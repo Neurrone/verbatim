@@ -645,3 +645,252 @@ Killed, 11 of the 22 missed listener-logic mutants, by `verbatim-listener`'s tes
 - schedule.rs:1026, && to || second (target).
 - schedule.rs:1035, spawn_failed body () (target).
 - schedule.rs:1038, delete ! (target).
+
+## Second run, at 5cfa65e9
+
+- Date: 2026-11-03. Commit: 5cfa65e9, detached, in a worktree. Tool, settings and the six runs are the baseline's, with `-o` naming each run's output directory outside the repository. No source file was changed.
+- Command lines: the baseline's six, listed at the top of this document, each with the crate's own tests only. Then, for the missed mutants of verbatim-outpost-logic and verbatim-listener-logic only, the role crates' tests were added as in "Killed by the role crates' tests", with `cargo build -p mockapp` first and `--re` an alternation of the exact names of the missed mutants of the first run, each as `^name$`:
+  - `cargo mutants --in-place -p verbatim-outpost-logic --test-package verbatim-outpost-logic --test-package verbatim-outpost --re <alternation>`
+  - `cargo mutants --in-place -p verbatim-listener-logic --test-package verbatim-listener-logic --test-package verbatim-listener --re <alternation>`
+- Run time: the six runs took 84 minutes (reader-rules 2 min 38 s, outpost-logic 54 min 15 s, listener-logic 6 min 4 s, core 9 min 42 s + 5 min 50 s + 5 min 25 s), first build included. The two role reruns took 25 min 14 s and 40 s. The outpost-logic run took 54 minutes against the baseline's 31, with 619 mutants against 514.
+
+### Counts
+
+Own tests only (baseline in brackets):
+
+- verbatim-reader-rules: caught 46 [42], missed 0 [4], unviable 53 [53], timeout 0 [0].
+- verbatim-outpost-logic: caught 450 [413], missed 66 [101], unviable 103 [101], timeout 0 [0].
+- verbatim-listener-logic: caught 126 [105], missed 3 [22], unviable 9 [9], timeout 0 [0].
+- verbatim-core: caught 86 [76], missed 14 [24], unviable 26 [26], timeout 0 [0], summed over the three runs (queries.rs 50, 2, 15; reduce.rs 27, 4, 4; terminal_model.rs 9, 8, 7).
+
+With the role crates' tests added to the missed ones:
+
+- verbatim-outpost-logic: 79 mutants ran (the 66 and 13 on neighbouring lines, which the name match also took). 8 of the 66 were killed by `verbatim-outpost`'s tests, all of them in the baseline's classes "excluded" (`FocusPath::of` with `Default::default()`, `route_to` with `None`, `route_to` `==` to `!=`, both `+` mutations on line 183, `Kept::judges` `<` to `>`, its guard `at_us >= until` to false, and `Verdicts::apply` `>=` to `<`). 58 stay missed. None of the target mutants is among the 8.
+- verbatim-listener-logic: 5 mutants ran. The 3 missed (`returned` `<` to `<=`, `published` `&&` to `||`, `drop_waiting` `||` to `&&`) stay missed under `verbatim-listener`'s tests.
+
+One mutant differs between runs: follow.rs:735 (`answer_to_judge`, delete field `simple_child`), baseline class excluded, was unviable in the outpost-logic run and missed in the rerun, whose build includes the other test crates.
+
+### Mutants that did not exist at the baseline
+
+None missed. Every missed mutant of the six runs was matched by file, function and mutation text to a mutant missed at the baseline, using the line mapping of `git diff -U0 be5bd5b9 5cfa65e9` for the files that changed. The 35 outpost-logic and 19 listener-logic mutants missed at the baseline and not now are therefore the difference.
+
+### Targets
+
+Each of the 71 target mutants (the 82 target-class mutants less the 11 killed by `verbatim-listener`'s tests at the baseline, as the baseline counts), by its baseline file and line. "Caught by" names the tests that failed under the mutant; "now line" is given where the code moved. The baseline's mutations are matched by file, function and mutation text.
+
+Two target mutants no longer exist as written: schedule.rs:734 (`Schedule::next`) and schedule.rs:1026 (`Schedule::outpost_ended`). Both conditions on `abandoned == 0` moved into the new `App::spent` (schedule.rs:372), whose `==` to `!=` mutant is caught by `schedule::generated::fixed_cases_keep_the_schedules_rules`, `schedule::generated::generated_cases_keep_the_schedules_rules` and two hand-written regression tests, and which has no missed mutant.
+
+### verbatim-reader-rules
+
+
+in_flight.rs: InFlight<T>::deadline
+
+- in_flight.rs:425, replace body with None: caught by `in_flight::tests::generated_cases_match_the_reference_model`
+- in_flight.rs:425, replace body with Some(0): caught by `in_flight::tests::generated_cases_match_the_reference_model`
+- in_flight.rs:425, replace body with Some(1): caught by `in_flight::tests::generated_cases_match_the_reference_model`
+
+in_flight.rs: InFlight<T>::item_mut
+
+- in_flight.rs:430, replace body with None: caught by `in_flight::tests::generated_cases_match_the_reference_model`
+
+### verbatim-outpost-logic
+
+
+follow.rs: apply
+
+- follow.rs:661, replace && with ||: caught by `tests::reducer::generated_cases_keep_the_reducers_rules`
+- follow.rs:661, replace == with !=: caught by `tests::reducer::generated_cases_keep_the_reducers_rules`
+- follow.rs:661, replace == with !=: caught by `tests::reducer::generated_cases_keep_the_reducers_rules`
+
+follow.rs: apply_watch
+
+- follow.rs:696, replace && with ||: still missed (now line 696)
+
+gap_record.rs: GapRecord::foreground
+
+- gap_record.rs:345, replace && with ||: caught (now line 352) by `tests::reducer::generated_cases_keep_the_reducers_rules`
+- gap_record.rs:345, replace match guard open.top_level == window && open.awaits == Awaits::Focus with true: caught (now line 352) by `tests::reducer::generated_cases_keep_the_reducers_rules`
+
+hold.rs: forwarded_time
+
+- hold.rs:172, replace match guard forwarded(fact) with true: still missed (now line 172)
+
+hold.rs: forwarded
+
+- hold.rs:179, replace body with true: still missed (now line 179)
+
+intake.rs: (no function named)
+
+- intake.rs:176, delete -: caught by `tests::intake_order::generated_cases_keep_the_intakes_order`
+
+intake.rs: Intake::push
+
+- intake.rs:521, replace < with <=: still missed (now line 521)
+- intake.rs:521, replace < with ==: caught by `tests::intake_order::generated_cases_keep_the_intakes_order`
+- intake.rs:521, replace < with >: caught by `tests::intake_order::generated_cases_keep_the_intakes_order`
+- intake.rs:523, replace -= with +=: caught by `tests::intake_order::generated_cases_keep_the_intakes_order`, `tests::reducer::generated_cases_keep_the_reducers_rules`
+- intake.rs:523, replace -= with /=: caught by `tests::intake_order::generated_cases_keep_the_intakes_order`
+
+intake.rs: Intake::next
+
+- intake.rs:600, replace > with >=: caught by `tests::intake_order::generated_cases_keep_the_intakes_order`, `tests::reducer::generated_cases_keep_the_reducers_rules`
+- intake.rs:605, replace += with *=: caught by `tests::intake_order::generated_cases_keep_the_intakes_order`
+
+intake.rs: Intake::cancel
+
+- intake.rs:649, delete !: caught by `tests::intake_order::generated_cases_keep_the_intakes_order`, `tests::reducer::generated_cases_keep_the_reducers_rules`
+
+intake.rs: Intake::batch_number
+
+- intake.rs:711, replace body with 0: caught (now line 729) by `tests::intake_order::generated_cases_keep_the_intakes_order`
+- intake.rs:711, replace body with 1: caught (now line 729) by `tests::intake_order::generated_cases_keep_the_intakes_order`
+
+intake.rs: remove_waiting
+
+- intake.rs:873, delete !: caught (now line 891) by `tests::intake_order::generated_cases_keep_the_intakes_order`
+- intake.rs:875, replace + with *: caught (now line 893) by `tests::intake_order::generated_cases_keep_the_intakes_order`
+- intake.rs:875, replace + with -: caught (now line 893) by `tests::intake_order::generated_cases_keep_the_intakes_order`
+
+intake.rs: caret_after_update
+
+- intake.rs:975, replace && with ||: still missed (now line 993)
+- intake.rs:988, replace && with ||: still missed (now line 1006)
+
+intake.rs: admit
+
+- intake.rs:1128, replace += with *=: caught (now line 1146) by `tests::intake_order::generated_cases_keep_the_intakes_order`
+
+lib.rs: Reducer::input
+
+- lib.rs:728, delete !: caught by `tests::a_gap_record_opened_after_the_close_is_never_tested`
+
+lib.rs: Reducer::tick
+
+- lib.rs:748, replace && with ||: caught by `tests::reducer::fixed_cases_keep_the_reducers_rules`, `tests::reducer::generated_cases_keep_the_reducers_rules`
+
+lib.rs: Reducer::gap_bound_tested
+
+- lib.rs:834, replace && with ||: caught (now line 852) by `tests::reducer::generated_cases_keep_the_reducers_rules`
+- lib.rs:834, replace match guard reads && self.intake.gap().is_open() with true: caught (now line 852) by `tests::reducer::generated_cases_keep_the_reducers_rules`
+
+lib.rs: Reducer::send
+
+- lib.rs:945, replace == with !=: caught (now line 963) by `tests::reducer::generated_cases_keep_the_reducers_rules`
+
+lib.rs: Reducer::finished
+
+- lib.rs:1276, replace && with ||: caught (now line 1294) by `tests::reducer::generated_cases_keep_the_reducers_rules`
+- lib.rs:1300, replace || with &&: caught (now line 1318) by `tests::reducer::generated_cases_keep_the_reducers_rules`
+
+lib.rs: Reducer::pump
+
+- lib.rs:1430, replace += with *=: caught (now line 1448) by `tests::reducer::generated_cases_keep_the_reducers_rules`
+
+lib.rs: Reducer::run
+
+- lib.rs:1538, replace match guard now.wall_us >= walk_until_us with false: caught (now line 1556) by `tests::reducer::generated_cases_keep_the_reducers_rules`
+- lib.rs:1545, replace match guard now.wall_us >= walk_until_us with true: still missed (now line 1563)
+
+lib.rs: gap_report
+
+- lib.rs:1873, delete match arm OutpostToCore::Reply{outcome:QueryOutcome::Done(QueryResult::Focus(now)), ..}: still missed (now line 1891)
+
+watch.rs: Watch::take
+
+- watch.rs:237, replace match guard open.node_id == node with true: caught by `tests::reducer::fixed_cases_keep_the_reducers_rules`
+
+### verbatim-listener-logic
+
+
+schedule.rs: Schedule<J>::push
+
+- schedule.rs:633, replace != with ==: caught (now line 649) by `schedule::generated::fixed_cases_keep_the_schedules_rules`, `schedule::generated::generated_cases_keep_the_schedules_rules`
+
+schedule.rs: Schedule<J>::next
+
+- schedule.rs:734, replace == with !=: no longer exists
+
+schedule.rs: Schedule<J>::returned
+
+- schedule.rs:753, replace && with ||: caught (now line 769) by `schedule::generated::generated_cases_keep_the_schedules_rules`
+- schedule.rs:775, replace < with ==: caught (now line 791) by `schedule::generated::generated_cases_keep_the_schedules_rules`
+- schedule.rs:775, replace < with >: caught (now line 791) by `schedule::generated::generated_cases_keep_the_schedules_rules`
+
+schedule.rs: Schedule<J>::abandon
+
+- schedule.rs:883, replace && with ||: caught (now line 903) by `schedule::generated::fixed_cases_keep_the_schedules_rules`, `schedule::generated::generated_cases_keep_the_schedules_rules`
+
+schedule.rs: Schedule<J>::published
+
+- schedule.rs:941, replace && with ||: still missed (now line 961)
+
+schedule.rs: Schedule<J>::foreground
+
+- schedule.rs:1011, replace == with !=: caught (now line 1031) by `schedule::generated::generated_cases_keep_the_schedules_rules`
+
+schedule.rs: Schedule<J>::outpost_ended
+
+- schedule.rs:1026, replace == with !=: no longer exists
+
+### verbatim-core
+
+
+queries.rs: Queries::next
+
+- queries.rs:302, replace body with 0: still missed (now line 302)
+- queries.rs:302, replace body with 1: caught by `queries::generated::fixed_cases_keep_the_reducers_rules`, `queries::generated::generated_cases_keep_the_reducers_rules`
+
+queries.rs: Queries::set_traces
+
+- queries.rs:310, replace == with !=: caught by `queries::generated::fixed_cases_keep_the_reducers_rules`, `queries::generated::generated_cases_keep_the_reducers_rules`
+- queries.rs:310, replace body with (): caught by `queries::generated::fixed_cases_keep_the_reducers_rules`, `queries::generated::generated_cases_keep_the_reducers_rules`
+
+queries.rs: Queries::set_trace
+
+- queries.rs:319, replace body with (): caught by `queries::generated::fixed_cases_keep_the_reducers_rules`, `queries::generated::generated_cases_keep_the_reducers_rules`
+- queries.rs:320, delete match arm Effect::ForKey(key, inner): caught by `queries::generated::generated_cases_keep_the_reducers_rules`
+- queries.rs:326, replace >= with <: caught by `queries::generated::fixed_cases_keep_the_reducers_rules`, `queries::generated::generated_cases_keep_the_reducers_rules`
+
+queries.rs: outpost_gone
+
+- queries.rs:435, replace && with ||: caught by `queries::generated::generated_cases_keep_the_reducers_rules`
+
+reduce.rs: leaves_focus
+
+- reduce.rs:604, replace < with <=: caught by `queries::generated::fixed_cases_keep_the_reducers_rules`, `queries::generated::generated_cases_keep_the_reducers_rules`
+
+reduce.rs: outpost_ended
+
+- reduce.rs:1418, replace == with !=: caught by `queries::generated::generated_cases_keep_the_reducers_rules`
+- reduce.rs:1425, replace == with !=: caught by `queries::generated::generated_cases_keep_the_reducers_rules`
+- reduce.rs:1430, delete match arm Then::Caret(PendingCaret{node, ..}) | Then::Text(PendingText{node, ..}): still missed (now line 1430)
+- reduce.rs:1431, replace == with !=: still missed (now line 1431)
+- reduce.rs:1438, replace == with !=: still missed (now line 1438)
+
+terminal_model.rs: answered_read
+
+- terminal_model.rs:905, replace body with None: still missed (now line 905)
+- terminal_model.rs:905, replace body with Some((Default::default(), None, vec![])): still missed (now line 905)
+- terminal_model.rs:912, delete match arm TextReply::TerminalSnapshot(snapshot): still missed (now line 912)
+
+terminal_model.rs: reply
+
+- terminal_model.rs:973, delete !: still missed (now line 973)
+- terminal_model.rs:974, delete !: still missed (now line 974)
+- terminal_model.rs:974, replace && with ||: still missed (now line 974)
+
+terminal_model.rs: answerable
+
+- terminal_model.rs:1098, delete match arm Effect::ForKey(_, effect): still missed (now line 1098)
+
+### Targets caught by the generated tests
+
+Caught now, missed at the baseline, and not killed by the role crates' tests (the missed ones that the role crates' tests were added to stayed missed, so no target is killed by them), out of 71:
+
+- verbatim-reader-rules: 4 of 4.
+- verbatim-outpost-logic: 29 of 37 (8 still missed).
+- verbatim-listener-logic: 6 of 9 (1 still missed, 2 no longer exist as written).
+- verbatim-core: 10 of 21 (11 still missed).
+- All: 49 of 71.
+
+All but one of the 49 fail under the generated tests (`generated_cases_...` or `fixed_cases_...`, the fixed cases of the same files). The exception is lib.rs:728, `Reducer::input` delete `!`, which only `tests::a_gap_record_opened_after_the_close_is_never_tested` catches, a hand-written regression test that the outpost's generated test found (it is not in the baseline's tests.rs). Without it the count is 48.
