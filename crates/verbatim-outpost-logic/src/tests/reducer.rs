@@ -106,6 +106,8 @@ enum Commit {
     OpenWatch { console: bool },
     /// The watch on node 1 is taken.
     Take,
+    /// A take of node 2, which no watch is on.
+    TakeOther,
     /// The held watch's check found its evidence or nothing.
     Checked { answered: bool },
     /// A copy dropped for UIA in window 0x11 of a top-level window.
@@ -154,7 +156,8 @@ enum Action {
     WithoutListener,
     /// The listener's forwarding ended through the newest stamp.
     ForwardingEnded,
-    /// Core withdraws the oldest open query.
+    /// Core withdraws the oldest query still waiting, or else the oldest
+    /// open one.
     Cancel,
     /// A verdict of the generation in charge or of the one before it:
     /// a probe (0 to 3 by kind) or a window's forgetting (4).
@@ -237,6 +240,7 @@ fn commit() -> impl Strategy<Value = Commit> {
             .prop_map(|(top, whole, owes)| Commit::Report { top, whole, owes }),
         3 => any::<bool>().prop_map(|console| Commit::OpenWatch { console }),
         5 => Just(Commit::Take),
+        3 => Just(Commit::TakeOther),
         2 => any::<bool>().prop_map(|answered| Commit::Checked { answered }),
         2 => (0..2u8).prop_map(|top| Commit::CopyDropped { top }),
         1 => Just(Commit::NotedCaret),
@@ -350,6 +354,8 @@ struct Flight {
     query: Option<u64>,
     /// Whether it was dispatched for a query.
     for_query: bool,
+    /// The focus group it is a try of, by number.
+    group: Option<u64>,
     walk: Walk,
     /// When it started, on the shell's clock, in microseconds.
     started: u64,
@@ -455,6 +461,9 @@ struct Model {
     bound_reads: BTreeSet<TraceId>,
     /// Whether the last program to leave was abandoned.
     abandoned: bool,
+    /// The focus groups a try reported, or was published in, by number:
+    /// none of their older entries is tried after.
+    ended_groups: BTreeSet<u64>,
 }
 
 impl Model {
@@ -1194,7 +1203,15 @@ impl Run {
             .model
             .arrived
             .iter()
-            .find(|number| self.model.queries.contains(number))
+            .find(|number| {
+                self.model.queries.contains(number) && !self.model.taken.contains(number)
+            })
+            .or_else(|| {
+                self.model
+                    .arrived
+                    .iter()
+                    .find(|number| self.model.queries.contains(number))
+            })
         else {
             return;
         };
@@ -1315,6 +1332,10 @@ impl Run {
                 opens(flight.query?, console)
             }
             Commit::Take if matches!(flight.kind, Kind::Entry | Kind::EditCaret) => takes(),
+            Commit::TakeOther if matches!(flight.kind, Kind::Entry | Kind::EditCaret) => Change {
+                watch: Some(WatchChange::Take(NodeId::new(2))),
+                ..Change::default()
+            },
             Commit::Checked { answered: true } => answered(),
             Commit::Checked { answered: false } => watching(1),
             Commit::CopyDropped { .. } if flight.for_query || flight.kind != Kind::Entry => {
@@ -1344,7 +1365,11 @@ impl Run {
                 )),
                 ..Change::default()
             },
-            Commit::OpenWatch { .. } | Commit::Take | Commit::OwedDone | Commit::Own(_) => {
+            Commit::OpenWatch { .. }
+            | Commit::Take
+            | Commit::TakeOther
+            | Commit::OwedDone
+            | Commit::Own(_) => {
                 return None;
             }
         })
@@ -1443,7 +1468,9 @@ impl Run {
                 }
                 self.reach("the watch opened");
             }
-            Some(WatchChange::Take(_)) if model.watch.is_some() && !model.watch_held => {
+            Some(WatchChange::Take(node))
+                if node.number() == 1 && model.watch.is_some() && !model.watch_held =>
+            {
                 model.watch_held = true;
                 self.reach("the watch taken");
             }
@@ -1526,6 +1553,10 @@ impl Run {
         if !cutting {
             self.model.flight = None;
             self.model.dead.push(flight.request);
+            if let (true, Some(group)) = (reported || flight.walk == Walk::Published, flight.group)
+            {
+                self.model.ended_groups.insert(group);
+            }
         }
         if panicked {
             self.reach("a program panicked");
@@ -1861,8 +1892,13 @@ impl Run {
                     "an abandonment answers its program's query: {trail:?}"
                 );
             }
+            // Unless the publication the abandonment waited for ended it
+            // first, in the same call.
             if self.model.watch_held
                 && let Some(watch) = self.model.watch
+                && !replies(&effects[..abandoned])
+                    .iter()
+                    .any(|(replied, _)| *replied == watch)
             {
                 assert!(
                     replied.contains(&(watch, "abandoned")),
@@ -1986,6 +2022,9 @@ impl Run {
                 );
                 self.model.generation += 1;
                 self.model.dead.push(flight.request);
+                if let (Walk::Published, Some(group)) = (flight.walk, flight.group) {
+                    self.model.ended_groups.insert(group);
+                }
                 if let Some((_, attempting)) = self.model.owed
                     && attempting == Some(*dead)
                 {
@@ -2120,9 +2159,15 @@ impl Run {
         self.issued(program.request);
         let mut query = None;
         let mut window = false;
+        let mut group = None;
         match kind {
             Kind::Entry | Kind::Key | Kind::EditCaret => {
-                let Work::Entry { entry, group, .. } = &program.work else {
+                let Work::Entry {
+                    entry,
+                    group: group_place,
+                    ..
+                } = &program.work
+                else {
                     unreachable!("an entry's program");
                 };
                 let trace = entry.trace;
@@ -2139,7 +2184,14 @@ impl Run {
                     query = Some(number);
                 }
                 window = intake::window_of(&entry.item).is_some();
-                if group.is_some_and(|group| group.rank > 0) {
+                if let Some(tried) = group_place {
+                    assert!(
+                        !self.model.ended_groups.contains(&tried.number),
+                        "a try of a group already reported or published: {trail:?}"
+                    );
+                    group = Some(tried.number);
+                }
+                if group_place.is_some_and(|group| group.rank > 0) {
                     self.reach("a focus group continued");
                     if self.model.abandoned {
                         self.reach("a focus group continued after an abandonment");
@@ -2208,6 +2260,7 @@ impl Run {
             kind,
             query,
             for_query: query.is_some(),
+            group,
             walk: Walk::Unarmed,
             started: self.at,
             deadline,
@@ -2410,6 +2463,13 @@ impl Run {
         for number in &self.model.arrived {
             let replied = self.model.replies.get(number).copied().unwrap_or(0);
             let left = self.reducer.queries().contains(&RequestId::shell(*number));
+            // Only a query never taken from the intake, or the watch's, is
+            // left to the shell's token at the close.
+            assert!(
+                !left || !self.model.taken.contains(number) || self.model.watch == Some(*number),
+                "query {number} taken and left unanswered: {:?}",
+                self.trail
+            );
             assert!(
                 (replied == 1) != left,
                 "query {number} replied {replied} times, left to the token {left}: {:?}",
@@ -2526,7 +2586,8 @@ const TO_TIMER: Action = Action::Advance(Advance::ToTimer {
 /// as they were sent as a change; a title sent for a record a publication
 /// in the same tick closed; and the title committed under the request of a
 /// generation the same tick's moved-on answer abandoned
-/// (`docs/design/logic-tests.md`, "To check in the build").
+/// (`docs/design/logic-tests.md`, "To check in the build"); and, from the
+/// mutation baseline, a take of a node no watch is on while one waits.
 fn fixed() -> Vec<Vec<(Action, Asks)>> {
     let in_front = What::Foreground {
         window: 0,
@@ -2534,7 +2595,19 @@ fn fixed() -> Vec<Vec<(Action, Asks)>> {
         uia: false,
     };
     let uia = |dead| Action::Verdict { dead, change: 0 };
+    let finished = Action::Finished {
+        reported: false,
+        panicked: false,
+        cut: false,
+    };
     vec![
+        vec![
+            arrives(What::CaretKey),
+            (Action::Commit(Commit::Own(false)), PLAIN),
+            (finished, PLAIN),
+            arrives(What::NameChange(0)),
+            (Action::Commit(Commit::TakeOther), PLAIN),
+        ],
         vec![
             (Action::Close, PLAIN),
             arrives(in_front),

@@ -170,7 +170,9 @@ giving back the held copies in the hook's order but those of the kinds
 the listener forwards raised at or before the end, or at or before the
 newest such copy the listener forwarded. Each case ends by draining
 (every program finished, every timer reached, the close), and then every
-query has one reply or is left to the shell's token. Each case runs twice
+query has one reply or is left to the shell's token, which only a query
+never taken from the intake, or the watch's, may be; and no focus group a
+try reported, or was published in, is tried again. Each case runs twice
 and the two runs' effects are compared, and the test fails if a listed
 lifecycle state is never reached. The cases the test and its exploration
 found are kept as fixed cases. The model leaves out the intake's plan,
