@@ -1642,10 +1642,23 @@ impl Run {
         let marks = self.reducer.facts.marks.clone();
         let gap_due = self.reducer.intake.gap().due_us();
         let flight_before = self.model.flight.clone();
+        // The reducer changes the watch only at a dispatch, at a
+        // publication that claims the program or with no program in
+        // flight: a gap's test leaves the watch the program's copy holds.
+        let held_watch = (matches!(input, Some(Input::GapBoundTested { .. }))
+            && self.reducer.busy())
+        .then(|| self.reducer.facts.follow.watch.clone());
         let effects = match input {
             Some(input) => self.reducer.input(input, now),
             None => self.reducer.tick(now),
         };
+        if let Some(watch) = held_watch {
+            assert_eq!(
+                self.reducer.facts.follow.watch, watch,
+                "a gap's test changed the watch of the program in flight: {:?}",
+                self.trail
+            );
+        }
         self.log.push(hash(&format!("{effects:?}")));
         self.check_call(kind, &effects, &marks, gap_due, flight_before.as_ref());
         // The gap's test's request is issued as the call makes it.
@@ -2586,8 +2599,9 @@ const TO_TIMER: Action = Action::Advance(Advance::ToTimer {
 /// as they were sent as a change; a title sent for a record a publication
 /// in the same tick closed; and the title committed under the request of a
 /// generation the same tick's moved-on answer abandoned
-/// (`docs/design/logic-tests.md`, "To check in the build"); and, from the
-/// mutation baseline, a take of a node no watch is on while one waits.
+/// (`docs/design/logic-tests.md`, "To check in the build"); from the
+/// mutation baseline, a take of a node no watch is on while one waits; and
+/// a title committed while the program in flight holds the watch.
 fn fixed() -> Vec<Vec<(Action, Asks)>> {
     let in_front = What::Foreground {
         window: 0,
@@ -2658,6 +2672,26 @@ fn fixed() -> Vec<Vec<(Action, Asks)>> {
                     ..PLAIN
                 },
             ),
+        ],
+        vec![
+            arrives(What::CaretKey),
+            (Action::Commit(Commit::OpenWatch { console: false }), PLAIN),
+            (finished, PLAIN),
+            arrives(in_front),
+            (Action::Commit(Commit::Take), PLAIN),
+            (
+                Action::Advance(Advance::By {
+                    at: 1_100,
+                    observed: 1_100,
+                    wall: 0,
+                }),
+                Asks {
+                    related: true,
+                    title: true,
+                    ..PLAIN
+                },
+            ),
+            (Action::Commit(Commit::Checked { answered: false }), PLAIN),
         ],
     ]
 }

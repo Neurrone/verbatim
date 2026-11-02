@@ -117,6 +117,13 @@ holding it ends it; and with no program in flight, no release pending
 and nothing else ready, its due time ends a waiting watch at its bound
 or dispatches a poll read (`Work::PollRead`). A report on another node or
 a replaced node ends it in any state, and a release of its node ends it.
+The one report the reducer commits for itself, the gap record's window
+text at its bound, leaves the watch while a program is in flight, since the
+program's copy holds it: the reducer changes the watch only at a dispatch,
+at a publication that claims the program, or with no program in flight.
+The end that report would have made is judged at the program's end, its
+abandonment or a publication that claims it, and the watch ends then
+unless the newest report is of its node.
 `next_timer` gives its due time only when it would be acted on.
 
 `cargo xtask ci` reads every file of the crate by the pure rule

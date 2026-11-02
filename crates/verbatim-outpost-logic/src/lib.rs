@@ -570,6 +570,11 @@ pub struct Reducer {
     /// come: nothing is dispatched until it has, so no program is given a
     /// node it frees.
     releasing: bool,
+    /// The caret key's watch, by its query, that a gap title's commit
+    /// would have ended as a report on another node while a program was
+    /// in flight: its end is judged at the next point the reducer may
+    /// change the watch ([`judge_watch_elsewhere`](Self::judge_watch_elsewhere)).
+    watch_elsewhere: Option<RequestId>,
     stopping: bool,
 }
 
@@ -828,6 +833,9 @@ impl Reducer {
     /// committed under `request` all the same, without the acceptance test
     /// a program's commit needs, since it is the shell's own read, made in
     /// line from local data, not a result of the worker that was abandoned.
+    /// While a program is in flight the commit leaves the caret key's watch,
+    /// which the program's copy holds, and the end its report would make is
+    /// judged later ([`judge_watch_elsewhere`](Self::judge_watch_elsewhere)).
     fn gap_bound_tested(
         &mut self,
         request: Request,
@@ -846,7 +854,20 @@ impl Reducer {
         let reads = self.intake.gap().awaits() == Some(Awaits::Focus);
         let trace = self.intake.gap().trace();
         if let Some(change) = title {
-            self.commit(request, &change, now, effects);
+            if self.busy() {
+                // The watch is the program in flight's to change, as its
+                // copy of the facts holds it: the report's end of a watch
+                // elsewhere waits for the program's end, its abandonment
+                // or a publication that claims it.
+                let watch = std::mem::take(&mut self.facts.follow.watch);
+                self.commit(request, &change, now, effects);
+                if let Some(open) = watch.open() {
+                    self.watch_elsewhere = Some(open.request_id);
+                }
+                self.facts.follow.watch = watch;
+            } else {
+                self.commit(request, &change, now, effects);
+            }
         }
         match trace {
             Some(trace) if reads && self.intake.gap().is_open() => self.intake.push_gap_bound(
@@ -1213,6 +1234,7 @@ impl Reducer {
         let got = match change {
             Some(change) if self.flight.accepts(request) => {
                 self.commit(request, &change, now, effects);
+                self.judge_watch_elsewhere(now, effects);
                 true
             }
             _ => false,
@@ -1262,6 +1284,7 @@ impl Reducer {
         if let Some(answer) = self.facts.follow.watch.abandoned() {
             self.answer_watch(answer, now, effects);
         }
+        self.judge_watch_elsewhere(now, effects);
         if let Some((request_id, trace)) = current.running {
             self.send(reply(request_id, trace, QueryOutcome::Abandoned), effects);
         }
@@ -1304,6 +1327,7 @@ impl Reducer {
         if let Some(answer) = self.facts.follow.watch.program_ended() {
             self.answer_watch(answer, now, effects);
         }
+        self.judge_watch_elsewhere(now, effects);
         if let Some((request_id, trace)) = current.running {
             self.send(
                 reply(
@@ -1334,6 +1358,27 @@ impl Reducer {
             } else {
                 self.continue_group(group);
             }
+        }
+    }
+
+    /// Judges the end a gap title's commit left while a program was in
+    /// flight, now that the reducer may change the watch: the watch it
+    /// would have ended, if still open, ends unless the newest report is
+    /// of its node, as a report on another node ends it.
+    fn judge_watch_elsewhere(&mut self, now: Now, effects: &mut Vec<Effect>) {
+        let Some(request_id) = self.watch_elsewhere.take() else {
+            return;
+        };
+        let newest = self.facts.held.expected().map(|focus| focus.node.id);
+        if self
+            .facts
+            .follow
+            .watch
+            .open()
+            .is_some_and(|open| open.request_id == request_id && Some(open.node_id) != newest)
+            && let Some(answer) = self.facts.follow.watch.end("the focus moved")
+        {
+            self.answer_watch(answer, now, effects);
         }
     }
 

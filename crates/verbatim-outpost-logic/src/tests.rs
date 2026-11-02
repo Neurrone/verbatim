@@ -2936,3 +2936,46 @@ fn a_record_closed_by_a_publication_in_its_tick_sends_no_title() {
     assert_eq!(focuses, [false], "the published focus alone");
     assert!(!replay.reducer.intake.gap().is_open());
 }
+
+/// Found by the outpost's generated test (`docs/design/logic-tests.md`,
+/// "The outpost's reducer"): a foreground change's program takes the open
+/// caret key's watch, and a tick past the gap record's bound finds its
+/// window in front and sends its window text. The text's commit, a report
+/// on another node, leaves the watch the program holds, so the program's
+/// check puts it back as its copy has it; the program's end then ends it,
+/// the newest report being of another node.
+#[test]
+fn a_title_committed_while_a_program_holds_the_watch_ends_it_at_the_programs_end() {
+    let mut replay = Replay::new();
+    let key = program(&replay.push(caret_key(7), Source::Other, 1)).request;
+    replay.commit(key, opens(7, false), 1);
+    replay.finish(key, false, 1);
+    let effects = replay.input(
+        Input::Entry {
+            entry: foreground_change(false),
+            source: Source::Other,
+        },
+        1,
+    );
+    let front = program(&effects).request;
+    replay.commit(front, takes(), 2);
+    // The window text as the shell sends it: a report, recorded, and the
+    // foreground's tracking.
+    let title = Change {
+        report: reported_in_window(3, InFront::Foreground(Window::new(0x10))).report,
+        foreground: Some((NodeId::new(3), Role::Window, 0)),
+        ..report_in(3, 0x10, 1_000, true)
+    };
+    replay.answers.titles.push_back(title);
+    let effects = replay.tick(1_100);
+    assert_eq!(replay.answers.tested, [0x10]);
+    assert_eq!(replies(&effects), []);
+    assert!(matches!(watch_of(&replay), Watch::Checking { .. }));
+    assert_eq!(replies(&replay.commit(front, watching(0), 1_101)), []);
+    assert!(matches!(watch_of(&replay), Watch::Waiting { .. }));
+    assert_eq!(
+        replies(&replay.finish(front, false, 1_102)),
+        [(7, "watch ended")]
+    );
+    assert_eq!(*watch_of(&replay), Watch::None);
+}
