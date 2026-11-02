@@ -382,7 +382,10 @@ impl GapRecord {
     /// no record open.
     pub fn bound_reached(&mut self, now_us: u64) -> Result<Option<GapRead>, u64> {
         match self.open.as_mut() {
+            // A second entry, queued at a bound a foreground change armed
+            // while the first waited: the first's read is the record's one.
             None => Ok(None),
+            Some(open) if open.bound == Bound::Passed => Ok(None),
             Some(open) if now_us < open.due_us => {
                 open.bound = Bound::Waiting;
                 Err(open.due_us)
@@ -704,5 +707,21 @@ mod tests {
                 due_us: 2_000 + BOUND_US
             }
         );
+    }
+
+    /// A bound's entry handled after the record's bound has passed, as a
+    /// second entry queued at a bound a later foreground change armed,
+    /// reads nothing: the record has one read.
+    #[test]
+    fn a_second_bound_entry_reads_nothing() {
+        let mut record = GapRecord::default();
+        record.copy_dropped(WINDOW, TOP, at(1_000));
+        assert!(
+            record
+                .bound_reached(1_000 + BOUND_US)
+                .is_ok_and(|read| read.is_some())
+        );
+        assert_eq!(record.bound_reached(2_000 + BOUND_US), Ok(None));
+        assert!(record.is_open());
     }
 }
