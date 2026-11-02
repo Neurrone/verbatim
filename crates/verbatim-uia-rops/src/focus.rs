@@ -467,8 +467,11 @@ fn ends_at_the_top(runtime_id: &[i32], hwnd: isize) -> bool {
 }
 
 /// The focus ancestry in one cross-process round trip: a program that
-/// reads the element's `HasKeyboardFocus` live and stops if it is false,
-/// then reads the previous element's (`FocusQuery::previous`), then, with
+/// reads the previous element's `HasKeyboardFocus` live
+/// (`FocusQuery::previous`), then the element's, and stops if that is
+/// false, in NVDA's order, so a focus only being lost cannot read as a new
+/// element under its runtime id (`docs/design/focus-pipeline-rework-remaining.md`,
+/// "The keep-id evidence, read in NVDA's order"), then, with
 /// [`FocusQuery::refresh`], fills the element's own cache afresh, then,
 /// for a menu item, reads its legacy MSAA state
 /// ([`Ancestry::legacy_state`]), then reads a list's or tab control's
@@ -499,14 +502,8 @@ pub fn focus_ancestry_remote(_uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
     let mut b = Builder::new();
     let element = b.import_element(query.element.live().element());
 
-    let focused = b.property(element, UIA_HasKeyboardFocusPropertyId.0);
-    let focused = b.add_to_results(focused.assume::<kind::Bool>());
-    if query.require_focus {
-        let not_focused = b.not(focused);
-        b.if_(not_focused, Builder::halt);
-    }
-
-    // The element held under the same runtime id: its own live focus. A
+    // The element held under the same runtime id: its own live focus, read
+    // first, as NVDA reads its last queued focus's before the sender's. A
     // held element that is gone fails the whole run before it starts
     // ([`focus_ancestry`] runs it again without it).
     let previous_focused = b.new_bool(false);
@@ -518,6 +515,13 @@ pub fn focus_ancestry_remote(_uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
         b.if_(is_bool, |b| {
             b.set(previous_focused, has.assume::<kind::Bool>());
         });
+    }
+
+    let focused = b.property(element, UIA_HasKeyboardFocusPropertyId.0);
+    let focused = b.add_to_results(focused.assume::<kind::Bool>());
+    if query.require_focus {
+        let not_focused = b.not(focused);
+        b.if_(not_focused, Builder::halt);
     }
 
     let cache = RemoteCache::new(&mut b, query.fill);
@@ -885,8 +889,11 @@ fn tell(before_call: Option<&dyn Fn(&'static str)>, call: &'static str) {
 }
 
 /// The focus ancestry the classic way, the focus listener's read and the
-/// outposts' fallback: a live `HasKeyboardFocus` read with
-/// [`FocusQuery::require_focus`], the previous element's, the element's
+/// outposts' fallback: the previous element's live `HasKeyboardFocus`
+/// read, then the element's with [`FocusQuery::require_focus`], which stops
+/// the walk when false, in NVDA's order
+/// (`docs/design/focus-pipeline-rework-remaining.md`, "The keep-id
+/// evidence, read in NVDA's order"); the element's
 /// own cache filled afresh with [`FocusQuery::refresh`]
 /// (`BuildUpdatedCache`), the selected child through the `Selection`
 /// pattern ([`Uia::selected`], as `Uia::selected_node` reads it), then one
@@ -897,8 +904,9 @@ fn tell(before_call: Option<&dyn Fn(&'static str)>, call: &'static str) {
 /// depth limit, below the desktop root, below the process boundary
 /// (`docs/design/listener-without-connections.md`, terms), at a step into a
 /// window that reads as a plain window ([`FocusQuery::plain`]), and when the
-/// query's time is up, which is asked before every call but the first
-/// focus read, so that at most the call under way runs past it.
+/// query's time is up, which is asked before every call but the element's
+/// own focus read, so that at most the call under way runs past it, or the
+/// two focus reads.
 ///
 /// The boundary is judged with local calls only, twice. Before each step,
 /// an element whose window has a parent window, or a visible owner for a
@@ -938,14 +946,10 @@ pub fn focus_ancestry_classic(uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
     // would have read is unknown, and the walk then reads no ancestor.
     let out_of_time = || query.out_of_time.is_some_and(|out_of_time| out_of_time());
     let before_call = |call| tell(query.before_call, call);
-    if query.require_focus && {
-        before_call("the focus's keyboard focus");
-        !live.element().has_keyboard_focus()?
-    } {
-        return Ok(FocusAncestry::NotFocused);
-    }
-    // A failed read is an element that is gone, but a provider that did
-    // not answer in time has said nothing about it.
+    // The earlier element's keyboard focus first, then the element's, as
+    // NVDA reads its last queued focus's before the sender's. A failed read
+    // is an element that is gone, but a provider that did not answer in
+    // time has said nothing about it.
     let previous_focused = match query.previous.filter(|_| !out_of_time()).map(|previous| {
         before_call("the previous focus's keyboard focus");
         previous.has_keyboard_focus()
@@ -956,6 +960,12 @@ pub fn focus_ancestry_classic(uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
         Some(Err(error)) if timed_out(&error) => return Err(Error::Uia(error)),
         Some(Err(_)) => Some(EarlierElement::Gone),
     };
+    if query.require_focus && {
+        before_call("the focus's keyboard focus");
+        !live.element().has_keyboard_focus()?
+    } {
+        return Ok(FocusAncestry::NotFocused);
+    }
     let progress = |read: Progress<'_>| {
         if let Some(progress) = query.progress {
             progress(read);

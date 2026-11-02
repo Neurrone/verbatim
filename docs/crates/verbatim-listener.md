@@ -71,7 +71,14 @@ receives the event's own element, judges and reads a UIA focus
   on an element the listener holds, with no remote operation and no
   connection: whether the element with the same runtime id as the previous
   focus still has the keyboard focus, has lost it, or is gone
-  (`UiaFocusRead::same_as_last`, a `verbatim_model::EarlierElement`); value,
+  (`UiaFocusRead::same_as_last`, a `verbatim_model::EarlierElement`), then
+  the sender's keyboard focus, NVDA's last check, a plain read that drops
+  the focus when false (`FocusQuery::require_focus`), in NVDA's order, so
+  a focus only being lost as it is read cannot read as a new element
+  (`docs/design/focus-pipeline-rework-remaining.md`, "The keep-id
+  evidence, read in NVDA's order"); a menu opening redirected to the
+  current focus has that focus's keyboard focus read by the checks
+  instead, and out of time the event's cache decides; value,
   states, and details afresh; a list's or tab control's selected child, or
   for a combo box without `Value` or a looping selector the first selected
   item as its value (`UiaFocusRead::value_from_selection`), left out when

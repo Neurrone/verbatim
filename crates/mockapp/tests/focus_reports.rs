@@ -30,7 +30,7 @@ mod common;
 #[path = "common/harness.rs"]
 mod harness;
 
-use std::sync::{Arc, mpsc};
+use std::sync::{Arc, Mutex, PoisonError, mpsc};
 use std::time::Duration;
 
 use verbatim_core::SrState;
@@ -2308,6 +2308,63 @@ fn a_repeated_focus_on_the_still_focused_element_is_read_in_full() {
     app.quit();
 }
 
+/// Windows Terminal raises its terminal's focus twice as it launches and
+/// then minimizes itself, so the second focus can be read as the focus is
+/// being lost. The listener reads, as NVDA does, the keyboard focus of the
+/// element it read before under the runtime id first, and the sender's
+/// after it, in its walk: here the focus leaves between the two reads, so
+/// the earlier element reads focused and the sender not, and the repeat is
+/// dropped, the focus announced once
+/// (`docs/design/focus-pipeline-rework-remaining.md`, "The keep-id
+/// evidence, read in NVDA's order").
+fn a_focus_that_leaves_between_the_two_keyboard_focus_reads_is_announced_once() {
+    let title = common::unique_title("mockapp-focus-leaves-between");
+    let mut app = common::spawn("small.json", "uia", &title);
+    let client = Client::new(common::find_window(&title));
+    let outpost = OutpostUnderTest::new(&app);
+
+    app.send("set-focus btn1");
+    let first = outpost.uia_focus(&client.focused());
+    assert_eq!(first.node.name.as_deref(), Some("Original Name"));
+    let repeated = client.focused();
+    let app = Arc::new(Mutex::new(app));
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let (moves, seen) = (Arc::clone(&app), Arc::clone(&calls));
+    outpost.listener_observes_calls(Arc::new(move |call| {
+        seen.lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(call);
+        if call == "the focus's keyboard focus" {
+            moves
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .send("set-focus slider1");
+        }
+    }));
+    let (judged, _) = outpost.listener_read(&repeated);
+    assert_eq!(
+        calls.lock().unwrap_or_else(PoisonError::into_inner)[..],
+        [
+            "the previous focus's keyboard focus",
+            "the focus's keyboard focus"
+        ],
+        "the earlier element's keyboard focus first, then the sender's"
+    );
+    let Judged::Dropped(reason) = judged else {
+        panic!("the listener read a focus that had left: {judged:?}");
+    };
+    assert_eq!(reason, NOT_FOCUSED);
+    outpost.deliver(Judged::Dropped(reason).into_fact(0, FocusEvent::Focus));
+    outpost.settled();
+
+    drop(outpost);
+    let app = Arc::try_unwrap(app)
+        .unwrap_or_else(|_| panic!("the observer was dropped with the outpost"))
+        .into_inner()
+        .unwrap_or_else(PoisonError::into_inner);
+    app.quit();
+}
+
 /// A UIA menu opening is judged and read as a focus on the menu, as NVDA's
 /// automation event handler maps it to one, by NVDA's checks but the
 /// duplicate test, which is its focus handler's alone: an opening on the
@@ -4565,6 +4622,10 @@ fn main() {
         (
             "a_focus_in_a_window_with_no_uia_provider_is_read_and_dropped_by_its_outpost",
             a_focus_in_a_window_with_no_uia_provider_is_read_and_dropped_by_its_outpost,
+        ),
+        (
+            "a_focus_that_leaves_between_the_two_keyboard_focus_reads_is_announced_once",
+            a_focus_that_leaves_between_the_two_keyboard_focus_reads_is_announced_once,
         ),
         (
             "a_repeated_focus_on_the_still_focused_element_is_read_in_full",

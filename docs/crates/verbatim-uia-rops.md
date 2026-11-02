@@ -158,16 +158,21 @@ element's raw-view ancestors and what a focus report needs besides. A
   and `element_fill`, the element's and its selected child's, which adds
   the node's place since each is read alone (decision 9 of
   `docs/design/uia-shapes.md`);
-- `require_focus`, for a live read of `HasKeyboardFocus` (NVDA's check
-  that a focus event is not stale), and `previous`, the element the
-  caller holds under the same runtime id, whose `HasKeyboardFocus` is
-  read live too, because an application can give a dead element's
-  runtime id to a new one (File Explorer does);
+- `previous`, the element the caller holds under the same runtime id,
+  whose `HasKeyboardFocus` is read live first, because an application can
+  give a dead element's runtime id to a new one (File Explorer does), and
+  `require_focus`, for a live read of the element's `HasKeyboardFocus`
+  after it (NVDA's check that a focus event is not stale), which stops the
+  walk when false: NVDA's order, so a focus only being lost cannot read as
+  a new element under its runtime id
+  (`docs/design/focus-pipeline-rework-remaining.md`, "The keep-id
+  evidence, read in NVDA's order"). Both reads are in the remote
+  program's one round trip, and are the classic walk's first two calls;
 - `refresh`, for the focused element's own cache filled afresh in the
   same round trip, so the focus listener reports its value, states, and
   details without a second call;
-- for the classic walk only, `out_of_time`, checked before each call
-  after the first; `before_call`, told each call's name as it begins so
+- for the classic walk only, `out_of_time`, checked before each call but
+  the element's own focus read; `before_call`, told each call's name as it begins so
   the caller can time it; `nearest_window` and `value_available`,
   answers the caller already has, each saving a call; and `plain`, which
   says, by local calls, whether a window is a ghost's or a hung

@@ -829,7 +829,7 @@ impl FocusReader {
         // `docs/design/focus-pipeline-rework.md`), and another
         // application's focus before it is always elsewhere. A local call.
         let known = match judged {
-            Ok(window) => window,
+            Ok((window, _)) => window,
             Err(_) if hwnd != 0 => hwnd,
             Err(_) => self.window.window(),
         };
@@ -842,8 +842,8 @@ impl FocusReader {
             self.last_top = Some(top);
             self.window.place(top);
         }
-        let nearest = match judged {
-            Ok(nearest) => nearest,
+        let (nearest, require_focus) = match judged {
+            Ok(judged) => judged,
             Err(reason) => return Judged::Dropped(reason),
         };
         let previous = self
@@ -915,9 +915,11 @@ impl FocusReader {
             .and_then(|(request, element_request)| {
                 let fill = Fill::new(&request);
                 let element_fill = Fill::new(&element_request);
-                // The sender's keyboard focus was read plainly just now, as
-                // NVDA's last check, and its nearest window found for NVDA's
-                // native check, so the read asks neither again
+                // The sender's keyboard focus, NVDA's last check, is the
+                // walk's to read, after the earlier element's, in NVDA's
+                // order (step 6), unless the checks made it already; its
+                // nearest window was found for NVDA's native check, so the
+                // read does not ask it again
                 // (`docs/design/listener-without-connections.md`, section 3,
                 // step 8).
                 let query = FocusQuery {
@@ -928,7 +930,7 @@ impl FocusReader {
                     fill: &fill,
                     element_fill: &element_fill,
                     out_of_time: Some(&out_of_time),
-                    require_focus: false,
+                    require_focus,
                     refresh: true,
                     nearest_window: Some(nearest),
                     before_call: Some(&|call| {
@@ -1241,13 +1243,17 @@ impl FocusReader {
     /// of NVDA's live read, a sender whose event says it did not have the
     /// focus being dropped. A menu opening's comparison is its read's first
     /// call, made within the budget.
+    ///
+    /// Answers the window the focus is judged with, and whether the read's
+    /// walk is to read the sender's keyboard focus, step 6, after the
+    /// earlier element's.
     fn judge_before_reading(
         &self,
         held: &Cached<ListenerEvent>,
         (sender, runtime_id): (&ListenerEvent, &[i32]),
         (kind, queue): (FocusEvent, QueuePlace),
         budget: &Budget,
-    ) -> Result<isize, &'static str> {
+    ) -> Result<(isize, bool), &'static str> {
         let element = held.live().element();
         let hwnd = sender.role.hwnd;
         let out_of_time = || budget.out_of_time();
@@ -1350,14 +1356,21 @@ impl FocusReader {
         // read live with a plain property read (`CurrentHasKeyboardFocus`
         // on the event's element, client side, or on the focus's for a
         // menu opening redirected to it), a failed read letting the event
-        // through. It is this plain read, here, and not one inside a remote
-        // operation, because Windows Terminal's second identity of its
-        // terminal answers the two differently, and only the plain read
-        // drops it as NVDA does (`docs/design/focus-pipeline.md`, section
-        // 16.8); the read does not make it again, since a focus that moves
-        // on while it is read is followed by the focus event of where it
-        // went (`docs/design/listener-without-connections.md`, section 3,
-        // step 8).
+        // through. It is a plain read, not one inside a remote operation,
+        // because Windows Terminal's second identity of its terminal
+        // answers the two differently, and only the plain read drops it as
+        // NVDA does (`docs/design/focus-pipeline.md`, section 16.8). The
+        // sender's is made by the read's classic walk
+        // (`FocusQuery::require_focus`), after the keyboard focus of the
+        // element held under the same runtime id, as NVDA reads its last
+        // queued focus's before the sender's (`UIAHandler/__init__.py` 902
+        // to 917 and 948), so a focus only being lost cannot read as a new
+        // element (`docs/design/focus-pipeline-rework-remaining.md`, "The
+        // keep-id evidence, read in NVDA's order"); the walk makes it once,
+        // since a focus that moves on while it is read is followed by the
+        // focus event of where it went
+        // (`docs/design/listener-without-connections.md`, section 3, step
+        // 8).
         //
         // Out of time, the live read is not made, and the sender's keyboard
         // focus is taken from the event's cache instead, as it stood when
@@ -1366,20 +1379,22 @@ impl FocusReader {
         // otherwise, lets the focus through, as NVDA's `except COMError:
         // return True` does (Dickson, 2026-10-21). A menu opening redirected
         // to the current focus is judged by the focus's element, whose
-        // keyboard focus no cache of this event holds, so it is let through.
-        let lacked_by_its_event =
-            || std::ptr::eq(subject, element) && sender.lacked_keyboard_focus();
+        // keyboard focus no cache of this event holds, read here.
+        let sender_is_subject = std::ptr::eq(subject, element);
         if out_of_time() {
-            if lacked_by_its_event() {
+            if sender_is_subject && sender.lacked_keyboard_focus() {
                 return Err(UNFOCUSED_OUT_OF_TIME);
             }
-        } else {
-            budget.call("the keyboard focus");
-            if let Ok(false) = subject.has_keyboard_focus() {
-                return Err(NOT_FOCUSED);
-            }
+            return Ok((window, false));
         }
-        Ok(window)
+        if sender_is_subject {
+            return Ok((window, true));
+        }
+        budget.call("the keyboard focus");
+        if let Ok(false) = subject.has_keyboard_focus() {
+            return Err(NOT_FOCUSED);
+        }
+        Ok((window, false))
     }
 
     /// Step 2: whether the sender, `held`, whose cache reads as `sender`, is

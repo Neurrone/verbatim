@@ -605,11 +605,13 @@ pub(crate) fn expect_prompt_read(
 /// How many times more a Windows Terminal window's terminal may be
 /// announced as the window opens: in some launches Windows Terminal raises
 /// the terminal's focus under a second runtime id, one starting 14,
-/// besides the usual one, and Verbatim announces both; in others it raises
-/// the usual one twice around a focus of its window, and the outpost
-/// gives the second read a node of its own. In the runs kept,
-/// opening a window, it was said twice at most, in 10 runs of 9
-/// scenarios.
+/// besides the usual one, and Verbatim announces both, as two elements. A
+/// focus raised twice under the usual runtime id keeps its node, and its
+/// repeat is Core's duplicate, or, when the focus is being lost as it is
+/// read, dropped, the earlier element's keyboard focus read before the
+/// sender's (`docs/design/focus-pipeline-rework-remaining.md`, "The keep-id
+/// evidence, read in NVDA's order"). In the runs kept, opening a window,
+/// it was said twice at most, in 10 runs of 9 scenarios.
 pub(crate) const LAUNCH_REPEATS: usize = 1;
 
 /// How many times more a second window opened in the running Windows
