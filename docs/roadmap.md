@@ -80,18 +80,26 @@ Notepad, speaks nothing, in 4 of 4 runs. The busy application's outpost
 drops its MSAA foreground fact because UIA owns the window and its UIA
 focus read never answers, so Core never learns the focus left Notepad
 and judges the return unchanged. The return must be spoken as the same
-switch is without a stall (Dickson, 2026-11-02); the second build
-designs it ([the remaining builds](design/focus-pipeline-rework-remaining.md),
-"A foreground change Core never learns of").
+switch is without a stall, and a held UIA window's title is said from
+Windows' own state after a second (Dickson, 2026-11-02); the second
+build designs both, with the listener's foreground change as the only
+source of the fact that a window came to the foreground
+([the remaining builds](design/focus-pipeline-rework-remaining.md),
+"One foreground change, from the listener" and "The held UIA
+application's title").
 
 Paused after those steps (Dickson, 2026-10-30): reviews kept finding races
 between processes' copies of one fact, so the ownership refactor below
 comes first. The keep-id review's fix and M4.5 are built; the rework
 resumes with the second of the remaining builds in
 [the remaining builds](design/focus-pipeline-rework-remaining.md), then
-M4.6, then the third (Dickson, 2026-10-31). The second build's design,
-written against today's `intake.rs` and `focus_read.rs`, is restated
-after M4.5, which moves and simplifies that code. The third build updates
+M4.6, then the third (Dickson, 2026-10-31). The second build's design
+was restated against the code after M4.5 on 2026-11-02 and revised the
+same day for Dickson's decisions on the foreground, the held
+application's window text, the return after any window that took the
+foreground and the moved-on rule; it also reads the keep-id evidence in
+NVDA's order, which fixes Windows Terminal's repeated launch
+announcement, and waits for its implementation. The third build updates
 M4.6's generators for the inputs it changes, adds invariants for its new
 mechanisms, and writes the listener's checks before reading as pure
 functions of what its calls return.
@@ -657,7 +665,8 @@ inside UIA (`docs/design/listener-without-connections.md`).
   Terminal's `UIAutomationCore.dll` that the clean shutdown was added for.
 - `SHUTDOWN_LIMIT` (21 seconds) rests on UIA's default transaction timeout
   of 20 seconds, which Verbatim lowered to 5 seconds on 2026-10-10, and a
-  timeout bounds each provider call, not an operation; its bound is
+  timeout bounds each request and window message, not an operation; its
+  bound is
   settled with the order above.
 - The supervisor's owner thread as a pure state machine, with the clock
   and I/O completions as inputs (Dickson, 2026-10-31, revisiting the
