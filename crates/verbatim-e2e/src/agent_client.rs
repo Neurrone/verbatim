@@ -209,8 +209,39 @@ impl AgentClient {
         })
     }
 
+    /// Launches `command` with `args`, as [`AgentClient::launch_minimized`]
+    /// does, its stdout and stderr captured into `output_to` and its
+    /// standard input a pipe the agent holds, for
+    /// [`AgentClient::write_stdin`]: a program the caller drives by its
+    /// standard input, such as `mockapp`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails or the agent could not spawn
+    /// the process.
+    pub fn launch_minimized_with_stdin(
+        &mut self,
+        command: &str,
+        args: &[String],
+        output_to: &str,
+    ) -> io::Result<Launched> {
+        self.launch(Request::LaunchProcess {
+            command: command.to_owned(),
+            args: args.to_vec(),
+            working_dir: None,
+            env: Vec::new(),
+            stderr_to: Some(output_to.to_owned()),
+            console_title: None,
+            minimized: true,
+            withhold_foreground: false,
+            ignore_foreign_terminals: false,
+            stdin_piped: true,
+        })
+    }
+
     /// Writes `text` to the standard input of `pid`, launched with
-    /// [`AgentClient::launch_with_stdin`].
+    /// [`AgentClient::launch_with_stdin`] or
+    /// [`AgentClient::launch_minimized_with_stdin`].
     ///
     /// # Errors
     ///

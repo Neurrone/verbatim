@@ -43,6 +43,7 @@ scenario_tests! {
     synth_host_crash_recovery
     outpost_crash_recovery
     return_after_retirement
+    return_from_a_held_application
     lock_key_announcements
     quick_link_menu
     explorer_folder_window

@@ -16,7 +16,8 @@ commands, are in [the mockapp tooling guide](../tooling/mockapp.md).
 ## The command line
 
 `mockapp --fixture <path.json> --backend <uia|msaa|win32> [--title <window
-title>] [--show] [--hide-window-handle] [--count-registrations]` (default
+title>] [--show] [--hide-window-handle] [--count-registrations]
+[--line-events <prefix>]` (default
 title `mockapp`). It creates one real top-level Win32 window titled per
 `--title`, hidden unless `--show` is given, prints `ready` (flushed) once
 the window exists and the provider is answering, then processes stdin
@@ -33,6 +34,12 @@ application opens with its focus on a control.
 - With `--hide-window-handle`, the UIA root reports a window handle of 0,
   so a client holds the window's own element, runtime id `[42, window]`,
   without its handle.
+- With `--line-events <prefix>`, as mockapp prints an acknowledgement or
+  `held <method>`, it also sets the named event that the prefix and the
+  line's first word name, such as `<prefix>applied` or `<prefix>held`,
+  when one exists, and nothing when none does: the end-to-end suite reads
+  no stdout, and waits on such an event it created instead
+  (`return_from_a_held_application`).
 - With `--count-registrations`, the UIA root answers through a provider
   that also implements `IRawElementProviderAdviseEvents` (see `hits`
   below). It is off otherwise, since implementing that interface changes

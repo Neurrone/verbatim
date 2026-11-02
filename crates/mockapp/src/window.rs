@@ -578,11 +578,9 @@ fn child_window(hwnd: HWND, context: &'static WindowContext) -> windows::core::R
 }
 
 /// Writes one acknowledgement line to stdout, where `ready` went, and
-/// flushes it at once.
+/// flushes it at once ([`hits::print_line`]).
 pub(crate) fn acknowledge(line: &str) {
-    let mut stdout = std::io::stdout().lock();
-    let _ = writeln!(stdout, "{line}");
-    let _ = stdout.flush();
+    hits::print_line(line);
 }
 
 /// Waits on the window thread until `until`, answering its messages

@@ -1147,6 +1147,72 @@ impl Scenario {
         self.bring_forward(launch, title, owner_exits, false, ready)
     }
 
+    /// [`Scenario::launch_titled`], the program's standard input a pipe
+    /// [`Scenario::write_stdin`] writes to and its stdout and stderr
+    /// captured into `output_to` on the agent's machine, for a program
+    /// driven by its standard input, such as `mockapp`. The process that
+    /// owned the window must exit at cleanup.
+    ///
+    /// # Errors
+    ///
+    /// As [`Scenario::launch_titled`].
+    pub fn launch_titled_with_stdin(
+        &mut self,
+        command: &str,
+        args: &[String],
+        title: &str,
+        output_to: &str,
+    ) -> io::Result<WindowInfo> {
+        self.begin_action(&launch_action(command, title));
+        let launch = self
+            .agent
+            .launch_minimized_with_stdin(command, args, output_to)?;
+        self.bring_forward(launch, title, true, false, None)
+    }
+
+    /// Writes `line` and a line feed to the standard input of `pid`,
+    /// launched with [`Scenario::launch_titled_with_stdin`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails, including when the process
+    /// has no stdin pipe or has exited.
+    pub fn write_stdin(&mut self, pid: u32, line: &str) -> io::Result<()> {
+        self.begin_action(&format!("write {line:?} to the standard input of {pid}"));
+        self.agent.write_stdin(pid, &format!("{line}\n"))
+    }
+
+    /// Creates the named event `name` on the agent's machine, not yet set,
+    /// for a process the scenario launched to set and
+    /// [`Scenario::wait_for_event`] to wait on.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails.
+    pub fn create_event(&mut self, name: &str) -> io::Result<()> {
+        self.agent.create_event(name)
+    }
+
+    /// Waits up to `timeout` for `pid` to set the event `name`
+    /// [`Scenario::create_event`] created: the evidence that the process
+    /// reached the point that sets it.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails, `pid` exits first, or the
+    /// event is not set within `timeout`.
+    pub fn wait_for_event(&mut self, name: &str, pid: u32, timeout: Duration) -> io::Result<()> {
+        match self.agent.wait_for_event(name, pid, timeout)? {
+            EventOutcome::Signalled => Ok(()),
+            EventOutcome::Exited { exit_code } => Err(io::Error::other(format!(
+                "process {pid} exited ({exit_code:?}) before it set {name:?}"
+            ))),
+            EventOutcome::TimedOut => Err(io::Error::other(format!(
+                "process {pid} did not set {name:?} within {timeout:?}"
+            ))),
+        }
+    }
+
     /// Records `launch` for cleanup, its window titled with `title` and its
     /// owner exiting at cleanup when `owner_exits`, waits for that window,
     /// opened minimized and inactive, to appear, restores it and sets it as

@@ -62,6 +62,12 @@ struct Cli {
     /// window's own element, runtime id `[42, window]`, without its handle.
     #[arg(long)]
     hide_window_handle: bool,
+    /// Sets the named event this prefix and a printed line's first word
+    /// name, such as `<prefix>applied` or `<prefix>held`, as mockapp prints
+    /// that line, when the event exists: for the end-to-end harness, which
+    /// waits on events rather than reading stdout.
+    #[arg(long)]
+    line_events: Option<String>,
 }
 
 /// The `--backend` values `mockapp` accepts, translated to
@@ -102,6 +108,9 @@ fn run(cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
     }
     if cli.hide_window_handle {
         uia::hide_window_handle();
+    }
+    if let Some(prefix) = &cli.line_events {
+        hits::set_line_events(prefix.clone());
     }
     let backend = match cli.backend {
         BackendArg::Uia => Some(Backend::Uia),

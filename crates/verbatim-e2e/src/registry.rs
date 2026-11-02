@@ -68,6 +68,8 @@
 //!   ([`outpost_crash_recovery`](crate::scenarios::outpost_crash_recovery)),
 //!   an application returned to after its outpost was retired
 //!   ([`return_after_retirement`](crate::scenarios::return_after_retirement)),
+//!   an application left while its reads are held and returned to
+//!   ([`return_from_a_held_application`](crate::scenarios::return_from_a_held_application)),
 //!   the Windows+X menu opened and closed
 //!   ([`quick_link_menu`](crate::scenarios::quick_link_menu)),
 //!   a File Explorer window
@@ -165,16 +167,17 @@ use crate::scenarios::{
     demo_terminal_session, document_keys, editing, explorer_folder_window, lock_key_announcements,
     measure, menu_and_settings_dialog, notepad_say_all, notepad_spelling_errors,
     object_navigation_in_settings, object_navigation_over_uia, outpost_crash_recovery, password,
-    quick_link_menu, rapid_tabbing_in_settings, return_after_retirement, review_cursor,
-    review_words, second_application_and_verbatim_menu, selection_keys,
-    settings_combo_box_expanded, settings_dialog_keys, settings_search_suggestions,
-    settings_search_suggestions_reentered, settings_system_page, spelling_errors,
-    switch_to_onecore, synth_host_crash_recovery, system_information_tree, terminal_command_marks,
-    terminal_commands, terminal_editing, terminal_flood, terminal_flood_kinds, terminal_footer,
-    terminal_fresh_flood, terminal_key_timing, terminal_lists, terminal_overflow, terminal_pager,
-    terminal_progress, terminal_review_grid, terminal_review_output, terminal_review_padding,
-    terminal_screens, terminal_settings_page, terminal_short_output, terminal_status_bar,
-    terminal_typing, terminal_windows, text_box_say_all, theme_panel, typed_words, word_selection,
+    quick_link_menu, rapid_tabbing_in_settings, return_after_retirement,
+    return_from_a_held_application, review_cursor, review_words,
+    second_application_and_verbatim_menu, selection_keys, settings_combo_box_expanded,
+    settings_dialog_keys, settings_search_suggestions, settings_search_suggestions_reentered,
+    settings_system_page, spelling_errors, switch_to_onecore, synth_host_crash_recovery,
+    system_information_tree, terminal_command_marks, terminal_commands, terminal_editing,
+    terminal_flood, terminal_flood_kinds, terminal_footer, terminal_fresh_flood,
+    terminal_key_timing, terminal_lists, terminal_overflow, terminal_pager, terminal_progress,
+    terminal_review_grid, terminal_review_output, terminal_review_padding, terminal_screens,
+    terminal_settings_page, terminal_short_output, terminal_status_bar, terminal_typing,
+    terminal_windows, text_box_say_all, theme_panel, typed_words, word_selection,
 };
 use crate::speech::SpeechFailure;
 
@@ -491,6 +494,19 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         setup: return_after_retirement::setup,
         body: return_after_retirement::body,
         teardown: return_after_retirement::teardown,
+    },
+    ScenarioDef {
+        name: "return_from_a_held_application",
+        group: Group::Shell,
+        settings: None,
+        local_only: false,
+        document: None,
+        comparable: Comparable::No(
+            "it says the held application's title and the return, where NVDA is silent: a deliberate difference",
+        ),
+        setup: return_from_a_held_application::setup,
+        body: return_from_a_held_application::body,
+        teardown: return_from_a_held_application::teardown,
     },
     ScenarioDef {
         name: "lock_key_announcements",

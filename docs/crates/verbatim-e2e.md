@@ -269,7 +269,8 @@ shorter (`compare::QuietPeriod`).
   so NVDA's announcement of the desktop is heard; it launches no Verbatim,
   records no video, and refuses a remote run. `is_comparing` says which
   mode a run is in. Each action that changes what is in front
-  (`launch_titled`, `launch_titled_once`, `launch_owning_window`,
+  (`launch_titled`, `launch_titled_once`, `launch_titled_with_stdin`,
+  `launch_owning_window`,
   `launch_console`, `bring_window_forward`, `bring_document_forward`,
   `open_folder`, `open_settings_page`, `run_handing_off`,
   `close_windows_titled`, `focus_by_automation_id`, and
@@ -368,6 +369,10 @@ input methods above:
   opened minimized and inactive, without the agent's foreground right, and
   brought forward as `launch_titled_once` does. `launch_owning_window`
   does the same for a program that must own the window it opens.
+  `launch_titled_with_stdin(command, args, title, output_to)` does the
+  same with the program's standard input a pipe `write_stdin(pid, line)`
+  writes to and its output captured into `output_to`, for a program driven
+  by its standard input, such as `mockapp`.
   `require_absent(title)` fails when a window so titled is already open,
   for a program whose title is not the run's own, such as msinfo32;
   `launched_children` lists what the last launched program started.
@@ -386,7 +391,10 @@ input methods above:
   events Core receives, for evidence no speech shows: a caret report, a
   focus, the end of an outpost (`Frame::OutpostEnded`).
 - `wait_for_agent_file` waits, on folder change notifications, for a file
-  a script writes; `wait_for_window_in_front` waits on window events.
+  a script writes; `wait_for_window_in_front` waits on window events;
+  `wait_for_event` waits for a launched process to set a named event
+  `create_event` made, such as the events `mockapp` sets as it prints a
+  line (`--line-events`).
 - State read independently of Verbatim, before the scenario fixes what it
   expects: `desktop_speech`, `key_toggled` (a lock key),
   `focus_by_automation_id` (focuses an element with UI Automation's
@@ -585,7 +593,11 @@ under `src/scenarios/` documents exactly what it asserts.
   new outpost), `return_after_retirement` (a text box brought forward
   again once Core reports its outpost retired after two minutes without
   attention, announced as before through a new outpost; about three
-  minutes), `quick_link_menu` (the Windows+X menu opened from the desktop
+  minutes), `return_from_a_held_application` (the text box left for a
+  mockapp UIA window, read once, entered again while mockapp holds the
+  first call into it: its title said about a second later, and the return
+  to the text box announced as without the stall, before mockapp's
+  `release`), `quick_link_menu` (the Windows+X menu opened from the desktop
   and closed with Escape), `explorer_folder_window` (a File Explorer
   window on a harness folder, with File Explorer's "Working on it..." an
   optional utterance on the window's opening and after Enter and
@@ -758,7 +770,8 @@ Each exists in both terminals unless named for one.
   `verbatim_agent::protocol` ([verbatim-agent](verbatim-agent.md)), past
   its `Hello` handshake (`connect`). Its methods map one to one onto the
   agent's requests:
-  - Processes: `launch_process`, `launch_with_stdin` and `write_stdin`,
+  - Processes: `launch_process`, `launch_with_stdin`,
+    `launch_minimized_with_stdin` and `write_stdin`,
     `launch_verbatim` (with the foreign terminals named for Verbatim to
     ignore), `launch_minimized`, `launch_without_foreground_right`,
     `launch_console`, each returning a `Launched` (the pid, and whether

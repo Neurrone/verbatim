@@ -551,10 +551,7 @@ pub(crate) fn hit(method: Method) {
     if HOLD.swap(false, Ordering::Relaxed) {
         // Printed as the window thread's acknowledgements are, where
         // `ready` went.
-        let mut stdout = std::io::stdout().lock();
-        let _ = writeln!(stdout, "held {method:?}");
-        let _ = stdout.flush();
-        drop(stdout);
+        print_line(&format!("held {method:?}"));
         let released = RELEASED
             .0
             .lock()
@@ -575,6 +572,49 @@ pub(crate) fn hit(method: Method) {
 
 /// Whether the next counted call is held ([`hold_next`]).
 static HOLD: AtomicBool = AtomicBool::new(false);
+
+/// The prefix of the named events mockapp sets as it prints its lines
+/// (`--line-events`), when it was given one.
+static LINE_EVENTS: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// Has every line [`print_line`] prints from now on set the named event
+/// `prefix` and the line's first word name, when one exists.
+pub(crate) fn set_line_events(prefix: String) {
+    let _ = LINE_EVENTS.set(prefix);
+}
+
+/// Writes `line` to stdout, where `ready` went, and flushes it at once:
+/// an acknowledgement, or `held <method>`. With `--line-events`, it then
+/// sets the named event the prefix and the line's first word name, such as
+/// `<prefix>applied` or `<prefix>held`, when the end-to-end harness, which
+/// reads no stdout, created one to wait on: the evidence that the line was
+/// printed. No such event, nothing is set.
+pub(crate) fn print_line(line: &str) {
+    let mut stdout = std::io::stdout().lock();
+    let _ = writeln!(stdout, "{line}");
+    let _ = stdout.flush();
+    drop(stdout);
+    let Some(prefix) = LINE_EVENTS.get() else {
+        return;
+    };
+    let word = line.split(' ').next().unwrap_or(line);
+    let name = windows::core::HSTRING::from(format!("{prefix}{word}"));
+    // SAFETY: opens a named event by a live, NUL-ended name; the handle
+    // is closed below.
+    let Ok(event) = (unsafe {
+        windows::Win32::System::Threading::OpenEventW(
+            windows::Win32::System::Threading::EVENT_MODIFY_STATE,
+            false,
+            &name,
+        )
+    }) else {
+        return;
+    };
+    // SAFETY: `event` was just opened with the right to set it.
+    let _ = unsafe { windows::Win32::System::Threading::SetEvent(event) };
+    // SAFETY: `event` is open, owned here alone.
+    let _ = unsafe { windows::Win32::Foundation::CloseHandle(event) };
+}
 
 /// Whether a held call may go on, and the condition it waits on.
 static RELEASED: (Mutex<bool>, Condvar) = (Mutex::new(false), Condvar::new());
