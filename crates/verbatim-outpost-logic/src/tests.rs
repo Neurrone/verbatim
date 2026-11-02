@@ -17,7 +17,9 @@ use verbatim_model::{
 
 use super::*;
 
+mod explore;
 mod generated;
+mod reducer;
 
 /// The answers the shell gives the reducer's asks, as a test records them:
 /// whether the user has moved on, and the publications the shell would make

@@ -444,6 +444,22 @@ Inside an outpost (`docs/design/communication.md`, section 6.4;
   costs one wake. Every lock its thread takes is a short hold with no
   call: the mailbox's, the backlog's with the store's inside it for a
   release, the store's for a commit's writes, and a worker's charge.
+- What the shell and the workers guarantee the reducer, which its
+  generated test's generator relies on and gives no more than
+  (`docs/design/logic-tests.md`, "The outpost's reducer"): the shell ticks
+  the reducer after every drain of the mailbox, not only when a timer is
+  due; each of the three clocks of `Now` never goes back; an abandoned
+  worker still posts its program's finish, arming and walk return; a
+  program's posts arrive in the order posted, and its finish exactly once;
+  Core's request ids are unique for the outpost's life; entries queued
+  behind the close still reach the reducer; the shell gives the reducer
+  only a commit it accepts; a program that answers a query commits that
+  query's reply as its one message; only an MSAA focus's report and the
+  gap's read arm a walk; only a caret key's program opens the watch, and
+  a program commits a check of it only while it holds it; only an
+  event's program commits a copy's drop for the gap record; only the owed
+  work commits it done; and only a caret read of an edit control's client
+  area is cut at its value change check.
 - Locks (`outpost::lock`): every lock the crate declares is a
   `Lock<T>`, a mutex whose `lock` is `#[track_caller]` and, in debug
   builds, records in the thread's slots where it was taken

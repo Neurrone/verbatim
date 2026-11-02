@@ -253,7 +253,7 @@ enum Category {
 
 /// An entry with what the limiter needs to know about it, computed when it
 /// is pushed.
-#[cfg_attr(test, derive(Clone))]
+#[cfg_attr(test, derive(Clone, Debug))]
 struct Waiting {
     key: Option<Key>,
     category: Category,
@@ -267,7 +267,7 @@ struct Waiting {
 }
 
 /// The order in which the worker handles a planned batch.
-#[cfg_attr(test, derive(Clone))]
+#[cfg_attr(test, derive(Clone, Debug))]
 pub enum Planned {
     /// Handle the entry.
     Run(Entry),
@@ -306,7 +306,7 @@ impl Planned {
 /// The intake: what waits to be planned, the batch being handed out, and
 /// what the planning reads of the focus. One owner, the reducer, so it
 /// takes no lock.
-#[cfg_attr(test, derive(Clone))]
+#[cfg_attr(test, derive(Clone, Debug))]
 #[derive(Default)]
 pub struct Intake {
     waiting: VecDeque<Waiting>,

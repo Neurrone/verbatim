@@ -137,3 +137,46 @@ time for the watch while a program or a release is in flight, the
 program's copy equal to the reducer's watch apart from times at each
 accepted commit, and no idle answer while the watch is open or the
 program in flight deferred.
+The reducer has a generated test against a reference model
+(`crates/verbatim-outpost-logic/src/tests/reducer.rs`,
+`docs/design/logic-tests.md`, "The outpost's reducer"): lists of actions
+weighted toward the lifecycle, run through proptest's `TestRunner::run`
+under a fixed seed and 1,500 cases (about 4.8 s in a debug build), each
+action made valid when applied by resolving its target against the model
+(the program in flight, the oldest open query, the newest request no
+longer live) and carrying the answers to the asks it may cause, which are
+answered in line in the shell's order. The actions are entries of every
+kind from the hook, the listener and the rest, several focuses pending at
+once among them; commits of every kind, and each program kind's own
+result; walks armed and returned; programs ended, cut and panicked;
+inputs of requests no longer live; verdicts of the generation in charge
+and of the one before; the hold; cancels; the close; and time on the
+three clocks, each advancing on its own, to the next timer or by chosen
+amounts. The model tracks the generation and the requests issued, the
+program in flight (its kind, its query, its walk, its deadline by its
+kind's budget, its window), the entries pending as a set rather than the
+intake's plan, the open queries, settles and rounds, the watch's query
+and whether a program holds it, the gap record, the hold, a release, the
+owed work and stopping. After every call it checks the design's sixteen
+invariants and its postconditions: each dispatch under the next request
+with its kind's deadline, a late shell query answered with nothing read,
+a cancel, a commit's message ahead of its other effects, a cut read's
+finish alone, a program's end answering its watch and its query before
+the next dispatch, a tick deciding the deadline, then the bound, then the
+moved-on rule, then the gap's bound, and an abandonment answering the
+watch and the query before the next dispatch. Each case ends by draining
+(every program finished, every timer reached, the close), and then every
+query has one reply or is left to the shell's token. Each case runs twice
+and the two runs' effects are compared, and the test fails if a listed
+lifecycle state is never reached. The cases the test and its exploration
+found are kept as fixed cases. The model leaves out the intake's plan,
+text facts, held reports, the subscription, the marks' contents, verdict
+contents beyond whether the record changed, and exact deadlines beyond
+each kind's budget; and its generator sends a foreground change from the
+listener, never as the hook's held copy.
+
+Beside it, an ignored exploration test (`explore_reducer`, in
+`src/tests/explore.rs`, the crate's one file that
+reads the environment) runs the same cases under the seed and case count
+in `VERBATIM_EXPLORE_SEED` and `VERBATIM_EXPLORE_CASES`; only the nightly
+workflow (`.github/workflows/explore.yml`) runs them.

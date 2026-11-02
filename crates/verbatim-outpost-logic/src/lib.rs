@@ -540,7 +540,7 @@ struct GroupTry {
 }
 
 /// The reducer.
-#[cfg_attr(test, derive(Clone))]
+#[cfg_attr(test, derive(Clone, Debug))]
 #[derive(Default)]
 #[expect(
     clippy::struct_excessive_bools,

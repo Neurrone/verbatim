@@ -2141,6 +2141,7 @@ dependencies = [
 name = "verbatim-outpost-logic"
 version = "0.1.0"
 dependencies = [
+ "proptest",
  "verbatim-core",
  "verbatim-model",
  "verbatim-reader-rules",

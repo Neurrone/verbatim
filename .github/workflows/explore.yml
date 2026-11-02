@@ -26,8 +26,16 @@ env:
   CARGO_TERM_COLOR: always
   OWNERS: >-
     verbatim-reader-rules
+    verbatim-outpost-logic
   COVERED: >-
     crates/verbatim-reader-rules/src/in_flight.rs
+    crates/verbatim-outpost-logic/src/lib.rs
+    crates/verbatim-outpost-logic/src/watch.rs
+    crates/verbatim-outpost-logic/src/gap_record.rs
+    crates/verbatim-outpost-logic/src/follow.rs
+    crates/verbatim-outpost-logic/src/verdicts.rs
+    crates/verbatim-outpost-logic/src/hold.rs
+    crates/verbatim-outpost-logic/src/intake.rs
 
 jobs:
   explore:
