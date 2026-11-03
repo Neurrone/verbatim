@@ -225,6 +225,15 @@ pub enum ScheduleEffect<J> {
     /// The thread whose abandoned read returned forgets its last read: Core
     /// never got that focus.
     ForgetLast,
+    /// `pid`'s application is let go: its outpost has ended, no thread is
+    /// in charge of its events or abandoned to a read of them, and none
+    /// waits ([`App::spent`]), so no thread waits on what the shell keeps
+    /// for it or returns to it, and the shell drops it. No later effect of
+    /// the step names `pid`; a later event of `pid`'s starts afresh.
+    Forget {
+        /// The application let go.
+        pid: Pid,
+    },
     /// The watchdog's alarm.
     Alarm(AlarmChange),
     /// Run the idle waiter.
@@ -451,6 +460,12 @@ impl<J> Schedule<J> {
             .collect();
         markers.sort_unstable();
         markers
+    }
+
+    /// The applications it holds, in order: one record each in the shell,
+    /// dropped at its [`ScheduleEffect::Forget`].
+    pub fn held(&self) -> impl Iterator<Item = Pid> + '_ {
+        self.apps.keys().copied()
     }
 
     /// Whether the thread `generation` is in charge of `pid`'s events: one
@@ -748,7 +763,7 @@ impl<J> Schedule<J> {
         if app.ending {
             app.threaded = false;
             if app.spent() {
-                self.apps.remove(&pid);
+                self.let_go(effects, pid);
             }
         }
     }
@@ -794,7 +809,7 @@ impl<J> Schedule<J> {
         tracing::info!(%pid, "an abandoned UIA focus read returned; its result is discarded");
         effects.push(ScheduleEffect::ForgetLast);
         if app.spent() {
-            self.apps.remove(&pid);
+            self.let_go(effects, pid);
             return;
         }
         if app.threaded || app.queue.is_empty() || stopping {
@@ -1039,13 +1054,21 @@ impl<J> Schedule<J> {
         }
     }
 
+    /// Lets `pid`'s spent application go ([`App::spent`]), and has the
+    /// shell forget what it keeps for it ([`ScheduleEffect::Forget`]):
+    /// the one place an application is removed.
+    fn let_go(&mut self, effects: &mut Vec<ScheduleEffect<J>>, pid: Pid) {
+        self.apps.remove(&pid);
+        effects.push(ScheduleEffect::Forget { pid });
+    }
+
     fn outpost_ended(&mut self, effects: &mut Vec<ScheduleEffect<J>>, pid: Pid) {
         let Some(app) = self.apps.get_mut(&pid) else {
             return;
         };
         app.ending = true;
         if app.spent() {
-            self.apps.remove(&pid);
+            self.let_go(effects, pid);
             return;
         }
         effects.push(ScheduleEffect::Wake(Waking::Thread(pid)));
@@ -1068,7 +1091,7 @@ impl<J> Schedule<J> {
             });
         }
         if app.spent() {
-            self.apps.remove(&pid);
+            self.let_go(effects, pid);
         }
         self.wake_idle_waiters(effects);
     }
@@ -1246,6 +1269,7 @@ mod tests {
         Wake(Waking),
         Unwatch(u32),
         ForgetLast,
+        Forget(u32),
         Alarm(AlarmChange),
         RunIdle(u64),
         Job(u32, u64, QueuePlace),
@@ -1276,6 +1300,7 @@ mod tests {
                 ScheduleEffect::Wake(waking) => Seen::Wake(waking),
                 ScheduleEffect::Unwatch { pid } => Seen::Unwatch(pid.0),
                 ScheduleEffect::ForgetLast => Seen::ForgetLast,
+                ScheduleEffect::Forget { pid } => Seen::Forget(pid.0),
                 ScheduleEffect::Alarm(change) => Seen::Alarm(change),
                 ScheduleEffect::RunIdle(waiter) => Seen::RunIdle(waiter),
                 ScheduleEffect::Job(job) => Seen::Job(job.pid.0, job.meta.marker, job.queue),
@@ -1932,7 +1957,7 @@ mod tests {
         );
         assert_eq!(
             step(&mut schedule, returned(1, request(1, 1), 1), DEADLINE + 1),
-            [Seen::ForgetLast]
+            [Seen::ForgetLast, Seen::Forget(1)]
         );
         assert!(schedule.apps.is_empty(), "let go");
     }
@@ -1957,7 +1982,7 @@ mod tests {
             ),
             [Seen::Wake(Waking::Thread(Pid(1)))]
         );
-        assert_eq!(step(&mut schedule, next(1, 1), 2), []);
+        assert_eq!(step(&mut schedule, next(1, 1), 2), [Seen::Forget(1)]);
         assert!(!schedule.in_charge(Pid(1), 1), "the thread ends");
         assert!(schedule.apps.is_empty(), "let go");
     }
@@ -1989,7 +2014,7 @@ mod tests {
                 },
                 0
             ),
-            [Seen::Outcome(1, 1, NO_THREAD)]
+            [Seen::Outcome(1, 1, NO_THREAD), Seen::Forget(1)]
         );
         assert!(schedule.apps.is_empty(), "let go");
     }

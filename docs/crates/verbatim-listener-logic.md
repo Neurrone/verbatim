@@ -50,7 +50,13 @@ Public API:
   (`InFlight::succeed`). An abandonment has the shell stop watching the
   read (`Unwatch`). An application whose outpost has ended (`OutpostEnded`)
   is let go once nothing of it is left, at whichever step leaves it so: no
-  thread in charge, none abandoned and no event waiting. The schedule owns the watchdog's alarm: after every
+  thread in charge, none abandoned and no event waiting; that step emits
+  `Forget(pid)`, after every other effect naming it, so the shell drops its
+  record of the application (`Schedule::let_go`, the one place an
+  application is removed; `Schedule::held` lists those kept). The
+  generated test checks that an action forgets exactly the applications
+  it let go, each once, and that no effect of the step names one after its
+  `Forget`. The schedule owns the watchdog's alarm: after every
   step it computes the soonest of each read's next wake and each
   application's end of its wait at the abandoned limit, and emits
   `Alarm(Set(due))` only when that changed, or after a `Tick`, which

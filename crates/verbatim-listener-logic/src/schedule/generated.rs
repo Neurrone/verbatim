@@ -333,7 +333,7 @@ struct Seen {
 }
 
 /// The listed states a gate's cases must reach.
-const LISTED: [&str; 26] = [
+const LISTED: [&str; 27] = [
     "a job given",
     "a job after another application's focus",
     "an event replaced",
@@ -353,6 +353,7 @@ const LISTED: [&str; 26] = [
     "an idle waiter run",
     "an idle waiter run at a later step",
     "an application removed at its outpost's end",
+    "an application forgotten",
     "an ended application read on",
     "a stale input",
     "a moved-on ask",
@@ -373,6 +374,11 @@ struct Run {
     /// The read a thread in charge returns, for its step: its marker and
     /// whether it was published.
     returning: Option<(u64, bool)>,
+    /// The applications the model held as the action began.
+    held_before: Vec<u32>,
+    /// The applications the action's steps let go
+    /// ([`ScheduleEffect::Forget`]), in order.
+    forgotten: Vec<u32>,
 }
 
 /// The meta of event `marker` of `kind`.
@@ -425,6 +431,8 @@ impl Run {
             log: Vec::new(),
             reached: BTreeMap::new(),
             returning: None,
+            held_before: Vec::new(),
+            forgotten: Vec::new(),
         }
     }
 
@@ -446,6 +454,8 @@ impl Run {
     #[expect(clippy::too_many_lines, reason = "one arm for each action")]
     fn act(&mut self, action: Action, asks: Asks) {
         self.trail.push(format!("{action:?} {asks:?}"));
+        self.held_before = self.model.apps.keys().copied().collect();
+        self.forgotten.clear();
         let pid_of = |app: u8| PIDS[usize::from(app)];
         match action {
             Action::Push {
@@ -709,6 +719,24 @@ impl Run {
             }
         }
         self.settle();
+        // The shell forgets exactly the applications the action let go,
+        // each once.
+        let mut forgotten = self.forgotten.clone();
+        forgotten.sort_unstable();
+        let gone: Vec<u32> = self
+            .held_before
+            .iter()
+            .copied()
+            .filter(|pid| !self.model.apps.contains_key(pid))
+            .collect();
+        assert_eq!(
+            forgotten, gone,
+            "the applications forgotten: {:?}",
+            self.trail
+        );
+        if !gone.is_empty() {
+            self.reach("an application forgotten");
+        }
         self.compare();
     }
 
@@ -903,6 +931,7 @@ impl Run {
                         ScheduleEffect::Outcome { .. }
                             | ScheduleEffect::Wake(_)
                             | ScheduleEffect::ForgetLast
+                            | ScheduleEffect::Forget { .. }
                             | ScheduleEffect::RunIdle(_)
                     ),
                     "after the stop: {effect:?}, {:?}",
@@ -1062,6 +1091,8 @@ impl Run {
             Given::OutpostEnded(pid) => {
                 let expected: Vec<String> = if self.model.apps.contains_key(&pid) {
                     vec![format!("wake {pid}")]
+                } else if self.held_before.contains(&pid) {
+                    vec![format!("forget {pid}")]
                 } else {
                     Vec::new()
                 };
@@ -1082,6 +1113,17 @@ impl Run {
                 );
             }
             _ => {}
+        }
+        // Nothing of an application follows its forgetting in the step.
+        for (at, effect) in effects.iter().enumerate() {
+            if let ScheduleEffect::Forget { pid } = effect {
+                assert!(
+                    effects[at + 1..]
+                        .iter()
+                        .all(|later| effect_pid(later) != Some(*pid)),
+                    "an effect of {pid} after its forgetting: {kinds:?} {trail:?}"
+                );
+            }
         }
     }
 
@@ -1324,6 +1366,13 @@ impl Run {
             ScheduleEffect::ForgetLast => {
                 seen.forgets += 1;
                 self.reach("an abandoned read returned");
+            }
+            ScheduleEffect::Forget { pid } => {
+                assert!(
+                    self.held_before.contains(&pid.0) && !self.forgotten.contains(&pid.0),
+                    "{pid} forgotten, not held or forgotten twice: {trail}"
+                );
+                self.forgotten.push(pid.0);
             }
             ScheduleEffect::RunIdle(waiter) => {
                 let at = self
@@ -1624,12 +1673,31 @@ fn effect_name(effect: &ScheduleEffect<u64>) -> String {
         ScheduleEffect::Wake(Waking::All) => "wake all".to_owned(),
         ScheduleEffect::Unwatch { pid } => format!("unwatch {}", pid.0),
         ScheduleEffect::ForgetLast => "forget last".to_owned(),
+        ScheduleEffect::Forget { pid } => format!("forget {}", pid.0),
         ScheduleEffect::Alarm(AlarmChange::Now) => "alarm now".to_owned(),
         ScheduleEffect::Alarm(AlarmChange::Set(due)) => format!("alarm {due:?}"),
         ScheduleEffect::RunIdle(waiter) => format!("run {waiter}"),
         ScheduleEffect::Job(job) => format!("job {}", job.meta.marker),
         ScheduleEffect::AskMovedOn { pid, .. } => format!("ask moved on {}", pid.0),
         ScheduleEffect::Publish { pid, .. } => format!("publish {}", pid.0),
+    }
+}
+
+/// The application an effect names, if any.
+fn effect_pid(effect: &ScheduleEffect<u64>) -> Option<Pid> {
+    match effect {
+        ScheduleEffect::Outcome { pid, .. }
+        | ScheduleEffect::Spawn { pid, .. }
+        | ScheduleEffect::Wake(Waking::Thread(pid))
+        | ScheduleEffect::Unwatch { pid }
+        | ScheduleEffect::Forget { pid }
+        | ScheduleEffect::AskMovedOn { pid, .. }
+        | ScheduleEffect::Publish { pid, .. } => Some(*pid),
+        ScheduleEffect::Job(job) => Some(job.pid),
+        ScheduleEffect::Wake(Waking::All)
+        | ScheduleEffect::ForgetLast
+        | ScheduleEffect::Alarm(_)
+        | ScheduleEffect::RunIdle(_) => None,
     }
 }
 

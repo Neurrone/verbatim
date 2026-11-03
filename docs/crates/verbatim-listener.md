@@ -206,14 +206,20 @@ receives the event's own element, judges and reads a UIA focus
   having failed, which a unit test causes through the `ThreadStart` fault
   point ([verbatim-faults](verbatim-faults.md)), `Stop`) and its effects out,
   in order (`ScheduleEffect`: `Outcome`, `Spawn`, `Wake`, `Unwatch`,
-  `ForgetLast`, `Alarm`, `RunIdle`, `Job`, and the asks `AskMovedOn` and
-  `Publish`), with time as microseconds from the shell's start and no
-  clock, lock or call of its own; each application's read under way is
-  its work in flight (`verbatim_reader_rules::in_flight`).
+  `ForgetLast`, `Forget`, `Alarm`, `RunIdle`, `Job`, and the asks
+  `AskMovedOn` and `Publish`), with time as microseconds from the shell's
+  start and no clock, lock or call of its own; each application's read
+  under way is its work in flight (`verbatim_reader_rules::in_flight`).
   `focus_read::Readers` is its shell: it keeps the readers' lock, the
-  threads and the condition variable each waits on, the alarm's timer,
-  the idle waiters' closures and the reads under way (`WatchedRead`, each
-  with its `Request`), and applies each step's effects under the lock.
+  threads, the alarm's timer, the idle waiters' closures, and one record
+  per application the schedule holds (`AppShell`: the condition variable
+  its thread in charge waits on and its read under way, a `WatchedRead`
+  with its `Request`), and applies each step's effects under the lock. A
+  record is made when a thread is put in charge and dropped whole at the
+  schedule's `Forget`, which comes only once no thread is in charge of the
+  application or abandoned to its read, so no thread waits on it or
+  returns to it; in debug builds each step asserts that the records' keys
+  are the schedule's applications (`Schedule::held`).
   A thread that cannot be started (`SpawnFailed`) and the asks are set
   aside: once the step's other effects are applied, each failed start is
   stepped, then each ask is answered, each as a step of its own, before

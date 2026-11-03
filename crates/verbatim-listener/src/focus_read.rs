@@ -1613,17 +1613,31 @@ pub(crate) trait Reading: Send + Sync + 'static {
 }
 
 /// What the readers' shell keeps under its lock beside the schedule: the
-/// threads, the condition variable each application's thread waits on,
-/// the reads under way, the idle waiters' closures, and the answer owed
-/// for each event the schedule holds, by marker.
+/// threads, one record for each application the schedule holds, the idle
+/// waiters' closures, and the answer owed for each event the schedule
+/// holds, by marker.
 struct ReadersState<J, O> {
     schedule: Schedule<J>,
     owed: HashMap<u64, O>,
     threads: Vec<JoinHandle<()>>,
-    wakes: HashMap<Pid, Arc<Condvar>>,
-    watched: HashMap<Pid, WatchedRead>,
+    apps: HashMap<Pid, AppShell>,
     idle_waiters: HashMap<u64, IdleWaiter>,
     next_waiter: u64,
+}
+
+/// What the shell keeps for one application the schedule holds: made when
+/// a thread is put in charge of its events, and dropped whole when the
+/// schedule lets the application go ([`ScheduleEffect::Forget`]), which it
+/// does only once no thread is in charge of its events or abandoned to a
+/// read of them, so no thread waits on its condition variable or returns
+/// to its read; in debug builds every step checks that its keys are the
+/// schedule's applications.
+#[derive(Default)]
+struct AppShell {
+    /// What the application's thread in charge waits on for its next event.
+    wake: Arc<Condvar>,
+    /// Its read under way, until the read returns or is abandoned.
+    watched: Option<WatchedRead>,
 }
 
 /// What [`Readers::when_idle`] runs.
@@ -1713,7 +1727,7 @@ fn step<R: Reading>(
                 if let Some(thread) = thread.as_mut() {
                     *thread.generation = generation;
                 }
-                state.wakes.entry(pid).or_default();
+                state.apps.entry(pid).or_default();
             }
             ScheduleEffect::Spawn {
                 pid,
@@ -1721,18 +1735,19 @@ fn step<R: Reading>(
                 reuse: false,
             } => failed.extend(spawn(shared, state, pid, generation)),
             ScheduleEffect::Wake(Waking::Thread(pid)) => {
-                if let Some(wake) = state.wakes.get(&pid) {
-                    wake.notify_one();
+                if let Some(app) = state.apps.get(&pid) {
+                    app.wake.notify_one();
                 }
             }
             ScheduleEffect::Wake(Waking::All) => {
-                for wake in state.wakes.values() {
-                    wake.notify_all();
+                for app in state.apps.values() {
+                    app.wake.notify_all();
                 }
             }
             ScheduleEffect::Unwatch { pid } => {
-                state.watched.remove(&pid);
+                let _ = state.apps.get_mut(&pid).and_then(|app| app.watched.take());
             }
+            ScheduleEffect::Forget { pid } => drop(state.apps.remove(&pid)),
             ScheduleEffect::ForgetLast => {
                 if let Some(ThreadSide {
                     reader: Some(reader),
@@ -1769,7 +1784,7 @@ fn step<R: Reading>(
                     },
                     job.after_elsewhere,
                 );
-                state.watched.insert(pid, watched.clone());
+                state.apps.entry(pid).or_default().watched = Some(watched.clone());
                 next = Some((job.meta, job.work, watched, job.queue));
             }
             ask @ (ScheduleEffect::AskMovedOn { .. } | ScheduleEffect::Publish { .. }) => {
@@ -1777,12 +1792,8 @@ fn step<R: Reading>(
             }
         }
     }
-    // Every transition that ends an event answered its marker: what is
-    // owed is exactly what the schedule still holds.
     if cfg!(debug_assertions) {
-        let mut owed: Vec<u64> = state.owed.keys().copied().collect();
-        owed.sort_unstable();
-        debug_assert_eq!(owed, state.schedule.markers(), "the owed markers");
+        check_tables(state);
     }
     for failure in failed {
         let more = step(shared, state, failure, None);
@@ -1794,6 +1805,23 @@ fn step<R: Reading>(
         debug_assert!(more.is_none(), "an answer's step gives no job");
     }
     next
+}
+
+/// The shell's tables match the schedule once a step's effects are
+/// applied, checked in debug builds: every transition that ends an event
+/// answered its marker, so what is owed is exactly what the schedule still
+/// holds, and there is one record for each application the schedule holds.
+fn check_tables<J, O>(state: &ReadersState<J, O>) {
+    let mut owed: Vec<u64> = state.owed.keys().copied().collect();
+    owed.sort_unstable();
+    debug_assert_eq!(owed, state.schedule.markers(), "the owed markers");
+    let mut apps: Vec<Pid> = state.apps.keys().copied().collect();
+    apps.sort_unstable();
+    debug_assert_eq!(
+        apps,
+        state.schedule.held().collect::<Vec<_>>(),
+        "the applications' records"
+    );
 }
 
 /// The answer to the schedule's ask `ask`, made under the readers' lock
@@ -1821,8 +1849,9 @@ fn answer<R: Reading>(
             then_abandon,
         } => {
             let watched = state
-                .watched
+                .apps
                 .get(&pid)
+                .and_then(|app| app.watched.as_ref())
                 .filter(|watched| watched.request() == Some(request));
             ScheduleInput::Published {
                 pid,
@@ -1867,8 +1896,7 @@ impl<R: Reading> Readers<R> {
                 schedule: Schedule::new(deadline),
                 owed: HashMap::new(),
                 threads: Vec::new(),
-                wakes: HashMap::new(),
-                watched: HashMap::new(),
+                apps: HashMap::new(),
                 idle_waiters: HashMap::new(),
                 next_waiter: 0,
             }),
@@ -1975,9 +2003,12 @@ impl<R: Reading> Readers<R> {
         let top_level = self.shared.reading.top_level(window);
         let mut state = self.shared.lock();
         let running_tops = state
-            .watched
+            .apps
             .iter()
-            .map(|(pid, watched)| (*pid, Window::new(watched.top_level())))
+            .filter_map(|(pid, app)| {
+                let watched = app.watched.as_ref()?;
+                Some((*pid, Window::new(watched.top_level())))
+            })
             .collect();
         step(
             &self.shared,
@@ -2055,7 +2086,7 @@ fn spawn<R: Reading>(
     pid: Pid,
     generation: u64,
 ) -> Option<ScheduleInput<R::Job>> {
-    state.wakes.entry(pid).or_default();
+    state.apps.entry(pid).or_default();
     let reading = Arc::clone(shared);
     // A thread the system cannot start, as one out of memory refuses it.
     #[cfg(test)]
@@ -2107,12 +2138,13 @@ fn run<R: Reading>(shared: &Arc<Shared<R>>, pid: Pid, generation: u64) {
             .request()
             .expect("a job's read is made with its request");
         let mut state = shared.lock();
-        if state
-            .watched
-            .get(&pid)
-            .is_some_and(|watched| watched.same(&window))
+        if let Some(app) = state.apps.get_mut(&pid)
+            && app
+                .watched
+                .as_ref()
+                .is_some_and(|watched| watched.same(&window))
         {
-            state.watched.remove(&pid);
+            app.watched = None;
         }
         step(
             shared,
@@ -2162,7 +2194,7 @@ fn next_job<R: Reading>(
         if !state.schedule.in_charge(pid, *generation) {
             return None;
         }
-        let wake = Arc::clone(state.wakes.entry(pid).or_default());
+        let wake = Arc::clone(&state.apps.entry(pid).or_default().wake);
         state = wake.wait(state).unwrap_or_else(PoisonError::into_inner);
     }
 }
@@ -3540,6 +3572,17 @@ mod tests {
         assert_eq!(
             fixture.finished.recv_timeout(WAIT).expect("a thread ended"),
             first
+        );
+        // Let go, nothing of it is kept.
+        assert_eq!(
+            fixture
+                .readers
+                .shared
+                .lock()
+                .apps
+                .keys()
+                .collect::<Vec<_>>(),
+            Vec::<&Pid>::new()
         );
         // The application runs on: its next event starts a new thread.
         fixture.push(Pid(5), meta(2), (2, None, Vec::new()));
