@@ -177,7 +177,15 @@ finds nothing, while the list's current selection is the new first
 item, which Verbatim says as it says it without replacement
 (`target/e2e-evidence/fixes-round-eight-2026-10-21/route-logs`). A
 mockapp test pins the replacing state through a real outpost
-(`crates/mockapp/tests/controller_for.rs`, mockapp's `replace-items`).
+(`crates/mockapp/tests/controller_for.rs`, mockapp's `replace-items`). A
+capture of 30 searches for "sound" (2026-11-03) also found, in 5 of
+them, a moment of about 90 ms after the first selection when the list
+had no children and its current selection had no name and no position,
+before all 22 items appeared together with a `ChildrenBulkAdded`
+structure change; read then, the item would be said as "list item".
+No such reading was seen with Verbatim running: 20 runs of
+`settings_search_suggestions` each said "Sound settings 1 of 22", so
+nothing waits for the list to fill (Dickson, 2026-11-03).
 The first suggestion comes before the suggestions-opened sound because
 its selection reaches the outpost's queue about 50 ms before Settings'
 second change of the search box's relation; a delay of that much in the
