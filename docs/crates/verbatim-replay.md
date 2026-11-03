@@ -21,7 +21,19 @@ nothing in it is Windows-specific.
   its sound files in `sounds`, the repository's `sounds` folder. `line(replayed)`
   is one input's line; `effect(effect)` one effect.
 - `describe_input(input)` is an input's part of the line, and
-  `input_time_us(input)` the time it carries, in microseconds.
+  `input_time_us(input)` the time it carries, in microseconds; an input
+  with none, or with a time of 0, is untimed. `carries_trace(input,
+  trace)` says whether a `trace_id` or `trace` field at any depth holds
+  `trace`.
+- `failure_inputs(replayed, renderer, trace, from_us, to_us)` is what the
+  end-to-end suite's failure report shows of a dump: each input carrying
+  `trace`, and each received from `from_us` to `to_us`, as a `Shown` with
+  its line, the time it is ordered by and its rendered line after its
+  marks, `(failing trace)`, `(untimed)` or both. An untimed input is
+  judged and ordered by the time of the nearest timed input before it, or
+  else after it, and is shown when no input of the dump is timed.
+- The binary prints a malformed dump's error, which names the line, and
+  for a dump cut off mid-line ends with the last line it read.
 
 ## The line
 

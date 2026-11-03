@@ -51,7 +51,7 @@ fn explored() -> (Config, String) {
     let seed = read("VERBATIM_EXPLORE_SEED");
     let cases = u32::try_from(read("VERBATIM_EXPLORE_CASES")).expect("a case count that fits");
     let again = format!(
-        "VERBATIM_EXPLORE_SEED={seed} VERBATIM_EXPLORE_CASES={cases} cargo test -p verbatim-core --lib -- --ignored --exact queries::explore::explore_reducer"
+        "$env:VERBATIM_EXPLORE_SEED='{seed}'; $env:VERBATIM_EXPLORE_CASES='{cases}'; cargo test -p verbatim-core --lib -- --ignored --exact queries::explore::explore_reducer"
     );
     (config(seed, cases), again)
 }

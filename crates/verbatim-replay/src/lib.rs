@@ -11,7 +11,7 @@ use std::path::Path;
 
 use serde_json::{Map, Value};
 use verbatim_core::{DumpContents, replay};
-use verbatim_model::{Effect, Input, SpeechPriority, Theme, ThemeOptions, UtteranceId};
+use verbatim_model::{Effect, Input, SpeechPriority, Theme, ThemeOptions, TraceId, UtteranceId};
 use verbatim_speech::{ActiveTheme, Presenter, ThemeHandle, ThemePresenter};
 
 /// The file line a dump's first input is on: the header is line 1 and the
@@ -70,7 +70,8 @@ pub fn replay_dump(contents: &DumpContents) -> Vec<Replayed> {
 /// When `input` happened, in microseconds on the run's clock, from the
 /// time it carries (`observed_at_us`, `ended_at_us`, `pressed_at_ms` or
 /// `at_ms`); `None` for an input that carries none, such as an outpost's
-/// answer.
+/// answer, or whose time is 0, which no stamp taken on the run's clock
+/// reads.
 #[must_use]
 pub fn input_time_us(input: &Input) -> Option<u64> {
     let value = serde_json::to_value(input).ok()?;
@@ -80,16 +81,110 @@ pub fn input_time_us(input: &Input) -> Option<u64> {
     let (_, Value::Object(fields)) = variant.into_iter().next()? else {
         return None;
     };
-    fields.iter().find_map(|(key, value)| {
-        let number = value.as_u64()?;
-        if key.ends_with("_us") {
-            Some(number)
-        } else if key.ends_with("_ms") {
-            number.checked_mul(1_000)
-        } else {
-            None
+    fields
+        .iter()
+        .find_map(|(key, value)| {
+            let number = value.as_u64()?;
+            if key.ends_with("_us") {
+                Some(number)
+            } else if key.ends_with("_ms") {
+                number.checked_mul(1_000)
+            } else {
+                None
+            }
+        })
+        .filter(|&time| time != 0)
+}
+
+/// Whether `input` carries `trace` in a `trace_id` or `trace` field,
+/// at any depth.
+#[must_use]
+pub fn carries_trace(input: &Input, trace: TraceId) -> bool {
+    fn holds(value: &Value, trace: &Value) -> bool {
+        match value {
+            Value::Object(fields) => fields.iter().any(|(key, value)| {
+                (matches!(key.as_str(), "trace_id" | "trace") && value == trace)
+                    || holds(value, trace)
+            }),
+            Value::Array(items) => items.iter().any(|item| holds(item, trace)),
+            _ => false,
         }
-    })
+    }
+    match (serde_json::to_value(input), serde_json::to_value(trace)) {
+        (Ok(value), Ok(trace)) => holds(&value, &trace),
+        _ => false,
+    }
+}
+
+/// One input a failure's report shows ([`failure_inputs`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Shown {
+    /// The time it is ordered by, in microseconds on the run's clock: its
+    /// own, or for an untimed input the time of the nearest timed input
+    /// before it, or else after it; `None` when no input in the dump is
+    /// timed.
+    pub time_us: Option<u64>,
+    /// Its line in the dump file.
+    pub line: usize,
+    /// Its rendered line ([`Renderer::line`]), after its marks in
+    /// parentheses: `failing trace` for one carrying the failing step's
+    /// trace, `untimed` for one with no time of its own.
+    pub text: String,
+}
+
+/// The inputs of `replayed`, a whole dump's replay in order, that a
+/// failure's report shows: each carrying `trace`, and each received from
+/// `from_us` to `to_us` on the run's shared clock. An untimed input
+/// ([`input_time_us`]) is judged by the time [`Shown::time_us`] gives it,
+/// and is shown when no input of the dump is timed, since then nothing
+/// places it outside the window.
+#[must_use]
+pub fn failure_inputs(
+    replayed: &[Replayed],
+    renderer: &Renderer,
+    trace: Option<TraceId>,
+    from_us: u64,
+    to_us: u64,
+) -> Vec<Shown> {
+    let own: Vec<Option<u64>> = replayed
+        .iter()
+        .map(|replayed| input_time_us(&replayed.input))
+        .collect();
+    let mut placed = own.clone();
+    let mut before = None;
+    for time in &mut placed {
+        *time = time.or(before);
+        before = *time;
+    }
+    let mut after = None;
+    for (time, own) in placed.iter_mut().zip(&own).rev() {
+        after = own.or(after);
+        *time = time.or(after);
+    }
+    replayed
+        .iter()
+        .zip(own.iter().zip(placed))
+        .filter_map(|(replayed, (own, time))| {
+            let carries = trace.is_some_and(|trace| carries_trace(&replayed.input, trace));
+            let within = time.is_none_or(|time| (from_us..=to_us).contains(&time));
+            let marks: Vec<&str> = [
+                carries.then_some("failing trace"),
+                own.is_none().then_some("untimed"),
+            ]
+            .into_iter()
+            .flatten()
+            .collect();
+            (carries || within).then(|| Shown {
+                time_us: time,
+                line: replayed.line,
+                text: if marks.is_empty() {
+                    renderer.line(replayed)
+                } else {
+                    format!("({}) {}", marks.join(", "), renderer.line(replayed))
+                },
+            })
+        })
+        .collect()
 }
 
 /// Renders inputs and effects as text, an utterance as the text Verbatim
@@ -381,5 +476,115 @@ mod tests {
             )
         );
         assert_eq!(input_time_us(&input), Some(5_000));
+    }
+
+    fn typed(trace: TraceId, text: &str, at_ms: u64) -> Input {
+        Input::CharacterTyped {
+            trace_id: trace,
+            key_seq: verbatim_model::KeySeq::none_yet(),
+            text: text.to_owned(),
+            at_ms,
+        }
+    }
+
+    /// `inputs` replayed as a dump of them read back, each recorded with
+    /// the effect count reducing it gives, from a new state.
+    fn replayed(inputs: Vec<Input>) -> Vec<Replayed> {
+        let mut state = verbatim_core::SrState::new();
+        let recorded: Vec<verbatim_core::RecordedInput> = inputs
+            .into_iter()
+            .map(|input| verbatim_core::RecordedInput {
+                effect_count: verbatim_core::reduce(&mut state, &input).len(),
+                input,
+            })
+            .collect();
+        let mut out = Vec::new();
+        verbatim_core::dump::write_dump(
+            &mut out,
+            "0.1.0",
+            "2026-10-09T10:00:05Z",
+            &verbatim_core::SrState::new(),
+            &recorded,
+        )
+        .expect("writes the dump");
+        let contents = verbatim_core::dump::read_dump(&mut out.as_slice()).expect("reads it back");
+        replay_dump(&contents)
+    }
+
+    #[test]
+    fn a_failure_shows_the_inputs_in_its_window_and_its_trace_s_with_the_untimed_placed_by_their_neighbours()
+     {
+        let trace = TraceId::from_raw(7);
+        let other = TraceId::from_raw(8);
+        let replayed = replayed(vec![
+            typed(other, "a", 5_000),
+            typed(trace, "b", 9_000),
+            typed(other, "c", 11_000),
+            Input::Tick,
+            // A zero stamp is no time: placed, like the tick, after "c".
+            typed(other, "d", 0),
+            typed(other, "e", 14_000),
+        ]);
+        let renderer = Renderer::new(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../sounds")
+                .as_path(),
+        );
+        let shown = failure_inputs(&replayed, &renderer, Some(trace), 10_000_000, 13_000_000);
+        assert_eq!(
+            shown,
+            [
+                Shown {
+                    time_us: Some(9_000_000),
+                    line: 4,
+                    text: "(failing trace) 4: CharacterTyped trace 7, at_ms 9000, key_seq 0, text \"b\". 0 effects".to_owned(),
+                },
+                Shown {
+                    time_us: Some(11_000_000),
+                    line: 5,
+                    text: "5: CharacterTyped trace 8, at_ms 11000, key_seq 0, text \"c\". 0 effects".to_owned(),
+                },
+                Shown {
+                    time_us: Some(11_000_000),
+                    line: 6,
+                    text: "(untimed) 6: Tick. 0 effects".to_owned(),
+                },
+                Shown {
+                    time_us: Some(11_000_000),
+                    line: 7,
+                    text: "(untimed) 7: CharacterTyped trace 8, at_ms 0, key_seq 0, text \"d\". 0 effects".to_owned(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn untimed_inputs_before_any_timed_one_take_the_next_one_s_time_and_with_none_timed_are_shown()
+    {
+        let other = TraceId::from_raw(8);
+        let renderer = Renderer::new(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../sounds")
+                .as_path(),
+        );
+        let replayed_inputs = replayed(vec![Input::Tick, typed(other, "a", 20_000)]);
+        let shown = failure_inputs(&replayed_inputs, &renderer, None, 10_000_000, 13_000_000);
+        assert_eq!(shown, []);
+
+        let shown = failure_inputs(
+            &replayed(vec![Input::Tick]),
+            &renderer,
+            None,
+            10_000_000,
+            13_000_000,
+        );
+        assert_eq!(
+            shown,
+            [Shown {
+                time_us: None,
+                line: 3,
+                text: "(untimed) 3: Tick. 0 effects".to_owned(),
+            }]
+        );
     }
 }

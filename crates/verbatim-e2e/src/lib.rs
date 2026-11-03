@@ -46,6 +46,7 @@
 
 pub mod agent_client;
 pub mod artifacts;
+pub mod command_line;
 pub mod compare;
 pub mod nvda;
 pub mod recording;

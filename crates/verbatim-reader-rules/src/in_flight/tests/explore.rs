@@ -33,7 +33,7 @@ fn explored() -> (u64, u32) {
 fn explore_in_flight() {
     let (seed, cases) = explored();
     let again = format!(
-        "VERBATIM_EXPLORE_SEED={seed} VERBATIM_EXPLORE_CASES={cases} cargo test -p verbatim-reader-rules --lib -- --ignored --exact in_flight::tests::explore::explore_in_flight"
+        "$env:VERBATIM_EXPLORE_SEED='{seed}'; $env:VERBATIM_EXPLORE_CASES='{cases}'; cargo test -p verbatim-reader-rules --lib -- --ignored --exact in_flight::tests::explore::explore_in_flight"
     );
     let _ = run_generated(config(seed, cases), &again);
 }

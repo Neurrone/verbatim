@@ -342,9 +342,10 @@ fn civil_from_days(days: i64) -> (i64, u32, u32) {
     (year, month, day)
 }
 
-/// How long before a failure the flight recorder's inputs are shown in
-/// its report whatever their trace, in microseconds: an application's
-/// answer under another trace is often what decided the failing step.
+/// How long before the failing step began the flight recorder's inputs
+/// are shown in a failure's report whatever their trace, in microseconds:
+/// an application's answer under another trace is often what decided the
+/// failing step.
 pub const RECORDER_WINDOW_US: u64 = 3_000_000;
 
 /// The lines a failure's report shows from the run's logs collected into
@@ -352,9 +353,10 @@ pub const RECORDER_WINDOW_US: u64 = 3_000_000;
 /// captured log and the outposts', listener's and synthesizer host's logs
 /// (every `.log` file, [`lines_carrying`]), each prefixed with its file's
 /// name; and from Core's flight recorder (`flight-recorder.jsonl`), each
-/// input carrying `trace` and every input Core received in the
-/// [`RECORDER_WINDOW_US`] before `failed_at_ms`, replayed and rendered on
-/// one line ([`recorder_lines`]).
+/// input carrying `trace` and every input Core received in `window_us`
+/// (from and to, in microseconds on Verbatim's clock), replayed and
+/// rendered on one line ([`recorder_lines`]). With no window, as when
+/// Verbatim's clock is unknown, only the inputs carrying `trace` are.
 ///
 /// # Errors
 ///
@@ -362,7 +364,7 @@ pub const RECORDER_WINDOW_US: u64 = 3_000_000;
 pub fn failure_lines(
     dir: &Path,
     trace: Option<TraceId>,
-    failed_at_ms: u64,
+    window_us: Option<(u64, u64)>,
 ) -> io::Result<Vec<String>> {
     let mut sources = Vec::new();
     let mut found = Vec::new();
@@ -373,7 +375,7 @@ pub fn failure_lines(
         };
         if name == FLIGHT_RECORDER_FILE {
             let text = String::from_utf8_lossy(&fs::read(&path)?).into_owned();
-            found.extend(recorder_lines(&text, trace, failed_at_ms * 1_000));
+            found.extend(recorder_lines(&text, trace, window_us));
         } else if path.extension().and_then(|extension| extension.to_str()) == Some("log") {
             let text = String::from_utf8_lossy(&fs::read(&path)?).into_owned();
             sources.push((name.to_owned(), text));
@@ -395,13 +397,12 @@ pub const FLIGHT_RECORDER_FILE: &str = "flight-recorder.jsonl";
 type Found = (Option<u64>, usize, usize, String);
 
 /// The inputs of the flight-recorder dump `text` that carry `trace` or
-/// that Core received in the [`RECORDER_WINDOW_US`] up to `failed_at_us`,
-/// each replayed and rendered on one line as `cargo xtask replay` prints
-/// it (`docs/crates/verbatim-replay.md`), prefixed with the file's name,
-/// and with `(failing trace)` after it for an input carrying `trace`. An
-/// input with no time of its own takes the time of the input before it.
-/// A dump that cannot be read is one line saying why.
-fn recorder_lines(text: &str, trace: Option<TraceId>, failed_at_us: u64) -> Vec<Found> {
+/// that Core received in `window_us`, each replayed and rendered on one
+/// line with its marks, `failing trace` and `untimed`, as
+/// `verbatim_replay::failure_inputs` gives them
+/// (`docs/crates/verbatim-replay.md`), prefixed with the file's name. A
+/// dump that cannot be read is one line saying why.
+fn recorder_lines(text: &str, trace: Option<TraceId>, window_us: Option<(u64, u64)>) -> Vec<Found> {
     let contents = match verbatim_core::dump::read_dump(&mut text.as_bytes()) {
         Ok(contents) => contents,
         Err(error) => {
@@ -414,30 +415,20 @@ fn recorder_lines(text: &str, trace: Option<TraceId>, failed_at_us: u64) -> Vec<
         }
     };
     let renderer = verbatim_replay::Renderer::new(&sounds_dir());
-    let trace = trace.map(|trace| trace.to_string());
-    let mut time = None;
-    let mut found = Vec::new();
-    for replayed in verbatim_replay::replay_dump(&contents) {
-        time = verbatim_replay::input_time_us(&replayed.input).or(time);
-        let carries = trace.as_ref().is_some_and(|trace| {
-            serde_json::to_string(&replayed.input).is_ok_and(|json| carries_trace(&json, trace))
-        });
-        let recent = time
-            .is_some_and(|time| time <= failed_at_us && time + RECORDER_WINDOW_US >= failed_at_us);
-        if carries || recent {
-            found.push((
-                time,
+    let replayed = verbatim_replay::replay_dump(&contents);
+    // With no window, one no time falls in: an empty range.
+    let (from_us, to_us) = window_us.unwrap_or((u64::MAX, 0));
+    verbatim_replay::failure_inputs(&replayed, &renderer, trace, from_us, to_us)
+        .into_iter()
+        .map(|shown| {
+            (
+                shown.time_us,
                 0,
-                replayed.line,
-                format!(
-                    "{FLIGHT_RECORDER_FILE}{}: {}",
-                    if carries { " (failing trace)" } else { "" },
-                    renderer.line(&replayed)
-                ),
-            ));
-        }
-    }
-    found
+                shown.line,
+                format!("{FLIGHT_RECORDER_FILE}: {}", shown.text),
+            )
+        })
+        .collect()
 }
 
 /// The repository's sound files, which the built-in default theme plays,
@@ -690,13 +681,14 @@ mod tests {
     }
 
     #[test]
-    fn a_failure_shows_its_trace_s_lines_and_the_recorder_s_last_three_seconds_in_time_order() {
+    fn a_failure_shows_its_trace_s_lines_and_the_recorder_s_window_in_time_order() {
         let trace = TraceId::mint();
         let other = TraceId::mint();
         let dir = temp_dir("failure-lines");
         fs::create_dir_all(&dir).expect("creates the directory");
-        // The failure is at 10:00:00. Each line carrying the trace, and
-        // each input received from 09:59:57, is shown; the other trace's
+        // The window is 09:59:57 to the failure at 10:00:00. Each line
+        // carrying the trace, and each input received in the window, is
+        // shown; the other trace's
         // lines and its inputs before then, or after the failure, are not.
         fs::write(
             dir.join("stderr.log"),
@@ -728,7 +720,11 @@ mod tests {
         .expect("writes");
         fs::write(dir.join("timeline.txt"), format!("trace_id={trace}\n")).expect("writes");
 
-        let lines = failure_lines(&dir, Some(trace), TEN_O_CLOCK_MS).expect("reads the logs");
+        let window = Some((
+            TEN_O_CLOCK_MS * 1_000 - RECORDER_WINDOW_US,
+            TEN_O_CLOCK_MS * 1_000,
+        ));
+        let lines = failure_lines(&dir, Some(trace), window).expect("reads the logs");
         let typed_at = |line: usize, trace: TraceId, text: &str, at_ms: u64| {
             format!(
                 "{line}: CharacterTyped trace {trace}, at_ms {at_ms}, key_seq 0, text \"{text}\". 0 effects"
@@ -741,14 +737,14 @@ mod tests {
                     "stderr.log: 2026-10-09T09:59:55.500000Z  INFO verbatim: gesture trace_id={trace}"
                 ),
                 format!(
-                    "flight-recorder.jsonl (failing trace): {}",
+                    "flight-recorder.jsonl: (failing trace) {}",
                     typed_at(4, trace, "b", TEN_O_CLOCK_MS - 4_000)
                 ),
                 format!(
                     "flight-recorder.jsonl: {}",
                     typed_at(5, other, "c", TEN_O_CLOCK_MS - 2_000)
                 ),
-                "flight-recorder.jsonl: 6: Tick. 0 effects".to_owned(),
+                "flight-recorder.jsonl: (untimed) 6: Tick. 0 effects".to_owned(),
                 format!(
                     "outpost-conhost-7.log: 2026-10-09T09:59:58.200000Z DEBUG verbatim_outpost: a watch is open trace={trace}"
                 ),

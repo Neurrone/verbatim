@@ -490,19 +490,25 @@ no line.
 
 Match a failure to [the known failures](../flaky-tests.md) before rerunning it or debugging it.
 
-Once the run's logs are collected, a speech-assertion failure prints
-three things. First, the expected and actual sequences, escaped (`{:?}`),
-with the index of the first utterance that differs and the first
-character in it that differs. Second, the failing step's trace: every
-line carrying its trace ID in Verbatim's log and the outposts',
-listener's and synthesizer host's logs, and every input in Core's flight
-recorder that carries it or that Core received in the 3 seconds before
-the failure, whatever its trace, merged in time order, each prefixed with
-its file's name. The flight recorder's inputs are replayed and rendered
-on one line each, as `cargo xtask replay` prints them ("Replaying a
-run"), and one of the failing step's trace is marked `(failing trace)`
-after the file's name; an input with no time of its own, such as an
-outpost's answer, takes the time of the input before it. Third, the run's timeline up to
+Once the run's logs are collected, every failure prints three things,
+and the `failures:` section at the end of the run prints each again in
+full. First, what failed: for a speech assertion, the expected and actual
+sequences, escaped (`{:?}`), with the index of the first utterance that
+differs and the first character in it that differs; for any other
+failure, its panic's message; and any problem found after the body.
+Second, the failing step's trace: every line carrying its trace ID in
+Verbatim's log and the outposts', listener's and synthesizer host's logs,
+and every input in Core's flight recorder that carries it or that Core
+received from 3 seconds before the failing step began to the failure,
+whatever its trace, merged in time order, each prefixed with its file's
+name. The failure's time is read on Verbatim's clock, from the newest
+speech frame's stamp, so a guest whose clock differs from the host's
+still shows the right inputs. The flight recorder's inputs are replayed
+and rendered on one line each, as `cargo xtask replay` prints them
+("Replaying a run"); one of the failing step's trace is marked
+`(failing trace)` after the file's name, and one with no time of its own,
+such as an outpost's answer, is marked `(untimed)` and takes the time of
+the input before it. Third, the run's timeline up to
 the failure: each earlier step on one line (when it started, the input,
 and what was said), then the failing step in full, one entry per line,
 each prefixed with the milliseconds since the first entry.

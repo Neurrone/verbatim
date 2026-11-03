@@ -18,7 +18,13 @@ this guide describes the code.
   (`harness = false`), with `libtest-mimic` taking libtest's command line,
   so that after every test it prints the end-of-run summary
   (`run_summary::RunSummary`), one line per scenario that ran with its
-  result and seconds, for which libtest's own harness has no place. One binary rather than one per
+  result and seconds, for which libtest's own harness has no place. It
+  keeps libtest's behaviour where `libtest-mimic` differs: it takes any
+  number of filters (`command_line::split_filters` and `selected`, since
+  `libtest-mimic` takes one), runs the tests in the order of their names,
+  so the session check comes first, runs each on a thread of its own
+  named after it, with a spawned thread's default 2 MiB stack, and ends
+  each failure with its panic's message, a scenario's whole report. One binary rather than one per
   scenario keeps the build small, since each test binary links the whole
   harness. A unit test in `registry.rs`, which `cargo xtask ci` runs,
   reads `tests/e2e.rs` as text and fails, naming each, when a registered
@@ -210,11 +216,19 @@ played at once for an event, which reads as `sound:` and its indication
   only what collect-only mode has already collected, waiting for nothing.
 
 A failed assertion unwinds with a `SpeechFailure`, without the panic
-hook, and the run reports it once the logs are collected
-(`SpeechFailure::report`): the expected and actual sequences, the failing
-step's trace with the flight recorder's last three seconds before the
-failure (`artifacts::failure_lines`, from the `failed_at_ms` the failure
-records), and the timeline. The failing
+hook, carrying its message and its `FailurePoint`: the failing step's
+trace, its entries on the timeline, and the instant it failed. Any other
+failure's point is the step under way when the body ended
+(`FailurePoint::now`), or at the end of the run for a problem found after
+the body. Once the logs are collected the run panics with the whole
+report (`FailurePoint::report`): the message, the failing step's trace
+with the flight recorder's inputs from 3 seconds before the step began to
+the failure (`artifacts::failure_lines`, over `FailurePoint::window_us`),
+and the timeline. The window is on Verbatim's clock: the timeline keeps
+the newest speech frame's stamp with the instant it arrived
+(`Timeline::on_verbatim_clock`), and a moment of the harness's is that
+stamp moved by the time since, so the harness's own wall clock never
+enters it. The failing
 step's trace ID is the one the speech frame of the utterance the
 assertion failed on carries; when it failed on none, an utterance never
 queued, it is the newest heard in the step. `latency_rows` gives one row
@@ -574,10 +588,11 @@ together with the body's own panic.
 `history/<scenario>/<UTC time>-<pass or fail>`, keeping the newest 100,
 without the video, and `failure_lines`, every line carrying a trace ID in a
 run's collected logs, with the flight recorder's inputs that carry it or
-that Core received in the `RECORDER_WINDOW_US` (3 seconds) before the
-failure, replayed and rendered with `verbatim-replay` as `cargo xtask
-replay` prints them, those of the trace marked `(failing trace)`, all in
-time order. `xtask vm test`
+that Core received in a window, from the `RECORDER_WINDOW_US` (3
+seconds) before the failing step began to the failure, replayed and
+rendered with `verbatim-replay` (`failure_inputs`) as `cargo xtask
+replay` prints them, those of the trace marked `(failing trace)` and
+those with no time of their own `(untimed)`, all in time order. `xtask vm test`
 calls the same functions to find and read what a scenario subprocess
 left, rather than parsing its output. The files a run keeps are listed in
 the tooling guide's "What a run leaves behind"; losing any of them fails

@@ -186,7 +186,7 @@ use crate::scenarios::{
     terminal_windows, text_box_say_all, theme_panel, typed_words, verbatim_lifecycle,
     word_selection,
 };
-use crate::speech::SpeechFailure;
+use crate::speech::{FailurePoint, SpeechFailure};
 
 /// Environment variable that, set to `1`, says the run is not on a Windows
 /// 11 desktop, so the local-only scenarios ([`ScenarioDef::local_only`])
@@ -2443,6 +2443,20 @@ fn run(def: &ScenarioDef) {
     // first frame with, so the recording's check can tell that the video
     // reaches it.
     let body_end_ms = crate::timeline::unix_ms();
+    // Where the body failed, with what it failed with: a failed speech
+    // assertion records its own point, and any other failure's is the
+    // step under way now, before the teardown adds to the timeline.
+    let body_failure = body_outcome.as_ref().err().map(|payload| {
+        payload.downcast_ref::<SpeechFailure>().map_or_else(
+            || {
+                (
+                    panic_message(payload.as_ref()),
+                    FailurePoint::now(scenario.timeline()),
+                )
+            },
+            |failure| (failure.message.clone(), failure.point.clone()),
+        )
+    });
     // A key the body held, as Control through a tab switcher, is released
     // first, whether the body passed or failed, so nothing after it runs
     // with a modifier down.
@@ -2514,20 +2528,6 @@ fn run(def: &ScenarioDef) {
             None
         }
     };
-    // A failed speech assertion is reported once the logs holding its
-    // step's trace, and the flight recorder, are collected.
-    let speech_report = body_outcome
-        .as_ref()
-        .err()
-        .and_then(|payload| payload.downcast_ref::<SpeechFailure>())
-        .map(|failure| {
-            let lines = artifacts::failure_lines(&dir, failure.trace, failure.failed_at_ms)
-                .map_err(|error| error.to_string());
-            failure.report(
-                scenario.timeline(),
-                lines.as_deref().map_err(String::as_str),
-            )
-        });
     if let Err(error) =
         scenario.finish_recording(&dir.join(format!("{}.mp4", def.name)), body_end_ms)
     {
@@ -2554,6 +2554,10 @@ fn run(def: &ScenarioDef) {
     // Every utterance of the run with its event's time, the rows
     // `latency.csv` holds.
     let latency = scenario.speech().latency_rows();
+    // The failure's report, made once the logs holding its step's trace
+    // and the flight recorder are collected, reads the timeline after the
+    // scenario is gone.
+    let timeline = scenario.timeline().clone();
     drop(scenario);
     if let Err(error) = write_foreground(&dir, &foreground) {
         problems.push(format!("could not write the foreground record: {error}"));
@@ -2582,23 +2586,36 @@ fn run(def: &ScenarioDef) {
         }
     );
     let problems = problems.join("\n");
-    if let Err(payload) = body_outcome {
-        if !problems.is_empty() {
-            eprintln!(
-                "scenario {:?}: also failed after its body:\n{problems}",
+    let failure = match body_failure {
+        Some((message, point)) if problems.is_empty() => Some((message, point)),
+        Some((message, point)) => Some((
+            format!(
+                "{message}\n\nscenario {:?} also failed after its body:\n{problems}",
                 def.name
-            );
-        }
-        if let Some(report) = speech_report {
-            panic!("{report}");
-        }
-        panic::resume_unwind(payload);
+            ),
+            point,
+        )),
+        None if problems.is_empty() => None,
+        None => Some((
+            format!("scenario {:?} failed after its body:\n{problems}", def.name),
+            FailurePoint::now(&timeline),
+        )),
+    };
+    // Every failure is reported in full, with the inputs around it: the
+    // panic carries the whole report, which the suite's runner prints
+    // again in its `failures:` section.
+    if let Some((message, point)) = failure {
+        let lines = artifacts::failure_lines(&dir, point.trace, point.window_us(&timeline))
+            .map_err(|error| error.to_string());
+        panic!(
+            "{}",
+            point.report(
+                &message,
+                &timeline,
+                lines.as_deref().map_err(String::as_str)
+            )
+        );
     }
-    assert!(
-        problems.is_empty(),
-        "scenario {:?} failed after its body:\n{problems}",
-        def.name
-    );
 }
 
 /// The scenarios this test process has run, and the outpost crashes they
@@ -2651,8 +2668,10 @@ fn report_optional_utterances(name: &str, outcomes: &[String]) {
     let _ = io::stderr().write_all(lines.as_bytes());
 }
 
-/// The message a panic carried, for reporting it beside other problems.
-fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
+/// The message a panic carried, for reporting it beside other problems:
+/// its text, or a failed speech assertion's message.
+#[must_use]
+pub fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
     payload
         .downcast_ref::<String>()
         .cloned()

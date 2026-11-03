@@ -5,12 +5,12 @@
 //! from the one the dump recorded (`docs/tooling/e2e.md`, "Replaying a run").
 
 use std::fs::File;
-use std::io::BufReader;
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use verbatim_core::{DumpContents, dump};
-use verbatim_replay::{Renderer, replay_dump};
+use verbatim_replay::{FIRST_INPUT_LINE, Renderer, replay_dump};
 
 /// The command's arguments.
 #[derive(Debug, PartialEq, Eq)]
@@ -36,9 +36,8 @@ fn main() -> ExitCode {
     };
     let contents = match File::open(&arguments.dump)
         .map_err(|error| error.to_string())
-        .and_then(|file| {
-            dump::read_dump(&mut BufReader::new(file)).map_err(|error| error.to_string())
-        }) {
+        .and_then(|file| read(&mut BufReader::new(file)))
+    {
         Ok(contents) => contents,
         Err(error) => {
             eprintln!(
@@ -67,6 +66,13 @@ fn main() -> ExitCode {
 /// The repository's sound files, which the built-in default theme plays.
 fn sounds() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../sounds")
+}
+
+/// The dump `reader` holds, or why it cannot be read: which line is
+/// malformed, or that the file ends before the state its inputs start
+/// from.
+fn read(reader: &mut impl BufRead) -> Result<DumpContents, String> {
+    dump::read_dump(reader).map_err(|error| error.to_string())
 }
 
 fn parse(args: &[String]) -> Result<Arguments, String> {
@@ -146,7 +152,10 @@ fn report(
         _ => "no input is on the lines asked for".to_owned(),
     });
     if contents.truncated {
-        lines.push("the dump ends mid-line: its last input was cut off".to_owned());
+        lines.push(format!(
+            "the dump ends mid-line: nothing after line {} was read",
+            FIRST_INPUT_LINE + contents.inputs.len() - 1
+        ));
     }
     Report { lines, differing }
 }
@@ -164,7 +173,7 @@ mod tests {
     }
 
     fn report_of(text: &str, from: Option<usize>, to: Option<usize>) -> Report {
-        let contents = dump::read_dump(&mut text.as_bytes()).expect("the dump parses");
+        let contents = read(&mut text.as_bytes()).expect("the dump parses");
         report(&contents, &Renderer::new(&sounds()), from, to)
     }
 
@@ -202,6 +211,80 @@ mod tests {
             ]
         );
         assert_eq!(report.differing, 1);
+    }
+
+    /// Only the lines from `--from` to `--to` are printed, and an input
+    /// outside them whose count differs is not counted.
+    #[test]
+    fn a_line_range_prints_and_counts_only_its_own_inputs() {
+        let text = fixture();
+        // The first input's recorded count, 2, becomes 5: it differs.
+        let edited = text.replacen("\"effect_count\":2}", "\"effect_count\":5}", 1);
+        assert_ne!(edited, text, "the edit applies");
+        let report = report_of(&edited, Some(4), Some(4));
+        assert_eq!(
+            report.lines,
+            [
+                VALUE,
+                "replayed 1 inputs, lines 4 to 4: none differs from the dump's effect counts",
+            ]
+        );
+        assert_eq!(report.differing, 0);
+
+        let report = report_of(&edited, Some(3), Some(4));
+        assert_eq!(
+            report.lines,
+            [
+                "3: Event FocusChanged, node Slider \"Rate\", whole_window false, trace 1, source 700, observed_at_us 0, backend \"Uia\". 2 effects (differs: the dump recorded 5): DropExpiredSpeech; Speak \"Rate slider 50\"",
+                VALUE,
+                "replayed 2 inputs, lines 3 to 4: 1 differs from the dump's effect count",
+            ]
+        );
+        assert_eq!(report.differing, 1);
+    }
+
+    /// A complete line that is not an input is an error naming its line.
+    #[test]
+    fn a_malformed_line_is_an_error_naming_it() {
+        let text = fixture();
+        let mut lines: Vec<&str> = text.lines().collect();
+        lines[3] = "{\"input\":";
+        let malformed = lines.join("\n") + "\n";
+        assert_eq!(
+            read(&mut malformed.as_bytes()).map(|_| ()),
+            Err(
+                "flight-recorder dump line 4 is malformed: EOF while parsing a value at line 1 column 9"
+                    .to_owned()
+            )
+        );
+    }
+
+    /// A dump cut off in its base state cannot be replayed; one cut off in
+    /// an input is replayed up to the line before it, and says so.
+    #[test]
+    fn a_truncated_dump_is_an_error_or_replayed_up_to_the_cut() {
+        let text = fixture();
+        let base_ends = text
+            .match_indices('\n')
+            .nth(1)
+            .expect("a base state line")
+            .0;
+        assert_eq!(
+            read(&mut &text.as_bytes()[..base_ends - 10]).map(|_| ()),
+            Err("flight-recorder dump ends before its base state line is complete".to_owned())
+        );
+
+        let last_starts = text.trim_end().rfind('\n').expect("an earlier line") + 1;
+        let report = report_of(&text[..last_starts + 20], None, None);
+        assert_eq!(
+            report.lines,
+            [
+                FOCUS,
+                VALUE,
+                "replayed 2 inputs, lines 3 to 4: none differs from the dump's effect counts",
+                "the dump ends mid-line: nothing after line 4 was read",
+            ]
+        );
     }
 
     #[test]

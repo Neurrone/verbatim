@@ -278,36 +278,81 @@ pub struct LatencyRow {
 
 /// A failed speech assertion: the payload a [`SpeechCollector`]
 /// assertion unwinds with, which [`crate::registry`] reports with
-/// [`SpeechFailure::report`] once the run's logs are collected.
+/// [`FailurePoint::report`] once the run's logs are collected.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SpeechFailure {
     /// What failed: the expected and heard sequences, and where they first
     /// differ, for a mismatch.
     pub message: String,
-    /// The failing step's trace ID: the trace of the utterance the
+    /// Where it failed. Its trace is the trace of the utterance the
     /// assertion failed on, or, when it failed on none (an utterance never
-    /// queued), of the newest utterance heard in the step; `None` when the
-    /// step heard nothing with one.
+    /// queued), of the newest utterance heard in the step.
+    pub point: FailurePoint,
+}
+
+/// Where a scenario failed, for its report: a failed speech assertion's
+/// ([`SpeechFailure`]), or, for any other failure, the step under way
+/// when it was found ([`FailurePoint::now`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FailurePoint {
+    /// The failing step's trace ID; `None` when the step heard nothing
+    /// with one.
     pub trace: Option<TraceId>,
     /// The failing step's entries on the timeline
     /// ([`Timeline::current_step`]).
     pub step: Range<usize>,
-    /// When the assertion failed, in milliseconds since the Unix epoch:
-    /// the end of the window of the flight recorder's inputs the report
-    /// shows ([`crate::artifacts::failure_lines`]).
-    pub failed_at_ms: u64,
+    /// When it failed.
+    pub failed_at: Instant,
 }
 
-impl SpeechFailure {
-    /// The failure as printed: the message; `trace_lines`, every log line
+impl FailurePoint {
+    /// The step under way on `timeline` now, traced by its newest
+    /// utterance that has a trace.
+    #[must_use]
+    pub fn now(timeline: &Timeline) -> Self {
+        let step = timeline.current_step();
+        Self {
+            trace: timeline.last_trace_in(step.clone()),
+            step,
+            failed_at: Instant::now(),
+        }
+    }
+
+    /// The flight recorder's inputs the report shows whatever their trace,
+    /// in microseconds on Verbatim's clock: from
+    /// [`crate::artifacts::RECORDER_WINDOW_US`] before the failing step
+    /// began to the failure, so a step that timed out shows its own
+    /// inputs. `None` before any frame stamped on Verbatim's clock has
+    /// arrived ([`Timeline::on_verbatim_clock`]).
+    #[must_use]
+    pub fn window_us(&self, timeline: &Timeline) -> Option<(u64, u64)> {
+        let failed = timeline.on_verbatim_clock(self.failed_at)?;
+        let began = timeline
+            .step_began(&self.step)
+            .and_then(|began| timeline.on_verbatim_clock(began))
+            .map_or(failed, |began| began.min(failed));
+        Some((
+            began
+                .saturating_mul(1_000)
+                .saturating_sub(crate::artifacts::RECORDER_WINDOW_US),
+            failed.saturating_mul(1_000),
+        ))
+    }
+
+    /// The failure as printed: `message`; `trace_lines`, every log line
     /// carrying the failing step's trace and the flight recorder's inputs
     /// around the failure, in time order
-    /// ([`crate::artifacts::failure_lines`]), or why they could not be
-    /// read; and `timeline` with each earlier step on one line and the
-    /// failing step in full.
+    /// ([`crate::artifacts::failure_lines`], over [`Self::window_us`]), or
+    /// why they could not be read; and `timeline` with each earlier step on
+    /// one line and the failing step in full.
     #[must_use]
-    pub fn report(&self, timeline: &Timeline, trace_lines: Result<&[String], &str>) -> String {
-        let mut out = format!("{}\n\n", self.message);
+    pub fn report(
+        &self,
+        message: &str,
+        timeline: &Timeline,
+        trace_lines: Result<&[String], &str>,
+    ) -> String {
+        let mut out = format!("{message}\n\n");
         let trace = self.trace.map_or_else(
             || {
                 "the failing step's trace: none, since the step heard nothing that carries a trace ID"
@@ -315,6 +360,11 @@ impl SpeechFailure {
             },
             |trace| format!("the failing step's trace, {trace}"),
         );
+        let received = if self.window_us(timeline).is_some() {
+            RECEIVED
+        } else {
+            "received by Verbatim's clock, which is unknown since no speech frame arrived"
+        };
         match trace_lines {
             Err(error) => {
                 let _ = writeln!(out, "{trace}; the logs could not be read: {error}");
@@ -322,13 +372,13 @@ impl SpeechFailure {
             Ok([]) if self.trace.is_some() => {
                 let _ = writeln!(
                     out,
-                    "{trace}; no log line carries it, and Core received no input in the 3 seconds before the failure"
+                    "{trace}; no log line carries it, and no input in Core's flight recorder carries it or was {received}"
                 );
             }
             Ok([]) => {
                 let _ = writeln!(
                     out,
-                    "{trace}; Core received no input in the 3 seconds before the failure"
+                    "{trace}; no input in Core's flight recorder was {received}"
                 );
             }
             Ok(lines) => {
@@ -336,9 +386,11 @@ impl SpeechFailure {
                     out,
                     "{trace}; {}, replayed, in time order:",
                     if self.trace.is_some() {
-                        "the lines carrying it in Verbatim's log and the outposts' logs, and the inputs in Core's flight recorder carrying it or received in the 3 seconds before the failure"
+                        format!(
+                            "the lines carrying it in Verbatim's log and the outposts' logs, and the inputs in Core's flight recorder carrying it or {received}"
+                        )
                     } else {
-                        "the inputs in Core's flight recorder received in the 3 seconds before the failure"
+                        format!("the inputs in Core's flight recorder {received}")
                     }
                 );
                 for line in lines {
@@ -354,6 +406,9 @@ impl SpeechFailure {
         out
     }
 }
+
+/// Which of the flight recorder's inputs a report shows by their time.
+const RECEIVED: &str = "received from 3 seconds before the failing step began to the failure";
 
 /// One frame, as the collector reads it.
 enum Absorbed {
@@ -676,13 +731,11 @@ impl SpeechCollector {
     /// and reports it in full once the run's logs are collected, which
     /// only then hold the step's trace.
     fn fail_traced(&self, message: &str, trace: Option<TraceId>) -> ! {
-        let step = self.timeline.current_step();
-        let trace = trace.or_else(|| self.timeline.last_trace_in(step.clone()));
+        let mut point = FailurePoint::now(&self.timeline);
+        point.trace = trace.or(point.trace);
         std::panic::resume_unwind(Box::new(SpeechFailure {
             message: message.to_owned(),
-            trace,
-            step,
-            failed_at_ms: crate::timeline::unix_ms(),
+            point,
         }))
     }
 
@@ -1854,12 +1907,15 @@ fn record(timeline: &Timeline, texts: &mut HashMap<UtteranceId, String>, frame: 
             utterance,
             trace_id,
             text,
+            queued_at_ms,
             ..
         } => {
+            timeline.mark_verbatim_clock(*queued_at_ms, Instant::now());
             timeline.push_utterance(text, Some(*trace_id));
             texts.insert(*utterance, text.clone());
         }
-        Frame::SpeechStarted { utterance, .. } => {
+        Frame::SpeechStarted { utterance, at_ms } => {
+            timeline.mark_verbatim_clock(*at_ms, Instant::now());
             timeline.push_audio_started(&text_of(texts, utterance));
         }
         Frame::SpeechEnded { utterance, ending } => {
@@ -2746,20 +2802,20 @@ mod tests {
         timeline.push_keys(&["downarrow"]);
         script.feed(vec![traced(2, "stray", stray)]);
         let failed = failure(move || speech.expect(&["second"]));
-        assert_eq!(failed.trace, Some(stray));
+        assert_eq!(failed.point.trace, Some(stray));
 
         let lines = [format!(
             "stderr.log: 2026-10-09T10:00:00.300000Z  INFO verbatim: gesture trace_id={stray}"
         )];
         assert_eq!(
-            without_times(&failed.report(&timeline, Ok(&lines))),
+            without_times(&failed.point.report(&failed.message, &timeline, Ok(&lines))),
             format!(
                 "speech did not match\n\
                  expected: [\"second\"]\n\
                  actual:   [\"stray\"]\n\
                  first difference: utterance 0, character 1: expected \"second\", got \"stray\"\n\
                  \n\
-                 the failing step's trace, {stray}; the lines carrying it in Verbatim's log and the outposts' logs, and the inputs in Core's flight recorder carrying it or received in the 3 seconds before the failure, replayed, in time order:\n\
+                 the failing step's trace, {stray}; the lines carrying it in Verbatim's log and the outposts' logs, and the inputs in Core's flight recorder carrying it or received from 3 seconds before the failing step began to the failure, replayed, in time order:\n\
                  stderr.log: 2026-10-09T10:00:00.300000Z  INFO verbatim: gesture trace_id={stray}\n\
                  \n\
                  timeline, each earlier step on one line and the failing step in full:\n\
@@ -2781,11 +2837,11 @@ mod tests {
             ended(1, UtteranceEnding::Completed),
         ]);
         let failed = failure(move || speech.expect(&["first", "second"]));
-        assert_eq!(failed.trace, Some(heard_first));
+        assert_eq!(failed.point.trace, Some(heard_first));
         assert_eq!(
-            trace_lines_in(&failed.report(&timeline, Ok(&[]))),
+            trace_lines_in(&failed.point.report(&failed.message, &timeline, Ok(&[]))),
             [format!(
-                "the failing step's trace, {heard_first}; no log line carries it, and Core received no input in the 3 seconds before the failure"
+                "the failing step's trace, {heard_first}; no log line carries it, and no input in Core's flight recorder carries it or was received from 3 seconds before the failing step began to the failure"
             )]
         );
 
@@ -2797,11 +2853,11 @@ mod tests {
         speech.expect(&["before"]);
         timeline.push_keys(&["downarrow"]);
         let failed = failure(move || speech.expect(&["after"]));
-        assert_eq!(failed.trace, None);
+        assert_eq!(failed.point.trace, None);
         assert_eq!(
-            trace_lines_in(&failed.report(&timeline, Ok(&[]))),
+            trace_lines_in(&failed.point.report(&failed.message, &timeline, Ok(&[]))),
             [
-                "the failing step's trace: none, since the step heard nothing that carries a trace ID; Core received no input in the 3 seconds before the failure"
+                "the failing step's trace: none, since the step heard nothing that carries a trace ID; no input in Core's flight recorder was received from 3 seconds before the failing step began to the failure"
             ]
         );
     }

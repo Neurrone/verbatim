@@ -18,15 +18,22 @@
 //! The binary has its own `main` (`harness = false`, with `libtest-mimic`
 //! taking libtest's command line), so that once every test has run it
 //! prints the end-of-run summary (`verbatim_e2e::run_summary`), which
-//! libtest's harness has no place for.
+//! libtest's harness has no place for. It keeps libtest's behaviour where
+//! `libtest-mimic` differs: any number of filters
+//! (`verbatim_e2e::command_line`), the tests run in the order of their
+//! names, each on a thread of its own, and each failure's whole report in
+//! the `failures:` section at the end.
 
 use std::panic::{self, AssertUnwindSafe};
 use std::process::ExitCode;
 use std::sync::{Arc, Mutex, PoisonError};
+use std::thread;
 use std::time::Instant;
 
 use libtest_mimic::{Arguments, Failed, Trial};
 use verbatim_e2e::AgentClient;
+use verbatim_e2e::command_line;
+use verbatim_e2e::registry::panic_message;
 use verbatim_e2e::run_summary::RunSummary;
 
 /// The names of the scenarios listed, each of whose tests is ignored for
@@ -224,30 +231,46 @@ fn agent_reports_an_interactive_window_station() {
 }
 
 /// A scenario's test: runs it, records its result and seconds in
-/// `summary`, and fails as it does. The panic hook has printed the
-/// panic's report as the scenario failed, so the failure points to it
-/// rather than carrying a second copy.
+/// `summary`, and fails as it does.
 fn scenario_trial(name: &'static str, summary: &Arc<Mutex<RunSummary>>) -> Trial {
     let summary = Arc::clone(summary);
     Trial::test(name, move || {
         let started = Instant::now();
-        let outcome = panic::catch_unwind(AssertUnwindSafe(|| {
-            verbatim_e2e::registry::run_named(name);
-        }));
+        let outcome = on_test_thread(name, move || verbatim_e2e::registry::run_named(name));
         summary
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .record(name, outcome.is_ok(), started.elapsed());
-        outcome.map_err(|_| Failed::from(PANICKED))
+        outcome
     })
     .with_ignored_flag(true)
 }
 
-/// A failed test's message: its panic's report was printed as it failed.
-const PANICKED: &str = "the test panicked: its report is printed above, where it failed";
+/// Runs `test` as libtest runs a test: on a thread of its own, named
+/// after it, with the stack a spawned thread has by default, 2 MiB unless
+/// `RUST_MIN_STACK` says otherwise, as libtest's test threads have, rather
+/// than on the main thread, which `libtest-mimic` runs a test on with
+/// `--test-threads=1`, and whose stack is the linker's. A panic is
+/// its failure, carrying the panic's message: for a scenario, its whole
+/// report (`registry::run_named`), which the panic hook printed as it
+/// failed and the `failures:` section prints again at the end.
+fn on_test_thread(name: &'static str, test: impl FnOnce() + Send + 'static) -> Result<(), Failed> {
+    thread::Builder::new()
+        .name(name.to_owned())
+        .spawn(move || {
+            panic::catch_unwind(AssertUnwindSafe(test))
+                .map_err(|payload| panic_message(payload.as_ref()))
+        })
+        .map_err(|error| format!("the test's thread could not start: {error}"))?
+        .join()
+        .unwrap_or_else(|payload| Err(panic_message(payload.as_ref())))
+        .map_err(Failed::from)
+}
 
 fn main() -> ExitCode {
-    let arguments = Arguments::from_args();
+    let args: Vec<String> = std::env::args().collect();
+    let (filters, rest) = command_line::split_filters(args.get(1..).unwrap_or_default());
+    let arguments = Arguments::from_iter(args.iter().take(1).cloned().chain(rest));
     let summary = Arc::new(Mutex::new(RunSummary::default()));
     let mut trials: Vec<Trial> = [LIVE, DEMONSTRATIONS, MEASURE_SET]
         .into_iter()
@@ -256,11 +279,17 @@ fn main() -> ExitCode {
         .collect();
     trials.push(
         Trial::test("agent_reports_an_interactive_window_station", || {
-            panic::catch_unwind(agent_reports_an_interactive_window_station)
-                .map_err(|_| Failed::from(PANICKED))
+            on_test_thread(
+                "agent_reports_an_interactive_window_station",
+                agent_reports_an_interactive_window_station,
+            )
         })
         .with_ignored_flag(true),
     );
+    // libtest runs its tests in the order of their names, so the session
+    // check runs before every scenario.
+    trials.sort_by(|a, b| a.name().cmp(b.name()));
+    trials.retain(|trial| command_line::selected(trial.name(), &filters, arguments.exact));
     let conclusion = libtest_mimic::run(&arguments, trials);
     for line in summary
         .lock()

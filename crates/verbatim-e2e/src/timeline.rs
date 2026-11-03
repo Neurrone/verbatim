@@ -110,6 +110,13 @@ struct TimelineEntry {
 #[derive(Debug, Clone)]
 pub struct Timeline {
     entries: Arc<Mutex<Vec<TimelineEntry>>>,
+    /// The newest stamp on Verbatim's clock that arrived (a speech frame's
+    /// time, in milliseconds on the run's shared clock,
+    /// `verbatim_process::clock`), with the instant it arrived: what a
+    /// moment of the harness's is turned into Verbatim's time by
+    /// ([`Self::on_verbatim_clock`]), so a VM guest whose clock differs
+    /// from the host's still has its own times compared.
+    verbatim_stamp: Arc<Mutex<Option<(u64, Instant)>>>,
 }
 
 impl Timeline {
@@ -118,7 +125,44 @@ impl Timeline {
     pub fn new() -> Self {
         Self {
             entries: Arc::new(Mutex::new(Vec::new())),
+            verbatim_stamp: Arc::new(Mutex::new(None)),
         }
+    }
+
+    /// Records that a frame stamped `stamp_ms` on Verbatim's clock
+    /// arrived at `arrived`.
+    pub(crate) fn mark_verbatim_clock(&self, stamp_ms: u64, arrived: Instant) {
+        *self
+            .verbatim_stamp
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some((stamp_ms, arrived));
+    }
+
+    /// The moment `at` on Verbatim's clock, in milliseconds on the run's
+    /// shared clock: the newest stamp that arrived, moved by the time from
+    /// its arrival to `at` on the harness's monotonic clock. A frame's
+    /// time on the wire makes it early by that much. `None` before any
+    /// stamp has arrived.
+    #[must_use]
+    pub fn on_verbatim_clock(&self, at: Instant) -> Option<u64> {
+        let (stamp_ms, arrived) = (*self
+            .verbatim_stamp
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner))?;
+        let moved = |by: std::time::Duration| u64::try_from(by.as_millis()).unwrap_or(u64::MAX);
+        Some(if at >= arrived {
+            stamp_ms.saturating_add(moved(at - arrived))
+        } else {
+            stamp_ms.saturating_sub(moved(arrived - at))
+        })
+    }
+
+    /// When the step `step` ([`Self::current_step`]) began: its first
+    /// entry's instant, `None` for a step with no entries.
+    #[must_use]
+    pub fn step_began(&self, step: &Range<usize>) -> Option<Instant> {
+        let entries = self.entries.lock().unwrap_or_else(PoisonError::into_inner);
+        entries.get(step.start).map(|entry| entry.at)
     }
 
     /// Records a gesture identifier at the current instant.
@@ -457,6 +501,25 @@ impl Default for Timeline {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A harness moment is the newest stamp's time moved by how long after
+    /// or before the stamp's arrival it is, whatever the harness's own
+    /// wall clock reads.
+    #[test]
+    fn a_moment_is_read_on_verbatim_s_clock_from_the_newest_stamp() {
+        let second = std::time::Duration::from_millis(1_000);
+        let timeline = Timeline::new();
+        let earlier = Instant::now();
+        let arrived = earlier + second;
+        assert_eq!(timeline.on_verbatim_clock(arrived), None);
+        timeline.mark_verbatim_clock(1_000, earlier);
+        timeline.mark_verbatim_clock(5_000, arrived);
+        assert_eq!(
+            timeline.on_verbatim_clock(arrived + 2 * second),
+            Some(7_000)
+        );
+        assert_eq!(timeline.on_verbatim_clock(earlier), Some(4_000));
+    }
 
     #[test]
     fn render_is_empty_placeholder_when_nothing_recorded() {
