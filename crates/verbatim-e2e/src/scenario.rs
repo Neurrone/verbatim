@@ -2326,14 +2326,18 @@ impl Scenario {
     /// Closes one launched application, as [`Scenario::clean_up`] says.
     fn close(&mut self, launched: &Launched) -> Vec<String> {
         let mut problems = Vec::new();
+        // Whether every harness tab closed, so that Notepad's remaining
+        // windows hold none and may be closed ([`Scenario::end_notepad`]).
+        let mut tabs_closed = false;
         if let Some(title) = &launched.title {
             if launched.notepad {
                 // Every harness tab, the scenario's and any Notepad restored
                 // from an earlier run's session, so Notepad can exit. Never
-                // its window: Notepad keeps the tabs of a window that closes
-                // for its next session.
-                if let Err(error) = close_notepad_tabs(&mut self.agent, DOCUMENT_MARKER) {
-                    problems.push(error.to_string());
+                // its window while a harness tab is open: Notepad keeps the
+                // tabs of a window that closes for its next session.
+                match close_notepad_tabs(&mut self.agent, DOCUMENT_MARKER) {
+                    Ok(()) => tabs_closed = true,
+                    Err(error) => problems.push(error.to_string()),
                 }
             } else if let Some(window) = &launched.window {
                 match self.agent.close_window(window, CLOSE_TIMEOUT) {
@@ -2362,11 +2366,12 @@ impl Scenario {
                 &[]
             };
             for &owner in owners.iter().chain(&launched.also_exit) {
+                if launched.notepad && tabs_closed {
+                    problems.extend(self.end_notepad(owner, title));
+                    continue;
+                }
                 match self.agent.wait_for_exit(owner, CLOSE_TIMEOUT) {
                     Ok(ProcessState::Exited { .. }) => {}
-                    Ok(ProcessState::Running) if launched.notepad => {
-                        problems.extend(self.end_notepad(owner, title));
-                    }
                     Ok(ProcessState::Running) => problems.push(format!(
                         "process {owner}, which owned or ran in the window titled {title:?}, did not exit within {CLOSE_TIMEOUT:?} of the window closing"
                     )),
@@ -2401,18 +2406,19 @@ impl Scenario {
         problems
     }
 
-    /// Ends Windows 11 Notepad process `owner`, still running after the
-    /// harness tabs of its window titled `title` closed, because it holds
-    /// other tabs, such as ones it restored from its previous session.
-    /// Closes its remaining Notepad windows by handle, so Notepad saves its
-    /// session with the harness tabs already gone, and waits for it to
-    /// exit; only if it still runs, kills it and waits. Never kills first:
-    /// killed straight after its tabs closed, Notepad had not yet saved its
-    /// session, and restored the deleted harness document's tab in the next
-    /// run behind a "Cannot find the file" dialog. Unsaved text in any of
-    /// its windows is lost. The agent closes by handle only windows that
-    /// were not open when the scenario started. Returns each step's
-    /// failure.
+    /// Ends Windows 11 Notepad process `owner` once the harness tabs of its
+    /// window titled `title` have closed (Dickson, 2026-11-03). Notepad
+    /// exits by itself when no tab is left; a tab that is not the
+    /// harness's, such as one it restored from its previous session, keeps
+    /// it running, which its remaining Notepad windows show. Those windows
+    /// are closed by handle, so Notepad saves its session with the harness
+    /// tabs already gone, and it is waited for. Only if it still runs is it
+    /// killed, which is reported: killed before saving its session, Notepad
+    /// restores the deleted harness document's tab in the next run behind a
+    /// "Cannot find the file" dialog. Unsaved text in a window it closes is
+    /// kept by Notepad's session; a kill loses it. The agent closes by
+    /// handle only windows that were not open when the scenario started.
+    /// Returns each step's failure.
     fn end_notepad(&mut self, owner: u32, title: &str) -> Vec<String> {
         let mut problems = Vec::new();
         let windows: Vec<WindowInfo> = match self.agent.foreground_info() {
@@ -2425,15 +2431,20 @@ impl Scenario {
                 problems.push(format!(
                     "could not find the windows of Notepad process {owner}: {error}"
                 ));
-                Vec::new()
+                return problems;
             }
         };
         for window in &windows {
-            if let Err(error) = self.agent.close_window(window, CLOSE_TIMEOUT) {
-                problems.push(format!(
+            match self.agent.close_window(window, CLOSE_TIMEOUT) {
+                Ok(true) => {}
+                Ok(false) => problems.push(format!(
+                    "Notepad's window {} did not close within {CLOSE_TIMEOUT:?}",
+                    describe_window(window)
+                )),
+                Err(error) => problems.push(format!(
                     "could not close {}: {error}",
                     describe_window(window)
-                ));
+                )),
             }
         }
         match self.agent.wait_for_exit(owner, CLOSE_TIMEOUT) {
@@ -2450,17 +2461,18 @@ impl Scenario {
             .agent
             .kill_process(owner)
             .and_then(|_| self.agent.wait_for_exit(owner, CLOSE_TIMEOUT));
-        match ended {
-            Ok(ProcessState::Exited { .. }) => {}
-            Ok(ProcessState::Running) => problems.push(format!(
-                "process {owner}, which owned the window titled {title:?}, did not exit within \
-                 {CLOSE_TIMEOUT:?} of being ended, after its harness tabs and its {} remaining \
-                 Notepad window(s) were closed: {}",
+        problems.push(match ended {
+            Ok(ProcessState::Exited { .. }) => format!(
+                "Notepad, process {owner}, which owned the window titled {title:?}, was killed: it                  was still running {CLOSE_TIMEOUT:?} after its harness tabs and its {} remaining                  Notepad window(s) were closed, so its session may hold a harness tab: {}",
                 windows.len(),
                 self.foreground_report()
-            )),
-            Err(error) => problems.push(format!("could not end process {owner}: {error}")),
-        }
+            ),
+            Ok(ProcessState::Running) => format!(
+                "Notepad, process {owner}, which owned the window titled {title:?}, did not exit                  within {CLOSE_TIMEOUT:?} of being killed: {}",
+                self.foreground_report()
+            ),
+            Err(error) => format!("could not end Notepad, process {owner}: {error}"),
+        });
         problems
     }
 }
