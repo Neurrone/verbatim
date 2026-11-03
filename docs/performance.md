@@ -2030,7 +2030,14 @@ with remote operations on or off.
   delivered no ancestor's event under NVDA's scope of the focus with its
   ancestors either. Moving it to a focus inside a group costs 1
   `HostRawElementProvider` and 2 `FragmentRoot` provider calls, 0.75 ms at
-  the median (1.14 at the 95th percentile, 30 runs).
+  the median (1.14 at the 95th percentile, 30 runs). Those are the warm
+  costs, with UI Automation's copy of the element's runtime id fresh. The
+  outpost moves the registration to elements it keeps
+  (`crates/verbatim-outpost/src/outpost/shell.rs`), and one held past UI
+  Automation's periodic sweep is cold: registering on it costs 9 provider
+  calls instead of 3, and moving the registration to the element it
+  already follows costs 6 instead of 0 (`docs/uia-bugs.md`, "UI
+  Automation's copy of an element's runtime id lapses").
 - A text focus's caret, text and active text position changes are one
   group on the focus (`uia_active_text_position_costs_exactly`):
   registering it on mockapp's text costs 1 `HostRawElementProvider` and 2

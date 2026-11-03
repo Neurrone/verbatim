@@ -635,6 +635,8 @@ The call fetches the runtime id from the provider again before doing its own wor
 
 The lapse is not a fixed lifetime. With nothing between the two calls, pauses of 0 to 190 ms always gave the warm cost and pauses of 1,000 and 3,000 ms always the cold one; from 210 to 400 ms the cost alternated with the pause (210 ms cold, 230 warm, 270 cold, 290 warm, 310 cold, 400 warm), each the same in 12 of 12 runs. That pattern fits a periodic sweep rather than an age limit, so no pause can be relied on to stay warm. The copy is kept per element: reading the name of `First`, of another button or of the window, or registering on another button, leaves `First` cold. Whether the copy is kept in the client's element or in UI Automation's server-side node was not determined.
 
+The same experiments found no provider call made after a registration, a removal or a read had returned: every call came before it returned, except `AdviseEventRemoved`, which comes late. So a test that counts provider calls right after one of them returns, as `crates/mockapp/tests/call_counts.rs` does, counts every call but a removal's `AdviseEventRemoved`.
+
 #### Not affected
 
 The answers of the calls; only their provider calls change.
@@ -657,7 +659,7 @@ No test reproduces the lapse, because reaching it needs a pause, which `docs/tes
 
 #### Evidence
 
-Experiments of 2026-11-03 that traced mockapp's provider hits in order between marker messages; their scratch code was not kept, and the figures above are from their recorded output.
+Experiments of 2026-11-03 that traced mockapp's provider hits in order between marker messages. Their code was not kept; every figure above comes from their recorded output.
 
 ### A Qt application's cached keyboard focus can be stale
 

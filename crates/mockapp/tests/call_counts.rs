@@ -2682,7 +2682,13 @@ fn a_node_with_no_kept_element_and_no_route_is_gone_with_no_call() {
 /// listener's desktop-wide group (an element selected, a menu opened, and
 /// notifications), and an outpost's focus-following property subscription
 /// moved to a focus, `First` inside the group `Settings`, registered on the
-/// focus alone, and moved to it again, which costs nothing.
+/// focus alone, and moved to it again, which costs nothing. Each is
+/// measured warm, with UI Automation's copy of the element's runtime id
+/// fresh. The outpost moves its registration to elements it keeps, so one
+/// held past UI Automation's sweep is cold, and costs 9 provider calls for
+/// the registration instead of 3, and 6 for the move to the same element
+/// instead of 0 (`docs/uia-bugs.md`, "UI Automation's copy of an
+/// element's runtime id lapses").
 fn uia_event_registrations_cost_exactly() {
     let title = common::unique_title("mockapp-counts-uia-registrations");
     let app = common::spawn("counts.json", "uia", &title);
