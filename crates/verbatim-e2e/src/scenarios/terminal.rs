@@ -431,10 +431,25 @@ pub(crate) fn open_windows_terminal_tab(
     })
 }
 
+/// The row of a terminal read's text that holds its caret, without its
+/// padding: the row `caret_rows_to_end` rows from the text's end. `None`
+/// with no caret, or a text too short to hold it.
+fn caret_row_of_text(snapshot: &verbatim_model::TerminalSnapshot) -> Option<&str> {
+    let rows: Vec<&str> = snapshot.text.text.split("\r\n").collect();
+    let from_end = usize::try_from(snapshot.caret_rows_to_end).ok()?;
+    rows.len()
+        .checked_sub(from_end)
+        .and_then(|row| rows.get(row))
+        .copied()
+}
+
 /// Waits until `events`, a subscription to the events Core receives,
 /// carries a caret report whose line, trailing white space aside, is
 /// `line`: alone, or in a terminal's read, which carries the caret the
-/// read found.
+/// read found and whose text holds `line` in the caret's row, since
+/// Windows Terminal can report the caret on a row before the row's text
+/// is written, and output arriving after the wait would then be heard
+/// as new.
 ///
 /// # Errors
 ///
@@ -458,7 +473,8 @@ pub(crate) fn wait_for_caret_on(
             }) if snapshot
                 .caret
                 .as_ref()
-                .is_some_and(|caret| caret.line.text.trim_end() == line) =>
+                .is_some_and(|caret| caret.line.text.trim_end() == line)
+                && caret_row_of_text(&snapshot) == Some(line) =>
             {
                 return Ok(());
             }
