@@ -30,7 +30,7 @@ use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 
 use proptest::strategy::Strategy;
-use proptest::test_runner::{Config, TestRunner};
+use proptest::test_runner::{Config, TestError, TestRunner};
 use verbatim_model::TraceId;
 
 use super::*;
@@ -1577,7 +1577,7 @@ fn effect_pid(effect: &ScheduleEffect<u64>) -> Option<Pid> {
 /// # Panics
 ///
 /// On a failing case, naming the smallest.
-pub(super) fn run_generated(config: Config) -> BTreeMap<&'static str, u32> {
+pub(super) fn run_generated(config: Config, again: &str) -> BTreeMap<&'static str, u32> {
     let reached = RefCell::new(BTreeMap::new());
     let mut runner = TestRunner::new(config);
     let strategy = proptest::collection::vec((action(), asks()), 1..40);
@@ -1591,10 +1591,38 @@ pub(super) fn run_generated(config: Config) -> BTreeMap<&'static str, u32> {
         }
         Ok(())
     });
-    if let Err(error) = result {
-        panic!("{error}");
+    match result {
+        Ok(()) => reached.into_inner(),
+        Err(TestError::Fail(reason, case)) => panic!("{reason}\n{}", fixed_report(&case, again)),
+        Err(error) => panic!("{error}"),
     }
-    reached.into_inner()
+}
+
+impl Action {
+    /// The action as the Rust expression that makes it, as a fixed case
+    /// lists it.
+    fn code(self) -> String {
+        match self {
+            Action::Advance(advance) => format!("Action::Advance(Advance::{advance:?})"),
+            other => format!("Action::{other:?}"),
+        }
+    }
+}
+
+/// The report of a failing case: `case` as a line ready to paste into
+/// [`fixed`], and the commands that run the fixed cases and the run that
+/// found it, `again`.
+fn fixed_report(case: &[(Action, Asks)], again: &str) -> String {
+    let steps: Vec<String> = case
+        .iter()
+        .map(|(action, asks)| format!("({}, {asks:?})", action.code()))
+        .collect();
+    format!(
+        "the smallest failing case, as a line for `fixed()` in crates/verbatim-listener-logic/src/schedule/generated.rs:\n        vec![{}],\n\
+         the fixed cases alone: cargo test -p verbatim-listener-logic --lib -- --exact schedule::generated::fixed_cases_keep_the_schedules_rules\n\
+         the run that found it again: {again}",
+        steps.join(", ")
+    )
 }
 
 /// The gate's seed and case count.
@@ -1611,7 +1639,10 @@ const CASES: u32 = 2_000;
 /// give the same effects when run twice, and reach every listed state.
 #[test]
 fn generated_cases_keep_the_schedules_rules() {
-    let reached = run_generated(super::explore::config(SEED, CASES));
+    let reached = run_generated(
+        super::explore::config(SEED, CASES),
+        "cargo test -p verbatim-listener-logic --lib -- --exact schedule::generated::generated_cases_keep_the_schedules_rules",
+    );
     let missed: Vec<&str> = LISTED
         .into_iter()
         .filter(|state| !reached.contains_key(state))
@@ -1860,17 +1891,55 @@ impl GraceRun {
 /// How many steps a grace sequence has at most.
 const GRACE_DEPTH: usize = 6;
 
-/// Runs every sequence that extends `run` up to [`GRACE_DEPTH`] steps,
-/// draining each.
-fn every_grace_sequence(run: &GraceRun) {
-    run.clone().drain();
-    if run.trail.len() == GRACE_DEPTH {
+/// Runs every sequence that extends `run` up to `depth` steps, draining
+/// each; a failing sequence is printed as a line for [`found_graces`]
+/// before the failure.
+fn every_grace_sequence(run: &GraceRun, depth: usize) {
+    grace_reported(&run.trail, || run.clone().drain());
+    if run.trail.len() == depth {
         return;
     }
     for step in GRACE_STEPS {
         let mut next = run.clone();
-        next.step(step);
-        every_grace_sequence(&next);
+        let trail: Vec<Grace> = run.trail.iter().copied().chain([step]).collect();
+        grace_reported(&trail, || next.step(step));
+        every_grace_sequence(&next, depth);
+    }
+}
+
+/// Runs `check`, the last step of the grace sequence `trail`; when it
+/// fails, prints `trail` as a line ready to paste into [`found_graces`]
+/// and the command that runs the found sequences, then fails as it did.
+fn grace_reported(trail: &[Grace], check: impl FnOnce()) {
+    if let Err(payload) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(check)) {
+        let steps: Vec<String> = trail
+            .iter()
+            .map(|step| format!("Grace::{step:?}"))
+            .collect();
+        eprintln!(
+            "the failing sequence, as a line for `found_graces()` in crates/verbatim-listener-logic/src/schedule/generated.rs:\n        vec![{}],\n\
+             the found sequences alone: cargo test -p verbatim-listener-logic --lib -- --exact schedule::generated::found_grace_sequences_keep_the_graces_rules",
+            steps.join(", ")
+        );
+        std::panic::resume_unwind(payload);
+    }
+}
+
+/// The grace sequences the enumeration failed on, each kept as its list of
+/// steps, as the failure's report gives it.
+fn found_graces() -> Vec<Vec<Grace>> {
+    Vec::new()
+}
+
+/// Every found grace sequence keeps the grace's rules through its drain.
+#[test]
+fn found_grace_sequences_keep_the_graces_rules() {
+    for sequence in found_graces() {
+        let mut run = GraceRun::default();
+        for step in sequence {
+            run.step(step);
+        }
+        run.drain();
     }
 }
 
@@ -1884,5 +1953,9 @@ fn every_grace_sequence(run: &GraceRun) {
 /// examples.
 #[test]
 fn every_short_grace_sequence_keeps_the_graces_rules() {
-    every_grace_sequence(&GraceRun::default());
+    // Each depth in turn, so the sequence a failure prints is one of the
+    // shortest that fail.
+    for depth in 1..=GRACE_DEPTH {
+        every_grace_sequence(&GraceRun::default(), depth);
+    }
 }

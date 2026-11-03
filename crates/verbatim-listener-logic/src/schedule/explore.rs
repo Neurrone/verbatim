@@ -31,7 +31,8 @@ pub(super) fn config(seed: u64, cases: u32) -> Config {
     }
 }
 
-/// The configuration the nightly workflow gives: its seed and case count.
+/// The configuration the nightly workflow gives, its seed and case count,
+/// with the command that runs the exploration with them again.
 ///
 /// # Panics
 ///
@@ -40,7 +41,7 @@ pub(super) fn config(seed: u64, cases: u32) -> Config {
     clippy::disallowed_methods,
     reason = "the exploration tests alone read their seed and case count from the environment, and the gate never runs them"
 )]
-fn explored() -> Config {
+fn explored() -> (Config, String) {
     let read = |name: &str| {
         std::env::var(name)
             .unwrap_or_else(|_| panic!("{name} is not set"))
@@ -49,11 +50,15 @@ fn explored() -> Config {
     };
     let seed = read("VERBATIM_EXPLORE_SEED");
     let cases = u32::try_from(read("VERBATIM_EXPLORE_CASES")).expect("a case count that fits");
-    config(seed, cases)
+    let again = format!(
+        "VERBATIM_EXPLORE_SEED={seed} VERBATIM_EXPLORE_CASES={cases} cargo test -p verbatim-listener-logic --lib -- --ignored --exact schedule::explore::explore_schedule"
+    );
+    (config(seed, cases), again)
 }
 
 #[test]
 #[ignore = "exploration: run by the nightly workflow with its own seed (docs/testing.md, Exploration tests)"]
 fn explore_schedule() {
-    let _ = super::generated::run_generated(explored());
+    let (config, again) = explored();
+    let _ = super::generated::run_generated(config, &again);
 }

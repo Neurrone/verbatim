@@ -484,10 +484,11 @@ mod tests {
         }
     }
 
-    /// Runs every sequence that extends `run` up to [`DEPTH`] steps, the
-    /// listener starting once.
-    fn every_sequence(run: &Run) {
-        if run.trail.len() == DEPTH {
+    /// Runs every sequence that extends `run` up to `depth` steps, the
+    /// listener starting once; a failing sequence is printed as a line for
+    /// [`found`] before the failure.
+    fn every_sequence(run: &Run, depth: usize) {
+        if run.trail.len() == depth {
             return;
         }
         for input in INPUTS {
@@ -495,8 +496,40 @@ mod tests {
                 continue;
             }
             let mut next = run.clone();
-            next.step(input);
-            every_sequence(&next);
+            if let Err(payload) =
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| next.step(input)))
+            {
+                let inputs: Vec<String> = run
+                    .trail
+                    .iter()
+                    .chain([&input])
+                    .map(|input| format!("Input::{input:?}"))
+                    .collect();
+                eprintln!(
+                    "the failing sequence, as a line for `found()` in crates/verbatim-listener-logic/src/foreground.rs:\n            vec![{}],\n\
+                     the found sequences alone: cargo test -p verbatim-listener-logic --lib -- --exact foreground::tests::found_sequences_keep_the_watchs_rules",
+                    inputs.join(", ")
+                );
+                std::panic::resume_unwind(payload);
+            }
+            every_sequence(&next, depth);
+        }
+    }
+
+    /// The sequences the enumeration failed on, each kept as its list of
+    /// inputs, as the failure's report gives it.
+    fn found() -> Vec<Vec<Input>> {
+        Vec::new()
+    }
+
+    /// Every found sequence keeps the watch's rules.
+    #[test]
+    fn found_sequences_keep_the_watchs_rules() {
+        for sequence in found() {
+            let mut run = Run::default();
+            for input in sequence {
+                run.step(input);
+            }
         }
     }
 
@@ -514,6 +547,10 @@ mod tests {
     /// examples above.
     #[test]
     fn every_short_sequence_keeps_the_watchs_rules() {
-        every_sequence(&Run::default());
+        // Each depth in turn, so the sequence a failure prints is one of
+        // the shortest that fail.
+        for depth in 1..=DEPTH {
+            every_sequence(&Run::default(), depth);
+        }
     }
 }
