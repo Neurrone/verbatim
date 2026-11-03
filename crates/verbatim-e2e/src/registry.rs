@@ -144,12 +144,12 @@
 //! A scenario marked [`ScenarioDef::local_only`] needs what GitHub's
 //! Windows Server runner lacks: Windows 11 Notepad, a Settings app that
 //! selects the first search suggestion as the suggestions list opens, or
-//! one whose Date and time page opens with its focus on the Region button; its
-//! name starts with one of [`LOCAL_ONLY_FILTERS`]. Every local and VM run includes it;
-//! GitHub's `e2e` job sets [`SKIP_LOCAL_ONLY_ENV`] and deselects it by
-//! name (one `--skip` per filter), and [`run_named`] fails a local-only scenario
-//! that runs anyway with the variable set, so a skip is never reported as
-//! a pass. The skip comes from that setting alone, never from detecting
+//! one whose Date and time page opens with its focus on the Region button.
+//! Every local and VM run includes it; GitHub's `e2e` job sets
+//! [`SKIP_LOCAL_ONLY_ENV`] and leaves it out of its groups
+//! (`cargo xtask e2e-plan` reads this flag), and [`run_named`] fails a
+//! local-only scenario that runs anyway with the variable set, so a skip is
+//! never reported as a pass. The skip comes from that setting alone, never from detecting
 //! the machine.
 //!
 //! In compare mode ([`crate::compare`]) [`run_named`] runs a scenario
@@ -190,39 +190,11 @@ use crate::speech::{FailurePoint, SpeechFailure};
 
 /// Environment variable that, set to `1`, says the run is not on a Windows
 /// 11 desktop, so the local-only scenarios ([`ScenarioDef::local_only`])
-/// must not run: GitHub's `e2e` job sets it and deselects them by name
-/// (one `--skip` per [`LOCAL_ONLY_FILTERS`] entry), and one that runs anyway fails rather than
+/// must not run: GitHub's `e2e` job sets it and leaves them out of the
+/// scenarios it names, and one that runs anyway fails rather than
 /// reporting a pass. Unset, empty, or `0` runs them. Nothing detects the
 /// machine.
 pub const SKIP_LOCAL_ONLY_ENV: &str = "VERBATIM_E2E_SKIP_LOCAL_ONLY";
-
-/// The `--skip` filters a run off a Windows 11 desktop deselects the
-/// local-only scenarios by: every local-only scenario's name starts with
-/// one, and no other scenario's does (a demonstration's `demo_` name can
-/// contain one, and is deselected with `--skip demo_`). `notepad_` begins
-/// every scenario that tests Windows 11 Notepad; `settings_search_suggestions`
-/// expects Settings to select the first suggestion as the list opens, which
-/// the runner's Settings does not; `settings_combo_box_expanded` expects
-/// the Date and time page to open with its focus on the Region button,
-/// where the runner's page focuses its location settings link;
-/// `explorer_folder_window` fails on the runner for the causes
-/// `docs/flaky-tests.md` records under "File Explorer". A unit test checks
-/// CI's `e2e` job's skips against this list.
-pub const LOCAL_ONLY_FILTERS: &[&str] = &[
-    "notepad_",
-    "settings_search_suggestions",
-    "settings_combo_box_expanded",
-    "explorer_folder_window",
-];
-
-/// Whether `name` starts with one of [`LOCAL_ONLY_FILTERS`], so libtest's
-/// `--skip`, which matches anywhere in a test's name, deselects it.
-#[must_use]
-pub fn named_local_only(name: &str) -> bool {
-    LOCAL_ONLY_FILTERS
-        .iter()
-        .any(|filter| name.starts_with(filter))
-}
 
 /// Whether `def` is skipped on a run whose [`SKIP_LOCAL_ONLY_ENV`] holds
 /// `setting` (`None` when it is unset): only a local-only scenario is ever
@@ -2152,8 +2124,7 @@ pub fn startup_speech() -> [crate::speech::Expected; 1] {
 /// Panics if `name` is not registered; if [`crate::ENDPOINT_ENV`] is unset,
 /// since a live scenario that cannot reach an agent has not passed; if the
 /// scenario is local-only and [`SKIP_LOCAL_ONLY_ENV`] is `1`, since such a
-/// run deselects it by name instead (a local-only scenario's name starts
-/// with one of [`LOCAL_ONLY_FILTERS`]); if the scenario is disabled
+/// run leaves it out of the scenarios it names instead; if the scenario is disabled
 /// ([`DISABLED`]), giving why; if [`compare::ENV`] names another scenario,
 /// as a harness error naming both ([`compare::selects`]); and if the
 /// scenario itself fails.
@@ -2174,7 +2145,7 @@ pub fn run_named(name: &str) {
     let setting = std::env::var(SKIP_LOCAL_ONLY_ENV).ok();
     match skips(def, setting.as_deref()) {
         Ok(true) => panic!(
-            "{name:?} runs only on a Windows 11 desktop, and {SKIP_LOCAL_ONLY_ENV} is 1: such a run deselects the local-only scenarios with a --skip for each of {LOCAL_ONLY_FILTERS:?} rather than running them"
+            "{name:?} runs only on a Windows 11 desktop, and {SKIP_LOCAL_ONLY_ENV} is 1: such a run leaves the local-only scenarios out of the scenarios it names rather than running them"
         ),
         Ok(false) => {}
         Err(error) => panic!("{error}"),
@@ -2898,75 +2869,6 @@ mod tests {
         let scenarios = fixture();
         let error = skips(&scenarios[0], Some("yes")).expect_err("yes is not a valid setting");
         assert!(error.contains(SKIP_LOCAL_ONLY_ENV), "{error}");
-    }
-
-    #[test]
-    fn exactly_the_local_only_scenarios_are_named_for_the_skip_filter() {
-        for def in SCENARIOS {
-            assert_eq!(
-                def.local_only,
-                named_local_only(def.name),
-                "{}: a local-only scenario, and only one, has a name starting with one of {LOCAL_ONLY_FILTERS:?}, which a run off a Windows 11 desktop skips",
-                def.name
-            );
-        }
-        let selected = select(SCENARIOS, &[], &[]).expect("no filters never errors");
-        assert!(
-            selected.iter().any(|def| def.local_only),
-            "a run with no filters includes the local-only scenarios"
-        );
-    }
-
-    /// CI's `e2e` job skips the demonstrations, the measure set, and
-    /// exactly [`LOCAL_ONLY_FILTERS`], in order, and since libtest's
-    /// `--skip` matches anywhere in a name, no other scenario's name
-    /// contains a local-only filter unless one of the job's other skips
-    /// deselects it too.
-    #[test]
-    fn ci_skips_exactly_the_local_only_filters_and_no_other_scenario() {
-        const OTHER_SKIPS: [&str; 2] = ["demo_", "measure_"];
-        let workflow = std::fs::read_to_string(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../.github/workflows/ci.yml"
-        ))
-        .expect("the workflow");
-        let suite: Vec<&str> = workflow
-            .lines()
-            .filter(|line| line.contains("cargo test -p verbatim-e2e --no-fail-fast"))
-            .collect();
-        assert_eq!(
-            suite.len(),
-            1,
-            "one suite command in the workflow: {suite:?}"
-        );
-        let words: Vec<&str> = suite[0].split_whitespace().collect();
-        let skips: Vec<&str> = words
-            .windows(2)
-            .filter(|pair| pair[0] == "--skip")
-            .map(|pair| pair[1])
-            .collect();
-        let expected: Vec<&str> = OTHER_SKIPS
-            .iter()
-            .chain(LOCAL_ONLY_FILTERS)
-            .copied()
-            .collect();
-        assert_eq!(skips, expected, "the e2e job's skips");
-        let also_skipped: Vec<&str> = SCENARIOS
-            .iter()
-            .filter(|def| !def.local_only)
-            .map(|def| def.name)
-            .filter(|name| {
-                LOCAL_ONLY_FILTERS
-                    .iter()
-                    .any(|filter| name.contains(filter))
-            })
-            .filter(|name| !OTHER_SKIPS.iter().any(|skip| name.contains(skip)))
-            .collect();
-        assert_eq!(
-            also_skipped,
-            Vec::<&str>::new(),
-            "scenarios CI would skip as local-only that are not"
-        );
     }
 
     #[test]

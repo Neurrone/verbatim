@@ -1,9 +1,9 @@
 //! Workspace automation, invoked as `cargo xtask <command>`.
 //!
-//! xtask builds on every host, but only `ci`, `docs` and `replay` exist on
-//! all of them; every other command, with its module and dependencies,
-//! exists on Windows alone (`#[cfg(windows)]`), and on another host it gets
-//! the usage text, which lists only `ci`, `docs` and `replay`.
+//! xtask builds on every host, but only `ci`, `docs`, `replay` and
+//! `e2e-plan` exist on all of them; every other command, with its module and
+//! dependencies, exists on Windows alone (`#[cfg(windows)]`), and on another
+//! host it gets the usage text, which lists only those four.
 //!
 //! `ci` is the standard check for both local runs and GitHub Actions, so
 //! the two cannot drift. On every host it runs the check of the crate
@@ -18,6 +18,10 @@
 //! architecture.
 //!
 //! On Windows `ci` ends with the fault step, [`faults`].
+//!
+//! `e2e-plan`, on every host, prints how many groups the CI `e2e` job
+//! runs the end-to-end suite in, as the job's matrix. See
+//! `xtask/src/plan.rs`.
 //!
 //! `docs` checks the repository's Markdown documents: that every relative
 //! link and every backticked repository path names something that exists,
@@ -45,6 +49,11 @@
 //! `nvda` builds the NVDA transcript add-on, captures what NVDA speaks, and
 //! compares an end-to-end scenario with NVDA (`docs/tooling/nvda.md`).
 //! See `xtask/src/nvda.rs`.
+//!
+//! `e2e-group` prints the end-to-end scenarios of one of the CI `e2e`
+//! job's groups, and `e2e-durations` rewrites the table of scenario
+//! durations the groups are sized by. See `xtask/src/group.rs` and
+//! `xtask/src/durations.rs`.
 //!
 //! `windows-terminal` downloads and unpacks the pinned portable Windows
 //! Terminal the terminal scenarios drive (`verbatim_e2e::windows_terminal`).
@@ -85,6 +94,7 @@ use windows::Win32::System::Com::{COINIT_MULTITHREADED, CoInitializeEx};
 // The portable modules, built on every host.
 mod docs;
 mod ownership;
+mod plan;
 mod replay;
 mod shapes;
 mod tiers;
@@ -97,6 +107,10 @@ mod waits;
 mod conformance;
 #[cfg(windows)]
 mod demo;
+#[cfg(windows)]
+mod durations;
+#[cfg(windows)]
+mod group;
 #[cfg(windows)]
 mod nvda;
 #[cfg(windows)]
@@ -138,6 +152,7 @@ fn main() -> ExitCode {
         Some("ci") => ci(),
         Some("docs") => docs::run(),
         Some("replay") => replay::run(&args[1..]),
+        Some("e2e-plan") => plan::run(&args[1..]),
         #[cfg(windows)]
         Some("vm") => vm::run(&args[1..]),
         #[cfg(windows)]
@@ -152,6 +167,10 @@ fn main() -> ExitCode {
         Some("demo") => demo::run(&args[1..]),
         #[cfg(windows)]
         Some("nvda") => nvda::run(&args[1..]),
+        #[cfg(windows)]
+        Some("e2e-group") => group::run(&args[1..]),
+        #[cfg(windows)]
+        Some("e2e-durations") => durations::run(&args[1..]),
         #[cfg(windows)]
         Some("windows-terminal") => windows_terminal(),
         #[cfg(windows)]
@@ -172,6 +191,9 @@ fn main() -> ExitCode {
             #[cfg(not(windows))]
             eprintln!(
                 "  ci    crate tier check, source scans, documentation check, and clippy and unit tests for the crates in LINUX_CRATES (xtask/src/main.rs), for the host's architecture"
+            );
+            eprintln!(
+                "  e2e-plan  print the CI e2e job's matrix of groups, sized by xtask/e2e-durations.txt"
             );
             eprintln!(
                 "  docs  check that the documents' links and backticked repository paths exist, and that docs/readme.md indexes every document under docs"
@@ -204,6 +226,14 @@ fn main() -> ExitCode {
             #[cfg(windows)]
             eprintln!(
                 "  measure  run the measure set on this machine and report each latency stage's distribution (cargo xtask measure [--release | --verbatim-exe <path>]; docs/tooling/measuring.md)"
+            );
+            #[cfg(windows)]
+            eprintln!(
+                "  e2e-group  print the end-to-end scenarios of one of the CI e2e job's groups (cargo xtask e2e-group <index>/<count>)"
+            );
+            #[cfg(windows)]
+            eprintln!(
+                "  e2e-durations  rewrite xtask/e2e-durations.txt from the e2e jobs of the last <runs> CI runs on main (cargo xtask e2e-durations <runs>)"
             );
             #[cfg(windows)]
             eprintln!(

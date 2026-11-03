@@ -584,8 +584,9 @@ guide](tooling/e2e.md)).
    `VERBATIM_E2E_RECORD=0` turns recording off.
 8. **On CI.** The `e2e` job in `.github/workflows/ci.yml` starts the agent
    in the same step as the suite, runs every scenario but the
-   demonstrations, the measure set and the local-only ones, and uploads the
-   artifacts for passing and failing runs alike.
+   demonstrations, the measure set and the local-only ones, split into groups
+   that run at once, and uploads one artifact per scenario, its
+   directory with the video, for passing and failing runs alike.
 9. **Against a Hyper-V guest.** `cargo xtask vm test` builds, copies
    changed binaries into the guest, restores the golden checkpoint only
    with `--restore`, and runs each scenario as its own `cargo test`

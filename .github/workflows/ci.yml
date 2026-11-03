@@ -207,16 +207,53 @@ jobs:
 
   # Milestone M2's runner-direct E2E suite (docs/roadmap.md): builds the
   # debug binaries the suite drives, starts verbatim-agent.exe bound to
-  # loopback, points crates/verbatim-e2e at it, and runs the suite serially
-  # (one live Verbatim at a time, per crates/verbatim-e2e's Scenario type).
-  # A separate job from `ci` so a live-suite failure is easy to tell apart
-  # from a build or lint failure; GitHub's Windows runners execute jobs in
-  # an interactive session, which is what lets SendInput-based key
-  # injection and real window focus work here.
-  e2e:
+  # loopback, points crates/verbatim-e2e at it, and runs the scenarios
+  # serially (one live Verbatim at a time, per crates/verbatim-e2e's
+  # Scenario type). A separate job from `ci` so a live-suite failure is
+  # easy to tell apart from a build or lint failure; GitHub's Windows
+  # runners execute jobs in an interactive session, which is what lets
+  # SendInput-based key injection and real window focus work here.
+  # The suite is split into groups, one runner each, running in parallel
+  # as NVDA's system tests do. The plan job chooses how many, every run;
+  # each group's `cargo xtask e2e-group` names its scenarios, the share
+  # for that count (docs/tooling/e2e.md, "How CI runs the suite"). A run
+  # started by hand repeats one scenario, so it is one job.
+  # How many groups the e2e job runs the suite in, as its matrix
+  # (`{"group":[1,2,...]}`): the fewest whose estimates from
+  # xtask/e2e-durations.txt are each within 9 minutes, since each group's
+  # suite step times out at 10. `cargo xtask e2e-plan` reads the suite from
+  # the registry's and the test file's source, so this job builds only
+  # xtask's portable part, on Linux. A run started by hand is one group.
+  plan:
     needs: changes
     if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      groups: ${{ steps.plan.outputs.groups }}
+    steps:
+      - uses: actions/checkout@v7
+        if: github.event_name != 'workflow_dispatch'
+      - uses: Swatinem/rust-cache@v2
+        if: github.event_name != 'workflow_dispatch'
+      - id: plan
+        shell: bash
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          if [ "$EVENT" = workflow_dispatch ]; then
+            groups='{"group":[1]}'
+          else
+            groups=$(cargo xtask e2e-plan)
+          fi
+          echo "groups=$groups" >> "$GITHUB_OUTPUT"
+
+  e2e:
+    needs: [changes, plan]
+    if: needs.changes.outputs.code == 'true'
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.groups) }}
     steps:
       - uses: actions/checkout@v7
       - name: Fetch eSpeak NG's source
@@ -268,26 +305,29 @@ jobs:
         run: Get-Process SystemPropertiesPerformance -ErrorAction SilentlyContinue | Stop-Process
       # Every live test is #[ignore]d, so a plain `cargo test` lists it as
       # ignored rather than reporting a pass it never ran; this step runs
-      # them with --ignored, and a missing agent fails them. The runner's
-      # Windows Server has classic Notepad, not Windows 11 Notepad, and its
-      # Settings raises no selection for a first search suggestion as the
-      # list opens, so the local-only scenarios, named notepad_ and
-      # settings_search_suggestions, are deselected by name
-      # (libtest counts them as filtered out, never as passed), and
-      # VERBATIM_E2E_SKIP_LOCAL_ONLY makes one that ran anyway fail. The
-      # demonstrations, named demo_, are recorded by `cargo xtask demo`
-      # and are not part of the suite (docs/tooling/e2e.md).
+      # its group's scenarios with --ignored, each named with --exact, and
+      # a missing agent fails them. The group's list leaves out the
+      # demonstrations, the measure set, and the local-only scenarios
+      # (the registry's local_only flag), which need a Windows 11 desktop
+      # the runner's Windows Server is not; VERBATIM_E2E_SKIP_LOCAL_ONLY
+      # makes one that ran anyway fail (docs/tooling/e2e.md).
       # The agent is started in the same step as the suite: GitHub's Windows
       # runner ends the processes a step started when that step finishes, so
       # an agent started in a step of its own was gone (connection refused)
       # by the time the suite ran. NVDA's system tests start NVDA inside
       # their test step for the same reason.
+      # A group's scenarios must finish within 10 minutes, which the plan
+      # job's sizing meets by the table; a run started by hand repeats one
+      # scenario as often as asked, so it has the job's limit instead.
       - name: Run the E2E suite against a local agent
+        timeout-minutes: ${{ github.event_name == 'workflow_dispatch' && 360 || 10 }}
         env:
           VERBATIM_E2E_ENDPOINT: 127.0.0.1:44001
           VERBATIM_E2E_SKIP_LOCAL_ONLY: "1"
           E2E_SCENARIO: ${{ inputs.scenario }}
           E2E_REPEAT: ${{ inputs.repeat }}
+          E2E_GROUP: ${{ matrix.group }}
+          E2E_GROUPS: ${{ strategy.job-total }}
         shell: pwsh
         run: |
           $agent = Start-Process -FilePath "target\debug\verbatim-agent.exe" `
@@ -331,25 +371,69 @@ jobs:
               if ($LASTEXITCODE -ne 0) { $status = $LASTEXITCODE }
             }
           } else {
-            cargo test -p verbatim-e2e --no-fail-fast -- --ignored --skip demo_ --skip measure_ --skip notepad_ --skip settings_search_suggestions --skip settings_combo_box_expanded --skip explorer_folder_window --test-threads=1 2>&1 | Tee-Object -FilePath verbatim-e2e-test-output.log
+            # The group's scenarios, one name a line. No filter would run
+            # every test, so an empty list fails the step.
+            $names = @(cargo xtask e2e-group "$env:E2E_GROUP/$env:E2E_GROUPS")
+            if ($LASTEXITCODE -ne 0 -or $names.Count -eq 0) {
+              Write-Error "cargo xtask e2e-group $env:E2E_GROUP/$env:E2E_GROUPS named no scenarios"
+              exit 1
+            }
+            cargo test -p verbatim-e2e --test e2e -- --ignored --exact @names --test-threads=1 2>&1 | Tee-Object -FilePath verbatim-e2e-test-output.log
             $status = $LASTEXITCODE
           }
           Stop-Process -Id $agent.Id -ErrorAction SilentlyContinue
           exit $status
-      # Kept for passing runs as well as failing ones: each scenario's
-      # directory holds its video, timeline, logs, and summary.
-      - name: Upload E2E output and videos
+      # The group's own logs, small: the test output and the agent's.
+      - name: Upload the group's test output and agent logs
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: verbatim-e2e-output
+          name: e2e-group-${{ matrix.group }}
           path: |
             verbatim-e2e-test-output.log
             verbatim-agent-stdout.log
             verbatim-agent-stderr.log
-            target/e2e-artifacts/
-            !target/e2e-artifacts/history/
           if-no-files-found: ignore
+      # One artifact per scenario that ran, passing or failing, named
+      # e2e-<scenario> and holding its whole directory: video, timeline,
+      # logs, and summary.txt, whose "result:" line says whether it
+      # passed. upload-artifact makes one artifact per step, so the loop
+      # calls its library, @actions/artifact (the version
+      # upload-artifact@v7 uses), from github-script. A group of about 15
+      # scenarios stays far below GitHub's 500 artifacts a job. The videos
+      # are already compressed, so the archives are not (compression
+      # level 0).
+      - name: Install the artifact upload library
+        if: always()
+        shell: pwsh
+        run: npm install --prefix "$env:RUNNER_TEMP\artifact-client" --no-save --ignore-scripts --no-audit --no-fund @actions/artifact@6.3.1
+      - name: Upload each scenario's directory
+        if: always()
+        uses: actions/github-script@v9
+        env:
+          ARTIFACT_CLIENT: ${{ runner.temp }}\artifact-client
+        with:
+          script: |
+            const fs = await import('node:fs');
+            const path = await import('node:path');
+            const { pathToFileURL } = await import('node:url');
+            const library = path.join(process.env.ARTIFACT_CLIENT, 'node_modules', '@actions', 'artifact', 'lib', 'artifact.js');
+            const { default: client } = await import(pathToFileURL(library).href);
+            const root = path.join(process.env.GITHUB_WORKSPACE, 'target', 'e2e-artifacts');
+            if (!fs.existsSync(root)) {
+              return;
+            }
+            for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+              if (!entry.isDirectory() || entry.name === 'history') {
+                continue;
+              }
+              const folder = path.join(root, entry.name);
+              const files = fs.readdirSync(folder, { recursive: true, withFileTypes: true })
+                .filter((file) => file.isFile())
+                .map((file) => path.join(file.parentPath, file.name));
+              const { size } = await client.uploadArtifact(`e2e-${entry.name}`, files, root, { compressionLevel: 0 });
+              core.info(`e2e-${entry.name}: ${files.length} files, ${size} bytes`);
+            }
       # A run started by hand repeats one scenario, and only the latest run
       # is in the scenario's own directory, so each run's copy in the
       # history (which leaves out the video) is kept as well.

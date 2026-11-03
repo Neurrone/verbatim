@@ -92,18 +92,9 @@ Wait for one run's process to exit before starting the next; a script
 that stops waiting on a timeout and starts another run is the usual way
 two overlap. Worktrees have their own locks, so two worktrees must not
 run scenarios against the same desktop at once.
-`.github/workflows/ci.yml`'s `e2e` job runs, on a plain `windows-latest`
-runner with the same environment variable,
-`cargo test -p verbatim-e2e --no-fail-fast -- --ignored --skip demo_ --skip measure_ --skip notepad_ --skip settings_search_suggestions --skip settings_combo_box_expanded --test-threads=1`,
-with `VERBATIM_E2E_SKIP_LOCAL_ONLY=1` as well (see the local-only scenarios
-below). Started by hand, as `gh workflow run ci.yml -f scenario=<name> -f
-repeat=<n>`, the workflow runs only its `e2e` job, which runs that one
-scenario n times, each in its own test process, and uploads every run's
-copy from the history (below) as the `verbatim-e2e-history` artifact, so
-an intermittent failure on GitHub's runner can be measured without a push
-for each run. The job fails before any run when n is below 1 or the name
-does not list exactly one test, since a misspelt name runs nothing and
-passes. Before the suite, the job closes a message box the runner
+`.github/workflows/ci.yml`'s `e2e` job runs the suite on plain
+`windows-latest` runners, split into groups ("How CI runs the suite"
+below). Before the suite, the job closes a message box the runner
 image shows at logon, "System Properties"
 (`SystemPropertiesPerformance.exe`, "Windows created a temporary paging
 file..."), which stays all run and takes the foreground when Verbatim's
@@ -357,16 +348,87 @@ GitHub's Windows Server runner cannot run them as this machine does:
   `settings_combo_box_expanded`; why each fails on the runner is in
   [the known failures](../flaky-tests.md).
 
-The registry's `LOCAL_ONLY_FILTERS` lists the filters, and only
-local-only scenarios' names start with them. A local-only scenario is part
-of the suite: every local run and every `cargo xtask vm test` run includes
-it. CI's `e2e` job deselects them with
-`--skip notepad_ --skip settings_search_suggestions --skip settings_combo_box_expanded`
-and sets `VERBATIM_E2E_SKIP_LOCAL_ONLY=1`, so one that ran there anyway
-would fail rather than report a pass. The skip comes from that setting
-alone, never from detecting the machine, so a local run cannot silently
-lose a scenario. Mark a new scenario local-only only when it tests
-Windows 11 Notepad, giving it the `notepad_` prefix.
+The registry's `local_only` flag is the one place this is recorded. A
+local-only scenario is part of the suite: every local run and every
+`cargo xtask vm test` run includes it. CI's `e2e` job leaves them out of
+its groups (`cargo xtask e2e-plan` and `e2e-group` read the flag) and sets
+`VERBATIM_E2E_SKIP_LOCAL_ONLY=1`, so one that ran there anyway would fail
+rather than report a pass. The skip comes from that setting alone, never
+from detecting the machine, so a local run cannot silently lose a
+scenario. Mark a new scenario local-only only when it needs what the
+runner's Windows Server lacks, such as Windows 11 Notepad.
+
+## How CI runs the suite
+
+The `e2e` job runs the suite in groups, `e2e (1)`, `e2e (2)` and on, each
+on a runner of its own and all at once, with `fail-fast` off so one
+group's failure does not cancel the others; NVDA's system tests are
+split the same way. Each group builds, prepares the runner, starts the
+agent, and runs its own scenarios with
+`cargo test -p verbatim-e2e --test e2e -- --ignored --exact <names...> --test-threads=1`
+and `VERBATIM_E2E_SKIP_LOCAL_ONLY=1`. A group's setup, from checkout to
+the suite with a warm cache, took about two and a half minutes of the
+single job the groups replaced.
+
+A group's scenarios must finish within 10 minutes: the step that runs
+them times out then. The limit is met by design, not found by a timeout:
+the `plan` job, on Linux, chooses the number of groups every run with
+`cargo xtask e2e-plan`, the fewest whose estimates are each within 9
+minutes, leaving a minute's margin, and prints the `e2e` job's matrix.
+It starts from the suite's total estimate over 9 minutes, rounded up, and
+adds a group while the greedy split still leaves one over. Nobody edits
+the count. The one failure is a single scenario estimated over 9
+minutes, which no group can hold: the plan fails naming it, and that
+scenario is made faster. A total that grows adds groups on its own.
+
+The estimates come from `xtask/e2e-durations.txt`, the median seconds of
+each scenario on GitHub's runner. A scenario the table lacks counts as 60
+seconds, and a table entry naming no scenario, such as a deleted one, is
+ignored. `cargo xtask e2e-durations <runs>` rewrites the table from the
+`e2e` jobs of the last `<runs>` completed runs of CI on `main`, read with
+`gh`: each scenario's duration in a job's log is the time between its
+`test <name> ... ok` or `FAILED` line and the line before it, since the
+scenarios run one at a time, and its figure is the median over every job
+that ran it. Refresh it when the scenarios' durations change, such as
+after making them faster.
+
+The plan reads the suite from the source, since the Linux job builds
+neither the registry crate nor the test binary: the test names in
+`crates/verbatim-e2e/tests/e2e.rs`, less the scenarios
+`crates/verbatim-e2e/src/registry.rs` places in the `Demo` or `Measure`
+group or marks `local_only`; a test outside the registry, the agent's
+session check, is in the suite. Each group then runs
+`cargo xtask e2e-group <index>/<count>`, which takes the scenarios from
+the test binary's own listing and the real registry, fails naming the
+difference when they are not the plan's, so a scenario is never dropped
+silently, and prints its share, one name a line, split as the plan split
+it: the longest first, each to the group with the least time so far, so
+the split depends only on the scenarios and the table. A unit test also
+checks the plan's reading of the registry against the registry itself.
+
+Each group uploads, for passing and failing runs alike:
+
+- `e2e-group-<group>`: the group's test output and the agent's standard
+  output and error logs, and nothing else.
+- `e2e-<scenario>`: for each scenario the group ran, its whole directory,
+  video included, so one scenario's run is downloaded alone; its
+  `summary.txt` says whether it passed. No artifact holds every scenario.
+  The step calls `@actions/artifact`, the library `actions/upload-artifact`
+  uses, from `actions/github-script`, since that action makes one artifact
+  per step.
+
+The scenario artifacts are stored uncompressed (compression level 0),
+since the videos are already compressed. A group of about 15 scenarios
+stays far below GitHub's limit of 500 artifacts a job.
+
+Started by hand, as `gh workflow run ci.yml -f scenario=<name> -f
+repeat=<n>`, the workflow runs only its `e2e` job, as one job rather than
+one per group and without the 10-minute limit, which runs that one
+scenario n times, each in its own test process, and uploads every run's copy from the history (below) as the
+`verbatim-e2e-history` artifact, so an intermittent failure on GitHub's
+runner can be measured without a push for each run. The job fails before
+any run when n is below 1 or the name does not list exactly one test,
+since a misspelt name runs nothing and passes.
 
 ## Demonstrations
 
@@ -804,7 +866,7 @@ so recording changes nothing about the run it records.
 A local run therefore needs ffmpeg on `PATH` to record
 (for example `winget install ffmpeg`, then a new terminal), or
 `VERBATIM_E2E_FFMPEG` naming it, or `VERBATIM_E2E_RECORD=0`. The CI `e2e` job installs ffmpeg and
-uploads the videos with the rest of each scenario's artifacts. For the VM,
+uploads every video in its scenario's artifact. For the VM,
 `cargo xtask vm deploy` copies ffmpeg into `C:\VerbatimLab\tools` over
 PowerShell Direct from the LFS-vendored `vm/vendor/ffmpeg` copy,
 hash-skipping after the first deploy just like Verbatim's own binaries

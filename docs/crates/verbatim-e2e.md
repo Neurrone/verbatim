@@ -38,12 +38,10 @@ this guide describes the code.
   the precondition check that the agent runs in an interactive session on
   the `Default` input desktop, is a plain ignored test outside the
   registry and fails the same way.
-- Local-only scenarios' names, and only theirs, start with one of
-  `LOCAL_ONLY_FILTERS` (`notepad_`, `settings_search_suggestions`, and
-  `settings_combo_box_expanded`); the tooling guide's "Local-only
-  scenarios" says why each is. A unit test checks that CI's `e2e` job
-  skips exactly these, and that no other scenario's name contains one. A
-  run with `SKIP_LOCAL_ONLY_ENV` (`VERBATIM_E2E_SKIP_LOCAL_ONLY`) set to `1`
+- A local-only scenario is marked by `ScenarioDef::local_only` alone; the
+  tooling guide's "Local-only scenarios" says why each is, and CI's
+  `e2e` job leaves them out of its groups (`cargo xtask e2e-plan` reads
+  the flag). A run with `SKIP_LOCAL_ONLY_ENV` (`VERBATIM_E2E_SKIP_LOCAL_ONLY`) set to `1`
   that runs one anyway fails. `skips` validates the variable: unset,
   empty, `0`, or `1`, anything else an error. Nothing detects the machine.
 - Demonstrations (the Demo group, `demo_` names) run only through
