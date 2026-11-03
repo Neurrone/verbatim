@@ -356,8 +356,8 @@ Different (Dickson, 2026-10-23):
   answer, where NVDA says "blank" for each key and drops the marker's
   change as probably typed (`windows_terminal_redrawn_list`,
   `conhost_redrawn_list`).
-- A pager moving a line on its alternate screen (`windows_terminal_pager`,
-  `conhost_pager`): Verbatim says the line the move brought onto the
+- A pager moving a line on its alternate screen
+  (`windows_terminal_pager_history`, `conhost_pager_history`): Verbatim says the line the move brought onto the
   screen alone, where NVDA says the prompt, ":", at the end of its wait
   and then that line.
 - For a key that leaves the caret where it was, Verbatim says the row

@@ -4,14 +4,13 @@
 //! (`docs/testing.md`). The shared setup is described in the `terminal`
 //! module.
 //!
-//! - `*_same_flood`: `same.ps1` prints "the same line" 2000 times. The
-//!   screen diff must count lines that read alike: heard as any flood, the
-//!   line 30 times, "skipped 1941 lines", the line 29 times and the prompt.
-//!   NVDA, captured live on 2026-10-09, speaks every line.
-//! - `*_raised_flood`: "Lines spoken in full" and "Last lines to speak"
-//!   raised to 200, above the 101 lines of `hundred.ps1`'s output and its
-//!   prompt, so every line is heard, as NVDA speaks every one.
-//! - `*_redraw_limit`: both limits lowered to 10. `screen.ps1` opens the
+//! - `*_same_flood`: `same.ps1` prints "the same line" 2000 times, with
+//!   both limits lowered to 10. The screen diff must count lines that read
+//!   alike: heard as any flood, the line 10 times, "skipped 1981 lines",
+//!   the line 9 times and the prompt. NVDA, captured live on 2026-10-09,
+//!   speaks every line.
+//! - `*_redraw_limit`: both limits lowered to 10, the setting reaching the
+//!   policy. `screen.ps1` opens the
 //!   alternate screen and draws its 30 rows in one write, "screen row 1" to
 //!   "screen row 30", and Q closes it and prints "closed". The redraw is a
 //!   burst larger than the limit: rows 1 to 10, "skipped 10 lines", rows 21
@@ -22,10 +21,8 @@
 
 use std::io;
 
-use verbatim_config::Settings;
-
 use super::terminal::{self, PROMPT};
-use super::terminal_flood::{FLOOD_STEP, burst_speech};
+use super::terminal_flood::{FLOOD_STEP, LOWERED, burst_speech};
 use crate::registry::ScenarioState;
 use crate::scenario::Scenario;
 
@@ -33,10 +30,6 @@ pub(crate) use super::no_teardown as teardown;
 
 /// Two thousand lines that read alike.
 const SAME_SCRIPT: &str = "for ($line = 1; $line -le 2000; $line++) { \"the same line\" }\r\n";
-
-/// A hundred numbered lines.
-const HUNDRED_SCRIPT: &str =
-    "for ($line = 1; $line -le 100; $line++) { \"output line $line\" }\r\n";
 
 /// The full-screen program: its screen drawn in one write, closed by Q.
 const SCREEN_SCRIPT: &str = "Add-Type -TypeDefinition @\"\r\n\
@@ -58,24 +51,6 @@ for ($n = 1; $n -lt $rows; $n++) { $screen += \"screen row $n`r`n\" }\r\n\
 while ([Console]::ReadKey($true).Key -ne 'Q') { }\r\n\
 [Console]::Write(\"$e[?1049l\")\r\n\
 'closed'\r\n";
-
-/// The lowered limit of the redraw scenarios.
-const LOWERED: u16 = 10;
-
-/// The raised limit of the raised-flood scenarios.
-const RAISED: u16 = 200;
-
-/// The raised-flood scenarios' settings: both limits 200.
-pub(crate) fn raised_limits(settings: &mut Settings) {
-    settings.reader.terminal_full_lines = RAISED;
-    settings.reader.terminal_last_lines = RAISED;
-}
-
-/// The redraw scenarios' settings: both limits 10.
-pub(crate) fn lowered_limits(settings: &mut Settings) {
-    settings.reader.terminal_full_lines = LOWERED;
-    settings.reader.terminal_last_lines = LOWERED;
-}
 
 /// The announcement as a terminal of this scenario takes the focus with
 /// nothing written yet, asserted with the first prompt.
@@ -112,41 +87,21 @@ fn same(_: u32) -> String {
 /// `windows_terminal_same_flood`.
 pub(crate) fn body_same_windows_terminal(scenario: &mut Scenario, state: &mut ScenarioState) {
     opened(scenario, state, true);
-    run_hearing(scenario, r".\same.ps1", &burst_speech(2000, same));
+    run_hearing(
+        scenario,
+        r".\same.ps1",
+        &burst_speech(2000, u32::from(LOWERED), same),
+    );
 }
 
 /// `conhost_same_flood`.
 pub(crate) fn body_same_console_host(scenario: &mut Scenario, state: &mut ScenarioState) {
     opened(scenario, state, false);
-    run_hearing(scenario, r".\same.ps1", &burst_speech(2000, same));
-}
-
-pub(crate) fn setup_raised_windows_terminal(scenario: &mut Scenario) -> io::Result<ScenarioState> {
-    terminal::open_windows_terminal(scenario, "raised-flood", &[("hundred.ps1", HUNDRED_SCRIPT)])
-}
-
-pub(crate) fn setup_raised_console_host(scenario: &mut Scenario) -> io::Result<ScenarioState> {
-    terminal::open_console_host(scenario, "raised-flood", &[("hundred.ps1", HUNDRED_SCRIPT)])
-}
-
-/// Every line of `hundred.ps1`, and the prompt.
-fn hundred() -> Vec<String> {
-    (1..=100)
-        .map(|n| format!("output line {n}"))
-        .chain(std::iter::once(PROMPT.to_owned()))
-        .collect()
-}
-
-/// `windows_terminal_raised_flood`.
-pub(crate) fn body_raised_windows_terminal(scenario: &mut Scenario, state: &mut ScenarioState) {
-    opened(scenario, state, true);
-    run_hearing(scenario, r".\hundred.ps1", &hundred());
-}
-
-/// `conhost_raised_flood`.
-pub(crate) fn body_raised_console_host(scenario: &mut Scenario, state: &mut ScenarioState) {
-    opened(scenario, state, false);
-    run_hearing(scenario, r".\hundred.ps1", &hundred());
+    run_hearing(
+        scenario,
+        r".\same.ps1",
+        &burst_speech(2000, u32::from(LOWERED), same),
+    );
 }
 
 pub(crate) fn setup_redraw_windows_terminal(scenario: &mut Scenario) -> io::Result<ScenarioState> {
@@ -205,15 +160,10 @@ mod tests {
     }
 
     #[test]
-    fn the_raised_limit_is_above_the_output() {
-        assert!(usize::from(RAISED) > hundred().len());
-    }
-
-    #[test]
     fn identical_lines_are_counted_as_any_flood() {
-        let speech = burst_speech(2000, same);
-        assert_eq!(speech.len(), 61);
-        assert_eq!(speech[30], "sound: skipped-lines skipped 1941 lines");
-        assert_eq!(speech[60], PROMPT);
+        let speech = burst_speech(2000, u32::from(LOWERED), same);
+        assert_eq!(speech.len(), 21);
+        assert_eq!(speech[10], "sound: skipped-lines skipped 1981 lines");
+        assert_eq!(speech[20], PROMPT);
     }
 }

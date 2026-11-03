@@ -85,7 +85,7 @@
 //! seconds, over 148 switches in 50 runs on 2026-10-11, while "flood line
 //! 1", the first line before, played for only 310 to 340 milliseconds, so
 //! about one run in 25 heard it in full before the switch landed. Forty
-//! such numbered words played for 16.1 seconds in a `conhost_wrapped_flood`
+//! such numbered words played for 16.1 seconds in a console host flood
 //! run, so sixteen play for about six seconds, four times the slowest
 //! switch seen and twenty times the usual one, and still fit on one row
 //! of the terminal's 120 columns. Once the second window is in front, the

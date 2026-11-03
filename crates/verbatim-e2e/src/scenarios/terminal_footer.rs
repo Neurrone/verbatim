@@ -13,12 +13,14 @@
 //! footer every twenty lines, until the scenario has heard the flood's
 //! first line and writes `footer-go`; then it writes the rest, to "flood
 //! line 12000", in one write, and redraws the footer as "status: done".
-//! The first thirty lines are heard whole, then "skipped more than 8971
-//! lines" (the history's 9,001 rows less the screen's 30, as
-//! `terminal_overflow` measured), then the screen as it is: lines 11972 to
-//! 12000 and the footer, "status: done", new since the anchor left the
-//! history. A read whose view moved used to be set aside when the footer
-//! was no longer on its row, and the view moves under nearly every read of
+//! Both limits are 15 ([`HALF`]), so that the write lands while the first
+//! group plays, as in `terminal_overflow`. The first fifteen lines are
+//! heard whole, then "skipped more than 8986 lines" (the history's 9,001
+//! rows less the 15 last lines, as `terminal_overflow` measured), then the
+//! newest of the screen as it is: lines 11987 to 12000 and the footer,
+//! "status: done", new since the anchor left the history. A read whose
+//! view moved used to be set aside when the footer was no longer on its
+//! row, and the view moves under nearly every read of
 //! such a flood, so it went unread until it ended. Another key removes the
 //! region, clears the screen and prints "footer gone".
 //!
@@ -31,6 +33,7 @@ use std::io;
 use std::time::Duration;
 
 use super::terminal::{self, PROMPT};
+use super::terminal_flood::HALF;
 use crate::registry::ScenarioState;
 use crate::scenario::Scenario;
 
@@ -117,9 +120,7 @@ pub(crate) fn body_overflow_console_host(scenario: &mut Scenario, state: &mut Sc
     scenario
         .write_agent_file(&go, b"")
         .expect("writes the go file");
-    let mut heard = flood_lines(2, 30);
-    heard.push("sound: skipped-lines skipped more than 8971 lines".to_owned());
-    heard.extend(flood_lines(11972, 12000));
+    let mut heard = overflow_rest();
     heard.push("status: done".to_owned());
     let heard: Vec<&str> = heard.iter().map(String::as_str).collect();
     scenario.speech().expect_within(&heard, FLOOD_STEP);
@@ -127,7 +128,38 @@ pub(crate) fn body_overflow_console_host(scenario: &mut Scenario, state: &mut Sc
     scenario.speech().expect(&["footer gone", PROMPT]);
 }
 
+/// The flood's lines from the second, the skip past the console host's
+/// 9,001 lines, and the last flood lines, with both limits at [`HALF`].
+fn overflow_rest() -> Vec<String> {
+    let group = u32::from(HALF);
+    let mut heard = flood_lines(2, group);
+    heard.push(format!(
+        "sound: skipped-lines skipped more than {} lines",
+        9_001 - group
+    ));
+    heard.extend(flood_lines(12_000 - group + 2, 12_000));
+    heard
+}
+
 /// `first` to `last` of the flood's lines.
 fn flood_lines(first: u32, last: u32) -> Vec<String> {
     (first..=last).map(|n| format!("flood line {n}")).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_overflow_keeps_fifteen_lines_each_side_of_the_skip() {
+        let heard = overflow_rest();
+        assert_eq!(heard.len(), 29);
+        assert_eq!(heard[13], "flood line 15");
+        assert_eq!(
+            heard[14],
+            "sound: skipped-lines skipped more than 8986 lines"
+        );
+        assert_eq!(heard[15], "flood line 11987");
+        assert_eq!(heard[28], "flood line 12000");
+    }
 }

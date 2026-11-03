@@ -2,6 +2,9 @@
 //! criteria; `docs/parity/terminals.md`, "The backlog"), as
 //! `windows_terminal_flood` in Windows Terminal and `conhost_flood` in the
 //! console host. The shared setup is described in the `terminal` module.
+//! These two keep the shipped limits, so the suite tests the defaults once;
+//! the other flood scenarios lower them ([`LOWERED`], [`HALF`]) to shorten
+//! what is heard.
 //!
 //! The flood policy: the first "Lines spoken in full" lines of a burst
 //! (30) are spoken whole; only once they have been spoken does Verbatim
@@ -9,18 +12,23 @@
 //! says "skipped N lines" for all but the newest "Last lines to speak"
 //! (30) and speaks those; it repeats that after each group until the
 //! output stops. The written script `flood.ps1` prints "flood line 1" to
-//! "flood line 2000" as fast as the shell can, which, all four floods
+//! "flood line 2000" as fast as the shell can, which, all three floods
 //! together, stays within the terminal's scrollback of 9,001 lines, so
 //! every line is counted, and ends long before thirty lines have been
 //! spoken, then writes how long that took, by its own stopwatch, to
-//! `flood-<run>.ms` in the run's folder. The prompt that follows is the
-//! burst's last line, and counts as a line of its output like any other:
-//! the burst is 2001 lines, and its last 30 are flood lines 1972 to 2000
-//! and the prompt. So a flood is heard exactly as: flood lines 1 to 30,
-//! "skipped 1941 lines" after the skipped-lines sound, then flood lines
-//! 1972 to 2000 and the prompt.
+//! `flood-<run>.ms` in the run's folder, the evidence that the script has
+//! finished. The prompt that follows is the burst's last line, and counts
+//! as a line of its output like any other: the burst is 2001 lines, and
+//! its last 30 are flood lines 1972 to 2000 and the prompt. So a flood is
+//! heard exactly as: flood lines 1 to 30, "skipped 1941 lines" after the
+//! skipped-lines sound, then flood lines 1972 to 2000 and the prompt.
 //!
-//! 1. The first flood, with no key pressed, asserted exactly as above.
+//! 1. The first flood, with no key pressed, asserted exactly as above. In
+//!    the console host, `long.ps1` first prints forty numbered words on
+//!    one line, which wraps onto three rows and is heard whole, so the
+//!    flood runs with a wrapped line on the screen: the screen's rows are
+//!    counted as rows, not as its lines, so no row the screen held is read
+//!    again as one that went by unread.
 //! 2. Responsiveness and output reporting off: the second flood's first
 //!    line is playing, and its next two queued behind it (output is handed
 //!    to speech two ahead of the line playing), when Verbatim+5 is sent;
@@ -30,33 +38,24 @@
 //!    typed command's echo is spoken. Verbatim+5 then says "report new
 //!    output on", and `echo back` is answered with exactly "back" and then
 //!    the prompt.
-//! 4. A fourth flood, with output reported, asserted as the first. The
-//!    ratio of its time to the third's, how much reporting the terminal's
-//!    output slows it down, is recorded in the run's artifacts as
-//!    `wall-time-ratio.txt`, for trends; it varies by machine, so it is not
-//!    asserted.
 //!
 //! `windows_terminal_full_history_flood` and `conhost_full_history_flood`
-//! flood a full history (`docs/design/terminal-model.md`, "A lost read"):
-//! with output reporting off, `fill.ps1` writes 9,100 lines, more than
-//! either terminal's history holds, and nothing is said; output
-//! reporting back on, `echo back` is answered with "back" and the prompt;
-//! then the first flood is heard as above but with the count taken from
-//! text, "skipped about 1941 lines", since the read after the first group
-//! finds the buffer moved further than it covers, reads the whole document
-//! and finds the last read's rows in it by their text.
-//!
-//! `conhost_wrapped_flood` floods the console host while a line that
-//! wrapped onto three rows is on its screen: `long.ps1` prints forty
-//! numbered words, heard whole, then the first flood is heard exactly as
-//! above. The screen's rows are counted as rows, not as its lines, so no
-//! row the screen held is read again as one that went by unread.
+//! flood a full history (`docs/design/terminal-model.md`, "A lost read"),
+//! with both limits lowered to 10: with output reporting off, `fill.ps1`
+//! writes 9,100 lines, more than either terminal's history holds, and
+//! nothing is said; output reporting back on, `echo back` is answered with
+//! "back" and the prompt; then the first flood is heard as above, but with
+//! ten lines each side of the skip and the count taken from text,
+//! "skipped about 1981 lines", since the read after the first group finds
+//! the buffer moved further than it covers, reads the whole document and
+//! finds the last read's rows in it by their text.
 
 use std::io;
 use std::time::Duration;
 
+use verbatim_config::Settings;
+
 use super::terminal::{self, PROMPT};
-use crate::artifacts;
 use crate::registry::ScenarioState;
 use crate::scenario::Scenario;
 use crate::speech::Ending;
@@ -67,8 +66,34 @@ pub(crate) use super::no_teardown as teardown;
 const LINES: u32 = 2_000;
 
 /// How many lines a burst speaks whole, and how many it speaks last: the
-/// e2e settings' "Lines spoken in full" and "Last lines to speak".
+/// shipped "Lines spoken in full" and "Last lines to speak", which the e2e
+/// settings keep.
 pub(crate) const GROUP: u32 = 30;
+
+/// Both limits lowered, for a flood scenario whose subject is not the
+/// limits' value: ten lines each side of a skip are heard in about a third
+/// of the time thirty take, and a flood of 2,000 or 5,000 lines is written
+/// long before ten lines have been spoken.
+pub(crate) const LOWERED: u16 = 10;
+
+/// Both limits at half their default, for a scenario whose output must land
+/// while a group plays, such as a 12,000-line write, which takes Windows
+/// Terminal about two seconds (`docs/performance.md`, "A terminal flood"),
+/// or that must hear a 30-row screen whole: 30 lines are not more than 15
+/// waiting behind a group of 15, so none is skipped.
+pub(crate) const HALF: u16 = 15;
+
+/// The settings of a scenario run at [`LOWERED`]: both limits 10.
+pub(crate) fn lowered_limits(settings: &mut Settings) {
+    settings.reader.terminal_full_lines = LOWERED;
+    settings.reader.terminal_last_lines = LOWERED;
+}
+
+/// The settings of a scenario run at [`HALF`]: both limits 15.
+pub(crate) fn half_limits(settings: &mut Settings) {
+    settings.reader.terminal_full_lines = HALF;
+    settings.reader.terminal_last_lines = HALF;
+}
 
 /// The flood script; its argument names the run's elapsed-time file, which
 /// is written under another name and renamed, so it never exists empty for
@@ -91,8 +116,16 @@ pub(crate) fn setup_windows_terminal(scenario: &mut Scenario) -> io::Result<Scen
     terminal::open_windows_terminal(scenario, "flood", &[("flood.ps1", SCRIPT)])
 }
 
+/// Forty numbered words on one line, which wraps onto three rows.
+const LONG_SCRIPT: &str = "$words = foreach ($i in 1..40) { \"word$i\" }\r\n\
+$words -join ' '\r\n";
+
 pub(crate) fn setup_console_host(scenario: &mut Scenario) -> io::Result<ScenarioState> {
-    terminal::open_console_host(scenario, "flood", &[("flood.ps1", SCRIPT)])
+    terminal::open_console_host(
+        scenario,
+        "flood",
+        &[("flood.ps1", SCRIPT), ("long.ps1", LONG_SCRIPT)],
+    )
 }
 
 /// 9,100 numbered lines as fast as the shell can, as the flood script
@@ -141,10 +174,10 @@ fn fill_history(scenario: &mut Scenario) {
 }
 
 /// Runs flood 1 into a full history and asserts exactly what it says: as
-/// any flood, with the count taken from text.
+/// any flood at the lowered limits, with the count taken from text.
 fn heard_full_history_flood(scenario: &mut Scenario) {
     terminal::type_with_echo(scenario, r".\flood.ps1 1", terminal::Echo::Shown);
-    let speech: Vec<String> = flood_speech()
+    let speech: Vec<String> = flood_speech(u32::from(LOWERED))
         .into_iter()
         .map(|said| {
             said.replace(
@@ -180,65 +213,34 @@ pub(crate) fn body_full_history_console_host(scenario: &mut Scenario, state: &mu
     heard_full_history_flood(scenario);
 }
 
-/// Forty numbered words on one line, which wraps onto three rows.
-const LONG_SCRIPT: &str = "$words = foreach ($i in 1..40) { \"word$i\" }\r\n\
-$words -join ' '\r\n";
-
-pub(crate) fn setup_wrapped_console_host(scenario: &mut Scenario) -> io::Result<ScenarioState> {
-    terminal::open_console_host(
-        scenario,
-        "wrapped-flood",
-        &[("flood.ps1", SCRIPT), ("long.ps1", LONG_SCRIPT)],
-    )
-}
-
-/// `conhost_wrapped_flood`.
-pub(crate) fn body_wrapped_console_host(scenario: &mut Scenario, state: &mut ScenarioState) {
-    let title = terminal::title(state).to_owned();
-    // The console host's text area has no name.
-    terminal::expect_prompt_read(
-        scenario,
-        state,
-        &[&format!("{title} window"), "terminal", "blank"],
-    );
-    terminal::type_with_echo(scenario, r".\long.ps1", terminal::Echo::Shown);
-    let long = (1..=40)
-        .map(|n| format!("word{n}"))
-        .collect::<Vec<_>>()
-        .join(" ");
-    scenario
-        .speech()
-        .expect_within(&[long.as_str(), PROMPT], FLOOD_STEP);
-    heard_flood(scenario, 1);
-}
-
 /// "flood line `line`".
 pub(crate) fn line(line: u32) -> String {
     format!("flood line {line}")
 }
 
-/// Exactly what a flood says: the first group, the skipped lines, and the
-/// last group, the burst's last [`GROUP`] lines, of which the prompt is
-/// the last: 29 flood lines and the prompt.
-pub(crate) fn flood_speech() -> Vec<String> {
-    burst_speech(LINES, line)
+/// Exactly what a flood says with both limits at `group`: the first
+/// group, the skipped lines, and the last group, the burst's last `group`
+/// lines, of which the prompt is the last.
+pub(crate) fn flood_speech(group: u32) -> Vec<String> {
+    burst_speech(LINES, group, line)
 }
 
 /// What a burst of `lines` lines named by `name`, and the prompt after
-/// them, says.
-pub(crate) fn burst_speech(lines: u32, name: fn(u32) -> String) -> Vec<String> {
+/// them, says with both limits at `group`.
+pub(crate) fn burst_speech(lines: u32, group: u32, name: fn(u32) -> String) -> Vec<String> {
     let total = lines + 1;
-    let mut speech: Vec<String> = (1..=GROUP).map(name).collect();
+    let mut speech: Vec<String> = (1..=group).map(name).collect();
     speech.push(format!(
         "sound: skipped-lines skipped {} lines",
-        total - 2 * GROUP
+        total - 2 * group
     ));
-    speech.extend((lines - GROUP + 2..=lines).map(name));
+    speech.extend((lines - group + 2..=lines).map(name));
     speech.push(PROMPT.to_owned());
     speech
 }
 
-/// Waits for the flood `run`'s elapsed-time file and returns its time.
+/// Waits for the flood `run`'s elapsed-time file, the evidence that its
+/// script has finished, and returns its time.
 fn elapsed(scenario: &mut Scenario, directory: &str, run: u32) -> Duration {
     let contents = scenario
         .wait_for_agent_file(&format!(r"{directory}\flood-{run}.ms"), FLOOD_STEP)
@@ -251,14 +253,15 @@ fn elapsed(scenario: &mut Scenario, directory: &str, run: u32) -> Duration {
     Duration::from_millis(millis)
 }
 
-/// Runs flood `run` with output reported and asserts exactly what it says.
+/// Runs flood `run` with output reported and asserts exactly what it says
+/// at the shipped limits.
 pub(crate) fn heard_flood(scenario: &mut Scenario, run: u32) {
     terminal::type_with_echo(
         scenario,
         &format!(r".\flood.ps1 {run}"),
         terminal::Echo::Shown,
     );
-    let speech = flood_speech();
+    let speech = flood_speech(GROUP);
     let speech: Vec<&str> = speech.iter().map(String::as_str).collect();
     scenario.speech().expect_within(&speech, FLOOD_STEP);
 }
@@ -322,11 +325,11 @@ fn output_off_during_flood(scenario: &mut Scenario, directory: &str) {
 }
 
 /// Step 3: the third flood, silent, then output reporting back on.
-fn silent_flood(scenario: &mut Scenario, directory: &str) -> Duration {
+fn silent_flood(scenario: &mut Scenario, directory: &str) {
     terminal::type_hearing(scenario, r".\flood.ps1 3", terminal::Echo::Shown);
     let watch = watch_for_prompt(scenario);
     scenario.send_keys(&["enter"]).expect("presses enter");
-    let unreported = elapsed(scenario, directory, 3);
+    let _ = elapsed(scenario, directory, 3);
     wait_for_prompt(watch);
     scenario.expect_nothing_more();
     scenario
@@ -335,7 +338,6 @@ fn silent_flood(scenario: &mut Scenario, directory: &str) -> Duration {
     scenario.speech().expect(&[OUTPUT_ON]);
     terminal::type_with_echo(scenario, "echo back", terminal::Echo::Shown);
     scenario.speech().expect(&["back", PROMPT]);
-    unreported
 }
 
 /// `windows_terminal_flood`.
@@ -348,10 +350,7 @@ pub(crate) fn body_windows_terminal(scenario: &mut Scenario, state: &mut Scenari
     heard_flood(scenario, 1);
     let _ = elapsed(scenario, &directory, 1);
     output_off_during_flood(scenario, &directory);
-    let unreported = silent_flood(scenario, &directory);
-    heard_flood(scenario, 4);
-    let reported = elapsed(scenario, &directory, 4);
-    record_ratio("windows_terminal_flood", reported, unreported);
+    silent_flood(scenario, &directory);
 }
 
 /// `conhost_flood`.
@@ -367,29 +366,19 @@ pub(crate) fn body_console_host(scenario: &mut Scenario, state: &mut ScenarioSta
         state,
         &[&format!("{title} window"), "terminal", "blank"],
     );
+    // The wrapped line stays on the screen as the first flood starts.
+    terminal::type_with_echo(scenario, r".\long.ps1", terminal::Echo::Shown);
+    let long = (1..=40)
+        .map(|n| format!("word{n}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    scenario
+        .speech()
+        .expect_within(&[long.as_str(), PROMPT], FLOOD_STEP);
     heard_flood(scenario, 1);
     let _ = elapsed(scenario, &directory, 1);
     output_off_during_flood(scenario, &directory);
-    let unreported = silent_flood(scenario, &directory);
-    heard_flood(scenario, 4);
-    let reported = elapsed(scenario, &directory, 4);
-    record_ratio("conhost_flood", reported, unreported);
-}
-
-/// Records, in the artifacts of the scenario `name`, how much reporting
-/// the terminal's output slowed the flood down.
-fn record_ratio(name: &str, reported: Duration, unreported: Duration) {
-    let ratio = reported.as_secs_f64() / unreported.as_secs_f64().max(0.001);
-    let report = format!(
-        "flood with output reported: {} ms\nflood with output not reported: {} ms\nwall-time ratio: {ratio:.2}\n",
-        reported.as_millis(),
-        unreported.as_millis()
-    );
-    print!("{report}");
-    let dir = artifacts::scenario_dir(&artifacts::artifacts_root(), name);
-    std::fs::create_dir_all(&dir)
-        .and_then(|()| std::fs::write(dir.join("wall-time-ratio.txt"), &report))
-        .expect("saves the wall-time ratio with the run's artifacts");
+    silent_flood(scenario, &directory);
 }
 
 #[cfg(test)]
@@ -398,7 +387,7 @@ mod tests {
 
     #[test]
     fn a_flood_speaks_its_first_and_last_groups_around_one_skip() {
-        let speech = flood_speech();
+        let speech = flood_speech(GROUP);
         assert_eq!(speech.len(), 2 * GROUP as usize + 1);
         assert_eq!(speech[0], "flood line 1");
         assert_eq!(speech[29], "flood line 30");
@@ -406,6 +395,16 @@ mod tests {
         assert_eq!(speech[31], "flood line 1972");
         assert_eq!(speech[59], "flood line 2000");
         assert_eq!(speech[60], "ready>");
+    }
+
+    #[test]
+    fn a_flood_at_the_lowered_limits_keeps_ten_lines_each_side() {
+        let speech = flood_speech(u32::from(LOWERED));
+        assert_eq!(speech.len(), 21);
+        assert_eq!(speech[9], "flood line 10");
+        assert_eq!(speech[10], "sound: skipped-lines skipped 1981 lines");
+        assert_eq!(speech[11], "flood line 1992");
+        assert_eq!(speech[20], "ready>");
     }
 
     #[test]

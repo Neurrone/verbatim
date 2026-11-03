@@ -1685,11 +1685,9 @@ The outpost reads whenever the text changed, coalesced with no fixed delay
 read's time, calls and size at debug level; reads and bytes per scenario
 are under "A terminal's reads, live". Core asks for new output as it hands
 a group's last line to speech, so "skipped" starts within 1 ms of that
-line ending in both terminals. The flood scenarios' wall-time ratio
-compares output reported against output off, and the outpost reads either
-way, so it does not measure the reads' cost; a starved machine distorts
-it (twelve busy threads made the flood 75 to 99 seconds in Windows
-Terminal with no screen reader). Core's flood policy keeps a lost read's
+line ending in both terminals. A starved machine slows a flood far more
+than reading it does: twelve busy threads made the flood 75 to 99 seconds
+in Windows Terminal with no screen reader. Core's flood policy keeps a lost read's
 kind on each waiting line, so handing a line on walks nothing; a lost
 read counting none walks the queue once.
 

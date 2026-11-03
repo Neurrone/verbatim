@@ -100,16 +100,11 @@ scenario_tests! {
     conhost_up_typing
     windows_terminal_same_flood
     conhost_same_flood
-    windows_terminal_raised_flood
-    conhost_raised_flood
     windows_terminal_redraw_limit
     conhost_redraw_limit
     windows_terminal_leave_flood
     conhost_leave_flood
     windows_terminal_close_tab
-    conhost_wrapped_flood
-    windows_terminal_history_flood
-    conhost_history_flood
     windows_terminal_history_flood_during_group
     conhost_history_flood_during_group
     windows_terminal_clear_flood
@@ -137,8 +132,6 @@ scenario_tests! {
     conhost_marker_list
     windows_terminal_redrawn_list
     conhost_redrawn_list
-    windows_terminal_pager
-    conhost_pager
     windows_terminal_pager_history
     conhost_pager_history
     windows_terminal_review_output

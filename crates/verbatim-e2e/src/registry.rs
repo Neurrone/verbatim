@@ -1000,7 +1000,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     ScenarioDef {
         name: "windows_terminal_full_history_flood",
         group: Group::Text,
-        settings: None,
+        settings: Some(terminal_flood::lowered_limits),
         local_only: false,
         document: None,
         comparable: Comparable::No(
@@ -1013,7 +1013,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     ScenarioDef {
         name: "conhost_full_history_flood",
         group: Group::Text,
-        settings: None,
+        settings: Some(terminal_flood::lowered_limits),
         local_only: false,
         document: None,
         comparable: Comparable::No(
@@ -1037,7 +1037,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     ScenarioDef {
         name: "windows_terminal_control_flood",
         group: Group::Text,
-        settings: None,
+        settings: Some(terminal_flood::lowered_limits),
         local_only: false,
         document: None,
         comparable: Comparable::No(
@@ -1050,7 +1050,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     ScenarioDef {
         name: "conhost_control_flood",
         group: Group::Text,
-        settings: None,
+        settings: Some(terminal_flood::lowered_limits),
         local_only: false,
         document: None,
         comparable: Comparable::No(
@@ -1129,7 +1129,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     ScenarioDef {
         name: "windows_terminal_same_flood",
         group: Group::Text,
-        settings: None,
+        settings: Some(terminal_flood::lowered_limits),
         local_only: false,
         document: None,
         comparable: Comparable::Yes,
@@ -1140,7 +1140,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     ScenarioDef {
         name: "conhost_same_flood",
         group: Group::Text,
-        settings: None,
+        settings: Some(terminal_flood::lowered_limits),
         local_only: false,
         document: None,
         comparable: Comparable::Yes,
@@ -1149,31 +1149,9 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         teardown: terminal_flood_kinds::teardown,
     },
     ScenarioDef {
-        name: "windows_terminal_raised_flood",
-        group: Group::Text,
-        settings: Some(terminal_flood_kinds::raised_limits),
-        local_only: false,
-        document: None,
-        comparable: Comparable::Yes,
-        setup: terminal_flood_kinds::setup_raised_windows_terminal,
-        body: terminal_flood_kinds::body_raised_windows_terminal,
-        teardown: terminal_flood_kinds::teardown,
-    },
-    ScenarioDef {
-        name: "conhost_raised_flood",
-        group: Group::Text,
-        settings: Some(terminal_flood_kinds::raised_limits),
-        local_only: false,
-        document: None,
-        comparable: Comparable::Yes,
-        setup: terminal_flood_kinds::setup_raised_console_host,
-        body: terminal_flood_kinds::body_raised_console_host,
-        teardown: terminal_flood_kinds::teardown,
-    },
-    ScenarioDef {
         name: "windows_terminal_redraw_limit",
         group: Group::Text,
-        settings: Some(terminal_flood_kinds::lowered_limits),
+        settings: Some(terminal_flood::lowered_limits),
         local_only: false,
         document: None,
         comparable: Comparable::Yes,
@@ -1184,7 +1162,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     ScenarioDef {
         name: "conhost_redraw_limit",
         group: Group::Text,
-        settings: Some(terminal_flood_kinds::lowered_limits),
+        settings: Some(terminal_flood::lowered_limits),
         local_only: false,
         document: None,
         comparable: Comparable::Yes,
@@ -1226,42 +1204,9 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         teardown: terminal_windows::teardown,
     },
     ScenarioDef {
-        name: "conhost_wrapped_flood",
-        group: Group::Text,
-        settings: None,
-        local_only: false,
-        document: None,
-        comparable: Comparable::Yes,
-        setup: terminal_flood::setup_wrapped_console_host,
-        body: terminal_flood::body_wrapped_console_host,
-        teardown: terminal_flood::teardown,
-    },
-    ScenarioDef {
-        name: "windows_terminal_history_flood",
-        group: Group::Text,
-        settings: None,
-        local_only: false,
-        document: None,
-        comparable: Comparable::Yes,
-        setup: terminal_overflow::setup_windows_terminal,
-        body: terminal_overflow::body_history_windows_terminal,
-        teardown: terminal_overflow::teardown,
-    },
-    ScenarioDef {
-        name: "conhost_history_flood",
-        group: Group::Text,
-        settings: None,
-        local_only: false,
-        document: None,
-        comparable: Comparable::Yes,
-        setup: terminal_overflow::setup_console_host,
-        body: terminal_overflow::body_history_console_host,
-        teardown: terminal_overflow::teardown,
-    },
-    ScenarioDef {
         name: "windows_terminal_history_flood_during_group",
         group: Group::Text,
-        settings: None,
+        settings: Some(terminal_flood::half_limits),
         local_only: false,
         document: None,
         comparable: Comparable::No(
@@ -1274,7 +1219,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     ScenarioDef {
         name: "conhost_history_flood_during_group",
         group: Group::Text,
-        settings: None,
+        settings: Some(terminal_flood::half_limits),
         local_only: false,
         document: None,
         comparable: Comparable::No(
@@ -1287,7 +1232,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     ScenarioDef {
         name: "windows_terminal_clear_flood",
         group: Group::Text,
-        settings: None,
+        settings: Some(terminal_flood::lowered_limits),
         local_only: false,
         document: None,
         comparable: Comparable::Yes,
@@ -1298,7 +1243,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     ScenarioDef {
         name: "windows_terminal_cleared_flood",
         group: Group::Text,
-        settings: None,
+        settings: Some(terminal_flood::lowered_limits),
         local_only: false,
         document: None,
         comparable: Comparable::Yes,
@@ -1309,7 +1254,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     ScenarioDef {
         name: "conhost_fresh_flood",
         group: Group::Text,
-        settings: None,
+        settings: Some(terminal_flood::lowered_limits),
         local_only: false,
         document: None,
         comparable: Comparable::Yes,
@@ -1320,7 +1265,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     ScenarioDef {
         name: "windows_terminal_scrollback_overflow",
         group: Group::Text,
-        settings: None,
+        settings: Some(terminal_flood::half_limits),
         local_only: false,
         document: None,
         comparable: Comparable::Yes,
@@ -1331,7 +1276,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     ScenarioDef {
         name: "conhost_scrollback_overflow",
         group: Group::Text,
-        settings: None,
+        settings: Some(terminal_flood::half_limits),
         local_only: false,
         document: None,
         comparable: Comparable::Yes,
@@ -1342,7 +1287,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     ScenarioDef {
         name: "windows_terminal_scrollback_overflow_during_group",
         group: Group::Text,
-        settings: None,
+        settings: Some(terminal_flood::half_limits),
         local_only: false,
         document: None,
         comparable: Comparable::No(
@@ -1355,7 +1300,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     ScenarioDef {
         name: "conhost_scrollback_overflow_during_group",
         group: Group::Text,
-        settings: None,
+        settings: Some(terminal_flood::half_limits),
         local_only: false,
         document: None,
         comparable: Comparable::No(
@@ -1564,31 +1509,9 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         teardown: terminal_lists::teardown,
     },
     ScenarioDef {
-        name: "windows_terminal_pager",
-        group: Group::Text,
-        settings: None,
-        local_only: false,
-        document: None,
-        comparable: Comparable::Yes,
-        setup: terminal_pager::setup_windows_terminal,
-        body: terminal_pager::body_windows_terminal,
-        teardown: terminal_pager::teardown,
-    },
-    ScenarioDef {
-        name: "conhost_pager",
-        group: Group::Text,
-        settings: None,
-        local_only: false,
-        document: None,
-        comparable: Comparable::Yes,
-        setup: terminal_pager::setup_console_host,
-        body: terminal_pager::body_console_host,
-        teardown: terminal_pager::teardown,
-    },
-    ScenarioDef {
         name: "windows_terminal_pager_history",
         group: Group::Text,
-        settings: None,
+        settings: Some(terminal_flood::half_limits),
         local_only: false,
         document: None,
         comparable: Comparable::Yes,
@@ -1599,7 +1522,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     ScenarioDef {
         name: "conhost_pager_history",
         group: Group::Text,
-        settings: None,
+        settings: Some(terminal_flood::half_limits),
         local_only: false,
         document: None,
         comparable: Comparable::Yes,
@@ -1632,7 +1555,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     ScenarioDef {
         name: "conhost_footer_overflow",
         group: Group::Text,
-        settings: None,
+        settings: Some(terminal_flood::half_limits),
         local_only: false,
         document: None,
         comparable: Comparable::Yes,
@@ -1665,7 +1588,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     ScenarioDef {
         name: "windows_terminal_command_marks",
         group: Group::Text,
-        settings: None,
+        settings: Some(terminal_flood::lowered_limits),
         local_only: false,
         document: None,
         comparable: Comparable::Yes,
@@ -1676,7 +1599,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     ScenarioDef {
         name: "conhost_command_marks",
         group: Group::Text,
-        settings: None,
+        settings: Some(terminal_flood::lowered_limits),
         local_only: false,
         document: None,
         comparable: Comparable::Yes,

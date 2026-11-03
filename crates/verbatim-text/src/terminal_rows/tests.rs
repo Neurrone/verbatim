@@ -549,7 +549,7 @@ fn a_history_erase_keeps_the_screens_rows() {
 
 #[test]
 fn a_pagers_first_page_is_a_new_screen_and_closing_it_speaks_the_shell() {
-    // `conhost_pager`'s shape: the pager's first page keeps no row of the
+    // `conhost_pager_history`'s pager's shape: the pager's first page keeps no row of the
     // shell's screen, so it is a new screen; its second page keeps its
     // caret's line, the status row, where it was, so that row counts as
     // rewritten and the page is no new screen; and the main screen back

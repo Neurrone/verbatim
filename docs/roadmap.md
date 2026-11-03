@@ -1087,8 +1087,8 @@ each of them end to end.
   without which Verbatim cannot read the secure desktop (Dickson,
   2026-10-12).
 - An elevated console window is named "Administrator: <title>" or just
-  "<title>" depending on when it is first read (`conhost_raised_flood` on
-  GitHub's elevated runner). Capture what NVDA says for
+  "<title>" depending on when it is first read (seen in a console host
+  flood scenario on GitHub's elevated runner). Capture what NVDA says for
   an elevated console window, which needs an elevation prompt Dickson
   approves, then make Verbatim read one name consistently.
 

@@ -1,7 +1,7 @@
-//! A pager scrolling a line at a time on the alternate screen, as
-//! `windows_terminal_pager` and `conhost_pager`, each its own code
-//! (`docs/testing.md`). The shared setup is described in the `terminal`
-//! module.
+//! A pager scrolling a line at a time on the alternate screen over a shell
+//! screen with history, as `windows_terminal_pager_history` and
+//! `conhost_pager_history`, each its own code (`docs/testing.md`). The
+//! shared setup is described in the `terminal` module.
 //!
 //! `pager.ps1` draws as a pager does: it opens the alternate screen, fills
 //! it with "page line 1" to "page line 29" and its prompt, ":", on the last
@@ -17,10 +17,12 @@
 //! screen when a pager closes (`docs/design/terminal-model.md`, "Screens",
 //! Dickson, 2026-10-24).
 //!
-//! `windows_terminal_pager_history` and `conhost_pager_history` run the
-//! same pager after `lines.ps1` has printed 100 lines, "history line 1" to
-//! "history line 100", heard through the flood policy as lines 1 to 30,
-//! "skipped 41 lines", lines 72 to 100 and the prompt. The pager's own
+//! The pager runs after `lines.ps1` has printed 100 lines, "history line 1"
+//! to "history line 100", heard through the flood policy with both limits
+//! at 15 ([`HALF`]) as lines 1 to 15, "skipped 71 lines", lines 87 to 100
+//! and the prompt. The limits are 15, not lower, so that the page and the
+//! restored screen, 30 lines each, are still heard whole: 15 lines waiting
+//! behind a group of 15 are not more than the limit. The pager's own
 //! reads keep its rows, so the shell's screen stays aside while it runs;
 //! closing it finds that screen back at its places, a new screen, so only
 //! its visible rows are spoken, the newest 27 history lines, the command,
@@ -42,6 +44,7 @@ use std::io;
 use std::time::Duration;
 
 use super::terminal::{self, PROMPT};
+use super::terminal_flood::HALF;
 use crate::registry::ScenarioState;
 use crate::scenario::Scenario;
 
@@ -88,14 +91,6 @@ while ($true) {\r\n\
 /// 100 numbered lines, as output before the pager.
 const LINES_SCRIPT: &str = "foreach ($n in 1..100) { \"history line $n\" }\r\n";
 
-pub(crate) fn setup_windows_terminal(scenario: &mut Scenario) -> io::Result<ScenarioState> {
-    terminal::open_windows_terminal(scenario, "pager", &[("pager.ps1", PAGER_SCRIPT)])
-}
-
-pub(crate) fn setup_console_host(scenario: &mut Scenario) -> io::Result<ScenarioState> {
-    terminal::open_console_host(scenario, "pager", &[("pager.ps1", PAGER_SCRIPT)])
-}
-
 pub(crate) fn setup_history_windows_terminal(scenario: &mut Scenario) -> io::Result<ScenarioState> {
     terminal::open_windows_terminal(
         scenario,
@@ -119,13 +114,24 @@ fn history(first: u32, last: u32) -> Vec<String> {
         .collect()
 }
 
+/// The 100 history lines and the prompt through the flood policy, both
+/// limits at [`HALF`].
+fn history_heard() -> Vec<String> {
+    let group = u32::from(HALF);
+    let mut heard = history(1, group);
+    heard.push(format!(
+        "sound: skipped-lines skipped {} lines",
+        101 - 2 * group
+    ));
+    heard.extend(history(100 - group + 2, 100));
+    heard.push(PROMPT.to_owned());
+    heard
+}
+
 /// Prints the 100 history lines and hears them through the flood policy.
 fn history_steps(scenario: &mut Scenario) {
     terminal::type_with_echo(scenario, r".\lines.ps1", terminal::Echo::Shown);
-    let mut heard = history(1, 30);
-    heard.push("sound: skipped-lines skipped 41 lines".to_owned());
-    heard.extend(history(72, 100));
-    heard.push(PROMPT.to_owned());
+    let heard = history_heard();
     let heard: Vec<&str> = heard.iter().map(String::as_str).collect();
     scenario.speech().expect_within(&heard, PAGE_SPEECH);
 }
@@ -185,29 +191,17 @@ pub(crate) fn body_history_console_host(scenario: &mut Scenario, state: &mut Sce
     closed_over_history(scenario);
 }
 
-/// Opens the pager, hears its page, moves down a line and back up, and
-/// closes it.
-fn pager_steps(scenario: &mut Scenario) {
-    pager_until_closed(scenario);
-    scenario
-        .speech()
-        .expect(&[r"ready> .\pager.ps1", "closed", PROMPT]);
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-/// `windows_terminal_pager`.
-pub(crate) fn body_windows_terminal(scenario: &mut Scenario, state: &mut ScenarioState) {
-    terminal::expect_windows_terminal_prompt_read(scenario, state, terminal::LAUNCH_REPEATS);
-    pager_steps(scenario);
-}
-
-/// `conhost_pager`.
-pub(crate) fn body_console_host(scenario: &mut Scenario, state: &mut ScenarioState) {
-    let title = terminal::title(state).to_owned();
-    // The console host's text area has no name.
-    terminal::expect_prompt_read(
-        scenario,
-        state,
-        &[&format!("{title} window"), "terminal", "blank"],
-    );
-    pager_steps(scenario);
+    #[test]
+    fn the_history_keeps_fifteen_lines_each_side_of_the_skip() {
+        let heard = history_heard();
+        assert_eq!(heard.len(), 31);
+        assert_eq!(heard[14], "history line 15");
+        assert_eq!(heard[15], "sound: skipped-lines skipped 71 lines");
+        assert_eq!(heard[16], "history line 87");
+        assert_eq!(heard[30], PROMPT);
+    }
 }

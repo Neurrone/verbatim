@@ -720,32 +720,42 @@ Each exists in both terminals unless named for one.
 - Lists and pagers (`scenarios/terminal_lists.rs`,
   `scenarios/terminal_pager.rs`): a selection list whose marker moves with
   the caret, or is redrawn whole on each move, each move said once; a
-  pager on the alternate screen moved down a line and back, each move
-  saying only the line it brought on.
+  pager on the alternate screen over a shell screen with history, moved
+  down a line and back, each move saying only the line it brought on, and
+  closed, the shell's screen spoken again (`*_pager_history`).
 - Keys during output (`scenarios/terminal_key_timing.rs`): Control cuts
   off everything still queued once the flood's last line is queued, and
   lines written after it are spoken (`*_control_flood`); Shift twice
-  pauses and resumes with nothing lost (`*_shift_flood`); Up Arrow during
+  pauses and resumes a short output with nothing lost (`*_shift_flood`); Up Arrow during
   a flood's speech cuts it and says the recalled line (`*_line_key_flood`);
   Up Arrow with a character typed at once says the recalled line with the
   character, once (`*_up_typing`).
-- Floods: `_flood`, 2,000 lines heard as lines 1 to 30, "skipped 1941
-  lines" after the skipped-lines sound, and lines 1,972 to 2,000 with the
-  prompt, with the ratio of its time to an unreported flood's saved as
-  `wall-time-ratio.txt`, never asserted; `scenarios/terminal_flood_kinds.rs`
-  for identical lines (`*_same_flood`), raised limits (`*_raised_flood`)
-  and a full-screen redraw past lowered limits (`*_redraw_limit`). The
-  acceptance floods (`scenarios/terminal_overflow.rs`, `_history_flood`
-  and `_scrollback_overflow`) print 30 lines, wait for a file, then write
-  5,000 or 12,000 lines in one write, within the history or past it,
-  heard as their first 30, one exact "skipped 4941 lines" or "skipped
-  more than N lines", and the last 30, N being the terminal's history less
-  the 30 spoken (9,001 in Windows Terminal, 8,971 in the console host);
-  their `_during_group` twins write the second part while the first 30
-  still play, so it joins their burst. Further flood variants
-  (`*_full_history_flood`, `conhost_wrapped_flood`, `conhost_fresh_flood`,
-  `windows_terminal_clear_flood`, `windows_terminal_cleared_flood`) are
-  documented in their modules. Outpost logs are collected in
+- Floods: `_flood`, at the shipped limits, the suite's one check of
+  them, 2,000 lines heard as lines 1 to 30, "skipped 1941 lines" after the
+  skipped-lines sound, and lines 1,972 to 2,000 with the prompt, then a
+  flood cut off by Verbatim+5 and one with output reporting off; in the
+  console host the first flood runs with a wrapped line on the screen.
+  Every other flood scenario lowers both limits through
+  `ScenarioDef::settings`, since what is heard takes time set by the
+  limits, not by the flood's size: to 10 (`terminal_flood::LOWERED`), or
+  to 15 (`terminal_flood::HALF`) where a large write must land while a
+  group plays or a 30-row screen must be heard whole; scripts that print
+  a group's worth of lines are written with the group's size, and every
+  count is computed from the same constants.
+  `scenarios/terminal_flood_kinds.rs` covers identical lines
+  (`*_same_flood`) and a full-screen redraw past lowered limits
+  (`*_redraw_limit`). The acceptance floods
+  (`scenarios/terminal_overflow.rs`, `_scrollback_overflow`) print a
+  group's worth of lines, wait for a file, then write 12,000 lines, past
+  the history, heard as their first 15, "skipped more than N lines", and
+  the last 15, N being the lines the terminal's buffer holds less the 15
+  last lines (9,016 in Windows Terminal, 8,986 in the console host); their
+  `_during_group` twins, and `_history_flood_during_group` with 5,000
+  lines within the history, write the second part while the first group
+  still plays, so it joins their burst. Further flood variants
+  (`*_full_history_flood`, `conhost_fresh_flood`,
+  `windows_terminal_clear_flood`, `windows_terminal_cleared_flood`,
+  `conhost_footer_overflow`) are documented in their modules. Outpost logs are collected in
   chunks, since a flood's debug log can be larger than one read of the
   agent's.
 - Windows and tabs (`scenarios/terminal_windows.rs`): `_two_windows`

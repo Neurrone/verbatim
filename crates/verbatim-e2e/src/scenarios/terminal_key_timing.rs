@@ -5,7 +5,9 @@
 //! described in the `terminal` module.
 //!
 //! - `*_control_flood`: Control while a flood is being spoken, as in NVDA
-//!   (`docs/parity/terminals.md`, "New terminal output"). `gated.ps1` writes "flood
+//!   (`docs/parity/terminals.md`, "New terminal output"), with both limits
+//!   lowered to 10, so the flood's last line is queued sooner; what Control
+//!   cuts off does not depend on them. `gated.ps1` writes "flood
 //!   line 1" to "flood line 100" and waits for the file `more` before it
 //!   writes lines 101 to 103. Which bursts Verbatim reads the hundred
 //!   lines in depends on timing, so their speech is not asserted line by
@@ -17,11 +19,13 @@
 //!   and then the rest, "flood line 100" always among them, cut off; and
 //!   nothing more is said. Once `more` is written, the output read after
 //!   Control is spoken: lines 101 to 103 and the prompt, exactly.
-//! - `*_shift_flood`: Shift while a flood's first line plays pauses
-//!   speech, and Shift again resumes it: each waits for Verbatim to report
-//!   speech paused, then resumed, and asserts it. Nothing is cut off or
-//!   lost: the first line and the two queued behind it are heard in full,
-//!   and the flood then as usual.
+//! - `*_shift_flood`: Shift while the first line of `short.ps1`'s output
+//!   plays pauses speech, and Shift again resumes it: each waits for
+//!   Verbatim to report speech paused, then resumed, and asserts it.
+//!   Pausing acts on speech, not on the output's size, so the script
+//!   prints only "flood line 1" to "flood line 10", within the limits.
+//!   Nothing is cut off or lost: the first line and the two queued behind
+//!   it are heard in full, then the rest and the prompt.
 //! - `*_line_key_flood`: Up Arrow while a flood's first line plays, once
 //!   the flood has ended and the shell shows its prompt (Core receives the
 //!   caret on it). `long.ps1` prints 200 lines of twenty words, so the
@@ -41,7 +45,7 @@
 use std::io;
 
 use super::terminal::{self, PROMPT};
-use super::terminal_flood::{FLOOD_STEP, flood_speech, line, wait_for_prompt, watch_for_prompt};
+use super::terminal_flood::{FLOOD_STEP, line, wait_for_prompt, watch_for_prompt};
 use crate::registry::ScenarioState;
 use crate::scenario::Scenario;
 use crate::speech::Ending;
@@ -64,6 +68,13 @@ function Mark([string]$Name) { [IO.File]::WriteAllText(\"$PSScriptRoot\\$Name\",
 const GATED_SCRIPT: &str = "for ($line = 1; $line -le 100; $line++) { \"flood line $line\" }\r\n\
 Wait-For more\r\n\
 for ($line = 101; $line -le 103; $line++) { \"flood line $line\" }\r\n";
+
+/// Ten numbered lines, fewer than "Lines spoken in full", so every one is
+/// heard.
+const SHORT_SCRIPT: &str = "for ($line = 1; $line -le 10; $line++) { \"flood line $line\" }\r\n";
+
+/// How many lines [`SHORT_SCRIPT`] prints.
+const SHORT_LINES: u32 = 10;
 
 /// Two hundred lines of twenty words.
 const LONG_SCRIPT: &str = "for ($line = 1; $line -le 200; $line++) { \"flood line $line one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen\" }\r\n";
@@ -173,7 +184,7 @@ pub(crate) fn setup_shift_windows_terminal(scenario: &mut Scenario) -> io::Resul
     terminal::open_windows_terminal(
         scenario,
         "shift-flood",
-        &[("flood.ps1", super::terminal_flood::SCRIPT)],
+        &[("short.ps1", SHORT_SCRIPT)],
     )
 }
 
@@ -181,14 +192,14 @@ pub(crate) fn setup_shift_console_host(scenario: &mut Scenario) -> io::Result<Sc
     terminal::open_console_host(
         scenario,
         "shift-flood",
-        &[("flood.ps1", super::terminal_flood::SCRIPT)],
+        &[("short.ps1", SHORT_SCRIPT)],
     )
 }
 
-/// Shift twice while the flood's first line plays: paused and resumed,
+/// Shift twice while the output's first line plays: paused and resumed,
 /// nothing lost.
 fn shift_steps(scenario: &mut Scenario) {
-    terminal::type_with_echo(scenario, r".\flood.ps1 1", terminal::Echo::Shown);
+    terminal::type_with_echo(scenario, r".\short.ps1", terminal::Echo::Shown);
     let first = scenario.speech().expect_started(&line(1));
     let queued = scenario.speech().expect_queued(&[&line(2), &line(3)]);
     scenario
@@ -203,8 +214,11 @@ fn shift_steps(scenario: &mut Scenario) {
     for heard in &queued {
         scenario.speech().expect_ended(heard, Ending::Completed);
     }
-    let speech = flood_speech();
-    let rest: Vec<&str> = speech[3..].iter().map(String::as_str).collect();
+    let rest: Vec<String> = (4..=SHORT_LINES)
+        .map(line)
+        .chain(std::iter::once(PROMPT.to_owned()))
+        .collect();
+    let rest: Vec<&str> = rest.iter().map(String::as_str).collect();
     scenario.speech().expect_within(&rest, FLOOD_STEP);
 }
 
@@ -302,6 +316,11 @@ pub(crate) fn body_up_typing_console_host(scenario: &mut Scenario, state: &mut S
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_short_script_prints_its_lines() {
+        assert!(SHORT_SCRIPT.contains(&format!("-le {SHORT_LINES};")));
+    }
 
     #[test]
     fn a_long_line_is_what_the_script_prints() {

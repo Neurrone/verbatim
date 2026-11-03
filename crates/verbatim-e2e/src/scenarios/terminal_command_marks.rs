@@ -6,7 +6,8 @@
 //!
 //! Four commands are entered: `echo one` twice, the written script
 //! `long.ps1`, which prints "long line 1" to "long line 100", more than
-//! three screens, heard through the flood policy, and `echo three`. Enter
+//! three screens, heard through the flood policy with both limits lowered
+//! to 10, and `echo three`. Enter
 //! on each typed line marks it. Verbatim+Alt+Up Arrow four times then
 //! moves the review cursor to each command's line and speaks it, newest
 //! first: "echo three", the script's line, and "echo one" twice, which
@@ -22,6 +23,7 @@ use std::io;
 use std::time::Duration;
 
 use super::terminal::{self, PROMPT};
+use super::terminal_flood::LOWERED;
 use crate::registry::ScenarioState;
 use crate::scenario::Scenario;
 
@@ -64,11 +66,15 @@ fn steps(scenario: &mut Scenario) {
     }
     terminal::type_with_echo(scenario, r".\long.ps1", terminal::Echo::Shown);
     // The flood policy, which NVDA does not have: the 100 lines and the
-    // prompt, 30 whole, 41 skipped, and the last 30.
+    // prompt, the first 10 whole, 81 skipped, and the last 10.
     scenario.deviates_from_nvda("docs/parity/terminals.md", "New terminal output");
-    let mut heard: Vec<String> = (1..=30).map(|n| format!("long line {n}")).collect();
-    heard.push("sound: skipped-lines skipped 41 lines".to_owned());
-    heard.extend((72..=100).map(|n| format!("long line {n}")));
+    let group = u32::from(LOWERED);
+    let mut heard: Vec<String> = (1..=group).map(|n| format!("long line {n}")).collect();
+    heard.push(format!(
+        "sound: skipped-lines skipped {} lines",
+        101 - 2 * group
+    ));
+    heard.extend((100 - group + 2..=100).map(|n| format!("long line {n}")));
     heard.push(PROMPT.to_owned());
     let heard: Vec<&str> = heard.iter().map(String::as_str).collect();
     scenario.speech().expect_within(&heard, FLOOD_STEP);
