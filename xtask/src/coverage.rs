@@ -8,7 +8,9 @@
 //! `cargo test`, as `ci` runs them there). Each level's profiles are
 //! reported on their own: an HTML report in `target/coverage/<level>/html`
 //! and an lcov file, `target/coverage/<level>.lcov`, whose paths are
-//! relative to the workspace, and its line coverage is printed.
+//! relative to the workspace, and its line coverage is printed. A failing
+//! step stops nothing: every level runs and is reported, and the command
+//! fails at the end, naming the steps that failed.
 //!
 //! `coverage report <name> <profiles>` reports the profiles in the folder
 //! `<profiles>` as level `<name>`, the same two files, for an end-to-end
@@ -21,7 +23,9 @@
 //! `e2e-<group>.lcov`, and writes the end-to-end level's `e2e.lcov`, all
 //! levels' `merged.lcov`, `summary.txt` with each level's line coverage,
 //! `e2e-only.txt`, the files with lines only the end-to-end level reaches,
-//! and `unreached.txt`, the files whose lines no level reaches.
+//! and `unreached.txt`, the files whose lines no level reaches. A level
+//! whose file is missing is named so in the summary, and the rest is made
+//! from the levels that are there.
 //!
 //! The profile runtime writes a process's profile as it exits; the
 //! outposts, the listener and mockapp's test runner end with
@@ -210,7 +214,9 @@ fn check_tools() -> Result<(), String> {
 }
 
 /// `cargo xtask coverage`: every level's tests, instrumented, each level
-/// reported on its own.
+/// reported on its own. A failing step does not stop the run: every
+/// level's tests run and are reported, from whatever profiles they wrote,
+/// and the command fails at the end, naming each step that failed.
 fn measure() -> Result<(), String> {
     check_tools()?;
     // The workspace's own artifacts, every old profile and every old
@@ -221,16 +227,31 @@ fn measure() -> Result<(), String> {
         std::fs::remove_dir_all(&out).map_err(|error| format!("{}: {error}", out.display()))?;
     }
     let mut summary = String::new();
+    let mut failures = Vec::new();
     for level in levels() {
-        cargo(&args(&["llvm-cov", "clean", "--profraw-only"]))?;
+        // A level whose old profiles cannot be removed would be reported
+        // with the last level's counts, so it is not run.
+        if let Err(error) = cargo(&args(&["llvm-cov", "clean", "--profraw-only"])) {
+            failures.push(format!("{}: {error}", level.name));
+            continue;
+        }
         for (name, cargo_args) in &level.steps {
             println!("xtask coverage: {}: {name}", level.name);
-            cargo(cargo_args)?;
+            if let Err(error) = cargo(cargo_args) {
+                failures.push(format!("{}: {name}: {error}", level.name));
+            }
         }
-        summary.push_str(&write_reports(level.name, None)?);
+        match write_reports(level.name, None) {
+            Ok(line) => summary.push_str(&line),
+            Err(error) => failures.push(format!("{}: the report: {error}", level.name)),
+        }
     }
     print!("{summary}");
-    Ok(())
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(format!("failed: {}", failures.join("; ")))
+    }
 }
 
 /// `cargo xtask coverage report`: the profiles in `profiles` as level
@@ -318,6 +339,9 @@ fn write(path: &Path, text: &str) -> Result<(), String> {
 }
 
 /// `cargo xtask coverage merge`: the levels' lcov files in `dir`, merged.
+/// A level with no file, because its job failed before writing it, is
+/// named as missing in the summary, and everything else is made from the
+/// levels that are there.
 fn merge(dir: &Path) -> Result<(), String> {
     let read = |file_name: &str| {
         let path = dir.join(file_name);
@@ -325,8 +349,15 @@ fn merge(dir: &Path) -> Result<(), String> {
             .map_err(|error| format!("{}: {error}", path.display()))
             .and_then(|text| parse_lcov(&text).map_err(|error| format!("{file_name}: {error}")))
     };
-    let unit = read("unit.lcov")?;
-    let mockapp = read("mockapp.lcov")?;
+    let read_level = |file_name: &str| {
+        if dir.join(file_name).exists() {
+            read(file_name).map(Some)
+        } else {
+            Ok(None)
+        }
+    };
+    let unit = read_level("unit.lcov")?;
+    let mockapp = read_level("mockapp.lcov")?;
     let mut groups: Vec<String> = read_dir(dir)?
         .iter()
         .filter_map(|path| path.file_name()?.to_str().map(str::to_owned))
@@ -338,27 +369,27 @@ fn merge(dir: &Path) -> Result<(), String> {
         })
         .collect();
     groups.sort();
-    if groups.is_empty() {
-        return Err(format!("{} holds no e2e-<group>.lcov", dir.display()));
+    let e2e = if groups.is_empty() {
+        None
+    } else {
+        let mut e2e = Lines::new();
+        for group in &groups {
+            add(&mut e2e, &read(group)?);
+        }
+        Some(e2e)
+    };
+    let mut below = Lines::new();
+    for lines in [&unit, &mockapp].into_iter().flatten() {
+        add(&mut below, lines);
     }
-    let mut e2e = Lines::new();
-    for group in &groups {
-        add(&mut e2e, &read(group)?);
-    }
-    let mut merged = unit.clone();
-    add(&mut merged, &mockapp);
-    add(&mut merged, &e2e);
-    write(&dir.join("e2e.lcov"), &to_lcov(&e2e))?;
+    let mut merged = below.clone();
+    let e2e_lines = e2e.clone().unwrap_or_default();
+    add(&mut merged, &e2e_lines);
+    write(&dir.join("e2e.lcov"), &to_lcov(&e2e_lines))?;
     write(&dir.join("merged.lcov"), &to_lcov(&merged))?;
-    let mut summary = String::new();
-    for (name, lines) in LEVELS.iter().zip([&unit, &mockapp, &e2e]) {
-        summary.push_str(&summary_line(name, lines));
-    }
-    summary.push_str(&summary_line("merged", &merged));
+    let summary = merge_summary(&[&unit, &mockapp, &e2e], &merged);
     write(&dir.join("summary.txt"), &summary)?;
-    let mut below = unit;
-    add(&mut below, &mockapp);
-    write(&dir.join("e2e-only.txt"), &e2e_only(&e2e, &below))?;
+    write(&dir.join("e2e-only.txt"), &e2e_only(&e2e_lines, &below))?;
     write(&dir.join("unreached.txt"), &unreached(&merged))?;
     print!("{summary}");
     println!(
@@ -367,6 +398,23 @@ fn merge(dir: &Path) -> Result<(), String> {
         dir.display()
     );
     Ok(())
+}
+
+/// The summary of a merge: a line for each of [`LEVELS`], in order, its
+/// coverage or, for one that is `None`, that it is missing, then the
+/// merged line.
+pub fn merge_summary(levels: &[&Option<Lines>; 3], merged: &Lines) -> String {
+    let mut summary = String::new();
+    for (name, lines) in LEVELS.iter().zip(levels) {
+        match lines {
+            Some(lines) => summary.push_str(&summary_line(name, lines)),
+            None => {
+                let _ = writeln!(summary, "{name}: missing, so not in the merged level");
+            }
+        }
+    }
+    summary.push_str(&summary_line("merged", merged));
+    summary
 }
 
 /// Line counts: each source file's instrumented lines, each with the
@@ -594,6 +642,19 @@ mod tests {
         assert_eq!(
             summary_line("e2e", &Lines::new()),
             "e2e: 0.0% of lines (0 of 0)\n"
+        );
+    }
+
+    #[test]
+    fn a_missing_level_is_named_in_the_merge_summary() {
+        let unit = Some(lines(&[("a.rs", &[(1, 1), (2, 0)])]));
+        let merged = lines(&[("a.rs", &[(1, 1), (2, 0)])]);
+        assert_eq!(
+            merge_summary(&[&unit, &None, &None], &merged),
+            "unit: 50.0% of lines (1 of 2)\n\
+             mockapp: missing, so not in the merged level\n\
+             e2e: missing, so not in the merged level\n\
+             merged: 50.0% of lines (1 of 2)\n"
         );
     }
 

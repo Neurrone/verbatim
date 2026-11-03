@@ -35,7 +35,11 @@ Public API:
 - `Contained` — the launched child: `job`, the kill-on-close job handle,
   whose closing kills the process; `process`, the process handle (closing
   it only releases the reference); and `pid`, for logs. Dropping a
-  `Contained` ends the child. `has_exited()` says whether the process has
+  `Contained` ends the child. In a build instrumented for coverage the
+  job does not kill on close and dropping a `Contained` terminates the
+  job instead, so a child left running when Verbatim exits ends when its
+  pipes close and writes its coverage profile
+  (`docs/tooling/coverage.md`). `has_exited()` says whether the process has
   exited, once the system has finished ending it; `wait(timeout)` waits
   up to `timeout` for it to and says whether it exited or the time ran
   out (`Waited`), or returns the error when the wait itself fails, and

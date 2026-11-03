@@ -3,7 +3,9 @@
 //!
 //! A child is created inside a kill-on-close job object
 //! (`PROC_THREAD_ATTRIBUTE_JOB_LIST`), so it is contained from its first
-//! instruction, and dies when Core's job handle closes, whatever ends Core.
+//! instruction, and dies when Core's job handle closes, whatever ends Core;
+//! in a build instrumented for coverage it ends instead when its pipes
+//! close, so it writes its profile (`docs/tooling/coverage.md`).
 //! Creation and containment are one step: a Core that dies while
 //! launching a child cannot leave it outside a job, running or suspended.
 //! It talks to Core over two pipes the caller makes, typically with
@@ -58,9 +60,9 @@ use windows::Win32::Storage::FileSystem::{
     FILE_TYPE_PIPE, GetFileType, OPEN_ALWAYS,
 };
 use windows::Win32::System::JobObjects::{
-    CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, JOB_OBJECT_LIMIT_PROCESS_MEMORY,
-    JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
-    SetInformationJobObject, TerminateJobObject,
+    CreateJobObjectW, JOB_OBJECT_LIMIT, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    JOB_OBJECT_LIMIT_PROCESS_MEMORY, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+    JobObjectExtendedLimitInformation, SetInformationJobObject, TerminateJobObject,
 };
 use windows::Win32::System::Threading::{
     CREATE_NO_WINDOW, CreateProcessW, DeleteProcThreadAttributeList, EXTENDED_STARTUPINFO_PRESENT,
@@ -189,6 +191,17 @@ impl Contained {
     }
 }
 
+/// In a build instrumented for coverage, whose jobs do not kill on close
+/// ([`create_job`]), a drop ends the child as closing the job does in
+/// every other build.
+#[cfg(coverage)]
+impl Drop for Contained {
+    fn drop(&mut self) {
+        // SAFETY: the job handle this value owns, open until this returns.
+        let _ = unsafe { TerminateJobObject(HANDLE(self.job.as_raw_handle()), KILLED_EXIT_CODE) };
+    }
+}
+
 /// The child's ends of two pipes the caller made, for
 /// [`launch_with_ends`]: typically the other ends of
 /// [`overlapped::pipe`]s, whose Verbatim ends the caller keeps.
@@ -286,7 +299,15 @@ fn create_job(memory_cap: Option<usize>) -> io::Result<OwnedHandle> {
     // is closed on every path below.
     let job = unsafe { OwnedHandle::from_raw_handle(job.0 as RawHandle) };
     let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
-    limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    // In a build instrumented for coverage a closed job kills nothing, so
+    // the children Verbatim leaves running as it exits end when their
+    // pipes close, and write their profiles (`docs/tooling/coverage.md`);
+    // every drop of a `Contained` still ends its child.
+    limits.BasicLimitInformation.LimitFlags = if cfg!(coverage) {
+        JOB_OBJECT_LIMIT(0)
+    } else {
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+    };
     if let Some(cap) = memory_cap {
         limits.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_PROCESS_MEMORY;
         limits.ProcessMemoryLimit = cap;

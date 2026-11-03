@@ -44,8 +44,9 @@ reports the level on its own: an HTML report at
 `target/coverage/<level>/html/index.html` and an lcov file at
 `target/coverage/<level>.lcov`, whose paths are relative to the
 workspace. It ends by printing each level's line coverage, such as
-`unit: 61.2% of lines (612 of 1000)`. A failing test fails the command,
-and the levels after it are not run.
+`unit: 61.2% of lines (612 of 1000)`. A failing test stops nothing:
+every level's tests run and are reported, from the profiles they wrote,
+and the command then fails, naming each step that failed.
 
 The instrumented build goes to `target/llvm-cov-target`, apart from
 `target/debug`, and took 5.2 GB; `cargo llvm-cov clean` empties it. On
@@ -69,10 +70,22 @@ profile first, through `verbatim_process::child::write_coverage_profile`,
 which does that in a build instrumented for coverage (`cfg(coverage)`,
 which cargo-llvm-cov sets) and nothing in any other.
 
-Two kinds of process are ended from outside and write no profile: the
-synthesizer host, which ends with its job when Verbatim exits, and the
-mockapp windows that the tests and scenarios end by killing them. Their
-lines count only where a test runs the same code inside its own process.
+The synthesizer host exits on its own when its command pipe from
+Verbatim closes, so the profile runtime writes its profile, but in other
+builds Verbatim's exit also closes the host's kill-on-close job, and the
+kill can come first. In a build instrumented for coverage the jobs of
+`verbatim-process` do not kill on close, and dropping a `Contained`
+terminates its job instead, so every ending Verbatim makes while it
+runs is unchanged. Only Verbatim's own exit, which drops nothing,
+differs: it closes the host's pipe and kills nothing, so the host always
+exits after Verbatim and writes its profile. An outpost or the listener
+still running then ends the same way, through its own end on the closed
+pipe. A host Verbatim ends while it runs, one lost or replaced by a
+switch of synthesizer, is killed and writes no profile.
+
+The mockapp windows that the tests and scenarios end by killing them
+write no profile; their lines count only where a test runs the same code
+inside its own process.
 
 LLVM's continuous mode, which keeps the counts in the file as the process
 runs and so would survive any ending, was measured and rejected: on
@@ -91,8 +104,10 @@ The run's jobs are the ordinary ones, run differently (the comments in
 `.github/workflows/ci.yml` give the details):
 
 - The `ci` job runs `cargo xtask coverage` instead of `cargo xtask ci`
-  and uploads `target/coverage` as the `coverage-unit` artifact. The
-  ARM64 and Linux jobs do not run.
+  and uploads `target/coverage` as the `coverage-unit` artifact, when a
+  test failed too. The ARM64 and Linux jobs do not run. Its build cache
+  and the `e2e` groups' have a key of their own in a coverage run, so the
+  instrumented build is never restored by a push run.
 - The `plan` job runs `cargo xtask e2e-plan --coverage`, which allows for
   the instrumented build's slowdown, so the run has more groups than a
   push's (`docs/tooling/e2e.md`, "How CI runs the suite").
@@ -110,7 +125,12 @@ The run's jobs are the ordinary ones, run differently (the comments in
   ones included: `cargo xtask coverage merge` merges the groups into the
   e2e level and all levels into the merged one, genhtml writes their HTML
   reports, and the job uploads everything as `coverage-report` and puts
-  the summary on the run's page.
+  the summary on the run's page. A level whose job failed before
+  uploading it is named as missing in the summary, and the rest is made
+  from the levels that are there.
+
+A run that sets both `coverage` and `scenario` fails in the `plan` job,
+since a coverage run measures the whole suite.
 
 Download the report with `gh run download <run id> -n coverage-report`.
 It holds:
@@ -133,8 +153,8 @@ scenarios ran on GitHub's runner. It cannot show:
 - What the scenarios the CI suite leaves out run: the local-only
   scenarios, the demonstrations and the measure set
   (`docs/tooling/e2e.md`).
-- What the synthesizer host and mockapp's windows run, since they are
-  ended from outside and write no profile (above).
+- What mockapp's windows run, and what a synthesizer host Verbatim ends
+  while it runs ran, since they are killed and write no profile (above).
 - Code in processes that are not Verbatim's: the applications the
   scenarios drive, such as Notepad, the console host and Windows Terminal.
 - Code no instrumented binary contains, such as code for another

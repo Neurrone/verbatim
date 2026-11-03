@@ -106,7 +106,12 @@ jobs:
         run: git submodule update --init --depth 1 third_party/espeak-ng
       # rust-toolchain.toml pins the toolchain, installed on the first cargo
       # invocation; everything builds for the runner's own architecture.
+      # A coverage run's build cache has a key of its own, so its
+      # instrumented build (target/llvm-cov-target) is never saved under
+      # the key the push runs restore.
       - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ inputs.coverage && 'coverage' || '' }}
       # The GUI's static wxWidgets build (crates/verbatim-gui/build/wx.rs)
       # goes to a fixed directory per version and architecture; caching it
       # spares every run the build. The key follows the recipe file.
@@ -141,8 +146,10 @@ jobs:
       - name: Measure the unit and mockapp tests' coverage
         if: inputs.coverage
         run: cargo xtask coverage
+      # Uploaded when a test failed too: `cargo xtask coverage` runs and
+      # reports every level before it fails.
       - name: Upload the unit and mockapp coverage reports
-        if: inputs.coverage
+        if: always() && inputs.coverage
         uses: actions/upload-artifact@v7
         with:
           name: coverage-unit
@@ -275,7 +282,10 @@ jobs:
           COVERAGE: ${{ inputs.coverage }}
           SCENARIO: ${{ inputs.scenario }}
         run: |
-          if [ "$COVERAGE" = true ]; then
+          if [ "$COVERAGE" = true ] && [ -n "$SCENARIO" ]; then
+            echo "::error::a coverage run measures the whole suite, so it names no scenario: set coverage or scenario, not both"
+            exit 1
+          elif [ "$COVERAGE" = true ]; then
             groups=$(cargo xtask e2e-plan --coverage)
           elif [ "$EVENT" = workflow_dispatch ]; then
             if [ -z "$SCENARIO" ]; then
@@ -314,18 +324,22 @@ jobs:
         run: |
           cargo --version
           rustup component add llvm-tools-preview
-          # Each line is NAME=value, a value with special characters in
-          # single quotes, shell style.
+          # Each line is NAME=value. Outside an MSYS shell, as here,
+          # show-env quotes a value only when it holds a space, a tab or a
+          # double quote, in double quotes by the Windows command-line
+          # rules; no value on the runner does, and one that did fails here
+          # rather than reaching the environment with its quotes.
           $lines = @(cargo llvm-cov show-env)
           if ($LASTEXITCODE -ne 0 -or $lines.Count -eq 0) { throw "cargo llvm-cov show-env failed" }
           foreach ($line in $lines) {
             if ($line -notmatch '^([A-Za-z_][A-Za-z0-9_]*)=(.*)$') { throw "cargo llvm-cov show-env printed '$line'" }
-            $value = $Matches[2]
-            if ($value.StartsWith("'")) { $value = $value.Substring(1, $value.Length - 2).Replace("'\''", "'") }
-            Add-Content -Path $env:GITHUB_ENV -Value "$($Matches[1])=$value"
+            if ($Matches[2].StartsWith('"')) { throw "cargo llvm-cov show-env quoted the value of $($Matches[1])" }
+            Add-Content -Path $env:GITHUB_ENV -Value "$($Matches[1])=$($Matches[2])"
           }
           Add-Content -Path $env:GITHUB_ENV -Value "LLVM_PROFILE_FILE=$env:GITHUB_WORKSPACE\target\coverage-profiles\%p-%m.profraw"
       - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ inputs.coverage && 'coverage' || '' }}
       # The GUI's static wxWidgets build (crates/verbatim-gui/build/wx.rs)
       # goes to a fixed directory per version and architecture; caching it
       # spares every run the build. The key follows the recipe file.
@@ -581,19 +595,30 @@ jobs:
       - name: Merge the levels
         shell: bash
         run: |
-          mkdir -p report
+          mkdir -p report downloaded
           find downloaded -name '*.lcov' -exec cp -t report {} +
-          cp -r downloaded/coverage-unit/unit downloaded/coverage-unit/mockapp report/
+          # A level whose job failed before uploading it is missing, and the
+          # merge names it in the summary.
+          for level in unit mockapp; do
+            if [ -d "downloaded/coverage-unit/$level" ]; then
+              cp -r "downloaded/coverage-unit/$level" report/
+            fi
+          done
           cargo xtask coverage merge report
           cat report/summary.txt >> "$GITHUB_STEP_SUMMARY"
       - name: Write the e2e and merged levels' HTML reports
         shell: bash
         run: |
           sudo apt-get install -y --no-install-recommends lcov
+          # An empty level, which the merge writes for a missing e2e level,
+          # has no report.
           for level in e2e merged; do
-            genhtml --output-directory "report/$level/html" "report/$level.lcov"
+            if [ -s "report/$level.lcov" ]; then
+              genhtml --output-directory "report/$level/html" "report/$level.lcov"
+            fi
           done
       - uses: actions/upload-artifact@v7
+        if: always()
         with:
           name: coverage-report
           path: report/
