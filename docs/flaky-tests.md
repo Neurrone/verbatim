@@ -95,6 +95,10 @@ Scenarios and tests: `notepad_editing`, `notepad_selection_keys` and `notepad_ty
   - How: `msaa_form_focus_costs_exactly` failed 7 of 20 runs with four copies of it running at once (2026-11-03): an extra window-title entry at the top of its chain; under twelve busy processes the other two failed as well. Alone they pass.
   - Cause, likely but not shown: the MSAA walk passes its bound under load, and the title is doubled when it does ([the follow-up](roadmap.md#the-focus-pipeline-rework), "The window title is doubled when an MSAA walk passes its bound").
   - Fix: that follow-up. Until then `cargo xtask ci` runs `call_counts` alone.
+- `focus_reports::an_msaa_client_area_reached_by_a_walk_carries_its_window_and_its_content_none` and `focus_reports::an_msaa_ancestor_reached_with_no_identity_string_is_its_windows_client`, under load
+  - How: both failed in 1 of 4 runs of the whole unit-test suite under cargo-nextest, many tests at once while another build compiled (2026-11-03): the window's title, and in the second the window's client area, above the dialog at the top of the chain. Alone, the binary passed 3 of 3 under nextest and 3 of 3 under its own runner.
+  - Cause, likely but not shown: as for the `call_counts` tests above.
+  - Fix: that follow-up. Until then `cargo xtask ci` runs `focus_reports` with nothing else beside it (`.config/nextest.toml`).
 
 ## Synthesizer host tests on GitHub's runner
 

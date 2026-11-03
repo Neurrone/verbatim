@@ -1,8 +1,29 @@
 # cargo-nextest's settings, for `cargo xtask ci`'s unit tests
 # (`docs/tooling/setup.md`, "What cargo xtask ci runs"). nextest runs every
-# test as a process of its own, many at once; the tests that must not run
-# beside others are run afterwards, one at a time, by a second invocation
-# that xtask makes (`SERIAL_TESTS` in `xtask/src/main.rs`).
+# test as a process of its own, many at once. Two sets are left out of that
+# run, by filters in `xtask/src/main.rs`, and run after it by invocations
+# of their own.
+#
+# With nothing beside them, many at once (`ALONE_TESTS`):
+#
+# - mockapp's `focus_reports`: under the whole run's load, its MSAA walks
+#   passed their 500 ms bound and reported the window's title above the
+#   chain, the defect in `docs/roadmap.md`, "The window title is doubled
+#   when an MSAA walk passes its bound". Alone it passes, as it did under
+#   its own runner.
+#
+# One at a time (`SERIAL_TESTS`):
+#
+# - `verbatim-synth-host`'s `hosting` and `protocol`, which activate the
+#   real Windows speech platform and time its answers.
+# - `verbatim-audio`'s `mixer`, whose real audio thread missed a playback
+#   event under load (`docs/flaky-tests.md`, "The mixer's allocation test
+#   under load").
+# - mockapp's `call_counts`, whose exact counts fail under load through
+#   the same doubled window title (`docs/flaky-tests.md`).
+# - The unit tests of `verbatim-agent`, `verbatim-ia2`, `verbatim-listener`
+#   and `verbatim-win32`, which make windows of their own on the desktop
+#   the run was started from, which may be in use.
 
 [profile.default]
 # A test that fails fails the run, the first time: a retry would hide a

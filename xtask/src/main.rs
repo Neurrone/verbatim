@@ -454,19 +454,18 @@ fn args(list: &[&str]) -> Vec<String> {
     list.iter().map(|arg| (*arg).to_owned()).collect()
 }
 
-/// The tests that must not run beside any other, as a cargo-nextest filter
-/// (`docs/tooling/setup.md`, "What cargo xtask ci runs"): `ci` runs them
-/// after the rest, one at a time.
-///
-/// - `verbatim-synth-host`'s `hosting` and `protocol`, which activate the
-///   real Windows speech platform and time its answers.
-/// - `verbatim-audio`'s `mixer`, whose real audio thread missed a playback
-///   event under load (`docs/flaky-tests.md`, "The mixer's allocation test
-///   under load").
-/// - The unit tests of `verbatim-agent`, `verbatim-ia2`,
-///   `verbatim-listener` and `verbatim-win32`, which make windows of their
-///   own on the desktop the run was started from, which may be in use.
-const SERIAL_TESTS: &str = "binary_id(verbatim-synth-host::hosting)     | binary_id(verbatim-synth-host::protocol)     | binary_id(verbatim-audio::mixer)     | binary_id(verbatim-agent) | binary_id(verbatim-ia2)     | binary_id(verbatim-listener) | binary_id(verbatim-win32)";
+/// The tests that run one at a time, after the rest, as a cargo-nextest
+/// filter; `.config/nextest.toml` says why each is here.
+const SERIAL_TESTS: &str = concat!(
+    "binary_id(verbatim-synth-host::hosting) | binary_id(verbatim-synth-host::protocol)",
+    " | binary_id(verbatim-audio::mixer) | binary_id(mockapp::call_counts)",
+    " | binary_id(verbatim-agent) | binary_id(verbatim-ia2)",
+    " | binary_id(verbatim-listener) | binary_id(verbatim-win32)",
+);
+
+/// The tests that run with nothing beside them but each other, many at
+/// once, as a cargo-nextest filter; `.config/nextest.toml` says why.
+const ALONE_TESTS: &str = "binary_id(mockapp::focus_reports)";
 
 /// `ci`'s cargo steps on Windows: the workspace-hack checks, rustfmt, and
 /// clippy and unit tests for the whole workspace. The workspace-hack crate
@@ -474,8 +473,9 @@ const SERIAL_TESTS: &str = "binary_id(verbatim-synth-host::hosting)     | binary
 /// depend on it, or commands that select different packages build
 /// dependencies apart again (`docs/tooling/setup.md`, "The workspace-hack
 /// crate"). The unit tests run under cargo-nextest, many at once, but for
-/// [`SERIAL_TESTS`], which run after them one at a time, and then the
-/// doctests, which nextest does not run.
+/// [`ALONE_TESTS`], which run after them with nothing else beside them,
+/// and [`SERIAL_TESTS`], which run last, one at a time; then the doctests,
+/// which nextest does not run.
 fn windows_steps() -> Vec<Step> {
     vec![
         ("workspace-hack", args(&["hakari", "generate", "--diff"])),
@@ -502,11 +502,15 @@ fn windows_steps() -> Vec<Step> {
                 "run",
                 "--workspace",
                 "-E",
-                &format!("not ({SERIAL_TESTS})"),
+                &format!("not ({SERIAL_TESTS} | {ALONE_TESTS})"),
             ]),
         ),
         (
-            "unit tests that run alone",
+            "unit tests that run with nothing else",
+            args(&["nextest", "run", "--workspace", "-E", ALONE_TESTS]),
+        ),
+        (
+            "unit tests that run one at a time",
             args(&[
                 "nextest",
                 "run",
