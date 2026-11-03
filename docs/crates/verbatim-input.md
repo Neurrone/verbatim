@@ -184,7 +184,9 @@ rules):
   line's places count from 1; `passed_on(place)` takes the line up to that
   place, since Core passes keys on in order and one Windows dropped is not
   waited for once a later one arrives. Every short sequence of keys,
-  pass-ons and permit changes is checked against a reference model by
+  pass-ons, permit changes and pauses past the multi-press timeout, up to
+  four steps over both Verbatim keys and every modifier, with each
+  layout's bindings, is checked against a reference model by
   `tests/hold_sequences.rs`, except where the permit falls to `None` while
   a deferred press or a mask waits, whose release then passes at once (the
   design's "Limitations").
