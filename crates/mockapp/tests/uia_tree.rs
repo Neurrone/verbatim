@@ -636,8 +636,6 @@ fn a_remote_dump_reads_a_small_tree_in_one_call() {
     app.quit();
 }
 
-/// Runs this file's tests through the UIA test runner, which explains why
-/// these binaries do not exit normally (`common/harness.rs`).
 /// Calls of UIA's activating pattern methods, and the pattern providers
 /// asked for, that mockapp counted since its counters were reset.
 fn activation_calls(hwnd: windows::Win32::Foundation::HWND) -> Vec<(&'static str, u32)> {
@@ -697,6 +695,8 @@ fn uia_activation_invokes_then_toggles_then_selects() {
     app.quit();
 }
 
+/// Runs this file's tests through the UIA test runner, which explains why
+/// these binaries do not exit normally (`common/harness.rs`).
 fn main() {
     harness::run_isolated(&[
         (

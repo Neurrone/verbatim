@@ -2480,7 +2480,11 @@ fn review_bottom_in_a_terminal_reads_the_last_row() {
 
 /// Page movement keeps the review cursor's column, as moving by line does
 /// (`docs/parity/review.md`, "Review cursor columns"), and a page movement
-/// that did not move says "Top" or "Bottom" and reads the line again.
+/// that did not move says "Top" or "Bottom", as NVDA does, and leaves the
+/// review cursor where it was. Each page here is one line, so the speech
+/// is the whole page's, as NVDA's is; a page of several lines is read
+/// differently from NVDA, which `docs/parity/review.md` records, and this
+/// test asserts nothing about it.
 #[test]
 fn review_pages_keep_the_column_and_name_the_edges() {
     let mut state = reviewing("abcdef\n", 2);
@@ -2664,8 +2668,7 @@ fn caret_location_asks_for_the_carets_place_and_says_it() {
 }
 
 /// The review cursor's location is asked at the review cursor, not the
-/// caret, and said the same way; text with no place to give is not
-/// supported.
+/// caret, and said the same way.
 #[test]
 fn review_location_asks_for_the_review_cursors_place_and_says_it() {
     let mut state = reviewing("hello world\n", 0);
@@ -2686,13 +2689,6 @@ fn review_location_asks_for_the_review_cursors_place_and_says_it() {
             ))]
         )
     );
-
-    let effects = reduce(&mut state, &command(ReviewCommand::ReportReviewLocation, 0));
-    let effects = reduce(
-        &mut state,
-        &completed(only_request(&effects).query_id, TextReply::NoText),
-    );
-    assert_eq!(effects, said(4, vec![message(Message::NotSupported)]));
 }
 
 /// Moving to a start marker in the same text reads the marker's line and

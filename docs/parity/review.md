@@ -189,7 +189,18 @@ grapheme clusters and words follow the text's language
 line speak the character there; the page commands (Verbatim+Page Up and
 Page Down), the selection's start and end (Verbatim+Alt+Home and End),
 and the review cursor's and caret's locations ("Positioned at x, y") are
-new. An object with no text interface is reviewed by its value or name,
+NVDA's commands too, and at a page edge both say "Top" or "Bottom" and
+leave the review cursor where it was. Four of their answers are
+different, pending a live capture and Dickson's decision: a page move
+reads the line it lands on, where NVDA reads the whole page; where the
+text cannot move by page Verbatim says "Not supported in this document",
+where NVDA says "Movement by page not supported"; the selection's start
+or end with no selection moves to the caret, where NVDA says "No
+selection" and leaves the review cursor; and the review cursor's
+location, when the text gives no place for it, says "Not supported in
+this document", where NVDA says the navigator object's location instead
+and "No location information" only when that is missing too. An object
+with no text interface is reviewed by its value or name,
 NVDA's fallback, through the M3 flat walk, which walks
 the same grapheme clusters and words as text with a text pattern;
 different, as a follow-up: its start and end of line still speak the

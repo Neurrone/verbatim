@@ -1737,9 +1737,11 @@ fn page_movement_answers_from_the_providers_pages() {
 
 /// A location is answered with where the provider places the point: over
 /// UIA, the top left of the character's bounding rectangle, which mockapp
-/// draws 8 pixels wide and 16 high from (100, 200), so "gamma" on the
-/// second line is at (100, 216); over an edit control, the character's
-/// place as `EM_POSFROMCHAR` gives it in the control, on the screen.
+/// draws 8 pixels wide and 16 high from (100, 200), so "beta", from the
+/// first line's seventh character, is at (148, 200), where a location
+/// taken from the whole line would be at (100, 200); over an edit control,
+/// the character's place as `EM_POSFROMCHAR` gives it in the control, on
+/// the screen.
 fn a_location_is_answered_from_where_the_provider_places_the_text() {
     use windows::Win32::Foundation::POINT;
     use windows::Win32::Graphics::Gdi::ClientToScreen;
@@ -1752,20 +1754,29 @@ fn a_location_is_answered_from_where_the_provider_places_the_text() {
     let mut source = uia_notes(hwnd, true);
     let mut store = Anchors::new(Arc::default());
     let mut anchors = store.node(1);
-    let (_, second) = chunk(read(
+    let (_, first) = chunk(read(
         &mut source,
         &mut anchors,
         TextPoint::Start,
-        Some((TextUnit::Line, 1)),
+        None,
         TextUnit::Line,
     ));
+    assert_eq!(
+        first.text,
+        "alpha beta
+"
+    );
+    let beta = TextPosition {
+        offset: 6,
+        ..point_of(&first)
+    };
     assert_eq!(
         perform(
             &mut source,
             &mut anchors,
-            &TextOp::Location(TextPoint::At(point_of(&second)))
+            &TextOp::Location(TextPoint::At(beta))
         ),
-        TextReply::Location { x: 100, y: 216 }
+        TextReply::Location { x: 148, y: 200 }
     );
     app.quit();
 
