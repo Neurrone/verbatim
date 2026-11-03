@@ -245,6 +245,19 @@ pub(super) enum Outcome {
     Failed,
 }
 
+impl Step {
+    /// The step as the Rust expression that makes it, as a found case
+    /// lists it.
+    fn code(&self) -> String {
+        match self {
+            Step::Answer(which, outcome) => {
+                format!("Step::Answer(Which::{which:?}, Outcome::{outcome:?})")
+            }
+            other => format!("Step::{other:?}"),
+        }
+    }
+}
+
 fn steps() -> Vec<Step> {
     let mut steps = vec![
         Step::CaretKey,
@@ -793,20 +806,100 @@ pub(super) fn check(path: &[usize], visit: &Visit<'_>) -> bool {
     resumed
 }
 
+/// A start of the enumeration: the function that makes it, its name, and
+/// the outpost it reads, with its constant's name.
+type Start = (Wired, &'static str, OutpostId, &'static str);
+
+/// A function making a start of the enumeration.
+type Wired = fn() -> (SrState, Wire);
+
+/// The enumeration's starts.
+const STARTS: [Start; 3] = [
+    (
+        text_box_wired,
+        "text_box_wired",
+        EDIT_OUTPOST,
+        "EDIT_OUTPOST",
+    ),
+    (
+        held_key_passed_on_wired,
+        "held_key_passed_on_wired",
+        EDIT_OUTPOST,
+        "EDIT_OUTPOST",
+    ),
+    (
+        console_wired,
+        "console_wired",
+        CONSOLE_OUTPOST,
+        "CONSOLE_OUTPOST",
+    ),
+];
+
 /// Every sequence of up to three steps from a text box with its caret,
 /// from the same with a held key's watch waited on, and from a console
 /// Core reads keeps the table's invariants after every input, against the
-/// wire's view of the requests.
+/// wire's view of the requests. A failing sequence is printed as a line
+/// for [`found`] before the failure.
 #[test]
 fn every_sequence_keeps_the_query_tables_invariants() {
-    for (start, outpost) in [
-        (text_box_wired(), EDIT_OUTPOST),
-        (held_key_passed_on_wired(), EDIT_OUTPOST),
-        (console_wired(), CONSOLE_OUTPOST),
-    ] {
-        enumerate(&start, outpost, 3, &mut |path, visit| {
-            check(path, &visit);
+    let steps = steps();
+    for (start, start_name, outpost, outpost_name) in STARTS {
+        enumerate(&start(), outpost, 3, &mut |path, visit| {
+            let line = || {
+                let path: Vec<String> = path.iter().map(|&index| steps[index].code()).collect();
+                found_report(&format!(
+                    "({start_name}, {outpost_name}, vec![{}]),",
+                    path.join(", ")
+                ))
+            };
+            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| check(path, &visit))) {
+                Ok(_) => {}
+                Err(payload) => {
+                    eprintln!("{}", line());
+                    std::panic::resume_unwind(payload);
+                }
+            }
         });
+    }
+}
+
+/// The report of a failing sequence, given as `line`: where to paste it,
+/// and the command that runs the found sequences.
+fn found_report(line: &str) -> String {
+    format!(
+        "the failing sequence, as a line for `found()` in crates/verbatim-core/src/queries/tests.rs:\n        {line}\n\
+         the found sequences alone: cargo test -p verbatim-core --lib -- --exact queries::tests::found_sequences_keep_the_query_tables_invariants"
+    )
+}
+
+/// The sequences the enumeration failed on, each kept as its start, its
+/// outpost and its steps, as the failure's report gives them.
+fn found() -> Vec<(Wired, OutpostId, Vec<Step>)> {
+    Vec::new()
+}
+
+/// Every found sequence keeps the table's invariants after every input.
+#[test]
+fn found_sequences_keep_the_query_tables_invariants() {
+    for (start, outpost, sequence) in found() {
+        let (mut state, mut wire) = start();
+        for step in &sequence {
+            for input in wire.inputs(outpost, step) {
+                let before = state.clone();
+                let effects = reduce(&mut state, &input);
+                wire.apply(&input, &effects);
+                check(
+                    &[],
+                    &Visit {
+                        before: &before,
+                        input: &input,
+                        state: &state,
+                        effects: &effects,
+                        wire: &wire,
+                    },
+                );
+            }
+        }
     }
 }
 

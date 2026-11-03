@@ -27,7 +27,7 @@ use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 
 use proptest::strategy::Strategy;
-use proptest::test_runner::{Config, TestRunner};
+use proptest::test_runner::{Config, TestError, TestRunner};
 use verbatim_model::{
     Backend, CaretKey, CaretMotion, EarlierElement, Effect, FocusText, ForegroundWindow, Input,
     KeySeq, NodeId, NormalizedEvent, OutpostId, Pid, QueryId, ReviewCommand, Role, TraceId,
@@ -96,6 +96,27 @@ enum Action {
     /// The terminal's quiet-period timer fires at its due time, as the
     /// shell reads it from the state, the clock moved on to it.
     Timer,
+}
+
+impl Action {
+    /// The action as the Rust expression that makes it, as a fixed case
+    /// lists it.
+    fn code(self) -> String {
+        format!("Action::{self:?}")
+    }
+}
+
+/// The report of a failing case: `actions` as a line ready to paste into
+/// [`found`], and the commands that run the found cases and the run that
+/// found it, `again`.
+fn found_report(actions: &[Action], again: &str) -> String {
+    let actions: Vec<String> = actions.iter().map(|action| action.code()).collect();
+    format!(
+        "the smallest failing case, as a line for `found()` in crates/verbatim-core/src/queries/generated.rs:\n        vec![{}],\n\
+         the found cases alone: cargo test -p verbatim-core --lib -- --exact queries::generated::found_cases_keep_the_reducers_rules\n\
+         the run that found it again: {again}",
+        actions.join(", ")
+    )
 }
 
 fn action() -> impl Strategy<Value = Action> {
@@ -1194,7 +1215,7 @@ impl Run {
 /// # Panics
 ///
 /// On a failing case, naming the smallest.
-pub(super) fn run_generated(config: Config) -> BTreeMap<&'static str, u32> {
+pub(super) fn run_generated(config: Config, again: &str) -> BTreeMap<&'static str, u32> {
     let reached = RefCell::new(BTreeMap::new());
     let mut runner = TestRunner::new(config);
     let strategy = proptest::collection::vec(action(), 1..40);
@@ -1208,10 +1229,13 @@ pub(super) fn run_generated(config: Config) -> BTreeMap<&'static str, u32> {
         }
         Ok(())
     });
-    if let Err(error) = result {
-        panic!("{error}");
+    match result {
+        Ok(()) => reached.into_inner(),
+        Err(TestError::Fail(reason, actions)) => {
+            panic!("{reason}\n{}", found_report(&actions, again))
+        }
+        Err(error) => panic!("{error}"),
     }
-    reached.into_inner()
 }
 
 /// A focus of the terminal of the oldest generation, with what its reader
@@ -1287,6 +1311,21 @@ fn fixed_cases_keep_the_reducers_rules() {
     }
 }
 
+/// The cases failures of the generated test or the exploration shrank to,
+/// each kept as its list of actions, as the failure's report gives it.
+fn found() -> Vec<Vec<Action>> {
+    Vec::new()
+}
+
+/// Every found case keeps the slice's rules, and gives the same effects
+/// when run twice.
+#[test]
+fn found_cases_keep_the_reducers_rules() {
+    for case in found() {
+        assert_eq!(Run::case(&case).log, Run::case(&case).log, "{case:?}");
+    }
+}
+
 /// The gate's seed and case count.
 const SEED: u64 = 20_261_103;
 const CASES: u32 = 300;
@@ -1300,7 +1339,10 @@ const CASES: u32 = 300;
 /// same effects when run twice, and reach every listed state.
 #[test]
 fn generated_cases_keep_the_reducers_rules() {
-    let reached = run_generated(super::explore::config(SEED, CASES));
+    let reached = run_generated(
+        super::explore::config(SEED, CASES),
+        "cargo test -p verbatim-core --lib -- --exact queries::generated::generated_cases_keep_the_reducers_rules",
+    );
     let missed: Vec<&str> = LISTED
         .into_iter()
         .filter(|state| !reached.contains_key(state))
