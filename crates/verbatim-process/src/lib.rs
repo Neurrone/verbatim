@@ -193,12 +193,14 @@ impl Contained {
 
 /// In a build instrumented for coverage, whose jobs do not kill on close
 /// ([`create_job`]), a drop ends the child as closing the job does in
-/// every other build.
+/// every other build, with exit code 0, the code the system gives a
+/// process ended by closing its kill-on-close job, so a drop is not
+/// reported as a [`Contained::kill`].
 #[cfg(coverage)]
 impl Drop for Contained {
     fn drop(&mut self) {
         // SAFETY: the job handle this value owns, open until this returns.
-        let _ = unsafe { TerminateJobObject(HANDLE(self.job.as_raw_handle()), KILLED_EXIT_CODE) };
+        let _ = unsafe { TerminateJobObject(HANDLE(self.job.as_raw_handle()), 0) };
     }
 }
 

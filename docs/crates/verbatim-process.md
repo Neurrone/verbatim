@@ -37,7 +37,7 @@ Public API:
   it only releases the reference); and `pid`, for logs. Dropping a
   `Contained` ends the child. In a build instrumented for coverage the
   job does not kill on close and dropping a `Contained` terminates the
-  job instead, so a child left running when Verbatim exits ends when its
+  job instead, with exit code 0 as closing a kill-on-close job gives, so a child left running when Verbatim exits ends when its
   pipes close and writes its coverage profile
   (`docs/tooling/coverage.md`). `has_exited()` says whether the process has
   exited, once the system has finished ending it; `wait(timeout)` waits
