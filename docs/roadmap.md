@@ -801,6 +801,7 @@ remains, in order:
   read in the key window as the keys' (`conhost_footer_overflow`, 1 of 3
   local runs on 2026-11-03, [the known failures](flaky-tests.md)). A known
   limit until here (Dickson, 2026-11-03): replay the recorded reads
+  ([the evidence](../experiments/a-redraw-in-a-keys-window-is-spoken-as-its-answer/readme.md))
   through the rules to confirm the cause, then ask whether a key's
   ownership of output should rest on firmer evidence than its window.
 - `conhost_long_lines` once heard "r" after Enter where its output line
