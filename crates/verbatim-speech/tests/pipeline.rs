@@ -155,8 +155,10 @@ impl Recorder {
     }
 
     /// Waits until at least `count` pauses and resumes have been reported,
-    /// then returns them all, in the order reported. Fails at
-    /// [`STEP_TIMEOUT`].
+    /// then returns them all, in the order reported: evidence that the
+    /// `count`th was applied, not that no more will come, which
+    /// [`pauses_so_far`](Self::pauses_so_far) after a marker shows. Fails
+    /// at [`STEP_TIMEOUT`].
     fn pauses(&self, count: usize) -> Vec<bool> {
         let (pauses, timeout) = self
             .paused
@@ -170,6 +172,14 @@ impl Recorder {
             *pauses
         );
         pauses.clone()
+    }
+
+    /// Every pause and resume reported so far, in the order reported. The
+    /// queue thread reports each toggle as it applies it, before it takes
+    /// a later command, so once an utterance spoken after the toggles has
+    /// ended every toggle's report has come.
+    fn pauses_so_far(&self) -> Vec<bool> {
+        self.pauses.lock().unwrap().clone()
     }
 
     /// The endings reported so far, in the order reported.
@@ -1178,7 +1188,12 @@ fn a_pause_holds_speech_until_resumed_and_new_speech_cancels_it() {
             (next, UtteranceEnding::Completed),
         ]
     );
-    assert_eq!(harness.recorder.pauses(4), [true, false, true, false]);
+    // The marker was spoken after every toggle, so every toggle's report
+    // came before its end.
+    assert_eq!(
+        harness.recorder.pauses_so_far(),
+        [true, false, true, false]
+    );
 }
 
 /// Plays `length` of quiet tone through a source of its own on `mixer` and

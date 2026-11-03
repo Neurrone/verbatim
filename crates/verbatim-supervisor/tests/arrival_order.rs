@@ -27,6 +27,8 @@
 use std::collections::HashMap;
 use std::io::{BufReader, Read as _, Write as _};
 use std::process::{Child, Command, Stdio};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use crossbeam_channel::{Receiver, unbounded};
@@ -36,7 +38,7 @@ use verbatim_model::protocol::{
 use verbatim_model::{Backend, NodeId, NormalizedEvent, OutpostId, Pid, TraceId};
 use verbatim_process::arguments::OutpostOptions;
 use verbatim_process::message::{read_message, write_message};
-use verbatim_process::port_queue::{PortQueue, Received, port_queue};
+use verbatim_process::port_queue::{PortQueue, Progress, Received, port_queue};
 use verbatim_process::transport::{BlockingReader, BlockingWriter};
 use verbatim_supervisor::{
     EventSink, Executables, Frames, OutpostMessage, ReducerStall, ShutdownSummary, Supervisor,
@@ -299,6 +301,11 @@ struct Reducer {
     frames: Frames,
     supervisor: Supervisor,
     stalls: Receiver<ReducerStall>,
+    /// Whether the relay's heartbeats see the queue's progress. Until a
+    /// test sets it they see nothing waiting, so no stall can be reported
+    /// however long a step of the test takes; only a hold the test makes
+    /// to be reported is watched.
+    watching: Arc<AtomicBool>,
     names: HashMap<OutpostId, String>,
 }
 
@@ -308,6 +315,8 @@ impl Reducer {
     fn start() -> Self {
         let (poster, queue) = port_queue::<Input>().expect("a port");
         let (stalls_tx, stalls) = unbounded();
+        let watching = Arc::new(AtomicBool::new(false));
+        let watched = Arc::clone(&watching);
         let progress = poster.clone();
         let deliver = poster.clone();
         let sink = EventSink::new(move |message| {
@@ -316,7 +325,13 @@ impl Reducer {
                 .map_err(|_| verbatim_supervisor::Undelivered::Gone)
         })
         .watched(
-            move || progress.progress(),
+            move || {
+                if watched.load(Ordering::SeqCst) {
+                    progress.progress()
+                } else {
+                    Progress::default()
+                }
+            },
             move |stall| {
                 let _ = stalls_tx.send(stall);
             },
@@ -337,6 +352,7 @@ impl Reducer {
             frames,
             supervisor,
             stalls,
+            watching,
             names: HashMap::new(),
         }
     }
@@ -545,7 +561,8 @@ fn a_reducer_held_past_three_ping_intervals_ends_no_outpost_and_is_reported_as_i
     let mut reducer = Reducer::start();
     reducer.with_outposts(&[pid]);
 
-    // Held from here, with a key waiting.
+    // Held from here, with a key waiting, and watched.
+    reducer.watching.store(true, Ordering::SeqCst);
     reducer.press(1);
     let stall = reducer
         .stalls
@@ -554,6 +571,7 @@ fn a_reducer_held_past_three_ping_intervals_ends_no_outpost_and_is_reported_as_i
     assert_eq!(stall.waiting, 1, "the key waited: {stall:?}");
 
     assert_eq!(reducer.take(1), ["key 1"]);
+    reducer.watching.store(false, Ordering::SeqCst);
     // The outpost was not ended, and still answers.
     reducer.cue("O1", 7);
     assert_eq!(reducer.take(1), ["O1: C"]);

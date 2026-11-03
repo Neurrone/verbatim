@@ -2292,17 +2292,19 @@ mod tests {
         unsafe { DestroyWindow(window) }.expect("the window destroyed");
     }
 
+    /// A menu end no focus follows is sent when its timer goes off at the
+    /// end of its grace, and not when it goes off a microsecond before,
+    /// which sets the timer again for the microsecond left.
     #[test]
     fn a_menu_end_no_focus_follows_reaches_core_after_the_grace() {
-        let (outgoing, reader) = outgoing();
-        let messages = drain(reader);
-        let ended = Instant::now();
+        let (outgoing, mut reader, grace) = outgoing_with_manual_grace(EVENT_PIPE_BUFFER);
         outgoing.menu_or_switch_ended(1_000);
-        let message = messages
-            .recv_timeout(Duration::from_secs(5))
-            .expect("the menu end is sent");
-        assert!(matches!(message, ListenerToCore::MenuOrSwitchEnded { .. }));
-        assert!(ended.elapsed() >= MENU_END_GRACE, "not before the grace");
+        grace.at(49_999);
+        outgoing.menu_end.grace_ended();
+        grace.at(50_000);
+        outgoing.menu_end.grace_ended();
+        assert_eq!(grace.set(), [50_000, 1], "the timer set for the grace");
+        assert_eq!(facts_and_ends(sent(&outgoing, &mut reader)), ["menu end"]);
     }
 
     /// A grace timer's callback that runs as a newer end comes, taking the

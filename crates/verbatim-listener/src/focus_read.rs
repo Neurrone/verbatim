@@ -2938,14 +2938,29 @@ mod tests {
         readers.push(Pid(5), meta(1), (1, Some(gate), Vec::new()), owed(1));
         assert_eq!(read_on.recv_timeout(WAIT).expect("a read").0, 1);
         readers.push(Pid(5), meta(2), (2, None, Vec::new()), owed(2));
+        // Stopping wakes every application's condition variable under the
+        // readers' lock as it marks the schedule stopping. The thread in
+        // charge of pid 5's events is held in its read, not waiting on it,
+        // so this wait takes no wake meant for that thread.
+        let wake = Arc::clone(
+            &readers
+                .shared
+                .lock()
+                .apps
+                .get(&Pid(5))
+                .expect("pid 5 is held")
+                .wake,
+        );
         thread::scope(|scope| {
             let stopping = scope.spawn(|| readers.stop());
             // The read returns only once the readers are stopping.
-            let waited = Instant::now();
-            while !readers.shared.lock().schedule.stopping() {
-                assert!(waited.elapsed() < WAIT, "the readers never stopped");
-                thread::yield_now();
-            }
+            let (state, waited) = wake
+                .wait_timeout_while(readers.shared.lock(), WAIT, |state| {
+                    !state.schedule.stopping()
+                })
+                .unwrap_or_else(PoisonError::into_inner);
+            assert!(!waited.timed_out(), "the readers never stopped");
+            drop(state);
             open.send(()).expect("the gate opens");
             assert_eq!(stopping.join().expect("stopped"), 1);
         });
