@@ -100,7 +100,12 @@ closed by the outpost's own reports, with the keep-id evidence read in
 NVDA's order. The third build updates
 M4.6's generators for the inputs it changes, adds invariants for its new
 mechanisms, and writes the listener's checks before reading as pure
-functions of what its calls return.
+functions of what its calls return. It also closes two gaps in the
+listener's readers' stop test (`crates/verbatim-listener/src/focus_read.rs`,
+Dickson, 2026-11-03): a stop that marks the schedule before the test's wait
+begins passes whether or not it woke the reading thread, and a stop that
+kept the readers' lock while joining their threads would hang the test
+rather than fail it.
 
 Follow-up, not established from the code alone: Core refuses a foreground
 report of the window holding its focus (`crates/verbatim-core/src/reduce.rs`,
@@ -247,14 +252,6 @@ The decisions, in brief:
   - The listener kept an ended application for good once its abandoned read returned, one per such process (found by the scheduler's model).
   - A reading thread's failed start was stepped before the other effects of its step, so an idle answer went ahead of another application's drop (found by exploration).
   - The build's upkeep: building the tests took 5.1 hours, the mutation runs 3.7 hours of machine time, and the design's surveys and reviews about 0.6 hours.
-
-### Follow-ups from the early-read audit
-
-Tests that read an asynchronous effect without evidence that it happened, found by the audit of 2026-11-03 and left open by its build:
-
-- `crates/mockapp/tests/call_counts.rs` around lines 1686 to 1737 counts provider calls right after a removal or a read; whether UI Automation makes calls after those return needs an experiment.
-- `crates/verbatim-audio/tests/mixer.rs` around line 590: the check that a speech lane's producer goes on only with room for what it needs passes with a producer that asks for room for one frame, so the size it waits for is not proved.
-- `crates/verbatim-listener/src/focus_read.rs`, the readers' stop test: a stop that marks the schedule before the test's wait begins passes whether or not it woke the thread, and a stop that kept the readers' lock while joining their threads would hang the test rather than fail it.
 
 ### The simulation of the reducers, deferred
 
@@ -749,6 +746,11 @@ second real engine (Dickson, 2026-10-29).
 - Generated tests for OneCore's WAV and mark parsing (any bytes: no panic
   and no read past the end) and eSpeak NG's mark splitting (every sample
   delivered once, marks in order).
+- The check that a speech lane's producer goes on only with room for what
+  it needs (`crates/verbatim-audio/tests/mixer.rs`, around line 590) passes
+  with a producer that asks for room for one frame, so the size it waits
+  for is made exact with the mixer's tests driven pass by pass (Dickson,
+  2026-11-03).
 
 ## M6.4 — Terminal residuals
 
