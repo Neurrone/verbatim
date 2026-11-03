@@ -585,7 +585,11 @@ Each file's module comment says exactly what it asserts; in outline:
   `BoundedClient` is given up at its own one-second deadline, its thread
   abandoned and waited for once the call is released; and a subscription
   moved onto a held window's subtree has its registration end at the
-  two-second connection timeout, its next move made after it.
+  two-second connection timeout, its next move made after it, exactly
+  one registration call having ended by the timeout, as
+  `verbatim-uia`'s observation point `RegistrationCallTimedOut` counts
+  it; so the binary requires the `faults` feature and runs in `cargo
+  xtask faults`.
 - `shutdown.rs`: an outpost told to shut down during a read into mockapp,
   a remote operation in one test and classic reads in the other, lets the
   read finish and sends its answer, then removes every UIA event handler
@@ -632,7 +636,11 @@ Each file's module comment says exactly what it asserts; in outline:
   foreground reports, each on-demand reading request and its answer, caret
   events with and without text changes, the console host's caret, the
   hooks' change events through MSAA, the whole document and history
-  blocks, colours requests, and the read before a held key.
+  blocks, colours requests, and the read before a held key. A console
+  host's caret watch ended by its poll is told from one ended at its own
+  bound by the reason the outpost's observation point `CaretWatchEnded`
+  gives, so the binary requires the `faults` feature and runs in `cargo
+  xtask faults`.
 - `remote_ops.rs` runs `verbatim-uia-rops`'s remote and classic focus
   ancestry over `ancestry.json` (a five-level chain, a list and a tab
   control with selected children) and asserts they return the same

@@ -16,9 +16,14 @@ Public API:
   `ThreadStart` (a reading thread's `(name, pid, generation)`, a worker's
   `(name, generation)`), `RemoveGroup` (`(registration, runtime id)`),
   `AddFocusHandler` and `RemoveFocusHandler` (`(registration, handler
-  index)`), and one observation point, `ShutdownWaitsForCalls` (an
+  index)`), and three observation points: `ShutdownWaitsForCalls` (an
   outpost's target process id), where an outpost's shutdown begins to
-  wait for the calls in progress.
+  wait for the calls in progress; `RegistrationCallTimedOut` (the
+  registration's id), each of `verbatim-uia`'s registration calls whose
+  time passed UIA's connection timeout, since such a call reports
+  success; and `CaretWatchEnded` (the reducer's reason, a `&'static
+  str`), where an outpost's shell carries out a caret key's watch ending
+  without evidence.
 - `arm(fault, selects, times)` — arms a point to fire `times` times, each
   at a call whose subject, of the type `selects` takes, `selects` picks,
   so a test names the one call that fails. Returns a `Guard`, whose drop
@@ -31,9 +36,11 @@ Public API:
   and has firings left, and the caller then takes the path the real
   failure takes, with the error the real call returns.
 - `reach(fault, &subject)` — what an observation point calls where
-  nothing fails: it counts as a firing, so a test waits for the evidence
-  that the code got there with `Guard::wait_fired`, and the code goes on
-  either way.
+  nothing fails: it counts as a firing of every armed point whose
+  selector picks the subject, even past the times armed, so a test waits
+  for the evidence that the code got there with `Guard::wait_fired`, or
+  counts how often it did, and the guard's drop fails a test whose code
+  got there more often than armed; the code goes on either way.
 - `hit_with(fault, subject)` — `hit` with the subject built by the
   closure `subject` only while `fault` is armed, for a subject whose
   making is itself a call, such as reading an element's runtime id, which
@@ -53,7 +60,7 @@ feature on but `cargo xtask faults`, which `cargo xtask ci` runs as its
 fault step on Windows: clippy of each of those crates, `verbatim-audio`
 and mockapp with the feature, one package at a time, then the fault test
 targets (`verbatim-supervisor`'s `fault_paths` and mockapp's
-`failure_paths` and `shutdown`), each declared with `required-features =
+`failure_paths`, `shutdown`, `terminal_reading` and `time_limits`), each declared with `required-features =
 ["faults"]` so the ordinary steps skip it, and `verbatim-audio`'s `mixer`,
 into `target/debug`. `verbatim-audio` is platform-neutral, so it cannot
 depend on this crate: its `faults` feature has no dependency and compiles
@@ -66,8 +73,8 @@ those crates' own unit tests.
 
 Tests: unit tests check that a point fires only for the subject and type
 selected and only as often as armed, that an observation point reached
-counts as a firing, and that a guard whose point never fired fails its
-test.
+counts as a firing, that one reached more often than armed fails its
+test, and that a guard whose point never fired fails its test.
 
 ## Failure paths
 

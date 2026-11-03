@@ -30,8 +30,9 @@ verbatim-term-sim.workspace = true
 verbatim-test-console.workspace = true
 
 [features]
-# The worker's fault point and shutdown's observation point, for mockapp's
-# `failure_paths` and `shutdown` tests; only `cargo xtask faults` turns it on.
+# The worker's fault point and the observation points of shutdown and of a
+# caret watch's end, for mockapp's `failure_paths`, `shutdown` and
+# `terminal_reading` tests; only `cargo xtask faults` turns it on.
 faults = ["dep:verbatim-faults"]
 
 [lints]

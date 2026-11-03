@@ -53,6 +53,16 @@ pub enum Fault {
     /// (`verbatim-outpost`'s `Outpost::shutdown`). Subject: the outpost's
     /// target process id.
     ShutdownWaitsForCalls,
+    /// An observation point ([`reach`]): one of `verbatim-uia`'s
+    /// registration calls into an application ended by UIA's connection
+    /// timeout, as its time past the timeout shows, since such a call
+    /// reports success. Subject: the registration's id.
+    RegistrationCallTimedOut,
+    /// An observation point ([`reach`]): an outpost's caret key's watch
+    /// ended without evidence (`verbatim-outpost`'s shell, carrying out the
+    /// reducer's `WatchEnded`). Subject: why it ended, the reducer's
+    /// `&'static str`.
+    CaretWatchEnded,
 }
 
 /// Whether a subject is the one a test names: false for a subject of
@@ -129,11 +139,27 @@ pub fn hit<S: Any>(fault: Fault, subject: &S) -> bool {
 }
 
 /// An observation point: what a point calls when the code reaches the
-/// place it stands for, where nothing fails. It counts as a firing of an
-/// armed point, so a test waits with [`Guard::wait_fired`] for the evidence
-/// that the code got there, and the code goes on either way.
+/// place it stands for, where nothing fails. It counts as a firing of each
+/// armed point whose selector picks the subject, even past the times it
+/// was armed for, so a test waits with [`Guard::wait_fired`] for the
+/// evidence that the code got there, and a guard's drop fails a test whose
+/// code got there more often than it was armed for; the code goes on
+/// either way.
 pub fn reach<S: Any>(fault: Fault, subject: &S) {
-    let _ = hit(fault, subject);
+    let mut table = table();
+    let mut fired = false;
+    for armed in table
+        .armed
+        .iter_mut()
+        .filter(|armed| armed.fault == fault && (armed.selects)(subject))
+    {
+        armed.left = armed.left.saturating_sub(1);
+        armed.fired += 1;
+        fired = true;
+    }
+    if fired {
+        FIRED.notify_all();
+    }
 }
 
 /// [`hit`] with a subject built by `subject` only while `fault` is armed,
@@ -234,6 +260,15 @@ mod tests {
         assert_eq!(guard.fired(), 0, "another subject");
         reach(Fault::ShutdownWaitsForCalls, &3_u32);
         assert!(guard.wait_fired(Duration::ZERO));
+    }
+
+    #[test]
+    #[should_panic(expected = "fired 2 times, not 1")]
+    fn an_observation_point_reached_past_its_times_fails_the_test() {
+        let guard = arm(Fault::CaretWatchEnded, |_: &&'static str| true, 1);
+        reach(Fault::CaretWatchEnded, &"first");
+        reach(Fault::CaretWatchEnded, &"second");
+        assert_eq!(guard.fired(), 2);
     }
 
     #[test]

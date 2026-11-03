@@ -20,8 +20,10 @@ workspace-hack = { version = "0.1", path = "../workspace-hack" }
 verbatim-faults.workspace = true
 
 [features]
-# The subscription's fault points and `subscribe::kept_for_tests`, for
-# mockapp's `failure_paths` tests; only `cargo xtask faults` turns it on.
+# The subscription's fault points, its observation point for a call ended
+# by the connection timeout, and `subscribe::kept_for_tests`, for mockapp's
+# `failure_paths` and `time_limits` tests; only `cargo xtask faults` turns
+# it on.
 faults = ["dep:verbatim-faults"]
 
 [lints]

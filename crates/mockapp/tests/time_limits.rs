@@ -11,7 +11,9 @@
 //! - A subscription's move onto a held window ends at UIA's connection
 //!   timeout, and the registration's next move is made after it, as is
 //!   another registration's move, since every registration of a process
-//!   shares its registering thread.
+//!   shares its registering thread: the client counts one call ended by
+//!   the timeout (`verbatim_faults::Fault::RegistrationCallTimedOut`), so
+//!   this binary is built only with the `faults` feature.
 //! - A tree walk whose step to an element's first child is held fails with
 //!   the step's `UIA_E_TIMEOUT`, rather than reading the element as having
 //!   no children.
@@ -28,9 +30,10 @@ use std::sync::atomic::AtomicU64;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
+use verbatim_faults::Fault;
 use verbatim_uia::{
-    BoundedClient, CONNECTION_TIMEOUT, ElementExt as _, Fill, Node, NodeIdRegistry, Part,
-    PropertyEvent, Registration, Scope, Shape, Subscription, TRANSACTION_TIMEOUT, Uia, Unanswered,
+    BoundedClient, ElementExt as _, Fill, Node, NodeIdRegistry, Part, PropertyEvent, Registration,
+    Scope, Shape, Subscription, TRANSACTION_TIMEOUT, Uia, Unanswered,
 };
 use verbatim_uia_rops::{TreeQuery, tree_dump_classic};
 use windows::Win32::System::Variant::VARIANT;
@@ -140,15 +143,23 @@ fn a_held_search_ends_at_its_deadline() {
     app.quit();
 }
 
+/// Counts every registration call, of any registration, that ends by UIA's
+/// connection timeout; the guard's drop fails the test if one more ended
+/// so than the one a test asserts.
+fn count_timed_out_calls() -> verbatim_faults::Guard {
+    verbatim_faults::arm(Fault::RegistrationCallTimedOut, |_: &u64| true, 1)
+}
+
 /// A subscription moved onto the subtree of a window whose provider holds
 /// its call, the window's element looked up before the hold, and moved
 /// again, while that call is held, onto another application's window: both
 /// moves are made, the next registering on the other window, as that
-/// application counts it, between one and two of UIA's connection
-/// timeouts after the first was asked for, though the held call is still
-/// held. So the held registration ended at the connection timeout, and
-/// the second move's removal of the group from the held window cost no
-/// timeout of its own.
+/// application counts it, though the held call is still held, and exactly
+/// one registration call of the two moves ended by UIA's connection
+/// timeout, as the client counts them
+/// (`verbatim_faults::Fault::RegistrationCallTimedOut`). So the held
+/// registration ended at the connection timeout, and the second move's
+/// removal of the group from the held window cost no timeout of its own.
 fn a_held_subscription_move_returns_at_the_connection_timeout() {
     common::init_com();
     let held_title = common::unique_title("mockapp-held-move");
@@ -173,18 +184,19 @@ fn a_held_subscription_move_returns_at_the_connection_timeout() {
         "nothing is registered on the other window yet"
     );
 
+    let timeouts = count_timed_out_calls();
     held_app.hold();
-    let started = Instant::now();
     registration.retarget(held_window);
     let held = held_app.held();
     registration.retarget(next_window);
     registration.settle();
-    let elapsed = started.elapsed();
     assert_eq!(held, "FragmentRoot", "the registration's call was held");
-    assert!(
-        elapsed >= CONNECTION_TIMEOUT && elapsed < CONNECTION_TIMEOUT * 2,
-        "both moves were made after one connection timeout: {elapsed:?}"
+    assert_eq!(
+        timeouts.fired(),
+        1,
+        "one call of the two moves ended by the connection timeout"
     );
+    drop(timeouts);
     assert_eq!(advised(), 1, "the next move registered on the other window");
     held_app.release();
     registration.close();
@@ -195,10 +207,11 @@ fn a_held_subscription_move_returns_at_the_connection_timeout() {
 /// second registration's commands wait behind the first's: its move and
 /// settle, asked for while the first registration's move onto a window
 /// whose provider holds its call is held, wait until that move has returned
-/// at UIA's connection timeout, so the second's settle returns no sooner
-/// than one connection timeout after the first move was asked for, and
-/// before two; and its move has then registered on the other application's
-/// window, as that application counts it. Whether the second move was made
+/// at UIA's connection timeout, so the second's settle returns after that
+/// one call ended by the connection timeout, and no other call of either
+/// registration did, as the client counts them; and its move has then
+/// registered on the other application's window, as that application
+/// counts it. Whether the second move was made
 /// after the held one rather than before it is not shown: the settle waits
 /// for both either way.
 fn a_second_registrations_commands_wait_behind_the_firsts_held_move() {
@@ -229,21 +242,22 @@ fn a_second_registrations_commands_wait_behind_the_firsts_held_move() {
         "nothing is registered on the other window yet"
     );
 
+    let timeouts = count_timed_out_calls();
     held_app.hold();
-    let started = Instant::now();
     first.retarget(held_window);
     let held = held_app.held();
     second.retarget(next_window);
     second.settle();
-    let elapsed = started.elapsed();
     assert_eq!(
         held, "FragmentRoot",
         "the first registration's call was held"
     );
-    assert!(
-        elapsed >= CONNECTION_TIMEOUT && elapsed < CONNECTION_TIMEOUT * 2,
-        "the second registration's settle waited behind the first's held move: {elapsed:?}"
+    assert_eq!(
+        timeouts.fired(),
+        1,
+        "only the first registration's held move ended by the connection timeout"
     );
+    drop(timeouts);
     assert_eq!(
         advised(),
         1,

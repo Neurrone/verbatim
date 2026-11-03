@@ -254,7 +254,6 @@ Tests that read an asynchronous effect without evidence that it happened, found 
 
 - `settings_search_suggestions.rs` line 74 and `settings_search_suggestions_reentered.rs` line 62 read the suggestions list once while Settings may still be filling it.
 - `crates/mockapp/tests/call_counts.rs` around lines 2712 to 2755 and 1686 to 1737 count provider calls right after a registration, a removal or a read; whether UI Automation makes calls after those return needs an experiment.
-- Elapsed-time bounds that can fail under load, where the time itself is the point: `crates/mockapp/tests/time_limits.rs` lines 184 to 187 and 243 to 246, whose upper bound of two connection timeouts is what shows a held move ends at one timeout and the move after it costs none; nothing observable marks the first timeout's end, so no order shows it. `crates/mockapp/tests/terminal_reading.rs` line 1055 likewise tells a console watch ended by its poll from one ended at the watch's 10-second bound only by the time, since the outpost only logs why a watch ended.
 
 ### The simulation of the reducers, deferred
 

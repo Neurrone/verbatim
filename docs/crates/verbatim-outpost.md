@@ -1133,7 +1133,13 @@ scripts wait for, without waiting:
   reported, its node is released, its holder panics, returns without a
   result or is claimed by its walk's publication, or at
   `CARET_WATCH_BOUND` (10 s after it opened, for a watch that does not
-  poll), acted on by the reducer with no program. A holder abandoned at
+  poll), acted on by the reducer with no program. The reducer gives the
+  shell why each watch ended without evidence (`Effect::WatchEnded`),
+  which the shell logs and, under the `faults` feature, passes to the
+  observation point `CaretWatchEnded`
+  ([verbatim-faults](verbatim-faults.md)), on which mockapp's
+  `terminal_reading` tests tell a watch ended by its poll from one ended
+  at its bound. A holder abandoned at
   its deadline answers `Abandoned`. So a key that moves nothing is silent
   (`docs/parity/text.md`, "TextInfo-equivalent layer").
 - The console host's caret poll (`reducer::Watch::Polling`, a documented

@@ -32,8 +32,9 @@ verbatim-uia-rops.workspace = true
 verbatim-win32.workspace = true
 
 [features]
-# The fault points of the outpost's worker, shutdown and UIA subscription,
-# for the `failure_paths` and `shutdown` tests; only `cargo xtask faults`
+# The fault points of the outpost's worker, shutdown and caret watches and
+# of UIA subscription, for the `failure_paths`, `shutdown`,
+# `terminal_reading` and `time_limits` tests; only `cargo xtask faults`
 # turns it on.
 faults = ["dep:verbatim-faults", "verbatim-outpost/faults", "verbatim-uia/faults"]
 
@@ -56,9 +57,12 @@ harness = false
 name = "combo_box"
 harness = false
 
+# Tells why a console's caret watch ended by the outpost's observation
+# point, so only `cargo xtask faults` builds it.
 [[test]]
 name = "terminal_reading"
 harness = false
+required-features = ["faults"]
 
 # This one runs itself as a subprocess, which its own `main` recognizes.
 [[test]]
@@ -124,9 +128,12 @@ harness = false
 name = "text"
 harness = false
 
+# Counts the registration calls ended by UIA's connection timeout at
+# verbatim-uia's observation point, so only `cargo xtask faults` builds it.
 [[test]]
 name = "time_limits"
 harness = false
+required-features = ["faults"]
 
 [[test]]
 name = "uia_bugs"

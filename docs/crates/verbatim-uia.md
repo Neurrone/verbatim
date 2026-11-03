@@ -434,6 +434,10 @@ The design is `docs/design/focus-pipeline.md`, section 17.
   also gives `kept_for_tests()`, how many closed or failed registrations
   the registering thread keeps for a failed removal
   ([verbatim-faults](verbatim-faults.md); mockapp's `failure_paths`).
+  Under the same conditions, each registration call whose time passed
+  the connection timeout, the calls logged at warn level for it, reaches
+  the observation point `RegistrationCallTimedOut`, which mockapp's
+  `time_limits` tests count.
 - Every registration in a process is made by one registering thread with
   one client, created on the process's first registration, in the order
   asked, because Microsoft's guidance for UIA clients is that a client

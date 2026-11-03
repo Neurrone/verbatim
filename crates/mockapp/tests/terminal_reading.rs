@@ -50,6 +50,11 @@
 //!   control focus is in, both before and after the same query answers with
 //!   the terminal.
 //!
+//! A console host's caret key's watch ended by its poll is told from one
+//! ended at the watch's own bound by the reason the outpost gives
+//! (`verbatim_faults::Fault::CaretWatchEnded`), so this binary is built
+//! only with the `faults` feature.
+//!
 //! While the terminal is held, the evidence that the outpost has taken a
 //! text change is the report of a caret event raised after it: UI
 //! Automation delivers one client's events from a provider in the order
@@ -1037,24 +1042,33 @@ fn a_console_hosts_caret_moved_without_an_event_answers_its_watch() {
     app.quit();
 }
 
-/// The longest a caret key's watch stays open without evidence, the
-/// outpost's `CARET_WATCH_BOUND`: a watch answered sooner was ended by
-/// something else.
-const WATCH_BOUND: Duration = Duration::from_secs(10);
+/// Why the outpost ends a console host's caret key's watch whose poll
+/// found nothing by the poll's bound, as its reducer gives it to the shell
+/// (`verbatim_faults::Fault::CaretWatchEnded`); a watch at its own bound,
+/// `CARET_WATCH_BOUND`, ends for "its bound passed".
+const POLL_ENDED: &str = "its poll's bound passed";
+
+/// Expects one caret key's watch to end without evidence, for `why`; the
+/// guard's drop fails the test if one ended for another reason, or more
+/// than one ended.
+fn expect_watch_end(why: &'static str) -> verbatim_faults::Guard {
+    verbatim_faults::arm(
+        verbatim_faults::Fault::CaretWatchEnded,
+        move |ended: &&'static str| *ended == why,
+        1,
+    )
+}
 
 /// A console host's caret key's watch whose poll finds nothing by its bound,
 /// 50 ms after the key, ends as a watch does at its own bound: answered
-/// `WatchEnded`, and nothing else said, before the watch's own bound could
-/// have ended it.
+/// `WatchEnded`, and nothing else said, but ended by its poll, not by the
+/// watch's own bound.
 fn a_console_hosts_watch_ends_when_its_poll_finds_nothing() {
-    let asked = Instant::now();
+    let ended = expect_watch_end(POLL_ENDED);
     let (app, outpost, _area, key) = console_watch("mockapp-console-poll-bound", 0);
     assert_eq!(answer_to(&outpost, key), TextReply::WatchEnded);
-    let waited = asked.elapsed();
-    assert!(
-        waited < WATCH_BOUND,
-        "the watch ended after {waited:?}, by its own bound, not its poll's"
-    );
+    assert_eq!(ended.fired(), 1, "the watch ended by its poll's bound");
+    drop(ended);
     outpost.settled();
     drop(outpost);
     app.quit();
@@ -1063,9 +1077,9 @@ fn a_console_hosts_watch_ends_when_its_poll_finds_nothing() {
 /// The poll's bound is 50 ms after the key's `pressed_at_ms`, not after the
 /// watch opened: a key passed on two seconds after the test asks has its
 /// watch re-read until 50 ms after that, and ended then, so not before the
-/// key's time. That the poll, not the watch's own bound, ends a console
-/// host's watch is the test above's.
+/// key's time, and ended by the poll, not by the watch's own bound.
 fn a_console_hosts_poll_is_bounded_from_the_keys_time() {
+    let ended = expect_watch_end(POLL_ENDED);
     let asked = Instant::now();
     let pressed_at_ms = common::outpost::now_ms() + 2_000;
     let (app, outpost, _area, key) = console_watch("mockapp-console-poll-key-time", pressed_at_ms);
@@ -1075,6 +1089,8 @@ fn a_console_hosts_poll_is_bounded_from_the_keys_time() {
         waited >= Duration::from_secs(2),
         "the watch ended after {waited:?}, before the key's time"
     );
+    assert_eq!(ended.fired(), 1, "the watch ended by its poll's bound");
+    drop(ended);
     outpost.settled();
     drop(outpost);
     app.quit();

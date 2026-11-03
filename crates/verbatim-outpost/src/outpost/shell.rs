@@ -846,6 +846,9 @@ impl Shell {
                 .context
                 .nudge_event_thread(super::narrowing::Nudge::Decide),
             Effect::WatchEnded { trace, why, waited } => {
+                // An observation point: a test asserts why a watch ended.
+                #[cfg(any(test, feature = "faults"))]
+                verbatim_faults::reach(verbatim_faults::Fault::CaretWatchEnded, &why);
                 tracing::debug!(
                     %trace,
                     why,

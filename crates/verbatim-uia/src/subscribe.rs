@@ -1039,6 +1039,25 @@ fn serve(ready: &mpsc::Sender<windows::core::Result<()>>, received: &mpsc::Recei
     crate::com::leave_mta();
 }
 
+/// Whether registration `registration`'s call into an application, which
+/// took `elapsed`, ended by UIA's connection timeout: such a call reports
+/// success (`docs/uia-bugs.md`, "A registration that times out reports
+/// success"), so its time past the timeout is the only sign. Each one is
+/// an observation point for a test that counts them.
+fn timed_out(registration: u64, elapsed: Duration) -> bool {
+    let timed_out = elapsed > crate::CONNECTION_TIMEOUT;
+    #[cfg(any(test, feature = "faults"))]
+    if timed_out {
+        verbatim_faults::reach(
+            verbatim_faults::Fault::RegistrationCallTimedOut,
+            &registration,
+        );
+    }
+    #[cfg(not(any(test, feature = "faults")))]
+    let _ = registration;
+    timed_out
+}
+
 /// Logs one registration call into an application, `call` on `element`,
 /// with its result and how long it took: at debug level, or at warn level
 /// when it took longer than UIA's connection timeout, or when it is a
@@ -1056,7 +1075,7 @@ fn log_call(
 ) {
     // The runtime id is read only for a line that is written.
     let elapsed_ms = elapsed.as_millis();
-    if elapsed > crate::CONNECTION_TIMEOUT {
+    if timed_out(registration, elapsed) {
         let runtime_id = crate::com::runtime_id(element);
         tracing::warn!(
             registration,
@@ -1188,7 +1207,7 @@ impl Follower {
                 unsafe { uia.client().AddFocusChangedEventHandler(&cache, &handler) }
             };
             let elapsed_ms = started.elapsed().as_millis();
-            if started.elapsed() > crate::CONNECTION_TIMEOUT {
+            if timed_out(id, started.elapsed()) {
                 tracing::warn!(
                     registration = id,
                     result = ?added,
@@ -1370,7 +1389,7 @@ impl Follower {
             };
             let elapsed = started.elapsed();
             let elapsed_ms = elapsed.as_millis();
-            if elapsed > crate::CONNECTION_TIMEOUT {
+            if timed_out(self.id, elapsed) {
                 tracing::warn!(
                     registration = self.id,
                     result = ?removed,
