@@ -1190,10 +1190,7 @@ fn a_pause_holds_speech_until_resumed_and_new_speech_cancels_it() {
     );
     // The marker was spoken after every toggle, so every toggle's report
     // came before its end.
-    assert_eq!(
-        harness.recorder.pauses_so_far(),
-        [true, false, true, false]
-    );
+    assert_eq!(harness.recorder.pauses_so_far(), [true, false, true, false]);
 }
 
 /// Plays `length` of quiet tone through a source of its own on `mixer` and

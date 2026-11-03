@@ -17,7 +17,7 @@ use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
 use std::sync::{PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use common::outpost::OutpostUnderTest;
 use verbatim_listener_logic::focus::{FocusEvent, Judged};
