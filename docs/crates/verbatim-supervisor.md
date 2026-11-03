@@ -124,7 +124,12 @@ How it works:
   released on `Ready` (`verbatim_core::supervisor::policy::HeldFacts`, which
   keeps the time the owner reads at each hold only for an application's
   first held fact); then the listener gets `HookInstalled`,
-  and later `HookRemoved`, through `Owner::tell_listener`.
+  and later `HookRemoved`, through `Owner::tell_listener`. `HookRemoved`
+  also goes when a record is removed before its generation's `Ready`
+  (`Generation::removed` emits it from every stage) and when the owner
+  declines to watch an application (`Owner::not_watched`), so a reading
+  thread the listener started for the application's events before any
+  hook was in is released.
 - Each application is identified by a process held open
   (`verbatim_process::held::Target`)
   while it has a record. Nothing is started for an application that exited

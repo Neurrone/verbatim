@@ -2,8 +2,9 @@
 //! knows it (`docs/design/ownership.md`): one state per stage of its life, each holding only what
 //! that stage has, and each transition a method that consumes the state
 //! and returns the next with the notices to send, in order. Leaving
-//! `Ready` emits the listener's `HookRemoved` in the same step, so no path
-//! out of it can forget it, and no sentinel generation is ever stored.
+//! `Ready` emits the listener's `HookRemoved` in the same step, and so does
+//! a record's removal from every stage, so no path out of it can forget
+//! it, and no sentinel generation is ever stored.
 //!
 //! Generic over the child, so the transitions are tested with `()`.
 
@@ -611,17 +612,18 @@ impl<C> Generation<C> {
     }
 
     /// `pid`'s record is removed: its application exited, its outpost
-    /// retired, or Verbatim is exiting. A ready generation's hook goes.
-    /// With `reason`, the app hears the end of every generation it heard
+    /// retired, or Verbatim is exiting. The listener hears first that the
+    /// application's hook is gone, from every stage and not only `Ready`,
+    /// so a reading thread it started for the application's events before
+    /// any outpost's hook was in is released too. With `reason`, the app hears the end of every generation it heard
     /// started, the unready one waiting for its replacement among them, no
     /// generation following, and then that the application is not
     /// watched; without one, Verbatim is exiting and the app hears
     /// nothing.
     pub fn removed(self, pid: Pid, reason: Option<EndReason>) -> Removed<C> {
-        let mut notices = Vec::new();
+        let mut notices = vec![Notice::HookRemoved { pid }];
         let (child, outpost, ready, heard) = match self {
             Generation::Ready { outpost, child, .. } => {
-                notices.push(Notice::HookRemoved { pid });
                 (Some(child), Some(outpost), true, Some(outpost))
             }
             Generation::Starting { outpost, child, .. } => {
@@ -809,10 +811,73 @@ mod tests {
         let removed = waiting.removed(PID, Some(EndReason::TargetExited));
         assert_eq!(
             named(&removed.notices),
-            ["Ended 3 target exited, follows false", "NotWatched"]
+            [
+                "HookRemoved",
+                "Ended 3 target exited, follows false",
+                "NotWatched"
+            ]
         );
         let unheard = Generation::<()>::new().removed(PID, Some(EndReason::TargetExited));
-        assert_eq!(named(&unheard.notices), ["NotWatched"]);
+        assert_eq!(named(&unheard.notices), ["HookRemoved", "NotWatched"]);
+    }
+
+    /// A record removed before its generation's `Ready` releases the
+    /// listener's reading thread for the application as a ready one does:
+    /// the listener may have started one for its events before any hook
+    /// was in.
+    #[test]
+    fn a_removal_before_ready_tells_the_listener_from_every_stage() {
+        let launching = Generation::<()>::new()
+            .given(
+                PID,
+                Next::Launch {
+                    outpost: OutpostId(3),
+                },
+                START,
+            )
+            .0;
+        let spare_given = Generation::<()>::new()
+            .given(
+                PID,
+                Next::Spare {
+                    outpost: OutpostId(3),
+                    child: None,
+                },
+                START,
+            )
+            .0;
+        assert_eq!(
+            named(
+                &launching
+                    .removed(PID, Some(EndReason::TargetExited))
+                    .notices
+            ),
+            ["HookRemoved", "NotWatched"]
+        );
+        assert_eq!(
+            named(
+                &spare_given
+                    .removed(PID, Some(EndReason::TargetExited))
+                    .notices
+            ),
+            ["HookRemoved", "NotWatched"]
+        );
+        assert_eq!(
+            named(
+                &starting(3)
+                    .removed(PID, Some(EndReason::TargetExited))
+                    .notices
+            ),
+            [
+                "HookRemoved",
+                "Ended 3 target exited, follows false",
+                "NotWatched"
+            ]
+        );
+        assert_eq!(
+            named(&starting(3).removed(PID, None).notices),
+            ["HookRemoved"]
+        );
     }
 
     #[test]

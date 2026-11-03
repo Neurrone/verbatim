@@ -1238,9 +1238,13 @@ impl Owner {
             .remove(&outpost);
     }
 
-    /// Tells the app that no outpost will watch `pid` for now
-    /// ([`OutpostMessage::NotWatched`]), so nothing waits for one.
+    /// Tells the listener that `pid` has no outpost's hook in
+    /// ([`CoreToListener::HookRemoved`]), so a reading thread it started
+    /// for the application's events is released, then tells the app that
+    /// no outpost will watch `pid` for now ([`OutpostMessage::NotWatched`]),
+    /// so nothing waits for one.
     fn not_watched(&mut self, pid: Pid) {
+        self.tell_listener(CoreToListener::HookRemoved { pid, sent_at_us: 0 });
         self.outbox.send(OutpostMessage::NotWatched {
             target_pid: pid,
             sealed: Sealed::new(),

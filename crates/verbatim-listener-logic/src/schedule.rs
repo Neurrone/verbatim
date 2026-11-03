@@ -1937,6 +1937,31 @@ mod tests {
         assert!(schedule.apps.is_empty(), "let go");
     }
 
+    /// A thread started for an application's events, before any outpost's
+    /// hook was in, stays in charge while nothing says the application has
+    /// no outpost, and ends at the release the supervisor sends from every
+    /// stage of a generation and when it declines to watch the application.
+    #[test]
+    fn a_thread_waits_for_its_applications_release_and_then_ends() {
+        let mut schedule = schedule();
+        let _ = step(&mut schedule, focus(1, 1), 0);
+        let _ = step(&mut schedule, next(1, 1), 0);
+        let _ = step(&mut schedule, returned(1, request(1, 1), 1), 1);
+        assert_eq!(step(&mut schedule, next(1, 1), 1), []);
+        assert!(schedule.in_charge(Pid(1), 1), "waits with nothing queued");
+        assert_eq!(
+            step(
+                &mut schedule,
+                ScheduleInput::OutpostEnded { pid: Pid(1) },
+                2
+            ),
+            [Seen::Wake(Waking::Thread(Pid(1)))]
+        );
+        assert_eq!(step(&mut schedule, next(1, 1), 2), []);
+        assert!(!schedule.in_charge(Pid(1), 1), "the thread ends");
+        assert!(schedule.apps.is_empty(), "let go");
+    }
+
     /// Found by the read scheduler's generated test: an application whose
     /// outpost has ended is let go once its thread cannot start and its
     /// waiting events are dropped.

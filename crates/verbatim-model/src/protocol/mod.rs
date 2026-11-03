@@ -824,8 +824,12 @@ pub enum CoreToListener {
         #[serde(default)]
         sent_at_us: u64,
     },
-    /// `pid` has no outpost with its hook in any more, so the listener
-    /// forwards its `WinEvent` facts again.
+    /// `pid` has no outpost with its hook in, so the listener forwards its
+    /// `WinEvent` facts again and its reading thread ends once the events
+    /// waiting for it are read. Sent when a ready generation fails, when an
+    /// application's record is removed from any stage, its hook ever in or
+    /// not, and when the supervisor declines to watch an application, so a
+    /// reading thread started before any hook was in is released too.
     HookRemoved {
         /// The application.
         pid: Pid,

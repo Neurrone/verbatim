@@ -2,14 +2,16 @@
 //! end-to-end harness names in `VERBATIM_IGNORE_PIDS`: the owner's own
 //! Windows Terminal) gets no outpost: the listener is told its pid, a focus
 //! fact from it is routed nowhere, a request to start an outpost for it
-//! starts none and says so (`NotWatched`), and a fact from another
-//! application, routed after it, is delivered as usual.
+//! starts none and says so (`NotWatched`), releasing the listener's reading
+//! thread for it (`HookRemoved`), and a fact from another application,
+//! routed after it, is delivered as usual.
 //!
 //! This test binary runs itself four ways: as two applications, processes
 //! with no windows that run until their standard input closes, one of them
 //! ignored; as a stand-in for the focus listener, which checks it was told
-//! the ignored pid, says it is ready, and sends a focus fact from the
-//! ignored application and then one from the other; and as a stand-in for
+//! the ignored pid, says it is ready, sends a focus fact from the ignored
+//! application and then one from the other, and shuts down cleanly only if
+//! it was told the ignored application's release; and as a stand-in for
 //! the outpost binary, which says it is ready, answers pings, and shuts
 //! down when asked. Nothing makes a UI Automation or `WinEvent` call, so the
 //! test touches nothing on the desktop. Its own `main` recognizes each
@@ -114,6 +116,10 @@ fn stand_in(args: &[String]) -> ! {
             send(&focus_fact(pid.parse().expect("a pid")));
         }
         send(&focus_fact(other));
+        // Whether the supervisor, declining to watch the ignored
+        // application, released its reading thread: the listener shuts
+        // down cleanly only then, so the test's summary counts it.
+        let mut released = false;
         loop {
             match read_message::<_, CoreToListener>(&mut commands) {
                 Ok(Some(CoreToListener::Ping { seq, .. })) => send(&ListenerToCore::Pong {
@@ -121,7 +127,14 @@ fn stand_in(args: &[String]) -> ! {
                     parked_count: 0,
                     written_at_us: 0,
                 }),
-                Ok(Some(CoreToListener::Shutdown) | None) => std::process::exit(0),
+                Ok(Some(CoreToListener::HookRemoved { pid, .. })) => {
+                    released |= ignored
+                        .split(',')
+                        .any(|ignored| ignored == pid.0.to_string());
+                }
+                Ok(Some(CoreToListener::Shutdown) | None) => {
+                    std::process::exit(if released { 0 } else { 3 })
+                }
                 Ok(Some(_)) => {}
                 Err(error) => panic!("the command pipe failed: {error}"),
             }
@@ -229,7 +242,7 @@ fn an_ignored_process_gets_no_outpost_and_its_facts_go_nowhere() {
             killed: 0,
             killed_on_failure: 0,
         },
-        "the listener and the other application's outpost shut down cleanly"
+        "the listener, told the ignored application's release, and the other application's outpost shut down cleanly"
     );
     let rest: Vec<OutpostMessage> = events.try_iter().collect();
     assert!(
