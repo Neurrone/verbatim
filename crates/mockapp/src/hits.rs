@@ -554,17 +554,7 @@ static PATTERN_DELAY_MS: AtomicU64 = AtomicU64::new(0);
 pub(crate) fn hit(method: Method) {
     HITS[method.index()].fetch_add(1, Ordering::Relaxed);
     if HOLD.swap(false, Ordering::Relaxed) {
-        // Printed as the window thread's acknowledgements are, where
-        // `ready` went.
-        print_line(&format!("held {method:?}"));
-        let released = RELEASED
-            .0
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let _released = RELEASED
-            .1
-            .wait_while(released, |released| !*released)
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        held(&format!("{method:?}"));
     }
     let mut delay = DELAY_MS.load(Ordering::Relaxed);
     if matches!(method, Method::GetPatternProvider) {
@@ -627,11 +617,33 @@ static RELEASED: (Mutex<bool>, Condvar) = (Mutex::new(false), Condvar::new());
 /// Holds the next provider call, whichever it is, until [`release`]: the
 /// `hold` command.
 pub(crate) fn hold_next() {
+    arm_hold();
+    HOLD.store(true, Ordering::Relaxed);
+}
+
+/// Makes the next call held ([`held`]) wait for the next [`release`]: the
+/// `hold` and `hold-acc-parent` commands.
+pub(crate) fn arm_hold() {
     *RELEASED
         .0
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner) = false;
-    HOLD.store(true, Ordering::Relaxed);
+}
+
+/// Says `held <call>` on stdout and waits until [`release`], so a test
+/// knows a client's call is in progress and decides when it ends.
+pub(crate) fn held(call: &str) {
+    // Printed as the window thread's acknowledgements are, where `ready`
+    // went.
+    print_line(&format!("held {call}"));
+    let released = RELEASED
+        .0
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let _released = RELEASED
+        .1
+        .wait_while(released, |released| !*released)
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
 }
 
 /// Lets a held call go on: the `release` command, which the stdin thread

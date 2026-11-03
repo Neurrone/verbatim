@@ -130,8 +130,8 @@ pub fn retirement_decision(
 /// section 19.5): one application's outposts that fail while serving it, or
 /// the spares that fail while they wait. The first failure is replaced at
 /// once; each further one waits twice as long as the one before, from
-/// the first of its backoff (the supervisor's `BACKOFF_FIRST`) up to
-/// its limit (`BACKOFF_LIMIT`). Nothing is ever given up. The
+/// the first of its backoff (the supervisor's `Timings::backoff_first`) up
+/// to its limit (`Timings::backoff_limit`). Nothing is ever given up. The
 /// count starts again once what failed had stayed up for
 /// the time it must stay up (`STAYED_UP`), and, for an application, when it comes
 /// to the foreground, which also ends a wait that runs

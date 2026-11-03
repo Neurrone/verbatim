@@ -3886,11 +3886,13 @@ fn a_gap_read_whose_walk_is_stuck_is_published_at_its_bound() {
 /// publication, whatever becomes of its worker: the OK button of mockapp's
 /// MSAA tree, as in
 /// [`an_msaa_focus_whose_walk_is_stuck_is_published_at_its_bound`], has its
-/// walk's step to its parent answer 3 seconds late, past the worker's
-/// deadline, which the test shortens from 10 seconds to 2. The watchdog's
-/// publication makes the focus the
-/// followed one, then the watchdog abandons the worker at the deadline,
-/// and the worker that replaces it has nothing handed over to it. Once
+/// walk's step to its parent held by mockapp until the test lets it go,
+/// past the worker's deadline, which the test shortens from 10 seconds to
+/// 2 for the walk alone. The watchdog's publication makes the focus the
+/// followed one, then the watchdog abandons the worker at the deadline:
+/// while the step is still held, a worker takes the next program, which
+/// only the replacement can, and the outpost's pong counts one abandoned
+/// worker. The worker that replaces it has nothing handed over to it. Once
 /// the step has returned, the
 /// button's rename, raised before ten renames of other objects of the
 /// same thread and planned in one batch with them, is kept beyond NVDA's
@@ -3905,7 +3907,7 @@ fn a_focus_published_at_its_bound_is_followed_after_its_worker_is_abandoned() {
         .outpost
         .set_handling_deadline(Duration::from_secs(2));
     app.send("set-focus btn_ok");
-    app.send("slow-acc-parent group1 3000");
+    app.send("hold-acc-parent group1");
     // The OK button, node 2 of the tree, at its object id.
     outpost.deliver(DeliveredFact::MsaaFocus {
         hwnd: hwnd.0 as isize,
@@ -3913,11 +3915,29 @@ fn a_focus_published_at_its_bound_is_followed_after_its_worker_is_abandoned() {
         id_child: 0,
     });
     let published = focus_changed(outpost.next());
-    app.stamped_line("slow-acc-parent started");
-    // Answered at once from the call after this one, which waits for it.
-    app.write("slow-acc-parent group1 0");
-    app.stamped_line("slow-acc-parent ended");
-    app.expect_line("applied", || "the late call's end".to_owned());
+    assert_eq!(app.held(), "AccParent", "the walk's step to its parent");
+    // The programs dispatched from here on have Verbatim's deadline,
+    // `verbatim_outpost_logic::HANDLING_DEADLINE`.
+    outpost
+        .outpost
+        .set_handling_deadline(Duration::from_secs(10));
+    // The step is still held, so only a worker that replaced the walk's
+    // can take the foreground change's program: the walk's worker was
+    // abandoned.
+    outpost.hold_worker_on(common::another_applications_window().0 as isize);
+    outpost.outpost.handle_command(&CoreToOutpost::Ping {
+        seq: 1,
+        sent_at_us: 0,
+    });
+    match outpost.next() {
+        OutpostToCore::Pong {
+            seq: 1,
+            parked_count: 1,
+            ..
+        } => {}
+        other => panic!("the outpost said {other:?}, not a pong counting the abandoned worker"),
+    }
+    app.release();
     assert_eq!(
         chain_of(&published),
         [
@@ -3926,11 +3946,9 @@ fn a_focus_published_at_its_bound_is_followed_after_its_worker_is_abandoned() {
         ],
         "the focus as read before its stuck step, below its window"
     );
-    outpost.settled();
     let NormalizedEvent::FocusChanged { node, .. } = &published else {
         unreachable!("a focus change");
     };
-    outpost.hold_worker_on(common::another_applications_window().0 as isize);
     app.send("set-name btn_ok Renamed");
     let others = [
         "group1",

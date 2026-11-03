@@ -332,6 +332,9 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
         Command::SlowAccParent(..) => {
             return Err("slow-acc-parent is not supported on the uia backend".into());
         }
+        Command::HoldAccParent(_) => {
+            return Err("hold-acc-parent is not supported on the uia backend".into());
+        }
         Command::FailAccParent(_) => {
             return Err("fail-acc-parent is not supported on the uia backend".into());
         }

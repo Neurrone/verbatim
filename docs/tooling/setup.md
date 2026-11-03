@@ -36,10 +36,12 @@ tests (below, "What cargo xtask ci runs"):
 
 ```
 cargo install cargo-hakari --locked
-cargo install cargo-nextest --locked
+cargo install cargo-nextest --version 0.9.151 --locked
 ```
 
-GitHub Actions installs both in the `ci` and `ci-arm64` jobs.
+GitHub Actions installs both in the `ci` and `ci-arm64` jobs, cargo-nextest
+at the version `.config/nextest.toml` requires (`nextest-version`), so a
+new nextest release changes nothing until the pin is moved in both places.
 
 ### The workspace-hack crate
 

@@ -30,10 +30,12 @@
 //! command line.
 
 use std::cell::RefCell;
+use std::collections::BTreeSet;
 use std::io::{BufReader, Read as _};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use crossbeam_channel::unbounded;
@@ -103,21 +105,6 @@ const LIMIT: Duration = Duration::from_secs(5);
 
 /// The longest any step waits.
 const WAIT: Duration = Duration::from_secs(30);
-
-/// The supervisor's timings for a test that waits out missed pings or a
-/// backoff: a ping every half second, so three missed make a child stuck
-/// after a second and a half rather than nine, and a backoff from half a
-/// second rather than one. A stand-in that answers pings answers each at
-/// once, and every wait a test makes the backoff end early, a foreground
-/// change, comes within milliseconds, so the shorter times leave each
-/// test's outcome unchanged.
-fn quick() -> Timings {
-    Timings {
-        ping_interval: Duration::from_millis(500),
-        backoff_first: Duration::from_millis(500),
-        ..Timings::default()
-    }
-}
 
 /// How a failing assignment fails.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -439,18 +426,13 @@ impl Run {
     /// A supervisor running this binary's stand-ins, ignoring `ignored`,
     /// once its listener is ready.
     fn start(ignored: &[Pid]) -> Self {
-        Self::start_with(ignored, Timings::default())
-    }
-
-    /// [`Run::start`], the supervisor running by `timings`.
-    fn start_with(ignored: &[Pid], timings: Timings) -> Self {
         let (events_tx, events) = unbounded();
         let supervisor = Supervisor::with_executables(
             events_tx,
             OutpostOptions::default(),
             Executables::both(exe()),
             LIMIT,
-            timings,
+            Timings::default(),
             Arc::new(IgnoredProcesses::hold(ignored.iter().copied())),
         )
         .expect("the supervisor starts");
@@ -914,7 +896,7 @@ fn a_spare_that_dies_waiting_is_replaced() {
 
 fn a_spare_that_misses_its_pings_while_it_waits_is_replaced() {
     set_env(MUTE_SPARE, "4");
-    let run = Run::start_with(&[], quick());
+    let run = Run::start(&[]);
     run.keep_spares();
     // Ended after three ping intervals without a pong, and replaced.
     run.expect_spare(5, 2);
@@ -1049,7 +1031,7 @@ fn an_outpost_that_crashes_after_its_ready_is_replaced_by_a_spare_at_once() {
 /// given the next spare.
 fn a_stuck_outpost_is_ended_and_replaced() {
     let failing = Failing::assignments(&[1], Failure::MuteAfterReady, false);
-    let run = Run::start_with(&[], quick());
+    let run = Run::start(&[]);
     run.keep_spares();
     let (first, first_pid) = application_and_pid();
     run.supervisor.ensure_spawned(first_pid);
@@ -1137,10 +1119,12 @@ fn served<const N: usize>(run: &Run, applications: [Pid; N]) -> [(OutpostId, Pid
 
 /// Repeated failures of one application's outposts, which does not hold
 /// attention, are each replaced and never given up, and are spaced by the
-/// backoff, here from half a second ([`quick`]): the first is replaced at
-/// once; the second waits half a second, and the third one, so a start for
-/// another application asked for after each of their ends is decided
-/// first. A foreground change to the application
+/// backoff: the first is replaced at once; the second waits a second, and
+/// the third two, so another application's outpost, asked for after each
+/// of their ends, starts while the replacement waits. The backoffs are
+/// judged by a clock the test moves, past each wait only once the other
+/// application's outpost has started, so the order does not depend on how
+/// quickly the test asks. A foreground change to the application
 /// ends the fourth's wait, its fact held meanwhile reaching the next
 /// outpost, and starts the count again, so the fifth is replaced at once,
 /// decided before a start asked for after its end. No spare is kept, so
@@ -1149,7 +1133,12 @@ fn repeated_failures_are_spaced_by_the_backoff_until_a_foreground_change() {
     let (first, first_pid) = application_and_pid();
     let others: Vec<(Child, Pid)> = (0..3).map(|_| application_and_pid()).collect();
     set_env(FACTS, format!("foreground:{first_pid}:7"));
-    let run = Run::start_with(&[], quick());
+    let run = Run::start(&[]);
+    let start = verbatim_process::clock::now_us();
+    let moved = Arc::new(AtomicU64::new(0));
+    let clock_moved = Arc::clone(&moved);
+    run.supervisor
+        .set_backoff_clock(Arc::new(move || start + clock_moved.load(Ordering::SeqCst)));
     run.supervisor.ensure_spawned(first_pid);
     let [(mut outpost, mut process)] = served(&run, [first_pid]);
 
@@ -1158,18 +1147,21 @@ fn repeated_failures_are_spaced_by_the_backoff_until_a_foreground_change() {
     run.expect_ended(outpost, first_pid, EndReason::Exited);
     [(outpost, process)] = served(&run, [first_pid]);
 
-    // The second and third: each waits, and another application's start
-    // asked for after the end comes first.
-    for (_, other_pid) in &others[..2] {
+    // The second and third: each waits, a second and then two, and another
+    // application's outpost, asked for after the end, starts meanwhile.
+    for ((_, other_pid), wait_us) in others[..2].iter().zip([1_000_000, 2_000_000]) {
         kill(process);
         run.expect_ended(outpost, first_pid, EndReason::Exited);
         run.supervisor.ensure_spawned(*other_pid);
-        let other;
-        [other, (outpost, process)] = served(&run, [*other_pid, first_pid]);
+        let [other] = served(&run, [*other_pid]);
+        // The wait ends; the views wake the supervisor to decide at once.
+        moved.fetch_add(wait_us, Ordering::SeqCst);
+        run.supervisor.note_views(None, BTreeSet::new());
+        [(outpost, process)] = served(&run, [first_pid]);
         assert!(other.0 < outpost, "{other:?} was started first");
     }
 
-    // The fourth waits two seconds, which the foreground change ends; the
+    // The fourth waits four seconds, which the foreground change ends; the
     // change, held meanwhile, reaches the next outpost.
     kill(process);
     run.expect_ended(outpost, first_pid, EndReason::Exited);
@@ -1257,7 +1249,7 @@ fn a_given_spare_whose_hook_fails_after_its_application_exited_ends_with_it() {
 /// next.
 fn a_given_spare_that_misses_its_pings_is_ended_as_killed() {
     let failing = Failing::assignments(&[1], Failure::Mute, false);
-    let run = Run::start_with(&[], quick());
+    let run = Run::start(&[]);
     run.keep_spares();
     let (first, first_pid) = application_and_pid();
     run.supervisor.ensure_spawned(first_pid);

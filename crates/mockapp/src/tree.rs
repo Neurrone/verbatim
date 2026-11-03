@@ -85,6 +85,9 @@ pub(crate) struct NodeData {
     /// Whether the node's MSAA `accParent` fails with `E_FAIL`
     /// (`fail-acc-parent`).
     pub(crate) acc_parent_fails: bool,
+    /// Whether the node's next MSAA `accParent` is held until `release`
+    /// (`hold-acc-parent`).
+    pub(crate) acc_parent_held: bool,
     /// The node's MSAA location, left, top, width and height, from the
     /// fixture's `location` (all 0 when it gives none), as `move` changes it.
     pub(crate) location: [i32; 4],
@@ -392,6 +395,7 @@ fn insert(
         parent_answer: (crate::stdin::ParentAnswer::Usual, 0),
         parent_delay: (0, 0),
         acc_parent_fails: false,
+        acc_parent_held: false,
         location: node.location,
         location_fails: false,
         generation: 0,

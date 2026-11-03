@@ -248,6 +248,10 @@ to:
 - `VERBATIM_IGNORE_PIDS`: the Windows Terminal processes, and the console
   hosts they run, that Verbatim must ignore ("The Verbatim under test
   never reads your Windows Terminal" below).
+- `VERBATIM_TEST_RETIREMENT=10000,1000`: an outpost's idle retirement
+  shortened from two minutes, looked for every 30 seconds, to 10 seconds,
+  looked for every second, set only for a scenario that waits for one
+  (`return_after_retirement`); a malformed value stops Verbatim's start.
 
 ## Running one scenario
 

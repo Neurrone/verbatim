@@ -314,11 +314,6 @@ impl Reducer {
     /// A supervisor launching this binary's stand-ins, posting to a port
     /// queue, with the queue watched.
     fn start() -> Self {
-        Self::start_with(Timings::default())
-    }
-
-    /// [`Reducer::start`], the supervisor running by `timings`.
-    fn start_with(timings: Timings) -> Self {
         let (poster, queue) = port_queue::<Input>().expect("a port");
         let (stalls_tx, stalls) = unbounded();
         let watching = Arc::new(AtomicBool::new(false));
@@ -348,7 +343,7 @@ impl Reducer {
             OutpostOptions::default(),
             Executables::both(exe),
             LIMIT,
-            timings,
+            Timings::default(),
             std::sync::Arc::default(),
         )
         .expect("the supervisor starts");
@@ -562,14 +557,12 @@ fn a_closed_pipe_reaches_the_app_after_every_frame_before_it() {
 
 /// The reducer held for longer than three ping intervals ends no outpost,
 /// since the relay reads the outposts' pongs itself, and is reported as
-/// its own stall, once. The supervisor pings every half second, so the
-/// hold lasts a second and a half rather than nine.
+/// its own stall, once. The supervisor pings at Verbatim's interval, so a
+/// stand-in has the time a real outpost has to answer, and the hold lasts
+/// nine seconds.
 fn a_reducer_held_past_three_ping_intervals_ends_no_outpost_and_is_reported_as_its_own_stall() {
     let (app, pid) = application();
-    let mut reducer = Reducer::start_with(Timings {
-        ping_interval: Duration::from_millis(500),
-        ..Timings::default()
-    });
+    let mut reducer = Reducer::start();
     reducer.with_outposts(&[pid]);
 
     // Held from here, with a key waiting, and watched.

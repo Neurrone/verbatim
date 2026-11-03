@@ -28,9 +28,12 @@ message layer, the launch arguments and the held processes are
   missed (three), the backoff's first wait and limit (1 and 30 seconds)
   and the `Retirement`: the idle time before an outpost is retired (two
   minutes) and the sweep's interval (30 seconds). `Timings::default` is
-  Verbatim's; `new` uses it with the retirement it is given. Only the
-  tests that wait out a ping miss or a backoff shorten them, through
-  `with_executables`; no setting reaches them. `Retirement::from_test_env`
+  Verbatim's; `new` uses it with the retirement it is given. A test may
+  pass others through `with_executables`, though every test runs with the
+  default, since a stand-in judged by a shorter ping interval is ended as
+  stuck when its start is slow; a test of the backoff moves the clock the
+  backoffs are judged by instead (`set_backoff_clock`). No setting
+  reaches them. `Retirement::from_test_env`
   reads the test-only `VERBATIM_TEST_RETIREMENT` (`TEST_RETIREMENT_ENV`),
   `<idle ms>,<sweep ms>`, which the end-to-end harness sets for the one
   scenario that waits for a retirement; unset, it is the default, and a

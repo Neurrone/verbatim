@@ -174,6 +174,10 @@ parses them.
 - `slow-acc-parent <id> <ms>` (MSAA only) does the same for the node's
   `accParent`, from the next call on, printing `slow-acc-parent started
   <us>` and `slow-acc-parent ended <us>`; 0 answers at once again.
+- `hold-acc-parent <id>` (MSAA only) holds the node's next `accParent`
+  as `hold` holds the next call of any kind: the call prints
+  `held AccParent` and waits until `release`, so a test decides when a
+  stuck parent step ends rather than racing a fixed delay.
 - `move <id> <left> <top> <width> <height>` (MSAA only) makes the node's
   `accLocation` answer that rectangle, raising no event; a fixture node's
   `location`, four integers, gives its first one (all 0 otherwise).
@@ -276,9 +280,9 @@ parses them.
 - `hold` makes the next provider call, whichever client makes it, print
   `held <method>` as it begins and wait until `release`, so a test knows a
   client's call is in progress and decides when it ends.
-- `release` lets the call `hold` held go on; it is applied and
-  acknowledged by the stdin thread, since the window thread is the one
-  held.
+- `release` lets the call `hold` or `hold-acc-parent` held go on; it is
+  applied and acknowledged by the stdin thread, since the window thread
+  is the one held.
 - `quit` exits the process.
 
 A typical by-hand session: start `mockapp` with a fixture, point a real

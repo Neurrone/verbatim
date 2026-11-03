@@ -372,6 +372,14 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
             let index = guard.index_of(&id).ok_or_else(|| unknown(&id))?;
             guard.nodes[index].parent_delay = (ms, 0);
         }
+        Command::HoldAccParent(id) => {
+            let mut guard = tree
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let index = guard.index_of(&id).ok_or_else(|| unknown(&id))?;
+            crate::hits::arm_hold();
+            guard.nodes[index].acc_parent_held = true;
+        }
         Command::FailAccParent(id) => {
             let mut guard = tree
                 .lock()
@@ -702,15 +710,19 @@ mod handler {
         fn accParent(&self) -> WinResult<IDispatch> {
             hits::hit(hits::Method::AccParent);
             alive(&self.tree, (self.index, self.generation))?;
-            let (delay, fails, parent) = {
+            let (delay, held, fails, parent) = {
                 let mut guard = self
                     .tree
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
                 let delay = guard.parent_delay(self.index);
-                let node = &guard.nodes[self.index];
-                (delay, node.acc_parent_fails, node.parent)
+                let node = &mut guard.nodes[self.index];
+                let held = std::mem::take(&mut node.acc_parent_held);
+                (delay, held, node.acc_parent_fails, node.parent)
             };
+            if held {
+                hits::held("AccParent");
+            }
             if delay > 0 {
                 crate::window::announce_call("slow-acc-parent", delay);
             }

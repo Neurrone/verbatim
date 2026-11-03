@@ -25,6 +25,10 @@
 #   and `verbatim-win32`, which make windows of their own on the desktop
 #   the run was started from, which may be in use.
 
+# The version `cargo xtask ci` runs, the one GitHub Actions installs
+# (`.github/workflows/ci.yml`): an older one refuses to run.
+nextest-version = "0.9.151"
+
 [profile.default]
 # A test that fails fails the run, the first time: a retry would hide a
 # race (`CLAUDE.md`, "Standing rules").

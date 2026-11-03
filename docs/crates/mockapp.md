@@ -302,7 +302,9 @@ Every counted call is also where `slow` delays a call and `hold` holds
 one. A parent step's own delay or failure, `slow-parent`,
 `slow-acc-parent` and `fail-acc-parent`, is a per-node setting in the
 tree instead (`Tree::parent_delay`), applied by the step after it is
-counted and bracketed by `window::announce_call`'s two lines. The tests compile `src/hits.rs` into their shared module, so the
+counted and bracketed by `window::announce_call`'s two lines;
+`hold-acc-parent` marks the node's next `accParent` to wait as `hold`'s
+call does (`hits::held`). The tests compile `src/hits.rs` into their shared module, so the
 method list and message numbers cannot drift apart.
 
 ## Implementation notes

@@ -108,7 +108,7 @@ jobs:
       # and runs the unit tests with cargo-nextest.
       - uses: taiki-e/install-action@v2
         with:
-          tool: cargo-hakari,cargo-nextest
+          tool: cargo-hakari,cargo-nextest@0.9.151
       # Environment preparation: a fresh runner's first activation of the
       # Windows speech platform takes longer than the synthesizer host's
       # ten-second hang bound, and the unit tests start several OneCore
@@ -164,7 +164,7 @@ jobs:
       # and runs the unit tests with cargo-nextest.
       - uses: taiki-e/install-action@v2
         with:
-          tool: cargo-hakari,cargo-nextest
+          tool: cargo-hakari,cargo-nextest@0.9.151
       # Environment preparation: a fresh runner's first activation of the
       # Windows speech platform takes longer than the synthesizer host's
       # ten-second hang bound, and the unit tests start several OneCore

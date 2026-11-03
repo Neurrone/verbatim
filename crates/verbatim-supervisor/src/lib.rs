@@ -93,10 +93,12 @@ pub const SPARES: usize = 2;
 
 /// The supervisor's periods and limits. Verbatim runs with
 /// [`Timings::default`] and [`Retirement::default`], unless the end-to-end
-/// harness shortens the retirement ([`Retirement::from_test_env`]); the
-/// tests that wait out a ping miss or a backoff construct the supervisor
-/// with shorter ones ([`Supervisor::with_executables`]). No setting in the
-/// settings file reaches them.
+/// harness shortens the retirement ([`Retirement::from_test_env`]); a test
+/// may construct the supervisor with others
+/// ([`Supervisor::with_executables`]), though every test runs with the
+/// default, since a stand-in judged by a shorter ping interval is ended
+/// as stuck when its start is slow. No setting in the settings file
+/// reaches them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Timings {
     /// How often every child is pinged: 3 seconds.
@@ -168,17 +170,19 @@ impl Retirement {
     ///
     /// # Errors
     ///
-    /// When it is set but is not two whole numbers of milliseconds, both
-    /// above zero, separated by a comma.
+    /// When it is set but is not Unicode, or not two whole numbers of
+    /// milliseconds, both above zero, separated by a comma: a test-only
+    /// variable mis-set stops the start rather than being ignored.
     pub fn from_test_env() -> Result<Self, String> {
-        match std::env::var(TEST_RETIREMENT_ENV) {
-            Ok(value) => Self::parse(&value).ok_or_else(|| {
-                format!(
-                    "{TEST_RETIREMENT_ENV}={value:?} is not <idle ms>,<sweep ms>, both above zero"
-                )
-            }),
-            Err(_) => Ok(Self::default()),
-        }
+        let Some(value) = std::env::var_os(TEST_RETIREMENT_ENV) else {
+            return Ok(Self::default());
+        };
+        value.to_str().and_then(Self::parse).ok_or_else(|| {
+            format!(
+                "{TEST_RETIREMENT_ENV}=\"{}\" is not <idle ms>,<sweep ms>, both above zero",
+                value.display()
+            )
+        })
     }
 
     /// `<idle ms>,<sweep ms>`, both above zero.
@@ -680,8 +684,7 @@ impl Supervisor {
     /// each `shutdown_limit` to exit after the shutdown message before it is
     /// killed, running by `timings`, and ignoring the processes `ignored`
     /// holds. For tests that launch stand-ins for the outpost and listener
-    /// binaries ([`Executables::both`]), which shorten the ping interval
-    /// or the backoff to wait them out sooner; Verbatim uses
+    /// binaries ([`Executables::both`]); Verbatim uses
     /// [`Supervisor::new`].
     ///
     /// # Errors

@@ -14,7 +14,7 @@
 //! `answer-property <property id> <fail|empty|usual>`,
 //! `answer-parent <id> <fail|none|usual> [<after>]`,
 //! `slow-parent <id> <ms> [<after>]`, `slow-acc-parent <id> <ms>`,
-//! `fail-acc-parent <id>`, `move <id> <left> <top> <width> <height>`,
+//! `hold-acc-parent <id>`, `fail-acc-parent <id>`, `move <id> <left> <top> <width> <height>`,
 //! `fail-acc-location <id>`, `recreate <id>`, `report-window <id>`,
 //! `popup <id>`,
 //! `take-runtime-id <id> <from>`, `share-runtime-id <id> <from>`,
@@ -243,6 +243,11 @@ pub(crate) enum Command {
     /// `slow-acc-parent ended <us>` around each wait; 0 answers at once
     /// again. MSAA-only.
     SlowAccParent(String, u64),
+    /// `hold-acc-parent <id>`: node `id`'s next `accParent` says
+    /// `held AccParent` on stdout and waits until `release`, as `hold`
+    /// holds the next call of any kind, so a test decides when the call
+    /// ends. MSAA-only.
+    HoldAccParent(String),
     /// `fail-acc-parent <id>`: node `id`'s `accParent` fails with `E_FAIL`
     /// from now on, while every other call on it answers as usual, printing
     /// `fail-acc-parent started <us>` and `fail-acc-parent ended <us>` as
@@ -368,8 +373,9 @@ pub(crate) enum Command {
     /// finishes. Applied on the window thread, so the calls before it are
     /// not held.
     Hold,
-    /// `release`: lets the call `hold` held go on. Applied and acknowledged
-    /// on the stdin thread, since the window thread is the one held.
+    /// `release`: lets the call `hold` or `hold-acc-parent` held go on.
+    /// Applied and acknowledged on the stdin thread, since the window
+    /// thread is the one held.
     Release,
     /// `await-advised <event id> <count>`: waits until the event has that
     /// many live registrations (`hits::await_advised`), at most
@@ -490,8 +496,8 @@ fn slow_parent(rest: &str, with_after: bool) -> Option<(String, u64, u32)> {
     parts.next().is_none().then(|| (id.to_owned(), ms, after))
 }
 
-/// `slow-parent`, `slow-acc-parent` or `fail-acc-parent`, as `verb` names,
-/// with its arguments.
+/// `slow-parent`, `slow-acc-parent`, `hold-acc-parent` or
+/// `fail-acc-parent`, as `verb` names, with its arguments.
 fn parent_step(verb: &str, rest: &str) -> Option<Command> {
     match verb {
         "slow-parent" => {
@@ -500,6 +506,8 @@ fn parent_step(verb: &str, rest: &str) -> Option<Command> {
         "slow-acc-parent" => {
             slow_parent(rest, false).map(|(id, ms, _)| Command::SlowAccParent(id, ms))
         }
+        "hold-acc-parent" => (!rest.is_empty() && !rest.contains(' '))
+            .then(|| Command::HoldAccParent(rest.to_owned())),
         _ => (!rest.is_empty() && !rest.contains(' '))
             .then(|| Command::FailAccParent(rest.to_owned())),
     }
@@ -571,7 +579,9 @@ pub(crate) fn parse_command(line: &str) -> Option<Command> {
         },
         "answer-property" => answer_property(rest),
         "answer-parent" => answer_parent(rest),
-        "slow-parent" | "slow-acc-parent" | "fail-acc-parent" => parent_step(verb, rest),
+        "slow-parent" | "slow-acc-parent" | "hold-acc-parent" | "fail-acc-parent" => {
+            parent_step(verb, rest)
+        }
         "move" => {
             let mut parts = rest.split_whitespace();
             let id = parts.next()?.to_owned();
@@ -895,6 +905,11 @@ mod tests {
             Some(Command::SlowAccParent(ref id, 15000)) if id == "item"
         ));
         assert!(parse_command("slow-acc-parent item 15000 1").is_none());
+        assert!(matches!(
+            parse_command("hold-acc-parent item"),
+            Some(Command::HoldAccParent(ref id)) if id == "item"
+        ));
+        assert!(parse_command("hold-acc-parent item 1").is_none());
         assert!(matches!(
             parse_command("fail-acc-parent item"),
             Some(Command::FailAccParent(ref id)) if id == "item"
