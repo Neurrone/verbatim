@@ -235,11 +235,6 @@ The decisions, in brief:
 - Review keys straight to the reducer
   ([communication](design/communication.md), section 11) is reconsidered
   when the command set is settled (Dickson, 2026-10-14).
-- A question for Dickson: `notepad_editing` reads Notepad's spelling
-  marks once before its second Control+Home, since Notepad raises no
-  event when it marks a word, and fails when the idle-time spell check
-  has not marked "gammaelta" yet; is there a sanctioned form of wait for
-  a precondition with no event?
 
 ### Follow-ups from M4.6
 

@@ -11,10 +11,10 @@
 //! raising no event when it does, so the document's first line, where the
 //! caret starts and which Notepad's opening announces, has no error: what
 //! the opening says does not depend on whether the marks are there yet.
-//! Once the opening has been heard, the agent reads which words are marked
-//! through UI Automation, independently of Verbatim, and the scenario
-//! fails unless they are exactly the second line's two misspelt words.
-//! Every step waits
+//! Since the marks raise no event, the scenario asserts nothing about
+//! them directly (Dickson, 2026-11-03): only the speech that follows each
+//! key, read once the startup speech, the opening included, has been
+//! heard. Every step waits
 //! for its speech to be heard in full before the next key, as a listening
 //! user would, and there is no other wait.
 //!
@@ -69,13 +69,6 @@ fn press(scenario: &mut Scenario, keys: &str, heard: &str) {
 
 pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     super::expect_notepad_in_front(scenario, NAME, FINE_LINE);
-    assert_eq!(
-        scenario
-            .misspelt_words()
-            .expect("the agent reads the marked words"),
-        ["Ths", "tset"],
-        "the words Notepad's spell checker marked once its opening was announced"
-    );
     press(scenario, "downarrow", ERROR_LINE);
 
     // The line ended out of the error, after its full stop, so the next
