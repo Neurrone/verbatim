@@ -1130,7 +1130,10 @@ fn a_pause_holds_speech_until_resumed_and_new_speech_cancels_it() {
         after,
         UtteranceEnding::Failed("synthesis failed: asked to fail".to_owned()),
     );
-    assert_eq!(harness.recorder.endings_through(after), [failed.clone()]);
+    assert_eq!(
+        harness.recorder.endings_through(after),
+        std::slice::from_ref(&failed)
+    );
     // The evidence that "held" would have ended by now were it not paused:
     // its end is at the mixer, and 100 ms of audio on another source of the
     // same mixer, given after it, has played to the end, and the mixer
@@ -1142,7 +1145,7 @@ fn a_pause_holds_speech_until_resumed_and_new_speech_cancels_it() {
     );
     assert_eq!(
         harness.recorder.ended_so_far(),
-        [failed.clone()],
+        std::slice::from_ref(&failed),
         "held while paused"
     );
     assert!(
