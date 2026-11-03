@@ -104,6 +104,10 @@ M4.1 is complete (Dickson, 2026-10-21): Verbatim stopped crashing and stalling a
 - No outpost connects to a new window after its probe, so a new File Explorer window's first item is queued within about 320 ms of its event ([the listener design](design/listener-without-connections.md), risk 11).
 - The suggestions-closed sound played twice in Settings' search box matches NVDA (`docs/parity/changes-and-selection.md`, "Suggestions appearing and going away").
 
+## Owner endings
+
+Built (2026-11-03), under the design principle that state about an owner lives in that owner's record (Dickson, 2026-11-03): the listener's reading thread released from every stage of an outpost generation's end, and its per-application shell state kept in one record dropped when the schedule lets the application go; the backend override, which no production code sent, deleted; a terminal's hold and request target kept in its model, so an ended outpost is asked nothing, while output already read is still spoken, as NVDA does; the terminal timer and lock key reads as views of Core's state; the supervisor no longer starting an outpost for an application that exited during its backoff; and Core's generated test checking that nothing names an ended outpost. Measured in debug builds made alike, two runs each: `measure_keys_text_box` 26.9 and 29.0 wakes and 2.16 and 2.43 ms per key before, 32.6 and 25.7 and 2.64 and 2.24 after; `conhost_flood` 2,879 and 3,351 wakes and 395 and 424 ms in its window before, 3,031 and 3,105 and 399 and 403 ms after: no change beyond the runs' spread.
+
 ## M4.6, generated tests
 
 Complete (2026-11-03). The design, with Dickson's decisions of 2026-11-02, is in [logic tests](design/logic-tests.md), "M4.6: the generated tests"; the judgement's record is `experiments/logic-tests-study/judgement.md`. Built, with a design review, an implementation review and its fixes, and related scenarios:
