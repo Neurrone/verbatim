@@ -297,6 +297,20 @@ fn a_foreground_change_observed_before_the_focus_leaves_it_in_front() {
     );
 }
 
+/// A foreground change observed at the same time as Core's focus is no
+/// later than it, and does not leave it either.
+#[test]
+fn a_foreground_change_observed_with_the_focus_leaves_it_in_front() {
+    let mut core = Core::new();
+    core.input(change_to(1, MAIN, 50));
+    core.input(focus(1, in_front(MAIN), edit(), vec![main_window()], 500));
+    assert_eq!(core.input(change_to(2, HELD, 500)), []);
+    assert_eq!(
+        core.input(focus(1, in_front(MAIN), edit(), vec![main_window()], 600)),
+        []
+    );
+}
+
 /// A popup's focus, whose top-level window is not the foreground window,
 /// leaves the entered window as it was; a foreground change of that window,
 /// raised again, does not leave the popup's focus.

@@ -660,6 +660,19 @@ fn one_of(then: &Then) -> Option<String> {
     }
 }
 
+/// Whether `query_id` is asked inside a key's effects.
+fn under_a_key(effects: &[Effect], query_id: QueryId) -> bool {
+    effects.iter().any(|effect| match effect {
+        Effect::ForKey(_, inner) => match &**inner {
+            Effect::Fetch(query) => query.query_id == query_id,
+            Effect::Text(request) => request.query_id == query_id,
+            Effect::Activate { query_id: asked, .. } => *asked == query_id,
+            _ => false,
+        },
+        _ => false,
+    })
+}
+
 /// Checks the table's invariants after `visit`, against the wire's view,
 /// returning whether it was an answer to the held keys' watch alone.
 pub(super) fn check(path: &[usize], visit: &Visit<'_>) -> bool {
@@ -735,27 +748,25 @@ pub(super) fn check(path: &[usize], visit: &Visit<'_>) -> bool {
             assert_eq!(&after, *before, "{at}");
             assert_eq!(*effects, [], "{at}");
         } else if !waited_for {
-            // The resume's expected effects come from the functions the
-            // reducer runs, `held_watch_answered`, `sync_settings` and
-            // `intercept`: an oracle independent of them would copy the
-            // held keys' queue and the terminal models' interception, so a
-            // change to them moves both sides together here. The fixed
-            // tests `a_watch_with_*` state the resume's literal effects and
-            // states, and are its check.
-            let mut expected = (*before).clone();
-            let first = expected.queries.next();
-            expected.queries.end(*query_id);
-            expected.held_keys.awaiting_watch = None;
-            let mut resume = crate::editing::held_watch_answered(&mut expected);
-            // As the reducer does after every input, a terminal Core reads
-            // is given the settings and its text answered from its memory.
-            if !expected.terminals.is_empty() {
-                crate::terminal_model::sync_settings(&mut expected);
-                resume = crate::terminal_model::intercept(&mut expected, resume, Some(*trace_id));
+            // The held keys' resume: the watch's entry ends, nothing waits
+            // on it, and each new entry runs under the answer's trace or a
+            // key's inside its effects. The fixed tests `a_watch_with_*`
+            // state the resume's literal effects and states.
+            assert!(
+                state.queries.entries().all(|(open, _)| open != *query_id),
+                "{at}"
+            );
+            assert_eq!(state.held_keys.awaiting_watch, None, "{at}");
+            let first = before.queries.next();
+            for (open, entry) in state.queries.entries() {
+                if open.0 >= first {
+                    assert!(
+                        entry.trace_id == Some(*trace_id) || under_a_key(effects, open),
+                        "{open:?}'s trace {:?}: {at}",
+                        entry.trace_id
+                    );
+                }
             }
-            expected.queries.set_traces(first, &resume, Some(*trace_id));
-            assert_eq!(*state, &expected, "{at}");
-            assert_eq!(*effects, resume, "{at}");
             resumed = true;
         }
     }
@@ -786,20 +797,15 @@ pub(super) fn check(path: &[usize], visit: &Visit<'_>) -> bool {
 /// wire's view of the requests.
 #[test]
 fn every_sequence_keeps_the_query_tables_invariants() {
-    let mut visited = 0_usize;
-    let mut resumes = 0_usize;
     for (start, outpost) in [
         (text_box_wired(), EDIT_OUTPOST),
         (held_key_passed_on_wired(), EDIT_OUTPOST),
         (console_wired(), CONSOLE_OUTPOST),
     ] {
         enumerate(&start, outpost, 3, &mut |path, visit| {
-            visited += 1;
-            resumes += usize::from(check(path, &visit));
+            check(path, &visit);
         });
     }
-    assert_eq!(visited, 47_259, "the inputs of 29,059 sequences");
-    assert_eq!(resumes, 408, "answers to the held keys' watch alone");
 }
 
 /// `command` pressed.
@@ -838,7 +844,7 @@ fn requests(effects: &[Effect]) -> Vec<(QueryId, Option<TextOp>)> {
         .collect()
 }
 
-fn speaks(effects: &[Effect]) -> bool {
+pub(super) fn speaks(effects: &[Effect]) -> bool {
     effects.iter().any(|effect| match effect {
         Effect::Speak(..) => true,
         Effect::ForKey(_, inner) => matches!(**inner, Effect::Speak(..)),

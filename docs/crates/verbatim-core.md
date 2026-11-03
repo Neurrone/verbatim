@@ -202,7 +202,7 @@ Tests: the query table's unit tests, every sequence of up to three steps
 from a text box, a held key's watch and a console, enumerated against the
 table's invariants (`crates/verbatim-core/src/queries/tests.rs`), and a generated test of the
 reducer's slice of queries, focus lifecycle and generations against a
-reference model (`crates/verbatim-core/src/queries/generated.rs`): lists of actions run
+reference model of sets and lists (`crates/verbatim-core/src/queries/generated.rs`): lists of actions run
 through proptest's `TestRunner::run` under a fixed seed and 300 cases
 (about 6.8 s in a debug build), each made valid against the model as it
 is applied. The actions are focuses from the oldest or newest live
@@ -216,24 +216,25 @@ newest open request, done, gone or failed, and at low weight to one
 ended, to one never asked and from another outpost; caret keys, held keys
 and their due times, typing and speech cut off; review commands; foreground
 changes, now or at the newest focus's stamp; outposts' ends and new
-generations. Only focuses whose fate the model decides plainly are
-generated. After every input the enumeration's invariants are checked
+generations. Focuses are generated only in the front's window or with
+no window facts. After every input the enumeration's invariants are checked
 against the wire's view of the requests, and the model's: every open
 entry but Core's own names a live generation and no effect asks an ended
 one; ids only rise and an ended id never returns; each new entry's trace
 is its input's or its key's, and an older entry's is unchanged; the held
 keys' awaited watch names an open entry; no held node is of an ended
-generation; the focus's node, life and whether it was left are the
-model's, a stale, duplicate or taken focus each as the model predicts; at
+generation; a focus is taken, its node alive and not left, or changes
+nothing of the focus and says nothing; the focus is left only at a
+foreground change and back only when a focus is taken; at
 most 16 models, each generation new when made and none of an ended
 outpost, one going only when evicted as the oldest for a new one, its
 node's text forgotten or its outpost ended, the others in their order of
 reading; and every memory entry a live model's. A foreground change gives
 no effect and changes nothing but the foreground record and whether the
-focus was left, which the model predicts from its own front, stamp and
-entered window (set by each focus taken with window facts); the record
-then holds the change as the hook's view, the front and attention, keeps
-the entered window the model predicts, and keeps its object and stamps;
+focus was left; the record then holds the change as the hook's view,
+the front and attention, and keeps its entered window, object and
+stamps; which focus is stale, a duplicate or left is left to the
+reducer's hand-written examples;
 an outpost's end asks nothing of it and leaves nothing of
 it, and another outpost's entry ends then only by a withdrawal; an answer
 to a model no longer live runs nothing; speech cut off asks nothing; the

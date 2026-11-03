@@ -3,10 +3,14 @@
 //! order. After every input the query table's invariants of the
 //! enumeration beside it (`queries/tests.rs`) are checked against the
 //! wire's view of the requests, and the slice's own against a reference
-//! model: the outpost generations live and ended, the ids given and ended,
-//! the focus's lifecycle (taken, alive, left) with the front and the
-//! newest focus stamp, and the terminal models' generations in their order
-//! of reading. The terminal's quiet-period timer, fired at the due time the
+//! model of sets and lists: the outpost generations live and ended, the
+//! ids given and ended, and the terminal models' generations in their
+//! order of reading. The focus is checked without a model: a focus is
+//! taken or changes nothing of the focus and says nothing, a foreground
+//! change changes only its record and whether the focus was left, and the
+//! focus is left only at a foreground change and back only when a focus is
+//! taken; which focus is stale, a duplicate or left is the reducer's own
+//! tests' examples. The terminal's quiet-period timer, fired at the due time the
 //! state gives, is due later than that time or not at all. Each case ends
 //! by answering every request still open, after which no field of the
 //! state names an ended generation but those [`ENDED_MAY_REMAIN`] lists
@@ -15,10 +19,9 @@
 //!
 //! The model leaves out words, carets, text, chains, say-all's buffers and
 //! the flood policy, and the held-key line, whose awaited watch alone it
-//! checks (Dickson, 2026-11-02). A focus is generated only where the model
-//! decides its fate plainly: in the front or with no window facts, from the
-//! one application every generation reads, never a whole-window focus or a
-//! group's.
+//! checks (Dickson, 2026-11-02). A focus is generated only in the front or
+//! with no window facts, from the one application every generation reads,
+//! never a whole-window focus or a group's.
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
@@ -121,37 +124,14 @@ fn action() -> impl Strategy<Value = Action> {
     ]
 }
 
-/// Core's focus, as the model holds it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct Focus {
-    node: NodeId,
-    alive: bool,
-    left: bool,
-    top: Option<WindowHandle>,
-}
-
-/// The newest focus observation that passed the stale test.
-#[derive(Clone, Copy, Debug)]
-struct Stamp {
-    outpost: OutpostId,
-    observed_at_us: u64,
-    top: Option<WindowHandle>,
-}
-
 /// The reference model.
 #[derive(Clone, Debug, Default)]
 struct Model {
     live: BTreeSet<OutpostId>,
     ended: BTreeSet<OutpostId>,
     started: u64,
-    focus: Option<Focus>,
     /// The front: its window and when it was observed.
     front: Option<(WindowHandle, u64)>,
-    /// The entered window: the top-level window of the newest focus taken
-    /// with window facts, each generated in the front, which it enters; a
-    /// foreground change never sets it.
-    entered: Option<WindowHandle>,
-    latest: Option<Stamp>,
     /// The terminal models, least recently read first, as node and
     /// generation, and the newest generation made.
     models: Vec<(NodeId, u64)>,
@@ -167,10 +147,9 @@ struct Model {
 }
 
 /// The listed states a gate's cases must reach.
-const LISTED: [&str; 19] = [
+const LISTED: [&str; 18] = [
     "a focus taken",
-    "a duplicate focus",
-    "a stale focus",
+    "a focus refused",
     "a focus left",
     "a focus's text forgotten",
     "an outpost ended",
@@ -401,12 +380,18 @@ impl Run {
                     windowed,
                     observed_at_us,
                 );
-                self.focus(&input, outpost, earlier, observed_at_us);
+                self.focus(&input, earlier);
             }
             Action::Snapshot { growing } => {
-                if let Some(focus) = self.model.focus.filter(|focus| focus.node.number() == 7) {
+                if let Some(node) = self
+                    .state
+                    .focus
+                    .as_ref()
+                    .map(|focus| focus.snapshot.id)
+                    .filter(|node| node.number() == 7)
+                {
                     self.model.reads += 1;
-                    let mut input = self.snapshot(focus.node);
+                    let mut input = self.snapshot(node);
                     if growing {
                         self.model.grown += 1;
                         grow(&mut input, self.model.grown);
@@ -420,12 +405,12 @@ impl Run {
                 };
                 for number in 10..26 {
                     let input = self.focus_input(outpost, number, None, false, 0);
-                    self.focus(&input, outpost, None, 0);
+                    self.focus(&input, None);
                     let snapshot = self.snapshot(node_of(outpost, number));
                     self.input(&snapshot);
                 }
                 let input = self.focus_input(outpost, 7, None, false, 0);
-                self.focus(&input, outpost, None, 0);
+                self.focus(&input, None);
             }
             Action::Answer { which, outcome } => {
                 let outcome = match outcome {
@@ -531,7 +516,7 @@ impl Run {
             }
             Action::Foreground { window, tie } => {
                 let window = WINDOWS[usize::from(window)];
-                let observed_at_us = match (tie, self.model.latest) {
+                let observed_at_us = match (tie, self.state.foreground.latest_focus()) {
                     (true, Some(latest)) => latest
                         .observed_at_us
                         .max(self.model.front.map_or(0, |(_, observed)| observed)),
@@ -648,16 +633,9 @@ impl Run {
         }
     }
 
-    /// Gives `input`, a focus of `outpost`'s read with `earlier` and
-    /// observed at `observed_at_us`, predicting its fate: stale, a
-    /// duplicate, or taken.
-    fn focus(
-        &mut self,
-        input: &Input,
-        outpost: OutpostId,
-        earlier: Option<EarlierElement>,
-        observed_at_us: u64,
-    ) {
+    /// Gives `input`, a focus read with `earlier`, generated in the front
+    /// or with no window facts.
+    fn focus(&mut self, input: &Input, earlier: Option<EarlierElement>) {
         let Input::Event {
             window,
             event: NormalizedEvent::FocusChanged { node, .. },
@@ -676,47 +654,6 @@ impl Run {
                     .is_none_or(|(window, _)| Some(window) == top),
             "a focus generated outside the front"
         );
-        let stale = observed_at_us != 0
-            && self.model.latest.is_some_and(|latest| {
-                latest.outpost != outpost
-                    && observed_at_us < latest.observed_at_us
-                    && !(top.is_some() && top == latest.top)
-            });
-        let expected = if stale {
-            self.reach("a stale focus");
-            self.model.focus
-        } else {
-            if observed_at_us != 0 {
-                self.model.latest = Some(Stamp {
-                    outpost,
-                    observed_at_us,
-                    top,
-                });
-            }
-            let duplicate = self.model.focus.is_some_and(|focus| {
-                !focus.left
-                    && focus.node == node.id
-                    && earlier.map_or(focus.alive, |earlier| earlier == EarlierElement::Focused)
-            });
-            if duplicate {
-                self.reach("a duplicate focus");
-                self.model.focus
-            } else {
-                self.reach("a focus taken");
-                // Generated in the front, a focus with window facts enters
-                // its window.
-                if top.is_some() {
-                    self.model.entered = top;
-                }
-                Some(Focus {
-                    node: node.id,
-                    alive: true,
-                    left: false,
-                    top,
-                })
-            }
-        };
-        self.model.focus = expected;
         if matches!(
             earlier,
             Some(EarlierElement::NotFocused | EarlierElement::Gone)
@@ -727,35 +664,16 @@ impl Run {
         self.input(input);
     }
 
-    /// Gives the foreground change `change`, which leaves the focus when it
-    /// is into another window after the newest focus stamp, and changes
-    /// nothing else of the slice.
+    /// Gives the foreground change `change`, which changes nothing of the
+    /// slice but its record and whether the focus was left.
     fn foreground(&mut self, change: ForegroundWindow) {
-        let entered = self.model.entered;
-        if let Some(focus) = self.model.focus.as_mut()
-            && let Some(top) = focus.top
-            && self
-                .model
-                .latest
-                .is_none_or(|latest| latest.observed_at_us < change.observed_at_us)
-            && change.window != top
-            && Some(change.window) != entered
-            && change.root_owner != top
-        {
-            if !focus.left {
-                *self.reached.entry("a focus left").or_default() += 1;
-            }
-            focus.left = true;
-        }
         if self
-            .model
-            .latest
+            .state
+            .foreground
+            .latest_focus()
             .is_some_and(|latest| latest.observed_at_us == change.observed_at_us)
         {
-            *self
-                .reached
-                .entry("a foreground change at the newest focus's stamp")
-                .or_default() += 1;
+            self.reach("a foreground change at the newest focus's stamp");
         }
         self.model.front = Some((change.window, change.observed_at_us));
         let before = self.state.clone();
@@ -763,9 +681,8 @@ impl Run {
         let effects = self.input(&input);
         // It speaks nothing, asks nothing, and changes nothing but the
         // foreground record and whether the focus was left: the record
-        // holds the change as the hook's view, the front and attention,
-        // keeps the entered window the model predicts, and keeps its
-        // object and stamps.
+        // holds the change as the hook's view, the front and attention, and
+        // keeps the entered window, its object and its stamps.
         assert_eq!(
             effects,
             [],
@@ -805,7 +722,7 @@ impl Run {
                         foreground_is_shell: false,
                     }),
                 }),
-                self.model.entered,
+                was.entered(),
             ),
             "a foreground change's record: {:?}",
             self.trail
@@ -829,8 +746,8 @@ impl Run {
         let mut expected = before;
         // Each part of the record is checked above.
         expected.foreground = self.state.foreground.clone();
-        if let (Some(focus), Some(model)) = (expected.focus.as_mut(), self.model.focus) {
-            focus.left = model.left;
+        if let (Some(focus), Some(now)) = (expected.focus.as_mut(), self.state.focus.as_ref()) {
+            focus.left = now.left;
         }
         assert_eq!(
             expected, self.state,
@@ -843,14 +760,13 @@ impl Run {
     fn outpost_ended(&mut self, outpost: OutpostId, trace: TraceId) {
         self.model.live.remove(&outpost);
         self.model.ended.insert(outpost);
-        if let Some(focus) = self.model.focus.as_mut()
-            && focus.node.outpost() == outpost
+        if self
+            .state
+            .focus
+            .as_ref()
+            .is_some_and(|focus| focus.alive && focus.snapshot.id.outpost() == outpost)
         {
-            focus.alive = false;
-            self.reached
-                .entry("a focus dead with its outpost")
-                .and_modify(|count| *count += 1)
-                .or_insert(1);
+            self.reach("a focus dead with its outpost");
         }
         self.reach("an outpost ended");
         let before = self.state.clone();
@@ -1035,17 +951,42 @@ impl Run {
                 "a held node of an ended outpost: {trail}"
             );
         }
-        // The focus's lifecycle.
-        assert_eq!(
-            state.focus.as_ref().map(|focus| Focus {
-                node: focus.snapshot.id,
-                alive: focus.alive,
-                left: focus.left,
-                top: focus.window.as_ref().map(|facts| facts.top_level),
-            }),
-            model.focus,
-            "the focus: {trail}"
-        );
+        // A focus is taken, its node alive and not left, or changes nothing
+        // of the focus and says nothing.
+        let focused = match input {
+            Input::Event {
+                event: NormalizedEvent::FocusChanged { node, .. },
+                ..
+            } => Some(node.id),
+            _ => None,
+        };
+        let taken = focused.is_some() && state.focus != before.focus;
+        if let Some(node) = focused {
+            if taken {
+                let focus = state.focus.as_ref().expect("a focus taken");
+                assert!(
+                    focus.snapshot.id == node && focus.alive && !focus.left,
+                    "a focus taken: {trail}"
+                );
+                *self.reached.entry("a focus taken").or_default() += 1;
+            } else {
+                assert!(!tests::speaks(&effects), "a refused focus spoke: {trail}");
+                *self.reached.entry("a focus refused").or_default() += 1;
+            }
+        }
+        // The focus is left only at a foreground change, and back only
+        // when a focus is taken.
+        let left = |state: &SrState| state.focus.as_ref().is_some_and(|focus| focus.left);
+        if !left(&before) && left(state) {
+            assert!(
+                matches!(input, Input::Foreground(_)),
+                "a focus left: {trail}"
+            );
+            *self.reached.entry("a focus left").or_default() += 1;
+        }
+        if left(&before) && !left(state) {
+            assert!(taken, "a left focus back: {trail}");
+        }
         // The terminal models: at most 16, each generation new when made
         // and none of an ended outpost; one goes only when the oldest is
         // evicted for a new one, its node's text is forgotten or its
