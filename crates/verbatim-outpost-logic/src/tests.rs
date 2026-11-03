@@ -2943,7 +2943,7 @@ fn a_record_closed_by_a_publication_in_its_tick_sends_no_title() {
 /// window in front and sends its window text. The text's foreground fact,
 /// on another node, ends the watch at once, though the program in flight
 /// holds it; the program's later check is ignored, and its end does
-/// nothing more (Claude, 2026-11-03, pending Dickson's acceptance).
+/// nothing more (Claude, 2026-11-03, accepted by Dickson the same day).
 #[test]
 fn a_title_committed_while_a_program_holds_the_watch_ends_it_at_once() {
     let mut replay = Replay::new();

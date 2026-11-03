@@ -122,7 +122,7 @@ the program in flight holds it: the gap record's window text, the one
 report the reducer commits for itself, does so whatever program is in
 flight, and that program's later check is ignored, since
 `WatchChange::Checked` applies only to a watch that is `Checking`
-(Claude, 2026-11-03, pending Dickson's acceptance). The reducer otherwise
+(Claude, 2026-11-03, accepted by Dickson the same day). The reducer otherwise
 changes the watch only at a dispatch, at a publication that claims the
 program, or with no program in flight.
 `next_timer` gives its due time only when it would be acted on.

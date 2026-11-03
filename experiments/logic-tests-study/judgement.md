@@ -909,7 +909,7 @@ M4.6's own build, for reference; the second measure counts from the next build. 
 - `6c9a1a93`: a push that replaced the event an idle waiter waited on ran no waiters. Found by reading while the design was surveyed; the generated test fails without the fix.
 - `e282e7ea`: the listener kept an ended application for good once its abandoned read returned, one per such process. Found by the scheduler's model.
 - `d12f5da1`: a reading thread's failed start was stepped before the other effects of its step, so an idle answer went ahead of another application's drop. Found by exploration.
-- Not a defect: a gap title ended a caret watch the program in flight held, against the watch's stated rule. Found by exploration; the rule was amended rather than the code (Claude, 2026-11-03, pending Dickson's acceptance), after a deferral that added a lifecycle state was reverted.
+- Not a defect: a gap title ended a caret watch the program in flight held, against the watch's stated rule. Found by exploration; the rule was amended rather than the code (Claude, 2026-11-03, accepted by Dickson the same day), after a deferral that added a lifecycle state was reverted.
 
 Time, by the agents' run times: building the tests 5.1 hours (the outpost's part 3.0, the listener's and Core's 1.5, the review's fixes 0.6); the mutation runs 3.7 hours of machine time; the design's surveys and reviews about 0.6 hours.
 

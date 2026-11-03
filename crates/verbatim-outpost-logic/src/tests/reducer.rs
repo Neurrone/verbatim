@@ -1563,8 +1563,8 @@ impl Run {
         let gap_before = GapSeen::of(self.reducer.intake.gap());
         let flight_before = self.model.flight.clone();
         // A committed foreground fact elsewhere ends the caret watch at
-        // once, even one the program in flight holds (Claude, 2026-11-03,
-        // pending Dickson's acceptance): the gap's window text, committed
+        // once, even one the program in flight holds (Claude, 2026-11-03, accepted
+        // by Dickson the same day): the gap's window text, committed
         // while its record is open, is a report on a node no watch is on.
         let title_ends = matches!(
             &input,

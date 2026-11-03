@@ -110,7 +110,7 @@ Complete (2026-11-03). The design, with Dickson's decisions of 2026-11-02, is in
 
 - generated tests of the work in flight, the outpost's reducer and its intake, the listener's scheduler and Core's query table, focus and generations, each against a reference model far simpler than the code, plain `proptest` action lists run twice in the gate within its 30 seconds (about 19);
 - a nightly exploration with new seeds and `cargo-mutants` on changed covered code (`.github/workflows/explore.yml`);
-- six production defects the tests found, fixed, and the caret watch's rule amended (pending Dickson's acceptance).
+- six production defects the tests found, fixed, and the caret watch's rule amended (accepted by Dickson, 2026-11-03).
 
 Exit met: each owner's generated test is in the gate, and the mutation baseline and its second run are recorded: the generated tests kill 49 of the 71 mutants the existing tests missed, against a threshold of 22. The second measure, ordering defects found first in the next three builds, is recorded there as they are built.
 
