@@ -148,6 +148,17 @@ bound is published again rather than discarded. With both forms fixed,
 `explorer_folder_window` is no longer local-only and returns to the
 GitHub runner.
 
+The same build makes a read published at its bound say which facts it
+did not read, and Core take no containers from such a read (Claude,
+2026-11-04, pending Dickson's acceptance; matching NVDA, which has no
+bound and reads the parent live): in `alt_tab_switcher` (coverage run
+41708393940) the listener's read of the switcher's item was cut at its
+bound before the item's parent was read, so the Alt+Tab rule
+(`drops_ancestry`, `crates/verbatim-core/src/applications.rs`), which
+needs the parent's automation id, did not apply and the plain window
+"Task Switching" filled in from window handles was spoken before the
+full read's item.
+
 Follow-up, not established from the code alone: Core refuses a foreground
 report of the window holding its focus (`crates/verbatim-core/src/reduce.rs`,
 `reduce_focus_changed`) with no check that the focus is alive, so a window
@@ -832,6 +843,11 @@ remains, in order:
   ([the evidence](../experiments/a-redraw-in-a-keys-window-is-spoken-as-its-answer/readme.md))
   through the rules to confirm the cause, then ask whether a key's
   ownership of output should rest on firmer evidence than its window.
+  The window fails the other way too: in `windows_terminal_clear_flood`
+  (run 41693694156) Windows Terminal showed a typed "." 472 ms after the
+  key, under the runner's load, so it was read as output and spoken "."
+  by the timer rather than echoed "dot" (Claude, 2026-11-04, pending
+  Dickson's acceptance).
 - `conhost_long_lines` once heard "r" after Enter where its output line
   was expected (run 41333390347, [the known failures](flaky-tests.md));
   find the cause, the typed-character rules suspected (Dickson,

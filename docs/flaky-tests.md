@@ -36,21 +36,21 @@ Recorded by Claude, 2026-11-04, pending Dickson's acceptance.
   - Cause: the outpost's gap record's bound passed with no focus reported, so the window's text was sent, the gap record's late-focus case.
   - Fix: [the focus pipeline rework's third build](roadmap.md#the-focus-pipeline-rework), whose first commit replaces the gap record.
 - `text_box_review_cursor`
-  - How: Verbatim+Alt+Home (review the selection's start) was answered "unanswered" by the outpost's text read, so nothing was said within 15 s; the same step passed seconds later in `text_box_selection_keys`.
-  - Cause: not found.
-  - Fix: none yet.
+  - How: Verbatim+Alt+Home (review the selection's start) was answered "unanswered" by the outpost's text read, so nothing was said within 15 s.
+  - Cause: the harness's Windows Forms text box (a Windows PowerShell window) did not answer `EM_GETSEL` within the outpost's fixed 500 ms message limit (`MESSAGE_TIMEOUT_MS`, `crates/verbatim-ia2/src/edit.rs`); its interface thread had stalled twice at the scenario's start too. The menu guard changed nothing in the text box. NVDA waits for the same message until its watchdog judges the application hung, so a slow but live application is still read.
+  - Fix: a question for Dickson, since how long silence is tolerated while an application is busy is a performance budget: wait until the application answers or is judged hung, as NVDA does, with [M6.1 hung and flooding applications](roadmap.md#m61--hung-and-flooding-applications).
 - `alt_tab_switcher` (coverage run 41708393940, an instrumented build)
-  - How: "Task Switching" was heard where the switcher's item "… row 1 column 2 2 of 4" was expected: two focus events came 330 ms apart, the first with an extra "Task Switching" ancestor, which was spoken, the second with the item, as expected.
-  - Cause: not found; the instrumented build's slowness is plausible, not shown.
-  - Fix: none yet.
+  - How: "Task Switching" was heard before the switcher's item "… row 1 column 2 2 of 4".
+  - Cause: the listener's read of the item's first focus passed its bound (its nearest-window lookup took 697 ms) and was published with no ancestors read, so the Alt+Tab rule, which needs the item's parent's automation id, did not apply, and the plain window "Task Switching" filled in from window handles was spoken; the full read 23 ms later spoke the item.
+  - Fix: [the focus pipeline rework's third build](roadmap.md#the-focus-pipeline-rework): a read published at its bound says which facts it did not read, and Core takes no containers from it.
 - `windows_terminal_command_marks` (run 41697089785)
-  - How: after `.\long.ps1` was typed, Verbatim played its "application not responding" sound where the command's echo was expected: it judged Windows Terminal's window hung.
-  - Cause: not found; whether the window hung under the runner's load or Verbatim misjudged it is not in the log.
-  - Fix: [M6.1 hung and flooding applications](roadmap.md#m61--hung-and-flooding-applications).
+  - How: 2.0 s after the second Verbatim+Alt+Up (the previous command mark), Verbatim played its "application not responding" sound where the mark's line "ready> .\long.ps1" was expected.
+  - Cause: the mark lay above the rows Core keeps, so Core asked the outpost to search the terminal (`TerminalFind`); the search, a remote operation in Windows Terminal (`crates/verbatim-uia-rops/src/terminal_find.rs`), took 3.2 s, past the outpost's 2 s text deadline (`TEXT_DEADLINE`), so the worker was abandoned, and `finish` (`crates/verbatim-app/src/main.rs`) plays the sound for any abandoned query, without asking whether Windows judges the window hung. Windows Terminal was answering throughout. NVDA has no such sound.
+  - Fix: whether the sound plays only when Windows judges the window hung is a question for Dickson (what users hear); the search's cost in a real Windows Terminal, never measured, is to be measured and fixed with [M6.4 terminal residuals](roadmap.md#m64--terminal-residuals)' measurements.
 - `windows_terminal_clear_flood`
-  - How: a typed "." was spoken as "." by the terminal's output timer rather than echoed as the typed character "dot": Core received the typed character with only a colours query, then the timer's read.
-  - Cause: not found; close to, but not the same symptom as, the typed-character entries below.
-  - Fix: [M6.4 terminal residuals](roadmap.md#m64--terminal-residuals).
+  - How: a typed "." was spoken as "." by the terminal's output timer rather than echoed as the typed character "dot".
+  - Cause: Windows Terminal showed the "." 472 ms after the key reached it, under the runner's load, past the 300 ms key window (`KEY_WINDOW_MS`, `crates/verbatim-text/src/terminal_reading.rs`), so the reading rules took it as output, as `typing_shown_after_300_milliseconds_is_output_not_echo` specifies. Not Verbatim's delay: Core and the outpost each took under 2 ms.
+  - Fix: a known limit of the key window, with the footer redraw's misreading the other way, under [M6.4 terminal residuals](roadmap.md#m64--terminal-residuals).
 
 ## Windows Terminal raises no TextChanged for a typed character
 
