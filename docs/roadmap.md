@@ -119,7 +119,20 @@ old line at the list and nothing is entered. NVDA differs on both points:
 two objects of different types are never equal (`NVDAObject.__eq__`), and
 a failed UIA parent falls back to the parent window (`GA_PARENT`), so the
 list's window is not in its line. It touches the identity the build's one
-node per window (defect A) changes. From the chain commits 10c9e83a,
+node per window (defect A) changes.
+
+Its first commit replaces the outpost's gap record (Dickson, 2026-11-03),
+with a design and an adversarial review of its own: the gap record took
+about twenty rounds of fixes since 2026-10-21, mostly from carrying two
+jobs in one record and judging queued work by a lifecycle flag. A held
+window's title becomes a deadline in Core's foreground record, set at each
+foreground change Core accepts and cleared when Core takes a focus in that
+window; the outpost keeps one pending read per application, queued a
+second after the first focus copy it dropped and checked against what it
+has reported when handled, which foreground changes no longer touch. The
+study behind it weighed dropping the record as NVDA has none, which loses
+the File Explorer and Settings stretches where UI Automation raises no
+focus at all. From the chain commits 10c9e83a,
 3abda293, b94d2ea2, c7c7c6dc and 9fd28a66.
 
 It also fixes the slow-Explorer form of that failure (Dickson,
@@ -278,6 +291,7 @@ The decisions, in brief:
   - The listener kept an ended application for good once its abandoned read returned, one per such process (found by the scheduler's model).
   - A reading thread's failed start was stepped before the other effects of its step, so an idle answer went ahead of another application's drop (found by exploration).
   - The build's upkeep: building the tests took 5.1 hours, the mutation runs 3.7 hours of machine time, and the design's surveys and reviews about 0.6 hours.
+  - Counted toward the threshold (Dickson, 2026-11-03), though found outside the three builds since no one knew of it: a gap read queued for a bound that a foreground change then replaced ran before the new bound's relatedness test was answered, so a window answered unrelated was read (found by the scheduled exploration, seed 1, Explore run 41623400047). Fixed by the gap record's replacement, the third build's first commit; its shrunk case is kept as a replay test.
 
 ### The simulation of the reducers, deferred
 
