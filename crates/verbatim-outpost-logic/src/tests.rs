@@ -929,6 +929,63 @@ fn an_adopted_focus_gives_its_marks_ahead_of_the_dispatch() {
     );
 }
 
+/// Each kind of entry is given its own deadline: the handling deadline for
+/// a focus-now query and every fact, the text deadline for a text query,
+/// what is left until its answer is due for a shell query, the walk's for
+/// ancestors and the nodes Core holds, and a step's for anything else
+/// asked.
+#[test]
+fn each_kind_of_entry_is_given_its_own_deadline() {
+    let handling = Duration::from_secs(7);
+    let query = |query: Query| Item::Query {
+        request_id: RequestId::shell(4),
+        query,
+    };
+    let deadline = |item: Item| budget(&entry(item, 1), now(1_000), handling).0;
+    assert_eq!(deadline(focus_now(4)), handling);
+    assert_eq!(deadline(msaa_focus(1, 5)), handling);
+    assert_eq!(deadline(name_change(1)), handling);
+    assert_eq!(deadline(caret_key(4)), TEXT_DEADLINE);
+    assert_eq!(
+        deadline(query(Query::ShellItems {
+            kind: verbatim_model::ShellItemKind::Taskbar,
+            walk_until_us: 1_200_000,
+            answer_by_us: 1_300_000,
+        })),
+        Duration::from_millis(300),
+        "the answer is due 300 ms after the shell's clock's now"
+    );
+    assert_eq!(
+        deadline(query(Query::ShellItems {
+            kind: verbatim_model::ShellItemKind::Taskbar,
+            walk_until_us: 0,
+            answer_by_us: 900_000,
+        })),
+        Duration::ZERO,
+        "an answer already due has none left"
+    );
+    assert_eq!(
+        deadline(query(Query::Ancestors {
+            node_id: NodeId::new(1),
+        })),
+        WALK_DEADLINE
+    );
+    assert_eq!(
+        deadline(Item::NodesHeld {
+            nodes: Vec::new(),
+            anchors: Vec::new(),
+            acknowledged: 1,
+        }),
+        WALK_DEADLINE
+    );
+    assert_eq!(
+        deadline(query(Query::Activate {
+            node_id: NodeId::new(1),
+        })),
+        STEP_DEADLINE
+    );
+}
+
 /// The deadline of the program dispatched at 1 ms, at which the tests
 /// below abandon it.
 const DEADLINE: Reason = Reason::Deadline;

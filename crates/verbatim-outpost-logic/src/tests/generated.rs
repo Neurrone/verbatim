@@ -2,8 +2,7 @@
 //! the caret watch): every sequence of up to
 //! [`DEPTH`] steps of the inputs that move a caret key's watch, given to
 //! [`Reducer::input`] and [`Reducer::tick`], enumerated without randomness. After every step it
-//! compares the reducer with a reference model, the open query and whether
-//! a program holds it, and checks four invariants:
+//! checks four invariants, with no model of the watch's lifecycle:
 //!
 //! - each caret key's query has at most one reply, and exactly one, or is
 //!   left to the outpost's end, once the sequence ends with `Close`;
@@ -13,6 +12,10 @@
 //!   commits applied, equals the reducer's apart from its times;
 //! - no idle answer is sent while the watch is open or the program in
 //!   flight is deferred.
+//!
+//! A due time is also acted on as soon as nothing else is ready. The
+//! watch's bound, its poll's timings and the reason each reply gives are
+//! the examples of `watch.rs` and `src/tests.rs`.
 
 use std::collections::BTreeMap;
 
@@ -110,23 +113,6 @@ struct Flight {
     done: bool,
 }
 
-/// The reference model: the query whose watch is open, and whether a
-/// program holds it; with when it is next acted on and its poll's last
-/// read, for the sequences' times.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-struct Model {
-    open: Option<u64>,
-    held: bool,
-    /// The key query its own program still answers.
-    running: Option<u64>,
-    /// When the watch is next acted on: its bound or its next read.
-    due: u64,
-    /// The poll's last read, for a polling watch.
-    until: Option<u64>,
-    /// Whether a poll read holds it.
-    by_read: bool,
-}
-
 /// One sequence's state: the reducer, its recorded reads and the test's
 /// own bookkeeping.
 #[derive(Clone)]
@@ -137,7 +123,6 @@ struct Gen {
     keys: u64,
     events: u32,
     flight: Option<Flight>,
-    model: Model,
     replies: BTreeMap<u64, u32>,
     closed: bool,
     rounds: bool,
@@ -189,7 +174,6 @@ impl Gen {
             keys: 0,
             events: 0,
             flight: None,
-            model: Model::default(),
             replies: BTreeMap::new(),
             closed: false,
             rounds: false,
@@ -296,22 +280,9 @@ impl Gen {
     }
 
     /// Takes `action`, and checks the step.
-    #[expect(clippy::too_many_lines, reason = "one arm for each kind of step")]
     fn step(&mut self, action: Action) {
         self.trail.push(action);
         self.at += 1;
-        let before = self.model.clone();
-        let flight = self.flight.clone();
-        let claimed = flight.as_ref().is_some_and(|flight| flight.claimed);
-        let mut expected: Vec<(u64, &'static str)> = Vec::new();
-        let ended = |model: &mut Model, expected: &mut Vec<(u64, &'static str)>, how| {
-            if let Some(open) = model.open.take() {
-                expected.push((open, how));
-            }
-            model.held = false;
-            model.by_read = false;
-            model.until = None;
-        };
         let effects = match action {
             Action::Key => {
                 self.keys += 1;
@@ -323,56 +294,22 @@ impl Gen {
             }
             Action::Open(console) => {
                 self.flight_mut().done = true;
-                let Some(Kind::Key(key)) = flight.as_ref().map(|flight| flight.kind) else {
+                let Some(Kind::Key(key)) = self.flight.as_ref().map(|flight| flight.kind) else {
                     unreachable!("a key's program")
                 };
-                if !claimed && self.model.open.is_none() {
-                    self.model.open = Some(key);
-                    self.model.running = None;
-                    self.model.until = console.then_some(self.at + 50);
-                    self.model.due = self.at + if console { 5 } else { 10_000 };
-                }
                 self.commit(opens(key, console))
             }
-            Action::Take => {
-                if !claimed && self.model.open.is_some() {
-                    self.model.held = true;
-                }
-                self.commit(takes())
-            }
+            Action::Take => self.commit(takes()),
             Action::Answered => {
                 self.flight_mut().done = true;
-                if !claimed && self.model.held {
-                    ended(&mut self.model, &mut expected, "done");
-                }
                 self.commit(answered())
             }
             Action::Watching => {
                 self.flight_mut().done = true;
-                if !claimed && self.model.held {
-                    self.model.held = false;
-                    if self.model.by_read {
-                        self.model.by_read = false;
-                        let until = self.model.until.expect("a poll");
-                        if self.at >= until {
-                            ended(&mut self.model, &mut expected, "watch ended");
-                        } else {
-                            self.model.due = (self.at + 5).min(until);
-                        }
-                    }
-                }
                 self.commit(watching(1))
             }
-            Action::ReportElsewhere => {
-                if !claimed {
-                    ended(&mut self.model, &mut expected, "watch ended");
-                }
-                self.commit(focus_change(2, false))
-            }
-            Action::Finish | Action::Panic => {
-                self.ended_program(&mut expected);
-                self.finish(action == Action::Panic, None)
-            }
+            Action::ReportElsewhere => self.commit(focus_change(2, false)),
+            Action::Finish | Action::Panic => self.finish(action == Action::Panic, None),
             Action::Cut => self.finish(
                 false,
                 Some(cut(Finish::Watch {
@@ -395,12 +332,6 @@ impl Gen {
             Action::Deadline => {
                 let deadline = self.reducer.flight.deadline().expect("in flight");
                 self.at = deadline / 1_000;
-                if self.model.held {
-                    ended(&mut self.model, &mut expected, "abandoned");
-                }
-                if let Some(running) = self.model.running.take() {
-                    expected.push((running, "abandoned"));
-                }
                 self.flight = None;
                 let now = self.now();
                 self.tick(now)
@@ -414,9 +345,6 @@ impl Gen {
             Action::Publish(report) => {
                 self.flight_mut().claimed = true;
                 let request = self.flight_mut().request;
-                if report {
-                    ended(&mut self.model, &mut expected, "watch ended");
-                }
                 self.answers.publications.push_back(if report {
                     focus_change(2, false)
                 } else {
@@ -436,16 +364,11 @@ impl Gen {
                     acknowledged: 0,
                 })
             }
-            Action::Released => {
-                if !self.model.held {
-                    ended(&mut self.model, &mut expected, "watch ended");
-                }
-                self.input(Input::Released {
-                    nodes: [1].into_iter().collect(),
-                    anchors: BTreeSet::new(),
-                    objects: false,
-                })
-            }
+            Action::Released => self.input(Input::Released {
+                nodes: [1].into_iter().collect(),
+                anchors: BTreeSet::new(),
+                objects: false,
+            }),
             Action::Round => {
                 self.rounds = true;
                 self.push(round(9))
@@ -455,75 +378,23 @@ impl Gen {
                 self.input(Input::Close)
             }
         };
-        self.check(&before, &effects, expected);
+        self.check(&effects);
     }
 
     fn flight_mut(&mut self) -> &mut Flight {
         self.flight.as_mut().expect("a program in flight")
     }
 
-    /// The program in flight ends without a result: a watch it holds
-    /// ends, and its own query is answered as failed.
-    fn ended_program(&mut self, expected: &mut Vec<(u64, &'static str)>) {
-        if self.model.held
-            && let Some(open) = self.model.open.take()
-        {
-            expected.push((open, "watch ended"));
-            self.model.held = false;
-            self.model.by_read = false;
-            self.model.until = None;
-        }
-        if let Some(running) = self.model.running.take() {
-            expected.push((running, "failed"));
-        }
-    }
-
-    /// A caret key's dispatch among `effects` ends the open watch it
-    /// replaces, before the key's program is given its copy.
-    fn key_dispatch_ends(&mut self, effects: &[Effect], expected: &mut Vec<(u64, &'static str)>) {
-        if effects.iter().any(|effect| {
-            matches!(effect, Effect::Dispatch(program) if matches!(kind_of(program), Kind::Key(_)))
-        }) && !self.model.held
-            && let Some(open) = self.model.open.take()
-        {
-            expected.push((open, "watch ended"));
-            self.model.until = None;
-        }
-    }
-
-    /// Checks the step's effects against the model, follows the programs
-    /// they dispatch, and checks the invariants.
-    fn check(
-        &mut self,
-        before: &Model,
-        effects: &[Effect],
-        mut expected: Vec<(u64, &'static str)>,
-    ) {
-        self.key_dispatch_ends(effects, &mut expected);
+    /// Follows the programs the step's effects dispatch, counts the
+    /// replies, and checks the invariants.
+    fn check(&mut self, effects: &[Effect]) {
         let trail = &self.trail;
         for effect in effects {
             match effect {
                 Effect::Dispatch(program) => {
-                    let kind = kind_of(program);
-                    if let Kind::Key(key) = kind {
-                        self.model.running = Some(key);
-                    }
-                    if kind == Kind::PollRead {
-                        // The poll's due read, taken once nothing else is
-                        // ready.
-                        assert!(
-                            self.model.open.is_some()
-                                && !self.model.held
-                                && self.model.until.is_some()
-                                && self.at >= self.model.due,
-                            "a poll read not due after {trail:?}"
-                        );
-                        self.model.held = true;
-                        self.model.by_read = true;
-                    }
                     self.flight = Some(Flight {
                         request: program.request,
-                        kind,
+                        kind: kind_of(program),
                         copy: program.facts.clone(),
                         claimed: false,
                         done: false,
@@ -531,31 +402,10 @@ impl Gen {
                 }
                 Effect::Abandon { .. } => self.flight = None,
                 Effect::Send(message) => {
-                    if let OutpostToCore::Reply {
-                        request_id,
-                        outcome,
-                        ..
-                    } = &**message
-                    {
+                    if let OutpostToCore::Reply { request_id, .. } = &**message {
                         let count = self.replies.entry(request_id.number).or_default();
                         *count += 1;
                         assert_eq!(*count, 1, "a second reply to {request_id} after {trail:?}");
-                        let reply = (request_id.number, outcome_name(outcome));
-                        if let Some(at) = expected.iter().position(|wanted| *wanted == reply) {
-                            expected.remove(at);
-                        } else {
-                            // The bound, reached once nothing else is
-                            // ready.
-                            assert!(
-                                reply.1 == "watch ended"
-                                    && self.model.open == Some(request_id.number)
-                                    && !self.model.held
-                                    && self.model.until.is_none()
-                                    && self.at >= self.model.due,
-                                "an unexpected reply {reply:?} after {trail:?}, model {before:?}"
-                            );
-                            self.model.open = None;
-                        }
                     }
                     if matches!(**message, OutpostToCore::IdleAnswer { .. }) {
                         assert!(
@@ -572,17 +422,7 @@ impl Gen {
                 _ => {}
             }
         }
-        assert_eq!(expected, [], "replies not sent after {trail:?}");
-        // The reference model.
         let watch = &self.reducer.facts.follow.watch;
-        assert_eq!(
-            (
-                watch.open().map(|open| open.request_id.number),
-                matches!(watch, Watch::Checking { .. })
-            ),
-            (self.model.open, self.model.held),
-            "the model and the reducer disagree after {trail:?}"
-        );
         // A due time is acted on as soon as nothing else is ready.
         if !self.reducer.busy() && !self.reducer.releasing && !self.reducer.stopping {
             assert!(
@@ -622,26 +462,22 @@ impl Gen {
     }
 }
 
-/// Every sequence from `generation`, depth first; returns how many were
-/// run.
-fn enumerate(generation: &Gen) -> u64 {
-    let mut count = 1;
+/// Every sequence from `generation`, depth first.
+fn enumerate(generation: &Gen) {
     generation.clone().close();
     if generation.trail.len() == DEPTH {
-        return count;
+        return;
     }
     for action in ACTIONS {
         if generation.applies(action) {
             let mut next = generation.clone();
             next.step(action);
-            count += enumerate(&next);
+            enumerate(&next);
         }
     }
-    count
 }
 
 #[test]
 fn every_short_sequence_answers_each_key_once_and_keeps_the_watchs_rules() {
-    let count = enumerate(&Gen::new());
-    assert_eq!(count, 104_682);
+    enumerate(&Gen::new());
 }

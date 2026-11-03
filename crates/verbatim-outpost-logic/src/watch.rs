@@ -510,6 +510,17 @@ mod tests {
     }
 
     #[test]
+    fn a_take_of_another_node_leaves_a_waiting_watch_as_it_is() {
+        let waiting = Watch::Waiting {
+            open: open(0),
+            bound: 10_001_000,
+        };
+        let mut watch = waiting.clone();
+        assert_eq!(watch.take(NodeId::new(2)), None);
+        assert_eq!(watch, waiting);
+    }
+
+    #[test]
     fn a_take_found_nothing_puts_the_watch_back_as_it_stood() {
         let polling = Watch::Polling {
             open: open(1_000),

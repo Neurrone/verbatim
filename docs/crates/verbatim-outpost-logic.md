@@ -136,15 +136,16 @@ asks answered by recorded answers as the shell answers them
 module's own), so every ordering of inputs is a replay. The watch has a
 generated test (`crates/verbatim-outpost-logic/src/tests/generated.rs`):
 every sequence of up to six steps of the inputs that move it, enumerated
-without randomness (104,682 sequences, about 1.5 s in a debug build),
-compared after each step with a reference model, the open query and
-whether a program holds it, and checked for four invariants: each key's
+without randomness (about 1.5 s in a debug build), with no model of
+the watch's lifecycle, and checked after each step for four invariants: each key's
 query answered at most once, and by the sequence's end answered once or
 left to the outpost's end, no
 time for the watch while a program or a release is in flight, the
 program's copy equal to the reducer's watch apart from times at each
 accepted commit, and no idle answer while the watch is open or the
-program in flight deferred.
+program in flight deferred; and a due time is acted on as soon as
+nothing else is ready. The bound, the poll's timings and each reply's
+reason are the examples of `watch.rs` and the replay tests.
 The reducer has a generated test against a reference model
 (`crates/verbatim-outpost-logic/src/tests/reducer.rs`): lists of actions
 weighted toward the lifecycle, run through proptest's `TestRunner::run`
@@ -160,27 +161,26 @@ inputs of requests no longer live; verdicts of the generation in charge
 and of the one before; the hold; cancels; the close; and time on the
 three clocks, each advancing on its own, to the next timer or by chosen
 amounts. The model tracks the generation and the requests issued, the
-program in flight (its kind, its query, its walk, its deadline by its
-kind's budget, its window), the entries pending as a set rather than the
-intake's plan, the open queries, settles and rounds, the watch's query
-and whether a program holds it, the hold, a release, the owed work and
-stopping. The gap record is not modelled: each call's change of it is
+program in flight (its kind, its query, its walk, its deadline as
+dispatched, its window), the entries pending as a set rather than the
+intake's plan, the open queries, settles and rounds, the hook's copies
+held in their order, a release, the owed work and stopping. The gap record is not modelled: each call's change of it is
 checked against what the design lets change it (opened or restamped by a
 foreground change found in front or a copy dropped in its window, closed
 by a report it answers, an unrelated window at its bound, a drop for no
 window or a copy elsewhere, its bound passed only once due), never against
 its stamps' arithmetic. After every call it checks the design's sixteen
 invariants and its postconditions: each dispatch under the next request
-with its kind's deadline, a late shell query answered with nothing read,
+with a deadline after its dispatch, a poll read holding the watch, a late shell query answered with nothing read,
 a cancel, a commit's message ahead of its other effects, a cut read's
 finish alone, a program's end answering its watch and its query before
 the next dispatch, a tick deciding the deadline, then the bound, then the
 moved-on rule, then the gap's bound, and an abandonment answering the
 watch and the query before the next dispatch, and the hold's release on
 the end of forwarding, the end of the listener's reads or no listener,
-giving back the held copies in the hook's order but those of the kinds
-the listener forwards raised at or before the end, or at or before the
-newest such copy the listener forwarded. Each case ends by draining
+giving back some of the held copies in the hook's order, every one with
+no listener. Each kind's deadline and which copies a release keeps are
+the examples of the replay tests and `hold.rs`. Each case ends by draining
 (every program finished, every timer reached, the close), and then every
 query has one reply or is left to the shell's token, which only a query
 never taken from the intake, or the watch's, may be; and no focus group a
@@ -189,8 +189,8 @@ and the two runs' effects are compared, and the test fails if a listed
 lifecycle state is never reached. The cases the test and its exploration
 found are kept as fixed cases. The model leaves out the intake's plan,
 text facts, held reports, the subscription, the marks' contents, verdict
-contents beyond whether the record changed, and exact deadlines beyond
-each kind's budget; and its generator sends a foreground change from the
+contents beyond whether the record changed, the caret watch's
+transitions, and exact deadlines; and its generator sends a foreground change from the
 listener, never as the hook's held copy.
 
 The intake has a generated test of its own
