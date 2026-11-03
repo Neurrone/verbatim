@@ -20,6 +20,13 @@ Scenarios: the `windows_terminal_` scenarios generally, for example `windows_ter
 - Cause: not found; possibly the first entry's.
 - Fix: [M6.4 terminal residuals](roadmap.md#m64--terminal-residuals).
 
+## Windows Terminal's second terminal identity cancels the terminal expected in full
+
+- Scenarios: `windows_terminal_two_windows` (run 41590454080, 2026-11-03).
+- How: the second window's focus is raised five times within about 200 ms by Windows Terminal; each "terminal" and "blank" queued behind the slow "… window" utterance cancels the one waiting before it, so the "… terminal" the scenario expects heard in full ends cancelled: "was expected to end Completed, but ended Cancelled".
+- Cause: Windows Terminal raises focus from a second runtime identity ([UIA faults](uia-bugs.md), "Windows Terminal raises focus from a second runtime identity"); Verbatim's rule dropping those repeats is not built, and the scenario's tolerance for optional repeats (`SECOND_WINDOW_REPEATS`, `crates/verbatim-e2e/src/scenarios/terminal.rs`) does not cover the expected utterance itself being cancelled. Whether NVDA cuts the earlier utterance the same way needs a capture.
+- Fix: [M5](roadmap.md#m5--extensions-v1), the Terminal built-in's rule for the second terminal identity.
+
 ## Windows Terminal raises no TextChanged for a typed character
 
 - Scenarios: the Windows Terminal typing scenarios.
