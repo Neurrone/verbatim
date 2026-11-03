@@ -4,7 +4,7 @@
 //! fetches for.
 //!
 //! The configuration names the theme by id: the base settings' `[theme]`,
-//! or a profile's once M8 activates profiles. Making one active decodes its
+//! or a profile's once M8.3 activates profiles. Making one active decodes its
 //! sounds (a missing or unreadable one is logged, and its indications are
 //! spoken instead), hands it to the speech manager's theme handle, and
 //! tells the reducer what it wants fetched (`Input::Fetches`), which the
@@ -49,7 +49,7 @@ impl ThemeHost for AppThemeHost {
     }
 
     /// The theme section as last saved: the profile the dialog edits until
-    /// M8 activates profiles.
+    /// M8.3 activates profiles.
     fn configured(&self) -> (String, ThemeOptions) {
         let section = self.section.lock().unwrap_or_else(PoisonError::into_inner);
         (section.0.id.clone(), section.0.options)
@@ -65,7 +65,7 @@ impl ThemeHost for AppThemeHost {
     }
 
     /// Saves the choice in the base settings, the profile the dialog edits
-    /// until M8 activates profiles, through the saver: a failed write is
+    /// until M8.3 activates profiles, through the saver: a failed write is
     /// logged there.
     fn persist(&self, id: &str, options: ThemeOptions) -> Result<(), String> {
         let mut section = self.section.lock().unwrap_or_else(PoisonError::into_inner);

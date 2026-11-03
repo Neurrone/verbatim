@@ -52,7 +52,7 @@ numpad 8 says "line two". Verbatim says "line two" in both cases.
 ### Gesture map / rebindable input, input help mode
 
 Verbatim: **partial**. The map exists; the user rebinding UI and input
-help are not yet built (M8).
+help are not yet built (M8.1).
 
 ### Typed-character echo
 

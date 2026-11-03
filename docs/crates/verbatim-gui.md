@@ -273,7 +273,7 @@ which would take the focus from the find field as the user types. Enter
 on any button activates that button (`KeyAction::ActivateFocused`).
 Every label is created just before its control, so each control is named
 by it; the check boxes carry their names. The dialog title names the
-category, not a profile, since profiles are not activated until M8. A
+category, not a profile, since profiles are not activated until M8.3. A
 failed file operation is reported in a message box with
 `verbatim-config`'s error text, which is English.
 

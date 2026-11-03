@@ -89,7 +89,7 @@ pub enum KeyboardLayout {
 /// Keyboard configuration within `settings.toml`. Global, like
 /// [`VerbatimKeys`]: [`Profile`] has no field for it, so no profile can
 /// override the active layout. Exposed only in the file for M3; a GUI
-/// choice arrives with M8's gesture-remapping work.
+/// choice arrives with M8.1's gesture-remapping work.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct KeyboardConfig {
@@ -263,7 +263,7 @@ pub struct Settings {
     /// Terminal settings (speaking passwords, reporting new output, and the
     /// flood policy's two limits), each with NVDA's default where NVDA has
     /// the setting ([`ReaderSettings`]). The base profile's only, until
-    /// profiles grow them (M8).
+    /// profiles grow them (M8.3).
     pub reader: ReaderSettings,
     /// The base profile's theme and the settings that go with it.
     pub theme: ThemeConfig,

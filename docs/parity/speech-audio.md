@@ -14,7 +14,7 @@ is cut off, and cancellation of expired focus speech"); `Interrupt`
 remains for a selection in a list the focus controls, notifications that
 ask for it, and a few direct messages such as the time. NVDA's resume of
 interrupted lower-priority speech is not yet built: Verbatim's Interrupt
-discards. Whether to match it is to be decided before M8's profiles
+discards. Whether to match it is to be decided before M8.3's profiles
 work.
 
 ### Index marks driving callbacks at audible position
@@ -142,7 +142,7 @@ stop+reset; latency measured in the E2E ledger.
 
 ### Rate boost via sonic, audio ducking, sound split
 
-**not yet (M8)** (ducking and configuration breadth). Tones and
+**not yet (M8.2)** (ducking and configuration breadth). Tones and
 earcons: see the next entry.
 
 ### Sonification
@@ -269,7 +269,7 @@ Verbatim: **different (D18)** — native synth host out of process
 NVDA:
 [Symbols, dictionaries, and character processing](../nvda/symbols-and-dictionaries.md).
 Verbatim: **partial**. Symbol processing in flowing text and speech
-dictionaries are not yet built (M8); D12 plans them over typed spans,
+dictionaries are not yet built (M8.2); D12 plans them over typed spans,
 and the dictionaries-before-symbols ordering and the symbol preserve
 rules are the parity-critical details. The character table for one
 character spoken on its own (caret and review movement, spelling, typing
@@ -292,7 +292,7 @@ a digit follows a letter, in everything it speaks, so "issue123" is
 spoken "issue 123" and "e2e" as "e 2e"
 ([Symbols, dictionaries, and character processing](../nvda/symbols-and-dictionaries.md),
 the built-in layer under "Speech dictionaries").
-Verbatim: **not yet (M8)**, built with punctuation and symbol levels
+Verbatim: **not yet (M8.2)**, built with punctuation and symbol levels
 (Dickson, 2026-10-15). Verbatim speaks the text as written. Open
 question, Dickson's (2026-10-15): the rule dates from 2006 and a
 pronunciation problem in ViaVoice, and whether current synthesizers
@@ -304,4 +304,4 @@ shows a difference on any spoken name with a digit after a letter.
 
 NVDA: strip-or-pass of language
 commands per config ([Speech](../nvda/speech.md)). Verbatim: **not yet
-(M8)**; it needs backend language attributes first.
+(M8.2)**; it needs backend language attributes first.

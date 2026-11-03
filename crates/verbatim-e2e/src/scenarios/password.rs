@@ -17,7 +17,7 @@
 //! `wpf-password-deleting-keys.txt` in
 //! `target/e2e-evidence/m42-protected-fixes-2026-10-22/`. The differences
 //! are declared where they occur: Verbatim has no symbol processing yet
-//! (M8), so it says a run of masked characters as the characters
+//! (M8.2), so it says a run of masked characters as the characters
 //! themselves, where NVDA collapses six stars to "6 star" and drops a run
 //! of circles, whose symbol level is above its default; and it has no
 //! delayed character description, the empty utterance NVDA says after a

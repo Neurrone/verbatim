@@ -27,7 +27,7 @@ built (2026-11-03). Next: the rework's third build.
   formatting-change sounds have data to act on.
 - A minimal built-in character-description table (punctuation and symbol
   names): character navigation must say "comma" on a comma even though the
-  configurable dictionary system waits until M8.
+  configurable dictionary system waits until M8.2.
 - Remote-ops integration (ancestor fetch on focus; terminal text ranges).
   The ARM64 remote-ops verification (R3) is not part of M4: it was
   deferred on 2026-10-06, and M4 is built and verified on x64 only.
@@ -236,7 +236,7 @@ The decisions, in brief:
   the read's start; the baseline's life follows the focus Core holds.
 - Remove the second layer: Core's eight caret reports and its Backspace
   and Delete prediction, the outpost's eight reads (so that until
-  uiAccess, M8.1, a caret key in an elevated window is judged from the
+  uiAccess, M8.6, a caret key in an elevated window is judged from the
   last read), the time-zero record, the line-limited "since" check,
   report numbers, the selection baseline's three modes, the separate
   watch request, and the single superseded slot.
@@ -513,7 +513,7 @@ package reader get generated tests of their own.
   every built-in written in Rust, Calculator and Notepad first.
 - Every Windows inbox application as a built-in: Explorer (starting with the
   cosmetic fixes deferred from M3), Windows Terminal, Notepad, Calculator,
-  Task Manager (proven by `mockapp` until M8.1 lets it be read end to
+  Task Manager (proven by `mockapp` until M8.6 lets it be read end to
   end), Settings, Start and search, Quick Settings and Open With; sleep mode
   as a core per-application list rather than five modules.
 - Windows Terminal's second terminal identity
@@ -979,8 +979,8 @@ Security work other milestones carry, each with its test:
 - M6.3: speech moved to another audio device while the default refuses Verbatim (A5), tested with the default held in exclusive mode; a cut string known to speech (U4).
 - M6.5: typed characters judged against the focus they were typed in (L9), tested by a password field that closes on its last character.
 - M7: the helper loaded narrowly, handed its channel, version-checked and treated as hostile (X8), tested with a mismatched helper and malformed messages; link destinations (S3).
-- M8, with the installer: a machine-wide, signed, administrator-owned installation (X1); pinned DLL search (X2), tested with a DLL planted beside a portable copy; signed updates from a process of their own (X9), tested with an unsigned and a wrongly signed download; never running elevated (B2); diagnostics' home and limits (L4); Core's restart with a degrading breaker (A1), tested by crashing Core repeatedly; the screen curtain built for a user who cannot see it (L8), tested across a display change, unlocking and a restart; linear-time dictionaries (J2); direction overrides spoken (S2); clipboard history (L7); the outposts' network block and process mitigations (section 6.9).
-- M8.1: the UIAccess measurement first (B1), then the lock and secure-screen rules (B3 to B8) with the secure instance's menu and dialogs as an allowlist, no file choice, and the toolkit's dialogs routed to the log (G1, G2, G4), tested by a list of every window and command the secure instance can reach equalling the allowlist, and by each of NVDA's secure-screen advisories as a scenario; the administrator's copy for secure screens following no links (X13), tested with a planted junction; developer mode in UIAccess builds turned on only in Verbatim's own window (C1); the secure instance's children started without SYSTEM (B10), tested by reading their tokens; "Secure Desktop" announced on the switch (B11); and the secure instance's own curtain.
+- M8.7, with the installer (the screen curtain with M8.4, and linear-time dictionaries, direction overrides and clipboard history with M8.2): a machine-wide, signed, administrator-owned installation (X1); pinned DLL search (X2), tested with a DLL planted beside a portable copy; signed updates from a process of their own (X9), tested with an unsigned and a wrongly signed download; never running elevated (B2); diagnostics' home and limits (L4); Core's restart with a degrading breaker (A1), tested by crashing Core repeatedly; the screen curtain built for a user who cannot see it (L8), tested across a display change, unlocking and a restart; linear-time dictionaries (J2); direction overrides spoken (S2); clipboard history (L7); the outposts' network block and process mitigations (section 6.9).
+- M8.6: the UIAccess measurement first (B1), then the lock and secure-screen rules (B3 to B8) with the secure instance's menu and dialogs as an allowlist, no file choice, and the toolkit's dialogs routed to the log (G1, G2, G4), tested by a list of every window and command the secure instance can reach equalling the allowlist, and by each of NVDA's secure-screen advisories as a scenario; the administrator's copy for secure screens following no links (X13), tested with a planted junction; developer mode in UIAccess builds turned on only in Verbatim's own window (C1); the secure instance's children started without SYSTEM (B10), tested by reading their tokens; "Secure Desktop" announced on the switch (B11); and the secure instance's own curtain.
 - M9: no content in logs at default levels (L3), tested by scanning a full suite run's logs for the planted text.
 - M12: Remote's end-to-end encryption, announcements and lock behaviour (C8, B9), tested with a relay that tries to read and alter traffic and a session that locks.
 - M18: braille drivers in model A or B (section 6.11), tested with a device sending malformed reports.
@@ -1022,7 +1022,7 @@ Security work other milestones carry, each with its test:
   wherever a text interface exists — UIA TextPattern bounding rectangles
   and IA2 character extents give exact per-character geometry, batched
   through the new helper — with rectangle interpolation as the fallback for
-  name-plus-rectangle elements. OCR joins as a second text source in M8 and
+  name-plus-rectangle elements. OCR joins as a second text source in M8.5 and
   the display model as a third in M17; the review commands and cursor stay
   the same throughout, only the source improves underneath.
 - Typed-character echo of composed text from the D2 injection helper, as
@@ -1058,7 +1058,35 @@ Exit: real browsing works day-to-day; large-page E2E passes; corpus
 performance/parity report vs NVDA written, at (or consciously accepted
 near) parity; screen review reads a modern app's screen correctly.
 
-## M8 — Breadth: speech configurability, profiles, overlays, OCR
+## M8.1 — Input handling
+
+No exit criterion of its own: the milestone is done when all of its items
+are.
+
+- Layered commands (Dickson, 2026-11-02): a command layer in the input
+  crate's decision machine, active after its prefix key until one of its
+  commands runs or Escape is pressed, named by input help; extensions
+  declare layers as data from M13. 24 NVDA add-ons use one, and the
+  decision machine's gesture map is fixed while Verbatim runs today.
+- Input help mode; the gesture-remapping configuration GUI.
+- Modifiers left held after the secure desktop, since their releases
+  never reach the hook (NVDA clears its modifier record when the secure
+  desktop opens; the signal of a desktop switch is designed in the focus
+  pipeline rework's third build). From the NVDA input audit of
+  2026-11-03.
+- A beep for a lowercase letter typed with Caps Lock on, as NVDA does by
+  default, settled with an NVDA capture (input audit, 2026-11-03).
+- Sticky Keys (input audit, 2026-11-03).
+- Key names Verbatim lacks: F13 to F24, media keys, numpad digits with
+  Num Lock on, and punctuation other than period and plus (input audit,
+  2026-11-03).
+- Bound keys are still swallowed while Core's reducer stalls, where
+  NVDA's watchdog lets keys through (input audit, 2026-11-03).
+
+## M8.2 — Speech configurability
+
+No exit criterion of its own: the milestone is done when all of its items
+are.
 
 - Automatic language switching, as NVDA does it: the language of each
   run of text (UIA's Culture per format run, IA2 text attributes) carried
@@ -1068,13 +1096,7 @@ near) parity; screen review reads a modern app's screen correctly.
   OneCore's SSML always uses the current voice's language (language audit,
   2026-10-08). Terminal output switches language only where the terminal
   reports a language per line (decided 2026-10-07).
-- Layered commands (Dickson, 2026-11-02): a command layer in the input
-  crate's decision machine, active after its prefix key until one of its
-  commands runs or Escape is pressed, named by input help; extensions
-  declare layers as data from M13. 24 NVDA add-ons use one, and the
-  decision machine's gesture map is fixed while Verbatim runs today.
-- Input help mode; the gesture-remapping configuration GUI; full
-  pronunciation/symbol dictionaries and their configuration UI (the
+- Full pronunciation/symbol dictionaries and their configuration UI (the
   data-driven infrastructure exists from M3/M4). The built-in
   dictionary's letter-to-digit rule, a space wherever a digit follows a
   letter, is built with them, after checking whether eSpeak NG and
@@ -1088,30 +1110,47 @@ near) parity; screen review reads a modern app's screen correctly.
   `windows_terminal_commands`'s first prompt NVDA says "ready greater"
   at its default symbol level ("some"), where Verbatim leaves the ">"
   out (Dickson, 2026-10-21).
-- Configuration profiles (manual and triggered); localized UI shipped in at
-  least two languages as proof.
-- Focus highlight (DirectComposition overlay) and screen curtain (R6 check);
-  overlay component designed to host a future magnifier.
-- OCR capability (Windows.Media.Ocr) exposed to extensions; synthetic-subtree
-  review of an image/window; OCR becomes screen review's second text source,
-  for windows whose pixels contain text that no API exposes.
 - Speech history (Dickson, 2026-11-02): reviewing recent utterances,
   moving back and forward through them and copying one, beside copying
   the last spoken text below; extensions read it from M13.
-- Installer/updater skeleton.
 - From NVDA's changes up to 663e4b679 (reviewed 2026-10-06): copying the
   last spoken text to the clipboard (NVDA+Control+X) and a controller
   call reporting whether speech is in progress; dictionary rules written
   as zero-width lookarounds, which avoid catastrophic backtracking (NVDA's
-  rewrite of its camel-case and word-to-digit rules in `builtin.dic`);
-  OCR captured through Windows Graphics Capture; menu item locations in
-  32-bit applications converted from the 96-DPI space the OLEACC menu
-  proxy reports when the client's bitness differs (needed once locations
-  are used, by the focus highlight or the mouse).
+  rewrite of its camel-case and word-to-digit rules in `builtin.dic`).
 
-Exit: curtain + highlight E2E.
+## M8.3 — Profiles and localization
 
-## M8.1 — UIAccess: elevated windows, UAC and sign-in
+No exit criterion of its own: the milestone is done when all of its items
+are.
+
+- Configuration profiles (manual and triggered); localized UI shipped in at
+  least two languages as proof.
+
+## M8.4 — Overlays
+
+No exit criterion of its own: the milestone is done when all of its items
+are.
+
+- Focus highlight (DirectComposition overlay) and screen curtain (R6 check);
+  overlay component designed to host a future magnifier.
+- From NVDA's changes up to 663e4b679 (reviewed 2026-10-06): menu item
+  locations in 32-bit applications converted from the 96-DPI space the
+  OLEACC menu proxy reports when the client's bitness differs (needed
+  once locations are used, by the focus highlight or the mouse).
+
+## M8.5 — OCR
+
+No exit criterion of its own: the milestone is done when all of its items
+are.
+
+- OCR capability (Windows.Media.Ocr) exposed to extensions; synthetic-subtree
+  review of an image/window; OCR becomes screen review's second text source,
+  for windows whose pixels contain text that no API exposes.
+- From NVDA's changes up to 663e4b679 (reviewed 2026-10-06): OCR captured
+  through Windows Graphics Capture.
+
+## M8.6 — UIAccess: elevated windows, UAC and sign-in
 
 Reading elevated console windows, UAC prompts and the lock screen or
 sign-in needs the UIAccess permission; this milestone builds it and reads
@@ -1144,6 +1183,13 @@ each of them end to end.
 
 Exit: a UAC prompt, an elevated console, and the sign-in screen are read
 in the VM.
+
+## M8.7 — Installer and updater
+
+No exit criterion of its own: the milestone is done when all of its items
+are.
+
+- Installer/updater skeleton.
 
 ## M9 — Logging and log viewer
 
@@ -1407,8 +1453,8 @@ Tiers, gated by the capabilities each module needs:
   line 15, tested in `IAccessibleHandler/__init__.py`, lines 1039 to
   1055), since its caret blinks by them; until then a focused Scintilla
   editor tries to read its caret at each blink.
-- **Lock screen and logon UI — after M8.1**: reading the sign-in screen
-  needs UIAccess, which M8.1 builds.
+- **Lock screen and logon UI — after M8.6**: reading the sign-in screen
+  needs UIAccess, which M8.6 builds.
 - **Tier B — the terminal clients, in two stages**: Windows Terminal
   workflows are core M4 behavior, and mintty is triaged on its own after M4
   (its ConPTY integration may make it readable stock). PuTTY, SecureCRT,
@@ -1419,7 +1465,7 @@ Tiers, gated by the capabilities each module needs:
   hosts, VS Code, WhatsApp, deeper Teams support, Thunderbird, Kindle and
   other readers.
 - **Tier D — after the object-model bridge capability lands (planned around
-  M8)**: Word, Excel, PowerPoint, Outlook, LibreOffice, Visual Studio.
+  M8.5)**: Word, Excel, PowerPoint, Outlook, LibreOffice, Visual Studio.
   NVDA's Office modules rely heavily on COM object-model automation, which
   Wasm extensions cannot reach directly; this tier is gated on designing a
   capability-gated app object-model bridge in the WIT host API — the

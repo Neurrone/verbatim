@@ -13,7 +13,7 @@ Mitigations remove attack surface by architecture or by product choice first, an
 In priority order:
 
 1. **Availability.** A silent or hung screen reader leaves a blind user without a computer, so denial of service is a security failure, not a nuisance.
-2. **Privilege boundaries.** Verbatim must never let a less trusted process reach something it could not reach on its own. With UIAccess (M8.1) Verbatim reads elevated windows and sends them input, and its secure-desktop instance runs as SYSTEM.
+2. **Privilege boundaries.** Verbatim must never let a less trusted process reach something it could not reach on its own. With UIAccess (M8.6) Verbatim reads elevated windows and sends them input, and its secure-desktop instance runs as SYSTEM.
 3. **The user's content.** Verbatim sees everything on screen, every keystroke and the clipboard; what it keeps, where, and who can read it is the question Windows Recall raised.
 4. **What the user hears.** For a blind user the speech is the interface.
 5. **The user's machine.** Code running inside Verbatim runs with the user's rights, and later with UIAccess and at sign-in.
@@ -44,7 +44,7 @@ The entry points:
 - **Files Verbatim reads or maps:** settings, profiles, themes, sounds, locale files, eSpeak NG's data, extension packages, module folders and compiled extension code.
 - **Synthesizer engines and braille devices,** their data and their failures.
 - **The audio device** and **the clipboard.**
-- **Planned:** the installer and updater (M8), the secure-desktop launch (M8.1), Remote support (M12), image description or OCR services.
+- **Planned:** the installer and updater (M8.7), the secure-desktop launch (M8.6), Remote support (M12), image description or OCR services.
 
 ## 4. Adversaries
 
@@ -177,7 +177,7 @@ STRIDE: denial of service. Class U covers applications making Verbatim fail; thi
 - **B6. The secure instance's GUI and commands are an allowlist (structural).** A window or command needs a capability the secure instance does not grant, so no browser, file dialog, help file, URL, log viewer, error dialog or window that can start a process opens there. A denylist, checks scattered through each feature, is what each of NVDA's secure-screen advisories slipped past.
 - **B7. Nothing of the user's session follows them onto a secure screen:** speech history, the last braille text and viewers clear on the switch and at exit.
 - **B8. Every executable Windows starts for Verbatim on the secure desktop is administrator-owned and signed,** and the registration names an absolute path in the installation.
-- **B10. The secure instance's children never run as SYSTEM.** Windows starts the secure-desktop instance as SYSTEM, but the outposts it starts read text the requesting program chose, such as its name, publisher and path on a UAC prompt, so each child starts with the least privileged token that can still read the sign-in and UAC screens, measured in M8.1.
+- **B10. The secure instance's children never run as SYSTEM.** Windows starts the secure-desktop instance as SYSTEM, but the outposts it starts read text the requesting program chose, such as its name, publisher and path on a UAC prompt, so each child starts with the least privileged token that can still read the sign-in and UAC screens, measured in M8.6.
 - **B11. A switch to the secure desktop is announced.** Verbatim says "Secure Desktop" when Windows switches to it, as NVDA does, so a password prompt a program draws on the ordinary desktop, which cannot trigger the announcement, can be told from Windows' own.
 - **B9. Remote reaches a secure screen only with the local user's consent,** in both directions: no remote input there, and no speech from there mirrored to the peer, unless allowed; and no local program can stop a permitted session reaching it.
 
@@ -231,11 +231,11 @@ What a malicious extension can still do inside these limits: a Wasm module reads
 
 Every process Verbatim starts gets the least privilege it can work with, on every desktop: a child is never given a right because its parent has it. From how Chromium, Firefox, the Codex CLI and Windows' app isolation sandbox their processes (the survey, "Sandboxing"):
 
-- **No process that reads applications can be an AppContainer or run below the user's ordinary integrity level.** UIA and MSAA begin every connection with a `WM_GETOBJECT` message, which UIPI drops from a lower level, and AppContainers cannot have UIAccess. So the listener and outposts run at the user's level, raised by UIAccess from M8.1, and are hardened by mitigations, not by token level.
+- **No process that reads applications can be an AppContainer or run below the user's ordinary integrity level.** UIA and MSAA begin every connection with a `WM_GETOBJECT` message, which UIPI drops from a lower level, and AppContainers cannot have UIAccess. So the listener and outposts run at the user's level, raised by UIAccess from M8.6, and are hardened by mitigations, not by token level.
 - **Outposts and the listener.** Control-flow guard, strict handle checks, the image load policy, no child processes, and the job's limits on the clipboard, atoms, system settings and desktop switching; never the job's limit on other processes' window handles, the removal of window-manager calls or the Microsoft-only image policy, which UIA, MSAA and IA2's proxy DLLs need. A write-restricted token, as the Codex CLI uses, is adopted if an experiment shows UIA events and reads, MSAA, a remote operation and later IA2 all work under it, against `mockapp` and Notepad. Outposts need no network, so the installer adds a filtering rule blocking it for `verbatim-outpost.exe`.
 - **Installed extensions' hosts.** Chromium's renderer profile: the strictest restricted token, untrusted integrity, no window-manager calls, one process in the job, no network.
 - **Synthesizer hosts.** The less privileged AppContainer with X6's limits; the no-generated-code mitigation per engine; never the Microsoft-only image policy, as Chromium exempts its speech process. Where an engine fails in the container, Chromium's GPU profile (a limited token at low integrity) is the fall-back to measure beside the ordinary AppContainer; a 32-bit engine under x86 emulation in the container is M6's first measurement.
-- **Core.** It holds the keyboard hook and, from M8.1, UIAccess, so it keeps its integrity level; it drops every privilege it does not use, enables strict handle checks and control-flow guard, and passes children only the handles in their attribute lists. The updater runs in a short-lived process of its own, keeping Core off the network until Remote.
+- **Core.** It holds the keyboard hook and, from M8.6, UIAccess, so it keeps its integrity level; it drops every privilege it does not use, enables strict handle checks and control-flow guard, and passes children only the handles in their attribute lists. The updater runs in a short-lived process of its own, keeping Core off the network until Remote.
 - **Per architecture.** Hardware shadow stacks exist only on x64, so ARM64 and the x86 host under emulation each get their own measured list.
 - **Signing and App Control.** Every binary is signed; an optional App Control supplemental policy lets an administrator choose which engine DLLs load.
 - **Not adopted:** an interception broker, which Chromium says gives compatibility, not security; a private desktop, since Verbatim must see the user's; Win32 app isolation, which has no UIA.
@@ -255,11 +255,11 @@ A vendor SDK that needs its own kernel driver or service gets a weaker container
 
 ### 6.12 Verbatim's own GUI
 
-The GUI runs on a thread in Core (D4), which holds the keyboard hook and, from M8.1, UIAccess, so whatever loads code into a dialog loads it into Core, and whatever drives a dialog drives Verbatim.
+The GUI runs on a thread in Core (D4), which holds the keyboard hook and, from M8.6, UIAccess, so whatever loads code into a dialog loads it into Core, and whatever drives a dialog drives Verbatim.
 
 - **G1. No file choice on secure screens.** The system's file dialog loads Explorer's shell extensions, which are DLLs the user or an administrator installed, into the process that shows it, and can browse to and start programs, which is how several of NVDA's secure-screen escapes reached a SYSTEM shell. In the user's session Verbatim keeps the standard dialog in Core, where its shell extensions are the user's own code, as input methods are (G5), and B1 records whether a UIAccess Core gives them more than Windows already gives such code. The secure-desktop instance offers no file choice at all.
 - **G2. Rich content in dialogs is a feature, and what applications supply is sanitized.** In the user's session, dialogs keep HTML views, links and help buttons. Text that comes from an application or an extension is never shown as active content: HTML from either passes an allowlist sanitizer first, and links open only web addresses in the default browser (J3). On secure screens none of these exist (G4), and wxWidgets' own log and assertion dialogs are routed to the log there, since NVDA turned off its toolkit's error dialogs after one led to a file dialog on a secure screen.
-- **G3. Only someone at the keyboard drives a confirmation that matters.** Before UIAccess a program of the same user can press buttons in Verbatim's dialogs, as it can in any of the user's programs (section 4). From M8.1, UIPI keeps lower-integrity input and messages out of Verbatim's windows, so the extension install confirmation and turning on developer mode (C1) can only be done by the user.
+- **G3. Only someone at the keyboard drives a confirmation that matters.** Before UIAccess a program of the same user can press buttons in Verbatim's dialogs, as it can in any of the user's programs (section 4). From M8.6, UIPI keeps lower-integrity input and messages out of Verbatim's windows, so the extension install confirmation and turning on developer mode (C1) can only be done by the user.
 - **G4. The secure instance's menu and dialogs are an allowlist** (B6). Reading settings the user needs at a sign-in or UAC prompt, such as rate, volume and voice, can be changed for the session in memory and are never saved; no settings page that touches files, profiles, extensions, logs, updates, developer mode or the installer exists there; there is no Extensions dialog, no help, no links and no clipboard.
 - **G5. Input methods are the user's own code.** Text fields in Verbatim's dialogs load the user's chosen input methods into Core, as every program's do; in the user's session that is code the user installed, and for the secure desktop B1 records which input methods Windows loads there.
 

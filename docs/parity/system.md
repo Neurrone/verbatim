@@ -24,7 +24,7 @@ released, on a normal exit, a failed start, a panic on the main thread,
 the console's Control+C, Control+Break or close, and the session ending
 (`verbatim-app`'s `screen_reader_flag`); a crash or a process ended from
 outside leaves it set, as it leaves NVDA's. Not yet built: an option to
-leave the flag alone, and a secure-desktop instance (M8.1). Programs
+leave the flag alone, and a secure-desktop instance (M8.6). Programs
 change their behaviour by it: Windows PowerShell, started while either
 screen reader runs, leaves `PSReadLine` out and prints "PowerShell
 detected that you might be using a screen reader and has disabled
@@ -58,8 +58,8 @@ Verbatim quits still plays it.
 NVDA: [The vision framework](../nvda/vision.md),
 [OCR and content recognition](../nvda/ocr-and-content-recognition.md),
 [Secure mode](../nvda/secure-mode.md), [Remote access](../nvda/remote-access.md).
-Verbatim: **not yet (M8)** for the focus highlight, screen curtain and
-OCR, and not yet for the secure desktop (M8.1); remote access is
+Verbatim: **not yet (M8.4 and M8.5)** for the focus highlight, screen curtain and
+OCR, and not yet for the secure desktop (M8.6); remote access is
 M12's.
 
 ### Elevated applications on the user desktop
@@ -68,8 +68,8 @@ Elevated applications on the user desktop (admin consoles,
 elevated installers): reading them requires uiAccess — signed
 binaries in a trusted install location. NVDA:
 [Secure mode](../nvda/secure-mode.md). Verbatim: **not yet
-(M8.1)**: unsigned dev builds cannot reach elevated windows at all;
-M8.1 brings UIAccess with test-signing in the VM, and production
+(M8.6)**: unsigned dev builds cannot reach elevated windows at all;
+M8.6 brings UIAccess with test-signing in the VM, and production
 signing and packaging have no milestone. Recognize the symptom now: "Verbatim
 goes quiet in the admin prompt" is this, not a bug.
 
@@ -84,7 +84,7 @@ the end of [Braille](../nvda/braille.md).
 Configuration profiles and triggers (app, say-all, manual;
 queue-synchronized application to speech). NVDA:
 [Configuration and profiles](../nvda/config-and-profiles.md).
-Verbatim: **not yet (M8)** — `verbatim-config` covers the base
+Verbatim: **not yet (M8.3)** — `verbatim-config` covers the base
 store only; the layering and trigger semantics are undesigned.
 
 ### Settings GUI generated from driver descriptors
@@ -167,5 +167,5 @@ the inspection role today.
 ### Installation, portable copies, self-update, COM registration repair
 
 NVDA: [Installation, portable copies, updates, and COM fixes](../nvda/installation-and-updates.md).
-Verbatim: **not yet (M8)** for an installer and updater skeleton;
+Verbatim: **not yet (M8.7)** for an installer and updater skeleton;
 portable copies and COM registration repair have no milestone yet.

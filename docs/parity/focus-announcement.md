@@ -184,7 +184,7 @@ focus.
   reads it: stars in a classic edit control, whose text Verbatim masks as
   NVDA's edit control text does, and the provider's circles in a WPF
   `PasswordBox`; a typed character is still echoed as "star"
-  ([input.md](input.md)). Without symbol processing (M8) the masked text
+  ([input.md](input.md)). Without symbol processing (M8.2) the masked text
   is spoken as its characters, where NVDA says a run of stars by its
   count and drops a line of circles: Tab into a Windows Forms password
   box holding six characters says "Password edit protected" and

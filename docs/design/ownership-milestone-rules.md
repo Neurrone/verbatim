@@ -49,14 +49,14 @@ The ownership refactor's builds are all built: [the one judge build](ownership.m
   - Calls to the helper can be cancelled with `CancelIoEx`.
   - The helper's UI-thread work is thread-affine.
   - The store keys IA2 nodes by window and unique id.
-- M8.
+- M8.3.
   - Core decides the active profile.
   - A switch is one transition whose effects carry its generation, with the theme and synthesizer settings ordered before the `Speak` the trigger caused.
   - Triggers are suspended while the settings dialog is focused.
   - Overlays are written only by reducer effects.
   - An OCR read is a query.
   - Words stay in Core.
-- M8.1: two instances share no writable fact; the integrity of the window in front stays the listener's report.
+- M8.6: two instances share no writable fact; the integrity of the window in front stays the listener's report.
 - M9: logs are one-way and sent in batches; the Verbatim+F1 report is a query.
 - M10: the console reads Core only by queries; its node reads are requests with responders.
 - M11: a theme switch is an input and an effect ordered with `Speak`.

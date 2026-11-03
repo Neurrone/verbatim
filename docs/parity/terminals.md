@@ -82,7 +82,7 @@ Verbatim: **different** (Dickson, 2026-10-23; rules 5, 12 and 13).
 - Commands, their output, the prompt, and the review cursor over the
   output read the same in both screen readers, in both terminals, apart
   from symbol names in flowing text ("ready greater" for the prompt
-  `ready>`, Verbatim "ready>"), which wait for symbol processing (M8).
+  `ready>`, Verbatim "ready>"), which wait for symbol processing (M8.2).
   A line of forty words is spoken whole, and a line growing by ten
   words a key speaks each key's words, as in NVDA (`*_long_lines`).
 

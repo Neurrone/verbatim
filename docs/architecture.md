@@ -80,7 +80,7 @@ screen reader in both rendered and source form.
   translations ship apart from binaries. Decided 2026-07-13.
 - **D11, no display model until last.** Screen review projects the
   normalized tree spatially, with character extents where text interfaces
-  give them, in M7, and OCR in M8; a GDI display model comes last (M17),
+  give them, in M7, and OCR in M8.5; a GDI display model comes last (M17),
   gated, and only legacy GDI terminals wait for it. Why: it sees only
   GDI-drawn text, a shrinking share of the screen. Decided 2026-07-15.
 - **D12, utterances stay structured.** The reducer emits semantic spans,
@@ -923,7 +923,7 @@ requirement, and because it projects the normalized model (not browser
 internals), the same machinery provides Narrator-style scan mode in ordinary
 apps. Screen review is the same projection specialized to geometry (D11):
 visible nodes ordered by bounding rectangle and grouped into visual lines,
-extent-backed where text interfaces exist, with OCR (M8) and eventually the
+extent-backed where text interfaces exist, with OCR (M8.5) and eventually the
 display model (M17) as further text sources behind the same review commands.
 
 ## 9. Observability
@@ -1169,5 +1169,5 @@ otherwise.
   elevated UIs during development. Mitigation: develop with test-signing in
   the VM; production signing tracked as release infra.
 - **R6 — Screen curtain on Win11/ARM64.** Magnification-API behavior needs
-  verification. Mitigation: verify when overlays land (M8); the overlay
+  verification. Mitigation: verify when overlays land (M8.4); the overlay
   design (DirectComposition) is independent of it.

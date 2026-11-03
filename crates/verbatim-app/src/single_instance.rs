@@ -26,7 +26,7 @@
 //! keeping its parameters.
 //!
 //! The mutex name has no per-desktop suffix yet; the secure-desktop instance
-//! that needs one arrives in milestone M8.
+//! that needs one arrives in milestone M8.6.
 
 use std::io;
 

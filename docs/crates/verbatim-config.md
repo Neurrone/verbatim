@@ -13,7 +13,7 @@ Public API:
 - `Settings` — the `settings.toml` schema: `locale`, `log_filter`,
   `verbatim_keys`, `keyboard`, `uia` (all global; profiles cannot carry
   them), `speech` (the base profile's section), `reader` (milestone M4, the
-  base profile's too until profiles grow it in M8), and `theme` (milestone
+  base profile's too until profiles grow it in M8.3), and `theme` (milestone
   M4, the base profile's theme, see "Themes" below).
 - `ReaderSettings`, `TypingEcho`, `SayAllUnit` — re-exported from
   `verbatim-model`, which the reducer reads them from; the `[reader]`
@@ -58,7 +58,7 @@ Public API:
   `speech_interrupt_for_characters` (a typed character, or Shift, cuts
   speech off) and `speech_interrupt_for_enter` (Enter cuts speech off),
   which the app maps to `verbatim-input`'s `DecisionConfig`. Exposed
-  only in `settings.toml`; a GUI choice arrives with M8's gesture-remapping
+  only in `settings.toml`; a GUI choice arrives with M8.1's gesture-remapping
   work. `verbatim-input`'s `bindings_for` consumes the resolved layout
   through its own decoupled layout enum (the app maps one to the other),
   the same pattern `DecisionConfig` already follows for `VerbatimKeys`.

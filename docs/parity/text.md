@@ -615,8 +615,8 @@ line between the two breaks, with two
 
 ### Office object-model reading
 
-**not yet (M8)**: the app-module track's Tier D, gated on the
-object-model bridge planned around M8 (`docs/roadmap.md`); reference
+**not yet (M8.5)**: the app-module track's Tier D, gated on the
+object-model bridge planned around M8.5 (`docs/roadmap.md`); reference
 [Office through COM](../nvda/office-com.md) before deciding whether
 Verbatim replicates the OM path or bets on modern-Office UIA.
 
