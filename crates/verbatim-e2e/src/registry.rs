@@ -1237,7 +1237,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     ScenarioDef {
         name: "windows_terminal_clear_flood",
         group: Group::Text,
-        settings: Some(terminal_flood::lowered_limits),
+        settings: Some(terminal_flood::half_limits),
         local_only: false,
         document: None,
         comparable: Comparable::Yes,

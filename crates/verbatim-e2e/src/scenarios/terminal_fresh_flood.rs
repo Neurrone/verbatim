@@ -12,8 +12,10 @@
 //! nowhere in it, so more went by than the buffer holds, and the burst is
 //! heard as its first lines, "skipped more than N lines", and its last
 //! lines, the prompt the last of them (Dickson, 2026-10-25). All three
-//! scenarios lower both limits to 10 ([`LOWERED`]), and the counts and
-//! ranges below are at 10.
+//! scenarios lower both limits: `windows_terminal_clear_flood` to 15
+//! ([`HALF`]), since its 9,100-line write must land while the cleared
+//! lines' group plays, the others to 10 ([`LOWERED`]); the counts and
+//! ranges below follow from those limits.
 //!
 //! `fresh.ps1` writes "fill line 1" to "fill line 9100" in one call of the
 //! raw standard output stream's `Write`, which Windows PowerShell 5.1's
@@ -64,7 +66,7 @@ use std::io;
 use std::time::Duration;
 
 use super::terminal::{self, PROMPT};
-use super::terminal_flood::LOWERED;
+use super::terminal_flood::{HALF, LOWERED};
 use crate::registry::ScenarioState;
 use crate::scenario::Scenario;
 
@@ -131,9 +133,9 @@ Clear-Host\r\n\
 $cleared = foreach ($line in 1..100) { \"cleared line $line\" }\r\n\
 Write-Raw (($cleared -join \"`r`n\") + \"`r`n\")\r\n";
 
-/// `script` with `$Group` set to a group's worth of lines at [`LOWERED`].
-fn with_group(script: &str) -> String {
-    format!("$Group = {LOWERED}\r\n{script}")
+/// `script` with `$Group` set to a group's worth of lines, `group`.
+fn with_group(script: &str, group: u16) -> String {
+    format!("$Group = {group}\r\n{script}")
 }
 
 /// `word` lines `first` to `last`.
@@ -166,7 +168,7 @@ pub(crate) fn setup_windows_terminal(scenario: &mut Scenario) -> io::Result<Scen
     terminal::open_windows_terminal(
         scenario,
         "clear-flood",
-        &[("clear.ps1", &with_group(CLEAR_SCRIPT))],
+        &[("clear.ps1", &with_group(CLEAR_SCRIPT, HALF))],
     )
 }
 
@@ -176,7 +178,7 @@ pub(crate) fn setup_cleared_windows_terminal(scenario: &mut Scenario) -> io::Res
         "cleared-flood",
         &[
             ("old.ps1", OLD_SCRIPT),
-            ("cleared.ps1", &with_group(CLEARED_SCRIPT)),
+            ("cleared.ps1", &with_group(CLEARED_SCRIPT, LOWERED)),
         ],
     )
 }
@@ -188,7 +190,7 @@ pub(crate) fn setup_console_host(scenario: &mut Scenario) -> io::Result<Scenario
 /// The rest of the cleared lines' group, the skip past Windows Terminal's
 /// 9,031 lines, and the last fill lines and the prompt.
 fn clear_rest() -> Vec<String> {
-    let group = u32::from(LOWERED);
+    let group = u32::from(HALF);
     let mut rest = numbered("cleared line", 2, group);
     rest.push(format!(
         "sound: skipped-lines skipped more than {} lines",
@@ -205,7 +207,7 @@ pub(crate) fn body_windows_terminal(scenario: &mut Scenario, state: &mut Scenari
     terminal::type_with_echo(scenario, r".\clear.ps1", terminal::Echo::Shown);
     expect(scenario, &numbered("before line", 1, 1));
     go(scenario, state, GO_FILE);
-    let mut cleared = numbered("before line", 2, u32::from(LOWERED));
+    let mut cleared = numbered("before line", 2, u32::from(HALF));
     cleared.extend(numbered("cleared line", 1, 1));
     expect(scenario, &cleared);
     go(scenario, state, SECOND_GO_FILE);
@@ -285,10 +287,10 @@ mod tests {
     #[test]
     fn the_counts_follow_from_the_lowered_limits() {
         assert_eq!(
-            clear_rest()[9],
-            "sound: skipped-lines skipped more than 9021 lines"
+            clear_rest()[14],
+            "sound: skipped-lines skipped more than 9016 lines"
         );
-        assert_eq!(clear_rest()[10], "fill line 9092");
+        assert_eq!(clear_rest()[15], "fill line 9087");
         assert_eq!(old_flood()[10], "sound: skipped-lines skipped 181 lines");
         assert_eq!(old_flood()[11], "old line 192");
         assert_eq!(
@@ -308,6 +310,6 @@ mod tests {
 
     #[test]
     fn the_scripts_write_a_group_s_worth_of_lines() {
-        assert!(with_group(CLEAR_SCRIPT).starts_with("$Group = 10\r\n"));
+        assert!(with_group(CLEARED_SCRIPT, LOWERED).starts_with("$Group = 10\r\n"));
     }
 }

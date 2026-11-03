@@ -432,10 +432,16 @@ pub(crate) fn open_windows_terminal_tab(
 }
 
 /// The row of a terminal read's text that holds its caret, without its
-/// padding: the row `caret_rows_to_end` rows from the text's end. `None`
-/// with no caret, or a text too short to hold it.
+/// padding: the row `caret_rows_to_end` rows from the text's end. A final
+/// line break ends the last row and starts none, as the reader's rows
+/// count it (`rows_of` in `verbatim-text`); Windows Terminal's text ends in
+/// one. Lines are taken as one row each, which holds for the prompt waits
+/// that use it, whose caret is on the last line. `None` with no caret, or
+/// a text too short to hold it.
 fn caret_row_of_text(snapshot: &verbatim_model::TerminalSnapshot) -> Option<&str> {
-    let rows: Vec<&str> = snapshot.text.text.split("\r\n").collect();
+    let text = &snapshot.text.text;
+    let text = text.strip_suffix("\r\n").unwrap_or(text);
+    let rows: Vec<&str> = text.split("\r\n").collect();
     let from_end = usize::try_from(snapshot.caret_rows_to_end).ok()?;
     rows.len()
         .checked_sub(from_end)
