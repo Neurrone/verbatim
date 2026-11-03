@@ -383,6 +383,23 @@ the count. The one failure is a single scenario estimated over 9
 minutes, which no group can hold: the plan fails naming it, and that
 scenario is made faster. A total that grows adds groups on its own.
 
+A coverage run (`docs/tooling/coverage.md`) keeps the same limit and
+budget and gets more groups instead of longer ones: its plan,
+`cargo xtask e2e-plan --coverage`, multiplies every estimate by 1.25
+(`COVERAGE_SLOWDOWN` in `xtask/src/plan.rs`) before holding it against
+the budget, and splits the scenarios as an ordinary plan of that count
+would, so `cargo xtask e2e-group` is unchanged. Decided on 2026-11-04,
+because one limit for every kind of run stops a hung group at the same
+point, and more groups cost runners rather than the run's length. The
+factor is the
+instrumented build's measured slowdown with a margin: on the development
+machine the instrumented unit and mockapp tests took 1.08 times as long
+in all (83.8 seconds against 77.6 over the five nextest runs) and 1.17
+times at most (the concurrent unit-test run, 27.5 seconds against 23.6),
+and the outpost's text conversion test, bound by the processor, 1.08
+times (7.8 seconds against 7.2). With the table of 2026-11-04 the suite
+runs in 5 groups, and a coverage run in 7.
+
 The estimates come from `xtask/e2e-durations.txt`, the median seconds of
 each scenario on GitHub's runner. A scenario the table lacks counts as 60
 seconds, and a table entry naming no scenario, such as a deleted one, is

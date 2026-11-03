@@ -328,7 +328,10 @@ Public API:
   installs its log's subscriber (`RUST_LOG`, `info` by default),
   `report_error!` writes to standard error without panicking, and
   `end_without_detach(code)` ends the process with `TerminateProcess`, so
-  no DLL's detach code runs (`docs/architecture.md`, "Process lifetime").
+  no DLL's detach code runs (`docs/architecture.md`, "Process lifetime"),
+  after `write_coverage_profile`, which in a build instrumented for
+  coverage writes the profile the runtime would write at exit and does
+  nothing in any other build (`docs/tooling/coverage.md`).
 - `alarm` — `Alarm`, a high-resolution waitable timer and an event waited
   on together by one thread (`docs/design/wake-ups.md`, item 3): `set`,
   `cancel`, `wake`, `wait` (whether the timer ended it) and

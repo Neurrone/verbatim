@@ -1,9 +1,9 @@
 //! Workspace automation, invoked as `cargo xtask <command>`.
 //!
-//! xtask builds on every host, but only `ci`, `docs`, `replay` and
-//! `e2e-plan` exist on all of them; every other command, with its module and
-//! dependencies, exists on Windows alone (`#[cfg(windows)]`), and on another
-//! host it gets the usage text, which lists only those four.
+//! xtask builds on every host, but only `ci`, `docs`, `replay`, `e2e-plan`
+//! and `coverage` exist on all of them; every other command, with its module
+//! and dependencies, exists on Windows alone (`#[cfg(windows)]`), and on
+//! another host it gets the usage text, which lists only those five.
 //!
 //! `ci` is the standard check for both local runs and GitHub Actions, so
 //! the two cannot drift. On every host it runs the check of the crate
@@ -22,6 +22,10 @@
 //! `e2e-plan`, on every host, prints how many groups the CI `e2e` job
 //! runs the end-to-end suite in, as the job's matrix. See
 //! `xtask/src/plan.rs`.
+//!
+//! `coverage`, on every host, measures line coverage per test level with
+//! cargo-llvm-cov, and reports and merges a coverage run's levels
+//! (`docs/tooling/coverage.md`). See `xtask/src/coverage.rs`.
 //!
 //! `docs` checks the repository's Markdown documents: that every relative
 //! link and every backticked repository path names something that exists,
@@ -92,6 +96,7 @@ use windows::Win32::Foundation::RPC_E_CHANGED_MODE;
 use windows::Win32::System::Com::{COINIT_MULTITHREADED, CoInitializeEx};
 
 // The portable modules, built on every host.
+mod coverage;
 mod docs;
 mod ownership;
 mod plan;
@@ -153,6 +158,7 @@ fn main() -> ExitCode {
         Some("docs") => docs::run(),
         Some("replay") => replay::run(&args[1..]),
         Some("e2e-plan") => plan::run(&args[1..]),
+        Some("coverage") => coverage::run(&args[1..]),
         #[cfg(windows)]
         Some("vm") => vm::run(&args[1..]),
         #[cfg(windows)]
@@ -182,70 +188,78 @@ fn main() -> ExitCode {
         #[cfg(windows)]
         Some("record-terminal-streams") => record::run(&args[1..]),
         _ => {
-            eprintln!("usage: cargo xtask <command>");
-            eprintln!("commands:");
-            #[cfg(windows)]
-            eprintln!(
-                "  ci    crate tier check, source scans, documentation check, workspace-hack checks, rustfmt, and clippy and unit tests for the workspace, for the host's architecture"
-            );
-            #[cfg(not(windows))]
-            eprintln!(
-                "  ci    crate tier check, source scans, documentation check, and clippy and unit tests for the crates in LINUX_CRATES (xtask/src/main.rs), for the host's architecture"
-            );
-            eprintln!(
-                "  e2e-plan  print the CI e2e job's matrix of groups, sized by xtask/e2e-durations.txt"
-            );
-            eprintln!(
-                "  docs  check that the documents' links and backticked repository paths exist, and that docs/readme.md indexes every document under docs"
-            );
-            eprintln!(
-                "  replay  replay a flight-recorder dump through Core's reducer and print each input with its effects (cargo xtask replay <flight-recorder.jsonl> [--from <line>] [--to <line>])"
-            );
-            #[cfg(windows)]
-            eprintln!(
-                "  faults  clippy with the faults feature, then the fault tests, into target/debug (docs/testing.md)"
-            );
-            #[cfg(windows)]
-            eprintln!("  vm    Hyper-V E2E harness; run `cargo xtask vm` alone for its verbs");
-            #[cfg(windows)]
-            eprintln!(
-                "  demo  record one scenario on this machine as a video in videos/tests, or a demonstration in videos/demos (cargo xtask demo <scenario> [--name <name>])"
-            );
-            #[cfg(windows)]
-            eprintln!(
-                "  nvda  build the NVDA transcript add-on, capture what NVDA speaks, or compare a scenario with NVDA; run `cargo xtask nvda` alone for its verbs"
-            );
-            #[cfg(windows)]
-            eprintln!(
-                "  park  move this Remote Desktop session to the console, unlocked, for unattended local runs"
-            );
-            #[cfg(windows)]
-            eprintln!(
-                "  trace  WPR traces of the CPU's scheduling: start, stop, waits <trace.etl>, or scenario <name> to trace a window inside one scenario and read it (docs/tooling/measuring.md)"
-            );
-            #[cfg(windows)]
-            eprintln!(
-                "  measure  run the measure set on this machine and report each latency stage's distribution (cargo xtask measure [--release | --verbatim-exe <path>]; docs/tooling/measuring.md)"
-            );
-            #[cfg(windows)]
-            eprintln!(
-                "  e2e-group  print the end-to-end scenarios of one of the CI e2e job's groups (cargo xtask e2e-group <index>/<count>)"
-            );
-            #[cfg(windows)]
-            eprintln!(
-                "  e2e-durations  rewrite xtask/e2e-durations.txt from the e2e jobs of the last <runs> CI runs on main (cargo xtask e2e-durations <runs>)"
-            );
-            #[cfg(windows)]
-            eprintln!(
-                "  windows-terminal  download and unpack the terminal scenarios' pinned portable Windows Terminal into target/e2e-stage"
-            );
-            #[cfg(windows)]
-            eprintln!(
-                "  warm-speech  activate the Windows speech platform once and print how long it took and the default voice"
-            );
+            usage();
             ExitCode::from(2)
         }
     }
+}
+
+/// Prints the commands this host has.
+fn usage() {
+    eprintln!("usage: cargo xtask <command>");
+    eprintln!("commands:");
+    #[cfg(windows)]
+    eprintln!(
+        "  ci    crate tier check, source scans, documentation check, workspace-hack checks, rustfmt, and clippy and unit tests for the workspace, for the host's architecture"
+    );
+    #[cfg(not(windows))]
+    eprintln!(
+        "  ci    crate tier check, source scans, documentation check, and clippy and unit tests for the crates in LINUX_CRATES (xtask/src/main.rs), for the host's architecture"
+    );
+    eprintln!(
+        "  e2e-plan  print the CI e2e job's matrix of groups, sized by xtask/e2e-durations.txt (--coverage for a coverage run's instrumented build)"
+    );
+    eprintln!(
+        "  coverage  line coverage of the unit and mockapp tests into target/coverage; report <name> <profiles> and merge <dir> for a coverage run (docs/tooling/coverage.md)"
+    );
+    eprintln!(
+        "  docs  check that the documents' links and backticked repository paths exist, and that docs/readme.md indexes every document under docs"
+    );
+    eprintln!(
+        "  replay  replay a flight-recorder dump through Core's reducer and print each input with its effects (cargo xtask replay <flight-recorder.jsonl> [--from <line>] [--to <line>])"
+    );
+    #[cfg(windows)]
+    eprintln!(
+        "  faults  clippy with the faults feature, then the fault tests, into target/debug (docs/testing.md)"
+    );
+    #[cfg(windows)]
+    eprintln!("  vm    Hyper-V E2E harness; run `cargo xtask vm` alone for its verbs");
+    #[cfg(windows)]
+    eprintln!(
+        "  demo  record one scenario on this machine as a video in videos/tests, or a demonstration in videos/demos (cargo xtask demo <scenario> [--name <name>])"
+    );
+    #[cfg(windows)]
+    eprintln!(
+        "  nvda  build the NVDA transcript add-on, capture what NVDA speaks, or compare a scenario with NVDA; run `cargo xtask nvda` alone for its verbs"
+    );
+    #[cfg(windows)]
+    eprintln!(
+        "  park  move this Remote Desktop session to the console, unlocked, for unattended local runs"
+    );
+    #[cfg(windows)]
+    eprintln!(
+        "  trace  WPR traces of the CPU's scheduling: start, stop, waits <trace.etl>, or scenario <name> to trace a window inside one scenario and read it (docs/tooling/measuring.md)"
+    );
+    #[cfg(windows)]
+    eprintln!(
+        "  measure  run the measure set on this machine and report each latency stage's distribution (cargo xtask measure [--release | --verbatim-exe <path>]; docs/tooling/measuring.md)"
+    );
+    #[cfg(windows)]
+    eprintln!(
+        "  e2e-group  print the end-to-end scenarios of one of the CI e2e job's groups (cargo xtask e2e-group <index>/<count>)"
+    );
+    #[cfg(windows)]
+    eprintln!(
+        "  e2e-durations  rewrite xtask/e2e-durations.txt from the e2e jobs of the last <runs> CI runs on main (cargo xtask e2e-durations <runs>)"
+    );
+    #[cfg(windows)]
+    eprintln!(
+        "  windows-terminal  download and unpack the terminal scenarios' pinned portable Windows Terminal into target/e2e-stage"
+    );
+    #[cfg(windows)]
+    eprintln!(
+        "  warm-speech  activate the Windows speech platform once and print how long it took and the default voice"
+    );
 }
 
 /// Activates the Windows speech platform once through the binding
@@ -503,6 +517,26 @@ const SERIAL_TESTS: &str = concat!(
 /// once, as a cargo-nextest filter; `.config/nextest.toml` says why.
 const ALONE_TESTS: &str = "binary_id(mockapp::focus_reports)";
 
+/// The filter of the unit tests that run many at once: every test but
+/// [`SERIAL_TESTS`] and [`ALONE_TESTS`].
+fn unit_test_filter() -> String {
+    format!("not ({SERIAL_TESTS} | {ALONE_TESTS})")
+}
+
+/// One cargo-nextest run of the workspace's tests as a step: cargo's
+/// arguments `command` (`nextest run`, or `cargo llvm-cov`'s `llvm-cov
+/// nextest` with its options), then `--workspace`, one test at a time when
+/// `serial`, and `filter` as the filter expression.
+fn nextest_step(name: &'static str, command: &[&str], filter: &str, serial: bool) -> Step {
+    let mut cargo_args = args(command);
+    cargo_args.push("--workspace".to_owned());
+    if serial {
+        cargo_args.extend(args(&["--test-threads", "1"]));
+    }
+    cargo_args.extend(["-E".to_owned(), filter.to_owned()]);
+    (name, cargo_args)
+}
+
 /// `ci`'s cargo steps on Windows: the workspace-hack checks, rustfmt, and
 /// clippy and unit tests for the whole workspace. The workspace-hack crate
 /// must match what cargo-hakari would generate, and every package must
@@ -531,31 +565,23 @@ fn windows_steps() -> Vec<Step> {
                 "warnings",
             ]),
         ),
-        (
+        nextest_step(
             "unit tests",
-            args(&[
-                "nextest",
-                "run",
-                "--workspace",
-                "-E",
-                &format!("not ({SERIAL_TESTS} | {ALONE_TESTS})"),
-            ]),
+            &["nextest", "run"],
+            &unit_test_filter(),
+            false,
         ),
-        (
+        nextest_step(
             "unit tests that run with nothing else",
-            args(&["nextest", "run", "--workspace", "-E", ALONE_TESTS]),
+            &["nextest", "run"],
+            ALONE_TESTS,
+            false,
         ),
-        (
+        nextest_step(
             "unit tests that run one at a time",
-            args(&[
-                "nextest",
-                "run",
-                "--workspace",
-                "--test-threads",
-                "1",
-                "-E",
-                SERIAL_TESTS,
-            ]),
+            &["nextest", "run"],
+            SERIAL_TESTS,
+            true,
         ),
         ("doctests", args(&["test", "--workspace", "--doc"])),
     ]

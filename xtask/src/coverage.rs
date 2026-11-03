@@ -1,0 +1,620 @@
+//! `cargo xtask coverage`: line coverage per test level, measured with
+//! cargo-llvm-cov (`docs/tooling/coverage.md`). It runs on every host.
+//!
+//! With no arguments it runs the instrumented tests level by level, the
+//! unit tests and then, on Windows, mockapp's tests, each through
+//! cargo-nextest with the filters and one-at-a-time runs `cargo xtask ci`
+//! uses (on another host, the unit tests of [`LINUX_CRATES`] through
+//! `cargo test`, as `ci` runs them there). Each level's profiles are
+//! reported on their own: an HTML report in `target/coverage/<level>/html`
+//! and an lcov file, `target/coverage/<level>.lcov`, whose paths are
+//! relative to the workspace, and its line coverage is printed.
+//!
+//! `coverage report <name> <profiles>` reports the profiles in the folder
+//! `<profiles>` as level `<name>`, the same two files, for an end-to-end
+//! group of a coverage run: the build is instrumented by the environment
+//! `cargo llvm-cov show-env` prints, and every process writes its profile
+//! into that folder. The harness's own crates are left out of the report.
+//!
+//! `coverage merge <dir>` reads the lcov files of a coverage run's levels
+//! from `<dir>`, `unit.lcov`, `mockapp.lcov` and every end-to-end group's
+//! `e2e-<group>.lcov`, and writes the end-to-end level's `e2e.lcov`, all
+//! levels' `merged.lcov`, `summary.txt` with each level's line coverage,
+//! `e2e-only.txt`, the files with lines only the end-to-end level reaches,
+//! and `unreached.txt`, the files whose lines no level reaches.
+//!
+//! The profile runtime writes a process's profile as it exits; the
+//! outposts, the listener and mockapp's test runner end with
+//! `TerminateProcess`, and write theirs first through
+//! `verbatim_process::child::write_coverage_profile`.
+
+use std::collections::BTreeMap;
+use std::fmt::Write as _;
+use std::path::{Path, PathBuf};
+use std::process::{Command, ExitCode};
+
+#[cfg(not(windows))]
+use crate::LINUX_CRATES;
+#[cfg(windows)]
+use crate::{ALONE_TESTS, SERIAL_TESTS, nextest_step, unit_test_filter};
+use crate::{Step, args};
+
+/// The cargo-llvm-cov release this command runs, the one GitHub Actions
+/// installs (`.github/workflows/ci.yml`): another fails the command, so a
+/// new release changes nothing until the pin is moved in both places.
+pub const LLVM_COV_VERSION: &str = "0.9.1";
+
+/// The files of the end-to-end harness, its agent and xtask, left out of
+/// an end-to-end group's report: they drive Verbatim rather than being
+/// Verbatim, and their own tests are in the unit level.
+const HARNESS_FILES: &str = r"(crates[\\/]verbatim-(e2e|agent)|xtask)[\\/]";
+
+/// The levels `coverage merge` reads, in their order in the summary.
+const LEVELS: [&str; 3] = ["unit", "mockapp", "e2e"];
+
+/// One level of tests: its name and the cargo steps that run its tests.
+struct Level {
+    name: &'static str,
+    steps: Vec<Step>,
+}
+
+/// Runs the command with its arguments after `coverage`.
+pub fn run(args: &[String]) -> ExitCode {
+    let result = match args {
+        [] => measure(),
+        [verb, name, profiles] if verb == "report" => report(name, Path::new(profiles)),
+        [verb, dir] if verb == "merge" => merge(Path::new(dir)),
+        _ => {
+            eprintln!(
+                "usage: cargo xtask coverage | cargo xtask coverage report <name> <profiles> | cargo xtask coverage merge <dir>"
+            );
+            return ExitCode::from(2);
+        }
+    };
+    match result {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("xtask coverage: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// The workspace's root.
+fn workspace() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("xtask sits in the workspace")
+        .to_path_buf()
+}
+
+/// Where the reports go.
+fn output_dir() -> PathBuf {
+    workspace().join("target").join("coverage")
+}
+
+/// cargo-llvm-cov's arguments for a test run of a level: no report, which
+/// also means no clean, since [`measure`] cleans once and reports each
+/// level itself.
+#[cfg(windows)]
+const COVERED_NEXTEST: &[&str] = &["llvm-cov", "nextest", "--no-report"];
+
+/// The levels on Windows: the unit tests, every test but mockapp's, and
+/// mockapp's tests, each through the same nextest runs as `cargo xtask
+/// ci`'s, limited to the level's package. The tests that run with nothing
+/// else are all mockapp's.
+#[cfg(windows)]
+fn levels() -> Vec<Level> {
+    let level = |scope: &str, filter: &str| format!("({scope}) & ({filter})");
+    let unit = "not package(mockapp)";
+    let mockapp = "package(mockapp)";
+    vec![
+        Level {
+            name: "unit",
+            steps: vec![
+                nextest_step(
+                    "unit tests",
+                    COVERED_NEXTEST,
+                    &level(unit, &unit_test_filter()),
+                    false,
+                ),
+                nextest_step(
+                    "unit tests that run one at a time",
+                    COVERED_NEXTEST,
+                    &level(unit, SERIAL_TESTS),
+                    true,
+                ),
+            ],
+        },
+        Level {
+            name: "mockapp",
+            steps: vec![
+                nextest_step(
+                    "mockapp tests",
+                    COVERED_NEXTEST,
+                    &level(mockapp, &unit_test_filter()),
+                    false,
+                ),
+                nextest_step(
+                    "mockapp tests that run with nothing else",
+                    COVERED_NEXTEST,
+                    &level(mockapp, ALONE_TESTS),
+                    false,
+                ),
+                nextest_step(
+                    "mockapp tests that run one at a time",
+                    COVERED_NEXTEST,
+                    &level(mockapp, SERIAL_TESTS),
+                    true,
+                ),
+            ],
+        },
+    ]
+}
+
+/// The level on another host: the unit tests of [`LINUX_CRATES`], through
+/// `cargo test` as `ci` runs them there.
+#[cfg(not(windows))]
+fn levels() -> Vec<Level> {
+    let mut test = args(&["llvm-cov", "test", "--no-report"]);
+    for name in LINUX_CRATES {
+        test.extend(["-p".to_owned(), (*name).to_owned()]);
+    }
+    vec![Level {
+        name: "unit",
+        steps: vec![("unit tests", test)],
+    }]
+}
+
+/// Runs cargo with `cargo_args` in the workspace.
+fn cargo(cargo_args: &[String]) -> Result<(), String> {
+    let status = Command::new(env!("CARGO"))
+        .args(cargo_args)
+        .current_dir(workspace())
+        .status()
+        .map_err(|error| format!("could not run cargo {}: {error}", cargo_args.join(" ")))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("cargo {} failed ({status})", cargo_args.join(" ")))
+    }
+}
+
+/// Checks that cargo-llvm-cov is the pinned release and that the
+/// toolchain has the LLVM tools it reads profiles with: without them
+/// cargo-llvm-cov asks on the terminal whether to install them.
+fn check_tools() -> Result<(), String> {
+    let output = Command::new(env!("CARGO"))
+        .args(["llvm-cov", "--version"])
+        .output()
+        .map_err(|error| format!("could not run cargo llvm-cov: {error}"))?;
+    let version = String::from_utf8_lossy(&output.stdout);
+    let expected = format!("cargo-llvm-cov {LLVM_COV_VERSION}");
+    if !output.status.success() || version.trim() != expected {
+        return Err(format!(
+            "needs {expected}, found {:?}: cargo install cargo-llvm-cov --version {LLVM_COV_VERSION} --locked",
+            version.trim()
+        ));
+    }
+    let status = Command::new("rustup")
+        .args(["component", "add", "llvm-tools-preview"])
+        .current_dir(workspace())
+        .status()
+        .map_err(|error| format!("could not run rustup: {error}"))?;
+    if !status.success() {
+        return Err(format!(
+            "rustup component add llvm-tools-preview failed ({status})"
+        ));
+    }
+    Ok(())
+}
+
+/// `cargo xtask coverage`: every level's tests, instrumented, each level
+/// reported on its own.
+fn measure() -> Result<(), String> {
+    check_tools()?;
+    // The workspace's own artifacts, every old profile and every old
+    // report go, so a report reads only this run's binaries and profiles.
+    cargo(&args(&["llvm-cov", "clean", "--workspace"]))?;
+    let out = output_dir();
+    if out.exists() {
+        std::fs::remove_dir_all(&out).map_err(|error| format!("{}: {error}", out.display()))?;
+    }
+    let mut summary = String::new();
+    for level in levels() {
+        cargo(&args(&["llvm-cov", "clean", "--profraw-only"]))?;
+        for (name, cargo_args) in &level.steps {
+            println!("xtask coverage: {}: {name}", level.name);
+            cargo(cargo_args)?;
+        }
+        summary.push_str(&write_reports(level.name, None)?);
+    }
+    print!("{summary}");
+    Ok(())
+}
+
+/// `cargo xtask coverage report`: the profiles in `profiles` as level
+/// `name`, in the environment `cargo llvm-cov show-env` printed for the
+/// build, whose target directory cargo-llvm-cov reads profiles from.
+fn report(name: &str, profiles: &Path) -> Result<(), String> {
+    let target = std::env::var_os("CARGO_LLVM_COV_TARGET_DIR").ok_or(
+        "CARGO_LLVM_COV_TARGET_DIR is not set: run this in the environment `cargo llvm-cov show-env` prints, as the build ran",
+    )?;
+    let target = PathBuf::from(target);
+    for entry in read_dir(&target)? {
+        if is_profile(&entry) {
+            std::fs::remove_file(&entry)
+                .map_err(|error| format!("{}: {error}", entry.display()))?;
+        }
+    }
+    let mut copied = 0;
+    for entry in read_dir(profiles)? {
+        if is_profile(&entry) {
+            let file_name = entry.file_name().expect("a file read from a folder");
+            std::fs::copy(&entry, target.join(file_name))
+                .map_err(|error| format!("{}: {error}", entry.display()))?;
+            copied += 1;
+        }
+    }
+    if copied == 0 {
+        return Err(format!("{} holds no profile", profiles.display()));
+    }
+    println!("xtask coverage: {name}: {copied} profiles");
+    print!("{}", write_reports(name, Some(HARNESS_FILES))?);
+    Ok(())
+}
+
+/// The paths in folder `dir`.
+fn read_dir(dir: &Path) -> Result<Vec<PathBuf>, String> {
+    std::fs::read_dir(dir)
+        .and_then(|entries| {
+            entries
+                .map(|entry| entry.map(|entry| entry.path()))
+                .collect()
+        })
+        .map_err(|error| format!("{}: {error}", dir.display()))
+}
+
+/// Whether `path` is a raw profile.
+fn is_profile(path: &Path) -> bool {
+    path.extension()
+        .is_some_and(|extension| extension == "profraw")
+}
+
+/// Writes level `name`'s HTML report and lcov file from the profiles in
+/// cargo-llvm-cov's target directory, leaving out files matching
+/// `ignore`, and returns its summary line.
+fn write_reports(name: &str, ignore: Option<&str>) -> Result<String, String> {
+    let out = output_dir();
+    std::fs::create_dir_all(&out).map_err(|error| format!("{}: {error}", out.display()))?;
+    let lcov = out.join(format!("{name}.lcov"));
+    let html = out.join(name);
+    let ignored: Vec<String> = ignore
+        .map(|pattern| args(&["--ignore-filename-regex", pattern]))
+        .unwrap_or_default();
+    let mut lcov_args = args(&["llvm-cov", "report", "--lcov", "--output-path"]);
+    lcov_args.push(lcov.display().to_string());
+    lcov_args.extend(ignored.iter().cloned());
+    cargo(&lcov_args)?;
+    let mut html_args = args(&["llvm-cov", "report", "--html", "--output-dir"]);
+    html_args.push(html.display().to_string());
+    html_args.extend(ignored);
+    cargo(&html_args)?;
+    let text =
+        std::fs::read_to_string(&lcov).map_err(|error| format!("{}: {error}", lcov.display()))?;
+    let lines = relative(parse_lcov(&text)?, &workspace());
+    write(&lcov, &to_lcov(&lines))?;
+    println!(
+        "xtask coverage: {name}: {} and {}",
+        lcov.display(),
+        html.join("html").join("index.html").display()
+    );
+    Ok(summary_line(name, &lines))
+}
+
+/// Writes `text` to `path`.
+fn write(path: &Path, text: &str) -> Result<(), String> {
+    std::fs::write(path, text).map_err(|error| format!("{}: {error}", path.display()))
+}
+
+/// `cargo xtask coverage merge`: the levels' lcov files in `dir`, merged.
+fn merge(dir: &Path) -> Result<(), String> {
+    let read = |file_name: &str| {
+        let path = dir.join(file_name);
+        std::fs::read_to_string(&path)
+            .map_err(|error| format!("{}: {error}", path.display()))
+            .and_then(|text| parse_lcov(&text).map_err(|error| format!("{file_name}: {error}")))
+    };
+    let unit = read("unit.lcov")?;
+    let mockapp = read("mockapp.lcov")?;
+    let mut groups: Vec<String> = read_dir(dir)?
+        .iter()
+        .filter_map(|path| path.file_name()?.to_str().map(str::to_owned))
+        .filter(|file_name| {
+            file_name.starts_with("e2e-")
+                && Path::new(file_name)
+                    .extension()
+                    .is_some_and(|extension| extension == "lcov")
+        })
+        .collect();
+    groups.sort();
+    if groups.is_empty() {
+        return Err(format!("{} holds no e2e-<group>.lcov", dir.display()));
+    }
+    let mut e2e = Lines::new();
+    for group in &groups {
+        add(&mut e2e, &read(group)?);
+    }
+    let mut merged = unit.clone();
+    add(&mut merged, &mockapp);
+    add(&mut merged, &e2e);
+    write(&dir.join("e2e.lcov"), &to_lcov(&e2e))?;
+    write(&dir.join("merged.lcov"), &to_lcov(&merged))?;
+    let mut summary = String::new();
+    for (name, lines) in LEVELS.iter().zip([&unit, &mockapp, &e2e]) {
+        summary.push_str(&summary_line(name, lines));
+    }
+    summary.push_str(&summary_line("merged", &merged));
+    write(&dir.join("summary.txt"), &summary)?;
+    let mut below = unit;
+    add(&mut below, &mockapp);
+    write(&dir.join("e2e-only.txt"), &e2e_only(&e2e, &below))?;
+    write(&dir.join("unreached.txt"), &unreached(&merged))?;
+    print!("{summary}");
+    println!(
+        "xtask coverage: merged {} end-to-end groups into {}",
+        groups.len(),
+        dir.display()
+    );
+    Ok(())
+}
+
+/// Line counts: each source file's instrumented lines, each with the
+/// times it ran.
+pub type Lines = BTreeMap<String, BTreeMap<u32, u64>>;
+
+/// The line counts of an lcov file: each record's `SF:` path and its `DA:`
+/// lines, a line named twice in one file summed. Every other record line
+/// is ignored, since only line coverage is reported.
+///
+/// # Errors
+///
+/// Returns the first `DA:` line that is not a line number and a count, or
+/// one before any `SF:` line.
+pub fn parse_lcov(text: &str) -> Result<Lines, String> {
+    let mut lines = Lines::new();
+    let mut file: Option<String> = None;
+    for (number, line) in text.lines().enumerate() {
+        if let Some(path) = line.strip_prefix("SF:") {
+            lines.entry(path.to_owned()).or_default();
+            file = Some(path.to_owned());
+        } else if let Some(data) = line.strip_prefix("DA:") {
+            let malformed = || format!("line {}: {line:?}", number + 1);
+            let mut fields = data.split(',');
+            let line_number: u32 = fields
+                .next()
+                .and_then(|field| field.parse().ok())
+                .ok_or_else(malformed)?;
+            let count: u64 = fields
+                .next()
+                .and_then(|field| field.parse().ok())
+                .ok_or_else(malformed)?;
+            let path = file.as_ref().ok_or_else(malformed)?;
+            let entry = lines
+                .get_mut(path)
+                .expect("added at its SF line")
+                .entry(line_number)
+                .or_default();
+            *entry = entry.saturating_add(count);
+        } else if line == "end_of_record" {
+            file = None;
+        }
+    }
+    Ok(lines)
+}
+
+/// `lines` with each path relative to `root`, with forward slashes, when
+/// it is under it, compared without regard to case as Windows paths are.
+pub fn relative(lines: Lines, root: &Path) -> Lines {
+    let root = format!(
+        "{}/",
+        root.display()
+            .to_string()
+            .replace('\\', "/")
+            .trim_end_matches('/')
+    );
+    let mut out = Lines::new();
+    for (path, counts) in lines {
+        let slashed = path.replace('\\', "/");
+        let path = if slashed.len() > root.len()
+            && slashed.is_char_boundary(root.len())
+            && slashed[..root.len()].eq_ignore_ascii_case(&root)
+        {
+            slashed[root.len()..].to_owned()
+        } else {
+            path
+        };
+        add(&mut out, &BTreeMap::from([(path, counts)]));
+    }
+    out
+}
+
+/// Adds `more`'s counts to `lines`.
+pub fn add(lines: &mut Lines, more: &Lines) {
+    for (path, counts) in more {
+        let file = lines.entry(path.clone()).or_default();
+        for (line, count) in counts {
+            let entry = file.entry(*line).or_default();
+            *entry = entry.saturating_add(*count);
+        }
+    }
+}
+
+/// `lines` as an lcov file: per file its path, its lines' counts, and how
+/// many lines it has and how many ran.
+pub fn to_lcov(lines: &Lines) -> String {
+    let mut text = String::new();
+    for (path, counts) in lines {
+        let _ = writeln!(text, "SF:{path}");
+        for (line, count) in counts {
+            let _ = writeln!(text, "DA:{line},{count}");
+        }
+        let (found, hit) = tally(counts);
+        let _ = writeln!(text, "LF:{found}\nLH:{hit}\nend_of_record");
+    }
+    text
+}
+
+/// How many lines `counts` holds, and how many of them ran.
+fn tally(counts: &BTreeMap<u32, u64>) -> (u64, u64) {
+    let found = counts.len() as u64;
+    let hit = counts.values().filter(|count| **count > 0).count() as u64;
+    (found, hit)
+}
+
+/// Level `name`'s line coverage as a line of the summary, such as
+/// `unit: 61.2% of lines (612 of 1000)`, the percentage rounded down.
+pub fn summary_line(name: &str, lines: &Lines) -> String {
+    let (found, hit) = lines
+        .values()
+        .map(tally)
+        .fold((0, 0), |(found, hit), (f, h)| (found + f, hit + h));
+    let tenths = (hit * 1000).checked_div(found).unwrap_or(0);
+    format!(
+        "{name}: {}.{}% of lines ({hit} of {found})\n",
+        tenths / 10,
+        tenths % 10
+    )
+}
+
+/// The files with lines `e2e` reaches and `below` does not, one a line as
+/// the number of those lines then the path, the most first: logic only an
+/// end-to-end scenario tests.
+pub fn e2e_only(e2e: &Lines, below: &Lines) -> String {
+    let mut files: Vec<(usize, &String)> = e2e
+        .iter()
+        .map(|(path, counts)| {
+            let only = counts
+                .iter()
+                .filter(|(line, count)| {
+                    **count > 0
+                        && below
+                            .get(path)
+                            .and_then(|lower| lower.get(line))
+                            .is_none_or(|lower| *lower == 0)
+                })
+                .count();
+            (only, path)
+        })
+        .filter(|(only, _)| *only > 0)
+        .collect();
+    files.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(b.1)));
+    files
+        .into_iter()
+        .fold(String::new(), |mut text, (only, path)| {
+            let _ = writeln!(text, "{only} {path}");
+            text
+        })
+}
+
+/// The files with instrumented lines of which none ran, one path a line.
+pub fn unreached(lines: &Lines) -> String {
+    lines
+        .iter()
+        .filter(|(_, counts)| !counts.is_empty() && counts.values().all(|count| *count == 0))
+        .fold(String::new(), |mut text, (path, _)| {
+            let _ = writeln!(text, "{path}");
+            text
+        })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn lines(list: &[(&str, &[(u32, u64)])]) -> Lines {
+        list.iter()
+            .map(|(path, counts)| ((*path).to_owned(), counts.iter().copied().collect()))
+            .collect()
+    }
+
+    #[test]
+    fn an_lcov_file_is_read_as_each_files_line_counts() {
+        let text = "TN:\nSF:a.rs\nFN:1,f\nDA:1,3\nDA:2,0\nDA:1,2\nLF:2\nLH:1\nend_of_record\nSF:b.rs\nDA:7,1,checksum\nend_of_record\n";
+        assert_eq!(
+            parse_lcov(text),
+            Ok(lines(&[("a.rs", &[(1, 5), (2, 0)]), ("b.rs", &[(7, 1)])]))
+        );
+    }
+
+    #[test]
+    fn paths_under_the_root_become_relative_with_forward_slashes() {
+        let read = lines(&[
+            (r"D:\A\verbatim\crates\x\src\lib.rs", &[(1, 1)]),
+            (r"d:\a\verbatim\crates\x\src\lib.rs", &[(1, 2)]),
+            (r"C:\elsewhere\y.rs", &[(2, 0)]),
+        ]);
+        assert_eq!(
+            relative(read, Path::new(r"D:\a\verbatim")),
+            lines(&[
+                (r"C:\elsewhere\y.rs", &[(2, 0)]),
+                ("crates/x/src/lib.rs", &[(1, 3)]),
+            ])
+        );
+    }
+
+    #[test]
+    fn merging_sums_counts_and_keeps_every_line() {
+        let mut merged = lines(&[("a.rs", &[(1, 1), (2, 0)])]);
+        add(
+            &mut merged,
+            &lines(&[("a.rs", &[(2, 4), (3, 0)]), ("b.rs", &[(1, 0)])]),
+        );
+        assert_eq!(
+            merged,
+            lines(&[("a.rs", &[(1, 1), (2, 4), (3, 0)]), ("b.rs", &[(1, 0)])])
+        );
+    }
+
+    #[test]
+    fn written_lcov_states_each_files_lines_and_totals() {
+        assert_eq!(
+            to_lcov(&lines(&[("a.rs", &[(1, 2), (2, 0)])])),
+            "SF:a.rs\nDA:1,2\nDA:2,0\nLF:2\nLH:1\nend_of_record\n"
+        );
+    }
+
+    #[test]
+    fn the_summary_line_is_the_share_of_lines_that_ran() {
+        let read = lines(&[("a.rs", &[(1, 2), (2, 0), (3, 1)]), ("b.rs", &[(1, 0)])]);
+        assert_eq!(
+            summary_line("unit", &read),
+            "unit: 50.0% of lines (2 of 4)\n"
+        );
+        assert_eq!(
+            summary_line("e2e", &Lines::new()),
+            "e2e: 0.0% of lines (0 of 0)\n"
+        );
+    }
+
+    #[test]
+    fn e2e_only_lists_files_by_their_lines_no_lower_level_ran() {
+        let e2e = lines(&[
+            ("a.rs", &[(1, 1), (2, 1), (3, 0)]),
+            ("b.rs", &[(1, 1), (2, 1), (3, 1)]),
+            ("c.rs", &[(1, 1)]),
+        ]);
+        let below = lines(&[("a.rs", &[(1, 0), (2, 5)]), ("c.rs", &[(1, 1)])]);
+        assert_eq!(e2e_only(&e2e, &below), "3 b.rs\n1 a.rs\n");
+    }
+
+    #[test]
+    fn unreached_lists_files_none_of_whose_lines_ran() {
+        let merged = lines(&[
+            ("a.rs", &[(1, 0), (2, 0)]),
+            ("b.rs", &[(1, 0), (2, 1)]),
+            ("c.rs", &[]),
+        ]);
+        assert_eq!(unreached(&merged), "a.rs\n");
+    }
+}

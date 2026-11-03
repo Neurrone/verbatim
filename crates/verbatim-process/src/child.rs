@@ -2,7 +2,8 @@
 //! installing its log's tracing subscriber ([`init_tracing`]), reporting
 //! an error to standard error without panicking
 //! ([`report_error!`](crate::report_error)), and ending without running
-//! DLLs' detach code ([`end_without_detach`]).
+//! DLLs' detach code ([`end_without_detach`]), having written its coverage
+//! profile first in an instrumented build ([`write_coverage_profile`]).
 //! The outpost and the focus listener both use them.
 
 /// Writes a line to standard error, as `eprintln!` does, but ignores a
@@ -26,6 +27,7 @@ macro_rules! report_error {
 /// log, is written unbuffered.
 pub fn end_without_detach(code: u32) -> ! {
     use windows::Win32::System::Threading::{GetCurrentProcess, TerminateProcess};
+    write_coverage_profile();
     // SAFETY: the calling process's pseudo-handle, which needs no closing.
     let this_process = unsafe { GetCurrentProcess() };
     // SAFETY: ends the calling process.
@@ -33,6 +35,28 @@ pub fn end_without_detach(code: u32) -> ! {
     // Unreachable unless the call failed; exit the ordinary way then.
     report_error!("the process could not end itself ({ended:?}); exiting normally");
     std::process::exit(i32::try_from(code).unwrap_or(1))
+}
+
+/// Writes this process's coverage profile now, in a build instrumented for
+/// coverage (`cfg(coverage)`, which cargo-llvm-cov sets), and does nothing
+/// in any other build. The profile runtime writes it at exit, which a
+/// process ending with `TerminateProcess` never reaches, so such a process
+/// calls this first (`docs/tooling/coverage.md`).
+pub fn write_coverage_profile() {
+    #[cfg(coverage)]
+    {
+        unsafe extern "C" {
+            /// The LLVM profile runtime's write of the profile to the file
+            /// `LLVM_PROFILE_FILE` names; nonzero when it failed.
+            fn __llvm_profile_write_file() -> std::ffi::c_int;
+        }
+        // SAFETY: the runtime is linked into every instrumented binary, and
+        // its write takes no arguments and may be called at any time.
+        let failed = unsafe { __llvm_profile_write_file() };
+        if failed != 0 {
+            report_error!("the coverage profile could not be written ({failed})");
+        }
+    }
 }
 
 /// Installs a tracing subscriber writing to this process's stderr (which the

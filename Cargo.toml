@@ -188,6 +188,9 @@ features = [
 
 [workspace.lints.rust]
 missing_docs = "warn"
+# cargo-llvm-cov builds the workspace with `--cfg coverage`
+# (`docs/tooling/coverage.md`).
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(coverage)"] }
 
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }

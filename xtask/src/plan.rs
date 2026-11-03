@@ -24,6 +24,12 @@
 //! is within that budget: the step running a group times out after 10
 //! minutes, and the budget leaves a minute's margin. The one failure is a
 //! single scenario estimated over the budget, which no count can place.
+//!
+//! With `--coverage`, for a coverage run's groups, which run an instrumented
+//! build (`docs/tooling/coverage.md`), every estimate is multiplied by
+//! [`COVERAGE_SLOWDOWN`] before it is held against the budget, so the run
+//! gets more groups rather than longer ones. Only the count changes: the
+//! split for a count is the same, so `cargo xtask e2e-group` needs no flag.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -40,6 +46,12 @@ pub const DEFAULT_SECONDS: f64 = 60.0;
 /// step running it, less a minute's margin.
 pub const BUDGET_SECONDS: f64 = 540.0;
 
+/// How much longer a scenario takes against the instrumented build of a
+/// coverage run than the table says: the instrumented unit and mockapp
+/// tests' measured slowdown, at most 1.17, with a margin
+/// (`docs/tooling/e2e.md`, "How CI runs the suite").
+pub const COVERAGE_SLOWDOWN: f64 = 1.25;
+
 /// One registry entry as its source states it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Entry {
@@ -53,13 +65,17 @@ pub struct Entry {
 
 /// Runs the command with its arguments after `e2e-plan`.
 pub fn run(args: &[String]) -> ExitCode {
-    if !args.is_empty() {
-        eprintln!("usage: cargo xtask e2e-plan");
-        return ExitCode::from(2);
-    }
+    let slowdown = match args {
+        [] => 1.0,
+        [flag] if flag == "--coverage" => COVERAGE_SLOWDOWN,
+        _ => {
+            eprintln!("usage: cargo xtask e2e-plan [--coverage]");
+            return ExitCode::from(2);
+        }
+    };
     let planned = table().and_then(|table| {
         let suite = read_suite()?;
-        let count = group_count(&suite, &table)?;
+        let count = group_count(&suite, &table, slowdown)?;
         Ok((suite, table, count))
     });
     let (suite, table, count) = match planned {
@@ -77,8 +93,8 @@ pub fn run(args: &[String]) -> ExitCode {
     eprintln!(
         "e2e-plan: {} scenarios, about {:.1} minutes by the table, in {count} groups of at most {:.1} minutes",
         suite.len(),
-        total(&table, &suite) / 60.0,
-        longest / 60.0
+        total(&table, &suite) * slowdown / 60.0,
+        longest * slowdown / 60.0
     );
     let indices: Vec<String> = (1..=count).map(|index| index.to_string()).collect();
     println!("{{\"group\":[{}]}}", indices.join(","));
@@ -281,17 +297,27 @@ pub fn total(table: &HashMap<String, f64>, names: &[String]) -> f64 {
 }
 
 /// The number of groups: the smallest, from the total over
-/// [`BUDGET_SECONDS`] rounded up, whose every group is within the budget.
+/// [`BUDGET_SECONDS`] rounded up, whose every group is within the budget,
+/// each estimate multiplied by `slowdown` (1 for an ordinary run).
 ///
 /// # Errors
 ///
 /// Returns an error naming each scenario estimated over the budget, since
 /// no count places one.
-pub fn group_count(suite: &[String], table: &HashMap<String, f64>) -> Result<usize, String> {
+pub fn group_count(
+    suite: &[String],
+    table: &HashMap<String, f64>,
+    slowdown: f64,
+) -> Result<usize, String> {
     let over: Vec<String> = suite
         .iter()
-        .filter(|name| estimate(table, name) > BUDGET_SECONDS)
-        .map(|name| format!("{name} ({:.1} minutes)", estimate(table, name) / 60.0))
+        .filter(|name| estimate(table, name) * slowdown > BUDGET_SECONDS)
+        .map(|name| {
+            format!(
+                "{name} ({:.1} minutes)",
+                estimate(table, name) * slowdown / 60.0
+            )
+        })
         .collect();
     if !over.is_empty() {
         return Err(format!(
@@ -302,13 +328,13 @@ pub fn group_count(suite: &[String], table: &HashMap<String, f64>) -> Result<usi
     }
     let mut count = 1;
     let mut capacity = BUDGET_SECONDS;
-    while total(table, suite) > capacity {
+    while total(table, suite) * slowdown > capacity {
         count += 1;
         capacity += BUDGET_SECONDS;
     }
     while assign(suite, table, count)
         .iter()
-        .any(|group| total(table, group) > BUDGET_SECONDS)
+        .any(|group| total(table, group) * slowdown > BUDGET_SECONDS)
     {
         count += 1;
     }
@@ -407,7 +433,7 @@ mod tests {
         // 300 seconds fit only one to a group.
         let table = parse_durations("300 a\n300 b\n300 c\n300 d\n300 e\n").expect("parses");
         assert_eq!(
-            group_count(&names(&["a", "b", "c", "d", "e"]), &table),
+            group_count(&names(&["a", "b", "c", "d", "e"]), &table, 1.0),
             Ok(5)
         );
     }
@@ -415,14 +441,36 @@ mod tests {
     #[test]
     fn the_count_is_the_rounded_up_total_when_its_groups_fit() {
         let table = parse_durations("200 a\n200 b\n200 c\n200 d\n").expect("parses");
-        assert_eq!(group_count(&names(&["a", "b", "c", "d"]), &table), Ok(2));
+        assert_eq!(
+            group_count(&names(&["a", "b", "c", "d"]), &table, 1.0),
+            Ok(2)
+        );
+    }
+
+    #[test]
+    fn a_slowdown_multiplies_every_estimate_against_the_budget() {
+        // Unscaled, 800 seconds fit two groups. Doubled they are 1600,
+        // three budgets rounded up, but three groups leave one holding
+        // 400 seconds, 800 doubled, so each scenario takes a group.
+        let table = parse_durations(
+            "200 a
+200 b
+200 c
+200 d
+",
+        )
+        .expect("parses");
+        assert_eq!(
+            group_count(&names(&["a", "b", "c", "d"]), &table, 2.0),
+            Ok(4)
+        );
     }
 
     #[test]
     fn a_scenario_estimated_over_the_budget_fails() {
         let table = parse_durations("541 slow\n10 quick\n").expect("parses");
         assert_eq!(
-            group_count(&names(&["quick", "slow"]), &table),
+            group_count(&names(&["quick", "slow"]), &table, 1.0),
             Err("slow (9.0 minutes) estimated over a group's budget of 9 minutes (the step's 10-minute timeout less a minute's margin), so no group can hold it: make it faster".to_string())
         );
     }

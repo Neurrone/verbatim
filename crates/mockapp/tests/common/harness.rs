@@ -153,11 +153,13 @@ fn run_with<W: FnMut(&'static str, fn()) -> bool>(
     end(if failed.is_empty() { 0 } else { FAILED });
 }
 
-/// Flushes the output and ends the process with `code`, without running any
-/// DLL's process-detach code (see the module documentation for why).
+/// Flushes the output, writes the coverage profile in an instrumented build,
+/// and ends the process with `code`, without running any DLL's
+/// process-detach code (see the module documentation for why).
 fn end(code: u32) -> ! {
     let _ = std::io::stdout().flush();
     let _ = std::io::stderr().flush();
+    verbatim_process::child::write_coverage_profile();
     // SAFETY: the pseudo-handle of this process; no preconditions.
     let process = unsafe { GetCurrentProcess() };
     // SAFETY: ends this process; nothing runs after it.

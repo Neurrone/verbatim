@@ -50,6 +50,10 @@ before debugging anything downstream.
   scenarios and demonstrations, what a run leaves behind and reading a
   failure, replaying a run's flight recorder with `cargo xtask replay`,
   the measure set, and hearing and recording a run.
+- [Code coverage](coverage.md): `cargo xtask coverage` for the unit and
+  mockapp tests on this machine, the CI workflow's coverage run, which
+  adds the end-to-end suite, its reports, and what the end-to-end level
+  can and cannot show.
 - [The VM harness](vm.md): every `cargo xtask vm` verb, rebuilding the
   golden image, and a map of the harness's code.
 - [Recording what NVDA says](nvda.md): the transcript add-on,
