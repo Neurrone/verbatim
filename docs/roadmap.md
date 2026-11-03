@@ -122,6 +122,17 @@ list's window is not in its line. It touches the identity the build's one
 node per window (defect A) changes. From the chain commits 10c9e83a,
 3abda293, b94d2ea2, c7c7c6dc and 9fd28a66.
 
+It also fixes the slow-Explorer form of that failure (Dickson,
+2026-11-03): with File Explorer blocked for about 5 seconds (run
+41501468361), the listener's read of the focus was published at its
+bound with no ancestors, and its complete result, arriving later, was
+discarded (`crates/verbatim-listener-logic/src/schedule.rs`), so "Items
+View list" and the position were not spoken. NVDA has no such bound and
+queues the UIA focus whenever it arrives. A read completed after its
+bound is published again rather than discarded. With both forms fixed,
+`explorer_folder_window` is no longer local-only and returns to the
+GitHub runner.
+
 Follow-up, not established from the code alone: Core refuses a foreground
 report of the window holding its focus (`crates/verbatim-core/src/reduce.rs`,
 `reduce_focus_changed`) with no check that the focus is alive, so a window
@@ -784,6 +795,10 @@ remains, in order:
   equals the installed build: Pi's regular mode resized, set aside until
   the corpus can record a resize (Dickson, 2026-10-25); fzf, once Dickson
   installs it. htop is dropped (Dickson, 2026-10-25).
+- `conhost_long_lines` once heard "r" after Enter where its output line
+  was expected (run 41333390347, [the known failures](flaky-tests.md));
+  find the cause, the typed-character rules suspected (Dickson,
+  2026-11-03).
 - End-to-end scenarios: the existing terminal scenarios brought back to
   passing; then cargo's build bar below its output; the landing rule's
   keys; Control+W, Control+U and Control+K; tab completion; suggestions; a
