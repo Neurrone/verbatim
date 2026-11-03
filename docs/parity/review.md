@@ -209,8 +209,9 @@ text cannot move by page Verbatim says "Not supported in this document",
 where NVDA says "Movement by page not supported"; the selection's start
 or end with no selection moves to the caret, where NVDA says "No
 selection" and leaves the review cursor; and the review cursor's
-location, when the text gives no place for it, says "Not supported in
-this document", where NVDA says the navigator object's location instead
+location in text not measured by offsets (UI Automation's and a rich
+edit's), when the text gives no place for it, says "Not supported in
+this document" (offset-measured text says its percentage alone), where NVDA says the navigator object's location instead
 and "No location information" only when that is missing too. An object
 with no text interface is reviewed by its value or name,
 NVDA's fallback, through the M3 flat walk, which walks

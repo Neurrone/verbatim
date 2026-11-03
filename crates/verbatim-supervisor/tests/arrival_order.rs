@@ -42,7 +42,6 @@ use verbatim_process::port_queue::{PortQueue, Progress, Received, port_queue};
 use verbatim_process::transport::{BlockingReader, BlockingWriter};
 use verbatim_supervisor::{
     EventSink, Executables, Frames, OutpostMessage, ReducerStall, ShutdownSummary, Supervisor,
-    Timings,
 };
 use windows::Win32::Foundation::{CloseHandle, HANDLE, WAIT_OBJECT_0};
 use windows::Win32::System::Threading::{CreateEventW, SetEvent, WaitForSingleObject};
@@ -343,7 +342,6 @@ impl Reducer {
             OutpostOptions::default(),
             Executables::both(exe),
             LIMIT,
-            Timings::default(),
             std::sync::Arc::default(),
         )
         .expect("the supervisor starts");

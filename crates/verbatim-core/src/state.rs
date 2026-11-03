@@ -751,6 +751,13 @@ impl SrState {
         Self::default()
     }
 
+    /// Whether Verbatim is exiting (`Input::Exiting`), so that nothing more
+    /// is said and the exit sound is the last.
+    #[must_use]
+    pub fn exiting(&self) -> bool {
+        self.exiting
+    }
+
     /// Whether a caret key pressed now is held back until the focus's
     /// caret has been read (`docs/design/key-holding.md`): the focus has
     /// text, or may have, as for the caret keys whose evidence is watched.

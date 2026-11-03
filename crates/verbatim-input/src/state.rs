@@ -2011,6 +2011,7 @@ mod tests {
     }
 
     const ALT: u16 = 0xA4;
+    const RIGHT_ALT: u16 = 0xA5;
     const HOME: u16 = 0x24;
     const LEFT_WINDOWS: u16 = 0x5B;
     const LEFT_SHIFT: u16 = 0xA0;
@@ -2088,8 +2089,9 @@ mod tests {
         }
     }
 
-    /// Alt held before the Verbatim key, a Windows key, and Control and
-    /// Shift together each get a mask behind the gesture; Control or Shift
+    /// Alt held before the Verbatim key, left or right (Alt Gr), a Windows
+    /// key, and Control and Shift together each get a mask behind the
+    /// gesture; Control or Shift
     /// alone does not, nor does a chord nothing is bound to.
     #[test]
     fn only_alt_a_windows_key_or_control_and_shift_together_are_masked() {
@@ -2102,8 +2104,12 @@ mod tests {
             "kb:verbatim+control+x",
             "kb:verbatim+shift+x",
         ];
-        let cases: [Case; 6] = [
+        let cases: [Case; 7] = [
             (&[(ALT, false), (INSERT, true), (HOME, true)], Some((1, 2))),
+            (
+                &[(RIGHT_ALT, true), (INSERT, true), (HOME, true)],
+                Some((1, 2)),
+            ),
             (
                 &[(LEFT_WINDOWS, true), (INSERT, true), (X, false)],
                 Some((1, 2)),

@@ -35,7 +35,7 @@ use verbatim_model::{Pid, TraceId};
 use verbatim_process::arguments::OutpostOptions;
 use verbatim_process::held::IgnoredProcesses;
 use verbatim_process::message::{read_message, write_message};
-use verbatim_supervisor::{Executables, OutpostMessage, ShutdownSummary, Supervisor, Timings};
+use verbatim_supervisor::{Executables, OutpostMessage, ShutdownSummary, Supervisor};
 
 /// An application's argument.
 const APPLICATION: &str = "--stand-in-application";
@@ -204,7 +204,6 @@ fn an_ignored_process_gets_no_outpost_and_its_facts_go_nowhere() {
         OutpostOptions::default(),
         Executables::both(exe),
         LIMIT,
-        Timings::default(),
         Arc::new(IgnoredProcesses::hold([ignored_pid])),
     )
     .expect("the supervisor starts");

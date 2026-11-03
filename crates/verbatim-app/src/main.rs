@@ -1017,10 +1017,9 @@ struct ReducerThread<'a> {
     /// generation ([`OutpostMessage::Regenerated`]), so their end asks
     /// for no focus.
     regenerated: HashSet<OutpostId>,
-    /// Whether Verbatim is exiting, so the exit sound is played to be
-    /// waited on, and the exit sound the reducer played then, for the main
-    /// thread to wait on until it has been heard ([`ShellCommand::Exiting`]).
-    exiting: bool,
+    /// The exit sound the reducer played once Verbatim was exiting
+    /// ([`SrState::exiting()`]), for the main thread to wait on until it has
+    /// been heard ([`ShellCommand::Exiting`]).
     exit_sound: Option<verbatim_speech::EarconHeard>,
     /// The harness's marks of handled input held behind a lock key's
     /// announcement still to come.
@@ -1413,7 +1412,6 @@ impl ReducerThread<'_> {
                 // The hook is gone, so nothing more joins the line, and a
                 // key in it would now arrive after keys pressed since.
                 self.held_keys.exit();
-                self.exiting = true;
                 self.apply(Input::Exiting { replaced });
                 let _ = heard.send(self.exit_sound.take());
             }
@@ -1773,7 +1771,7 @@ impl ReducerThread<'_> {
             // The exit sound is heard before Verbatim exits: the main thread
             // waits for it ([`ShellCommand::Exiting`]). A preview of it is
             // played as any other earcon.
-            Effect::PlayEarcon(Earcon::Exit) if self.exiting => {
+            Effect::PlayEarcon(Earcon::Exit) if self.state.exiting() => {
                 self.exit_sound = Some(
                     self.context
                         .manager
@@ -2140,7 +2138,6 @@ fn reducer_loop(
         frames: context.supervisor.frames(),
         barrier: idle::IdleBarrier::default(),
         regenerated: HashSet::new(),
-        exiting: false,
         exit_sound: None,
         held_keys: held_keys::HeldKeys::default(),
         held_due: None,

@@ -8,9 +8,11 @@ the one Verbatim controls. Call counts do not vary between runs, so CI
 enforces them exactly; times vary, so they are judged against a floor
 measured in the same run.
 
-The ledger records what is substantially slow or can become so: calls
-into other processes, wake-ups, waits, timers and locks, work that grows
-with the application, and work that takes milliseconds. A single
+The ledger records costs on the event or speech path and costs measured
+to be slow: calls into other processes, wake-ups, waits, timers and
+locks, work that grows with the application, and work that takes
+milliseconds. A command's own calls are pinned by a call-count test
+(`crates/mockapp/tests/call_counts.rs`), not written here. A single
 allocation, a type's size or a local call of microseconds is not
 recorded.
 
@@ -1071,7 +1073,8 @@ The audio events thread is new in this build.
   after: `settings_dialog_keys` 18, then 0, 0, 0; `theme_panel` 8, then 1,
   1, 1; `switch_to_onecore` 3, then 0, 0, 0; `menu_and_settings_dialog` 2,
   then 0, 0, 0; `terminal_settings_page` 2, then 0, 0, 2;
-  `synth_host_crash_recovery` 1, then 0, 0, 0; `notepad_say_all` 0, then
+  `synth_host_crash_recovery` (now `crash_recovery`'s synthesizer host
+  step) 1, then 0, 0, 0; `notepad_say_all` 0, then
   1, 0, 2.
 
 ### A caret move, UIA
@@ -1538,25 +1541,6 @@ Notepad (debug, a 300-line document, eSpeak NG at 376 words a minute, a
 piece a line) a batch read in 3.3 ms at the median remotely and 21.1
 classically, and the gaps between pieces were 1.5 ms at the median and 14
 at the 95th percentile either way, against NVDA's 1.2 and 30.2.
-
-### The caret's location, UIA
-
-Report caret location.
-
-- Minimum and today: 1 UIA call, met; classically 5 (the caret's two
-  reads, a copy expanded to the character, its bounding rectangles).
-
-### The caret's location, Win32 edit control
-
-Report caret location, said as the caret's percentage of the text's
-length and its place, as NVDA says it.
-
-- Minimum and today: 3 window messages, met: `EM_GETSEL`, the text's
-  length (`WM_GETTEXTLENGTH`, or `EM_GETTEXTLENGTHEX` from rich edit 2.0)
-  for the percentage, and `EM_POSFROMCHAR` (`caret_moves_cost_exactly`,
-  "Edit control caret location"). The length is the one message the
-  percentage adds; it is made only for the command, never on the event
-  path.
 
 ### The selected text, UIA
 

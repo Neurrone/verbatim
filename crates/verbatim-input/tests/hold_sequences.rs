@@ -20,8 +20,9 @@
 //! only while a place waits. The permit never falls to `None` while a
 //! deferred press or a mask waits in line: a release would then pass at
 //! once, ahead of its press or of the mask, the known limitation of "The
-//! hook's hold decision". The walk's `None` stands for a view that lets no
-//! key be held, so no mask is due for a gesture made with it; the hook's
+//! hook's hold decision" (`docs/design/key-holding.md`, "Limitations").
+//! The walk's `None` stands for a view that lets no key be held, so no
+//! mask is due for a gesture made with it; the hook's
 //! other `None`, a view that lets keys be held with no text and nothing in
 //! line, decides as `Defer` does with an empty line, which the walk
 //! covers.
@@ -29,8 +30,8 @@
 //! After every step, with no model: no release reaches the application
 //! before its press; Alt's, the Windows key's, or Control's and Shift's
 //! together, release does not reach it after a gesture made with them down
-//! in it until the mask has; and the machine's line holds a place exactly
-//! while one is given out and not passed on. After every sequence, every
+//! in it until that gesture's mask has; and the machine's line holds a
+//! place exactly while one is given out and not passed on. After every sequence, every
 //! key let go and every place passed on, the application has every key up.
 //! The model states, for a press whose meaning it takes from the machine
 //! (a bound gesture, the Verbatim key, a held caret key, or anything
@@ -171,8 +172,10 @@ enum Meaning {
 /// whose meaning is given.
 #[derive(Clone, Debug)]
 struct Model {
-    /// Each key down, and whether a press of it has reached the
-    /// application, or is deferred to, since it went down or was held.
+    /// Each key down, and whether the model lets its release through:
+    /// true after a press that passed or was deferred, false after a held
+    /// press, and unchanged by a swallowed one (false for a key whose first
+    /// press it is).
     reached: BTreeMap<K, bool>,
     /// How many places wait in line.
     line: usize,
@@ -267,9 +270,10 @@ struct World<'a> {
     line: VecDeque<(u32, Sent)>,
     app_down: BTreeSet<K>,
     places: BTreeSet<u32>,
-    /// The modifiers down in the application when a gesture was masked,
-    /// whose release must not reach it before the mask does.
-    mask_due: BTreeSet<K>,
+    /// Each mask in line, by its press's place, with the modifiers down
+    /// in the application when its gesture was made, whose release must
+    /// not reach it before that mask's press does.
+    mask_due: BTreeMap<u32, BTreeSet<K>>,
     trail: Vec<Step>,
 }
 
@@ -285,7 +289,7 @@ impl<'a> World<'a> {
             line: VecDeque::new(),
             app_down: BTreeSet::new(),
             places: BTreeSet::new(),
-            mask_due: BTreeSet::new(),
+            mask_due: BTreeMap::new(),
             trail: Vec::new(),
         }
     }
@@ -331,7 +335,7 @@ impl<'a> World<'a> {
 
     /// The application receives `key`'s transition.
     fn app(&mut self, key: K, pressed: bool) -> Result<(), String> {
-        if !pressed && self.mask_due.contains(&key) {
+        if !pressed && self.mask_due.values().any(|keys| keys.contains(&key)) {
             return Err(format!(
                 "{key:?}'s release reached the application before the mask of a gesture made with it down"
             ));
@@ -351,6 +355,31 @@ impl<'a> World<'a> {
             return Err(format!("place {place} entered the line twice"));
         }
         self.line.push_back((place, sent));
+        Ok(())
+    }
+
+    /// Puts a transition's mask in line, and for a gesture made with the
+    /// view letting keys be held, notes the modifiers whose release must
+    /// wait for that mask.
+    fn masked(&mut self, meaning: Meaning, mask: Option<(u32, u32)>) -> Result<(), String> {
+        if meaning == Meaning::Gesture && self.permit != HoldPermit::None {
+            let acting = self.acting_modifiers();
+            match mask {
+                Some((press, _)) => {
+                    self.mask_due.insert(press, acting);
+                }
+                None if !acting.is_empty() => {
+                    return Err(format!(
+                        "a gesture made with {acting:?} down in the application has no mask"
+                    ));
+                }
+                None => {}
+            }
+        }
+        if let Some((press, release)) = mask {
+            self.push(press, Sent::Mask(true))?;
+            self.push(release, Sent::Mask(false))?;
+        }
         Ok(())
     }
 
@@ -404,14 +433,7 @@ impl<'a> World<'a> {
                         decision.mask
                     ));
                 }
-                if meaning == Meaning::Gesture && self.permit != HoldPermit::None {
-                    let acting = self.acting_modifiers();
-                    self.mask_due.extend(acting);
-                }
-                if let Some((press, release)) = decision.mask {
-                    self.push(press, Sent::Mask(true))?;
-                    self.push(release, Sent::Mask(false))?;
-                }
+                self.masked(meaning, decision.mask)?;
                 if pressed {
                     self.user_down.insert(key);
                 } else {
@@ -436,7 +458,9 @@ impl<'a> World<'a> {
                         self.app(key, false)?;
                     }
                     Sent::Transition(key, pressed) => self.app(key, pressed)?,
-                    Sent::Mask(true) => self.mask_due.clear(),
+                    Sent::Mask(true) => {
+                        self.mask_due.remove(&place);
+                    }
                     Sent::Mask(false) => {}
                 }
             }

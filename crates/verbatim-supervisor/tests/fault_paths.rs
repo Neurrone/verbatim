@@ -22,7 +22,7 @@ use verbatim_process::message::{read_message, write_message};
 use verbatim_process::port_queue::port_queue;
 use verbatim_process::transport::{BlockingReader, BlockingWriter};
 use verbatim_supervisor::{
-    EventSink, Executables, OutpostMessage, SPARES, ShutdownSummary, Supervisor, Timings,
+    EventSink, Executables, OutpostMessage, SPARES, ShutdownSummary, Supervisor,
 };
 
 mod common;
@@ -130,7 +130,6 @@ fn supervisor(sink: EventSink) -> Supervisor {
         OutpostOptions::default(),
         Executables::both(exe),
         LIMIT,
-        Timings::default(),
         std::sync::Arc::default(),
     )
     .expect("the supervisor starts")

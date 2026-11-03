@@ -156,11 +156,11 @@ pub(crate) fn notepad_body(scenario: &mut Scenario, _state: &mut ScenarioState) 
     super::expect_notepad_in_front(scenario, NAME, "alpha beta gamma");
     // Verbatim+Tab reports the focus as a query, with its states, and the
     // caret's line in place of its value, as its own utterance, where NVDA
-    // says the two in one (`docs/parity/review.md`, "Report focus").
+    // says the two in one: the same words, so matched
+    // (`docs/parity/review.md`, "Report focus").
     scenario
         .send_gesture("kb:verbatim+tab")
         .expect("sends Verbatim+Tab");
-    scenario.deviates_from_nvda("docs/parity/review.md", "Report focus");
     scenario
         .speech()
         .expect(&["Text editor document focused", "alpha beta gamma"]);

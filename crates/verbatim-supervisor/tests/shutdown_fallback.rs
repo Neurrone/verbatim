@@ -21,7 +21,7 @@ use verbatim_model::Pid;
 use verbatim_model::protocol::ListenerToCore;
 use verbatim_process::arguments::OutpostOptions;
 use verbatim_process::message::write_message;
-use verbatim_supervisor::{Executables, OutpostMessage, ShutdownSummary, Supervisor, Timings};
+use verbatim_supervisor::{Executables, OutpostMessage, ShutdownSummary, Supervisor};
 
 /// How long the stand-in has to exit after the shutdown message: short, as
 /// it never will.
@@ -75,7 +75,6 @@ fn a_child_that_does_not_exit_in_time_is_killed_and_the_kill_is_reported() {
         OutpostOptions::default(),
         Executables::both(exe),
         LIMIT,
-        Timings::default(),
         std::sync::Arc::default(),
     )
     .expect("the supervisor starts");

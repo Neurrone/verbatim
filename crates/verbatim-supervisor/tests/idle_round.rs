@@ -40,7 +40,7 @@ use verbatim_model::{OutpostId, Pid, TraceId};
 use verbatim_process::arguments::OutpostOptions;
 use verbatim_process::message::{read_message, write_message};
 use verbatim_process::transport::{BlockingReader, BlockingWriter};
-use verbatim_supervisor::{Executables, OutpostMessage, ShutdownSummary, Supervisor, Timings};
+use verbatim_supervisor::{Executables, OutpostMessage, ShutdownSummary, Supervisor};
 
 /// The application's argument.
 const APPLICATION: &str = "--stand-in-application";
@@ -297,7 +297,6 @@ fn a_round_asks_the_listener_then_every_outpost_behind_the_facts_before_it() {
         OutpostOptions::default(),
         Executables::both(exe),
         LIMIT,
-        Timings::default(),
         std::sync::Arc::default(),
     )
     .expect("the supervisor starts");

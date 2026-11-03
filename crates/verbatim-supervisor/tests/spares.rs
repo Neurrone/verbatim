@@ -48,9 +48,7 @@ use verbatim_process::arguments::OutpostOptions;
 use verbatim_process::held::IgnoredProcesses;
 use verbatim_process::message::{read_message, write_message};
 use verbatim_process::transport::{BlockingReader, BlockingWriter};
-use verbatim_supervisor::{
-    EndReason, Executables, OutpostMessage, ShutdownSummary, Supervisor, Timings,
-};
+use verbatim_supervisor::{EndReason, Executables, OutpostMessage, ShutdownSummary, Supervisor};
 use windows::Win32::Foundation::{CloseHandle, HANDLE, WAIT_OBJECT_0};
 use windows::Win32::System::Threading::{
     CreateEventW, OpenEventW, OpenProcess, PROCESS_SYNCHRONIZE, PROCESS_TERMINATE,
@@ -432,7 +430,6 @@ impl Run {
             OutpostOptions::default(),
             Executables::both(exe()),
             LIMIT,
-            Timings::default(),
             Arc::new(IgnoredProcesses::hold(ignored.iter().copied())),
         )
         .expect("the supervisor starts");

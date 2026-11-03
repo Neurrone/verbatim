@@ -93,11 +93,10 @@ pub const SPARES: usize = 2;
 
 /// The supervisor's periods and limits. Verbatim runs with
 /// [`Timings::default`] and [`Retirement::default`], unless the end-to-end
-/// harness shortens the retirement ([`Retirement::from_test_env`]); a test
-/// may construct the supervisor with others
-/// ([`Supervisor::with_executables`]), though every test runs with the
-/// default, since a stand-in judged by a shorter ping interval is ended
-/// as stuck when its start is slow. No setting in the settings file
+/// harness shortens the retirement ([`Retirement::from_test_env`]); the
+/// tests' supervisor ([`Supervisor::with_executables`]) runs with the
+/// default too, since a stand-in judged by a shorter ping interval is
+/// ended as stuck when its start is slow. No setting in the settings file
 /// reaches them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Timings {
@@ -666,7 +665,7 @@ impl Supervisor {
         retirement: Retirement,
     ) -> io::Result<Self> {
         let executables = Executables::beside_current()?;
-        Self::with_executables(
+        Self::start(
             events,
             options,
             executables,
@@ -682,8 +681,8 @@ impl Supervisor {
     /// [`Supervisor::new`], launching each role from its executable in
     /// `executables` and giving
     /// each `shutdown_limit` to exit after the shutdown message before it is
-    /// killed, running by `timings`, and ignoring the processes `ignored`
-    /// holds. For tests that launch stand-ins for the outpost and listener
+    /// killed, running by [`Timings::default`], and ignoring the processes
+    /// `ignored` holds. For tests that launch stand-ins for the outpost and listener
     /// binaries ([`Executables::both`]); Verbatim uses
     /// [`Supervisor::new`].
     ///
@@ -692,6 +691,25 @@ impl Supervisor {
     /// Returns an error if the relay's completion port or the owner thread
     /// cannot be made.
     pub fn with_executables(
+        events: impl Into<EventSink>,
+        options: verbatim_process::arguments::OutpostOptions,
+        executables: Executables,
+        shutdown_limit: Duration,
+        ignored: Arc<IgnoredProcesses>,
+    ) -> io::Result<Self> {
+        Self::start(
+            events,
+            options,
+            executables,
+            shutdown_limit,
+            Timings::default(),
+            ignored,
+        )
+    }
+
+    /// The supervisor of `executables`, running by `timings`, as
+    /// [`Supervisor::new`] and [`Supervisor::with_executables`] start it.
+    fn start(
         events: impl Into<EventSink>,
         options: verbatim_process::arguments::OutpostOptions,
         executables: Executables,

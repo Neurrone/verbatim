@@ -48,7 +48,9 @@ const SAME_SCRIPT: &str = "for ($line = 1; $line -le 2000; $line++) { \"the same
 const RAISED_LINES: u32 = 61;
 
 /// [`RAISED_LINES`] numbered lines.
-const RAISED_SCRIPT: &str = "for ($line = 1; $line -le 61; $line++) { \"output line $line\" }\r\n";
+fn raised_script() -> String {
+    format!("for ($line = 1; $line -le {RAISED_LINES}; $line++) {{ \"output line $line\" }}\r\n")
+}
 
 /// Both limits one above the shipped 30.
 const RAISED: u16 = 31;
@@ -174,7 +176,11 @@ pub(crate) fn body_redraw_console_host(scenario: &mut Scenario, state: &mut Scen
 }
 
 pub(crate) fn setup_raised_console_host(scenario: &mut Scenario) -> io::Result<ScenarioState> {
-    terminal::open_console_host(scenario, "raised-limit", &[("raised.ps1", RAISED_SCRIPT)])
+    terminal::open_console_host(
+        scenario,
+        "raised-limit",
+        &[("raised.ps1", &raised_script())],
+    )
 }
 
 /// Every line of `raised.ps1`, and the prompt.
@@ -213,7 +219,6 @@ mod tests {
         let burst = RAISED_LINES + 1;
         assert!(burst - GROUP > GROUP);
         assert!(burst - u32::from(RAISED) <= u32::from(RAISED));
-        assert!(RAISED_SCRIPT.contains(&format!("-le {RAISED_LINES};")));
         let speech = raised();
         assert_eq!(speech.len(), 62);
         assert_eq!(speech[60], "output line 61");

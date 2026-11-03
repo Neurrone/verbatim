@@ -19,8 +19,8 @@ message layer, the launch arguments and the held processes are
   starts the listener at once, launching each role from its executable
   beside the current one (`Executables::beside_current`:
   `verbatim-outpost.exe` and `verbatim-listener.exe`); a missing one fails
-  that role's launch. `with_executables` takes the `Executables`, a
-  shutdown limit and the `Timings`, for tests, whose stand-in is both
+  that role's launch. `with_executables` takes the `Executables` and a
+  shutdown limit, for tests, whose stand-in is both
   (`Executables::both`), telling the roles apart by the listener's first
   argument, `--listener`. Both take the `OutpostOptions` every outpost
   gets.
@@ -28,10 +28,9 @@ message layer, the launch arguments and the held processes are
   missed (three), the backoff's first wait and limit (1 and 30 seconds)
   and the `Retirement`: the idle time before an outpost is retired (two
   minutes) and the sweep's interval (30 seconds). `Timings::default` is
-  Verbatim's; `new` uses it with the retirement it is given. A test may
-  pass others through `with_executables`, though every test runs with the
-  default, since a stand-in judged by a shorter ping interval is ended as
-  stuck when its start is slow; a test of the backoff moves the clock the
+  Verbatim's; `new` uses it with the retirement it is given, and
+  `with_executables` uses it unchanged, since a stand-in judged by a
+  shorter ping interval is ended as stuck when its start is slow; a test of the backoff moves the clock the
   backoffs are judged by instead (`set_backoff_clock`). No setting
   reaches them. `Retirement::from_test_env`
   reads the test-only `VERBATIM_TEST_RETIREMENT` (`TEST_RETIREMENT_ENV`),

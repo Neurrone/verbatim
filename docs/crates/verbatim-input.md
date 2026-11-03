@@ -193,8 +193,9 @@ rules):
   transitions pass, are held or deferred, or are swallowed, and when a
   mask is due, taking each press's meaning from the machine, since the
   unit tests state gesture naming, counting and the double tap, except where the permit falls to `None` while
-  a deferred press or a mask waits, whose release then passes at once (the
-  design's "Limitations").
+  a deferred press or a mask waits, whose release then passes at once
+  (`docs/design/key-holding.md`, "Limitations", "The hook's hold
+  decision").
 - The menu guard (`docs/parity/input.md`, "A modifier released after a
   command"): a bound gesture the user pressed, swallowed while `may_mask`
   is set and while Alt, a Windows key, or Control and Shift together are

@@ -32,9 +32,7 @@ use verbatim_model::protocol::{
 use verbatim_model::{OutpostId, Pid};
 use verbatim_process::arguments::OutpostOptions;
 use verbatim_process::message::{read_message, write_message};
-use verbatim_supervisor::{
-    EndReason, Executables, OutpostMessage, ShutdownSummary, Supervisor, Timings,
-};
+use verbatim_supervisor::{EndReason, Executables, OutpostMessage, ShutdownSummary, Supervisor};
 use verbatim_supervisor::{EventSink, Undelivered};
 
 /// The application's argument.
@@ -141,7 +139,6 @@ fn an_outpost_is_never_started_or_replaced_for_an_application_that_has_exited() 
         OutpostOptions::default(),
         Executables::both(exe.clone()),
         LIMIT,
-        Timings::default(),
         std::sync::Arc::default(),
     )
     .expect("the supervisor starts");
@@ -274,7 +271,6 @@ fn an_end_the_app_refuses_for_now_still_comes_before_its_replacement() {
         OutpostOptions::default(),
         Executables::both(exe.clone()),
         LIMIT,
-        Timings::default(),
         std::sync::Arc::default(),
     )
     .expect("the supervisor starts");
@@ -377,7 +373,6 @@ fn a_replacement_waiting_out_its_backoff_is_not_started_for_an_application_that_
         OutpostOptions::default(),
         Executables::both(exe.clone()),
         LIMIT,
-        Timings::default(),
         std::sync::Arc::default(),
     )
     .expect("the supervisor starts");

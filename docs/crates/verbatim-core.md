@@ -614,7 +614,9 @@ shell's threads learn comes in as inputs (`shell.rs`): `Input::Started`,
 `Exiting` cancels speech, then plays the exit sound, unless a new
 instance replaces this one, and sets `SrState::exiting`, after which
 `reduce` does nothing for any input, so nothing is said after the exit
-sound, as in NVDA (`docs/parity/system.md`, "Exiting"); `LockKeyToggled`
+sound, as in NVDA (`docs/parity/system.md`, "Exiting"), and which
+`SrState::exiting()` answers, so the shell plays that exit sound to be
+waited on; `LockKeyToggled`
 (`Phrase::LockKeyState`), `ClockRead` (time, then the date on a quick
 second press), `ClipboardCopied` (`Phrase::CopiedToClipboard` or
 `Message::UnableToCopy`) and `PreviewSpeech` speak, interrupting;

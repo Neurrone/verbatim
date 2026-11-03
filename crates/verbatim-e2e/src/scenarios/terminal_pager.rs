@@ -1,6 +1,7 @@
-//! A pager scrolling a line at a time on the alternate screen over a shell
-//! screen with history, as `windows_terminal_pager_history` and
-//! `conhost_pager_history`, each its own code (`docs/testing.md`). The
+//! A pager run once on a fresh terminal, then scrolling a line at a time
+//! on the alternate screen over a shell screen with history, as
+//! `windows_terminal_pager_history` and `conhost_pager_history`, each its
+//! own code (`docs/testing.md`). The
 //! shared setup is described in the `terminal` module.
 //!
 //! `pager.ps1` draws as a pager does: it opens the alternate screen, fills
@@ -26,9 +27,9 @@
 //! The pager then runs again after `lines.ps1` has printed 100 lines,
 //! "history line 1" to "history line 100", heard through the flood policy
 //! with both limits at 15 ([`HALF`]) as lines 1 to 15, "skipped 71 lines",
-//! lines 87 to 100 and the prompt. The limits are 15, not lower, so that the page and the
-//! restored screen, 30 lines each, are still heard whole: 15 lines waiting
-//! behind a group of 15 are not more than the limit. The pager's own
+//! lines 87 to 100 and the prompt. The limits are 15, not lower, so that
+//! the page and the restored screen, 30 lines each, are still heard whole:
+//! 15 lines waiting behind a group of 15 are not more than the limit. The pager's own
 //! reads keep its rows, so the shell's screen stays aside while it runs;
 //! closing it finds that screen back at its places, a new screen, so only
 //! its visible rows are spoken, the newest 27 history lines, the command,
