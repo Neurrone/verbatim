@@ -123,7 +123,10 @@ abandoned limit and `focus_pending` are the unit tests' examples. Each case ends
 draining, then every marker has had one outcome and every waiter run
 once, or, with the listener stopped, at most once; it runs twice with the
 same effects, and the gate fails if any listed state is never reached.
-The cases the generated test found are kept as fixed cases. The menu
+The cases the generated test found are kept as fixed cases, pasted as
+the failure prints them (`docs/testing.md`, "Exploration tests"), and a
+failing sequence of either enumeration below is kept in its own found
+list. The menu
 end's grace and the foreground watch are each tested by every sequence of
 up to six steps against their rules, with no model of their effects (in
 the generated test's file, and in

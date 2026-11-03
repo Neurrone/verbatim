@@ -187,7 +187,9 @@ never taken from the intake, or the watch's, may be; and no focus group a
 try reported, or was published in, is tried again. Each case runs twice
 and the two runs' effects are compared, and the test fails if a listed
 lifecycle state is never reached. The cases the test and its exploration
-found are kept as fixed cases. The model leaves out the intake's plan,
+found are kept as fixed cases, pasted as the failure prints them
+(`docs/testing.md`, "Exploration tests"); the intake's and the watch's
+enumeration's are kept in their tests' `found()` lists. The model leaves out the intake's plan,
 text facts, held reports, the subscription, the marks' contents, verdict
 contents beyond whether the record changed, the caret watch's
 transitions, and exact deadlines; and its generator sends a foreground change from the

@@ -250,7 +250,10 @@ window's object, the newest focus stamp and the focus's formatting
 cache): the state is serialised through a serializer that finds every
 `OutpostId` by its type's name, in a node id, a tuple or a map's key
 (`crates/verbatim-core/src/queries/ended.rs`), so a field added later is
-checked with no change to the check. Three fixed cases keep what the
+checked with no change to the check. A failure's shrunk case is kept in
+the test's `found()` list, as the failure prints it (`docs/testing.md`,
+"Exploration tests"), and so is a failing sequence of the query table's
+enumeration in its own `found()`. Three fixed cases keep what the
 generated cases reach too seldom: a model's request answered after a
 newer model of the same terminal replaced it, a foreground change at the
 newest focus's stamp, and the terminal's timer fired once a changing
