@@ -181,19 +181,11 @@ pub(crate) fn body_control_console_host(scenario: &mut Scenario, state: &mut Sce
 }
 
 pub(crate) fn setup_shift_windows_terminal(scenario: &mut Scenario) -> io::Result<ScenarioState> {
-    terminal::open_windows_terminal(
-        scenario,
-        "shift-flood",
-        &[("short.ps1", SHORT_SCRIPT)],
-    )
+    terminal::open_windows_terminal(scenario, "shift-flood", &[("short.ps1", SHORT_SCRIPT)])
 }
 
 pub(crate) fn setup_shift_console_host(scenario: &mut Scenario) -> io::Result<ScenarioState> {
-    terminal::open_console_host(
-        scenario,
-        "shift-flood",
-        &[("short.ps1", SHORT_SCRIPT)],
-    )
+    terminal::open_console_host(scenario, "shift-flood", &[("short.ps1", SHORT_SCRIPT)])
 }
 
 /// Shift twice while the output's first line plays: paused and resumed,

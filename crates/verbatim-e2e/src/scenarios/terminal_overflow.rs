@@ -374,7 +374,10 @@ mod tests {
             "sound: skipped-lines skipped more than 9016 lines"
         );
         let speech = past_history(CONSOLE_HOST_HOLDS);
-        assert_eq!(speech[0], "sound: skipped-lines skipped more than 8986 lines");
+        assert_eq!(
+            speech[0],
+            "sound: skipped-lines skipped more than 8986 lines"
+        );
         assert_eq!(speech[1], "after line 11987");
         assert_eq!(speech.len(), 16);
         assert_eq!(speech[15], PROMPT);
