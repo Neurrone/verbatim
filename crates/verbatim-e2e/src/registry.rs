@@ -2515,16 +2515,14 @@ fn run(def: &ScenarioDef) {
         }
     };
     // A failed speech assertion is reported once the logs holding its
-    // step's trace are collected.
+    // step's trace, and the flight recorder, are collected.
     let speech_report = body_outcome
         .as_ref()
         .err()
         .and_then(|payload| payload.downcast_ref::<SpeechFailure>())
         .map(|failure| {
-            let lines = failure.trace.map_or_else(
-                || Ok(Vec::new()),
-                |trace| artifacts::trace_lines(&dir, trace).map_err(|error| error.to_string()),
-            );
+            let lines = artifacts::failure_lines(&dir, failure.trace, failure.failed_at_ms)
+                .map_err(|error| error.to_string());
             failure.report(
                 scenario.timeline(),
                 lines.as_deref().map_err(String::as_str),

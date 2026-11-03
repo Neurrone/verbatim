@@ -494,9 +494,15 @@ Once the run's logs are collected, a speech-assertion failure prints
 three things. First, the expected and actual sequences, escaped (`{:?}`),
 with the index of the first utterance that differs and the first
 character in it that differs. Second, the failing step's trace: every
-line carrying its trace ID in Verbatim's log, Core's flight recorder, and
-the outposts', listener's and synthesizer host's logs, merged in time
-order, each prefixed with its file's name. Third, the run's timeline up to
+line carrying its trace ID in Verbatim's log and the outposts',
+listener's and synthesizer host's logs, and every input in Core's flight
+recorder that carries it or that Core received in the 3 seconds before
+the failure, whatever its trace, merged in time order, each prefixed with
+its file's name. The flight recorder's inputs are replayed and rendered
+on one line each, as `cargo xtask replay` prints them ("Replaying a
+run"), and one of the failing step's trace is marked `(failing trace)`
+after the file's name; an input with no time of its own, such as an
+outpost's answer, takes the time of the input before it. Third, the run's timeline up to
 the failure: each earlier step on one line (when it started, the input,
 and what was said), then the failing step in full, one entry per line,
 each prefixed with the milliseconds since the first entry.

@@ -342,56 +342,131 @@ fn civil_from_days(days: i64) -> (i64, u32, u32) {
     (year, month, day)
 }
 
-/// Every line carrying `trace` in the run's logs collected into `dir`:
-/// Verbatim's captured log, the outposts', listener's and synthesizer
-/// host's logs (every `.log` file), and Core's flight recorder (the
-/// `.jsonl` dump), merged in time order, each prefixed with its file's
-/// name ([`lines_carrying`]).
+/// How long before a failure the flight recorder's inputs are shown in
+/// its report whatever their trace, in microseconds: an application's
+/// answer under another trace is often what decided the failing step.
+pub const RECORDER_WINDOW_US: u64 = 3_000_000;
+
+/// The lines a failure's report shows from the run's logs collected into
+/// `dir`, in time order: every line carrying `trace` in Verbatim's
+/// captured log and the outposts', listener's and synthesizer host's logs
+/// (every `.log` file, [`lines_carrying`]), each prefixed with its file's
+/// name; and from Core's flight recorder (`flight-recorder.jsonl`), each
+/// input carrying `trace` and every input Core received in the
+/// [`RECORDER_WINDOW_US`] before `failed_at_ms`, replayed and rendered on
+/// one line ([`recorder_lines`]).
 ///
 /// # Errors
 ///
 /// Returns an error if `dir` or a file in it cannot be read.
-pub fn trace_lines(dir: &Path, trace: TraceId) -> io::Result<Vec<String>> {
+pub fn failure_lines(
+    dir: &Path,
+    trace: Option<TraceId>,
+    failed_at_ms: u64,
+) -> io::Result<Vec<String>> {
     let mut sources = Vec::new();
+    let mut found = Vec::new();
     for entry in fs::read_dir(dir)? {
         let path = entry?.path();
         let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
             continue;
         };
-        let extension = path.extension().and_then(|extension| extension.to_str());
-        if matches!(extension, Some("log" | "jsonl")) {
+        if name == FLIGHT_RECORDER_FILE {
+            let text = String::from_utf8_lossy(&fs::read(&path)?).into_owned();
+            found.extend(recorder_lines(&text, trace, failed_at_ms * 1_000));
+        } else if path.extension().and_then(|extension| extension.to_str()) == Some("log") {
             let text = String::from_utf8_lossy(&fs::read(&path)?).into_owned();
             sources.push((name.to_owned(), text));
         }
     }
     sources.sort();
-    Ok(lines_carrying(trace, &sources))
+    if let Some(trace) = trace {
+        found.extend(lines_carrying(trace, &sources));
+    }
+    found.sort_by_key(|(time, order, index, _)| (*time, *order, *index));
+    Ok(found.into_iter().map(|(.., line)| line).collect())
+}
+
+/// The flight recorder's file in a run's artifacts.
+pub const FLIGHT_RECORDER_FILE: &str = "flight-recorder.jsonl";
+
+/// A line found for a failure's report: its time in microseconds, its
+/// file's place, its line's place in the file, and its text.
+type Found = (Option<u64>, usize, usize, String);
+
+/// The inputs of the flight-recorder dump `text` that carry `trace` or
+/// that Core received in the [`RECORDER_WINDOW_US`] up to `failed_at_us`,
+/// each replayed and rendered on one line as `cargo xtask replay` prints
+/// it (`docs/crates/verbatim-replay.md`), prefixed with the file's name,
+/// and with `(failing trace)` after it for an input carrying `trace`. An
+/// input with no time of its own takes the time of the input before it.
+/// A dump that cannot be read is one line saying why.
+fn recorder_lines(text: &str, trace: Option<TraceId>, failed_at_us: u64) -> Vec<Found> {
+    let contents = match verbatim_core::dump::read_dump(&mut text.as_bytes()) {
+        Ok(contents) => contents,
+        Err(error) => {
+            return vec![(
+                None,
+                0,
+                0,
+                format!("{FLIGHT_RECORDER_FILE}: could not be read: {error}"),
+            )];
+        }
+    };
+    let renderer = verbatim_replay::Renderer::new(&sounds_dir());
+    let trace = trace.map(|trace| trace.to_string());
+    let mut time = None;
+    let mut found = Vec::new();
+    for replayed in verbatim_replay::replay_dump(&contents) {
+        time = verbatim_replay::input_time_us(&replayed.input).or(time);
+        let carries = trace.as_ref().is_some_and(|trace| {
+            serde_json::to_string(&replayed.input).is_ok_and(|json| carries_trace(&json, trace))
+        });
+        let recent = time
+            .is_some_and(|time| time <= failed_at_us && time + RECORDER_WINDOW_US >= failed_at_us);
+        if carries || recent {
+            found.push((
+                time,
+                0,
+                replayed.line,
+                format!(
+                    "{FLIGHT_RECORDER_FILE}{}: {}",
+                    if carries { " (failing trace)" } else { "" },
+                    renderer.line(&replayed)
+                ),
+            ));
+        }
+    }
+    found
+}
+
+/// The repository's sound files, which the built-in default theme plays,
+/// so a rendered utterance names a sound as the suite hears it.
+fn sounds_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../sounds")
 }
 
 /// Every line of `sources` (each a file's name and text) carrying
-/// `trace` as a field, `trace_id=` or `trace=` in a log line and
-/// `"trace_id":` or `"trace":` in the flight recorder's JSON, with
-/// terminal colour codes removed, ordered by time: a log line's leading
-/// UTC timestamp, a flight recorder entry's `observed_at_us` or
-/// `pressed_at_ms`. A line without a time of its own (a flight recorder
-/// entry Core made in reply to an outpost, a log message's continuation)
-/// takes the time of the line before it in its file, so it stays after
-/// that line.
-fn lines_carrying(trace: TraceId, sources: &[(String, String)]) -> Vec<String> {
+/// `trace` as a field, `trace_id=` or `trace=`, with terminal colour
+/// codes removed, with its time: a log line's leading UTC timestamp. A
+/// line without a time of its own (a log message's continuation) takes the
+/// time of the line before it in its file, so it stays after that line.
+/// Each file's place is its index in `sources` plus one, after the flight
+/// recorder's.
+fn lines_carrying(trace: TraceId, sources: &[(String, String)]) -> Vec<Found> {
     let trace = trace.to_string();
-    let mut found: Vec<(Option<u64>, usize, usize, String)> = Vec::new();
+    let mut found = Vec::new();
     for (order, (name, text)) in sources.iter().enumerate() {
         let mut time = None;
         for (index, raw) in text.lines().enumerate() {
             let line = without_colours(raw);
             time = line_time_us(&line).or(time);
             if carries_trace(&line, &trace) {
-                found.push((time, order, index, format!("{name}: {line}")));
+                found.push((time, order + 1, index, format!("{name}: {line}")));
             }
         }
     }
-    found.sort_by_key(|(time, order, index, _)| (*time, *order, *index));
-    found.into_iter().map(|(.., line)| line).collect()
+    found
 }
 
 /// `line` without the escape sequences a terminal colours text with.
@@ -413,7 +488,9 @@ fn without_colours(line: &str) -> String {
     out
 }
 
-/// Whether `line` holds `trace` (its decimal form) as a trace field.
+/// Whether `line` holds `trace` (its decimal form) as a trace field:
+/// `trace_id=` or `trace=` in a log line, `"trace_id":` or `"trace":` in
+/// an input's JSON.
 fn carries_trace(line: &str, trace: &str) -> bool {
     ["trace_id=", "trace=", "\"trace_id\":", "\"trace\":"]
         .iter()
@@ -427,22 +504,9 @@ fn carries_trace(line: &str, trace: &str) -> bool {
 }
 
 /// When `line` was written, in microseconds since the Unix epoch: a log
-/// line's leading timestamp (`2026-10-09T10:42:19.268605Z`), or a flight
-/// recorder entry's `observed_at_us` or `pressed_at_ms`.
+/// line's leading timestamp (`2026-10-09T10:42:19.268605Z`).
 fn line_time_us(line: &str) -> Option<u64> {
-    if let Some(stamp) = line.split_whitespace().next()
-        && let Some(time) = parse_utc_us(stamp)
-    {
-        return Some(time);
-    }
-    // Each key with what its value is multiplied by to give microseconds.
-    [("\"observed_at_us\":", 1), ("\"pressed_at_ms\":", 1_000)]
-        .iter()
-        .find_map(|&(key, to_us)| {
-            let value = &line[line.find(key)? + key.len()..];
-            let digits = value.split(|c: char| !c.is_ascii_digit()).next()?;
-            digits.parse::<u64>().ok().map(|time| time * to_us)
-        })
+    parse_utc_us(line.split_whitespace().next()?)
 }
 
 /// `2026-10-09T10:42:19.268605Z` as microseconds since the Unix epoch.
@@ -590,46 +654,107 @@ fn parse_outpost_crash(value: &str) -> Option<OutpostCrash> {
 mod tests {
     use super::*;
 
+    /// 2026-10-09T10:00:00Z, in milliseconds since the Unix epoch.
+    const TEN_O_CLOCK_MS: u64 = 1_791_540_000_000;
+
+    /// A dump of `inputs`, each with the effect count reducing it gives,
+    /// from a new state.
+    fn dump_of(inputs: Vec<verbatim_model::Input>) -> String {
+        let mut state = verbatim_core::SrState::new();
+        let recorded: Vec<verbatim_core::RecordedInput> = inputs
+            .into_iter()
+            .map(|input| verbatim_core::RecordedInput {
+                effect_count: verbatim_core::reduce(&mut state, &input).len(),
+                input,
+            })
+            .collect();
+        let mut out = Vec::new();
+        verbatim_core::dump::write_dump(
+            &mut out,
+            "0.1.0",
+            "2026-10-09T10:00:05Z",
+            &verbatim_core::SrState::new(),
+            &recorded,
+        )
+        .expect("writes the dump");
+        String::from_utf8(out).expect("a dump is UTF-8")
+    }
+
+    fn typed(trace: TraceId, text: &str, at_ms: u64) -> verbatim_model::Input {
+        verbatim_model::Input::CharacterTyped {
+            trace_id: trace,
+            key_seq: verbatim_model::KeySeq::none_yet(),
+            text: text.to_owned(),
+            at_ms,
+        }
+    }
+
     #[test]
-    fn the_lines_carrying_a_trace_are_merged_from_every_log_in_time_order() {
+    fn a_failure_shows_its_trace_s_lines_and_the_recorder_s_last_three_seconds_in_time_order() {
         let trace = TraceId::mint();
         let other = TraceId::mint();
-        let stderr = format!(
-            "2026-10-09T10:00:00.300000Z  INFO verbatim: gesture \u{1b}[3mtrace_id\u{1b}[0m={trace}\n\
-             2026-10-09T10:00:00.400000Z  INFO verbatim: gesture trace_id={other}\n\
-             2026-10-09T10:00:00.500000Z  INFO verbatim: gesture trace_id={trace}9\n"
-        );
-        let outpost = format!(
-            "2026-10-09T10:00:00.200000Z DEBUG verbatim_outpost: a watch is open trace={trace}\n"
-        );
-        // Pressed at 10:00:00.100; the second entry, with no time of its
-        // own, takes the first's.
-        let flight = format!(
-            "{{\"input\":{{\"CaretKey\":{{\"trace_id\":{trace},\"pressed_at_ms\":1791540000100}}}}}}\n\
-             {{\"input\":{{\"Answered\":{{\"trace_id\":{trace}}}}}}}\n"
-        );
-        let sources = [
-            ("flight-recorder.jsonl".to_owned(), flight),
-            ("outpost-conhost-7.log".to_owned(), outpost),
-            ("stderr.log".to_owned(), stderr),
-        ];
+        let dir = temp_dir("failure-lines");
+        fs::create_dir_all(&dir).expect("creates the directory");
+        // The failure is at 10:00:00. Each line carrying the trace, and
+        // each input received from 09:59:57, is shown; the other trace's
+        // lines and its inputs before then, or after the failure, are not.
+        fs::write(
+            dir.join("stderr.log"),
+            format!(
+                "2026-10-09T09:59:55.500000Z  INFO verbatim: gesture \u{1b}[3mtrace_id\u{1b}[0m={trace}\n\
+                 2026-10-09T09:59:58.000000Z  INFO verbatim: gesture trace_id={other}\n\
+                 2026-10-09T09:59:58.500000Z  INFO verbatim: gesture trace_id={trace}9\n"
+            ),
+        )
+        .expect("writes");
+        fs::write(
+            dir.join("outpost-conhost-7.log"),
+            format!(
+                "2026-10-09T09:59:58.200000Z DEBUG verbatim_outpost: a watch is open trace={trace}\n"
+            ),
+        )
+        .expect("writes");
+        fs::write(
+            dir.join(FLIGHT_RECORDER_FILE),
+            dump_of(vec![
+                typed(other, "a", TEN_O_CLOCK_MS - 5_000),
+                typed(trace, "b", TEN_O_CLOCK_MS - 4_000),
+                typed(other, "c", TEN_O_CLOCK_MS - 2_000),
+                // No time of its own: it takes the input's before it.
+                verbatim_model::Input::Tick,
+                typed(other, "d", TEN_O_CLOCK_MS + 1_000),
+            ]),
+        )
+        .expect("writes");
+        fs::write(dir.join("timeline.txt"), format!("trace_id={trace}\n")).expect("writes");
+
+        let lines = failure_lines(&dir, Some(trace), TEN_O_CLOCK_MS).expect("reads the logs");
+        let typed_at = |line: usize, trace: TraceId, text: &str, at_ms: u64| {
+            format!(
+                "{line}: CharacterTyped trace {trace}, at_ms {at_ms}, key_seq 0, text \"{text}\". 0 effects"
+            )
+        };
         assert_eq!(
-            lines_carrying(trace, &sources),
-            vec![
+            lines,
+            [
                 format!(
-                    "flight-recorder.jsonl: {{\"input\":{{\"CaretKey\":{{\"trace_id\":{trace},\"pressed_at_ms\":1791540000100}}}}}}"
+                    "stderr.log: 2026-10-09T09:59:55.500000Z  INFO verbatim: gesture trace_id={trace}"
                 ),
                 format!(
-                    "flight-recorder.jsonl: {{\"input\":{{\"Answered\":{{\"trace_id\":{trace}}}}}}}"
+                    "flight-recorder.jsonl (failing trace): {}",
+                    typed_at(4, trace, "b", TEN_O_CLOCK_MS - 4_000)
                 ),
                 format!(
-                    "outpost-conhost-7.log: 2026-10-09T10:00:00.200000Z DEBUG verbatim_outpost: a watch is open trace={trace}"
+                    "flight-recorder.jsonl: {}",
+                    typed_at(5, other, "c", TEN_O_CLOCK_MS - 2_000)
                 ),
+                "flight-recorder.jsonl: 6: Tick. 0 effects".to_owned(),
                 format!(
-                    "stderr.log: 2026-10-09T10:00:00.300000Z  INFO verbatim: gesture trace_id={trace}"
+                    "outpost-conhost-7.log: 2026-10-09T09:59:58.200000Z DEBUG verbatim_outpost: a watch is open trace={trace}"
                 ),
             ]
         );
+        fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

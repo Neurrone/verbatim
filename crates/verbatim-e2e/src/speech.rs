@@ -292,37 +292,54 @@ pub struct SpeechFailure {
     /// The failing step's entries on the timeline
     /// ([`Timeline::current_step`]).
     pub step: Range<usize>,
+    /// When the assertion failed, in milliseconds since the Unix epoch:
+    /// the end of the window of the flight recorder's inputs the report
+    /// shows ([`crate::artifacts::failure_lines`]).
+    pub failed_at_ms: u64,
 }
 
 impl SpeechFailure {
     /// The failure as printed: the message; `trace_lines`, every log line
-    /// carrying the failing step's trace in time order
-    /// ([`crate::artifacts::trace_lines`]), or why they could not be read;
-    /// and `timeline` with each earlier step on one line and the failing
-    /// step in full.
+    /// carrying the failing step's trace and the flight recorder's inputs
+    /// around the failure, in time order
+    /// ([`crate::artifacts::failure_lines`]), or why they could not be
+    /// read; and `timeline` with each earlier step on one line and the
+    /// failing step in full.
     #[must_use]
     pub fn report(&self, timeline: &Timeline, trace_lines: Result<&[String], &str>) -> String {
         let mut out = format!("{}\n\n", self.message);
-        match (self.trace, trace_lines) {
-            (None, _) => out.push_str(
-                "the failing step's trace: none, since the step heard nothing that carries a trace ID\n",
-            ),
-            (Some(trace), Err(error)) => {
+        let trace = self.trace.map_or_else(
+            || {
+                "the failing step's trace: none, since the step heard nothing that carries a trace ID"
+                    .to_owned()
+            },
+            |trace| format!("the failing step's trace, {trace}"),
+        );
+        match trace_lines {
+            Err(error) => {
+                let _ = writeln!(out, "{trace}; the logs could not be read: {error}");
+            }
+            Ok([]) if self.trace.is_some() => {
                 let _ = writeln!(
                     out,
-                    "the failing step's trace, {trace}: the logs could not be read: {error}"
+                    "{trace}; no log line carries it, and Core received no input in the 3 seconds before the failure"
                 );
             }
-            (Some(trace), Ok([])) => {
+            Ok([]) => {
                 let _ = writeln!(
                     out,
-                    "the failing step's trace, {trace}: no log line carries it"
+                    "{trace}; Core received no input in the 3 seconds before the failure"
                 );
             }
-            (Some(trace), Ok(lines)) => {
+            Ok(lines) => {
                 let _ = writeln!(
                     out,
-                    "the failing step's trace, {trace}, from Verbatim's log, Core's flight recorder and the outposts' logs, in time order:"
+                    "{trace}; {}, replayed, in time order:",
+                    if self.trace.is_some() {
+                        "the lines carrying it in Verbatim's log and the outposts' logs, and the inputs in Core's flight recorder carrying it or received in the 3 seconds before the failure"
+                    } else {
+                        "the inputs in Core's flight recorder received in the 3 seconds before the failure"
+                    }
                 );
                 for line in lines {
                     let _ = writeln!(out, "{line}");
@@ -665,6 +682,7 @@ impl SpeechCollector {
             message: message.to_owned(),
             trace,
             step,
+            failed_at_ms: crate::timeline::unix_ms(),
         }))
     }
 
@@ -2741,7 +2759,7 @@ mod tests {
                  actual:   [\"stray\"]\n\
                  first difference: utterance 0, character 1: expected \"second\", got \"stray\"\n\
                  \n\
-                 the failing step's trace, {stray}, from Verbatim's log, Core's flight recorder and the outposts' logs, in time order:\n\
+                 the failing step's trace, {stray}; the lines carrying it in Verbatim's log and the outposts' logs, and the inputs in Core's flight recorder carrying it or received in the 3 seconds before the failure, replayed, in time order:\n\
                  stderr.log: 2026-10-09T10:00:00.300000Z  INFO verbatim: gesture trace_id={stray}\n\
                  \n\
                  timeline, each earlier step on one line and the failing step in full:\n\
@@ -2767,7 +2785,7 @@ mod tests {
         assert_eq!(
             trace_lines_in(&failed.report(&timeline, Ok(&[]))),
             [format!(
-                "the failing step's trace, {heard_first}: no log line carries it"
+                "the failing step's trace, {heard_first}; no log line carries it, and Core received no input in the 3 seconds before the failure"
             )]
         );
 
@@ -2783,7 +2801,7 @@ mod tests {
         assert_eq!(
             trace_lines_in(&failed.report(&timeline, Ok(&[]))),
             [
-                "the failing step's trace: none, since the step heard nothing that carries a trace ID"
+                "the failing step's trace: none, since the step heard nothing that carries a trace ID; Core received no input in the 3 seconds before the failure"
             ]
         );
     }

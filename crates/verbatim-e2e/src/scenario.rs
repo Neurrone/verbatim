@@ -62,7 +62,6 @@ use crate::{ENDPOINT_ENV, endpoint};
 /// [`crate::artifacts::scenario_dir`] names.
 const TIMELINE_FILE_NAME: &str = "timeline.txt";
 const STDERR_FILE_NAME: &str = "stderr.log";
-const FLIGHT_RECORDER_FILE_NAME: &str = "flight-recorder.jsonl";
 const FOCUS_FILE_NAME: &str = "focus.txt";
 const LATENCY_FILE_NAME: &str = "latency.csv";
 const AUDIO_FILE_NAME: &str = "verbatim-audio.wav";
@@ -2388,7 +2387,7 @@ impl Scenario {
             }
         };
         let bytes = self.agent.read_file(&path)?;
-        fs::write(dir.join(FLIGHT_RECORDER_FILE_NAME), bytes)
+        fs::write(dir.join(crate::artifacts::FLIGHT_RECORDER_FILE), bytes)
     }
 
     /// Collects the run's artifacts into `dir`, once Verbatim has exited:

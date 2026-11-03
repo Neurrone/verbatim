@@ -1987,8 +1987,10 @@ dependencies = [
  "verbatim-agent",
  "verbatim-config",
  "verbatim-control",
+ "verbatim-core",
  "verbatim-model",
  "verbatim-process",
+ "verbatim-replay",
  "workspace-hack",
 ]
 

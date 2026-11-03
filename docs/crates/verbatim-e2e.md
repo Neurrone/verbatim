@@ -212,7 +212,9 @@ played at once for an event, which reads as `sound:` and its indication
 A failed assertion unwinds with a `SpeechFailure`, without the panic
 hook, and the run reports it once the logs are collected
 (`SpeechFailure::report`): the expected and actual sequences, the failing
-step's trace (`artifacts::trace_lines`), and the timeline. The failing
+step's trace with the flight recorder's last three seconds before the
+failure (`artifacts::failure_lines`, from the `failed_at_ms` the failure
+records), and the timeline. The failing
 step's trace ID is the one the speech frame of the utterance the
 assertion failed on carries; when it failed on none, an utterance never
 queued, it is the newest heard in the step. `latency_rows` gives one row
@@ -570,8 +572,12 @@ together with the body's own panic.
 `ScenarioSummary` (with its `OutpostCrash` list, and `read` for
 `xtask vm test`), `archive_run`, which copies each run into
 `history/<scenario>/<UTC time>-<pass or fail>`, keeping the newest 100,
-without the video, and `trace_lines`, every line carrying a trace ID in a
-run's collected logs and flight recorder, in time order. `xtask vm test`
+without the video, and `failure_lines`, every line carrying a trace ID in a
+run's collected logs, with the flight recorder's inputs that carry it or
+that Core received in the `RECORDER_WINDOW_US` (3 seconds) before the
+failure, replayed and rendered with `verbatim-replay` as `cargo xtask
+replay` prints them, those of the trace marked `(failing trace)`, all in
+time order. `xtask vm test`
 calls the same functions to find and read what a scenario subprocess
 left, rather than parsing its output. The files a run keeps are listed in
 the tooling guide's "What a run leaves behind"; losing any of them fails
