@@ -83,7 +83,8 @@ first events start its outpost:
   outpost no listener forwards to (`run_attach`, or a test's,
   `Outpost::without_listener`) holds nothing. The hold costs only an
   outpost's start: a median of 20.6 ms, at most 591.3 ms over 126 starts.
-- When a ready outpost ends, the supervisor sends the listener
+- When an application's outpost generation ends, from any stage, or the
+  supervisor declines to watch it, the supervisor sends the listener
   `HookRemoved`, and the listener forwards that application's events again.
   A replacement listener gets `--hooks-in`, forwards none of those
   applications' events, and first sends each such outpost a

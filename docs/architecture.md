@@ -576,6 +576,7 @@ is gone with it. Only the focused terminal's timer counts, and a step that
 fires a timer moves its due time past the time it fired at, or the view would
 fire on every wake. A held key's deadline stays an effect, since it is
 measured from when the shell runs it and the state keeps no due time.
+Amended 2026-11-03 (Dickson: timers the state keeps are views).
 Consequences:
 
 - **Determinism.** A recorded triple of initial state, input sequence, and

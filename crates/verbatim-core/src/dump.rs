@@ -29,8 +29,9 @@ use crate::state::SrState;
 /// pending read names the start marker it was made for. Version 4: events
 /// and the state's focus times are stamped in microseconds only. Version 5:
 /// the state records Core's queries in one table, and an outpost's answer
-/// to any of them is one input.
-pub const DUMP_FORMAT_VERSION: u32 = 5;
+/// to any of them is one input. Version 6: a lock key's read waiting in the
+/// state keeps its due time, and a terminal's hold is its model's.
+pub const DUMP_FORMAT_VERSION: u32 = 6;
 
 /// The first line of a dump: format version, the crate version that wrote
 /// it, and a caller-supplied timestamp string.
