@@ -248,6 +248,18 @@ The decisions, in brief:
   - A reading thread's failed start was stepped before the other effects of its step, so an idle answer went ahead of another application's drop (found by exploration).
   - The build's upkeep: building the tests took 5.1 hours, the mutation runs 3.7 hours of machine time, and the design's surveys and reviews about 0.6 hours.
 
+### Follow-ups from the early-read audit
+
+Tests that read an asynchronous effect without evidence that it happened, found by the audit of 2026-11-03 and left open by its build:
+
+- The end-to-end idle barrier covers Verbatim, not the application (`docs/design/communication.md`, section 6.7), so a check that nothing more was spoken in the middle of a scenario can be failed by an event the application raises after the barrier's query: `editing.rs` lines 135 and 246, `password.rs` 234, `terminal_flood.rs` 134, 321 and 331, `terminal_key_timing.rs` 151, `terminal_windows.rs` 217 and `terminal_command_marks.rs` 52 in `crates/verbatim-e2e/src/scenarios`. A round trip to the foreground window's thread was built and removed (Dickson, 2026-11-03): for a terminal it reaches the console host's or Windows Terminal's thread, not the program writing, for Settings ApplicationFrameHost's, and a sent message can be answered while a key is still handled. No evidence-based wait is known.
+- `settings_search_suggestions.rs` line 74 and `settings_search_suggestions_reentered.rs` line 62 read the suggestions list once while Settings may still be filling it.
+- `crates/mockapp/tests/call_counts.rs` around lines 2712 to 2755 and 1686 to 1737 count provider calls right after a registration, a removal or a read; whether UI Automation makes calls after those return needs an experiment.
+- `crates/mockapp/tests/uia_bugs/a_hung_window_named_in_a_system_focus_event_holds_a_processs_uia_events.rs` lines 41 to 42 end on an absence with no marker event after it.
+- Elapsed-time bounds that can fail under load: `crates/verbatim-synth-host/tests/hosting.rs` line 283, `crates/mockapp/tests/time_limits.rs` lines 184 to 187 and 243 to 246, `remote_ops.rs` line 1450 and `terminal_reading.rs` line 1074; and the speech supervisor's `arrival_order` `finish()` relies on every hold lasting under 9 seconds.
+- `Recorder::pauses(n)` in `crates/verbatim-speech/tests` waits for at least n and then compares, as `endings(n)` did; the listener's disconnect test (`crates/verbatim-listener/src/focus_read.rs`, around line 2934) polls with `yield_now`; `a_menu_end_no_focus_follows_reaches_core_after_the_grace` (`crates/verbatim-listener/src/listener.rs`) times the real grace timer, which the injected clock could make exact.
+- The agent's `MisspeltWords` request and `AgentClient::misspelt_words` have had no caller since the Notepad spelling scenarios stopped reading marks.
+
 ### The simulation of the reducers, deferred
 
 Built only if the second measure above is met. A simulation joining the reducers through pretend pipes, with their concurrency, as Dropbox's Trinity did beside its CanopyCheck tests of single pure owners. It needs two prerequisites: the transport's merge, priority and overflow rules as pure code it can call, since the real pipes merge by key, put urgent messages first and drop the oldest past 64 (`docs/design/communication.md`, section 4.4), and a recorder of the worker's commits. It is hand-written, since the simulation frameworks assume async code, and it has a fault model for application answers (slow, failing, reordered, the application exiting), counters for the states reached, a separate random stream per component, and the end-to-end suite kept, since that catches what no simulation models.
