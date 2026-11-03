@@ -1390,9 +1390,8 @@ fn a_watch_with_a_held_key_behind_it_reads_that_keys_caret() {
 /// In a console Core reads, the held keys' watch answered with a review
 /// command behind it: the command runs, and its read of the caret's line
 /// is answered from the console's memory after a fresh read, so only the
-/// fresh read is sent. The review waits under the watch answer's trace,
-/// and its query has none, since the reducer gives the transition's
-/// requests the input's trace.
+/// fresh read is sent, for the command: the review and both of its
+/// queries carry the command's trace, not the watch answer's.
 #[test]
 fn a_watch_with_a_command_behind_it_in_a_console_runs_the_command_from_memory() {
     let mut state = console();
@@ -1431,11 +1430,14 @@ fn a_watch_with_a_command_behind_it_in_a_console_runs_the_command_from_memory() 
     assert_eq!(
         effects,
         [
-            Effect::Text(TextRequest {
-                query_id: QueryId(5),
-                node_id: console,
-                op: TextOp::TerminalReadNow(TerminalScope::Fresh),
-            }),
+            Effect::ForKey(
+                TraceId::from_raw(61),
+                Box::new(Effect::Text(TextRequest {
+                    query_id: QueryId(5),
+                    node_id: console,
+                    op: TextOp::TerminalReadNow(TerminalScope::Fresh),
+                })),
+            ),
             Effect::BoundHeldKey(None),
         ]
     );
@@ -1449,7 +1451,7 @@ fn a_watch_with_a_command_behind_it_in_a_console_runs_the_command_from_memory() 
         QueryId(4),
         queries::Open {
             outpost: CONSOLE_OUTPOST,
-            trace_id: None,
+            trace_id: Some(TraceId::from_raw(61)),
             asked: queries::Asked::Memory,
             then: Then::Text(PendingText {
                 node: console,
@@ -1464,7 +1466,7 @@ fn a_watch_with_a_command_behind_it_in_a_console_runs_the_command_from_memory() 
         QueryId(5),
         queries::Open {
             outpost: CONSOLE_OUTPOST,
-            trace_id: Some(TraceId::from_raw(70)),
+            trace_id: Some(TraceId::from_raw(61)),
             asked: queries::Asked::Read,
             then: Then::TerminalModel {
                 node: console,
@@ -1477,7 +1479,7 @@ fn a_watch_with_a_command_behind_it_in_a_console_runs_the_command_from_memory() 
     expected.held_keys.waiting.clear();
     expected.held_keys.awaiting_watch = None;
     expected.held_keys.bounded = None;
-    expected.terminals[0].wait_for_text(Some(TraceId::from_raw(70)), QueryId(4), line);
+    expected.terminals[0].wait_for_text(Some(TraceId::from_raw(61)), QueryId(4), line);
     // The watch's own answer, the caret the read before the key found,
     // joins the caret history again.
     let newest = expected.caret_history.len() - 1;

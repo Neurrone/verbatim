@@ -1096,6 +1096,15 @@ pub(crate) fn input_trace(input: &Input) -> Option<TraceId> {
 
 /// The request `effect` makes of a terminal Core models that Core answers
 /// from its memory.
+/// The trace of the key `effect` was made for ([`Effect::ForKey`]), if it
+/// was made for one.
+fn key_trace(effect: &Effect) -> Option<TraceId> {
+    match effect {
+        Effect::ForKey(key, _) => Some(*key),
+        _ => None,
+    }
+}
+
 fn answerable(state: &SrState, effect: &Effect) -> Option<(QueryId, NodeId, TextOp)> {
     match effect {
         Effect::Text(TextRequest {
@@ -1128,15 +1137,23 @@ pub(crate) fn intercept(
             kept.push(effect);
             continue;
         };
-        state.queries.answer_from_memory_later(query_id);
-        kept.extend(queue(
+        // A key's request keeps the key's trace: its review waits under it,
+        // and the fresh read it asks for is sent for the key.
+        let key = key_trace(&effect);
+        let trace = key.or(trace);
+        state.queries.answer_from_memory_later(query_id, trace);
+        let asked = queue(
             state,
             node,
             Waiting {
                 trace,
                 review: Review::Text { query_id, op },
             },
-        ));
+        );
+        kept.extend(asked.into_iter().map(|asked| match key {
+            Some(key) => Effect::ForKey(key, Box::new(asked)),
+            None => asked,
+        }));
     }
     kept
 }
@@ -1359,7 +1376,10 @@ fn queue_only(state: &mut SrState, effects: Vec<Effect>, trace: TraceId) -> Vec<
     for effect in effects {
         match answerable(state, &effect) {
             Some((query_id, node, op)) => {
-                state.queries.answer_from_memory_later(query_id);
+                let trace = key_trace(&effect).unwrap_or(trace);
+                state
+                    .queries
+                    .answer_from_memory_later(query_id, Some(trace));
                 if let Some(model) = model_mut(state, node) {
                     model.reviews.push_back(Waiting {
                         trace: Some(trace),

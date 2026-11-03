@@ -201,10 +201,12 @@ impl Queries {
 
     /// Core takes query `query_id`'s request out of the effects and
     /// answers it from a terminal's memory: it is not sent, and not waited
-    /// for.
-    pub(crate) fn answer_from_memory_later(&mut self, query_id: QueryId) {
+    /// for. It keeps `trace`, the trace its request would have been sent
+    /// under, since no effect is left to give it one.
+    pub(crate) fn answer_from_memory_later(&mut self, query_id: QueryId, trace: Option<TraceId>) {
         if let Some(open) = self.open.get_mut(&query_id) {
             open.asked = Asked::Memory;
+            open.trace_id = trace;
         }
     }
 
