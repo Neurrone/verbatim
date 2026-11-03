@@ -11,7 +11,8 @@
 //!
 //! The model is lists and sets: per application, the markers waiting in
 //! push order with their kind and key, its read under way, the thread it
-//! runs and its abandoned threads, and the requests given; globally, each
+//! runs, whether a thread is in charge, its abandoned threads, whether its
+//! outpost ended, and the requests given; globally, each
 //! marker's place and outcomes, the idle waiters and the alarm as the
 //! schedule last set it. It predicts no replacement, drop, place or alarm
 //! time: it follows the outcomes the schedule emits and checks each was
@@ -1424,6 +1425,11 @@ impl Run {
                     .as_ref()
                     .map(|read| (read.request, read.marker, read.published)),
                 "{pid}'s read: {trail:?}"
+            );
+            assert_eq!(
+                (real.threaded, real.ending, real.abandoned),
+                (app.threaded, app.ending, app.strays.len()),
+                "{pid}'s thread in charge, ending and abandoned threads: {trail:?}"
             );
             for stray in &app.strays {
                 assert!(

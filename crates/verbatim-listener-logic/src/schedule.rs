@@ -1373,6 +1373,30 @@ mod tests {
             .unwrap_or_else(|| panic!("no job of {marker}: {effects:?}"))
     }
 
+    /// A job of `pid`'s event `marker`, queued at `place` after its
+    /// application was last moved away from at `left_at`.
+    fn job(pid: u32, marker: u64, place: u64, left_at: u64) -> Seen {
+        Seen::Job(pid, marker, QueuePlace { place, left_at })
+    }
+
+    /// The effects of `input` at `now`, and whether each job among them
+    /// is after another application's focus, in order.
+    fn step_jobs(
+        schedule: &mut Schedule<u64>,
+        input: ScheduleInput<u64>,
+        now: u64,
+    ) -> (Vec<Seen>, Vec<bool>) {
+        let effects = schedule.step(input, now);
+        let after_elsewhere = effects
+            .iter()
+            .filter_map(|effect| match effect {
+                ScheduleEffect::Job(job) => Some(job.after_elsewhere),
+                _ => None,
+            })
+            .collect();
+        (seen(effects), after_elsewhere)
+    }
+
     /// Takes application 1's two reads past their deadlines, abandoning
     /// both threads so the application is at the abandoned limit, its
     /// third event waiting with no thread.
@@ -2023,31 +2047,108 @@ mod tests {
     #[test]
     fn a_job_is_after_elsewhere_only_after_another_applications_focus() {
         let mut schedule = schedule();
-        let after_elsewhere = |schedule: &mut Schedule<u64>, pid: u32, generation: u64| {
-            schedule
-                .step(next(pid, generation), 0)
-                .into_iter()
-                .find_map(|effect| match effect {
-                    ScheduleEffect::Job(job) => Some(job.after_elsewhere),
-                    _ => None,
-                })
-                .expect("a job")
-        };
-        let _ = step(&mut schedule, focus(1, 1), 0);
-        assert!(after_elsewhere(&mut schedule, 1, 1), "the first focus");
-        let _ = step(&mut schedule, returned(1, request(1, 1), 1), 0);
-        let _ = step(&mut schedule, focus(1, 2), 0);
-        assert!(
-            !after_elsewhere(&mut schedule, 1, 1),
+        assert_eq!(
+            step(&mut schedule, focus(1, 1), 0),
+            [Seen::Spawn(1, 1, false)]
+        );
+        assert_eq!(
+            step_jobs(&mut schedule, next(1, 1), 0),
+            (vec![job(1, 1, 1, 0), set(GRACE)], vec![true]),
+            "the first focus"
+        );
+        assert_eq!(
+            step(&mut schedule, returned(1, request(1, 1), 1), 0),
+            [Seen::Outcome(1, 1, "read"), CANCEL]
+        );
+        assert_eq!(
+            step(&mut schedule, focus(1, 2), 0),
+            [Seen::Wake(Waking::Thread(Pid(1)))]
+        );
+        assert_eq!(
+            step_jobs(&mut schedule, next(1, 1), 0),
+            (vec![job(1, 2, 2, 0), set(GRACE)], vec![false]),
             "a focus of the same application"
         );
         assert_eq!(
             step(&mut schedule, focus(2, 3), 0),
             [Seen::Spawn(2, 1, false)]
         );
-        assert!(
-            after_elsewhere(&mut schedule, 2, 1),
+        assert_eq!(
+            step_jobs(&mut schedule, next(2, 1), 0),
+            (vec![job(2, 3, 3, 0)], vec![true]),
             "another application's focus"
+        );
+    }
+
+    /// A menu opening counts as a focus for whether a job is after
+    /// another application's, both its own job and the jobs after it, and
+    /// a selection or a notification counts as neither.
+    #[test]
+    fn a_menu_opening_counts_for_after_elsewhere_and_a_selection_or_notification_does_not() {
+        let mut schedule = schedule();
+        let _ = step(&mut schedule, focus(1, 1), 0);
+        let _ = step(&mut schedule, next(1, 1), 0);
+        let _ = step(&mut schedule, returned(1, request(1, 1), 1), 0);
+        assert_eq!(
+            step(&mut schedule, push(2, 2, FocusEvent::Selection), 0),
+            [Seen::Spawn(2, 1, false)]
+        );
+        assert_eq!(
+            step_jobs(&mut schedule, next(2, 1), 0),
+            (vec![job(2, 2, 2, 0), set(GRACE)], vec![false]),
+            "a selection after another application's focus"
+        );
+        assert_eq!(
+            step(&mut schedule, returned(2, request(1, 1), 2), 0),
+            [Seen::Outcome(2, 2, "read"), CANCEL]
+        );
+        assert_eq!(
+            step(&mut schedule, push(2, 3, FocusEvent::Notification), 0),
+            [Seen::Wake(Waking::Thread(Pid(2)))]
+        );
+        assert_eq!(
+            step_jobs(&mut schedule, next(2, 1), 0),
+            (vec![job(2, 3, 3, 0), set(GRACE)], vec![false]),
+            "a notification after another application's focus"
+        );
+        assert_eq!(
+            step(&mut schedule, returned(2, request(1, 2), 3), 0),
+            [Seen::Outcome(2, 3, "read"), CANCEL]
+        );
+        assert_eq!(
+            step(&mut schedule, focus(1, 4), 0),
+            [Seen::Wake(Waking::Thread(Pid(1)))]
+        );
+        assert_eq!(
+            step_jobs(&mut schedule, next(1, 1), 0),
+            (vec![job(1, 4, 4, 0), set(GRACE)], vec![false]),
+            "a focus after its own application's, a selection and a notification between"
+        );
+        assert_eq!(
+            step(&mut schedule, returned(1, request(1, 2), 4), 0),
+            [Seen::Outcome(1, 4, "read"), CANCEL]
+        );
+        assert_eq!(
+            step(&mut schedule, push(2, 5, FocusEvent::MenuOpened), 0),
+            [Seen::Wake(Waking::Thread(Pid(2)))]
+        );
+        assert_eq!(
+            step_jobs(&mut schedule, next(2, 1), 0),
+            (vec![job(2, 5, 5, 4), set(GRACE)], vec![true]),
+            "a menu opening after another application's focus"
+        );
+        assert_eq!(
+            step(&mut schedule, returned(2, request(1, 3), 5), 0),
+            [Seen::Outcome(2, 5, "read"), CANCEL]
+        );
+        assert_eq!(
+            step(&mut schedule, focus(1, 6), 0),
+            [Seen::Wake(Waking::Thread(Pid(1)))]
+        );
+        assert_eq!(
+            step_jobs(&mut schedule, next(1, 1), 0),
+            (vec![job(1, 6, 6, 5), set(GRACE)], vec![true]),
+            "a focus after another application's menu opening"
         );
     }
 
@@ -2063,6 +2164,24 @@ mod tests {
         let _ = step(&mut schedule, focus(1, 2), 0);
         let _ = step(&mut schedule, next(1, 1), 0);
         assert!(schedule.focus_pending(None), "a focus read");
+    }
+
+    /// A focus waiting behind a menu opening's read, in an application
+    /// with a thread, is pending for every application's menu openings.
+    #[test]
+    fn a_focus_queued_with_a_thread_is_pending_for_every_application() {
+        let mut schedule = schedule();
+        assert_eq!(
+            step(&mut schedule, push(1, 1, FocusEvent::MenuOpened), 0),
+            [Seen::Spawn(1, 1, false)]
+        );
+        let _ = step(&mut schedule, next(1, 1), 0);
+        assert_eq!(
+            step(&mut schedule, focus(1, 2), 0),
+            [Seen::Wake(Waking::Thread(Pid(1)))]
+        );
+        assert!(schedule.focus_pending(None));
+        assert!(schedule.focus_pending(Some(Pid(2))));
     }
 
     /// Only a read focus gives its application its last top-level window:
@@ -2119,11 +2238,15 @@ mod tests {
     fn a_foreground_event_judges_each_read_by_its_own_window() {
         let other = Window::new(0x20).expect("not 0");
         let mut schedule = schedule();
-        // Application 1's focus, queued last, moves away from 2 at place 2.
+        // Application 1's focus moves away from 2 at place 2; its
+        // selection, queued last at place 3, moves away from nothing, so
+        // only the foreground event moves away from 2 at place 3.
         let _ = step(&mut schedule, focus(2, 1), 0);
         let _ = step(&mut schedule, next(2, 1), 0);
         let _ = step(&mut schedule, focus(1, 2), 0);
         let _ = step(&mut schedule, next(1, 1), 0);
+        let _ = step(&mut schedule, push(1, 3, FocusEvent::Selection), 0);
+        assert_eq!(schedule.apps[&Pid(2)].left_at, 2);
         let _ = schedule.step(
             ScheduleInput::Foreground {
                 top_level: Some(WINDOW),
@@ -2136,7 +2259,7 @@ mod tests {
                 schedule.apps[&Pid(1)].left_at,
                 schedule.apps[&Pid(2)].left_at,
             ),
-            (0, 2),
+            (0, 3),
             "the first stays in its window, the second is moved away from"
         );
     }

@@ -97,7 +97,8 @@ was there to publish, and whether a new thread fails to start. They are
 given as the listener's shell gives them: effects in order, then each
 failed start, then each ask's answer, each a step of its own. The model
 is lists and sets: each application's waiting markers, read under way,
-thread and generation, abandoned threads and requests given, and
+thread and generation, whether a thread is in charge, abandoned
+threads, whether its outpost ended and requests given, and
 globally each marker's place and outcomes, the idle waiters, stopping
 and the alarm as last set; it predicts no place, moving away, wait's
 bound or alarm time, and takes the work in flight's decisions as given.
@@ -111,8 +112,9 @@ a deadline abandonment at or past its deadline and a moved-on one after
 an answer of true; one forget-last per abandoned thread's return; an
 alarm set only when it changes; and after the stop no spawn, job, ask or
 alarm and every push dropped), and after every action compares the
-schedule's open markers, queues, reads under way, applications held and
-stopping with the model's lists, checks that no abandoned thread is in
+schedule's open markers, queues, reads under way, applications held,
+each application's thread in charge, abandoned threads and ending, and
+stopping with the model's, checks that no abandoned thread is in
 charge, that each idle waiter ran in the step its last event got its
 outcome, that no read survives a tick past its deadline, and that the
 alarm is never later than a read's next wake and is later than each

@@ -986,6 +986,48 @@ fn each_kind_of_entry_is_given_its_own_deadline() {
     );
 }
 
+/// The work a followed focus owes is dispatched under the handling
+/// deadline, and a release's drop under the walk's, each from its
+/// dispatch.
+#[test]
+fn owed_work_and_a_drop_are_dispatched_under_their_kinds_deadlines() {
+    let mut replay = Replay::new();
+    let effects = replay.push(msaa_focus(1, 1), Source::Hook, 1);
+    let request = program(&effects).request;
+    replay.commit(request, focus_change(1, true), 2);
+    let effects = replay.finish(request, true, 3);
+    let owed = program(&effects);
+    assert!(matches!(owed.work, Work::Owed(_)));
+    let owed = owed.request;
+    assert_eq!(replay.reducer.flight.deadline(), Some(3_000 + 10_000_000));
+    assert!(programs(&replay.finish(owed, false, 4)).is_empty());
+    let effects = replay.push(
+        Item::NodesHeld {
+            nodes: vec![],
+            anchors: vec![],
+            acknowledged: 0,
+        },
+        Source::Other,
+        5,
+    );
+    assert!(
+        effects
+            .iter()
+            .any(|effect| matches!(effect, Effect::Release { .. })),
+        "the release asked for"
+    );
+    let effects = replay.input(
+        Input::Released {
+            nodes: BTreeSet::new(),
+            anchors: BTreeSet::new(),
+            objects: true,
+        },
+        6,
+    );
+    assert!(matches!(program(&effects).work, Work::Drop));
+    assert_eq!(replay.reducer.flight.deadline(), Some(6_000 + 5_000_000));
+}
+
 /// The deadline of the program dispatched at 1 ms, at which the tests
 /// below abandon it.
 const DEADLINE: Reason = Reason::Deadline;
