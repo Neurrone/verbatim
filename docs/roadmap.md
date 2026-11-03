@@ -16,8 +16,7 @@ M4.1". M4.5 (logic foundations) and M4.6 (generated tests) are complete. The pro
 layout was weighed again and kept: an outpost process per application
 and a separate focus listener (D9, D13; Dickson, 2026-11-02). The focus
 pipeline rework's second build is built (2026-11-02). Next: the owner
-endings build ([owner endings](design/owner-endings.md), Dickson,
-2026-11-03), then the rework's third build.
+endings build (Dickson, 2026-11-03), then the rework's third build.
 
 ## M4 — Text, editing, and terminals
 

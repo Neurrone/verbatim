@@ -74,10 +74,6 @@ suite, the VM harness, NVDA captures and troubleshooting.
     (the crates by role, determinism, the work in flight, Core's query
     table, the hook's hold decision, failure paths and the cost rule), and
     generated tests of the reducers against reference models (M4.6).
-  - [owner-endings.md](design/owner-endings.md) — state about an owner
-    kept in that owner's record so its ending drops it, the defects of
-    state outliving its owner, and the patterns from other software
-    weighed.
   - [communication.md](design/communication.md) — every pipe and thread
     from an event or a key to sound.
   - [focus-pipeline.md](design/focus-pipeline.md) — how focus events
