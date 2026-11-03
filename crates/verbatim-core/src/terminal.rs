@@ -69,11 +69,13 @@ pub(crate) use items::{Skipped, TerminalItem, TerminalKeyKind, TerminalUnit};
 /// between lines and the backlog stays here, where it can be trimmed.
 const AHEAD: usize = 2;
 
-/// The focused terminal's output still to be spoken.
+/// The focus's terminal output still to be spoken: the focus's, so it is
+/// forgotten when the focus moves, and spoken when the terminal's outpost
+/// ends, as what was read is. Whether the outpost holds is its model's
+/// ([`crate::terminal_model::TerminalModel::held`]), and requests go to the
+/// focused terminal's model, so none goes to an ended outpost.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct TerminalSpeechState {
-    /// The terminal this is about.
-    pub(crate) node: Option<NodeId>,
     /// Output not yet handed to speech, oldest first: what is left of the
     /// group being spoken, and after it at most as many lines as either
     /// limit keeps, older ones counted as skipped ([`bound`]).
@@ -94,9 +96,6 @@ pub(crate) struct TerminalSpeechState {
     /// The trace of the newest output, which output handed to speech when
     /// a mark is reached is spoken under.
     pub(crate) trace: Option<TraceId>,
-    /// Whether the outpost was told to hold ([`TextOp::TerminalHold`]).
-    #[serde(default)]
-    pub(crate) held: bool,
     /// The group's last line is playing, and the backlog is looked at once
     /// the request is answered.
     #[serde(default)]
@@ -288,13 +287,11 @@ pub(crate) fn speech(
     if !state.focus_matches(node) {
         return Vec::new();
     }
-    focus_moved(state, node, false);
-    state.terminal.node = Some(node);
     // Read before speech was last cut off, or before the outpost took the
     // cancel: the output pending then is dropped, as NVDA drops it.
     let before_cut = asked(state, TerminalAsk::Cancel)
         || (observed_at_ms != 0 && observed_at_ms < state.terminal.cut_at_ms);
-    take(state, trace_id, speech, before_cut)
+    take(state, trace_id, Some(node), speech, before_cut)
 }
 
 /// The segments of a key's answer.
@@ -318,10 +315,16 @@ fn answer_segments(item: &TerminalItem) -> Option<Vec<UtteranceSegment>> {
     })
 }
 
-/// Takes in what the focused terminal said: speaks the answers to keys,
-/// then, unless the output is `before_cut` (read before a cut), queues it
-/// by the flood policy and hands the oldest to speech.
-fn take(state: &mut SrState, trace_id: TraceId, speech: Said, before_cut: bool) -> Vec<Effect> {
+/// Takes in what the focused terminal, `node`, said: speaks the answers to
+/// keys, then, unless the output is `before_cut` (read before a cut),
+/// queues it by the flood policy and hands the oldest to speech.
+fn take(
+    state: &mut SrState,
+    trace_id: TraceId,
+    node: Option<NodeId>,
+    speech: Said,
+    before_cut: bool,
+) -> Vec<Effect> {
     let mut effects = Vec::new();
     for item in &speech.items {
         let SaidItem::Item(item) = item else {
@@ -341,7 +344,7 @@ fn take(state: &mut SrState, trace_id: TraceId, speech: Said, before_cut: bool) 
     }
     if speech.followed
         && let Some(navigator) = state.navigator.as_mut()
-        && Some(navigator.object.id) == state.terminal.node
+        && Some(navigator.object.id) == node
     {
         // The review cursor followed the caret: the next review command
         // reads at the caret as the outpost finds it.
@@ -380,9 +383,9 @@ fn waiting_lines(waiting: &VecDeque<Waiting>) -> usize {
 }
 
 /// A text request about the focused terminal, whose answer continues
-/// `then`.
+/// `then`: none once Core no longer models it, as when its outpost ended.
 fn request(state: &mut SrState, op: TextOp, then: Then) -> Option<Effect> {
-    let node = state.terminal.node?;
+    let node = crate::terminal_model::focused(state)?;
     Some(
         state
             .queries
@@ -404,7 +407,7 @@ fn asked(state: &SrState, ask: TerminalAsk) -> bool {
 /// Tells the outpost to hold once as many lines wait, or wait in speech to
 /// start playing, as a group speaks.
 fn hold_if_full(state: &mut SrState) -> Vec<Effect> {
-    if state.terminal.held
+    if crate::terminal_model::holds(state)
         || asked(state, TerminalAsk::Cancel)
         || waiting_lines(&state.terminal.waiting)
             + state
@@ -420,7 +423,7 @@ fn hold_if_full(state: &mut SrState) -> Vec<Effect> {
     let Some(effect) = request(state, TextOp::TerminalHold, Then::Nothing) else {
         return Vec::new();
     };
-    state.terminal.held = true;
+    crate::terminal_model::set_held(state, true);
     vec![effect]
 }
 
@@ -437,7 +440,7 @@ fn ask(state: &mut SrState, hold: bool) -> Vec<Effect> {
     ) else {
         return Vec::new();
     };
-    state.terminal.held = hold;
+    crate::terminal_model::set_held(state, hold);
     vec![effect]
 }
 
@@ -471,10 +474,11 @@ pub(crate) fn answered(
     key: Option<TraceId>,
 ) -> Vec<Effect> {
     let trace_id = key.unwrap_or(trace_id);
+    let node = terminal_focus(state);
     let spoken = match ask {
-        TerminalAsk::Cancel | TerminalAsk::Overtaken => take(state, trace_id, output, true),
+        TerminalAsk::Cancel | TerminalAsk::Overtaken => take(state, trace_id, node, output, true),
         TerminalAsk::Read => {
-            let mut spoken = take(state, trace_id, output, false);
+            let mut spoken = take(state, trace_id, node, output, false);
             if std::mem::take(&mut state.terminal.deciding) {
                 spoken.extend(decide_and_pump(state));
             }
@@ -962,11 +966,15 @@ fn output_utterance(
             .as_ref()
             .map(|focus| crate::reduce::source_of(&focus.snapshot)),
         say_all: false,
-        validity: state.terminal.node.map(|node| FocusValidity {
-            node,
-            had_focus: true,
-            window: focus_window(state, node),
-        }),
+        validity: state
+            .focus
+            .as_ref()
+            .map(|focus| focus.snapshot.id)
+            .map(|node| FocusValidity {
+                node,
+                had_focus: true,
+                window: focus_window(state, node),
+            }),
     }
 }
 
@@ -988,7 +996,7 @@ fn pump(state: &mut SrState, trace_id: TraceId) -> Vec<Effect> {
             && let Some(left) = state.terminal.group.as_mut()
         {
             *left = left.saturating_sub(1);
-            if *left == 0 && state.terminal.held {
+            if *left == 0 && crate::terminal_model::holds(state) {
                 effects.extend(ask(state, true));
             }
         }
@@ -1121,7 +1129,7 @@ fn decide_and_pump(state: &mut SrState) -> Vec<Effect> {
     };
     decide(state);
     let mut effects = pump(state, trace_id);
-    if state.terminal.waiting.is_empty() && state.terminal.held {
+    if state.terminal.waiting.is_empty() && crate::terminal_model::holds(state) {
         effects.extend(ask(state, false));
     }
     effects
@@ -1146,7 +1154,9 @@ pub(crate) fn cut(state: &mut SrState, at_ms: u64) -> Vec<Effect> {
 /// still unanswered is overtaken: its answer still comes, ahead of the
 /// cancel's, and may hold typing the terminal showed after the cut.
 fn cancel(state: &mut SrState) -> Vec<Effect> {
-    if (!state.terminal.held && !asked(state, TerminalAsk::Read)) || state.terminal.node.is_none() {
+    if (!crate::terminal_model::holds(state) && !asked(state, TerminalAsk::Read))
+        || crate::terminal_model::focused(state).is_none()
+    {
         return Vec::new();
     }
     // The older cancel and the request it overtook are answered with
@@ -1172,7 +1182,7 @@ fn cancel(state: &mut SrState) -> Vec<Effect> {
     ) else {
         return Vec::new();
     };
-    state.terminal.held = false;
+    crate::terminal_model::set_held(state, false);
     vec![effect]
 }
 
@@ -1190,14 +1200,16 @@ pub(crate) fn utterance_cancelled(
     if waits { cut(state, at_ms) } else { Vec::new() }
 }
 
-/// The focus moved to `node`: another node's output, or its own when the
-/// focus was `left` for another window and is taken again, is forgotten, and the
-/// answers to the requests Core made of it are taken by nothing.
+/// The focus moves to `node` from the focus `state` still holds: another
+/// node's output, or its own when the focus was `left` for another window
+/// and is taken again, is forgotten, and the answers to the requests Core
+/// made of it are taken by nothing.
 pub(crate) fn focus_moved(state: &mut SrState, node: NodeId, left: bool) {
-    if state
-        .terminal
-        .node
-        .is_some_and(|terminal| left || terminal != node)
+    if left
+        || state
+            .focus
+            .as_ref()
+            .is_none_or(|focus| focus.snapshot.id != node)
     {
         state.terminal = TerminalSpeechState::default();
         state

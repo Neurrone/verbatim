@@ -216,6 +216,12 @@ pub(crate) struct TerminalModel {
     told: Option<(u32, u32)>,
     /// When the rules' quiet-period timer is due.
     due_ms: Option<u64>,
+    /// Whether the outpost was told to hold this terminal's reading for
+    /// Core's flood policy ([`TextOp::TerminalHold`]): it holds only while
+    /// the terminal has the focus, and goes with the model, so an ended
+    /// outpost's hold goes with it.
+    #[serde(default)]
+    pub(crate) held: bool,
 }
 
 /// Core's models of the terminals it reads, the most recently read last,
@@ -317,6 +323,7 @@ impl TerminalModel {
             width: 0,
             told: None,
             due_ms: None,
+            held: false,
         }
     }
 
@@ -472,9 +479,27 @@ fn model_or_new(state: &mut SrState, node: NodeId) -> &mut TerminalModel {
     &mut state.terminals[last]
 }
 
-/// The focused terminal, when Core models it.
-fn focused(state: &SrState) -> Option<NodeId> {
+/// The focused terminal, when Core models it: the one the flood policy
+/// asks, and whose quiet-period timer counts.
+pub(crate) fn focused(state: &SrState) -> Option<NodeId> {
     crate::terminal::terminal_focus(state).filter(|node| model_of(state, *node).is_some())
+}
+
+/// Whether the outpost holds the focused terminal's reading for the flood
+/// policy ([`TerminalModel::held`]).
+pub(crate) fn holds(state: &SrState) -> bool {
+    focused(state)
+        .and_then(|node| model_of(state, node))
+        .is_some_and(|model| model.held)
+}
+
+/// Notes whether the outpost holds the focused terminal's reading.
+pub(crate) fn set_held(state: &mut SrState, held: bool) {
+    if let Some(node) = focused(state)
+        && let Some(model) = model_mut(state, node)
+    {
+        model.held = held;
+    }
 }
 
 /// A text request about terminal `node` whose answer nothing waits for.
@@ -913,7 +938,7 @@ pub(crate) fn answered_read(
     state: &mut SrState,
     reply: &TextReply,
 ) -> Option<(Said, Option<TraceId>, Vec<Effect>)> {
-    let node = state.terminal.node?;
+    let node = crate::terminal::terminal_focus(state)?;
     // While a read the rules asked for is owed, a read begun before it
     // says nothing: the owed read holds everything it showed.
     if owed(state, node) {
@@ -1439,6 +1464,7 @@ pub(crate) fn focus_moved(
         model.due_ms = step.timer;
         model.pending.clear();
         model.last_key = None;
+        model.held = false;
         if had {
             effects.push(Effect::TerminalTimer { due_ms: None });
         }

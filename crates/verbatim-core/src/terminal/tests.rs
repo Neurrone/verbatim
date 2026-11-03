@@ -56,10 +56,23 @@ fn event(event: NormalizedEvent) -> Input {
     }
 }
 
-/// A state whose focus is a terminal.
-fn terminal() -> SrState {
+/// A state whose focus is a terminal Core does not model yet, for what the
+/// reducer does beside the flood policy with no request of the model's own
+/// (a key's colours, a review answered from its memory).
+fn unmodelled() -> SrState {
     let mut state = SrState::new();
     let _ = reduce(&mut state, &terminal_focus(None));
+    state
+}
+
+/// A state whose focus is a terminal Core models, as after its first
+/// read.
+fn terminal() -> SrState {
+    let mut state = unmodelled();
+    state.terminals.add(
+        id(TERMINAL),
+        verbatim_text::terminal_reading::Settings::default(),
+    );
     state
 }
 
@@ -1200,7 +1213,7 @@ fn the_answers_to_keys_are_spoken_at_once_ahead_of_output() {
 
 #[test]
 fn typing_the_terminal_showed_is_echoed_by_the_typing_echo_settings() {
-    let mut state = terminal();
+    let mut state = unmodelled();
     let echo = TerminalSpeech {
         items: vec![TerminalItem::Echo("ls".to_owned())],
         followed: false,
@@ -1224,7 +1237,7 @@ fn typing_the_terminal_showed_is_echoed_by_the_typing_echo_settings() {
 
 #[test]
 fn the_review_cursor_reads_at_the_caret_once_it_followed_it() {
-    let mut state = terminal();
+    let mut state = unmodelled();
     let review = |state: &mut SrState| {
         reduce(
             state,
@@ -1360,4 +1373,39 @@ fn keys_are_told_to_the_reading_rules_by_their_unit() {
     assert_eq!(typed_kind("\r"), TerminalKeyKind::Enter);
     assert_eq!(typed_kind("\t"), TerminalKeyKind::Forget);
     assert_eq!(typed_kind("\u{1}"), TerminalKeyKind::Other);
+}
+
+/// When the terminal's outpost ends with output waiting, what Core read is
+/// still spoken, as NVDA speaks the lines its monitor read, but nothing is
+/// asked of the ended outpost: its hold goes with the terminal's model, and
+/// once everything is heard nothing of the terminal is left.
+#[test]
+fn output_read_before_the_outpost_ended_is_spoken_and_nothing_is_asked_of_it() {
+    let mut state = terminal();
+    let mut playback = Playback::default();
+    playback.feed(&mut state, &output(lines(1..=40)));
+    assert_eq!(playback.requests, [TextOp::TerminalHold]);
+    for _ in 0..10 {
+        assert!(playback.play_one(&mut state));
+    }
+    playback.requests.clear();
+    playback.feed(
+        &mut state,
+        &Input::OutpostEnded {
+            trace_id: TraceId::from_raw(6),
+            outpost: OUTPOST,
+        },
+    );
+    let mut heard = std::mem::take(&mut playback.heard);
+    heard.extend(playback.play_all(&mut state));
+    assert_eq!(heard, lines(1..=40));
+    assert_eq!(playback.requests, []);
+    assert!(state.terminals.is_empty());
+    assert_eq!(
+        state.terminal,
+        super::TerminalSpeechState {
+            trace: Some(TraceId::from_raw(2)),
+            ..super::TerminalSpeechState::default()
+        }
+    );
 }

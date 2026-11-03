@@ -907,7 +907,12 @@ a pipe.
   speech, it asks for what is new (`TextOp::TerminalRead`), and the
   backlog is decided once both have happened
   (`TerminalSpeechState::deciding`). With nothing waiting, reading goes
-  live again. A cut while held or with a request out sends
+  live again. Whether the outpost holds is the focused terminal's model's
+  (`TerminalModel::held`), and every request goes to the focused terminal
+  Core models, so when the outpost ends, its hold goes with the model and
+  nothing more is asked of it; what Core had already read is still
+  spoken, as NVDA speaks the lines its monitor read (the request out is
+  answered gone, and the backlog decided then). A cut while held or with a request out sends
   `TextOp::TerminalCancel`; of reads before the cut
   (`Input::SpeechCancelled::at_ms` against the read's start) only the
   answers to keys are spoken, as for an overtaken request
@@ -915,8 +920,9 @@ a pipe.
 - Anything that cuts speech drops the output waiting and handed to
   speech: `Input::SpeechCancelled`, a step whose effects stop speech or
   interrupt, and `Input::UtteranceCancelled`. `Input::UtteranceFailed`
-  counts as heard. A focus moving to another node forgets the output, and
-  output utterances carry the terminal's focus validity.
+  counts as heard. The output waiting is the focus's: a focus moving to
+  another node forgets it, an outpost replaced under the same focus keeps
+  it, and output utterances carry the focus's validity.
 - Verbatim+5 (`ReviewCommand::ToggleReportNewOutput`) toggles "Report new
   output"; off drops what waits and speaks no output, but still the
   answers to keys.
@@ -945,7 +951,8 @@ answers to the requests they make.
   (`TerminalReader`) behind an `Arc`, the model's generation, the keys not
   yet given to them, waiting review requests, history rows that came, the
   review places, the caret and screen shape, the shape told to the
-  outpost, and the quiet-period timer's due time. The reads it asked for
+  outpost, whether the outpost holds for the flood policy, and the
+  quiet-period timer's due time. The reads it asked for
   are Core's queries, tagged with its node and generation ("Core's
   queries", above). A model is made with a terminal's first snapshot
   while it has the focus.
