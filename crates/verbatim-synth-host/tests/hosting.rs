@@ -13,7 +13,6 @@
 use std::cell::Cell;
 use std::ops::ControlFlow;
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
 
 use verbatim_audio::PcmFormat;
 use verbatim_model::{TraceId, UtteranceId};
@@ -22,22 +21,14 @@ use verbatim_speech::{
     SynthId, SynthSink,
 };
 use verbatim_synth_hosted::HostedSynth;
-use windows::Win32::Foundation::{CloseHandle, WAIT_OBJECT_0};
+use windows::Win32::Foundation::{CloseHandle, HANDLE, WAIT_OBJECT_0};
 use windows::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, TH32CS_SNAPTHREAD, THREADENTRY32, Thread32First, Thread32Next,
 };
 use windows::Win32::System::Threading::{
-    OpenProcess, OpenThread, PROCESS_SYNCHRONIZE, PROCESS_TERMINATE, SuspendThread,
+    OpenProcess, OpenThread, PROCESS_SYNCHRONIZE, PROCESS_TERMINATE, ResumeThread, SuspendThread,
     THREAD_SUSPEND_RESUME, TerminateProcess, WaitForSingleObject,
 };
-
-/// The longest a cancelled utterance may take to end, from the sink asking
-/// to stop to `speak` returning: the cancel's write to the host, since the
-/// driver no longer waits for the host's answer. A round trip was measured
-/// at 0.06 to 0.6 ms on the development machine; the budget leaves room
-/// for a slower runner while staying well under what a listener would
-/// notice.
-const CANCEL_BUDGET: Duration = Duration::from_millis(20);
 
 /// The longest a killed host may take to exit; it only bounds a hang.
 const EXIT_TIMEOUT_MS: u32 = 10_000;
@@ -252,16 +243,22 @@ fn a_host_that_dies_fails_its_utterance_and_the_next_gets_a_new_host_with_the_sa
     );
 }
 
+/// A cancelled utterance ends without waiting for the host: the sink
+/// suspends every thread of the host as it asks to stop, so the host can
+/// answer nothing until `speak` has returned and the test resumes it. A
+/// driver that waited for the host's end of the utterance would wait
+/// until it judged the host hung and fail the utterance.
 #[test]
-fn a_cancelled_utterance_ends_promptly_and_the_host_carries_on() {
+fn a_cancelled_utterance_ends_without_the_hosts_answer_and_the_host_carries_on() {
     let mut synth = onecore();
     let pid = synth.process_id().expect("a host is running");
-    let asked_to_stop = Cell::new(None);
+    let suspended = Cell::new(false);
     let mut sink = Collect {
         received: Vec::new(),
         cancelled: false,
         on_audio: || {
-            asked_to_stop.set(Some(Instant::now()));
+            suspend(pid);
+            suspended.set(true);
             ControlFlow::Break(())
         },
     };
@@ -274,16 +271,13 @@ fn a_cancelled_utterance_ends_promptly_and_the_host_carries_on() {
             &mut sink,
         )
         .expect("a cancelled utterance is not a failure");
-    let took = asked_to_stop.get().expect("audio arrived").elapsed();
+    assert!(suspended.get(), "audio arrived");
     assert_eq!(
         sink.received.len(),
         1,
         "nothing is relayed after the cancel"
     );
-    assert!(
-        took <= CANCEL_BUDGET,
-        "the utterance ended {took:?} after the cancel"
-    );
+    resume(pid);
 
     assert_ne!(spoken(&mut synth, 2, text("next")), []);
     assert_eq!(
@@ -400,6 +394,20 @@ fn a_host_that_died_while_idle_is_replaced_before_the_next_utterance() {
 /// Suspends every thread of process `pid`: the process stays alive, so a
 /// request reaches it, but it answers nothing.
 fn suspend(pid: u32) {
+    // SAFETY: a handle with suspend access, from `each_thread`.
+    each_thread(pid, |thread| unsafe { SuspendThread(thread) });
+}
+
+/// Resumes every thread of process `pid` that [`suspend`] suspended.
+fn resume(pid: u32) {
+    // SAFETY: a handle with resume access, from `each_thread`.
+    each_thread(pid, |thread| unsafe { ResumeThread(thread) });
+}
+
+/// Calls `act`, which returns the thread's previous suspend count or
+/// `u32::MAX` on failure, with a handle to each thread of process `pid`
+/// opened with suspend and resume access.
+fn each_thread(pid: u32, act: impl Fn(HANDLE) -> u32) {
     // SAFETY: a snapshot of the system's threads; the handle is closed below.
     let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0) }
         .expect("takes a snapshot of the threads");
@@ -407,7 +415,7 @@ fn suspend(pid: u32) {
         dwSize: u32::try_from(std::mem::size_of::<THREADENTRY32>()).expect("a small struct"),
         ..THREADENTRY32::default()
     };
-    let mut suspended = 0;
+    let mut acted = 0;
     // SAFETY: the snapshot just taken, and an entry whose size is set.
     let mut more = unsafe { Thread32First(snapshot, &raw mut entry) }.is_ok();
     while more {
@@ -415,10 +423,9 @@ fn suspend(pid: u32) {
             // SAFETY: opening a thread by id; the handle is closed below.
             let thread = unsafe { OpenThread(THREAD_SUSPEND_RESUME, false, entry.th32ThreadID) }
                 .expect("opens the host's thread");
-            // SAFETY: the handle just opened, with suspend access.
-            let previous = unsafe { SuspendThread(thread) };
-            assert_ne!(previous, u32::MAX, "suspends the host's thread");
-            suspended += 1;
+            let previous = act(thread);
+            assert_ne!(previous, u32::MAX, "suspends or resumes the host's thread");
+            acted += 1;
             // SAFETY: the handle opened above, closed once.
             unsafe { CloseHandle(thread) }.expect("closes the thread handle");
         }
@@ -427,7 +434,7 @@ fn suspend(pid: u32) {
     }
     // SAFETY: the snapshot handle, closed once.
     unsafe { CloseHandle(snapshot) }.expect("closes the snapshot");
-    assert!(suspended > 0, "the host has threads to suspend");
+    assert!(acted > 0, "the host has threads");
 }
 
 /// A sink that ends `host` the first time the driver, waiting for the

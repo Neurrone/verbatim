@@ -9,7 +9,12 @@ use crate::support::{self, Handler};
 /// only its own events (E-delivery, in "Not affected"): with mockapp A's
 /// provider held in the call UIA makes into it as A raises its focus,
 /// B's focus event reaches this process, and A's arrives once A is
-/// released.
+/// released. A's event cannot arrive while A is held, so nothing on A's
+/// handler then is proved by the hold itself. Each application then raises
+/// a marker, A's once it is released, which must be the next event on its
+/// own handler, so an extra event of either, which would come before its
+/// application's marker, fails the test, rather than a check that nothing
+/// more came, which could run before an event arrived.
 pub fn a_provider_held_raising_its_event_holds_only_its_own_events() {
     let (mut a, a_hwnd) = support::mockapp("held-raise-a", "uia");
     let (mut b, b_hwnd) = support::mockapp("held-raise-b", "uia");
@@ -38,8 +43,10 @@ pub fn a_provider_held_raising_its_event_holds_only_its_own_events() {
     a.release();
     a.expect_line("applied", String::new);
     assert_eq!(on_a.next(), support::from(&a, "Original Name"));
-    on_a.heard_nothing_more();
-    on_b.heard_nothing_more();
+    a.send("focus item1");
+    assert_eq!(on_a.next(), support::from(&a, "First"));
+    b.send("focus item1");
+    assert_eq!(on_b.next(), support::from(&b, "First"));
     a.quit();
     b.quit();
 }

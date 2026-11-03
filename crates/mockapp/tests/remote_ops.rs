@@ -1433,6 +1433,10 @@ impl Drop for ProcessTimeout {
     }
 }
 
+/// A remote operation, and the classic reads, on an element whose process
+/// has exited fail with `UIA_E_ELEMENTNOTAVAILABLE`, so the call ended on
+/// the broken connection, not by waiting out a timeout, which ends a call
+/// with `UIA_E_TIMEOUT`.
 fn a_provider_that_has_exited_fails_at_once() {
     let mut fixture = Fixture::start("mockapp-rops-exited");
     let deep = fixture.focus("deep", "Deep button");
@@ -1445,9 +1449,7 @@ fn a_provider_that_has_exited_fails_at_once() {
     } = fixture;
     // Returns once the process has exited.
     drop(app);
-    let started = Instant::now();
     let answer = focus_ancestry_remote(&uia, &query(&deep, &[], &fill));
-    assert!(started.elapsed() < Duration::from_secs(1));
     assert_eq!(
         answer.as_ref().err().and_then(execution_failure),
         Some(hresult(UIA_E_ELEMENTNOTAVAILABLE)),
