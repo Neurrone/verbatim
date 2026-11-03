@@ -31,17 +31,14 @@ fn timing() -> EventTiming {
 /// One sample of each [`CoreToOutpost`] variant, after `previous`.
 fn next_core_to_outpost(previous: Option<&CoreToOutpost>) -> Option<CoreToOutpost> {
     let Some(previous) = previous else {
-        return Some(CoreToOutpost::SetBackendOverride {
-            backend_override: None,
-        });
-    };
-    Some(match previous {
-        CoreToOutpost::SetBackendOverride { .. } => CoreToOutpost::DeliverFact {
+        return Some(CoreToOutpost::DeliverFact {
             trace_id: TraceId::from_raw(1),
             timing: timing(),
             fact: DeliveredFact::UiaFocusReadsEnded,
             win_event: None,
-        },
+        });
+    };
+    Some(match previous {
         CoreToOutpost::DeliverFact { .. } => CoreToOutpost::ForwardingEnded { through: 1 },
         CoreToOutpost::ForwardingEnded { .. } => CoreToOutpost::Query {
             trace_id: TraceId::from_raw(2),
@@ -72,17 +69,13 @@ fn next_core_to_outpost(previous: Option<&CoreToOutpost>) -> Option<CoreToOutpos
 /// One sample of each [`CoreToListener`] variant, after `previous`.
 fn next_core_to_listener(previous: Option<&CoreToListener>) -> Option<CoreToListener> {
     let Some(previous) = previous else {
-        return Some(CoreToListener::SetBackendOverride {
-            backend_override: Some(Backend::Uia),
-            pid: Pid(1),
-        });
-    };
-    Some(match previous {
-        CoreToListener::SetBackendOverride { .. } => CoreToListener::HookInstalled {
+        return Some(CoreToListener::HookInstalled {
             pid: Pid(1),
             outpost: OutpostId(1),
             sent_at_us: 0,
-        },
+        });
+    };
+    Some(match previous {
         CoreToListener::HookInstalled { .. } => CoreToListener::HookRemoved {
             pid: Pid(1),
             sent_at_us: 0,
@@ -175,7 +168,6 @@ fn every_variant_has_its_reviewed_kind() {
                 .collect()
         ),
         [
-            "SetBackendOverride: Configuration",
             "DeliverFact: Routed",
             "ForwardingEnded: Lifecycle",
             "Query: Ask",
@@ -196,7 +188,6 @@ fn every_variant_has_its_reviewed_kind() {
                 .collect()
         ),
         [
-            "SetBackendOverride: Configuration",
             "HookInstalled: Lifecycle",
             "HookRemoved: Lifecycle",
             "Ping: Lifecycle",

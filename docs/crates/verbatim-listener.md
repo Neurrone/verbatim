@@ -45,8 +45,7 @@ receives the event's own element, judges and reads a UIA focus
   dropped before any call; so is a focus whose nearest window's class is on
   NVDA's MSAA class list (`focus_read::MSAA_CLASS`), by the class verdict
   every outpost's arbitrator gives (`verbatim_reader_rules::class::class_verdict`), unless a
-  backend override forcing UIA holds for its application
-  (`SetBackendOverride` with its `pid`, `FocusReader::forces_uia`); the
+  test forces UIA (`FocusReader::forces_uia`); the
   listener makes no other backend verdict, no probe and no console check,
   which are its outpost's. A shell window that only stages a switch is read
   and Core drops it. The listener makes no duplicate test and keeps no
@@ -423,10 +422,7 @@ section 6.3).
   front, until one of that window's events names its thread. The app
   receives it as `OutpostMessage::Foreground` (a `ForegroundReport`).
 - It handles `Ping`, `HookInstalled`, `HookRemoved` (which also ends the
-  application's reading thread and its override), `SetBackendOverride`
-  with a `pid` (an override forcing UIA, after which that application's
-  readers skip nothing by class), `IdleQuery`, and `Shutdown`, and ignores
-  the rest. A replacement gets `--hooks-in`
+  application's reading thread), `IdleQuery`, and `Shutdown`. A replacement gets `--hooks-in`
   (`verbatim_process::arguments::parse_hooks_in`) and does without each thread's last focus,
   at the cost of one fuller ancestor read per application. It makes no
   remote operation, so takes no `--classic-uia`.

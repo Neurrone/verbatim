@@ -98,7 +98,7 @@ The choices:
 - Across processes the asking side's request table gives every query one outcome (reply, "gone" at its generation's end, or "failed" at its deadline), because a killed process runs no `Drop`. Within a process a `Responder` answers "gone" on drop and lives only in a thread's shell. One module owns the wanted requests and ends each exactly once.
 - The supervisor's generation is an enum whose transitions consume the state, and lifecycle messages carry a `Sealed` only the supervisor makes. The owner thread itself stays impure.
 
-Limits: a merge reorders an event of the merged report's node queued between the two ahead of it, which is NVDA's limiter's own effect and is pinned by a test per kind; a wanted request ended at a retirement just before a new start is answered "nothing"; `kind()` exists for the wire enums only; the backend override and fetch configuration are sent unversioned until M5; a reply bars only a caret report with selection changes from merging across it, and the caret rework generalises that.
+Limits: a merge reorders an event of the merged report's node queued between the two ahead of it, which is NVDA's limiter's own effect and is pinned by a test per kind; a wanted request ended at a retirement just before a new start is answered "nothing"; `kind()` exists for the wire enums only; the fetch configuration is sent unversioned until M5; a reply bars only a caret report with selection changes from merging across it, and the caret rework generalises that.
 
 ### Output: one saver, one audio owner
 
@@ -135,7 +135,7 @@ The choices:
 
 As built: parked event objects and an active text range are parked as pushed, after the push-time drops; plain windows mint by window handle, with no separate map; owed work and the gap's read are programs of their own, dispatched first; a generation's charge holds the walk's progress and its abandoned flag under one lock; what the shell lets go of is dropped by the worker before its next program; a focus walk's object is its event address or runtime id; text facts are reducer state while ranges and patterns stay in the store.
 
-Limits: at an outpost's start the hook's stream waits for `ForwardingEnded` (median 20.6 ms, at most 591.3 ms over 126 starts), and without it until the listener's reads end; a dead generation's mints wait for the next `NodesHeld`, at most 3 seconds; an event with a commit usually costs four wakes where the worker alone woke once; the fetch configuration and backend override are still written by the I/O thread, versioned in M5; the purity check reads text.
+Limits: at an outpost's start the hook's stream waits for `ForwardingEnded` (median 20.6 ms, at most 591.3 ms over 126 starts), and without it until the listener's reads end; a dead generation's mints wait for the next `NodesHeld`, at most 3 seconds; an event with a commit usually costs four wakes where the worker alone woke once; the fetch configuration is still written by the I/O thread, versioned in M5; the purity check reads text.
 
 ## Dickson's decisions
 

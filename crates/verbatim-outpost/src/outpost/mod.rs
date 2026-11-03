@@ -72,7 +72,7 @@ use windows::Win32::UI::Accessibility::{
 use windows::core::AgileReference;
 
 use verbatim_ia2::{APP_SUBSCRIPTIONS, WinEvent, WinEventKind};
-use verbatim_model::{Backend, Fetches, NodeId, Pid, TraceId};
+use verbatim_model::{Fetches, NodeId, Pid, TraceId};
 use verbatim_process::overlapped::{End, Flow, pipe};
 use verbatim_process::scheduling::{ThreadPriority, prioritize_role};
 use verbatim_process::transport::{
@@ -255,10 +255,6 @@ pub(crate) struct Context {
     /// The failed cached reads the worker has made (`verbatim_uia::calls`),
     /// taken after each entry.
     failed_reads: AtomicU32,
-    /// How many times Core has changed the backend override, which decides
-    /// every window anew: the event thread's windows' backends are
-    /// decided again after a change ([`EventWindows`]).
-    override_changes: AtomicU64,
     /// When the first of the focus listener's UIA focuses reached this
     /// outpost, its read or its drop as a focus, on the run's clock in
     /// microseconds, 0 before any: the gap's read logs whether
@@ -827,16 +823,6 @@ impl Context {
         }
     }
 
-    /// Core's backend override, forced on every window, or none
-    /// ([`CoreToOutpost::SetBackendOverride`]): every window is
-    /// decided anew, the event thread's too, which decides its hook again.
-    fn set_backend_override(&self, backend_override: Option<Backend>) {
-        self.arbitrator()
-            .set_forced(backend_override.map(|backend| backend == Backend::Uia));
-        self.override_changes.fetch_add(1, Ordering::Release);
-        self.nudge_event_thread(narrowing::Nudge::Decide);
-    }
-
     /// Nudges the event thread, once it runs ([`narrowing`]).
     fn nudge_event_thread(&self, nudge: narrowing::Nudge) {
         if let Some(nudger) = self.event_thread.get() {
@@ -887,11 +873,7 @@ impl Context {
                     | WinEventKind::Destroy
                     | WinEventKind::Caret
             ) && windows.known_to_use_uia(
-                (
-                    &self.arbitrator,
-                    || self.mailbox.verdicts(),
-                    self.override_changes.load(Ordering::Acquire),
-                ),
+                (&self.arbitrator, || self.mailbox.verdicts()),
                 (hwnd, verbatim_win32::window::window_thread(hwnd)),
                 verbatim_win32::window::window_classes,
             ) {
@@ -1146,7 +1128,6 @@ impl Outpost {
             heard: OnceLock::new(),
             foreground_programs: OnceLock::new(),
             failed_reads: AtomicU32::new(0),
-            override_changes: AtomicU64::new(0),
             first_uia_focus_us: AtomicU64::new(0),
             event_thread: OnceLock::new(),
         });
@@ -1513,9 +1494,6 @@ impl Outpost {
     pub fn handle_command(&self, command: &CoreToOutpost) {
         let context = &self.context;
         match command {
-            CoreToOutpost::SetBackendOverride { backend_override } => {
-                context.set_backend_override(*backend_override);
-            }
             CoreToOutpost::DeliverFact {
                 trace_id,
                 timing,

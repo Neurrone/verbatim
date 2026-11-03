@@ -91,9 +91,7 @@
 //! the listener sends carries one fact for it, whether the sender had no
 //! window above it, and nothing is placed here. The listener makes no
 //! backend verdict; it skips a focus only by its window's class
-//! (`verbatim_listener_logic::focus::MSAA_CLASS`), unless a backend override forcing
-//! UIA holds for the application
-//! ([`CoreToListener::SetBackendOverride`]).
+//! (`verbatim_listener_logic::focus::MSAA_CLASS`).
 //!
 //! Outgoing facts are coalesced with NVDA's UIA limiter rule before they are
 //! sent: one waiting fact per element and kind (for a notification, per
@@ -127,7 +125,6 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
-use verbatim_model::Backend;
 
 use windows::Win32::Foundation::FILETIME;
 use windows::Win32::System::Threading::{
@@ -793,26 +790,7 @@ struct Listener {
 /// and read from its own element ([`FocusReader`]), and what became of it
 /// sent to its application's outpost behind its marker, through the
 /// answer owed for it ([`MarkerOwed`]).
-struct UiaFocusReading {
-    /// Whether a backend override forcing UIA holds, per application, each
-    /// shared with that application's readers
-    /// ([`CoreToListener::SetBackendOverride`]).
-    forced_uia: Mutex<HashMap<Pid, Arc<AtomicBool>>>,
-}
-
-impl UiaFocusReading {
-    /// Whether a backend override forcing UIA holds for `pid`, shared with
-    /// its readers.
-    fn forced_uia(&self, pid: Pid) -> Arc<AtomicBool> {
-        Arc::clone(
-            self.forced_uia
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .entry(pid)
-                .or_default(),
-        )
-    }
-}
+struct UiaFocusReading;
 
 impl Reading for UiaFocusReading {
     /// The event's element, its own window handle from the event's cache
@@ -828,12 +806,9 @@ impl Reading for UiaFocusReading {
     );
     type Reader = FocusReader;
 
-    fn reader(&self, pid: Pid) -> Option<FocusReader> {
+    fn reader(&self, _pid: Pid) -> Option<FocusReader> {
         match FocusReader::new() {
-            Ok(mut reader) => {
-                reader.share_forced_uia(self.forced_uia(pid));
-                Some(reader)
-            }
+            Ok(reader) => Some(reader),
             Err(error) => {
                 tracing::warn!(%error, "a reading thread could not create a UIA client");
                 None
@@ -1005,12 +980,7 @@ impl Listener {
         for &(pid, outpost) in hooks_in {
             outgoing.hook_installed(pid, outpost, before_the_hook);
         }
-        let readers = Arc::new(Readers::new(
-            UiaFocusReading {
-                forced_uia: Mutex::default(),
-            },
-            READ_DEADLINE,
-        ));
+        let readers = Arc::new(Readers::new(UiaFocusReading, READ_DEADLINE));
         let msaa_outgoing = Arc::clone(&outgoing);
         let idle_readers = Arc::clone(&readers);
         let make_handlers: MakeHandlers = Arc::new(move || {
@@ -1162,8 +1132,7 @@ impl Listener {
 
     /// Answers `Ping` with a `Pong` (the listener never abandons a worker, so
     /// its count is always zero), takes the hand-over's news of outposts'
-    /// hooks, takes a backend override forcing UIA for an application, so
-    /// its readers skip nothing by class, starts the idle barrier's round
+    /// hooks, starts the idle barrier's round
     /// ([`Self::idle_query`]). An application with no outpost
     /// any more has its reading thread ended too
     /// ([`Readers::outpost_ended`]). `received_at_us` is when the command
@@ -1188,23 +1157,7 @@ impl Listener {
             }
             CoreToListener::HookRemoved { pid, .. } => {
                 self.outgoing.hook_removed(*pid);
-                // The override is its outpost's, and ends with it.
-                self.readers
-                    .reading()
-                    .forced_uia(*pid)
-                    .store(false, Ordering::Relaxed);
                 self.readers.outpost_ended(*pid);
-            }
-            CoreToListener::SetBackendOverride {
-                backend_override,
-                pid,
-            } => {
-                let forced = *backend_override == Some(Backend::Uia);
-                tracing::info!(%pid, forced, "a backend override forcing UIA for an application");
-                self.readers
-                    .reading()
-                    .forced_uia(*pid)
-                    .store(forced, Ordering::Relaxed);
             }
             CoreToListener::IdleQuery { round } => self.idle_query(*round),
             // The serving loop ends on `Shutdown`, before it is handled here.

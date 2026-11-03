@@ -419,8 +419,9 @@ a walk of the window's whole tree would wait on its
   An idle round (`idle_round`) reaches the outpost's idle answer,
   which waits while its record is open. `focus_moves_during_the_read`
   moves the focus window as the outpost reads the focused element, and
-  `listener_forces_uia` tells the listener's reader of a backend override
-  forcing UIA. The listener's reader measures how long an event waited
+  `listener_forces_uia` has the listener's reader skip no focus by its
+  window's class (`FocusReader::forces_uia`), so it reads one in a window
+  on NVDA's MSAA class list. The listener's reader measures how long an event waited
   before its read by the same observation clock, so `listener_read_after`
   passes the time between a focus's observation and its read, bringing its
   walk's bound that much sooner with no real wait. A test of the

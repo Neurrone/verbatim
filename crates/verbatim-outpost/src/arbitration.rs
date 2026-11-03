@@ -21,8 +21,8 @@
 //! a program reads its own copy and commits each probe as it returns, and
 //! the event thread reads the push-time copy
 //! (`docs/design/ownership.md`). The arbitrator
-//! holds the configuration they are read with: the class lists, the
-//! override and the clocks.
+//! holds the configuration they are read with: the class lists and the
+//! clocks.
 //!
 //! A probe that finds a UIA provider is kept for the window's lifetime and
 //! forgotten when the window is destroyed ([`VerdictChange::Forget`]), as
@@ -137,14 +137,11 @@ pub(crate) trait Judgement {
 }
 
 /// Decides the backend for each window of one application, from its
-/// configuration, the class lists, the override and the clocks, and the
+/// configuration, the class lists and the clocks, and the
 /// verdicts the reducer keeps ([`Verdicts`]), which each caller gives.
 pub struct Arbitrator {
     good_classes: HashSet<String>,
     bad_classes: HashSet<String>,
-    /// A `SetBackendOverride` forcing every window: `Some(true)` for UIA,
-    /// `Some(false)` for MSAA, `None` for normal arbitration.
-    forced: Option<bool>,
     /// The time a classic walk's budget is measured by.
     clock: Clock,
     /// The time a keep's end and an entry with no event are stamped by.
@@ -173,7 +170,6 @@ impl Arbitrator {
         Self {
             good_classes,
             bad_classes,
-            forced: None,
             clock: Arc::new(Instant::now),
             observed: Arc::new(verbatim_process::clock::now_us),
             probe: Arc::new(verbatim_uia::raw_probe),
@@ -218,13 +214,6 @@ impl Arbitrator {
     #[must_use]
     pub fn observed_now(&self) -> u64 {
         (self.observed)()
-    }
-
-    /// Sets a `SetBackendOverride` command's forced backend: `Some(true)`
-    /// forces UIA for every window, `Some(false)` forces MSAA, `None`
-    /// restores normal arbitration.
-    pub fn set_forced(&mut self, forced: Option<bool>) {
-        self.forced = forced;
     }
 
     /// Records in `verdicts` a probe of `hwnd` that found a provider when
@@ -299,9 +288,6 @@ impl Arbitrator {
         classes: &WindowClasses,
         at_us: u64,
     ) -> Option<bool> {
-        if self.forced.is_some() {
-            return self.forced;
-        }
         match self.classify(classes) {
             ClassVerdict::Uia => Some(true),
             ClassVerdict::NonUia => Some(false),
@@ -313,8 +299,7 @@ impl Arbitrator {
     }
 
     /// The verdict [`verdict`](Self::verdict) gives, and whether it holds
-    /// for the window's lifetime until the override changes: a forced one,
-    /// one from the class lists, or a kept probe that found a provider, or
+    /// for the window's lifetime: one from the class lists, or a kept probe that found a provider, or
     /// one NVDA does not use. A probe that found none runs out, and a
     /// window not yet probed has no verdict, so neither lasts.
     #[must_use]
@@ -324,8 +309,7 @@ impl Arbitrator {
         hwnd: isize,
         classes: &WindowClasses,
     ) -> (Option<bool>, bool) {
-        let lasting = self.forced.is_some()
-            || self.classify(classes) != ClassVerdict::Unknown
+        let lasting = self.classify(classes) != ClassVerdict::Unknown
             || verdicts.lasts(hwnd, window_thread(hwnd));
         (self.verdict(verdicts, hwnd, classes), lasting)
     }
@@ -500,13 +484,10 @@ fn decide(
 /// classes once and asks the arbitrator only until its backend is decided
 /// for the window's lifetime ([`Arbitrator::lasting_verdict`]). A window's
 /// entry goes when the window is destroyed ([`forget`](Self::forget)), or
-/// when its handle is found owned by another thread ([`WindowCache`]), and
-/// every entry's backend when the override changes.
+/// when its handle is found owned by another thread ([`WindowCache`]).
 #[derive(Default)]
 pub(crate) struct EventWindows {
     windows: WindowCache<KnownWindow>,
-    /// The count of override changes the entries were decided under.
-    overrides: u64,
 }
 
 /// What [`EventWindows`] keeps of one window.
@@ -520,21 +501,16 @@ impl EventWindows {
     /// Whether window `hwnd`, owned by thread `owner`, is already known to
     /// be read through UIA, from the class lists or a kept verdict, without
     /// the probe ([`uses_uia`] probes when neither decides), with
-    /// `overrides` the count of override changes so far and `verdicts` the
-    /// push-time copy of the reducer's verdicts, taken only while the
+    /// `verdicts` the push-time copy of the reducer's verdicts, taken only while the
     /// window's backend is not decided for its lifetime. Its classes are
     /// read with `classes_of` the first time. Local calls only, so safe on
     /// the thread that takes in an outpost's `WinEvents`.
     pub(crate) fn known_to_use_uia(
         &mut self,
-        (arbitrator, verdicts, overrides): (&Lock<Arbitrator>, impl FnOnce() -> Arc<Verdicts>, u64),
+        (arbitrator, verdicts): (&Lock<Arbitrator>, impl FnOnce() -> Arc<Verdicts>),
         (hwnd, owner): (isize, u32),
         classes_of: impl FnOnce(isize) -> WindowClasses,
     ) -> bool {
-        if overrides != self.overrides {
-            self.windows.clear();
-            self.overrides = overrides;
-        }
         let known = self.windows.get_or_learn(hwnd, owner, || KnownWindow {
             classes: classes_of(hwnd),
             lasting: None,
@@ -584,7 +560,7 @@ mod tests {
         reads: &std::cell::Cell<u32>,
     ) -> bool {
         let verdicts = || Arc::new(Verdicts::default());
-        windows.known_to_use_uia((arbitrator, verdicts, 0), (42, 7), |_| {
+        windows.known_to_use_uia((arbitrator, verdicts), (42, 7), |_| {
             reads.set(reads.get() + 1);
             top("RAIL_WINDOW")
         })

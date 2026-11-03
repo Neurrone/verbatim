@@ -23,8 +23,8 @@
 //! menu-opening and foreground events its hook delivers, and, before the
 //! hook has delivered one, those of the facts the listener routed, which
 //! the reader hands it as nudges. It decides again whenever one of those
-//! changes, when the worker has just kept a verdict of UIA for a window,
-//! and when Core changes the backend override.
+//! changes, and when the worker has just kept a verdict of UIA for a
+//! window.
 //!
 //! What can be lost: an event of a narrowed kind raised by a window read
 //! through MSAA after the focus or foreground moved into it but before the
@@ -40,7 +40,6 @@ use verbatim_ia2::{WinEvent, WinEventKind};
 use super::Context;
 
 use crate::arbitration::EventWindows;
-use std::sync::atomic::Ordering;
 
 /// The kinds unhooked while the application's focus and foreground windows
 /// are both read through UIA: those its event thread drops for a window
@@ -150,14 +149,9 @@ impl EventThreadState {
     /// Narrows the hook while the focus and foreground windows are both
     /// known to be read through UIA, and hooks every kind again otherwise.
     fn decide(&mut self, context: &Context) {
-        let overrides = context.override_changes.load(Ordering::Acquire);
         let mut known = |hwnd: isize| {
             self.windows.known_to_use_uia(
-                (
-                    &context.arbitrator,
-                    || context.mailbox.verdicts(),
-                    overrides,
-                ),
+                (&context.arbitrator, || context.mailbox.verdicts()),
                 (hwnd, verbatim_win32::window::window_thread(hwnd)),
                 verbatim_win32::window::window_classes,
             )

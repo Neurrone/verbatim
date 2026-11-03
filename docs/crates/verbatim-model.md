@@ -255,8 +255,7 @@ that carries them on the pipes, `Message`, is
 - One enum per direction and role, so a receiver cannot be sent what it
   does not take: a frame of another direction fails to decode, and its
   child is ended as failed.
-  - `CoreToOutpost`: `SetBackendOverride` (one backend for every window,
-    or normal arbitration); `DeliverFact` (a routed fact: a UIA focus's
+  - `CoreToOutpost`: `DeliverFact` (a routed fact: a UIA focus's
     marker, read, or drop with whether its sender had no window, an MSAA focus or
     menu-popup address, a foreground window, with the listener's trace
     id, its `EventTiming`, whose `observed_at_us` orders the fact, and
@@ -266,8 +265,8 @@ that carries them on the pipes, `Message`, is
     number, which outposts store, compare and echo and decide nothing by);
     `Cancel` (withdraws a query not started, by its `RequestId`); `Ping`; `Fetches`;
     `NodesHeld`; `IdleQuery`; `Shutdown`; and `Assign`.
-  - `CoreToListener`: `SetBackendOverride` for one application's `pid`,
-    `HookInstalled`, `HookRemoved`, `Ping`, `IdleQuery` and `Shutdown`.
+  - `CoreToListener`: `HookInstalled`, `HookRemoved`, `Ping`, `IdleQuery`
+    and `Shutdown`.
   - `OutpostToCore`: `Ready`, `SpareReady`, `Event` (trace id,
     observation time in microseconds, backend, `WindowFacts`, the
     normalized event, and the application it belongs to when not the

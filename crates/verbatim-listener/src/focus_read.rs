@@ -597,8 +597,8 @@ fn duration_us(duration: Duration) -> u64 {
 
 /// Whether a focus whose nearest window has the classes `classes` is
 /// skipped ([`MSAA_CLASS`]): the class verdict every outpost's arbitrator
-/// gives calls it MSAA ([`class_verdict`]), unless a backend override
-/// forcing UIA holds for its application (`forced_uia`).
+/// gives calls it MSAA ([`class_verdict`]), unless a test forces UIA
+/// (`forced_uia`, [`FocusReader::forces_uia`]).
 fn skipped_by_class(classes: &WindowClasses, forced_uia: bool) -> bool {
     !forced_uia && class_verdict(classes) == ClassVerdict::NonUia
 }
@@ -643,10 +643,9 @@ pub struct FocusReader {
     /// The top-level window of the last focus this reader placed, for the
     /// bound of the next focus's walk.
     last_top: Option<isize>,
-    /// Whether a backend override forcing UIA is set for this reader's
-    /// application, so no focus is skipped by its window's class
-    /// ([`CoreToListener::SetBackendOverride`](verbatim_model::protocol::CoreToListener::SetBackendOverride)).
-    forced_uia: Arc<AtomicBool>,
+    /// Whether a test has this reader skip no focus by its window's class
+    /// ([`forces_uia`](Self::forces_uia)).
+    forced_uia: AtomicBool,
     /// The read under way as the reading threads' watchdog watches it,
     /// told a focus's sender's nearest window once the read finds it, and asked
     /// whether it was abandoned before its focus is accepted
@@ -683,7 +682,7 @@ impl FocusReader {
             clock: Arc::new(Instant::now),
             observed: Arc::new(now_us),
             last_top: None,
-            forced_uia: Arc::default(),
+            forced_uia: AtomicBool::new(false),
             window: WatchedRead::default(),
             calls: None,
             window_readability: Arc::new(verbatim_win32::window::window_unreadable),
@@ -750,15 +749,9 @@ impl FocusReader {
         Arc::clone(&self.clock)
     }
 
-    /// Whether a backend override forcing UIA is set for its application,
-    /// shared with whoever sets it ([`forces_uia`](Self::forces_uia)).
-    pub(crate) fn share_forced_uia(&mut self, forced: Arc<AtomicBool>) {
-        self.forced_uia = forced;
-    }
-
-    /// Sets whether a backend override forcing UIA holds for its
-    /// application: while one does, no focus is skipped by its window's
-    /// class, since the outpost then counts it.
+    /// Sets whether this reader skips no focus by its window's class: for
+    /// a test that has the listener read a focus in a window on NVDA's
+    /// MSAA class list, which it otherwise skips.
     pub fn forces_uia(&self, forced: bool) {
         self.forced_uia.store(forced, Ordering::Relaxed);
     }
@@ -1410,9 +1403,7 @@ impl FocusReader {
     /// list, and not on its UIA list or under a shell window, is skipped
     /// ([`MSAA_CLASS`]), by the class verdict every outpost's arbitrator
     /// gives ([`class_verdict`]): a function of the window's class names,
-    /// local calls only, so the two processes agree on it, unless a backend
-    /// override forcing UIA holds for the application, which then counts
-    /// that focus. The rest of `isUIAWindow`, the probe and the post-probe
+    /// local calls only, so the two processes agree on it. The rest of `isUIAWindow`, the probe and the post-probe
     /// checks, is the outpost's, whose verdict alone decides which
     /// backend's focus counts in each window
     /// (`docs/design/focus-pipeline-rework.md`, "Who owns each duplicated
@@ -2031,11 +2022,6 @@ impl<R: Reading> Readers<R> {
             ScheduleInput::MsaaFocus { pid },
             None,
         );
-    }
-
-    /// The work the reading threads do.
-    pub(crate) fn reading(&self) -> &R {
-        &self.shared.reading
     }
 
     /// The failed cached reads the reading threads have made so far.
@@ -2768,13 +2754,12 @@ mod tests {
     /// verdict the outposts' arbitrators give, and its drop carries no fact
     /// for the gap record, which the outpost closes by its own reports; one
     /// on no list, or under a shell
-    /// window, is read, and so is any focus while a backend override
-    /// forcing UIA holds for its application.
+    /// window, is read, and so is any focus while a test forces UIA.
     #[test]
     fn a_focus_whose_windows_class_is_on_the_msaa_list_is_skipped() {
         let edit = WindowClasses::new("Edit", "Notepad");
         assert!(skipped_by_class(&edit, false));
-        assert!(!skipped_by_class(&edit, true), "the override forcing UIA");
+        assert!(!skipped_by_class(&edit, true), "a test forcing UIA");
         assert!(!skipped_by_class(
             &WindowClasses::new("Windows.UI.Input.InputSite.WindowClass", "Notepad"),
             false

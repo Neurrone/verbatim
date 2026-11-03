@@ -1823,22 +1823,19 @@ fn a_focus_event_naming_another_applications_window_is_not_read() {
 }
 
 /// A UIA focus the listener read in a window this outpost judges MSAA,
-/// here by Core's backend override, is dropped: the outpost's own verdict
+/// here by its class on NVDA's MSAA list, which the test has the
+/// listener's reader read anyway, is dropped: the outpost's own verdict
 /// decides which backend's focus counts in each of its windows, and in an
 /// MSAA window its MSAA focus speaks for it.
 fn a_listener_report_in_a_window_the_outpost_judges_msaa_is_dropped() {
     let title = common::unique_title("mockapp-report-in-msaa-window");
-    let mut app = common::spawn("small.json", "uia", &title);
+    let mut app = common::spawn("msaa_class_window.json", "uia", &title);
     let client = Client::new(common::find_window(&title));
     let outpost = OutpostUnderTest::new(&app);
 
     app.send("set-focus btn1");
+    outpost.listener_forces_uia(true);
     let read = outpost.listener_fact(&client.focused());
-    outpost
-        .outpost
-        .handle_command(&CoreToOutpost::SetBackendOverride {
-            backend_override: Some(Backend::Msaa),
-        });
     outpost.deliver(read);
     outpost.settled();
 
@@ -2242,10 +2239,8 @@ fn a_gap_read_whose_focus_window_changes_during_the_read_is_dropped() {
 
 /// A UIA focus whose window's class is on NVDA's MSAA class list is skipped
 /// by the listener, its nearest window the one call made, as the outpost
-/// judges that window MSAA by the same table; a backend override forcing
-/// UIA reaches the listener as it reaches the outpost, so the same focus
-/// is then read and reported.
-fn a_forced_uia_override_has_the_listener_read_a_class_listed_window() {
+/// judges that window MSAA by the same table.
+fn the_listener_skips_a_focus_in_a_class_listed_window() {
     let title = common::unique_title("mockapp-class-listed");
     let mut app = common::spawn("msaa_class_window.json", "uia", &title);
     let hwnd = common::find_window(&title);
@@ -2266,15 +2261,6 @@ fn a_forced_uia_override_has_the_listener_read_a_class_listed_window() {
         (1, 0, 0),
         "the nearest window alone"
     );
-
-    outpost.listener_forces_uia(true);
-    outpost
-        .outpost
-        .handle_command(&CoreToOutpost::SetBackendOverride {
-            backend_override: Some(Backend::Uia),
-        });
-    let reported = outpost.uia_focus(&client.focused());
-    assert_eq!(reported.node.name.as_deref(), Some("Original Name"));
     outpost.settled();
 
     drop(outpost);
@@ -4529,8 +4515,8 @@ fn main() {
             a_gap_read_whose_focus_window_changes_during_the_read_is_dropped,
         ),
         (
-            "a_forced_uia_override_has_the_listener_read_a_class_listed_window",
-            a_forced_uia_override_has_the_listener_read_a_class_listed_window,
+            "the_listener_skips_a_focus_in_a_class_listed_window",
+            the_listener_skips_a_focus_in_a_class_listed_window,
         ),
         (
             "a_forwarded_copy_opens_the_starting_outposts_record",

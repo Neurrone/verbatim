@@ -282,7 +282,7 @@ whichever hook took it, is `verbatim_ia2::fact_of_win_event`
 
 `Arbitrator` is NVDA's per-window backend decision (`_isUIAWindowHelper`),
 each outpost's one verdict per window. It holds the configuration: the
-class lists, the `SetBackendOverride` and the clocks. The verdicts probes
+class lists and the clocks. The verdicts probes
 found are the reducer's state, `Verdicts` (`verbatim-outpost-logic`'s
 `verdicts.rs`),
 which callers give it. `verdict(&verdicts, hwnd, &WindowClasses)` answers

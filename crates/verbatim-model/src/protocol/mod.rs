@@ -621,18 +621,6 @@ pub enum FactKey {
 /// [`CoreToOutpost::Assign`].
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum CoreToOutpost {
-    /// Forces one backend for every window of the target application,
-    /// overriding arbitration; used by tests. `None` restores normal
-    /// arbitration. One forcing UIA is sent to the focus listener too
-    /// ([`CoreToListener::SetBackendOverride`]), so that its reads skip no
-    /// focus of that application by its window's class, the outpost then
-    /// counting every UIA focus (`docs/design/focus-pipeline-rework.md`,
-    /// the verdicts); sent as two messages, the two processes can differ
-    /// while one is in flight.
-    SetBackendOverride {
-        /// The forced backend, or `None` for normal arbitration.
-        backend_override: Option<Backend>,
-    },
     /// Delivers a focus fact the focus listener captured, for this outpost's
     /// target application (decision D13), threading the listener's
     /// `trace_id` and observation (`timing`'s `observed_at_us`) through to
@@ -787,9 +775,7 @@ impl CoreToOutpost {
             | CoreToOutpost::Shutdown
             | CoreToOutpost::ForwardingEnded { .. } => Kind::Lifecycle,
             CoreToOutpost::DeliverFact { .. } => Kind::Routed,
-            CoreToOutpost::Fetches(_) | CoreToOutpost::SetBackendOverride { .. } => {
-                Kind::Configuration
-            }
+            CoreToOutpost::Fetches(_) => Kind::Configuration,
         }
     }
 }
@@ -797,16 +783,6 @@ impl CoreToOutpost {
 /// Messages from verbatim.exe to the focus listener.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CoreToListener {
-    /// Forces one backend for the application `pid`, as its outpost is told
-    /// ([`CoreToOutpost::SetBackendOverride`]): one forcing UIA makes the
-    /// listener's reads skip no focus of that application by its window's
-    /// class.
-    SetBackendOverride {
-        /// The forced backend, or `None` for normal arbitration.
-        backend_override: Option<Backend>,
-        /// The application the override is for.
-        pid: Pid,
-    },
     /// The outpost `outpost` watching `pid` has its own `WinEvent` hook in,
     /// so the listener forwards none of `pid`'s `WinEvent` facts raised
     /// from now on, and answers [`ListenerToCore::ForwardingEnded`] behind
@@ -871,9 +847,7 @@ impl CoreToListener {
             CoreToListener::Ping { sent_at_us, .. }
             | CoreToListener::HookInstalled { sent_at_us, .. }
             | CoreToListener::HookRemoved { sent_at_us, .. } => *sent_at_us = now(),
-            CoreToListener::SetBackendOverride { .. }
-            | CoreToListener::IdleQuery { .. }
-            | CoreToListener::Shutdown => {}
+            CoreToListener::IdleQuery { .. } | CoreToListener::Shutdown => {}
         }
     }
 
@@ -885,9 +859,7 @@ impl CoreToListener {
             CoreToListener::Ping { sent_at_us, .. }
             | CoreToListener::HookInstalled { sent_at_us, .. }
             | CoreToListener::HookRemoved { sent_at_us, .. } => *sent_at_us,
-            CoreToListener::SetBackendOverride { .. }
-            | CoreToListener::IdleQuery { .. }
-            | CoreToListener::Shutdown => 0,
+            CoreToListener::IdleQuery { .. } | CoreToListener::Shutdown => 0,
         }
     }
 
@@ -900,7 +872,6 @@ impl CoreToListener {
             | CoreToListener::HookRemoved { .. }
             | CoreToListener::Ping { .. }
             | CoreToListener::Shutdown => Kind::Lifecycle,
-            CoreToListener::SetBackendOverride { .. } => Kind::Configuration,
         }
     }
 }

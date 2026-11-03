@@ -826,9 +826,9 @@ impl OutpostUnderTest {
         self.moves_to.store(hwnd.0 as isize, Ordering::Relaxed);
     }
 
-    /// Tells the listener's reader whether a backend override forcing UIA
-    /// holds for mockapp's application, as the listener is told
-    /// (`CoreToOutpost::SetBackendOverride`).
+    /// Tells the listener's reader whether to skip no focus by its
+    /// window's class, so it reads one in a window on NVDA's MSAA list
+    /// (`FocusReader::forces_uia`).
     pub fn listener_forces_uia(&self, forced: bool) {
         self.reader.borrow().forces_uia(forced);
     }

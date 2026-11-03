@@ -177,9 +177,7 @@ fn listener_stand_in(
                 }
                 send(&ListenerToCore::IdleAnswer { round });
             }
-            CoreToListener::SetBackendOverride { .. }
-            | CoreToListener::HookInstalled { .. }
-            | CoreToListener::HookRemoved { .. } => {}
+            CoreToListener::HookInstalled { .. } | CoreToListener::HookRemoved { .. } => {}
         }
     }
 }

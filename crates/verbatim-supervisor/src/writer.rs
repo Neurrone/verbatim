@@ -130,8 +130,7 @@ impl ToChild for CoreToOutpost {
             CoreToOutpost::DeliverFact { timing, .. } | CoreToOutpost::Query { timing, .. } => {
                 Some(timing)
             }
-            CoreToOutpost::SetBackendOverride { .. }
-            | CoreToOutpost::ForwardingEnded { .. }
+            CoreToOutpost::ForwardingEnded { .. }
             | CoreToOutpost::Cancel { .. }
             | CoreToOutpost::Ping { .. }
             | CoreToOutpost::Fetches(_)
