@@ -127,7 +127,9 @@ about twenty rounds of fixes since 2026-10-21, mostly from carrying two
 jobs in one record and judging queued work by a lifecycle flag. A held
 window's title becomes a deadline in Core's foreground record, set at each
 foreground change Core accepts and cleared when Core takes a focus in that
-window; the outpost keeps one pending read per application, queued a
+window, the title said from the window's text, which the listener's
+foreground message gains, read locally with no message to the
+application (Dickson, 2026-11-03); the outpost keeps one pending read per application, queued a
 second after the first focus copy it dropped and checked against what it
 has reported when handled, which foreground changes no longer touch. The
 study behind it weighed dropping the record as NVDA has none, which loses
