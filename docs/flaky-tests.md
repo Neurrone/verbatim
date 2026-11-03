@@ -100,13 +100,16 @@ Scenarios and tests: `notepad_editing`, `notepad_selection_keys` and `notepad_ty
   - Cause: not found. The tests run the real audio and delivery threads and judge from outside when the mixer is idle, so it is not known whether this is the harness's guess or a lost wake in the mixer.
   - Fix: [M6.3](roadmap.md#m63--speech-and-audio-pipeline), the mixer's decision tests driven pass by pass on the test thread, where it is reproduced or ruled out.
 
-## A failed group removal test on GitHub's ARM64 runner
+## Failed group removal tests reading the count too early
 
 - `mockapp`'s `failure_paths` test `a_group_whose_removals_all_failed_is_removed_when_the_registering_thread_ends`
   - How: its first assertion, "the old element's group outlives the close", found the two applications' advised groups at (1, 1) where (1, 0) was expected (`crates/mockapp/tests/failure_paths.rs`, line 233): right after `close`, the new element's group was still advised.
   - How often: once, in the `ci-arm64` job of run 41333390347 (2026-11-01, a commit adding only documents and `experiments/`); the same code passed `ci-arm64` in run 41331655970 just before it, and passed `cargo xtask ci` locally.
-  - Cause: not found.
-  - Fix: none yet.
+- `mockapp`'s `failure_paths` test `a_group_a_move_failed_to_remove_is_removed_at_close`
+  - How: its assertion "the close removed both groups" found the advised groups at (1, 0) where (0, 0) was expected (line 209): right after `close`, the old window still counted one registration.
+  - How often: once in six runs of `cargo xtask faults` on the development machine (2026-11-03); five runs in a row passed after it.
+- Cause, for both, likely but not shown: `Registration::close` (`crates/verbatim-uia/src/subscribe.rs`) returns when `RemoveEventHandlerGroup` returns, while mockapp's count falls only when UI Automation calls `AdviseEventRemoved` on its provider (`crates/mockapp/src/uia.rs`), and the tests read the count once, with nothing waiting for that call.
+- Fix: mockapp signals each change of its count and the tests wait for the count they expect, as its `RELEASED` wait does, so a count that never arrives is a defect in the close's wait (a follow-up of the owner endings build).
 
 ## Scenarios that fail on GitHub's runner, skipped there
 
