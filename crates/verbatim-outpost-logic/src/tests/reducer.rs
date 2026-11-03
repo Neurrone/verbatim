@@ -24,7 +24,7 @@ use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 
 use proptest::strategy::Strategy;
-use proptest::test_runner::{Config, TestRunner};
+use proptest::test_runner::{Config, TestError, TestRunner};
 use verbatim_model::protocol::{UiaFocusRead, UiaSnapshotFact};
 
 use super::*;
@@ -2474,7 +2474,7 @@ fn title(id: u64, top: isize, stamp_us: u64) -> Change {
 /// # Panics
 ///
 /// On a failing case, naming the smallest.
-pub(super) fn run_generated(config: Config) -> Reached {
+pub(super) fn run_generated(config: Config, again: &str) -> Reached {
     let reached = RefCell::new(Reached::new());
     let mut runner = TestRunner::new(config);
     let strategy = proptest::collection::vec((action(), asks()), 1..48);
@@ -2488,10 +2488,43 @@ pub(super) fn run_generated(config: Config) -> Reached {
         }
         Ok(())
     });
-    if let Err(error) = result {
-        panic!("{error}");
+    match result {
+        Ok(()) => reached.into_inner(),
+        Err(TestError::Fail(reason, case)) => panic!("{reason}\n{}", fixed_report(&case, again)),
+        Err(error) => panic!("{error}"),
     }
-    reached.into_inner()
+}
+
+impl Action {
+    /// The action as the Rust expression that makes it, as a fixed case
+    /// lists it.
+    fn code(self) -> String {
+        match self {
+            Action::Entry { what, from, more } => format!(
+                "Action::Entry {{ what: What::{what:?}, from: From::{from:?}, more: {more} }}"
+            ),
+            Action::Commit(commit) => format!("Action::Commit(Commit::{commit:?})"),
+            Action::Stale(stale) => format!("Action::Stale(Stale::{stale:?})"),
+            Action::Advance(advance) => format!("Action::Advance(Advance::{advance:?})"),
+            other => format!("Action::{other:?}"),
+        }
+    }
+}
+
+/// The report of a failing case: `case` as a line ready to paste into
+/// [`fixed`], and the commands that run the fixed cases and the run that
+/// found it, `again`.
+fn fixed_report(case: &[(Action, Asks)], again: &str) -> String {
+    let steps: Vec<String> = case
+        .iter()
+        .map(|(action, asks)| format!("({}, {asks:?})", action.code()))
+        .collect();
+    format!(
+        "the smallest failing case, as a line for `fixed()` in crates/verbatim-outpost-logic/src/tests/reducer.rs:\n        vec![{}],\n\
+         the fixed cases alone: cargo test -p verbatim-outpost-logic --lib -- --exact tests::reducer::fixed_cases_keep_the_reducers_rules\n\
+         the run that found it again: {again}",
+        steps.join(", ")
+    )
 }
 
 /// The gate's seed and case count.
@@ -2508,7 +2541,10 @@ const CASES: u32 = 1_500;
 /// reach every listed state.
 #[test]
 fn generated_cases_keep_the_reducers_rules() {
-    let reached = run_generated(super::explore::config(SEED, CASES));
+    let reached = run_generated(
+        super::explore::config(SEED, CASES),
+        "cargo test -p verbatim-outpost-logic --lib -- --exact tests::reducer::generated_cases_keep_the_reducers_rules",
+    );
     let missed: Vec<&str> = LISTED
         .into_iter()
         .filter(|state| !reached.contains_key(state))

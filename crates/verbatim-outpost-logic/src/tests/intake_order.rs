@@ -33,7 +33,7 @@ use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 
 use proptest::strategy::Strategy;
-use proptest::test_runner::{Config, TestRunner};
+use proptest::test_runner::{Config, TestError, TestRunner};
 use verbatim_model::protocol::{UiaFocusRead, UiaSnapshotFact};
 
 use super::*;
@@ -937,7 +937,7 @@ fn focus_read(marker: u64, element: u8) -> DeliveredFact {
 /// # Panics
 ///
 /// On a failing case, naming the smallest.
-pub(super) fn run_generated(config: Config) -> BTreeMap<&'static str, u64> {
+pub(super) fn run_generated(config: Config, again: &str) -> BTreeMap<&'static str, u64> {
     let reached = RefCell::new(BTreeMap::new());
     let mut runner = TestRunner::new(config);
     let strategy = proptest::collection::vec(action(), 1..80);
@@ -951,10 +951,50 @@ pub(super) fn run_generated(config: Config) -> BTreeMap<&'static str, u64> {
         }
         Ok(())
     });
-    if let Err(error) = result {
-        panic!("{error}");
+    match result {
+        Ok(()) => reached.into_inner(),
+        Err(TestError::Fail(reason, case)) => panic!("{reason}\n{}", found_report(&case, again)),
+        Err(error) => panic!("{error}"),
     }
-    reached.into_inner()
+}
+
+impl Action {
+    /// The action as the Rust expression that makes it, as a found case
+    /// lists it.
+    fn code(self) -> String {
+        match self {
+            Action::Push(kind) => format!("Action::Push(Kind::{kind:?})"),
+            other => format!("Action::{other:?}"),
+        }
+    }
+}
+
+/// The report of a failing case: `case` as a line ready to paste into
+/// [`found`], and the commands that run the found cases and the run that
+/// found it, `again`.
+fn found_report(case: &[Action], again: &str) -> String {
+    let actions: Vec<String> = case.iter().map(|action| action.code()).collect();
+    format!(
+        "the smallest failing case, as a line for `found()` in crates/verbatim-outpost-logic/src/tests/intake_order.rs:\n        vec![{}],\n\
+         the found cases alone: cargo test -p verbatim-outpost-logic --lib -- --exact tests::intake_order::found_cases_keep_the_intakes_order\n\
+         the run that found it again: {again}",
+        actions.join(", ")
+    )
+}
+
+/// The cases failures of the generated test or the exploration shrank to,
+/// each kept as its list of actions, as the failure's report gives it.
+fn found() -> Vec<Vec<Action>> {
+    Vec::new()
+}
+
+/// Every found case keeps the intake's order, and gives the same
+/// hand-outs when run twice.
+#[test]
+fn found_cases_keep_the_intakes_order() {
+    for case in found() {
+        assert_eq!(Run::case(&case).log, Run::case(&case).log, "{case:?}");
+    }
 }
 
 /// The gate's seed and case count.
@@ -969,7 +1009,10 @@ const CASES: u32 = 800;
 /// state.
 #[test]
 fn generated_cases_keep_the_intakes_order() {
-    let reached = run_generated(super::explore::config(SEED, CASES));
+    let reached = run_generated(
+        super::explore::config(SEED, CASES),
+        "cargo test -p verbatim-outpost-logic --lib -- --exact tests::intake_order::generated_cases_keep_the_intakes_order",
+    );
     let missed: Vec<&str> = LISTED
         .into_iter()
         .filter(|state| !reached.contains_key(state))

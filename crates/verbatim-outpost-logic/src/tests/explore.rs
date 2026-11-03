@@ -40,7 +40,7 @@ pub(super) fn config(seed: u64, cases: u32) -> Config {
     clippy::disallowed_methods,
     reason = "the exploration tests alone read their seed and case count from the environment, and the gate never runs them"
 )]
-fn explored() -> Config {
+fn explored(test: &str) -> (Config, String) {
     let read = |name: &str| {
         std::env::var(name)
             .unwrap_or_else(|_| panic!("{name} is not set"))
@@ -49,17 +49,22 @@ fn explored() -> Config {
     };
     let seed = read("VERBATIM_EXPLORE_SEED");
     let cases = u32::try_from(read("VERBATIM_EXPLORE_CASES")).expect("a case count that fits");
-    config(seed, cases)
+    let again = format!(
+        "VERBATIM_EXPLORE_SEED={seed} VERBATIM_EXPLORE_CASES={cases} cargo test -p verbatim-outpost-logic --lib -- --ignored --exact tests::explore::{test}"
+    );
+    (config(seed, cases), again)
 }
 
 #[test]
 #[ignore = "exploration: run by the nightly workflow with its own seed (docs/testing.md, Exploration tests)"]
 fn explore_reducer() {
-    let _ = super::reducer::run_generated(explored());
+    let (config, again) = explored("explore_reducer");
+    let _ = super::reducer::run_generated(config, &again);
 }
 
 #[test]
 #[ignore = "exploration: run by the nightly workflow with its own seed (docs/testing.md, Exploration tests)"]
 fn explore_intake() {
-    let _ = super::intake_order::run_generated(explored());
+    let (config, again) = explored("explore_intake");
+    let _ = super::intake_order::run_generated(config, &again);
 }

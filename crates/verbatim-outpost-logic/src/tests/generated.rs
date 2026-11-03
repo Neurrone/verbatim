@@ -462,22 +462,66 @@ impl Gen {
     }
 }
 
-/// Every sequence from `generation`, depth first.
+/// Every sequence from `generation`, depth first; a failing sequence is
+/// printed as a line for [`found`] before the failure.
 fn enumerate(generation: &Gen) {
-    generation.clone().close();
+    reported(&generation.trail, || generation.clone().close());
     if generation.trail.len() == DEPTH {
         return;
     }
     for action in ACTIONS {
         if generation.applies(action) {
             let mut next = generation.clone();
-            next.step(action);
+            let trail: Vec<Action> = generation.trail.iter().copied().chain([action]).collect();
+            reported(&trail, || next.step(action));
             enumerate(&next);
         }
+    }
+}
+
+/// Runs `check`, the last step of the sequence `trail`; when it fails,
+/// prints `trail` as a line ready to paste into [`found`] and the command
+/// that runs the found sequences, then fails as it did.
+fn reported(trail: &[Action], check: impl FnOnce()) {
+    if let Err(payload) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(check)) {
+        let actions: Vec<String> = trail
+            .iter()
+            .map(|action| format!("Action::{action:?}"))
+            .collect();
+        eprintln!(
+            "the failing sequence, as a line for `found()` in crates/verbatim-outpost-logic/src/tests/generated.rs:\n        vec![{}],\n\
+             the found sequences alone: cargo test -p verbatim-outpost-logic --lib -- --exact tests::generated::found_sequences_answer_each_key_once_and_keep_the_watchs_rules",
+            actions.join(", ")
+        );
+        std::panic::resume_unwind(payload);
     }
 }
 
 #[test]
 fn every_short_sequence_answers_each_key_once_and_keeps_the_watchs_rules() {
     enumerate(&Gen::new());
+}
+
+/// The sequences the enumeration failed on, each kept as its list of
+/// actions, as the failure's report gives it.
+fn found() -> Vec<Vec<Action>> {
+    Vec::new()
+}
+
+/// Every found sequence applies, step by step, and answers each key once
+/// and keeps the watch's rules through its close.
+#[test]
+fn found_sequences_answer_each_key_once_and_keep_the_watchs_rules() {
+    for sequence in found() {
+        let mut generation = Gen::new();
+        for action in sequence {
+            assert!(
+                generation.applies(action),
+                "{action:?} after {:?}",
+                generation.trail
+            );
+            generation.step(action);
+        }
+        generation.close();
+    }
 }
