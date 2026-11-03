@@ -768,6 +768,64 @@ mod tests {
         }
     }
 
+    /// A focus, runtime id `[42, 1]`, in window `own` (0 for none), with
+    /// ancestors `[42, 2]` and `[42, 3]`, nearest first, in the windows
+    /// `windows` gives, its walk ending as `end` says.
+    fn focus_read(
+        own: isize,
+        windows: [isize; 2],
+        end: verbatim_model::protocol::AncestorsEnd,
+    ) -> verbatim_model::protocol::UiaFocusRead {
+        use verbatim_model::protocol::{UiaAncestorFact, UiaFocusRead, UiaSnapshotFact};
+        let snapshot = |id| UiaSnapshotFact {
+            runtime_id: vec![42, id],
+            role: verbatim_model::Role::Group,
+            name: None,
+            value: None,
+            states: verbatim_model::StateSet::new(),
+            details: verbatim_model::NodeDetails::default(),
+        };
+        UiaFocusRead {
+            hwnd: own,
+            snapshot: snapshot(1),
+            ancestors: (2..=3)
+                .zip(windows)
+                .map(|(id, hwnd)| UiaAncestorFact {
+                    snapshot: snapshot(id),
+                    hwnd,
+                    content: true,
+                })
+                .collect(),
+            ancestors_end: end,
+            selected_child: None,
+            value_from_selection: false,
+            window: None,
+            same_as_last: None,
+            bound_us: 2_000_000,
+        }
+    }
+
+    /// A chain is cut at its focus only when the walk up from it did not
+    /// reach the top and no element of it has a window of its own; never
+    /// at an ancestor.
+    #[test]
+    fn a_chain_is_cut_at_a_windowless_focus_whose_walk_did_not_reach_the_top() {
+        use verbatim_model::protocol::AncestorsEnd;
+        let focus = [42, 1];
+        let cut = FocusPath::of(&focus_read(0, [0, 0], AncestorsEnd::PlainFrom(70)));
+        assert!(cut.is_cut_at(&focus));
+        assert!(!cut.is_cut_at(&[42, 2]), "an ancestor is not the focus");
+        let failed = FocusPath::of(&focus_read(0, [0, 0], AncestorsEnd::ContinueFrom(70)));
+        assert!(failed.is_cut_at(&focus));
+        let whole = FocusPath::of(&focus_read(0, [0, 0], AncestorsEnd::Top));
+        assert!(!whole.is_cut_at(&focus));
+        let windowed_ancestor = FocusPath::of(&focus_read(0, [0, 80], AncestorsEnd::PlainFrom(70)));
+        assert!(!windowed_ancestor.is_cut_at(&focus));
+        let windowed_focus = FocusPath::of(&focus_read(60, [0, 0], AncestorsEnd::PlainFrom(70)));
+        assert!(!windowed_focus.is_cut_at(&focus));
+        assert!(!FocusPath::default().is_cut_at(&focus));
+    }
+
     #[test]
     fn an_event_observed_while_a_read_was_in_flight_is_not_covered() {
         let mut read = CaretRead::default();

@@ -261,10 +261,8 @@ carries each outcome out (`requests::deliver`,
   generation asked and only the first time; `outpost_ended(outpost)`, each
   outstanding request answered "gone"; `expire(now_us)`, each past its
   deadline answered failed (`DEADLINE_PASSED`) and named with its outpost
-  (`Expired`) for the shell to withdraw; and `withdraw(which)`, the first
-  request whose asker `which` picks, with no outcome, its asker handed
-  back for the caller to drop. `find(which)` names a request to withdraw
-  from its outpost while it keeps its one outcome.
+  (`Expired`) for the shell to withdraw. `find(which)` names a request to
+  withdraw from its outpost while it keeps its one outcome.
 - Request numbers are given in increasing order and kept in a
   `BTreeMap`, so the outcomes `outpost_ended` and `expire` return together
   come in the order the requests were made.

@@ -285,6 +285,17 @@ impl Terminals {
 }
 
 impl TerminalModel {
+    /// Keeps the text request `op` of query `query_id`, run under `trace`,
+    /// waiting for the model's answer, for a test that states the model it
+    /// expects.
+    #[cfg(test)]
+    pub(crate) fn wait_for_text(&mut self, trace: Option<TraceId>, query_id: QueryId, op: TextOp) {
+        self.reviews.push_back(Waiting {
+            trace,
+            review: Review::Text { query_id, op },
+        });
+    }
+
     fn new(node: NodeId, settings: Settings, generation: u64) -> Self {
         Self {
             node,

@@ -243,10 +243,6 @@ The decisions, in brief:
 
 ### Follow-ups from M4.6
 
-- `crates/verbatim-core/src/queries/tests.rs`'s three-step enumeration builds the expected effects of a held key's resume by calling `held_watch_answered`, `terminal_model::sync_settings` and `intercept` themselves, so a change to them moves the expected and actual effects together (dropping `answer_from_memory_later` from `intercept` passes); a fixed test should state the resume's literal effects from its three fixed states.
-- Two counterexamples the intake's generated test kills are likely but not guaranteed in the gate's cases (a batch with five focus events kept, and a same-key pair across an idle query in what waits); `LISTED` in `tests/intake_order.rs` should require them.
-- Core's generated test copies two fields of the foreground record, the attention's `topmost` and `under_active_window`, into the expected record unchecked (`queries/generated.rs`).
-- `FocusPath::is_cut_at` in `crates/verbatim-outpost-logic/src/follow.rs` has no test anywhere, and `RequestTable::withdraw` in `crates/verbatim-core/src/requests.rs` has no production caller.
 - The surviving targets in `experiments/logic-tests-study/judgement.md`, "Second run", 22 of 71, are the next checks to add, when a build changes their owner.
 
 ### Follow-ups from M4.1

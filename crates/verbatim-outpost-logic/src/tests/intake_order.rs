@@ -172,10 +172,12 @@ struct Run {
 }
 
 /// The lifecycle states the gate's cases must each reach.
-const LISTED: [&str; 11] = [
+const LISTED: [&str; 13] = [
     "a focus group of several",
     "replaced",
     "past the batch limits",
+    "a focus event dropped behind four kept",
+    "a same-key pair across an idle query",
     "a client focus removed by its foreground change",
     "an older menu opening",
     "a menu opening at its batch's end",
@@ -502,8 +504,13 @@ impl Run {
         let Some(new) = after.iter().position(|&waiting| waiting == trace) else {
             return;
         };
+        let mut across = false;
         for (place, &other) in after.iter().enumerate() {
-            if other == trace || self.divided(&after, place, new) {
+            if other == trace {
+                continue;
+            }
+            if self.divided(&after, place, new) {
+                across |= key(kind).is_some() && key(self.pushed[&other].kind) == key(kind);
                 continue;
             }
             let was = self.pushed[&other].kind;
@@ -515,6 +522,11 @@ impl Run {
                 !client(was),
                 "the focus {other} on the client area waits beside its window's foreground change {trace}: {trail}"
             );
+        }
+        // An entry of its key waits only beyond an idle query, so a search
+        // for one to replace that did not stop at idle queries would find it.
+        if across && replaced == 0 {
+            self.reach("a same-key pair across an idle query");
         }
     }
 
@@ -549,6 +561,7 @@ impl Run {
             "a batch keeps an entry it did not take: {trail}"
         );
         let mut fates = Vec::new();
+        let mut reach_focus = false;
         for (at, trace) in ready.iter().enumerate() {
             let counted = groups(kind(trace));
             let newer = &ready[at + 1..];
@@ -583,6 +596,15 @@ impl Run {
                     kind(trace)
                 );
                 fates.push((*trace, "past the batch limits"));
+                // Kept by a batch keeping five focus events, it would be
+                // the fifth.
+                let focus_kept = newer
+                    .iter()
+                    .filter(|newer| kept.contains(newer) && groups(kind(newer)).contains(&(0, 4)))
+                    .count();
+                if matches!(kind(trace), Kind::Focus { .. }) && focus_kept == 4 {
+                    reach_focus = true;
+                }
             }
         }
         assert!(
@@ -593,6 +615,9 @@ impl Run {
             "two menu openings kept in one batch: {trail}"
         );
         self.fate.extend(fates);
+        if reach_focus {
+            self.reach("a focus event dropped behind four kept");
+        }
     }
 
     /// The oldest open marker, resolved now.

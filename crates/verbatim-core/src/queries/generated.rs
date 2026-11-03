@@ -31,7 +31,7 @@ use verbatim_model::{
 use super::Asked as Waited;
 use super::Then;
 use super::tests::{self, Visit, Wire};
-use crate::foreground::Front;
+use crate::foreground::{Attention, Front};
 use crate::reduce;
 use crate::state::SrState;
 
@@ -662,13 +662,7 @@ impl Run {
             (
                 record.window(),
                 record.front(),
-                record.attention().map(|attention| (
-                    attention.source,
-                    attention
-                        .window
-                        .as_ref()
-                        .map(|facts| (facts.top_level, facts.root_owner))
-                )),
+                record.attention(),
                 record.entered(),
             ),
             (
@@ -678,7 +672,23 @@ impl Run {
                     root_owner: change.root_owner,
                     observed_at_us: change.observed_at_us,
                 }),
-                Some((change.process, Some((change.window, change.root_owner)))),
+                // The hook's view of the window: in front, and nothing
+                // else of it known.
+                Some(&Attention {
+                    source: change.process,
+                    window: Some(WindowFacts {
+                        top_level: change.window,
+                        root_owner: change.root_owner,
+                        topmost: false,
+                        under_active_window: None,
+                        in_foreground: true,
+                        foreground_window: change.window,
+                        class: String::new(),
+                        application: String::new(),
+                        alt_held: false,
+                        foreground_is_shell: false,
+                    }),
+                }),
                 self.model.entered,
             ),
             "a foreground change's record: {:?}",

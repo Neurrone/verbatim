@@ -182,16 +182,6 @@ impl<A> RequestTable<A> {
             .map(|(id, entry)| (*id, entry.outpost))
     }
 
-    /// Ends the first outstanding request, in the order they were made,
-    /// whose asker `which` picks, with no outcome, so nothing waits for it
-    /// and its outcome when it comes is dropped: the request, the outpost to
-    /// withdraw it from, and its asker, which the caller drops.
-    pub fn withdraw(&mut self, which: impl Fn(&A) -> bool) -> Option<(RequestId, OutpostId, A)> {
-        let (id, _) = self.find(which)?;
-        self.remove(id)
-            .map(|entry| (id, entry.outpost, entry.asker))
-    }
-
     /// How many requests are outstanding.
     #[must_use]
     pub fn len(&self) -> usize {
@@ -247,22 +237,6 @@ mod tests {
         let id = table.begin(OutpostId(1), "navigation");
         assert_eq!(table.finish(id, OutpostId(2), QueryOutcome::Gone), None);
         assert_eq!(table.len(), 1, "the real answer can still arrive");
-    }
-
-    #[test]
-    fn a_withdrawn_request_is_not_outstanding_and_its_late_outcome_is_dropped() {
-        let mut table = RequestTable::<Asker>::default();
-        let read = table.begin(OutpostId(1), "read");
-        assert_eq!(table.withdraw(|asker| *asker == "other"), None);
-        assert_eq!(
-            table.withdraw(|asker| *asker == "read"),
-            Some((read, OutpostId(1), "read"))
-        );
-        assert_eq!(table.outstanding(), 0, "the idle condition is clear");
-        assert_eq!(
-            table.finish(read, OutpostId(1), QueryOutcome::NotStarted),
-            None
-        );
     }
 
     #[test]
