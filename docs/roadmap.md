@@ -243,7 +243,28 @@ The decisions, in brief:
 
 ### Follow-ups from M4.6
 
-- The surviving targets in `experiments/logic-tests-study/judgement.md`, "Second run", 22 of 71, are the next checks to add, when a build changes their owner.
+- The 22 target mutants the generated tests did not kill, listed in `experiments/logic-tests-study/judgement.md`, "Targets still missed", with every missed mutant's class and reason above it, are the next checks to add, when a build changes their owner.
+- The second measure of the generated tests' judgement, set by Dickson on 2026-11-02, is taken over the next three builds that change a covered owner (the focus pipeline rework's third build, the caret and selection rework, and the next). Each build records every ordering, lifecycle or hand-off defect found in a covered owner, by anything, with what found it first, and the time spent on generators, models and their upkeep. A generated test's failure counts as a defect found only when its fix changes production code, and is logged when found; a failure fixed in the model or the generator is upkeep. Reason: a failure fixed before its commit leaves no trace, and counting every failure would count the model's own errors. Threshold: the generated tests find first at least two such defects across the three builds, and their upkeep stays under 15% of each build's time. Reason: October's study puts the defects within reach of these tests at roughly 8 to 12 a month in code that survives the rework, so two in three builds is a low bar, and a bar the tests cannot clear says they are not worth growing. If it is not met, the generated tests stop growing, are kept while they pass, and the simulation below is not built. The record so far, from M4.6's own build, whose defects do not count toward the three builds; each was fixed with its shrunk case kept as a replay test and a fixed case:
+  - A closed outpost still tested the gap record's bound, so a title could reach Core (found by the outpost's generated test in the gate).
+  - A verdict that left the record unchanged was reported as a change, so the record was sent again and the hook narrowed again (found by exploration).
+  - A gap record closed by its own tick's publication still had its title committed (found by exploration).
+  - A push that replaced the event an idle waiter waited on ran no waiters (found by reading while the design was surveyed; the generated test fails without the fix).
+  - The listener kept an ended application for good once its abandoned read returned, one per such process (found by the scheduler's model).
+  - A reading thread's failed start was stepped before the other effects of its step, so an idle answer went ahead of another application's drop (found by exploration).
+  - The build's upkeep: building the tests took 5.1 hours, the mutation runs 3.7 hours of machine time, and the design's surveys and reviews about 0.6 hours.
+
+### The simulation of the reducers, deferred
+
+Built only if the second measure above is met. A simulation joining the reducers through pretend pipes, with their concurrency, as Dropbox's Trinity did beside its CanopyCheck tests of single pure owners. It needs two prerequisites: the transport's merge, priority and overflow rules as pure code it can call, since the real pipes merge by key, put urgent messages first and drop the oldest past 64 (`docs/design/communication.md`, section 4.4), and a recorder of the worker's commits. It is hand-written, since the simulation frameworks assume async code, and it has a fault model for application answers (slow, failing, reordered, the application exiting), counters for the states reached, a separate random stream per component, and the end-to-end suite kept, since that catches what no simulation models.
+
+A simulated application would follow it, once the simulation has shown value by the same kind of judgement. In order:
+
+- The worker's reads behind one trait, as the listener's reading threads already are (`Reading` in the listener's focus reading), so a program runs unchanged against it.
+- A tree of elements with UI Automation's and MSAA's answers, and its events, in memory.
+- A fault model taken from `docs/uia-bugs.md`: a hung window, a call past its timeout, an element gone between two calls, a focus event late or repeated, a reused runtime id.
+- Conformance checked as the simulated terminal's is: mockapp is the reference for UI Automation's and MSAA's own behaviour, and recorded end-to-end sessions for real applications'. Every difference is a defect in the model or a new entry in `docs/uia-bugs.md`.
+
+It does not replace mockapp, which tests the real client stack, COM and the cross-process calls at real timing; the simulated application tests the logic above the calls, in memory, under a seeded scheduler. Code outside every simulation should then be only the calls themselves: COM and UI Automation, the hooks, the pipes' I/O, the audio device and the engines.
 
 ### Follow-ups from M4.1
 
@@ -1057,8 +1078,8 @@ each of them end to end.
   waits in the line waits behind it whatever the permit, so a key
   released as a window Verbatim cannot hold keys in comes to the front
   is not left down; with UIAccess no send Verbatim makes is dropped, so
-  the rule holds in every window ([logic tests](design/logic-tests.md),
-  "The hook's hold decision"; Dickson, 2026-11-01).
+  the rule holds in every window ([verbatim-input](crates/verbatim-input.md);
+  Dickson, 2026-11-01).
 - The secure desktop and the lock screen wait for UIAccess support,
   without which Verbatim cannot read the secure desktop (Dickson,
   2026-10-12).
@@ -1151,8 +1172,7 @@ theme's output is unchanged from before M11.
 - The TLS WebSocket transport starting from the synchronous `tungstenite`
   and `rustls` on a thread of their own, handing messages to the rest of
   Verbatim as the control plane does, with no async runtime
-  ([logic tests](design/logic-tests.md), "Alternatives weighed"; Dickson,
-  2026-10-31).
+  (Dickson, 2026-10-31).
 - Remote Desktop, Citrix and similar products (Dickson, 2026-11-02): a
   channel plug-in, built into Verbatim, that the product's client loads and
   that carries the remote protocol over the product's own virtual channel,

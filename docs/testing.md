@@ -83,3 +83,37 @@ A test known to fail is listed with its cause and fix in [the known failures](fl
 
 - The harness injects only the input the scenario is about. It never taps keys, or uses Alt+Tab, to bring a window forward; a window that refuses the foreground fails the test. Even where switching windows is what a scenario is about, as in the two-window scenarios, the harness brings the window it opened, found by its title marker, to the front, as clicking its taskbar button does and as NVDA's system tests do with `SetForegroundWindow` (`Scenario::bring_window_forward`; Dickson, 2026-10-10). Alt+Tab goes to the most recently used window, which the harness cannot predict, so it could reach a window the scenario did not open.
 - Every scenario starts from the same state: all windows minimized to the desktop, whether the run is recorded or not. Recording and other instrumentation change nothing else about the desktop or the load a run sees.
+
+## The crates on a reducer's path
+
+A replay or a generated case must depend only on its inputs, and every project that built a simulation reports leaks of exactly this kind. So the crates on a reducer's path allow no hash map or set, no clock, no randomness, no thread, no environment, file, process or network call, no minted trace id, no call during a transition and no floating-point function from the platform's library. The tier check (`xtask/src/tiers.rs`) derives the set from the dependency graph, with `verbatim-input` listed beside the reducers. `verbatim-speech` stays outside the rule (Dickson, 2026-10-31): it runs after the reducer and owns the synthesizer threads, and its maps are only looked up.
+
+How the rule is enforced:
+
+- Each covered crate's `clippy.toml`, identical to `verbatim-core`'s, disallows the types and methods.
+- The ownership scan (`xtask/src/ownership.rs`) keeps those files equal, forbids silencing them outside its listed exceptions, forbids the whole modules that Clippy names function by function, and forbids `tracing`'s `enabled!` family and `proptest`'s macro and default configuration.
+- The tier check holds each covered crate's direct third-party dependencies to an allow-list.
+
+What the rule means in code:
+
+- `BTreeMap` and `BTreeSet` everywhere on the path (Dickson, 2026-10-31), and a fixed-hasher map only where a measurement shows a cost that matters, named with its figure; none is taken. Reason: one kind of map leaves no key classification for review, so Clippy can enforce the rule whole. The terminal alignment's five lookups by row hash are ordered collections too, accepting 12 to 62% more time on those lookups' cases than fixed-hasher maps because the simpler code is preferred (Dickson, 2026-11-01; `docs/performance.md`).
+- Times and trace ids are inputs: microseconds on the run's shared clock, never an `Instant`, and a trace id carried by the input that caused the work, `TraceId::from_raw` in tests. Reason: an `Instant` cannot be recorded or generated, and the mint is a process-wide counter.
+- A reducer is pure with calls as its effects (Dickson, 2026-10-31): a local read it needs is an ask, an effect answered by an input.
+- Each generated case runs twice from a new owner and the two effect sequences are compared by their `Debug` text, which is ordered because every map on the path is ordered.
+
+A third-party crate the covered crates call gets the same check when it is added to the allow-list and when a version change is reviewed (Dickson, 2026-10-31): the functions called from the path, and the dependencies they reach, are read from source for a randomly seeded hash map whose order reaches a result, a clock, randomness, a thread, the environment or a file, and global mutable state that changes a result. Verdicts, at the versions in the lock file on 2026-11-01:
+
+- `jieba-rs` 0.11.0: deterministic. Its dictionary is embedded, its maps are `rustc-hash`'s fixed-seed maps, its trie's hash is fixed, and its thread-local scratch buffers are cleared for each call.
+- `icu_segmenter`, `icu_normalizer`, `icu_properties` and `icu_locale_core` 2.2.0: deterministic. Their data is compiled in, and the word segmenter's LSTM computes with `core_maths` over the pure Rust `libm`, so x64 and ARM64 agree.
+- `unicode-width` 0.2.2: deterministic, static tables.
+- `serde` 1.0.228: deterministic; its hash map impls are reached only by hash maps, which the covered crates have none of.
+- `serde_json` 1.0.150: deterministic while its `preserve_order` feature is off, which nothing enables.
+- `vte` 0.15.0: deterministic while its `ansi` feature, the one with a clock read, is off, which nothing enables.
+- `tracing` 0.1.44: its dispatcher is global state that decides only whether an event is written, so the scan forbids asking it whether one is enabled.
+- `proptest` 1.12.0: deterministic as called, from `random_config()`, which fixes the seed and turns off failure files, forks and timeouts; its default configuration reads the environment, so the scan forbids it.
+
+Limits: the verdicts on `serde_json` and `vte` rest on features nothing enables, which `workspace-hack` could unify in, though neither would make a result depend on anything but its input; a `tracing` field with a side effect would make the logic depend on the subscriber, which is a review rule; and the idle barrier and the GUI's lifecycle stay outside the covered crates.
+
+### Exploration tests
+
+Each generated test in the gate has a fixed seed and case count and reads nothing from the environment. Beside it, an `#[ignore]`d exploration test calls the same machine with a seed and case count read from `VERBATIM_EXPLORE_SEED` and `VERBATIM_EXPLORE_CASES`, and fails if either is missing. Its file is one of the ownership scan's exceptions for `std::env` (an `expect` of `clippy::disallowed_methods` with its reason). This is the recorded decision for those ignored tests: only the scheduled workflow (`.github/workflows/explore.yml`) runs them, and a failure it finds is shrunk and added to the owner's fixed cases as an explicit action list, never kept as a seed. Reason: the environment is read only by a test the gate never runs, in a file the scan names.

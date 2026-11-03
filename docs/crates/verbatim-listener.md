@@ -240,7 +240,7 @@ receives the event's own element, judges and reads a UIA focus
 responder out of it.
 - What the shell guarantees the schedule, which the schedule's generated
   test relies on and gives no stronger
-  (`docs/design/logic-tests.md`, "The listener's scheduler"): a reading
+  (`docs/crates/verbatim-listener-logic.md`): a reading
   thread asks for its next event (`Next`) only with no read under way, as
   its own loop alternates the two, and only under the generation it was
   last given; a read returns once per job, from the thread given it, and a

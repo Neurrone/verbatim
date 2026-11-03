@@ -258,7 +258,7 @@ terminal's reads in Core". The alignment's lookups by row hash are
 `BTreeMap`s and `BTreeSet`s, as the determinism rule asks of every crate
 on a reducer's path, at 12 to 62% more time on those cases than the
 fixed-hasher maps they replaced, kept as the simpler code
-(`docs/design/logic-tests.md`, "Determinism").
+(`docs/testing.md`, "The crates on a reducer's path").
 
 ### Tests
 

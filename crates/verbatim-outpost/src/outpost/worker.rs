@@ -2757,7 +2757,7 @@ impl Worker<'_> {
         // An event whose own window's application the system reports hung
         // is dropped before any window lookup or read, as NVDA's UIA
         // handlers drop it first, a window of 0 passing untested
-        // (`docs/design/logic-tests.md`, "Determinism").
+        // (`docs/testing.md`, "The crates on a reducer's path").
         // Its element and range, taken from the store, go with it.
         if hung(event.hwnd) {
             if let UiaKind::ActiveTextPosition(Some(range)) = event.kind {

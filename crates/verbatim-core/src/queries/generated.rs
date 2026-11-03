@@ -1,5 +1,4 @@
-//! Core's reducer slice's generated test (`docs/design/logic-tests.md`,
-//! "Core's reducer"): lists of actions, each made valid when it is applied
+//! Core's reducer slice's generated test (`docs/crates/verbatim-core.md`): lists of actions, each made valid when it is applied
 //! by resolving its target against the model, given to [`reduce`] in
 //! order. After every input the query table's invariants of the
 //! enumeration beside it (`queries/tests.rs`) are checked against the

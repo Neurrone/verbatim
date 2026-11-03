@@ -44,8 +44,7 @@ Public API:
   to the foreground window, the rules the test ends with, which an outpost
   also reports in an event's window facts.
 - `in_flight` — the work in flight: a reader's record of the one slow-call
-  item a worker is running (`docs/design/logic-tests.md`, "The work
-  in flight, shared by both readers"). `InFlight<T>` holds the worker
+  item a worker is running. `InFlight<T>` holds the worker
   generation in charge and the last request number given, and the item
   running: its `Request` (generation and number), its start and deadline,
   its `Walk` (`Unarmed`, `Armed(bound)` or `Published`, so a walk armed
@@ -103,8 +102,7 @@ Public API:
 Tests: the class normalization, the class lists pinned to their NVDA
 sources so an NVDA sync is a diff, the acceptance test rule by rule
 against a made-up desk, and the work in flight: a replay test per rule,
-and a generated test (`docs/design/logic-tests.md`, "Tests against
-reference models") under a fixed seed and case count that drives lists of
+and a generated test under a fixed seed and case count that drives lists of
 actions weighted toward the lifecycle: starts, learned windows, armed walks
 (after a publication too), ticks, returned walks, hand-ons, ends,
 successions, requests the record does not keep, answers to a dead request

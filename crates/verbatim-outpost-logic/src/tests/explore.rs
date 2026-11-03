@@ -2,8 +2,7 @@
 //! tests: the gate's generated tests under a seed and a case count read
 //! from `VERBATIM_EXPLORE_SEED` and `VERBATIM_EXPLORE_CASES`, run only by
 //! the nightly workflow (`.github/workflows/explore.yml`). The one file of
-//! the crate that reads the environment (`docs/design/logic-tests.md`,
-//! "Tests against reference models"); a failure an exploration finds is
+//! the crate that reads the environment (`docs/testing.md`, "Exploration tests"); a failure an exploration finds is
 //! shrunk and added to the gate as a fixed case, never kept as a seed.
 
 use proptest::test_runner::{Config, RngAlgorithm, RngSeed};
@@ -54,13 +53,13 @@ fn explored() -> Config {
 }
 
 #[test]
-#[ignore = "exploration: run by the nightly workflow with its own seed (docs/design/logic-tests.md)"]
+#[ignore = "exploration: run by the nightly workflow with its own seed (docs/testing.md, Exploration tests)"]
 fn explore_reducer() {
     let _ = super::reducer::run_generated(explored());
 }
 
 #[test]
-#[ignore = "exploration: run by the nightly workflow with its own seed (docs/design/logic-tests.md)"]
+#[ignore = "exploration: run by the nightly workflow with its own seed (docs/testing.md, Exploration tests)"]
 fn explore_intake() {
     let _ = super::intake_order::run_generated(explored());
 }

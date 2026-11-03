@@ -1,6 +1,6 @@
 //! The debug-build check that no call into an application is made while
 //! the calling thread holds one of the outpost's locks
-//! (`docs/design/logic-tests.md`, "Failure paths and locks").
+//! (`docs/crates/verbatim-win32.md`, `held_locks`).
 //!
 //! Each thread keeps a record of eight slots, each empty or holding the
 //! place a lock was taken. The outpost's lock wrapper fills the first empty

@@ -9,8 +9,7 @@
 //! microseconds on the shell's monotonic clock, and returns the
 //! [`ScheduleEffect`]s, in the order the shell applies them under its lock.
 //! Each application's read under way is its work in flight
-//! ([`InFlight`], `docs/design/logic-tests.md`, "The work in flight,
-//! shared by both readers"), which decides its abandonment, its
+//! ([`InFlight`], `docs/crates/verbatim-reader-rules.md`), which decides its abandonment, its
 //! publication at its bound and the half-second judgment of whether the
 //! user has moved on; what it needs of Windows it asks by an effect
 //! ([`ScheduleEffect::AskMovedOn`], [`ScheduleEffect::Publish`]), which
@@ -1904,7 +1903,7 @@ mod tests {
     }
 
     /// Found by the read scheduler's generated test
-    /// (`docs/design/logic-tests.md`, "The listener's scheduler"): an idle
+    /// (`docs/crates/verbatim-listener-logic.md`): an idle
     /// waiter runs in the push whose replacement gives the one event
     /// queued before it its outcome, not at a later step.
     #[test]
@@ -1934,7 +1933,7 @@ mod tests {
     }
 
     /// Found by the read scheduler's generated test
-    /// (`docs/design/logic-tests.md`, "The listener's scheduler"): an
+    /// (`docs/crates/verbatim-listener-logic.md`): an
     /// application whose outpost has ended is let go once its last
     /// abandoned read returns with nothing waiting.
     #[test]

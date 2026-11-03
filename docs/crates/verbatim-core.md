@@ -189,8 +189,7 @@ what its answer continues (`Then`).
   `Nothing` holds nothing.
 
 What the shell and the outposts guarantee the reducer here, which its
-generated test relies on and gives no stronger
-(`docs/design/logic-tests.md`, "Core's reducer"): the focus listener's
+generated test relies on and gives no stronger: the focus listener's
 foreground stamps never decrease, though a focus may be stamped as late as
 one; answers do not come in the order of their requests in general, and an
 answer may come from another outpost than the one asked or come again,
@@ -203,8 +202,7 @@ Tests: the query table's unit tests, every sequence of up to three steps
 from a text box, a held key's watch and a console, enumerated against the
 table's invariants (`crates/verbatim-core/src/queries/tests.rs`), and a generated test of the
 reducer's slice of queries, focus lifecycle and generations against a
-reference model (`crates/verbatim-core/src/queries/generated.rs`;
-`docs/design/logic-tests.md`, "Core's reducer"): lists of actions run
+reference model (`crates/verbatim-core/src/queries/generated.rs`): lists of actions run
 through proptest's `TestRunner::run` under a fixed seed and 300 cases
 (about 6.8 s in a debug build), each made valid against the model as it
 is applied. The actions are focuses from the oldest or newest live

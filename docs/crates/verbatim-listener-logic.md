@@ -81,8 +81,7 @@ Public API:
 Tests: each module's unit tests, the scheduler's a replay of inputs with
 exact effects, and every drop reason's fact for the gap record. The
 scheduler has a generated test against a reference model
-(`crates/verbatim-listener-logic/src/schedule/generated.rs`,
-`docs/design/logic-tests.md`, "The listener's scheduler"): lists of
+(`crates/verbatim-listener-logic/src/schedule/generated.rs`): lists of
 actions weighted toward the lifecycle, run through proptest's
 `TestRunner::run` under a fixed seed and 2,000 cases (about 2.4 s in a
 debug build), each made valid when applied by resolving its target

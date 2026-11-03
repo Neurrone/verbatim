@@ -1,5 +1,4 @@
-//! The outpost's reducer's generated test (`docs/design/logic-tests.md`,
-//! "The outpost's reducer"): lists of actions, each made valid when it is
+//! The outpost's reducer's generated test (`docs/crates/verbatim-outpost-logic.md`): lists of actions, each made valid when it is
 //! applied by resolving its target against the model, given to
 //! [`Reducer::input`] and [`Reducer::tick`] with every ask answered in
 //! line as the outpost's shell answers it, and checked against a reference
@@ -364,7 +363,6 @@ struct Flight {
     /// ended by its clock, which the copy does not read; and after a gap
     /// title's foreground fact ended the watch while it was in flight, its
     /// copy still shows the watch the reducer no longer has
-    /// (docs/design/logic-tests.md, "Limitations").
     uncompared: bool,
 }
 
@@ -1635,8 +1633,7 @@ impl Run {
     }
 
     /// Checks the gap record's change in one call, from `before`, against
-    /// what the design lets change it (`docs/design/logic-tests.md`, "The
-    /// outpost's reducer"), never against its stamps' arithmetic: it opens,
+    /// what the design lets change it (`docs/crates/verbatim-outpost-logic.md`), never against its stamps' arithmetic: it opens,
     /// or is restamped, only by a foreground change found in front or a
     /// copy dropped for UIA in its top-level window, waiting for a focus
     /// after a copy, a change judged UIA, or a record of its window that
@@ -2583,7 +2580,7 @@ const TO_TIMER: Action = Action::Advance(Advance::ToTimer {
 /// as they were sent as a change; a title sent for a record a publication
 /// in the same tick closed; and the title committed under the request of a
 /// generation the same tick's moved-on answer abandoned
-/// (`docs/design/logic-tests.md`, "To check in the build"); from the
+/// (`docs/crates/verbatim-outpost-logic.md`); from the
 /// mutation baseline, a take of a node no watch is on while one waits; and
 /// a title committed while the program in flight holds the watch, which
 /// ends it at once.

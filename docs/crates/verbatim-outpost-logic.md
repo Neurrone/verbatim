@@ -146,8 +146,7 @@ program's copy equal to the reducer's watch apart from times at each
 accepted commit, and no idle answer while the watch is open or the
 program in flight deferred.
 The reducer has a generated test against a reference model
-(`crates/verbatim-outpost-logic/src/tests/reducer.rs`,
-`docs/design/logic-tests.md`, "The outpost's reducer"): lists of actions
+(`crates/verbatim-outpost-logic/src/tests/reducer.rs`): lists of actions
 weighted toward the lifecycle, run through proptest's `TestRunner::run`
 under a fixed seed and 1,500 cases (about 4.3 s in a debug build), each
 action made valid when applied by resolving its target against the model

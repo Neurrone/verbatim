@@ -1737,7 +1737,7 @@ back pages or not):
 
 Measured again on 2026-11-01, medians of six runs, after the alignment's
 lookups by row hash became `BTreeMap`s and `BTreeSet`s
-(`docs/design/logic-tests.md`, "Determinism"). Against the hashed
+(`docs/testing.md`, "The crates on a reducer's path"). Against the hashed
 maps they replaced on the same day (a rotation of 1,000 rows 1.23 to 1.26
 ms, an overflow 1.06 to 1.07), the lost reads above cost 12 to 26% more,
 the overflow 30 to 31% more, the clear and reprint 26 to 28% more, and
@@ -1854,8 +1854,7 @@ fault and an ordinary read 18 to 21 µs; without them and with the text
 grown from empty, 2,134 to 2,407 µs with 114 to 159 page faults in
 Latin text and an ordinary read 21 to 24 µs. Sizing the text up front
 removed about a third of the page faults; its time difference is within
-the drift of the comparison's unchanged two-copy conversion
-(`docs/design/logic-tests.md`, "The cost rule").
+the drift of the comparison's unchanged two-copy conversion.
 
 ### A terminal's reads, live
 

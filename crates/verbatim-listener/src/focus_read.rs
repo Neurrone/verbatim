@@ -75,8 +75,7 @@
 //!
 //! Each application's read under way is its work in flight in the
 //! schedule (`verbatim_reader_rules::in_flight`,
-//! `docs/design/logic-tests.md`, "The work in flight, shared by both
-//! readers"), which abandons a thread whose read runs past
+//! `docs/crates/verbatim-reader-rules.md`), which abandons a thread whose read runs past
 //! [`READ_DEADLINE`], the budget and the one call that can be under way
 //! when the budget passes, and, as NVDA's watchdog cancels a slow call
 //! once the user has moved on (`docs/nvda/main-loop-and-watchdog.md`,
@@ -3481,7 +3480,7 @@ mod tests {
     }
 
     /// Found by the read scheduler's generated test
-    /// (`docs/design/logic-tests.md`, "The listener's scheduler"): a tick
+    /// (`docs/crates/verbatim-listener-logic.md`): a tick
     /// abandons two applications' reads, the first with an event waiting,
     /// whose new thread cannot start. The failed start is stepped once the
     /// tick's effects are applied, so the second application's drop is sent

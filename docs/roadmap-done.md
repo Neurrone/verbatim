@@ -110,7 +110,7 @@ Built (2026-11-03), under the design principle that state about an owner lives i
 
 ## M4.6, generated tests
 
-Complete (2026-11-03). The design, with Dickson's decisions of 2026-11-02, is in [logic tests](design/logic-tests.md), "M4.6: the generated tests"; the judgement's record is `experiments/logic-tests-study/judgement.md`. Built, with a design review, an implementation review and its fixes, and related scenarios:
+Complete (2026-11-03). Each generated test is described in its crate's guide ([the crate index](crates/readme.md)), and the rest of the judgement is in [the roadmap](roadmap.md), "Follow-ups from M4.6"; the first measure's record is `experiments/logic-tests-study/judgement.md`. Built, with a design review, an implementation review and its fixes, and related scenarios:
 
 - generated tests of the work in flight, the outpost's reducer and its intake, the listener's scheduler and Core's query table, focus and generations, each against a reference model far simpler than the code, plain `proptest` action lists run twice in the gate within its 30 seconds (about 19);
 - a nightly exploration with new seeds and `cargo-mutants` on changed covered code (`.github/workflows/explore.yml`);
@@ -120,7 +120,7 @@ Exit met: each owner's generated test is in the gate, and the mutation baseline 
 
 ## M4.5, logic foundations
 
-Complete (2026-11-01). The design, its decisions and its limits are in [logic tests](design/logic-tests.md), "M4.5: the foundations"; the evidence is in `experiments/logic-tests-study/`. Built, each with its design review, implementation review and related scenarios, and pushed after the full suite ran on GitHub:
+Complete (2026-11-01). Its decisions are in the crate guides ([the crate index](crates/readme.md)) and in [the testing standard](testing.md), "The crates on a reducer's path"; the evidence is in `experiments/logic-tests-study/`. Built, each with its design review, implementation review and related scenarios, and pushed after the full suite ran on GitHub:
 
 - the outpost split by role into `verbatim-outpost`, `verbatim-listener` and `verbatim-supervisor`, their logic in `verbatim-outpost-logic`, `verbatim-listener-logic` and `verbatim-reader-rules`, with a tier check in `cargo xtask ci`;
 - `xtask` on Linux and the `ci-linux` job;

@@ -27,7 +27,7 @@
 //! The commands below exist on Windows only.
 //!
 //! `faults` builds and runs the fault tests (`docs/testing.md`, and
-//! `docs/design/logic-tests.md`, "Failure paths and locks"): clippy
+//! `docs/crates/verbatim-faults.md`, "Failure paths"): clippy
 //! of every crate with a `faults` feature with that feature on, one package
 //! at a time, then each fault test target, into `target/debug`. No other
 //! command turns a `faults` feature on, so the ordinary steps build and
@@ -113,7 +113,7 @@ mod vm;
 /// passed to cargo as `-p`: the platform-neutral tier, the logic crates,
 /// and xtask itself, so
 /// the unit tests of the documentation check and the scans run there too
-/// (`docs/design/logic-tests.md`, "Crates by role"). Every crate here
+/// (`docs/crates/readme.md`). Every crate here
 /// must build on Linux, which GitHub's `ci-linux` job proves.
 const LINUX_CRATES: &[&str] = &[
     "verbatim-model",

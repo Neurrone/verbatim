@@ -1,5 +1,4 @@
-//! The intake's generated test (`docs/design/logic-tests.md`, "The
-//! intake"): lists of pushes, hand-outs, cancels, a noted caret kept for
+//! The intake's generated test (`docs/crates/verbatim-outpost-logic.md`): lists of pushes, hand-outs, cancels, a noted caret kept for
 //! when nothing else is ready, and the close, given to the intake alone,
 //! with the reducer's one use of `push_ahead` (a barrier reached with a
 //! noted caret kept goes behind it) done as the reducer does it. It checks

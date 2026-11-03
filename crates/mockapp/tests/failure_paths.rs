@@ -1,6 +1,5 @@
 //! The failure paths of the outpost's worker and of the UIA subscription,
-//! each run through its fault point (`docs/design/logic-tests.md`,
-//! "Failure paths and locks"): a worker that cannot start leaves its
+//! each run through its fault point (`docs/crates/verbatim-faults.md`, "Failure paths"): a worker that cannot start leaves its
 //! generation with none, whose programs are answered as failed until a
 //! dispatch starts one; a group or focus handler whose removal failed is
 //! kept and removed again at the registration's close, or when the

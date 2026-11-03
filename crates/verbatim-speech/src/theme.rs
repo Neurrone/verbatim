@@ -584,8 +584,7 @@ const PROGRESS_OCTAVES: f64 = 3.0;
 /// theme's tone for progress at 0 percent: rising evenly in pitch by three
 /// octaves to 100 percent. Kept here rather than with the theme in
 /// `verbatim-model` because `exp2` comes from the platform's library, which
-/// no crate on a reducer's path may call (`docs/design/logic-tests.md`,
-/// "Determinism").
+/// no crate on a reducer's path may call (`docs/testing.md`, "The crates on a reducer's path").
 #[must_use]
 fn progress_frequency(base_hz: u32, percent: u8) -> u32 {
     let percent = f64::from(percent.min(100));

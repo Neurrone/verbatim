@@ -1,5 +1,5 @@
 # The determinism rule for the crates on a reducer's path
-# (docs/design/logic-tests.md, "Determinism"): no hash collection, no
+# (docs/testing.md, "The crates on a reducer's path"): no hash collection, no
 # clock, no file, process, network, thread or environment, no trace id
 # minted, and no floating-point function from the platform's library. Each
 # covered crate keeps an identical copy of this file, which `cargo xtask ci`

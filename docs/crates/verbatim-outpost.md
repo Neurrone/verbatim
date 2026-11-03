@@ -447,7 +447,7 @@ Inside an outpost (`docs/design/communication.md`, section 6.4;
   release, the store's for a commit's writes, and a worker's charge.
 - What the shell and the workers guarantee the reducer, which its
   generated test's generator relies on and gives no more than
-  (`docs/design/logic-tests.md`, "The outpost's reducer"): the shell ticks
+  (`docs/crates/verbatim-outpost-logic.md`): the shell ticks
   the reducer after every drain of the mailbox, not only when a timer is
   due; each of the three clocks of `Now` never goes back; an abandoned
   worker still posts its program's finish, arming and walk return; a

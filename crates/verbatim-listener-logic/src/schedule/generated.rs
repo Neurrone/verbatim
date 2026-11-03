@@ -1,5 +1,4 @@
-//! The read scheduler's generated test (`docs/design/logic-tests.md`, "The
-//! listener's scheduler"): lists of actions, each made valid when it is
+//! The read scheduler's generated test (`docs/crates/verbatim-listener-logic.md`): lists of actions, each made valid when it is
 //! applied by resolving its target against the model, given to
 //! [`Schedule::step`] as the listener's shell gives them: every effect
 //! applied in order, then each failed spawn stepped, and then the step's

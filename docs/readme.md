@@ -70,10 +70,6 @@ suite, the VM harness, NVDA captures and troubleshooting.
   - [ownership-milestone-rules.md](design/ownership-milestone-rules.md) —
     the ownership rules each planned milestone follows, and the evidence
     behind them.
-  - [logic-tests.md](design/logic-tests.md) — what M4.5 decided and why
-    (the crates by role, determinism, the work in flight, Core's query
-    table, the hook's hold decision, failure paths and the cost rule), and
-    generated tests of the reducers against reference models (M4.6).
   - [communication.md](design/communication.md) — every pipe and thread
     from an event or a key to sound.
   - [focus-pipeline.md](design/focus-pipeline.md) — how focus events

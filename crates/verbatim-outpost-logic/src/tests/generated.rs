@@ -1,5 +1,5 @@
-//! The caret watch's generated test (`docs/design/logic-tests.md`,
-//! "The outpost's programs and the caret watch"): every sequence of up to
+//! The caret watch's generated test (`docs/crates/verbatim-outpost-logic.md`,
+//! the caret watch): every sequence of up to
 //! [`DEPTH`] steps of the inputs that move a caret key's watch, given to
 //! [`Reducer::input`] and [`Reducer::tick`], enumerated without randomness. After every step it
 //! compares the reducer with a reference model, the open query and whether
