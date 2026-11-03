@@ -1017,8 +1017,11 @@ machine's taskbar, from a separate process running the outpost's walk,
   with Alt, a Windows key, or Control and Shift down, posts two more
   reports, and its two injected mask transitions each wake the hook once,
   passing without a decision, as NVDA's mask does; the modifier's release
-  behind them is deferred and sent on, one more hook wake. No measure
-  workload presses such a gesture, so no trace was taken.
+  behind them is deferred and sent on, one more hook wake. Measured on
+  2026-11-04 with `measure_keys_text_box` (debug, three alternated runs
+  each, `--after 15 --seconds 8`), which presses no masked gesture: the
+  hook took 69 to 70 µs of processor time a wake after the change, 71 to
+  75 µs before it, so every other key pays nothing for the guard.
 
 ### An interrupt
 
