@@ -210,7 +210,7 @@ fn usage() {
         "  e2e-plan  print the CI e2e job's matrix of groups, sized by xtask/e2e-durations.txt (--coverage for a coverage run's instrumented build)"
     );
     eprintln!(
-        "  coverage  line coverage of the unit and mockapp tests into target/coverage; report <name> <profiles> and merge <dir> for a coverage run (docs/tooling/coverage.md)"
+        "  coverage  line coverage of the unit, mockapp and fault tests into target/coverage; report <name> <profiles> and merge <dir> for a coverage run (docs/tooling/coverage.md)"
     );
     eprintln!(
         "  docs  check that the documents' links and backticked repository paths exist, and that docs/readme.md indexes every document under docs"

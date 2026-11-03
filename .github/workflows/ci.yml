@@ -575,10 +575,10 @@ jobs:
           path: target/e2e-artifacts/history/
           if-no-files-found: ignore
 
-  # A coverage run's last job: merges the unit and mockapp levels' lcov
-  # files and every e2e group's with `cargo xtask coverage merge`, writes
-  # HTML reports of the e2e level and the merged one with genhtml, and
-  # uploads them with the unit and mockapp reports as `coverage-report`
+  # A coverage run's last job: merges the unit, mockapp and faults levels'
+  # lcov files and every e2e group's with `cargo xtask coverage merge`,
+  # writes HTML reports of the e2e level and the merged one with genhtml,
+  # and uploads them with the other levels' reports as `coverage-report`
   # (docs/tooling/coverage.md). It runs when a group failed too, since a
   # failing scenario's profile still counts.
   coverage:
@@ -599,7 +599,7 @@ jobs:
           find downloaded -name '*.lcov' -exec cp -t report {} +
           # A level whose job failed before uploading it is missing, and the
           # merge names it in the summary.
-          for level in unit mockapp; do
+          for level in unit mockapp faults; do
             if [ -d "downloaded/coverage-unit/$level" ]; then
               cp -r "downloaded/coverage-unit/$level" report/
             fi

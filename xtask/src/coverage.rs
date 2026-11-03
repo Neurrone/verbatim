@@ -4,8 +4,9 @@
 //! With no arguments it runs the instrumented tests level by level, the
 //! unit tests and then, on Windows, mockapp's tests, each through
 //! cargo-nextest with the filters and one-at-a-time runs `cargo xtask ci`
-//! uses (on another host, the unit tests of [`LINUX_CRATES`] through
-//! `cargo test`, as `ci` runs them there). Each level's profiles are
+//! uses, then the fault tests as `ci`'s fault step runs them (on another
+//! host, the unit tests of [`LINUX_CRATES`] through `cargo test`, as `ci`
+//! runs them there). Each level's profiles are
 //! reported on their own: an HTML report in `target/coverage/<level>/html`
 //! and an lcov file, `target/coverage/<level>.lcov`, whose paths are
 //! relative to the workspace, and its line coverage is printed. A failing
@@ -19,8 +20,8 @@
 //! into that folder. The harness's own crates are left out of the report.
 //!
 //! `coverage merge <dir>` reads the lcov files of a coverage run's levels
-//! from `<dir>`, `unit.lcov`, `mockapp.lcov` and every end-to-end group's
-//! `e2e-<group>.lcov`, and writes the end-to-end level's `e2e.lcov`, all
+//! from `<dir>`, `unit.lcov`, `mockapp.lcov`, `faults.lcov` and every
+//! end-to-end group's `e2e-<group>.lcov`, and writes the end-to-end level's `e2e.lcov`, all
 //! levels' `merged.lcov`, `summary.txt` with each level's line coverage,
 //! `e2e-only.txt`, the files with lines only the end-to-end level reaches,
 //! and `unreached.txt`, the files whose lines no level reaches. A level
@@ -40,7 +41,7 @@ use std::process::{Command, ExitCode};
 #[cfg(not(windows))]
 use crate::LINUX_CRATES;
 #[cfg(windows)]
-use crate::{ALONE_TESTS, SERIAL_TESTS, nextest_step, unit_test_filter};
+use crate::{ALONE_TESTS, FAULT_TESTS, SERIAL_TESTS, nextest_step, unit_test_filter};
 use crate::{Step, args};
 
 /// The cargo-llvm-cov release this command runs, the one GitHub Actions
@@ -54,7 +55,7 @@ pub const LLVM_COV_VERSION: &str = "0.9.1";
 const HARNESS_FILES: &str = r"(crates[\\/]verbatim-(e2e|agent)|xtask)[\\/]";
 
 /// The levels `coverage merge` reads, in their order in the summary.
-const LEVELS: [&str; 3] = ["unit", "mockapp", "e2e"];
+const LEVELS: [&str; 4] = ["unit", "mockapp", "faults", "e2e"];
 
 /// One level of tests: its name and the cargo steps that run its tests.
 struct Level {
@@ -103,10 +104,39 @@ fn output_dir() -> PathBuf {
 #[cfg(windows)]
 const COVERED_NEXTEST: &[&str] = &["llvm-cov", "nextest", "--no-report"];
 
+/// The fault tests of [`FAULT_TESTS`], each target run by `cargo test`
+/// with its package's `faults` feature, as `cargo xtask ci`'s fault step
+/// runs it.
+#[cfg(windows)]
+fn fault_steps() -> Vec<Step> {
+    FAULT_TESTS
+        .iter()
+        .map(|(package, test)| {
+            (
+                "fault tests",
+                args(&[
+                    "llvm-cov",
+                    "test",
+                    "--no-report",
+                    "-p",
+                    package,
+                    "--features",
+                    "faults",
+                    "--test",
+                    test,
+                ]),
+            )
+        })
+        .collect()
+}
+
 /// The levels on Windows: the unit tests, every test but mockapp's, and
 /// mockapp's tests, each through the same nextest runs as `cargo xtask
-/// ci`'s, limited to the level's package. The tests that run with nothing
-/// else are all mockapp's.
+/// ci`'s, limited to the level's package, then the fault tests, last
+/// because their `faults` build replaces binaries, such as `mockapp.exe`,
+/// whose file names do not change with a feature, and so would leave an
+/// earlier level's profiles with no binary to match. The tests that run
+/// with nothing else are all mockapp's.
 #[cfg(windows)]
 fn levels() -> Vec<Level> {
     let level = |scope: &str, filter: &str| format!("({scope}) & ({filter})");
@@ -152,6 +182,10 @@ fn levels() -> Vec<Level> {
                     true,
                 ),
             ],
+        },
+        Level {
+            name: "faults",
+            steps: fault_steps(),
         },
     ]
 }
@@ -358,6 +392,7 @@ fn merge(dir: &Path) -> Result<(), String> {
     };
     let unit = read_level("unit.lcov")?;
     let mockapp = read_level("mockapp.lcov")?;
+    let faults = read_level("faults.lcov")?;
     let mut groups: Vec<String> = read_dir(dir)?
         .iter()
         .filter_map(|path| path.file_name()?.to_str().map(str::to_owned))
@@ -379,7 +414,7 @@ fn merge(dir: &Path) -> Result<(), String> {
         Some(e2e)
     };
     let mut below = Lines::new();
-    for lines in [&unit, &mockapp].into_iter().flatten() {
+    for lines in [&unit, &mockapp, &faults].into_iter().flatten() {
         add(&mut below, lines);
     }
     let mut merged = below.clone();
@@ -387,7 +422,7 @@ fn merge(dir: &Path) -> Result<(), String> {
     add(&mut merged, &e2e_lines);
     write(&dir.join("e2e.lcov"), &to_lcov(&e2e_lines))?;
     write(&dir.join("merged.lcov"), &to_lcov(&merged))?;
-    let summary = merge_summary(&[&unit, &mockapp, &e2e], &merged);
+    let summary = merge_summary(&[&unit, &mockapp, &faults, &e2e], &merged);
     write(&dir.join("summary.txt"), &summary)?;
     write(&dir.join("e2e-only.txt"), &e2e_only(&e2e_lines, &below))?;
     write(&dir.join("unreached.txt"), &unreached(&merged))?;
@@ -403,7 +438,7 @@ fn merge(dir: &Path) -> Result<(), String> {
 /// The summary of a merge: a line for each of [`LEVELS`], in order, its
 /// coverage or, for one that is `None`, that it is missing, then the
 /// merged line.
-pub fn merge_summary(levels: &[&Option<Lines>; 3], merged: &Lines) -> String {
+pub fn merge_summary(levels: &[&Option<Lines>; 4], merged: &Lines) -> String {
     let mut summary = String::new();
     for (name, lines) in LEVELS.iter().zip(levels) {
         match lines {
@@ -650,9 +685,10 @@ mod tests {
         let unit = Some(lines(&[("a.rs", &[(1, 1), (2, 0)])]));
         let merged = lines(&[("a.rs", &[(1, 1), (2, 0)])]);
         assert_eq!(
-            merge_summary(&[&unit, &None, &None], &merged),
+            merge_summary(&[&unit, &None, &None, &None], &merged),
             "unit: 50.0% of lines (1 of 2)\n\
              mockapp: missing, so not in the merged level\n\
+             faults: missing, so not in the merged level\n\
              e2e: missing, so not in the merged level\n\
              merged: 50.0% of lines (1 of 2)\n"
         );

@@ -11,14 +11,24 @@ with cargo-llvm-cov, per test level:
   with the filters and one-at-a-time runs of `cargo xtask ci`
   (`docs/tooling/setup.md`, "What cargo xtask ci runs").
 - mockapp: mockapp's tests (`docs/crates/mockapp.md`), run the same way.
+- faults: the fault tests as `cargo xtask faults` runs them, the
+  `FAULT_TESTS` of `xtask/src/main.rs`, each target through `cargo test`
+  with its package's `faults` feature.
 - e2e: the end-to-end suite as CI runs it, in groups, against an
   instrumented build; GitHub only.
-- merged: the three together.
+- merged: all of them together.
 
-Neither the doctests nor the fault tests (`cargo xtask faults`) are
-measured: instrumenting doctests needs a nightly compiler, and the fault
-tests build their crates with the `faults` feature, which is not the
-build the other levels measure.
+The fault tests are a level of their own, measured last, rather than
+part of the unit and mockapp levels, because their build replaces
+binaries whose file names do not change with a feature, such as
+`mockapp.exe`: a report made after it finds no binary for the profiles
+the ordinary build's processes wrote, and in one report with mockapp's
+tests it lost 1061 of the mockapp level's covered lines. The lines only
+the `faults` build compiles, the fault points and the hooks they call,
+can be reached by this level alone.
+
+The doctests are not measured, since instrumenting them needs a nightly
+compiler.
 
 ## Running it on this machine
 
@@ -136,11 +146,11 @@ Download the report with `gh run download <run id> -n coverage-report`.
 It holds:
 
 - `summary.txt`: each level's line coverage, and the merged one's.
-- `unit`, `mockapp`, `e2e` and `merged`: each level's HTML report, in its
+- `unit`, `mockapp`, `faults`, `e2e` and `merged`: each level's HTML report, in its
   `html` folder, and its lcov file beside it, as `<level>.lcov`.
 - `e2e-only.txt`: each file with lines only the end-to-end suite runs, as
   the number of those lines then the path, the most first. These are the
-  logic that should get unit or mockapp tests.
+  logic that should get unit, mockapp or fault tests.
 - `unreached.txt`: each file of which no level runs a line.
 
 ## What the end-to-end level shows
