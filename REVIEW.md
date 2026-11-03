@@ -48,4 +48,4 @@ A reviewer reads the evidence before the code: the test output, the scenario log
 
 ## Decisions
 
-A decision the parent session takes while Dickson is away is recorded as "(Fable, <date>, pending Dickson's acceptance)" in documents and commit messages, listed for him, and never written as his. A decision he took keeps "(Dickson, <date>)".
+A decision the parent session takes while Dickson is away is recorded as "(Claude, <date>, pending Dickson's acceptance)", naming no model in documents and commit messages, listed for him, and never written as his. A decision he took keeps "(Dickson, <date>)".
