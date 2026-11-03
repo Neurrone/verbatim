@@ -106,6 +106,10 @@ const JOB_EMPTY_TIMEOUT: Duration = Duration::from_secs(15);
 /// outposts' and its focus listener's.
 const CHILD_IMAGES: [&str; 2] = ["verbatim-outpost.exe", "verbatim-listener.exe"];
 
+/// The executable of Verbatim's synthesizer host, which ends with
+/// Verbatim's job rather than being shut down.
+const SYNTH_HOST_IMAGE: &str = "verbatim-synth-host.exe";
+
 /// Whether `image` is one of [`CHILD_IMAGES`].
 fn is_child_image(image: &str) -> bool {
     CHILD_IMAGES
@@ -1936,7 +1940,10 @@ impl Scenario {
     /// abnormally, and before Verbatim itself did. A child Verbatim's
     /// supervisor had to kill exits with `verbatim_process::KILLED_EXIT_CODE`;
     /// one still running when Verbatim exited ends with its job afterwards.
-    /// At least one must have exited, the focus listener. Returns every
+    /// At least one must have exited, the focus listener. The synthesizer
+    /// host, which ends with the job, must not have crashed: no exit Windows
+    /// called abnormal and no exception code, since
+    /// [`Scenario::unexpected_exits`] is read before the quit. Returns every
     /// problem found.
     ///
     /// # Errors
@@ -1950,7 +1957,21 @@ impl Scenario {
         let mut problems = Vec::new();
         let mut outposts = 0;
         for (index, exit) in exits.iter().enumerate() {
-            if !is_child_image(&exit.image) || self.expected_exits.contains(&exit.pid) {
+            if self.expected_exits.contains(&exit.pid) {
+                continue;
+            }
+            if exit.image.eq_ignore_ascii_case(SYNTH_HOST_IMAGE) {
+                if exit.abnormal || exit.exit_code.is_some_and(is_exception_code) {
+                    problems.push(format!(
+                        "the synthesizer host process {} crashed: exit code {:?}{}",
+                        exit.pid,
+                        exit.exit_code,
+                        if exit.abnormal { ", abnormally" } else { "" }
+                    ));
+                }
+                continue;
+            }
+            if !is_child_image(&exit.image) {
                 continue;
             }
             outposts += 1;

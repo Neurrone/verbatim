@@ -460,7 +460,9 @@ exit code 0 and leave none of its processes behind: once it has exited,
 the harness waits for its job to empty (`WaitForJobEmpty`), and every
 outpost and the focus listener but one the scenario ended on purpose must
 have exited with code 0 before Verbatim did; one the supervisor had to
-kill exits with `verbatim_process::KILLED_EXIT_CODE` and fails the run
+kill exits with `verbatim_process::KILLED_EXIT_CODE` and fails the run;
+and the synthesizer host, which ends with the job, must not have crashed
+on the way, its exit neither abnormal nor an exception code
 (`Scenario::outposts_shut_down_cleanly`; [verbatim-outpost](verbatim-outpost.md),
 "Shutting down"). When crash dumps are configured
 (`vm/scripts/Enable-VerbatimCrashDumps.ps1`), the dumps that appeared in
