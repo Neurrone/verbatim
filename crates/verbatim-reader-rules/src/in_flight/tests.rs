@@ -5,7 +5,7 @@ use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 
 use proptest::strategy::Strategy;
-use proptest::test_runner::{Config, RngAlgorithm, RngSeed, TestRunner};
+use proptest::test_runner::{Config, RngAlgorithm, RngSeed, TestError, TestRunner};
 
 use super::*;
 
@@ -953,7 +953,7 @@ fn config(seed: u64, cases: u32) -> Config {
 /// # Panics
 ///
 /// On a failing case, naming the smallest.
-fn run_generated(config: Config) -> Reached {
+fn run_generated(config: Config, again: &str) -> Reached {
     use proptest::collection::vec;
     use proptest::prelude::any;
     let reached = RefCell::new(Reached::new());
@@ -973,10 +973,65 @@ fn run_generated(config: Config) -> Reached {
         }
         Ok(())
     });
-    if let Err(error) = result {
-        panic!("{error}");
+    match result {
+        Ok(()) => reached.into_inner(),
+        Err(TestError::Fail(reason, case)) => panic!("{reason}\n{}", found_report(&case, again)),
+        Err(error) => panic!("{error}"),
     }
-    reached.into_inner()
+}
+
+impl Action {
+    /// The action as the Rust expression that makes it, as a found case
+    /// lists it.
+    fn code(self) -> String {
+        match self {
+            Action::Stale(Stale::Published(reason)) => format!(
+                "Action::Stale(Stale::Published({}))",
+                reason.map_or_else(
+                    || "None".to_owned(),
+                    |reason| format!("Some(Reason::{reason:?})")
+                )
+            ),
+            Action::Stale(stale) => format!("Action::Stale(Stale::{stale:?})"),
+            other => format!("Action::{other:?}"),
+        }
+    }
+}
+
+/// A generated case: its actions, the answers its asks are given in turn,
+/// and the step after which the reader stops, if it does.
+type Case = (Vec<Action>, Vec<bool>, Option<usize>);
+
+/// The report of a failing case: `case` as a line ready to paste into
+/// [`found`], and the commands that run the found cases and the run that
+/// found it, `again`.
+fn found_report((actions, answers, stop): &Case, again: &str) -> String {
+    let actions: Vec<String> = actions.iter().map(|action| action.code()).collect();
+    format!(
+        "the smallest failing case, as a line for `found()` in crates/verbatim-reader-rules/src/in_flight/tests.rs:\n        (vec![{}], vec!{answers:?}, {stop:?}),\n\
+         the found cases alone: cargo test -p verbatim-reader-rules --lib -- --exact in_flight::tests::found_cases_match_the_reference_model\n\
+         the run that found it again: {again}",
+        actions.join(", ")
+    )
+}
+
+/// The cases failures of the generated test or the exploration shrank to,
+/// as the failure's report gives them.
+fn found() -> Vec<Case> {
+    Vec::new()
+}
+
+/// Every found case gives each item the fate its timeline names, and the
+/// same decisions when run twice.
+#[test]
+fn found_cases_match_the_reference_model() {
+    for (actions, answers, stop) in found() {
+        assert_eq!(
+            Run::case(&actions, &answers, stop).log,
+            Run::case(&actions, &answers, stop).log,
+            "{actions:?}"
+        );
+    }
 }
 
 /// The gate's seed and case count.
@@ -993,7 +1048,10 @@ const CASES: u32 = 2_000;
 /// reached.
 #[test]
 fn generated_cases_match_the_reference_model() {
-    let reached = run_generated(config(SEED, CASES));
+    let reached = run_generated(
+        config(SEED, CASES),
+        "cargo test -p verbatim-reader-rules --lib -- --exact in_flight::tests::generated_cases_match_the_reference_model",
+    );
     let missed: Vec<&str> = LISTED
         .into_iter()
         .filter(|state| !reached.contains_key(state))
