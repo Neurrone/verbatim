@@ -50,6 +50,7 @@ suite, the VM harness, NVDA captures and troubleshooting.
 - [Tooling](tooling/readme.md) — which command to type, one guide per
   purpose.
 - [The testing standard](testing.md) — what every test must meet.
+- [Test coverage](test-coverage.md) — every gesture and user-facing feature, with the tests that cover it at each level and the gaps still open.
 - [Known failing and flaky tests](flaky-tests.md) — each test known to fail,
   with its cause and the work that fixes it.
 - [Performance](performance.md) — the operation ledger: what counts as a
