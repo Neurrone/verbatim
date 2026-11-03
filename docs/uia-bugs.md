@@ -249,7 +249,7 @@ Not measured across processes; each process has its own value (inferred from the
 
 #### Workarounds that worked
 
-- Verbatim's choice: both timeouts are set once per process, to `CONNECTION_TIMEOUT` (2 seconds) and `TRANSACTION_TIMEOUT` (5 seconds), during UIA's first-time setup in `crates/verbatim-uia/src/client.rs`, and nothing else sets them. Tests that need a different value change it for the whole test process and run alone (`TRANSACTION_TIMEOUT` in `crates/mockapp/tests/remote_ops.rs`, and the runner's process per test).
+- Verbatim's choice: both timeouts are set once per process, to `CONNECTION_TIMEOUT` (2 seconds) and `TRANSACTION_TIMEOUT` (5 seconds), during UIA's first-time setup in `crates/verbatim-uia/src/client.rs`, and nothing else sets them. Tests that need a different value change it for the whole test process, which runs that test alone (mockapp's runner gives each test a process of its own, `crates/mockapp/tests/common/harness.rs`).
 
 #### Workarounds that didn't work
 

@@ -16,7 +16,6 @@ use std::os::windows::io::AsRawHandle;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
-use std::sync::{PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::time::Duration;
 
 use common::outpost::OutpostUnderTest;
@@ -49,17 +48,6 @@ const BOTH: [(&str, FocusAncestryFn); 2] = [
     ("classic", focus_ancestry_classic),
 ];
 
-/// UIA's transaction timeout is process-wide: the test that shortens it
-/// holds this for writing, so it runs alone, and every other test holds it
-/// for reading while it runs.
-static TRANSACTION_TIMEOUT: RwLock<()> = RwLock::new(());
-
-/// What a fixture holds of [`TRANSACTION_TIMEOUT`].
-enum Timeout {
-    Shared(#[expect(dead_code, reason = "held, not read")] RwLockReadGuard<'static, ()>),
-    Alone(#[expect(dead_code, reason = "held, not read")] RwLockWriteGuard<'static, ()>),
-}
-
 /// A running ancestry fixture and a client reading it.
 struct Fixture {
     app: common::MockApp,
@@ -71,28 +59,16 @@ struct Fixture {
     /// How a focus query fills the elements it returns, with every detail,
     /// as the focus listener reads.
     fill: Fill<Ancestor>,
-    _timeout: Timeout,
 }
 
 impl Fixture {
-    /// A fixture for a test that leaves the transaction timeout alone.
+    /// A fixture of the ancestry fixture.
     fn start(prefix: &str) -> Self {
-        let timeout = TRANSACTION_TIMEOUT
-            .read()
-            .unwrap_or_else(PoisonError::into_inner);
-        Self::with(prefix, "ancestry.json", Timeout::Shared(timeout))
+        Self::with(prefix, "ancestry.json")
     }
 
-    /// A fixture of `file` for a test that changes the transaction
-    /// timeout, run while no other test in this process runs.
-    fn start_alone(prefix: &str, file: &str) -> Self {
-        let timeout = TRANSACTION_TIMEOUT
-            .write()
-            .unwrap_or_else(PoisonError::into_inner);
-        Self::with(prefix, file, Timeout::Alone(timeout))
-    }
-
-    fn with(prefix: &str, file: &str, timeout: Timeout) -> Self {
+    /// A fixture of `file`.
+    fn with(prefix: &str, file: &str) -> Self {
         let title = common::unique_title(prefix);
         let app = common::spawn(file, "uia", &title);
         let hwnd = common::find_window(&title).0 as isize;
@@ -113,7 +89,6 @@ impl Fixture {
             root,
             hwnd,
             fill: ancestors,
-            _timeout: timeout,
         }
     }
 
@@ -465,14 +440,7 @@ fn a_focus_whose_selected_item_is_gone_is_reported_without_it() {
 /// box inside the provider, and the classic walk, with no fresh copy of
 /// the element, asks it live.
 fn a_combo_box_reads_its_selected_item_only_without_the_value_pattern() {
-    let timeout = TRANSACTION_TIMEOUT
-        .read()
-        .unwrap_or_else(PoisonError::into_inner);
-    let mut fixture = Fixture::with(
-        "mockapp-rops-combo-box",
-        "combo_box.json",
-        Timeout::Shared(timeout),
-    );
+    let mut fixture = Fixture::with("mockapp-rops-combo-box", "combo_box.json");
     let hour = fixture.focus("hour", "Hour");
     let ancestry = both_agree(&fixture.uia, &query(&hour, &[], &fixture.fill));
     assert_eq!(
@@ -610,10 +578,10 @@ fn execution_failure(error: &Error) -> Option<windows::core::HRESULT> {
 /// Both are process-wide.
 fn a_stalled_provider_holds_execute_until_the_transaction_timeout() {
     const STALL: Duration = Duration::from_millis(4000);
-    // The transaction timeout is process-wide, so no other test in this
-    // binary runs meanwhile ([`TRANSACTION_TIMEOUT`]).
+    // The transaction timeout is process-wide; the test runs in a process
+    // of its own (`harness::run_isolated`), so it reaches no other test.
     const TIMEOUT: Duration = Duration::from_millis(1000);
-    let mut fixture = Fixture::start_alone("mockapp-rops-stall", "ancestry.json");
+    let mut fixture = Fixture::start("mockapp-rops-stall");
     let deep = fixture.focus("deep", "Deep button");
 
     // Each run starts once mockapp has acknowledged that its window thread
@@ -681,7 +649,7 @@ fn a_focus_walk_that_times_out_fails() {
     const TIMEOUT: Duration = Duration::from_millis(1000);
     const SLOW_CALL: Duration = Duration::from_millis(50);
     const STALL: Duration = Duration::from_millis(1500);
-    let mut fixture = Fixture::start_alone("mockapp-rops-timed-out", "ancestry.json");
+    let mut fixture = Fixture::start("mockapp-rops-timed-out");
     let deep = fixture.focus("deep", "Deep button");
     let client: IUIAutomation2 = fixture.uia.client().cast().expect("IUIAutomation2");
     let _restored = ProcessTimeout::set(&client, Kind::Transaction, TIMEOUT);
@@ -735,7 +703,7 @@ fn a_focus_walk_that_times_out_fails() {
 fn a_timed_out_nearest_window_lookup_reads_nothing_into_the_application() {
     const TIMEOUT: Duration = Duration::from_millis(1_200);
     const SLOW_PARENT: Duration = Duration::from_millis(1_800);
-    let mut fixture = Fixture::start_alone("mockapp-rops-lookup-timed-out", "ancestry.json");
+    let mut fixture = Fixture::start("mockapp-rops-lookup-timed-out");
     let deep = fixture.focus_delivered("deep", "Deep button");
     let outpost = OutpostUnderTest::new(&fixture.app);
     let client: IUIAutomation2 = fixture.uia.client().cast().expect("IUIAutomation2");
@@ -787,7 +755,7 @@ fn a_timed_out_nearest_window_lookup_reads_nothing_into_the_application() {
 fn a_nearest_window_lookup_that_fails_fast_leaves_the_gap_record_open() {
     const TIMEOUT: Duration = Duration::from_millis(300);
     const SLOW_PARENT: Duration = Duration::from_millis(900);
-    let mut fixture = Fixture::start_alone("mockapp-rops-lookup-failed-fast", "ancestry.json");
+    let mut fixture = Fixture::start("mockapp-rops-lookup-failed-fast");
     let deep = fixture.focus_delivered("deep", "Deep button");
     let outpost = OutpostUnderTest::on_frozen_time(&fixture.app);
     outpost.read_focus_as(deep.live().element());
@@ -853,8 +821,7 @@ fn a_focus_whose_walk_times_out_is_reported_below_its_window() {
     const SLOW_CALL: Duration = Duration::from_millis(40);
     for remote in [true, false] {
         let path = if remote { "remote" } else { "classic" };
-        let mut fixture =
-            Fixture::start_alone(&format!("mockapp-rops-unknown-{path}"), "ancestry.json");
+        let mut fixture = Fixture::start(&format!("mockapp-rops-unknown-{path}"));
         let outpost = OutpostUnderTest::with_options(
             &fixture.app,
             OutpostOptions {
@@ -1251,7 +1218,7 @@ fn a_focus_inside_one_whose_parent_step_failed_meets_its_chain_there() {
 fn a_focus_whose_read_fails_is_reported_whatever_its_event_says_of_its_focus() {
     const TIMEOUT: Duration = Duration::from_millis(300);
     const SLOW_CALL: Duration = Duration::from_millis(40);
-    let mut fixture = Fixture::start_alone("mockapp-rops-failed-unfocused", "ancestry.json");
+    let mut fixture = Fixture::start("mockapp-rops-failed-unfocused");
     let outpost = OutpostUnderTest::new(&fixture.app);
     let deep = fixture.delivered("Deep button");
     assert!(
@@ -1307,7 +1274,7 @@ fn a_selection_read_that_times_out_or_finds_the_list_gone_fails() {
     const TIMEOUT: Duration = Duration::from_millis(1000);
     const SLOW_CALL: Duration = Duration::from_millis(50);
     const STALL: Duration = Duration::from_millis(1500);
-    let mut fixture = Fixture::start_alone("mockapp-rops-selection-timeout", "ancestry.json");
+    let mut fixture = Fixture::start("mockapp-rops-selection-timeout");
     let request = fixture
         .uia
         .request::<Node>(Node::all_on())
@@ -1362,9 +1329,7 @@ fn a_selection_read_that_times_out_or_finds_the_list_gone_fails() {
     }
     drop(restored);
 
-    let Fixture {
-        app, uia, _timeout, ..
-    } = fixture;
+    let Fixture { app, uia, .. } = fixture;
     // Returns once the process has exited.
     drop(app);
     for container in &containers {
@@ -1440,13 +1405,7 @@ impl Drop for ProcessTimeout {
 fn a_provider_that_has_exited_fails_at_once() {
     let mut fixture = Fixture::start("mockapp-rops-exited");
     let deep = fixture.focus("deep", "Deep button");
-    let Fixture {
-        app,
-        uia,
-        fill,
-        _timeout,
-        ..
-    } = fixture;
+    let Fixture { app, uia, fill, .. } = fixture;
     // Returns once the process has exited.
     drop(app);
     let answer = focus_ancestry_remote(&uia, &query(&deep, &[], &fill));
