@@ -1314,7 +1314,27 @@ fn fixed_cases_keep_the_reducers_rules() {
 /// The cases failures of the generated test or the exploration shrank to,
 /// each kept as its list of actions, as the failure's report gives it.
 fn found() -> Vec<Vec<Action>> {
-    Vec::new()
+    vec![
+        // A say all from the caret run in a held key's resume, its read
+        // answered from a terminal's memory under the waiting key's trace.
+        vec![
+            Action::OtherTerminals,
+            Action::Key(1),
+            Action::Answer {
+                which: 1,
+                outcome: 0,
+            },
+            Action::Command(5),
+            Action::Focus {
+                generation: 0,
+                node: 2,
+                earlier: 2,
+                windowed: false,
+                stamp: 0,
+            },
+            Action::Snapshot { growing: false },
+        ],
+    ]
 }
 
 /// Every found case keeps the slice's rules, and gives the same effects

@@ -14,7 +14,7 @@ use verbatim_model::{
 
 use crate::queries::{self, ModelAsk, Then};
 use crate::reduce;
-use crate::state::{HeldKey, HeldRead, PendingText, SrState, TextFollowUp};
+use crate::state::{HeldKey, HeldRead, PendingText, SrState, TextFollowUp, WaitingKey};
 
 /// The text box's outpost.
 const EDIT_OUTPOST: OutpostId = OutpostId(1);
@@ -688,6 +688,33 @@ fn under_a_key(effects: &[Effect], query_id: QueryId) -> bool {
     })
 }
 
+/// Whether `entry`, opened as `open` in the held keys' resume of `before`
+/// with `effects`, runs under the answer's trace `answer` or a key's
+/// inside the effects, or is a read answered from a terminal's memory under
+/// the trace of a key waiting behind the held key.
+fn traced_in_resume(
+    before: &SrState,
+    effects: &[Effect],
+    answer: TraceId,
+    open: QueryId,
+    entry: &queries::Open,
+) -> bool {
+    let trace = entry.trace_id;
+    trace == Some(answer)
+        || under_a_key(effects, open)
+        || entry.asked == queries::Asked::Memory
+            && before
+                .held_keys
+                .waiting
+                .iter()
+                .any(|waiting| match waiting {
+                    WaitingKey::Held(key) => Some(key.trace_id) == trace,
+                    WaitingKey::Later(input) | WaitingKey::Command(input) => {
+                        trace.is_some() && input.trace_id() == trace
+                    }
+                })
+}
+
 /// Checks the table's invariants after `visit`, against the wire's view,
 /// returning whether it was an answer to the held keys' watch alone.
 pub(super) fn check(path: &[usize], visit: &Visit<'_>) -> bool {
@@ -765,8 +792,11 @@ pub(super) fn check(path: &[usize], visit: &Visit<'_>) -> bool {
         } else if !waited_for {
             // The held keys' resume: the watch's entry ends, nothing waits
             // on it, and each new entry runs under the answer's trace or a
-            // key's inside its effects. The fixed tests `a_watch_with_*`
-            // state the resume's literal effects and states.
+            // key's inside its effects, or is a read answered from a
+            // terminal's memory, which waits under the trace of the waiting
+            // key that asked for it and leaves no effect naming it. The
+            // fixed tests `a_watch_with_*` state the resume's literal
+            // effects and states.
             assert!(
                 state.queries.entries().all(|(open, _)| open != *query_id),
                 "{at}"
@@ -776,7 +806,7 @@ pub(super) fn check(path: &[usize], visit: &Visit<'_>) -> bool {
             for (open, entry) in state.queries.entries() {
                 if open.0 >= first {
                     assert!(
-                        entry.trace_id == Some(*trace_id) || under_a_key(effects, open),
+                        traced_in_resume(before, effects, *trace_id, open, entry),
                         "{open:?}'s trace {:?}: {at}",
                         entry.trace_id
                     );
