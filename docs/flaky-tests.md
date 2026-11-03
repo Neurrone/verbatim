@@ -39,6 +39,10 @@ Recorded by Claude, 2026-11-04, pending Dickson's acceptance.
   - How: Verbatim+Alt+Home (review the selection's start) was answered "unanswered" by the outpost's text read, so nothing was said within 15 s; the same step passed seconds later in `text_box_selection_keys`.
   - Cause: not found.
   - Fix: none yet.
+- `alt_tab_switcher` (coverage run 41708393940, an instrumented build)
+  - How: "Task Switching" was heard where the switcher's item "… row 1 column 2 2 of 4" was expected: two focus events came 330 ms apart, the first with an extra "Task Switching" ancestor, which was spoken, the second with the item, as expected.
+  - Cause: not found; the instrumented build's slowness is plausible, not shown.
+  - Fix: none yet.
 - `windows_terminal_command_marks` (run 41697089785)
   - How: after `.\long.ps1` was typed, Verbatim played its "application not responding" sound where the command's echo was expected: it judged Windows Terminal's window hung.
   - Cause: not found; whether the window hung under the runner's load or Verbatim misjudged it is not in the log.
@@ -108,6 +112,13 @@ Scenarios and tests: `notepad_editing`, `notepad_selection_keys` and `notepad_ty
 - How: setup fails with "no window titled ... opened within 30s" and no Notepad window among the visible ones, before any key is sent; the mockapp test fails with "the window is shown: Timeout". Locally five times on 2026-11-01, in bursts of up to three runs in a row, then passing; on the runner once (run 41254405706). Twelve runs in a row, six idle and six under a release build's load, all passed.
 - Cause: not found. Load from a concurrent build did not reproduce it. The console host entry above, whose kept artifacts show the new window hung on its own with Explorer's notification area also not answering, may be the same; no Notepad failure's artifacts have been kept yet.
 - Fix: none yet. The next harness failure carries the wait chains of the not-responding windows' threads and of the launched Notepad's threads, in the failure message and in `wait-chains.txt`, which say what a hung window's thread waits on; the mockapp test's failure does not. A roadmap follow-up under M4.
+
+## The scheduled exploration of the outpost reducer
+
+- The Explore workflow's `explore` job, `verbatim-outpost-logic`'s `explore_reducer` with seed 1
+  - How: fails every run with "the gap bound tested before it passed" until the gap record is replaced.
+  - Cause: the gap record's defect counted in docs/roadmap.md, "Follow-ups from M4.6" (a queued gap read from a replaced bound run before the new bound's test is answered).
+  - Fix: [the focus pipeline rework's third build](roadmap.md#the-focus-pipeline-rework), its first commit. Recorded by Claude, 2026-11-04, pending Dickson's acceptance.
 
 ## Mockapp tests under `cargo xtask ci`
 
