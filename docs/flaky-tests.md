@@ -73,7 +73,7 @@ Scenarios and tests: `notepad_editing`, `notepad_selection_keys` and `notepad_ty
 ## Mockapp tests under `cargo xtask ci`
 
 - `call_counts::uia_focus_chains_stop_below_the_process_boundary` and `shutdown::a_remote_operation_in_progress_finishes_before_the_outpost_shuts_down`
-  - How: fail intermittently under `cargo xtask ci`. `call_counts::uia_event_registrations_cost_exactly` failed once the same way on 2026-11-01, with no calls and four local hits on "UIA focus-following move to the element already followed", then passed 3 of 3 alone and 5 of 5 with its binary. The first's counts hold with a 1.5 s pause between its steps, so UIA's lapsing element state is not its cause.
+  - How: fail intermittently under `cargo xtask ci`. The first's counts hold with a 1.5 s pause between its steps, so the lapse of UI Automation's copy of an element's runtime id (`docs/uia-bugs.md`) is not its cause.
   - Cause: not found.
   - Fix: [the M4.1 follow-ups](roadmap.md#follow-ups-from-m41), the entry on these tests.
 

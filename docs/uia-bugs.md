@@ -623,6 +623,42 @@ No test reproduces it; mockapp has no second identity. The identity judge in its
 
 [`experiments/windows-terminal-raises-focus-from-a-second-runtime-identity/`](../experiments/windows-terminal-raises-focus-from-a-second-runtime-identity/readme.md): the identity judge and its three 150-round runs; `docs/design/windows-terminal-twin-focus.md`; `docs/design/focus-pipeline.md`, sections 16.8 and 16.9.
 
+### UI Automation's copy of an element's runtime id lapses
+
+#### Trigger
+
+A client holds an element for longer than UI Automation keeps its copy of the element's runtime id, then makes a call that needs the runtime id, such as `AddEventHandlerGroup` on the element or a `GetRuntimeId` read.
+
+#### Symptoms
+
+The call fetches the runtime id from the provider again before doing its own work. On mockapp's button `First`, a cold `AddEventHandlerGroup` cost 9 provider calls where a warm one cost 3: `FragmentRoot`, `HostRawElementProvider`, `GetRuntimeId`, `FragmentRoot`, `HostRawElementProvider` and `ProviderOptions`, which is exactly what a `GetRuntimeId` read alone costs when the copy has lapsed, then the warm call's `FragmentRoot`, `HostRawElementProvider` and `FragmentRoot`. Moving a registration to the element it already follows, which costs nothing warm, cost `GetRuntimeId` 1, `ProviderOptions` 1, `HostRawElementProvider` 2 and `FragmentRoot` 2 after a pause of 250 ms or more, in 30 of 30 runs, and nothing after 0 or 100 ms, in 20 of 20. The answers are the same; only the cost differs.
+
+The lapse is not a fixed lifetime. With nothing between the two calls, pauses of 0 to 190 ms always gave the warm cost and pauses of 1,000 and 3,000 ms always the cold one; from 210 to 400 ms the cost alternated with the pause (210 ms cold, 230 warm, 270 cold, 290 warm, 310 cold, 400 warm), each the same in 12 of 12 runs. That pattern fits a periodic sweep rather than an age limit, so no pause can be relied on to stay warm. The copy is kept per element: reading the name of `First`, of another button or of the window, or registering on another button, leaves `First` cold. Whether the copy is kept in the client's element or in UI Automation's server-side node was not determined.
+
+#### Not affected
+
+The answers of the calls; only their provider calls change.
+
+#### Workarounds that worked
+
+- Reading the element's runtime id (`GetRuntimeId`) just before the call renews the copy: with it, the cold-prone registration cost the warm 3 provider calls in 256 of 256 runs at pauses from 0 to 3,000 ms, and the move to the element already followed cost nothing in 50 of 50. The read itself costs the 6 provider calls when the copy has lapsed, so it moves the cost rather than removing it.
+
+#### Workarounds that didn't work
+
+- Reading another property of the element, such as its name, or touching another element of the same provider: neither renews the copy.
+
+#### NVDA
+
+Not examined; the fault changes only what a call costs, not what it answers.
+
+#### Reproduction test
+
+No test reproduces the lapse, because reaching it needs a pause, which `docs/testing.md` forbids in a test. `call_counts::uia_event_registrations_cost_exactly` (`crates/mockapp/tests/call_counts.rs`) reads the runtime id before each of its two measured registration steps, so it pins the warm costs; it passed 50 of 50 runs alone and 5 of 5 with its binary. With a 1.5 s pause before each step, it passed 10 of 10 with the read and failed 5 of 5 without it, with the cold costs above.
+
+#### Evidence
+
+Experiments of 2026-11-03 that traced mockapp's provider hits in order between marker messages; their scratch code was not kept, and the figures above are from their recorded output.
+
 ### A Qt application's cached keyboard focus can be stale
 
 #### Trigger

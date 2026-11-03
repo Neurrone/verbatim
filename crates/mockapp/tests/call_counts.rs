@@ -2718,6 +2718,14 @@ fn uia_event_registrations_cost_exactly() {
         &[],
     );
 
+    // UI Automation's copy of an element's runtime id lapses on a periodic
+    // sweep, and a registration on an element whose copy has lapsed reads it
+    // from the provider again: 9 provider calls in place of 3 here, and
+    // provider hits on the move below that otherwise costs none
+    // (`docs/uia-bugs.md`, "UI Automation's copy of an element's runtime id
+    // lapses"). Reading the runtime id just before each measured step,
+    // outside the measure, renews the copy, so each step is measured warm.
+    warm_runtime_id(under_test.element("First"));
     let focus = AgileReference::new(under_test.element("First")).expect("an agile reference");
     let (registration, cost) = under_test.measure(hwnd, |_| {
         Registration::with_parts(
@@ -2740,6 +2748,7 @@ fn uia_event_registrations_cost_exactly() {
     // A move to the element already followed, by another reference to it,
     // makes no call: the registration compares the elements and keeps the
     // group where it is (`docs/design/focus-pipeline.md`, section 17).
+    warm_runtime_id(under_test.element("First"));
     let again = AgileReference::new(under_test.element("First")).expect("an agile reference");
     let ((), cost) = under_test.measure(hwnd, |_| {
         registration.retarget(Scope::Elements(vec![again]));
@@ -2756,6 +2765,15 @@ fn uia_event_registrations_cost_exactly() {
 
     ratchet.finish();
     drop(app);
+}
+
+/// Reads `element`'s runtime id, which renews UI Automation's copy of it
+/// (`uia_event_registrations_cost_exactly` says why).
+fn warm_runtime_id(element: &IUIAutomationElement) {
+    assert!(
+        !verbatim_uia::runtime_id(element).is_empty(),
+        "the element's runtime id"
+    );
 }
 
 /// A container's selected child, through `SelectionPattern2` (mockapp's
