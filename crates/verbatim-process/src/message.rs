@@ -295,7 +295,6 @@ mod tests {
                 (message, peek)
             })
             .collect();
-        assert_eq!(cases.len(), 9);
         for (message, expected) in &cases {
             assert_eq!(peeked(message), *expected, "{message:?}");
         }

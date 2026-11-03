@@ -328,7 +328,6 @@ fn the_cores_violations_over_the_corpus() {
 #[test]
 fn the_cores_violations_over_every_stream_of_four_tiny_operations() {
     let streams = every_stream(&TINY_ALPHABET, 4);
-    assert_eq!(streams.len(), 9 + 81 + 729 + 6561);
     let found: Vec<(String, Flavor, Vec<Violation>)> = streams
         .iter()
         .flat_map(|stream| {

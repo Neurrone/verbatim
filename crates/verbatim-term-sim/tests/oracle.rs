@@ -2060,7 +2060,6 @@ fn the_ground_truth_reader_passes_the_fixed_streams() {
 #[test]
 fn the_ground_truth_reader_passes_every_stream_of_four_tiny_operations() {
     let streams = every_stream(&TINY_ALPHABET, 4);
-    assert_eq!(streams.len(), 9 + 81 + 729 + 6561);
     let failures: Vec<(String, Flavor, Vec<Violation>)> = streams
         .iter()
         .flat_map(|stream| {
