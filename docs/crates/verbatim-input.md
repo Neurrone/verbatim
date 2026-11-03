@@ -186,8 +186,13 @@ rules):
   waited for once a later one arrives. Every short sequence of keys,
   pass-ons, permit changes and pauses past the multi-press timeout, up to
   four steps over both Verbatim keys and every modifier, with each
-  layout's bindings, is checked against a reference model by
-  `tests/hold_sequences.rs`, except where the permit falls to `None` while
+  layout's bindings, is checked by `tests/hold_sequences.rs` against
+  invariants that need no model (no release before its press, no key
+  left down, no acting modifier released before its mask, the line
+  matching the places given out) and a small reference model of which
+  transitions pass, are held or deferred, or are swallowed, and when a
+  mask is due, taking each press's meaning from the machine, since the
+  unit tests state gesture naming, counting and the double tap, except where the permit falls to `None` while
   a deferred press or a mask waits, whose release then passes at once (the
   design's "Limitations").
 - The menu guard (`docs/parity/input.md`, "A modifier released after a
