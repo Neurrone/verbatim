@@ -9,8 +9,10 @@
 //! newest focus stamp, and the terminal models' generations in their order
 //! of reading. The terminal's quiet-period timer, fired at the due time the
 //! state gives, is due later than that time or not at all. Each case ends
-//! by answering every request still open, and its state round-trips
-//! through its serialisation after every action.
+//! by answering every request still open, after which no field of the
+//! state names an ended generation but those [`ENDED_MAY_REMAIN`] lists
+//! (`super::ended`), and its state round-trips through its serialisation
+//! after every action.
 //!
 //! The model leaves out words, carets, text, chains, say-all's buffers and
 //! the flood policy, and the held-key line, whose awaited watch alone it
@@ -166,7 +168,7 @@ struct Model {
 }
 
 /// The listed states a gate's cases must reach.
-const LISTED: [&str; 18] = [
+const LISTED: [&str; 19] = [
     "a focus taken",
     "a duplicate focus",
     "a stale focus",
@@ -185,6 +187,7 @@ const LISTED: [&str; 18] = [
     "the held keys resumed",
     "an answer to a model no longer live",
     "a request answered from memory",
+    "an ended generation checked",
 ];
 
 /// One case's run: the state and the model side by side.
@@ -214,6 +217,45 @@ fn grow(snapshot: &mut Input, length: usize) {
     snapshot.screen = text;
     snapshot.first_row = verbatim_model::TerminalText::unpadded(&line);
 }
+
+/// The fields of Core's state that may still name an ended outpost
+/// generation once everything asked of it is answered, each by its path in
+/// the state's serialisation (`[]` an element of a list or tuple, `{}` a
+/// map's key or an entry under a key that is not text), with why it is
+/// kept. A field found that is not listed fails the case.
+const ENDED_MAY_REMAIN: &[(&str, &str)] = &[
+    (
+        "focus.snapshot.id.outpost",
+        "the focus keeps its copied data with its ids dead, so a replacement's \
+         report of the same focus is taken silently; the next focus taken replaces it",
+    ),
+    (
+        "focus.ancestors[].id.outpost",
+        "the dead focus's ancestors, kept with it for the same comparison",
+    ),
+    (
+        "focus.spoken.ancestors[][].outpost",
+        "what Core last spoke of the dead focus's line, against which the next \
+         focus's line says only what changed; the next focus taken replaces it",
+    ),
+    (
+        "foreground.id.outpost",
+        "the foreground window's object, the same object to every generation by \
+         its window handle; the next foreground change replaces it",
+    ),
+    (
+        "latest_focus.outpost",
+        "the newest focus observation's stamp, which orders later focus events by \
+         time; its generation only exempts that generation's own reports, and an \
+         ended one sends none",
+    ),
+    (
+        "reported_format[].outpost",
+        "the formatting last reported in the focus's text, read only for that \
+         node, which no generation reports once its own ended; the next focus \
+         taken clears it",
+    ),
+];
 
 /// The window facts of a focus in top-level window `top`.
 fn facts(top: WindowHandle) -> WindowFacts {
@@ -268,14 +310,36 @@ impl Run {
         run
     }
 
-    /// Runs `actions`, then drains.
+    /// Runs `actions`, then drains, and checks that nothing left names an
+    /// ended generation.
     fn case(actions: &[Action]) -> Self {
         let mut run = Self::new();
         for &action in actions {
             run.act(action);
         }
         run.drain();
+        run.check_ended_owners();
         run
+    }
+
+    /// Once the case is quiet, no field of the state names an ended
+    /// outpost generation but those [`ENDED_MAY_REMAIN`] lists: state
+    /// about an owner goes with its ending.
+    fn check_ended_owners(&mut self) {
+        if self.model.ended.is_empty() {
+            return;
+        }
+        let found = super::ended::naming(&self.state, &self.model.ended);
+        let left: Vec<&String> = found
+            .iter()
+            .filter(|path| !ENDED_MAY_REMAIN.iter().any(|(kept, _)| kept == path))
+            .collect();
+        assert!(
+            left.is_empty(),
+            "fields naming an ended generation: {left:?}: {:?}",
+            self.trail
+        );
+        self.reach("an ended generation checked");
     }
 
     fn reach(&mut self, state: &'static str) {

@@ -210,8 +210,10 @@ through proptest's `TestRunner::run` under a fixed seed and 300 cases
 is applied. The actions are focuses from the oldest or newest live
 generation on a text box, a button or the terminal, with what the reader
 read of the element it held, in the front's window or with no window
-facts, observed now, before, or at no known time; terminal snapshots, and
-the first snapshots of 16 other terminals; answers to the oldest or
+facts, observed now, before, or at no known time; terminal snapshots,
+some with a ruler that changes on every such read, and the first
+snapshots of 16 other terminals; the terminal's timer at its due time;
+answers to the oldest or
 newest open request, done, gone or failed, and at low weight to one
 ended, to one never asked and from another outpost; caret keys, held keys
 and their due times, typing and speech cut off; review commands; foreground
@@ -236,13 +238,24 @@ then holds the change as the hook's view, the front and attention, keeps
 the entered window the model predicts, and keeps its object and stamps;
 an outpost's end asks nothing of it and leaves nothing of
 it, and another outpost's entry ends then only by a withdrawal; an answer
-to a model no longer live runs nothing; speech cut off asks nothing. The
+to a model no longer live runs nothing; speech cut off asks nothing; the
+terminal's timer, fired at the due time the state gives, is due later
+than that or not at all. The
 state round-trips through its serialisation after every action, each case
 runs twice with the same effects, ends with every request answered and
 only Core's own entries left, and the gate fails if any listed state is
-never reached. Two fixed cases keep what the generated cases reach too
-seldom: a model's request answered after a newer model of the same
-terminal replaced it, and a foreground change at the newest focus's stamp.
+never reached. Once a case is quiet, no field of the state names an
+ended generation but those `ENDED_MAY_REMAIN` lists, each by its exact
+path with why it is kept (the dead focus's copied data, the foreground
+window's object, the newest focus stamp and the focus's formatting
+cache): the state is serialised through a serializer that finds every
+`OutpostId` by its type's name, in a node id, a tuple or a map's key
+(`crates/verbatim-core/src/queries/ended.rs`), so a field added later is
+checked with no change to the check. Three fixed cases keep what the
+generated cases reach too seldom: a model's request answered after a
+newer model of the same terminal replaced it, a foreground change at the
+newest focus's stamp, and the terminal's timer fired once a changing
+row armed it.
 
 ## The request table
 
