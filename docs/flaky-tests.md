@@ -50,7 +50,7 @@ Scenarios: the `windows_terminal_` scenarios generally, for example `windows_ter
   - Cause: not found. Verbatim's outpost was the one waiting on Explorer; no Verbatim call was found that Explorer waited on.
   - Fix: none yet.
 - `measure_focus_explorer`
-  - How: times out. On 2026-10-29 it failed in 22 of 23 runs in a row on the development machine, before and after that day's changes, while `explorer_folder_window` passed.
+  - How: times out. On 2026-10-29 it failed in 22 of 23 runs in a row on the development machine, before and after that day's changes, while `explorer_folder_window` passed; on 2026-11-03, 20 of 20 at 000f36f3, each at a newly opened folder: its title "... - File Explorer" is spoken, then nothing for 15 s where its first item ("one 0 not selected 1 of 2") is expected.
   - Cause: File Explorer can focus its "Working on it..." placeholder and raise no later focus; what it raises then, and what makes it constant, are not found.
   - Fix: [the M4.1 follow-ups](roadmap.md#follow-ups-from-m41), the entry on this failure.
 
