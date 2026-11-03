@@ -93,6 +93,18 @@ enum Step {
     Pause,
 }
 
+impl Step {
+    /// The step as the Rust expression that makes it, as a found sequence
+    /// lists it.
+    fn code(self) -> String {
+        match self {
+            Step::Press(key) => format!("Step::Press(K::{key:?})"),
+            Step::Release(key) => format!("Step::Release(K::{key:?})"),
+            other => format!("Step::{other:?}"),
+        }
+    }
+}
+
 const STEPS: [Step; 20] = [
     Step::Press(K::Right),
     Step::Release(K::Right),
@@ -497,19 +509,22 @@ impl<'a> World<'a> {
 }
 
 /// Walks every sequence of up to `depth` steps after `world`, collecting
-/// failures.
-fn walk(world: &World, depth: usize, failures: &mut Vec<String>) {
+/// failures, each with its sequence.
+fn walk(world: &World, depth: usize, failures: &mut Vec<(Vec<Step>, String)>) {
     for step in STEPS {
         if !world.allows(step) {
             continue;
         }
         let mut next = world.clone();
         if let Err(error) = next.apply(step) {
-            failures.push(format!("{:?}: {error}", next.trail));
+            failures.push((next.trail.clone(), format!("{:?}: {error}", next.trail)));
             continue;
         }
         if let Err(error) = next.clone().finish() {
-            failures.push(format!("{:?}, then let go: {error}", next.trail));
+            failures.push((
+                next.trail.clone(),
+                format!("{:?}, then let go: {error}", next.trail),
+            ));
         }
         if depth > 1 {
             walk(&next, depth - 1, failures);
@@ -617,7 +632,37 @@ fn every_sequence_of_up_to_four_steps_matches_the_model() {
         let mut failures = Vec::new();
         let world = World::new(map, &held, HoldPermit::HoldAndDefer);
         walk(&world, DEPTH, &mut failures);
+        if let Some((shortest, _)) = failures.iter().min_by_key(|(trail, _)| trail.len()) {
+            let steps: Vec<String> = shortest.iter().map(|step| step.code()).collect();
+            eprintln!(
+                "the shortest failing sequence, as a line for `found()` in crates/verbatim-input/tests/hold_sequences.rs:\n        (KeyboardLayout::{layout:?}, vec![{}]),\n\
+                 the found sequences alone: cargo test -p verbatim-input --test hold_sequences -- --exact found_sequences_match_the_model",
+                steps.join(", ")
+            );
+        }
+        let failures: Vec<String> = failures.into_iter().map(|(_, failure)| failure).collect();
         assert_eq!(failures, Vec::<String>::new(), "{layout:?}");
+    }
+}
+
+/// The sequences the walk failed on, each kept as its layout and steps
+/// from the walk's start, as the failure's report gives them.
+fn found() -> Vec<(KeyboardLayout, Vec<Step>)> {
+    Vec::new()
+}
+
+/// Every found sequence, from the walk's start, matches the model at each
+/// step and once every key is let go.
+#[test]
+fn found_sequences_match_the_model() {
+    for (layout, steps) in found() {
+        let (map, held) = map_for(layout);
+        let mut world = World::new(map, &held, HoldPermit::HoldAndDefer);
+        for step in steps {
+            assert!(world.allows(step), "{step:?} after {:?}", world.trail);
+            world.apply(step).expect("the step matches the model");
+        }
+        world.finish().expect("every key ends up");
     }
 }
 
