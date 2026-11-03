@@ -78,6 +78,8 @@ Costs, per caret key the first check finds unmoved: at most 10 more remote opera
 
 The app keeps a held key's stroke in its line until Core passes it on, then sends it with `SendInput`, pressing before it the gesture's Shift, Control or Alt that Windows does not have down and releasing them after, as NVDA's `KeyboardInputGesture.send` does. Since every transition after a held key is deferred behind it, the modifiers are as they were when it was pressed. Verbatim is not idle while any key waits in the line, since that key has not reached its application (`docs/design/communication.md`, section 6.7).
 
+At exit, once the hook is gone, the keys still in line are dropped, since they would reach the application after keys pressed since, but the line leaves no key down: each key whose last transition in line is a release, and which Windows has down because its press reached the application first, is released. Without this, Shift pressed before a held Down Arrow and released behind it would stay down in Windows after Verbatim exits, since the hook swallowed its release.
+
 The bound: the before read is bounded by Core's one deadline for the held key, 150 milliseconds from when the read is asked ("Core"); past it Core passes the key on without the read and gives the read up. The value is above the slowest before read seen (65.5 ms, in Windows Terminal), and short enough that a key the outpost cannot read for still reaches the application before it feels lost; NVDA's default wait for a caret move is 100 ms. It is a bound on a request, not a sleep: nothing waits on it unless a read is outstanding.
 
 ## Costs
@@ -104,7 +106,7 @@ Measured with three runs of ten rounds of each case, the build before holding ag
 
 ## Limitations
 
-- A stalled reducer thread delays caret keys in text fields, and every key pressed after one, until it recovers, where without holding keys reach the application at once whatever Verbatim is doing; the bound covers only the outpost's read. If Verbatim exits while keys are held, those keys are lost.
+- A stalled reducer thread delays caret keys in text fields, and every key pressed after one, until it recovers, where without holding keys reach the application at once whatever Verbatim is doing; the bound covers only the outpost's read. If Verbatim exits while keys are held, those keys and the transitions deferred behind them are lost, though no key is left down ("The shell").
 - The foreground changing between a key's press and its pass-on sends the key, and the keys deferred behind it, to the new foreground window, as NVDA's would; accepted (Dickson, 2026-10-22). If the new window is elevated, Windows drops them.
 - A key auto-repeating is held press by press, so the application receives separate presses rather than repeats.
 - Verbatim's own commands (a review command, select then copy, the time, the menu, the shell's lists) pressed while a held key waits run after it, once its watch is answered or 100 ms after its pass, where without holding they run at once; the key ahead says nothing, and a reading command reads the line the key moved to, where NVDA reads the line before it (`docs/design/ownership.md`).

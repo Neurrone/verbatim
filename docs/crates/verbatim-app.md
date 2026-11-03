@@ -217,7 +217,11 @@ Milestone M4's text protocol is wired here (`docs/crates/verbatim-model.md`,
   Windows still has it down, as NVDA's gesture send does, and a
   character typed as Unicode (`VK_PACKET`) as Unicode again. Each
   pass-on logs how long the key was held (`verbatim::held_key`,
-  `held_us`). `Effect::ForKey` is executed on the named key's trace.
+  `held_us`). At exit (`ShellCommand::Exiting`, after the hook is
+  dropped) the line is dropped but leaves no key down
+  (`HeldKeys::exit`): each key whose last transition in line is a
+  release, and which Windows has down (`GetAsyncKeyState`), is released
+  with one `SendInput`. `Effect::ForKey` is executed on the named key's trace.
   `Effect::BoundHeldKey` sets or clears the held key's one deadline, for
   its wait for the key ahead or for the read of its caret, kept beside the
   reducer thread's other deadlines (`next_deadline`); when it passes, the

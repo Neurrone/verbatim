@@ -1412,6 +1412,9 @@ impl ReducerThread<'_> {
             ShellCommand::DumpTreeGivenUp(ticket) => self.dump_tree_given_up(ticket),
             ShellCommand::FocusNow(pid) => self.want_focus_now(pid),
             ShellCommand::Exiting { replaced, heard } => {
+                // The hook is gone, so nothing more joins the line, and a
+                // key in it would now arrive after keys pressed since.
+                self.held_keys.exit();
                 self.exiting = true;
                 self.apply(Input::Exiting { replaced });
                 let _ = heard.send(self.exit_sound.take());

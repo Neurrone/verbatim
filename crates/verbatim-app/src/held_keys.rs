@@ -12,6 +12,10 @@
 //! tagged with its place in line (`passed_on_info`) so the hook lets it
 //! through and knows it has gone.
 //!
+//! At exit, once the hook is gone, what is still in line is dropped, but
+//! no key is left down: a key released behind a held key, whose press
+//! reached the application before it, is released ([`HeldKeys::exit`]).
+//!
 //! A held key is sent as NVDA's `KeyboardInputGesture.send`
 //! (`nvda/source/keyboardHandler.py`) sends a gesture: the gesture's
 //! modifiers not already down are pressed first and released after, and a
@@ -109,6 +113,27 @@ impl HeldKeys {
         self.send_ready();
     }
 
+    /// Verbatim is exiting and the hook is gone: the keys still in line are
+    /// dropped, as they would arrive after keys pressed since, but no key is
+    /// left down by the line. Each key whose last transition in line is a
+    /// release, and which Windows still has down because its press reached
+    /// the application before the release was deferred, is released.
+    pub(crate) fn exit(&mut self) {
+        let line = std::mem::take(&mut self.line);
+        let inputs: Vec<INPUT> = releases_at_exit(&line, is_down)
+            .into_iter()
+            .map(|stroke| key(stroke, true, stroke.sequence))
+            .collect();
+        if !line.is_empty() {
+            tracing::info!(
+                dropped = line.len(),
+                released = inputs.len(),
+                "keys held back dropped at exit"
+            );
+        }
+        send(&inputs);
+    }
+
     /// Sends, with one `SendInput`, every key at the front of the line that
     /// may go: deferred transitions, and held keys Core has passed on.
     fn send_ready(&mut self) {
@@ -138,22 +163,55 @@ impl HeldKeys {
             }
             self.line.pop_front();
         }
-        if inputs.is_empty() {
-            return;
-        }
-        let size = i32::try_from(size_of::<INPUT>()).unwrap_or(i32::MAX);
-        // SAFETY: `inputs` is a valid slice of initialized INPUT values whose
-        // size is passed as the API requires.
-        let sent = unsafe { SendInput(&inputs, size) };
-        if usize::try_from(sent).unwrap_or(0) != inputs.len() {
-            tracing::warn!(
-                sent,
-                wanted = inputs.len(),
-                error = %windows::core::Error::from_thread(),
-                "keys held back could not be passed on in full"
-            );
-        }
+        send(&inputs);
     }
+}
+
+/// Sends `inputs` with one `SendInput`, which Windows never interleaves
+/// with other input.
+fn send(inputs: &[INPUT]) {
+    if inputs.is_empty() {
+        return;
+    }
+    let size = i32::try_from(size_of::<INPUT>()).unwrap_or(i32::MAX);
+    // SAFETY: `inputs` is a valid slice of initialized INPUT values whose
+    // size is passed as the API requires.
+    let sent = unsafe { SendInput(inputs, size) };
+    if usize::try_from(sent).unwrap_or(0) != inputs.len() {
+        tracing::warn!(
+            sent,
+            wanted = inputs.len(),
+            error = %windows::core::Error::from_thread(),
+            "keys held back could not be passed on in full"
+        );
+    }
+}
+
+/// The releases to send at exit for the keys in `line`, which is dropped:
+/// one for each key whose last transition in line is a deferred release
+/// and which `down` says Windows has down, in the order of those releases.
+/// A held key needs none, since its own release is swallowed for good and
+/// its press never reached Windows; a key whose last transition is a press
+/// is still down under the user's finger, and its release, which the hook
+/// no longer sees, reaches Windows itself. A character typed as Unicode
+/// leaves no key down.
+fn releases_at_exit(line: &VecDeque<Waiting>, down: impl Fn(u16) -> bool) -> Vec<HeldStroke> {
+    let mut last: Vec<(HeldStroke, bool)> = Vec::new();
+    for waiting in line {
+        let Waiting::Deferred { stroke, pressed } = waiting else {
+            continue;
+        };
+        if stroke.vk == VK_PACKET {
+            continue;
+        }
+        // Moved to the end, so the releases go in the order of the last.
+        last.retain(|(earlier, _)| earlier.vk != stroke.vk);
+        last.push((*stroke, *pressed));
+    }
+    last.into_iter()
+        .filter(|&(stroke, pressed)| !pressed && down(stroke.vk))
+        .map(|(stroke, _)| stroke)
+        .collect()
 }
 
 /// The virtual-key codes of `gesture`'s Shift, Control and Alt, in that
@@ -267,5 +325,59 @@ mod tests {
         assert_eq!(of("kb:rightarrow"), Vec::<u16>::new());
         assert_eq!(of("kb:shift+control+leftarrow"), [0x10, 0x11]);
         assert_eq!(of("kb:control+backspace"), [0x11]);
+    }
+
+    fn stroke(vk: u16, sequence: u32) -> HeldStroke {
+        HeldStroke {
+            vk,
+            scan_code: 0,
+            extended: false,
+            sequence,
+        }
+    }
+
+    fn deferred(vk: u16, pressed: bool, sequence: u32) -> Waiting {
+        Waiting::Deferred {
+            stroke: stroke(vk, sequence),
+            pressed,
+        }
+    }
+
+    /// At exit the line is dropped, and the keys whose release waits in it
+    /// with their press already in Windows are released: left Shift,
+    /// pressed before a held Down Arrow and released behind it, its
+    /// auto-repeat deferred too, and right Alt; not X, whose press was
+    /// deferred and dropped with it, nor left Control, still down under the
+    /// user's finger, nor Alt, which Windows does not have down, nor a
+    /// character typed as Unicode.
+    #[test]
+    fn a_key_released_behind_a_held_key_is_released_at_exit() {
+        const SHIFT: u16 = 0xA0;
+        const CONTROL: u16 = 0xA2;
+        const ALT: u16 = 0x12;
+        const RIGHT_ALT: u16 = 0xA5;
+        const X: u16 = 0x58;
+        let line = VecDeque::from([
+            Waiting::Held {
+                trace_id: TraceId::from_raw(1),
+                stroke: stroke(0x28, 1),
+                modifiers: vec![0x10],
+                pressed_at_us: 0,
+                passed: false,
+            },
+            deferred(SHIFT, true, 2),
+            deferred(X, true, 3),
+            deferred(RIGHT_ALT, false, 4),
+            deferred(SHIFT, false, 5),
+            deferred(X, false, 6),
+            deferred(CONTROL, true, 7),
+            deferred(VK_PACKET, false, 8),
+            deferred(ALT, false, 9),
+        ]);
+        let down = |vk| matches!(vk, SHIFT | CONTROL | RIGHT_ALT);
+        assert_eq!(
+            releases_at_exit(&line, down),
+            [stroke(RIGHT_ALT, 4), stroke(SHIFT, 5)]
+        );
     }
 }
