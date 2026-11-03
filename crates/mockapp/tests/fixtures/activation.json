@@ -1,0 +1,31 @@
+{
+  "id": "root",
+  "role": "window",
+  "name": "Mockapp Activation Fixture",
+  "children": [
+    {
+      "id": "all_three",
+      "role": "check_box",
+      "name": "Invoke, toggle or select",
+      "states": ["focusable", "selectable"],
+      "default_action": "Press"
+    },
+    {
+      "id": "toggle_and_select",
+      "role": "check_box",
+      "name": "Toggle or select",
+      "states": ["focusable", "selectable"]
+    },
+    {
+      "id": "select_only",
+      "role": "list_item",
+      "name": "Select only",
+      "states": ["focusable", "selectable"]
+    },
+    {
+      "id": "none",
+      "role": "static_text",
+      "name": "Nothing to do"
+    }
+  ]
+}

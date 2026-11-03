@@ -223,6 +223,8 @@ pub(crate) enum Method {
     ElementProviderFromPoint,
     /// `IRawElementProviderFragmentRoot::GetFocus`.
     GetFocus,
+    /// `IInvokeProvider::Invoke`.
+    Invoke,
     /// `IToggleProvider::Toggle`.
     Toggle,
     /// `IToggleProvider::ToggleState`.
@@ -359,7 +361,7 @@ static HITS: [AtomicU32; COUNT] = [const { AtomicU32::new(0) }; COUNT];
 impl Method {
     /// Every counted method, in counter order: a method's index here is the
     /// `wParam` that reads it.
-    pub(crate) const ALL: [Method; 75] = [
+    pub(crate) const ALL: [Method; 76] = [
         Method::GetObject,
         Method::ProviderOptions,
         Method::GetPatternProvider,
@@ -373,6 +375,7 @@ impl Method {
         Method::FragmentRoot,
         Method::ElementProviderFromPoint,
         Method::GetFocus,
+        Method::Invoke,
         Method::Toggle,
         Method::ToggleState,
         Method::Expand,
@@ -457,6 +460,7 @@ impl Method {
             Method::FragmentRoot => "FragmentRoot",
             Method::ElementProviderFromPoint => "ElementProviderFromPoint",
             Method::GetFocus => "GetFocus",
+            Method::Invoke => "Invoke",
             Method::Toggle => "Toggle",
             Method::ToggleState => "ToggleState",
             Method::Expand => "Expand",

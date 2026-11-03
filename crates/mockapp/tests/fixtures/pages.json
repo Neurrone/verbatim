@@ -1,0 +1,15 @@
+{
+  "id": "root",
+  "role": "window",
+  "name": "Mockapp Pages Fixture",
+  "children": [
+    {
+      "id": "doc",
+      "role": "editable_text",
+      "name": "Notes",
+      "states": ["focusable"],
+      "text": "one\ntwo\nthree\nfour\nfive\n",
+      "page_lines": 2
+    }
+  ]
+}

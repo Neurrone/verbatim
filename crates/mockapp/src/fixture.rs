@@ -117,6 +117,8 @@ struct RawNode {
     #[serde(default)]
     backward_moves_positive: bool,
     #[serde(default)]
+    page_lines: Option<usize>,
+    #[serde(default)]
     native: Option<String>,
     #[serde(default)]
     window_class: Option<String>,
@@ -255,6 +257,9 @@ pub(crate) struct FixtureNode {
     /// Whether a backward `Move` or `MoveEndpointByUnit` answers with a
     /// positive count, as some providers do.
     pub(crate) backward_moves_positive: bool,
+    /// How many lines make a page of the text, which is otherwise one
+    /// page.
+    pub(crate) page_lines: Option<usize>,
     /// The real control the node becomes for the MSAA backend instead of a
     /// scripted node: `tree_view` for a comctl32 tree view
     /// ([`crate::tree_view`]), `list_view` for a comctl32 list view in the
@@ -425,6 +430,7 @@ fn convert(
         cultures: raw.cultures,
         styles: raw.styles,
         backward_moves_positive: raw.backward_moves_positive,
+        page_lines: raw.page_lines,
         native: raw.native,
         window_class: raw.window_class,
         class_name: raw.class_name,

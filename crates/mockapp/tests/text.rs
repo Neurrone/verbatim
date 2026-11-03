@@ -1661,10 +1661,169 @@ fn reading_ahead_ends_where_lines_clamp_back_both_ways() {
     app.quit();
 }
 
+/// The line `read` reaches from `at` by `pages` pages: how far it moved and
+/// its text.
+fn by_page<S: TextSource>(
+    source: &mut S,
+    anchors: &mut NodeText<'_, S::Pos>,
+    at: TextPoint,
+    pages: i32,
+) -> (i32, TextChunk) {
+    chunk(read(
+        source,
+        anchors,
+        at,
+        Some((TextUnit::Page, pages)),
+        TextUnit::Line,
+    ))
+}
+
+/// Review's page movement over UIA text whose provider has pages
+/// (`pages.json`, two lines a page) lands on the first line of the next or
+/// previous page and moves nothing past the last; over an edit control,
+/// which has no page unit, it is not supported.
+fn page_movement_answers_from_the_providers_pages() {
+    common::init_com();
+    let title = common::unique_title("mockapp-text-pages");
+    let app = common::spawn("pages.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let mut source = uia_notes(hwnd, true);
+    let mut store = Anchors::new(Arc::default());
+    let mut anchors = store.node(1);
+
+    let (moved, third) = by_page(&mut source, &mut anchors, TextPoint::Start, 1);
+    assert_eq!((moved, third.text.as_str()), (1, "three\n"));
+    let (moved, fifth) = by_page(
+        &mut source,
+        &mut anchors,
+        TextPoint::At(point_of(&third)),
+        1,
+    );
+    assert_eq!((moved, fifth.text.as_str()), (1, "five\n"));
+    let (moved, last) = by_page(
+        &mut source,
+        &mut anchors,
+        TextPoint::At(point_of(&fifth)),
+        1,
+    );
+    assert_eq!((moved, last.text.as_str()), (0, "five\n"), "the last page");
+    let (moved, back) = by_page(
+        &mut source,
+        &mut anchors,
+        TextPoint::At(point_of(&fifth)),
+        -1,
+    );
+    assert_eq!((moved, back.text.as_str()), (-1, "three\n"));
+    app.quit();
+
+    let title = common::unique_title("mockapp-text-pages-edit");
+    let app = common::spawn("text.json", "msaa", &title);
+    let hwnd = common::find_window(&title);
+    let mut source = edit_notes(hwnd);
+    let mut store = Anchors::new(Arc::default());
+    let mut anchors = store.node(1);
+    assert_eq!(
+        read(
+            &mut source,
+            &mut anchors,
+            TextPoint::Start,
+            Some((TextUnit::Page, 1)),
+            TextUnit::Line,
+        ),
+        TextReply::UnsupportedUnit(TextUnit::Page)
+    );
+    app.quit();
+}
+
+/// A location is answered with where the provider places the point: over
+/// UIA, the top left of the character's bounding rectangle, which mockapp
+/// draws 8 pixels wide and 16 high from (100, 200), so "gamma" on the
+/// second line is at (100, 216); over an edit control, the character's
+/// place as `EM_POSFROMCHAR` gives it in the control, on the screen.
+fn a_location_is_answered_from_where_the_provider_places_the_text() {
+    use windows::Win32::Foundation::POINT;
+    use windows::Win32::Graphics::Gdi::ClientToScreen;
+    use windows::Win32::UI::Controls::EM_POSFROMCHAR;
+    use windows::Win32::UI::WindowsAndMessaging::SendMessageW;
+    common::init_com();
+    let title = common::unique_title("mockapp-text-location");
+    let app = common::spawn("text.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let mut source = uia_notes(hwnd, true);
+    let mut store = Anchors::new(Arc::default());
+    let mut anchors = store.node(1);
+    let (_, second) = chunk(read(
+        &mut source,
+        &mut anchors,
+        TextPoint::Start,
+        Some((TextUnit::Line, 1)),
+        TextUnit::Line,
+    ));
+    assert_eq!(
+        perform(
+            &mut source,
+            &mut anchors,
+            &TextOp::Location(TextPoint::At(point_of(&second)))
+        ),
+        TextReply::Location { x: 100, y: 216 }
+    );
+    app.quit();
+
+    let title = common::unique_title("mockapp-text-location-edit");
+    let app = common::spawn("text.json", "msaa", &title);
+    let hwnd = common::find_window(&title);
+    // SAFETY: a local search of mockapp's window's children by class.
+    let edit = unsafe { FindWindowExW(Some(hwnd), None, w!("EDIT"), None) }
+        .expect("mockapp's edit control");
+    // Where the control places "gamma", at character 12 after
+    // "alpha beta\r\n", read before the outpost is asked: the control's
+    // client coordinates in the answer's two low words, then on the screen.
+    // SAFETY: EM_POSFROMCHAR takes and answers plain integers.
+    let packed = unsafe { SendMessageW(edit, EM_POSFROMCHAR, Some(WPARAM(12)), None) }.0;
+    let word = |shift: isize| u16::try_from((packed >> shift) & 0xFFFF).expect("a 16-bit word");
+    let mut expected = POINT {
+        x: i32::from(word(0).cast_signed()),
+        y: i32::from(word(16).cast_signed()),
+    };
+    // SAFETY: converts a local point; the control is alive.
+    assert!(unsafe { ClientToScreen(edit, &raw mut expected) }.as_bool());
+    let mut source = edit_notes(hwnd);
+    let mut store = Anchors::new(Arc::default());
+    let mut anchors = store.node(1);
+    let (_, second) = chunk(read(
+        &mut source,
+        &mut anchors,
+        TextPoint::Start,
+        Some((TextUnit::Line, 1)),
+        TextUnit::Line,
+    ));
+    assert_eq!(second.text, "gamma\r\n");
+    assert_eq!(
+        perform(
+            &mut source,
+            &mut anchors,
+            &TextOp::Location(TextPoint::At(point_of(&second)))
+        ),
+        TextReply::Location {
+            x: expected.x,
+            y: expected.y
+        }
+    );
+    app.quit();
+}
+
 /// Runs this file's tests through the UIA test runner, which explains why
 /// these binaries do not exit normally (`common/harness.rs`).
 fn main() {
     harness::run_isolated(&[
+        (
+            "page_movement_answers_from_the_providers_pages",
+            page_movement_answers_from_the_providers_pages,
+        ),
+        (
+            "a_location_is_answered_from_where_the_provider_places_the_text",
+            a_location_is_answered_from_where_the_provider_places_the_text,
+        ),
         (
             "reading_ahead_ends_where_lines_clamp_back_both_ways",
             reading_ahead_ends_where_lines_clamp_back_both_ways,

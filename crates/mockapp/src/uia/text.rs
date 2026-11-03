@@ -9,8 +9,9 @@
 //! character; a line ends after its line feed, and a text ending in a line
 //! feed has an empty last line, as an editor shows one; a paragraph is a
 //! line; a stretch of the format unit ends wherever a spelling error or a
-//! bold stretch of the fixture starts or ends; the page and the document
-//! are the whole text.
+//! bold stretch of the fixture starts or ends; the page is the fixture's
+//! `page_lines` lines, or the whole text without it, and the document is
+//! the whole text.
 //! Moving by a unit lands on a unit's start and never goes past the last
 //! unit, so a client sees the text's ends. The caret is the selection's
 //! start, as the edit controls report it, and the focused node's caret
@@ -63,13 +64,13 @@ use windows::Win32::UI::Accessibility::{
     IRawElementProviderSimple, ITextProvider, ITextProvider_Impl, ITextProvider2,
     ITextProvider2_Impl, ITextRangeProvider, ITextRangeProvider_Impl, SupportedTextSelection,
     SupportedTextSelection_Single, TextPatternRangeEndpoint, TextPatternRangeEndpoint_Start,
-    TextUnit, TextUnit_Character, TextUnit_Format, TextUnit_Line, TextUnit_Paragraph,
-    TextUnit_Word, UIA_AnnotationTypesAttributeId, UIA_BackgroundColorAttributeId,
-    UIA_BulletStyleAttributeId, UIA_CultureAttributeId, UIA_FontNameAttributeId,
-    UIA_FontSizeAttributeId, UIA_FontWeightAttributeId, UIA_ForegroundColorAttributeId,
-    UIA_IsItalicAttributeId, UIA_LinkAttributeId, UIA_StrikethroughStyleAttributeId,
-    UIA_TEXTATTRIBUTE_ID, UIA_UnderlineStyleAttributeId, UiaGetReservedMixedAttributeValue,
-    UiaGetReservedNotSupportedValue, UiaPoint,
+    TextUnit, TextUnit_Character, TextUnit_Format, TextUnit_Line, TextUnit_Page,
+    TextUnit_Paragraph, TextUnit_Word, UIA_AnnotationTypesAttributeId,
+    UIA_BackgroundColorAttributeId, UIA_BulletStyleAttributeId, UIA_CultureAttributeId,
+    UIA_FontNameAttributeId, UIA_FontSizeAttributeId, UIA_FontWeightAttributeId,
+    UIA_ForegroundColorAttributeId, UIA_IsItalicAttributeId, UIA_LinkAttributeId,
+    UIA_StrikethroughStyleAttributeId, UIA_TEXTATTRIBUTE_ID, UIA_UnderlineStyleAttributeId,
+    UiaGetReservedMixedAttributeValue, UiaGetReservedNotSupportedValue, UiaPoint,
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::{VIRTUAL_KEY, VK_DOWN, VK_RIGHT, VK_UP};
 use windows::core::{BSTR, Interface, Result as WinResult};
@@ -249,6 +250,15 @@ fn formats_of(tree: &SharedTree, index: usize) -> Formats {
 /// formatting, any other unit's from the text alone.
 fn spans_of(tree: &SharedTree, index: usize, unit: TextUnit) -> Vec<(usize, usize)> {
     let text = text_of(tree, index);
+    if unit == TextUnit_Page
+        && let Some(lines) = formats_of(tree, index).page_lines
+    {
+        // Pages of `lines` lines each, the last perhaps shorter.
+        return units(&text, TextUnit_Line)
+            .chunks(lines.max(1))
+            .map(|page| (page[0].0, page[page.len() - 1].1))
+            .collect();
+    }
     if unit != TextUnit_Format {
         return units(&text, unit);
     }

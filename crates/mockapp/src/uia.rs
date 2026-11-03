@@ -1196,7 +1196,8 @@ mod handler {
     use windows::Win32::System::Com::SAFEARRAY;
     use windows::Win32::System::Variant::VARIANT;
     use windows::Win32::UI::Accessibility::{
-        IExpandCollapseProvider, IExpandCollapseProvider_Impl, IRawElementProviderAdviseEvents,
+        IExpandCollapseProvider, IExpandCollapseProvider_Impl, IInvokeProvider,
+        IInvokeProvider_Impl, IRawElementProviderAdviseEvents,
         IRawElementProviderAdviseEvents_Impl, IRawElementProviderFragment,
         IRawElementProviderFragment_Impl, IRawElementProviderFragmentRoot,
         IRawElementProviderFragmentRoot_Impl, IRawElementProviderSimple,
@@ -1204,9 +1205,9 @@ mod handler {
         ISelectionProvider, ISelectionProvider_Impl, ISelectionProvider2, ISelectionProvider2_Impl,
         IToggleProvider, IToggleProvider_Impl, NavigateDirection, ProviderOptions,
         ProviderOptions_ServerSideProvider, ProviderOptions_UseComThreading, UIA_EVENT_ID,
-        UIA_ExpandCollapsePatternId, UIA_PATTERN_ID, UIA_PROPERTY_ID, UIA_SelectionItemPatternId,
-        UIA_SelectionPattern2Id, UIA_SelectionPatternId, UIA_TextPattern2Id, UIA_TextPatternId,
-        UIA_TogglePatternId, UIA_ValuePatternId, UiaRect,
+        UIA_ExpandCollapsePatternId, UIA_InvokePatternId, UIA_PATTERN_ID, UIA_PROPERTY_ID,
+        UIA_SelectionItemPatternId, UIA_SelectionPattern2Id, UIA_SelectionPatternId,
+        UIA_TextPattern2Id, UIA_TextPatternId, UIA_TogglePatternId, UIA_ValuePatternId, UiaRect,
     };
     use windows::core::Result as WinResult;
     use windows_core::{Error, IUnknown, Interface, implement};
@@ -1509,13 +1510,22 @@ mod handler {
         index: usize,
         pattern_id: UIA_PATTERN_ID,
     ) -> WinResult<IUnknown> {
-        let (role, states, has_value) = {
+        let (role, states, has_value, invokable) = {
             let guard = tree
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             let node = &guard.nodes[index];
-            (node.role, node.states, node.value.is_some())
+            (
+                node.role,
+                node.states,
+                node.value.is_some(),
+                node.default_action.is_some(),
+            )
         };
+        if pattern_id == UIA_InvokePatternId && invokable {
+            let provider: IUnknown = InvokeProvider.into();
+            return Ok(provider);
+        }
         if pattern_id == UIA_TogglePatternId && props::toggle_available(role) {
             let provider: IUnknown = ToggleProvider {
                 tree: tree.clone(),
@@ -1585,6 +1595,19 @@ mod handler {
             top: 0.0,
             width: 0.0,
             height: 0.0,
+        }
+    }
+
+    /// The `InvokePattern` provider for a node whose fixture gives it a
+    /// `default_action`, the action UIA's `Invoke` stands for. `Invoke`
+    /// only counts its hit, for the same reason `Toggle` changes nothing.
+    #[implement(IInvokeProvider, Agile = false)]
+    struct InvokeProvider;
+
+    impl IInvokeProvider_Impl for InvokeProvider_Impl {
+        fn Invoke(&self) -> WinResult<()> {
+            hits::hit(hits::Method::Invoke);
+            Ok(())
         }
     }
 

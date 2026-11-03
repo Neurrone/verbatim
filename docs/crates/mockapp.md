@@ -63,7 +63,7 @@ complete name tables. The fields:
   `NodeDetails` vocabulary of [verbatim-model](verbatim-model.md); each
   backend serves the subset its API can express.
 - `default_action`: MSAA's `accDefaultAction`, which `accDoDefaultAction`
-  then succeeds for.
+  then succeeds for; on the UIA backend the node serves `InvokePattern`.
 - `controller_for`: the `id` of a node this one controls, served on the
   UIA backend as the `ControllerFor` relation, as a search box names its
   suggestion list.
@@ -214,7 +214,8 @@ offsets are read from its implementation.
   ends wherever a `spelling_errors`, `bold`, or `styles` stretch starts or
   ends (not an `italic` one, so a stretch holding italic and upright text
   reads as mixed, as in Windows Terminal); the page and the document are
-  the whole text. Moving lands on a unit's start and never past the last
+  the whole text, unless the node's `page_lines` makes a page that many
+  lines. Moving lands on a unit's start and never past the last
   unit; a move back from inside a unit to its start counts as one, as UIA
   specifies.
 - The caret (`GetCaretRange`) is the selection's start, as the edit
@@ -339,7 +340,9 @@ method list and message numbers cannot drift apart.
   `IToggleProvider`, `IExpandCollapseProvider`, `IValueProvider`, and
   `ISelectionItemProvider` objects, gated on role for toggle, on the
   fixture's `expanded` or `collapsed` states or a `value` for the middle
-  two, and on its `selectable` or `selected` states for selection. A
+  two, and on its `selectable` or `selected` states for selection, and
+  an `IInvokeProvider` for a node with a `default_action`, which only
+  activation asks for. A
   list, a tab control or a combo box also serves an `ISelectionProvider`
   whose selection is its children in the `selected` state, so a fixture's
   initial selection and the `select` command both show through the
@@ -495,7 +498,8 @@ Each file's module comment says exactly what it asserts; in outline:
   fixture left plain (rectangles excluded: mockapp scripts no geometry,
   but UIA merges the real window's rectangle into the window-hosted root).
   `uia_tree.rs` also navigates remotely from a node kept from a text
-  event, read as the `Kept` shape; `msaa_tree.rs` reads a list's selected
+  event, read as the `Kept` shape, and activates `activation.json`'s
+  elements, each by the first of Invoke, Toggle and SelectionItem it has; `msaa_tree.rs` reads a list's selected
   child through `verbatim_ia2::acquire::selected_child` after a `select`,
   and that `slow-acc-parent` answers a node's `accParent` late, its wait
   bracketed by its two lines inside the client's call, and
@@ -620,7 +624,9 @@ Each file's module comment says exactly what it asserts; in outline:
 - `text.rs` drives `verbatim-outpost`'s text module over `text.json` on
   both stacks: lines, words, and characters; movement stopping at the
   empty last line; UIA's missing sentence unit and the edit control's
-  paragraph in its place; a page unsupported; UIA's language; every
+  paragraph in its place; a page unsupported; movement by page over
+  `pages.json` and its refusal by the edit control; a point's location on
+  both stacks; UIA's language; every
   attribute over `formatting.json` and the unsupported ones over
   `text.json`; backward moves over `backward_moves.json`; and a caret key
   answered with the word it reached and with a selection. It also runs

@@ -638,8 +638,71 @@ fn a_remote_dump_reads_a_small_tree_in_one_call() {
 
 /// Runs this file's tests through the UIA test runner, which explains why
 /// these binaries do not exit normally (`common/harness.rs`).
+/// Calls of UIA's activating pattern methods, and the pattern providers
+/// asked for, that mockapp counted since its counters were reset.
+fn activation_calls(hwnd: windows::Win32::Foundation::HWND) -> Vec<(&'static str, u32)> {
+    common::read_hits(hwnd)
+        .into_iter()
+        .filter(|(method, _)| {
+            matches!(
+                *method,
+                "GetPatternProvider" | "Invoke" | "Toggle" | "Select"
+            )
+        })
+        .collect()
+}
+
+/// UIA activation (`Uia::activate`) tries `Invoke`, then `Toggle`, then
+/// selecting the element, as NVDA's default action for a UIA element does
+/// (`docs/parity/review.md`): each pattern is asked for only when the one
+/// before is absent, the first present one is called once, and only
+/// `Invoke` has a name to say. An element with none of the three is
+/// refused (`activation.json`).
+fn uia_activation_invokes_then_toggles_then_selects() {
+    common::init_com();
+    let title = common::unique_title("mockapp-uia-activate");
+    let app = common::spawn("activation.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let uia = Uia::new().expect("a UIA client");
+    let cases = [
+        (
+            "Invoke, toggle or select",
+            Some(verbatim_model::ActionName::Invoke),
+            vec![("GetPatternProvider", 1), ("Invoke", 1)],
+        ),
+        (
+            "Toggle or select",
+            None,
+            vec![("GetPatternProvider", 2), ("Toggle", 1)],
+        ),
+        (
+            "Select only",
+            None,
+            vec![("GetPatternProvider", 3), ("Select", 1)],
+        ),
+    ];
+    for (name, action, calls) in cases {
+        let element = common::named_element(&uia, hwnd, name);
+        common::reset_hits(hwnd);
+        assert_eq!(uia.activate(&element).expect(name), action, "{name}");
+        assert_eq!(activation_calls(hwnd), calls, "{name}");
+    }
+    let element = common::named_element(&uia, hwnd, "Nothing to do");
+    common::reset_hits(hwnd);
+    assert_eq!(
+        uia.activate(&element).map_err(|error| error.code()),
+        Err(windows::Win32::Foundation::E_NOTIMPL)
+    );
+    assert_eq!(activation_calls(hwnd), vec![("GetPatternProvider", 3)]);
+    app.quit();
+}
+
 fn main() {
     harness::run_isolated(&[
+        (
+            "uia_activation_invokes_then_toggles_then_selects",
+            uia_activation_invokes_then_toggles_then_selects,
+        ),
         (
             "uia_client_reads_the_scripted_tree",
             uia_client_reads_the_scripted_tree,

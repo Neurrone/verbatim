@@ -136,6 +136,7 @@ pub(crate) struct Formats {
     pub(crate) cultures: Vec<(usize, usize, i32)>,
     pub(crate) styles: crate::fixture::Styles,
     pub(crate) backward_moves_positive: bool,
+    pub(crate) page_lines: Option<usize>,
 }
 
 /// The whole scripted tree: an arena of [`NodeData`] plus a lookup from
@@ -386,6 +387,7 @@ fn insert(
             cultures: node.cultures,
             styles: *node.styles,
             backward_moves_positive: node.backward_moves_positive,
+            page_lines: node.page_lines,
         },
         parent,
         children: Vec::new(),
@@ -452,6 +454,7 @@ mod tests {
             cultures: Vec::new(),
             styles: Box::default(),
             backward_moves_positive: false,
+            page_lines: None,
             native: None,
             window_class: None,
             class_name: None,
