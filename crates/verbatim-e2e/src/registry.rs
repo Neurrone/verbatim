@@ -1176,6 +1176,17 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         teardown: terminal_flood_kinds::teardown,
     },
     ScenarioDef {
+        name: "conhost_raised_limit",
+        group: Group::Text,
+        settings: Some(terminal_flood_kinds::raised_limits),
+        local_only: false,
+        document: None,
+        comparable: Comparable::Yes,
+        setup: terminal_flood_kinds::setup_raised_console_host,
+        body: terminal_flood_kinds::body_raised_console_host,
+        teardown: terminal_flood_kinds::teardown,
+    },
+    ScenarioDef {
         name: "windows_terminal_leave_flood",
         group: Group::Text,
         settings: None,

@@ -102,6 +102,7 @@ scenario_tests! {
     conhost_same_flood
     windows_terminal_redraw_limit
     conhost_redraw_limit
+    conhost_raised_limit
     windows_terminal_leave_flood
     conhost_leave_flood
     windows_terminal_close_tab

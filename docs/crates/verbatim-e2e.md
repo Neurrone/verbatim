@@ -744,8 +744,11 @@ Each exists in both terminals unless named for one.
   a group's worth of lines are written with the group's size, and every
   count is computed from the same constants.
   `scenarios/terminal_flood_kinds.rs` covers identical lines
-  (`*_same_flood`) and a full-screen redraw past lowered limits
-  (`*_redraw_limit`). The acceptance floods
+  (`*_same_flood`), a full-screen redraw past lowered limits
+  (`*_redraw_limit`), and limits raised to 31, under which a 62-line
+  burst the default would split is heard whole (`conhost_raised_limit`,
+  the console host only, since Core applies the limits the same for
+  every terminal). The acceptance floods
   (`scenarios/terminal_overflow.rs`, `_scrollback_overflow`) print a
   group's worth of lines, wait for a file, then write 12,000 lines, past
   the history, heard as their first 15, "skipped more than N lines", and

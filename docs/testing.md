@@ -17,7 +17,7 @@ A test runs against one fixed application and exercises one backend. Nothing abo
 - Win32 and MSAA edit controls are tested in a Windows Forms text box the harness creates, which behaves the same everywhere.
 - UIA documents are tested in Windows 11 Notepad. Those scenarios are local-only (`VERBATIM_E2E_SKIP_LOCAL_ONLY`), since GitHub's Windows Server runner has classic Notepad instead.
 - Editing behaviour is covered against both: each editing scenario exists once for the Windows Forms box and once for Windows 11 Notepad. Formatting, such as spelling errors, has tests of its own.
-- Terminal behaviour is covered in both terminals: each terminal scenario exists once for Windows Terminal and once for the console host, and asserts the program that owns the window.
+- Terminal behaviour is covered in both terminals: each terminal scenario exists once for Windows Terminal and once for the console host, and asserts the program that owns the window. One exception is a scenario whose subject is a setting Core applies the same for every terminal and whose terminal reads other scenarios cover in both, such as `conhost_raised_limit`'s raised flood limits; it runs in the console host only and says so in its module.
 - Scripted providers are tested in `mockapp`.
 
 A test never falls back to another target when its own is missing, and never chooses its expectation from what the application answered. When a target is missing, the test fails.
