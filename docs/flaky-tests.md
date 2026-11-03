@@ -27,18 +27,22 @@ Scenarios: the `windows_terminal_` scenarios generally, for example `windows_ter
 - Cause: Windows Terminal raises focus from a second runtime identity ([UIA faults](uia-bugs.md), "Windows Terminal raises focus from a second runtime identity"); Verbatim's rule dropping those repeats is not built, and the scenario's tolerance for optional repeats (`SECOND_WINDOW_REPEATS`, `crates/verbatim-e2e/src/scenarios/terminal.rs`) does not cover the expected utterance itself being cancelled. Whether NVDA cuts the earlier utterance the same way needs a capture.
 - Fix: [M5](roadmap.md#m5--extensions-v1), the Terminal built-in's rule for the second terminal identity.
 
-## Single failures in the first grouped run (run 41693694156, 2026-11-03)
+## Single failures in the first grouped runs (runs 41693694156 and 41697089785, 2026-11-03)
 
 Recorded by Claude, 2026-11-04, pending Dickson's acceptance.
 
-- `object_navigation_in_settings`
-  - How: Verbatim's own Settings dialog took the focus about 2.9 s after Enter, and only its title was said ("Verbatim Settings: Speech", where "… dialog", the categories list and "Speech 1 of 3" were expected).
+- `object_navigation_in_settings`, and `wpf_password` (run 41697089785, and run 41564027712 before it)
+  - How: Verbatim's own Settings dialog took the focus about 2.9 s after Enter, and only its title was said; in `wpf_password` the dialog was said as "… window" where "… dialog" and its first field were expected ("Verbatim Settings: Speech", where "… dialog", the categories list and "Speech 1 of 3" were expected).
   - Cause: the outpost's gap record's bound passed with no focus reported, so the window's text was sent, the gap record's late-focus case.
   - Fix: [the focus pipeline rework's third build](roadmap.md#the-focus-pipeline-rework), whose first commit replaces the gap record.
 - `text_box_review_cursor`
   - How: Verbatim+Alt+Home (review the selection's start) was answered "unanswered" by the outpost's text read, so nothing was said within 15 s; the same step passed seconds later in `text_box_selection_keys`.
   - Cause: not found.
   - Fix: none yet.
+- `windows_terminal_command_marks` (run 41697089785)
+  - How: after `.\long.ps1` was typed, Verbatim played its "application not responding" sound where the command's echo was expected: it judged Windows Terminal's window hung.
+  - Cause: not found; whether the window hung under the runner's load or Verbatim misjudged it is not in the log.
+  - Fix: [M6.1 hung and flooding applications](roadmap.md#m61--hung-and-flooding-applications).
 - `windows_terminal_clear_flood`
   - How: a typed "." was spoken as "." by the terminal's output timer rather than echoed as the typed character "dot": Core received the typed character with only a colours query, then the timer's read.
   - Cause: not found; close to, but not the same symptom as, the typed-character entries below.
