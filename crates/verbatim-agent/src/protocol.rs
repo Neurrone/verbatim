@@ -64,11 +64,12 @@ use serde::{Deserialize, Serialize};
 /// desktop capture runs as; version 25 added [`WindowInfo::hidden`], so
 /// a failure names a foreground window that is not yet shown; version 26
 /// added [`Request::WaitChains`], so a window that did not open in time is
-/// reported with what its not-responding windows' threads wait on. A test
+/// reported with what its not-responding windows' threads wait on; version
+/// 27 removed `Request::MisspeltWords`, which no client sent. A test
 /// run against an older agent is refused at `Hello`
 /// instead of losing its connection mid-run, or running without the
 /// exclusion.
-pub const AGENT_PROTOCOL_VERSION: u32 = 26;
+pub const AGENT_PROTOCOL_VERSION: u32 = 27;
 
 /// The command of a [`Request::LaunchProcess`] that names the agent's own
 /// executable, wherever it was deployed: the recordings launch
@@ -250,11 +251,6 @@ pub enum Request {
         /// The element's UI Automation identifier.
         automation_id: String,
     },
-    /// Reports the words of the focused element's text that its
-    /// application marks as misspelt, with UI Automation's spelling-error
-    /// annotation, in order, read independently of any screen reader.
-    /// Answered by [`ReplyPayload::Words`].
-    MisspeltWords,
     /// Reports what the focused element controls: of the first element its
     /// UI Automation `ControllerFor` relation names, the set size its first
     /// child reports (`SizeOfSet`) and the names of its first `names`
@@ -693,12 +689,6 @@ pub enum ReplyPayload {
     Name {
         /// The element's name.
         name: String,
-    },
-    /// Answer to [`Request::MisspeltWords`].
-    Words {
-        /// The words, as the text range of each reads, white space after
-        /// it trimmed.
-        words: Vec<String>,
     },
     /// Answer to [`Request::TakeForeignTerminalWindows`].
     TerminalWindows {

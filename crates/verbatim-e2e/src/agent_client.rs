@@ -706,23 +706,6 @@ impl AgentClient {
         }
     }
 
-    /// The words of the focused text that its application marks as
-    /// misspelt, as the agent reads them through UI Automation,
-    /// independently of Verbatim.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the request fails.
-    pub fn misspelt_words(&mut self) -> io::Result<Vec<String>> {
-        match self.request(Request::MisspeltWords)? {
-            Frame::Reply {
-                payload: ReplyPayload::Words { words },
-                ..
-            } => Ok(words),
-            other => Err(unexpected("MisspeltWords", &other)),
-        }
-    }
-
     /// The name of the foreground window's element whose UI Automation
     /// identifier is `automation_id`, as the agent reads it through UI
     /// Automation, independently of Verbatim, without focusing it.

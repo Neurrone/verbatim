@@ -401,10 +401,8 @@ input methods above:
   `SetFocus` and returns how many children it has), `controlled_items`
   (of the first element the focused element controls, the set size its
   first child reports and the names of the first children),
-  `name_by_automation_id` (the name of the foreground window's element
-  with that identifier, read without focusing it), and `misspelt_words`
-  (the words of the focused text marked with UI Automation's
-  spelling-error annotation).
+  and `name_by_automation_id` (the name of the foreground window's element
+  with that identifier, read without focusing it).
 - `verbatim_children`, `end_verbatim_process(pid)` (ending one of
   Verbatim's own processes on purpose, which is then expected to exit),
   and `unexpected_exits`.
@@ -648,10 +646,9 @@ under `src/scenarios/` documents exactly what it asserts.
   brought forward by the scenario, which sets the caret with keys it
   asserts and saves what it edited. Typing is one character at a time,
   each echo heard in full before the next, since a character typed while
-  an echo plays cuts it off. `notepad_spelling_errors` reads, through the
-  agent, the words Notepad's spell checker marked once the document's
-  opening has been announced, and fails unless they are exactly the two
-  misspelt words, since Notepad raises no event when it marks them.
+  an echo plays cuts it off. `notepad_spelling_errors` asserts nothing
+  about the spell checker's marks themselves, since Notepad raises no
+  event when it marks them, only the speech that follows each key.
 - `scenarios/terminal.rs`: each terminal scenario opens its terminal,
   `open_windows_terminal` or `open_console_host`, and gets that one or
   fails, with no fallback. Windows Terminal is the harness's portable copy
@@ -789,7 +786,7 @@ Each exists in both terminals unless named for one.
     the runner writing it for a launch that fails before the scenario
     exists).
   - Accessibility reads: `focused_element`, `focus_by_automation_id`,
-    `misspelt_words`, `name_by_automation_id`, `controlled_items`,
+    `name_by_automation_id`, `controlled_items`,
     `key_toggled`.
   - Input: `send_keys`, `press_key`, `release_key`, `type_text`,
     `send_keys_paced`, `repeat_key`, `type_text_paced`, each returning the

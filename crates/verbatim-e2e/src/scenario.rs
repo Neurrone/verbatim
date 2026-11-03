@@ -1790,16 +1790,6 @@ impl Scenario {
         self.agent.focus_by_automation_id(automation_id)
     }
 
-    /// The words of the focused text that its application marks as
-    /// misspelt, read by the agent independently of Verbatim.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the request fails.
-    pub fn misspelt_words(&mut self) -> io::Result<Vec<String>> {
-        self.agent.misspelt_words()
-    }
-
     /// The name of the foreground window's element whose UI Automation
     /// identifier is `automation_id`, read by the agent through UI
     /// Automation independently of Verbatim, without focusing it.

@@ -351,7 +351,6 @@ fn dispatch(connection: u64, id: u64, request: Request) -> Frame {
         }
         request @ (Request::FocusedElement
         | Request::FocusByAutomationId { .. }
-        | Request::MisspeltWords
         | Request::ControlledItems { .. }
         | Request::NameByAutomationId { .. }
         | Request::KeyToggled { .. }) => state_request(id, request),
@@ -521,8 +520,8 @@ fn process_request(id: u64, request: Request) -> Frame {
 
 /// Answers the requests that read state a test fixes its expectations
 /// from, independently of the screen reader under test: the focused
-/// element, an element focused by its identifier, the focused text's
-/// misspelt words, and a lock key's state.
+/// element, an element focused by its identifier, what the focused element
+/// controls, an element's name, and a lock key's state.
 fn state_request(id: u64, request: Request) -> Frame {
     match request {
         Request::FocusedElement => match focus::focused_element() {
@@ -541,13 +540,6 @@ fn state_request(id: u64, request: Request) -> Frame {
                 Err(error) => error_frame(id, &error),
             }
         }
-        Request::MisspeltWords => match focus::misspelt_words() {
-            Ok(words) => Frame::Reply {
-                to: id,
-                payload: ReplyPayload::Words { words },
-            },
-            Err(error) => error_frame(id, &error),
-        },
         Request::ControlledItems { names } => match focus::controlled_items(names) {
             Ok((count, names)) => Frame::Reply {
                 to: id,

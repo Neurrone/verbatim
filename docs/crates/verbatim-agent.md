@@ -18,7 +18,7 @@ it when the suite is done.
 Public API:
 
 - `protocol` — the agent's own wire vocabulary, versioned separately from
-  the control plane's (`AGENT_PROTOCOL_VERSION`, currently 26) and framed
+  the control plane's (`AGENT_PROTOCOL_VERSION`, currently 27) and framed
   with the same newline-JSON helpers the control plane uses
   (`verbatim_control::protocol::write_message`/`read_message`). Its pids
   are raw OS process ids naming a process a test is driving, not
@@ -130,10 +130,8 @@ Public API:
     names of the first children asked for, as a search box's suggestions),
     `NameByAutomationId` (the name of the foreground window's element with
     that identifier, read without focusing it, for a control whose name
-    differs between machines), `MisspeltWords` (the
-    words of the focused text marked with UI Automation's spelling-error
-    annotation, read word by word), and `KeyToggled` (whether a lock key
-    is on). The four requests that keep UI Automation, which need facts only
+    differs between machines), and `KeyToggled` (whether a lock key
+    is on). The three requests that keep UI Automation, which need facts only
     it has, log how long each took, at warn from two seconds, so their slow
     answers are counted apart from Verbatim's
     (`docs/design/listener-without-connections.md`, section 4.5).
