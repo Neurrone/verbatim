@@ -20,8 +20,17 @@
 //! The focus listener: it is ended, and once its replacement has joined
 //! Verbatim's job, the scenario waits for Verbatim to be idle, which asks
 //! the replacement behind its start, and Verbatim has said nothing more;
-//! then the desktop is brought back to the foreground, a focus change the
-//! replacement reports, and it is heard.
+//! then a second `mockapp` text box opens and is heard. Returning to an application that has an outpost would not
+//! show the replacement at work: that outpost's own hook takes in its
+//! application's focus and foreground events, and reads the focus itself
+//! when no listener sends a read, so the desktop, for one, is announced
+//! with no listener. An application with no outpost is seen only through
+//! the listener's facts, which start its outpost, so the new
+//! application's announcement can have come only from the replacement,
+//! the one listener running once the first has exited.
+//!
+//! The scenario is in the shell group (`Group::Shell`), which covers the
+//! synthesizer host's replacement with the others.
 
 use std::io;
 use std::time::{Duration, Instant};
@@ -45,6 +54,13 @@ const NAME: &str = "outpost-crash";
 
 /// The text box's one line.
 const LINE: &str = "Read again by a new outpost.";
+
+/// The second text box window's name in the run, opened once the focus
+/// listener was replaced.
+const LISTENER_NAME: &str = "listener-crash";
+
+/// The second text box's one line.
+const LISTENER_LINE: &str = "Seen by a new focus listener.";
 
 /// How long an ended process is given to exit, and its replacement to
 /// start.
@@ -136,8 +152,7 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
         .wait_for_verbatim_process(LISTENER, &[listener], EXIT_TIMEOUT)
         .expect("a new focus listener joins Verbatim's job");
     scenario.expect_nothing_more();
-    scenario
-        .return_to_desktop()
-        .expect("brings the desktop back to the foreground");
-    super::expect_desktop(scenario);
+    super::open_text_box_app(scenario, LISTENER_NAME, LISTENER_LINE)
+        .expect("opens a second text box application");
+    super::expect_text_box_app(scenario, LISTENER_NAME, LISTENER_LINE);
 }

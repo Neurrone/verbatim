@@ -11,12 +11,50 @@
 //! Each key's state is read through the agent first, independently of
 //! Verbatim, so each announcement is fixed before the key is pressed, and
 //! read again after each press, showing the key really changed. Each key
-//! is toggled twice, so the machine is left as it was found.
+//! is toggled twice, so a passing run leaves the machine as it was found;
+//! the setup records each key's state, and the teardown, once Verbatim
+//! has quit, presses each key whose state differs from it, so a failing
+//! step leaves no lock key changed either.
+
+use std::io;
 
 use crate::registry::ScenarioState;
 use crate::scenario::Scenario;
 
-pub(crate) use super::{no_setup as setup, no_teardown as teardown};
+/// The lock keys the scenario toggles.
+const LOCK_KEYS: [&str; 2] = ["scrolllock", "capslock"];
+
+/// Records the lock keys that are on, read through the agent.
+pub(crate) fn setup(scenario: &mut Scenario) -> io::Result<ScenarioState> {
+    let mut on = Vec::new();
+    for key in LOCK_KEYS {
+        if scenario.key_toggled(key)? {
+            on.push(key.to_owned());
+        }
+    }
+    Ok(ScenarioState::Names(on))
+}
+
+/// Turns each lock key back to the state the setup found.
+pub(crate) fn teardown(scenario: &mut Scenario, state: ScenarioState) {
+    let ScenarioState::Names(on) = state else {
+        panic!("the setup records the lock keys that were on");
+    };
+    // Every key is restored before a failure is reported.
+    let failed: Vec<String> = LOCK_KEYS
+        .into_iter()
+        .filter_map(|key| {
+            scenario
+                .restore_key_toggled(key, on.iter().any(|name| name == key))
+                .err()
+                .map(|error| format!("{key}: {error}"))
+        })
+        .collect();
+    assert!(
+        failed.is_empty(),
+        "could not restore the lock keys: {failed:?}"
+    );
+}
 
 /// What Verbatim says when the lock `name` (such as "scroll lock") turns
 /// `on` or off.

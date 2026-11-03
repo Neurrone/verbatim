@@ -233,9 +233,9 @@ what it shows.
   Synthesizer dialog switches from eSpeak NG to Windows OneCore voices,
   whose voice is then read, and back. It demonstrates switching
   synthesizer, and both synthesizers speaking.
-- `synth-host-crash-recovery.mp4`, from `synth_host_crash_recovery`: the
-  synthesizer's host process is killed, and the next announcement is
-  still heard from a new one. It demonstrates recovering from a
+- `synth-host-crash-recovery.mp4`, recorded from the steps that are now
+  the first part of `crash_recovery`: the synthesizer's host process is
+  killed, and the next announcement is still heard from a new one. It demonstrates recovering from a
   synthesizer crash.
 - `theme-panel.mp4`, from `theme_panel`: the Settings dialog's Theme
   page is read control by control, the indications tree is walked

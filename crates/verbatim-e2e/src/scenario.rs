@@ -1837,6 +1837,22 @@ impl Scenario {
         self.agent.key_toggled(key)
     }
 
+    /// Turns the lock key `key` (such as `capslock`) on or off, as `on`
+    /// says, for a teardown restoring the state a scenario found: its state
+    /// is read through the agent, and when it differs the key is pressed
+    /// once through the agent. Called once Verbatim has quit, so nothing
+    /// swallows the press; no speech is checked, since there is none.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a request fails.
+    pub fn restore_key_toggled(&mut self, key: &str, on: bool) -> io::Result<()> {
+        if self.agent.key_toggled(key)? != on {
+            self.agent.send_keys(&[key.to_owned()])?;
+        }
+        Ok(())
+    }
+
     /// Whether Windows' screen reader flag is set, read by the agent
     /// independently of Verbatim.
     ///
@@ -1964,6 +1980,10 @@ impl Scenario {
     /// ready. Its speech is pushed to the same timeline, and its startup
     /// speech is the next the scenario asserts. The replaced Verbatim's
     /// stderr log and outpost logs are collected with the run's artifacts.
+    /// Until the second is connected to, the scenario has no control
+    /// connection, so a failure on the way leaves both to
+    /// [`Scenario::quit_verbatim`], which ends each still running by its
+    /// process id.
     ///
     /// # Errors
     ///
@@ -2045,6 +2065,35 @@ impl Scenario {
         Ok(())
     }
 
+    /// Ends, by process id and with everything in its job, each Verbatim
+    /// the scenario started that may still be running: the one it runs
+    /// with and each a second start replaced, one of which a failed
+    /// replacement can leave running. Each job's emptying, on the agent's
+    /// job handle, is the evidence that none of its processes still holds
+    /// a log open when the logs are collected and deleted. Returns each
+    /// one that could not be ended.
+    fn end_by_pid(&mut self) -> Vec<String> {
+        let pids: Vec<u32> = self
+            .replaced
+            .iter()
+            .map(|(pid, _)| *pid)
+            .chain(self.verbatim_pid)
+            .collect();
+        let mut problems = Vec::new();
+        for pid in pids {
+            if let Err(error) = self.agent.kill_process(pid) {
+                problems.push(format!("could not end Verbatim (pid {pid}): {error}"));
+                continue;
+            }
+            if let Err(error) = self.agent.wait_for_job_empty(pid, JOB_EMPTY_TIMEOUT) {
+                problems.push(format!(
+                    "the job of Verbatim (pid {pid}) did not empty once it was ended: {error}"
+                ));
+            }
+        }
+        problems
+    }
+
     /// The processes in Verbatim's job that exited and that the scenario
     /// did not end on purpose, other than those that exited cleanly with
     /// code 0: a crash, a kill by Verbatim's own supervisor, or any other
@@ -2069,15 +2118,27 @@ impl Scenario {
     }
 
     /// Asks Verbatim to exit cleanly (`Request::Quit`), and waits on its
-    /// process handle for it to exit with code 0.
+    /// process handle for it to exit with code 0. A second start
+    /// ([`Scenario::replace_verbatim`]) that failed before it was connected
+    /// to leaves no connection to ask: every Verbatim the scenario started
+    /// is then ended by its process id instead ([`Scenario::end_by_pid`]),
+    /// which is a failure.
     ///
     /// # Errors
     ///
     /// Returns an error if the request fails, Verbatim does not exit within
-    /// the timeout, or it exits with any other code.
+    /// the timeout, it exits with any other code, or there was no
+    /// connection to ask.
     pub fn quit_verbatim(&mut self) -> io::Result<()> {
         let pid = self.pid("quit")?;
         self.quit = true;
+        if self.control.is_none() {
+            let mut problems = vec![format!(
+                "Verbatim (pid {pid}) has no control connection, since its start as a replacement did not finish, so every Verbatim the scenario started was ended by its process id"
+            )];
+            problems.extend(self.end_by_pid());
+            return Err(io::Error::other(problems.join("; ")));
+        }
         // The reply races Verbatim's own teardown: the connection can close
         // before it is written. The exit code, read below, is the
         // authority on whether the quit worked.
@@ -2694,21 +2755,26 @@ const NOTEPAD_CLASS: &str = "Notepad";
 
 impl Drop for Scenario {
     /// A scenario dropped without its cleanup having run, which happens
-    /// only when the run panicked before reaching it: Verbatim is ended by
-    /// its process id, what the scenario opened is closed, and the capture
-    /// is stopped as [`Recording::stop`] stops it, so its file is complete.
-    /// Anything that will not close is printed; the run has already failed.
+    /// only when the run panicked before reaching it: Verbatim is asked to
+    /// quit, or, with no connection to ask or when it does not exit, ended
+    /// by its process id, what the scenario opened is closed, and the
+    /// capture is stopped as [`Recording::stop`] stops it, so its file is
+    /// complete. Anything that will not close is printed; the run has
+    /// already failed.
     fn drop(&mut self) {
         if !self.quit
-            && let (Some(pid), Some(control)) = (self.verbatim_pid, self.control.as_mut())
+            && let Some(pid) = self.verbatim_pid
         {
-            let _ = control.request(Request::Quit);
-            match self.agent.wait_for_exit(pid, QUIT_TIMEOUT) {
-                Ok(ProcessState::Exited { .. }) => {}
-                _ => {
-                    if let Err(error) = self.agent.kill_process(pid) {
-                        eprintln!("could not end Verbatim (pid {pid}): {error}");
-                    }
+            let exited = self.control.as_mut().is_some_and(|control| {
+                let _ = control.request(Request::Quit);
+                matches!(
+                    self.agent.wait_for_exit(pid, QUIT_TIMEOUT),
+                    Ok(ProcessState::Exited { .. })
+                )
+            });
+            if !exited {
+                for problem in self.end_by_pid() {
+                    eprintln!("cleanup after a failed run: {problem}");
                 }
             }
         }

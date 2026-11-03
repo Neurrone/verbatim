@@ -403,7 +403,8 @@ input methods above:
   `create_event` made, such as the events `mockapp` sets as it prints a
   line (`--line-events`).
 - State read independently of Verbatim, before the scenario fixes what it
-  expects: `desktop_speech`, `key_toggled` (a lock key),
+  expects: `desktop_speech`, `key_toggled` (a lock key, which
+  `restore_key_toggled` turns back once Verbatim has quit),
   `screen_reader_flag` (Windows' screen reader flag), `local_clock` (the
   time without seconds and the long date in the user's locale formats,
   read once the minute has turned when it is about to),
@@ -430,6 +431,10 @@ input methods above:
   become ready; the scenario goes on with the second, whose startup speech
   it asserts next on the same timeline. The first's stderr log and outpost
   logs are collected into a `replaced-<pid>` folder of the artifacts.
+  Until the second is connected to there is no control connection, so a
+  failure on the way leaves `quit_verbatim` to end every Verbatim the
+  scenario started by its process id, waiting for each job to empty, and
+  report that as a failure.
 - `expect_exit_at_cleanup(title, pid)` adds a process, such as a
   terminal's shell, that must exit once the window closes.
 - `close_windows_titled` closes every window whose title contains the
@@ -607,12 +612,13 @@ under `src/scenarios/` documents exactly what it asserts.
   flag set once Verbatim has started; a second Verbatim started, the
   first exiting with code 0, its processes shut down cleanly and nothing
   more said, and the second announcing as a start does; the flag cleared
-  once the run has quit it), `speak_time_and_date` (Verbatim+F12 once
-  and twice quickly, the time and date read by the agent first, waiting
+  once the run has quit it), `speak_time_and_date` (Verbatim+F12 pressed
+  twice in one burst, the time cut off by the date, the time and date read by the agent first, waiting
   for the minute to turn when it is within two seconds),
   `lock_key_announcements` (Scroll Lock, and Caps Lock by a double tap of
   the Verbatim key, each key's state read through the agent first, then
-  announced on and off), `settings_dialog_keys`, `theme_panel` (a role changed to a
+  announced on and off, and the teardown turning each back to the state
+  the setup found), `settings_dialog_keys`, `theme_panel` (a role changed to a
   sound is then heard as that sound), and `terminal_settings_page` (its
   applied change found in Core with Verbatim+5).
 - Shell: `second_application_and_verbatim_menu` (the Windows Forms text
@@ -623,7 +629,8 @@ under `src/scenarios/` documents exactly what it asserts.
   reports its end and is idle, nothing more said, and the review cursor
   reading the text through a new outpost; and the focus listener, once its
   replacement has joined Verbatim's job and Verbatim is idle, nothing more
-  said, and the desktop brought back announced), `alt_tab_switcher` (two
+  said, and a second text box, an application with no outpost, which only
+  the listener's facts reveal, announced), `alt_tab_switcher` (two
   Windows Forms text boxes opened in order, Alt held and Tab pressed, the
   switcher's item for the first window said alone, its row, column and
   position read by the agent from the switcher's list first, and Alt

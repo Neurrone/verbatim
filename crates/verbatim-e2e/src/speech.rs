@@ -390,6 +390,10 @@ pub struct SpeechCollector {
     compare: Option<Comparison>,
     /// What became of each optional utterance asserted so far, in order.
     optional_outcomes: Vec<OptionalOutcome>,
+    /// Whether [`Self::take_until_the_end`] has seen the connection end:
+    /// every frame has been absorbed, and the reader's channel closing
+    /// after that is not a failure.
+    ended: bool,
 }
 
 /// Compare mode's record: the steps closed so far, the texts expected in
@@ -479,6 +483,7 @@ impl SpeechCollector {
             collected: Vec::new(),
             compare: None,
             optional_outcomes: Vec::new(),
+            ended: false,
         })
     }
 
@@ -585,6 +590,9 @@ impl SpeechCollector {
     /// carries is checked by a later assertion, at the latest by
     /// [`Self::expect_nothing_more`].
     fn read_arrived(&mut self) {
+        if self.ended {
+            return;
+        }
         loop {
             let received = match self.frames.try_recv() {
                 Ok(received) => received,
@@ -1680,7 +1688,10 @@ impl SpeechCollector {
                 Ok(Ok(frame)) => {
                     self.absorb(frame);
                 }
-                Ok(Err(_)) | Err(RecvTimeoutError::Disconnected) => return Ok(()),
+                Ok(Err(_)) | Err(RecvTimeoutError::Disconnected) => {
+                    self.ended = true;
+                    return Ok(());
+                }
                 Err(RecvTimeoutError::Timeout) => {
                     return Err(format!(
                         "the speech connection did not end within {:?} after Verbatim quit, so its last frames may be missing from the latency report",
@@ -2626,6 +2637,28 @@ mod tests {
                 event_to_audio_ms: Some(50),
             }]
         );
+    }
+
+    /// Once the connection's end has been taken, the reader's channel
+    /// closing after it is not a failure: a check that every utterance was
+    /// asserted, as a replaced Verbatim's exit makes, passes.
+    #[test]
+    fn the_readers_end_after_the_connections_end_is_not_a_failure() {
+        let (mut speech, mut script) = scripted(Timeline::new());
+        script.feed(vec![
+            queued(1, "last"),
+            ended(1, UtteranceEnding::Completed),
+        ]);
+        speech.expect(&["last"]);
+        script.feed.send(None).expect("the reader is running");
+        assert_eq!(speech.take_until_the_end(), Ok(()));
+        speech
+            .reader
+            .take()
+            .expect("the reader is running")
+            .join()
+            .expect("the reader ends cleanly");
+        speech.require_all_asserted("after the connection ended");
     }
 
     /// A connection that does not end within the step timeout is reported

@@ -1600,7 +1600,8 @@ mod handler {
 
     /// The `InvokePattern` provider for a node whose fixture gives it a
     /// `default_action`, the action UIA's `Invoke` stands for. `Invoke`
-    /// only counts its hit, for the same reason `Toggle` changes nothing.
+    /// only counts its hit: mockapp's scripted state changes only through
+    /// its stdin commands, `Toggle` aside.
     #[implement(IInvokeProvider, Agile = false)]
     struct InvokeProvider;
 
@@ -1649,8 +1650,8 @@ mod handler {
     }
 
     /// The `ExpandCollapsePattern` provider for a node whose fixture states
-    /// include `expanded` or `collapsed`. `Expand`/`Collapse` are no-ops for
-    /// the same reason `Toggle` is.
+    /// include `expanded` or `collapsed`. `Expand`/`Collapse` are no-ops,
+    /// for the same reason `Invoke` only counts its hit.
     #[implement(IExpandCollapseProvider, Agile = false)]
     struct ExpandCollapseProvider {
         tree: SharedTree,
@@ -1681,7 +1682,8 @@ mod handler {
     }
 
     /// The `ValuePattern` provider for any node whose fixture supplies a
-    /// `value`. `SetValue` is a no-op for the same reason `Toggle` is.
+    /// `value`. `SetValue` is a no-op, for the same reason `Invoke` only
+    /// counts its hit.
     #[implement(windows::Win32::UI::Accessibility::IValueProvider, Agile = false)]
     struct ValueProvider {
         tree: SharedTree,
@@ -1719,10 +1721,10 @@ mod handler {
     }
 
     /// The `SelectionItemPattern` provider for a node whose fixture states
-    /// include `selectable` or `selected`. The mutating methods are no-ops
-    /// for the same reason `Toggle` is: mockapp's scripted state changes
-    /// only via stdin commands (`select`), never through pattern
-    /// invocation. Like toggle and expand-collapse above, a real pattern
+    /// include `selectable` or `selected`. The mutating methods are no-ops,
+    /// for the same reason `Invoke` only counts its hit: mockapp's scripted
+    /// selection changes only through its stdin command (`select`). Like
+    /// toggle and expand-collapse above, a real pattern
     /// object exists because `IUIAutomationCacheRequest`'s cache building
     /// asks `GetPatternProvider` before trusting a cached
     /// `SelectionItemIsSelected` value.

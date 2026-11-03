@@ -6,14 +6,15 @@
 //! same formats, independently of Verbatim. A read within two seconds of
 //! the next minute waits for the minute to turn, on the clock's own timer,
 //! so Verbatim's reads, made at once after, fall in the same minute. The
-//! two presses are real keys, the second pressed as soon as the time
-//! starts to play, so it counts as a second press and cuts the time off.
+//! two presses are real keys sent in one burst, well within the
+//! multi-press timeout, so the second counts as a second press: the time,
+//! said at the first, is cut off by the date, heard in full.
 
 use std::time::Duration;
 
 use crate::registry::ScenarioState;
 use crate::scenario::Scenario;
-use crate::speech::Ending;
+use crate::speech::{cut_off, heard};
 
 pub(crate) use super::{no_setup as setup, no_teardown as teardown};
 
@@ -25,12 +26,9 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
         .local_clock(TURN_WITHIN)
         .expect("reads the local clock");
     scenario
-        .send_keys(&["insert+f12"])
-        .expect("sends Verbatim+F12");
-    let said = scenario.speech().expect_started(&time);
+        .send_keys(&["insert+f12", "insert+f12"])
+        .expect("sends Verbatim+F12 twice");
     scenario
-        .send_keys(&["insert+f12"])
-        .expect("sends Verbatim+F12 again");
-    scenario.speech().expect_ended(&said, Ending::Cancelled);
-    scenario.speech().expect(&[&date]);
+        .speech()
+        .expect_sequence(&[cut_off(&time), heard(&date)]);
 }
