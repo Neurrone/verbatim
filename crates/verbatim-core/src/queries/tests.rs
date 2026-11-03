@@ -666,7 +666,9 @@ fn under_a_key(effects: &[Effect], query_id: QueryId) -> bool {
         Effect::ForKey(_, inner) => match &**inner {
             Effect::Fetch(query) => query.query_id == query_id,
             Effect::Text(request) => request.query_id == query_id,
-            Effect::Activate { query_id: asked, .. } => *asked == query_id,
+            Effect::Activate {
+                query_id: asked, ..
+            } => *asked == query_id,
             _ => false,
         },
         _ => false,

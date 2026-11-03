@@ -433,7 +433,14 @@ mod tests {
                             panic!("a seen event reported {report:?}: {trail}");
                         };
                         assert_eq!(report.window, window, "{trail}");
-                        assert_eq!(report, Front { observed_at_us: at, ..front }, "{trail}");
+                        assert_eq!(
+                            report,
+                            Front {
+                                observed_at_us: at,
+                                ..front
+                            },
+                            "{trail}"
+                        );
                         self.newest = Some((front, false, true));
                     }
                     if self.started {

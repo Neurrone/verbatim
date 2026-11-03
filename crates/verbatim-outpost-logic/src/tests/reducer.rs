@@ -2428,7 +2428,13 @@ impl Run {
             assert!(
                 !left
                     || !self.model.taken.contains(number)
-                    || self.reducer.facts.follow.watch.open().map(|open| open.request_id.number)
+                    || self
+                        .reducer
+                        .facts
+                        .follow
+                        .watch
+                        .open()
+                        .map(|open| open.request_id.number)
                         == Some(*number),
                 "query {number} taken and left unanswered: {:?}",
                 self.trail
