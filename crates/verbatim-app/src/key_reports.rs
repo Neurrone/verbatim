@@ -366,14 +366,19 @@ mod tests {
 
     use super::*;
 
-    /// What each command `report` is to the reducer says, in order.
+    /// What each command `report` is to the reducer says, in order, with
+    /// the desktop layout's tables.
     fn mapped(report: KeyReport) -> Vec<String> {
+        mapped_in(KeyboardLayout::Desktop, report)
+    }
+
+    /// What each command `report` is to the reducer says, in order, with
+    /// `layout`'s tables.
+    fn mapped_in(layout: KeyboardLayout, report: KeyReport) -> Vec<String> {
         let mut commands = Vec::new();
-        commands_for(
-            report,
-            &Tables::for_layout(KeyboardLayout::Desktop),
-            |command| commands.push(command),
-        );
+        commands_for(report, &Tables::for_layout(layout), |command| {
+            commands.push(command);
+        });
         commands
             .into_iter()
             .map(|command| match command {
@@ -517,6 +522,31 @@ mod tests {
         );
         assert_eq!(
             mapped(gesture(trace_id, "kb:verbatim+q", 0)),
+            Vec::<String>::new()
+        );
+    }
+
+    /// A laptop gesture maps through the laptop layout's table, and the
+    /// desktop layout, which does not bind it, maps it to nothing.
+    #[test]
+    fn a_laptop_gesture_maps_to_its_command_only_in_the_laptop_layout() {
+        let trace_id = TraceId::mint();
+        let report = || gesture(trace_id, "kb:verbatim+shift+period", 1);
+        assert_eq!(
+            mapped_in(KeyboardLayout::Laptop, report()),
+            [format!(
+                "{:?}",
+                Input::Command {
+                    trace_id,
+                    key_seq: KeySeq::new(4),
+                    command: ReviewCommand::ReviewCurrentLine,
+                    repeat: 1,
+                    pressed_at_ms: PRESSED_AT_US / 1_000
+                }
+            )]
+        );
+        assert_eq!(
+            mapped_in(KeyboardLayout::Desktop, report()),
             Vec::<String>::new()
         );
     }
