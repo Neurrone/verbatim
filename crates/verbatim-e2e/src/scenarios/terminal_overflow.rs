@@ -23,9 +23,12 @@
 //! 256-character buffer and automatic flushing, and so writes the 30 lines
 //! as two. The script then waits, on its folder's change notifications,
 //! for a go file, and then writes its second part, "after line 1" onwards,
-//! with one `[Console]::Out.Write`, which reaches the terminal 256
-//! characters at a time, so that the first read after the go file takes
-//! the second part's first lines. Written with one `WriteFile`, the
+//! in chunks of whole lines of at most 256 characters, one `WriteFile`
+//! each, so that the first read after the go file takes the second part's
+//! first lines, and no read finds a line whose digits are not yet written,
+//! as one `[Console]::Out.Write` cutting its 256-character pieces in the
+//! middle of a line let a read find "after line" alone. Written with one
+//! `WriteFile`, the
 //! console host took all 12,000 lines before the outpost's first read, and
 //! the first line spoken was "after line 3001" (2026-10-25). The prompt
 //! follows, and counts as a line like any other: the last 30 lines are 29
@@ -96,9 +99,8 @@ const FLOOD_STEP: Duration = Duration::from_secs(120);
 const SECOND_GO_FILE: &str = "phased-go-2";
 
 /// The script: 30 lines in one `WriteFile`, the go file, then `$After`
-/// lines in one `[Console]::Out.Write`; or, given `$First`, the first
-/// `$First` of them in one such call, the second go file, and the rest in
-/// another.
+/// lines in chunks of whole lines; or, given `$First`, the first `$First`
+/// of them so, the second go file, and the rest so.
 const SCRIPT: &str = "param([int]$After, [int]$First = 0)\r\n\
 function Wait-Go($name) {\r\n\
 \x20   $watcher = New-Object IO.FileSystemWatcher($PSScriptRoot, $name)\r\n\
@@ -106,8 +108,19 @@ function Wait-Go($name) {\r\n\
 \x20   $watcher.Dispose()\r\n\
 }\r\n\
 function Write-After($from, $to) {\r\n\
-\x20   $lines = foreach ($line in $from..$to) { \"after line $line\" }\r\n\
-\x20   [Console]::Out.Write(($lines -join \"`r`n\") + \"`r`n\")\r\n\
+\x20   $chunks = New-Object Collections.Generic.List[string]\r\n\
+\x20   $chunk = ''\r\n\
+\x20   foreach ($line in $from..$to) {\r\n\
+\x20       $text = \"after line $line`r`n\"\r\n\
+\x20       if ($chunk.Length + $text.Length -gt 256) { $chunks.Add($chunk); $chunk = '' }\r\n\
+\x20       $chunk += $text\r\n\
+\x20   }\r\n\
+\x20   $chunks.Add($chunk)\r\n\
+\x20   $out = [Console]::OpenStandardOutput()\r\n\
+\x20   foreach ($chunk in $chunks) {\r\n\
+\x20       $bytes = [Console]::OutputEncoding.GetBytes($chunk)\r\n\
+\x20       $out.Write($bytes, 0, $bytes.Length)\r\n\
+\x20   }\r\n\
 }\r\n\
 $before = foreach ($line in 1..30) { \"before line $line\" }\r\n\
 $bytes = [Console]::OutputEncoding.GetBytes(($before -join \"`r`n\") + \"`r`n\")\r\n\

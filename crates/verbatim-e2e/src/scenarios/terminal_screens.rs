@@ -21,7 +21,12 @@
 //! alternate screen: the main screen comes back as a new screen, so its
 //! rows are spoken, the command, "closed" and the prompt
 //! (`docs/design/terminal-model.md`, "Screens", Dickson, 2026-10-24). The
-//! keys are read without being shown, so they echo nothing.
+//! keys are read without being shown, so they echo nothing. Each step,
+//! the fill included, is one call of the raw standard output stream's
+//! `Write`, which Windows PowerShell 5.1 passes to one `WriteFile`
+//! (`[Console]::Write` would cut the fill into 256-character pieces), and
+//! ends with the cursor parked on the status line, so no read sees a step
+//! half made.
 
 use std::io;
 use std::time::Duration;
@@ -65,28 +70,22 @@ public static class Vt {\r\n\
 [Vt]::Enable()\r\n\
 $e = [char]27\r\n\
 $rows = [Console]::WindowHeight\r\n\
-function Row([int]$n, [string]$text) { [Console]::Write(\"$e[$n;1H$e[2K$text\") }\r\n\
-function Park { [Console]::Write(\"$e[$rows;14H\") }\r\n\
-[Console]::Write(\"$e[?1049h$e[2J\")\r\n\
-for ($n = 1; $n -lt $rows; $n++) { Row $n \"row $n\" }\r\n\
-Row $rows 'status: ready'\r\n\
-Park\r\n\
+function Row([int]$n, [string]$text) { \"$e[$n;1H$e[2K$text\" }\r\n\
+$park = \"$e[$rows;14H\"\r\n\
+$out = [Console]::OpenStandardOutput()\r\n\
+function Out([string]$text) { $bytes = [Console]::OutputEncoding.GetBytes($text); $out.Write($bytes, 0, $bytes.Length) }\r\n\
+$fill = -join (1..($rows - 1) | ForEach-Object { Row $_ \"row $_\" })\r\n\
+Out (\"$e[?1049h$e[2J\" + $fill + (Row $rows 'status: ready') + $park)\r\n\
 $null = [Console]::ReadKey($true)\r\n\
-Row 3 'row 3 changed'\r\n\
-Park\r\n\
+Out ((Row 3 'row 3 changed') + $park)\r\n\
 $null = [Console]::ReadKey($true)\r\n\
-Row ($rows - 3) \"row $($rows - 3) changed\"\r\n\
-Park\r\n\
+Out ((Row ($rows - 3) \"row $($rows - 3) changed\") + $park)\r\n\
 $null = [Console]::ReadKey($true)\r\n\
-[Console]::Write(\"$e[1;$($rows - 1)r$e[1T$e[r\")\r\n\
-Row 1 'row 0'\r\n\
-Park\r\n\
+Out (\"$e[1;$($rows - 1)r$e[1T$e[r\" + (Row 1 'row 0') + $park)\r\n\
 $null = [Console]::ReadKey($true)\r\n\
-[Console]::Write(\"$e[1;$($rows - 1)r$e[1S$e[r\")\r\n\
-Row ($rows - 1) \"row $rows\"\r\n\
-Park\r\n\
+Out (\"$e[1;$($rows - 1)r$e[1S$e[r\" + (Row ($rows - 1) \"row $rows\") + $park)\r\n\
 $null = [Console]::ReadKey($true)\r\n\
-[Console]::Write(\"$e[?1049l\")\r\n\
+Out \"$e[?1049l\"\r\n\
 'closed'\r\n";
 
 /// The scripts each scenario writes.

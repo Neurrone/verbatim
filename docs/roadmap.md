@@ -758,7 +758,7 @@ pushed until the last. The model in `verbatim-text`, its move into Core's
 reducer, "Report status bar" and moving by command are built. What
 remains, in order:
 
-- Generated invariant tests for the terminal's line comparison, if it is pure: the comparison of an old and a new screen must give back the new one exactly; `conhost_full_screen`'s whole changed line and the scrollback overflows' torn line (`docs/flaky-tests.md`) are the defects it would judge.
+- Generated invariant tests for the terminal's line comparison, if it is pure: the comparison of an old and a new screen must give back the new one exactly.
 - Pi's regular mode in the moving-by-command and "Report status bar"
   scenarios, once Pi is installed on the test machine.
 - Recordings for the conformance corpus, after checking that the NVDA pin
@@ -817,8 +817,6 @@ Related items, each to be settled within the redesign or after it:
   comparison inside the existing remote program, judged by a fake-source
   unit test, a mockapp provider whose expansion clamps, and a console host
   scenario step from a fresh NVDA capture.
-- `conhost_full_screen` fails ([the known failures](flaky-tests.md)); a
-  read taken before `altscreen.ps1` parks the cursor may be the cause.
 - A lost read was seen to ask twice for the whole document, where one
   whole-document read should answer it.
 - "hellook1" is heard in the recorded hand streams.
