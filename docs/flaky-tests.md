@@ -27,6 +27,23 @@ Scenarios: the `windows_terminal_` scenarios generally, for example `windows_ter
 - Cause: Windows Terminal raises focus from a second runtime identity ([UIA faults](uia-bugs.md), "Windows Terminal raises focus from a second runtime identity"); Verbatim's rule dropping those repeats is not built, and the scenario's tolerance for optional repeats (`SECOND_WINDOW_REPEATS`, `crates/verbatim-e2e/src/scenarios/terminal.rs`) does not cover the expected utterance itself being cancelled. Whether NVDA cuts the earlier utterance the same way needs a capture.
 - Fix: [M5](roadmap.md#m5--extensions-v1), the Terminal built-in's rule for the second terminal identity.
 
+## Single failures in the first grouped run (run 41693694156, 2026-11-03)
+
+Recorded by Claude, 2026-11-04, pending Dickson's acceptance.
+
+- `object_navigation_in_settings`
+  - How: Verbatim's own Settings dialog took the focus about 2.9 s after Enter, and only its title was said ("Verbatim Settings: Speech", where "… dialog", the categories list and "Speech 1 of 3" were expected).
+  - Cause: the outpost's gap record's bound passed with no focus reported, so the window's text was sent, the gap record's late-focus case.
+  - Fix: [the focus pipeline rework's third build](roadmap.md#the-focus-pipeline-rework), whose first commit replaces the gap record.
+- `text_box_review_cursor`
+  - How: Verbatim+Alt+Home (review the selection's start) was answered "unanswered" by the outpost's text read, so nothing was said within 15 s; the same step passed seconds later in `text_box_selection_keys`.
+  - Cause: not found.
+  - Fix: none yet.
+- `windows_terminal_clear_flood`
+  - How: a typed "." was spoken as "." by the terminal's output timer rather than echoed as the typed character "dot": Core received the typed character with only a colours query, then the timer's read.
+  - Cause: not found; close to, but not the same symptom as, the typed-character entries below.
+  - Fix: [M6.4 terminal residuals](roadmap.md#m64--terminal-residuals).
+
 ## Windows Terminal raises no TextChanged for a typed character
 
 - Scenarios: the Windows Terminal typing scenarios.
@@ -82,7 +99,7 @@ Scenarios: `measure_keys_conhost` and `measure_keys_conhost_unmoved` (release bu
 
 ## A new application's window not shown in time
 
-Scenarios and tests: `notepad_editing`, `notepad_selection_keys` and `notepad_typed_words` locally, and mockapp's `remote_ops::a_windows_forms_menu_item_is_checked_from_the_remote_read` under `cargo xtask ci` on GitHub's runner.
+Scenarios and tests: `notepad_editing`, `notepad_selection_keys` and `notepad_typed_words` locally; mockapp's `remote_ops::a_windows_forms_menu_item_is_checked_from_the_remote_read` under `cargo xtask ci` on GitHub's runner; and `return_from_a_held_application` and `text_box_page_keys` in one group of run 41693694156 (2026-11-03), where the harness's PowerShell-hosted Windows Forms window never showed (pid 3612) or stayed minimized and not responding (pid 3032), the foreground on Program Manager. A setup that fails this way leaves its host running until the next scenario's start ends it (Claude, 2026-11-04, pending Dickson's acceptance).
 
 - How: setup fails with "no window titled ... opened within 30s" and no Notepad window among the visible ones, before any key is sent; the mockapp test fails with "the window is shown: Timeout". Locally five times on 2026-11-01, in bursts of up to three runs in a row, then passing; on the runner once (run 41254405706). Twelve runs in a row, six idle and six under a release build's load, all passed.
 - Cause: not found. Load from a concurrent build did not reproduce it. The console host entry above, whose kept artifacts show the new window hung on its own with Explorer's notification area also not answering, may be the same; no Notepad failure's artifacts have been kept yet.
