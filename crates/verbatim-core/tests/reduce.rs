@@ -6517,6 +6517,48 @@ fn review_edges_are_named_and_the_unit_is_read_again() {
     );
 }
 
+/// Flat review's bottom moves to the last line's start and reads the line.
+#[test]
+fn flat_review_bottom_reads_the_last_line_from_its_start() {
+    let state = reviewing("ab\ncd\nef");
+    let (state, segments) = review(&state, ReviewCommand::ReviewBottom, 0);
+    assert_eq!(segments, vec![UtteranceSegment::text("ef")]);
+    let (_, segments) = review(&state, ReviewCommand::ReviewCurrentCharacter, 0);
+    assert_eq!(segments, vec![UtteranceSegment::text("e")]);
+}
+
+/// Flat review's start of line moves to the line's start but still speaks
+/// the line, not the character there (`docs/parity/review.md`, "Review
+/// cursor line/word/character over object text").
+#[test]
+fn flat_review_start_of_line_moves_to_the_lines_start_and_speaks_the_line() {
+    let state = reviewing("ab\ncd");
+    let (state, _) = review(&state, ReviewCommand::ReviewNextLine, 0);
+    let (state, _) = review(&state, ReviewCommand::ReviewNextCharacter, 0);
+    let (state, segments) = review(&state, ReviewCommand::ReviewStartOfLine, 0);
+    assert_eq!(segments, vec![UtteranceSegment::text("cd")]);
+    let (_, segments) = review(&state, ReviewCommand::ReviewCurrentCharacter, 0);
+    assert_eq!(segments, vec![UtteranceSegment::text("c")]);
+}
+
+/// Flat review's previous word crosses a line start, and at the first word
+/// says "Top" and the word again.
+#[test]
+fn flat_review_previous_word_crosses_a_line_start_and_stops_at_the_top() {
+    use verbatim_model::Message;
+    let state = reviewing("ab cd\nef");
+    let (state, _) = review(&state, ReviewCommand::ReviewNextLine, 0);
+    let (state, segments) = review(&state, ReviewCommand::ReviewPreviousWord, 0);
+    assert_eq!(segments, vec![UtteranceSegment::text("cd")]);
+    let (state, segments) = review(&state, ReviewCommand::ReviewPreviousWord, 0);
+    assert_eq!(segments, vec![UtteranceSegment::text("ab")]);
+    let (_, segments) = review(&state, ReviewCommand::ReviewPreviousWord, 0);
+    assert_eq!(
+        segments,
+        vec![message(Message::Top), UtteranceSegment::text("ab")]
+    );
+}
+
 /// Flat review walks grapheme clusters: in "हिन्दी" the consonant ha with
 /// its vowel sign is one character, and the conjunct after it, na, virama,
 /// da, and the long vowel sign, is the next, starting at byte 6.

@@ -8,9 +8,9 @@ use verbatim_model::{
     Backend, CaretKey, CaretMotion, CaretReply, CaretReport, CaretWatch, Effect, Input, Message,
     NodeDetails, NodeId, NodeSnapshot, NormalizedEvent, OutpostId, Phrase, Pid, QueryId,
     ReaderSettings, ReviewCommand, Role, SegmentContent, Selection, SelectionChange, SelectionText,
-    SpeechMark, State, StateSet, TextAnchor, TextChunk, TextMovement, TextOp, TextPoint,
-    TextPosition, TextRead, TextReadAhead, TextReply, TextRequest, TextThrough, TextUnit, TraceId,
-    TypingEcho, UtteranceSegment,
+    SpeechMark, SpeechPriority, State, StateSet, TextAnchor, TextChunk, TextMovement, TextOp,
+    TextPoint, TextPosition, TextRead, TextReadAhead, TextReply, TextRequest, TextThrough,
+    TextUnit, TraceId, TypingEcho, Utterance, UtteranceSegment,
 };
 use verbatim_model::{BulletStyle, FocusText, FormatRun, LineStyle, TextAttributes, TextFormat};
 use verbatim_model::{GuiRequest, Script, ShellItemKind};
@@ -2368,6 +2368,408 @@ fn the_next_word_past_the_line_moves_to_the_next_line_first_word() {
         ),
     );
     assert_eq!(spoken(&effects), vec![UtteranceSegment::text("next")]);
+}
+
+/// The one effect of `effects`, a text request.
+fn only_request(effects: &[Effect]) -> TextRequest {
+    assert_eq!(effects.len(), 1, "one effect in {effects:?}");
+    request(effects)
+}
+
+/// One queued utterance of `segments`, traced `trace`: 3 for a command's
+/// own speech, 4 for speech an outpost's answer brought.
+fn said(trace: u64, segments: Vec<UtteranceSegment>) -> Vec<Effect> {
+    vec![Effect::Speak(
+        Utterance {
+            trace_id: TraceId::from_raw(trace),
+            priority: SpeechPriority::Queued,
+            segments,
+            source: None,
+            say_all: false,
+            validity: None,
+        },
+        None,
+    )]
+}
+
+/// A read of the line at `at`, after moving by `movement` when given.
+fn line_read(at: TextPoint, movement: Option<(TextUnit, i32)>) -> TextOp {
+    TextOp::Read(TextRead {
+        at,
+        movement: movement.map(|(unit, count)| TextMovement { unit, count }),
+        unit: TextUnit::Line,
+    })
+}
+
+/// Checks that `effects` are one request for `op` and answers it with a
+/// read of `chunk` that moved `moved` units.
+fn answer_read(
+    state: &mut SrState,
+    effects: &[Effect],
+    op: &TextOp,
+    (moved, chunk): (i32, TextChunk),
+) -> Vec<Effect> {
+    let asked = only_request(effects);
+    assert_eq!(&asked.op, op);
+    reduce(
+        state,
+        &completed(asked.query_id, TextReply::Read { moved, chunk }),
+    )
+}
+
+/// The start of the line anchored at `anchor`.
+fn line_start(anchor: u64) -> TextPoint {
+    TextPoint::At(TextPosition::at(TextAnchor(anchor)))
+}
+
+/// A terminal focused with its caret, and the review cursor settled, on
+/// `row` at `offset`, anchored at 400.
+fn reviewing_terminal(row: &str, offset: u32) -> SrState {
+    let mut state = SrState::new();
+    focus(&mut state, node(15, Role::Terminal, StateSet::new()));
+    caret_event(&mut state, 15, line(row, 400, offset));
+    settle(&mut state, line(row, 400, offset));
+    state
+}
+
+#[test]
+fn review_bottom_reads_the_last_line_from_its_start() {
+    let mut state = reviewing("first\n", 3);
+    let effects = reduce(&mut state, &command(ReviewCommand::ReviewBottom, 0));
+    let effects = answer_read(
+        &mut state,
+        &effects,
+        &line_read(TextPoint::End, None),
+        (0, line("last line", 102, 9)),
+    );
+    assert_eq!(effects, said(4, vec![UtteranceSegment::text("last line")]));
+    let effects = reduce(
+        &mut state,
+        &command(ReviewCommand::ReviewCurrentCharacter, 0),
+    );
+    assert_eq!(effects, said(3, vec![character("l")]));
+}
+
+/// In a terminal, bottom first reads the review cursor's row again, as
+/// every review command there does (`docs/design/terminal-model.md`, "The
+/// review cursor"), then the text's last row.
+#[test]
+fn review_bottom_in_a_terminal_reads_the_last_row() {
+    let mut state = reviewing_terminal("$ ls", 2);
+    let effects = reduce(&mut state, &command(ReviewCommand::ReviewBottom, 0));
+    let effects = answer_read(
+        &mut state,
+        &effects,
+        &line_read(
+            TextPoint::At(TextPosition {
+                anchor: TextAnchor(400),
+                offset: 2,
+            }),
+            None,
+        ),
+        (0, line("$ ls", 400, 2)),
+    );
+    let effects = answer_read(
+        &mut state,
+        &effects,
+        &line_read(TextPoint::End, None),
+        (0, line("done", 405, 4)),
+    );
+    assert_eq!(effects, said(4, vec![UtteranceSegment::text("done")]));
+}
+
+/// Page movement keeps the review cursor's column, as moving by line does
+/// (`docs/parity/review.md`, "Review cursor columns"), and a page movement
+/// that did not move says "Top" or "Bottom" and reads the line again.
+#[test]
+fn review_pages_keep_the_column_and_name_the_edges() {
+    let mut state = reviewing("abcdef\n", 2);
+    let effects = reduce(&mut state, &command(ReviewCommand::ReviewNextPage, 0));
+    let effects = answer_read(
+        &mut state,
+        &effects,
+        &line_read(line_start(100), Some((TextUnit::Page, 1))),
+        (1, line("012345\n", 140, 0)),
+    );
+    assert_eq!(effects, said(4, vec![UtteranceSegment::text("012345")]));
+    let effects = reduce(
+        &mut state,
+        &command(ReviewCommand::ReviewCurrentCharacter, 0),
+    );
+    assert_eq!(effects, said(3, vec![character("2")]));
+
+    let effects = reduce(&mut state, &command(ReviewCommand::ReviewNextPage, 0));
+    let effects = answer_read(
+        &mut state,
+        &effects,
+        &line_read(line_start(140), Some((TextUnit::Page, 1))),
+        (0, line("012345\n", 140, 0)),
+    );
+    assert_eq!(
+        effects,
+        said(
+            4,
+            vec![message(Message::Bottom), UtteranceSegment::text("012345")]
+        )
+    );
+
+    let effects = reduce(&mut state, &command(ReviewCommand::ReviewPreviousPage, 0));
+    let effects = answer_read(
+        &mut state,
+        &effects,
+        &line_read(line_start(140), Some((TextUnit::Page, -1))),
+        (-1, line("abcdef\n", 100, 0)),
+    );
+    assert_eq!(effects, said(4, vec![UtteranceSegment::text("abcdef")]));
+    let effects = reduce(&mut state, &command(ReviewCommand::ReviewPreviousPage, 0));
+    let effects = answer_read(
+        &mut state,
+        &effects,
+        &line_read(line_start(100), Some((TextUnit::Page, -1))),
+        (0, line("abcdef\n", 100, 0)),
+    );
+    assert_eq!(
+        effects,
+        said(
+            4,
+            vec![message(Message::Top), UtteranceSegment::text("abcdef")]
+        )
+    );
+    let effects = reduce(
+        &mut state,
+        &command(ReviewCommand::ReviewCurrentCharacter, 0),
+    );
+    assert_eq!(effects, said(3, vec![character("c")]));
+}
+
+/// The selection's start is its first character, and its end the
+/// character before the point past the selection, its last.
+#[test]
+fn the_review_cursor_moves_to_the_selections_first_and_last_characters() {
+    let mut state = reviewing("hello world\n", 0);
+    let effects = reduce(&mut state, &command(ReviewCommand::ReviewSelectionStart, 0));
+    let effects = answer_read(
+        &mut state,
+        &effects,
+        &line_read(TextPoint::SelectionStart, None),
+        (0, line("hello world\n", 100, 6)),
+    );
+    assert_eq!(effects, said(4, vec![character("w")]));
+
+    let effects = reduce(&mut state, &command(ReviewCommand::ReviewSelectionEnd, 0));
+    let effects = answer_read(
+        &mut state,
+        &effects,
+        &line_read(TextPoint::SelectionEnd, None),
+        (0, line("hello world\n", 100, 11)),
+    );
+    assert_eq!(effects, said(4, vec![character("d")]));
+    let effects = reduce(
+        &mut state,
+        &command(ReviewCommand::ReviewCurrentCharacter, 0),
+    );
+    assert_eq!(effects, said(3, vec![character("d")]));
+}
+
+/// Start of line moves to the line's first character and says it, with no
+/// read: the review cursor holds its line.
+#[test]
+fn start_of_line_says_the_lines_first_character() {
+    let mut state = reviewing("hello world\n", 8);
+    let effects = reduce(&mut state, &command(ReviewCommand::ReviewStartOfLine, 0));
+    assert_eq!(effects, said(3, vec![character("h")]));
+    let effects = reduce(&mut state, &command(ReviewCommand::ReviewNextCharacter, 0));
+    assert_eq!(effects, said(3, vec![character("e")]));
+}
+
+/// In a terminal, start of line reads the review cursor's row again first
+/// (`docs/design/terminal-model.md`, "The review cursor"), then says the
+/// row's first cell.
+#[test]
+fn start_of_line_in_a_terminal_says_the_rows_first_cell() {
+    let mut state = reviewing_terminal("ab cd", 3);
+    let effects = reduce(&mut state, &command(ReviewCommand::ReviewStartOfLine, 0));
+    let effects = answer_read(
+        &mut state,
+        &effects,
+        &line_read(
+            TextPoint::At(TextPosition {
+                anchor: TextAnchor(400),
+                offset: 3,
+            }),
+            None,
+        ),
+        (0, line("ab cd", 400, 3)),
+    );
+    assert_eq!(effects, said(4, vec![character("a")]));
+}
+
+/// Previous word reads the word before on the line; from the line's first
+/// word it reads the line above and lands on its last word; on the first
+/// line it says "Top" and the word again.
+#[test]
+fn previous_word_crosses_a_line_start_and_stops_at_the_top() {
+    let mut state = reviewing("big world\n", 4);
+    let effects = reduce(&mut state, &command(ReviewCommand::ReviewPreviousWord, 0));
+    assert_eq!(effects, said(3, vec![UtteranceSegment::text("big")]));
+
+    let effects = reduce(&mut state, &command(ReviewCommand::ReviewPreviousWord, 0));
+    let effects = answer_read(
+        &mut state,
+        &effects,
+        &line_read(line_start(100), Some((TextUnit::Line, -1))),
+        (
+            -1,
+            TextChunk {
+                first: true,
+                ..line("one two\n", 90, 0)
+            },
+        ),
+    );
+    assert_eq!(effects, said(4, vec![UtteranceSegment::text("two")]));
+    let effects = reduce(&mut state, &command(ReviewCommand::ReviewPreviousWord, 0));
+    assert_eq!(effects, said(3, vec![UtteranceSegment::text("one")]));
+    let effects = reduce(&mut state, &command(ReviewCommand::ReviewPreviousWord, 0));
+    assert_eq!(
+        effects,
+        said(
+            3,
+            vec![message(Message::Top), UtteranceSegment::text("one")]
+        )
+    );
+}
+
+/// The caret's location is asked of the focus's caret and said as NVDA
+/// says it (`docs/parity/review.md`, "Review cursor line/word/character
+/// over object text").
+#[test]
+fn caret_location_asks_for_the_carets_place_and_says_it() {
+    let mut state = editing("abc\n", 1);
+    let effects = reduce(&mut state, &command(ReviewCommand::ReportCaretLocation, 0));
+    let asked = only_request(&effects);
+    assert_eq!(asked.op, TextOp::Location(TextPoint::Caret));
+    let effects = reduce(
+        &mut state,
+        &completed(asked.query_id, TextReply::Location { x: 108, y: 200 }),
+    );
+    assert_eq!(
+        effects,
+        said(
+            4,
+            vec![UtteranceSegment::new(SegmentContent::Phrase(
+                Phrase::Positioned { x: 108, y: 200 }
+            ))]
+        )
+    );
+}
+
+/// The review cursor's location is asked at the review cursor, not the
+/// caret, and said the same way; text with no place to give is not
+/// supported.
+#[test]
+fn review_location_asks_for_the_review_cursors_place_and_says_it() {
+    let mut state = reviewing("hello world\n", 0);
+    let _ = reduce(&mut state, &command(ReviewCommand::ReviewNextWord, 0));
+    let effects = reduce(&mut state, &command(ReviewCommand::ReportReviewLocation, 0));
+    let asked = only_request(&effects);
+    assert_eq!(asked.op, TextOp::Location(at(6)));
+    let effects = reduce(
+        &mut state,
+        &completed(asked.query_id, TextReply::Location { x: 148, y: 200 }),
+    );
+    assert_eq!(
+        effects,
+        said(
+            4,
+            vec![UtteranceSegment::new(SegmentContent::Phrase(
+                Phrase::Positioned { x: 148, y: 200 }
+            ))]
+        )
+    );
+
+    let effects = reduce(&mut state, &command(ReviewCommand::ReportReviewLocation, 0));
+    let effects = reduce(
+        &mut state,
+        &completed(only_request(&effects).query_id, TextReply::NoText),
+    );
+    assert_eq!(effects, said(4, vec![message(Message::NotSupported)]));
+}
+
+/// Moving to a start marker in the same text reads the marker's line and
+/// says the character at the marker, where the review cursor then is.
+#[test]
+fn moving_to_the_start_marker_in_the_same_text_says_its_character() {
+    let mut state = reviewing("hello world\n", 6);
+    let _ = reduce(&mut state, &command(ReviewCommand::SetStartMarker, 0));
+    let _ = reduce(&mut state, &command(ReviewCommand::ReviewPreviousWord, 0));
+    let effects = reduce(&mut state, &command(ReviewCommand::MoveToStartMarker, 0));
+    let effects = answer_read(
+        &mut state,
+        &effects,
+        &line_read(at(6), None),
+        (0, line("hello world\n", 100, 6)),
+    );
+    assert_eq!(effects, said(4, vec![character("w")]));
+    let effects = reduce(&mut state, &command(ReviewCommand::ReviewNextCharacter, 0));
+    assert_eq!(effects, said(3, vec![character("o")]));
+}
+
+/// Verbatim+3 cycles word echo from its default, off, through only in edit
+/// controls and always back to off, saying each and reporting the settings
+/// to save.
+#[test]
+fn the_typed_words_toggle_cycles_says_and_saves_each_setting() {
+    let mut state = editing("abc\n", 0);
+    for echo in [
+        TypingEcho::EditControls,
+        TypingEcho::Always,
+        TypingEcho::Off,
+    ] {
+        let effects = reduce(&mut state, &command(ReviewCommand::ToggleTypedWords, 0));
+        let mut expected = said(
+            3,
+            vec![UtteranceSegment::new(SegmentContent::Phrase(
+                Phrase::SpeakTypedWords(echo),
+            ))],
+        );
+        expected.push(Effect::SettingsChanged(ReaderSettings {
+            speak_typed_words: echo,
+            ..ReaderSettings::default()
+        }));
+        assert_eq!(effects, expected, "{echo:?}");
+    }
+}
+
+/// Verbatim+6 pressed twice turns following the caret off and on again,
+/// saying and saving each, and once on the review cursor follows the
+/// caret again.
+#[test]
+fn the_follow_caret_toggle_turns_following_off_and_back_on() {
+    let mut state = reviewing("abc\n", 0);
+    let effects = reduce(&mut state, &command(ReviewCommand::ToggleFollowCaret, 0));
+    let mut expected = said(3, vec![message(Message::CaretDoesNotMoveReview)]);
+    expected.push(Effect::SettingsChanged(ReaderSettings {
+        follow_caret: false,
+        ..ReaderSettings::default()
+    }));
+    assert_eq!(effects, expected);
+    let effects = reduce(&mut state, &command(ReviewCommand::ToggleFollowCaret, 0));
+    let mut expected = said(3, vec![message(Message::CaretMovesReview)]);
+    expected.push(Effect::SettingsChanged(ReaderSettings::default()));
+    assert_eq!(effects, expected);
+
+    caret_event(&mut state, 5, line("xyz\n", 101, 2));
+    let effects = reduce(
+        &mut state,
+        &command(ReviewCommand::ReviewCurrentCharacter, 0),
+    );
+    let effects = answer_read(
+        &mut state,
+        &effects,
+        &line_read(TextPoint::Caret, None),
+        (0, line("xyz\n", 101, 2)),
+    );
+    assert_eq!(effects, said(4, vec![character("z")]));
 }
 
 /// The index mark and text of each say-all utterance among `effects`, each
