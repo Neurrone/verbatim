@@ -725,16 +725,49 @@ impl AgentClient {
         }
     }
 
-    /// Of the first element the focused element controls (its UI
-    /// Automation `ControllerFor` relation), the set size its first child
-    /// reports (`SizeOfSet`) and the names of its first `names` children, as the agent reads them through UI
-    /// Automation, independently of Verbatim.
+    /// Has the agent watch the foreground window, through UI Automation,
+    /// for children added in bulk to its element whose identifier is
+    /// `automation_id`, the evidence [`AgentClient::controlled_items`]
+    /// waits for. Called before the input that fills the element.
     ///
     /// # Errors
     ///
     /// Returns an error if the request fails.
-    pub fn controlled_items(&mut self, names: u32) -> io::Result<(u32, Vec<String>)> {
-        match self.request(Request::ControlledItems { names })? {
+    pub fn watch_children_added(&mut self, automation_id: &str) -> io::Result<()> {
+        match self.request(Request::WatchChildrenAdded {
+            automation_id: automation_id.to_owned(),
+        })? {
+            Frame::Reply {
+                payload: ReplyPayload::Watching,
+                ..
+            } => Ok(()),
+            other => Err(unexpected("WatchChildrenAdded", &other)),
+        }
+    }
+
+    /// Waits up to `timeout` for the change
+    /// [`AgentClient::watch_children_added`] watches for, then reads, of the
+    /// first element the focused element controls (its UI Automation
+    /// `ControllerFor` relation), the set size its first child reports
+    /// (`SizeOfSet`) and the names of its first `names` children, as the
+    /// agent reads them through UI Automation, independently of Verbatim.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails, no watch was armed, or the
+    /// change did not come within `timeout`.
+    pub fn controlled_items(
+        &mut self,
+        names: u32,
+        timeout: Duration,
+    ) -> io::Result<(u32, Vec<String>)> {
+        match self.request_waiting(
+            Request::ControlledItems {
+                names,
+                timeout_ms: millis(timeout),
+            },
+            timeout,
+        )? {
             Frame::Reply {
                 payload: ReplyPayload::ControlledItems { count, names },
                 ..

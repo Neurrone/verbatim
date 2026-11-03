@@ -18,7 +18,7 @@ it when the suite is done.
 Public API:
 
 - `protocol` — the agent's own wire vocabulary, versioned separately from
-  the control plane's (`AGENT_PROTOCOL_VERSION`, currently 27) and framed
+  the control plane's (`AGENT_PROTOCOL_VERSION`, currently 28) and framed
   with the same newline-JSON helpers the control plane uses
   (`verbatim_control::protocol::write_message`/`read_message`). Its pids
   are raw OS process ids naming a process a test is driving, not
@@ -124,15 +124,29 @@ Public API:
     focused item's position and the item count from the list view's own
     messages), `FocusByAutomationId` (focuses the foreground window's
     element with that identifier with UI Automation's `SetFocus`, injecting
-    no input, and answers how many children it has), `ControlledItems`
-    (of the first element the focused element's `ControllerFor` relation
-    names, the set size its first child reports, `SizeOfSet`, and the
-    names of the first children asked for, as a search box's suggestions),
-    `NameByAutomationId` (the name of the foreground window's element with
-    that identifier, read without focusing it, for a control whose name
-    differs between machines), and `KeyToggled` (whether a lock key
-    is on). The three requests that keep UI Automation, which need facts only
-    it has, log how long each took, at warn from two seconds, so their slow
+    no input, and answers how many children it has), `WatchChildrenAdded`
+    and `ControlledItems` (below), `NameByAutomationId` (the name of the
+    foreground window's element with that identifier, read without
+    focusing it, for a control whose name differs between machines), and
+    `KeyToggled` (whether a lock key is on).
+    `WatchChildrenAdded` registers a UI Automation `StructureChanged`
+    handler on the whole foreground window and keeps only a
+    `ChildrenBulkAdded` change from the element (its identifier read live)
+    with the identifier asked for; it is sent before the input
+    that fills that element, since the element, such as Settings'
+    `SuggestionsList`, may not be reachable before it. `ControlledItems`
+    then waits up to its `timeout_ms` for that change, removes the
+    handler, and reads, of the first element the focused element's
+    `ControllerFor` relation names, the set size its first child reports,
+    `SizeOfSet`, and the names of the first children asked for, as a
+    search box's suggestions; it is refused when no watch is armed, so the
+    list is never read before its application has filled it. A watch
+    belongs to its connection and lives on the connection's thread, one at
+    a time, and is removed when the connection ends
+    (`crates/verbatim-agent/src/structure.rs`). The three requests that
+    read through UI Automation, `FocusByAutomationId`, `ControlledItems`
+    and `NameByAutomationId`, which need facts only it has, log how long
+    each took, at warn from two seconds, so their slow
     answers are counted apart from Verbatim's
     (`docs/design/listener-without-connections.md`, section 4.5).
   - Evidence: `WaitForFile` (a file appearing, checked again on each change

@@ -65,11 +65,14 @@ use serde::{Deserialize, Serialize};
 /// a failure names a foreground window that is not yet shown; version 26
 /// added [`Request::WaitChains`], so a window that did not open in time is
 /// reported with what its not-responding windows' threads wait on; version
-/// 27 removed `Request::MisspeltWords`, which no client sent. A test
+/// 27 removed `Request::MisspeltWords`, which no client sent; version 28
+/// added [`Request::WatchChildrenAdded`] and made
+/// [`Request::ControlledItems`] wait for the change it watches for, so a
+/// list is read only once its application has filled it. A test
 /// run against an older agent is refused at `Hello`
 /// instead of losing its connection mid-run, or running without the
 /// exclusion.
-pub const AGENT_PROTOCOL_VERSION: u32 = 27;
+pub const AGENT_PROTOCOL_VERSION: u32 = 28;
 
 /// The command of a [`Request::LaunchProcess`] that names the agent's own
 /// executable, wherever it was deployed: the recordings launch
@@ -251,16 +254,34 @@ pub enum Request {
         /// The element's UI Automation identifier.
         automation_id: String,
     },
-    /// Reports what the focused element controls: of the first element its
-    /// UI Automation `ControllerFor` relation names, the set size its first
-    /// child reports (`SizeOfSet`) and the names of its first `names`
-    /// children, read independently
-    /// of any screen reader, as a search box's suggestion list is counted
-    /// and named before a test fixes what it expects. Answered by
+    /// Starts watching the foreground window, through UI Automation, for a
+    /// `StructureChanged` event of the kind `ChildrenBulkAdded` raised by
+    /// its element whose identifier is `automation_id`, such as Settings'
+    /// `SuggestionsList` when its suggestions are filled: the evidence
+    /// [`Request::ControlledItems`] waits for. Sent before the input that
+    /// fills the element, since the watch sees only changes after it. The
+    /// connection keeps one watch at a time, until `ControlledItems` has
+    /// waited on it or the connection ends. Answered by
+    /// [`ReplyPayload::Watching`].
+    WatchChildrenAdded {
+        /// The UI Automation identifier of the element whose children are
+        /// watched for.
+        automation_id: String,
+    },
+    /// Waits up to `timeout_ms` for the change the connection's
+    /// [`Request::WatchChildrenAdded`] watches for, removes the watch, and
+    /// then reports what the focused element controls: of the first element
+    /// its UI Automation `ControllerFor` relation names, the set size its
+    /// first child reports (`SizeOfSet`) and the names of its first `names`
+    /// children, read independently of any screen reader, as a search
+    /// box's suggestion list is counted and named before a test fixes what
+    /// it expects. Refused when no watch is armed. Answered by
     /// [`ReplyPayload::ControlledItems`].
     ControlledItems {
         /// How many of the children's names to report.
         names: u32,
+        /// How long to wait for the watched change, in milliseconds.
+        timeout_ms: u64,
     },
     /// Reports the name of the first element of the foreground window
     /// whose UI Automation identifier is `automation_id`, read through UI
@@ -676,6 +697,8 @@ pub enum ReplyPayload {
         /// Whether the key is on.
         on: bool,
     },
+    /// Answer to [`Request::WatchChildrenAdded`]: the watch is registered.
+    Watching,
     /// Answer to [`Request::ControlledItems`].
     ControlledItems {
         /// The size of the set the controlled element's first child

@@ -127,6 +127,17 @@ stays shown for many minutes. It then asserts Verbatim's startup
 speech and the desktop's announcement, which it reads independently
 through the agent. The run takes over the desktop while it lasts.
 
+State a scenario fixes its expectation from is read by the agent,
+independently of Verbatim, and only after the application has given
+evidence that it is complete. The Settings suggestions scenarios have the
+agent watch the suggestion list (`SuggestionsList`) from before the query
+is typed for children added in bulk, the UI Automation `StructureChanged`
+event Settings raises once per opening after it fills the list, and read
+the list only after that event (`WatchChildrenAdded` and
+`ControlledItems`, [the agent's guide](../crates/verbatim-agent.md)). The
+agent's protocol version is 28, and a client of another version is refused
+at `Hello`, so restart a running agent after rebuilding it.
+
 ### Parking a Remote Desktop session
 
 On a development VM reached over Remote Desktop, a run needs the session

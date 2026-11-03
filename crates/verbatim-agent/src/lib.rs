@@ -42,6 +42,7 @@ pub mod protocol;
 mod scenario_windows;
 pub mod server;
 pub mod session;
+mod structure;
 mod terminals;
 mod tunnel;
 mod typing;

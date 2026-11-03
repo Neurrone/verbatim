@@ -10,7 +10,7 @@
 //! "Sound settings 1 of 22".
 //!
 //! Read-only, so it changes no setting. The suggestions' size and first
-//! name come from the agent's read of the list once it is open, as in
+//! name come from the agent's read of the list once Settings has filled it, as in
 //! [`settings_search_suggestions`](super::settings_search_suggestions). The
 //! account button's name is the machine's account name, so the agent reads
 //! it by its UI Automation identifier, `UserProfileControlButton`, before
@@ -28,6 +28,10 @@ use crate::speech::{cut_off, heard, optional};
 
 pub(crate) use super::no_teardown as teardown;
 
+/// The UI Automation identifier of Settings' suggestion list, which the
+/// search box controls while its suggestions are open.
+const SUGGESTIONS_LIST: &str = "SuggestionsList";
+
 /// The UI Automation identifier of Settings' account button, the Tab stop
 /// after the search box.
 const ACCOUNT_BUTTON: &str = "UserProfileControlButton";
@@ -44,6 +48,14 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
         "Search box, Find a setting edit",
         "blank",
     ]);
+    // Settings fills the suggestion list all at once, but in some openings
+    // replaces its items first, leaving it empty for about 100 ms after
+    // the first selection; the one event after the fill in every opening
+    // is children added in bulk to the list, which the agent watches for
+    // from before the query is typed and waits for before it reads.
+    scenario
+        .watch_children_added(SUGGESTIONS_LIST)
+        .expect("the agent watches the suggestions");
     scenario.type_text("sound").expect("types the query");
     // NVDA says the first suggestion as "list item", the name its event's
     // cache holds, which Settings has not set yet; Verbatim reads its name.

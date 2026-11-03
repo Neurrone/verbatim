@@ -25,8 +25,8 @@ use crate::protocol::{
     RequestEnvelope,
 };
 use crate::{
-    desktop, events, files, focus, jobs, keys, process, scenario_windows, session, terminals,
-    tunnel, typing, wait_chain,
+    desktop, events, files, focus, jobs, keys, process, scenario_windows, session, structure,
+    terminals, tunnel, typing, wait_chain,
 };
 
 /// The number the next key stroke or typed character the agent injects
@@ -40,13 +40,16 @@ static NEXT_INPUT: AtomicU64 = AtomicU64::new(1);
 static NEXT_CONNECTION: AtomicU64 = AtomicU64::new(1);
 
 /// Ends a connection's watch of its scenario's windows when the connection
-/// ends, however it ends ([`scenario_windows::connection_ended`]).
+/// ends, however it ends ([`scenario_windows::connection_ended`]), and its
+/// structure watch ([`structure::forget`]), which lives on the connection's
+/// thread, where this is dropped.
 struct ConnectionEnd(u64);
 
 impl Drop for ConnectionEnd {
     fn drop(&mut self) {
         release_held(self.0);
         scenario_windows::connection_ended(self.0);
+        structure::forget();
     }
 }
 
@@ -351,6 +354,7 @@ fn dispatch(connection: u64, id: u64, request: Request) -> Frame {
         }
         request @ (Request::FocusedElement
         | Request::FocusByAutomationId { .. }
+        | Request::WatchChildrenAdded { .. }
         | Request::ControlledItems { .. }
         | Request::NameByAutomationId { .. }
         | Request::KeyToggled { .. }) => state_request(id, request),
@@ -520,8 +524,9 @@ fn process_request(id: u64, request: Request) -> Frame {
 
 /// Answers the requests that read state a test fixes its expectations
 /// from, independently of the screen reader under test: the focused
-/// element, an element focused by its identifier, what the focused element
-/// controls, an element's name, and a lock key's state.
+/// element, an element focused by its identifier, a watch for a list's
+/// filling and what the focused element controls once it is filled, an
+/// element's name, and a lock key's state.
 fn state_request(id: u64, request: Request) -> Frame {
     match request {
         Request::FocusedElement => match focus::focused_element() {
@@ -540,13 +545,26 @@ fn state_request(id: u64, request: Request) -> Frame {
                 Err(error) => error_frame(id, &error),
             }
         }
-        Request::ControlledItems { names } => match focus::controlled_items(names) {
-            Ok((count, names)) => Frame::Reply {
-                to: id,
-                payload: ReplyPayload::ControlledItems { count, names },
-            },
-            Err(error) => error_frame(id, &error),
-        },
+        Request::WatchChildrenAdded { automation_id } => {
+            match structure::watch_children_added(&automation_id) {
+                Ok(()) => Frame::Reply {
+                    to: id,
+                    payload: ReplyPayload::Watching,
+                },
+                Err(error) => error_frame(id, &error),
+            }
+        }
+        Request::ControlledItems { names, timeout_ms } => {
+            match structure::wait_children_added(Duration::from_millis(timeout_ms))
+                .and_then(|()| focus::controlled_items(names))
+            {
+                Ok((count, names)) => Frame::Reply {
+                    to: id,
+                    payload: ReplyPayload::ControlledItems { count, names },
+                },
+                Err(error) => error_frame(id, &error),
+            }
+        }
         Request::NameByAutomationId { automation_id } => {
             match focus::name_by_automation_id(&automation_id) {
                 Ok(name) => Frame::Reply {

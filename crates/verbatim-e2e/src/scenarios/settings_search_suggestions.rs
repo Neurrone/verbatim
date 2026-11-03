@@ -14,7 +14,10 @@
 //! what they are called, comes from Settings' search index, which differs
 //! between editions and builds, so the agent reads the list's size and its
 //! first three names through UI Automation, independently of Verbatim,
-//! once the list is open and before the scenario fixes what it expects.
+//! once Settings has filled the list and before the scenario fixes what it
+//! expects: the agent watches for children added in bulk to the list
+//! (`SuggestionsList`) from before the query is typed, and reads after
+//! that event.
 //! The size is the set size the first item reports (`SizeOfSet`), the
 //! property Verbatim's "of N" comes from, not the count of the list's
 //! realized children, which a virtualized list would make smaller.
@@ -41,6 +44,10 @@ use crate::speech::{cut_off, heard};
 
 pub(crate) use super::no_teardown as teardown;
 
+/// The UI Automation identifier of Settings' suggestion list, which the
+/// search box controls while its suggestions are open.
+const SUGGESTIONS_LIST: &str = "SuggestionsList";
+
 pub(crate) fn setup(scenario: &mut Scenario) -> io::Result<ScenarioState> {
     scenario.open_settings_page("ms-settings:system")?;
     Ok(ScenarioState::None)
@@ -53,6 +60,14 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
         "Search box, Find a setting edit",
         "blank",
     ]);
+    // Settings fills the suggestion list all at once, but in some openings
+    // replaces its items first, leaving it empty for about 100 ms after
+    // the first selection; the one event after the fill in every opening
+    // is children added in bulk to the list, which the agent watches for
+    // from before the query is typed and waits for before it reads.
+    scenario
+        .watch_children_added(SUGGESTIONS_LIST)
+        .expect("the agent watches the suggestions");
     // Each character's echo is cut off by the next key, the last heard in
     // full; then the application's notification that suggestions are
     // available, cut off by its selection of the first one.

@@ -398,8 +398,11 @@ input methods above:
 - State read independently of Verbatim, before the scenario fixes what it
   expects: `desktop_speech`, `key_toggled` (a lock key),
   `focus_by_automation_id` (focuses an element with UI Automation's
-  `SetFocus` and returns how many children it has), `controlled_items`
-  (of the first element the focused element controls, the set size its
+  `SetFocus` and returns how many children it has), `watch_children_added`
+  (has the agent watch the foreground window, from before the input that
+  fills it, for children added in bulk to the element with a given UI
+  Automation identifier), `controlled_items` (once that change has come,
+  of the first element the focused element controls, the set size its
   first child reports and the names of the first children),
   and `name_by_automation_id` (the name of the foreground window's element
   with that identifier, read without focusing it).
@@ -786,7 +789,7 @@ Each exists in both terminals unless named for one.
     the runner writing it for a launch that fails before the scenario
     exists).
   - Accessibility reads: `focused_element`, `focus_by_automation_id`,
-    `name_by_automation_id`, `controlled_items`,
+    `name_by_automation_id`, `watch_children_added`, `controlled_items`,
     `key_toggled`.
   - Input: `send_keys`, `press_key`, `release_key`, `type_text`,
     `send_keys_paced`, `repeat_key`, `type_text_paced`, each returning the
