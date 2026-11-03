@@ -14,6 +14,11 @@
 //! it, so the shutdown is asked for while the call is in progress, never
 //! before it starts or after it ends.
 //!
+//! The outpost's observation point at the start of shutdown's wait for the
+//! calls in progress (`verbatim_faults::Fault::ShutdownWaitsForCalls`)
+//! tells a test that the shutdown has reached that wait, so the binary
+//! needs the `faults` feature and only `cargo xtask faults` builds it.
+//!
 //! Each test runs on a desktop of its own (`harness::run_isolated`), so the
 //! only registrations on mockapp's window are the outpost's.
 
@@ -23,6 +28,7 @@ mod harness;
 
 use std::sync::mpsc::{self, RecvTimeoutError};
 
+use verbatim_faults::Fault;
 use verbatim_model::protocol::{CoreToOutpost, OutpostToCore, Query, QueryOutcome, QueryResult};
 use verbatim_model::{
     CallCounts, FocusText, NodeId, NormalizedEvent, TextOp, TextPoint, TextRead, TextReply,
@@ -141,7 +147,14 @@ fn shut_down_during(name: &str, read: &Read) {
     );
 
     // The shutdown is asked for while the call is held, on a thread of its
-    // own, since it waits for the call.
+    // own, since it waits for the call. Once it has begun to wait for the
+    // calls in progress, the held call keeps it there.
+    let pid = app.pid();
+    let waiting = verbatim_faults::arm(
+        Fault::ShutdownWaitsForCalls,
+        move |target: &u32| *target == pid,
+        1,
+    );
     let messages = outpost.messages;
     let under_shutdown = outpost.outpost;
     let (shut_down_tx, shut_down) = mpsc::channel();
@@ -149,10 +162,14 @@ fn shut_down_during(name: &str, read: &Read) {
         under_shutdown.shutdown();
         let _ = shut_down_tx.send(());
     });
+    assert!(
+        waiting.wait_fired(common::WAIT_TIMEOUT),
+        "the shutdown begins to wait for the calls in progress"
+    );
     assert_eq!(
         shut_down.try_recv(),
         Err(mpsc::TryRecvError::Empty),
-        "the shutdown does not end while the call is in progress"
+        "the shutdown waits while the call is in progress"
     );
     app.release();
 

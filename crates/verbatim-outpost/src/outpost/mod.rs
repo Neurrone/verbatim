@@ -1342,6 +1342,13 @@ impl Outpost {
             registration.close();
         }
         let handlers_removed = started.elapsed();
+        // An observation point: a test waits for it before it checks that
+        // a call in progress holds the shutdown here.
+        #[cfg(any(test, feature = "faults"))]
+        verbatim_faults::reach(
+            verbatim_faults::Fault::ShutdownWaitsForCalls,
+            &context.target_pid(),
+        );
         let workers = stop(&context);
         let bounded = context.bounded.close();
         let calls_finished = started.elapsed();

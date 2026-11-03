@@ -50,6 +50,8 @@
 mod delivery;
 mod records;
 mod recover;
+#[cfg(feature = "faults")]
+mod room_waits;
 mod run;
 mod store;
 
@@ -178,6 +180,19 @@ pub(crate) struct SourceShared {
     /// Set when the source or its lane has room again
     /// (`docs/design/ownership.md`).
     room: Arc<dyn Signal>,
+    /// The producers' waits for room begun, for tests.
+    #[cfg(feature = "faults")]
+    room_waits: room_waits::RoomWaits,
+}
+
+impl SourceShared {
+    /// A producer's wait for room: on the room event, until the audio
+    /// thread sets it.
+    fn wait_for_room(&self) {
+        #[cfg(feature = "faults")]
+        self.room_waits.begin();
+        self.room.wait();
+    }
 }
 
 /// The format generation's bits in a packed format.
@@ -273,6 +288,8 @@ impl MixerBuilder {
                 paused: AtomicBool::new(false),
                 released: AtomicU64::new(0),
                 room: self.device.signal(),
+                #[cfg(feature = "faults")]
+                room_waits: room_waits::RoomWaits::default(),
             }),
             takes_frames: false,
         });
@@ -539,6 +556,16 @@ impl SourceControl {
         self.source.paused.store(paused, Ordering::Release);
         (self.shared.waker)();
     }
+
+    /// Waits up to `timeout` until the producers on this source have begun
+    /// at least `count` waits for room, counted from the source's making;
+    /// returns whether they have. Only with the `faults` feature, for a
+    /// test that checks a producer stays blocked once it waits.
+    #[cfg(feature = "faults")]
+    #[must_use]
+    pub fn wait_room_waits(&self, count: u64, timeout: Duration) -> bool {
+        self.source.room_waits.wait_began(count, timeout)
+    }
 }
 
 /// Why a lane refused a record.
@@ -630,7 +657,7 @@ impl Lane {
                 Err(Refused::Stopped) => return ControlFlow::Break(()),
                 Err(Refused::Full(back)) => {
                     record = back;
-                    self.source.room.wait();
+                    self.source.wait_for_room();
                 }
             }
         }
@@ -777,7 +804,7 @@ impl SpeechLane {
             let wanted = left.min(capacity / 2).max(1);
             let ring = (self.samples.slots() / channels) as u64;
             if room.min(ring) < wanted || self.lane.records.is_full() {
-                self.lane.source.room.wait();
+                self.lane.source.wait_for_room();
                 continue;
             }
             let take = room.min(ring).min(left);
@@ -787,7 +814,7 @@ impl SpeechLane {
                 .push_entire_slice(&frames[offset..offset + count])
                 .is_err()
             {
-                self.lane.source.room.wait();
+                self.lane.source.wait_for_room();
                 continue;
             }
             let record = Record::Frames {

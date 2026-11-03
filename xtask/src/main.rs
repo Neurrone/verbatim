@@ -372,6 +372,7 @@ fn run_steps(command_name: &str, steps: &[Step]) -> ExitCode {
 /// The crates with a `faults` feature, each linted with it on.
 #[cfg(windows)]
 const FAULT_CRATES: &[&str] = &[
+    "verbatim-audio",
     "verbatim-process",
     "verbatim-uia",
     "verbatim-outpost",
@@ -380,11 +381,15 @@ const FAULT_CRATES: &[&str] = &[
 ];
 
 /// The fault test targets, each its package's and its name: test targets
-/// with `required-features = ["faults"]`, which the ordinary steps skip.
+/// with `required-features = ["faults"]`, which the ordinary steps skip,
+/// and `verbatim-audio`'s `mixer`, whose tests that wait on the mixer's
+/// observation point are compiled only with the feature.
 #[cfg(windows)]
 const FAULT_TESTS: &[(&str, &str)] = &[
+    ("verbatim-audio", "mixer"),
     ("verbatim-supervisor", "fault_paths"),
     ("mockapp", "failure_paths"),
+    ("mockapp", "shutdown"),
 ];
 
 /// The fault step's cargo invocations: clippy of each of [`FAULT_CRATES`]

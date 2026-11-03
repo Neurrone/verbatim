@@ -1421,7 +1421,9 @@ The outpost's side (`Outpost::shutdown`), in order:
 2. The `WinEvent` hook and its thread go.
 3. The subscription's groups are removed (`RemoveEventHandlerGroup`), each
    waiting for callbacks in progress.
-4. The reducer's thread ends once the program in flight has ended, with no
+4. Under the `faults` feature, the observation point
+   `ShutdownWaitsForCalls` ([verbatim-faults](verbatim-faults.md)) is
+   reached. The reducer's thread ends once the program in flight has ended, with no
    worker abandoned meanwhile, after handing what it let go of and the
    elements the subscription followed to the worker in charge to drop;
    then every worker, abandoned or not, and
@@ -1451,7 +1453,8 @@ to 443 ms from the message to the exit, median 15.
 Tests: `crates/mockapp/tests/shutdown.rs` (a shutdown during a held read,
 remote and classic: the answer sent, the four UIA registrations removed,
 the pipe closed, mockapp still answering; and a pong while the worker is
-held), `crates/verbatim-supervisor/tests/shutdown_fallback.rs` (a stand-in
+held; it waits on the shutdown's observation point, so only `cargo xtask
+faults` builds it), `crates/verbatim-supervisor/tests/shutdown_fallback.rs` (a stand-in
 that never exits is reported killed at its limit), and
 `crates/verbatim-outpost/tests/target_exit.rs` (`TargetExited`, then a
 clean exit). The end-to-end suite checks every child exited with code 0.

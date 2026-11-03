@@ -48,6 +48,11 @@ pub enum Fault {
     /// `RemoveFocusChangedEventHandler` fails. Subject: `(registration,
     /// handler index)`.
     RemoveFocusHandler,
+    /// An observation point, not a failure ([`reach`]): an outpost's
+    /// shutdown begins to wait for the calls in progress
+    /// (`verbatim-outpost`'s `Outpost::shutdown`). Subject: the outpost's
+    /// target process id.
+    ShutdownWaitsForCalls,
 }
 
 /// Whether a subject is the one a test names: false for a subject of
@@ -121,6 +126,14 @@ pub fn hit<S: Any>(fault: Fault, subject: &S) -> bool {
     armed.fired += 1;
     FIRED.notify_all();
     true
+}
+
+/// An observation point: what a point calls when the code reaches the
+/// place it stands for, where nothing fails. It counts as a firing of an
+/// armed point, so a test waits with [`Guard::wait_fired`] for the evidence
+/// that the code got there, and the code goes on either way.
+pub fn reach<S: Any>(fault: Fault, subject: &S) {
+    let _ = hit(fault, subject);
 }
 
 /// [`hit`] with a subject built by `subject` only while `fault` is armed,
@@ -208,6 +221,19 @@ mod tests {
         assert_eq!(guard.fired(), 1);
         drop(guard);
         assert!(!hit(Fault::RelayWake, &7_u32), "disarmed");
+    }
+
+    #[test]
+    fn an_observation_point_reached_counts_as_a_firing() {
+        let guard = arm(
+            Fault::ShutdownWaitsForCalls,
+            |subject: &u32| *subject == 3,
+            1,
+        );
+        reach(Fault::ShutdownWaitsForCalls, &4_u32);
+        assert_eq!(guard.fired(), 0, "another subject");
+        reach(Fault::ShutdownWaitsForCalls, &3_u32);
+        assert!(guard.wait_fired(Duration::ZERO));
     }
 
     #[test]

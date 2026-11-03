@@ -16,7 +16,9 @@ Public API:
   `ThreadStart` (a reading thread's `(name, pid, generation)`, a worker's
   `(name, generation)`), `RemoveGroup` (`(registration, runtime id)`),
   `AddFocusHandler` and `RemoveFocusHandler` (`(registration, handler
-  index)`).
+  index)`), and one observation point, `ShutdownWaitsForCalls` (an
+  outpost's target process id), where an outpost's shutdown begins to
+  wait for the calls in progress.
 - `arm(fault, selects, times)` — arms a point to fire `times` times, each
   at a call whose subject, of the type `selects` takes, `selects` picks,
   so a test names the one call that fails. Returns a `Guard`, whose drop
@@ -28,6 +30,10 @@ Public API:
   operation it stands for: true when an armed selector picks the subject
   and has firings left, and the caller then takes the path the real
   failure takes, with the error the real call returns.
+- `reach(fault, &subject)` — what an observation point calls where
+  nothing fails: it counts as a firing, so a test waits for the evidence
+  that the code got there with `Guard::wait_fired`, and the code goes on
+  either way.
 - `hit_with(fault, subject)` — `hit` with the subject built by the
   closure `subject` only while `fault` is armed, for a subject whose
   making is itself a call, such as reading an element's runtime id, which
@@ -44,17 +50,24 @@ another crate's tests reach have a `faults` feature, `verbatim-process`,
 `faults` feature turns on optional normal dependencies on the last two,
 since a feature cannot name a dev-dependency. Nothing turns a `faults`
 feature on but `cargo xtask faults`, which `cargo xtask ci` runs as its
-fault step on Windows: clippy of each of those crates and mockapp with the
-feature, one package at a time, then the fault test targets
-(`verbatim-supervisor`'s `fault_paths` and mockapp's `failure_paths`),
-each declared with `required-features = ["faults"]` so the ordinary steps
-skip it, into `target/debug`. The points of `verbatim-app`'s hook posts and
+fault step on Windows: clippy of each of those crates, `verbatim-audio`
+and mockapp with the feature, one package at a time, then the fault test
+targets (`verbatim-supervisor`'s `fault_paths` and mockapp's
+`failure_paths` and `shutdown`), each declared with `required-features =
+["faults"]` so the ordinary steps skip it, and `verbatim-audio`'s `mixer`,
+into `target/debug`. `verbatim-audio` is platform-neutral, so it cannot
+depend on this crate: its `faults` feature has no dependency and compiles
+its own observation point, a producer's wait for room
+([verbatim-audio](verbatim-audio.md), `SourceControl`), and the three
+`mixer` tests that wait on it are compiled only with the feature, the
+others running in both steps. The points of `verbatim-app`'s hook posts and
 of `verbatim-listener`'s reading thread are `cfg(test)` only, reached by
 those crates' own unit tests.
 
 Tests: unit tests check that a point fires only for the subject and type
-selected and only as often as armed, and that a guard whose point never
-fired fails its test.
+selected and only as often as armed, that an observation point reached
+counts as a firing, and that a guard whose point never fired fails its
+test.
 
 ## Failure paths
 

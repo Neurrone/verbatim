@@ -76,7 +76,7 @@ A test known to fail is listed with its cause and fix in [the known failures](fl
 ## Tests exercise the real code
 
 - A test measures or exercises the production code, never a copy of its logic written in the test.
-- A failure path is tested by making the real operation fail at a fault point placed just before it (`verbatim-faults`, [its guide](crates/verbatim-faults.md)), so the code takes the path the real failure takes; the test selects the one call that fails, and the point must fire exactly as often as armed. Fault points are compiled only into tests: a crate's own unit tests reach its points, and another crate's fault tests are test targets with `required-features = ["faults"]`, built only by `cargo xtask faults`, which `cargo xtask ci` runs as its fault step.
+- A failure path is tested by making the real operation fail at a fault point placed just before it (`verbatim-faults`, [its guide](crates/verbatim-faults.md)), so the code takes the path the real failure takes; the test selects the one call that fails, and the point must fire exactly as often as armed. Fault points are compiled only into tests: a crate's own unit tests reach its points, and another crate's fault tests are test targets with `required-features = ["faults"]`, or tests compiled only under the feature, built only by `cargo xtask faults`, which `cargo xtask ci` runs as its fault step. An observation point is the same mechanism where nothing fails: a test waits for it as evidence that the code reached a wait before it checks that the wait holds.
 - What a test's documentation says it checks is exactly what it asserts.
 
 ## The harness does not change what it measures

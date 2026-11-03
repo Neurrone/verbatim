@@ -32,8 +32,9 @@ verbatim-uia-rops.workspace = true
 verbatim-win32.workspace = true
 
 [features]
-# The fault points of the outpost's worker and of the UIA subscription, for
-# the `failure_paths` tests; only `cargo xtask faults` turns it on.
+# The fault points of the outpost's worker, shutdown and UIA subscription,
+# for the `failure_paths` and `shutdown` tests; only `cargo xtask faults`
+# turns it on.
 faults = ["dep:verbatim-faults", "verbatim-outpost/faults", "verbatim-uia/faults"]
 
 # The test binaries that use UIA as a client run through their own runner,
@@ -100,9 +101,12 @@ harness = false
 name = "remote_ops"
 harness = false
 
+# Waits on the outpost's shutdown observation point, so only `cargo xtask
+# faults` builds it.
 [[test]]
 name = "shutdown"
 harness = false
+required-features = ["faults"]
 
 [[test]]
 name = "slow_application"

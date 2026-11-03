@@ -589,7 +589,10 @@ Each file's module comment says exactly what it asserts; in outline:
 - `shutdown.rs`: an outpost told to shut down during a read into mockapp,
   a remote operation in one test and classic reads in the other, lets the
   read finish and sends its answer, then removes every UIA event handler
-  it registered.
+  it registered. Each test waits for the shutdown to reach its wait for
+  the calls in progress, the observation point `ShutdownWaitsForCalls`,
+  before it checks that the held call keeps it there, so the binary
+  requires the `faults` feature and runs in `cargo xtask faults`.
 - `idle_barrier.rs`: the outpost's part of the harness's idle barrier
   (`docs/design/communication.md`, section 6.7): the answer to an idle
   query goes behind every message the outpost sent before it, and is held

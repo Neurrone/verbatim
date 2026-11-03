@@ -566,6 +566,9 @@ fn a_start_is_heard_when_the_devices_clock_passes_its_first_frame() {
 /// alone does not let it on: it goes on only with room for what it needs.
 /// With 75 frames to write it needs 25 more after the first 50, so with 24
 /// frames played it still waits, and the 25th lets it on.
+/// Only with the `faults` feature (`cargo xtask faults`), whose observation
+/// point says when the producer has begun to wait.
+#[cfg(feature = "faults")]
 #[test]
 fn a_producer_waiting_for_room_is_woken_when_half_its_room_is_free() {
     let mut harness = harness();
@@ -580,6 +583,10 @@ fn a_producer_waiting_for_room_is_woken_when_half_its_room_is_free() {
     harness
         .device
         .wait_written(10, "the mixer writes the first frames");
+    assert!(
+        harness.control.wait_room_waits(1, WAIT),
+        "the producer waits once its first 50 frames fill the source"
+    );
     play(&harness.device, 24);
     harness.device.settle();
     assert_eq!(
@@ -596,6 +603,9 @@ fn a_producer_waiting_for_room_is_woken_when_half_its_room_is_free() {
     harness.lane = writer.join().unwrap();
 }
 
+/// Only with the `faults` feature (`cargo xtask faults`), whose observation
+/// point says when the producer has begun to wait.
+#[cfg(feature = "faults")]
 #[test]
 fn a_producer_waiting_for_room_is_woken_at_shutdown_and_its_write_answers_break() {
     let mut harness = harness();
@@ -609,6 +619,10 @@ fn a_producer_waiting_for_room_is_woken_at_shutdown_and_its_write_answers_break(
     harness
         .device
         .wait_written(10, "the mixer writes the first frames");
+    assert!(
+        harness.control.wait_room_waits(1, WAIT),
+        "the producer waits once its first 50 frames fill the source"
+    );
     harness.device.settle();
     assert_eq!(
         done_rx.try_recv(),
@@ -769,6 +783,9 @@ fn a_failed_utterance_is_reported_failed_and_its_unheard_audio_dropped() {
     assert_eq!(harness.device.written(), [SPOKEN; 10]);
 }
 
+/// Only with the `faults` feature (`cargo xtask faults`), whose observation
+/// point says when the producer has begun to wait.
+#[cfg(feature = "faults")]
 #[test]
 fn a_write_waits_while_the_source_is_too_far_ahead_of_playback() {
     let mut harness = harness();
@@ -784,6 +801,10 @@ fn a_write_waits_while_the_source_is_too_far_ahead_of_playback() {
     harness
         .device
         .wait_written(10, "the mixer writes the first frames");
+    assert!(
+        harness.control.wait_room_waits(1, WAIT),
+        "the write waits once its first 50 frames fill the source"
+    );
     harness.device.settle();
     assert!(done_rx.try_recv().is_err(), "the write is held back");
     play(&harness.device, 30);

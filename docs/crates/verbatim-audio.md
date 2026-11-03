@@ -72,7 +72,14 @@ Public API:
   every voice of the source; `pause(paused)` holds the source's audio
   where it is, or lets it go on, with its playback events waiting with
   the audio. Neither waits for the audio thread: each is one atomic store
-  and a wake.
+  and a wake. With the `faults` feature only, `wait_room_waits(count,
+  timeout)` waits until the source's producers have begun `count` waits
+  for room: an observation point a producer passes as it begins each wait
+  on the room event, never on the audio thread, for a test that checks a
+  producer stays blocked once it waits. The feature has no dependency,
+  since the crate is platform-neutral and `verbatim-faults` is not, and
+  only `cargo xtask faults` turns it on, so release and end-to-end builds
+  have no point.
 - `SpeechLane` — the synth thread's lane to its source. `register(utterance,
   trace_id, generation)` announces the utterance written next, under the
   generation it was handed on under; `write(utterance, format, samples)`
@@ -374,7 +381,9 @@ utterance finished after a cancel in one pass ending cancelled, an
 utterance whose registration and frames were still in its lane when the
 device came back in another format failing with nothing written, failure,
 write backpressure, a producer waiting for room woken only once half its
-room is free and at shutdown, where its write answers `Break`, replaying
+room is free and at shutdown, where its write answers `Break` (these three
+wait for the producer to have begun waiting, so they are compiled only with
+the `faults` feature and run in `cargo xtask faults`), replaying
 unplayed audio after a reopen, the tap getting exactly what played and
 never what was cut off, the audio thread making no allocation and no free
 over 200 passes that play speech with a mark and a sound, an earcon, a

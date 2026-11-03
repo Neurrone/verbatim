@@ -14,5 +14,10 @@ tracing.workspace = true
 verbatim-model.workspace = true
 workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
+[features]
+# The observation point of a producer's wait for room, for the mixer tests
+# that check a producer stays blocked; only `cargo xtask faults` turns it on.
+faults = []
+
 [lints]
 workspace = true
