@@ -119,8 +119,6 @@ every Verbatim process (`verbatim_uia::CONNECTION_TIMEOUT` and
   arbitrated, after a focus whose ancestors are kept; the walk stops at
   the first ancestor already held. Moving within one group or one list is
   the steady state.
-- For object navigation, warm means the node is held with its live
-  element. Every navigation in the ledger is warm.
 
 ## Cancelled traces
 
@@ -676,9 +674,9 @@ Counted from the code (`docs/design/ownership.md`), not measured.
 
 ### A focus change, MSAA, cold
 
-- Minimum and today: 28 MSAA calls and 1 window message, the steady
-  state's count, since nothing is recognized either way, plus the probe;
-  met. `WindowFromAccessibleObject` answers no window for mockapp's
+- Minimum and today: 28 MSAA calls and 1 window message, the probe;
+  met. The steady state makes 20 and no message
+  (`msaa_focus_changes_cost_exactly`). `WindowFromAccessibleObject` answers no window for mockapp's
   ancestors, and the walk keeps the window it is in. mockapp answered 33
   provider calls.
 
