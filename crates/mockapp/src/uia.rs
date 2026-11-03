@@ -1612,9 +1612,9 @@ mod handler {
     }
 
     /// The `TogglePattern` provider for a checkbox or radio button node.
-    /// `Toggle` is a no-op: mockapp's scripted state changes only via
-    /// stdin commands (`set-name`/`set-value`), never through pattern
-    /// invocation, so there is nothing to flip.
+    /// `Toggle` turns the node's checked state over, as a click does, so a
+    /// read after an activation finds the new state; it raises no event,
+    /// since mockapp raises events only for its stdin commands.
     #[implement(IToggleProvider, Agile = false)]
     struct ToggleProvider {
         tree: SharedTree,
@@ -1624,6 +1624,16 @@ mod handler {
     impl IToggleProvider_Impl for ToggleProvider_Impl {
         fn Toggle(&self) -> WinResult<()> {
             hits::hit(hits::Method::Toggle);
+            let mut tree = self
+                .tree
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let states = &mut tree.nodes[self.index].states;
+            if states.contains(verbatim_model::State::Checked) {
+                states.remove(verbatim_model::State::Checked);
+            } else {
+                states.insert(verbatim_model::State::Checked);
+            }
             Ok(())
         }
         fn ToggleState(&self) -> WinResult<windows::Win32::UI::Accessibility::ToggleState> {

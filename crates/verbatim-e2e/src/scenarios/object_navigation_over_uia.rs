@@ -9,7 +9,9 @@
 //! and the window, down to the window's title bar and across to the group,
 //! down to the group's first child and past it to the edge ("No
 //! previous"), and then moves
-//! the navigator back to the focus. Every step asserts exactly what is
+//! the navigator back to the focus. Last, it activates the check box,
+//! whose Toggle pattern turns it over, and reads it again by moving away
+//! and back, twice: unchecked, then checked. Every step asserts exactly what is
 //! said. Gestures are the desktop layout's bindings, sent through the
 //! control plane by their identifiers, so `NumLock` cannot affect the run.
 
@@ -104,4 +106,19 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
         "kb:verbatim+numpadminus",
         "Move to focus OK button",
     );
+
+    // The check box activated, which toggles it, and read again by moving
+    // away and back: unchecked, then activated again, checked.
+    navigate(scenario, "kb:verbatim+numpad6", "Cancel button");
+    navigate(scenario, "kb:verbatim+numpad6", "Enable check box checked");
+    navigate(scenario, "kb:verbatim+numpadenter", "Activate");
+    navigate(scenario, "kb:verbatim+numpad4", "Cancel button");
+    navigate(
+        scenario,
+        "kb:verbatim+numpad6",
+        "Enable check box not checked",
+    );
+    navigate(scenario, "kb:verbatim+numpadenter", "Activate");
+    navigate(scenario, "kb:verbatim+numpad4", "Cancel button");
+    navigate(scenario, "kb:verbatim+numpad6", "Enable check box checked");
 }

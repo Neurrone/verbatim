@@ -7,7 +7,9 @@
 //! deliberate difference from NVDA, `docs/parity/review.md`, "Review cursor
 //! columns"); numpad 5 pressed twice spells the word; numpad 2 pressed
 //! twice describes the character ("Alfa") and three times gives its code
-//! ("65"). It holds for Windows 11 Notepad (UIA) and an edit control
+//! ("65"). Last, numpad 4 reads the word before, from a row's first word
+//! the last word of the row above, and Shift+numpad 9 moves to the text's
+//! bottom. It holds for Windows 11 Notepad (UIA) and an edit control
 //! alike.
 //!
 //! Single presses are sent as gestures. Presses that count are sent
@@ -133,6 +135,15 @@ pub(crate) fn text_box_body(scenario: &mut Scenario, _state: &mut ScenarioState)
         &["numpad2", "numpad2", "numpad2"],
         &["A", "Alfa", "65, 0 x 4 1"],
     );
+
+    // Back a word from the row's first word crosses to the header row's
+    // last word, and on to the one before; the bottom is the empty line
+    // after the text's last line break, and the line above it is the
+    // table's last row.
+    review(scenario, "kb:numpad4", "Price");
+    review(scenario, "kb:numpad4", "Color");
+    review(scenario, "kb:shift+numpad9", "blank");
+    review(scenario, "kb:numpad7", ROWS[3].0);
 }
 
 /// The scenario in Windows 11 Notepad.
@@ -168,6 +179,15 @@ pub(crate) fn notepad_body(scenario: &mut Scenario, _state: &mut ScenarioState) 
         &["numpad2", "numpad2", "numpad2"],
         &["A", "Alfa", "65, 0 x 4 1"],
     );
+
+    // Back a word from the row's first word crosses to the header row's
+    // last word, and on to the one before; the bottom is the empty line
+    // after the text's last line break, and the line above it is the
+    // table's last row.
+    review(scenario, "kb:numpad4", "Price");
+    review(scenario, "kb:numpad4", "Color");
+    review(scenario, "kb:shift+numpad9", "blank");
+    review(scenario, "kb:numpad7", ROWS[3].0);
 }
 
 #[cfg(test)]

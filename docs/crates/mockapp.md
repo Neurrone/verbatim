@@ -342,7 +342,8 @@ method list and message numbers cannot drift apart.
   fixture's `expanded` or `collapsed` states or a `value` for the middle
   two, and on its `selectable` or `selected` states for selection, and
   an `IInvokeProvider` for a node with a `default_action`, which only
-  activation asks for. A
+  activation asks for. `Toggle` turns the node's checked state over, with
+  no event, so a read after an activation finds the new state. A
   list, a tab control or a combo box also serves an `ISelectionProvider`
   whose selection is its children in the `selected` state, so a fixture's
   initial selection and the `select` command both show through the

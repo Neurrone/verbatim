@@ -7,10 +7,14 @@
 //! bottom, and Verbatim+F9 and F10 copying a range, checked by pasting it:
 //! a first press of F10 again before the copy asks for the second press,
 //! and after the copy a further press finds the start marker cleared.
-//! Last, a start marker set and the navigator moved to the parent object,
+//! Then a start marker set and the navigator moved to the parent object,
 //! where F10 finds no start marker, and back at the focus, where F10
 //! selects from the kept marker, and Right Arrow then moves past the
-//! selection.
+//! selection. Last, the caret's place on the screen, the review cursor
+//! moved to the start marker and its place, each place read first from the
+//! editor itself; the review cursor moved to a selection's first and last
+//! characters; and following the caret turned off (Verbatim+6), the caret
+//! moved while the review cursor stays, and turned on again.
 //!
 //! The document is a small text table whose second column starts at column
 //! 8 on every row long enough to have one. Moving down the table keeps the
@@ -49,6 +53,15 @@ pub(crate) fn document() -> Document {
         name: NAME,
         contents: DOCUMENT.to_owned(),
     }
+}
+
+/// The line the copy is pasted as, counting from zero: the line after the
+/// document's four.
+const PASTED_LINE: u32 = 4;
+
+/// What Verbatim says of a place on the screen at `x`, `y`.
+fn positioned(x: i32, y: i32) -> String {
+    format!("Positioned at {x}, {y}")
 }
 
 /// Sends the review gesture `gesture` and asserts exactly `heard`.
@@ -217,6 +230,40 @@ pub(crate) fn text_box_body(scenario: &mut Scenario, _state: &mut ScenarioState)
         .send_keys(&["rightarrow"])
         .expect("sends right arrow");
     scenario.speech().expect(&["a", "N unselected"]);
+
+    // The caret's place on the screen, on the pasted line's second
+    // character, then the review cursor moved to the start marker, on its
+    // first, and its place: each read first from the edit control itself.
+    let (x, y) = scenario
+        .edit_character_position(PASTED_LINE, 1)
+        .expect("reads the caret's character's place");
+    review(scenario, "kb:verbatim+numpaddelete", &positioned(x, y));
+    review(scenario, "kb:verbatim+shift+f9", "N");
+    let (x, y) = scenario
+        .edit_character_position(PASTED_LINE, 0)
+        .expect("reads the start marker's character's place");
+    review(
+        scenario,
+        "kb:verbatim+shift+numpaddelete",
+        &positioned(x, y),
+    );
+    // The rest of the line selected, and the review cursor moved to the
+    // selection's first and last characters; following the caret turned
+    // off, the caret moved home while the review cursor stays on the
+    // selection's last character, and following turned on again.
+    scenario.send_keys(&["shift+end"]).expect("sends shift+end");
+    scenario.speech().expect(&["ame selected"]);
+    review(scenario, "kb:verbatim+alt+home", "a");
+    review(scenario, "kb:verbatim+alt+end", "e");
+    review(
+        scenario,
+        "kb:verbatim+6",
+        "caret doesn't move review cursor",
+    );
+    scenario.send_keys(&["home"]).expect("sends home");
+    scenario.speech().expect(&["N", "ame unselected"]);
+    review(scenario, "kb:numpad2", "e");
+    review(scenario, "kb:verbatim+6", "caret moves review cursor");
 }
 
 /// The scenario in Windows 11 Notepad.
@@ -340,6 +387,41 @@ pub(crate) fn notepad_body(scenario: &mut Scenario, _state: &mut ScenarioState) 
         .send_keys(&["rightarrow"])
         .expect("sends right arrow");
     scenario.speech().expect(&["a", "N unselected"]);
+
+    // The caret's place on the screen, on the pasted line's second
+    // character, then the review cursor moved to the start marker, on its
+    // first, and its place: each read first from Notepad's text through
+    // UI Automation.
+    let (x, y) = scenario
+        .uia_character_position(PASTED_LINE, 1)
+        .expect("reads the caret's character's place");
+    review(scenario, "kb:verbatim+numpaddelete", &positioned(x, y));
+    review(scenario, "kb:verbatim+shift+f9", "N");
+    let (x, y) = scenario
+        .uia_character_position(PASTED_LINE, 0)
+        .expect("reads the start marker's character's place");
+    review(
+        scenario,
+        "kb:verbatim+shift+numpaddelete",
+        &positioned(x, y),
+    );
+    // The rest of the line selected, and the review cursor moved to the
+    // selection's first and last characters; following the caret turned
+    // off, the caret moved home while the review cursor stays on the
+    // selection's last character, and following turned on again.
+    scenario.send_keys(&["shift+end"]).expect("sends shift+end");
+    scenario.speech().expect(&["ame selected"]);
+    review(scenario, "kb:verbatim+alt+home", "a");
+    review(scenario, "kb:verbatim+alt+end", "e");
+    review(
+        scenario,
+        "kb:verbatim+6",
+        "caret doesn't move review cursor",
+    );
+    scenario.send_keys(&["home"]).expect("sends home");
+    scenario.speech().expect(&["N", "ame unselected"]);
+    review(scenario, "kb:numpad2", "e");
+    review(scenario, "kb:verbatim+6", "caret moves review cursor");
     scenario
         .save_document(NAME, WINDOW_TIMEOUT)
         .expect("saves the document");
