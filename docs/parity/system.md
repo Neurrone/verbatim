@@ -53,6 +53,20 @@ plays none and stops at once, which saves about a second (the exit
 sound took 1.08 of the 1.4 seconds a replacement took). Every other way
 Verbatim quits still plays it.
 
+### Exiting
+
+NVDA, once its main loop ends, handles the events already queued, then
+cancels speech, stops its handlers, and plays its exit sound to the end,
+saying nothing after it (`nvda/source/core.py`, the end of `main`).
+Verbatim: **matched (unverified)** (Dickson, 2026-11-03). Once its GUI
+loop ends, the keyboard hook is removed and Core is told it is exiting
+(`Input::Exiting`) behind whatever was already queued: a focus read
+before then may be spoken, and is cut off, since Core then cancels speech
+and plays the exit sound, and reduces no later input, so nothing is said
+after the sound. `verbatim_lifecycle` exits through the menu and asserts
+that the exit sound is the last thing played, not whether the desktop is
+spoken before it.
+
 ### Vision framework (focus highlight, screen curtain, magnifier), OCR, secure screens, remote access
 
 NVDA: [The vision framework](../nvda/vision.md),

@@ -48,6 +48,10 @@ pub const SNAP_RESULTS_ACTIVITY: &str = "Windows.Shell.SnapComponent.SnapHotKeyR
 /// parts of the state it does not touch (architecture section 2).
 #[must_use]
 pub fn reduce(state: &mut SrState, input: &Input) -> Vec<Effect> {
+    // Once Verbatim is exiting nothing more is said or asked.
+    if state.exiting {
+        return Vec::new();
+    }
     let focus = state.focus.as_ref().map(|focus| focus.snapshot.id);
     let was_left = state.focus.as_ref().is_some_and(|focus| focus.left);
     let first_query = state.queries.next();

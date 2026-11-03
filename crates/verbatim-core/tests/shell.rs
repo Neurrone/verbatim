@@ -51,13 +51,20 @@ fn the_start_and_error_sounds_and_not_responding_play_their_earcons() {
     );
 }
 
+/// Exiting cancels speech, then plays the exit sound, as NVDA does,
+/// unless a new instance replaces this one; after it no input does
+/// anything, so nothing is said after the exit sound.
 #[test]
-fn the_exit_sound_plays_unless_a_new_instance_replaces_this_one() {
+fn exiting_cancels_speech_then_plays_the_exit_sound_and_nothing_follows() {
+    let mut state = SrState::new();
     assert_eq!(
-        effects_of(&Input::Exiting { replaced: false }),
-        [Effect::PlayEarcon(Earcon::Exit)]
+        reduce(&mut state, &Input::Exiting { replaced: false }),
+        [Effect::StopSpeech, Effect::PlayEarcon(Earcon::Exit)]
     );
-    assert_eq!(effects_of(&Input::Exiting { replaced: true }), []);
+    assert_eq!(reduce(&mut state, &Input::ErrorLogged), []);
+    let mut state = SrState::new();
+    assert_eq!(reduce(&mut state, &Input::Exiting { replaced: true }), []);
+    assert_eq!(reduce(&mut state, &Input::ErrorLogged), []);
 }
 
 #[test]

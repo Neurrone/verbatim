@@ -733,6 +733,11 @@ pub struct SrState {
     /// value"), the most recent last, at most [`PROGRESS_BARS_KEPT`].
     #[serde(default)]
     pub(crate) progress_reported: Vec<((i32, i32), u32)>,
+    /// Verbatim is exiting (`Input::Exiting`): no later input does
+    /// anything, so nothing is said after the exit sound, as NVDA says
+    /// nothing once it has stopped its handlers.
+    #[serde(default)]
+    pub(crate) exiting: bool,
 }
 
 /// How many progress bars' last indications are remembered: more than are

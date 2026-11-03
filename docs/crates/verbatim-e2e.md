@@ -435,6 +435,14 @@ input methods above:
   failure on the way leaves `quit_verbatim` to end every Verbatim the
   scenario started by its process id, waiting for each job to empty, and
   report that as a failure.
+- `send_keys_exiting(keys, last)` sends a step's keys that make Verbatim
+  exit, such as its menu's Exit, waits on its process handle for it to
+  exit with code 0, then takes its speech to the connection's end with
+  the collector's `expect_last_at_the_end(last)`, which asserts that the
+  last utterance is exactly `last` and takes those before it unasserted
+  (`docs/testing.md`, "Exact assertions"). From then on `exited()` is
+  true: `expect_nothing_more` has nothing to ask, and the run does not
+  quit Verbatim.
 - `expect_exit_at_cleanup(title, pid)` adds a process, such as a
   terminal's shell, that must exit once the window closes.
 - `close_windows_titled` closes every window whose title contains the
@@ -534,7 +542,9 @@ an outpost log named for one of them (`Scenario::collect_run_artifacts`).
 does, in order: launch; assert the startup speech and the desktop; run
 setup and the body, which ends with `expect_nothing_more`; save Core's
 focus (`collect_focus`, `focus.txt`, from the control plane's `DumpFocus`)
-and the flight recorder (`collect_flight_recorder`) while Verbatim is up;
+and the flight recorder (`collect_flight_recorder`) while Verbatim is up,
+unless the body made it exit (`send_keys_exiting`), when neither is left
+to dump;
 check for unexpected exits; quit Verbatim and check that its outposts and
 listener shut down cleanly; take the speech Verbatim sent: after a clean
 quit, every frame until the speech connection ends (`take_until_the_end`,
@@ -611,8 +621,9 @@ under `src/scenarios/` documents exactly what it asserts.
   synthesizer, and back), `verbatim_lifecycle` (Windows' screen reader
   flag set once Verbatim has started; a second Verbatim started, the
   first exiting with code 0, its processes shut down cleanly and nothing
-  more said, and the second announcing as a start does; the flag cleared
-  once the run has quit it), `speak_time_and_date` (Verbatim+F12 pressed
+  more said, and the second announcing as a start does; the second exited
+  through its menu, the exit sound the last thing played and its exit
+  code 0; the flag cleared once it has exited), `speak_time_and_date` (Verbatim+F12 pressed
   twice in one burst, the time cut off by the date, the time and date read by the agent first, waiting
   for the minute to turn when it is within two seconds),
   `lock_key_announcements` (Scroll Lock, and Caps Lock by a double tap of

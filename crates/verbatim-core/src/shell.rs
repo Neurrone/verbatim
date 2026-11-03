@@ -23,7 +23,10 @@ use crate::state::SrState;
 pub(crate) fn reduce(state: &mut SrState, input: &Input) -> Vec<Effect> {
     match input {
         Input::Started => started(),
-        Input::Exiting { replaced } => exiting(*replaced),
+        Input::Exiting { replaced } => {
+            state.exiting = true;
+            exiting(*replaced)
+        }
         Input::ErrorLogged => error_logged(),
         Input::ApplicationNotResponding { .. } => not_responding(),
         Input::ToggleKeyPressed {
@@ -125,14 +128,15 @@ fn started() -> Vec<Effect> {
     vec![Effect::PlayEarcon(Earcon::Start)]
 }
 
-/// Verbatim is exiting: the exit sound, unless a new instance is replacing
-/// this one, which stops at once with no sound (Dickson, 2026-10-10;
-/// `docs/parity/system.md`, "Replacing a running instance").
+/// Verbatim is exiting: speech is cancelled, then the exit sound plays, as
+/// NVDA exits (Dickson, 2026-11-03; `docs/parity/system.md`, "Exiting"),
+/// unless a new instance is replacing this one, which stops at once with
+/// no sound (Dickson, 2026-10-10; "Replacing a running instance").
 fn exiting(replaced: bool) -> Vec<Effect> {
     if replaced {
         Vec::new()
     } else {
-        vec![Effect::PlayEarcon(Earcon::Exit)]
+        vec![Effect::StopSpeech, Effect::PlayEarcon(Earcon::Exit)]
     }
 }
 

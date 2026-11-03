@@ -265,6 +265,9 @@ pub struct Scenario {
     cleaned_up: bool,
     /// Whether Verbatim has been asked to quit.
     quit: bool,
+    /// Whether Verbatim exited by itself at a step's keys
+    /// ([`Scenario::send_keys_exiting`]): nothing is left to ask it.
+    exited: bool,
     /// The keys the scenario holds down ([`Scenario::hold_key`]), in the
     /// order it pressed them, released at the latest by
     /// [`Scenario::release_held_keys`].
@@ -494,6 +497,7 @@ impl Scenario {
                 dumps_collected: Vec::new(),
                 cleaned_up: false,
                 quit: false,
+                exited: false,
                 held: Vec::new(),
                 nvda: Some(nvda),
                 wait_chains: Vec::new(),
@@ -592,6 +596,7 @@ impl Scenario {
             dumps_collected: Vec::new(),
             cleaned_up: false,
             quit: false,
+            exited: false,
             held: Vec::new(),
             nvda: None,
             wait_chains: Vec::new(),
@@ -889,7 +894,64 @@ impl Scenario {
     /// Panics if anything unasserted was said, or Verbatim does not become
     /// idle.
     pub fn expect_nothing_more(&mut self) {
-        self.speech.expect_nothing_more(self.last_input);
+        // Once Verbatim has exited by itself, its speech was taken to the
+        // connection's end and asserted then.
+        if !self.exited {
+            self.speech.expect_nothing_more(self.last_input);
+        }
+    }
+
+    /// Whether Verbatim exited by itself at a step's keys
+    /// ([`Scenario::send_keys_exiting`]), so that neither its focus nor
+    /// its flight recorder can be dumped and it needs no quit.
+    #[must_use]
+    pub fn exited(&self) -> bool {
+        self.exited
+    }
+
+    /// [`Scenario::send_keys`] for a step that makes Verbatim exit, such as
+    /// the Exit item of its menu: waits on its process handle for it to
+    /// exit with code 0, then takes its speech to the connection's end,
+    /// whose last utterance must be exactly `last`; what was said between
+    /// the keys and it is not asserted (`docs/testing.md`, "Exact
+    /// assertions"). The run then asks Verbatim for nothing more and does
+    /// not quit it ([`Scenario::quit_verbatim`]).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the keys cannot be sent, or Verbatim does not
+    /// exit within the quit timeout or exits with another code.
+    ///
+    /// # Panics
+    ///
+    /// Panics if an utterance no assertion matched is waiting before the
+    /// keys, the speech connection does not end, or `last` is not the last
+    /// utterance.
+    pub fn send_keys_exiting(&mut self, keys: &[&str], last: &str) -> io::Result<()> {
+        let pid = self.pid("exit (send_keys_exiting)")?;
+        self.send_keys(keys)?;
+        let state = self.agent.wait_for_exit(pid, QUIT_TIMEOUT)?;
+        // Gone, so nothing is left to quit; one still running is quit by
+        // the run as usual.
+        if matches!(state, ProcessState::Exited { .. }) {
+            self.quit = true;
+            self.exited = true;
+        }
+        match state {
+            ProcessState::Exited { exit_code: Some(0) } => {}
+            ProcessState::Exited { exit_code } => {
+                return Err(io::Error::other(format!(
+                    "Verbatim (pid {pid}) exited with {exit_code:?} after the keys {keys:?}"
+                )));
+            }
+            ProcessState::Running => {
+                return Err(io::Error::other(format!(
+                    "Verbatim (pid {pid}) is still running {QUIT_TIMEOUT:?} after the keys {keys:?}"
+                )));
+            }
+        }
+        self.speech.expect_last_at_the_end(last);
+        Ok(())
     }
 
     /// Every utterance not yet matched that was queued before Verbatim
@@ -2131,6 +2193,10 @@ impl Scenario {
     /// connection to ask.
     pub fn quit_verbatim(&mut self) -> io::Result<()> {
         let pid = self.pid("quit")?;
+        // Its exit with code 0 was checked when it exited.
+        if self.exited {
+            return Ok(());
+        }
         self.quit = true;
         if self.control.is_none() {
             let mut problems = vec![format!(

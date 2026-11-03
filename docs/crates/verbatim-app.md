@@ -312,7 +312,8 @@ Milestone M4's themes and earcons are wired here too
   before the foreground's focus is asked for); the exit, once the GUI
   loop has ended (`ShellCommand::Exiting`, which the reducer thread
   applies as `Input::Exiting` with whether a new instance is replacing
-  this one, which plays no sound); the reducer thread plays the exit sound
+  this one, which plays no sound; Core cancels speech first); the reducer
+  thread plays the exit sound
   with `play_earcon_heard`, one record to the mixer that never waits, and
   hands its `EarconHeard` back, on which the main thread waits until it
   has been heard, for at most two seconds; and

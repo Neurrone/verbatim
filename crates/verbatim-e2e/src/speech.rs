@@ -1702,6 +1702,47 @@ impl SpeechCollector {
         }
     }
 
+    /// Once Verbatim has exited by itself, at a step that makes it exit:
+    /// takes every frame up to the speech connection's end, waiting at
+    /// most the step timeout, and asserts that the last utterance is
+    /// exactly `last`. The utterances before it, said between the step's
+    /// input and the exit, are taken unasserted: which come depends on when
+    /// the exit overtakes the application's events (`docs/testing.md`,
+    /// "Exact assertions").
+    ///
+    /// # Panics
+    ///
+    /// Panics if the connection does not end in time, or the last
+    /// utterance is not `last`.
+    pub fn expect_last_at_the_end(&mut self, last: &str) {
+        self.refuse_in_compare_mode("expect_last_at_the_end");
+        let deadline = Instant::now() + self.step_timeout;
+        loop {
+            let wait = deadline.saturating_duration_since(Instant::now());
+            match self.frames.recv_timeout(wait) {
+                Ok(Ok(frame)) => {
+                    let _ = self.take(Ok(frame));
+                }
+                Ok(Err(_)) | Err(RecvTimeoutError::Disconnected) => break,
+                Err(RecvTimeoutError::Timeout) => self.fail(&format!(
+                    "the speech connection did not end within {:?} after Verbatim exited",
+                    self.step_timeout
+                )),
+            }
+        }
+        self.ended = true;
+        let taken: Vec<Utterance> = self.pending.drain(..).collect();
+        if taken.last().is_none_or(|utterance| utterance.text != last) {
+            let texts: Vec<&str> = taken
+                .iter()
+                .map(|utterance| utterance.text.as_str())
+                .collect();
+            self.fail(&format!(
+                "expected {last:?} to be the last thing said before Verbatim exited; after the step came {texts:?}"
+            ));
+        }
+    }
+
     /// One row per utterance heard so far that carries the time of the
     /// event behind it, in the order they were queued: the latency report
     /// a run's artifacts keep. An utterance's time to audio includes any

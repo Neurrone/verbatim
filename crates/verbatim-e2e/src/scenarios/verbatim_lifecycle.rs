@@ -4,9 +4,12 @@
 //! Windows' screen reader flag is set. A second Verbatim started then
 //! replaces the first: the first exits with code 0, having shut its
 //! outposts and listener down cleanly and said nothing more, and the
-//! second announces as a start does, with the flag still set. Once the
-//! run has quit the second, which must exit with code 0
-//! ([`Scenario::quit_verbatim`]), the flag is cleared. The flag is read
+//! second announces as a start does, with the flag still set. The second
+//! is then exited through its menu, Verbatim+V and Exit: as NVDA exits,
+//! speech is cancelled and the exit sound is the last thing played, and
+//! Verbatim exits with code 0 ([`Scenario::send_keys_exiting`]); whether
+//! the desktop's focus is spoken before it is not asserted (Dickson,
+//! 2026-11-03). Once it has exited, the flag is cleared. The flag is read
 //! through the agent, independently of Verbatim.
 
 use crate::registry::{ScenarioState, startup_speech};
@@ -33,9 +36,19 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
             .expect("reads the screen reader flag"),
         "Windows' screen reader flag is set once the second Verbatim has started"
     );
+
+    super::open_verbatim_menu(scenario);
+    for heard in ["Settings... s", "Exit x"] {
+        scenario.send_keys(&["downarrow"]).expect("sends downarrow");
+        scenario.speech().expect(&[heard]);
+    }
+    scenario
+        .send_keys_exiting(&["enter"], "sound: exit")
+        .expect("Verbatim exits through its menu");
 }
 
-/// Runs once the run has quit Verbatim: its exit cleared the flag.
+/// Runs once Verbatim has exited through its menu: its exit cleared the
+/// flag.
 pub(crate) fn teardown(scenario: &mut Scenario, _state: ScenarioState) {
     assert!(
         !scenario

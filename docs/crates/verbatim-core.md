@@ -609,8 +609,11 @@ text carries no language.
 
 Only the reducer speaks (`docs/architecture.md`, section 2), so what the
 shell's threads learn comes in as inputs (`shell.rs`): `Input::Started`,
-`Exiting` (unless a new instance replaces this one), `ErrorLogged` and
-`ApplicationNotResponding` play their sounds; `LockKeyToggled`
+`ErrorLogged` and `ApplicationNotResponding` play their sounds;
+`Exiting` cancels speech, then plays the exit sound, unless a new
+instance replaces this one, and sets `SrState::exiting`, after which
+`reduce` does nothing for any input, so nothing is said after the exit
+sound, as in NVDA (`docs/parity/system.md`, "Exiting"); `LockKeyToggled`
 (`Phrase::LockKeyState`), `ClockRead` (time, then the date on a quick
 second press), `ClipboardCopied` (`Phrase::CopiedToClipboard` or
 `Message::UnableToCopy`) and `PreviewSpeech` speak, interrupting;

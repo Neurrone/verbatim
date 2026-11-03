@@ -2448,11 +2448,15 @@ fn run(def: &ScenarioDef) {
     // with a modifier down.
     problems.extend(scenario.release_held_keys());
 
-    if let Err(error) = scenario.collect_focus(&dir) {
-        problems.push(format!("could not save Core's focus: {error}"));
-    }
-    if let Err(error) = scenario.collect_flight_recorder(&dir) {
-        problems.push(format!("could not save the flight recorder: {error}"));
+    // A Verbatim that exited by itself, as a step of the body made it, has
+    // no focus or flight recorder left to dump.
+    if !scenario.exited() {
+        if let Err(error) = scenario.collect_focus(&dir) {
+            problems.push(format!("could not save Core's focus: {error}"));
+        }
+        if let Err(error) = scenario.collect_flight_recorder(&dir) {
+            problems.push(format!("could not save the flight recorder: {error}"));
+        }
     }
     match scenario.unexpected_exits() {
         Ok(exits) => problems.extend(exits.into_iter().map(|exit| {
