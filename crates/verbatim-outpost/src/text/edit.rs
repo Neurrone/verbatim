@@ -256,6 +256,10 @@ impl TextSource for EditText {
         self.length()
     }
 
+    fn measure(&mut self, at: &u32) -> TextResult<Option<(u32, u32)>> {
+        Ok(Some((*at, self.length()?)))
+    }
+
     fn unit_at(
         &mut self,
         at: &u32,

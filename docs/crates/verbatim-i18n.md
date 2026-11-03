@@ -26,7 +26,7 @@ Public API:
   digit grouping to an ordinal position.
 - `message_text(message)` and `phrase_text(phrase)` — the wording of the
   reader's fixed messages and of its messages with values ("selected
-  hello", "Positioned at 10, 20", "speak typed characters only in edit
+  hello", "Positioned at 10, 20", "93%, at 608, 516", "speak typed characters only in edit
   controls"), NVDA's English wording; `typing_echo_name(mode)` names a
   typing echo choice.
 - Themes (milestone M4): `indication_name(indication)` and

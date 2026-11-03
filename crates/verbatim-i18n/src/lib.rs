@@ -754,6 +754,23 @@ pub fn phrase_text(phrase: &verbatim_model::Phrase) -> String {
             x = x.to_string(),
             y = y.to_string()
         ),
+        Phrase::OffsetPositioned {
+            offset,
+            length,
+            point,
+        } => {
+            let percent = offset_percent(*offset, *length);
+            match point {
+                Some((x, y)) => i18n_embed_fl::fl!(
+                    loader,
+                    "phrase-offset-percent-at",
+                    percent = percent,
+                    x = x.to_string(),
+                    y = y.to_string()
+                ),
+                None => i18n_embed_fl::fl!(loader, "phrase-offset-percent", percent = percent),
+            }
+        }
         Phrase::SpeakTypedCharacters(mode) => i18n_embed_fl::fl!(
             loader,
             "phrase-speak-typed-characters",
@@ -808,6 +825,16 @@ pub fn phrase_text(phrase: &verbatim_model::Phrase) -> String {
         // nothing rather than crashing the pipeline.
         _ => String::new(),
     }
+}
+
+/// How far through a text of `length` units `offset` is, as a whole
+/// percentage: computed in floating point and rounded half to even, as
+/// NVDA words the place, and an empty text taken as one unit long
+/// (`docs/parity/review.md`, "Review cursor line/word/character over
+/// object text").
+fn offset_percent(offset: u32, length: u32) -> String {
+    let percent = f64::from(offset) / f64::from(length.max(1)) * 100.0;
+    format!("{percent:.0}")
 }
 
 /// The spoken form of text named in a selection announcement: the text, a
@@ -1799,6 +1826,14 @@ mod tests {
         );
         assert_eq!(message_text(Message::UnableToCopy), "Unable to copy");
         assert_eq!(
+            message_text(Message::CaretMovesReview),
+            "caret moves review cursor on"
+        );
+        assert_eq!(
+            message_text(Message::CaretDoesNotMoveReview),
+            "caret moves review cursor off"
+        );
+        assert_eq!(
             phrase_text(&Phrase::ShellItemGone("Clock".to_owned())),
             "Clock is no longer there"
         );
@@ -1942,6 +1977,31 @@ mod tests {
         assert_eq!(
             phrase_text(&Phrase::Positioned { x: 10, y: 20 }),
             "Positioned at 10, 20"
+        );
+        assert_eq!(
+            phrase_text(&Phrase::OffsetPositioned {
+                offset: 42,
+                length: 45,
+                point: Some((608, 516)),
+            }),
+            "93%, at 608, 516"
+        );
+        // A half rounds to even, and an empty text is taken as one unit.
+        assert_eq!(
+            phrase_text(&Phrase::OffsetPositioned {
+                offset: 1,
+                length: 8,
+                point: None,
+            }),
+            "12%"
+        );
+        assert_eq!(
+            phrase_text(&Phrase::OffsetPositioned {
+                offset: 0,
+                length: 0,
+                point: None,
+            }),
+            "0%"
         );
         assert_eq!(
             phrase_text(&Phrase::SpeakTypedCharacters(TypingEcho::EditControls)),

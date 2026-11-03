@@ -2667,6 +2667,35 @@ fn caret_location_asks_for_the_carets_place_and_says_it() {
     );
 }
 
+/// In text measured by character offsets the caret's location is said as
+/// how far through the text it is, then its place on the screen.
+#[test]
+fn an_offset_measured_location_says_the_percentage_and_the_place() {
+    let mut state = editing("abc\n", 1);
+    let effects = reduce(&mut state, &command(ReviewCommand::ReportCaretLocation, 0));
+    let asked = only_request(&effects);
+    assert_eq!(asked.op, TextOp::Location(TextPoint::Caret));
+    let reply = TextReply::OffsetLocation {
+        offset: 1,
+        length: 4,
+        point: Some((108, 200)),
+    };
+    let effects = reduce(&mut state, &completed(asked.query_id, reply));
+    assert_eq!(
+        effects,
+        said(
+            4,
+            vec![UtteranceSegment::new(SegmentContent::Phrase(
+                Phrase::OffsetPositioned {
+                    offset: 1,
+                    length: 4,
+                    point: Some((108, 200)),
+                }
+            ))]
+        )
+    );
+}
+
 /// The review cursor's location is asked at the review cursor, not the
 /// caret, and said the same way.
 #[test]

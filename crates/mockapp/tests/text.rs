@@ -1740,8 +1740,8 @@ fn page_movement_answers_from_the_providers_pages() {
 /// draws 8 pixels wide and 16 high from (100, 200), so "beta", from the
 /// first line's seventh character, is at (148, 200), where a location
 /// taken from the whole line would be at (100, 200); over an edit control,
-/// the character's place as `EM_POSFROMCHAR` gives it in the control, on
-/// the screen.
+/// the character's offset, the text's length, and its place as
+/// `EM_POSFROMCHAR` gives it in the control, on the screen.
 fn a_location_is_answered_from_where_the_provider_places_the_text() {
     use windows::Win32::Foundation::POINT;
     use windows::Win32::Graphics::Gdi::ClientToScreen;
@@ -1815,9 +1815,10 @@ fn a_location_is_answered_from_where_the_provider_places_the_text() {
             &mut anchors,
             &TextOp::Location(TextPoint::At(point_of(&second)))
         ),
-        TextReply::Location {
-            x: expected.x,
-            y: expected.y
+        TextReply::OffsetLocation {
+            offset: 12,
+            length: 19,
+            point: Some((expected.x, expected.y)),
         }
     );
     app.quit();

@@ -681,6 +681,27 @@ pub(crate) fn reply(
                 Phrase::Positioned { x, y },
             ))],
         )],
+        // Text measured by character offsets says how far through the text
+        // the place is, then where it is on the screen
+        // (`docs/parity/review.md`, "Review cursor line/word/character over
+        // object text").
+        (
+            TextFollowUp::Location,
+            TextReply::OffsetLocation {
+                offset,
+                length,
+                point,
+            },
+        ) => vec![speak(
+            trace_id,
+            vec![UtteranceSegment::new(SegmentContent::Phrase(
+                Phrase::OffsetPositioned {
+                    offset,
+                    length,
+                    point,
+                },
+            ))],
+        )],
         // A copy clears the start marker it copied from whatever it found,
         // so a further press has none, but keeps a marker set while the
         // read was in flight; a range with nothing in it copies nothing and

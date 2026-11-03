@@ -621,7 +621,9 @@ pub enum TextOp {
     /// answered [`TextReply::Done`] or [`TextReply::Unsupported`].
     MoveCaret(TextPoint),
     /// The screen position of a point: answered [`TextReply::Location`], or
-    /// [`TextReply::Unsupported`] when the provider cannot tell.
+    /// [`TextReply::Unsupported`] when the provider cannot tell; in text
+    /// measured by character offsets, answered
+    /// [`TextReply::OffsetLocation`].
     Location(TextPoint),
     /// Read several units ahead (say-all): answered [`TextReply::Chunks`],
     /// or as [`TextOp::Read`] is when the first unit cannot be read.
@@ -793,6 +795,18 @@ pub enum TextReply {
         x: i32,
         /// Screen y.
         y: i32,
+    },
+    /// The answer to [`TextOp::Location`] in text measured by character
+    /// offsets (a Win32 edit control): the point's offset and the text's
+    /// length, in the text's own units, and its screen coordinates when
+    /// the provider can tell them.
+    OffsetLocation {
+        /// The point's offset from the text's start.
+        offset: u32,
+        /// The text's length.
+        length: u32,
+        /// Screen x and y, in pixels.
+        point: Option<(i32, i32)>,
     },
     /// The provider has no such unit (UIA has no sentence; a plain edit
     /// control has no page). Core falls back to a unit it has.

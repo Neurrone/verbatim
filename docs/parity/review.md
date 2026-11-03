@@ -32,8 +32,11 @@ Automation counts it both a control and content.
 NVDA coupling
 rules ([Review modes](../nvda/review-modes.md)). Verbatim: **partial**.
 The follow-focus default is matched, unverified. Following the caret
-("caret moves review cursor", on by default, toggled by Verbatim+6 with
-NVDA's messages) is implemented in Core, unverified; `followMouse` is
+(on by default) is implemented in Core, and its toggle, Verbatim+6, says
+NVDA's "caret moves review cursor off" and "caret moves review cursor
+on", **matched (verified)** against an NVDA capture in the Windows Forms
+text box (2026-11-03) and pinned by `text_box_review_cursor` and
+`notepad_review_cursor`; `followMouse` is
 not yet built (unscheduled). NVDA's "review cursor follows focus"
 setting (on by default) has no counterpart yet: Verbatim always follows
 the focus, and the setting is part of the settings package (M4.3).
@@ -62,8 +65,7 @@ focus"). Verbatim: **matched (verified)** on Verbatim+Tab,
 checked live in Windows 11 Notepad against an NVDA transcript: both say
 "Text editor document focused" and the line at the caret,
 NVDA in one utterance and Verbatim in two, the line as its own, as for
-any focus with text (the Notepad scenarios, when a Notepad window was
-already open). One
+any focus with text (pinned by `notepad_editing`). One
 difference with no counterpart in NVDA: while the outpost that reported
 the focus has ended and its replacement has not yet reported the focus
 again, Verbatim says "No focus", as its node ids name nothing then.
@@ -188,9 +190,17 @@ grapheme clusters and words follow the text's language
 (`verbatim-text`); previous and next word cross lines; start and end of
 line speak the character there; the page commands (Verbatim+Page Up and
 Page Down), the selection's start and end (Verbatim+Alt+Home and End),
-and the review cursor's and caret's locations ("Positioned at x, y") are
-NVDA's commands too, and at a page edge both say "Top" or "Bottom" and
-leave the review cursor where it was. Four of their answers are
+and the review cursor's and caret's locations are NVDA's commands too,
+and at a page edge both say "Top" or "Bottom" and leave the review cursor
+where it was. A location in text measured by character offsets (a Win32
+edit control) is said as NVDA says it, the place's offset as a whole
+percentage of the text's length (rounded half to even, an empty text
+taken as one character long), then the place on the screen:
+"93%, at 608, 516", or "93%" alone when the control gives no place;
+other text (UI Automation's) says "Positioned at x, y". **Matched
+(verified)** against an NVDA capture in the Windows Forms text box
+(2026-11-03) and pinned by `text_box_review_cursor` and
+`notepad_review_cursor`. Four of their answers are
 different, pending a live capture and Dickson's decision: a page move
 reads the line it lands on, where NVDA reads the whole page; where the
 text cannot move by page Verbatim says "Not supported in this document",
@@ -210,6 +220,27 @@ line's start, where NVDA's current-line command leaves the review
 position where it is, so a following character or word command starts
 from a different place; it is fixed with the review cursor on objects
 that no longer exist ([the roadmap](../roadmap.md), M4.2).
+
+### Review bottom on a final empty line
+
+NVDA's last position in text measured by character offsets is the
+text's last character, so in a Windows Forms text box whose text ends in
+a line break, review bottom reads the last line with text and the
+previous line then reads the line above it; in UI Automation text, such
+as Notepad's, its last position is the end, and bottom reads the empty
+line after the final break. Verbatim: **different** (Dickson,
+2026-11-03): bottom reads the text's last line in both, even when it is
+empty ("blank"), because NVDA's handling of a final empty line is taken
+to be a defect. Pinned by `text_box_review_words`.
+
+### Previous word across a line break
+
+In text measured by character offsets, NVDA's previous word from a
+line's first word stops on the line break before it, saying "line feed"
+and then "carriage return", before the previous line's last word.
+Verbatim: **different** (Dickson, 2026-11-03): previous word goes
+straight to the previous line's last word, as it does in UI Automation
+text. Pinned by `text_box_review_words`.
 
 ### Review cursor columns
 

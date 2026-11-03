@@ -229,8 +229,8 @@ message-no-start-marker = No start marker set
 message-no-status-bar-information = no status bar information
 message-no-status-line-found = No status line found
 message-press-twice-to-copy = Press twice to copy or reset the start marker
-message-caret-moves-review = caret moves review cursor
-message-caret-does-not-move-review = caret doesn't move review cursor
+message-caret-moves-review = caret moves review cursor on
+message-caret-does-not-move-review = caret moves review cursor off
 message-not-supported = Not supported in this document
 message-cannot-select = Can't select text, press twice to copy
 message-no-caret = No caret
@@ -248,6 +248,10 @@ phrase-preselected = selected { $text }
 # Used only for 512 characters or more, so always plural.
 phrase-characters = { $count } characters
 phrase-positioned = Positioned at { $x }, { $y }
+# A place in text measured by character offsets, as a percentage of the
+# text's length, with and without its place on the screen.
+phrase-offset-percent = { $percent }%
+phrase-offset-percent-at = { $percent }%, at { $x }, { $y }
 phrase-speak-typed-characters = speak typed characters { $mode }
 phrase-speak-typed-words = speak typed words { $mode }
 phrase-skipped-line = skipped { $count } line

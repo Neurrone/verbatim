@@ -839,7 +839,10 @@ a marker set while it is in flight is kept.
 Toggles and locations: Verbatim+6 toggles the review cursor following the
 caret; Verbatim+2 and Verbatim+3 cycle character and word echo; each emits
 `Effect::SettingsChanged`. The caret's and the review cursor's locations
-are asked of the outpost and spoken "Positioned at x, y".
+are asked of the outpost and spoken "Positioned at x, y", or, in text
+measured by character offsets, as the offset's percentage of the text's
+length and the place, "93%, at x, y" (`Phrase::OffsetPositioned`, worded
+by `verbatim-i18n`).
 
 ### Say-all
 

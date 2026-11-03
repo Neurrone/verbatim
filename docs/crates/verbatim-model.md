@@ -492,7 +492,9 @@ supersedes an older one, whose answer Core drops. The operations
 - `MoveCaret(point)`: answered `Done` or `Unsupported`; Core does not wait
   for it.
 - `Location(point)`: answered `Location { x, y }` in pixels, or
-  `Unsupported`.
+  `Unsupported`; in text measured by character offsets (a Win32 edit
+  control), `OffsetLocation { offset, length, point }`, the point's offset,
+  the text's length and its place in pixels when the control gives one.
 - `TerminalHold`, `TerminalRead { hold }`, `TerminalCancel`: a focused
   terminal's on-demand reading (`docs/parity/terminals.md`, "Reading a
   terminal on demand"). Hold: only note changes (`Done`). Read: what the

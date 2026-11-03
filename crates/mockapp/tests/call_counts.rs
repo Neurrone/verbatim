@@ -4673,6 +4673,30 @@ fn caret_moves_cost_exactly() {
     // `EM_GETSEL`, `EM_SETSEL` and `EM_SCROLLCARET`, `EM_GETSEL` again,
     // and the change's text (`WM_GETTEXTLENGTH`, `WM_GETTEXT`).
     ratchet.check_calls("Edit control review copy select", measured, calls(0, 0, 6));
+
+    // The caret's location, from a request of its own: `EM_GETSEL`, the
+    // text's length (`WM_GETTEXTLENGTH`) for the percentage, and
+    // `EM_POSFROMCHAR`; `tests/text.rs` pins the place itself.
+    let mut source = EditText::new(edit.0 as isize, 0);
+    let _ = verbatim_ia2::calls::take();
+    let reply = perform(
+        &mut source,
+        &mut anchors,
+        &TextOp::Location(TextPoint::Caret),
+    );
+    let measured = verbatim_ia2::calls::take();
+    assert!(
+        matches!(
+            reply,
+            TextReply::OffsetLocation {
+                offset: 0,
+                length: 19,
+                point: Some(_),
+            }
+        ),
+        "{reply:?}"
+    );
+    ratchet.check_calls("Edit control caret location", measured, calls(0, 0, 3));
     app.quit();
 
     ratchet.finish();

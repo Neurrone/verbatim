@@ -59,9 +59,18 @@ pub(crate) fn document() -> Document {
 /// document's four.
 const PASTED_LINE: u32 = 4;
 
-/// What Verbatim says of a place on the screen at `x`, `y`.
+/// What Verbatim says of a place on the screen at `x`, `y` in text not
+/// measured by character offsets (Notepad's UIA text).
 fn positioned(x: i32, y: i32) -> String {
     format!("Positioned at {x}, {y}")
+}
+
+/// What Verbatim says of a place `percent` of the way through text
+/// measured by character offsets (the text box's), on the screen at `x`,
+/// `y`, as NVDA does (`docs/parity/review.md`, "Review cursor
+/// line/word/character over object text").
+fn offset_positioned(percent: u32, x: i32, y: i32) -> String {
+    format!("{percent}%, at {x}, {y}")
 }
 
 /// Sends the review gesture `gesture` and asserts exactly `heard`.
@@ -210,9 +219,8 @@ pub(crate) fn text_box_body(scenario: &mut Scenario, _state: &mut ScenarioState)
     // the text box, and back at the focus selects from it through the
     // review cursor, both on the line's first character.
     review(scenario, "kb:verbatim+f9", "Start marked");
-    // The parent is the text box's own window, which NVDA's simple review
-    // skips for the form's window.
-    review_full_tree(scenario, "kb:verbatim+numpad8", "Text window");
+    // The parent is the text box's own window, as in NVDA.
+    review(scenario, "kb:verbatim+numpad8", "Text window");
     review(scenario, "kb:verbatim+f10", "No start marker set");
     scenario
         .send_gesture("kb:verbatim+numpadminus")
@@ -234,10 +242,17 @@ pub(crate) fn text_box_body(scenario: &mut Scenario, _state: &mut ScenarioState)
     // The caret's place on the screen, on the pasted line's second
     // character, then the review cursor moved to the start marker, on its
     // first, and its place: each read first from the edit control itself.
+    // The text is the document's 41 characters and the pasted "Name", 45
+    // in all, so the caret, at offset 42, is 93% through it, and the start
+    // marker, at offset 41, 91%.
     let (x, y) = scenario
         .edit_character_position(PASTED_LINE, 1)
         .expect("reads the caret's character's place");
-    review(scenario, "kb:verbatim+numpaddelete", &positioned(x, y));
+    review(
+        scenario,
+        "kb:verbatim+numpaddelete",
+        &offset_positioned(93, x, y),
+    );
     review(scenario, "kb:verbatim+shift+f9", "N");
     let (x, y) = scenario
         .edit_character_position(PASTED_LINE, 0)
@@ -245,7 +260,7 @@ pub(crate) fn text_box_body(scenario: &mut Scenario, _state: &mut ScenarioState)
     review(
         scenario,
         "kb:verbatim+shift+numpaddelete",
-        &positioned(x, y),
+        &offset_positioned(91, x, y),
     );
     // The rest of the line selected, and the review cursor moved to the
     // selection's first and last characters; following the caret turned
@@ -255,15 +270,11 @@ pub(crate) fn text_box_body(scenario: &mut Scenario, _state: &mut ScenarioState)
     scenario.speech().expect(&["ame selected"]);
     review(scenario, "kb:verbatim+alt+home", "a");
     review(scenario, "kb:verbatim+alt+end", "e");
-    review(
-        scenario,
-        "kb:verbatim+6",
-        "caret doesn't move review cursor",
-    );
+    review(scenario, "kb:verbatim+6", "caret moves review cursor off");
     scenario.send_keys(&["home"]).expect("sends home");
     scenario.speech().expect(&["N", "ame unselected"]);
     review(scenario, "kb:numpad2", "e");
-    review(scenario, "kb:verbatim+6", "caret moves review cursor");
+    review(scenario, "kb:verbatim+6", "caret moves review cursor on");
 }
 
 /// The scenario in Windows 11 Notepad.
@@ -413,15 +424,11 @@ pub(crate) fn notepad_body(scenario: &mut Scenario, _state: &mut ScenarioState) 
     scenario.speech().expect(&["ame selected"]);
     review(scenario, "kb:verbatim+alt+home", "a");
     review(scenario, "kb:verbatim+alt+end", "e");
-    review(
-        scenario,
-        "kb:verbatim+6",
-        "caret doesn't move review cursor",
-    );
+    review(scenario, "kb:verbatim+6", "caret moves review cursor off");
     scenario.send_keys(&["home"]).expect("sends home");
     scenario.speech().expect(&["N", "ame unselected"]);
     review(scenario, "kb:numpad2", "e");
-    review(scenario, "kb:verbatim+6", "caret moves review cursor");
+    review(scenario, "kb:verbatim+6", "caret moves review cursor on");
     scenario
         .save_document(NAME, WINDOW_TIMEOUT)
         .expect("saves the document");

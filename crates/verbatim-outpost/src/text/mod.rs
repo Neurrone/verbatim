@@ -396,6 +396,16 @@ pub trait TextSource {
     /// As [`caret`](Self::caret).
     fn end(&mut self) -> TextResult<Self::Pos>;
 
+    /// `at`'s offset and the text's length, for a source that measures its
+    /// text by character offsets; `None` for one that does not.
+    ///
+    /// # Errors
+    ///
+    /// As [`caret`](Self::caret).
+    fn measure(&mut self, _at: &Self::Pos) -> TextResult<Option<(u32, u32)>> {
+        Ok(None)
+    }
+
     /// The `unit` containing `at`, its text read up to `max_units` code
     /// units; `None` when the source has no such unit. At the end of the
     /// text, the last unit.
@@ -2992,9 +3002,20 @@ fn location<S: TextSource>(
         Ok(at) => at,
         Err(reply) => return Ok(reply),
     };
-    Ok(match source.location(&at)? {
-        Some((x, y)) => TextReply::Location { x, y },
-        None => TextReply::Unsupported,
+    let measured = source.measure(&at)?;
+    let point = source.location(&at)?;
+    Ok(match (measured, point) {
+        // Text measured by offsets says how far through it the point is,
+        // with or without its place on the screen
+        // (`docs/parity/review.md`, "Review cursor line/word/character
+        // over object text").
+        (Some((offset, length)), point) => TextReply::OffsetLocation {
+            offset,
+            length,
+            point,
+        },
+        (None, Some((x, y))) => TextReply::Location { x, y },
+        (None, None) => TextReply::Unsupported,
     })
 }
 

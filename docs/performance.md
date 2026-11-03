@@ -1546,6 +1546,18 @@ Report caret location.
 - Minimum and today: 1 UIA call, met; classically 5 (the caret's two
   reads, a copy expanded to the character, its bounding rectangles).
 
+### The caret's location, Win32 edit control
+
+Report caret location, said as the caret's percentage of the text's
+length and its place, as NVDA says it.
+
+- Minimum and today: 3 window messages, met: `EM_GETSEL`, the text's
+  length (`WM_GETTEXTLENGTH`, or `EM_GETTEXTLENGTHEX` from rich edit 2.0)
+  for the percentage, and `EM_POSFROMCHAR` (`caret_moves_cost_exactly`,
+  "Edit control caret location"). The length is the one message the
+  percentage adds; it is made only for the command, never on the event
+  path.
+
 ### The selected text, UIA
 
 The selected text read for a copy, or with a focus's or the navigator's

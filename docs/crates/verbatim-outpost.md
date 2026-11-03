@@ -696,7 +696,9 @@ and the inherited pipe handles.
   `known_support` say whether caret reads try a remote operation, which
   formatting they read, and the `TextSupport` known before and after), or
   `edit::EditText` over an edit control's messages (offsets; a word is the
-  line segmented by `verbatim-text`'s rules, as NVDA finds it).
+  line segmented by `verbatim-text`'s rules, as NVDA finds it; it answers
+  `TextSource::measure`, a point's offset and the text's length, so a
+  location there is answered `OffsetLocation`).
   `caret_report`, `caret_report_since` (with `LastSelection` and
   `ReportedCaret`), and `caret_report_checking` read the caret for
   `CaretMoved`. `Anchors` keeps a backend's anchors by node for a reader

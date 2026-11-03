@@ -1476,6 +1476,7 @@ impl Named {
             | TextReply::TerminalHistory { .. }
             | TextReply::TerminalFound { .. }
             | TextReply::Location { .. }
+            | TextReply::OffsetLocation { .. }
             | TextReply::UnsupportedUnit(_)
             | TextReply::Unsupported
             | TextReply::NoText

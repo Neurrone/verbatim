@@ -230,6 +230,17 @@ pub enum Phrase {
         /// Screen y, in pixels.
         y: i32,
     },
+    /// A place in text measured by character offsets: NVDA's "93%, at
+    /// 608, 516", the offset as a percentage of the text's length, then
+    /// the screen position when there is one.
+    OffsetPositioned {
+        /// The place's offset from the text's start.
+        offset: u32,
+        /// The text's length.
+        length: u32,
+        /// Screen x and y, in pixels.
+        point: Option<(i32, i32)>,
+    },
     /// The "Speak typed characters" setting's new value, after its toggle.
     SpeakTypedCharacters(crate::TypingEcho),
     /// The "Speak typed words" setting's new value, after its toggle.
@@ -318,10 +329,10 @@ pub enum Message {
     /// marker".
     PressTwiceToCopy,
     /// The review cursor now follows the caret — NVDA's "caret moves review
-    /// cursor".
+    /// cursor on".
     CaretMovesReview,
-    /// The review cursor no longer follows the caret — NVDA's "caret
-    /// doesn't move review cursor".
+    /// The review cursor no longer follows the caret — NVDA's "caret moves
+    /// review cursor off".
     CaretDoesNotMoveReview,
     /// The text cannot do what was asked (no page unit, no selection, no
     /// screen position) — NVDA's "Not supported in this document".

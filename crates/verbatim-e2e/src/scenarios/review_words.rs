@@ -137,12 +137,25 @@ pub(crate) fn text_box_body(scenario: &mut Scenario, _state: &mut ScenarioState)
     );
 
     // Back a word from the row's first word crosses to the header row's
-    // last word, and on to the one before; the bottom is the empty line
-    // after the text's last line break, and the line above it is the
-    // table's last row.
-    review(scenario, "kb:numpad4", "Price");
+    // last word, where NVDA stops on the line break first, and on to the
+    // one before; the bottom is the empty line after the text's last line
+    // break, where NVDA reads the table's last row, and the line above it
+    // is the table's last row. Both are deliberate differences
+    // (`docs/parity/review.md`).
+    scenario
+        .send_gesture("kb:numpad4")
+        .expect("sends the gesture");
+    scenario.deviates_from_nvda("docs/parity/review.md", "Previous word across a line break");
+    scenario.speech().expect(&["Price"]);
     review(scenario, "kb:numpad4", "Color");
-    review(scenario, "kb:shift+numpad9", "blank");
+    scenario
+        .send_gesture("kb:shift+numpad9")
+        .expect("sends the gesture");
+    scenario.deviates_from_nvda(
+        "docs/parity/review.md",
+        "Review bottom on a final empty line",
+    );
+    scenario.speech().expect(&["blank"]);
     review(scenario, "kb:numpad7", ROWS[3].0);
 }
 
