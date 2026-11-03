@@ -11,14 +11,13 @@
 //! writes what it heard to its standard output. The other tests run here,
 //! one after another, since a process has one driver at a time.
 //!
-//! The binary has its own small runner (`harness = false` in
-//! `Cargo.toml`), which prints libtest's lines, runs the tests whose names
-//! contain the first argument that is not an option, and exits with
-//! libtest's code when one fails.
+//! The binary has its own `main` (`harness = false` in `Cargo.toml`), which
+//! runs its tests with libtest's command line through `libtest-mimic`, one
+//! after another on the main thread, so cargo-nextest can list them and run
+//! each in a process of its own.
 
 use std::io::{Read, Write};
 use std::ops::ControlFlow;
-use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::process::{Command, Stdio};
 
 use verbatim_audio::PcmFormat;
@@ -473,7 +472,6 @@ fn main() {
         record.write(&mut std::io::stdout().lock());
         return;
     }
-    let filter = args.iter().find(|arg| !arg.starts_with('-'));
     let tests: [(&str, fn()); 9] = [
         (
             "a_process_has_one_driver_which_places_marks_and_changes_pitch",
@@ -512,30 +510,17 @@ fn main() {
             a_mark_after_a_full_stop_is_reported_where_the_next_sentence_starts,
         ),
     ];
-    let selected: Vec<_> = tests
-        .iter()
-        .filter(|(name, _)| filter.is_none_or(|filter| name.contains(filter.as_str())))
+    let mut arguments = libtest_mimic::Arguments::from_args();
+    // A process has one driver at a time.
+    arguments.test_threads = Some(1);
+    let trials = tests
+        .into_iter()
+        .map(|(name, test)| {
+            libtest_mimic::Trial::test(name, move || {
+                test();
+                Ok(())
+            })
+        })
         .collect();
-    println!("\nrunning {} tests", selected.len());
-    let mut failed = Vec::new();
-    for &&(name, test) in &selected {
-        let passed = catch_unwind(AssertUnwindSafe(test)).is_ok();
-        println!("test {name} ... {}", if passed { "ok" } else { "FAILED" });
-        if !passed {
-            failed.push(name);
-        }
-    }
-    println!(
-        "\ntest result: {}. {} passed; {} failed; 0 ignored; 0 measured; {} filtered out\n",
-        if failed.is_empty() { "ok" } else { "FAILED" },
-        selected.len() - failed.len(),
-        failed.len(),
-        tests.len() - selected.len()
-    );
-    if !failed.is_empty() {
-        for name in failed {
-            println!("failed: {name}");
-        }
-        std::process::exit(101);
-    }
+    libtest_mimic::run(&arguments, trials).exit()
 }

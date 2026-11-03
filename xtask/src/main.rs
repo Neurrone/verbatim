@@ -454,12 +454,28 @@ fn args(list: &[&str]) -> Vec<String> {
     list.iter().map(|arg| (*arg).to_owned()).collect()
 }
 
+/// The tests that must not run beside any other, as a cargo-nextest filter
+/// (`docs/tooling/setup.md`, "What cargo xtask ci runs"): `ci` runs them
+/// after the rest, one at a time.
+///
+/// - `verbatim-synth-host`'s `hosting` and `protocol`, which activate the
+///   real Windows speech platform and time its answers.
+/// - `verbatim-audio`'s `mixer`, whose real audio thread missed a playback
+///   event under load (`docs/flaky-tests.md`, "The mixer's allocation test
+///   under load").
+/// - The unit tests of `verbatim-agent`, `verbatim-ia2`,
+///   `verbatim-listener` and `verbatim-win32`, which make windows of their
+///   own on the desktop the run was started from, which may be in use.
+const SERIAL_TESTS: &str = "binary_id(verbatim-synth-host::hosting)     | binary_id(verbatim-synth-host::protocol)     | binary_id(verbatim-audio::mixer)     | binary_id(verbatim-agent) | binary_id(verbatim-ia2)     | binary_id(verbatim-listener) | binary_id(verbatim-win32)";
+
 /// `ci`'s cargo steps on Windows: the workspace-hack checks, rustfmt, and
 /// clippy and unit tests for the whole workspace. The workspace-hack crate
 /// must match what cargo-hakari would generate, and every package must
 /// depend on it, or commands that select different packages build
 /// dependencies apart again (`docs/tooling/setup.md`, "The workspace-hack
-/// crate").
+/// crate"). The unit tests run under cargo-nextest, many at once, but for
+/// [`SERIAL_TESTS`], which run after them one at a time, and then the
+/// doctests, which nextest does not run.
 fn windows_steps() -> Vec<Step> {
     vec![
         ("workspace-hack", args(&["hakari", "generate", "--diff"])),
@@ -479,7 +495,29 @@ fn windows_steps() -> Vec<Step> {
                 "warnings",
             ]),
         ),
-        ("unit tests", args(&["test", "--workspace"])),
+        (
+            "unit tests",
+            args(&[
+                "nextest",
+                "run",
+                "--workspace",
+                "-E",
+                &format!("not ({SERIAL_TESTS})"),
+            ]),
+        ),
+        (
+            "unit tests that run alone",
+            args(&[
+                "nextest",
+                "run",
+                "--workspace",
+                "--test-threads",
+                "1",
+                "-E",
+                SERIAL_TESTS,
+            ]),
+        ),
+        ("doctests", args(&["test", "--workspace", "--doc"])),
     ]
 }
 

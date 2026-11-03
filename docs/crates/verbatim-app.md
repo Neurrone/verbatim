@@ -97,6 +97,12 @@ the hook's cancel takes no lock. The supervisor's sink is
 
 The end-to-end harness's hooks (private `harness` module):
 
+- The idle retirement: when launched with `VERBATIM_TEST_RETIREMENT`,
+  `<idle ms>,<sweep ms>`, Verbatim retires an idle outpost after that
+  idle time, looked for at that interval, in place of two minutes and 30
+  seconds (`verbatim_supervisor::Retirement::from_test_env`, handed to
+  `Supervisor::new`); a malformed value stops its start. Only the
+  end-to-end scenario that waits for a retirement sets it.
 - Ignored processes: when launched with `VERBATIM_IGNORE_PIDS` naming
   pids, separated by commas, Verbatim holds those processes open and
   ignores them entirely (`verbatim_process::held::IgnoredProcesses`,

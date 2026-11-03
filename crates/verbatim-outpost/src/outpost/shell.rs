@@ -25,7 +25,7 @@ use std::sync::mpsc;
 
 use super::lock::{Lock, LockGuard};
 use std::thread;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use verbatim_model::TraceId;
 use verbatim_model::protocol::{EventTiming, OutpostToCore, QueryOutcome, RequestId, Responder};
@@ -98,6 +98,8 @@ pub(super) enum Posted {
     Returned,
     /// A test times the gap record's bound with a timer of its own.
     GapTimerGiven,
+    /// A test shortens the deadline for handling an entry.
+    HandlingDeadline(Duration),
     /// The gap record's bound was reached by the timer a test set.
     GapBound,
     /// The outpost is shutting down.
@@ -150,6 +152,7 @@ impl Mailbox {
                     | Posted::ForwardingEnded(_)
                     | Posted::Cancel(_)
                     | Posted::GapTimerGiven
+                    | Posted::HandlingDeadline(_)
                     | Posted::GapBound
             )
         {
@@ -687,6 +690,7 @@ impl Shell {
                 return;
             }
             Posted::GapTimerGiven => Input::GapTimerGiven,
+            Posted::HandlingDeadline(deadline) => Input::HandlingDeadline(deadline),
             Posted::GapBound => Input::GapBound,
             Posted::Close => {
                 self.closing = true;

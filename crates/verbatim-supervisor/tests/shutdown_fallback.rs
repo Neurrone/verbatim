@@ -21,7 +21,7 @@ use verbatim_model::Pid;
 use verbatim_model::protocol::ListenerToCore;
 use verbatim_process::arguments::OutpostOptions;
 use verbatim_process::message::write_message;
-use verbatim_supervisor::{Executables, OutpostMessage, ShutdownSummary, Supervisor};
+use verbatim_supervisor::{Executables, OutpostMessage, ShutdownSummary, Supervisor, Timings};
 
 /// How long the stand-in has to exit after the shutdown message: short, as
 /// it never will.
@@ -75,6 +75,7 @@ fn a_child_that_does_not_exit_in_time_is_killed_and_the_kill_is_reported() {
         OutpostOptions::default(),
         Executables::both(exe),
         LIMIT,
+        Timings::default(),
         std::sync::Arc::default(),
     )
     .expect("the supervisor starts");
@@ -103,8 +104,24 @@ fn main() {
     if args.iter().any(|arg| arg == "--listener") {
         stuck_child(&args);
     }
-    // libtest's own options, such as a name filter, are accepted and
-    // ignored: the binary holds one test.
-    a_child_that_does_not_exit_in_time_is_killed_and_the_kill_is_reported();
-    println!("test a_child_that_does_not_exit_in_time_is_killed_and_the_kill_is_reported ... ok");
+    // The tests run with libtest's command line (`libtest-mimic`), so
+    // cargo-nextest can list them and run each in a process of its own;
+    // under `cargo test` they run one after another on the main thread,
+    // since each test's children inherit this process's environment.
+    let mut arguments = libtest_mimic::Arguments::from_args();
+    arguments.test_threads = Some(1);
+    let tests: [(&str, fn()); 1] = [(
+        "a_child_that_does_not_exit_in_time_is_killed_and_the_kill_is_reported",
+        a_child_that_does_not_exit_in_time_is_killed_and_the_kill_is_reported,
+    )];
+    let trials = tests
+        .into_iter()
+        .map(|(name, test)| {
+            libtest_mimic::Trial::test(name, move || {
+                test();
+                Ok(())
+            })
+        })
+        .collect();
+    libtest_mimic::run(&arguments, trials).exit()
 }

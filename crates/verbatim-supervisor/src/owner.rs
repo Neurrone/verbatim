@@ -49,9 +49,8 @@ use super::relay::{COMPLETIONS_PER_WAIT, CommandPipes, Inbox, Mailbox, Relay, So
 use super::retire::{Ending, ShutdownSummary, retire};
 use super::writer::{Outgoing, Received, ToChild, WriterHandle, received_now};
 use super::{
-    ABANDONED_WORKER_LIMIT, BACKOFF, EndReason, EventSink, IDLE_RETIREMENT, MISSED_PONG_THRESHOLD,
-    OutpostMessage, PING_INTERVAL, ReducerStall, SPARES, SWEEP_INTERVAL, Sealed, Undelivered,
-    Writers,
+    ABANDONED_WORKER_LIMIT, EndReason, EventSink, OutpostMessage, ReducerStall, SPARES, Sealed,
+    Timings, Undelivered, Writers,
 };
 use super::{Executables, sealed};
 use verbatim_process::arguments::ListenerArguments;
@@ -160,6 +159,8 @@ pub(super) struct Setup {
     pub(super) executables: Executables,
     pub(super) options: verbatim_process::arguments::OutpostOptions,
     pub(super) shutdown_limit: Duration,
+    /// The periods and limits it runs by.
+    pub(super) timings: Timings,
     pub(super) events_tx: EventSink,
     pub(super) writers: Writers,
     pub(super) own_tx: Mailbox<OwnerEvent>,
@@ -292,6 +293,8 @@ struct Owner {
     executables: Executables,
     /// What every outpost is launched with.
     options: verbatim_process::arguments::OutpostOptions,
+    /// The periods and limits it runs by.
+    timings: Timings,
     outbox: Outbox,
     writers: Writers,
     own_tx: Mailbox<OwnerEvent>,
@@ -375,8 +378,14 @@ struct ReducerWatch {
 impl ReducerWatch {
     /// Notes the reducer's `progress` at `now`, a heartbeat, and returns
     /// the stall to report, once per stall: none of its inputs taken for
-    /// [`MISSED_PONG_THRESHOLD`] heartbeats in a row while some waited.
-    fn note(&mut self, progress: Progress, now: Instant) -> Option<ReducerStall> {
+    /// `missed_pongs` heartbeats in a row while some waited
+    /// ([`Timings::missed_pongs`]).
+    fn note(
+        &mut self,
+        progress: Progress,
+        now: Instant,
+        missed_pongs: u32,
+    ) -> Option<ReducerStall> {
         let stuck = self
             .last
             .is_some_and(|(last, _)| last.waiting() > 0 && last.taken == progress.taken);
@@ -389,7 +398,7 @@ impl ReducerWatch {
         }
         let (count, since) = self.stuck.get_or_insert((0, since));
         *count += 1;
-        if *count < MISSED_PONG_THRESHOLD || self.reported {
+        if *count < missed_pongs || self.reported {
             return None;
         }
         self.reported = true;
@@ -406,6 +415,7 @@ pub(super) fn start(setup: Setup) -> io::Result<()> {
         executables,
         options,
         shutdown_limit,
+        timings,
         events_tx,
         writers,
         own_tx,
@@ -418,6 +428,7 @@ pub(super) fn start(setup: Setup) -> io::Result<()> {
         executables,
         options,
         shutdown_limit,
+        timings,
         retiring: 0,
         summary: ShutdownSummary::default(),
         shutting_down: None,
@@ -450,13 +461,6 @@ pub(super) fn start(setup: Setup) -> io::Result<()> {
     Ok(())
 }
 
-/// The limits a child is judged stuck by.
-const WEDGE_LIMITS: WedgeLimits = WedgeLimits {
-    ping_interval: PING_INTERVAL,
-    missed_pongs: MISSED_PONG_THRESHOLD,
-    abandoned_workers: ABANDONED_WORKER_LIMIT,
-};
-
 /// How long from `since_us` until now, on the run's shared clock.
 fn up_since(since_us: u64) -> Duration {
     Duration::from_micros(now_us().saturating_sub(since_us))
@@ -470,14 +474,25 @@ fn next_due(due: Instant, now: Instant, interval: Duration) -> Instant {
 }
 
 impl Owner {
+    /// The limits a child is judged stuck by.
+    fn wedge_limits(&self) -> WedgeLimits {
+        WedgeLimits {
+            ping_interval: self.timings.ping_interval,
+            missed_pongs: self.timings.missed_pongs,
+            abandoned_workers: ABANDONED_WORKER_LIMIT,
+        }
+    }
+
     /// The relay's loop: waits on the port until the heartbeat or the
     /// sweep is due, and handles what the wait took, in the port's order.
     /// Returns once Verbatim's exit has ended every child and every pipe
     /// has finished.
     fn run(&mut self, events: &Inbox<OwnerEvent>) {
         let start = Instant::now();
-        let mut heartbeat_due = start + PING_INTERVAL;
-        let mut sweep_due = start + SWEEP_INTERVAL;
+        let ping_interval = self.timings.ping_interval;
+        let sweep_interval = self.timings.retirement.sweep_interval;
+        let mut heartbeat_due = start + ping_interval;
+        let mut sweep_due = start + sweep_interval;
         let mut completions = Completions::with_capacity(COMPLETIONS_PER_WAIT);
         loop {
             if self.finish_shutdown() {
@@ -516,11 +531,11 @@ impl Owner {
                 }
                 self.outbox.retry();
                 self.heartbeat();
-                heartbeat_due = next_due(heartbeat_due, now, PING_INTERVAL);
+                heartbeat_due = next_due(heartbeat_due, now, ping_interval);
             }
             if now >= sweep_due {
                 self.sweep();
-                sweep_due = next_due(sweep_due, now, SWEEP_INTERVAL);
+                sweep_due = next_due(sweep_due, now, sweep_interval);
             }
         }
     }
@@ -1123,7 +1138,8 @@ impl Owner {
     /// `up` as an error, the evidence to find its cause from, and replaces
     /// it, at once or after its backoff: spares are always replaced.
     fn spare_failed(&mut self, why: &str, up: Duration) {
-        let wait = self.spares.failed(up, (self.backoff_clock)(), BACKOFF);
+        let backoff = self.timings.backoff();
+        let wait = self.spares.failed(up, (self.backoff_clock)(), backoff);
         tracing::error!(
             why,
             backoff_ms = wait.as_millis(),
@@ -1194,6 +1210,7 @@ impl Owner {
             self.end_quietly(pid, why);
             return;
         }
+        let backoff = self.timings.backoff();
         let Some(record) = self.records.get_mut(&pid) else {
             return;
         };
@@ -1209,7 +1226,7 @@ impl Owner {
         let wait =
             record
                 .backoff
-                .failed(up_since(record.since_us), (self.backoff_clock)(), BACKOFF);
+                .failed(up_since(record.since_us), (self.backoff_clock)(), backoff);
         let failed = failure.outpost;
         let ready = failure.ready;
         // What it reported before it failed is the evidence of why.
@@ -1978,7 +1995,7 @@ impl Owner {
         }
         let now = Instant::now();
         if let Some(progress) = self.outbox.sink.progress()
-            && let Some(stall) = self.reducer.note(progress, now)
+            && let Some(stall) = self.reducer.note(progress, now, self.timings.missed_pongs)
         {
             self.outbox.sink.stalled(stall);
         }
@@ -1988,6 +2005,7 @@ impl Owner {
         let mut exited = Vec::new();
         let mut hang_checks = Vec::new();
         let at_us = now_us();
+        let limits = self.wedge_limits();
         let running: Vec<Pid> = self
             .records
             .iter()
@@ -2005,7 +2023,7 @@ impl Owner {
             };
             let (Some(outpost), Some(beat)) = (
                 record.generation.outpost(),
-                record.generation.heartbeat(at_us, WEDGE_LIMITS),
+                record.generation.heartbeat(at_us, limits),
             ) else {
                 continue;
             };
@@ -2037,7 +2055,7 @@ impl Owner {
             None => self.start_listener(true),
             Some(listener) => {
                 if let Some(child) = listener.child.running() {
-                    let decision = listener.liveness.wedged(at_us, WEDGE_LIMITS);
+                    let decision = listener.liveness.wedged(at_us, limits);
                     if decision == Some(WedgeReason::MissedHeartbeats) {
                         tracing::warn!("focus listener stopped answering; replacing it");
                         self.end_listener("it stopped answering pings; it is replaced");
@@ -2057,12 +2075,13 @@ impl Owner {
     /// Pings every spare waiting and ends any that has missed its pings, as
     /// a spare's failure, at `now_us` on the run's shared clock.
     fn spare_heartbeat(&mut self, now_us: u64, ping: &CoreToOutpost) {
+        let limits = self.wedge_limits();
         let mut wedged = Vec::new();
         for (&outpost, spare) in &self.spare_children {
             let Some(child) = spare.child.running() else {
                 continue;
             };
-            if spare.liveness.wedged(now_us, WEDGE_LIMITS).is_some() {
+            if spare.liveness.wedged(now_us, limits).is_some() {
                 wedged.push(outpost);
             } else {
                 let _ = child.writer.push(Outgoing::Ping(ping.clone()));
@@ -2113,13 +2132,14 @@ impl Owner {
     /// application has answered, as the heartbeat did when it made the
     /// check itself.
     fn on_hang_checked(&mut self, outpost: OutpostId, hung: bool) {
+        let limits = self.wedge_limits();
         let Some(pid) = self.pid_of(outpost) else {
             return;
         };
         let Some(record) = self.records.get_mut(&pid) else {
             return;
         };
-        let reason = record.generation.hang_checked(hung, now_us(), WEDGE_LIMITS);
+        let reason = record.generation.hang_checked(hung, now_us(), limits);
         if self.shutting_down.is_some() {
             return;
         }
@@ -2130,13 +2150,15 @@ impl Owner {
     }
 
     /// Retires every outpost whose application has not held attention for
-    /// two minutes and in which Core holds no nodes. Core's own outpost is
+    /// the retirement's idle time ([`crate::Retirement::idle`], two
+    /// minutes) and in which Core holds no nodes. Core's own outpost is
     /// never retired: its next menu would otherwise spawn it cold.
     fn sweep(&mut self) {
         if self.shutting_down.is_some() {
             return;
         }
         let now = now_us();
+        let idle = self.timings.retirement.idle;
         let retiring: Vec<Pid> = self
             .records
             .iter()
@@ -2146,7 +2168,7 @@ impl Owner {
                     && retirement_decision(
                         record.last_attention_us,
                         now,
-                        IDLE_RETIREMENT,
+                        idle,
                         self.attention == Some(**pid),
                         record
                             .generation

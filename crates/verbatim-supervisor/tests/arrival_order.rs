@@ -42,6 +42,7 @@ use verbatim_process::port_queue::{PortQueue, Progress, Received, port_queue};
 use verbatim_process::transport::{BlockingReader, BlockingWriter};
 use verbatim_supervisor::{
     EventSink, Executables, Frames, OutpostMessage, ReducerStall, ShutdownSummary, Supervisor,
+    Timings,
 };
 use windows::Win32::Foundation::{CloseHandle, HANDLE, WAIT_OBJECT_0};
 use windows::Win32::System::Threading::{CreateEventW, SetEvent, WaitForSingleObject};
@@ -313,6 +314,11 @@ impl Reducer {
     /// A supervisor launching this binary's stand-ins, posting to a port
     /// queue, with the queue watched.
     fn start() -> Self {
+        Self::start_with(Timings::default())
+    }
+
+    /// [`Reducer::start`], the supervisor running by `timings`.
+    fn start_with(timings: Timings) -> Self {
         let (poster, queue) = port_queue::<Input>().expect("a port");
         let (stalls_tx, stalls) = unbounded();
         let watching = Arc::new(AtomicBool::new(false));
@@ -342,6 +348,7 @@ impl Reducer {
             OutpostOptions::default(),
             Executables::both(exe),
             LIMIT,
+            timings,
             std::sync::Arc::default(),
         )
         .expect("the supervisor starts");
@@ -555,10 +562,14 @@ fn a_closed_pipe_reaches_the_app_after_every_frame_before_it() {
 
 /// The reducer held for longer than three ping intervals ends no outpost,
 /// since the relay reads the outposts' pongs itself, and is reported as
-/// its own stall, once.
+/// its own stall, once. The supervisor pings every half second, so the
+/// hold lasts a second and a half rather than nine.
 fn a_reducer_held_past_three_ping_intervals_ends_no_outpost_and_is_reported_as_its_own_stall() {
     let (app, pid) = application();
-    let mut reducer = Reducer::start();
+    let mut reducer = Reducer::start_with(Timings {
+        ping_interval: Duration::from_millis(500),
+        ..Timings::default()
+    });
     reducer.with_outposts(&[pid]);
 
     // Held from here, with a key waiting, and watched.
@@ -682,33 +693,66 @@ fn main() {
     if args.iter().any(|arg| arg == "--pipe-in") {
         stand_in(&args);
     }
-    // libtest's own options, such as a name filter, are accepted and
-    // ignored: the binary runs its tests in turn.
-    let signal = Signal::new();
-    a_frame_written_before_a_key_is_reduced_before_it_and_one_written_after_it_after(&signal);
-    println!(
-        "test a_frame_written_before_a_key_is_reduced_before_it_and_one_written_after_it_after ... ok"
-    );
-    a_closed_pipe_reaches_the_app_after_every_frame_before_it();
-    println!("test a_closed_pipe_reaches_the_app_after_every_frame_before_it ... ok");
-    while_the_reducer_is_held_the_relay_drains_every_frame_and_two_value_changes_both_arrive(
-        &signal,
-    );
-    println!(
-        "test while_the_reducer_is_held_the_relay_drains_every_frame_and_two_value_changes_both_arrive ... ok"
-    );
-    nothing_an_outpost_sent_after_a_frame_that_is_not_a_message_reaches_the_reducer_but_its_end(
-        &signal,
-    );
-    println!(
-        "test nothing_an_outpost_sent_after_a_frame_that_is_not_a_message_reaches_the_reducer_but_its_end ... ok"
-    );
-    nothing_an_outpost_writes_after_the_supervisor_ended_it_reaches_the_reducer();
-    println!(
-        "test nothing_an_outpost_writes_after_the_supervisor_ended_it_reaches_the_reducer ... ok"
-    );
-    a_reducer_held_past_three_ping_intervals_ends_no_outpost_and_is_reported_as_its_own_stall();
-    println!(
-        "test a_reducer_held_past_three_ping_intervals_ends_no_outpost_and_is_reported_as_its_own_stall ... ok"
-    );
+    // The tests run with libtest's command line (`libtest-mimic`), so
+    // cargo-nextest can list them and run each in a process of its own;
+    // under `cargo test` they run one after another on the main thread,
+    // since each test's children inherit this process's environment.
+    let mut arguments = libtest_mimic::Arguments::from_args();
+    arguments.test_threads = Some(1);
+    // Each test names the event its stand-in listener sets ([`Signal`]),
+    // which every stand-in listener opens, whether or not the test waits
+    // on it.
+    let tests: [(&str, fn()); 6] = [
+        (
+            "a_frame_written_before_a_key_is_reduced_before_it_and_one_written_after_it_after",
+            || {
+                a_frame_written_before_a_key_is_reduced_before_it_and_one_written_after_it_after(
+                    &Signal::new(),
+                );
+            },
+        ),
+        (
+            "a_closed_pipe_reaches_the_app_after_every_frame_before_it",
+            || {
+                let _signal = Signal::new();
+                a_closed_pipe_reaches_the_app_after_every_frame_before_it();
+            },
+        ),
+        (
+            "while_the_reducer_is_held_the_relay_drains_every_frame_and_two_value_changes_both_arrive",
+            || {
+                while_the_reducer_is_held_the_relay_drains_every_frame_and_two_value_changes_both_arrive(&Signal::new());
+            },
+        ),
+        (
+            "nothing_an_outpost_sent_after_a_frame_that_is_not_a_message_reaches_the_reducer_but_its_end",
+            || {
+                nothing_an_outpost_sent_after_a_frame_that_is_not_a_message_reaches_the_reducer_but_its_end(&Signal::new());
+            },
+        ),
+        (
+            "nothing_an_outpost_writes_after_the_supervisor_ended_it_reaches_the_reducer",
+            || {
+                let _signal = Signal::new();
+                nothing_an_outpost_writes_after_the_supervisor_ended_it_reaches_the_reducer();
+            },
+        ),
+        (
+            "a_reducer_held_past_three_ping_intervals_ends_no_outpost_and_is_reported_as_its_own_stall",
+            || {
+                let _signal = Signal::new();
+                a_reducer_held_past_three_ping_intervals_ends_no_outpost_and_is_reported_as_its_own_stall();
+            },
+        ),
+    ];
+    let trials = tests
+        .into_iter()
+        .map(|(name, test)| {
+            libtest_mimic::Trial::test(name, move || {
+                test();
+                Ok(())
+            })
+        })
+        .collect();
+    libtest_mimic::run(&arguments, trials).exit()
 }

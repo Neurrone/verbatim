@@ -63,7 +63,7 @@ use std::sync::{Arc, OnceLock};
 
 use lock::{Lock, LockGuard};
 use std::thread::{self, JoinHandle};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use windows::Win32::UI::Accessibility::{
     IUIAutomationTextRange, UIA_RangeValueValuePropertyId, UIA_Text_TextChangedEventId,
@@ -1407,6 +1407,17 @@ impl Outpost {
     pub fn set_gap_timer(&self, timer: Arc<dyn GapTimer>) {
         *self.context.gap_timer.lock() = Some(timer);
         self.context.mailbox.post(Posted::GapTimerGiven);
+    }
+
+    /// Gives the programs dispatched from now on `deadline` in place of
+    /// the deadline for handling an event, a focus or a focus-now query
+    /// (`verbatim_outpost_logic::HANDLING_DEADLINE`, 10 seconds), for a
+    /// test that waits out a worker's abandonment at it. Verbatim never
+    /// calls it.
+    pub fn set_handling_deadline(&self, deadline: Duration) {
+        self.context
+            .mailbox
+            .post(Posted::HandlingDeadline(deadline));
     }
 
     /// What reaches the gap record's bound, as the outpost's timer reaches

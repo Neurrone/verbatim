@@ -43,9 +43,12 @@ const FAILED: u32 = 101;
 
 /// Runs `tests` (name and function) with libtest's command-line filtering
 /// (name substrings, `--skip`, `--exact`, `--ignored`, `--test-threads`,
-/// `--list`) and output, each in a process of its own on a desktop no other
-/// test's process is on while it runs, then ends the process with libtest's
-/// exit code, as explained in the module documentation.
+/// `--list`, with `--format terse` as cargo-nextest lists) and output,
+/// each in a process of its own on a desktop no other test's process is on
+/// while it runs, then ends the process with libtest's exit code, as
+/// explained in the module documentation. Under cargo-nextest, which runs
+/// each test as a process of this binary of its own, each test makes a
+/// desktop of its own.
 ///
 /// The desktop also keeps the counts of the calls `mockapp`'s providers
 /// answer exact.
@@ -230,9 +233,14 @@ impl Options {
                 }
                 "--skip" => options.skips.push(value("--skip")?),
                 "--isolated-test" => options.isolated = Some(value("--isolated-test")?),
+                // The list is always in libtest's terse format, `<name>:
+                // test`, which cargo-nextest asks for.
                 "--color" | "--format" => {
                     let wanted = value(&flag)?;
-                    if !matches!(wanted.as_str(), "auto" | "always" | "never" | "pretty") {
+                    if !matches!(
+                        wanted.as_str(),
+                        "auto" | "always" | "never" | "pretty" | "terse"
+                    ) {
                         return Err(format!("{flag} {wanted} is not supported by this runner"));
                     }
                 }

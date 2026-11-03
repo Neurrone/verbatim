@@ -3,10 +3,14 @@
 //! harness's Windows Forms text box comes to the foreground and is read by
 //! an outpost of its own; a second text box, another process, then takes
 //! the foreground and keeps it. Once Core reports, on its event
-//! subscription, that the first box's outpost was retired, after two
-//! minutes without attention, the first box is brought forward again as its
-//! taskbar button does, and is announced as it was the first time, read by
-//! a new outpost.
+//! subscription, that the first box's outpost was retired, the first box is
+//! brought forward again as its taskbar button does, and is announced as it
+//! was the first time, read by a new outpost. The scenario's Verbatim
+//! retires an outpost after 10 seconds without attention, looked for every
+//! second, rather than two minutes, looked for every 30 seconds, through
+//! the test-only `VERBATIM_TEST_RETIREMENT`
+//! ([`crate::scenario::QUICK_RETIREMENT`]); the retirement's code is the
+//! same.
 //!
 //! The Windows Forms text box is the fixed application because it is the
 //! same on every machine and, being a real application, reports its focus
@@ -40,9 +44,9 @@ const LINE: &str = "Read again after retirement.";
 const OTHER_LINE: &str = "Holding attention meanwhile.";
 
 /// How long the first box's outpost may take to be retired: the
-/// supervisor's two minutes without attention, its sweep's 30-second
-/// interval, and a minute for a busy machine.
-const RETIREMENT_TIMEOUT: Duration = Duration::from_secs(210);
+/// scenario's 10 seconds without attention, its sweep's 1-second interval,
+/// and a minute for a busy machine.
+const RETIREMENT_TIMEOUT: Duration = Duration::from_secs(71);
 
 pub(crate) fn setup(scenario: &mut Scenario) -> io::Result<ScenarioState> {
     Ok(ScenarioState::TargetPid(super::text_box::open(

@@ -15,14 +15,26 @@ message layer, the launch arguments and the held processes are
 
 `Supervisor`:
 
-- `new(events)` starts the relay, which starts the listener at once,
-  launching each role from its executable beside the current one
-  (`Executables::beside_current`: `verbatim-outpost.exe` and
-  `verbatim-listener.exe`); a missing one fails that role's launch.
-  `with_executables` takes the `Executables` and a shutdown limit, for
-  tests, whose stand-in is both (`Executables::both`), telling the roles
-  apart by the listener's first argument, `--listener`. Both take the
-  `OutpostOptions` every outpost gets.
+- `new(events, options, ignored, retirement)` starts the relay, which
+  starts the listener at once, launching each role from its executable
+  beside the current one (`Executables::beside_current`:
+  `verbatim-outpost.exe` and `verbatim-listener.exe`); a missing one fails
+  that role's launch. `with_executables` takes the `Executables`, a
+  shutdown limit and the `Timings`, for tests, whose stand-in is both
+  (`Executables::both`), telling the roles apart by the listener's first
+  argument, `--listener`. Both take the `OutpostOptions` every outpost
+  gets.
+- `Timings` holds the ping interval (3 seconds), the pings that may be
+  missed (three), the backoff's first wait and limit (1 and 30 seconds)
+  and the `Retirement`: the idle time before an outpost is retired (two
+  minutes) and the sweep's interval (30 seconds). `Timings::default` is
+  Verbatim's; `new` uses it with the retirement it is given. Only the
+  tests that wait out a ping miss or a backoff shorten them, through
+  `with_executables`; no setting reaches them. `Retirement::from_test_env`
+  reads the test-only `VERBATIM_TEST_RETIREMENT` (`TEST_RETIREMENT_ENV`),
+  `<idle ms>,<sweep ms>`, which the end-to-end harness sets for the one
+  scenario that waits for a retirement; unset, it is the default, and a
+  malformed value stops Verbatim's start.
 - `shutdown()` shuts every child down and returns a `ShutdownSummary`: how
   many children ended cleanly, had exited, exited with an error, were killed
   at their time limit, or were killed because ending them failed.
@@ -145,12 +157,13 @@ How it works:
 - An outpost whose pipe closes is ended once everything it wrote is handed
   on: with its target if the application exited, otherwise by the failure
   path (`crates/verbatim-supervisor/tests/spares.rs`). Every child is pinged
-  every three seconds, and nine seconds without a pong ends it; eight
+  every three seconds, and nine seconds without a pong ends it
+  (`Timings`); eight
   abandoned workers end an outpost unless its application's windows are
   reported hung, judged by the generation's `heartbeat` and
   `hang_checked` and, for the listener and the spares, by their
   `Liveness`, all on the run's shared clock. An outpost whose application has not
-  held attention for two minutes, is not Core's own, and holds no nodes of
+  held attention for two minutes (`Retirement`), is not Core's own, and holds no nodes of
   the reducer's is retired by the sweep (`policy::retirement_decision`). An
   outpost says `TargetExited` when its application exits, and the heartbeat
   also checks every held application.

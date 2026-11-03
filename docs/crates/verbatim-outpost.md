@@ -382,7 +382,10 @@ the same tables and code, which the arbitrator's own lists are built from.
   gap's read); `set_observation_clock` (a `verbatim_process::clock::ObservationClock`
   for the outpost's own events' stamps and its verdicts' keeps); and
   `set_gap_timer` (a `GapTimer` for the gap record's bound, which
-  `gap_bound_reacher` reaches); and `without_listener`, for an outpost
+  `gap_bound_reacher` reaches); `set_handling_deadline` (a deadline in
+  place of the reducer's `HANDLING_DEADLINE`, 10 seconds, for the
+  programs dispatched after it, so a test that waits out a worker's
+  abandonment waits less; Verbatim never calls it); and `without_listener`, for an outpost
   no focus listener forwards to, whose hook's copies are never held.
 - `Outpost::settle` posts a barrier (`Item::Barrier` with
   `Asker::Settle`) and waits until the reducer reaches it with no program

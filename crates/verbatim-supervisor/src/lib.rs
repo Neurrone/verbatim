@@ -83,44 +83,125 @@ use verbatim_core::supervisor::{generation, policy};
 use verbatim_process::held::IgnoredProcesses;
 pub use writer::QueueError;
 
-/// How often every child is pinged.
-const PING_INTERVAL: Duration = Duration::from_secs(3);
-
-/// How many ping intervals may pass without a pong before a child is ended:
-/// three intervals, nine seconds.
-const MISSED_PONG_THRESHOLD: u32 = 3;
-
 /// How many abandoned workers end an outpost, unless its application's
 /// windows are reported hung.
 const ABANDONED_WORKER_LIMIT: usize = 8;
-
-/// How long an application must go without attention before its outpost is
-/// retired (risk R2's memory-use mitigation).
-const IDLE_RETIREMENT: Duration = Duration::from_mins(2);
-
-/// How often idle outposts are looked for.
-const SWEEP_INTERVAL: Duration = Duration::from_secs(30);
 
 /// How many spare outposts the supervisor keeps waiting
 /// (`docs/design/focus-pipeline.md`, section 19).
 pub const SPARES: usize = 2;
 
-/// How long the replacement of an outpost's second failure in a row
-/// waits; each failure after it waits twice as long as the one before, up
-/// to [`BACKOFF_LIMIT`] (`docs/design/focus-pipeline.md`, section 19.5).
-/// The first failure is replaced at once.
-const BACKOFF_FIRST: Duration = Duration::from_secs(1);
+/// The supervisor's periods and limits. Verbatim runs with
+/// [`Timings::default`] and [`Retirement::default`], unless the end-to-end
+/// harness shortens the retirement ([`Retirement::from_test_env`]); the
+/// tests that wait out a ping miss or a backoff construct the supervisor
+/// with shorter ones ([`Supervisor::with_executables`]). No setting in the
+/// settings file reaches them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Timings {
+    /// How often every child is pinged: 3 seconds.
+    pub ping_interval: Duration,
+    /// How many ping intervals may pass without a pong before a child is
+    /// ended: three intervals, nine seconds.
+    pub missed_pongs: u32,
+    /// How long the replacement of an outpost's second failure in a row
+    /// waits: a second. Each failure after it waits twice as long as the
+    /// one before, up to [`backoff_limit`](Self::backoff_limit)
+    /// (`docs/design/focus-pipeline.md`, section 19.5). The first failure
+    /// is replaced at once.
+    pub backoff_first: Duration,
+    /// The longest a failed outpost's replacement waits: 30 seconds.
+    pub backoff_limit: Duration,
+    /// When idle outposts are retired.
+    pub retirement: Retirement,
+}
 
-/// The longest a failed outpost's replacement waits.
-const BACKOFF_LIMIT: Duration = Duration::from_secs(30);
+impl Default for Timings {
+    fn default() -> Self {
+        Self {
+            ping_interval: Duration::from_secs(3),
+            missed_pongs: 3,
+            backoff_first: Duration::from_secs(1),
+            backoff_limit: Duration::from_secs(30),
+            retirement: Retirement::default(),
+        }
+    }
+}
+
+impl Timings {
+    /// The backoff's three times, as [`policy::Backoff::failed`] takes
+    /// them.
+    fn backoff(&self) -> (Duration, Duration, Duration) {
+        (self.backoff_first, self.backoff_limit, STAYED_UP)
+    }
+}
+
+/// When idle outposts are retired (risk R2's memory-use mitigation).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Retirement {
+    /// How long an application must go without attention before its
+    /// outpost is retired: two minutes.
+    pub idle: Duration,
+    /// How often idle outposts are looked for: 30 seconds.
+    pub sweep_interval: Duration,
+}
+
+impl Default for Retirement {
+    fn default() -> Self {
+        Self {
+            idle: Duration::from_mins(2),
+            sweep_interval: Duration::from_secs(30),
+        }
+    }
+}
+
+/// The environment variable the end-to-end harness sets, for a scenario
+/// that waits for an outpost's retirement, to shorten it: the idle time and
+/// the sweep's interval in milliseconds, separated by a comma, such as
+/// `10000,1000`. Test-only: real users never set it, and without it the
+/// retirement is [`Retirement::default`].
+pub const TEST_RETIREMENT_ENV: &str = "VERBATIM_TEST_RETIREMENT";
+
+impl Retirement {
+    /// The retirement [`TEST_RETIREMENT_ENV`] names in this process's
+    /// environment, or [`Retirement::default`] when it is unset.
+    ///
+    /// # Errors
+    ///
+    /// When it is set but is not two whole numbers of milliseconds, both
+    /// above zero, separated by a comma.
+    pub fn from_test_env() -> Result<Self, String> {
+        match std::env::var(TEST_RETIREMENT_ENV) {
+            Ok(value) => Self::parse(&value).ok_or_else(|| {
+                format!(
+                    "{TEST_RETIREMENT_ENV}={value:?} is not <idle ms>,<sweep ms>, both above zero"
+                )
+            }),
+            Err(_) => Ok(Self::default()),
+        }
+    }
+
+    /// `<idle ms>,<sweep ms>`, both above zero.
+    fn parse(value: &str) -> Option<Self> {
+        let (idle, sweep) = value.split_once(',')?;
+        let millis = |text: &str| {
+            text.trim()
+                .parse::<u64>()
+                .ok()
+                .filter(|&ms| ms > 0)
+                .map(Duration::from_millis)
+        };
+        Some(Self {
+            idle: millis(idle)?,
+            sweep_interval: millis(sweep)?,
+        })
+    }
+}
 
 /// How long an outpost, or a spare, must have been up for its failure to
 /// count as the first again: a minute, twenty heartbeats, long past the
 /// start and first focus in which a failure that repeats shows itself.
 const STAYED_UP: Duration = Duration::from_mins(1);
-
-/// The backoff's three times, as [`policy::Backoff::failed`] takes them.
-const BACKOFF: (Duration, Duration, Duration) = (BACKOFF_FIRST, BACKOFF_LIMIT, STAYED_UP);
 
 /// Where the supervisor delivers its [`OutpostMessage`]s. Only the relay
 /// delivers through it, so a sink that puts each message in one queue gives
@@ -565,7 +646,10 @@ impl Supervisor {
     /// the current executable ([`Executables::beside_current`]).
     /// Every outpost is launched with `options`. The processes `ignored`
     /// holds are ignored entirely: the listener drops their facts, and no
-    /// outpost is ever started for them.
+    /// outpost is ever started for them. Idle outposts are retired as
+    /// `retirement` says, [`Retirement::default`] but in the end-to-end
+    /// suite ([`Retirement::from_test_env`]); every other period and limit
+    /// is [`Timings::default`].
     ///
     /// # Errors
     ///
@@ -575,6 +659,7 @@ impl Supervisor {
         events: impl Into<EventSink>,
         options: verbatim_process::arguments::OutpostOptions,
         ignored: Arc<IgnoredProcesses>,
+        retirement: Retirement,
     ) -> io::Result<Self> {
         let executables = Executables::beside_current()?;
         Self::with_executables(
@@ -582,6 +667,10 @@ impl Supervisor {
             options,
             executables,
             retire::SHUTDOWN_LIMIT,
+            Timings {
+                retirement,
+                ..Timings::default()
+            },
             ignored,
         )
     }
@@ -589,9 +678,10 @@ impl Supervisor {
     /// [`Supervisor::new`], launching each role from its executable in
     /// `executables` and giving
     /// each `shutdown_limit` to exit after the shutdown message before it is
-    /// killed, and ignoring the processes `ignored` holds. For tests that
-    /// launch stand-ins for the outpost and listener binaries
-    /// ([`Executables::both`]); Verbatim uses
+    /// killed, running by `timings`, and ignoring the processes `ignored`
+    /// holds. For tests that launch stand-ins for the outpost and listener
+    /// binaries ([`Executables::both`]), which shorten the ping interval
+    /// or the backoff to wait them out sooner; Verbatim uses
     /// [`Supervisor::new`].
     ///
     /// # Errors
@@ -603,6 +693,7 @@ impl Supervisor {
         options: verbatim_process::arguments::OutpostOptions,
         executables: Executables,
         shutdown_limit: Duration,
+        timings: Timings,
         ignored: Arc<IgnoredProcesses>,
     ) -> io::Result<Self> {
         // The launch's log directory was prepared by the app at startup,
@@ -615,6 +706,7 @@ impl Supervisor {
             executables,
             options,
             shutdown_limit,
+            timings,
             events_tx: events,
             writers: Arc::clone(&writers),
             own_tx: owner_tx.clone(),
@@ -797,6 +889,20 @@ impl Supervisor {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_test_retirement_is_two_positive_millisecond_counts() {
+        assert_eq!(
+            Retirement::parse("10000,1000"),
+            Some(Retirement {
+                idle: Duration::from_secs(10),
+                sweep_interval: Duration::from_secs(1),
+            })
+        );
+        for malformed in ["10000", "10000,0", "0,1000", "ten,1000", "10000,1000,5", ""] {
+            assert_eq!(Retirement::parse(malformed), None, "{malformed:?}");
+        }
+    }
 
     #[test]
     fn each_role_runs_from_its_own_executable() {

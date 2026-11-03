@@ -172,10 +172,29 @@ fn main() {
         let _ = std::io::stdin().read_to_end(&mut rest);
         return;
     }
-    an_outpost_whose_application_exits_says_so_and_shuts_down_cleanly();
-    println!("test an_outpost_whose_application_exits_says_so_and_shuts_down_cleanly ... ok");
-    a_spare_takes_its_application_from_assign_and_ends_on_one_it_cannot_watch();
-    println!(
-        "test a_spare_takes_its_application_from_assign_and_ends_on_one_it_cannot_watch ... ok"
-    );
+    // The tests run with libtest's command line (`libtest-mimic`), so
+    // cargo-nextest can list them and run each in a process of its own;
+    // under `cargo test` they run one after another on the main thread.
+    let mut arguments = libtest_mimic::Arguments::from_args();
+    arguments.test_threads = Some(1);
+    let tests: [(&str, fn()); 2] = [
+        (
+            "an_outpost_whose_application_exits_says_so_and_shuts_down_cleanly",
+            an_outpost_whose_application_exits_says_so_and_shuts_down_cleanly,
+        ),
+        (
+            "a_spare_takes_its_application_from_assign_and_ends_on_one_it_cannot_watch",
+            a_spare_takes_its_application_from_assign_and_ends_on_one_it_cannot_watch,
+        ),
+    ];
+    let trials = tests
+        .into_iter()
+        .map(|(name, test)| {
+            libtest_mimic::Trial::test(name, move || {
+                test();
+                Ok(())
+            })
+        })
+        .collect();
+    libtest_mimic::run(&arguments, trials).exit()
 }

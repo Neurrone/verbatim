@@ -431,6 +431,10 @@ pub enum Input {
     /// A test times the gap record's bound: the reducer keeps no timer of
     /// its own for it from now on.
     GapTimerGiven,
+    /// A test that waits out a program's deadline shortens it: entries
+    /// dispatched from now on that would have [`HANDLING_DEADLINE`] have
+    /// this one. Verbatim never sends it.
+    HandlingDeadline(Duration),
     /// The gap record's bound was reached by a timer the shell was given.
     GapBound,
     /// The shell's answer to [`Effect::TestGapBound`]: whether the record's
@@ -566,6 +570,9 @@ pub struct Reducer {
     /// Whether a test's timer times the gap record's bound in place of the
     /// reducer's own.
     gap_timer_given: bool,
+    /// A test's deadline in place of [`HANDLING_DEADLINE`]
+    /// ([`Input::HandlingDeadline`]).
+    handling_deadline: Option<Duration>,
     /// Whether a release was asked for and its [`Input::Released`] has not
     /// come: nothing is dispatched until it has, so no program is given a
     /// node it frees.
@@ -585,6 +592,12 @@ impl Reducer {
     #[must_use]
     pub fn facts(&self) -> &Facts {
         &self.facts
+    }
+
+    /// The deadline for handling an event, a focus or a focus-now query:
+    /// [`HANDLING_DEADLINE`], or a test's in its place.
+    fn handling_deadline(&self) -> Duration {
+        self.handling_deadline.unwrap_or(HANDLING_DEADLINE)
     }
 
     /// The worker generation in charge.
@@ -705,6 +718,7 @@ impl Reducer {
                 objects,
             } => self.released(&nodes, &anchors, objects, now, &mut effects),
             Input::GapTimerGiven => self.gap_timer_given = true,
+            Input::HandlingDeadline(deadline) => self.handling_deadline = Some(deadline),
             Input::GapBound => self.gap_bound(&mut effects),
             Input::GapBoundTested {
                 request,
@@ -1401,7 +1415,7 @@ impl Reducer {
                 }
                 self.dispatch(
                     Work::Owed(owed),
-                    (HANDLING_DEADLINE, None, None),
+                    (self.handling_deadline(), None, None),
                     None,
                     now,
                     effects,
@@ -1593,7 +1607,7 @@ impl Reducer {
         now: Now,
         effects: &mut Vec<Effect>,
     ) {
-        let (deadline, running) = budget(&entry, now);
+        let (deadline, running) = budget(&entry, now, self.handling_deadline());
         let window = intake::window_of(&entry.item);
         // Anything that may end a held terminal's hold reads every update
         // observed after it begins.
@@ -1814,14 +1828,15 @@ fn micros(duration: Duration) -> u64 {
 }
 
 /// The deadline for an entry begun at `now`, and the query it answers, if
-/// it is one. A shell item query's deadline is the one it carries, a due
+/// it is one, `handling` being [`HANDLING_DEADLINE`] or a test's in its
+/// place. A shell item query's deadline is the one it carries, a due
 /// time on the shared clock fixed when the dialog asked, so a query that
 /// waited behind other work has only what is left of it.
-fn budget(entry: &Entry, now: Now) -> (Duration, Option<(RequestId, TraceId)>) {
+fn budget(entry: &Entry, now: Now, handling: Duration) -> (Duration, Option<(RequestId, TraceId)>) {
     match &entry.item {
         Item::Query { request_id, query } => {
             let deadline = match query {
-                Query::FocusNow => HANDLING_DEADLINE,
+                Query::FocusNow => handling,
                 Query::Ancestors { .. } | Query::DumpTree { .. } => WALK_DEADLINE,
                 Query::ShellItems { answer_by_us, .. }
                 | Query::ShellItemPosition { answer_by_us, .. } => {
@@ -1838,7 +1853,7 @@ fn budget(entry: &Entry, now: Now) -> (Duration, Option<(RequestId, TraceId)>) {
         | Item::NotedCaret { .. }
         | Item::Barrier { .. }
         | Item::GapBound
-        | Item::GapRead { .. } => (HANDLING_DEADLINE, None),
+        | Item::GapRead { .. } => (handling, None),
         // Releasing thousands of objects after a tree dump takes a while.
         Item::NodesHeld { .. } => (WALK_DEADLINE, None),
     }

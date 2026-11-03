@@ -569,7 +569,8 @@ Verbatim's run.
 `ScenarioDef` is one named, grouped scenario: `name` (its `#[test]`
 function, `--scenario` selector, artifacts directory, and video name),
 `group`, `settings` (a change to the fixed settings), `local_only`,
-`comparable`, `document`, and `setup`, `body` and `teardown`.
+`quick_retirement` (Verbatim launched with its idle retirement
+shortened, `scenario::QUICK_RETIREMENT`), `comparable`, `document`, and `setup`, `body` and `teardown`.
 `ScenarioState` is what setup hands the body and teardown: nothing, a
 target's pid, a window title, names, or a `Window` (the launch's pid, the
 window's title, how Verbatim announces the terminal's text area,
@@ -598,9 +599,12 @@ under `src/scenarios/` documents exactly what it asserts.
   outpost ended by its process id; once Core reports its end and is idle,
   nothing more was said, and the review cursor reads the text through a
   new outpost), `return_after_retirement` (a text box brought forward
-  again once Core reports its outpost retired after two minutes without
-  attention, announced as before through a new outpost; about three
-  minutes), `return_from_a_held_application` (the text box left for a
+  again once Core reports its outpost retired after 10 seconds without
+  attention, announced as before through a new outpost; its Verbatim is
+  launched with the test-only `VERBATIM_TEST_RETIREMENT`, which shortens
+  the retirement from two minutes and its sweep from every 30 seconds to
+  every second, through `ScenarioDef::quick_retirement`),
+  `return_from_a_held_application` (the text box left for a
   mockapp UIA window, read once, entered again while mockapp holds the
   first call into it: its title said about a second later, and the return
   to the text box announced as without the stall, before mockapp's

@@ -22,7 +22,7 @@ use verbatim_process::message::{read_message, write_message};
 use verbatim_process::port_queue::port_queue;
 use verbatim_process::transport::{BlockingReader, BlockingWriter};
 use verbatim_supervisor::{
-    EventSink, Executables, OutpostMessage, SPARES, ShutdownSummary, Supervisor,
+    EventSink, Executables, OutpostMessage, SPARES, ShutdownSummary, Supervisor, Timings,
 };
 
 mod common;
@@ -130,6 +130,7 @@ fn supervisor(sink: EventSink) -> Supervisor {
         OutpostOptions::default(),
         Executables::both(exe),
         LIMIT,
+        Timings::default(),
         std::sync::Arc::default(),
     )
     .expect("the supervisor starts")
@@ -251,13 +252,30 @@ fn main() {
     if args.iter().any(|arg| arg == "--pipe-in") {
         stand_in(&args);
     }
-    // libtest's own options, such as a name filter, are accepted and
-    // ignored: the binary runs all of its tests, one after another, since
-    // the table of armed fault points is the process's.
-    a_message_the_port_refuses_is_delivered_again_in_order_and_shutdown_ends();
-    println!(
-        "test a_message_the_port_refuses_is_delivered_again_in_order_and_shutdown_ends ... ok"
-    );
-    a_shutdown_whose_wake_the_port_refuses_still_ends();
-    println!("test a_shutdown_whose_wake_the_port_refuses_still_ends ... ok");
+    // The tests run with libtest's command line (`libtest-mimic`), so
+    // cargo-nextest can list them and run each in a process of its own;
+    // under `cargo test` they run one after another on the main thread,
+    // since the table of armed fault points is the process's.
+    let mut arguments = libtest_mimic::Arguments::from_args();
+    arguments.test_threads = Some(1);
+    let tests: [(&str, fn()); 2] = [
+        (
+            "a_message_the_port_refuses_is_delivered_again_in_order_and_shutdown_ends",
+            a_message_the_port_refuses_is_delivered_again_in_order_and_shutdown_ends,
+        ),
+        (
+            "a_shutdown_whose_wake_the_port_refuses_still_ends",
+            a_shutdown_whose_wake_the_port_refuses_still_ends,
+        ),
+    ];
+    let trials = tests
+        .into_iter()
+        .map(|(name, test)| {
+            libtest_mimic::Trial::test(name, move || {
+                test();
+                Ok(())
+            })
+        })
+        .collect();
+    libtest_mimic::run(&arguments, trials).exit()
 }

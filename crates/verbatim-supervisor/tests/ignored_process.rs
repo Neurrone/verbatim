@@ -35,7 +35,7 @@ use verbatim_model::{Pid, TraceId};
 use verbatim_process::arguments::OutpostOptions;
 use verbatim_process::held::IgnoredProcesses;
 use verbatim_process::message::{read_message, write_message};
-use verbatim_supervisor::{Executables, OutpostMessage, ShutdownSummary, Supervisor};
+use verbatim_supervisor::{Executables, OutpostMessage, ShutdownSummary, Supervisor, Timings};
 
 /// An application's argument.
 const APPLICATION: &str = "--stand-in-application";
@@ -204,6 +204,7 @@ fn an_ignored_process_gets_no_outpost_and_its_facts_go_nowhere() {
         OutpostOptions::default(),
         Executables::both(exe),
         LIMIT,
+        Timings::default(),
         Arc::new(IgnoredProcesses::hold([ignored_pid])),
     )
     .expect("the supervisor starts");
@@ -263,8 +264,24 @@ fn main() {
     if args.iter().any(|arg| arg == "--pipe-in") {
         stand_in(&args);
     }
-    // libtest's own options, such as a name filter, are accepted and
-    // ignored: the binary holds one test.
-    an_ignored_process_gets_no_outpost_and_its_facts_go_nowhere();
-    println!("test an_ignored_process_gets_no_outpost_and_its_facts_go_nowhere ... ok");
+    // The tests run with libtest's command line (`libtest-mimic`), so
+    // cargo-nextest can list them and run each in a process of its own;
+    // under `cargo test` they run one after another on the main thread,
+    // since each test's children inherit this process's environment.
+    let mut arguments = libtest_mimic::Arguments::from_args();
+    arguments.test_threads = Some(1);
+    let tests: [(&str, fn()); 1] = [(
+        "an_ignored_process_gets_no_outpost_and_its_facts_go_nowhere",
+        an_ignored_process_gets_no_outpost_and_its_facts_go_nowhere,
+    )];
+    let trials = tests
+        .into_iter()
+        .map(|(name, test)| {
+            libtest_mimic::Trial::test(name, move || {
+                test();
+                Ok(())
+            })
+        })
+        .collect();
+    libtest_mimic::run(&arguments, trials).exit()
 }

@@ -3886,8 +3886,9 @@ fn a_gap_read_whose_walk_is_stuck_is_published_at_its_bound() {
 /// publication, whatever becomes of its worker: the OK button of mockapp's
 /// MSAA tree, as in
 /// [`an_msaa_focus_whose_walk_is_stuck_is_published_at_its_bound`], has its
-/// walk's step to its parent answer 12 seconds late, past the worker's
-/// 10-second deadline. The watchdog's publication makes the focus the
+/// walk's step to its parent answer 3 seconds late, past the worker's
+/// deadline, which the test shortens from 10 seconds to 2. The watchdog's
+/// publication makes the focus the
 /// followed one, then the watchdog abandons the worker at the deadline,
 /// and the worker that replaces it has nothing handed over to it. Once
 /// the step has returned, the
@@ -3900,8 +3901,11 @@ fn a_focus_published_at_its_bound_is_followed_after_its_worker_is_abandoned() {
     let mut app = common::spawn("tree.json", "msaa", &title);
     let hwnd = common::find_window(&title);
     let outpost = OutpostUnderTest::on_frozen_time(&app);
+    outpost
+        .outpost
+        .set_handling_deadline(Duration::from_secs(2));
     app.send("set-focus btn_ok");
-    app.send("slow-acc-parent group1 12000");
+    app.send("slow-acc-parent group1 3000");
     // The OK button, node 2 of the tree, at its object id.
     outpost.deliver(DeliveredFact::MsaaFocus {
         hwnd: hwnd.0 as isize,

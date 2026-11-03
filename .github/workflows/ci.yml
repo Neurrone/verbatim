@@ -104,10 +104,11 @@ jobs:
         with:
           path: ~/verbatim-wx
           key: wxwidgets-3.3.3-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('crates/verbatim-gui/build/wx.rs') }}
-      # `cargo xtask ci` checks the workspace-hack crate with cargo-hakari.
+      # `cargo xtask ci` checks the workspace-hack crate with cargo-hakari
+      # and runs the unit tests with cargo-nextest.
       - uses: taiki-e/install-action@v2
         with:
-          tool: cargo-hakari
+          tool: cargo-hakari,cargo-nextest
       # Environment preparation: a fresh runner's first activation of the
       # Windows speech platform takes longer than the synthesizer host's
       # ten-second hang bound, and the unit tests start several OneCore
@@ -159,10 +160,11 @@ jobs:
         with:
           path: ~/verbatim-wx
           key: wxwidgets-3.3.3-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('crates/verbatim-gui/build/wx.rs') }}
-      # `cargo xtask ci` checks the workspace-hack crate with cargo-hakari.
+      # `cargo xtask ci` checks the workspace-hack crate with cargo-hakari
+      # and runs the unit tests with cargo-nextest.
       - uses: taiki-e/install-action@v2
         with:
-          tool: cargo-hakari
+          tool: cargo-hakari,cargo-nextest
       # Environment preparation: a fresh runner's first activation of the
       # Windows speech platform takes longer than the synthesizer host's
       # ten-second hang bound, and the unit tests start several OneCore

@@ -1,6 +1,6 @@
 # Setup and builds
 
-How to get a fresh clone building: the submodules, CMake and wxWidgets, cargo-hakari and the workspace-hack crate, what `cargo xtask ci` scans, the documentation check, and the build's disk use.
+How to get a fresh clone building: the submodules, CMake and wxWidgets, cargo-hakari and the workspace-hack crate, cargo-nextest, what `cargo xtask ci` scans, the documentation check, and the build's disk use.
 
 ## First-time setup
 
@@ -31,11 +31,15 @@ architecture: the result is kept in `target/wxwidgets`, or under
 eSpeak NG submodule in every job and caches the wxWidgets build.
 
 `cargo xtask ci` also needs `cargo-hakari`, which checks the workspace-hack
-crate described next:
+crate described next, and on Windows `cargo-nextest`, which runs the unit
+tests (below, "What cargo xtask ci runs"):
 
 ```
 cargo install cargo-hakari --locked
+cargo install cargo-nextest --locked
 ```
+
+GitHub Actions installs both in the `ci` and `ci-arm64` jobs.
 
 ### The workspace-hack crate
 
@@ -77,7 +81,7 @@ cargo hakari manage-deps
 runs, in its `ci`, `ci-arm64` and `ci-linux` jobs. On Windows its steps are
 the crate tier check, the scans below, the documentation
 check, the workspace-hack check above, rustfmt, and pedantic Clippy with
-warnings denied and unit tests for the whole workspace, then the fault step,
+warnings denied and unit tests for the whole workspace (below), then the fault step,
 `cargo xtask faults` (Clippy of each crate with a `faults` feature with that
 feature on, one package at a time, then the fault test targets;
 [the verbatim-faults guide](../crates/verbatim-faults.md)), all for the host's
@@ -101,6 +105,27 @@ C compiler, run a check-only build, which produces no binary:
 x86_64-unknown-linux-gnu`; crates that reach `verbatim-text` cannot be
 checked this way, because its `zstd-sys` needs a Linux C toolchain, so
 GitHub's `ci-linux` run is their check.
+
+On Windows the unit tests run under cargo-nextest, which runs every test
+as a process of its own, as many at once as the machine has processors,
+and reports a failed test once, with no retry (`.config/nextest.toml`).
+The tests that must not run beside others are left out of that run and run
+after it, one at a time (`SERIAL_TESTS` in `xtask/src/main.rs`): the
+synthesizer host's `hosting` and `protocol`, which use the real Windows
+speech platform; `verbatim-audio`'s `mixer`, whose real audio thread
+missed a playback event under load; and the unit tests of
+`verbatim-agent`, `verbatim-ia2`, `verbatim-listener` and `verbatim-win32`,
+which make windows on the desktop the run was started from. The doctests,
+which nextest does not run, come last, as `cargo test --workspace --doc`.
+The test binaries that run themselves as stand-in processes
+(`harness = false`) answer libtest's command line, which nextest uses to
+list their tests and run each one: mockapp's through its own runner
+(`crates/mockapp/tests/common/harness.rs`), which under nextest makes a
+desktop for each test, and the rest through `libtest-mimic`, which runs
+their tests one after another on the main thread under `cargo test`. On
+this 12-processor machine, with nothing to rebuild, the unit tests took
+216 seconds one binary after another and take about 45 under nextest;
+the longest single tests now take about 3 to 4 seconds.
 
 The tier check (`xtask/src/tiers.rs`) reads `cargo metadata` once, with no
 platform filter, over normal and build edges, so a dependency gated on

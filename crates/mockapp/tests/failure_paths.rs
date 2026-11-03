@@ -14,6 +14,7 @@ mod common;
 mod harness;
 
 use std::sync::{Arc, mpsc};
+use std::time::Duration;
 
 use verbatim_faults::Fault;
 use verbatim_model::protocol::{OutpostToCore, Query, QueryOutcome};
@@ -96,13 +97,17 @@ fn a_first_worker_that_cannot_start_answers_its_program_and_starts_with_the_next
 }
 
 /// A replacement worker that cannot start: generation 0 is abandoned at its
-/// deadline while mockapp holds its call, and generation 1's start fails;
+/// deadline, shortened from 10 seconds to 2, while mockapp holds its call,
+/// and generation 1's start fails;
 /// once the call is let go, the next program's dispatch starts generation
 /// 1's worker, which answers it with its read.
 fn a_replacement_worker_that_cannot_start_answers_the_next_program() {
     let title = common::unique_title("mockapp-replacement-worker");
     let mut app = common::spawn("small.json", "uia", &title);
     let mut outpost = OutpostUnderTest::new(&app);
+    outpost
+        .outpost
+        .set_handling_deadline(Duration::from_secs(2));
     focus_button(&mut app, &outpost, &title);
     let refusal = fail_worker_start(1, 1);
 

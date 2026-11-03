@@ -600,8 +600,11 @@ fn main() -> ExitCode {
     if args.iter().any(|arg| arg == "--pipe-in") {
         return stand_in(&args);
     }
-    // libtest's own options, such as a name filter, are accepted and
-    // ignored: the binary runs all its tests.
+    // The tests run with libtest's command line (`libtest-mimic`), so
+    // cargo-nextest can list them and run each in a process of its own;
+    // under `cargo test` they run one after another on the main thread.
+    let mut arguments = libtest_mimic::Arguments::from_args();
+    arguments.test_threads = Some(1);
     let tests: [(&str, fn()); 6] = [
         (
             "a_new_utterance_goes_right_behind_a_cancel",
@@ -628,9 +631,14 @@ fn main() -> ExitCode {
             a_request_waiting_in_the_host_is_in_its_first_chunk,
         ),
     ];
-    for (name, test) in tests {
-        test();
-        println!("test {name} ... ok");
-    }
-    ExitCode::SUCCESS
+    let trials = tests
+        .into_iter()
+        .map(|(name, test)| {
+            libtest_mimic::Trial::test(name, move || {
+                test();
+                Ok(())
+            })
+        })
+        .collect();
+    libtest_mimic::run(&arguments, trials).exit_code()
 }

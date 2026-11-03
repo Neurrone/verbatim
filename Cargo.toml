@@ -57,6 +57,10 @@ toml = "1"
 vte = "0.15"
 # Random streams for the terminal oracle's tests (verbatim-term-sim).
 proptest = "1"
+# libtest's command line for the test binaries that run themselves as
+# stand-in processes (`harness = false`), so cargo-nextest can list and run
+# their tests one at a time.
+libtest-mimic = "0.8"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 unic-langid = "0.9"
@@ -196,6 +200,13 @@ multiple_unsafe_ops_per_block = "warn"
 # unoptimized build of it takes about a tenth of real time, enough to run
 # the device dry under load, so it is optimized in development builds too.
 [profile.dev.package.rubato]
+opt-level = 3
+
+# The simulated terminal and its oracle run under every corpus test, one
+# stream after another; unoptimized they made the slowest unit tests. Only
+# dev-dependencies and xtask reach it, never a shipped binary or the
+# end-to-end build, so no latency figure is measured through it.
+[profile.dev.package.verbatim-term-sim]
 opt-level = 3
 
 # Every crate, the workspace's own included, keeps line tables, enough for

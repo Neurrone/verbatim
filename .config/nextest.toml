@@ -1,0 +1,12 @@
+# cargo-nextest's settings, for `cargo xtask ci`'s unit tests
+# (`docs/tooling/setup.md`, "What cargo xtask ci runs"). nextest runs every
+# test as a process of its own, many at once; the tests that must not run
+# beside others are run afterwards, one at a time, by a second invocation
+# that xtask makes (`SERIAL_TESTS` in `xtask/src/main.rs`).
+
+[profile.default]
+# A test that fails fails the run, the first time: a retry would hide a
+# race (`CLAUDE.md`, "Standing rules").
+retries = 0
+# Every test runs, so one run reports every failure.
+fail-fast = false

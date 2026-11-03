@@ -32,7 +32,9 @@ use verbatim_model::protocol::{
 use verbatim_model::{OutpostId, Pid};
 use verbatim_process::arguments::OutpostOptions;
 use verbatim_process::message::{read_message, write_message};
-use verbatim_supervisor::{EndReason, Executables, OutpostMessage, ShutdownSummary, Supervisor};
+use verbatim_supervisor::{
+    EndReason, Executables, OutpostMessage, ShutdownSummary, Supervisor, Timings,
+};
 use verbatim_supervisor::{EventSink, Undelivered};
 
 /// The application's argument.
@@ -139,6 +141,7 @@ fn an_outpost_is_never_started_or_replaced_for_an_application_that_has_exited() 
         OutpostOptions::default(),
         Executables::both(exe.clone()),
         LIMIT,
+        Timings::default(),
         std::sync::Arc::default(),
     )
     .expect("the supervisor starts");
@@ -271,6 +274,7 @@ fn an_end_the_app_refuses_for_now_still_comes_before_its_replacement() {
         OutpostOptions::default(),
         Executables::both(exe.clone()),
         LIMIT,
+        Timings::default(),
         std::sync::Arc::default(),
     )
     .expect("the supervisor starts");
@@ -373,6 +377,7 @@ fn a_replacement_waiting_out_its_backoff_is_not_started_for_an_application_that_
         OutpostOptions::default(),
         Executables::both(exe.clone()),
         LIMIT,
+        Timings::default(),
         std::sync::Arc::default(),
     )
     .expect("the supervisor starts");
@@ -445,16 +450,34 @@ fn main() {
     if args.iter().any(|arg| arg == "--pipe-in") {
         stand_in(&args);
     }
-    // libtest's own options, such as a name filter, are accepted and
-    // ignored: the binary runs all of its tests.
-    an_outpost_is_never_started_or_replaced_for_an_application_that_has_exited();
-    println!(
-        "test an_outpost_is_never_started_or_replaced_for_an_application_that_has_exited ... ok"
-    );
-    an_end_the_app_refuses_for_now_still_comes_before_its_replacement();
-    println!("test an_end_the_app_refuses_for_now_still_comes_before_its_replacement ... ok");
-    a_replacement_waiting_out_its_backoff_is_not_started_for_an_application_that_exited();
-    println!(
-        "test a_replacement_waiting_out_its_backoff_is_not_started_for_an_application_that_exited ... ok"
-    );
+    // The tests run with libtest's command line (`libtest-mimic`), so
+    // cargo-nextest can list them and run each in a process of its own;
+    // under `cargo test` they run one after another on the main thread,
+    // since each test's children inherit this process's environment.
+    let mut arguments = libtest_mimic::Arguments::from_args();
+    arguments.test_threads = Some(1);
+    let tests: [(&str, fn()); 3] = [
+        (
+            "an_outpost_is_never_started_or_replaced_for_an_application_that_has_exited",
+            an_outpost_is_never_started_or_replaced_for_an_application_that_has_exited,
+        ),
+        (
+            "an_end_the_app_refuses_for_now_still_comes_before_its_replacement",
+            an_end_the_app_refuses_for_now_still_comes_before_its_replacement,
+        ),
+        (
+            "a_replacement_waiting_out_its_backoff_is_not_started_for_an_application_that_exited",
+            a_replacement_waiting_out_its_backoff_is_not_started_for_an_application_that_exited,
+        ),
+    ];
+    let trials = tests
+        .into_iter()
+        .map(|(name, test)| {
+            libtest_mimic::Trial::test(name, move || {
+                test();
+                Ok(())
+            })
+        })
+        .collect();
+    libtest_mimic::run(&arguments, trials).exit()
 }

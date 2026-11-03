@@ -40,7 +40,7 @@ use verbatim_model::{OutpostId, Pid, TraceId};
 use verbatim_process::arguments::OutpostOptions;
 use verbatim_process::message::{read_message, write_message};
 use verbatim_process::transport::{BlockingReader, BlockingWriter};
-use verbatim_supervisor::{Executables, OutpostMessage, ShutdownSummary, Supervisor};
+use verbatim_supervisor::{Executables, OutpostMessage, ShutdownSummary, Supervisor, Timings};
 
 /// The application's argument.
 const APPLICATION: &str = "--stand-in-application";
@@ -297,6 +297,7 @@ fn a_round_asks_the_listener_then_every_outpost_behind_the_facts_before_it() {
         OutpostOptions::default(),
         Executables::both(exe),
         LIMIT,
+        Timings::default(),
         std::sync::Arc::default(),
     )
     .expect("the supervisor starts");
@@ -375,8 +376,24 @@ fn main() {
     if args.iter().any(|arg| arg == "--pipe-in") {
         stand_in(&args);
     }
-    // libtest's own options, such as a name filter, are accepted and
-    // ignored: the binary runs its one test.
-    a_round_asks_the_listener_then_every_outpost_behind_the_facts_before_it();
-    println!("test a_round_asks_the_listener_then_every_outpost_behind_the_facts_before_it ... ok");
+    // The tests run with libtest's command line (`libtest-mimic`), so
+    // cargo-nextest can list them and run each in a process of its own;
+    // under `cargo test` they run one after another on the main thread,
+    // since each test's children inherit this process's environment.
+    let mut arguments = libtest_mimic::Arguments::from_args();
+    arguments.test_threads = Some(1);
+    let tests: [(&str, fn()); 1] = [(
+        "a_round_asks_the_listener_then_every_outpost_behind_the_facts_before_it",
+        a_round_asks_the_listener_then_every_outpost_behind_the_facts_before_it,
+    )];
+    let trials = tests
+        .into_iter()
+        .map(|(name, test)| {
+            libtest_mimic::Trial::test(name, move || {
+                test();
+                Ok(())
+            })
+        })
+        .collect();
+    libtest_mimic::run(&arguments, trials).exit()
 }

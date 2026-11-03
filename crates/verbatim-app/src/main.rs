@@ -286,10 +286,15 @@ fn run(
     // (the owner's own Windows Terminal), ignored entirely: nothing is ever
     // read from them. Unset for real users, so nothing is ignored.
     let ignored = Arc::new(verbatim_process::held::IgnoredProcesses::from_env());
+    // The idle retirement: two minutes, but in the end-to-end scenario that
+    // waits for one, whose harness shortens it with
+    // `VERBATIM_TEST_RETIREMENT`; unset for real users.
+    let retirement = verbatim_supervisor::Retirement::from_test_env()?;
     let supervisor = Arc::new(Supervisor::new(
         outpost_sink(command_tx.clone()),
         outpost_options,
         ignored,
+        retirement,
     )?);
     let outposts: Arc<Mutex<HashMap<Pid, OutpostStatus>>> = Arc::new(Mutex::new(HashMap::new()));
     // The GUI's handle, once the GUI thread is up; part of readiness.
