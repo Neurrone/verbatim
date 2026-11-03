@@ -188,18 +188,21 @@ fn send(inputs: &[INPUT]) {
 }
 
 /// The releases to send at exit for the keys in `line`, which is dropped:
-/// one for each key whose last transition in line is a deferred release
-/// and which `down` says Windows has down, in the order of those releases.
-/// A held key needs none, since its own release is swallowed for good and
-/// its press never reached Windows; a key whose last transition is a press
-/// is still down under the user's finger, and its release, which the hook
-/// no longer sees, reaches Windows itself. A character typed as Unicode
-/// leaves no key down.
+/// one for each key whose last transition in line is a release and which
+/// `down` says Windows has down, in the order of those releases. A held key
+/// counts as a release, since passing it on sends its press and its
+/// release: its own release is swallowed for good, so Windows has it down
+/// when an earlier press of it reached Windows, and is released, and not
+/// when none did. A key whose last transition is a deferred press is still
+/// down under the user's finger, and its release, which the hook no longer
+/// sees, reaches Windows itself. A character typed as Unicode leaves no
+/// key down.
 fn releases_at_exit(line: &VecDeque<Waiting>, down: impl Fn(u16) -> bool) -> Vec<HeldStroke> {
     let mut last: Vec<(HeldStroke, bool)> = Vec::new();
     for waiting in line {
-        let Waiting::Deferred { stroke, pressed } = waiting else {
-            continue;
+        let (stroke, pressed) = match waiting {
+            Waiting::Held { stroke, .. } => (stroke, &false),
+            Waiting::Deferred { stroke, pressed } => (stroke, pressed),
         };
         if stroke.vk == VK_PACKET {
             continue;
@@ -379,5 +382,51 @@ mod tests {
             releases_at_exit(&line, down),
             [stroke(RIGHT_ALT, 4), stroke(SHIFT, 5)]
         );
+    }
+
+    /// A key released behind a held key and then pressed again is down
+    /// under the user's finger at exit, so no release is sent for it; a key
+    /// released twice is released once; and a character typed as Unicode
+    /// is released by no key, even when Windows answers it is down.
+    #[test]
+    fn only_a_keys_last_transition_decides_its_release_at_exit() {
+        const SHIFT: u16 = 0xA0;
+        const CONTROL: u16 = 0xA2;
+        let line = VecDeque::from([
+            Waiting::Held {
+                trace_id: TraceId::from_raw(1),
+                stroke: stroke(0x28, 1),
+                modifiers: Vec::new(),
+                pressed_at_us: 0,
+                passed: false,
+            },
+            deferred(SHIFT, false, 2),
+            deferred(SHIFT, true, 3),
+            deferred(CONTROL, false, 4),
+            deferred(CONTROL, false, 5),
+            deferred(VK_PACKET, false, 6),
+        ]);
+        let down = |vk| matches!(vk, SHIFT | CONTROL | VK_PACKET);
+        assert_eq!(releases_at_exit(&line, down), [stroke(CONTROL, 5)]);
+    }
+
+    /// A held key whose earlier press reached Windows has its release
+    /// swallowed with the held press, so Windows still has it down at exit
+    /// and it is released; a held key whose press never reached Windows is
+    /// not down, and is not released.
+    #[test]
+    fn a_held_key_windows_still_has_down_is_released_at_exit() {
+        const RIGHT: u16 = 0x27;
+        const DOWN: u16 = 0x28;
+        let held = |vk, number: u32| Waiting::Held {
+            trace_id: TraceId::from_raw(u64::from(number)),
+            stroke: stroke(vk, number),
+            modifiers: Vec::new(),
+            pressed_at_us: 0,
+            passed: false,
+        };
+        let line = VecDeque::from([held(RIGHT, 1), held(DOWN, 2)]);
+        let down = |vk| vk == RIGHT;
+        assert_eq!(releases_at_exit(&line, down), [stroke(RIGHT, 1)]);
     }
 }
