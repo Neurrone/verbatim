@@ -344,8 +344,8 @@ Windows Terminal its image ships.
 Some scenarios are local-only, marked `local_only` in the registry, because
 GitHub's Windows Server runner cannot run them as this machine does:
 
-- The `notepad_` scenarios, `settings_search_suggestions` and
-  `settings_combo_box_expanded`; why each fails on the runner is in
+- The `notepad_` scenarios, `settings_search_suggestions`,
+  `settings_combo_box_expanded` and `explorer_folder_window`; why each fails on the runner is in
   [the known failures](../flaky-tests.md).
 
 The registry's `local_only` flag is the one place this is recorded. A

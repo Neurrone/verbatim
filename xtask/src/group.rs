@@ -166,8 +166,8 @@ mod tests {
             "/../crates/verbatim-e2e/src/registry.rs"
         ))
         .expect("the registry's source");
-        let read = plan::registry_entries(&source).expect("the planner reads the registry");
-        let real: Vec<plan::Entry> = registry::SCENARIOS
+        let planned = plan::registry_entries(&source).expect("the planner reads the registry");
+        let registered: Vec<plan::Entry> = registry::SCENARIOS
             .iter()
             .map(|def| plan::Entry {
                 name: def.name.to_string(),
@@ -175,7 +175,7 @@ mod tests {
                 local_only: def.local_only,
             })
             .collect();
-        assert_eq!(read, real);
+        assert_eq!(planned, registered);
     }
 
     #[test]

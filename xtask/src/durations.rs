@@ -19,16 +19,14 @@ use std::process::{Command, ExitCode, Stdio};
 
 /// Runs the command with its arguments after `e2e-durations`.
 pub fn run(args: &[String]) -> ExitCode {
-    let runs = match args {
-        [runs] => match runs.parse::<usize>() {
-            Ok(runs) if runs > 0 => runs,
-            _ => {
-                eprintln!("e2e-durations: {runs:?} is not a whole number of at least 1");
-                return ExitCode::from(2);
-            }
-        },
+    let [runs] = args else {
+        eprintln!("usage: cargo xtask e2e-durations <runs>, such as 30");
+        return ExitCode::from(2);
+    };
+    let runs = match runs.parse::<usize>() {
+        Ok(runs) if runs > 0 => runs,
         _ => {
-            eprintln!("usage: cargo xtask e2e-durations <runs>, such as 30");
+            eprintln!("e2e-durations: {runs:?} is not a whole number of at least 1");
             return ExitCode::from(2);
         }
     };
@@ -149,7 +147,7 @@ fn median(values: &[f64]) -> f64 {
     let mut sorted = values.to_vec();
     sorted.sort_by(f64::total_cmp);
     let middle = sorted.len() / 2;
-    if sorted.len() % 2 == 0 {
+    if sorted.len().is_multiple_of(2) {
         f64::midpoint(sorted[middle - 1], sorted[middle])
     } else {
         sorted[middle]
