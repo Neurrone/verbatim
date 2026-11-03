@@ -23,7 +23,10 @@
 //! which says nothing about the title either.
 //!
 //! The walk is fixed: the Speech page's controls in their Tab order, so
-//! every Tab is asserted by the control it reaches. Every time the dialog
+//! every Tab is asserted by the control it reaches. The first opening Tabs
+//! from the category list to the rate slider; the later ones move to it
+//! with its access key, Alt+R, since the walk there is not what they test.
+//! Every time the dialog
 //! closes, the scenario waits for the desktop, where the focus returns, to
 //! take the foreground and asserts its announcement.
 
@@ -67,6 +70,14 @@ pub(crate) fn open_at_rate(scenario: &mut Scenario, rate: u32) {
     press(scenario, "tab", &[&format!("Rate slider {rate} Alt+r")]);
 }
 
+/// Opens the Speech settings and moves to the rate slider by its access
+/// key, Alt+R, where it must say `rate`: once [`open_at_rate`] has walked
+/// the Tab order, the later openings need only reach the slider.
+fn open_at_rate_by_access_key(scenario: &mut Scenario, rate: u32) {
+    super::open_speech_settings(scenario);
+    press(scenario, "alt+r", &[&format!("Rate slider {rate} Alt+r")]);
+}
+
 /// Tabs from the rate slider through `count` controls after it.
 fn tab_past_rate(scenario: &mut Scenario, count: usize) {
     for control in &AFTER_RATE[..count] {
@@ -93,7 +104,7 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     // Enter on Apply applies the change and leaves the dialog open: the
     // next Shift+Tab moves back from Apply inside the dialog. Escape then
     // closes it without undoing what was applied.
-    open_at_rate(scenario, 80);
+    open_at_rate_by_access_key(scenario, 80);
     press(scenario, "uparrow", &["79"]);
     tab_past_rate(scenario, 6);
     scenario
@@ -106,7 +117,7 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     // Control+S on the rate slider, inside the Speech page, applies: the
     // Cancel that Escape then sends reverts to the applied rate, not past
     // it.
-    open_at_rate(scenario, 79);
+    open_at_rate_by_access_key(scenario, 79);
     press(scenario, "uparrow", &["78"]);
     scenario
         .send_keys(&["control+s"])
@@ -118,7 +129,7 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     // Terminal and wraps round to Speech. Control+Shift+Tab from the Change
     // button moves to the previous category, wrapping to the last,
     // Terminal.
-    open_at_rate(scenario, 78);
+    open_at_rate_by_access_key(scenario, 78);
     press(
         scenario,
         "control+tab",
