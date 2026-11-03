@@ -642,8 +642,6 @@ under `src/scenarios/` documents exactly what it asserts.
   Verbatim's latency ledger that assert no speech after the desktop's and
   write each step's ground truth to `measure-truth.jsonl`; the tooling
   guide's "The measure set" describes each and how to run them.
-  `measure_focus_explorer` also waits for exact announcements and fails
-  with a named timeout when one is not queued.
 
 ### Shared setups
 

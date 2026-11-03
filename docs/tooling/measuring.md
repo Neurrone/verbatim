@@ -126,7 +126,6 @@ File Explorer clears it. A scenario's length is in its log
 (`finished in`); the windows the baseline used, debug build:
 
 - `measure_keys_text_box` (39 seconds): `--after 15 --seconds 8`.
-- `measure_focus_explorer`: `--after 10 --seconds 8`. The baseline used it when the scenario ran 17 seconds, and it then lay in a different part of the scenario. The scenario now waits for each new window's announcement and takes about 40 seconds, its ten new windows from about 4 to 30 seconds in and the keys after them, so the same window falls inside the new windows and a trace of it is not comparable with the baseline's. Its latency samples are reported by kind in the run's `measure-summary.txt` ([the end-to-end guide](e2e.md), "The measure set").
 - `conhost_flood` (115 seconds): `--after 8 --seconds 6`.
 - `measure_speech_real` (43 seconds, `--audible`): `--after 20 --seconds 8`.
 - `measure_focus_text_box` is over in 5 seconds and has no room for one.

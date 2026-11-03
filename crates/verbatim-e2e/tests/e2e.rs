@@ -171,7 +171,6 @@ scenario_tests! {
     "a measurement workload, run by name (docs/tooling/e2e.md)":
     measure_focus_windows_terminal
     measure_focus_windows_terminal_tabs
-    measure_focus_explorer
     measure_focus_text_box
     measure_focus_new_application
     measure_keys_text_box

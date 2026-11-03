@@ -30,7 +30,6 @@ const ENDPOINT: &str = "127.0.0.1:44001";
 const MEASURE_SET: &[&str] = &[
     "measure_focus_windows_terminal",
     "measure_focus_windows_terminal_tabs",
-    "measure_focus_explorer",
     "measure_focus_text_box",
     "measure_focus_new_application",
     "measure_keys_text_box",

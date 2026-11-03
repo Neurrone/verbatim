@@ -24,7 +24,7 @@
 //! give it to the item: on GitHub's runners in 8 of 18 recorded runs after
 //! Enter, after Backspace in runs 39558690998 and 39583748471, and on the
 //! opening in run 39603654902; in none of 5 local runs of this scenario,
-//! though `measure_focus_explorer` has met it on a development machine.
+//! though other File Explorer runs have met it on a development machine.
 //! Whether it comes depends on how quickly the machine loads the folder,
 //! so it is an optional utterance (`docs/testing.md`, "Optional
 //! utterances", approved by Dickson for Enter on 2026-10-17 and for

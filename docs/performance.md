@@ -354,8 +354,8 @@ fact", the gap's evidence).
 - Memory: one record, the newest answer per top-level window of the
   application, pruned when the window is destroyed, and two stamps, in the
   outpost; nothing in the listener.
-- Reads made in vain are accepted: in `measure_focus_explorer` a record
-  can come to a read after the focus moved to another process's window,
+- Reads made in vain are accepted: as File Explorer windows open in
+  turn, a record can come to a read after the focus moved to another process's window,
   whose foreground event comes about 200 ms early; the read ends at its
   local check, about 110 µs.
 - The harness's idle barrier: the outpost answers a round only once its
@@ -665,7 +665,7 @@ reaching a parent 3 more (`accParent`, the `QueryInterface` for its
 
 ### The outpost's reducer
 
-Counted from the code (`docs/design/ownership.md`), not yet measured: `measure_focus_explorer`,
+Counted from the code (`docs/design/ownership.md`), not yet measured:
 `measure_focus_text_box`, `measure_keys_windows_terminal` and
 `measure_keys_conhost` before and after give the hop's latency and the
 wake-ups and processor time per event.

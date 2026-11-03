@@ -49,10 +49,6 @@ Scenarios: the `windows_terminal_` scenarios generally, for example `windows_ter
   - How: nothing is spoken after the desktop's "Recycle Bin 1 of 13"; the folder window, opened in a new `explorer.exe` process, never takes the foreground, its UI thread stops answering about 1.5 s after it opens (an arbitration probe of its `ShellTabWindowClass` window times out at 3 s, an MSAA call waits 13 s), and it does not close within 15 s, so the next scenarios fail at launch on the window left open. Once in 13 runs, with the keep-id fix; the next 10 passed.
   - Cause: not found. Verbatim's outpost was the one waiting on Explorer; no Verbatim call was found that Explorer waited on.
   - Fix: none yet.
-- `measure_focus_explorer`
-  - How: times out. On 2026-10-29 it failed in 22 of 23 runs in a row on the development machine, before and after that day's changes, while `explorer_folder_window` passed; on 2026-11-03, 20 of 20 at 000f36f3, each at a newly opened folder: its title "... - File Explorer" is spoken, then nothing for 15 s where its first item ("one 0 not selected 1 of 2") is expected.
-  - Cause: File Explorer, which gives a newly opened folder's first item the keyboard focus only some of the time. Captures on 2026-11-03 (NVDA build 732d1ce2, the pin), opening two folders as the workload does: NVDA spoke the new folder's title alone and its report of the focus said "pane" in 1 of 3 runs, and the title, "Items View list" and "one 0 not selected 1 of 2" in 2; Verbatim, on the same steps, said the title alone with the pane focused in 1 of 3, and the item, focused, in 1. Verbatim speaks the item whenever File Explorer focuses it, as NVDA does. In the workload's own runs File Explorer raised no focus on any item (its events read from seven runs), so the wait for the item cannot end. One of Verbatim's three capture runs spoke neither folder's title, with the pane focused, once; not explained.
-  - Fix: the workload waits for what is always said, the new window's title, rather than its first item; a question for Dickson, since it changes what the measurement samples (2026-11-03).
 
 ## Terminal scenarios, single failures on GitHub's runner
 

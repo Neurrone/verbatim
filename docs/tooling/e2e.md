@@ -511,36 +511,6 @@ The scenarios, all named `measure_`:
   forward 20 times by turns as a taskbar button does.
 - `measure_focus_windows_terminal_tabs`: two tabs of one Windows Terminal
   window, 20 switches with Control+Tab and Control+Shift+Tab.
-- `measure_focus_explorer`: 10 new File Explorer windows, each holding
-  two files named for it, each opened and closed once its first item is
-  announced (the first focus in a new window), with a wait after each
-  close for the folder window's item as it comes back to the front, so
-  every new window opens on the same desktop;
-  then 20 rounds of arrows, Enter into a subfolder and Backspace back,
-  each key followed by a wait for the item it moves to. None of these
-  announcements is part of an input Verbatim reports handled, and each
-  can come after Verbatim is idle, so the scenario waits for the
-  announcement itself, as `explorer_folder_window` does. It writes
-  `measure-summary.txt` to its artifacts: its samples by kind, each with
-  its count and figures in milliseconds, and no figure over all of them,
-  since the new windows' first focus, which includes a new outpost's
-  start, sets any overall percentile alone. The kinds are keys (each
-  key's item; their audio figures are taken from the arrow keys' rows
-  alone, by their step, `keys downarrow` or `keys uparrow`, so they
-  cover 80 of the 120 items in every run: the items after Enter, and
-  after every Backspace but the last, never play, the next key's speech
-  ending them, and the last Backspace's item waits behind the folder
-  window's title and list, so its time to audio is not a key's), new
-  windows (each window's title, once per window, though its list and
-  item share its latency) and returns (the folder window's title heard
-  between each close and the folder window's item, measuring the title's
-  event to the title being queued; the list and the item come from a
-  later focus event, raised tens to hundreds of milliseconds after the
-  title's and queued soon after the title). Each percentile is
-  the sample at the rounded index p/100 times (n-1), index
-  `(p(n-1)+50)/100` of the sorted samples, so a kind's P95 is its maximum with 11
-  samples or fewer, and its P99 with 51 or fewer, so the new windows'
-  and returns' 10 samples give both as the maximum, as the file says.
 - `measure_focus_text_box`: two Windows Forms text boxes, brought forward
   20 times by turns.
 - `measure_focus_new_application`: 12 newly started applications, each
@@ -612,7 +582,7 @@ second terminal:
 ```
 $env:VERBATIM_E2E_ENDPOINT = '127.0.0.1:44001'
 $env:VERBATIM_E2E_RECORD = '0'
-cargo test -p verbatim-e2e --test e2e -- --ignored --exact measure_focus_explorer --test-threads=1
+cargo test -p verbatim-e2e --test e2e -- --ignored --exact measure_focus_text_box --test-threads=1
 ```
 
 `VERBATIM_E2E_RECORD = '0'` leaves out the video, which a measurement does
@@ -636,7 +606,7 @@ and skips its own debug build. The agent can stay a debug build.
 ```
 cargo build --release -p verbatim-app -p verbatim-outpost -p verbatim-listener -p verbatim-synth-host -p mockapp
 $env:VERBATIM_E2E_VERBATIM_EXE = "$PWD\target\release\verbatim.exe"
-cargo test -p verbatim-e2e --test e2e -- --ignored --exact measure_focus_explorer --test-threads=1
+cargo test -p verbatim-e2e --test e2e -- --ignored --exact measure_focus_text_box --test-threads=1
 ```
 
 Remove the variable (`Remove-Item Env:VERBATIM_E2E_VERBATIM_EXE`) to go

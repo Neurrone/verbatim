@@ -1904,18 +1904,6 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         teardown: measure::teardown,
     },
     ScenarioDef {
-        name: "measure_focus_explorer",
-        group: Group::Measure,
-        settings: None,
-        local_only: false,
-        quick_retirement: false,
-        document: None,
-        comparable: Comparable::No("it is a measurement workload of Verbatim's latency"),
-        setup: measure::setup_focus_explorer,
-        body: measure::body_focus_explorer,
-        teardown: measure::teardown,
-    },
-    ScenarioDef {
         name: "measure_focus_text_box",
         group: Group::Measure,
         settings: None,

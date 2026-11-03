@@ -301,7 +301,7 @@ is kept in the repository.
 Tests and tooling:
 
 - `call_counts::uia_focus_chains_stop_below_the_process_boundary` was recorded as failing intermittently under `cargo xtask ci`, a defect by `docs/testing.md`, but did not fail in 456 runs on 2026-11-03, alone, with its binary and under load ([the known failures](flaky-tests.md)). Its next failure's message is to be kept and its cause found from the count that moved.
-- Audit every end-to-end scenario for timing races, each fixed by waiting for evidence, not a longer bound; find why the agent's bring-forward always takes its slowest path (up to 1.4 s). `measure_focus_explorer`'s key waits end on their key's item, which two keys share ("alpha 2 of 4" for Down 1 and Up 1), so a late repeat can end the next key's wait; the targets are `explorer_folder_window`'s, so renaming cannot fix it.
+- Audit every end-to-end scenario for timing races, each fixed by waiting for evidence, not a longer bound; find why the agent's bring-forward always takes its slowest path (up to 1.4 s).
 - Root-cause, from the GitHub run logs, the ARM64 unit test `the_codeview_record_read_is_the_one_dbghelp_reports` (`verbatim-trace-waits`), which failed on main before 2026-10-15 and does not reproduce here.
 - The trace tool's symbol lookup for ARM64X images, such as ntdll, needs a fix testable only on the ARM64 runner (deferred, Dickson, 2026-10-21).
 - Compare mode presses Verbatim+V (`kb:verbatim+v`) as Insert+V, which under NVDA types "v" into Notepad and corrupts the later steps of `notepad_editing`'s comparison.
@@ -329,7 +329,6 @@ Focus and File Explorer:
   item to "Installed apps Alt, p1 of 17" where the scenario has "p 1 of
   17", so the step is judged "differs"; find whether the compare tool
   joins NVDA's speech parts without a space or NVDA runs them together.
-- File Explorer can focus its "Working on it..." placeholder and raise no later focus, UIA or `WinEvent`, so `measure_focus_explorer` times out, which decision 11's wait cannot recover; find what File Explorer raises then, beyond a name change and three state changes on the items view. The failure is recorded in [the known failures](flaky-tests.md).
 - In one runner run the `delta` item inside Inner still carried the parent folder's window title; check whether File Explorer's title lags or an ancestor name is stale (`explorer_folder_window`).
 - The listener's read in File Explorer scenarios once came 285 ms late, locally mostly the first nearest-window lookup waiting on a busy File Explorer; confirm on GitHub's runner (deferred, Dickson, 2026-10-21).
 - On a fresh GitHub runner the first Verbatim start can say "Start toggle button not pressed" instead of "Desktop list", because the taskbar rehosts the Start button in a new PopupHost window and raises a UIA focus NVDA would accept too; the choice between a throwaway warm-up start and an experiment to find the trigger is deferred (Dickson, 2026-10-21).

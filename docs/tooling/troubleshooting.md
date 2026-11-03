@@ -231,13 +231,6 @@ connection fails while another process's remote operation is queued" and
 "UiaHasServerSideProvider says no for a new conhost window while another
 process has an event handler") reaches it.
 
-**`measure_focus_explorer` times out on File Explorer's "Working on
-it..." placeholder.** File Explorer sometimes gives the focus to the
-placeholder and raises no later focus, so the wait for the item times
-out with no fault of Verbatim's (`docs/roadmap.md`, M4, "Follow-ups from
-M4.1"). Record the run and repeat it, because the measure is valid only
-when the item is focused.
-
 **A window's title-bar information takes seconds during a parallel
 mockapp run.** The Desktop Window Manager does work for every top-level
 window made or destroyed anywhere in the session (on the development VM
