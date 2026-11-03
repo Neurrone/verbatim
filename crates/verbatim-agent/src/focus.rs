@@ -360,3 +360,239 @@ fn list_view_position(window: HWND) -> Option<(i32, i32)> {
     let index = i32::try_from(focused).ok().filter(|index| *index >= 0)?;
     Some((index + 1, i32::try_from(count).ok()?))
 }
+
+/// The screen position of the character on line `line` at `column`, both
+/// from zero, of the focused Win32 edit control, as the control gives it:
+/// the line's first character's index (`EM_LINEINDEX`), the position of
+/// the character `column` past it (`EM_POSFROMCHAR`, packed in its answer
+/// as a classic edit control packs it), converted to screen coordinates.
+///
+/// # Errors
+///
+/// Returns an error if no window has the focus, it does not answer, or the
+/// character is not in its client area.
+pub fn edit_character_position(line: u32, column: u32) -> io::Result<(i32, i32)> {
+    use windows::Win32::Foundation::POINT;
+    use windows::Win32::Graphics::Gdi::ClientToScreen;
+    use windows::Win32::UI::Controls::{EM_LINEINDEX, EM_POSFROMCHAR};
+
+    let window = focused_window().ok_or_else(|| io::Error::other("no window has the focus"))?;
+    let ask = |message: u32, wparam: usize| -> io::Result<usize> {
+        let mut answer = 0usize;
+        // SAFETY: both messages take plain integers and answer one; nothing
+        // points into this process.
+        let sent = unsafe {
+            SendMessageTimeoutW(
+                window,
+                message,
+                WPARAM(wparam),
+                LPARAM(0),
+                SMTO_ABORTIFHUNG,
+                1000,
+                Some(&raw mut answer),
+            )
+        };
+        if sent.0 == 0 {
+            return Err(io::Error::other(format!(
+                "the focused window ({}) did not answer message {message:#x}",
+                class_name(window)
+            )));
+        }
+        Ok(answer)
+    };
+    let start = ask(EM_LINEINDEX, line as usize)?;
+    if start.cast_signed() < 0 {
+        return Err(io::Error::other(format!(
+            "the edit control has no line {line}"
+        )));
+    }
+    let packed = ask(EM_POSFROMCHAR, start + column as usize)?;
+    if packed.cast_signed() == -1 {
+        return Err(io::Error::other(format!(
+            "the character at line {line}, column {column} has no position"
+        )));
+    }
+    // The client coordinates, each a signed 16-bit value in one of the
+    // answer's two low words.
+    let low = u16::try_from(packed & 0xFFFF).unwrap_or(0);
+    let high = u16::try_from((packed >> 16) & 0xFFFF).unwrap_or(0);
+    let mut point = POINT {
+        x: i32::from(low.cast_signed()),
+        y: i32::from(high.cast_signed()),
+    };
+    // SAFETY: a local conversion of a local point.
+    if !unsafe { ClientToScreen(window, &raw mut point) }.as_bool() {
+        return Err(io::Error::other(
+            "the point could not be converted to the screen",
+        ));
+    }
+    Ok((point.x, point.y))
+}
+
+/// The screen position of the character on line `line` at `column`, both
+/// from zero, of the focused UI Automation element's text: a range at the
+/// text's start moved by `line` lines and then by `column` characters,
+/// expanded to its character, and the top left of its first bounding
+/// rectangle, each coordinate rounded.
+///
+/// # Errors
+///
+/// Returns an error if UI Automation cannot be reached, the focus has no
+/// text pattern, the move falls short, or the character has no rectangle.
+pub fn uia_character_position(line: u32, column: u32) -> io::Result<(i32, i32)> {
+    through_uia("UiaCharacterPosition", || {
+        uia_position_through_uia(line, column)
+    })
+}
+
+/// [`uia_character_position`]'s UI Automation calls.
+fn uia_position_through_uia(line: u32, column: u32) -> io::Result<(i32, i32)> {
+    use windows::Win32::System::Ole::{
+        SafeArrayAccessData, SafeArrayDestroy, SafeArrayGetUBound, SafeArrayUnaccessData,
+    };
+    use windows::Win32::UI::Accessibility::{
+        IUIAutomationTextPattern, TextPatternRangeEndpoint_End, TextPatternRangeEndpoint_Start,
+        TextUnit_Character, TextUnit_Line, UIA_TextPatternId,
+    };
+
+    // SAFETY: as in `focused_element`.
+    let _ = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
+    // SAFETY: as in `focused_element`.
+    let automation: IUIAutomation =
+        unsafe { CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER) }
+            .map_err(io::Error::other)?;
+    // SAFETY: plain COM calls on live interfaces.
+    let focus = unsafe { automation.GetFocusedElement() }.map_err(io::Error::other)?;
+    // SAFETY: as above.
+    let pattern: IUIAutomationTextPattern = unsafe { focus.GetCurrentPatternAs(UIA_TextPatternId) }
+        .map_err(|_| io::Error::other("the focused element has no text pattern"))?;
+    // SAFETY: as above.
+    let range = unsafe { pattern.DocumentRange() }.map_err(io::Error::other)?;
+    // SAFETY: as above; the range is collapsed to its start.
+    unsafe {
+        range.MoveEndpointByRange(
+            TextPatternRangeEndpoint_End,
+            &range,
+            TextPatternRangeEndpoint_Start,
+        )
+    }
+    .map_err(io::Error::other)?;
+    for (unit, count, what) in [
+        (TextUnit_Line, line, "lines"),
+        (TextUnit_Character, column, "characters"),
+    ] {
+        let count = i32::try_from(count).map_err(io::Error::other)?;
+        if count == 0 {
+            continue;
+        }
+        // SAFETY: as above.
+        let moved = unsafe { range.Move(unit, count) }.map_err(io::Error::other)?;
+        if moved != count {
+            return Err(io::Error::other(format!(
+                "the text moved {moved} of {count} {what}"
+            )));
+        }
+    }
+    // SAFETY: as above.
+    unsafe { range.ExpandToEnclosingUnit(TextUnit_Character) }.map_err(io::Error::other)?;
+    // SAFETY: as above; the array returned is this call's to destroy.
+    let array = unsafe { range.GetBoundingRectangles() }.map_err(io::Error::other)?;
+    let rectangle = (|| {
+        // SAFETY: a live one-dimensional array of doubles.
+        let upper = unsafe { SafeArrayGetUBound(array, 1) }.map_err(io::Error::other)?;
+        if upper < 1 {
+            return Err(io::Error::other("the character has no bounding rectangle"));
+        }
+        let mut data: *mut core::ffi::c_void = std::ptr::null_mut();
+        // SAFETY: as above; `data` is a local the call fills.
+        unsafe { SafeArrayAccessData(array, &raw mut data) }.map_err(io::Error::other)?;
+        // SAFETY: the array holds at least two doubles, accessed until
+        // unaccessed below.
+        let pair = unsafe { std::slice::from_raw_parts(data.cast::<f64>(), 2) };
+        let (left, top) = (pair[0], pair[1]);
+        // SAFETY: accessed above.
+        unsafe { SafeArrayUnaccessData(array) }.map_err(io::Error::other)?;
+        Ok((left, top))
+    })();
+    // SAFETY: the array is this call's, and no longer accessed.
+    let _ = unsafe { SafeArrayDestroy(array) };
+    let (left, top) = rectangle?;
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "a rounded screen coordinate, saturating if out of range"
+    )]
+    Ok((left.round() as i32, top.round() as i32))
+}
+
+/// The Alt+Tab switcher's item named `name`, read through UI Automation
+/// while the switcher is open: its grid row and column, each from one, its
+/// position in the list, from one, and the list's size. The switcher's
+/// window is found by its class, and the item among the children of its
+/// list, whose automation id is `SwitchItemListControl`.
+///
+/// # Errors
+///
+/// Returns an error if UI Automation cannot be reached, the switcher is not
+/// open, or it has no item so named, or the item reports no row, column or
+/// position.
+pub fn switcher_item(name: &str) -> io::Result<(u32, u32, u32, u32)> {
+    through_uia("SwitcherItem", || switcher_item_through_uia(name))
+}
+
+/// [`switcher_item`]'s UI Automation calls.
+fn switcher_item_through_uia(name: &str) -> io::Result<(u32, u32, u32, u32)> {
+    use windows::Win32::UI::Accessibility::{
+        IUIAutomationGridItemPattern, UIA_GridItemPatternId, UIA_NamePropertyId,
+        UIA_PositionInSetPropertyId,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::FindWindowW;
+    use windows::core::w;
+
+    // SAFETY: as in `focused_element`.
+    let _ = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
+    // SAFETY: as in `focused_element`.
+    let automation: IUIAutomation =
+        unsafe { CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER) }
+            .map_err(io::Error::other)?;
+    // SAFETY: a local lookup by class name.
+    let window = unsafe { FindWindowW(w!("XamlExplorerHostIslandWindow"), None) }
+        .map_err(|_| io::Error::other("the Alt+Tab switcher's window is not open"))?;
+    // SAFETY: plain COM calls on live interfaces.
+    let root = unsafe { automation.ElementFromHandle(window) }.map_err(io::Error::other)?;
+    let id = VARIANT::from(BSTR::from("SwitchItemListControl"));
+    // SAFETY: as above.
+    let list_condition =
+        unsafe { automation.CreatePropertyCondition(UIA_AutomationIdPropertyId, &id) }
+            .map_err(io::Error::other)?;
+    // SAFETY: as above.
+    let list = unsafe { root.FindFirst(TreeScope_Descendants, &list_condition) }
+        .map_err(|_| io::Error::other("the switcher has no list of running applications"))?;
+    let named = VARIANT::from(BSTR::from(name));
+    // SAFETY: as above.
+    let item_condition = unsafe { automation.CreatePropertyCondition(UIA_NamePropertyId, &named) }
+        .map_err(io::Error::other)?;
+    // SAFETY: as above.
+    let item = unsafe { list.FindFirst(TreeScope_Children, &item_condition) }
+        .map_err(|_| io::Error::other(format!("the switcher has no item named {name:?}")))?;
+    // SAFETY: as above.
+    let grid: IUIAutomationGridItemPattern =
+        unsafe { item.GetCurrentPatternAs(UIA_GridItemPatternId) }
+            .map_err(|_| io::Error::other("the switcher's item has no grid position"))?;
+    // SAFETY: as above.
+    let row = unsafe { grid.CurrentRow() }.map_err(io::Error::other)?;
+    // SAFETY: as above.
+    let column = unsafe { grid.CurrentColumn() }.map_err(io::Error::other)?;
+    let number = |property| -> io::Result<u32> {
+        // SAFETY: as above.
+        let value = unsafe { item.GetCurrentPropertyValue(property) }.map_err(io::Error::other)?;
+        i32::try_from(&value)
+            .ok()
+            .and_then(|value| u32::try_from(value).ok())
+            .filter(|&value| value > 0)
+            .ok_or_else(|| io::Error::other("the switcher's item reports no position in its list"))
+    };
+    let position = number(UIA_PositionInSetPropertyId)?;
+    let set_size = number(UIA_SizeOfSetPropertyId)?;
+    let from_one = |value: i32| u32::try_from(value + 1).map_err(io::Error::other);
+    Ok((from_one(row)?, from_one(column)?, position, set_size))
+}

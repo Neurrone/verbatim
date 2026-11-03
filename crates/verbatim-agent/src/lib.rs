@@ -30,6 +30,7 @@
 //! binary for real guest deployment.
 
 pub mod capture;
+mod clock;
 pub mod desktop;
 mod events;
 mod files;

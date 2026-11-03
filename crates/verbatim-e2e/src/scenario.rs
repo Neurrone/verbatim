@@ -276,6 +276,16 @@ pub struct Scenario {
     /// open or take the foreground in time ([`window_wait_chains`]), one
     /// chain a line, for [`WAIT_CHAINS_FILE_NAME`].
     wait_chains: Vec<String>,
+    /// The executable Verbatim was launched from, for a second start
+    /// ([`Scenario::replace_verbatim`]); empty in compare mode.
+    launch_exe: String,
+    /// The environment Verbatim was launched with, but for its readiness
+    /// event, for a second start.
+    launch_env: Vec<(String, String)>,
+    /// Each Verbatim a second start replaced, by its process id, with the
+    /// path of its stderr log, whose artifacts are collected with the
+    /// run's.
+    replaced: Vec<(u32, String)>,
 }
 
 /// The NVDA a compare-mode scenario runs against.
@@ -487,6 +497,9 @@ impl Scenario {
                 held: Vec::new(),
                 nvda: Some(nvda),
                 wait_chains: Vec::new(),
+                launch_exe: String::new(),
+                launch_env: Vec::new(),
+                replaced: Vec::new(),
             });
         }
         let dumps_before = crash_dumps(&mut agent);
@@ -522,6 +535,7 @@ impl Scenario {
         if !filter.is_empty() {
             env.push(("RUST_LOG".to_owned(), filter));
         }
+        let launch_env = env[1..].to_vec();
         let launched = agent.launch_verbatim(&exe_str, &run_dir, &env, &stderr_path);
         let (verbatim_pid, ignored) = match launched {
             Ok((launched, ignored)) => (launched.pid, ignored),
@@ -555,18 +569,7 @@ impl Scenario {
                 return Err(error);
             }
         };
-        let status = ok_or_error(control.request(Request::Status)?)?;
-        if !matches!(
-            status,
-            Frame::Reply {
-                payload: ReplyPayload::Status(ref info),
-                ..
-            } if info.ready
-        ) {
-            return Err(io::Error::other(format!(
-                "Verbatim set its readiness event but its status is not ready: {status:?}"
-            )));
-        }
+        require_ready(&mut control)?;
 
         Ok(Self {
             _lock: lock,
@@ -592,6 +595,9 @@ impl Scenario {
             held: Vec::new(),
             nvda: None,
             wait_chains: Vec::new(),
+            launch_exe: exe_str,
+            launch_env,
+            replaced: Vec::new(),
         })
     }
 
@@ -1831,6 +1837,60 @@ impl Scenario {
         self.agent.key_toggled(key)
     }
 
+    /// Whether Windows' screen reader flag is set, read by the agent
+    /// independently of Verbatim.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails.
+    pub fn screen_reader_flag(&mut self) -> io::Result<bool> {
+        self.agent.screen_reader_flag()
+    }
+
+    /// The local time, without seconds, and the local date, in the long
+    /// format, each in the user's locale formats, read by the agent
+    /// independently of Verbatim; when the next minute is due within
+    /// `turn_within`, read once it has turned.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails.
+    pub fn local_clock(&mut self, turn_within: Duration) -> io::Result<(String, String)> {
+        self.agent.local_clock(turn_within)
+    }
+
+    /// The screen position of the character on `line` at `column`, both
+    /// from zero, of the focused Win32 edit control, read by the agent as
+    /// the control gives it.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails.
+    pub fn edit_character_position(&mut self, line: u32, column: u32) -> io::Result<(i32, i32)> {
+        self.agent.edit_character_position(line, column)
+    }
+
+    /// The screen position of the character on `line` at `column`, both
+    /// from zero, of the focused UI Automation element's text, read by the
+    /// agent.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails.
+    pub fn uia_character_position(&mut self, line: u32, column: u32) -> io::Result<(i32, i32)> {
+        self.agent.uia_character_position(line, column)
+    }
+
+    /// The open Alt+Tab switcher's item named `name`, read by the agent:
+    /// its row, column and position, each from one, and the list's size.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails.
+    pub fn switcher_item(&mut self, name: &str) -> io::Result<(u32, u32, u32, u32)> {
+        self.agent.switcher_item(name)
+    }
+
     /// The process id of the program the scenario launched last, and the
     /// processes it started that are still running.
     ///
@@ -1874,6 +1934,115 @@ impl Scenario {
                 "process {pid} did not exit within {timeout:?}"
             ))),
         }
+    }
+
+    /// Waits up to `timeout` for a process of `image`, such as
+    /// `verbatim-listener.exe`, other than those in `known`, to be running
+    /// in Verbatim's job, on the job's own messages: the evidence that
+    /// Verbatim replaced one the scenario ended. Returns its process id.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails or none joined in time.
+    pub fn wait_for_verbatim_process(
+        &mut self,
+        image: &str,
+        known: &[u32],
+        timeout: Duration,
+    ) -> io::Result<u32> {
+        let pid = self.pid("wait for a process of (wait_for_verbatim_process)")?;
+        self.agent.wait_for_job_process(pid, image, known, timeout)
+    }
+
+    /// Starts a second Verbatim, as a user starting it again does, which
+    /// replaces the running one, and goes on with the second. First, as
+    /// before any input, Verbatim is idle and every utterance it queued
+    /// has been asserted. The running Verbatim must then exit with code 0,
+    /// every outpost and listener of its job shut down cleanly
+    /// ([`Scenario::outposts_shut_down_cleanly`]), and its speech
+    /// connection end with nothing more said; the second must say it is
+    /// ready. Its speech is pushed to the same timeline, and its startup
+    /// speech is the next the scenario asserts. The replaced Verbatim's
+    /// stderr log and outpost logs are collected with the run's artifacts.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the second cannot be launched or connected to,
+    /// the first does not exit with code 0 or leaves its processes
+    /// unclean, its speech connection does not end, or the second does not
+    /// become ready.
+    ///
+    /// # Panics
+    ///
+    /// Panics if Verbatim does not become idle or anything said was not
+    /// asserted, before the second start or as the first exits.
+    pub fn replace_verbatim(&mut self) -> io::Result<()> {
+        let replaced = self.pid("replace (replace_verbatim)")?;
+        self.speech.expect_nothing_more(self.last_input);
+        self.timeline.push_action("start a second Verbatim");
+        let agent_addr =
+            endpoint().ok_or_else(|| io::Error::other(format!("{ENDPOINT_ENV} is not set")))?;
+        let ready_event = ready_event_name();
+        self.agent.create_event(&ready_event)?;
+        let mut env = vec![(READY_EVENT_ENV.to_owned(), ready_event.clone())];
+        env.extend(self.launch_env.iter().cloned());
+        let stderr_path = replacement_stderr_path(&self.stderr_log_path);
+        let (launched, ignored) =
+            self.agent
+                .launch_verbatim(&self.launch_exe, &self.run_dir, &env, &stderr_path)?;
+        // From here the second is the scenario's Verbatim, for cleanup to
+        // end whatever happens next; the first's artifacts are kept.
+        let replaced_stderr = std::mem::replace(&mut self.stderr_log_path, stderr_path);
+        self.replaced.push((replaced, replaced_stderr));
+        self.verbatim_pid = Some(launched.pid);
+        self.ignored = ignored;
+        self.control = None;
+        self.last_input = None;
+        match self.agent.wait_for_exit(replaced, QUIT_TIMEOUT)? {
+            ProcessState::Exited { exit_code: Some(0) } => {}
+            ProcessState::Exited { exit_code } => {
+                return Err(io::Error::other(format!(
+                    "the replaced Verbatim (pid {replaced}) exited with {exit_code:?}"
+                )));
+            }
+            ProcessState::Running => {
+                return Err(io::Error::other(format!(
+                    "the replaced Verbatim (pid {replaced}) is still running {QUIT_TIMEOUT:?} after the second start"
+                )));
+            }
+        }
+        let problems = self.children_shut_down_cleanly(replaced)?;
+        if !problems.is_empty() {
+            return Err(io::Error::other(format!(
+                "the replaced Verbatim (pid {replaced}) did not shut down cleanly: {}",
+                problems.join("; ")
+            )));
+        }
+        self.speech.take_until_the_end().map_err(io::Error::other)?;
+        self.speech
+            .require_all_asserted("after the replaced Verbatim exited");
+        match self
+            .agent
+            .wait_for_event(&ready_event, launched.pid, READY_TIMEOUT)?
+        {
+            EventOutcome::Signalled => {}
+            EventOutcome::Exited { exit_code } => {
+                return Err(io::Error::other(format!(
+                    "the second Verbatim exited ({exit_code:?}) before it was ready; see {}",
+                    self.stderr_log_path
+                )));
+            }
+            EventOutcome::TimedOut => {
+                return Err(io::Error::other(format!(
+                    "the second Verbatim did not say it was ready within {READY_TIMEOUT:?}"
+                )));
+            }
+        }
+        let (mut control, speech) = connect_with(&agent_addr, self.timeline.clone())?;
+        require_ready(&mut control)?;
+        self.control = Some(control);
+        self.speech = speech;
+        Ok(())
     }
 
     /// The processes in Verbatim's job that exited and that the scenario
@@ -1950,6 +2119,12 @@ impl Scenario {
     /// still running once [`JOB_EMPTY_TIMEOUT`] has passed.
     pub fn outposts_shut_down_cleanly(&mut self) -> io::Result<Vec<String>> {
         let pid = self.pid("check the outposts of")?;
+        self.children_shut_down_cleanly(pid)
+    }
+
+    /// [`Scenario::outposts_shut_down_cleanly`] for the Verbatim `pid`,
+    /// once it has exited.
+    fn children_shut_down_cleanly(&mut self, pid: u32) -> io::Result<Vec<String>> {
         let exits = self.agent.wait_for_job_empty(pid, JOB_EMPTY_TIMEOUT)?;
         let verbatim_exited_at = exits.iter().position(|exit| exit.pid == pid);
         let mut problems = Vec::new();
@@ -2131,7 +2306,29 @@ impl Scenario {
         if let Err(error) = self.agent.copy_file(&audio, &dir.join(AUDIO_FILE_NAME)) {
             problems.push(format!("could not copy Verbatim's audio {audio}: {error}"));
         }
-        problems.extend(self.collect_outpost_logs(dir));
+        match self.pid("collect the logs of") {
+            Ok(pid) => problems.extend(self.collect_outpost_logs(pid, dir)),
+            Err(error) => problems.push(error.to_string()),
+        }
+        for (pid, stderr_path) in self.replaced.clone() {
+            let replaced_dir = dir.join(format!("replaced-{pid}"));
+            if let Err(error) = fs::create_dir_all(&replaced_dir) {
+                problems.push(format!(
+                    "could not create {}: {error}",
+                    replaced_dir.display()
+                ));
+                continue;
+            }
+            if let Err(error) = self
+                .agent
+                .copy_file(&stderr_path, &replaced_dir.join(STDERR_FILE_NAME))
+            {
+                problems.push(format!(
+                    "could not collect the replaced Verbatim's stderr log {stderr_path}: {error}"
+                ));
+            }
+            problems.extend(self.collect_outpost_logs(pid, &replaced_dir));
+        }
         problems.extend(self.collect_crash_dumps(dir));
         problems
     }
@@ -2155,13 +2352,9 @@ impl Scenario {
         csv
     }
 
-    /// Fetches every outpost and listener log this Verbatim launch wrote,
-    /// from `logs\<Verbatim's pid>` next to its executable.
-    fn collect_outpost_logs(&mut self, dir: &Path) -> Vec<String> {
-        let pid = match self.pid("collect the logs of") {
-            Ok(pid) => pid,
-            Err(error) => return vec![error.to_string()],
-        };
+    /// Fetches every outpost and listener log the Verbatim launch `pid`
+    /// wrote, from `logs\<pid>` next to its executable, into `dir`.
+    fn collect_outpost_logs(&mut self, pid: u32, dir: &Path) -> Vec<String> {
         let logs_dir = format!(r"{}\logs\{pid}", self.run_dir);
         let names = match self.agent.list_files(&logs_dir) {
             Ok(names) => names,
@@ -2889,12 +3082,49 @@ fn connect_nvda(agent: &mut AgentClient) -> io::Result<(SpeechCollector, Timelin
 /// Connects to a just-launched, ready Verbatim: the command connection,
 /// then a second one subscribed to its speech.
 fn connect(agent_addr: &str) -> io::Result<(ControlClient, SpeechCollector, Timeline)> {
+    let timeline = Timeline::new();
+    let (control, speech) = connect_with(agent_addr, timeline.clone())?;
+    Ok((control, speech, timeline))
+}
+
+/// [`connect`], its speech pushed to `timeline`.
+fn connect_with(
+    agent_addr: &str,
+    timeline: Timeline,
+) -> io::Result<(ControlClient, SpeechCollector)> {
     let control = AgentClient::connect(agent_addr)?.open_control_tunnel()?;
     let speech_tunnel = AgentClient::connect(agent_addr)?.open_control_tunnel()?;
-    let timeline = Timeline::new();
-    let speech = SpeechCollector::subscribe(speech_tunnel, timeline.clone())
+    let speech = SpeechCollector::subscribe(speech_tunnel, timeline)
         .map_err(|error| io::Error::other(format!("could not subscribe to speech: {error}")))?;
-    Ok((control, speech, timeline))
+    Ok((control, speech))
+}
+
+/// Fails unless `control`'s Verbatim says it is ready.
+fn require_ready(control: &mut ControlClient) -> io::Result<()> {
+    let status = ok_or_error(control.request(Request::Status)?)?;
+    if matches!(
+        status,
+        Frame::Reply {
+            payload: ReplyPayload::Status(ref info),
+            ..
+        } if info.ready
+    ) {
+        Ok(())
+    } else {
+        Err(io::Error::other(format!(
+            "Verbatim set its readiness event but its status is not ready: {status:?}"
+        )))
+    }
+}
+
+/// The path of the stderr log of the Verbatim that replaces the one
+/// writing to `stderr_path`: the same name with `-replacement` before its
+/// extension, so the two do not share one file.
+fn replacement_stderr_path(stderr_path: &str) -> String {
+    match stderr_path.rsplit_once('.') {
+        Some((stem, extension)) => format!("{stem}-replacement.{extension}"),
+        None => format!("{stderr_path}-replacement"),
+    }
 }
 
 /// The workspace root, computed from this crate's own manifest directory

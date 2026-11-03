@@ -761,6 +761,132 @@ impl AgentClient {
         }
     }
 
+    /// Whether Windows' screen reader flag is set, as the agent reads it,
+    /// independently of Verbatim.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails.
+    pub fn screen_reader_flag(&mut self) -> io::Result<bool> {
+        match self.request(Request::ScreenReaderFlag)? {
+            Frame::Reply {
+                payload: ReplyPayload::ScreenReaderFlag { on },
+                ..
+            } => Ok(on),
+            other => Err(unexpected("ScreenReaderFlag", &other)),
+        }
+    }
+
+    /// The local time, without seconds, and date, in the long format, each
+    /// in the user's locale formats, read once the minute has turned when
+    /// the next minute is due within `turn_within`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails.
+    pub fn local_clock(&mut self, turn_within: Duration) -> io::Result<(String, String)> {
+        match self.request_waiting(
+            Request::LocalClock {
+                turn_within_ms: millis(turn_within),
+            },
+            turn_within,
+        )? {
+            Frame::Reply {
+                payload: ReplyPayload::LocalClock { time, date },
+                ..
+            } => Ok((time, date)),
+            other => Err(unexpected("LocalClock", &other)),
+        }
+    }
+
+    /// Waits up to `timeout` for a process of `image`, not one of `known`,
+    /// to be running in the job of `pid`, which the agent launched, and
+    /// returns its pid.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails, including when none joined.
+    pub fn wait_for_job_process(
+        &mut self,
+        pid: u32,
+        image: &str,
+        known: &[u32],
+        timeout: Duration,
+    ) -> io::Result<u32> {
+        match self.request_waiting(
+            Request::WaitForJobProcess {
+                pid,
+                image: image.to_owned(),
+                known: known.to_vec(),
+                timeout_ms: millis(timeout),
+            },
+            timeout,
+        )? {
+            Frame::Reply {
+                payload: ReplyPayload::Joined { pid },
+                ..
+            } => Ok(pid),
+            other => Err(unexpected("WaitForJobProcess", &other)),
+        }
+    }
+
+    /// The screen position of the character on `line` at `column`, both
+    /// from zero, of the focused Win32 edit control, as the control gives
+    /// it.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails.
+    pub fn edit_character_position(&mut self, line: u32, column: u32) -> io::Result<(i32, i32)> {
+        match self.request(Request::EditCharacterPosition { line, column })? {
+            Frame::Reply {
+                payload: ReplyPayload::Position { x, y },
+                ..
+            } => Ok((x, y)),
+            other => Err(unexpected("EditCharacterPosition", &other)),
+        }
+    }
+
+    /// The screen position of the character on `line` at `column`, both
+    /// from zero, of the focused UI Automation element's text.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails.
+    pub fn uia_character_position(&mut self, line: u32, column: u32) -> io::Result<(i32, i32)> {
+        match self.request(Request::UiaCharacterPosition { line, column })? {
+            Frame::Reply {
+                payload: ReplyPayload::Position { x, y },
+                ..
+            } => Ok((x, y)),
+            other => Err(unexpected("UiaCharacterPosition", &other)),
+        }
+    }
+
+    /// The open Alt+Tab switcher's item named `name`: its row, column and
+    /// position, each from one, and the list's size.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails.
+    pub fn switcher_item(&mut self, name: &str) -> io::Result<(u32, u32, u32, u32)> {
+        match self.request(Request::SwitcherItem {
+            name: name.to_owned(),
+        })? {
+            Frame::Reply {
+                payload:
+                    ReplyPayload::SwitcherItem {
+                        row,
+                        column,
+                        position,
+                        set_size,
+                    },
+                ..
+            } => Ok((row, column, position, set_size)),
+            other => Err(unexpected("SwitcherItem", &other)),
+        }
+    }
+
     /// The guest's foreground window and visible top-level windows.
     ///
     /// # Errors

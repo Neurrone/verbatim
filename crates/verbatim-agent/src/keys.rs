@@ -36,3 +36,28 @@ pub fn toggled(name: &str) -> io::Result<bool> {
             .map_err(|_| io::Error::other("the key-state thread panicked"))
     })
 }
+
+/// Whether Windows' screen reader flag (`SPI_GETSCREENREADER`) is set,
+/// for [`Request::ScreenReaderFlag`](crate::protocol::Request::ScreenReaderFlag):
+/// a screen reader sets it while it runs and clears it as it exits.
+///
+/// # Errors
+///
+/// Returns an error if Windows refuses the read.
+pub fn screen_reader_flag() -> io::Result<bool> {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        SPI_GETSCREENREADER, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SystemParametersInfoW,
+    };
+    let mut on = windows::core::BOOL(0);
+    // SAFETY: this action writes one BOOL to the pointer given, a local.
+    unsafe {
+        SystemParametersInfoW(
+            SPI_GETSCREENREADER,
+            0,
+            Some((&raw mut on).cast()),
+            SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
+        )
+    }
+    .map_err(io::Error::other)?;
+    Ok(on.as_bool())
+}

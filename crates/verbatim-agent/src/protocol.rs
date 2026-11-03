@@ -65,11 +65,15 @@ use serde::{Deserialize, Serialize};
 /// a failure names a foreground window that is not yet shown; version 26
 /// added [`Request::WaitChains`], so a window that did not open in time is
 /// reported with what its not-responding windows' threads wait on; version
-/// 27 removed `Request::MisspeltWords`, which no client sent. A test
+/// 27 removed `Request::MisspeltWords`, which no client sent; version 28
+/// added [`Request::ScreenReaderFlag`], [`Request::LocalClock`],
+/// [`Request::WaitForJobProcess`], [`Request::EditCharacterPosition`],
+/// [`Request::UiaCharacterPosition`] and [`Request::SwitcherItem`], for the
+/// lifecycle, clock, recovery, review location and Alt+Tab scenarios. A test
 /// run against an older agent is refused at `Hello`
 /// instead of losing its connection mid-run, or running without the
 /// exclusion.
-pub const AGENT_PROTOCOL_VERSION: u32 = 27;
+pub const AGENT_PROTOCOL_VERSION: u32 = 28;
 
 /// The command of a [`Request::LaunchProcess`] that names the agent's own
 /// executable, wherever it was deployed: the recordings launch
@@ -278,6 +282,71 @@ pub enum Request {
     KeyToggled {
         /// The key's name.
         key: String,
+    },
+    /// Reports whether Windows' screen reader flag (`SPI_GETSCREENREADER`)
+    /// is set, read independently of any screen reader. Answered by
+    /// [`ReplyPayload::ScreenReaderFlag`].
+    ScreenReaderFlag,
+    /// Reads the local clock and formats it as a screen reader's time
+    /// command does: the time without seconds and the date in the long
+    /// format, each in the user's own locale formats (`GetTimeFormatEx`
+    /// with `TIME_NOSECONDS` and `GetDateFormatEx` with `DATE_LONGDATE`).
+    /// When the next minute is due within `turn_within_ms`, it first waits
+    /// for the minute to turn, on a waitable timer set for that minute, so
+    /// a test that acts at once reads the same minute. Answered by
+    /// [`ReplyPayload::LocalClock`].
+    LocalClock {
+        /// How close to the next minute a read waits for it to turn, in
+        /// milliseconds.
+        turn_within_ms: u64,
+    },
+    /// Waits up to `timeout_ms`, on the job's own messages, for a process
+    /// whose image is `image` (such as `verbatim-listener.exe`) and whose
+    /// id is not in `known` to have joined the job of the process `pid` the
+    /// agent launched and still be running: how a test knows one of
+    /// Verbatim's processes it ended has been replaced. Answered by
+    /// [`ReplyPayload::Joined`].
+    WaitForJobProcess {
+        /// The launched process's OS pid.
+        pid: u32,
+        /// The image name of the process waited for.
+        image: String,
+        /// The processes of that image already known, which do not count.
+        known: Vec<u32>,
+        /// How long to wait, in milliseconds.
+        timeout_ms: u64,
+    },
+    /// Reports the screen position of the character on line `line`, at
+    /// `column`, both counted from zero, of the focused Win32 edit control
+    /// (the focus of the foreground window's thread), as such a control
+    /// gives it: `EM_LINEINDEX`, then `EM_POSFROMCHAR`, converted to screen
+    /// coordinates. Answered by [`ReplyPayload::Position`].
+    EditCharacterPosition {
+        /// The line, from zero.
+        line: u32,
+        /// The character on it, from zero.
+        column: u32,
+    },
+    /// Reports the screen position of the character on line `line`, at
+    /// `column`, both counted from zero, of the focused UI Automation
+    /// element's text: the top left of the first bounding rectangle of the
+    /// character range found by moving from the text's start by lines and
+    /// then by characters, each coordinate rounded. Answered by
+    /// [`ReplyPayload::Position`].
+    UiaCharacterPosition {
+        /// The line, from zero.
+        line: u32,
+        /// The character on it, from zero.
+        column: u32,
+    },
+    /// Reads the item of the Alt+Tab switcher's list ("Running
+    /// applications", UI Automation id `SwitchItemListControl`) named
+    /// `name`, while the switcher is open, through UI Automation: its grid
+    /// row and column and its position in the list. Answered by
+    /// [`ReplyPayload::SwitcherItem`].
+    SwitcherItem {
+        /// The item's name, its window's title.
+        name: String,
     },
     /// Lists the processes that have exited in the job of the process `pid`
     /// the agent launched (every process it started, and they started), in
@@ -675,6 +744,42 @@ pub enum ReplyPayload {
     KeyToggled {
         /// Whether the key is on.
         on: bool,
+    },
+    /// Answer to [`Request::ScreenReaderFlag`].
+    ScreenReaderFlag {
+        /// Whether the flag is set.
+        on: bool,
+    },
+    /// Answer to [`Request::LocalClock`].
+    LocalClock {
+        /// The time, without seconds, in the locale's format.
+        time: String,
+        /// The date, in the locale's long format.
+        date: String,
+    },
+    /// Answer to [`Request::WaitForJobProcess`]: the process that joined.
+    Joined {
+        /// Its OS pid.
+        pid: u32,
+    },
+    /// Answer to [`Request::EditCharacterPosition`] and
+    /// [`Request::UiaCharacterPosition`]: a point on the screen.
+    Position {
+        /// The horizontal coordinate.
+        x: i32,
+        /// The vertical coordinate.
+        y: i32,
+    },
+    /// Answer to [`Request::SwitcherItem`].
+    SwitcherItem {
+        /// Its row, counted from one.
+        row: u32,
+        /// Its column, counted from one.
+        column: u32,
+        /// Its position in the list, counted from one.
+        position: u32,
+        /// How many items the list has.
+        set_size: u32,
     },
     /// Answer to [`Request::ControlledItems`].
     ControlledItems {

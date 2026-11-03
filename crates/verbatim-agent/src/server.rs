@@ -25,8 +25,8 @@ use crate::protocol::{
     RequestEnvelope,
 };
 use crate::{
-    desktop, events, files, focus, jobs, keys, process, scenario_windows, session, terminals,
-    tunnel, typing, wait_chain,
+    clock, desktop, events, files, focus, jobs, keys, process, scenario_windows, session,
+    terminals, tunnel, typing, wait_chain,
 };
 
 /// The number the next key stroke or typed character the agent injects
@@ -273,6 +273,10 @@ fn handle_connection(stream: &TcpStream, pipe_name: &str) {
 
 /// Dispatches one already-validated (post-`Hello`, non-tunnel) request,
 /// made on `connection`, to a [`Frame`] reply or error.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one arm for each request or group of requests, each handing it to its handler"
+)]
 fn dispatch(connection: u64, id: u64, request: Request) -> Frame {
     match request {
         Request::Hello { .. } => Frame::Reply {
@@ -303,7 +307,8 @@ fn dispatch(connection: u64, id: u64, request: Request) -> Frame {
         | Request::WaitForExit { .. }
         | Request::WaitForFile { .. }
         | Request::CreateEvent { .. }
-        | Request::WaitForEvent { .. }) => process_request(id, request),
+        | Request::WaitForEvent { .. }
+        | Request::WaitForJobProcess { .. }) => process_request(id, request),
         Request::SessionInfo => match session::current() {
             Ok(info) => Frame::Reply {
                 to: id,
@@ -353,7 +358,12 @@ fn dispatch(connection: u64, id: u64, request: Request) -> Frame {
         | Request::FocusByAutomationId { .. }
         | Request::ControlledItems { .. }
         | Request::NameByAutomationId { .. }
-        | Request::KeyToggled { .. }) => state_request(id, request),
+        | Request::KeyToggled { .. }
+        | Request::ScreenReaderFlag
+        | Request::EditCharacterPosition { .. }
+        | Request::UiaCharacterPosition { .. }
+        | Request::SwitcherItem { .. }
+        | Request::LocalClock { .. }) => state_request(id, request),
         Request::ListFiles { path } => list_reply(id, files::list(&path)),
         Request::ListFolders { path } => list_reply(id, files::list_folders(&path)),
         Request::SendKeys { keys } => send_keys(id, &keys),
@@ -466,6 +476,18 @@ fn process_request(id: u64, request: Request) -> Frame {
             },
             Err(error) => error_frame(id, &error),
         },
+        Request::WaitForJobProcess {
+            pid,
+            image,
+            known,
+            timeout_ms,
+        } => match jobs::wait_for_joined(pid, &image, &known, Duration::from_millis(timeout_ms)) {
+            Ok(joined) => Frame::Reply {
+                to: id,
+                payload: ReplyPayload::Joined { pid: joined },
+            },
+            Err(error) => error_frame(id, &error),
+        },
         Request::WaitForJobEmpty { pid, timeout_ms } => {
             match jobs::wait_until_empty(pid, Duration::from_millis(timeout_ms)) {
                 Ok(exits) => Frame::Reply {
@@ -563,10 +585,57 @@ fn state_request(id: u64, request: Request) -> Frame {
             },
             Err(error) => error_frame(id, &error),
         },
+        Request::LocalClock { turn_within_ms } => {
+            match clock::local_clock(Duration::from_millis(turn_within_ms)) {
+                Ok((time, date)) => Frame::Reply {
+                    to: id,
+                    payload: ReplyPayload::LocalClock { time, date },
+                },
+                Err(error) => error_frame(id, &error),
+            }
+        }
+        Request::ScreenReaderFlag => match keys::screen_reader_flag() {
+            Ok(on) => Frame::Reply {
+                to: id,
+                payload: ReplyPayload::ScreenReaderFlag { on },
+            },
+            Err(error) => error_frame(id, &error),
+        },
+        Request::EditCharacterPosition { line, column } => {
+            position_reply(id, focus::edit_character_position(line, column))
+        }
+        Request::UiaCharacterPosition { line, column } => {
+            position_reply(id, focus::uia_character_position(line, column))
+        }
+        Request::SwitcherItem { name } => match focus::switcher_item(&name) {
+            Ok((row, column, position, set_size)) => Frame::Reply {
+                to: id,
+                payload: ReplyPayload::SwitcherItem {
+                    row,
+                    column,
+                    position,
+                    set_size,
+                },
+            },
+            Err(error) => error_frame(id, &error),
+        },
         other => Frame::Error {
             to: id,
             message: format!("not a state request: {other:?}"),
         },
+    }
+}
+
+/// Answers [`Request::EditCharacterPosition`] or
+/// [`Request::UiaCharacterPosition`] with the point read, or the error
+/// reading it.
+fn position_reply(id: u64, point: io::Result<(i32, i32)>) -> Frame {
+    match point {
+        Ok((x, y)) => Frame::Reply {
+            to: id,
+            payload: ReplyPayload::Position { x, y },
+        },
+        Err(error) => error_frame(id, &error),
     }
 }
 

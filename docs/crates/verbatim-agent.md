@@ -18,7 +18,7 @@ it when the suite is done.
 Public API:
 
 - `protocol` — the agent's own wire vocabulary, versioned separately from
-  the control plane's (`AGENT_PROTOCOL_VERSION`, currently 27) and framed
+  the control plane's (`AGENT_PROTOCOL_VERSION`, currently 28) and framed
   with the same newline-JSON helpers the control plane uses
   (`verbatim_control::protocol::write_message`/`read_message`). Its pids
   are raw OS process ids naming a process a test is driving, not
@@ -38,7 +38,10 @@ Public API:
     `WaitForJobEmpty` (a wait, on the job's own messages, until no process
     in a launched child's job runs, answered with every exit in the job:
     how a test checks that Verbatim left none of its processes behind and
-    how each ended), and `WaitForExit` (on the process handle, answered
+    how each ended), `WaitForJobProcess` (a wait, on the job's own
+    messages, until a process of an image, other than those known, runs
+    in a launched child's job: how a test knows Verbatim replaced a
+    process it ended), and `WaitForExit` (on the process handle, answered
     with whether the process still runs and, once it has exited, its exit
     code).
   - The desktop: `ForegroundInfo` (the foreground window and the visible
@@ -130,8 +133,20 @@ Public API:
     names of the first children asked for, as a search box's suggestions),
     `NameByAutomationId` (the name of the foreground window's element with
     that identifier, read without focusing it, for a control whose name
-    differs between machines), and `KeyToggled` (whether a lock key
-    is on). The three requests that keep UI Automation, which need facts only
+    differs between machines), `KeyToggled` (whether a lock key
+    is on), `ScreenReaderFlag` (Windows' screen reader flag,
+    `SPI_GETSCREENREADER`), `LocalClock` (the local time without seconds
+    and the date in the long format, in the user's locale formats, as
+    Verbatim formats them; a read due within the given time of the next
+    minute first waits for the minute to turn on a waitable timer set for
+    it), `EditCharacterPosition` (the screen place of the character at a
+    line and column of the focused Win32 edit control, from `EM_LINEINDEX`
+    and `EM_POSFROMCHAR`), `UiaCharacterPosition` (the same from the
+    focused UI Automation element's text: the top left of the character's
+    first bounding rectangle, rounded), and `SwitcherItem` (the open Alt+Tab
+    switcher's item of a name, from its `SwitchItemListControl` list: its
+    grid row and column and its position and the list's size). The
+    requests that keep UI Automation, which need facts only
     it has, log how long each took, at warn from two seconds, so their slow
     answers are counted apart from Verbatim's
     (`docs/design/listener-without-connections.md`, section 4.5).

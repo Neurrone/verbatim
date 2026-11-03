@@ -251,6 +251,50 @@ pub(crate) fn wait_until_empty(
     )))
 }
 
+/// Waits up to `timeout` for a process whose image is `image` and whose
+/// id is not in `known` to be running in the job of the launched child
+/// `pid`, on the job watcher's notifications, and returns its id.
+///
+/// # Errors
+///
+/// Returns an error when the agent did not launch `pid`, or when no such
+/// process has joined once the wait runs out, naming those running.
+pub(crate) fn wait_for_joined(
+    pid: u32,
+    image: &str,
+    known: &[u32],
+    timeout: std::time::Duration,
+) -> io::Result<u32> {
+    let joined = |record: &JobRecord| {
+        record
+            .running
+            .iter()
+            .filter(|(id, (_, name))| !known.contains(id) && name.eq_ignore_ascii_case(image))
+            .map(|(id, _)| *id)
+            .min()
+    };
+    let jobs = JOBS.lock().unwrap_or_else(PoisonError::into_inner);
+    let (jobs, _) = CHANGED
+        .wait_timeout_while(jobs, timeout, |jobs| {
+            jobs.get(&pid)
+                .is_some_and(|record| joined(record).is_none())
+        })
+        .unwrap_or_else(PoisonError::into_inner);
+    let record = jobs
+        .get(&pid)
+        .ok_or_else(|| io::Error::other(format!("the agent did not launch process {pid}")))?;
+    joined(record).ok_or_else(|| {
+        let running: Vec<(u32, &str)> = record
+            .running
+            .iter()
+            .map(|(pid, (_, image))| (*pid, image.as_str()))
+            .collect();
+        io::Error::other(format!(
+            "no new {image} joined the job of {pid} within {timeout:?}; running: {running:?}"
+        ))
+    })
+}
+
 /// Forgets the job of the launched child `pid`.
 pub(crate) fn forget(pid: u32) {
     JOBS.lock()
