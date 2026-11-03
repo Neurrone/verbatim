@@ -337,6 +337,10 @@ jobs:
           E2E_GROUPS: ${{ strategy.job-total }}
         shell: pwsh
         run: |
+          # The build cache restores target\, scenario folders included, so
+          # they are cleared first: the uploads below then hold only the
+          # folders this group's scenarios wrote.
+          Remove-Item -Recurse -Force target\e2e-artifacts -ErrorAction SilentlyContinue
           $agent = Start-Process -FilePath "target\debug\verbatim-agent.exe" `
             -ArgumentList "--bind-address 127.0.0.1 --port 44001" `
             -RedirectStandardOutput "verbatim-agent-stdout.log" `
