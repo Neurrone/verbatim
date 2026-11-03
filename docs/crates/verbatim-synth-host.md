@@ -114,9 +114,10 @@ host's unmarked sentence sample for sample; a raised capital spoken at
 the raised pitch (differing from the plain letter, and shorter than its
 markup read aloud); a host killed mid-utterance failing that utterance,
 with the next utterance getting a new host process that speaks exactly
-as a host set to the same rate does; a cancelled utterance ending within
-20 ms of the cancel, without anything relayed after it, and the same
-host process speaking the next utterance; an utterance cancelled before
+as a host set to the same rate does; a cancelled utterance ending
+without the host's answer, since `speak` returns while every thread of
+the host is suspended, with nothing relayed after the cancel, and the
+same host process speaking the next utterance; an utterance cancelled before
 any audio relaying nothing and keeping the host; eSpeak NG speaking from
 a folder whose name the ANSI code page cannot represent; a host that died
 while idle, and has exited, being replaced before the next utterance;

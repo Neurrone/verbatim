@@ -2951,19 +2951,38 @@ mod tests {
                 .expect("pid 5 is held")
                 .wake,
         );
-        thread::scope(|scope| {
-            let stopping = scope.spawn(|| readers.stop());
-            // The read returns only once the readers are stopping.
-            let (state, waited) = wake
-                .wait_timeout_while(readers.shared.lock(), WAIT, |state| {
-                    !state.schedule.stopping()
-                })
-                .unwrap_or_else(PoisonError::into_inner);
-            assert!(!waited.timed_out(), "the readers never stopped");
-            drop(state);
-            open.send(()).expect("the gate opens");
-            assert_eq!(stopping.join().expect("stopped"), 1);
+        // Stopped on a thread the test does not join, which hands the
+        // readers back with its count: a stop that never marks the
+        // schedule stopping waits on the read held at the gate, and the
+        // test fails at the wait below instead of hanging on that thread.
+        let readers = Arc::new(readers);
+        let (stopped_tx, stopped) = mpsc::channel();
+        thread::spawn({
+            let readers = Arc::clone(&readers);
+            move || {
+                let count = readers.stop();
+                let _ = stopped_tx.send((count, readers));
+            }
         });
+        // The read returns only once the readers are stopping. A wait that
+        // times out fails, since a check made after the timeout would also
+        // accept a stop that marked the schedule and woke no one.
+        let mut state = readers.shared.lock();
+        while !state.schedule.stopping() {
+            let (next, waited) = wake
+                .wait_timeout(state, WAIT)
+                .unwrap_or_else(PoisonError::into_inner);
+            assert!(
+                !waited.timed_out(),
+                "the readers' stop never woke pid 5's thread"
+            );
+            state = next;
+        }
+        drop(state);
+        open.send(()).expect("the gate opens");
+        let (count, handed_back) = stopped.recv_timeout(WAIT).expect("the readers stopped");
+        assert_eq!(count, 1);
+        drop(handed_back);
         drop(readers);
         // The waiting event has no outcome of the schedule's: its owed
         // answer, dropped with the readers, answers its marker.

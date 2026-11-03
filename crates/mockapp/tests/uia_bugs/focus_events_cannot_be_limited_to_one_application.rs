@@ -101,7 +101,12 @@ pub fn a_focus_event_in_a_group_on_one_window_hears_that_applications_focus_alon
 /// events, which a desktop-wide focus handler hears, but hears the name
 /// change raised after the focus: UIA's proxy delivers the group that
 /// window's events, in the order they were raised, and the focus is not
-/// among them.
+/// among them. Each handler ends on a marker: a second focus, the next
+/// event the desktop-wide handler hears, and a name change after it, the
+/// next the group hears, so an extra event of either, or the second focus
+/// on the group, which would come before its marker, fails the test, rather
+/// than a check that nothing more came, which could run before an event
+/// arrived.
 ///
 /// The client is a plain one, since `verbatim_uia`'s tells its proxies not
 /// to raise name changes from `WinEvent`s.
@@ -130,8 +135,10 @@ pub fn a_focus_event_in_a_group_on_a_proxied_window_hears_none_of_its_focus() {
     assert_eq!(desktop.next(), support::from(&m, "Original Name"));
     m.send("set-name btn1 Renamed");
     assert_eq!(on_m.next(), support::from(&m, "Renamed"));
-    on_m.heard_nothing_more();
-    desktop.heard_nothing_more();
+    m.send("focus item1");
+    assert_eq!(desktop.next(), support::from(&m, "First"));
+    m.send("set-name item1 Marker");
+    assert_eq!(on_m.next(), support::from(&m, "Marker"));
     m.quit();
 }
 
