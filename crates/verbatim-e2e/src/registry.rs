@@ -197,12 +197,15 @@ pub const SKIP_LOCAL_ONLY_ENV: &str = "VERBATIM_E2E_SKIP_LOCAL_ONLY";
 /// expects Settings to select the first suggestion as the list opens, which
 /// the runner's Settings does not; `settings_combo_box_expanded` expects
 /// the Date and time page to open with its focus on the Region button,
-/// where the runner's page focuses its location settings link. A unit test checks CI's `e2e` job's
-/// skips against this list.
+/// where the runner's page focuses its location settings link;
+/// `explorer_folder_window` fails on the runner for the causes
+/// `docs/flaky-tests.md` records under "File Explorer". A unit test checks
+/// CI's `e2e` job's skips against this list.
 pub const LOCAL_ONLY_FILTERS: &[&str] = &[
     "notepad_",
     "settings_search_suggestions",
     "settings_combo_box_expanded",
+    "explorer_folder_window",
 ];
 
 /// Whether `name` starts with one of [`LOCAL_ONLY_FILTERS`], so libtest's
@@ -534,7 +537,9 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         name: "explorer_folder_window",
         group: Group::Shell,
         settings: None,
-        local_only: false,
+        // Fails on the runner for the causes `docs/flaky-tests.md` records
+        // under "File Explorer", so it gives no signal there until that fix.
+        local_only: true,
         document: None,
         comparable: Comparable::Yes,
         setup: explorer_folder_window::setup,
