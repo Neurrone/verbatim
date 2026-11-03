@@ -715,6 +715,7 @@ second real engine (Dickson, 2026-10-29).
   an utterance: an audible gap" from `verbatim::audio` (debug build); look
   at them with the audio step.
 - The audio device awake time setting, with the awake period above.
+- A notification that interrupts say-all is spoken at once and say-all then resumes where it was, as NVDA does (Dickson, 2026-11-03): NVDA speaks a MostRecent or ImportantMostRecent UIA notification at its NOW priority while say-all runs (`nvda/source/NVDAObjects/UIA/__init__.py`, lines 2546 to 2557), and NOW interrupts lower-priority speech, which resumes after it (`nvda/source/speech/priorities.py`, lines 22 to 26; `nvda/source/speech/manager.py`, lines 257 to 265 and 403 to 412). Verbatim has no interrupting priority that resumes: today Core does not stop say-all on an interrupting notification, so a read-ahead answered before the cancellation reaches Core queues more text after the notification, and say-all then stops (reproduced by a replay test of Core, 2026-11-03). Needs an interrupt-and-resume priority and say-all resuming from the point reached; designed with this milestone's speech work.
 - What Verbatim does for a user whose first OneCore activation after logon takes longer than the synthesizer host's ten-second hang bound is open (Dickson, 2026-10-21).
 - The speech queue thread's decisions as a pure reducer, built with the
   `drop_expired` fix, since both rewrite the queue (Dickson, 2026-10-31), with a generated test
