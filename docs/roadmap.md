@@ -362,7 +362,10 @@ NVDA capture.
   follow NVDA (a `Windows.UI.Core.CoreWindow` whose automation id contains
   `ToastView`, from a desktop-wide window-opened subscription in the
   listener), then adopt NVDA's rule dropping MSAA alert and show events
-  from native UIA windows.
+  from native UIA windows. Its end-to-end scenario, `toast`, raises a
+  toast of its own: it turns Windows' Do Not Disturb off for the run and
+  restores what it found at the end, so a machine with it on keeps it on
+  (Dickson, 2026-11-03).
 - Selection inside a list the focus controls: the
   `settings_search_suggestions` scenario covers it, compared with NVDA
   on 2026-10-20. Left to check against a live NVDA capture are the
@@ -547,6 +550,16 @@ package reader get generated tests of their own.
   on Windows 11 24H2 and not on 25H2, with no `StartButton` rule, since
   the rework's first step found no keyboard route to the MSAA focus on
   File Explorer's `Start` window.
+- The system tray and taskbar lists (Verbatim+F11, pressed once and
+  twice) as a global module (Dickson, 2026-11-03). Today they read the
+  notification area's UIA tree, which is empty on Windows 11 build 26200
+  unless the overflow flyout is open. NVDA's `systrayList` add-on reads
+  the MSAA children of the taskbar's
+  `Windows.UI.Input.InputSite.WindowClass` window instead, the taskbar's
+  buttons under its first child, and clicks an item at its location. An
+  end-to-end scenario, `tray_list_and_task_bar`, lists Verbatim's own
+  tray icon and opens its menu with Enter, then lists the taskbar on a
+  second press.
 
 Out of M5 by decision (Dickson, 2026-10-22): module settings and storage
 and the timer and asynchronous imports (M13), the utterance,
