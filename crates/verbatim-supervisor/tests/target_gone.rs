@@ -337,6 +337,94 @@ fn an_end_the_app_refuses_for_now_still_comes_before_its_replacement() {
     assert!(status.success(), "the application exited with {status}");
 }
 
+/// Crashes `outpost`, the stand-in, and waits for its end.
+fn crash(supervisor: &Supervisor, events: &Delivered, outpost: OutpostId, target_pid: Pid) {
+    supervisor
+        .send_to_outpost(
+            outpost,
+            CoreToOutpost::Cancel {
+                request_id: RequestId::shell(0),
+            },
+        )
+        .expect("the command that crashes the stand-in is queued");
+    match next(events) {
+        OutpostMessage::Ended {
+            outpost: ended,
+            target_pid: ended_pid,
+            reason: EndReason::Exited,
+            ..
+        } if ended == outpost && ended_pid == target_pid => {}
+        other => panic!("the supervisor said {other:?}, not that the outpost ended"),
+    }
+}
+
+/// An application whose outpost failed a second time, and whose
+/// replacement waits out the backoff, exits meanwhile: when the backoff
+/// ends, the supervisor finds the application gone as it decides, starts
+/// nothing for it and says nothing watches it, before its sweep, half a
+/// minute apart, would find it.
+fn a_replacement_waiting_out_its_backoff_is_not_started_for_an_application_that_exited() {
+    let (events_tx, events) = unbounded();
+    let exe = std::env::current_exe().expect("this test binary's path");
+    let supervisor = Supervisor::with_executables(
+        events_tx,
+        OutpostOptions::default(),
+        Executables::both(exe.clone()),
+        LIMIT,
+        std::sync::Arc::default(),
+    )
+    .expect("the supervisor starts");
+    let events = Delivered::new(events, &supervisor);
+    match next(&events) {
+        OutpostMessage::ListenerReady {
+            replacement: false, ..
+        } => {}
+        other => panic!("the supervisor said {other:?} before the listener was ready"),
+    }
+
+    let mut application = Command::new(&exe)
+        .arg(APPLICATION)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .spawn()
+        .expect("the application starts");
+    let target_pid = Pid(application.id());
+    supervisor.note_views(Some(target_pid), std::collections::BTreeSet::new());
+    supervisor.ensure_spawned(target_pid);
+    let outpost = started_and_ready(&events, target_pid);
+    // The first failure is replaced at once; the second waits a second.
+    crash(&supervisor, &events, outpost, target_pid);
+    let replacement = started_and_ready(&events, target_pid);
+    crash(&supervisor, &events, replacement, target_pid);
+    drop(application.stdin.take());
+    let status = application.wait().expect("the application exits");
+    assert!(status.success(), "the application exited with {status}");
+    match next(&events) {
+        OutpostMessage::NotWatched {
+            target_pid: gone, ..
+        } if gone == target_pid => {}
+        other => panic!(
+            "the supervisor said {other:?}, not that nothing watches the application that exited"
+        ),
+    }
+
+    assert_eq!(
+        supervisor.shutdown(),
+        ShutdownSummary {
+            clean: 1,
+            exited: 2,
+            killed: 0,
+            killed_on_failure: 0,
+        },
+        "the listener shut down cleanly and both crashed outposts had exited"
+    );
+    let rest: Vec<OutpostMessage> = events.try_iter().collect();
+    assert!(
+        rest.is_empty(),
+        "the supervisor said nothing more, and started no outpost: {rest:?}"
+    );
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|arg| arg == APPLICATION) {
@@ -355,4 +443,8 @@ fn main() {
     );
     an_end_the_app_refuses_for_now_still_comes_before_its_replacement();
     println!("test an_end_the_app_refuses_for_now_still_comes_before_its_replacement ... ok");
+    a_replacement_waiting_out_its_backoff_is_not_started_for_an_application_that_exited();
+    println!(
+        "test a_replacement_waiting_out_its_backoff_is_not_started_for_an_application_that_exited ... ok"
+    );
 }

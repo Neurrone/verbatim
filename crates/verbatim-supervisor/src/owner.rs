@@ -1130,7 +1130,8 @@ impl Owner {
 
     /// Ends every backoff due at `now`, on the run's shared clock: each
     /// application waiting is given its next generation, in the order
-    /// [`due_starts`] gives, and the spares are replenished.
+    /// [`due_starts`] gives, unless it has exited by now, which ends its
+    /// record as its exit; and the spares are replenished.
     fn start_due(&mut self, now: u64) {
         if self.shutting_down.is_some() {
             return;
@@ -1142,6 +1143,13 @@ impl Owner {
             now,
         );
         for pid in due {
+            // Whether the application still runs is read as the start is
+            // decided: a spare is never used up, nor an outpost launched,
+            // for a process that exited during the backoff.
+            if self.has_exited(pid) {
+                self.target_exited(pid, "target exited while its outpost's replacement waited");
+                continue;
+            }
             tracing::info!(%pid, "a failed outpost's backoff has ended; its application is given the next");
             self.incarnate(pid);
         }

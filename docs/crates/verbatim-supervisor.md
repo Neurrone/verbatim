@@ -133,7 +133,12 @@ How it works:
 - Each application is identified by a process held open
   (`verbatim_process::held::Target`)
   while it has a record. Nothing is started for an application that exited
-  or cannot be opened; the app hears `NotWatched`.
+  or cannot be opened; the app hears `NotWatched`. A replacement waiting
+  out a failure's backoff is decided when the backoff ends
+  (`Owner::start_due`), which reads whether the application has exited
+  then and ends its record as its exit instead of giving it a generation,
+  so no spare is used up and no outpost launched for a process that is
+  gone (`crates/verbatim-supervisor/tests/target_gone.rs`).
 - An outpost whose pipe closes is ended once everything it wrote is handed
   on: with its target if the application exited, otherwise by the failure
   path (`crates/verbatim-supervisor/tests/spares.rs`). Every child is pinged
