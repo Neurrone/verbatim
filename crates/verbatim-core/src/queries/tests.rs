@@ -843,8 +843,12 @@ const STARTS: [Start; 3] = [
 #[test]
 fn every_sequence_keeps_the_query_tables_invariants() {
     let steps = steps();
-    for (start, start_name, outpost, outpost_name) in STARTS {
-        enumerate(&start(), outpost, 3, &mut |path, visit| {
+    // Each depth in turn, so the sequence a failure prints is one of the
+    // shortest that fail.
+    for (depth, (start, start_name, outpost, outpost_name)) in
+        (1..=3).flat_map(|depth| STARTS.map(|start| (depth, start)))
+    {
+        enumerate(&start(), outpost, depth, &mut |path, visit| {
             let line = || {
                 let path: Vec<String> = path.iter().map(|&index| steps[index].code()).collect();
                 found_report(&format!(

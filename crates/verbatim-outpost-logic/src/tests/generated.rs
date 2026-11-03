@@ -462,11 +462,11 @@ impl Gen {
     }
 }
 
-/// Every sequence from `generation`, depth first; a failing sequence is
-/// printed as a line for [`found`] before the failure.
-fn enumerate(generation: &Gen) {
+/// Every sequence from `generation` up to `depth` steps, depth first; a
+/// failing sequence is printed as a line for [`found`] before the failure.
+fn enumerate(generation: &Gen, depth: usize) {
     reported(&generation.trail, || generation.clone().close());
-    if generation.trail.len() == DEPTH {
+    if generation.trail.len() == depth {
         return;
     }
     for action in ACTIONS {
@@ -474,7 +474,7 @@ fn enumerate(generation: &Gen) {
             let mut next = generation.clone();
             let trail: Vec<Action> = generation.trail.iter().copied().chain([action]).collect();
             reported(&trail, || next.step(action));
-            enumerate(&next);
+            enumerate(&next, depth);
         }
     }
 }
@@ -499,7 +499,11 @@ fn reported(trail: &[Action], check: impl FnOnce()) {
 
 #[test]
 fn every_short_sequence_answers_each_key_once_and_keeps_the_watchs_rules() {
-    enumerate(&Gen::new());
+    // Each depth in turn, so the sequence a failure prints is one of the
+    // shortest that fail.
+    for depth in 1..=DEPTH {
+        enumerate(&Gen::new(), depth);
+    }
 }
 
 /// The sequences the enumeration failed on, each kept as its list of
