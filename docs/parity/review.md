@@ -192,12 +192,14 @@ line speak the character there; the page commands (Verbatim+Page Up and
 Page Down), the selection's start and end (Verbatim+Alt+Home and End),
 and the review cursor's and caret's locations are NVDA's commands too,
 and at a page edge both say "Top" or "Bottom" and leave the review cursor
-where it was. A location in text measured by character offsets (a Win32
-edit control) is said as NVDA says it, the place's offset as a whole
+where it was. A location in text measured by character offsets (a plain
+Win32 edit control, such as a Windows Forms text box, which NVDA reads
+by offsets; NVDA reads a rich edit through its text object model) is
+said as NVDA says it, the place's offset as a whole
 percentage of the text's length (rounded half to even, an empty text
 taken as one character long), then the place on the screen:
 "93%, at 608, 516", or "93%" alone when the control gives no place;
-other text (UI Automation's) says "Positioned at x, y". **Matched
+other text (UI Automation's, and a rich edit's) says "Positioned at x, y". **Matched
 (verified)** against an NVDA capture in the Windows Forms text box
 (2026-11-03) and pinned by `text_box_review_cursor` and
 `notepad_review_cursor`. Four of their answers are

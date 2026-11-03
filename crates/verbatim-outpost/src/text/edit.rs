@@ -257,6 +257,13 @@ impl TextSource for EditText {
     }
 
     fn measure(&mut self, at: &u32) -> TextResult<Option<(u32, u32)>> {
+        // Only the plain edit control is measured by offsets: NVDA reads a
+        // rich edit through its text object model, whose location has no
+        // percentage (`docs/parity/review.md`, "Review cursor
+        // line/word/character over object text").
+        if self.control.version() != 0 {
+            return Ok(None);
+        }
         Ok(Some((*at, self.length()?)))
     }
 
@@ -414,6 +421,15 @@ mod tests {
         // A no-break space separates words as a space does.
         assert_eq!(plain_word(&units("a\u{A0}b"), 0), (0, 2));
         assert_eq!(plain_word(&units("a\u{A0}b"), 2), (2, 3));
+    }
+
+    #[test]
+    fn a_rich_edit_is_not_measured_by_offsets() {
+        // No window: a rich edit answers before asking the control.
+        for version in [1, 2, 5] {
+            let mut text = EditText::new(0, version);
+            assert!(matches!(text.measure(&3), Ok(None)), "version {version}");
+        }
     }
 
     #[test]

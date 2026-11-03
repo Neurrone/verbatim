@@ -797,7 +797,7 @@ pub enum TextReply {
         y: i32,
     },
     /// The answer to [`TextOp::Location`] in text measured by character
-    /// offsets (a Win32 edit control): the point's offset and the text's
+    /// offsets (a plain Win32 edit control): the point's offset and the text's
     /// length, in the text's own units, and its screen coordinates when
     /// the provider can tell them.
     OffsetLocation {

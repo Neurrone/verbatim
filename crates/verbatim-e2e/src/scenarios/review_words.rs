@@ -147,7 +147,12 @@ pub(crate) fn text_box_body(scenario: &mut Scenario, _state: &mut ScenarioState)
         .expect("sends the gesture");
     scenario.deviates_from_nvda("docs/parity/review.md", "Previous word across a line break");
     scenario.speech().expect(&["Price"]);
-    review(scenario, "kb:numpad4", "Color");
+    // NVDA says "carriage return" here, the line break's other half.
+    scenario
+        .send_gesture("kb:numpad4")
+        .expect("sends the gesture");
+    scenario.deviates_from_nvda("docs/parity/review.md", "Previous word across a line break");
+    scenario.speech().expect(&["Color"]);
     scenario
         .send_gesture("kb:shift+numpad9")
         .expect("sends the gesture");
@@ -156,7 +161,15 @@ pub(crate) fn text_box_body(scenario: &mut Scenario, _state: &mut ScenarioState)
         "Review bottom on a final empty line",
     );
     scenario.speech().expect(&["blank"]);
-    review(scenario, "kb:numpad7", ROWS[3].0);
+    // NVDA, at the last row already, says the row above it, "Fig purple".
+    scenario
+        .send_gesture("kb:numpad7")
+        .expect("sends the gesture");
+    scenario.deviates_from_nvda(
+        "docs/parity/review.md",
+        "Review bottom on a final empty line",
+    );
+    scenario.speech().expect(&[ROWS[3].0]);
 }
 
 /// The scenario in Windows 11 Notepad.
