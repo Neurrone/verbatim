@@ -294,7 +294,7 @@ These steps follow the simulation of the reducers, once it has shown value by th
 
 ## Performance
 
-Nothing here runs on the event path in a release build. Fault points compile out of release builds; the lock check is debug-only, its cost stated. The crate split changed no thread, message or wake-up, and the relay mailbox's wake decided under its lock measured no change. M4.5's figures are under "Measured before and after".
+Nothing here runs on the event path in a release build. M4.6 changed no production code on the key path; measured on `measure_keys_text_box` in debug builds made alike (non-incremental, each in its own target), two runs a build alternated, the build before it (be5bd5b9) woke 28.5 and 29.1 times and spent 2.46 and 2.42 ms per input-hook wake in all processes, and the build after 26.8 and 30.3 times and 2.20 and 2.51 ms, no change beyond the runs' spread. `measure_focus_explorer` failed in every run of both builds as `docs/flaky-tests.md` records, so it has no figure. Fault points compile out of release builds; the lock check is debug-only, its cost stated. The crate split changed no thread, message or wake-up, and the relay mailbox's wake decided under its lock measured no change. M4.5's figures are under "Measured before and after".
 
 ## Alternatives weighed
 
