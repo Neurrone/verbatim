@@ -107,6 +107,21 @@ begins passes whether or not it woke the reading thread, and a stop that
 kept the readers' lock while joining their threads would hang the test
 rather than fail it.
 
+The third build also fixes `explorer_folder_window`'s failure on GitHub's
+runner (Dickson, 2026-11-03), local-only until then
+([the known failures](flaky-tests.md)). The placeholder's UIA read fails
+there with `UIA_E_ELEMENTNOTAVAILABLE`, so its chain is filled in from
+window handles starting at its own nearest window, an MSAA pane on the
+window that is the items view list's own; `ObjectKey::is_same_object`
+(`crates/verbatim-model/src/tree.rs`) treats two nodes on one window
+handle as one object whatever their backend, so delta's chain meets the
+old line at the list and nothing is entered. NVDA differs on both points:
+two objects of different types are never equal (`NVDAObject.__eq__`), and
+a failed UIA parent falls back to the parent window (`GA_PARENT`), so the
+list's window is not in its line. It touches the identity the build's one
+node per window (defect A) changes. From the chain commits 10c9e83a,
+3abda293, b94d2ea2, c7c7c6dc and 9fd28a66.
+
 Follow-up, not established from the code alone: Core refuses a foreground
 report of the window holding its focus (`crates/verbatim-core/src/reduce.rs`,
 `reduce_focus_changed`) with no check that the focus is alive, so a window
@@ -274,7 +289,7 @@ is kept in the repository.
 
 Tests and tooling:
 
-- Two mockapp tests fail intermittently under `cargo xtask ci`, a defect by `docs/testing.md`: `call_counts::uia_focus_chains_stop_below_the_process_boundary` and `shutdown::a_remote_operation_in_progress_finishes_before_the_outpost_shuts_down`. Find each cause (failure recorded in [the known failures](flaky-tests.md)). The hypothesis to test first, unconfirmed: `cargo test` runs a file's tests as threads of one process, these tests make UIA calls from that process, and UIA keeps state per process (`docs/uia-bugs.md`, "The connection timeout applies to the whole process"); run each alone ten times and with its file ten times, and if only the second fails, run the files whose tests call UIA one process per test.
+- Two mockapp tests fail intermittently under `cargo xtask ci`, a defect by `docs/testing.md`: `call_counts::uia_focus_chains_stop_below_the_process_boundary` and `shutdown::a_remote_operation_in_progress_finishes_before_the_outpost_shuts_down`. Find each cause (failure recorded in [the known failures](flaky-tests.md)). State shared between tests in one process is ruled out: mockapp's runner (`run_isolated`, `crates/mockapp/tests/common/harness.rs`) has run each test as its own process on its own desktop since 387b841c. Being fixed in the testing improvements session (Dickson, 2026-11-03).
 - Audit every end-to-end scenario for timing races, each fixed by waiting for evidence, not a longer bound; find why the agent's bring-forward always takes its slowest path (up to 1.4 s). `measure_focus_explorer`'s key waits end on their key's item, which two keys share ("alpha 2 of 4" for Down 1 and Up 1), so a late repeat can end the next key's wait; the targets are `explorer_folder_window`'s, so renaming cannot fix it.
 - Root-cause, from the GitHub run logs, the ARM64 unit test `the_codeview_record_read_is_the_one_dbghelp_reports` (`verbatim-trace-waits`), which failed on main before 2026-10-15 and does not reproduce here.
 - The trace tool's symbol lookup for ARM64X images, such as ntdll, needs a fix testable only on the ARM64 runner (deferred, Dickson, 2026-10-21).
@@ -304,7 +319,6 @@ Focus and File Explorer:
   17", so the step is judged "differs"; find whether the compare tool
   joins NVDA's speech parts without a space or NVDA runs them together.
 - File Explorer can focus its "Working on it..." placeholder and raise no later focus, UIA or `WinEvent`, so `measure_focus_explorer` times out, which decision 11's wait cannot recover; find what File Explorer raises then, beyond a name change and three state changes on the items view. The failure is recorded in [the known failures](flaky-tests.md).
-- `explorer_folder_window` fails on GitHub's runner ([the known failures](flaky-tests.md)). The placeholder's UIA read fails there (0x80040201), so its chain is filled in from window handles starting at its own nearest window, an MSAA pane on the window that is the items view list's own; `ObjectKey::is_same_object` (`crates/verbatim-model/src/tree.rs`) treats two nodes on one window handle as one object whatever their backend, so delta's chain meets the old line at the list and nothing is entered. NVDA differs on both points: two objects of different types are never equal (`NVDAObject.__eq__`), and a failed UIA parent falls back to the parent window (`GA_PARENT`), so the list's window is not in its line. From the focus pipeline rework's chain commits (10c9e83a, 3abda293, b94d2ea2, c7c7c6dc, 9fd28a66); it passes locally only because the placeholder's read does not fail there.
 - In one runner run the `delta` item inside Inner still carried the parent folder's window title; check whether File Explorer's title lags or an ancestor name is stale (`explorer_folder_window`).
 - The listener's read in File Explorer scenarios once came 285 ms late, locally mostly the first nearest-window lookup waiting on a busy File Explorer; confirm on GitHub's runner (deferred, Dickson, 2026-10-21).
 - On a fresh GitHub runner the first Verbatim start can say "Start toggle button not pressed" instead of "Desktop list", because the taskbar rehosts the Start button in a new PopupHost window and raises a UIA focus NVDA would accept too; the choice between a throwaway warm-up start and an experiment to find the trigger is deferred (Dickson, 2026-10-21).

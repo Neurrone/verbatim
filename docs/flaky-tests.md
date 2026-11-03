@@ -42,9 +42,9 @@ Scenarios: the `windows_terminal_` scenarios generally, for example `windows_ter
 
 - `explorer_folder_window` on GitHub's runner (runs 41157849900 and 41163500778), where it is now skipped (see "Scenarios that fail on GitHub's runner, skipped there")
   - How: "Items View list" is not spoken after "Working on it..."; the first utterance heard is "delta not selected 1 of 1". Passes locally.
-  - Cause: the placeholder's UIA read fails on the runner (0x80040201), so its chain is filled in from window handles, and `ObjectKey::is_same_object` treats two nodes on one window handle as one object whatever their backend, so nothing is entered. NVDA differs on both points.
-  - Fix: [the M4.1 follow-ups](roadmap.md#follow-ups-from-m41), the entry on this failure.
-  - Also seen (run 41501468361): File Explorer answered the outpost's MSAA calls slowly, a name change taking 3.3 s and a focus 4.5 s, so the gap record's bound passed first; the window's title was spoken, then "Inner" alone from the gap read, its chain filled in from window handles, so "Items View list" and the position were not spoken.
+  - Cause: the placeholder's UIA read fails on the runner (`UIA_E_ELEMENTNOTAVAILABLE`), so its chain is filled in from window handles, and `ObjectKey::is_same_object` treats two nodes on one window handle as one object whatever their backend, so nothing is entered. NVDA differs on both points.
+  - Fix: [the focus pipeline rework's third build](roadmap.md#the-focus-pipeline-rework).
+  - Also seen (run 41501468361): File Explorer was blocked for about 5 s. The listener's read of the UIA focus on "Inner" was still in its nearest-window call (1.98 s) at its bound, so it was published with no ancestors and its late result discarded (`crates/verbatim-listener-logic/src/schedule.rs`); the outpost's MSAA focus item took 4.48 s, so its gap record's bound sent the title. "Inner" reached Core with window-handle panes, so "Items View list" and the position were not spoken. NVDA has no such bound: it queues the UIA focus whenever it arrives. Fix: not yet placed; a read that completes after its bound would be published again rather than discarded.
 - `explorer_folder_window` locally, Explorer's folder window not responding (2026-10-31)
   - How: nothing is spoken after the desktop's "Recycle Bin 1 of 13"; the folder window, opened in a new `explorer.exe` process, never takes the foreground, its UI thread stops answering about 1.5 s after it opens (an arbitration probe of its `ShellTabWindowClass` window times out at 3 s, an MSAA call waits 13 s), and it does not close within 15 s, so the next scenarios fail at launch on the window left open. Once in 13 runs, with the keep-id fix; the next 10 passed.
   - Cause: not found. Verbatim's outpost was the one waiting on Explorer; no Verbatim call was found that Explorer waited on.
@@ -53,6 +53,17 @@ Scenarios: the `windows_terminal_` scenarios generally, for example `windows_ter
   - How: times out. On 2026-10-29 it failed in 22 of 23 runs in a row on the development machine, before and after that day's changes, while `explorer_folder_window` passed.
   - Cause: File Explorer can focus its "Working on it..." placeholder and raise no later focus; what it raises then, and what makes it constant, are not found.
   - Fix: [the M4.1 follow-ups](roadmap.md#follow-ups-from-m41), the entry on this failure.
+
+## Terminal scenarios, single failures on GitHub's runner
+
+- `windows_terminal_full_history_flood` (run 41572436376)
+  - How: "ready>" is heard when "report new output" is turned back on, before the command is typed: "utterances no assertion matched were waiting before typing".
+  - Cause: the harness. `wait_for_caret_on` (`crates/verbatim-e2e/src/scenarios/terminal.rs`) returns on a snapshot whose caret is on the prompt's line before that line's text holds the prompt; Windows Terminal's next snapshot, 31 ms later, added "ready>", which arrived after reporting was on.
+  - Fix: the testing improvements session (2026-11-03): the wait also requires the prompt's text.
+- `conhost_long_lines` (run 41333390347)
+  - How: after Enter, "r" is heard where "part1 part2 ... part10" is expected; the snapshot then has the caret on an empty line and "ready>" on the screen's first row.
+  - Cause: not found; the typed-character rules (`crates/verbatim-core/src/terminal_model.rs`) are suspected, not shown. Once in 32 runs.
+  - Fix: none yet.
 
 ## A new console host not responding at its outpost's first call
 
@@ -74,8 +85,8 @@ Scenarios and tests: `notepad_editing`, `notepad_selection_keys` and `notepad_ty
 
 - `call_counts::uia_focus_chains_stop_below_the_process_boundary` and `shutdown::a_remote_operation_in_progress_finishes_before_the_outpost_shuts_down`
   - How: fail intermittently under `cargo xtask ci`. The first's counts hold with a 1.5 s pause between its steps, so the lapse of UI Automation's copy of an element's runtime id (`docs/uia-bugs.md`) is not its cause.
-  - Cause: not found.
-  - Fix: [the M4.1 follow-ups](roadmap.md#follow-ups-from-m41), the entry on these tests.
+  - Cause: not found. Shared state between tests is ruled out: mockapp's runner runs each test as its own process.
+  - Fix: the testing improvements session (Dickson, 2026-11-03).
 
 ## Synthesizer host tests on GitHub's runner
 
@@ -101,7 +112,7 @@ Scenarios and tests: `notepad_editing`, `notepad_selection_keys` and `notepad_ty
   - How: its assertion "the close removed both groups" found the advised groups at (1, 0) where (0, 0) was expected (line 209): right after `close`, the old window still counted one registration.
   - How often: once in six runs of `cargo xtask faults` on the development machine (2026-11-03); five runs in a row passed after it.
 - Cause, for both, likely but not shown: `Registration::close` (`crates/verbatim-uia/src/subscribe.rs`) returns when `RemoveEventHandlerGroup` returns, while mockapp's count falls only when UI Automation calls `AdviseEventRemoved` on its provider (`crates/mockapp/src/uia.rs`), and the tests read the count once, with nothing waiting for that call.
-- Fix: mockapp signals each change of its count and the tests wait for the count they expect, as its `RELEASED` wait does, so a count that never arrives is a defect in the close's wait (a follow-up of the owner endings build).
+- Fix: mockapp signals each change of its count and the tests wait for the count they expect, as its `RELEASED` wait does, so a count that never arrives is a defect in the close's wait (the testing improvements session, Dickson, 2026-11-03).
 
 ## Scenarios that fail on GitHub's runner, skipped there
 
@@ -110,4 +121,4 @@ These are `local_only` in the registry. The `e2e` job deselects them (`--skip no
 - The `notepad_` scenarios: the runner has classic Notepad, a Win32 edit control, not Windows 11 Notepad. Editing is also covered in the harness's Windows Forms text box.
 - `settings_search_suggestions`: the runner's Settings raises no selection event for a first suggestion as the list opens, so "Suggestions available" plays to completion there, while the scenario expects the first suggestion, which this machine's Settings selects as the list opens, to cut it off.
 - `settings_combo_box_expanded`: the runner's Settings opens its Date and time page with the focus on "Location Settings link", where this machine's opens it on "Region button", which the scenario's opening speech asserts.
-- `explorer_folder_window`: fails on the runner in 21 of 32 runs (to 2026-11-03) for the causes under "File Explorer" above, so it gives no signal there. It returns to the runner when [the M4.1 follow-ups](roadmap.md#follow-ups-from-m41) fix that failure.
+- `explorer_folder_window`: fails on the runner in 21 of 32 runs (to 2026-11-03) for the causes under "File Explorer" above, so it gives no signal there. It returns to the runner when [the focus pipeline rework's third build](roadmap.md#the-focus-pipeline-rework) fixes that failure.
