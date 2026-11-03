@@ -111,6 +111,9 @@ jobs:
             args=(-p "$package")
             for file in $files; do args+=(--file "$file"); done
             if [ -n "$filter" ]; then args+=(-F "$filter"); fi
+            # cargo-mutants makes its output folder but not that folder's
+            # parent, so each group's numbered folder is made first.
+            mkdir -p "mutants.out/$run"
             set +e
             cargo mutants --no-shuffle "${args[@]}" "${diff[@]}" --output "mutants.out/$run"
             status=$?
