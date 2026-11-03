@@ -23,7 +23,7 @@
 //! `focus-child <container> <child>`, `client-name <text>`,
 //! `client-identity`, `disable-client`, `acc-focus-window <hwnd>`,
 //! `child-window`, `child-client-identity`, `form-client`, `window-focus`, `hold`,
-//! `release`, and `quit`.
+//! `release`, `await-advised <event id> <count>`, and `quit`.
 //! Parsing runs on a dedicated thread (reading stdin blocks, and the window
 //! thread must keep pumping its message loop); parsed commands are handed
 //! to the window thread over a channel, woken by a lightweight posted
@@ -31,7 +31,8 @@
 //! has taken effect: `applied`, or `rejected: <reason>`; `stall` with its
 //! own two lines instead, and `quit` not at all. `release` is applied and
 //! acknowledged by the reading thread itself, since the window thread is
-//! the one a `hold` holds.
+//! the one a `hold` holds; so is `await-advised`, since the window thread
+//! is the one whose calls it waits for.
 
 use std::io::BufRead;
 use std::sync::mpsc::Sender;
@@ -370,6 +371,12 @@ pub(crate) enum Command {
     /// `release`: lets the call `hold` held go on. Applied and acknowledged
     /// on the stdin thread, since the window thread is the one held.
     Release,
+    /// `await-advised <event id> <count>`: waits until the event has that
+    /// many live registrations (`hits::await_advised`), at most
+    /// [`AWAIT_ADVISED_LIMIT`], then answers `applied`, or past it
+    /// `rejected:` with the count seen. Applied and acknowledged on the
+    /// stdin thread, since UIA reports registrations on the window thread.
+    AwaitAdvised(i32, i64),
     /// `quit`.
     Quit,
     /// A line that is no command, rejected on the window thread, so its
@@ -533,6 +540,13 @@ pub(crate) fn parse_command(line: &str) -> Option<Command> {
         "quit" => Some(Command::Quit),
         "hold" => Some(Command::Hold),
         "release" => Some(Command::Release),
+        "await-advised" => {
+            let (event, count) = rest.split_once(' ')?;
+            Some(Command::AwaitAdvised(
+                event.parse().ok()?,
+                count.trim().parse().ok()?,
+            ))
+        }
         "focus" if !rest.is_empty() => Some(Command::Focus(rest.to_owned())),
         "set-focus" if !rest.is_empty() => Some(Command::SetFocus(rest.to_owned())),
         "select" if !rest.is_empty() => Some(Command::Select(rest.to_owned())),
@@ -665,6 +679,11 @@ fn unescape(text: &str) -> String {
     out
 }
 
+/// The longest `await-advised` waits: shorter than the tests' wait for
+/// an acknowledgement (15 seconds), so a count that never comes is a named
+/// rejection rather than a missing answer.
+const AWAIT_ADVISED_LIMIT: std::time::Duration = std::time::Duration::from_secs(10);
+
 /// Reads stdin line by line, sending each parsed command to `sink` and
 /// calling `wake` so the window thread's message loop notices. Returns when
 /// stdin closes or a `quit` command was sent.
@@ -681,6 +700,14 @@ pub(crate) fn run(sink: &Sender<Command>, wake: impl Fn()) {
             Some(Command::Release) => {
                 crate::hits::release();
                 crate::window::acknowledge("applied");
+            }
+            Some(Command::AwaitAdvised(event, count)) => {
+                match crate::hits::await_advised(event, count, AWAIT_ADVISED_LIMIT) {
+                    Ok(()) => crate::window::acknowledge("applied"),
+                    Err(seen) => crate::window::acknowledge(&format!(
+                        "rejected: event {event} has {seen} live registrations, not {count} after {AWAIT_ADVISED_LIMIT:?}"
+                    )),
+                }
             }
             Some(command) => {
                 if sink.send(command).is_err() {
@@ -903,6 +930,15 @@ mod tests {
             _ => panic!("expected OnActivate"),
         }
         assert!(parse_command("on-activate").is_none());
+    }
+
+    #[test]
+    fn parses_await_advised() {
+        assert!(matches!(
+            parse_command("await-advised 20004 0"),
+            Some(Command::AwaitAdvised(20004, 0))
+        ));
+        assert!(parse_command("await-advised 20004").is_none());
     }
 
     #[test]

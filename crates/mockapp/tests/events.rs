@@ -376,7 +376,7 @@ fn uia_a_focus_events_cache_holds_a_failed_keyboard_focus_as_an_empty_one() {
     let mut app = common::spawn("small.json", "uia", &title);
     let hwnd = common::find_window(&title);
 
-    let (sender, observed) = mpsc::channel::<(String, String, String)>();
+    let (sender, observed) = mpsc::channel::<(Option<String>, (String, String, String))>();
     let registration = Registration::with_parts(
         vec![Part::shaped::<ListenerEvent>(Subscription::Event {
             event: UIA_AutomationFocusChangedEventId,
@@ -388,7 +388,7 @@ fn uia_a_focus_events_cache_holds_a_failed_keyboard_focus_as_an_empty_one() {
                     Ok(focus) => format!("{focus}"),
                     Err(error) => format!("failed {:#010x}", error.code().0),
                 };
-                let _ = sender.send((observe(true), observe(false), live));
+                let _ = sender.send((element.read().name, (observe(true), observe(false), live)));
             }),
         })],
         common::window_subtree(hwnd.0 as isize),
@@ -398,29 +398,34 @@ fn uia_a_focus_events_cache_holds_a_failed_keyboard_focus_as_an_empty_one() {
     // Each event's cache is filled after its command is acknowledged, so
     // each answer stays set until its event has arrived.
     let property = UIA_HasKeyboardFocusPropertyId.0;
-    let mut observe = |answer: &str, item: &str| {
+    // The next focus event, which must be `item`'s, named `name`.
+    let mut observe = |answer: &str, item: &str, name: &str| {
         app.send(&format!("answer-property {property} {answer}"));
         app.send(&format!("focus {item}"));
-        observed
+        let (sender, answers) = observed
             .recv_timeout(common::WAIT_TIMEOUT)
-            .unwrap_or_else(|error| panic!("no focus event from {item}: {error}"))
+            .unwrap_or_else(|error| panic!("no focus event from {item}: {error}"));
+        assert_eq!(sender.as_deref(), Some(name), "the focus event's sender");
+        answers
     };
     let pair = |ignored: &str, plain: &str, live: &str| {
         (ignored.to_owned(), plain.to_owned(), live.to_owned())
     };
     assert_eq!(
         [
-            observe("fail", "item1"),
-            observe("empty", "item2"),
-            observe("usual", "item1"),
+            observe("fail", "item1", "First"),
+            observe("empty", "item2", "Second"),
+            observe("usual", "item1", "First"),
+            // A marker: its event coming next shows no other came first.
+            observe("usual", "item2", "Second"),
         ],
         [
             pair("not supported", "false", "false"),
             pair("not supported", "false", "false"),
             pair("true", "true", "true"),
+            pair("true", "true", "true"),
         ]
     );
-    assert_eq!(observed.try_recv(), Err(TryRecvError::Empty));
     registration.close();
     app.quit();
 }
@@ -559,9 +564,19 @@ fn uia_active_text_position_arrives_with_its_range() {
             (Some("Notes".to_owned()), "alpha".to_owned())
         ]
     );
-    assert!(
-        matches!(positions.try_recv(), Err(TryRecvError::Empty)),
-        "an event after the marker"
+    // A marker: its event coming next shows no other came after the two.
+    app.send("active-text-position doc 1 4");
+    let (_, range) = positions
+        .recv_timeout(common::WAIT_TIMEOUT)
+        .expect("the marker's event");
+    let range = range
+        .expect("the marker's range")
+        .resolve()
+        .expect("the range");
+    assert_eq!(
+        String::from_utf16_lossy(&range.text(-1).expect("the range's text")),
+        "lph",
+        "the next event is the marker's"
     );
 
     app.quit();

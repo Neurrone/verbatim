@@ -29,6 +29,11 @@
 //! - [`WM_ADVISED_READ`]: `wParam` is the event's id, and the result is
 //!   its live registrations.
 //!
+//! UIA reports a removal to the provider on mockapp's window thread some
+//! time after the client's removal has returned, so a test that expects a
+//! count to fall waits for it with the `await-advised` command
+//! ([`await_advised`]) rather than reading it once.
+//!
 //! The `WM_GETTITLEBARINFOEX`s the host window takes are counted too, as
 //! [`Method::GetTitleBarInfoEx`] ([`hit_title_bar_info`]): UIA's MSAA proxy
 //! sends one for most reads of the window's title bar, its location and
@@ -639,26 +644,55 @@ pub(crate) fn release() {
     RELEASED.1.notify_all();
 }
 
-/// The live registrations per event, by event id.
-static ADVISED: Mutex<BTreeMap<i32, i64>> = Mutex::new(BTreeMap::new());
+/// The live registrations per event, by event id, and the condition
+/// [`await_advised`] waits on, notified at each change.
+static ADVISED: (Mutex<BTreeMap<i32, i64>>, Condvar) =
+    (Mutex::new(BTreeMap::new()), Condvar::new());
 
 /// Counts a registration UIA reported added (`added`) or removed for event
 /// `event`.
 pub(crate) fn advise(event: i32, added: bool) {
     let mut advised = ADVISED
+        .0
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     *advised.entry(event).or_default() += if added { 1 } else { -1 };
+    ADVISED.1.notify_all();
 }
 
 /// The live registrations for event `event`.
 pub(crate) fn advised(event: i32) -> i64 {
     ADVISED
+        .0
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .get(&event)
         .copied()
         .unwrap_or(0)
+}
+
+/// Waits until event `event` has `count` live registrations, at most
+/// `timeout`: the `await-advised` command, which the stdin thread applies
+/// itself, since UIA reports a removal on the window thread
+/// ([`advise`]) some time after the client's removal has returned. On
+/// the timeout, answers the count it last saw.
+pub(crate) fn await_advised(
+    event: i32,
+    count: i64,
+    timeout: std::time::Duration,
+) -> Result<(), i64> {
+    let advised = ADVISED
+        .0
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let (advised, _) = ADVISED
+        .1
+        .wait_timeout_while(advised, timeout, |advised| {
+            advised.get(&event).copied().unwrap_or(0) != count
+        })
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let seen = advised.get(&event).copied().unwrap_or(0);
+    if seen == count { Ok(()) } else { Err(seen) }
 }
 
 /// Makes every provider call from now on wait `ms` milliseconds before it

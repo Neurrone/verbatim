@@ -188,7 +188,7 @@ fn two_applications(name: &str) -> ([common::MockApp; 2], [HWND; 2]) {
 /// after the move, and is removed by the close, whose wait is answered.
 fn a_group_a_move_failed_to_remove_is_removed_at_close() {
     common::init_com();
-    let (apps, [old, new]) = two_applications("mockapp-move-unremoved");
+    let (mut apps, [old, new]) = two_applications("mockapp-move-unremoved");
     let (registration, _names) = name_changes(common::window_subtree(old.0 as isize));
     assert_eq!(
         (advised(old), advised(new)),
@@ -205,11 +205,10 @@ fn a_group_a_move_failed_to_remove_is_removed_at_close() {
         "the old element keeps its group after the move"
     );
     registration.close();
-    assert_eq!(
-        (advised(old), advised(new)),
-        (0, 0),
-        "the close removed both groups"
-    );
+    // The close removed both groups.
+    for app in &mut apps {
+        app.await_advised(UIA_AutomationPropertyChangedEventId.0, 0);
+    }
     drop(refusal);
     for app in apps {
         app.quit();
@@ -229,9 +228,12 @@ fn a_group_whose_removals_all_failed_is_removed_when_the_registering_thread_ends
     registration.retarget(common::window_subtree(new.0 as isize));
     registration.settle();
     registration.close();
+    // The new element's removal has reached its provider, and the old
+    // element's group, whose removal failed, outlives the close.
+    apps[1].await_advised(UIA_AutomationPropertyChangedEventId.0, 0);
     assert_eq!(
-        (advised(old), advised(new)),
-        (1, 0),
+        advised(old),
+        1,
         "the old element's group outlives the close"
     );
     verbatim_uia::release_mta_usage();
@@ -239,11 +241,8 @@ fn a_group_whose_removals_all_failed_is_removed_when_the_registering_thread_ends
         !verbatim_uia::registering_thread_runs(),
         "the registering thread ended"
     );
-    assert_eq!(
-        advised(old),
-        0,
-        "the old group went with the registering thread"
-    );
+    // The old group went with the registering thread.
+    apps[0].await_advised(UIA_AutomationPropertyChangedEventId.0, 0);
     drop(refusal);
 
     let (_later, names) = name_changes(common::window_subtree(new.0 as isize));

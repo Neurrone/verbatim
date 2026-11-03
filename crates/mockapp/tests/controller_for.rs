@@ -212,10 +212,10 @@ fn a_selected_result_is_found_only_inside_the_list_the_search_box_controls() {
         "the controlled list itself is not answered with its selection"
     );
 
-    assert!(
-        selected.try_recv().is_err(),
-        "one selection event for each select"
-    );
+    // A marker: its event coming next shows one selection event came for
+    // each select before it.
+    app.send("select result1");
+    selected_id("Display settings");
     app.quit();
 }
 

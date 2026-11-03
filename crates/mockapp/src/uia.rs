@@ -392,6 +392,7 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
         | Command::AnswerProperty(..)
         | Command::Hold
         | Command::Release
+        | Command::AwaitAdvised(..)
         | Command::Quit
         | Command::Unrecognized(_) => {}
     }

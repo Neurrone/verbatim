@@ -305,6 +305,16 @@ impl MockApp {
         self.send("release");
     }
 
+    /// Waits until UIA has reported `count` live registrations for event
+    /// `event` to mockapp's fragment root (mockapp's `await-advised`
+    /// command), failing the test with the count mockapp last saw: the
+    /// evidence that a removal has reached the provider, which UIA tells
+    /// it on its window thread some time after the client's removal has
+    /// returned, so a single read ([`advised`]) can come too early.
+    pub fn await_advised(&mut self, event: i32, count: i64) {
+        self.send(&format!("await-advised {event} {count}"));
+    }
+
     /// Writes `line` to mockapp and returns at once, for a command whose
     /// acknowledgements the test reads itself ([`Self::expect_line`]), such
     /// as a stall's.

@@ -177,11 +177,10 @@ fn shut_down_during(name: &str, read: &Read) {
         Err(RecvTimeoutError::Disconnected),
         "the outpost said nothing more and closed its pipe"
     );
-    assert_eq!(
-        registrations(hwnd),
-        [0, 0, 0, 0],
-        "every handler the outpost registered was removed"
-    );
+    // Every handler the outpost registered was removed.
+    for event in EVENTS {
+        app.await_advised(event, 0);
+    }
 
     // mockapp keeps running, and answers another client.
     let uia = Uia::new().expect("a UIA client");

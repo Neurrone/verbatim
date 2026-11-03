@@ -60,8 +60,11 @@ pub fn a_focus_handler_on_one_window_is_refused() {
 /// A group with the focus event on A's window hears A's focus events and
 /// not B's, while a group on B's window hears B's. B's events reach both
 /// groups' process together, as one raise, so the group on A's window,
-/// which hears A's event after B's first, would have heard B's first
-/// before it.
+/// which hears A's event after each of B's, would have heard B's before
+/// it; and the group on B's window, which hears B's second event after
+/// A's first, would have heard A's before it. Each group's last event is
+/// followed by the other application's, so nothing is left for a check
+/// that nothing more came, which could run before an event arrived.
 pub fn a_focus_event_in_a_group_on_one_window_hears_that_applications_focus_alone() {
     let (mut a, a_hwnd) = support::mockapp("scope-a", "uia");
     let (mut b, b_hwnd) = support::mockapp("scope-b", "uia");
@@ -87,8 +90,8 @@ pub fn a_focus_event_in_a_group_on_one_window_hears_that_applications_focus_alon
     assert_eq!(on_a.next(), support::from(&a, "First"));
     b.send("focus item2");
     assert_eq!(on_b.next(), support::from(&b, "Second"));
-    on_a.heard_nothing_more();
-    on_b.heard_nothing_more();
+    a.send("focus item2");
+    assert_eq!(on_a.next(), support::from(&a, "Second"));
     a.quit();
     b.quit();
 }
@@ -210,7 +213,11 @@ fn core_focus_registration(hwnd: windows::Win32::Foundation::HWND) -> HUIAEVENT 
 /// and not B's. A second registration, on B's window's node, feeds the
 /// same channel, so each of B's events is known to reach this process:
 /// each is heard once, from B's registration, and one heard by A's as well
-/// would be an extra of B's in the exact sequence of senders.
+/// would be an extra of B's in the exact sequence of senders, before A's
+/// next event; an extra of A's, heard by B's registration, would come
+/// before B's next. The last event is A's, whose extra the earlier ones
+/// already rule out, so no check that nothing more came, which could run
+/// before an event arrived, is made.
 pub fn a_core_api_focus_registration_on_one_window_hears_that_applications_focus_alone() {
     let (mut a, a_hwnd) = support::mockapp("scope-core-a", "uia");
     let (mut b, b_hwnd) = support::mockapp("scope-core-b", "uia");
@@ -233,7 +240,6 @@ pub fn a_core_api_focus_registration_on_one_window_hears_that_applications_focus
     assert_eq!(next(), b.pid());
     a.send("focus btn1");
     assert_eq!(next(), a.pid());
-    assert_eq!(heard.try_recv(), Err(mpsc::TryRecvError::Empty));
     a.quit();
     b.quit();
 }
