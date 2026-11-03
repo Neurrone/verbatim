@@ -1,5 +1,5 @@
-//! The end-to-end suite's one test binary: a `#[test]` per scenario
-//! registered in `crates/verbatim-e2e/src/registry.rs`, each calling
+//! The end-to-end suite's one test binary: a test per scenario registered
+//! in `crates/verbatim-e2e/src/registry.rs`, each calling
 //! `registry::run_named` with its own name, and the session check every
 //! scenario depends on. A scenario's test has the scenario's name, so
 //! `cargo test -p verbatim-e2e --test e2e -- --ignored --exact <name>
@@ -14,26 +14,32 @@
 //! ci`, lists them as ignored rather than running them; the end-to-end job
 //! runs them with `--ignored`, and `cargo xtask demo` runs a demonstration
 //! with `--include-ignored`.
+//!
+//! The binary has its own `main` (`harness = false`, with `libtest-mimic`
+//! taking libtest's command line), so that once every test has run it
+//! prints the end-of-run summary (`verbatim_e2e::run_summary`), which
+//! libtest's harness has no place for.
 
+use std::panic::{self, AssertUnwindSafe};
+use std::process::ExitCode;
+use std::sync::{Arc, Mutex, PoisonError};
+use std::time::Instant;
+
+use libtest_mimic::{Arguments, Failed, Trial};
 use verbatim_e2e::AgentClient;
+use verbatim_e2e::run_summary::RunSummary;
 
-/// Defines one ignored `#[test]` per name, ignored for `$reason`, running
-/// the registered scenario of that name.
+/// The names of the scenarios listed, each of whose tests is ignored for
+/// the reason given first.
 macro_rules! scenario_tests {
     ($reason:literal: $($name:ident)*) => {
-        $(
-            #[test]
-            #[ignore = $reason]
-            fn $name() {
-                verbatim_e2e::registry::run_named(stringify!($name));
-            }
-        )*
+        &[$(stringify!($name)),*]
     };
 }
 
 // The disabled scenarios (`registry::DISABLED`, each with its reason) have
 // no test here.
-scenario_tests! {
+const LIVE: &[&str] = scenario_tests! {
     "live: drives a real Verbatim through a running agent; the end-to-end job runs it with --ignored (docs/tooling/e2e.md)":
     menu_and_settings_dialog
     second_application_and_verbatim_menu
@@ -151,25 +157,25 @@ scenario_tests! {
     windows_terminal_tabs
     object_navigation_over_uia
     system_information_tree
-}
+};
 
 // The demonstrations are ignored too, so the suite never runs them; `cargo
 // xtask demo` runs one with `--include-ignored`, and the suite's commands
 // also deselect them with `--skip demo_`.
-scenario_tests! {
+const DEMONSTRATIONS: &[&str] = scenario_tests! {
     "a demonstration, recorded by cargo xtask demo":
     demo_notepad_editing
     demo_review_cursor
     demo_say_all
     demo_terminal_session
     demo_settings_dialog_keys
-}
+};
 
 // The measure set, the measurement workloads of
 // `docs/design/communication.md` section 11: ignored, run by name or with
 // `cargo xtask vm test --group measure`, never by the suite, whose runs
 // deselect them with `--skip measure_` (docs/tooling/e2e.md).
-scenario_tests! {
+const MEASURE_SET: &[&str] = scenario_tests! {
     "a measurement workload, run by name (docs/tooling/e2e.md)":
     measure_focus_windows_terminal
     measure_focus_windows_terminal_tabs
@@ -184,7 +190,7 @@ scenario_tests! {
     measure_stale_caret_conhost
     measure_held_repeat_text_box
     measure_speech_real
-}
+};
 
 /// The agent reports an interactive session on the default desktop: the
 /// precondition every scenario depends on, not itself a scenario. A screen
@@ -193,8 +199,8 @@ scenario_tests! {
 /// is the secure desktop, where the suite does nothing useful, so this is
 /// the first thing worth checking when the suite behaves strangely. It
 /// fails when no agent is named.
-#[test]
-#[ignore = "live: needs a running agent; the end-to-end job runs it with --ignored (docs/tooling/e2e.md)"]
+/// It is ignored like the scenarios: it needs a running agent, and the
+/// end-to-end job runs it with `--ignored` (docs/tooling/e2e.md).
 fn agent_reports_an_interactive_window_station() {
     let endpoint = verbatim_e2e::endpoint().unwrap_or_else(|| {
         panic!(
@@ -215,4 +221,53 @@ fn agent_reports_an_interactive_window_station() {
         Some("Default"),
         "the input desktop is not the default desktop: the machine is locked, or the secure desktop is up"
     );
+}
+
+/// A scenario's test: runs it, records its result and seconds in
+/// `summary`, and fails as it does. The panic hook has printed the
+/// panic's report as the scenario failed, so the failure points to it
+/// rather than carrying a second copy.
+fn scenario_trial(name: &'static str, summary: &Arc<Mutex<RunSummary>>) -> Trial {
+    let summary = Arc::clone(summary);
+    Trial::test(name, move || {
+        let started = Instant::now();
+        let outcome = panic::catch_unwind(AssertUnwindSafe(|| {
+            verbatim_e2e::registry::run_named(name);
+        }));
+        summary
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .record(name, outcome.is_ok(), started.elapsed());
+        outcome.map_err(|_| Failed::from(PANICKED))
+    })
+    .with_ignored_flag(true)
+}
+
+/// A failed test's message: its panic's report was printed as it failed.
+const PANICKED: &str = "the test panicked: its report is printed above, where it failed";
+
+fn main() -> ExitCode {
+    let arguments = Arguments::from_args();
+    let summary = Arc::new(Mutex::new(RunSummary::default()));
+    let mut trials: Vec<Trial> = [LIVE, DEMONSTRATIONS, MEASURE_SET]
+        .into_iter()
+        .flatten()
+        .map(|name| scenario_trial(name, &summary))
+        .collect();
+    trials.push(
+        Trial::test("agent_reports_an_interactive_window_station", || {
+            panic::catch_unwind(agent_reports_an_interactive_window_station)
+                .map_err(|_| Failed::from(PANICKED))
+        })
+        .with_ignored_flag(true),
+    );
+    let conclusion = libtest_mimic::run(&arguments, trials);
+    for line in summary
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .lines()
+    {
+        println!("{line}");
+    }
+    conclusion.exit_code()
 }

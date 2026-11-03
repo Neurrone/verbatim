@@ -467,6 +467,25 @@ intermittent failure survives the runs after it. None of this is a retry
 mechanism: a failed scenario is reported failed exactly once, and nothing
 re-runs it.
 
+## The end-of-run summary
+
+Once every test the run selected has finished, the suite's test binary
+prints, after libtest's own result line, a heading and one line per
+scenario that ran, in the order they ran:
+
+`end-of-run summary, one line per scenario that ran:`
+
+`summary: conhost_typing pass 41.2s`
+
+Each line is `summary: `, the scenario's name, `pass` or `fail`, and its
+seconds with one decimal place followed by `s`, separated by single
+spaces; the seconds run from before Verbatim's launch to after the
+scenario's artifacts are archived. A tool finds the lines by their
+`summary: ` start and splits them on spaces. A run that ran no scenario
+prints neither the heading nor any line. The session check,
+`agent_reports_an_interactive_window_station`, is not a scenario and has
+no line.
+
 ## Reading a failure
 
 Match a failure to [the known failures](../flaky-tests.md) before rerunning it or debugging it.

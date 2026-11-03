@@ -3,7 +3,7 @@
 //! instead of logic living only inside a `#[test]` function.
 //!
 //! One identifier, [`ScenarioDef::name`], is used everywhere a scenario
-//! needs naming: the plain-libtest `#[test]` function wrapping it (so
+//! needs naming: the test in `tests/e2e.rs` wrapping it (so
 //! `cargo test -p verbatim-e2e --test e2e <name> -- --exact` selects exactly one
 //! scenario), `cargo xtask vm test --scenario <name>`'s selector, the
 //! per-scenario artifacts directory ([`crate::artifacts::scenario_dir`]),
@@ -127,8 +127,8 @@
 //! - [`Group::Demo`]: demonstrations, recorded as videos for
 //!   `videos/demos` by `cargo xtask demo` and never part of the suite: a
 //!   selection with no `--scenario` or `--group` leaves them out
-//!   ([`select`]), `cargo xtask vm test` refuses them, and their `#[test]`
-//!   wrappers are `#[ignore]`d, so a plain `cargo test -p verbatim-e2e`, as
+//!   ([`select`]), `cargo xtask vm test` refuses them, and their tests are
+//!   ignored, so a plain `cargo test -p verbatim-e2e`, as
 //!   CI's `e2e` job runs it, skips them. Each still asserts what it shows,
 //!   so a broken feature fails rather than recording a misleading video.
 //! - [`Group::Measure`]: the measure set, workloads that make Verbatim's
@@ -136,7 +136,7 @@
 //!   section 11 compares at every migration step. They are measurement,
 //!   not tests, and are left out like the demonstrations: a selection
 //!   with no `--scenario` or `--group` leaves them out ([`select`]), and
-//!   their `#[test]` wrappers are ignored and named `measure_`, so the
+//!   their tests are ignored and named `measure_`, so the
 //!   suite's runs deselect them with `--skip measure_`. Their speech is
 //!   collected without being asserted ([`SpeechCollector::collect_only`](crate::speech::SpeechCollector::collect_only));
 //!   `docs/tooling/e2e.md` says how to run them.
@@ -247,7 +247,7 @@ pub fn skips(def: &ScenarioDef, setting: Option<&str>) -> Result<bool, String> {
 }
 
 /// The disabled scenarios, each with why and what re-enables it. None has
-/// a `#[test]` in `tests/e2e.rs`, so no run includes one and none is ever
+/// a test in `tests/e2e.rs`, so no run includes one and none is ever
 /// reported as passing; [`select`] leaves them out, and refuses one asked
 /// for by name, giving its reason; [`run_named`] fails one run anyway. Each
 /// stays registered and compiled as it is, to be enabled again unchanged.

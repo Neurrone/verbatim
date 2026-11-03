@@ -13,20 +13,24 @@ this guide describes the code.
 ## Running, skipping, and failing
 
 - The suite is one test binary, `crates/verbatim-e2e/tests/e2e.rs`, with
-  a `#[test]` per scenario named after it, each calling
-  `registry::run_named` with that name. One binary rather than one per
+  a test per scenario named after it, each calling
+  `registry::run_named` with that name. The binary has its own `main`
+  (`harness = false`), with `libtest-mimic` taking libtest's command line,
+  so that after every test it prints the end-of-run summary
+  (`run_summary::RunSummary`), one line per scenario that ran with its
+  result and seconds, for which libtest's own harness has no place. One binary rather than one per
   scenario keeps the build small, since each test binary links the whole
   harness. A unit test in `registry.rs`, which `cargo xtask ci` runs,
   reads `tests/e2e.rs` as text and fails, naming each, when a registered
   scenario has no test there or a test there has no registered scenario.
-- Every live `#[test]` is `#[ignore]`d with the reason "live", so a
+- Every live test is ignored, so a
   workspace test run (and `cargo xtask ci`) lists them as ignored rather
   than reporting them as passed.
 - `endpoint()` reads `ENDPOINT_ENV` (`VERBATIM_E2E_ENDPOINT`). A live test
   run without it fails: a scenario that cannot reach an agent has not
   passed. `session_info`'s `agent_reports_an_interactive_window_station`,
   the precondition check that the agent runs in an interactive session on
-  the `Default` input desktop, is a plain ignored `#[test]` outside the
+  the `Default` input desktop, is a plain ignored test outside the
   registry and fails the same way.
 - Local-only scenarios' names, and only theirs, start with one of
   `LOCAL_ONLY_FILTERS` (`notepad_`, `settings_search_suggestions`, and
@@ -538,7 +542,7 @@ an outpost log named for one of them (`Scenario::collect_run_artifacts`).
 
 ## The run
 
-`registry::run_named` is what every `#[test]` wrapper calls; its `run`
+`registry::run_named` is what every scenario's test calls; its `run`
 does, in order: launch; assert the startup speech and the desktop; run
 setup and the body, which ends with `expect_nothing_more`; save Core's
 focus (`collect_focus`, `focus.txt`, from the control plane's `DumpFocus`)
@@ -598,8 +602,7 @@ Verbatim's run.
 
 ## The registry
 
-`ScenarioDef` is one named, grouped scenario: `name` (its `#[test]`
-function, `--scenario` selector, artifacts directory, and video name),
+`ScenarioDef` is one named, grouped scenario: `name` (its test, `--scenario` selector, artifacts directory, and video name),
 `group`, `settings` (a change to the fixed settings), `local_only`,
 `quick_retirement` (Verbatim launched with its idle retirement
 shortened, `scenario::QUICK_RETIREMENT`), `comparable`, `document`, and `setup`, `body` and `teardown`.

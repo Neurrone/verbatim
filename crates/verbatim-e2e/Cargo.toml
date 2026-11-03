@@ -23,5 +23,15 @@ verbatim-process.workspace = true
 sha2 = "0.11"
 workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
+[dev-dependencies]
+# The suite's test binary takes libtest's command line with its own `main`,
+# so it can print the end-of-run summary after every test
+# (tests/e2e.rs).
+libtest-mimic.workspace = true
+
+[[test]]
+name = "e2e"
+harness = false
+
 [lints]
 workspace = true
