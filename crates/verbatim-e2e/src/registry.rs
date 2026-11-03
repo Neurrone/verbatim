@@ -1252,6 +1252,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         group: Group::Text,
         settings: Some(terminal_flood_kinds::raised_limits),
         local_only: false,
+        quick_retirement: false,
         document: None,
         comparable: Comparable::Yes,
         setup: terminal_flood_kinds::setup_raised_console_host,
