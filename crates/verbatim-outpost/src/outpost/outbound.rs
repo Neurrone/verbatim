@@ -786,6 +786,16 @@ mod tests {
         // Sent as `flush` sends it, without waiting for the answer here.
         let (done_tx, done) = mpsc::channel();
         assert!(outbound.sender().send(Outgoing::Flushed(done_tx)).is_ok());
+        // The evidence that the flush has been taken and waits: it is in the
+        // backlog, behind the large message's write, which stays in flight
+        // until the test reads it.
+        assert!(
+            outbound.with_pending(|pending| {
+                pending.ordinary.len() == 1
+                    && matches!(pending.ordinary.front(), Some(Waiting::Flushed(_)))
+            }),
+            "the flush waits in the backlog"
+        );
         assert_eq!(
             done.try_recv(),
             Err(mpsc::TryRecvError::Empty),

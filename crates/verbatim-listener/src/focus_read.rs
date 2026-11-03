@@ -2987,6 +2987,8 @@ mod tests {
         assert_eq!(fixture.read_on.recv_timeout(WAIT).expect("a read").0, 1);
         fixture.push(Pid(5), meta(2), (2, None, Vec::new()));
         fixture.readers.when_idle(idle(2));
+        // A waiter due at once runs inside `when_idle`'s step, so this read
+        // follows any run it made.
         assert_eq!(
             fixture.outcomes.try_recv(),
             Err(mpsc::TryRecvError::Empty),

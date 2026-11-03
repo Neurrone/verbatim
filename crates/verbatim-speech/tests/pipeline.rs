@@ -109,13 +109,20 @@ impl SpeechEvents for Recorder {
 }
 
 impl Recorder {
-    /// Waits until at least `count` endings have been reported, then
-    /// returns them all, in the order reported. Fails at [`STEP_TIMEOUT`].
-    fn endings(&self, count: usize) -> Vec<(UtteranceId, UtteranceEnding)> {
-        self.wait_until(
-            |endings| endings.len() >= count,
-            || format!("{count} endings"),
-        )
+    /// Waits until `marker`, an utterance spoken after everything the test
+    /// checks, has completed, checks that its ending is the last and the
+    /// only one of it, and returns every ending reported before it, in the
+    /// order reported: an ending of earlier speech is reported before the
+    /// marker's, so a second one cannot come after the read. Fails at
+    /// [`STEP_TIMEOUT`].
+    fn endings_before(&self, marker: UtteranceId) -> Vec<(UtteranceId, UtteranceEnding)> {
+        let mut endings = self.endings_through(marker);
+        assert_eq!(
+            endings.pop(),
+            Some((marker, UtteranceEnding::Completed)),
+            "the marker's ending is the last: {endings:?}"
+        );
+        endings
     }
 
     /// Waits until `id` has ended, then returns every ending reported, in
@@ -454,12 +461,7 @@ impl ControlHarness {
         let marker = self.manager.speak(&self.token, queued("marker"));
         assert_eq!(recv_started(&self.started), "marker");
         self.finish.send(()).unwrap();
-        let mut endings = self.recorder.endings_through(marker);
-        assert_eq!(
-            endings.pop(),
-            Some((marker, UtteranceEnding::Completed)),
-            "the marker's ending is the last: {endings:?}"
-        );
+        let mut endings = self.recorder.endings_before(marker);
         endings.sort_by_key(|(utterance, _)| *utterance);
         endings
     }
@@ -530,11 +532,11 @@ fn next_lane_jumps_ahead_of_queued_and_each_completes_once_played() {
     harness.finish.send(()).unwrap();
 
     assert_eq!(
-        harness.recorder.endings(3),
+        harness.endings_before_a_marker(),
         vec![
             (first, UtteranceEnding::Completed),
-            (third, UtteranceEnding::Completed),
             (second, UtteranceEnding::Completed),
+            (third, UtteranceEnding::Completed),
         ]
     );
 }
@@ -667,7 +669,7 @@ fn failed_synthesis_ends_the_utterance_as_failed_and_speech_carries_on() {
     harness.finish.send(()).unwrap();
 
     assert_eq!(
-        harness.recorder.endings(2),
+        harness.endings_before_a_marker(),
         vec![
             (
                 failing,
@@ -697,10 +699,18 @@ fn renders_tokens_through_capture_synth() {
         },
     );
 
-    assert_eq!(recorder.endings(1), vec![(id, UtteranceEnding::Completed)]);
-    let requests = log.lock().unwrap();
-    assert_eq!(requests.len(), 1);
-    assert_eq!(requests[0].sequence.text(), "Settings menu item");
+    let marker = manager.speak(&token, queued("marker"));
+    assert_eq!(
+        recorder.endings_before(marker),
+        vec![(id, UtteranceEnding::Completed)]
+    );
+    let texts: Vec<String> = log
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|record| record.sequence.text())
+        .collect();
+    assert_eq!(texts, ["Settings menu item", "marker"]);
 }
 
 /// A theme that puts a mark after each segment.
@@ -740,7 +750,11 @@ fn a_synth_that_cannot_place_marks_gets_the_sequence_split_and_marks_stay_exact(
         },
     );
 
-    assert_eq!(recorder.endings(1), vec![(id, UtteranceEnding::Completed)]);
+    let marker = manager.speak(&token, queued("marker"));
+    assert_eq!(
+        recorder.endings_before(marker),
+        vec![(id, UtteranceEnding::Completed)]
+    );
     let texts: Vec<String> = log
         .lock()
         .unwrap()
@@ -749,12 +763,16 @@ fn a_synth_that_cannot_place_marks_gets_the_sequence_split_and_marks_stay_exact(
         .collect();
     assert_eq!(
         texts,
-        ["one", "two"],
+        ["one", "two", "marker"],
         "one synthesis per piece, no marks inside"
     );
     assert_eq!(
         *recorder.marks.lock().unwrap(),
-        vec![(id, IndexMark(1)), (id, IndexMark(2))]
+        vec![
+            (id, IndexMark(1)),
+            (id, IndexMark(2)),
+            (marker, IndexMark(1))
+        ]
     );
 }
 
@@ -847,19 +865,33 @@ fn a_synth_that_places_marks_gets_the_whole_sequence_in_one_call() {
         },
     );
 
-    assert_eq!(recorder.endings(1), vec![(id, UtteranceEnding::Completed)]);
+    let marker = manager.speak(&token, queued("marker"));
+    assert_eq!(
+        recorder.endings_before(marker),
+        vec![(id, UtteranceEnding::Completed)]
+    );
     assert_eq!(
         *given.lock().unwrap(),
-        vec![vec![
-            SpeechItem::Text("one".to_owned()),
-            SpeechItem::Mark(IndexMark(1)),
-            SpeechItem::Text("two".to_owned()),
-            SpeechItem::Mark(IndexMark(2)),
-        ]]
+        vec![
+            vec![
+                SpeechItem::Text("one".to_owned()),
+                SpeechItem::Mark(IndexMark(1)),
+                SpeechItem::Text("two".to_owned()),
+                SpeechItem::Mark(IndexMark(2)),
+            ],
+            vec![
+                SpeechItem::Text("marker".to_owned()),
+                SpeechItem::Mark(IndexMark(1)),
+            ]
+        ]
     );
     assert_eq!(
         *recorder.marks.lock().unwrap(),
-        vec![(id, IndexMark(1)), (id, IndexMark(2))]
+        vec![
+            (id, IndexMark(1)),
+            (id, IndexMark(2)),
+            (marker, IndexMark(1))
+        ]
     );
 }
 
@@ -1069,6 +1101,10 @@ fn a_pause_holds_speech_until_resumed_and_new_speech_cancels_it() {
     let mut harness = control_manager();
     let held = harness.manager.speak(&harness.token, queued("held"));
     assert_eq!(recv_started(&harness.started), "held");
+    // Queued behind it before the pause, so its synthesis starting shows
+    // the synth thread has finished with "held"; it fails at once, so the
+    // queue thread, which waits for a synthesis in progress, is free again.
+    let after = harness.manager.speak(&harness.token, queued("fail"));
     assert!(
         harness.manager.control().toggle_pause(),
         "the queue took the toggle"
@@ -1085,22 +1121,37 @@ fn a_pause_holds_speech_until_resumed_and_new_speech_cancels_it() {
             .expect("synth returned"),
         "held"
     );
+    // The synth thread hands an utterance's last audio and its end to the
+    // mixer after the driver returns, and only then takes the next, whose
+    // failure the mixer reports at once, paused or not, so once it is
+    // reported the mixer holds "held"'s end.
+    assert_eq!(recv_started(&harness.started), "fail");
+    let failed = (
+        after,
+        UtteranceEnding::Failed("synthesis failed: asked to fail".to_owned()),
+    );
+    assert_eq!(harness.recorder.endings_through(after), [failed.clone()]);
     // The evidence that "held" would have ended by now were it not paused:
-    // 100 ms of audio on another source of the same mixer has played to
-    // the end, and the mixer mixes every source into the same frames.
+    // its end is at the mixer, and 100 ms of audio on another source of the
+    // same mixer, given after it, has played to the end, and the mixer
+    // mixes every source into the same frames.
     play_to_the_end(
         &mut harness.probe,
         &harness.probe_ended,
         Duration::from_millis(100),
     );
-    assert_eq!(harness.recorder.ended_so_far(), [], "held while paused");
+    assert_eq!(
+        harness.recorder.ended_so_far(),
+        [failed.clone()],
+        "held while paused"
+    );
     assert!(
         harness.manager.control().toggle_pause(),
         "the queue took the toggle"
     );
     assert_eq!(
         harness.recorder.endings_through(held),
-        [(held, UtteranceEnding::Completed)]
+        [failed, (held, UtteranceEnding::Completed)]
     );
 
     let paused = harness.manager.speak(&harness.token, queued("paused"));
@@ -1116,6 +1167,10 @@ fn a_pause_holds_speech_until_resumed_and_new_speech_cancels_it() {
         harness.endings_before_a_marker(),
         vec![
             (held, UtteranceEnding::Completed),
+            (
+                after,
+                UtteranceEnding::Failed("synthesis failed: asked to fail".to_owned())
+            ),
             (paused, UtteranceEnding::Cancelled),
             (next, UtteranceEnding::Completed),
         ]
@@ -1655,8 +1710,9 @@ fn a_spelled_capital_is_spoken_at_a_raised_pitch() {
         },
     );
     let after = manager.speak(&token, queued("after"));
+    let marker = manager.speak(&token, queued("marker"));
     assert_eq!(
-        recorder.endings(2),
+        recorder.endings_before(marker),
         vec![
             (spelled, UtteranceEnding::Completed),
             (after, UtteranceEnding::Completed),
@@ -1669,6 +1725,7 @@ fn a_spelled_capital_is_spoken_at_a_raised_pitch() {
             ("B".to_owned(), 80),
             ("c".to_owned(), 50),
             ("after".to_owned(), 50),
+            ("marker".to_owned(), 50),
         ]
     );
 }
