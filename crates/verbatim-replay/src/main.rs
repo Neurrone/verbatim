@@ -3,13 +3,15 @@
 //! from the state it starts at, and prints each input on one line with the
 //! effects it produced, flagging every input whose effect count differs
 //! from the one the dump recorded (`docs/tooling/e2e.md`, "Replaying a run").
+//! It first prints the commit the dump's build and its own were made from,
+//! with a warning when they differ or either had uncommitted changes.
 
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use verbatim_core::{DumpContents, dump};
+use verbatim_core::{DumpContents, UNKNOWN_COMMIT, dump};
 use verbatim_replay::{FIRST_INPUT_LINE, Renderer, replay_dump};
 
 /// The command's arguments.
@@ -47,6 +49,13 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    let dump_source = Source {
+        commit: &contents.header.commit,
+        uncommitted_changes: contents.header.uncommitted_changes,
+    };
+    for line in source_lines(dump_source, own_source()) {
+        println!("{line}");
+    }
     let report = report(
         &contents,
         &Renderer::new(&sounds()),
@@ -66,6 +75,68 @@ fn main() -> ExitCode {
 /// The repository's sound files, which the built-in default theme plays.
 fn sounds() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../sounds")
+}
+
+/// The commit a build was made from, and whether its working tree had
+/// uncommitted changes.
+#[derive(Clone, Copy, Debug)]
+struct Source<'a> {
+    commit: &'a str,
+    uncommitted_changes: bool,
+}
+
+/// The commit this replay was built from, captured by its build script.
+fn own_source() -> Source<'static> {
+    Source {
+        commit: env!("VERBATIM_COMMIT"),
+        uncommitted_changes: env!("VERBATIM_UNCOMMITTED_CHANGES") == "true",
+    }
+}
+
+/// The lines naming the commits the dump's build and this replay were made
+/// from, then a warning for each reason the replay's effect counts may
+/// differ from the dump's other than a change in behaviour: different
+/// commits, a commit not known (so a match cannot be shown), or
+/// uncommitted changes in either.
+fn source_lines(dump: Source, replay: Source) -> Vec<String> {
+    const WHY: &str = "; effect counts may differ for that reason";
+    let mut lines = vec![
+        built_from("the dump", dump),
+        built_from("this replay", replay),
+    ];
+    if dump.commit == UNKNOWN_COMMIT || replay.commit == UNKNOWN_COMMIT {
+        lines.push(format!(
+            "warning: the commit the dump or this replay was built from is unknown{WHY}"
+        ));
+    } else if dump.commit != replay.commit {
+        lines.push(format!(
+            "warning: this replay was built from a different commit than the dump{WHY}"
+        ));
+    }
+    if dump.uncommitted_changes {
+        lines.push(format!(
+            "warning: the dump's build had uncommitted changes{WHY}"
+        ));
+    }
+    if replay.uncommitted_changes {
+        lines.push(format!(
+            "warning: this replay's build had uncommitted changes{WHY}"
+        ));
+    }
+    lines
+}
+
+fn built_from(whose: &str, source: Source) -> String {
+    if source.commit == UNKNOWN_COMMIT {
+        format!("{whose} was built from an unknown commit")
+    } else if source.uncommitted_changes {
+        format!(
+            "{whose} was built from commit {}, with uncommitted changes",
+            source.commit
+        )
+    } else {
+        format!("{whose} was built from commit {}", source.commit)
+    }
 }
 
 /// The dump `reader` holds, or why it cannot be read: which line is
@@ -283,6 +354,62 @@ mod tests {
                 VALUE,
                 "replayed 2 inputs, lines 3 to 4: none differs from the dump's effect counts",
                 "the dump ends mid-line: nothing after line 4 was read",
+            ]
+        );
+    }
+
+    const COMMIT: &str = "0123456789abcdef0123456789abcdef01234567";
+    const OTHER: &str = "89abcdef0123456789abcdef0123456789abcdef";
+
+    fn clean(commit: &str) -> Source<'_> {
+        Source {
+            commit,
+            uncommitted_changes: false,
+        }
+    }
+
+    #[test]
+    fn the_same_commit_with_no_uncommitted_changes_gives_no_warning() {
+        assert_eq!(
+            source_lines(clean(COMMIT), clean(COMMIT)),
+            [
+                format!("the dump was built from commit {COMMIT}"),
+                format!("this replay was built from commit {COMMIT}"),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_different_commit_gives_a_warning() {
+        assert_eq!(
+            source_lines(clean(COMMIT), clean(OTHER)),
+            [
+                format!("the dump was built from commit {COMMIT}"),
+                format!("this replay was built from commit {OTHER}"),
+                "warning: this replay was built from a different commit than the dump; effect counts may differ for that reason".to_owned(),
+            ]
+        );
+    }
+
+    /// The committed fixture is a version 6 dump, so its commit is unknown.
+    #[test]
+    fn uncommitted_changes_or_an_unknown_commit_give_a_warning() {
+        let contents = read(&mut fixture().as_bytes()).expect("the dump parses");
+        let dump = Source {
+            commit: &contents.header.commit,
+            uncommitted_changes: contents.header.uncommitted_changes,
+        };
+        let replay = Source {
+            commit: COMMIT,
+            uncommitted_changes: true,
+        };
+        assert_eq!(
+            source_lines(dump, replay),
+            [
+                "the dump was built from an unknown commit".to_owned(),
+                format!("this replay was built from commit {COMMIT}, with uncommitted changes"),
+                "warning: the commit the dump or this replay was built from is unknown; effect counts may differ for that reason".to_owned(),
+                "warning: this replay's build had uncommitted changes; effect counts may differ for that reason".to_owned(),
             ]
         );
     }

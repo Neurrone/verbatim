@@ -129,6 +129,8 @@ pub fn dump_now(recorder: &Arc<Mutex<ReducerRecorder>>, dumps_dir: &Path) -> io:
     dump::write_dump(
         &mut file,
         env!("CARGO_PKG_VERSION"),
+        env!("VERBATIM_COMMIT"),
+        env!("VERBATIM_UNCOMMITTED_CHANGES") == "true",
         &now.header,
         &base,
         &inputs,

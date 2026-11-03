@@ -325,7 +325,12 @@ Milestone M4's themes and earcons are wired here too
 - The build script copies the top-level `sounds` folder next to the
   executables in the cargo target directory, so `target\debug` holds
   everything a run needs, and the end-to-end staging and the VM deploy
-  copy it from there.
+  copy it from there. It also sets `VERBATIM_COMMIT` to `git rev-parse
+  HEAD` and `VERBATIM_UNCOMMITTED_CHANGES` to whether `git status
+  --porcelain` printed anything, `unknown` and `false` when git cannot
+  answer, which `flight_dump` writes into the dump's header; it reruns when
+  HEAD, the ref it names, the packed refs or the index change, so editing
+  a file without staging it leaves the recorded state as it was.
 - `error_sound` is a tracing layer: every event logged at error level, on
   any thread, posts `Input::ErrorLogged` to the reducer thread, whose
   reducer plays the error sound, as NVDA plays one for a logged error. It only sends, so logging from inside the speech pipeline

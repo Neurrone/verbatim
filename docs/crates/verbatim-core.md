@@ -95,7 +95,8 @@ guide maps those behaviors onto the crate's types and modules.
 - `flight_recorder` and `FlightRecorder<T, S>`: see "The flight recorder".
 - `RecordedInput`, `ReducerRecorder` and `replay(initial, inputs)`: see
   "The flight recorder".
-- `dump`: `DUMP_FORMAT_VERSION`, `DumpHeader`, `DumpContents`,
+- `dump`: `DUMP_FORMAT_VERSION`, `OLDEST_DUMP_FORMAT_VERSION`,
+  `UNKNOWN_COMMIT`, `DumpHeader`, `DumpContents`,
   `DumpReadError`, `write_dump` and `read_dump`; see "The dump format".
 - `read_of(&TerminalSnapshot)`, `snapshot_of(&Read, waited, colours)` and
   `read_at(&TerminalSnapshot)`: see "Core's terminal model".
@@ -335,12 +336,18 @@ and `Deserialize`.
 ## The dump format
 
 `dump` is a versioned JSON-lines file: a header line (`DumpHeader`: format
-version, the writing crate's version, and a caller-supplied timestamp
-string, since the module never reads a clock), then the `SrState` the
+version, the writing crate's version, the commit the writing build was
+made from and whether its working tree had uncommitted changes, and a
+caller-supplied timestamp string; the writer captures the commit when it
+is built and the module never reads a clock), then the `SrState` the
 inputs start from, then one compact-JSON `RecordedInput` per line.
-`write_dump(writer, crate_version, timestamp, base, inputs)` writes one;
-`read_dump(reader)` reads one back as `DumpContents` (header, base state,
-the inputs that parsed completely, and whether the file ended mid-line).
+`write_dump(writer, crate_version, commit, uncommitted_changes, timestamp,
+base, inputs)` writes one; `read_dump(reader)` reads one back as
+`DumpContents` (header, base state, the inputs that parsed completely, and
+whether the file ended mid-line). It reads every format version from
+`OLDEST_DUMP_FORMAT_VERSION` (6) to `DUMP_FORMAT_VERSION` (7): a version 6
+header has no commit, so it reads as `UNKNOWN_COMMIT` with no uncommitted
+changes.
 
 `DumpReadError` distinguishes a missing header, a malformed header, an
 unsupported format version, a base state line that is missing or cut off,

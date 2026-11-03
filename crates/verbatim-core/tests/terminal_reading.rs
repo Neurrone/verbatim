@@ -1208,7 +1208,16 @@ fn a_terminal_session_survives_a_flight_recorders_dump_and_replay() {
         })
         .collect();
     let mut file = Vec::new();
-    dump::write_dump(&mut file, "test", "now", &base, &recorded).expect("a dump is written");
+    dump::write_dump(
+        &mut file,
+        "test",
+        dump::UNKNOWN_COMMIT,
+        false,
+        "now",
+        &base,
+        &recorded,
+    )
+    .expect("a dump is written");
     let contents = dump::read_dump(&mut BufReader::new(file.as_slice())).expect("a dump is read");
     assert_eq!(contents.base, base);
     let inputs: Vec<Input> = contents

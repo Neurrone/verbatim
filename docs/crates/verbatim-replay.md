@@ -34,6 +34,19 @@ nothing in it is Windows-specific.
   else after it, and is shown when no input of the dump is timed.
 - The binary prints a malformed dump's error, which names the line, and
   for a dump cut off mid-line ends with the last line it read.
+- The binary first prints the commit the dump's build was made from and
+  the commit it was itself built from, which its build script captures as
+  `verbatim-app`'s does ([verbatim-app](verbatim-app.md)), each with
+  whether its working tree had uncommitted changes, then a warning when
+  the commits differ, either is unknown, or either build had uncommitted
+  changes, since any of these can change effect counts as a change in
+  behaviour does:
+
+  `the dump was built from commit 4eb4c413d89889a844ff4d82f0f945b7ba072d02`
+
+  `this replay was built from commit 82187a9706656747c95a6199d8df5043ee6ff72b`
+
+  `warning: this replay was built from a different commit than the dump; effect counts may differ for that reason`
 
 ## The line
 

@@ -35,7 +35,8 @@ mod terminal_model;
 mod text;
 
 pub use dump::{
-    DUMP_FORMAT_VERSION, DumpContents, DumpHeader, DumpReadError, read_dump, write_dump,
+    DUMP_FORMAT_VERSION, DumpContents, DumpHeader, DumpReadError, OLDEST_DUMP_FORMAT_VERSION,
+    UNKNOWN_COMMIT, read_dump, write_dump,
 };
 pub use flight_recorder::FlightRecorder;
 pub use focus_rules::is_selection_container;

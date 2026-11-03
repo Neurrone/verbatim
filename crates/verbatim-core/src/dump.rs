@@ -8,7 +8,10 @@
 //! then one compact-JSON [`RecordedInput`] per line, in the order the flight
 //! recorder captured them. The header
 //! carries a format version this module checks on read, the crate version
-//! that wrote it (informational only), and a timestamp string supplied by
+//! that wrote it (informational only), the commit the writing build was made
+//! from and whether its working tree had uncommitted changes (both handed
+//! in by the writer, which captures them when it is built, since this crate
+//! runs no tools), and a timestamp string supplied by
 //! the caller rather than read from a clock here, so this crate stays free
 //! of I/O and time dependencies. A dump interrupted mid-write (a crash) is
 //! expected: [`read_dump`] parses every complete line it can and reports the
@@ -31,10 +34,21 @@ use crate::state::SrState;
 /// the state records Core's queries in one table, and an outpost's answer
 /// to any of them is one input. Version 6: a lock key's read waiting in the
 /// state keeps its due time, and a terminal's hold is its model's.
-pub const DUMP_FORMAT_VERSION: u32 = 6;
+/// Version 7: the header records the commit the writing build was made
+/// from and whether its working tree had uncommitted changes; a version 6
+/// dump, otherwise the same, still reads, its commit unknown.
+pub const DUMP_FORMAT_VERSION: u32 = 7;
+
+/// The oldest format version [`read_dump`] still reads.
+pub const OLDEST_DUMP_FORMAT_VERSION: u32 = 6;
+
+/// The commit a header records when the writing build's commit is not
+/// known: a build made without git, or a version 6 dump.
+pub const UNKNOWN_COMMIT: &str = "unknown";
 
 /// The first line of a dump: format version, the crate version that wrote
-/// it, and a caller-supplied timestamp string.
+/// it, the commit that build was made from and whether its working tree
+/// had uncommitted changes, and a caller-supplied timestamp string.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DumpHeader {
     /// The dump format version; see [`DUMP_FORMAT_VERSION`].
@@ -42,10 +56,22 @@ pub struct DumpHeader {
     /// `CARGO_PKG_VERSION` of the crate that wrote the dump, informational
     /// only.
     pub crate_version: String,
+    /// The commit the writing build was made from, as `git rev-parse HEAD`
+    /// gives it, or [`UNKNOWN_COMMIT`].
+    #[serde(default = "unknown_commit")]
+    pub commit: String,
+    /// Whether the working tree of the writing build had uncommitted
+    /// changes; false when its commit is unknown.
+    #[serde(default)]
+    pub uncommitted_changes: bool,
     /// When the dump was written, in whatever format the caller chose; this
     /// crate never reads a clock, so it neither validates nor parses this
     /// field.
     pub timestamp: String,
+}
+
+fn unknown_commit() -> String {
+    UNKNOWN_COMMIT.to_owned()
 }
 
 /// The result of reading a dump: its header, the state its inputs start
@@ -113,7 +139,7 @@ impl std::fmt::Display for DumpReadError {
             }
             Self::UnsupportedVersion { found, supported } => write!(
                 f,
-                "flight-recorder dump format version {found} is not supported (this build reads version {supported})"
+                "flight-recorder dump format version {found} is not supported (this build reads versions {OLDEST_DUMP_FORMAT_VERSION} to {supported})"
             ),
             Self::MalformedLine {
                 line_number,
@@ -144,8 +170,8 @@ impl From<io::Error> for DumpReadError {
 
 /// Writes a dump: a header line, then `base`, the reducer state the inputs
 /// start from, then one compact-JSON [`RecordedInput`] per line, each
-/// newline-terminated. `crate_version` and `timestamp` are recorded verbatim
-/// in the header.
+/// newline-terminated. `crate_version`, `commit`, `uncommitted_changes` and
+/// `timestamp` are recorded verbatim in the header.
 ///
 /// # Errors
 ///
@@ -153,6 +179,8 @@ impl From<io::Error> for DumpReadError {
 pub fn write_dump<W: Write>(
     writer: &mut W,
     crate_version: &str,
+    commit: &str,
+    uncommitted_changes: bool,
     timestamp: &str,
     base: &SrState,
     inputs: &[RecordedInput],
@@ -162,6 +190,8 @@ pub fn write_dump<W: Write>(
         &DumpHeader {
             format_version: DUMP_FORMAT_VERSION,
             crate_version: crate_version.to_owned(),
+            commit: commit.to_owned(),
+            uncommitted_changes,
             timestamp: timestamp.to_owned(),
         },
     )?;
@@ -200,7 +230,7 @@ pub fn read_dump<R: BufRead>(reader: &mut R) -> Result<DumpContents, DumpReadErr
     }
     let header: DumpHeader =
         serde_json::from_str(line.trim_end()).map_err(DumpReadError::MalformedHeader)?;
-    if header.format_version != DUMP_FORMAT_VERSION {
+    if !(OLDEST_DUMP_FORMAT_VERSION..=DUMP_FORMAT_VERSION).contains(&header.format_version) {
         return Err(DumpReadError::UnsupportedVersion {
             found: header.format_version,
             supported: DUMP_FORMAT_VERSION,
@@ -320,13 +350,27 @@ mod tests {
         let base = sample_base();
         assert!(base.focused().is_some());
         let mut buffer = Vec::new();
-        write_dump(&mut buffer, "9.9.9", "2026-07-14T00:00:00Z", &base, &inputs).expect("writes");
+        write_dump(
+            &mut buffer,
+            "9.9.9",
+            "0123456789abcdef0123456789abcdef01234567",
+            true,
+            "2026-07-14T00:00:00Z",
+            &base,
+            &inputs,
+        )
+        .expect("writes");
 
         let mut reader = buffer.as_slice();
         let contents = read_dump(&mut reader).expect("reads");
 
         assert_eq!(contents.header.format_version, DUMP_FORMAT_VERSION);
         assert_eq!(contents.header.crate_version, "9.9.9");
+        assert_eq!(
+            contents.header.commit,
+            "0123456789abcdef0123456789abcdef01234567"
+        );
+        assert!(contents.header.uncommitted_changes);
         assert_eq!(contents.header.timestamp, "2026-07-14T00:00:00Z");
         assert_eq!(contents.base, base);
         assert_eq!(contents.inputs, inputs);
@@ -338,6 +382,8 @@ mod tests {
         let header = DumpHeader {
             format_version: DUMP_FORMAT_VERSION + 1,
             crate_version: "9.9.9".to_owned(),
+            commit: UNKNOWN_COMMIT.to_owned(),
+            uncommitted_changes: false,
             timestamp: "2026-07-14T00:00:00Z".to_owned(),
         };
         let mut buffer = Vec::new();
@@ -351,6 +397,36 @@ mod tests {
             }
             other => panic!("expected UnsupportedVersion, got {other:?}"),
         }
+    }
+
+    /// A version 6 header has no commit: the dump reads, its commit
+    /// unknown.
+    #[test]
+    fn a_version_6_dump_reads_with_an_unknown_commit() {
+        let mut buffer = Vec::new();
+        buffer.extend_from_slice(
+            br#"{"format_version":6,"crate_version":"9.9.9","timestamp":"2026-07-14T00:00:00Z"}"#,
+        );
+        buffer.push(b'\n');
+        write_line(&mut buffer, &sample_base()).expect("writes the base state");
+        for input in sample_inputs() {
+            write_line(&mut buffer, &input).expect("writes an input");
+        }
+
+        let contents = read_dump(&mut buffer.as_slice()).expect("reads");
+
+        assert_eq!(
+            contents.header,
+            DumpHeader {
+                format_version: 6,
+                crate_version: "9.9.9".to_owned(),
+                commit: UNKNOWN_COMMIT.to_owned(),
+                uncommitted_changes: false,
+                timestamp: "2026-07-14T00:00:00Z".to_owned(),
+            }
+        );
+        assert_eq!(contents.base, sample_base());
+        assert_eq!(contents.inputs, sample_inputs());
     }
 
     #[test]
@@ -368,6 +444,8 @@ mod tests {
         write_dump(
             &mut buffer,
             "9.9.9",
+            UNKNOWN_COMMIT,
+            false,
             "2026-07-14T00:00:00Z",
             &sample_base(),
             &[],
@@ -389,6 +467,8 @@ mod tests {
         write_dump(
             &mut buffer,
             "9.9.9",
+            UNKNOWN_COMMIT,
+            false,
             "2026-07-14T00:00:00Z",
             &SrState::new(),
             &inputs,
@@ -429,6 +509,8 @@ mod tests {
             &DumpHeader {
                 format_version: DUMP_FORMAT_VERSION,
                 crate_version: "9.9.9".to_owned(),
+                commit: UNKNOWN_COMMIT.to_owned(),
+                uncommitted_changes: false,
                 timestamp: "2026-07-14T00:00:00Z".to_owned(),
             },
         )

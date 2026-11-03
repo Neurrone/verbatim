@@ -502,6 +502,8 @@ mod tests {
         verbatim_core::dump::write_dump(
             &mut out,
             "0.1.0",
+            verbatim_core::UNKNOWN_COMMIT,
+            false,
             "2026-10-09T10:00:05Z",
             &verbatim_core::SrState::new(),
             &recorded,

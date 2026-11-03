@@ -246,7 +246,9 @@ to:
 
 ## Running one scenario
 
-A scenario's name is also its `#[test]` function name, so
+The end-to-end test binary (`crates/verbatim-e2e/tests/e2e.rs`) has its
+own runner, built on `libtest-mimic` and taking libtest's command line,
+with one test per registered scenario named after it, so
 `cargo test -p verbatim-e2e --test e2e -- --ignored --exact <name> --test-threads=1`
 runs exactly that one scenario, the same selection
 `cargo xtask vm test --scenario <name>` makes against the VM
@@ -604,7 +606,12 @@ depend on those before it. The last line says how many inputs were
 replayed and how many differ: an input whose effect count is not the one
 the dump recorded is marked `(differs: the dump recorded N)`, which means
 the code changed since the run or the reducer is not deterministic, and
-the command then exits with a failure. The format of a line is in
+the command then exits with a failure. Before the inputs it prints the
+commit the dump's build was made from and the commit the replay was
+itself built from, and a warning when they differ, either is unknown, or
+either build had uncommitted changes, such as "this replay was built from
+a different commit than the dump; effect counts may differ for that
+reason". It only reports this: it checks out and builds nothing. The format of a line is in
 [the crate's guide](../crates/verbatim-replay.md), "The line". The
 command runs on Linux too, so a dump from a Windows run can be read
 anywhere.

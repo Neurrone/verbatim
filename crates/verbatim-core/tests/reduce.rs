@@ -1469,8 +1469,16 @@ fn a_window_that_dropped_its_start_replays_from_its_checkpoint() {
 
     let entries: Vec<_> = recorder.entries().cloned().collect();
     let mut buffer = Vec::new();
-    verbatim_core::write_dump(&mut buffer, "test", "now", recorder.checkpoint(), &entries)
-        .expect("writes");
+    verbatim_core::write_dump(
+        &mut buffer,
+        "test",
+        verbatim_core::UNKNOWN_COMMIT,
+        false,
+        "now",
+        recorder.checkpoint(),
+        &entries,
+    )
+    .expect("writes");
     let contents = verbatim_core::read_dump(&mut buffer.as_slice()).expect("reads");
 
     assert_eq!(replay(&contents.base, &kept), live_tail);

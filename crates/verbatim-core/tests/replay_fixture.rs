@@ -203,6 +203,8 @@ fn regenerate_fixture() {
     dump::write_dump(
         &mut buffer,
         env!("CARGO_PKG_VERSION"),
+        dump::UNKNOWN_COMMIT,
+        false,
         "2026-07-14T00:00:00Z",
         &SrState::new(),
         &recorded,
