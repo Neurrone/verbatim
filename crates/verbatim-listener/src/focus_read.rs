@@ -2712,11 +2712,23 @@ mod tests {
     /// until [`tick_at`] moves it: nothing comes due but what a test ticks
     /// by hand, and the watchdog's own ticks judge nothing more.
     fn still_fixture(deadline: Duration) -> (Fixture, Still) {
+        still_fixture_of(deadline, (WINDOW, 0))
+    }
+
+    /// [`fixture_of`]'s readers, whose schedule's clock stands still as
+    /// [`still_fixture`]'s does.
+    fn still_fixture_of(deadline: Duration, (hwnd, nearest): (isize, isize)) -> (Fixture, Still) {
         let still = Still {
             start: Instant::now(),
             at: Arc::new(AtomicU64::new(0)),
         };
-        (fixture_by(deadline, (WINDOW, 0), still.clock()), still)
+        (fixture_by(deadline, (hwnd, nearest), still.clock()), still)
+    }
+
+    /// [`tick_at`], taking the readers' lock for the tick alone.
+    fn tick(fixture: &Fixture, still: &Still, at: u64) {
+        let mut state = fixture.readers.shared.lock();
+        tick_at(fixture, still, &mut state, at);
     }
 
     /// Moves `still` to `at` microseconds and steps the watchdog's tick
@@ -3054,11 +3066,18 @@ mod tests {
 
     #[test]
     fn a_read_past_its_deadline_is_dropped_and_a_new_thread_reads_on() {
-        let fixture = fixture(Duration::from_millis(50));
+        let (fixture, still) = still_fixture(Duration::from_millis(50));
         let (open, gate) = mpsc::channel();
         fixture.push(Pid(5), meta(1), (1, Some(gate), Vec::new()));
         let (_, held_on) = fixture.read_on.recv_timeout(WAIT).expect("a read");
         fixture.push(Pid(5), meta(2), (2, None, Vec::new()));
+        tick(&fixture, &still, 49_999);
+        assert_eq!(
+            fixture.outcomes.try_recv(),
+            Err(mpsc::TryRecvError::Empty),
+            "within the deadline"
+        );
+        tick(&fixture, &still, 50_000);
         assert_eq!(
             fixture.outcomes.recv_timeout(WAIT).expect("an outcome"),
             (Pid(5), 1, "its read did not return in time")
@@ -3082,21 +3101,24 @@ mod tests {
     /// the application's next event.
     #[test]
     fn a_held_read_is_abandoned_once_the_user_moves_on_past_its_grace() {
-        let fixture = fixture(Duration::from_secs(60));
+        let (fixture, still) = still_fixture(Duration::from_secs(60));
         let (open, gate) = mpsc::channel();
         fixture.push(Pid(5), meta(1), (1, Some(gate), Vec::new()));
         let (_, held_on) = fixture.read_on.recv_timeout(WAIT).expect("a read");
         fixture.push(Pid(5), meta(2), (2, None, Vec::new()));
+        tick(&fixture, &still, grace_us());
         assert_eq!(
-            fixture.asked.recv_timeout(WAIT).expect("the grace's check"),
-            WINDOW,
+            fixture.asked.try_recv(),
+            Ok(WINDOW),
             "the grace's end asks about the read's window"
         );
+        assert_eq!(fixture.outcomes.try_recv(), Err(mpsc::TryRecvError::Empty));
         fixture.set_moved_on(true);
+        tick(&fixture, &still, 2 * grace_us());
         assert_eq!(
             fixture.outcomes.recv_timeout(WAIT).expect("an outcome"),
             (Pid(5), 1, MOVED_ON),
-            "the next half second's check found the user had moved on"
+            "the next grace's check found the user had moved on"
         );
         assert_eq!(
             fixture.outcomes.recv_timeout(WAIT).expect("an outcome"),
@@ -3152,12 +3174,21 @@ mod tests {
     /// the read's own outcome is sent once it returns.
     #[test]
     fn a_held_read_past_its_grace_is_left_alone_while_the_user_has_not_moved_on() {
-        let fixture = fixture(Duration::from_secs(60));
+        let (fixture, still) = still_fixture(Duration::from_secs(60));
         let (open, gate) = mpsc::channel();
         fixture.push(Pid(5), meta(1), (1, Some(gate), Vec::new()));
         let (_, read_on) = fixture.read_on.recv_timeout(WAIT).expect("a read");
-        for check in ["the grace's check", "the next half second's check"] {
-            assert_eq!(fixture.asked.recv_timeout(WAIT).expect(check), WINDOW);
+        for (check, at) in [
+            ("the grace's check", grace_us()),
+            ("the next grace's check", 2 * grace_us()),
+        ] {
+            tick(&fixture, &still, at);
+            assert_eq!(fixture.asked.try_recv(), Ok(WINDOW), "{check}");
+            assert_eq!(
+                fixture.outcomes.try_recv(),
+                Err(mpsc::TryRecvError::Empty),
+                "{check}"
+            );
         }
         open.send(()).expect("the held read waits");
         assert_eq!(
@@ -3178,15 +3209,19 @@ mod tests {
     /// asked.
     #[test]
     fn a_windowless_sender_s_read_is_not_judged_before_its_window_is_known() {
-        let fixture = fixture_of(Duration::from_millis(800), (0, 0));
+        let (fixture, still) = still_fixture_of(Duration::from_millis(800), (0, 0));
         fixture.set_moved_on(true);
         let (open, gate) = mpsc::channel();
         fixture.push(Pid(5), meta(1), (1, Some(gate), Vec::new()));
         assert_eq!(fixture.read_on.recv_timeout(WAIT).expect("a read").0, 1);
+        tick(&fixture, &still, grace_us());
         assert_eq!(
-            fixture.outcomes.recv_timeout(WAIT).expect("an outcome"),
-            (Pid(5), 1, NOT_IN_TIME)
+            fixture.outcomes.try_recv(),
+            Err(mpsc::TryRecvError::Empty),
+            "not judged at the grace's end"
         );
+        tick(&fixture, &still, 800_000);
+        assert_eq!(fixture.outcomes.try_recv(), Ok((Pid(5), 1, NOT_IN_TIME)));
         open.send(()).expect("the held read waits");
         assert_eq!(fixture.readers.stop(), 1);
         assert_eq!(fixture.asked.try_recv(), Err(mpsc::TryRecvError::Empty));
@@ -3198,15 +3233,14 @@ mod tests {
     /// about once, and nothing else is asked.
     #[test]
     fn a_read_that_found_its_sender_s_nearest_window_is_judged_by_it() {
-        let fixture = fixture_of(Duration::from_secs(60), (0, NEAREST));
+        let (fixture, still) = still_fixture_of(Duration::from_secs(60), (0, NEAREST));
         fixture.set_moved_on(true);
         let (open, gate) = mpsc::channel();
         fixture.push(Pid(5), meta(1), (1, Some(gate), Vec::new()));
+        // The read learns the nearest window before it says it reads.
         assert_eq!(fixture.read_on.recv_timeout(WAIT).expect("a read").0, 1);
-        assert_eq!(
-            fixture.outcomes.recv_timeout(WAIT).expect("an outcome"),
-            (Pid(5), 1, MOVED_ON)
-        );
+        tick(&fixture, &still, grace_us());
+        assert_eq!(fixture.outcomes.try_recv(), Ok((Pid(5), 1, MOVED_ON)));
         open.send(()).expect("the held read waits");
         assert_eq!(fixture.readers.stop(), 1);
         let asked: Vec<isize> = fixture.asked.try_iter().collect();
@@ -3218,22 +3252,25 @@ mod tests {
     /// abandoned as moved on too.
     #[test]
     fn a_read_taken_by_a_new_thread_is_judged_at_its_own_grace_end() {
-        let fixture = fixture(Duration::from_secs(60));
+        let (fixture, still) = still_fixture(Duration::from_secs(60));
         fixture.set_moved_on(true);
         let (open_first, gate) = mpsc::channel();
         fixture.push(Pid(5), meta(1), (1, Some(gate), Vec::new()));
         assert_eq!(fixture.read_on.recv_timeout(WAIT).expect("a read").0, 1);
         let (open_second, gate) = mpsc::channel();
         fixture.push(Pid(5), meta(2), (2, Some(gate), Vec::new()));
-        assert_eq!(
-            fixture.outcomes.recv_timeout(WAIT).expect("an outcome"),
-            (Pid(5), 1, MOVED_ON)
-        );
+        tick(&fixture, &still, grace_us());
+        assert_eq!(fixture.outcomes.try_recv(), Ok((Pid(5), 1, MOVED_ON)));
+        // The new thread's read begins at the first read's grace's end.
         assert_eq!(fixture.read_on.recv_timeout(WAIT).expect("a read").0, 2);
+        tick(&fixture, &still, 2 * grace_us() - 1);
         assert_eq!(
-            fixture.outcomes.recv_timeout(WAIT).expect("an outcome"),
-            (Pid(5), 2, MOVED_ON)
+            fixture.outcomes.try_recv(),
+            Err(mpsc::TryRecvError::Empty),
+            "not judged before its own grace's end"
         );
+        tick(&fixture, &still, 2 * grace_us());
+        assert_eq!(fixture.outcomes.try_recv(), Ok((Pid(5), 2, MOVED_ON)));
         open_first.send(()).expect("the first held read waits");
         open_second.send(()).expect("the second held read waits");
         assert_eq!(fixture.readers.stop(), 2);
@@ -3329,22 +3366,18 @@ mod tests {
     /// arrived.
     #[test]
     fn an_event_at_the_abandoned_limit_waits_for_a_thread_that_returns() {
-        let fixture = fixture(Duration::from_secs(60));
+        let (fixture, still) = still_fixture(Duration::from_secs(60));
         fixture.set_moved_on(true);
         let (open_first, gate) = mpsc::channel();
         fixture.push(Pid(5), meta(1), (1, Some(gate), Vec::new()));
         let (_, first) = fixture.read_on.recv_timeout(WAIT).expect("a read");
-        assert_eq!(
-            fixture.outcomes.recv_timeout(WAIT).expect("an outcome"),
-            (Pid(5), 1, MOVED_ON)
-        );
+        tick(&fixture, &still, grace_us());
+        assert_eq!(fixture.outcomes.try_recv(), Ok((Pid(5), 1, MOVED_ON)));
         let (open_second, gate) = mpsc::channel();
         fixture.push(Pid(5), meta(2), (2, Some(gate), Vec::new()));
         assert_eq!(fixture.read_on.recv_timeout(WAIT).expect("a read").0, 2);
-        assert_eq!(
-            fixture.outcomes.recv_timeout(WAIT).expect("an outcome"),
-            (Pid(5), 2, MOVED_ON)
-        );
+        tick(&fixture, &still, 2 * grace_us());
+        assert_eq!(fixture.outcomes.try_recv(), Ok((Pid(5), 2, MOVED_ON)));
         fixture.push(Pid(5), meta(3), (3, None, vec![42, 3]));
         fixture.push(Pid(5), meta(4), (4, None, vec![42, 4]));
         assert_eq!(
@@ -3393,25 +3426,36 @@ mod tests {
     /// own deadline after its push. None of them is read.
     #[test]
     fn events_waiting_at_the_abandoned_limit_are_dropped_at_the_applications_bound() {
-        let fixture = fixture(Duration::from_millis(50));
+        let (fixture, still) = still_fixture(Duration::from_millis(50));
         let (open_first, gate) = mpsc::channel();
         fixture.push(Pid(5), meta(1), (1, Some(gate), Vec::new()));
+        assert_eq!(fixture.read_on.recv_timeout(WAIT).expect("a read").0, 1);
+        tick(&fixture, &still, 50_000);
         assert_eq!(
-            fixture.outcomes.recv_timeout(WAIT).expect("an outcome"),
-            (Pid(5), 1, "its read did not return in time")
+            fixture.outcomes.try_recv(),
+            Ok((Pid(5), 1, "its read did not return in time"))
         );
         let (open_second, gate) = mpsc::channel();
         fixture.push(Pid(5), meta(2), (2, Some(gate), Vec::new()));
+        assert_eq!(fixture.read_on.recv_timeout(WAIT).expect("a read").0, 2);
+        // The second abandoned read reaches the limit, and the
+        // application's bound is a deadline after it.
+        tick(&fixture, &still, 100_000);
         assert_eq!(
-            fixture.outcomes.recv_timeout(WAIT).expect("an outcome"),
-            (Pid(5), 2, "its read did not return in time")
+            fixture.outcomes.try_recv(),
+            Ok((Pid(5), 2, "its read did not return in time"))
         );
         fixture.push(Pid(5), meta(3), (3, None, Vec::new()));
         fixture.push(Pid(5), meta(4), (4, None, Vec::new()));
+        tick(&fixture, &still, 149_999);
+        assert_eq!(
+            fixture.outcomes.try_recv(),
+            Err(mpsc::TryRecvError::Empty),
+            "events 3 and 4 wait within the bound"
+        );
+        tick(&fixture, &still, 150_000);
         let waited = "it waited too long behind its application's abandoned reads";
-        let outcomes: Vec<(Pid, u64, &str)> = (0..2)
-            .map(|_| fixture.outcomes.recv_timeout(WAIT).expect("an outcome"))
-            .collect();
+        let outcomes: Vec<(Pid, u64, &str)> = fixture.outcomes.try_iter().collect();
         assert_eq!(outcomes, [(Pid(5), 3, waited), (Pid(5), 4, waited)]);
         fixture.push(Pid(5), meta(5), (5, None, Vec::new()));
         assert_eq!(
@@ -3428,7 +3472,11 @@ mod tests {
             .try_iter()
             .map(|(marker, _)| marker)
             .collect();
-        assert_eq!(read, [1, 2], "events 3, 4 and 5 were never read");
+        assert_eq!(
+            read,
+            Vec::<u64>::new(),
+            "events 3, 4 and 5 were never read, only 1 and 2"
+        );
     }
 
     /// A reading thread that cannot start answers its application's

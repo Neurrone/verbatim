@@ -193,8 +193,9 @@ struct Outgoing {
     /// The end of a menu or of the Alt+Tab switcher waiting for its grace.
     menu_end: Arc<MenuEnd>,
     /// The threadpool timer that ends the grace, kept until the listener
-    /// is dropped, which closes it.
-    _grace: GraceTimer,
+    /// is dropped, which closes it; none in a test that fires the grace by
+    /// hand ([`Outgoing::with_manual_grace`]).
+    _grace: Option<GraceTimer>,
 }
 
 /// The clock the listener's stamps are read from: the shared clock,
@@ -368,16 +369,31 @@ struct MenuEnd {
     /// What waits for the grace, a pure transition
     /// ([`GraceState::step`]).
     waiting: Mutex<GraceState>,
-    /// The time the grace's microseconds count from.
-    origin: Instant,
+    /// Now, in the grace's microseconds: since the listener's sending side
+    /// was made, or a test's clock.
+    clock: GraceClock,
     sender: Sender<Waiting>,
-    /// The timer that ends the grace, set once it is made, which the
-    /// callback sets again when it runs before the end's grace is over.
-    timer: OnceLock<TimerHandle>,
+    /// What sets the timer that ends the grace to go off after a time, set
+    /// once the timer is made, which the callback sets again when it runs
+    /// before the end's grace is over; a test's records the time instead.
+    timer: OnceLock<SetGraceTimer>,
 }
+
+/// The grace's clock ([`MenuEnd::clock`]).
+type GraceClock = Box<dyn Fn() -> u64 + Send + Sync>;
+
+/// What sets the grace's timer ([`MenuEnd::timer`]).
+type SetGraceTimer = Box<dyn Fn(Duration) + Send + Sync>;
 
 /// A threadpool timer's handle, shared with its own callback.
 struct TimerHandle(PTP_TIMER);
+
+impl TimerHandle {
+    /// Sets the timer to go off once, `after` from now ([`set_timer`]).
+    fn set(&self, after: Duration) {
+        set_timer(self.0, after);
+    }
+}
 
 // SAFETY: a threadpool timer may be set from any thread, its own callback
 // included; the handle stays open until `GraceTimer::drop`, which stops
@@ -387,9 +403,18 @@ unsafe impl Send for TimerHandle {}
 unsafe impl Sync for TimerHandle {}
 
 impl MenuEnd {
+    fn new(sender: Sender<Waiting>, clock: GraceClock) -> Self {
+        Self {
+            waiting: Mutex::new(GraceState::default()),
+            clock,
+            sender,
+            timer: OnceLock::new(),
+        }
+    }
+
     /// Now, in the grace's microseconds.
     fn now(&self) -> u64 {
-        u64::try_from(self.origin.elapsed().as_micros()).unwrap_or(u64::MAX)
+        (self.clock)()
     }
 
     /// Steps the grace with `input` and applies its effects, under the
@@ -416,7 +441,7 @@ impl MenuEnd {
                 }
                 GraceEffect::SetTimer(after) => {
                     if let Some(timer) = self.timer.get() {
-                        set_timer(timer.0, Duration::from_micros(after));
+                        timer(Duration::from_micros(after));
                     }
                 }
             }
@@ -465,7 +490,10 @@ impl GraceTimer {
         match timer {
             Ok(timer) => {
                 // Set before the timer is first set, so before any callback.
-                let _ = end_of(end).timer.set(TimerHandle(timer));
+                let handle = TimerHandle(timer);
+                let _ = end_of(end)
+                    .timer
+                    .set(Box::new(move |after| handle.set(after)));
                 Ok(Self { timer, end })
             }
             Err(error) => {
@@ -536,14 +564,38 @@ impl Outgoing {
     ///
     /// Returns the error of creating the menu end's grace timer.
     fn new(sender: Sender<Waiting>, ignored: IgnoredProcesses) -> io::Result<Self> {
-        let menu_end = Arc::new(MenuEnd {
-            waiting: Mutex::new(GraceState::default()),
-            origin: Instant::now(),
-            sender: sender.clone(),
-            timer: OnceLock::new(),
-        });
+        let origin = Instant::now();
+        let menu_end = Arc::new(MenuEnd::new(
+            sender.clone(),
+            Box::new(move || u64::try_from(origin.elapsed().as_micros()).unwrap_or(u64::MAX)),
+        ));
         let grace = GraceTimer::new(&menu_end)?;
-        Ok(Self {
+        Ok(Self::with_menu_end(sender, ignored, menu_end, Some(grace)))
+    }
+
+    /// [`new`](Self::new) with the grace read from `clock` and its timer
+    /// set by `timer`, for a test that moves the clock and steps the
+    /// timer's going off by hand ([`MenuEnd::grace_ended`]), so no
+    /// threadpool timer races the test's own steps.
+    #[cfg(test)]
+    fn with_manual_grace(
+        sender: Sender<Waiting>,
+        ignored: IgnoredProcesses,
+        clock: GraceClock,
+        timer: SetGraceTimer,
+    ) -> Self {
+        let menu_end = Arc::new(MenuEnd::new(sender.clone(), clock));
+        let _ = menu_end.timer.set(timer);
+        Self::with_menu_end(sender, ignored, menu_end, None)
+    }
+
+    fn with_menu_end(
+        sender: Sender<Waiting>,
+        ignored: IgnoredProcesses,
+        menu_end: Arc<MenuEnd>,
+        grace: Option<GraceTimer>,
+    ) -> Self {
+        Self {
             sender,
             ignored,
             markers: AtomicU64::new(0),
@@ -551,7 +603,7 @@ impl Outgoing {
             clock: Clock::default(),
             menu_end,
             _grace: grace,
-        })
+        }
     }
 
     fn urgent(&self, message: ListenerToCore) {
@@ -1794,6 +1846,65 @@ mod tests {
         outgoing_with(EVENT_PIPE_BUFFER, IgnoredProcesses::default())
     }
 
+    /// A menu end's grace the test runs by hand: the clock it reads, in
+    /// microseconds, which the test moves, and every time its timer was
+    /// set for, which no timer acts on, so the test says when it goes off
+    /// ([`MenuEnd::grace_ended`]).
+    struct ManualGrace {
+        now: Arc<AtomicU64>,
+        set: Arc<Mutex<Vec<u64>>>,
+    }
+
+    impl ManualGrace {
+        /// Moves the clock to `now`.
+        fn at(&self, now: u64) {
+            self.now.store(now, Ordering::Relaxed);
+        }
+
+        /// Every time the timer was set for, in microseconds, in order.
+        fn set(&self) -> Vec<u64> {
+            self.set
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .clone()
+        }
+    }
+
+    /// [`outgoing_with`], its grace run by hand from a clock at 0.
+    fn outgoing_with_manual_grace(buffer: u32) -> (Outgoing, BufReader<File>, ManualGrace) {
+        let (ours, theirs) = pipe(Flow::Outbound, buffer, End::Synchronous).expect("a pipe");
+        let (sender, _finishing) =
+            Sender::start(ours, Waiting::default(), "listener-test", || {}).expect("a sender");
+        let grace = ManualGrace {
+            now: Arc::new(AtomicU64::new(0)),
+            set: Arc::new(Mutex::new(Vec::new())),
+        };
+        let (now, set) = (Arc::clone(&grace.now), Arc::clone(&grace.set));
+        let outgoing = Outgoing::with_manual_grace(
+            sender,
+            IgnoredProcesses::default(),
+            Box::new(move || now.load(Ordering::Relaxed)),
+            Box::new(move |after| {
+                set.lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .push(u64::try_from(after.as_micros()).unwrap_or(u64::MAX));
+            }),
+        );
+        (outgoing, BufReader::new(File::from(theirs)), grace)
+    }
+
+    /// The facts by process and the menu ends `messages` holds, in order.
+    fn facts_and_ends(messages: Vec<ListenerToCore>) -> Vec<String> {
+        messages
+            .into_iter()
+            .map(|message| match message {
+                ListenerToCore::FocusFact { fact, .. } => format!("fact {}", fact.pid.0),
+                ListenerToCore::MenuOrSwitchEnded { .. } => "menu end".to_owned(),
+                other => format!("{other:?}"),
+            })
+            .collect()
+    }
+
     /// Everything `outgoing` sent, which is closed first, as Core reads it.
     fn sent(outgoing: &Outgoing, reader: &mut BufReader<File>) -> Vec<ListenerToCore> {
         outgoing.close();
@@ -2195,41 +2306,41 @@ mod tests {
     }
 
     /// A grace timer's callback that runs as a newer end comes, taking the
-    /// lock only once that end is noted, sends nothing: the newer end is
-    /// sent once its own grace is over, and only once.
+    /// lock only once that end is noted, sends nothing and sets the timer
+    /// for the whole grace again: the newer end is sent once its own grace
+    /// is over, after a fact sent meanwhile, and only once.
     #[test]
     fn a_menu_end_is_not_sent_before_its_grace_by_a_callback_of_an_earlier_one() {
-        let (outgoing, reader) = outgoing();
-        let messages = drain(reader);
-        let ended = Instant::now();
+        let (outgoing, mut reader, grace) = outgoing_with_manual_grace(EVENT_PIPE_BUFFER);
         outgoing.menu_or_switch_ended(1_000);
         // As an earlier grace's callback does, run just as this end came.
         outgoing.menu_end.grace_ended();
-        let message = messages
-            .recv_timeout(Duration::from_secs(5))
-            .expect("the menu end is sent");
-        assert!(matches!(message, ListenerToCore::MenuOrSwitchEnded { .. }));
-        assert!(ended.elapsed() >= MENU_END_GRACE, "not before the grace");
-        outgoing.close();
-        assert_eq!(messages.iter().count(), 0, "the end is sent once");
+        outgoing.fact(Pid(6), msaa_focus(), None, None, 1_000);
+        // As the timer does once the grace is over.
+        grace.at(50_000);
+        outgoing.menu_end.grace_ended();
+        assert_eq!(grace.set(), [50_000, 50_000], "the timer set for the grace");
+        assert_eq!(
+            facts_and_ends(sent(&outgoing, &mut reader)),
+            ["fact 6", "menu end"]
+        );
     }
 
     #[test]
     fn a_menu_end_a_focus_follows_is_sent_after_the_focus() {
         // Whether the focus was usable is Core's to judge: it may yet be
         // dropped or fail to read.
-        let (outgoing, reader) = outgoing();
+        let (outgoing, mut reader, grace) = outgoing_with_manual_grace(EVENT_PIPE_BUFFER);
         outgoing.menu_or_switch_ended(1_000);
         outgoing.fact(Pid(5), msaa_focus(), None, None, 1_000);
-        let messages = drain(reader);
-        let first = messages
-            .recv_timeout(Duration::from_secs(5))
-            .expect("the focus fact is sent");
-        assert!(matches!(first, ListenerToCore::FocusFact { .. }));
-        let second = messages
-            .recv_timeout(Duration::from_secs(5))
-            .expect("the menu end is sent too");
-        assert!(matches!(second, ListenerToCore::MenuOrSwitchEnded { .. }));
+        // As the timer does once the grace is over.
+        grace.at(50_000);
+        outgoing.menu_end.grace_ended();
+        assert_eq!(grace.set(), [50_000], "the timer set for the grace");
+        assert_eq!(
+            facts_and_ends(sent(&outgoing, &mut reader)),
+            ["fact 5", "menu end"]
+        );
     }
 
     #[test]
@@ -2238,7 +2349,7 @@ mod tests {
         // facts go through, so it waits behind the write in flight, and
         // goes after every fact waiting when it is written, one sent after
         // it included.
-        let (outgoing, mut reader) = outgoing_with(4096, IgnoredProcesses::default());
+        let (outgoing, mut reader, _grace) = outgoing_with_manual_grace(4096);
         let mut large = uia_snapshot();
         large.name = Some("x".repeat(20_000));
         outgoing.fact(
@@ -2275,7 +2386,7 @@ mod tests {
     /// while a menu end waits for its grace goes after the end.
     #[test]
     fn the_idle_answer_waits_behind_every_fact_and_menu_end_before_it() {
-        let (outgoing, mut reader) = outgoing_with(4096, IgnoredProcesses::default());
+        let (outgoing, mut reader, _grace) = outgoing_with_manual_grace(4096);
         let mut large = uia_snapshot();
         large.name = Some("x".repeat(20_000));
         outgoing.fact(
