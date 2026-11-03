@@ -71,6 +71,9 @@ const RELAY_PRIORITY: ThreadPriority = ThreadPriority::Highest;
 pub(super) enum OwnerEvent {
     /// From the app: start an outpost for this application if none exists.
     EnsureSpawned(Pid),
+    /// From a test: read the time the failures' backoffs are judged by
+    /// from this clock from now on ([`Owner::backoff_clock`]).
+    BackoffClock(BackoffClock),
     /// From the app: the views derived from the reducer state.
     Views {
         attention: Option<Pid>,
@@ -276,8 +279,15 @@ impl Outbox {
     }
 }
 
+/// A clock in microseconds, the run's shared clock's units.
+pub(super) type BackoffClock = Arc<dyn Fn() -> u64 + Send + Sync>;
+
 /// The owner thread's state.
 struct Owner {
+    /// The time the failures' backoffs are set and ended by: the run's
+    /// shared clock, or a test's, which moves it past a backoff once what
+    /// it waits for has happened ([`crate::Supervisor::set_backoff_clock`]).
+    backoff_clock: BackoffClock,
     /// The executables each role is launched from.
     executables: Executables,
     /// What every outpost is launched with.
@@ -404,6 +414,7 @@ pub(super) fn start(setup: Setup) -> io::Result<()> {
         ignored,
     } = setup;
     let mut owner = Owner {
+        backoff_clock: Arc::new(now_us),
         executables,
         options,
         shutdown_limit,
@@ -476,7 +487,9 @@ impl Owner {
                 .min(sweep_due)
                 .saturating_duration_since(Instant::now());
             if let Some(due_us) = self.next_due() {
-                timeout = timeout.min(Duration::from_micros(due_us.saturating_sub(now_us())));
+                timeout = timeout.min(Duration::from_micros(
+                    due_us.saturating_sub((self.backoff_clock)()),
+                ));
             }
             if let Err(error) = self.relay.wait(&mut completions, Some(timeout)) {
                 tracing::error!(%error, "the relay's wait failed; the supervisor stops");
@@ -493,7 +506,7 @@ impl Owner {
                     Taken::Read(key) => self.read_pipe(key, &completion),
                 }
             }
-            self.start_due(now_us());
+            self.start_due((self.backoff_clock)());
             let now = Instant::now();
             if now >= heartbeat_due {
                 // What was sent while the port refused the mailbox's wake,
@@ -761,6 +774,7 @@ impl Owner {
     fn handle(&mut self, event: OwnerEvent) {
         match event {
             OwnerEvent::Shutdown(reply) => self.shut_down_all(reply),
+            OwnerEvent::BackoffClock(clock) => self.backoff_clock = clock,
             OwnerEvent::EnsureSpawned(pid) => {
                 if self.shutting_down.is_none() && !self.records.contains_key(&pid) {
                     let _ = self.start_outpost(pid, None);
@@ -1109,7 +1123,7 @@ impl Owner {
     /// `up` as an error, the evidence to find its cause from, and replaces
     /// it, at once or after its backoff: spares are always replaced.
     fn spare_failed(&mut self, why: &str, up: Duration) {
-        let wait = self.spares.failed(up, now_us(), BACKOFF);
+        let wait = self.spares.failed(up, (self.backoff_clock)(), BACKOFF);
         tracing::error!(
             why,
             backoff_ms = wait.as_millis(),
@@ -1192,9 +1206,10 @@ impl Owner {
             }
         };
         record.generation = failure.next;
-        let wait = record
-            .backoff
-            .failed(up_since(record.since_us), now_us(), BACKOFF);
+        let wait =
+            record
+                .backoff
+                .failed(up_since(record.since_us), (self.backoff_clock)(), BACKOFF);
         let failed = failure.outpost;
         let ready = failure.ready;
         // What it reported before it failed is the evidence of why.

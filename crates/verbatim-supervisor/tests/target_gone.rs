@@ -18,7 +18,7 @@
 use std::io::{BufReader, Read as _};
 use std::process::{Command, Stdio};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 use verbatim_process::transport::{BlockingReader, BlockingWriter};
 
@@ -362,7 +362,9 @@ fn crash(supervisor: &Supervisor, events: &Delivered, outpost: OutpostId, target
 /// replacement waits out the backoff, exits meanwhile: when the backoff
 /// ends, the supervisor finds the application gone as it decides, starts
 /// nothing for it and says nothing watches it, before its sweep, half a
-/// minute apart, would find it.
+/// minute apart, would find it. The backoffs are judged by a clock the test
+/// moves, past the second failure's backoff only once the application has
+/// exited, so the order does not depend on how quickly it exits.
 fn a_replacement_waiting_out_its_backoff_is_not_started_for_an_application_that_exited() {
     let (events_tx, events) = unbounded();
     let exe = std::env::current_exe().expect("this test binary's path");
@@ -381,6 +383,10 @@ fn a_replacement_waiting_out_its_backoff_is_not_started_for_an_application_that_
         } => {}
         other => panic!("the supervisor said {other:?} before the listener was ready"),
     }
+    let start = verbatim_process::clock::now_us();
+    let moved = Arc::new(AtomicU64::new(0));
+    let clock_moved = Arc::clone(&moved);
+    supervisor.set_backoff_clock(Arc::new(move || start + clock_moved.load(Ordering::SeqCst)));
 
     let mut application = Command::new(&exe)
         .arg(APPLICATION)
@@ -399,6 +405,10 @@ fn a_replacement_waiting_out_its_backoff_is_not_started_for_an_application_that_
     drop(application.stdin.take());
     let status = application.wait().expect("the application exits");
     assert!(status.success(), "the application exited with {status}");
+    // The second failure's backoff, a second, ends; the views wake the
+    // supervisor to decide at once.
+    moved.store(1_000_000, Ordering::SeqCst);
+    supervisor.note_views(Some(target_pid), std::collections::BTreeSet::new());
     match next(&events) {
         OutpostMessage::NotWatched {
             target_pid: gone, ..

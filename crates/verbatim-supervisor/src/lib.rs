@@ -764,6 +764,15 @@ impl Supervisor {
         reply_rx.recv().unwrap_or_default()
     }
 
+    /// Reads the time the failures' backoffs are set and ended by from
+    /// `clock`, in microseconds, in place of the run's shared clock, from
+    /// the next failure on: a test that moves it past a backoff decides
+    /// when the backoff ends, so what it waits for has happened first, and
+    /// wakes the supervisor with any later command to have it act at once.
+    pub fn set_backoff_clock(&self, clock: Arc<dyn Fn() -> u64 + Send + Sync>) {
+        let _ = self.owner.send(owner::OwnerEvent::BackoffClock(clock));
+    }
+
     /// Tells the owner the views the app derives from the reducer state:
     /// the application holding attention, and the outposts in which the
     /// state holds nodes, which decide retirement.

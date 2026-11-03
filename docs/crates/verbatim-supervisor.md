@@ -34,6 +34,9 @@ message layer, the launch arguments and the held processes are
   writer's slot for the next command), `send_nodes_held` (written behind
   what waits, in place of a list left), `query_idle(round)`, `is_ignored`,
   and `frames`.
+- `set_backoff_clock(clock)` has the failures' backoffs set and ended by a
+  test's clock in place of the run's shared one, so a test decides when a
+  backoff ends, after what it waits for has happened.
 - `SPARES` is two; Verbatim's readiness waits for them.
 
 The app hears through `OutpostMessage`: `ListenerReady`, `SpareReady`,
