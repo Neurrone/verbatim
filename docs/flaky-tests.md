@@ -63,7 +63,7 @@ Scenarios: the `windows_terminal_` scenarios generally, for example `windows_ter
 - `conhost_footer_overflow` (locally, 1 of 3 runs, 2026-11-03)
   - How: "flood line 20" is heard between "flood line 3" and "flood line 4", at the start of the 12,000-line flood that "n" starts.
   - Cause, probable but not replayed: the script redraws its footer at line 20, about 90 ms after the key, and every read within the 300 ms key window (`KEY_WINDOW_MS`, `owner` in `crates/verbatim-text/src/terminal_reading.rs`) counts as the keys', so "Rows the keys own" (`docs/design/terminal-model.md`) speaks the redrawn row at once as the key's answer, ahead of the queued flood. The key "n" is read by the script without an echo. Not caused by the scenario's lowered limits: the same reads would misspeak at 30.
-  - Fix: a question for Dickson, since the terminal reading rules are closed to changes (2026-11-03).
+  - Fix: a known limit until [M6.4 terminal residuals](roadmap.md#m64--terminal-residuals) (Dickson, 2026-11-03).
 - `conhost_long_lines` (run 41333390347)
   - How: after Enter, "r" is heard where "part1 part2 ... part10" is expected; the snapshot then has the caret on an empty line and "ready>" on the screen's first row.
   - Cause: not found; the typed-character rules (`crates/verbatim-core/src/terminal_model.rs`) are suspected, not shown. Once in 32 runs.

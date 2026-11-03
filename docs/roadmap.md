@@ -795,6 +795,14 @@ remains, in order:
   equals the installed build: Pi's regular mode resized, set aside until
   the corpus can record a resize (Dickson, 2026-10-25); fzf, once Dickson
   installs it. htop is dropped (Dickson, 2026-10-25).
+- A program silent on a key that then prints output and redraws a status
+  row within 300 ms has the redrawn row spoken at once as the key's
+  answer, ahead of the queued output: "Rows the keys own" counts every
+  read in the key window as the keys' (`conhost_footer_overflow`, 1 of 3
+  local runs on 2026-11-03, [the known failures](flaky-tests.md)). A known
+  limit until here (Dickson, 2026-11-03): replay the recorded reads
+  through the rules to confirm the cause, then ask whether a key's
+  ownership of output should rest on firmer evidence than its window.
 - `conhost_long_lines` once heard "r" after Enter where its output line
   was expected (run 41333390347, [the known failures](flaky-tests.md));
   find the cause, the typed-character rules suspected (Dickson,
