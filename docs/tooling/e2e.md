@@ -422,7 +422,7 @@ since the videos are already compressed. A group of about 15 scenarios
 stays far below GitHub's limit of 500 artifacts a job.
 
 Started by hand, as `gh workflow run ci.yml -f scenario=<name> -f
-repeat=<n>`, the workflow runs only its `e2e` job, as one job rather than
+repeat=<n>`, the workflow runs its `changes` and `plan` jobs and its `e2e` job, as one job rather than
 one per group and without the 10-minute limit, which runs that one
 scenario n times, each in its own test process, and uploads every run's copy from the history (below) as the
 `verbatim-e2e-history` artifact, so an intermittent failure on GitHub's

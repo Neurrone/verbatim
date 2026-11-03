@@ -275,6 +275,13 @@ jobs:
         run: cargo build -p verbatim-app -p verbatim-agent -p verbatim-outpost -p verbatim-listener -p verbatim-synth-host -p mockapp
       # Every scenario is recorded, video and Verbatim's own audio, when
       # ffmpeg can be started (crates/verbatim-e2e/src/recording.rs).
+      # The test binary and xtask are compiled here, before the timed step,
+      # so the group's 10 minutes hold only the agent's start and the
+      # scenarios the table measures.
+      - name: Build the end-to-end test binary and xtask
+        run: |
+          cargo test -p verbatim-e2e --test e2e --no-run
+          cargo build -p xtask
       - name: Make sure ffmpeg is installed
         shell: pwsh
         run: |
@@ -423,6 +430,7 @@ jobs:
             if (!fs.existsSync(root)) {
               return;
             }
+            const failed = [];
             for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
               if (!entry.isDirectory() || entry.name === 'history') {
                 continue;
@@ -431,8 +439,16 @@ jobs:
               const files = fs.readdirSync(folder, { recursive: true, withFileTypes: true })
                 .filter((file) => file.isFile())
                 .map((file) => path.join(file.parentPath, file.name));
-              const { size } = await client.uploadArtifact(`e2e-${entry.name}`, files, root, { compressionLevel: 0 });
-              core.info(`e2e-${entry.name}: ${files.length} files, ${size} bytes`);
+              try {
+                const { size } = await client.uploadArtifact(`e2e-${entry.name}`, files, root, { compressionLevel: 0 });
+                core.info(`e2e-${entry.name}: ${files.length} files, ${size} bytes`);
+              } catch (error) {
+                failed.push(entry.name);
+                core.error(`e2e-${entry.name}: ${error.message}`);
+              }
+            }
+            if (failed.length > 0) {
+              core.setFailed(`no artifact for: ${failed.join(', ')}`);
             }
       # A run started by hand repeats one scenario, and only the latest run
       # is in the scenario's own directory, so each run's copy in the
