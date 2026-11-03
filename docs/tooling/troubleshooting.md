@@ -111,10 +111,16 @@ never by closing Notepad's window, and closes every harness tab (named
 `verbatim-e2e-`) it finds, including ones an earlier run left. A restored
 tab whose file was deleted shows "Cannot find the file", which blocks
 closing tabs until dismissed. A restored tab of your own keeps Notepad
-running after the harness tab closes, and the Notepad scenarios then fail
-saying so: close those tabs, or set Notepad to start a new session,
-before running them, because the harness never closes what is not its
-own.
+running after the harness tabs close; the harness then closes, by
+handle, that Notepad's remaining windows that were not open when the
+scenario started, so Notepad saves its session with the harness tabs
+already gone, waits for it to exit, and only if it still runs kills it.
+Unsaved text in any window of that Notepad is lost, so close your own
+tabs, or set Notepad to start a new session, before running the Notepad
+scenarios. Notepad is never killed before its windows are closed:
+killed straight after its tabs closed, it had not yet saved its session,
+and the next run restored the deleted harness document behind a "Cannot
+find the file" dialog.
 
 **Crash dumps.** Any of Verbatim's own processes that exits unexpectedly
 during a scenario fails it, read from the exits the agent records for
@@ -163,7 +169,8 @@ rules, each so that nothing of yours is touched:
 - Notepad is opened only when no Notepad window is open, on a harness
   document whose title holds `verbatim-e2e-`, so its window and process
   are the scenario's own; its tab is closed with Control+W, saved first
-  when changed, then Notepad's exit is awaited and the document, and the
+  when changed, then Notepad's exit is awaited (closing its remaining
+  windows, then killing it, if it holds other tabs) and the document, and the
   folders made for Explorer and terminal windows, deleted.
 - The agent records every top-level window when a scenario starts, and
   cleanup's last step waits, on window events and up to the close

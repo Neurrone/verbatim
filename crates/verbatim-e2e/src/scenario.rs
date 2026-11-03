@@ -2275,7 +2275,8 @@ impl Scenario {
     /// its title (a Notepad harness tab as a tab, a File Explorer window by
     /// its handle, before its folder is deleted), waiting for it to go and,
     /// when the scenario started its program, for the process that owned
-    /// it to exit; anything launched without a window of its own by its
+    /// it to exit (a Notepad that holds other tabs is ended as
+    /// [`Scenario::end_notepad`] says); anything launched without a window of its own by its
     /// process id; then the harness documents, folders, and files. Last, it
     /// checks that every window shown now that was not open when the
     /// scenario started has gone, whatever its title has become, waiting
@@ -2363,18 +2364,11 @@ impl Scenario {
             for &owner in owners.iter().chain(&launched.also_exit) {
                 match self.agent.wait_for_exit(owner, CLOSE_TIMEOUT) {
                     Ok(ProcessState::Exited { .. }) => {}
+                    Ok(ProcessState::Running) if launched.notepad => {
+                        problems.extend(self.end_notepad(owner, title));
+                    }
                     Ok(ProcessState::Running) => problems.push(format!(
-                        "process {owner}, which owned or ran in the window titled {title:?}, did not exit within {CLOSE_TIMEOUT:?} of the window closing{}",
-                        if launched.notepad {
-                            format!(
-                                " (Windows 11 Notepad keeps running while it has tabs open, \
-                                 such as tabs it restored from its previous session, which \
-                                 must be closed before the Notepad scenarios run): {}",
-                                self.foreground_report()
-                            )
-                        } else {
-                            String::new()
-                        }
+                        "process {owner}, which owned or ran in the window titled {title:?}, did not exit within {CLOSE_TIMEOUT:?} of the window closing"
                     )),
                     Err(error) => problems.push(format!(
                         "could not wait for process {owner} to exit: {error}"
@@ -2406,7 +2400,73 @@ impl Scenario {
         }
         problems
     }
+
+    /// Ends Windows 11 Notepad process `owner`, still running after the
+    /// harness tabs of its window titled `title` closed, because it holds
+    /// other tabs, such as ones it restored from its previous session.
+    /// Closes its remaining Notepad windows by handle, so Notepad saves its
+    /// session with the harness tabs already gone, and waits for it to
+    /// exit; only if it still runs, kills it and waits. Never kills first:
+    /// killed straight after its tabs closed, Notepad had not yet saved its
+    /// session, and restored the deleted harness document's tab in the next
+    /// run behind a "Cannot find the file" dialog. Unsaved text in any of
+    /// its windows is lost. The agent closes by handle only windows that
+    /// were not open when the scenario started. Returns each step's
+    /// failure.
+    fn end_notepad(&mut self, owner: u32, title: &str) -> Vec<String> {
+        let mut problems = Vec::new();
+        let windows: Vec<WindowInfo> = match self.agent.foreground_info() {
+            Ok(info) => info
+                .windows
+                .into_iter()
+                .filter(|window| window.pid == owner && window.class == NOTEPAD_CLASS)
+                .collect(),
+            Err(error) => {
+                problems.push(format!(
+                    "could not find the windows of Notepad process {owner}: {error}"
+                ));
+                Vec::new()
+            }
+        };
+        for window in &windows {
+            if let Err(error) = self.agent.close_window(window, CLOSE_TIMEOUT) {
+                problems.push(format!(
+                    "could not close {}: {error}",
+                    describe_window(window)
+                ));
+            }
+        }
+        match self.agent.wait_for_exit(owner, CLOSE_TIMEOUT) {
+            Ok(ProcessState::Exited { .. }) => return problems,
+            Ok(ProcessState::Running) => {}
+            Err(error) => {
+                problems.push(format!(
+                    "could not wait for process {owner} to exit: {error}"
+                ));
+                return problems;
+            }
+        }
+        let ended = self
+            .agent
+            .kill_process(owner)
+            .and_then(|_| self.agent.wait_for_exit(owner, CLOSE_TIMEOUT));
+        match ended {
+            Ok(ProcessState::Exited { .. }) => {}
+            Ok(ProcessState::Running) => problems.push(format!(
+                "process {owner}, which owned the window titled {title:?}, did not exit within \
+                 {CLOSE_TIMEOUT:?} of being ended, after its harness tabs and its {} remaining \
+                 Notepad window(s) were closed: {}",
+                windows.len(),
+                self.foreground_report()
+            )),
+            Err(error) => problems.push(format!("could not end process {owner}: {error}")),
+        }
+        problems
+    }
 }
+
+/// The class of Windows 11 Notepad's top-level window.
+const NOTEPAD_CLASS: &str = "Notepad";
 
 impl Drop for Scenario {
     /// A scenario dropped without its cleanup having run, which happens
