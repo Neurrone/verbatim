@@ -677,9 +677,10 @@ pub struct SrState {
     #[serde(default)]
     pub(crate) key_origins: crate::keys::KeyOrigins,
     /// The lock keys pressed whose new state is still to be announced, in
-    /// the order pressed (`Input::ToggleKeyPressed`).
+    /// the order pressed (`Input::ToggleKeyPressed`), each with when its
+    /// state is read, on the run's shared clock.
     #[serde(default)]
-    pub(crate) toggle_keys: std::collections::VecDeque<verbatim_model::LockKey>,
+    pub(crate) toggle_keys: std::collections::VecDeque<(verbatim_model::LockKey, u64)>,
     /// The select-then-copy start marker.
     #[serde(default)]
     pub(crate) start_marker: Option<StartMarker>,
@@ -776,6 +777,27 @@ impl SrState {
     #[must_use]
     pub fn announces_toggle_key(&self) -> bool {
         !self.toggle_keys.is_empty()
+    }
+
+    /// The lock key whose state the shell reads next, and when, on the
+    /// run's shared clock: the front of those pressed, read once its time
+    /// is past and entered as [`verbatim_model::Input::LockKeyToggled`],
+    /// which takes it from the front. A view of the state, read after each
+    /// step, so the shell keeps no copy.
+    #[must_use]
+    pub fn toggle_key_read_due(&self) -> Option<(verbatim_model::LockKey, u64)> {
+        self.toggle_keys.front().copied()
+    }
+
+    /// When the focused terminal's quiet-period timer is due, on the run's
+    /// shared clock: the shell enters [`verbatim_model::Input::TerminalTimer`]
+    /// with this time once it is past. A view of the focused terminal's
+    /// model, read after each step, so a model dropped, or a terminal left,
+    /// has no timer; after the timer fires, the due time is later than the
+    /// time it fired at, or none.
+    #[must_use]
+    pub fn terminal_timer_due(&self) -> Option<u64> {
+        crate::terminal_model::due(self)
     }
 
     /// What the keyboard hook reads of the foreground window, decided from

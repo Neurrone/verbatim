@@ -476,6 +476,48 @@ fn the_timer_gives_the_keys_that_reached_the_program_by_then_first() {
     assert_eq!(session.timers, [Some(3250)]);
 }
 
+/// The session of the timer's test, its timer armed for 2000 by a key
+/// whose answer a read showed.
+fn timed() -> Session {
+    let mut session = showing(20, 5, 10, "line one\r\nline two\r\n\r\n1,1 Top\x1b[1;1H");
+    session.input(&Input::CaretKey {
+        key_seq: verbatim_model::KeySeq::NONE_YET,
+        trace_id: TraceId::from_raw(5),
+        key: CaretKey {
+            motion: CaretMotion::NextLine,
+            select: false,
+        },
+        pressed_at_ms: 1000,
+    });
+    session.write("\x1b[4;1H2,1 Top\x1b[2;1H", 1050);
+    assert_eq!(session.armed(), Some(2000));
+    session
+}
+
+#[test]
+fn the_timer_goes_with_the_model_when_the_outpost_ends() {
+    let mut session = timed();
+    session.input(&Input::OutpostEnded {
+        trace_id: TraceId::from_raw(6),
+        outpost: terminal_support::OUTPOST,
+    });
+    assert_eq!(session.armed(), None);
+}
+
+#[test]
+fn the_timer_goes_with_the_model_when_the_terminals_text_is_forgotten() {
+    // The listener reads that the element the terminal's node held is
+    // gone while the focus stays: its model goes, and the next read makes
+    // a new one, whose rules asked for no timer.
+    let mut session = timed();
+    session.input(&terminal_support::focus_after(Some(
+        verbatim_model::EarlierElement::Gone,
+    )));
+    assert_eq!(session.armed(), None);
+    session.write("more\r\n", 1100);
+    assert_eq!(session.armed(), None);
+}
+
 // The wire form of a read.
 
 #[test]

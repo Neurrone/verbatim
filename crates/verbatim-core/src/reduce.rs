@@ -69,9 +69,9 @@ pub fn reduce(state: &mut SrState, input: &Input) -> Vec<Effect> {
                 Input::Event { observed_at_us, .. } => whole_ms(*observed_at_us),
                 _ => 0,
             };
-            effects.extend(terminal_model::focus_moved(state, (focus, now), at_ms));
+            terminal_model::focus_moved(state, (focus, now), at_ms);
         }
-        effects.extend(terminal_model::sync_settings(state));
+        terminal_model::sync_settings(state);
         effects = terminal_model::intercept(state, effects, terminal_model::input_trace(input));
     }
     // Whatever cuts speech off drops the terminal output handed to it, and

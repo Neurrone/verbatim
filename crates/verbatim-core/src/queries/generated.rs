@@ -7,8 +7,10 @@
 //! model: the outpost generations live and ended, the ids given and ended,
 //! the focus's lifecycle (taken, alive, left) with the front and the
 //! newest focus stamp, and the terminal models' generations in their order
-//! of reading. Each case ends by answering every request still open, and
-//! its state round-trips through its serialisation after every action.
+//! of reading. The terminal's quiet-period timer, fired at the due time the
+//! state gives, is due later than that time or not at all. Each case ends
+//! by answering every request still open, and its state round-trips
+//! through its serialisation after every action.
 //!
 //! The model leaves out words, carets, text, chains, say-all's buffers and
 //! the flood policy, and the held-key line, whose awaited watch alone it
@@ -59,8 +61,11 @@ enum Action {
         windowed: bool,
         stamp: u8,
     },
-    /// The focused terminal's snapshot.
-    Snapshot,
+    /// The focused terminal's snapshot: its prompt alone, or (`growing`)
+    /// with a ruler above it whose line number grows by one each such
+    /// read, a row changed often enough that the reading rules hold it
+    /// until it settles, with their quiet-period timer.
+    Snapshot { growing: bool },
     /// The first snapshots of 16 other terminals, which evict the oldest
     /// models, then the focus back on the terminal.
     OtherTerminals,
@@ -84,6 +89,9 @@ enum Action {
     OutpostEnded(u8),
     /// A new generation starts.
     NewGeneration,
+    /// The terminal's quiet-period timer fires at its due time, as the
+    /// shell reads it from the state, the clock moved on to it.
+    Timer,
 }
 
 fn action() -> impl Strategy<Value = Action> {
@@ -98,7 +106,7 @@ fn action() -> impl Strategy<Value = Action> {
                 stamp,
             }
         ),
-        4 => Just(Action::Snapshot),
+        4 => any::<bool>().prop_map(|growing| Action::Snapshot { growing }),
         1 => Just(Action::OtherTerminals),
         10 => (prop_oneof![8 => 0..2u8, 1 => 2..5u8], 0..3u8)
             .prop_map(|(which, outcome)| Action::Answer { which, outcome }),
@@ -108,6 +116,7 @@ fn action() -> impl Strategy<Value = Action> {
             .prop_map(|(window, tie)| Action::Foreground { window, tie }),
         2 => (0..2u8).prop_map(Action::OutpostEnded),
         2 => Just(Action::NewGeneration),
+        3 => Just(Action::Timer),
     ]
 }
 
@@ -152,6 +161,8 @@ struct Model {
     now: u64,
     /// The terminal's snapshots read so far.
     reads: u64,
+    /// How many of them showed a line of output growing.
+    grown: usize,
 }
 
 /// The listed states a gate's cases must reach.
@@ -185,6 +196,23 @@ struct Run {
     /// Each input's effects, for the run twice.
     log: Vec<String>,
     reached: BTreeMap<&'static str, u32>,
+}
+
+/// `snapshot`, a terminal snapshot's event, with a ruler above its prompt
+/// showing line `length`.
+fn grow(snapshot: &mut Input, length: usize) {
+    let Input::Event {
+        event: NormalizedEvent::TerminalSnapshot { snapshot, .. },
+        ..
+    } = snapshot
+    else {
+        return;
+    };
+    let line = format!("{length},1 Top");
+    let text = verbatim_model::TerminalText::unpadded(&format!("{line}\r\nPS> "));
+    snapshot.text = text.clone();
+    snapshot.screen = text;
+    snapshot.first_row = verbatim_model::TerminalText::unpadded(&line);
 }
 
 /// The window facts of a focus in top-level window `top`.
@@ -312,10 +340,14 @@ impl Run {
                 );
                 self.focus(&input, outpost, earlier, observed_at_us);
             }
-            Action::Snapshot => {
+            Action::Snapshot { growing } => {
                 if let Some(focus) = self.model.focus.filter(|focus| focus.node.number() == 7) {
                     self.model.reads += 1;
-                    let input = self.snapshot(focus.node);
+                    let mut input = self.snapshot(focus.node);
+                    if growing {
+                        self.model.grown += 1;
+                        grow(&mut input, self.model.grown);
+                    }
                     self.input(&input);
                 }
             }
@@ -466,6 +498,27 @@ impl Run {
                     self.model.started += 1;
                     self.model.live.insert(OutpostId(self.model.started));
                 }
+            }
+            Action::Timer => {
+                let Some(due_ms) = self.state.terminal_timer_due() else {
+                    return;
+                };
+                self.model.now = self.model.now.max(due_ms * 1_000);
+                self.reach("a terminal timer fired");
+                self.input(&Input::TerminalTimer {
+                    trace_id: trace,
+                    at_ms: due_ms,
+                });
+                // The timer's due time moves past the time it fired at, or
+                // the shell, which fires it whenever the due time it reads
+                // is past, would fire it on every wake.
+                assert!(
+                    self.state
+                        .terminal_timer_due()
+                        .is_none_or(|due| due > due_ms),
+                    "the timer is due again at its own time: {:?}",
+                    self.trail
+                );
             }
         }
         // The state round-trips through its serialisation.
@@ -1171,17 +1224,18 @@ const fn terminal(earlier: u8) -> Action {
 
 /// The cases kept beside the generated ones, each reaching what the
 /// generated cases reach too seldom: a model's request answered after its
-/// model was replaced by a newer one of the same terminal, and a foreground
-/// change observed when the newest focus was.
+/// model was replaced by a newer one of the same terminal, a foreground
+/// change observed when the newest focus was, and the terminal's timer
+/// fired after a row changed often enough for the rules to hold it.
 fn fixed() -> Vec<(Vec<Action>, &'static str)> {
     vec![
         (
             vec![
                 terminal(0),
-                Action::Snapshot,
+                Action::Snapshot { growing: false },
                 Action::Command(0),
                 terminal(2),
-                Action::Snapshot,
+                Action::Snapshot { growing: false },
                 Action::Answer {
                     which: 0,
                     outcome: 0,
@@ -1204,6 +1258,16 @@ fn fixed() -> Vec<(Vec<Action>, &'static str)> {
                 },
             ],
             "a foreground change at the newest focus's stamp",
+        ),
+        (
+            vec![
+                terminal(0),
+                Action::Snapshot { growing: true },
+                Action::Snapshot { growing: true },
+                Action::Snapshot { growing: true },
+                Action::Timer,
+            ],
+            "a terminal timer fired",
         ),
     ]
 }

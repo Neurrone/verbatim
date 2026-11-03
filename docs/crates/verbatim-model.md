@@ -165,8 +165,9 @@ recorder unchanged. What the reducer does with each type is in
     result back as `Input::ClipboardCopied`); `ReadForegroundFocus`
     (NVDA's fake focus); `ReadClock { repeat }` (read the time and date
     into `Input::ClockRead`); `Show(GuiRequest)` (the menu, or the list of
-    a `ShellItemKind`'s items); and `ReadToggleKey { toggle, due_ms }`
-    (read a lock key's state at `due_ms` into `Input::LockKeyToggled`).
+    a `ShellItemKind`'s items). A lock key's read and the terminal's
+    quiet-period timer are not effects: the shell reads their due times
+    from Core's state after each step.
     The text effects are under "The text protocol".
 - `Earcon`: an event reported at once, outside the speech queue: an
   application not responding, start, exit, an error, browse and focus
@@ -546,7 +547,7 @@ exists), or `Unanswered` (no answer in time, or the read failed).
 - `Input::Settings(ReaderSettings)` and `Input::Fetches(Fetches)`: at
   startup and whenever they change.
 - `Input::TerminalTimer { trace_id, at_ms }`: the focused terminal's
-  quiet-period timer came due.
+  quiet-period timer came due, at the due time Core's state gave.
 
 ### Effects for the shell
 
@@ -563,8 +564,6 @@ exists), or `Unanswered` (no answer in time, or the read failed).
   every true is followed by a false.
 - `Effect::SettingsChanged(ReaderSettings)`: a toggle key changed a
   setting; save it.
-- `Effect::TerminalTimer { due_ms }`: arm the focused terminal's
-  quiet-period timer, replacing any armed before, or disarm it (`None`).
 
 ## Themes
 

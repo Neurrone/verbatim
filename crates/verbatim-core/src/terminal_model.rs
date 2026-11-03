@@ -558,13 +558,11 @@ fn owed(state: &SrState, node: NodeId) -> bool {
     model_asks(state, node, ModelAsk::owed)
 }
 
-/// The timer effect for the focused terminal when its due time is no
-/// longer `before`.
-fn timer_effect(state: &SrState, node: NodeId, before: Option<u64>) -> Option<Effect> {
-    let model = model_of(state, node)?;
-    (focused(state) == Some(node) && model.due_ms != before).then_some(Effect::TerminalTimer {
-        due_ms: model.due_ms,
-    })
+/// When the quiet-period timer is due: the focused terminal's model's due
+/// time, and no other's, so a model dropped or left has no timer. The
+/// shell reads it after each step ([`SrState::terminal_timer_due`]).
+pub(crate) fn due(state: &SrState) -> Option<u64> {
+    model_of(state, focused(state)?)?.due_ms
 }
 
 /// A key of `kind` that reached the focused terminal at `at_ms`, with its
@@ -590,16 +588,13 @@ pub(crate) fn key(
     let Some(model) = model_mut(state, node) else {
         return Vec::new();
     };
-    let before = model.due_ms;
     if model.pending.len() >= PENDING_KEYS
         && let Some(oldest) = model.pending.pop_front()
     {
         model.give(&oldest);
     }
     model.pending.push_back(PendingKey { kind, at_ms, trace });
-    let mut effects = vec![effect];
-    effects.extend(timer_effect(state, node, before));
-    effects
+    vec![effect]
 }
 
 /// The keys a key input is to the reading rules
@@ -811,7 +806,6 @@ struct Taken {
 fn take_snapshot(state: &mut SrState, node: NodeId, snapshot: &TerminalSnapshot) -> Taken {
     let at_ms = read_at(snapshot);
     let model = model_or_new(state, node);
-    let before = model.due_ms;
     model.give_keys(at_ms);
     let read = read_of(snapshot);
     let colours = snapshot.colours.as_deref().map(colours_of);
@@ -837,7 +831,6 @@ fn take_snapshot(state: &mut SrState, node: NodeId, snapshot: &TerminalSnapshot)
         };
         let effect = ask_model(state, node, TextOp::TerminalReadNow(scope), ask);
         effects.push(effect);
-        effects.extend(timer_effect(state, node, before));
         return Taken {
             speech: None,
             key,
@@ -867,7 +860,6 @@ fn take_snapshot(state: &mut SrState, node: NodeId, snapshot: &TerminalSnapshot)
     if let Some(op) = shape {
         effects.push(request(state, node, op));
     }
-    effects.extend(timer_effect(state, node, before));
     if let Some(caret) = &snapshot.caret {
         crate::editing::update_caret(state, node, caret.clone(), at_ms);
     }
@@ -1431,6 +1423,8 @@ fn held_anchors(
 
 /// The quiet-period timer came due at `at_ms`: the focused terminal's rules
 /// are given the keys that reached the program by then, then the timer.
+/// Its next due time is after `at_ms`, since the shell fires the timer
+/// whenever the due time it reads is past.
 pub(crate) fn timer(state: &mut SrState, trace_id: TraceId, at_ms: u64) -> Vec<Effect> {
     let Some(node) = focused(state) else {
         return Vec::new();
@@ -1438,70 +1432,52 @@ pub(crate) fn timer(state: &mut SrState, trace_id: TraceId, at_ms: u64) -> Vec<E
     let Some(model) = model_mut(state, node) else {
         return Vec::new();
     };
-    let before = model.due_ms;
     model.give_keys(at_ms);
     let step = model.rules().timer(at_ms);
     model.due_ms = step.timer;
-    let mut effects: Vec<Effect> = timer_effect(state, node, before).into_iter().collect();
-    effects.extend(speak(state, trace_id, (node, at_ms), speech_of(step), None));
-    effects
+    debug_assert!(
+        model.due_ms.is_none_or(|due_ms| due_ms > at_ms),
+        "the quiet-period timer fired at {at_ms} is due again at {:?}",
+        model.due_ms
+    );
+    speak(state, trace_id, (node, at_ms), speech_of(step), None)
 }
 
 /// The focus moved from `from` to `to` at `at_ms`: a terminal Core models
 /// that lost it is told so and its waiting keys dropped; one that gained
-/// it is told so, and the timer follows the focus.
+/// it is told so. The timer follows the focus ([`due`]).
 pub(crate) fn focus_moved(
     state: &mut SrState,
     (from, to): (Option<NodeId>, Option<NodeId>),
     at_ms: u64,
-) -> Vec<Effect> {
-    let mut effects = Vec::new();
+) {
     if let Some(from) = from
         && let Some(model) = model_mut(state, from)
     {
-        let had = model.due_ms.is_some();
         let step = model.rules().blur();
         model.due_ms = step.timer;
         model.pending.clear();
         model.last_key = None;
         model.held = false;
-        if had {
-            effects.push(Effect::TerminalTimer { due_ms: None });
-        }
     }
     if let Some(to) = to
         && let Some(model) = model_mut(state, to)
     {
         let step = model.rules().focus(at_ms);
         model.due_ms = step.timer;
-        if let Some(due_ms) = model.due_ms {
-            effects.push(Effect::TerminalTimer {
-                due_ms: Some(due_ms),
-            });
-        }
     }
-    effects
 }
 
 /// Gives every model's rules the reader settings when they changed:
 /// "report new output" and "review follows caret".
-pub(crate) fn sync_settings(state: &mut SrState) -> Vec<Effect> {
+pub(crate) fn sync_settings(state: &mut SrState) {
     let settings = settings_of(state);
-    let focus = focused(state);
-    let mut effects = Vec::new();
     for model in state.terminals.iter_mut() {
         if model.reader.settings() != settings {
-            let before = model.due_ms;
             let step = model.rules().set_settings(settings);
             model.due_ms = step.timer;
-            if Some(model.node) == focus && model.due_ms != before {
-                effects.push(Effect::TerminalTimer {
-                    due_ms: model.due_ms,
-                });
-            }
         }
     }
-    effects
 }
 
 /// An outpost ended: the terminals it read are forgotten.

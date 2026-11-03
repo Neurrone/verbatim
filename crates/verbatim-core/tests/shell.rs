@@ -443,14 +443,12 @@ fn a_lock_keys_announcement_is_heard_after_a_key_pressed_within_its_30_ms() {
             pressed_at_ms: 1_000,
         },
     );
-    assert_eq!(
-        effects,
-        [Effect::ReadToggleKey {
-            toggle: LockKey::ScrollLock,
-            due_ms: 1_030
-        }]
-    );
+    assert_eq!(effects, []);
     assert!(state.announces_toggle_key());
+    assert_eq!(
+        state.toggle_key_read_due(),
+        Some((LockKey::ScrollLock, 1_030))
+    );
     // "a", pressed as key 2 within the 30 ms, is spoken with its number.
     let letter = TraceId::from_raw(10);
     let effects = reduce(

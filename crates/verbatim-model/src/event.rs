@@ -743,8 +743,9 @@ pub enum Input {
         pressed_at_ms: u64,
     },
     /// A lock key reached the operating system: its new state is announced
-    /// 30 ms after `pressed_at_ms`, once Windows has changed it
-    /// ([`Effect::ReadToggleKey`], then [`Input::LockKeyToggled`]).
+    /// 30 ms after `pressed_at_ms`, once Windows has changed it: the shell
+    /// reads the key's state at the due time Core's state gives, then
+    /// enters [`Input::LockKeyToggled`].
     ToggleKeyPressed {
         /// Trace ID minted when the key was observed.
         trace_id: TraceId,
@@ -978,8 +979,9 @@ pub enum Input {
         ended_at_us: u64,
     },
     /// The quiet-period timer of the focused terminal's reading rules came
-    /// due ([`Effect::TerminalTimer`]): the rules are given the keys that
-    /// reached the program by `at_ms`, then the timer.
+    /// due, at the due time Core's state gives, which the shell reads after
+    /// each step: the rules are given the keys that reached the program by
+    /// `at_ms`, then the timer.
     TerminalTimer {
         /// Trace ID minted when the shell found it due.
         trace_id: TraceId,
@@ -1267,14 +1269,6 @@ pub enum Effect {
     /// a later key's own effects), and its requests and speech must carry
     /// its own key's trace, so that its answers and speech are that key's.
     ForKey(TraceId, Box<Effect>),
-    /// Arm the focused terminal's quiet-period timer for `due_ms`, in
-    /// milliseconds on the clock every process of a run shares, replacing
-    /// any armed before, or disarm it (`None`). When it passes, the shell
-    /// enters [`Input::TerminalTimer`].
-    TerminalTimer {
-        /// When it is due.
-        due_ms: Option<u64>,
-    },
     /// Ask the application in front for its focus, reported as a focus on
     /// the control alone, as NVDA's fake focus after a menu or the Alt+Tab
     /// switcher closes; an application whose outpost is not ready is asked
@@ -1288,12 +1282,4 @@ pub enum Effect {
     },
     /// Show a window of the GUI.
     Show(GuiRequest),
-    /// Read a lock key's state at `due_ms`, on the run's shared clock, and
-    /// enter [`Input::LockKeyToggled`] with it.
-    ReadToggleKey {
-        /// Which key.
-        toggle: LockKey,
-        /// When to read it.
-        due_ms: u64,
-    },
 }

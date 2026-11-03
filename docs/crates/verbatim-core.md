@@ -615,8 +615,9 @@ and `Script::ShellList` `Effect::Show(GuiRequest::ShellList(kind))`, the
 system tray on a first press and the taskbar on a quick second
 (`shell_list_kind`). A lock key's press (`Input::ToggleKeyPressed`) adds
 the key to `SrState::toggle_keys`, the announcements to come in press
-order, and emits `Effect::ReadToggleKey` due 30 ms after the press;
-`LockKeyToggled` takes the front one. Its utterance carries no key
+order, each with its read due 30 ms after the press, which the shell reads
+from the state (`SrState::toggle_key_read_due`); `LockKeyToggled` takes
+the front one. Its utterance carries no key
 number, so a key pressed within the 30 ms does not silence it, as NVDA's
 announcement after its timer is heard; it never waits behind a held key,
 since NVDA starts that timer when the key is pressed, outside its script
@@ -976,8 +977,13 @@ answers to the requests they make.
   nothing. A read's caret report becomes Core's caret at the read's time.
   The read before a held key is answered with a snapshot (`before_key`)
   whose caret answers the read. A new screen shape is told with
-  `TextOp::TerminalShape`; the rules' timer is `Effect::TerminalTimer`,
-  answered by `Input::TerminalTimer`.
+  `TextOp::TerminalShape`. The rules' timer is the focused model's due
+  time, which the shell reads after each step
+  (`SrState::terminal_timer_due`) and answers with `Input::TerminalTimer`
+  once it is past; another model's due time does not count, so a model
+  dropped or left has no timer, and the timer's step moves the due time
+  past the time it fired at (a debug assertion, and a postcondition of
+  the generated test).
 - Review commands. A request the memory answers is not sent: `reduce`
   takes it out of the step's effects, its query becoming one Core answers
   itself, never waited for, asks for a fresh read

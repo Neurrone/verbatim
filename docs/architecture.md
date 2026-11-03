@@ -568,7 +568,15 @@ fn reduce(state: &mut SrState, input: &Input) -> Vec<Effect>
 
 The shell (imperative, async) executes effects: `Fetch` goes to the relevant
 outpost and its completion re-enters the reducer as an `Input`; `Speak` enters
-the speech pipeline. Consequences:
+the speech pipeline. A timer whose due time the state keeps is a view, not an
+effect: after each step the shell reads the focused terminal's quiet-period
+timer and the next lock key's read from `SrState` and waits for the earlier,
+entering its `Input` once it is past, so a timer whose owner the state dropped
+is gone with it. Only the focused terminal's timer counts, and a step that
+fires a timer moves its due time past the time it fired at, or the view would
+fire on every wake. A held key's deadline stays an effect, since it is
+measured from when the shell runs it and the state keeps no due time.
+Consequences:
 
 - **Determinism.** A recorded triple of initial state, input sequence, and
   fetch replies replays to identical effects. The flight recorder (section 9)

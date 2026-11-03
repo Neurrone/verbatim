@@ -27,7 +27,7 @@ mod terminal_settings;
 mod themes;
 mod wanted;
 
-use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
@@ -1003,10 +1003,6 @@ struct ReducerThread<'a> {
     /// ahead or the read of its caret ends; one of the reducer thread's
     /// deadlines, so it adds no wake-up source.
     held_due: Option<(TraceId, Instant)>,
-    /// The focused terminal's quiet-period timer, as Core armed it
-    /// ([`Effect::TerminalTimer`]): when it is due on the shared clock, and
-    /// as an instant, one of the reducer thread's deadlines.
-    terminal_timer: Option<(u64, Instant)>,
     /// Control-plane `AwaitIdle` waiters that reached their place in line,
     /// and the idle barrier's round through every child that answers them
     /// (`docs/design/communication.md`, section 6.7).
@@ -1021,9 +1017,6 @@ struct ReducerThread<'a> {
     /// thread to wait on until it has been heard ([`ShellCommand::Exiting`]).
     exiting: bool,
     exit_sound: Option<verbatim_speech::EarconHeard>,
-    /// The lock keys whose state is to be read, each with when, in press
-    /// order ([`Effect::ReadToggleKey`]): the reducer thread's deadlines.
-    toggle_reads: VecDeque<(LockKey, Instant)>,
     /// The harness's marks of handled input held behind a lock key's
     /// announcement still to come.
     marks: idle::HeldMarks,
@@ -1503,7 +1496,7 @@ impl ReducerThread<'_> {
             .unwrap_or_else(PoisonError::into_inner) = format!(
             "handled input {}, {standing}, {requests} outpost requests outstanding, {starting} outposts starting, focus wanted from {focus_wanted} applications, terminal timer {}",
             self.handled_input,
-            if self.terminal_timer.is_some() {
+            if self.state.terminal_timer_due().is_some() {
                 "armed"
             } else {
                 "not armed"
@@ -1526,7 +1519,7 @@ impl ReducerThread<'_> {
             && self.held_keys.is_empty()
             && !self.state.holds_inputs_back()
             && !self.state.announces_toggle_key()
-            && self.terminal_timer.is_none()
+            && self.state.terminal_timer_due().is_none()
             && self.live.starting() == 0
             && self.wanted.focus_now_count() == 0
     }
@@ -1799,12 +1792,6 @@ impl ReducerThread<'_> {
                     tracing::debug!(%error, %outpost, "a query of Core's could not be withdrawn");
                 }
             }
-            Effect::TerminalTimer { due_ms } => {
-                self.terminal_timer = due_ms.map(|due_ms| {
-                    let wait = due_ms.saturating_sub(latency::now_ms());
-                    (due_ms, Instant::now() + Duration::from_millis(wait))
-                });
-            }
             Effect::ForKey(key, effect) => self.execute(key, *effect),
             Effect::ReadClock { repeat } => {
                 self.follow_ups.push(read_clock(trace_id, repeat));
@@ -1816,11 +1803,6 @@ impl ReducerThread<'_> {
                     GuiRequest::ShellList(kind) => GuiCommand::OpenShellItemList(kind),
                 },
             ),
-            Effect::ReadToggleKey { toggle, due_ms } => {
-                let wait = due_ms.saturating_sub(latency::now_ms());
-                self.toggle_reads
-                    .push_back((toggle, Instant::now() + Duration::from_millis(wait)));
-            }
             _ => {}
         }
     }
@@ -2021,17 +2003,23 @@ impl ReducerThread<'_> {
     /// if it has had no outcome by then, a request with a deadline is
     /// ended, the held key's one deadline passes, the focused
     /// terminal's quiet-period timer is due, or a lock key's state is read.
+    /// The last two are views of Core's state, read here after each step,
+    /// so a timer whose model is gone is gone with it.
     fn next_deadline(&self) -> Option<Instant> {
         self.wanted
             .next_deadline()
             .into_iter()
             .chain(self.requests.next_deadline())
+            .chain(self.state.terminal_timer_due().map(ms_to_us))
+            .chain(
+                self.state
+                    .toggle_key_read_due()
+                    .map(|(_, due_ms)| ms_to_us(due_ms)),
+            )
             .min()
             .map(instant_at)
             .into_iter()
             .chain(self.held_due.map(|(_, due)| due))
-            .chain(self.terminal_timer.map(|(_, due)| due))
-            .chain(self.toggle_reads.front().map(|&(_, due)| due))
             .min()
     }
 
@@ -2058,16 +2046,21 @@ impl ReducerThread<'_> {
         if let Some((trace_id, _)) = self.held_due.take_if(|(_, due)| *due <= now) {
             self.apply(Input::HeldKeyDue { trace_id });
         }
-        if let Some((at_ms, _)) = self.terminal_timer.take_if(|(_, due)| *due <= now) {
+        // The terminal's timer, once its due time is past; the step moves
+        // the due time past it (`SrState::terminal_timer_due`).
+        if let Some(at_ms) = self.state.terminal_timer_due()
+            && ms_to_us(at_ms) <= shared
+        {
             self.apply(Input::TerminalTimer {
                 trace_id: TraceId::mint(),
                 at_ms,
             });
         }
-        while let Some(&(toggle, due)) = self.toggle_reads.front()
-            && due <= now
+        // Each lock key whose read is due, in press order; the step takes
+        // it from the front.
+        while let Some((toggle, due_ms)) = self.state.toggle_key_read_due()
+            && ms_to_us(due_ms) <= shared
         {
-            self.toggle_reads.pop_front();
             self.apply(read_toggle_key(toggle));
         }
     }
@@ -2146,8 +2139,6 @@ fn reducer_loop(
         exit_sound: None,
         held_keys: held_keys::HeldKeys::default(),
         held_due: None,
-        terminal_timer: None,
-        toggle_reads: VecDeque::new(),
         marks: idle::HeldMarks::default(),
         follow_ups: Vec::new(),
         token,
@@ -2173,6 +2164,11 @@ fn reducer_loop(
         thread.advance_idle_barrier(&mut command_rx);
     }
     thread.token
+}
+
+/// `ms` milliseconds on the run's shared clock, in microseconds.
+fn ms_to_us(ms: u64) -> u64 {
+    ms.saturating_mul(1_000)
 }
 
 /// The moment on the monotonic clock that `due_us`, on the run's shared

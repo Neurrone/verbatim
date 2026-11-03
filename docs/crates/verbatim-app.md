@@ -28,10 +28,12 @@ message-only window made for that one write and destroyed after it
 a window kept on a thread that pumps no messages would leave another
 application's `EmptyClipboard` waiting), and frees its global memory
 whenever the clipboard did not take it. A lock key's press reaches the
-reducer as `Input::ToggleKeyPressed`; Core asks for its state 30 ms later
-(`Effect::ReadToggleKey`), which the reducer thread keeps among its
-deadlines (`toggle_reads`), reads with `GetKeyState` when it passes and
-enters as `Input::LockKeyToggled`, which Core says ("caps lock on"). The
+reducer as `Input::ToggleKeyPressed`; Core keeps when its state is to be
+read, 30 ms later, and the reducer thread reads that due time from the
+state after each step (`SrState::toggle_key_read_due`) among its
+deadlines, reads the key's state with `GetKeyState` once it passes and
+enters it as `Input::LockKeyToggled`, which Core says ("caps lock on")
+and which takes the key from the front. The
 time gesture's `Effect::ReadClock` is read on the reducer thread, as
 `GetTimeFormatEx` and `GetDateFormatEx` word it, and applied as
 `Input::ClockRead` with the trace the effect ran under, after the current
@@ -229,9 +231,11 @@ Milestone M4's text protocol is wired here (`docs/crates/verbatim-model.md`,
   `Effect::Withdraw` sends the outpost of a query Core gave up on, and
   no longer records, `CoreToOutpost::Cancel`, as a tree dump's give-up
   does.
-  `Effect::TerminalTimer` sets or clears the focused terminal's
-  quiet-period timer, another of those deadlines, its due time on the
-  shared clock turned into an instant; when it passes, the thread enters
+  The focused terminal's quiet-period timer is another of those
+  deadlines, read from the state after each step
+  (`SrState::terminal_timer_due`), never kept here, so a terminal model
+  Core dropped leaves no timer; its due time on the shared clock is turned
+  into an instant, and once it passes the thread enters
   `Input::TerminalTimer` with that due time and a trace ID minted then.
 - `Effect::Fetch`, `Effect::Activate` and `Effect::Text` go to the
   outpost of the node they name as `Query::Navigate`, `Query::Activate`

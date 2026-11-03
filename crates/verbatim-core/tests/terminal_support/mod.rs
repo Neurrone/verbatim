@@ -40,6 +40,12 @@ pub fn event(event: NormalizedEvent) -> Input {
 
 /// The focus on the terminal.
 pub fn focus() -> Input {
+    focus_after(None)
+}
+
+/// The focus on the terminal, with what the listener read of the element it
+/// held under the terminal's node before, `earlier`.
+pub fn focus_after(earlier: Option<verbatim_model::EarlierElement>) -> Input {
     event(NormalizedEvent::FocusChanged {
         node: NodeSnapshot {
             id: node(),
@@ -54,7 +60,7 @@ pub fn focus() -> Input {
         ancestors: Vec::new(),
         selected_child: None,
         text: None,
-        earlier: None,
+        earlier,
         group: None,
     })
 }
@@ -371,8 +377,11 @@ pub struct Session {
     pub heard: Vec<Said>,
     /// Every request Core made, in order.
     pub requests: Vec<TextOp>,
-    /// Every timer Core armed, in order.
+    /// Every due time of the quiet-period timer, as the shell reads it
+    /// after each step that changed it, in order.
     pub timers: Vec<Option<u64>>,
+    /// The due time the shell read last.
+    armed: Option<u64>,
     /// The text Core copied to the clipboard, in order.
     pub copied: Vec<String>,
     /// Every input given to the reducer since the session began, with its
@@ -427,6 +436,7 @@ impl Session {
             heard: Vec::new(),
             requests: Vec::new(),
             timers: Vec::new(),
+            armed: None,
             copied: Vec::new(),
             log: Vec::new(),
             hold_whole: false,
@@ -449,10 +459,16 @@ impl Session {
         session
     }
 
-    /// One step of the reducer, logged.
+    /// One step of the reducer, logged, with the timer's due time read
+    /// after it, as the shell reads it.
     fn step(&mut self, input: Input) -> Vec<Effect> {
         let effects = reduce(&mut self.state, &input);
         self.log.push((input, effects.clone()));
+        let due = self.state.terminal_timer_due();
+        if due != self.armed {
+            self.armed = due;
+            self.timers.push(due);
+        }
         effects
     }
 
@@ -590,7 +606,7 @@ impl Session {
     /// Takes in effects: speech is queued, or heard at once when it has no
     /// marks; requests are kept for the outpost, which answers those of the
     /// terminal and leaves others, such as a caret key's watch, unanswered;
-    /// timers and copies are recorded. Any other effect fails the test.
+    /// copies are recorded. Any other effect fails the test.
     fn take(&mut self, effects: Vec<Effect>, key: Option<TraceId>) {
         for effect in effects {
             match effect {
@@ -615,7 +631,6 @@ impl Session {
                     }
                 }
                 Effect::StopSpeech => self.queued.clear(),
-                Effect::TerminalTimer { due_ms } => self.timers.push(due_ms),
                 Effect::CopyToClipboard(text) => self.copied.push(text),
                 Effect::Text(TextRequest { query_id, op, .. }) => {
                     self.requests.push(op.clone());
@@ -653,6 +668,11 @@ impl Session {
                 self.run(effects);
             }
         }
+    }
+
+    /// When the shell's quiet-period timer is due, if it is armed.
+    pub fn armed(&self) -> Option<u64> {
+        self.armed
     }
 
     /// What was heard since the last [`Session::heard`], taken.

@@ -750,7 +750,7 @@ pub(super) fn check(path: &[usize], visit: &Visit<'_>) -> bool {
             // As the reducer does after every input, a terminal Core reads
             // is given the settings and its text answered from its memory.
             if !expected.terminals.is_empty() {
-                resume.extend(crate::terminal_model::sync_settings(&mut expected));
+                crate::terminal_model::sync_settings(&mut expected);
                 resume = crate::terminal_model::intercept(&mut expected, resume, Some(*trace_id));
             }
             expected.queries.set_traces(first, &resume, Some(*trace_id));

@@ -107,15 +107,15 @@ pub(crate) const TOGGLE_KEY_DELAY_MS: u64 = 30;
 
 /// A lock key reached the operating system at `pressed_at_ms`: its
 /// announcement is to come, in press order, once the shell has read the
-/// key's state [`TOGGLE_KEY_DELAY_MS`] later. It never waits behind a held
-/// key, as NVDA starts the announcement's timer when the key is pressed,
-/// outside its script queue.
+/// key's state [`TOGGLE_KEY_DELAY_MS`] later, when the front read's due
+/// time ([`SrState::toggle_key_read_due`]) is past. It never waits behind
+/// a held key, as NVDA starts the announcement's timer when the key is
+/// pressed, outside its script queue.
 fn toggle_key_pressed(state: &mut SrState, toggle: LockKey, pressed_at_ms: u64) -> Vec<Effect> {
-    state.toggle_keys.push_back(toggle);
-    vec![Effect::ReadToggleKey {
-        toggle,
-        due_ms: pressed_at_ms + TOGGLE_KEY_DELAY_MS,
-    }]
+    state
+        .toggle_keys
+        .push_back((toggle, pressed_at_ms + TOGGLE_KEY_DELAY_MS));
+    Vec::new()
 }
 
 /// Verbatim has started: the start sound, as NVDA plays it. No start
