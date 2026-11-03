@@ -120,7 +120,7 @@ Exit met: each owner's generated test is in the gate, and the mutation baseline 
 
 ## M4.5, logic foundations
 
-Complete (2026-11-01). Its decisions are in the crate guides ([the crate index](crates/readme.md)) and in [the testing standard](testing.md), "The crates on a reducer's path"; the evidence is in `experiments/logic-tests-study/`. Built, each with its design review, implementation review and related scenarios, and pushed after the full suite ran on GitHub:
+Complete (2026-11-01). Its decisions are in the crate guides ([the crate index](crates/readme.md)) and in [the testing standard](testing.md), "The crates on a reducer's path". Built, each with its design review, implementation review and related scenarios, and pushed after the full suite ran on GitHub:
 
 - the outpost split by role into `verbatim-outpost`, `verbatim-listener` and `verbatim-supervisor`, their logic in `verbatim-outpost-logic`, `verbatim-listener-logic` and `verbatim-reader-rules`, with a tier check in `cargo xtask ci`;
 - `xtask` on Linux and the `ci-linux` job;
