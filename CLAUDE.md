@@ -66,6 +66,7 @@ These hold for every session and every subagent; a subagent brief points here ra
 - Builder subagents end at unit tests and `cargo xtask ci`; the parent runs the end-to-end scenarios, one batch at a time from one background script, because agents that waited on the desktop with a large context spent hours polling and fought over it.
 - Measure each build's wake-ups and processor time before and after, inside the build, because a build's cost found later is paid on every event meanwhile.
 - Estimate time from measured durations, such as a scenario's run time in its log, because a guessed hour was twenty minutes.
+- When adding, removing or changing the length of an end-to-end scenario, run `cargo xtask e2e-durations` once its GitHub run finishes. Commit the table.
 
 ## Design principles
 
