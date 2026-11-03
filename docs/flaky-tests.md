@@ -51,7 +51,7 @@ Scenarios: the `windows_terminal_` scenarios generally, for example `windows_ter
   - Fix: none yet.
 - `measure_focus_explorer`
   - How: times out. On 2026-10-29 it failed in 22 of 23 runs in a row on the development machine, before and after that day's changes, while `explorer_folder_window` passed; on 2026-11-03, 20 of 20 at 000f36f3, each at a newly opened folder: its title "... - File Explorer" is spoken, then nothing for 15 s where its first item ("one 0 not selected 1 of 2") is expected.
-  - Cause: File Explorer can focus its "Working on it..." placeholder and raise no later focus; what it raises then, and what makes it constant, are not found.
+  - Cause, from the events of seven of the 2026-11-03 runs, not yet from a capture: in a folder window opened in a new `explorer.exe` process while another folder window stays open, File Explorer focuses its placeholder window before the new window has the foreground, then the `CabinetWClass` window itself, then replaces the placeholder with the items view, which raises only selection events and no focus on any item for 14 s. Verbatim drops and discards nothing that would have been the item: the window's focus reaches Core and its title is spoken. NVDA acts on focus events only, so it would be expected to say the same; a capture is needed to confirm it, and whether the item then holds the keyboard focus at all. `explorer_folder_window`, which opens one folder, passes locally.
   - Fix: [the M4.1 follow-ups](roadmap.md#follow-ups-from-m41), the entry on this failure.
 
 ## Terminal scenarios, single failures on GitHub's runner
