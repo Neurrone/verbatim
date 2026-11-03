@@ -778,6 +778,30 @@ impl AgentClient {
         }
     }
 
+    /// Waits up to `timeout` for the thread of the guest's foreground
+    /// window to answer a message ([`Request::ForegroundRoundTrip`]), and
+    /// returns that window's process and thread ids, or `None` when no
+    /// window is in the foreground.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails, or the thread does not
+    /// answer in time.
+    pub fn foreground_round_trip(&mut self, timeout: Duration) -> io::Result<Option<(u32, u32)>> {
+        match self.request_waiting(
+            Request::ForegroundRoundTrip {
+                timeout_ms: millis(timeout),
+            },
+            timeout,
+        )? {
+            Frame::Reply {
+                payload: ReplyPayload::ForegroundAnswered { thread },
+                ..
+            } => Ok(thread),
+            other => Err(unexpected("ForegroundRoundTrip", &other)),
+        }
+    }
+
     /// The guest's foreground window and visible top-level windows.
     ///
     /// # Errors

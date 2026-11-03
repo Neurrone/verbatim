@@ -176,6 +176,11 @@ played at once for an event, which reads as `sound:` and its indication
   injected; Verbatim answers once it has handled that input and is idle,
   so everything it queued before then arrives first, and none of it may
   be unmatched. That is evidence, never a stretch of silence.
+  `Scenario::expect_nothing_more` and `Scenario::take_until_idle` first
+  make a round trip to the foreground window's thread through the agent
+  (`ForegroundRoundTrip`), so the application has finished handling the
+  last key before Verbatim's barrier is asked for ([the end-to-end
+  guide](../tooling/e2e.md), "The idle barrier").
 - `require_all_asserted(when)`: called before every injected input. It
   reads the frames already on their way, without waiting, and fails, as a
   harness error, if any utterance is waiting that no assertion matched.

@@ -30,14 +30,64 @@ use windows::Win32::System::Threading::{
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, FindWindowW, GWL_EXSTYLE, GWL_STYLE, GetClassNameW, GetForegroundWindow,
     GetWindowLongPtrW, GetWindowTextW, GetWindowThreadProcessId, IsHungAppWindow, IsIconic,
-    IsWindowVisible, PostMessageW, SMTO_ABORTIFHUNG, SW_RESTORE, SW_SHOWMINNOACTIVE,
-    SendMessageTimeoutW, SetForegroundWindow, ShowWindowAsync, WM_CLOSE, WM_COMMAND,
+    IsWindowVisible, PostMessageW, SMTO_ABORTIFHUNG, SMTO_NORMAL, SW_RESTORE, SW_SHOWMINNOACTIVE,
+    SendMessageTimeoutW, SetForegroundWindow, ShowWindowAsync, WM_CLOSE, WM_COMMAND, WM_NULL,
     WS_EX_NOACTIVATE, WS_MINIMIZEBOX,
 };
 use windows::core::{BOOL, PWSTR, w};
 
 use crate::protocol::{ForegroundInfo, WindowCondition, WindowInfo};
 use crate::wait;
+
+/// Sends `WM_NULL` to the foreground window and waits up to `timeout` for
+/// its thread to answer ([`Request::ForegroundRoundTrip`]), returning the
+/// window's process and thread ids, or `None` when no window is in the
+/// foreground.
+///
+/// A sent message is handled at the thread's next look at its queue, so
+/// its answer shows the thread finished the work it was doing, the
+/// handling of a key it had taken included; it is handled ahead of input
+/// the thread has not yet taken, so it shows nothing about a key still
+/// waiting in the thread's queue.
+///
+/// # Errors
+///
+/// Returns an error naming the window when its thread does not answer
+/// within `timeout`, or the window has gone.
+///
+/// [`Request::ForegroundRoundTrip`]: crate::protocol::Request::ForegroundRoundTrip
+pub fn foreground_round_trip(timeout: Duration) -> std::io::Result<Option<(u32, u32)>> {
+    // SAFETY: GetForegroundWindow has no preconditions.
+    let window = unsafe { GetForegroundWindow() };
+    if window.is_invalid() {
+        return Ok(None);
+    }
+    let mut pid = 0;
+    // SAFETY: a window handle, which Windows checks, and a live out-pointer.
+    let thread = unsafe { GetWindowThreadProcessId(window, Some(&raw mut pid)) };
+    let limit = u32::try_from(timeout.as_millis()).unwrap_or(u32::MAX);
+    // SAFETY: a message carrying no pointer, answered by the window's own
+    // thread; no result is read.
+    let answered = unsafe {
+        SendMessageTimeoutW(
+            window,
+            WM_NULL,
+            WPARAM(0),
+            LPARAM(0),
+            SMTO_NORMAL,
+            limit,
+            None,
+        )
+    };
+    if answered.0 == 0 {
+        let error = std::io::Error::last_os_error();
+        return Err(std::io::Error::other(format!(
+            "the foreground window {:?} (pid {pid}, thread {thread}) did not answer within {timeout:?}: {error}",
+            window_info(window)
+        )));
+    }
+    Ok(Some((pid, thread)))
+}
 
 /// The foreground window and every visible, titled top-level window,
 /// owned ones such as dialogs included, each with its title, class, and

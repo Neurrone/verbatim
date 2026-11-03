@@ -335,6 +335,7 @@ fn dispatch(connection: u64, id: u64, request: Request) -> Frame {
             }
         }
         request @ (Request::ForegroundInfo
+        | Request::ForegroundRoundTrip { .. }
         | Request::CloseWindows { .. }
         | Request::SetForeground { .. }
         | Request::WaitForWindow { .. }
@@ -718,6 +719,15 @@ fn desktop_request(id: u64, request: Request) -> Frame {
             to: id,
             payload: ReplyPayload::ForegroundInfo(desktop::foreground_info()),
         },
+        Request::ForegroundRoundTrip { timeout_ms } => {
+            match desktop::foreground_round_trip(Duration::from_millis(timeout_ms)) {
+                Ok(thread) => Frame::Reply {
+                    to: id,
+                    payload: ReplyPayload::ForegroundAnswered { thread },
+                },
+                Err(error) => error_frame(id, &error),
+            }
+        }
         Request::CloseWindows {
             title_contains,
             timeout_ms,

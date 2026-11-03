@@ -68,7 +68,7 @@ use serde::{Deserialize, Serialize};
 /// run against an older agent is refused at `Hello`
 /// instead of losing its connection mid-run, or running without the
 /// exclusion.
-pub const AGENT_PROTOCOL_VERSION: u32 = 26;
+pub const AGENT_PROTOCOL_VERSION: u32 = 27;
 
 /// The command of a [`Request::LaunchProcess`] that names the agent's own
 /// executable, wherever it was deployed: the recordings launch
@@ -353,6 +353,17 @@ pub enum Request {
     /// foreground when an assertion fails. Answered by
     /// [`ReplyPayload::ForegroundInfo`].
     ForegroundInfo,
+    /// Sends `WM_NULL` to the foreground window, the window keyboard input
+    /// goes to, and waits up to `timeout_ms` for its thread to answer: the
+    /// evidence, for the idle barrier, that the application's UI thread has
+    /// finished what it had in hand when the message arrived, the handling
+    /// of an earlier key included, and so has raised the events that
+    /// handling raises. Answered by [`ReplyPayload::ForegroundAnswered`];
+    /// fails, naming the window, when its thread does not answer in time.
+    ForegroundRoundTrip {
+        /// How long to wait, in milliseconds.
+        timeout_ms: u64,
+    },
     /// Records the wait chain (Windows' Wait Chain Traversal) of the thread
     /// owning each window in `windows`, and of each thread of each process
     /// in `pids` that owns a top-level window, or of every thread of one
@@ -722,6 +733,13 @@ pub enum ReplyPayload {
     },
     /// Answer to [`Request::SessionInfo`].
     SessionInfo(SessionInfo),
+    /// Answer to [`Request::ForegroundRoundTrip`]: the process and thread
+    /// of the foreground window that answered, or `None` when no window
+    /// was in the foreground, so no thread had keyboard input to handle.
+    ForegroundAnswered {
+        /// The answering window's process and thread ids.
+        thread: Option<(u32, u32)>,
+    },
     /// Answer to [`Request::ReadFile`]: the file's raw bytes, base64
     /// encoded. Files larger than a few megabytes are refused as a
     /// [`Frame::Error`] instead (see the agent's `files` module for the

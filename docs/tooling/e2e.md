@@ -270,6 +270,15 @@ scenarios type through the agent's `TypeText`, which maps each character
 with the foreground window's keyboard layout, so any layout that can type
 the commands works.
 
+## The idle barrier
+
+A scenario's checks that nothing more was said (`Scenario::expect_nothing_more`, which ends every scenario and also stands between steps, and `Scenario::take_until_idle`) wait for evidence in two parts, each bounded at 15 seconds:
+
+- The application. The agent sends `WM_NULL` to the foreground window, the window the scenario's keys go to, and waits for its thread to answer (`ForegroundRoundTrip`). A sent message is handled when the thread next looks at its queue, so the answer shows the application's UI thread has finished what it was doing, the handling of the last key included, and has raised the events that handling raises. A thread that does not answer fails the step, naming its window; with no window in the foreground there is nothing to wait for.
+- Verbatim. The collector then sends `AwaitIdle` with the number of the last key, and Verbatim answers once it has handled that key and every event that reached it before, through its listener and every outpost ([communication](../design/communication.md), section 6.7); every utterance queued before the answer reaches the collector first.
+
+Limits: a sent message is handled ahead of input the thread has not yet taken, so the round trip says nothing about a key still waiting in a busy application's queue; and an event the application raised that UI Automation has not yet delivered to Verbatim's outpost is not covered by either part.
+
 ## Keeping your Windows Terminal safe
 
 **The Windows Terminal scenarios never use your own Windows Terminal.**

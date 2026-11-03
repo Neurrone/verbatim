@@ -89,6 +89,10 @@ const CLOSE_TIMEOUT: Duration = Duration::from_secs(15);
 /// How long minimizing every window may take.
 const MINIMIZE_TIMEOUT: Duration = Duration::from_secs(15);
 
+/// How long the idle barrier waits for the foreground window's thread to
+/// answer ([`Scenario::expect_nothing_more`]): a bound on a hang.
+const APPLICATION_ROUND_TRIP_TIMEOUT: Duration = Duration::from_secs(15);
+
 /// How long [`Scenario::launch`] waits for Verbatim to say it is ready.
 const READY_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -864,29 +868,57 @@ impl Scenario {
         Ok(())
     }
 
-    /// Asserts that nothing more was said: once Verbatim has handled the
-    /// scenario's last injected input and is idle, every utterance it
-    /// queued has been matched by an assertion
+    /// Asserts that nothing more was said: once the application in the
+    /// foreground has finished what it had in hand
+    /// ([`Scenario::application_round_trip`]), and Verbatim has then
+    /// handled the scenario's last injected input and is idle, every
+    /// utterance it queued has been matched by an assertion
     /// ([`SpeechCollector::expect_nothing_more`]). Every scenario ends with
     /// this.
     ///
     /// # Panics
     ///
-    /// Panics if anything unasserted was said, or Verbatim does not become
-    /// idle.
+    /// Panics if anything unasserted was said, or the application or
+    /// Verbatim does not become idle.
     pub fn expect_nothing_more(&mut self) {
+        self.application_round_trip();
         self.speech.expect_nothing_more(self.last_input);
     }
 
-    /// Every utterance not yet matched that was queued before Verbatim
-    /// has handled the scenario's last input and is idle
+    /// Every utterance not yet matched that was queued before the
+    /// foreground application has finished what it had in hand and
+    /// Verbatim has then handled the scenario's last input and is idle
     /// ([`SpeechCollector::take_until_idle`]), for the caller to assert on.
     ///
     /// # Panics
     ///
-    /// Panics if Verbatim does not become idle.
+    /// Panics if the application or Verbatim does not become idle.
     pub fn take_until_idle(&mut self) -> Vec<crate::speech::Heard> {
+        self.application_round_trip();
         self.speech.take_until_idle(self.last_input)
+    }
+
+    /// The idle barrier's first part: a round trip to the thread of the
+    /// foreground window, which keyboard input goes to, through the agent
+    /// ([`AgentClient::foreground_round_trip`]). Its answer shows the
+    /// application's UI thread has finished what it was doing, the
+    /// handling of the scenario's last key included, so the events that
+    /// handling raises were raised before Verbatim's own barrier is asked
+    /// for, which covers what reached Verbatim before it. A sent message
+    /// goes ahead of input the thread has not yet taken, so it says nothing
+    /// of a key still waiting in the application's queue.
+    ///
+    /// # Panics
+    ///
+    /// Panics, naming the window, if its thread does not answer within
+    /// [`APPLICATION_ROUND_TRIP_TIMEOUT`].
+    fn application_round_trip(&mut self) {
+        if let Err(error) = self
+            .agent
+            .foreground_round_trip(APPLICATION_ROUND_TRIP_TIMEOUT)
+        {
+            panic!("the foreground application did not become idle: {error}");
+        }
     }
 
     /// For the measurement workloads, which assert no speech: everything
