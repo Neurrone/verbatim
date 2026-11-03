@@ -6,9 +6,13 @@
 //! Every `e2e` job counts, one per group (`e2e (1)`, `e2e (2)`, ...) or
 //! the single job of a run before the groups, when it succeeded or failed;
 //! a cancelled or skipped one, or one whose log has expired, is left out.
-//! In a job's log, the scenarios run one at a time (`--test-threads=1`),
-//! so a scenario's duration is the time between its `test <name> ... ok`
-//! or `FAILED` line and the line before it, `running <n> tests` for the
+//! A job's log ends with the suite's end-of-run summary, a heading then
+//! `summary: <name> <pass|fail> <seconds>s` for each scenario that ran
+//! (`docs/tooling/e2e.md`, "The end-of-run summary"), and a scenario's
+//! duration is its summary line's. A log from before the summary has none,
+//! and there, since the scenarios run one at a time (`--test-threads=1`),
+//! a scenario's duration is the time between its `test <name> ... ok` or
+//! `FAILED` line and the line before it, `running <n> tests` for the
 //! first. Each scenario's figure is the median of its durations, the
 //! middle two's mean for an even count.
 
@@ -154,9 +158,47 @@ fn median(values: &[f64]) -> f64 {
     }
 }
 
-/// Each scenario's duration in one job's log: the time from the line
-/// before its result line, `running <n> tests` or the previous result.
+/// The heading the suite prints before its summary lines
+/// (`verbatim_e2e::run_summary::HEADING`, which xtask cannot depend on,
+/// since it builds on Linux).
+const SUMMARY_HEADING: &str = "end-of-run summary, one line per scenario that ran:";
+
+/// Each scenario's duration in one job's log: its summary line's, or, in a
+/// log with no summary, [`gap_durations`]'.
 fn durations(log: &str) -> Vec<(String, f64)> {
+    summary_durations(log).unwrap_or_else(|| gap_durations(log))
+}
+
+/// The summary's durations: each `summary: <name> <pass|fail> <seconds>s`
+/// line after the heading, or `None` when the log has no heading.
+fn summary_durations(log: &str) -> Option<Vec<(String, f64)>> {
+    let mut found = None;
+    for line in log.lines() {
+        let line = line.rsplit('\t').next().unwrap_or(line);
+        // The text after the line's time, when it has one.
+        let text = strip_escapes(timestamped(line).map_or(line, |(_, text)| text));
+        let text = text.trim();
+        if text == SUMMARY_HEADING {
+            found = Some(Vec::new());
+        } else if let Some(found) = found.as_mut()
+            && let Some(rest) = text.strip_prefix("summary: ")
+        {
+            let mut words = rest.split_whitespace();
+            if let (Some(name), Some("pass" | "fail"), Some(seconds), None) =
+                (words.next(), words.next(), words.next(), words.next())
+                && let Some(Ok(seconds)) = seconds.strip_suffix('s').map(str::parse::<f64>)
+            {
+                found.push((name.to_string(), seconds));
+            }
+        }
+    }
+    found
+}
+
+/// Each scenario's duration in one job's log with no summary: the time
+/// from the line before its result line, `running <n> tests` or the
+/// previous result.
+fn gap_durations(log: &str) -> Vec<(String, f64)> {
     let mut found = Vec::new();
     let mut previous: Option<f64> = None;
     for line in log.lines() {
@@ -258,6 +300,23 @@ mod tests {
                 ("conhost_typing".to_string(), 30.5),
                 ("text_box_editing".to_string(), 60.0),
                 ("theme_panel".to_string(), 81_080.0),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_log_with_the_summary_takes_each_duration_from_its_line() {
+        let log = "2026-11-03T01:27:10.0000000Z running 2 tests\n\
+                   2026-11-03T01:27:40.5000000Z test conhost_typing ... ok\n\
+                   2026-11-03T01:28:40.5000000Z test text_box_editing ... FAILED\n\
+                   2026-11-03T01:28:41.0000000Z end-of-run summary, one line per scenario that ran:\n\
+                   2026-11-03T01:28:41.0000000Z summary: conhost_typing pass 41.2s\n\
+                   2026-11-03T01:28:41.0000000Z summary: text_box_editing fail 7.1s\n";
+        assert_eq!(
+            durations(log),
+            vec![
+                ("conhost_typing".to_string(), 41.2),
+                ("text_box_editing".to_string(), 7.1),
             ]
         );
     }

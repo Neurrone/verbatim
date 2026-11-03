@@ -192,7 +192,7 @@ mod tests {
     #[test]
     fn the_suite_leaves_out_demonstrations_measurements_and_local_only_scenarios() {
         assert!(!in_suite("demo_say_all"));
-        assert!(!in_suite("measure_focus_explorer"));
+        assert!(!in_suite("measure_focus_text_box"));
         assert!(!in_suite("notepad_editing"));
         assert!(in_suite("conhost_typing"));
         assert!(in_suite("agent_reports_an_interactive_window_station"));

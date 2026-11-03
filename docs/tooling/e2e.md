@@ -386,9 +386,10 @@ each scenario on GitHub's runner. A scenario the table lacks counts as 60
 seconds, and a table entry naming no scenario, such as a deleted one, is
 ignored. `cargo xtask e2e-durations <runs>` rewrites the table from the
 `e2e` jobs of the last `<runs>` completed runs of CI on `main`, read with
-`gh`: each scenario's duration in a job's log is the time between its
-`test <name> ... ok` or `FAILED` line and the line before it, since the
-scenarios run one at a time, and its figure is the median over every job
+`gh`: each scenario's duration in a job's log is the seconds on its line
+of the end-of-run summary (below), or, in a log from before the summary,
+the time between its `test <name> ... ok` or `FAILED` line and the line
+before it, since the scenarios run one at a time; its figure is the median over every job
 that ran it. Refresh it when the scenarios' durations change, such as
 after making them faster.
 

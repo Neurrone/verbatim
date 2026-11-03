@@ -6,7 +6,7 @@
 //!
 //! The suite is read from the source: the test names in
 //! `crates/verbatim-e2e/tests/e2e.rs` (each `scenario_tests!` block's names
-//! and each top-level `#[test]` function), less those the registry,
+//! and each test its `main` adds by a `Trial::test("<name>"` literal), less those the registry,
 //! `crates/verbatim-e2e/src/registry.rs`, places in the `Demo` or `Measure`
 //! group or marks `local_only`. A test the registry does not hold, such as
 //! the agent's session check, is in the suite. Each Windows group checks
@@ -214,15 +214,17 @@ pub fn registry_entries(source: &str) -> Result<Vec<Entry>, String> {
 }
 
 /// The test names of the tests file, in its order: each `scenario_tests!`
-/// block's names, and each top-level function marked `#[test]`.
+/// block's names, a block starting on a line ending `scenario_tests! {` and
+/// ending on `}` or `};`, and each `Trial::test("<name>"` literal, which
+/// names a test outside the blocks, such as the session check.
 fn test_names(source: &str) -> Vec<String> {
+    const TRIAL: &str = "Trial::test(\"";
     let mut names = Vec::new();
     let mut in_block = false;
-    let mut marked_test = false;
     for line in source.lines() {
+        let word = line.trim();
         if in_block {
-            let word = line.trim();
-            if word == "}" {
+            if word == "}" || word == "};" {
                 in_block = false;
             } else if !word.is_empty()
                 && word
@@ -231,17 +233,12 @@ fn test_names(source: &str) -> Vec<String> {
             {
                 names.push(word.to_string());
             }
-        } else if line == "scenario_tests! {" {
+        } else if line.ends_with("scenario_tests! {") {
             in_block = true;
-        } else if line == "#[test]" {
-            marked_test = true;
-        } else if let Some(rest) = line.strip_prefix("fn ")
-            && marked_test
+        } else if let Some(start) = line.find(TRIAL)
+            && let Some((name, _)) = line[start + TRIAL.len()..].split_once('"')
         {
-            if let Some((name, _)) = rest.split_once('(') {
-                names.push(name.to_string());
-            }
-            marked_test = false;
+            names.push(name.to_string());
         }
     }
     names
@@ -461,24 +458,30 @@ pub const SCENARIOS: &[ScenarioDef] = &[
 ];
 "#;
         let tests = r#"
-scenario_tests! {
+const LIVE: &[&str] = scenario_tests! {
     "a reason":
     kept
     only_here
-}
+};
 
-scenario_tests! {
+const OTHERS: &[&str] = scenario_tests! {
     "another":
     demo_kind
     measure_kind
+};
+
+fn scenario_trial(name: &'static str) -> Trial {
+    Trial::test(name, move || run(name))
 }
 
-#[test]
-#[ignore = "live"]
-fn outside_the_registry() {
+fn main() {
+    trials.push(
+        Trial::test("outside_the_registry", || {
+            on_test_thread("outside_the_registry", check)
+        })
+        .with_ignored_flag(true),
+    );
 }
-
-fn helper() {}
 "#;
         assert_eq!(
             suite_from_source(registry, tests),
