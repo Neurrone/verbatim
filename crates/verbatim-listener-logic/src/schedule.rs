@@ -2017,4 +2017,127 @@ mod tests {
         );
         assert!(schedule.apps.is_empty(), "let go");
     }
+
+    /// A job is after another application's focus when the focus or menu
+    /// opening queued before it, of any application, was another's.
+    #[test]
+    fn a_job_is_after_elsewhere_only_after_another_applications_focus() {
+        let mut schedule = schedule();
+        let after_elsewhere = |schedule: &mut Schedule<u64>, pid: u32, generation: u64| {
+            schedule
+                .step(next(pid, generation), 0)
+                .into_iter()
+                .find_map(|effect| match effect {
+                    ScheduleEffect::Job(job) => Some(job.after_elsewhere),
+                    _ => None,
+                })
+                .expect("a job")
+        };
+        let _ = step(&mut schedule, focus(1, 1), 0);
+        assert!(after_elsewhere(&mut schedule, 1, 1), "the first focus");
+        let _ = step(&mut schedule, returned(1, request(1, 1), 1), 0);
+        let _ = step(&mut schedule, focus(1, 2), 0);
+        assert!(
+            !after_elsewhere(&mut schedule, 1, 1),
+            "a focus of the same application"
+        );
+        assert_eq!(
+            step(&mut schedule, focus(2, 3), 0),
+            [Seen::Spawn(2, 1, false)]
+        );
+        assert!(
+            after_elsewhere(&mut schedule, 2, 1),
+            "another application's focus"
+        );
+    }
+
+    /// A focus is pending while one is read and not published, but a menu
+    /// opening's read is not one.
+    #[test]
+    fn a_focus_is_pending_while_a_focus_is_read_and_not_while_a_menu_opening_is() {
+        let mut schedule = schedule();
+        let _ = step(&mut schedule, push(1, 1, FocusEvent::MenuOpened), 0);
+        let _ = step(&mut schedule, next(1, 1), 0);
+        assert!(!schedule.focus_pending(None), "a menu opening read");
+        let _ = step(&mut schedule, returned(1, request(1, 1), 1), 0);
+        let _ = step(&mut schedule, focus(1, 2), 0);
+        let _ = step(&mut schedule, next(1, 1), 0);
+        assert!(schedule.focus_pending(None), "a focus read");
+    }
+
+    /// Only a read focus gives its application its last top-level window:
+    /// after a dropped read, a foreground event of the window it named
+    /// still moves away from the application.
+    #[test]
+    fn a_dropped_reads_window_is_not_its_applications_last() {
+        let mut schedule = schedule();
+        let _ = step(&mut schedule, focus(1, 1), 0);
+        let _ = step(&mut schedule, next(1, 1), 0);
+        let _ = step(
+            &mut schedule,
+            ScheduleInput::Returned {
+                pid: Pid(1),
+                request: request(1, 1),
+                meta: meta(1, FocusEvent::Focus),
+                judged: Judged::Dropped("its element could not be resolved"),
+                top: Some(WINDOW),
+            },
+            1,
+        );
+        assert_eq!(schedule.apps[&Pid(1)].last_top, None);
+        let _ = schedule.step(
+            ScheduleInput::Foreground {
+                top_level: Some(WINDOW),
+                running_tops: Vec::new(),
+            },
+            1,
+        );
+        assert_eq!(schedule.apps[&Pid(1)].left_at, 1, "moved away from");
+    }
+
+    /// An abandoned thread's return below the limit ends the wait at it.
+    #[test]
+    fn a_return_below_the_abandoned_limit_ends_the_limits_wait() {
+        let mut schedule = schedule();
+        at_the_limit(&mut schedule);
+        assert_eq!(
+            schedule.apps[&Pid(1)].limit_reached,
+            Some(2 * DEADLINE),
+            "the limit reached at the second abandonment"
+        );
+        let _ = step(
+            &mut schedule,
+            returned(1, request(1, 1), 1),
+            2 * DEADLINE + 1,
+        );
+        assert_eq!(schedule.apps[&Pid(1)].limit_reached, None);
+    }
+
+    /// A foreground event judges each application with a read under way by
+    /// that application's own read's top-level window.
+    #[test]
+    fn a_foreground_event_judges_each_read_by_its_own_window() {
+        let other = Window::new(0x20).expect("not 0");
+        let mut schedule = schedule();
+        // Application 1's focus, queued last, moves away from 2 at place 2.
+        let _ = step(&mut schedule, focus(2, 1), 0);
+        let _ = step(&mut schedule, next(2, 1), 0);
+        let _ = step(&mut schedule, focus(1, 2), 0);
+        let _ = step(&mut schedule, next(1, 1), 0);
+        let _ = schedule.step(
+            ScheduleInput::Foreground {
+                top_level: Some(WINDOW),
+                running_tops: vec![(Pid(1), Some(WINDOW)), (Pid(2), Some(other))],
+            },
+            1,
+        );
+        assert_eq!(
+            (
+                schedule.apps[&Pid(1)].left_at,
+                schedule.apps[&Pid(2)].left_at,
+            ),
+            (0, 2),
+            "the first stays in its window, the second is moved away from"
+        );
+    }
 }

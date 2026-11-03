@@ -96,14 +96,14 @@ what it may cause: whether the user moved on, whether a read's progress
 was there to publish, and whether a new thread fails to start. They are
 given as the listener's shell gives them: effects in order, then each
 failed start, then each ask's answer, each a step of its own. The model
-tracks each application's queue, read under way, thread and generation,
-abandoned threads, limit, ending, moved-away place and last read's
-top-level window, and globally the place counter, the last focus's
-application, the idle waiters, stopping and the watchdog's timer; it
-takes the work in flight's decisions as given. After every step it
+is lists and sets: each application's waiting markers, read under way,
+thread and generation, abandoned threads and requests given, and
+globally each marker's place and outcomes, the idle waiters, stopping
+and the alarm as last set; it predicts no place, moving away, wait's
+bound or alarm time, and takes the work in flight's decisions as given.
+After every step it
 checks each effect (every marker's one outcome, by the reason its input
-allows; jobs in push order to the thread in charge, each with its place,
-moved-away place and `after_elsewhere`; each spawn's generation above
+allows; jobs in push order to the thread in charge; each spawn's generation above
 every earlier one in the application's life, with nothing waiting
 unthreaded below the abandoned limit; no new thread while two are
 abandoned; at most one ask per application, each of its read under way;
@@ -111,16 +111,26 @@ a deadline abandonment at or past its deadline and a moved-on one after
 an answer of true; one forget-last per abandoned thread's return; an
 alarm set only when it changes; and after the stop no spawn, job, ask or
 alarm and every push dropped), and after every action compares the
-schedule's state and its queries (`markers`, `stopping`, `in_charge`,
-`focus_pending`, the applications held) with the model's, checks that
-each idle waiter ran in the step its last event got its outcome, that no
-event waits past its bound and no read survives a tick past its
-deadline, and that the alarm is the earliest due time. Each case ends by
+schedule's open markers, queues, reads under way, applications held and
+stopping with the model's lists, checks that no abandoned thread is in
+charge, that each idle waiter ran in the step its last event got its
+outcome, that no read survives a tick past its deadline, and that the
+alarm is never later than a read's next wake and is later than each
+tick. Which place and moved-away place a job carries, the wait at the
+abandoned limit and `focus_pending` are the unit tests' examples. Each case ends by
 draining, then every marker has had one outcome and every waiter run
 once, or, with the listener stopped, at most once; it runs twice with the
 same effects, and the gate fails if any listed state is never reached.
 The cases the generated test found are kept as fixed cases. The menu
 end's grace and the foreground watch are each tested by every sequence of
-up to six steps against a model of their exact effects
-(55,987 sequences, in the generated test's file, and 20,935, in
-`crates/verbatim-listener-logic/src/foreground.rs`).
+up to six steps against their rules, with no model of their effects (in
+the generated test's file, and in
+`crates/verbatim-listener-logic/src/foreground.rs`): for the grace, only
+the newest end sent and once, no round answered twice or held with no end
+pending, a held round answered after its end, and once drained every
+round answered and the newest end sent unless closed; for the foreground
+watch, nothing before the start, an event in front reported at once, one
+not in front reported only as the newest, once, with the observation of
+the event that found it, and a console's thread named only while the
+consoles' events are hooked. Their exact cases are hand-written
+examples.

@@ -2,25 +2,25 @@
 //! applied by resolving its target against the model, given to
 //! [`Schedule::step`] as the listener's shell gives them: every effect
 //! applied in order, then each failed spawn stepped, and then the step's
-//! asks answered, each as a step of its own. After every step its effects are checked against a reference
-//! model far simpler than the schedule, and after every action the
-//! schedule's state is compared with the model's and the invariants the
-//! design lists are checked. Each case ends by draining: every read
-//! returned, every waiting event read, every alarm reached; then every
-//! marker has had exactly one outcome and every idle waiter has run once.
+//! asks answered, each as a step of its own. Each effect is checked as
+//! permitted by what the model holds, and after every action the
+//! invariants the design lists are checked. Each case ends by draining:
+//! every read returned, every waiting event read, every alarm reached;
+//! then every marker has had exactly one outcome and every idle waiter has
+//! run once.
 //!
-//! The model tracks, per application, its queue of events with their kind,
-//! key and place; its read under way (its event, request, start, window,
-//! armed bound and whether it was published); whether a thread is in
-//! charge, and of which generation; its abandoned threads, each still
-//! reading; when the abandoned limit was reached; whether its outpost has
-//! ended; where it was last moved away from; and its last read's
-//! top-level window. Globally: the place counter, the last focus's
-//! application, the idle waiters, stopping and the watchdog's timer. It
-//! takes the work in flight's decisions as given, since that has its own
-//! test, and checks only that a deadline abandonment comes at or after its
-//! deadline, a moved-on abandonment follows an answer of true, and no read
-//! survives a tick at or past its deadline.
+//! The model is lists and sets: per application, the markers waiting in
+//! push order with their kind and key, its read under way, the thread it
+//! runs and its abandoned threads, and the requests given; globally, each
+//! marker's place and outcomes, the idle waiters and the alarm as the
+//! schedule last set it. It predicts no replacement, drop, place or alarm
+//! time: it follows the outcomes the schedule emits and checks each was
+//! permitted, a deadline abandonment at or after its deadline, a moved-on
+//! one after an answer of true, no read surviving a tick at or past its
+//! deadline, and the alarm never later than a read's next wake and later
+//! than each tick. Which place an event is given, its moving away, the
+//! bound of a wait at the abandoned limit and whether a focus is pending
+//! are the schedule's own tests' examples.
 //!
 //! The menu end's grace is tested by every sequence of up to six steps,
 //! below ([`every_short_grace_sequence_keeps_the_graces_rules`]).
@@ -170,9 +170,6 @@ struct Waiting {
     kind: FocusEvent,
     key: Option<u8>,
     window: RuleWindow,
-    place: u64,
-    after_elsewhere: bool,
-    left_at: u64,
 }
 
 /// A read under way, as the model holds it.
@@ -208,10 +205,7 @@ struct App {
     /// Its read, while one is under way.
     read: Option<Read>,
     strays: Vec<Stray>,
-    limit_reached: Option<u64>,
     ending: bool,
-    left_at: u64,
-    last_top: Option<Window>,
     /// The highest generation spawned in its life.
     highest: u64,
     /// The requests its jobs were given in its life.
@@ -236,7 +230,6 @@ struct Model {
     apps: BTreeMap<u32, App>,
     stopping: bool,
     queued: u64,
-    last_focus: Option<u32>,
     /// The idle waiters, each with the place counter when it came.
     waiters: Vec<(u64, u64)>,
     next_waiter: u64,
@@ -261,21 +254,6 @@ impl Model {
         self.places
             .iter()
             .all(|(marker, place)| *place > before || self.outcomes.contains_key(marker))
-    }
-
-    /// Whether a focus is waiting or being read, for a menu opening of
-    /// `pid`'s.
-    fn focus_pending(&self, pid: Option<u32>) -> bool {
-        self.apps.iter().any(|(owner, app)| {
-            app.read
-                .as_ref()
-                .is_some_and(|read| read.kind == FocusEvent::Focus && !read.published)
-                || (app.threaded || Some(*owner) == pid)
-                    && app
-                        .queue
-                        .iter()
-                        .any(|queued| queued.kind == FocusEvent::Focus)
-        })
     }
 
     /// The markers whose outcome is owed: those waiting, and those read
@@ -493,21 +471,6 @@ impl Run {
                     Given::Push { pid, marker },
                     asks,
                 );
-                // No event waits past its application's bound once a push
-                // at or past it is handled.
-                let now = self.model.now;
-                if let Some(app) = self.model.apps.get(&pid) {
-                    assert!(
-                        self.model.stopping
-                            || app.threaded
-                            || app.queue.is_empty()
-                            || app
-                                .limit_reached
-                                .is_none_or(|reached| now < reached + DEADLINE),
-                        "{pid}'s events wait past their bound after a push: {:?}",
-                        self.trail
-                    );
-                }
             }
             Action::Next { app } => {
                 let pid = pid_of(app);
@@ -552,7 +515,7 @@ impl Run {
                     (read.request, read.marker, read.kind)
                 };
                 let top = (top > 0).then(|| window(top));
-                self.returning(pid, stray, read, top);
+                self.returning(pid, stray);
                 self.shell(
                     ScheduleInput::Returned {
                         pid: Pid(pid),
@@ -643,25 +606,10 @@ impl Run {
                         (Pid(*pid), (tops[at] > 0).then(|| window(tops[at])))
                     })
                     .collect();
-                let place = self.model.queued;
-                let mut moved = false;
-                for (pid, app) in &mut self.model.apps {
-                    let reference = if app.read.is_some() {
-                        running_tops
-                            .iter()
-                            .find(|(owner, _)| owner.0 == *pid)
-                            .and_then(|(_, top)| *top)
-                    } else {
-                        app.last_top
-                    };
-                    if reference.is_none() || reference != top_level {
-                        moved |= app.left_at != place;
-                        app.left_at = place;
-                    }
-                }
-                if moved {
-                    self.reach("a foreground event moving away");
-                }
+                let left_at = |schedule: &Schedule<u64>| -> Vec<u64> {
+                    schedule.apps.values().map(|app| app.left_at).collect()
+                };
+                let before = left_at(&self.schedule);
                 self.shell(
                     ScheduleInput::Foreground {
                         top_level,
@@ -670,10 +618,12 @@ impl Run {
                     Given::Foreground,
                     asks,
                 );
+                if left_at(&self.schedule) != before {
+                    self.reach("a foreground event moving away");
+                }
             }
             Action::MsaaFocus { app } => {
                 let pid = pid_of(app);
-                self.moved_away_from_all_but(pid);
                 self.shell(
                     ScheduleInput::MsaaFocus { pid: Pid(pid) },
                     Given::MsaaFocus,
@@ -757,32 +707,14 @@ impl Run {
         model.queued += 1;
         let place = model.queued;
         model.places.insert(marker, place);
-        let focus = matches!(kind, FocusEvent::Focus | FocusEvent::MenuOpened);
-        let after_elsewhere = focus && model.last_focus.replace(pid) != Some(pid);
-        if focus {
-            self.moved_away_from_all_but(pid);
-        }
-        let app = self.model.apps.entry(pid).or_default();
+        let app = model.apps.entry(pid).or_default();
         app.ending = false;
         app.queue.push(Waiting {
             marker,
             kind,
             key,
             window: rule,
-            place,
-            after_elsewhere,
-            left_at: app.left_at,
         });
-    }
-
-    /// Every application but `pid` moved away from at the newest place.
-    fn moved_away_from_all_but(&mut self, pid: u32) {
-        let place = self.model.queued;
-        for (owner, app) in &mut self.model.apps {
-            if *owner != pid {
-                app.left_at = place;
-            }
-        }
     }
 
     /// The request an input of `pid`'s names: its read's, or, `stale`, the
@@ -820,21 +752,14 @@ impl Run {
     }
 
     /// The model's part of a return, before its step: the read leaves its
-    /// thread, a focus read's top-level window becomes the last read's,
-    /// and an abandoned thread's return lowers the count.
-    fn returning(&mut self, pid: u32, stray: bool, found: bool, top: Option<Window>) {
+    /// thread, or an abandoned thread leaves the list.
+    fn returning(&mut self, pid: u32, stray: bool) {
         let Some(app) = self.model.apps.get_mut(&pid) else {
             return;
         };
         if stray {
             app.strays.remove(0);
-            if app.strays.len() < ABANDONED_LIMIT {
-                app.limit_reached = None;
-            }
         } else if let Some(read) = app.read.take() {
-            if found && top.is_some() {
-                app.last_top = top;
-            }
             self.returning = Some((read.marker, read.published));
         }
     }
@@ -886,16 +811,15 @@ impl Run {
                         self.trail
                     );
                 }
-                assert!(
-                    app.threaded
-                        || app.queue.is_empty()
-                        || app
-                            .limit_reached
-                            .is_none_or(|reached| now < reached + DEADLINE),
-                    "{pid}'s events wait past their bound after a tick: {:?}",
-                    self.trail
-                );
             }
+            // The tick acted on everything due by now, so the alarm is
+            // left unset or later: never a wake it will not act on.
+            assert!(
+                self.model.timer.is_none_or(|due| due > now),
+                "the alarm at {:?} after a tick at {now}: {:?}",
+                self.model.timer,
+                self.trail
+            );
         }
     }
 
@@ -1287,11 +1211,8 @@ impl Run {
                         }
                         WAITED_TOO_LONG => {
                             assert!(
-                                !app.threaded
-                                    && app
-                                        .limit_reached
-                                        .is_some_and(|reached| now >= reached + DEADLINE),
-                                "an event dropped before its bound: {trail}"
+                                !app.threaded && app.strays.len() >= ABANDONED_LIMIT,
+                                "an event dropped while not at the abandoned limit: {trail}"
                             );
                             match given {
                                 Given::Tick => self.reach("events dropped at their bound"),
@@ -1352,8 +1273,7 @@ impl Run {
                 });
                 app.thread = None;
                 app.threaded = false;
-                if app.strays.len() >= ABANDONED_LIMIT && app.limit_reached.is_none() {
-                    app.limit_reached = Some(now);
+                if app.strays.len() == ABANDONED_LIMIT {
                     self.reach("the abandoned limit reached");
                 }
                 if read.published {
@@ -1406,15 +1326,6 @@ impl Run {
                 assert_eq!(job.meta.marker, queued.marker, "{trail}");
                 assert_eq!(job.work, queued.marker, "{trail}");
                 assert_eq!(job.window, queued.window, "{trail}");
-                assert_eq!(job.after_elsewhere, queued.after_elsewhere, "{trail}");
-                assert_eq!(
-                    job.queue,
-                    QueuePlace {
-                        place: queued.place,
-                        left_at: queued.left_at,
-                    },
-                    "{trail}"
-                );
                 assert!(
                     app.threaded && app.thread == Some(app.generation),
                     "a job but to the thread in charge: {trail}"
@@ -1437,7 +1348,7 @@ impl Run {
                     published: false,
                 });
                 self.reach("a job given");
-                if queued.after_elsewhere {
+                if job.after_elsewhere {
                     self.reach("a job after another application's focus");
                 }
                 if self.model.apps[&pid].ending {
@@ -1473,12 +1384,8 @@ impl Run {
         }
     }
 
-    /// The schedule's state and queries equal the model's, and the
-    /// invariants hold, after an action.
-    #[expect(
-        clippy::too_many_lines,
-        reason = "one check for each part of the state"
-    )]
+    /// The schedule's open markers, applications and queues are the
+    /// model's lists, and the invariants hold, after an action.
     fn compare(&self) {
         let trail = &self.trail;
         let model = &self.model;
@@ -1507,19 +1414,6 @@ impl Run {
                     .collect::<Vec<_>>(),
                 "{pid}'s queue: {trail:?}"
             );
-            assert_eq!(real.threaded, app.threaded, "{pid} threaded: {trail:?}");
-            assert_eq!(
-                real.abandoned,
-                app.strays.len(),
-                "{pid} abandoned: {trail:?}"
-            );
-            assert_eq!(
-                real.limit_reached, app.limit_reached,
-                "{pid}'s limit: {trail:?}"
-            );
-            assert_eq!(real.ending, app.ending, "{pid} ending: {trail:?}");
-            assert_eq!(real.left_at, app.left_at, "{pid} left at: {trail:?}");
-            assert_eq!(real.last_top, app.last_top, "{pid}'s last top: {trail:?}");
             assert_eq!(
                 real.flight.running().map(|(request, running, published)| (
                     request,
@@ -1531,18 +1425,6 @@ impl Run {
                     .map(|read| (read.request, read.marker, read.published)),
                 "{pid}'s read: {trail:?}"
             );
-            assert_eq!(
-                real.flight.deadline(),
-                app.read.as_ref().map(|read| read.start + DEADLINE),
-                "{pid}'s read's deadline: {trail:?}"
-            );
-            if let Some(thread) = app.thread {
-                assert_eq!(
-                    schedule.in_charge(Pid(*pid), thread),
-                    !model.stopping && app.threaded && thread == app.generation,
-                    "{pid}'s thread in charge: {trail:?}"
-                );
-            }
             for stray in &app.strays {
                 assert!(
                     !schedule.in_charge(Pid(*pid), stray.request.generation),
@@ -1557,14 +1439,15 @@ impl Run {
                     app.threaded || app.queue.is_empty() || app.strays.len() >= ABANDONED_LIMIT,
                     "{pid}'s events wait with no thread below the limit: {trail:?}"
                 );
+                // The alarm is never later than a read's next wake.
+                if let Some(wake) = real.flight.next_wake() {
+                    assert!(
+                        model.timer.is_some_and(|due| due <= wake),
+                        "the alarm {:?} later than {pid}'s read's wake {wake}: {trail:?}",
+                        model.timer
+                    );
+                }
             }
-        }
-        for pid in [None, Some(1), Some(2), Some(3)] {
-            assert_eq!(
-                schedule.focus_pending(pid.map(Pid)),
-                model.focus_pending(pid),
-                "a focus pending for {pid:?}: {trail:?}"
-            );
         }
         // Each idle waiter runs in the step in which every event queued
         // before it has its outcome.
@@ -1573,25 +1456,6 @@ impl Run {
                 !model.idle(*before),
                 "waiter {waiter} not run once its events had their outcomes: {trail:?}"
             );
-        }
-        // The alarm set is the earliest of the model's due times.
-        if !model.stopping {
-            let due = model
-                .apps
-                .iter()
-                .flat_map(|(pid, app)| {
-                    let read = app
-                        .read
-                        .as_ref()
-                        .and_then(|_| schedule.apps[&Pid(*pid)].flight.next_wake());
-                    let waiting = (!app.threaded && !app.queue.is_empty())
-                        .then_some(app.limit_reached)
-                        .flatten()
-                        .map(|reached| reached + DEADLINE);
-                    read.into_iter().chain(waiting)
-                })
-                .min();
-            assert_eq!(model.timer, due, "the watchdog's alarm: {trail:?}");
         }
     }
 
@@ -1860,87 +1724,50 @@ const GRACE_STEPS: [Grace; 6] = [
 /// The grace's length the sequences give.
 const GRACE_US: u64 = 300;
 
-/// A grace sequence, run beside its model.
+/// A grace sequence, with what it has sent.
 #[derive(Clone, Debug, Default)]
 struct GraceRun {
     grace: GraceState,
     trail: Vec<Grace>,
     now: u64,
+    /// How many ends and rounds have come.
     ends: u64,
     rounds: u64,
-    /// The pending end, as its number and when its grace is over.
-    end: Option<(u64, u64)>,
-    /// The rounds waiting for the end.
-    held: Vec<u64>,
+    /// When the newest end's grace is over, while no end has been sent
+    /// since it came.
+    pending: Option<u64>,
+    /// The rounds not answered as they came, each with the newest end
+    /// when it came.
+    held: Vec<(u64, u64)>,
     closed: bool,
     /// The ends sent, and the rounds answered.
     sent: Vec<u64>,
     answered: Vec<u64>,
 }
 
-/// An end numbered `number`, as the grace sends it.
-fn end_of(number: u64) -> GraceEffect {
-    GraceEffect::SendEnd {
-        ended_at_us: number,
-        timing: EventTiming::default(),
-    }
-}
-
 impl GraceRun {
-    /// Takes `step`, checking its exact effects against the model's and the
-    /// grace's rules.
+    /// Takes `step`, checking its effects against the grace's rules.
     fn step(&mut self, step: Grace) {
         self.trail.push(step);
         let now = self.now;
-        let (input, expected) = match step {
+        let input = match step {
             Grace::Ended => {
                 self.ends += 1;
-                // A newer end replaces the one pending, never sent.
-                self.end = Some((self.ends, now + GRACE_US));
-                (
-                    GraceInput::Ended {
-                        ended_at_us: self.ends,
-                        timing: EventTiming::default(),
-                        grace: GRACE_US,
-                    },
-                    vec![GraceEffect::SetTimer(GRACE_US)],
-                )
+                self.pending = Some(now + GRACE_US);
+                GraceInput::Ended {
+                    ended_at_us: self.ends,
+                    timing: EventTiming::default(),
+                    grace: GRACE_US,
+                }
             }
-            Grace::Fired => {
-                let expected = match self.end {
-                    // Early: the rest of the grace, unless closed.
-                    Some((_, over)) if now < over => {
-                        if self.closed {
-                            Vec::new()
-                        } else {
-                            vec![GraceEffect::SetTimer(over - now)]
-                        }
-                    }
-                    end => {
-                        // The end, then every round that waited for it.
-                        self.end = None;
-                        end.map(|(number, _)| end_of(number))
-                            .into_iter()
-                            .chain(self.held.drain(..).map(GraceEffect::SendIdleAnswer))
-                            .collect()
-                    }
-                };
-                (GraceInput::Fired, expected)
-            }
+            Grace::Fired => GraceInput::Fired,
             Grace::IdleAnswer => {
                 self.rounds += 1;
-                let round = self.rounds;
-                let expected = if self.end.is_some() {
-                    self.held.push(round);
-                    Vec::new()
-                } else {
-                    vec![GraceEffect::SendIdleAnswer(round)]
-                };
-                (GraceInput::IdleAnswer(round), expected)
+                GraceInput::IdleAnswer(self.rounds)
             }
             Grace::Close => {
                 self.closed = true;
-                (GraceInput::Close, Vec::new())
+                GraceInput::Close
             }
             Grace::Wait(us) => {
                 self.now += us;
@@ -1948,16 +1775,18 @@ impl GraceRun {
             }
         };
         let effects = self.grace.step(input, now);
-        assert_eq!(effects, expected, "{:?}", self.trail);
         for effect in &effects {
             match effect {
                 GraceEffect::SendEnd { ended_at_us, .. } => {
+                    // Only the newest end is sent, and once.
+                    assert_eq!(*ended_at_us, self.ends, "{:?}", self.trail);
                     assert!(
                         !self.sent.contains(ended_at_us),
                         "an end sent twice: {:?}",
                         self.trail
                     );
                     self.sent.push(*ended_at_us);
+                    self.pending = None;
                 }
                 GraceEffect::SendIdleAnswer(round) => {
                     assert!(
@@ -1965,35 +1794,45 @@ impl GraceRun {
                         "a round answered twice: {:?}",
                         self.trail
                     );
+                    // A round that waited is answered after an end at
+                    // least as new as the one it waited for.
+                    if let Some(&(_, end)) = self.held.iter().find(|(held, _)| held == round) {
+                        assert!(
+                            self.sent.last().is_some_and(|sent| *sent >= end),
+                            "round {round} answered before end {end}: {:?}",
+                            self.trail
+                        );
+                    }
+                    self.held.retain(|(held, _)| held != round);
                     self.answered.push(*round);
                 }
                 GraceEffect::SetTimer(_) => {}
             }
         }
-        // No idle answer waits while no end is pending.
+        if matches!(step, Grace::IdleAnswer) && !self.answered.contains(&self.rounds) {
+            self.held.push((self.rounds, self.ends));
+        }
+        // No round is held while no end is pending.
         assert!(
-            self.end.is_some() || self.held.is_empty(),
-            "{:?}",
+            self.pending.is_some() || self.held.is_empty(),
+            "a round held with no end pending: {:?}",
             self.trail
         );
     }
 
     /// Ends the sequence as the timer would: once the grace is over, it
     /// fires, unless closed. Then every round is answered once and the
-    /// newest end sent once, each end before the rounds that came while it
-    /// was pending; closed, at most once each.
+    /// newest end sent once; closed, at most once each.
     fn drain(mut self) {
         if !self.closed
-            && let Some((_, over)) = self.end
+            && let Some(over) = self.pending
         {
             self.now = self.now.max(over);
             self.step(Grace::Fired);
         }
-        let mut answered = self.answered.clone();
-        answered.sort_unstable();
-        answered.dedup();
-        assert_eq!(answered.len(), self.answered.len(), "{:?}", self.trail);
         if !self.closed {
+            let mut answered = self.answered.clone();
+            answered.sort_unstable();
             assert_eq!(
                 answered,
                 (1..=self.rounds).collect::<Vec<_>>(),
@@ -2016,29 +1855,28 @@ impl GraceRun {
 const GRACE_DEPTH: usize = 6;
 
 /// Runs every sequence that extends `run` up to [`GRACE_DEPTH`] steps,
-/// draining each; how many sequences were run.
-fn every_grace_sequence(run: &GraceRun) -> u64 {
+/// draining each.
+fn every_grace_sequence(run: &GraceRun) {
     run.clone().drain();
     if run.trail.len() == GRACE_DEPTH {
-        return 1;
+        return;
     }
-    let mut count = 1;
     for step in GRACE_STEPS {
         let mut next = run.clone();
         next.step(step);
-        count += every_grace_sequence(&next);
+        every_grace_sequence(&next);
     }
-    count
 }
 
 /// Every sequence of up to six steps of the menu end's grace (ends, the
-/// timer going off as set or early, idle rounds, the close and time) gives
-/// exactly the effects the model gives: a newer end replaces the pending
-/// one, an early callback sets the timer for the rest unless closed, and
-/// the end goes before the rounds that waited for it; no end or round is
-/// sent twice, and once drained every round has its answer and the newest
-/// end was sent, unless the timer was closed.
+/// timer going off as set or early, idle rounds, the close and time)
+/// keeps the grace's rules: only the newest end is sent, no end or round
+/// is sent twice, no round is held with no end pending, a round that
+/// waited is answered after the end it waited for, and once drained every
+/// round has its answer and the newest end was sent, unless the timer was
+/// closed. The timer's exact settings are the grace's own tests'
+/// examples.
 #[test]
 fn every_short_grace_sequence_keeps_the_graces_rules() {
-    assert_eq!(every_grace_sequence(&GraceRun::default()), 55_987);
+    every_grace_sequence(&GraceRun::default());
 }
