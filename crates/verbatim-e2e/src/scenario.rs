@@ -82,10 +82,6 @@ pub const DOCUMENT_MARKER: &str = "verbatim-e2e-";
 /// foreground, or to go: a bound on a hang.
 pub const WINDOW_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// How long an application is given to fill a list the agent watches
-/// ([`Scenario::controlled_items`]): a bound on a hang.
-const CHILDREN_ADDED_TIMEOUT: Duration = Duration::from_secs(10);
-
 /// How long a window the harness asks to close, or the process that owned
 /// it, is given to go.
 const CLOSE_TIMEOUT: Duration = Duration::from_secs(15);
@@ -1805,30 +1801,16 @@ impl Scenario {
         self.agent.name_by_automation_id(automation_id)
     }
 
-    /// Has the agent watch the foreground window for children added in
-    /// bulk to its element whose UI Automation identifier is
-    /// `automation_id`, the evidence [`Scenario::controlled_items`] waits
-    /// for. Called before the input that fills the element.
+    /// Of the first element the focused element controls (its UI
+    /// Automation `ControllerFor` relation), the set size its first child
+    /// reports (`SizeOfSet`) and the names of its first `names` children, read by the agent independently of
+    /// Verbatim.
     ///
     /// # Errors
     ///
     /// Returns an error if the request fails.
-    pub fn watch_children_added(&mut self, automation_id: &str) -> io::Result<()> {
-        self.agent.watch_children_added(automation_id)
-    }
-
-    /// Waits for the change [`Scenario::watch_children_added`] watches for,
-    /// then reads, of the first element the focused element controls (its
-    /// UI Automation `ControllerFor` relation), the set size its first
-    /// child reports (`SizeOfSet`) and the names of its first `names`
-    /// children, read by the agent independently of Verbatim.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the request fails, no watch was armed, or the
-    /// change did not come within ten seconds.
     pub fn controlled_items(&mut self, names: u32) -> io::Result<(u32, Vec<String>)> {
-        self.agent.controlled_items(names, CHILDREN_ADDED_TIMEOUT)
+        self.agent.controlled_items(names)
     }
 
     /// Whether the lock key `key` (such as `scrolllock`) is on, read by the

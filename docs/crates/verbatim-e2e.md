@@ -171,6 +171,13 @@ played at once for an event, which reads as `sound:` and its indication
   naming `when`, not Verbatim's failure.
 - `take_until(until, timeout)` and `ending_of` hand over utterances whose
   text cannot be known before the step, for the caller to assert on.
+- `await_next_queued()` waits, within the step's timeout, until an
+  utterance no assertion has matched is queued, without matching it: the
+  evidence a scenario waits for before the agent reads state the
+  scenario fixes that utterance's expectation from, as the Settings
+  suggestions scenarios wait for the first suggestion before reading the
+  list. In compare mode it returns at once, since the step before waited
+  for NVDA to be quiet.
 - `expect_nothing_more(after_input)`: ends every scenario. The collector
   sends `AwaitIdle` with the number of the last key the scenario
   injected; Verbatim answers once it has handled that input and is idle,
@@ -398,11 +405,8 @@ input methods above:
 - State read independently of Verbatim, before the scenario fixes what it
   expects: `desktop_speech`, `key_toggled` (a lock key),
   `focus_by_automation_id` (focuses an element with UI Automation's
-  `SetFocus` and returns how many children it has), `watch_children_added`
-  (has the agent watch the foreground window, from before the input that
-  fills it, for children added in bulk to the element with a given UI
-  Automation identifier), `controlled_items` (once that change has come,
-  of the first element the focused element controls, the set size its
+  `SetFocus` and returns how many children it has), `controlled_items`
+  (of the first element the focused element controls, the set size its
   first child reports and the names of the first children),
   and `name_by_automation_id` (the name of the foreground window's element
   with that identifier, read without focusing it).
@@ -789,7 +793,7 @@ Each exists in both terminals unless named for one.
     the runner writing it for a launch that fails before the scenario
     exists).
   - Accessibility reads: `focused_element`, `focus_by_automation_id`,
-    `name_by_automation_id`, `watch_children_added`, `controlled_items`,
+    `name_by_automation_id`, `controlled_items`,
     `key_toggled`.
   - Input: `send_keys`, `press_key`, `release_key`, `type_text`,
     `send_keys_paced`, `repeat_key`, `type_text_paced`, each returning the

@@ -1864,7 +1864,6 @@ dependencies = [
  "verbatim-model",
  "verbatim-process",
  "windows",
- "windows-core",
  "workspace-hack",
 ]
 

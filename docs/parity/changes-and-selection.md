@@ -185,7 +185,7 @@ before all 22 items appeared together with a `ChildrenBulkAdded`
 structure change; read then, the item would be said as "list item".
 No such reading was seen with Verbatim running: 20 runs of
 `settings_search_suggestions` each said "Sound settings 1 of 22", so
-nothing waits for the list to fill (Dickson, 2026-11-03).
+nothing in Verbatim waits for the list to fill (Dickson, 2026-11-03).
 The first suggestion comes before the suggestions-opened sound because
 its selection reaches the outpost's queue about 50 ms before Settings'
 second change of the search box's relation; a delay of that much in the

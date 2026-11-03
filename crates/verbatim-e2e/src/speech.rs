@@ -1211,6 +1211,31 @@ impl SpeechCollector {
         }
     }
 
+    /// Waits up to [`STEP_TIMEOUT`] until an utterance no assertion has
+    /// matched yet is queued, without matching it: evidence that Verbatim
+    /// has spoken for a change, after which the scenario reads state it
+    /// fixes its expectation from, then asserts the utterance exactly. In
+    /// compare mode it returns at once, since the step before waited for
+    /// NVDA to be quiet.
+    ///
+    /// # Panics
+    ///
+    /// Panics if nothing is queued in time.
+    pub fn await_next_queued(&mut self) {
+        if self.compare.is_some() {
+            return;
+        }
+        let deadline = Instant::now() + self.step_timeout;
+        while self.pending.is_empty() {
+            if Instant::now() >= deadline {
+                self.fail(&format!("nothing was queued for {:?}", self.step_timeout));
+            }
+            if let Err(error) = self.read_by(deadline) {
+                self.fail(&format!("the speech connection failed: {error}"));
+            }
+        }
+    }
+
     /// How `heard` ended, waiting up to `timeout` for it to end; `None`
     /// when it had not.
     pub fn ending_of(&mut self, heard: &Heard, timeout: Duration) -> Option<UtteranceEnding> {
@@ -2044,6 +2069,16 @@ mod tests {
             ended(2, UtteranceEnding::Completed),
         ]);
         speech.expect(&["first", ""]);
+        speech.expect_nothing_more(None);
+    }
+
+    #[test]
+    fn waiting_for_the_next_utterance_leaves_it_to_be_matched() {
+        let (mut speech, mut script) = scripted(Timeline::new());
+        script.feed(vec![queued(1, "first")]);
+        speech.await_next_queued();
+        script.feed(vec![ended(1, UtteranceEnding::Completed)]);
+        speech.expect(&["first"]);
         speech.expect_nothing_more(None);
     }
 

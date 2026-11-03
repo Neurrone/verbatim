@@ -14,10 +14,18 @@
 //! what they are called, comes from Settings' search index, which differs
 //! between editions and builds, so the agent reads the list's size and its
 //! first three names through UI Automation, independently of Verbatim,
-//! once Settings has filled the list and before the scenario fixes what it
-//! expects: the agent watches for children added in bulk to the list
-//! (`SuggestionsList`) from before the query is typed, and reads after
-//! that event.
+//! once the list is filled and before the scenario fixes what it expects.
+//! The evidence that it is filled is Verbatim's utterance for the first
+//! suggestion: Settings fills the list all at once, from no children to
+//! all of them, so once Verbatim has said the first suggestion's name and
+//! position the list holds every item. The scenario waits for that
+//! utterance to be queued without matching it, has the agent read the
+//! list, and only then asserts the utterance exactly, built from the
+//! agent's read; Verbatim's words fix only when the agent reads, never
+//! what is expected. The agent watches for no event in Settings, since
+//! Settings raises its structure events only while a client listens for
+//! them, and a listener of the harness's would change what Settings does
+//! in the step asserted.
 //! The size is the set size the first item reports (`SizeOfSet`), the
 //! property Verbatim's "of N" comes from, not the count of the list's
 //! realized children, which a virtualized list would make smaller.
@@ -44,10 +52,6 @@ use crate::speech::{cut_off, heard};
 
 pub(crate) use super::no_teardown as teardown;
 
-/// The UI Automation identifier of Settings' suggestion list, which the
-/// search box controls while its suggestions are open.
-const SUGGESTIONS_LIST: &str = "SuggestionsList";
-
 pub(crate) fn setup(scenario: &mut Scenario) -> io::Result<ScenarioState> {
     scenario.open_settings_page("ms-settings:system")?;
     Ok(ScenarioState::None)
@@ -60,14 +64,6 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
         "Search box, Find a setting edit",
         "blank",
     ]);
-    // Settings fills the suggestion list all at once, but in some openings
-    // replaces its items first, leaving it empty for about 100 ms after
-    // the first selection; the one event after the fill in every opening
-    // is children added in bulk to the list, which the agent watches for
-    // from before the query is typed and waits for before it reads.
-    scenario
-        .watch_children_added(SUGGESTIONS_LIST)
-        .expect("the agent watches the suggestions");
     // Each character's echo is cut off by the next key, the last heard in
     // full; then the application's notification that suggestions are
     // available, cut off by its selection of the first one.
@@ -86,6 +82,9 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
         heard("d"),
         cut_off("Suggestions available"),
     ]);
+    // Verbatim's utterance for the first suggestion shows that Settings
+    // has filled the list; it is asserted below, from the agent's read.
+    scenario.speech().await_next_queued();
     let (count, names) = scenario
         .controlled_items(3)
         .expect("the agent reads the suggestions");
