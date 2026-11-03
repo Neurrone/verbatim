@@ -91,6 +91,10 @@ Scenarios and tests: `notepad_editing`, `notepad_selection_keys` and `notepad_ty
   - How: recorded as failing intermittently under `cargo xtask ci`, with no failure message kept; the only failures on record came while the test was being rewritten (2026-10-29 and 2026-10-30). On 2026-11-03, at 29237e17, it passed 456 of 456 runs: 100 alone, 50 with its binary, 6 runs of mockapp's whole suite, 120 as twelve copies at once, 20 binaries as four copies at once, and 160 under twelve busy processes. Its counts also hold with a 1.5 s pause between its steps, so the lapse of UI Automation's copy of an element's runtime id (`docs/uia-bugs.md`) is not its cause.
   - Cause: not found, since it does not reproduce.
   - Fix: none until it fails again; its failure message is to be kept, since which count moved names the call to look at.
+- `call_counts::msaa_form_focus_costs_exactly`, `call_counts::msaa_tree_view_costs_exactly` and `call_counts::uia_combo_box_costs_exactly`, under load
+  - How: `msaa_form_focus_costs_exactly` failed 7 of 20 runs with four copies of it running at once (2026-11-03): an extra window-title entry at the top of its chain; under twelve busy processes the other two failed as well. Alone they pass.
+  - Cause, likely but not shown: the MSAA walk passes its bound under load, and the title is doubled when it does ([the follow-up](roadmap.md#the-focus-pipeline-rework), "The window title is doubled when an MSAA walk passes its bound").
+  - Fix: that follow-up. Until then `cargo xtask ci` runs `call_counts` alone.
 
 ## Synthesizer host tests on GitHub's runner
 
