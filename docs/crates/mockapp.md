@@ -586,9 +586,10 @@ Each file's module comment says exactly what it asserts; in outline:
   abandoned and waited for once the call is released; and a subscription
   moved onto a held window's subtree has its registration end at the
   two-second connection timeout, its next move made after it, exactly
-  one registration call having ended by the timeout, as
-  `verbatim-uia`'s observation point `RegistrationCallTimedOut` counts
-  it; so the binary requires the `faults` feature and runs in `cargo
+  one registration call having taken past the timeout, as
+  `verbatim-uia`'s observation point `RegistrationCallPassedTimeout` counts
+  it (a wait into the held application by anything but a registration
+  call is not counted); so the binary requires the `faults` feature and runs in `cargo
   xtask faults`.
 - `shutdown.rs`: an outpost told to shut down during a read into mockapp,
   a remote operation in one test and classic reads in the other, lets the

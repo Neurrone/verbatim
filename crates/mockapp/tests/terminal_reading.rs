@@ -1049,8 +1049,9 @@ fn a_console_hosts_caret_moved_without_an_event_answers_its_watch() {
 const POLL_ENDED: &str = "its poll's bound passed";
 
 /// Expects one caret key's watch to end without evidence, for `why`; the
-/// guard's drop fails the test if one ended for another reason, or more
-/// than one ended.
+/// guard's drop fails the test unless exactly one watch ended for `why`.
+/// A watch that ended for another reason is not counted, so each test
+/// opens one watch.
 fn expect_watch_end(why: &'static str) -> verbatim_faults::Guard {
     verbatim_faults::arm(
         verbatim_faults::Fault::CaretWatchEnded,

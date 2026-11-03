@@ -1049,7 +1049,7 @@ fn timed_out(registration: u64, elapsed: Duration) -> bool {
     #[cfg(any(test, feature = "faults"))]
     if timed_out {
         verbatim_faults::reach(
-            verbatim_faults::Fault::RegistrationCallTimedOut,
+            verbatim_faults::Fault::RegistrationCallPassedTimeout,
             &registration,
         );
     }

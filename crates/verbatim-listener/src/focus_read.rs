@@ -2965,8 +2965,10 @@ mod tests {
             }
         });
         // The read returns only once the readers are stopping. A wait that
-        // times out fails, since a check made after the timeout would also
-        // accept a stop that marked the schedule and woke no one.
+        // times out fails, which catches a stop that never marks the
+        // schedule. A stop that marks it before this wait begins passes
+        // whether or not it woke the thread, and a stop that kept the
+        // readers' lock while it joined their threads would hang here.
         let mut state = readers.shared.lock();
         while !state.schedule.stopping() {
             let (next, waited) = wake

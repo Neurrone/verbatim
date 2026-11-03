@@ -57,7 +57,7 @@ pub enum Fault {
     /// registration calls into an application ended by UIA's connection
     /// timeout, as its time past the timeout shows, since such a call
     /// reports success. Subject: the registration's id.
-    RegistrationCallTimedOut,
+    RegistrationCallPassedTimeout,
     /// An observation point ([`reach`]): an outpost's caret key's watch
     /// ended without evidence (`verbatim-outpost`'s shell, carrying out the
     /// reducer's `WatchEnded`). Subject: why it ended, the reducer's

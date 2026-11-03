@@ -18,7 +18,7 @@ Public API:
   `AddFocusHandler` and `RemoveFocusHandler` (`(registration, handler
   index)`), and three observation points: `ShutdownWaitsForCalls` (an
   outpost's target process id), where an outpost's shutdown begins to
-  wait for the calls in progress; `RegistrationCallTimedOut` (the
+  wait for the calls in progress; `RegistrationCallPassedTimeout` (the
   registration's id), each of `verbatim-uia`'s registration calls whose
   time passed UIA's connection timeout, since such a call reports
   success; and `CaretWatchEnded` (the reducer's reason, a `&'static

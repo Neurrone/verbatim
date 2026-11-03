@@ -12,7 +12,7 @@
 //!   timeout, and the registration's next move is made after it, as is
 //!   another registration's move, since every registration of a process
 //!   shares its registering thread: the client counts one call ended by
-//!   the timeout (`verbatim_faults::Fault::RegistrationCallTimedOut`), so
+//!   the timeout (`verbatim_faults::Fault::RegistrationCallPassedTimeout`), so
 //!   this binary is built only with the `faults` feature.
 //! - A tree walk whose step to an element's first child is held fails with
 //!   the step's `UIA_E_TIMEOUT`, rather than reading the element as having
@@ -143,11 +143,11 @@ fn a_held_search_ends_at_its_deadline() {
     app.quit();
 }
 
-/// Counts every registration call, of any registration, that ends by UIA's
-/// connection timeout; the guard's drop fails the test if one more ended
-/// so than the one a test asserts.
+/// Counts every registration call, of any registration, that takes past
+/// UIA's connection timeout; the guard's drop fails the test if more did
+/// than the one a test asserts.
 fn count_timed_out_calls() -> verbatim_faults::Guard {
-    verbatim_faults::arm(Fault::RegistrationCallTimedOut, |_: &u64| true, 1)
+    verbatim_faults::arm(Fault::RegistrationCallPassedTimeout, |_: &u64| true, 1)
 }
 
 /// A subscription moved onto the subtree of a window whose provider holds
@@ -155,11 +155,12 @@ fn count_timed_out_calls() -> verbatim_faults::Guard {
 /// again, while that call is held, onto another application's window: both
 /// moves are made, the next registering on the other window, as that
 /// application counts it, though the held call is still held, and exactly
-/// one registration call of the two moves ended by UIA's connection
+/// one registration call of the two moves took past UIA's connection
 /// timeout, as the client counts them
-/// (`verbatim_faults::Fault::RegistrationCallTimedOut`). So the held
-/// registration ended at the connection timeout, and the second move's
-/// removal of the group from the held window cost no timeout of its own.
+/// (`verbatim_faults::Fault::RegistrationCallPassedTimeout`). So no other
+/// registration call of either move waited out the timeout; a wait into
+/// the held application by anything but a registration call is not
+/// counted, and is left to review (Dickson, 2026-11-03).
 fn a_held_subscription_move_returns_at_the_connection_timeout() {
     common::init_com();
     let held_title = common::unique_title("mockapp-held-move");
@@ -194,7 +195,7 @@ fn a_held_subscription_move_returns_at_the_connection_timeout() {
     assert_eq!(
         timeouts.fired(),
         1,
-        "one call of the two moves ended by the connection timeout"
+        "one registration call of the two moves took past the connection timeout"
     );
     drop(timeouts);
     assert_eq!(advised(), 1, "the next move registered on the other window");
@@ -208,8 +209,9 @@ fn a_held_subscription_move_returns_at_the_connection_timeout() {
 /// settle, asked for while the first registration's move onto a window
 /// whose provider holds its call is held, wait until that move has returned
 /// at UIA's connection timeout, so the second's settle returns after that
-/// one call ended by the connection timeout, and no other call of either
-/// registration did, as the client counts them; and its move has then
+/// one registration call took past the connection timeout, and no other
+/// registration call of either registration did, as the client counts
+/// them; and its move has then
 /// registered on the other application's window, as that application
 /// counts it. Whether the second move was made
 /// after the held one rather than before it is not shown: the settle waits
@@ -255,7 +257,7 @@ fn a_second_registrations_commands_wait_behind_the_firsts_held_move() {
     assert_eq!(
         timeouts.fired(),
         1,
-        "only the first registration's held move ended by the connection timeout"
+        "only the first registration's held move took past the connection timeout"
     );
     drop(timeouts);
     assert_eq!(

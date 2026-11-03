@@ -254,6 +254,8 @@ Tests that read an asynchronous effect without evidence that it happened, found 
 
 - `settings_search_suggestions.rs` line 74 and `settings_search_suggestions_reentered.rs` line 62 read the suggestions list once while Settings may still be filling it.
 - `crates/mockapp/tests/call_counts.rs` around lines 2712 to 2755 and 1686 to 1737 count provider calls right after a registration, a removal or a read; whether UI Automation makes calls after those return needs an experiment.
+- `crates/verbatim-audio/tests/mixer.rs` around line 590: the check that a speech lane's producer goes on only with room for what it needs passes with a producer that asks for room for one frame, so the size it waits for is not proved.
+- `crates/verbatim-listener/src/focus_read.rs`, the readers' stop test: a stop that marks the schedule before the test's wait begins passes whether or not it woke the thread, and a stop that kept the readers' lock while joining their threads would hang the test rather than fail it.
 
 ### The simulation of the reducers, deferred
 
