@@ -1,9 +1,9 @@
 //! Workspace automation, invoked as `cargo xtask <command>`.
 //!
-//! xtask builds on every host, but only `ci` and `docs` exist on all of
-//! them; every other command, with its module and dependencies, exists on
-//! Windows alone (`#[cfg(windows)]`), and on another host it gets the usage
-//! text, which lists only `ci` and `docs`.
+//! xtask builds on every host, but only `ci`, `docs` and `replay` exist on
+//! all of them; every other command, with its module and dependencies,
+//! exists on Windows alone (`#[cfg(windows)]`), and on another host it gets
+//! the usage text, which lists only `ci`, `docs` and `replay`.
 //!
 //! `ci` is the standard check for both local runs and GitHub Actions, so
 //! the two cannot drift. On every host it runs the check of the crate
@@ -85,6 +85,7 @@ use windows::Win32::System::Com::{COINIT_MULTITHREADED, CoInitializeEx};
 // The portable modules, built on every host.
 mod docs;
 mod ownership;
+mod replay;
 mod shapes;
 mod tiers;
 mod waits;
@@ -127,6 +128,7 @@ const LINUX_CRATES: &[&str] = &[
     "verbatim-reader-rules",
     "verbatim-outpost-logic",
     "verbatim-listener-logic",
+    "verbatim-replay",
     "xtask",
 ];
 
@@ -135,6 +137,7 @@ fn main() -> ExitCode {
     match args.first().map(String::as_str) {
         Some("ci") => ci(),
         Some("docs") => docs::run(),
+        Some("replay") => replay::run(&args[1..]),
         #[cfg(windows)]
         Some("vm") => vm::run(&args[1..]),
         #[cfg(windows)]
@@ -172,6 +175,9 @@ fn main() -> ExitCode {
             );
             eprintln!(
                 "  docs  check that the documents' links and backticked repository paths exist, and that docs/readme.md indexes every document under docs"
+            );
+            eprintln!(
+                "  replay  replay a flight-recorder dump through Core's reducer and print each input with its effects (cargo xtask replay <flight-recorder.jsonl> [--from <line>] [--to <line>])"
             );
             #[cfg(windows)]
             eprintln!(

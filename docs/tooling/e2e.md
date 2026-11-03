@@ -497,6 +497,29 @@ announced, or interrupting speech; the lines just above the `cancelled`
 line show what. A timeout and an outright connection failure read
 differently: the second appends "underlying error: ...".
 
+## Replaying a run
+
+`cargo xtask replay <flight-recorder.jsonl> [--from <line>] [--to <line>]`
+replays a run's `flight-recorder.jsonl` through Core's reducer, from the
+state the dump starts at, and prints one line per input: its line in the
+file, its kind and key fields (an event's kind and node, the source, the
+trace and the time), and the effects the replay produced, an utterance as
+the text Verbatim reports as queued. `--from` and `--to` choose the file
+lines printed; every input is still replayed, since each one's effects
+depend on those before it. The last line says how many inputs were
+replayed and how many differ: an input whose effect count is not the one
+the dump recorded is marked `(differs: the dump recorded N)`, which means
+the code changed since the run or the reducer is not deterministic, and
+the command then exits with a failure. The format of a line is in
+[the crate's guide](../crates/verbatim-replay.md), "The line". The
+command runs on Linux too, so a dump from a Windows run can be read
+anywhere.
+
+A dump replays with the code it is replayed with, so after a fix the
+same dump shows what the fixed reducer does with the run's inputs, and a
+dump worth keeping becomes a regression test as
+`crates/verbatim-core/tests/replay_fixture.rs` shows.
+
 ## The measure set
 
 The registry's `measure` group holds the measure set, the measurement

@@ -2194,6 +2194,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "verbatim-replay"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "verbatim-core",
+ "verbatim-model",
+ "verbatim-speech",
+ "workspace-hack",
+]
+
+[[package]]
 name = "verbatim-speech"
 version = "0.1.0"
 dependencies = [

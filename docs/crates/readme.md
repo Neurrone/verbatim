@@ -57,6 +57,8 @@ changed crate's own guide leaves those claims stale.
   one synthesizer in its own process.
 - [verbatim-core](verbatim-core.md) — the pure reducer, flight recorder,
   and dump format.
+- [verbatim-replay](verbatim-replay.md) — a dump replayed through the
+  reducer, each input and its effects on one line (`cargo xtask replay`).
 - [verbatim-reader-rules](verbatim-reader-rules.md) — what both readers
   apply before reading: NVDA's class verdict and acceptance test, and the
   waits they share.

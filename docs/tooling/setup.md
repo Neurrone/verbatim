@@ -98,7 +98,9 @@ logic crates (`verbatim-reader-rules`, `verbatim-outpost-logic` and
 `verbatim-listener-logic`) and xtask.
 rustfmt and the workspace-hack checks run only on Windows, since they read
 source and metadata the same way on every host. On Linux xtask builds only
-its portable part, so `ci` and `docs` are its only commands there; the
+its portable part, so `ci`, `docs` and `replay` are its only commands
+there (`replay` runs the `verbatim-replay` binary, so xtask itself builds
+no Core); the
 documentation-only `docs` job runs on Linux for that reason, as it builds
 less. To check xtask's Linux build from this machine, which has no Linux
 C compiler, run a check-only build, which produces no binary:

@@ -95,6 +95,7 @@ verbatim-outpost = { path = "crates/verbatim-outpost" }
 verbatim-outpost-logic = { path = "crates/verbatim-outpost-logic" }
 verbatim-process = { path = "crates/verbatim-process" }
 verbatim-reader-rules = { path = "crates/verbatim-reader-rules" }
+verbatim-replay = { path = "crates/verbatim-replay" }
 verbatim-speech = { path = "crates/verbatim-speech" }
 verbatim-supervisor = { path = "crates/verbatim-supervisor" }
 verbatim-synth-capture = { path = "crates/verbatim-synth-capture" }

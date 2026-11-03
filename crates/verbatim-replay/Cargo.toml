@@ -1,0 +1,19 @@
+[package]
+name = "verbatim-replay"
+description = "Replays a flight-recorder dump through Core's reducer and renders each input and its effects on one line (cargo xtask replay, and the end-to-end suite's failure output)"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+serde_json.workspace = true
+verbatim-core.workspace = true
+verbatim-model.workspace = true
+# The theme presenter, so an utterance is rendered as the text Verbatim
+# reports as queued.
+verbatim-speech.workspace = true
+workspace-hack = { version = "0.1", path = "../workspace-hack" }
+
+[lints]
+workspace = true
