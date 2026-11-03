@@ -720,9 +720,10 @@ Each exists in both terminals unless named for one.
 - Lists and pagers (`scenarios/terminal_lists.rs`,
   `scenarios/terminal_pager.rs`): a selection list whose marker moves with
   the caret, or is redrawn whole on each move, each move said once; a
-  pager on the alternate screen over a shell screen with history, moved
-  down a line and back, each move saying only the line it brought on, and
-  closed, the shell's screen spoken again (`*_pager_history`).
+  pager on the alternate screen, moved down a line and back, each move
+  saying only the line it brought on, and closed, the shell's screen
+  spoken again, first on the fresh terminal at the top of the document,
+  then over a shell screen with history (`*_pager_history`).
 - Keys during output (`scenarios/terminal_key_timing.rs`): Control cuts
   off everything still queued once the flood's last line is queued, and
   lines written after it are spoken (`*_control_flood`); Shift twice

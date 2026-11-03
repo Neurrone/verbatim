@@ -549,13 +549,14 @@ fn a_history_erase_keeps_the_screens_rows() {
 
 #[test]
 fn a_pagers_first_page_is_a_new_screen_and_closing_it_speaks_the_shell() {
-    // `conhost_pager_history`'s pager's shape: the pager's first page keeps no row of the
-    // shell's screen, so it is a new screen; its second page keeps its
-    // caret's line, the status row, where it was, so that row counts as
-    // rewritten and the page is no new screen; and the main screen back
-    // leaves the caret's line where the pager's status row was, so that row
-    // counts as rewritten and the rest of the shell's screen is new, spoken
-    // as NVDA speaks it (`nv-con-pager.txt`; "Screens").
+    // The shape of `conhost_pager_history`'s opening step, a pager closed
+    // onto a shell screen at the top of the document: the pager's first
+    // page keeps no row of the shell's screen, so it is a new screen; its
+    // second page keeps its caret's line, the status row, where it was, so
+    // that row counts as rewritten and the page is no new screen; and the
+    // main screen back leaves the caret's line where the pager's status row
+    // was, so that row counts as rewritten and the rest of the shell's
+    // screen is new, spoken as NVDA speaks it (`nv-con-pager.txt`; "Screens").
     let mut watch = Watch::console(10, 3, 20);
     watch.write("PS>pager\r\n");
     let opened = watch.write("\x1b[?1049h\x1b[H\x1b[2Jp1\r\np2\r\n:");
