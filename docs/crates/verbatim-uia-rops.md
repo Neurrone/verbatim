@@ -732,7 +732,7 @@ In a release build against mockapp: five ancestors to the top-level
 window take 3.4 ms remotely and 25 ms classically, most of the classic
 time being the last hop to the desktop root; a list with its selected
 child and one ancestor 3.4 ms and 17 ms; one live property read 0.31 ms.
-The text reads and the navigation step are in `docs/performance.md`,
+The caret and say-all reads are in `docs/performance.md`,
 "Wall-clock gain".
 
 ## Tests

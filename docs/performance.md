@@ -231,19 +231,17 @@ Rules that hold for every UIA focus:
   button or the list and 22 for a list item; and the sender's keyboard
   focus read plainly (`CurrentHasKeyboardFocus`, NVDA's last check), 3
   provider calls. The listener makes no duplicate test: Core judges a
-  repeat (`docs/design/ownership.md`), so no focus
-  pays the comparison with an earlier focus (`CompareElements`, which
-  reaches no provider but is a client call). A menu opening is compared
-  with its thread's last read while that read is current, one call. It is read plainly because inside a remote program
+  repeat (`docs/design/ownership.md`). A menu opening is compared
+  with its thread's last read while that read is current, one call. The
+  keyboard focus is read plainly because inside a remote program
   Windows Terminal's second focus identity answers that it has the focus
   where NVDA's plain read answers that it has not (section 16.8).
 - A repeated focus on the element that still has the keyboard focus is
-  read in full, 5 UIA calls where the listener's duplicate test dropped it
-  after 3 (`uia_repeated_focus_costs_exactly`): the nearest window, the
-  keyboard focus, and the read, which asks whether the element it read
-  last under the runtime id still has the keyboard focus, refreshes the
-  sender's cache, and steps once up to its known parent. They cost mockapp
-  149 provider calls, where the three cost 34. Core drops the repeat; the
+  read in full, 5 UIA calls (`uia_repeated_focus_costs_exactly`): the
+  nearest window, the keyboard focus, and the read, which asks whether the
+  element it read last under the runtime id still has the keyboard focus,
+  refreshes the sender's cache, and steps once up to its known parent.
+  They cost mockapp 149 provider calls. Core drops the repeat; the
   window's verdict is kept, so the window is asked nothing.
 - A focus on a console window's own element is dropped after the
   console's provider check, made once per console window by the listener
@@ -294,13 +292,10 @@ Rules that hold for every UIA focus:
   back to whatever else is due, or cancels it, as it ends: two or three
   timer calls that wake no thread. A read that returns within its grace
   makes no moved-on call (`GetGUIThreadInfo`, `GetWindowThreadProcessId`,
-  class and process reads), where each read with a window made one as it
-  started or learned its window before the work in flight; one still
-  under way past its grace costs one watchdog wake-up and one moved-on
-  call every half second, at most 15 before `READ_DEADLINE` (stand-in
-  reads held 3 seconds, debug: 5 wake-ups and 5 calls, where before it
-  took none with no foreground event and 2 wake-ups and 3 calls with two;
-  20 quick reads: no wake-up, and 0 calls where before 20); and when the new
+  class and process reads); one still under way past its grace costs one
+  watchdog wake-up and one moved-on call every half second, at most 15
+  before `READ_DEADLINE` (stand-in reads held 3 seconds, debug: 5
+  wake-ups and 5 calls); and when the new
   focus is inside the old, the intake moves the old focus's queued state
   changes ahead of the read (`docs/design/focus-pipeline.md`, section
   12.4), delaying the report by their handling, 0.2 to 1.8 ms per property
@@ -314,9 +309,6 @@ The wait is the outpost's gap record, beside the verdict that dropped its
 copy (`docs/design/focus-pipeline-rework.md`, "Who owns each duplicated
 fact", the gap's evidence).
 
-- Per focus or foreground `WinEvent` the listener's hook observes:
-  nothing for the gap, where the listener's records cost one take of the
-  reading threads' lock.
 - Per MSAA focus copy the worker judges, through either backend: one take
   of the intake's lock. A copy dropped for UIA that opens the record sets
   the threadpool timer, one `SetThreadpoolTimer`, under that lock, where
@@ -325,14 +317,10 @@ fact", the gap's evidence).
   `SetThreadpoolTimer`.
 - Wake-ups: none on the steady path. A record answered before its bound
   costs no wake-up: its timer is cancelled before it fires, and the
-  answer is applied as the marker resolves, with no wake of the worker,
-  where the listener's record woke its readers' watchdog once per focus
-  change to arm the bound. So a focus change costs one wake-up fewer.
+  answer is applied as the marker resolves, with no wake of the worker.
 - Per record unanswered at its bound, a second after its first copy: one
   threadpool callback, one intake entry and one worker wake-up, with no
-  message, where the listener's record cost a watchdog wake-up, one
-  focus-missing message through the supervisor's relay and the outpost's
-  pipe thread, and the worker's wake-up; or, after a drop for no window
+  message; or, after a drop for no window
   above the sender (`docs/design/listener-without-connections.md`, risk
   13), the read at once in the drop's or the copy's place, with no timer.
   The read is the focus-now query's (`read::gap_focus_read`) through UIA
@@ -362,7 +350,7 @@ fact", the gap's evidence).
   local check, about 110 µs.
 - The harness's idle barrier: the outpost answers a round only once its
   record is closed, at most a second and the gap's read after the record's
-  first copy; the listener no longer waits on records.
+  first copy.
 - Target: no call per focus and at most one read per record; met, with no
   wake-up per focus change.
 
@@ -378,16 +366,12 @@ the verdicts).
   element (the keyboard focus, the cache, the step to the desktop's root),
   for which the proxy makes 14 calls into the application's `IAccessible`
   (`a_focus_in_a_window_with_no_uia_provider_is_read_and_dropped_by_its_outpost`),
-  about five calls per element of the chain in general, and sends the read
-  in place of a drop, a larger message; the count of messages and wake-ups
-  is unchanged. The outpost drops it by its verdict, kept or probed, so
-  entries arriving after its marker wait for the read rather than the
-  drop, a few milliseconds more. Where the listener made a raw probe, 1
-  window message, at a window's first focus and each focus more than
-  500 ms after its last, it makes none: probes per such focus change, one,
-  the outpost's, as NVDA makes one.
+  about five calls per element of the chain in general, and sends the read.
+  The outpost drops it by its verdict, kept or probed, so entries arriving
+  after its marker wait for the read, a few milliseconds. Probes per such
+  focus change: one, the outpost's, as NVDA makes one.
 - A focus in a window on the class lists: the class verdict, local calls
-  only, and the drop, as before.
+  only, and the drop.
 - The listener's exposure to a busy MSAA application: its read through the
   proxy calls into the application's `IAccessible`, one call per proxied
   property and per ancestor of the walk. UIA's transaction timeout bounds
@@ -396,8 +380,8 @@ the verdicts).
   focus read failing by the timeout and the focus let through from its
   event (measured 2026-10-30 with a scratch mockapp test, `--backend
   msaa` under `stall`, not kept). Each read is bounded by `READ_DEADLINE`,
-  now 8 seconds (the read's budget of 2, the transaction timeout of 5 and a
-  second), which lost the probe's 3 seconds with the probe, and the
+  8 seconds (the read's budget of 2, the transaction timeout of 5 and a
+  second), and the
   application's reading threads by `ABANDONED_LIMIT`; each application has
   its own reading thread, so no other application waits.
 
@@ -427,15 +411,11 @@ was answered (measured 2026-10-07).
   fact", the verdicts), once in the window's lifetime; the listener makes
   no probe. 354 provider calls with the outpost's remote walk and 345 with
   its classic walk, 12 of them the grid item's row and column and the
-  ancestors' automation ids, and 5 the outpost's probe; the listener's
-  probe, which went, cost 5 (1 `WM_GETOBJECT`, 2 `ProviderOptions`, 1
-  `HostRawElementProvider` and 1 `Navigate`).
+  ancestors' automation ids, and 5 the outpost's probe.
 - Probes per new window: in a UIA window, the outpost's 1; in an MSAA
   window not on the class lists, the outpost's 1 at its first MSAA focus,
   then none while its "no" lasts, 500 ms, from the probe's end, for events
-  observed until then; the listener makes none (step 1's baseline, with
-  the listener's, is in
-  `experiments/focus-pipeline-rework-measurements/probes-per-new-window.txt`).
+  observed until then; the listener makes none.
 - Target: the minimum. The walk could stop at the desktop's root, which
   is known locally, instead of asking for its parent.
 - Bound: the depth of the focus below the desktop.
@@ -455,9 +435,8 @@ other's MSAA window (`uia_focus_chains_stop_below_the_process_boundary`).
 - Today: the listener's 5 UIA calls and no window message, its two steps
   ending at the child's window. The outpost makes no call into the parent,
   with or without a UIA provider
-  (`uia_focus_chains_name_a_parent_with_a_provider_as_a_plain_window`);
-  before the plain window it made 8 MSAA calls there, and 21 above a parent
-  with a provider. It probes the child's window, its own application's,
+  (`uia_focus_chains_name_a_parent_with_a_provider_as_a_plain_window`).
+  It probes the child's window, its own application's,
   once: 1 window message. A parent stalled for 4 seconds does not delay the
   report (`a_window_above_the_process_boundary_is_a_plain_window_with_no_call`).
   UIA's client side still connects to that parent when a read returns the
@@ -485,14 +464,10 @@ and `a_hung_window_above_a_focus_now_is_a_plain_window_remote` and
   call after it, the window being a plain window read from Windows' own
   state.
 - Today: the listener makes 5 UIA calls, its two steps ending with the
-  one into the host's element, where it made 6 before, stepping on from
-  that element. A focus-now query makes 3 UIA calls with the classic
-  walk and 4 with remote operations on, which then reads by the classic
-  walk, the focus's keyboard focus read first; before, the remote program
-  made 2 calls but connected to the hung window twice (`UiaRootObjectId`
-  with a nonzero wParam), and the classic walk made 5 and probed the hung
-  window for its verdict. Either way the hung window now takes only the
-  3 `UiaRootObjectId` messages with a zero wParam that UIA's client side
+  one into the host's element. A focus-now query makes 3 UIA calls with
+  the classic walk and 4 with remote operations on, which then reads by
+  the classic walk, the focus's keyboard focus read first. Either way the
+  hung window takes only the 3 `UiaRootObjectId` messages with a zero wParam that UIA's client side
   sends it for reads of the child window's elements and the step, and
   the outpost 1 window message, the child window's probe.
 - Target: met for the walk.
@@ -500,8 +475,7 @@ and `a_hung_window_above_a_focus_now_is_a_plain_window_remote` and
   `GhostWindowFromHungWindow`, `IsHungAppWindow`) of each window whose
   own element a UIA step reaches, a few local calls, and for a
   focus-now query read by a remote program, the same check of each
-  window above the focus's own to the process boundary. No wake-up or
-  lock is added.
+  window above the focus's own to the process boundary.
 
 ### A focus whose walk is stuck at its bound, UIA
 
@@ -597,31 +571,6 @@ Pinned by `uia_combo_box_costs_exactly`, both ways.
   outpost's remote walk and 324 with its classic walk, 11 of them the
   grid item's row and column and the ancestors' automation ids.
 
-### An object navigation step, UIA
-
-Next sibling and parent, from a node the outpost holds.
-
-- Minimum: 1 UIA call: one program takes the step, fills the neighbor's
-  cache and finds the node's nearest window, for correcting the
-  neighbor's backend (`verbatim_uia_rops::navigation_step`).
-- Today, remotely: 1 each, met, from the held element without refreshing
-  it: the program fails at once when the element is gone, and the outpost
-  then finds it by the focus's route or answers it gone. 91 provider calls
-  for the next sibling and 92 for the parent. A step from a top-level
-  window is taken classically, since a program's walk ends there.
-- A node with no kept element and no focus route, for navigation, the
-  ancestors query and activation alike: 0 calls and no provider call,
-  answered gone with no search by runtime id
-  (`a_node_with_no_kept_element_and_no_route_is_gone_with_no_call`); the
-  search it replaces made one connection and one `FindFirstBuildCache` per
-  top-level window of the application, and 481 provider calls in a child
-  window's process when another process served one
-  (`docs/design/cross-process-calls-study.md`, instance 3).
-- Today, classically: 3 each: the held element's cache refreshed, which
-  proves it still answers, its nearest window, and the step; 141 provider
-  calls for the next sibling and 142 for the parent.
-- Bound: one step per command.
-
 ### A focus change, MSAA, steady state
 
 MSAA has no cache requests or remote operations, so each property is a
@@ -636,7 +585,7 @@ reaching a parent 3 more (`accParent`, the `QueryInterface` for its
   `docs/parity/windows-and-processes.md`, "A control's own focus with a
   focused child"), the read (7), and one ancestor hop (9) that recognizes
   the previous focus's container.
-- Today: 20 (28 before NVDA's equality was ported): the focus 9 (its
+- Today: 20: the focus 9 (its
   role and state, read first for NVDA's checks, kept for the read) and one
   ancestor hop (9), whose new sighting of the group, oleacc's new wrapper,
   passes the equality's first steps against the group of the focus before
@@ -647,9 +596,7 @@ reaching a parent 3 more (`accParent`, the `QueryInterface` for its
   reached through `accParent`, as both groups are, has oleacc walk that
   object's parents in the provider: 3 `accParent` hits per read here,
   measured by leaving the location step out, which gives 18 calls, 6
-  `accParent` and 1 `accLocation`. Against 10 `accParent` before the
-  equality, the walk no longer hopping to the window's root saves 4 and
-  the two reads add 6. The arrow between list items, whose list is one
+  `accParent` and 1 `accLocation`. The arrow between list items, whose list is one
   level nearer the root, pays 3 `accParent` for its two reads. A focus
   that is itself a sighting compared with a candidate reuses the location
   its read made, so it costs no second read.
@@ -667,17 +614,15 @@ reaching a parent 3 more (`accParent`, the `QueryInterface` for its
 
 ### The outpost's reducer
 
-Counted from the code (`docs/design/ownership.md`), not yet measured:
-`measure_focus_text_box`, `measure_keys_windows_terminal` and
-`measure_keys_conhost` before and after give the hop's latency and the
-wake-ups and processor time per event.
+Counted from the code (`docs/design/ownership.md`), but for the wake-ups
+measured per input-hook wake.
 
 - Wake-ups: an event a program handles wakes the reducer's thread for
   the event, the worker for its program, and the reducer's thread for each
   of the program's posts. Every `Commit` and the `Finished` are separate
   posts, so an event with a commit usually costs four wakes (the event,
-  the program, the commit and the finish), where the worker alone woke
-  once; posts that arrive while the shell is awake share its wake.
+  the program, the commit and the finish); posts that arrive while the
+  shell is awake share its wake.
   Each verdict probe is posted in its own commit,
   so a walk that probes adds a post for each. An event the push drops
   wakes nobody; one the reducer drops wakes only its thread.
@@ -686,19 +631,21 @@ wake-ups and processor time per event.
   control's caret read cut at its value change check (only with a
   selection before or after), adds two. Each timer, a
   deadline, a grace, a walk's bound or the gap record's bound, costs one
-  wake where the watchdog took two (its own, then a post), and the gap
-  record's threadpool timer is gone. Each 5 ms re-read of the console
+  wake. Each 5 ms re-read of the console
   host's caret poll is a program of its own, timed by the shell's
   high-resolution timer, waking the shell for its timer, the worker, and
   the shell for its commit and end, up to ten re-reads on a key that
-  moves nothing. Wake-ups in all processes per input-hook wake, debug builds, test audio mode, one 12-second trace window each (2026-10-31): `measure_keys_conhost` 17.9 before and 18.1 after; `measure_keys_conhost_unmoved`, keys that move nothing, 14.6 before and 17.5 after, the outpost's share 6.6 and 8.0; `measure_keys_notepad` 32.5 before and 33.5 after.
+  moves nothing. Wake-ups in all processes per input-hook wake, debug
+  builds, test audio mode, one 12-second trace window each (2026-10-31):
+  `measure_keys_conhost` 18.1; `measure_keys_conhost_unmoved`, keys that
+  move nothing, 17.5, the outpost's share 8.0; `measure_keys_notepad`
+  33.5.
 - Latency: two thread hand-offs per program, each an `SetEvent` and a
   wait's return, expected at tens of microseconds.
 - Processor time: per program, a scan of the intake when a caret key's
   watch is open or a caret key is dispatched; and a scan of the intake for an edit control's
   value change when a caret read is cut at its value change check.
-- Locks: the watch lock and the commit's nested locks are gone. The
-  reducer's thread takes the mailbox's lock to drain it, the store's for
+- Locks: the reducer's thread takes the mailbox's lock to drain it, the store's for
   a commit's writes, a worker's charge for a publication, and the
   backlog's with the store's inside it for a release; a worker takes its
   charge's lock for each step of a walk and for each text write, with the
@@ -708,27 +655,24 @@ wake-ups and processor time per event.
 
 ### The outpost's object store
 
-Counted from the code (`docs/design/ownership.md`), not measured. No wake-up and no call into an application is
-added: every walk makes the calls it made before.
+Counted from the code (`docs/design/ownership.md`), not measured.
 
 - Each node a walk issues or looks up takes the store's lock with the
-  registry's inside it, where it took the registry's alone. A UIA
-  element's agile reference is made before either lock.
+  registry's inside it. A UIA element's agile reference is made before
+  either lock.
 - A walk tags the lines it copies in one hold of the store's lock: the
   previous focus's chain, up to about ten entries, and for an MSAA focus
   the reports' MSAA lines.
 - Sending a message takes no registry's lock for the nodes and anchors it
-  names, where the registries' touched lists were taken under their
-  locks.
+  names.
 - A text call copies under the store's lock only the anchors its
   operation names, at most two, and those of the kept carets, with the
-  kept selection, the same however many anchors the node has, so a long say-all costs no more per call. It
-  puts the copy back under its worker's charge and the store's lock, its
-  displaced positions released after both. The text locks are no longer held across
-  the call.
-- A release reads every kept node's and anchor's tags, where it read only
-  the carried ones, and also frees nodes and anchors no message carried
-  once their request ends, which before were kept for the outpost's life.
+  kept selection, the same however many anchors the node has, so a long
+  say-all costs no more per call. It puts the copy back under its
+  worker's charge and the store's lock, its displaced positions released
+  after both. No text lock is held across the call.
+- A release reads every kept node's and anchor's tags, and also frees
+  nodes and anchors no message carried once their request ends.
 
 ### A focus change, MSAA, cold
 
@@ -746,12 +690,11 @@ with no identity string, its window object offering none either, as a
 Windows Forms form's (`tests/fixtures/form.json` with `form-client`,
 `msaa_form_focus_costs_exactly`).
 
-- Today, cold: 57 MSAA calls and 2 window messages, 56 before the walk
-  acquired the form's client area at its own address and read it there
-  rather than reading the object `accParent` gave
-  (`docs/parity/focus-context.md`, "Top-level windows in the ancestry"):
-  the acquisition (1), the reads being the same.
-- Today, steady state: 25, unchanged: a second focus in the window meets
+- Today, cold: 57 MSAA calls and 2 window messages, one of them the
+  acquisition of the form's client area at its own address, read there
+  rather than as the object `accParent` gave
+  (`docs/parity/focus-context.md`, "Top-level windows in the ancestry").
+- Today, steady state: 25: a second focus in the window meets
   the first's chain below the client area and reads it no more.
 - Bound: one acquisition per walk that reaches a top-level window's client
   this way.
@@ -940,19 +883,6 @@ as the `Kept` shape, of which nothing is read
   (`uia_dialog_window_text_reads_nothing_of_its_title_bar`).
 - Bound: one call per container read.
 
-### A tree dump, UIA
-
-The control plane's tree dump (`verbatim-inspect dump-tree`), through
-`verbatim_uia_rops::tree_dump` (`crates/mockapp/tests/uia_tree.rs`).
-
-- Minimum: one call per listed element above the deepest level, its
-  children read in one scoped `BuildUpdatedCache`; fewer remotely, each
-  program reading up to 60 children.
-- Today: classically one call per listed element, 3 for mockapp's list of
-  two items; remotely 1 for that list and for any tree of up to 60
-  children read; met. Locations and off-screen states are read only when
-  the dump asks for locations, so a dump sends no `WM_GETTITLEBARINFOEX`.
-
 ### The shell's tray and taskbar list, UIA
 
 File Explorer's outpost walks the notification area or the taskbar for
@@ -973,15 +903,6 @@ machine's taskbar, from a separate process running the outpost's walk,
   under the taskbar's element.
 - Bound: the surface's elements.
 
-### An object navigation step, MSAA
-
-- Minimum and today: 10 MSAA calls for a next sibling (`accNavigate`, the
-  neighbor's `IAccessible`, its window and its seven properties) and 10
-  for a parent (`accParent` in place of `accNavigate`); met. mockapp
-  answered 9 provider calls for the next sibling and 15 for the parent, 8
-  of them `accParent` from `WindowFromAccessibleObject`'s walk. With a
-  theme reporting descriptions and shortcuts off, a next sibling is 8.
-
 ### A key through the keyboard hook
 
 - Minimum and today: no call into an application. Every key but one
@@ -996,25 +917,11 @@ machine's taskbar, from a separate process running the outpost's walk,
   (`docs/crates/verbatim-input-windows.md`), and a key that cancels or
   pauses speech posts once to the speech queue's port: no lock is taken
   on the hook thread (`docs/design/ownership.md`). A bound
-  gesture wakes the reducer once, where it woke the router and then the
-  reducer; a lock key wakes the reducer for its press and for its
-  deadline, which applies the announcement in the same step, two wakes
-  where there were three. A test's gesture is pressed as keys, each key
-  event a call of the hook procedure as a person's is, and an idle waiter
-  wakes only the reducer, never the hook thread.
-  `measure_keys_notepad` traced over 80 s in a debug build (2026-10-30),
-  before and after this change, wakes and processor time: the reducer
-  thread 4,801 and 1,026 ms before, 4,622 and 891 ms after; the hook
-  thread 3,910 and 301 ms before, 4,090 and 253 ms after; the speech queue
-  thread 2,606 and 278 ms before, 2,815 and 201 ms after; the router
-  thread 687 and 73 ms before, gone after. This was measured before the
-  later rework that made the hook take only keys
-  (`docs/tooling/measuring.md`).
-
-### An interrupt
-
-Stopping speech on a key press makes no call into an application, so the
-ratchet does not measure it.
+  gesture wakes the reducer once; a lock key wakes the reducer for its
+  press and for its deadline, which applies the announcement in the same
+  step. A test's gesture is pressed as keys, each key event a call of the
+  hook procedure as a person's is, and an idle waiter wakes only the
+  reducer, never the hook thread.
 
 ### A notification from an application with no outpost
 
@@ -1029,8 +936,7 @@ Every utterance and earcon comes from the reducer (`docs/architecture.md`,
 section 2), and the speech pipeline reports an utterance with index marks
 that ends unheard.
 
-- No call into an application. An utterance with index marks cut off or
-  failed costs one post to the reducer and one recorded step, two or three per key that cuts say-all or terminal output.
+- An utterance with index marks cut off or failed costs one post to the reducer and one recorded step, two or three per key that cuts say-all or terminal output.
   The time, the clipboard's result, a shell item gone, the theme page's
   previews and the start, exit, error and "not responding" sounds take
   one thread hop to the reducer and one step; a lock key takes the
@@ -1039,34 +945,26 @@ that ends unheard.
 
 ### Threads after the output build
 
-Debug builds, 2026-10-31, before and after the output ownership build
+Debug builds, 2026-10-31, after the output ownership build
 (`docs/design/ownership.md`), wakes and processor time per trace.
-The audio events thread is new in this build.
 
 - `measure_speech_real` with audible output, traced over 60 s: the audio
-  thread 8,643 wakes and 760 ms before, 12,467 and 805 ms after; the synth
-  thread 3,124 and 1,499 ms before, 1,346 and 1,400 ms after; the reducer
-  2,676 and 607 ms before, 2,615 and 591 ms after; the speech queue
-  thread 1,949 and 143 ms before, 1,524 and 136 ms after; the audio events
-  thread 1,155 and 130 ms after.
-- `measure_keys_notepad`, traced over 80 s: the audio thread 5,832 and
-  752 ms before, 11,995 and 1,034 ms after; the reducer 4,416 and
-  1,152 ms before, 4,760 and 1,106 ms after; the synth thread 2,633 and
-  1,954 ms before, 1,967 and 1,980 ms after; the audio events thread
-  1,317 and 198 ms after.
-- The audio thread's wake-ups roughly doubled under key load, against
-  the rule not to raise wake-ups on the speech path: every push of a synth
-  chunk wakes the audio thread, where the old mixer woke it only when the
-  device was waiting for audio (`docs/roadmap.md`). These traces ran in
-  test audio mode, whose silent device wakes the audio thread every 10 ms
-  while playing.
-- Warnings "the device ran dry" per scenario run, one run before and three
-  after: `settings_dialog_keys` 18, then 0, 0, 0; `theme_panel` 8, then 1,
-  1, 1; `switch_to_onecore` 3, then 0, 0, 0; `menu_and_settings_dialog` 2,
-  then 0, 0, 0; `terminal_settings_page` 2, then 0, 0, 2;
-  `synth_host_crash_recovery` (now `crash_recovery`'s synthesizer host
-  step) 1, then 0, 0, 0; `notepad_say_all` 0, then
-  1, 0, 2.
+  thread 12,467 wakes and 805 ms; the synth thread 1,346 and 1,400 ms; the
+  reducer 2,615 and 591 ms; the speech queue thread 1,524 and 136 ms; the
+  audio events thread 1,155 and 130 ms.
+- `measure_keys_notepad`, traced over 80 s: the audio thread 11,995 and
+  1,034 ms; the reducer 4,760 and 1,106 ms; the synth thread 1,967 and
+  1,980 ms; the audio events thread 1,317 and 198 ms.
+- Every push of a synth chunk wakes the audio thread, against the rule
+  not to raise wake-ups on the speech path, roughly twice the wake-ups of
+  a mixer woken only when the device waits for audio (`docs/roadmap.md`).
+  These traces ran in test audio mode, whose silent device wakes the
+  audio thread every 10 ms while playing.
+- Warnings "the device ran dry" per scenario run, three runs:
+  `settings_dialog_keys` 0, 0, 0; `theme_panel` 1, 1, 1;
+  `switch_to_onecore` 0, 0, 0; `menu_and_settings_dialog` 0, 0, 0;
+  `terminal_settings_page` 0, 0, 2; `crash_recovery`'s synthesizer host
+  step 0, 0, 0; `notepad_say_all` 1, 0, 2.
 
 ### A caret move, UIA
 
@@ -1207,8 +1105,7 @@ applied (decision D14; `docs/parity/focus-events.md`, "Stale focus
 events"). Every process stamps an observation with one read of the
 performance counter, in microseconds, for every event kind.
 
-- Minimum and today: no wait; every message carries one stamp. No
-  thread, timer, message or wake-up.
+- Minimum and today: no wait; every message carries one stamp.
 - What it does not catch: a switcher focus Windows raises after the
   console's (11 ms after its foreground event and 15 ms after its focus)
   happened later, so no ordering drops it; Core's refusal of the
@@ -1222,19 +1119,16 @@ carries Core's focus to the listener or the outposts.
 
 - An MSAA repeat of the focus is read in full: 23 MSAA calls in
   `call_counts`' arrow back onto the same list item ("MSAA focus
-  repeated"), where the outpost's own repeat test dropped it after
-  acquiring it and reading its role, five provider calls and none
-  counted. A foreground change in front of a report's window is read and
+  repeated"). A foreground change in front of a report's window is read and
   reported, 8 MSAA calls once the window's backend is known and 11 for a
-  second report of the same window (`msaa_events`), where the outpost's
-  own tests dropped it with local calls; within a focus group its older
+  second report of the same window (`msaa_events`); within a focus group its older
   entry is read too, 20 MSAA calls for the list item beside the change.
   Each costs one message to Core, one reducer input, and the `NodesHeld`
   written after it.
 - A change of a node the outpost has not released but Core no longer
   targets is read: an MSAA change outside Core's line costs its
   acquisition and the one property read, 1 `WM_GETOBJECT` and 1
-  `get_accChild` before the property, as before, plus one message;
+  `get_accChild` before the property, plus one message;
   a state change of a node only a waiting message carries reads its role
   too. Only while its window is in front, and only until Core's list
   releases it, one pipe hop after Core handled the report.
@@ -1242,8 +1136,7 @@ carries Core's focus to the listener or the outposts.
   one remote operation (`ControllerFor`) per UIA report until one
   controls the selection: in steady state Core's line can hold two UIA
   reports (a list and the item focused inside it), so a selection in a
-  list no focus controls costs one remote operation more than when only
-  the newest focus was asked. `call_counts`' combo box pins the cost with
+  list no focus controls costs two remote operations. `call_counts`' combo box pins the cost with
   the older report released.
 - The focus-following subscription keeps its group on the element of
   every UIA report the outpost has not released: one more element with a
@@ -1267,13 +1160,10 @@ carries Core's focus to the listener or the outposts.
   `reported` on every accepted MSAA state change.
 - `NodesHeld` is written on its own after each focus report and each
   change of the node set Core holds in an outpost: one pipe write and the
-  outpost's reader wake, about what the `CoreFocus` notice to the focus's
-  outpost cost. Saved: the notices to the listener and to the other
-  outposts concerned, and the supervisor owner thread's wake for each. A
-  change of anchors or of the acknowledged position alone still rides on
+  outpost's reader wake. A change of anchors or of the acknowledged position alone still rides on
   the next command or the 3-second ping, so typing adds no write.
-- Text anchors are released by message position, as nodes are: the
-  64-anchor slack is gone, and an outpost keeps the anchors minted since
+- Text anchors are released by message position, as nodes are: an
+  outpost keeps the anchors minted since
   Core's last list, bounded by the keys typed between two lists.
 - Not measured here: `held_nodes` per outpost in the scenarios' flight
   dumps, which the scenarios record.
@@ -1284,8 +1174,8 @@ Core refuses the UI Automation focus of the task switcher's frame in File
 Explorer (`docs/parity/windows-and-processes.md`, "The Alt+Tab switcher's
 pane"), by the element's class and the focus's application.
 
-- Minimum and today: no cross-process call, thread, timer, message or
-  wake-up. The class comes from the element's cache (the listener's
+- Minimum and today: no cross-process call; the class comes from the
+  element's cache (the listener's
   `ListenerEvent` shape and the outpost's `Node` shape). The
   application's name is read once per application and console client with
   `QueryFullProcessImageNameW` and kept with its process held open, so it
@@ -1300,7 +1190,7 @@ speaks a grid item's row and column (`docs/parity/focus-announcement.md`,
 
 - Minimum: the parent's automation id from its cache, Alt with one
   `GetAsyncKeyState`, and the row and column as two properties.
-- Today: no cross-process call added; met. Every ancestor's request holds
+- Today: the minimum. Every ancestor's request holds
   its automation id (`verbatim_uia::Ancestor`). The requests of an element
   read alone (the focus, its selected child, a navigation step's
   neighbour) hold the `GridItem` pattern's availability, row and column
@@ -1316,10 +1206,8 @@ and cuts speech when they share nothing below the desktop
 completes a chain it could not read by plain windows; each UI Automation
 ancestor carries its class name; and MSAA's invisible state is carried.
 
-- Minimum and today: no call, thread, timer, message or wake-up added. The
-  class name is in the role's cache group every UIA ancestor is already
-  read with (`RoleCore`), so no property is added to any cache request,
-  and `call_counts`' figures are unchanged; the plain windows of a failed
+- Minimum and today: the class name is in the role's cache group every
+  UIA ancestor is read with (`RoleCore`); the plain windows of a failed
   walk are local calls, about four per window, as at a walk's bound.
 - Core: the meeting compares each entry of the new line with the previous
   line's, from the focus outward, until one matches, so at most the
@@ -1345,10 +1233,9 @@ focuses its thumb"). The cost is accepted (Fable, 2026-10-30).
   one `RemoveEventHandlerGroup`. All of it runs on the worker after the
   focus is reported, so none is on the speech path. A repeated focus on
   the thumb, while the outpost keeps the slider's element, makes no call.
-- Any other parent: no call. The class name is already in each UI
-  Automation ancestor's snapshot, so the check reads the focus chain the
-  outpost last reported, and `call_counts`' UIA focus figures, read after
-  the subscription has moved, are unchanged.
+- Any other parent: no call. The class name is in each UI Automation
+  ancestor's snapshot, so the check reads the focus chain the outpost
+  last reported.
 - Minimum: the same. UIA delivers no ancestor's event to a registration
   on the thumb (`docs/parity/backends.md`, "UIA event registration"), and
   the listener cannot hand the outpost the slider's element, since a UI
@@ -1485,25 +1372,6 @@ selected.
   comparisons and text reads, only when the selection moved. A selection
   from nothing or to nothing is one whole change, as NVDA speaks it.
 
-### A review cursor line, UIA
-
-The review cursor's next line (numpad 9), from a position the outpost
-reported.
-
-- Minimum and today: 1 UIA call (`verbatim_uia_rops::text_units`), met;
-  classically 8 (a copy of the position, expanded to its line, collapsed,
-  moved; a copy expanded to the line reached and its text; its `Culture`).
-  The first review command and report current object on an edit field
-  read the line at the caret in one program, classically 9.
-
-### A review cursor word inside a line, UIA
-
-The word at a position inside a line Core holds, found by moving a copy of
-the line's start by the text before the position.
-
-- Minimum and today: 1 UIA call, the program trying each character count
-  a provider may use, met; classically 12.
-
 ### Say-all, UIA
 
 Reading mockapp's three lines from the caret and moving the caret as each
@@ -1533,57 +1401,18 @@ piece a line) a batch read in 3.3 ms at the median remotely and 21.1
 classically, and the gaps between pieces were 1.5 ms at the median and 14
 at the 95th percentile either way, against NVDA's 1.2 and 30.2.
 
-### The selected text, UIA
-
-The selected text read for a copy, or with a focus's or the navigator's
-announcement (`ReadRange`).
-
-- Minimum and today: 1 UIA call, met; classically 7, of which the range's
-  read is 4; at a focus, whose caret read already fetched the selection,
-  those 4 alone.
-
-### The review copy's selection, UIA
-
-The review copy's first press (Verbatim+F10, `TextOp::Select`), answered
-with how the selection changed: mockapp's collapsed caret, then "alpha"
-selected from the marker through the character at the review cursor. Core
-sends both ends as points past their characters (`TextThrough`), since
-only the outpost can tell which comes first.
-
-- Minimum and today: 1 UIA call, met: one program reads the selection,
-  selects (`TextRangeSelect`), reads it again, compares and reads each
-  change's text and the selection's text up to 513 units. It executes 163
-  instructions (`range_selections_execute_exactly`). Classically 29.
-- When the program fails after its select, the selection is made: the
-  program still returns the selection before, and only the after-read is
-  made classically, never the select again; by the code's count for
-  mockapp's case, 11 classic calls more, and 4 for each further change.
-- In a Win32 edit control 6 window messages, also the minimum: `EM_GETSEL`,
-  `EM_SETSEL` and `EM_SCROLLCARET`, `EM_GETSEL` again, and
-  `WM_GETTEXTLENGTH` and `WM_GETTEXT` (`uia_text_requests_cost_exactly`,
-  "UIA review copy select"; `caret_moves_cost_exactly`, "Edit control
-  review copy select").
-
 ### Wall-clock gain
 
 What remote operations save, measured on 2026-10-07 on this machine,
 release build, against mockapp in its own process, 200 runs of each
 operation as the worker makes it, with other builds loading the machine.
 Medians held within about 0.2 ms across three runs; the worst cases vary
-with load, and the worst remote navigation step is the process's first
-program, which creates the remote operations machinery. mockapp's
-providers run on one window thread, so a real application gains more.
-Median, 95th percentile and worst in ms, remote against classic:
+with load, and the process's first program is slower, since it creates
+the remote operations machinery. mockapp's providers run on one window
+thread, so a real application gains more. Median, 95th percentile and
+worst in ms, remote against classic:
 
-- Navigation, next sibling: 0.93, 8.8 and 109 against 1.62, 7.7 and 19.6.
-- Review cursor's next line: 0.40, 0.49 and 8.4 against 0.77, 4.7 and
-  7.3.
-- Review cursor's word inside a line: 0.38, 0.43 and 4.9 against 0.60, 4.6
-  and 5.2.
-- Line at the caret: 0.43, 4.0 and 10.1 against 0.76, 5.4 and 7.5.
 - Say-all's caret move: 0.29, 0.35 and 4.4 against 0.40, 4.9 and 9.2.
-- The caret's location: 0.36, 0.40 and 0.44 against 0.54, 8.8 and 24.4.
-- The selected text: 0.39, 0.46 and 4.3 against 0.68, 6.2 and 13.9.
 - A caret key that selects: 0.45, 0.55 and 1.1 against 2.5, 21.5 and 56.8.
 - A caret move: 0.41, 0.45 and 0.96 against 1.34, 19.4 and 34.8.
 
@@ -1611,7 +1440,7 @@ An answer that compares selections waits once for the `WinEvent` thread to
 take every event raised before it (`Nudger::sync`), then ends its
 program, and the reducer scans its waiting entries once for the control's
 value change and dispatches the answer's finish, so an edit is said in
-general terms; no call to the application, and two more wakes. The sync posts one thread message and raises
+general terms, at two more wakes. The sync posts one thread message and raises
 one marker with `NotifyWinEvent`, because a posted message alone can
 overtake an event raised before it: about 25 to 36 µs at the median
 (release, 20,000 syncs of an idle thread), and no `WM_GETOBJECT`. A sync is
@@ -1658,8 +1487,7 @@ mockapp's `tests/fixtures/terminal.json` (`tests/terminal.rs`).
 A terminal raises no caret event for every character echoed, so every
 read takes the caret and its line in the same program
 (`verbatim_uia_rops::SnapshotQuery::caret`), and Core takes it as its
-caret. A caret event of either terminal reads the terminal itself. No call
-more.
+caret. A caret event of either terminal reads the terminal itself.
 
 ### A terminal flood
 
@@ -1712,7 +1540,12 @@ test --release -p verbatim-text --test terminal_cost -- --ignored
 every read timed 31 times with a fresh reader. Measured on 2026-10-26 on
 this machine, medians over both terminals and two runs, moving by up to
 0.3 ms between runs and 0.6 for cases marked bimodal (the heap handing
-back pages or not):
+back pages or not). These figures are for the alignment's lookups by row
+hash in hashed maps; with the `BTreeMap`s and `BTreeSet`s it uses now
+(`docs/testing.md`, "The crates on a reducer's path"), measured on
+2026-11-01 over six runs, the lost reads cost 12 to 26% more, the
+overflow 30 to 31% more, the clear and reprint 26 to 28% more, and the
+bimodal wide lines 36 to 62% more:
 
 - A rotation of 58 rows, settled in one read: 37 to 42 µs.
 - A rotation of 61 rows, and of 1,000 rows, each a lost read and the whole
@@ -1728,24 +1561,15 @@ back pages or not):
   is aligned: 1.0 ms.
 - The subsequence's worst case, 8,000 lines drawn from the last screen's
   texts then 60 new lines: 1.7 to 1.9 ms.
-
-Measured again on 2026-11-01, medians of six runs, after the alignment's
-lookups by row hash became `BTreeMap`s and `BTreeSet`s
-(`docs/testing.md`, "The crates on a reducer's path"). Against the hashed
-maps they replaced on the same day (a rotation of 1,000 rows 1.23 to 1.26
-ms, an overflow 1.06 to 1.07), the lost reads above cost 12 to 26% more,
-the overflow 30 to 31% more, the clear and reprint 26 to 28% more, and
-the bimodal wide lines 36 to 62% more. Two cases were added:
-
-- A rotation of 1,000 rows over a console buffer enlarged to its greatest
-  height, 32,766 rows, a lost read and the whole document of 4.0 MB: 4.9
-  ms, against 4.1 with hashed maps, past the reducer's 2 ms budget for a
-  read (`docs/design/terminal-model.md`, "Costs").
 - A screen of 29 rows of Chinese text each rewritten with its last
   character changed, every row paired with its old row by likeness: 1.0
-  ms, against 1.7 when likeness looked its characters up in a hashed map,
-  measured before the alignment's lookups by row hash became `BTree`
-  collections.
+  ms.
+
+With the lookups as they are now, 2026-11-01: a rotation of 1,000 rows
+over a console buffer enlarged to its greatest height, 32,766 rows, a
+lost read and the whole document of 4.0 MB, takes 4.9 ms, past the
+reducer's 2 ms budget for a read (`docs/design/terminal-model.md`,
+"Costs").
 
 The bound is what the work must touch: hashing and copying every row's
 text once (about 0.1 ms a megabyte each), the vectors kept per row, and in
@@ -1779,8 +1603,7 @@ with a full history of numbered lines.
 Core keeps, beside the reading of the focus it holds, what it last spoke
 of it (`SpokenRecord` in `crates/verbatim-core/src/state.rs`), against
 which name, value, description and state changes are compared
-([verbatim-core](crates/verbatim-core.md), "Focus"). No call, wake-up or
-timer is added. Its bound: per focus change, each new ancestor searches
+([verbatim-core](crates/verbatim-core.md), "Focus"). Its bound: per focus change, each new ancestor searches
 the previous focus line's entries, as the entered containers already
 search the previous chain, so the work grows with the depth of the
 application's focus line.
@@ -1841,14 +1664,7 @@ release, 2026-11-01, eleven runs): a whole document of 9,031 rows of 120
 cells 1,947 to 2,128 µs with 78 to 80 page faults in Latin text, 2,036
 to 2,180 µs with 95 to 98 in Cyrillic; an ordinary read of two screens
 20 to 27 µs; 64 KiB, the write buffer, kept after a whole document. Paid
-in the outpost, once per whole-document read. Measured as the change
-that removed the spare buffers the conversion reused, on the same day
-and machine: with them, a whole document 1,769 to 1,966 µs with no page
-fault and an ordinary read 18 to 21 µs; without them and with the text
-grown from empty, 2,134 to 2,407 µs with 114 to 159 page faults in
-Latin text and an ordinary read 21 to 24 µs. Sizing the text up front
-removed about a third of the page faults; its time difference is within
-the drift of the comparison's unchanged two-copy conversion.
+in the outpost, once per whole-document read.
 
 ### A terminal's reads, live
 
@@ -1856,11 +1672,9 @@ Measured on 2026-10-26 on this machine, release build, every read sent to
 Core, one run of each scenario, before a terminal's text moved to the
 frame's raw section.
 
-- Messages: one per read, about 1.6 to 3.3 KB for an ordinary read; a
-  flood in the console host sent 1,911 messages and 6.01 MB, in Windows
-  Terminal 252 and 0.69 MB; a full-history flood 3,906 and 12.33 MB, and
-  154 and 0.81 MB; the key scenarios 2,420 and 5.92 MB, and 2,991 and
-  6.30 MB.
+- Messages: one per read; a flood sent 1,911 in the console host and 252
+  in Windows Terminal, a full-history flood 3,906 and 154, the key
+  scenarios 2,420 and 2,991.
 - The reducer's time per input carrying a read: a live read 101 to 116 µs
   at the median and 182 to 406 at the 99th percentile, an answer to
   Core's request 53 to 83. Over the 2 ms budget: the whole document after
@@ -1946,8 +1760,7 @@ measured. Nothing in either is on the event or speech path.
 
 "Report status bar" costs one fresh read per press and a walk up the
 memory's last screen in the reducer; the third press's copy is the
-shell's clipboard write. Nothing is added to any other read (Dickson,
-2026-10-26).
+shell's clipboard write (Dickson, 2026-10-26).
 
 ### A terminal's colours
 
@@ -1996,15 +1809,6 @@ The UIA features newer than Verbatim's first UIA code, measured on
 2026-10-07 on this machine, release build, against mockapp in its own
 process; the counts are pinned by `call_counts.rs`.
 
-### Event coalescing and connection recovery
-
-Every UIA client Verbatim creates turns on `IUIAutomation6`'s
-`CoalesceEvents` and `ConnectionRecoveryBehavior`, as NVDA does
-(`docs/crates/verbatim-uia.md`). Both are local settings, so they add no
-call and change no mockapp wait: a burst of 100 name changes is delivered
-whole, a stalled window's reads time out, and creating a client takes
-0.036 ms at the median.
-
 ### Event handler groups
 
 Every `verbatim_uia::Registration` registers its subscriptions as one
@@ -2036,7 +1840,7 @@ with remote operations on or off.
   group on the focus (`uia_active_text_position_costs_exactly`):
   registering it on mockapp's text costs 1 `HostRawElementProvider` and 2
   `FragmentRoot`, 0.89 ms at the median. An active text position change is
-  kept as a position without reading anything: no call, 0.002 ms.
+  kept as a position without reading anything.
 
 ### Event caches
 
