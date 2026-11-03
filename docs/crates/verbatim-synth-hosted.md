@@ -154,7 +154,7 @@ advancing a fake clock, so a stamp taken after the write fails them. It is other
 host executable in `crates/verbatim-synth-host/tests/hosting.rs`, and
 against a scripted host in `crates/verbatim-synth-host/tests/protocol.rs`
 (see [verbatim-synth-host](verbatim-synth-host.md)), and end to end by the
-`synth_host_crash_recovery` scenario ([verbatim-e2e](verbatim-e2e.md)),
-which kills the host once the Verbatim menu's announcement has been
+`crash_recovery` scenario ([verbatim-e2e](verbatim-e2e.md)),
+which, among Verbatim's other processes, kills the host once the Verbatim menu's announcement has been
 heard and expects the next
 announcement to be heard in full.

@@ -40,8 +40,10 @@ scenario_tests! {
     rapid_tabbing_in_settings
     object_navigation_in_settings
     switch_to_onecore
-    synth_host_crash_recovery
-    outpost_crash_recovery
+    crash_recovery
+    verbatim_lifecycle
+    speak_time_and_date
+    alt_tab_switcher
     return_after_retirement
     return_from_a_held_application
     lock_key_announcements

@@ -14,7 +14,9 @@ use std::io;
 use crate::registry::ScenarioState;
 use crate::scenario::{Scenario, harness_marker};
 
+pub(crate) mod alt_tab_switcher;
 pub(crate) mod caret_keys;
+pub(crate) mod crash_recovery;
 pub(crate) mod demo_notepad_editing;
 pub(crate) mod demo_review_cursor;
 pub(crate) mod demo_say_all;
@@ -30,7 +32,6 @@ pub(crate) mod notepad_say_all;
 pub(crate) mod notepad_spelling_errors;
 pub(crate) mod object_navigation_in_settings;
 pub(crate) mod object_navigation_over_uia;
-pub(crate) mod outpost_crash_recovery;
 pub(crate) mod password;
 pub(crate) mod quick_link_menu;
 pub(crate) mod rapid_tabbing_in_settings;
@@ -45,9 +46,9 @@ pub(crate) mod settings_dialog_keys;
 pub(crate) mod settings_search_suggestions;
 pub(crate) mod settings_search_suggestions_reentered;
 pub(crate) mod settings_system_page;
+pub(crate) mod speak_time_and_date;
 pub(crate) mod spelling_errors;
 pub(crate) mod switch_to_onecore;
-pub(crate) mod synth_host_crash_recovery;
 pub(crate) mod system_information_tree;
 pub(crate) mod terminal;
 pub(crate) mod terminal_command_marks;
@@ -75,6 +76,7 @@ pub(crate) mod text_box;
 pub(crate) mod text_box_say_all;
 pub(crate) mod theme_panel;
 pub(crate) mod typed_words;
+pub(crate) mod verbatim_lifecycle;
 pub(crate) mod word_selection;
 
 /// What the scenario says about the desktop, which has the focus after the

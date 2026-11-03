@@ -48,8 +48,11 @@
 //!   [`rapid_tabbing_in_settings`](crate::scenarios::rapid_tabbing_in_settings),
 //!   a burst of focus changes in the settings dialog that must leave focus
 //!   where it really is, and
-//!   [`synth_host_crash_recovery`](crate::scenarios::synth_host_crash_recovery),
-//!   speech going on after the synthesizer host is killed, and
+//!   [`verbatim_lifecycle`](crate::scenarios::verbatim_lifecycle),
+//!   Verbatim started, replaced by a second start and quit, with Windows'
+//!   screen reader flag set and cleared, and
+//!   [`speak_time_and_date`](crate::scenarios::speak_time_and_date), the
+//!   time and the date said, and
 //!   [`switch_to_onecore`](crate::scenarios::switch_to_onecore), switching
 //!   to Windows `OneCore` voices and back, and
 //!   [`lock_key_announcements`](crate::scenarios::lock_key_announcements),
@@ -64,8 +67,11 @@
 //!   applications (the "task switching" item `docs/roadmap-done.md`'s M3 E2E
 //!   list names,
 //!   [`second_application_and_verbatim_menu`](crate::scenarios::second_application_and_verbatim_menu)),
-//!   an outpost replaced after it dies
-//!   ([`outpost_crash_recovery`](crate::scenarios::outpost_crash_recovery)),
+//!   the synthesizer host, an outpost and the focus listener each
+//!   replaced after it dies
+//!   ([`crash_recovery`](crate::scenarios::crash_recovery)),
+//!   the Alt+Tab switcher's item said with Alt held
+//!   ([`alt_tab_switcher`](crate::scenarios::alt_tab_switcher)),
 //!   an application returned to after its outpost was retired
 //!   ([`return_after_retirement`](crate::scenarios::return_after_retirement)),
 //!   an application left while its reads are held and returned to
@@ -163,21 +169,22 @@ use crate::artifacts::{self, OutpostCrash, ScenarioSummary};
 use crate::compare::{self, ReportHeader};
 use crate::scenario::{Document, Scenario, wait_chains_of, write_wait_chains};
 use crate::scenarios::{
-    caret_keys, demo_notepad_editing, demo_review_cursor, demo_say_all, demo_settings_dialog_keys,
-    demo_terminal_session, document_keys, editing, explorer_folder_window, lock_key_announcements,
-    measure, menu_and_settings_dialog, notepad_say_all, notepad_spelling_errors,
-    object_navigation_in_settings, object_navigation_over_uia, outpost_crash_recovery, password,
-    quick_link_menu, rapid_tabbing_in_settings, return_after_retirement,
-    return_from_a_held_application, review_cursor, review_words,
+    alt_tab_switcher, caret_keys, crash_recovery, demo_notepad_editing, demo_review_cursor,
+    demo_say_all, demo_settings_dialog_keys, demo_terminal_session, document_keys, editing,
+    explorer_folder_window, lock_key_announcements, measure, menu_and_settings_dialog,
+    notepad_say_all, notepad_spelling_errors, object_navigation_in_settings,
+    object_navigation_over_uia, password, quick_link_menu, rapid_tabbing_in_settings,
+    return_after_retirement, return_from_a_held_application, review_cursor, review_words,
     second_application_and_verbatim_menu, selection_keys, settings_combo_box_expanded,
     settings_dialog_keys, settings_search_suggestions, settings_search_suggestions_reentered,
-    settings_system_page, spelling_errors, switch_to_onecore, synth_host_crash_recovery,
+    settings_system_page, speak_time_and_date, spelling_errors, switch_to_onecore,
     system_information_tree, terminal_command_marks, terminal_commands, terminal_editing,
     terminal_flood, terminal_flood_kinds, terminal_footer, terminal_fresh_flood,
     terminal_key_timing, terminal_lists, terminal_overflow, terminal_pager, terminal_progress,
     terminal_review_grid, terminal_review_output, terminal_review_padding, terminal_screens,
     terminal_settings_page, terminal_short_output, terminal_status_bar, terminal_typing,
-    terminal_windows, text_box_say_all, theme_panel, typed_words, word_selection,
+    terminal_windows, text_box_say_all, theme_panel, typed_words, verbatim_lifecycle,
+    word_selection,
 };
 use crate::speech::SpeechFailure;
 
@@ -476,28 +483,54 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         teardown: switch_to_onecore::teardown,
     },
     ScenarioDef {
-        name: "synth_host_crash_recovery",
-        group: Group::Speech,
-        settings: None,
-        local_only: false,
-        quick_retirement: false,
-        document: None,
-        comparable: Comparable::No("it ends Verbatim's synthesizer host"),
-        setup: synth_host_crash_recovery::setup,
-        body: synth_host_crash_recovery::body,
-        teardown: synth_host_crash_recovery::teardown,
-    },
-    ScenarioDef {
-        name: "outpost_crash_recovery",
+        name: "crash_recovery",
         group: Group::Shell,
         settings: None,
         local_only: false,
         quick_retirement: false,
         document: None,
-        comparable: Comparable::No("it ends one of Verbatim's outposts"),
-        setup: outpost_crash_recovery::setup,
-        body: outpost_crash_recovery::body,
-        teardown: outpost_crash_recovery::teardown,
+        comparable: Comparable::No(
+            "it ends Verbatim's synthesizer host, an outpost and its focus listener",
+        ),
+        setup: crash_recovery::setup,
+        body: crash_recovery::body,
+        teardown: crash_recovery::teardown,
+    },
+    ScenarioDef {
+        name: "verbatim_lifecycle",
+        group: Group::Speech,
+        settings: None,
+        local_only: false,
+        quick_retirement: false,
+        document: None,
+        comparable: Comparable::No("it starts a second Verbatim to replace the first"),
+        setup: verbatim_lifecycle::setup,
+        body: verbatim_lifecycle::body,
+        teardown: verbatim_lifecycle::teardown,
+    },
+    ScenarioDef {
+        name: "speak_time_and_date",
+        group: Group::Speech,
+        settings: None,
+        local_only: false,
+        quick_retirement: false,
+        document: None,
+        comparable: Comparable::Yes,
+        setup: speak_time_and_date::setup,
+        body: speak_time_and_date::body,
+        teardown: speak_time_and_date::teardown,
+    },
+    ScenarioDef {
+        name: "alt_tab_switcher",
+        group: Group::Shell,
+        settings: None,
+        local_only: false,
+        quick_retirement: false,
+        document: None,
+        comparable: Comparable::Yes,
+        setup: alt_tab_switcher::setup,
+        body: alt_tab_switcher::body,
+        teardown: alt_tab_switcher::teardown,
     },
     ScenarioDef {
         name: "return_after_retirement",

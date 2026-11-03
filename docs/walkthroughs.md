@@ -506,7 +506,7 @@ Each failure, what notices it, and what happens next
    that answered out of turn. The utterance in flight fails, except that
    one whose host's pipe ended before any of it was relayed is sent once
    more to a fresh host. The next request starts a new host and restores
-   every setting the old one had. The `synth_host_crash_recovery` scenario
+   every setting the old one had. The `crash_recovery` scenario
    kills the host and expects the next announcement in full.
 8. **A synthesizer will not start.** At startup the speech manager tries
    every other registered synthesizer in order, eSpeak NG first, without

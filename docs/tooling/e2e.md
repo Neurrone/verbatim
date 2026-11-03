@@ -449,6 +449,9 @@ losing any of them fails the run:
   `outpost-<image>-<pid>.log` per application, Core's own as
   `outpost-verbatim-<pid>.log`, and `synth-espeak.log`, plus
   `synth-onecore.log` when OneCore was started.
+- `replaced-<pid>`, only for a scenario that started a second Verbatim
+  (`verbatim_lifecycle`): the replaced Verbatim's `stderr.log` and the
+  files of its log directory.
 - `flight-recorder.jsonl`: the reducer's flight recorder, taken before the
   quit, so a passing run has it too.
 - `focus.txt`: Core's focus, its ancestors, and the navigator.

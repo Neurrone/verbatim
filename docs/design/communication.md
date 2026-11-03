@@ -440,7 +440,7 @@ Each point was checked against NVDA and the suite, with what guards it:
 - Arrival order under load: a frame written before a key is reduced before it however busy the reducer is (section 4.5). Guarded by `arrival_order.rs`.
 - No new merging: the relay keeps draining while the reducer is held, so the outbound merge rules act no more than before. Guarded by `arrival_order.rs`.
 - Settings against speech: a setting applied right after a cancel is answered without the cancelled utterance's frames (section 7.2). Guarded by the host's `protocol.rs` tests.
-- Crash recovery: an outpost's pipe end follows every frame before it; a host that dies while a cancelled utterance drains is found at the next request. Guarded by `outpost_crash_recovery` and `synth_host_crash_recovery`.
+- Crash recovery: an outpost's pipe end follows every frame before it; a host that dies while a cancelled utterance drains is found at the next request. Guarded by `crash_recovery`.
 
 ## 18. Wake-ups and CPU
 
