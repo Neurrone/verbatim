@@ -2,21 +2,27 @@
 //! decision machine, checked against a reference model of what the
 //! application should receive (`docs/crates/verbatim-input.md`).
 //!
-//! The alphabet is eleven steps: Right Arrow's press (an auto-repeat when
-//! it is already down) and release, A's, Shift's and the Verbatim
-//! modifier's (Insert's) press and release, T's press, Core's pass-on of
-//! the oldest place in line, and the permit moved to its next value.
-//! Verbatim+Right Arrow and Verbatim+T are bound, and Right Arrow and
-//! Shift+Right Arrow held, so a caret key is also a gesture's key. Steps
-//! are 33 ms apart, inside the multi-press timeout. A release is offered
-//! only for a key down, and a pass-on only while a place waits. The permit
-//! never falls to `None` while a deferred press waits in line: its release
-//! would then pass at once, ahead of the press, the known limitation of
-//! "The hook's hold decision". After
-//! every step the machine's verdict and raised gesture must equal the
-//! model's, and after every sequence, every key let go and every place
-//! passed on, the application must have every key up, having received no
-//! release before its press.
+//! The alphabet is thirteen steps: Right Arrow's press (an auto-repeat
+//! when it is already down) and release, A's, Shift's, Alt's and the
+//! Verbatim modifier's (Insert's) press and release, T's press, Core's
+//! pass-on of the oldest place in line, and the permit moved to its next
+//! value. Verbatim+Right Arrow, Verbatim+T and Verbatim+Alt+T are bound,
+//! and Right Arrow and Shift+Right Arrow held, so a caret key is also a
+//! gesture's key. Steps are 33 ms apart, inside the multi-press timeout. A
+//! release is offered only for a key down, and a pass-on only while a
+//! place waits. The permit never falls to `None` while a deferred press
+//! or a mask waits in line: a release would then pass at once, ahead of
+//! its press or of the mask, the known limitation of "The hook's hold
+//! decision". The walk's `None` stands for a view that lets no key be
+//! held, so the model expects no mask for a gesture made with it; the
+//! hook's other `None`, a view that lets keys be held with no text and
+//! nothing in line, decides as `Defer` does with an empty line, which the
+//! walk covers. After every step the machine's verdict, raised gesture
+//! and mask must equal the model's; the application must receive the mask
+//! between Alt's press and release around a gesture made with Alt down in
+//! it; and after every sequence, every key let go and every place passed
+//! on, the application must have every key up, having received no release
+//! before its press.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
@@ -31,6 +37,7 @@ enum K {
     Right,
     A,
     Shift,
+    Alt,
     Insert,
     T,
 }
@@ -42,6 +49,7 @@ impl K {
             K::Right => (0x27, true),
             K::A => (0x41, false),
             K::Shift => (0xA0, false),
+            K::Alt => (0xA4, false),
             K::Insert => (0x2D, true),
             K::T => (0x54, false),
         }
@@ -56,13 +64,15 @@ enum Step {
     NextPermit,
 }
 
-const STEPS: [Step; 11] = [
+const STEPS: [Step; 13] = [
     Step::Press(K::Right),
     Step::Release(K::Right),
     Step::Press(K::A),
     Step::Release(K::A),
     Step::Press(K::Shift),
     Step::Release(K::Shift),
+    Step::Press(K::Alt),
+    Step::Release(K::Alt),
     Step::Press(K::Insert),
     Step::Release(K::Insert),
     Step::Press(K::T),
@@ -100,6 +110,7 @@ struct Model {
     down: BTreeMap<K, Down>,
     insert_modifier: bool,
     shift: bool,
+    alt: bool,
     lone: Lone,
     last: Option<(&'static str, u64)>,
     count: u8,
@@ -113,6 +124,7 @@ impl Model {
             down: BTreeMap::new(),
             insert_modifier: false,
             shift: false,
+            alt: false,
             lone: Lone::Idle,
             last: None,
             count: 0,
@@ -137,7 +149,7 @@ impl Model {
         }
     }
 
-    fn press(&mut self, key: K, now: u64, permit: HoldPermit) -> (Verdict, Option<(String, u8)>) {
+    fn press(&mut self, key: K, now: u64, permit: HoldPermit) -> Expected {
         let hands = match self.lone {
             Lone::Passing => true,
             Lone::Tapped(at) => key == K::Insert && now - at < TIMEOUT_US,
@@ -157,14 +169,18 @@ impl Model {
         if key == K::Shift {
             self.shift = true;
         }
+        if key == K::Alt {
+            self.alt = true;
+        }
         let swallowed_before = self.down.get(&key).is_some_and(|down| down.swallowed);
         self.down.entry(key).or_default();
-        if matches!(key, K::Right | K::T) && self.insert_modifier && !self.shift {
-            let name = if key == K::Right {
-                "kb:rightarrow+verbatim"
-            } else {
-                "kb:t+verbatim"
-            };
+        let bound = match key {
+            K::Right if !self.alt => Some("kb:rightarrow+verbatim"),
+            K::T if self.alt => Some("kb:alt+t+verbatim"),
+            K::T => Some("kb:t+verbatim"),
+            _ => None,
+        };
+        if let Some(name) = bound.filter(|_| self.insert_modifier && !self.shift) {
             let repeat = if swallowed_before {
                 self.count
             } else {
@@ -178,22 +194,26 @@ impl Model {
                 self.count
             };
             self.down.get_mut(&key).expect("down").swallowed = true;
-            return (Verdict::Swallow, Some((name.to_owned(), repeat)));
+            // Alt's press is never swallowed in this alphabet, so while it
+            // is down it has reached the application.
+            let mask = (self.alt && permit != HoldPermit::None)
+                .then(|| (self.queue(None), self.queue(None)));
+            return (Verdict::Swallow, Some((name.to_owned(), repeat)), mask);
         }
-        if !modifier && key != K::Shift {
+        if !modifier && key != K::Shift && key != K::Alt {
             self.last = None;
         }
         if modifier {
             self.down.get_mut(&key).expect("down").swallowed = true;
-            return (Verdict::Swallow, None);
+            return (Verdict::Swallow, None, None);
         }
-        let held = key == K::Right && !self.insert_modifier;
+        let held = key == K::Right && !self.insert_modifier && !self.alt;
         if held && permit == HoldPermit::HoldAndDefer {
             self.down.get_mut(&key).expect("down").reached = false;
-            return (Verdict::Hold(self.queue(None)), None);
+            return (Verdict::Hold(self.queue(None)), None, None);
         }
         self.down.get_mut(&key).expect("down").reached = true;
-        (self.reach(key, true, permit), None)
+        (self.reach(key, true, permit), None, None)
     }
 
     fn release(&mut self, key: K, now: u64, permit: HoldPermit) -> Verdict {
@@ -208,12 +228,19 @@ impl Model {
         if key == K::Shift {
             self.shift = false;
         }
+        if key == K::Alt {
+            self.alt = false;
+        }
         match self.down.remove(&key) {
             Some(down) if !down.reached => Verdict::Swallow,
             _ => self.reach(key, false, permit),
         }
     }
 }
+
+/// What the model expects of a key transition: its verdict, the gesture
+/// it raised with its count, and the places of its mask.
+type Expected = (Verdict, Option<(String, u8)>, Option<(u32, u32)>);
 
 /// What a place in line sends the application when passed on.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -222,6 +249,8 @@ enum Sent {
     Held(K),
     /// A deferred transition.
     Transition(K, bool),
+    /// A mask's press or release.
+    Mask(bool),
 }
 
 /// The machine, the model, and what the application has received.
@@ -235,14 +264,21 @@ struct World {
     line: VecDeque<(u32, Sent)>,
     app_down: BTreeSet<K>,
     places: BTreeSet<u32>,
+    /// A gesture was made with Alt down in the application, which has not
+    /// received a mask since: Alt's release must not reach it now.
+    mask_due: bool,
     trail: Vec<Step>,
 }
 
 impl World {
     fn new() -> Self {
         let id = |raw| GestureId::parse(raw).expect("valid id");
-        let map = GestureMap::new([id("kb:rightarrow+verbatim"), id("kb:t+verbatim")])
-            .with_held([id("kb:rightarrow"), id("kb:shift+rightarrow")]);
+        let map = GestureMap::new([
+            id("kb:rightarrow+verbatim"),
+            id("kb:t+verbatim"),
+            id("kb:alt+t+verbatim"),
+        ])
+        .with_held([id("kb:rightarrow"), id("kb:shift+rightarrow")]);
         Self {
             machine: DecisionMachine::new(DecisionConfig::default(), map),
             model: Model::new(),
@@ -252,6 +288,7 @@ impl World {
             line: VecDeque::new(),
             app_down: BTreeSet::new(),
             places: BTreeSet::new(),
+            mask_due: false,
             trail: Vec::new(),
         }
     }
@@ -265,7 +302,7 @@ impl World {
                     || !self
                         .line
                         .iter()
-                        .any(|&(_, sent)| matches!(sent, Sent::Transition(_, true)))
+                        .any(|&(_, sent)| matches!(sent, Sent::Transition(_, true) | Sent::Mask(_)))
             }
             Step::Press(_) => true,
         }
@@ -273,6 +310,12 @@ impl World {
 
     /// The application receives `key`'s transition.
     fn app(&mut self, key: K, pressed: bool) -> Result<(), String> {
+        if key == K::Alt && !pressed && self.mask_due {
+            return Err(
+                "Alt's release reached the application with no mask after a gesture made with it down"
+                    .to_owned(),
+            );
+        }
         if pressed {
             self.app_down.insert(key);
         } else if !self.app_down.remove(&key) {
@@ -313,6 +356,7 @@ impl World {
                     num_lock: false,
                     source: KeySource::User,
                     permit: self.permit,
+                    may_mask: self.permit != HoldPermit::None,
                 });
                 let raised = decision
                     .emitted
@@ -320,14 +364,20 @@ impl World {
                 let expected = if pressed {
                     self.model.press(key, self.now, self.permit)
                 } else {
-                    (self.model.release(key, self.now, self.permit), None)
+                    (self.model.release(key, self.now, self.permit), None, None)
                 };
-                if (decision.verdict, raised.clone()) != expected {
+                if (decision.verdict, raised.clone(), decision.mask) != expected {
                     return Err(format!(
-                        "{key:?} {}: the machine {:?} {raised:?}, the model {expected:?}",
+                        "{key:?} {}: the machine {:?} {raised:?} {:?}, the model {expected:?}",
                         if pressed { "down" } else { "up" },
-                        decision.verdict
+                        decision.verdict,
+                        decision.mask
                     ));
+                }
+                if let Some((press, release)) = decision.mask {
+                    self.push(press, Sent::Mask(true))?;
+                    self.push(release, Sent::Mask(false))?;
+                    self.mask_due = true;
                 }
                 if pressed {
                     self.user_down.insert(key);
@@ -353,6 +403,7 @@ impl World {
                         self.app(key, false)?;
                     }
                     Sent::Transition(key, pressed) => self.app(key, pressed)?,
+                    Sent::Mask(pressed) => self.mask_due &= !pressed,
                 }
             }
             Step::NextPermit => {
@@ -452,6 +503,23 @@ fn every_sequence_of_up_to_five_steps_matches_the_model() {
             Verdict::Pass
         ]
     );
+    // Verbatim+Alt+T made with Alt down in the application: its mask
+    // takes places 1 and 2, and Alt's release waits behind it.
+    assert_eq!(
+        verdicts(&[
+            Press(K::Alt),
+            Press(K::Insert),
+            NextPermit,
+            Press(K::T),
+            Release(K::Alt)
+        ]),
+        [
+            Verdict::Pass,
+            Verdict::Swallow,
+            Verdict::Swallow,
+            Verdict::Defer(3)
+        ]
+    );
     let mut failures = Vec::new();
     let walked = walk(&World::new(), 5, &mut failures);
     assert_eq!(failures, Vec::<String>::new());
@@ -460,4 +528,4 @@ fn every_sequence_of_up_to_five_steps_matches_the_model() {
 
 /// The number of sequences the walk takes, so that a change to the
 /// alphabet or its pruning is seen.
-const WALKED: u64 = 18_929;
+const WALKED: u64 = 38_446;

@@ -190,6 +190,11 @@ pub struct KeyInput {
     pub source: KeySource,
     /// What Core's view lets the machine do with it.
     pub permit: HoldPermit,
+    /// Whether Core's view lets keys be held in the window it names
+    /// (`holds_keys`), whether or not that window is still in front: a
+    /// bound gesture swallowed while it is set gets a mask
+    /// ([`Decision::mask`]).
+    pub may_mask: bool,
 }
 
 /// What the hook does with a key transition: pass it, or swallow it, for
@@ -254,6 +259,17 @@ pub struct Decision {
     /// The lock key whose new state is announced: one pressed and passed
     /// to the operating system, not as the Verbatim modifier shared.
     pub toggle: Option<ToggleKey>,
+    /// The places in line of the mask's press and release, two deferred
+    /// transitions of [`VK_MASK`] the application is sent after a bound
+    /// gesture swallowed while Alt, a Windows key, or Control and Shift
+    /// together are down in it, so that the modifier does not act alone
+    /// when released: Alt opening the menu bar, the Windows key Start, or
+    /// Control+Shift switching the keyboard layout (`docs/parity/input.md`,
+    /// "A modifier released after a command"). Only the user's gestures
+    /// get one, while [`KeyInput::may_mask`] is set, and only modifiers
+    /// whose press reached the application count, since a swallowed
+    /// press has its release swallowed.
+    pub mask: Option<(u32, u32)>,
 }
 
 impl Decision {
@@ -267,6 +283,7 @@ impl Decision {
             observed: None,
             typing: PressReport::Nothing,
             toggle: None,
+            mask: None,
         }
     }
 
@@ -317,6 +334,10 @@ const VK_VOLUME_UP: u16 = 0xAF;
 /// A key Windows does not know, which some devices report for events such
 /// as a gyroscope moving.
 const VK_UNKNOWN: u16 = 0xFF;
+/// The key a mask presses and releases ([`Decision::mask`]): one Windows
+/// does not know, so the application does nothing with it but see that
+/// the modifier held did not act alone.
+pub const VK_MASK: u16 = VK_UNKNOWN;
 
 /// Identity of a physical key: the virtual-key code paired with the extended
 /// flag, so an extended key and its numpad twin are distinct keys.
@@ -477,6 +498,12 @@ impl LoneModifier {
 ///   press is held back for its caret to be read and sent again by Core,
 ///   and every later transition that would pass waits behind it in line
 ///   (`docs/design/key-holding.md`).
+/// - A bound gesture swallowed while Alt, a Windows key, or Control and
+///   Shift together are down in the application puts a mask behind it in
+///   line, the unknown key pressed and released ([`Decision::mask`]), so
+///   the modifier's release does not open a menu, Start, or switch the
+///   keyboard layout, as in NVDA; while it waits, the modifier's release
+///   is deferred behind it like any other transition.
 /// - Injected keys are decided exactly like physical ones, which is what lets
 ///   the control plane drive real gestures with synthetic input.
 /// - In share mode ([`DecisionConfig::share_modifier`]) the modifier's own
@@ -562,6 +589,7 @@ impl DecisionMachine {
             num_lock,
             source,
             permit,
+            may_mask,
         } = input;
         let mut decision = if event.pressed {
             let speech = self.speech_effect(event);
@@ -573,7 +601,31 @@ impl DecisionMachine {
         };
         decision.verdict = self.place(event, source, permit, &decision);
         report(event, source, &mut decision);
+        if decision.emitted.is_some()
+            && source == KeySource::User
+            && may_mask
+            && self.modifiers_may_act_alone()
+        {
+            decision.mask = Some((
+                self.queue(Some((VK_MASK, true))),
+                self.queue(Some((VK_MASK, false))),
+            ));
+        }
         decision
+    }
+
+    /// Whether the modifiers down in the application could act if
+    /// released alone: Alt or a Windows key, or Control and Shift
+    /// together. Only modifiers whose press reached the application, or
+    /// is deferred to, count.
+    fn modifiers_may_act_alone(&self) -> bool {
+        let reached = |vks: &[u16]| {
+            self.held_modifiers.iter().any(|key| {
+                vks.contains(&key.0) && self.keys_down.get(key).is_some_and(|down| down.reached)
+            })
+        };
+        reached(&[0x12, 0xA4, 0xA5, 0x5B, 0x5C])
+            || (reached(&[0x11, 0xA2, 0xA3]) && reached(&[0x10, 0xA0, 0xA1]))
     }
 
     /// Notes that the key Core passed on with place `place` reached the
@@ -1007,6 +1059,7 @@ mod tests {
             num_lock: false,
             source: KeySource::User,
             permit: HoldPermit::None,
+            may_mask: false,
         }
     }
 
@@ -1955,5 +2008,202 @@ mod tests {
                 (Verdict::Pass, None, None, PressReport::Nothing)
             );
         }
+    }
+
+    const ALT: u16 = 0xA4;
+    const HOME: u16 = 0x24;
+    const LEFT_WINDOWS: u16 = 0x5B;
+    const LEFT_SHIFT: u16 = 0xA0;
+    const LEFT_CONTROL: u16 = 0xA2;
+
+    /// The user's `event` at `now` with `permit`, where Core's view lets
+    /// keys be held, so that a gesture may be masked.
+    fn masking(permit: HoldPermit, event: KeyEvent, now: u64) -> KeyInput {
+        KeyInput {
+            may_mask: true,
+            ..with(permit, event, now)
+        }
+    }
+
+    /// The mask of each press of `keys`, each a key and whether it is
+    /// extended, with nothing in line and a mask allowed.
+    fn masks(m: &mut DecisionMachine, keys: &[(u16, bool)]) -> Vec<Option<(u32, u32)>> {
+        keys.iter()
+            .map(|&(vk, extended)| {
+                m.on_key(masking(HoldPermit::None, down(vk, extended), START))
+                    .mask
+            })
+            .collect()
+    }
+
+    /// Verbatim+Alt+Home with nothing in line: the gesture is swallowed
+    /// with a mask behind it, the unknown key's press and release in line;
+    /// Home's release is swallowed, and Alt's, which would pass, waits
+    /// behind the mask. Once the mask and Alt's release come back passed
+    /// on, Alt passes again and a second press counts as a double press,
+    /// masked in its turn.
+    #[test]
+    fn a_gesture_with_alt_down_is_masked_and_alts_release_waits_behind_it() {
+        let mut m = machine(DecisionConfig::default(), &["kb:verbatim+alt+home"]);
+        let none = HoldPermit::None;
+        let defer = HoldPermit::Defer;
+        let mut t = START;
+        for (repeat, first) in [(0, 1), (1, 4)] {
+            assert_eq!(m.on_key(masking(none, down(INSERT, true), t)).mask, None);
+            assert_eq!(verdict(&mut m, none, down(ALT, false), t), Verdict::Pass);
+            assert_eq!(
+                m.on_key(masking(none, down(HOME, true), t)),
+                Decision {
+                    verdict: Verdict::Swallow,
+                    emitted: Some(RaisedGesture {
+                        gesture: GestureId::parse("kb:verbatim+alt+home").expect("valid id"),
+                        repeat,
+                    }),
+                    speech: Some(KeySpeechEffect::Cancel),
+                    shared_modifier: false,
+                    observed: None,
+                    typing: PressReport::Nothing,
+                    toggle: None,
+                    mask: Some((first, first + 1)),
+                }
+            );
+            assert_eq!(
+                m.on_key(masking(defer, up(HOME, true), t)).verdict,
+                Verdict::Swallow
+            );
+            assert_eq!(
+                m.on_key(masking(defer, up(ALT, false), t)).verdict,
+                Verdict::Defer(first + 2)
+            );
+            assert_eq!(
+                m.on_key(masking(defer, up(INSERT, true), t)).verdict,
+                Verdict::Swallow
+            );
+            assert_eq!(
+                m.deferred_transitions().collect::<Vec<_>>(),
+                [(VK_MASK, true), (VK_MASK, false), (ALT, false)]
+            );
+            m.passed_on(first + 2);
+            t += ms(100);
+        }
+    }
+
+    /// Alt held before the Verbatim key, a Windows key, and Control and
+    /// Shift together each get a mask behind the gesture; Control or Shift
+    /// alone does not, nor does a chord nothing is bound to.
+    #[test]
+    fn only_alt_a_windows_key_or_control_and_shift_together_are_masked() {
+        // The keys pressed in turn, and the last press's mask.
+        type Case = (&'static [(u16, bool)], Option<(u32, u32)>);
+        let ids = [
+            "kb:verbatim+alt+home",
+            "kb:verbatim+leftwindows+x",
+            "kb:verbatim+control+shift+x",
+            "kb:verbatim+control+x",
+            "kb:verbatim+shift+x",
+        ];
+        let cases: [Case; 6] = [
+            (&[(ALT, false), (INSERT, true), (HOME, true)], Some((1, 2))),
+            (
+                &[(LEFT_WINDOWS, true), (INSERT, true), (X, false)],
+                Some((1, 2)),
+            ),
+            (
+                &[
+                    (LEFT_CONTROL, false),
+                    (LEFT_SHIFT, false),
+                    (INSERT, true),
+                    (X, false),
+                ],
+                Some((1, 2)),
+            ),
+            (&[(LEFT_CONTROL, false), (INSERT, true), (X, false)], None),
+            (&[(LEFT_SHIFT, false), (INSERT, true), (X, false)], None),
+            (&[(ALT, false), (INSERT, true), (Z, false)], None),
+        ];
+        for (keys, mask) in cases {
+            let mut m = machine(DecisionConfig::default(), &ids);
+            let mut expected = vec![None; keys.len() - 1];
+            expected.push(mask);
+            assert_eq!(masks(&mut m, keys), expected, "{keys:?}");
+        }
+    }
+
+    /// A modifier whose own press was swallowed, as a gesture's, never
+    /// reached the application, and its release is swallowed too, so it
+    /// cannot act alone: with Verbatim+Left Alt bound, Alt's press is that
+    /// gesture, and Verbatim+Alt+Home after it gets no mask; likewise
+    /// with Verbatim+Left Control bound, Shift pressed after it, and
+    /// Verbatim+Control+Shift+X.
+    #[test]
+    fn a_modifier_whose_press_was_swallowed_is_not_masked() {
+        let mut m = machine(
+            DecisionConfig::default(),
+            &["kb:verbatim+leftalt", "kb:verbatim+alt+home"],
+        );
+        let decided: Vec<(Verdict, Option<(u32, u32)>)> =
+            [(INSERT, true), (ALT, false), (HOME, true)]
+                .into_iter()
+                .map(|(vk, extended)| {
+                    let decision = m.on_key(masking(HoldPermit::None, down(vk, extended), START));
+                    (decision.verdict, decision.mask)
+                })
+                .collect();
+        assert_eq!(decided, [(Verdict::Swallow, None); 3]);
+        let mut m = machine(
+            DecisionConfig::default(),
+            &["kb:verbatim+leftcontrol", "kb:verbatim+control+shift+x"],
+        );
+        let decided: Vec<(Verdict, Option<(u32, u32)>)> = [
+            (INSERT, true),
+            (LEFT_CONTROL, false),
+            (LEFT_SHIFT, false),
+            (X, false),
+        ]
+        .into_iter()
+        .map(|(vk, extended)| {
+            let decision = m.on_key(masking(HoldPermit::None, down(vk, extended), START));
+            (decision.verdict, decision.mask)
+        })
+        .collect();
+        assert_eq!(
+            decided,
+            [
+                (Verdict::Swallow, None),
+                (Verdict::Swallow, None),
+                (Verdict::Pass, None),
+                (Verdict::Swallow, None),
+            ]
+        );
+    }
+
+    /// Verbatim+Alt+Home held with auto-repeat: the repeat is masked too,
+    /// its count the press's; while Core's view lets no key be held, or
+    /// for Verbatim's own key, a gesture gets no mask.
+    #[test]
+    fn auto_repeat_is_masked_and_no_mask_without_the_view_or_for_own_keys() {
+        let mut m = machine(DecisionConfig::default(), &["kb:verbatim+alt+home"]);
+        assert_eq!(
+            masks(&mut m, &[(ALT, false), (INSERT, true), (HOME, true)]),
+            [None, None, Some((1, 2))]
+        );
+        let repeat = m.on_key(masking(HoldPermit::Defer, down(HOME, true), START + ms(33)));
+        assert_eq!(
+            (repeat.emitted.map(|raised| raised.repeat), repeat.mask),
+            (Some(0), Some((3, 4)))
+        );
+        let mut m = machine(DecisionConfig::default(), &["kb:verbatim+alt+home"]);
+        for event in [down(ALT, false), down(INSERT, true)] {
+            m.on_key(masking(HoldPermit::None, event, START));
+        }
+        let unmasked = m.on_key(key(down(HOME, true), START));
+        assert_eq!((unmasked.emitted.is_some(), unmasked.mask), (true, None));
+        m.on_key(key(up(HOME, true), START));
+        let own = m.on_key(KeyInput {
+            source: KeySource::Own,
+            ..masking(HoldPermit::None, down(HOME, true), START + ms(600))
+        });
+        assert_eq!((own.emitted.is_some(), own.mask), (true, None));
+        assert!(!m.has_outstanding());
     }
 }

@@ -20,7 +20,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 use verbatim_input::state::{
-    DecisionMachine, HoldPermit, KeyInput, KeySource, PressReport, Verdict,
+    DecisionMachine, HoldPermit, KeyInput, KeySource, PressReport, VK_MASK, Verdict,
 };
 use verbatim_input::{KeyDecision, KeyEvent};
 use verbatim_model::{HookForeground, KeySeq, TraceId};
@@ -228,6 +228,26 @@ fn report_passed(
     }
 }
 
+/// Reports a gesture's mask, if it has one, after the gesture: the unknown
+/// key pressed and released, from its places in line, sent on as any
+/// deferred transition.
+fn report_mask(state: &HookState, mask: Option<(u32, u32)>) {
+    let Some((press, release)) = mask else {
+        return;
+    };
+    for (sequence, pressed) in [(press, true), (release, false)] {
+        (state.reports)(KeyReport::Deferred {
+            stroke: HeldStroke {
+                vk: VK_MASK,
+                scan_code: 0,
+                extended: false,
+                sequence,
+            },
+            pressed,
+        });
+    }
+}
+
 /// Gathers one key transition's inputs, has the machine decide it, carries
 /// out its effect on speech, and reports what it caused, each report
 /// carrying the key's number; `scan_code` and `extra_info` are the key
@@ -265,6 +285,11 @@ pub(crate) fn decide(
         num_lock,
         source,
         permit,
+        // From the view alone, reading no window: a mask decided for a
+        // window no longer in front is dropped by Windows or sent to the
+        // new one, and every transition behind it reads the window in
+        // front for its own permit, since the line is then not empty.
+        may_mask: view.is_some_and(|view| view.holds_keys),
     });
     let stroke = |sequence| HeldStroke {
         vk: event.vk,
@@ -323,6 +348,7 @@ pub(crate) fn decide(
             pressed: event.pressed,
         });
     }
+    report_mask(state, decision.mask);
     // A lock key reaching the operating system is reported, for its new
     // state to be announced, as NVDA announces it.
     if let Some(toggle) = decision.toggle {
@@ -621,6 +647,91 @@ mod tests {
             described(&reports.lock().unwrap()),
             ["held kb:rightarrow #1", "handled 7"]
         );
+    }
+
+    /// Verbatim+Alt+Home in the order the end-to-end agent sends it in one
+    /// batch (Insert, Alt and Home down, then up in reverse), with Core's
+    /// view letting keys be held and the focus without text: the gesture
+    /// is reported, then its mask, the unknown key pressed and released,
+    /// and Alt's release, which reaches the hook before anything is sent
+    /// back, is deferred behind the mask. Once the three come back passed
+    /// on, a second round is the same, its gesture counted as a double
+    /// press.
+    #[test]
+    fn a_gesture_with_alt_down_is_masked_and_alts_release_waits_behind_the_mask() {
+        let reports = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&reports);
+        let foreground = Arc::new(ForegroundView::new());
+        foreground.set(Some(HookForeground {
+            focus_has_text: false,
+            ..IN_FRONT
+        }));
+        let map = GestureMap::new([GestureId::parse("kb:verbatim+alt+home").expect("valid id")]);
+        let mut state = HookState::new(
+            DecisionMachine::new(DecisionConfig::default(), map),
+            (
+                Box::new(|_, _| {}),
+                Box::new(move |report| sink.lock().unwrap().push(report)),
+                foreground,
+            ),
+            typed::Typing::default(),
+        );
+        state.front = window_in_front;
+        let key = |vk, scan_code, extended, pressed| KeyEvent {
+            vk,
+            scan_code,
+            extended,
+            injected: true,
+            pressed,
+        };
+        let insert = |pressed| key(0x2D, 0x52, true, pressed);
+        let alt = |pressed| key(0xA4, 0x38, false, pressed);
+        let home = |pressed| key(0x24, 0x47, true, pressed);
+        let (swallow, pass) = (KeyDecision::Swallow, KeyDecision::Pass);
+        for first in [1, 4] {
+            let mut decided = Vec::new();
+            for (event, extra_info) in [
+                (insert(true), 0),
+                (alt(true), 0),
+                (home(true), 0),
+                (home(false), 0),
+                (alt(false), 0),
+                (insert(false), 0),
+                (key(0xFF, 0, false, true), passed_on_info(first)),
+                (key(0xFF, 0, false, false), passed_on_info(first + 1)),
+                (alt(false), passed_on_info(first + 2)),
+            ] {
+                decided.push(decide(&mut state, event, event.scan_code, extra_info));
+            }
+            assert_eq!(
+                decided,
+                [
+                    swallow, pass, swallow, swallow, swallow, swallow, pass, pass, pass
+                ]
+            );
+        }
+        let reports = reports.lock().unwrap();
+        assert_eq!(
+            described(&reports),
+            [
+                "gesture kb:alt+home+verbatim",
+                "deferred 0xff down #1",
+                "deferred 0xff up #2",
+                "deferred 0xa4 up #3",
+                "gesture kb:alt+home+verbatim",
+                "deferred 0xff down #4",
+                "deferred 0xff up #5",
+                "deferred 0xa4 up #6",
+            ]
+        );
+        let repeats: Vec<u8> = reports
+            .iter()
+            .filter_map(|report| match report {
+                KeyReport::Gesture { gesture, .. } => Some(gesture.repeat),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(repeats, [0, 1]);
     }
 
     /// Each verdict is carried out: a held key is swallowed and reported

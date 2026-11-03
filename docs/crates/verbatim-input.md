@@ -37,7 +37,9 @@ Public API:
   from a user typing numbers; the `source`, `User` or `Own` (the keys
   Verbatim injects for itself); and the `permit` Core's view of the window
   in front gives, `None`, `Defer` or `HoldAndDefer`, the last when the
-  focus also has text. A `Decision` carries the `verdict` (`Pass`,
+  focus also has text; and `may_mask`, whether that view lets keys be
+  held in the window it names, read without checking the window is still
+  in front. A `Decision` carries the `verdict` (`Pass`,
   `Swallow`, `Hold(place)` or `Defer(place)`), the gesture raised if any
   (a `RaisedGesture`, which the hook stamps with a trace id as it reports
   it, `stamped(trace_id)`, making an `EmittedGesture`), `speech`, the
@@ -46,7 +48,8 @@ Public API:
   that reaches the application reports (the text it types, which the hook
   translates, or, typing none, that it may have edited the text), and
   `toggle`, a lock key passed to the operating system, whose new state is
-  announced. For `Own` input it gives no speech effect, observed gesture
+  announced, and `mask`, the places in line of a mask's press and release
+  (below). For `Own` input it gives no speech effect, observed gesture
   or typing. `passed_on(place)` takes the line of keys held back up to a
   key Core passed on, and changes nothing else; `has_outstanding()` and
   `deferred_transitions()` read the line, for the hook's permit and its
@@ -183,8 +186,21 @@ rules):
   waited for once a later one arrives. Every short sequence of keys,
   pass-ons and permit changes is checked against a reference model by
   `tests/hold_sequences.rs`, except where the permit falls to `None` while
-  a deferred press waits, whose release then passes at once (the design's
-  "Limitations").
+  a deferred press or a mask waits, whose release then passes at once (the
+  design's "Limitations").
+- The menu guard (`docs/parity/input.md`, "A modifier released after a
+  command"): a bound gesture the user pressed, swallowed while `may_mask`
+  is set and while Alt, a Windows key, or Control and Shift together are
+  held with `reached` set, gets a `mask`: two places in line for
+  `VK_MASK` (0xFF, a key Windows does not know), pressed then released,
+  which the app sends on as deferred transitions. The modifier's release,
+  which would pass, is deferred behind them like any transition behind a
+  place in line, so the application sees a key between the modifier's
+  press and release and does not open its menu bar, Start, or switch the
+  keyboard layout. A modifier whose press was swallowed is left out, since
+  its release is swallowed too. Every auto-repeat of the gesture gets one,
+  and the mask passes back through the hook with its place, so it leaves
+  the multi-press count alone.
 - Double-tap passthrough: releasing the modifier with no other key pressed
   during the hold arms a window (`multi_press_timeout`, 500 ms). Pressing
   the same physical key again inside the window hands that whole press to the

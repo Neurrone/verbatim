@@ -49,6 +49,36 @@ caret speech is cancelled, and "line two" is never spoken. With 300 ms
 between the two keys, in each of 2 runs, Down Arrow says "line two" and
 numpad 8 says "line two". Verbatim says "line two" in both cases.
 
+### A modifier released after a command
+
+NVDA, when it runs a script for a gesture whose modifiers could act if
+released alone (Alt opening the menu bar, a Windows key opening Start,
+or Control and Shift together switching the keyboard layout), sends the
+application virtual key 0xFF, a key Windows does not know, pressed and
+released, so the application sees the modifier modify a key; input help
+skips it (`canModifiersPerformAction` and
+`KeyboardInputGesture.executeScript`, `nvda/source/keyboardHandler.py`;
+NVDA issue 3472). Verbatim: **matched**, the same three cases, for each
+bound gesture the user presses, auto-repeats included
+(`verbatim-input`'s `Decision::mask`). Different, with nothing heard of
+it: Verbatim counts only modifiers whose press reached the application,
+where NVDA counts any Alt or Windows key down, since a modifier whose
+press Verbatim swallowed has its release swallowed too and cannot act in
+the application. The mask goes
+through the line of keys held back, so the modifier's release, which the
+hook sees before the mask is sent, is deferred behind it and the order
+the application receives is the modifier's press, the mask, then its
+release. Checked live by the `kb:verbatim+alt+home` and
+`kb:verbatim+alt+end` steps of `text_box_review_cursor` and
+`notepad_review_cursor`; no binding uses a Windows key or Control and
+Shift, so those are unit-tested only. Input help, not yet built (M8.1),
+must skip the guard as NVDA's does. Limitation: no mask is sent to an
+elevated window, nor would one sent reach it, since Windows drops input
+Verbatim sends to a window of higher integrity without uiAccess, so Alt
+released after a Verbatim command there still opens the menu bar; the
+fix is uiAccess (M8.6). A Verbatim gesture pressed with such a modifier
+stuck down, as after the secure desktop, sends a harmless mask.
+
 ### Gesture map / rebindable input, input help mode
 
 Verbatim: **partial**. The map exists; the user rebinding UI and input

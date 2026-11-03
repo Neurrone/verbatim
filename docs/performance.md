@@ -1008,6 +1008,15 @@ machine's taskbar, from a separate process running the outpost's walk,
   thread 687 and 73 ms before, gone after. This was measured before the
   later rework that made the hook take only keys
   (`docs/tooling/measuring.md`).
+- The menu guard (`docs/parity/input.md`, "A modifier released after a
+  command") adds no read, lock or call to a key's decision: whether a
+  gesture is masked is decided from the view already loaded and the
+  machine's own record of the keys down. A masked gesture, one pressed
+  with Alt, a Windows key, or Control and Shift down, posts two more
+  reports, and its two injected mask transitions each wake the hook once,
+  passing without a decision, as NVDA's mask does; the modifier's release
+  behind them is deferred and sent on, one more hook wake. No measure
+  workload presses such a gesture, so no trace was taken.
 
 ### An interrupt
 

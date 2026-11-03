@@ -106,7 +106,8 @@ The hook thread runs at `THREAD_PRIORITY_HIGHEST`
 bare callback with no user pointer, and only ever runs on the thread that
 installed it), gathers each key's inputs for the machine (`KeyInput`: the
 time, Num Lock from the keyboard's own toggle state, a local read, the
-key's source from `dwExtraInfo`, and the permit, below), calls `speech`
+key's source from `dwExtraInfo`, the permit, below, and `may_mask`,
+the view's `holds_keys` with no window read), calls `speech`
 with the decision's speech effect, reports, and carries out the verdict:
 `CallNextHookEx` for `Pass`, and 1 for `Swallow`, `Hold` and `Defer`.
 The machine decides each key whole; the hook rewrites no decision. The
@@ -148,6 +149,17 @@ reported `Typed`, translated with the deferred modifiers ahead of it,
 read from the machine's line, taken as made), so the app sends it on
 after the held key, in the order pressed. The clearing keys, typed
 characters, Enter and any other key are never held for a read.
+
+A gesture's mask (the menu guard, `docs/parity/input.md`, "A modifier
+released after a command") is reported after the gesture as two
+`KeyReport::Deferred`, `VK_MASK` with no scan code, pressed then
+released, each with its place, and the app sends them on like any
+deferred transition. `may_mask` is decided from the view alone, with no
+`GetForegroundWindow` read: every transition behind the mask reads the
+window in front for its own permit, since the line is then not empty.
+A mask decided for a window no longer in front reaches the new one or
+is dropped by Windows, and its places are cleared by the next key passed
+on.
 
 A key held or deferred comes back carrying its place: `dwExtraInfo` holds
 `PASSED_ON_TAG` in its high half and the place in its low half
