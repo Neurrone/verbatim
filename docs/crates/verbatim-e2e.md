@@ -480,8 +480,10 @@ retitles it as it navigates, closed and waited for until it has gone
 before the harness folders are deleted, and a second window of the
 harness's running Windows Terminal. Then the process the agent launched
 must have exited too; one still running after the close timeout is ended,
-with everything it started, through the agent's own handle for it, as at
-a run's start, and that fails the run. A launch that handed its window to
+with everything it started, through the agent's own handles for it
+(`EndLaunch`), as at a run's start, and that fails the run; a launch the
+agent no longer holds has exited, and its pid, which Windows may have
+reused, is never opened. A launch that handed its window to
 another process, as `explorer.exe` does, exited long before, so a clean
 run waits for nothing more. Two kinds of window are still closed by title,
 since nothing else identifies them: the Settings app's window

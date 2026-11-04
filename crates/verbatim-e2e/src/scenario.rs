@@ -48,8 +48,9 @@ use std::sync::{Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::Duration;
 
 use verbatim_agent::protocol::{
-    EventOutcome, ForegroundInfo, ProcessDiagnostics, ProcessExit, ProcessInfo, ProcessState,
-    SwitcherItem, WaitChain, WaitNode, WaitNodeKind, WaitNodeStatus, WindowCondition, WindowInfo,
+    EventOutcome, ForegroundInfo, LaunchEnd, ProcessDiagnostics, ProcessExit, ProcessInfo,
+    ProcessState, SwitcherItem, WaitChain, WaitNode, WaitNodeKind, WaitNodeStatus, WindowCondition,
+    WindowInfo,
 };
 use verbatim_config::{ConfigStore, Settings};
 use verbatim_control::client::{Client as ControlClient, ok_or_error};
@@ -2861,9 +2862,10 @@ impl Scenario {
     /// titled `title`, to exit once its windows have closed, for up to the
     /// close timeout, or not at all when `waited`, since it owned the window
     /// and was waited for already; and when it still runs, ends it, with
-    /// everything in its job, through the agent's own handle, as
+    /// everything in its job, through the agent's own handles, as
     /// [`AgentClient::end_launched`] ends a launch an earlier run left, and
-    /// reports that. A launch that handed its window to another process
+    /// reports that; a launch the agent no longer holds has exited, and its
+    /// pid, which may name another process by then, is never opened. A launch that handed its window to another process
     /// and exited, as `explorer.exe` and a second `WindowsTerminal.exe` do,
     /// has exited long before, so a clean run waits for nothing here. The
     /// job holds only the launch and what it started, never a shared
@@ -2875,30 +2877,18 @@ impl Scenario {
         } else {
             CLOSE_TIMEOUT
         };
-        match self.agent.wait_for_exit(pid, wait) {
-            Ok(ProcessState::Exited { .. }) => return Vec::new(),
-            Ok(ProcessState::Running) => {}
-            Err(error) => {
-                return vec![format!(
-                    "could not wait for process {pid}, launched to open the window titled {title:?}, to exit: {error}"
-                )];
-            }
-        }
-        let ended = self
-            .agent
-            .kill_process(pid)
-            .and_then(|_| self.agent.wait_for_exit(pid, CLOSE_TIMEOUT));
-        vec![match ended {
-            Ok(ProcessState::Exited { .. }) => format!(
-                "process {pid}, launched to open the window titled {title:?}, was still running {CLOSE_TIMEOUT:?} after its windows closed, so it was ended with everything it started"
-            ),
-            Ok(ProcessState::Running) => format!(
-                "process {pid}, launched to open the window titled {title:?}, did not exit within {CLOSE_TIMEOUT:?} of being ended"
-            ),
-            Err(error) => format!(
+        match self.agent.end_launch(pid, wait, CLOSE_TIMEOUT) {
+            Ok(LaunchEnd::Exited) => Vec::new(),
+            Ok(LaunchEnd::Ended) => vec![format!(
+                "process {pid}, launched to open the window titled {title:?}, was still running after its windows closed, so it was ended with everything it started"
+            )],
+            Ok(LaunchEnd::StillRunning) => vec![format!(
+                "process {pid}, launched to open the window titled {title:?}, did not exit after being ended"
+            )],
+            Err(error) => vec![format!(
                 "could not end process {pid}, launched to open the window titled {title:?}: {error}"
-            ),
-        }]
+            )],
+        }
     }
 
     /// Ends Windows 11 Notepad process `owner` once the harness tabs of its

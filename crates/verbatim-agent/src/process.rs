@@ -54,7 +54,7 @@ use windows::Win32::System::Threading::{
 use windows::Win32::UI::WindowsAndMessaging::AllowSetForegroundWindow;
 use windows::core::{PCWSTR, PWSTR};
 
-use crate::protocol::{KillOutcome, ProcessInfo, ProcessState};
+use crate::protocol::{KillOutcome, LaunchEnd, ProcessInfo, ProcessState};
 
 /// Spawns `command` with `args`, and environment (extended, not replaced,
 /// by `env`).
@@ -683,6 +683,52 @@ pub fn kill(pid: u32) -> io::Result<KillOutcome> {
     kill_opened(pid)
 }
 
+/// Ends launch `pid` at cleanup ([`crate::protocol::Request::EndLaunch`]):
+/// waits up to `wait` for it to exit, and if it still runs, terminates its
+/// job and waits up to `ended_wait` for it to go, on copies of the entry's own
+/// handles, so the lock is not held while waiting and `pid` is never
+/// opened afresh. With no entry, it is [`LaunchEnd::Exited`]: an entry is
+/// dropped only five minutes after its child exited and its job emptied
+/// ([`FINISHED_KEPT`]), so a pid without one may name another process.
+///
+/// # Errors
+///
+/// Returns an error if a handle cannot be copied, or a wait or the
+/// termination fails.
+pub fn end_launch(pid: u32, wait: Duration, ended_wait: Duration) -> io::Result<LaunchEnd> {
+    let (child, job) = {
+        let launched = LAUNCHED.lock().unwrap_or_else(PoisonError::into_inner);
+        let Some(entry) = launched.get(&pid) else {
+            return Ok(LaunchEnd::Exited);
+        };
+        (entry.child.try_clone()?, entry.job.try_clone()?)
+    };
+    let child = HANDLE(child.as_raw_handle());
+    if wait_on(child, wait)? {
+        return Ok(LaunchEnd::Exited);
+    }
+    // SAFETY: `job` is an open job handle, owned until the end of this
+    // function.
+    unsafe { TerminateJobObject(HANDLE(job.as_raw_handle()), 1) }.map_err(io::Error::other)?;
+    Ok(if wait_on(child, ended_wait)? {
+        LaunchEnd::Ended
+    } else {
+        LaunchEnd::StillRunning
+    })
+}
+
+/// Waits up to `timeout` on process handle `handle`, open with
+/// synchronize access; true when the process has exited.
+fn wait_on(handle: HANDLE, timeout: Duration) -> io::Result<bool> {
+    let milliseconds = u32::try_from(timeout.as_millis()).unwrap_or(u32::MAX - 1);
+    // SAFETY: the caller keeps `handle` open for the wait.
+    match unsafe { WaitForSingleObject(handle, milliseconds) } {
+        WAIT_OBJECT_0 => Ok(true),
+        WAIT_TIMEOUT => Ok(false),
+        _ => Err(io::Error::last_os_error()),
+    }
+}
+
 /// Terminates `pid`, which this agent did not launch, opening it afresh.
 fn kill_opened(pid: u32) -> io::Result<KillOutcome> {
     let Some(handle) = open_process(pid, PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION)
@@ -1181,6 +1227,33 @@ mod tests {
             wait_for_exit(pid, WAIT).expect("waits"),
             ProcessState::Exited { .. }
         ));
+    }
+
+    #[test]
+    fn ending_a_launch_still_running_ends_it_through_its_own_handles() {
+        let _launching = crate::process::LAUNCHING
+            .read()
+            .unwrap_or_else(PoisonError::into_inner);
+        let pid = long_running();
+        assert_eq!(
+            end_launch(pid, Duration::ZERO, WAIT).expect("ends"),
+            LaunchEnd::Ended
+        );
+        assert!(matches!(
+            status(pid).expect("reads"),
+            ProcessState::Exited { .. }
+        ));
+    }
+
+    #[test]
+    fn ending_a_pid_the_agent_did_not_launch_leaves_it_running() {
+        // This test's own process: running, and never launched by the agent.
+        let pid = std::process::id();
+        assert_eq!(
+            end_launch(pid, Duration::ZERO, WAIT).expect("answers"),
+            LaunchEnd::Exited
+        );
+        assert_eq!(status(pid).expect("reads"), ProcessState::Running);
     }
 
     #[test]

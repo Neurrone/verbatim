@@ -23,7 +23,7 @@ use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use verbatim_agent::protocol::{
     AGENT_PROTOCOL_VERSION, EventOutcome, FocusedElement, ForegroundInfo, Frame, KillOutcome,
-    ProcessDiagnostics, ProcessExit, ProcessInfo, ProcessState, ReplyPayload, Request,
+    LaunchEnd, ProcessDiagnostics, ProcessExit, ProcessInfo, ProcessState, ReplyPayload, Request,
     RequestEnvelope, SessionInfo, SwitcherItem, WaitChain, WindowCondition, WindowInfo,
 };
 use verbatim_control::client::Client as ControlClient;
@@ -418,6 +418,37 @@ impl AgentClient {
                 ..
             } => Ok(outcome),
             other => Err(unexpected("KillProcess", &other)),
+        }
+    }
+
+    /// Ends launch `pid` at cleanup through the agent's own handles: waits
+    /// up to `wait` for it to exit, and if it still runs, ends its job and
+    /// waits up to `ended_wait` for it to go. A pid the agent no longer holds a
+    /// launch for is reported exited, never opened afresh, so a reused pid
+    /// is never ended.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails.
+    pub fn end_launch(
+        &mut self,
+        pid: u32,
+        wait: Duration,
+        ended_wait: Duration,
+    ) -> io::Result<LaunchEnd> {
+        match self.request_waiting(
+            Request::EndLaunch {
+                pid,
+                wait_ms: millis(wait),
+                ended_wait_ms: millis(ended_wait),
+            },
+            wait.saturating_add(ended_wait),
+        )? {
+            Frame::Reply {
+                payload: ReplyPayload::LaunchEnd(end),
+                ..
+            } => Ok(end),
+            other => Err(unexpected("EndLaunch", &other)),
         }
     }
 

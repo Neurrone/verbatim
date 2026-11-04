@@ -30,7 +30,11 @@ Public API:
     the `q` that stops a recording's ffmpeg cleanly), `KillProcess` (a
     launched child with everything in its job), `EndLaunched` (every process the
     agent launched that still runs, ended by its own handle: the
-    pre-launch sweep, never by image name), `ChildProcesses` (the
+    pre-launch sweep, never by image name), `EndLaunch` (protocol version
+    30: one launch at cleanup, waited for and if still running ended with
+    its job, only through the handles kept from its launch; a pid the agent
+    no longer holds a launch for is reported exited and never opened, since
+    it may name another process by then), `ChildProcesses` (the
     processes whose parent is a given pid, such as Verbatim's synthesizer
     host), `JobExits` (the processes that exited in a launched child's job,
     in order, with exit codes and whether the exit was abnormal: how a test

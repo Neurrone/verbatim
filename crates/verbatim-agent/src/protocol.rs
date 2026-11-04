@@ -76,11 +76,12 @@ use serde::{Deserialize, Serialize};
 /// cleanup closes a launched program's windows by its process rather than
 /// their titles, and [`Request::ProcessDiagnostics`], so a launched window
 /// that does not appear is reported with its process's processor time,
-/// modules and a minidump. A test
+/// modules and a minidump; version 30 added [`Request::EndLaunch`], so
+/// cleanup ends a launch only through the agent's own handles. A test
 /// run against an older agent is refused at `Hello`
 /// instead of losing its connection mid-run, or running without the
 /// exclusion.
-pub const AGENT_PROTOCOL_VERSION: u32 = 29;
+pub const AGENT_PROTOCOL_VERSION: u32 = 30;
 
 /// The command of a [`Request::LaunchProcess`] that names the agent's own
 /// executable, wherever it was deployed: the recordings launch
@@ -209,6 +210,22 @@ pub enum Request {
     /// aborted earlier run left behind is ended by its own handle, never by
     /// its image name. Answered by [`ReplyPayload::EndedLaunched`].
     EndLaunched,
+    /// Ends a launch at cleanup: waits up to `wait_ms` for process `pid`,
+    /// which this agent launched, to exit, and if it still runs, terminates
+    /// its job and waits up to `ended_wait_ms` for it to go, all through
+    /// the handles the agent kept from its launch, never by opening `pid`
+    /// afresh, so a reused pid is never ended. A pid with no launch entry
+    /// is reported exited: an entry is kept until five minutes after its
+    /// process exited. Answered by [`ReplyPayload::LaunchEnd`].
+    EndLaunch {
+        /// The OS process id, as returned by a prior
+        /// [`ReplyPayload::Launched`].
+        pid: u32,
+        /// How long to wait for it to exit by itself, in milliseconds.
+        wait_ms: u64,
+        /// How long to wait for it to go once ended, in milliseconds.
+        ended_wait_ms: u64,
+    },
     /// Lists the processes whose parent is `pid`, such as the synthesizer
     /// host a Verbatim started, so a test can act on one process of its own
     /// rather than every process of that name. Answered by
@@ -723,6 +740,8 @@ pub enum ReplyPayload {
     StdinWritten,
     /// Answer to [`Request::KillProcess`].
     Killed(KillOutcome),
+    /// Answer to [`Request::EndLaunch`].
+    LaunchEnd(LaunchEnd),
     /// Answer to [`Request::EndLaunched`]: how many launched processes were
     /// still running and were ended.
     EndedLaunched {
@@ -928,6 +947,17 @@ pub enum KillOutcome {
     Terminated,
     /// The process had already exited; there was nothing to terminate.
     AlreadyExited,
+}
+
+/// Answer to [`Request::EndLaunch`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum LaunchEnd {
+    /// It exited by itself within the wait, or had exited before.
+    Exited,
+    /// It still ran after the wait, and ended once its job was terminated.
+    Ended,
+    /// It still ran after its job was terminated and the second wait.
+    StillRunning,
 }
 
 /// Answer to [`Request::WaitForExit`].

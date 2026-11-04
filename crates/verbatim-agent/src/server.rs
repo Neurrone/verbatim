@@ -301,6 +301,7 @@ fn dispatch(connection: u64, id: u64, request: Request) -> Frame {
             Err(error) => error_frame(id, &error),
         },
         request @ (Request::EndLaunched
+        | Request::EndLaunch { .. }
         | Request::ChildProcesses { .. }
         | Request::JobExits { .. }
         | Request::WaitForJobEmpty { .. }
@@ -483,6 +484,21 @@ fn launch(id: u64, request: Request) -> Frame {
 /// ending the launched children, listing a process's children or a job's
 /// exits, and waiting for a process to exit, a file to appear, or an event
 /// to be set.
+/// Answers [`Request::EndLaunch`].
+fn end_launch(id: u64, pid: u32, wait_ms: u64, ended_wait_ms: u64) -> Frame {
+    match process::end_launch(
+        pid,
+        Duration::from_millis(wait_ms),
+        Duration::from_millis(ended_wait_ms),
+    ) {
+        Ok(end) => Frame::Reply {
+            to: id,
+            payload: ReplyPayload::LaunchEnd(end),
+        },
+        Err(error) => error_frame(id, &error),
+    }
+}
+
 fn process_request(id: u64, request: Request) -> Frame {
     match request {
         Request::EndLaunched => match process::end_launched() {
@@ -527,6 +543,11 @@ fn process_request(id: u64, request: Request) -> Frame {
                 Err(error) => error_frame(id, &error),
             }
         }
+        Request::EndLaunch {
+            pid,
+            wait_ms,
+            ended_wait_ms,
+        } => end_launch(id, pid, wait_ms, ended_wait_ms),
         Request::WaitForExit { pid, timeout_ms } => {
             match process::wait_for_exit(pid, Duration::from_millis(timeout_ms)) {
                 Ok(state) => Frame::Reply {

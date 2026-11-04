@@ -2554,7 +2554,7 @@ fn run(def: &ScenarioDef) {
         if body_outcome.is_ok() && problems.is_empty() {
             "pass"
         } else {
-            "fail; its report is in the failures section at the end of the run"
+            "fail"
         }
     );
     let problems = problems.join("\n");
@@ -2574,8 +2574,8 @@ fn run(def: &ScenarioDef) {
         )),
     };
     // Every failure is reported in full, with the inputs around it: the
-    // panic carries the whole report, which the suite's runner prints
-    // once, in its `failures:` section.
+    // panic carries the whole report, which the panic hook prints here,
+    // once; the `failures:` section only points to it.
     if let Some((message, point)) = failure {
         let lines = artifacts::failure_lines(&dir, point.trace, point.window_us(&timeline))
             .map_err(|error| error.to_string());
