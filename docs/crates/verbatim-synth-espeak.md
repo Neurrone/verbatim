@@ -47,12 +47,14 @@ Where it builds. With `VERBATIM_ESPEAK_DIR` unset, the CMake build goes
 to the crate's own output directory, so every target directory builds
 it. When it is set and the submodule is checked out at a commit with no
 changes to its tracked files, the build goes to
-`<VERBATIM_ESPEAK_DIR>/<commit>-<architecture>` instead, shared by every
+`<VERBATIM_ESPEAK_DIR>/<commit>-<architecture>-r<recipe>` instead, the
+recipe being `RECIPE` in `build.rs`, raised when the recipe changes, so
+trees building different recipes of one commit never remove each other's
+folder while it is copied from or linked with. It is shared by every
 target directory and worktree as `VERBATIM_WX_DIR` is for wxWidgets: a
 lock file serializes builds that start together, and once built the
-folder keeps only `lib`, `espeak-ng-data` and a stamp naming the recipe
-(`RECIPE` in `build.rs`, raised when the recipe changes), so later builds
-skip CMake. A changed source is built in the output directory, so it
+folder keeps only `lib`, `espeak-ng-data` and a stamp naming the recipe,
+so later builds skip CMake. A changed source is built in the output directory, so it
 neither reuses nor replaces the commit's build. GitHub Actions caches the
 folder, keyed on the submodule's commit and `build.rs`.
 

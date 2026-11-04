@@ -380,6 +380,9 @@ fn gate() -> Result<(), String> {
 /// workspace.
 pub fn gate_summary(crates: &[&str], lines: &Lines) -> (String, bool) {
     let mut summary = String::new();
+    // A crate with no lines measured means the profile or the paths did
+    // not match, never that the crate is covered, so it fails the gate.
+    let mut unmeasured = Vec::new();
     for name in crates {
         let prefix = format!("crates/{name}/");
         let own: Lines = lines
@@ -387,6 +390,9 @@ pub fn gate_summary(crates: &[&str], lines: &Lines) -> (String, bool) {
             .filter(|(path, _)| path.starts_with(&prefix))
             .map(|(path, counts)| (path.clone(), counts.clone()))
             .collect();
+        if own.values().map(tally).all(|(found, _)| found == 0) {
+            unmeasured.push(*name);
+        }
         summary.push_str(&summary_line(name, &own));
     }
     summary.push_str(&summary_line("total", lines));
@@ -394,7 +400,14 @@ pub fn gate_summary(crates: &[&str], lines: &Lines) -> (String, bool) {
         .values()
         .map(tally)
         .fold((0, 0), |(found, hit), (f, h)| (found + f, hit + h));
-    let passed = hit * 100 >= GATE_PERCENT * found;
+    let passed = unmeasured.is_empty() && hit * 100 >= GATE_PERCENT * found;
+    if !unmeasured.is_empty() {
+        let _ = writeln!(
+            summary,
+            "no lines were measured for {}",
+            unmeasured.join(", ")
+        );
+    }
     let _ = writeln!(
         summary,
         "gate: {} (the total must be at least {GATE_PERCENT}%)",
@@ -902,6 +915,23 @@ mod tests {
             ],
         )]);
         assert!(gate_summary(&["a"], &read).1);
+    }
+
+    #[test]
+    fn the_gate_fails_when_a_crate_has_no_lines_measured() {
+        let read = lines(&[("crates/a/src/lib.rs", &[(1, 1)])]);
+        assert_eq!(
+            gate_summary(&["a", "b"], &read),
+            (
+                "a: 100.0% of lines (1 of 1)\n\
+                 b: 0.0% of lines (0 of 0)\n\
+                 total: 100.0% of lines (1 of 1)\n\
+                 no lines were measured for b\n\
+                 gate: failed (the total must be at least 90%)\n"
+                    .to_owned(),
+                false
+            )
+        );
     }
 
     #[test]

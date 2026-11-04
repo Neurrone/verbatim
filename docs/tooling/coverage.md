@@ -77,7 +77,9 @@ the unit tests of `LINUX_CRATES` instrumented, as `cargo xtask coverage
 gate`, rather than through a plain `cargo test`, and fails when the line
 coverage of the nine platform-neutral and three logic crates
 (`xtask/src/tiers.rs`) over their total is below 90% (Dickson,
-2026-11-04). It prints each crate's figure and the total. Test code is
+2026-11-04). It prints each crate's figure and the total, and also fails
+when any of those crates has no lines measured, since that means the
+profile's paths did not match, not that the crate is covered. Test code is
 left out: only each crate's `src` folder counts, without the files of
 test modules declared as `#[cfg(test)] mod name;` and without the lines
 of items marked `#[cfg(test)]`. The gate measures these crates alone

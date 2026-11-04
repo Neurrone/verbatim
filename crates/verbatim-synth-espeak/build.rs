@@ -136,7 +136,10 @@ fn shared_dir(source: &Path) -> Option<PathBuf> {
         return None;
     }
     let arch = std::env::var("CARGO_CFG_TARGET_ARCH").expect("set by cargo");
-    Some(root.join(format!("{commit}-{arch}")))
+    // The recipe is in the name, so trees building different recipes of
+    // one commit use different folders, and neither removes the folder
+    // the other is copying from or linking with.
+    Some(root.join(format!("{commit}-{arch}-r{RECIPE}")))
 }
 
 /// The build in the shared directory `dir`, made first when it does not
