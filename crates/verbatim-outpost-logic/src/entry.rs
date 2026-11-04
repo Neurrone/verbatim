@@ -205,8 +205,12 @@ pub enum Item {
         /// Whether the reducer has put it directly behind the noted caret.
         behind_noted: bool,
     },
-    /// The gap record's bound has passed: the record, still open, is read.
-    GapBound,
+    /// The gap record's bound has passed: the record, still open, is read,
+    /// when `bound` is still its bound.
+    GapBound {
+        /// The number of the bound whose test queued it.
+        bound: u64,
+    },
     /// A drop for no window above its sender answered the open gap record,
     /// whose read takes the drop's marker's place, stamped with the
     /// record's stamp, the entry's observation; `window` is the record's

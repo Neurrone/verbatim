@@ -498,7 +498,7 @@ impl InHand {
                     Item::NodesHeld { .. } => "the nodes Core holds",
                     Item::NotedCaret { .. } => "a noted caret",
                     Item::Barrier { .. } => "the idle barrier",
-                    Item::GapBound => "the gap record's bound",
+                    Item::GapBound { .. } => "the gap record's bound",
                     Item::GapRead { .. } => "the gap record's read",
                 },
                 Some(entry.trace),
@@ -859,14 +859,17 @@ impl Reducer {
         }
         let reads = self.intake.gap().awaits() == Some(Awaits::Focus);
         let trace = self.intake.gap().trace();
+        let bound = self.intake.gap().bound_number();
         if let Some(change) = title {
             self.commit(request, &change, now, effects);
         }
-        match trace {
-            Some(trace) if reads && self.intake.gap().is_open() => self.intake.push_gap_bound(
-                Entry::own(Item::GapBound, trace, now.observed_us),
-                &self.facts.marks,
-            ),
+        match (trace, bound) {
+            (Some(trace), Some(bound)) if reads && self.intake.gap().is_open() => {
+                self.intake.push_gap_bound(
+                    Entry::own(Item::GapBound { bound }, trace, now.observed_us),
+                    &self.facts.marks,
+                );
+            }
             _ => self.intake.gap_mut().bound_passed(),
         }
     }
@@ -1547,9 +1550,9 @@ impl Reducer {
                     live,
                 });
             }
-            Item::GapBound => {
+            Item::GapBound { bound } => {
                 if let Ok(Some(GapRead { window, stamp_us })) =
-                    self.intake.gap_mut().bound_reached(now.observed_us)
+                    self.intake.gap_mut().bound_reached(bound, now.observed_us)
                 {
                     let read = Entry {
                         item: Item::GapRead { window },
@@ -1852,7 +1855,7 @@ fn budget(entry: &Entry, now: Now, handling: Duration) -> (Duration, Option<(Req
         | Item::Uia(_)
         | Item::NotedCaret { .. }
         | Item::Barrier { .. }
-        | Item::GapBound
+        | Item::GapBound { .. }
         | Item::GapRead { .. } => (handling, None),
         // Releasing thousands of objects after a tree dump takes a while.
         Item::NodesHeld { .. } => (WALK_DEADLINE, None),
