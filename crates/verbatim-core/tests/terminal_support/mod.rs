@@ -370,6 +370,10 @@ pub fn words(segments: &[verbatim_model::UtteranceSegment]) -> String {
 
 /// A reducer reading the simulated terminal through Core's terminal model,
 /// with playback that reaches each utterance's marks as it plays.
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent switches a test sets for how the outpost answers and when speech plays"
+)]
 pub struct Session {
     pub state: SrState,
     pub outpost: Outpost,
