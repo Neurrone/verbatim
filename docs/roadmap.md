@@ -936,6 +936,17 @@ remains, in order:
   was expected (run 41333390347, [the known failures](flaky-tests.md));
   find the cause, the typed-character rules suspected (Dickson,
   2026-11-03).
+- A typed line's wrap shown over two reads: an empty row that appears
+  below the typed line, where the caret already is, is not new output.
+  The console host showed the row in a read 13 ms after the one showing
+  the typed character, and Core spoke it "blank" as the key's answer
+  (`conhost_typing`, run 41859263092; Dickson, 2026-11-04).
+- Whether a key such as Control+Shift+Tab, which Windows Terminal takes
+  for its own tab switcher, opens a caret watch in the terminal: the
+  watch's read waited 2 s on Windows Terminal opening the switcher, and
+  the abandoned worker played the not-responding sound in place of the
+  switcher's speech (`windows_terminal_tabs`, run 41859263092; Dickson,
+  2026-11-04).
 - End-to-end scenarios: the existing terminal scenarios brought back to
   passing; then cargo's build bar below its output; the landing rule's
   keys; Control+W, Control+U and Control+K; tab completion; suggestions; a
