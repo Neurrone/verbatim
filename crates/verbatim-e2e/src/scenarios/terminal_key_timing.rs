@@ -32,12 +32,12 @@
 //!   Then the command marks (`docs/design/terminal-model.md`, "Features
 //!   and settings"): `echo three` is entered, heard as "three" and the
 //!   prompt, and Enter on each typed line has marked it.
-//!   Verbatim+Alt+Up Arrow six times moves the review cursor to each
+//!   Verbatim+Alt+Up Arrow five times moves the review cursor to each
 //!   command's line and speaks it, newest first: "echo three", `short.ps1`'s
 //!   line, `gated.ps1`'s line, and "echo one" twice; the last three lie
 //!   more than a hundred rows above the prompt, above the rows Core keeps,
 //!   so each is found by the outpost's search, the match nearest its own
-//!   mark. A seventh press says nothing, past the oldest mark, and
+//!   mark. A sixth press says nothing, past the oldest mark, and
 //!   Verbatim+Alt+Down Arrow goes back to the newer "echo one", then to
 //!   `gated.ps1`'s line. Last, `cls`, heard as the prompt, which in both
 //!   terminals erases the history with the marks' lines

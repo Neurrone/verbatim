@@ -872,8 +872,8 @@ remains, in order:
   ([the evidence](../experiments/a-redraw-in-a-keys-window-is-spoken-as-its-answer/readme.md))
   through the rules to confirm the cause, then ask whether a key's
   ownership of output should rest on firmer evidence than its window.
-  The window fails the other way too: in `windows_terminal_clear_flood`
-  (run 41693694156) Windows Terminal showed a typed "." 472 ms after the
+  The window fails the other way too: in `windows_terminal_clear_flood`,
+  since retired (run 41693694156), Windows Terminal showed a typed "." 472 ms after the
   key, under the runner's load, so it was read as output and spoken "."
   by the timer rather than echoed "dot" (Claude, 2026-11-04, pending
   Dickson's acceptance).

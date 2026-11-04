@@ -15,7 +15,7 @@ Scenarios: the `windows_terminal_` scenarios generally, for example `windows_ter
 
 ## Windows Terminal launch speech, not this cause
 
-- Scenarios: the `*_line_key_flood`, `*_typing` and `*_commands` Windows Terminal scenarios.
+- Scenarios: the `*_up_typing` (since merged into `*_line_key_flood`), `*_typing` and `*_commands` Windows Terminal scenarios.
 - How: the launch focus sometimes speaks "... terminal" without "... window", and the desktop's announcement is sometimes cancelled.
 - Cause: not found; possibly the first entry's.
 - Fix: [M6.4 terminal residuals](roadmap.md#m64--terminal-residuals).
