@@ -820,8 +820,8 @@ Each exists in both terminals unless named for one.
   a short output with nothing lost; and Verbatim+Alt+Up Arrow and
   Verbatim+Alt+Down Arrow move between the commands entered, those the
   flood carried above the rows Core keeps found by the outpost's search,
-  then after `cls`, which erases them in Windows Terminal and keeps them
-  in the console host (`*_control_flood`). Up Arrow then a character typed
+  then after `cls`, which erases them in both terminals
+  (`*_control_flood`). Up Arrow then a character typed
   once its line is heard says the recalled line and echoes the character,
   and Up Arrow during a flood's speech cuts it and says the recalled line
   (`*_line_key_flood`).

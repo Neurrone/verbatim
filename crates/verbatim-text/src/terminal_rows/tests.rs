@@ -436,8 +436,9 @@ fn a_clear_and_a_reprint_keep_the_last_reads_rows() {
 }
 #[test]
 fn output_repeated_after_cls_is_not_a_reprint() {
-    // The console host's cls pushes the screen into the history, so the
-    // output printed again is below the old screen, and new.
+    // The console host's erase of the display (`ESC[2J`) pushes the
+    // screen into the history, so the output printed again is below the
+    // old screen, and new.
     let mut watch = Watch::console(10, 3, 20);
     watch.write("ls1\r\nls2\r\n");
     watch.write("\x1b[H\x1b[2J");

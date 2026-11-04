@@ -39,13 +39,10 @@
 //!   so each is found by the outpost's search, the match nearest its own
 //!   mark. A seventh press says nothing, past the oldest mark, and
 //!   Verbatim+Alt+Down Arrow goes back to the newer "echo one", then to
-//!   `gated.ps1`'s line. Last, `cls`, heard as the prompt. In Windows
-//!   Terminal it erases the history with the marks' lines, and
-//!   Verbatim+Alt+Up Arrow says nothing. In the console host it pushes the
-//!   screen into the history (`docs/design/terminal-model.md`, "The
-//!   terminals"), so the marks stay, and Verbatim+Alt+Up Arrow from the
-//!   prompt, where the review cursor followed the caret, says the newest, `cls`'s own
-//!   line. NVDA has no command marks, so each press is Verbatim's own
+//!   `gated.ps1`'s line. Last, `cls`, heard as the prompt, which in both
+//!   terminals erases the history with the marks' lines
+//!   (`docs/design/terminal-model.md`, "The terminals"), so
+//!   Verbatim+Alt+Up Arrow says nothing. NVDA has no command marks, so each press is Verbatim's own
 //!   (`docs/parity/terminals.md`, "Reading a terminal on demand"); the
 //!   marks steps come after Control's timing-dependent part, so they are
 //!   asserted exactly.
@@ -278,11 +275,11 @@ pub(crate) fn body_control_console_host(scenario: &mut Scenario, state: &mut Sce
     control_steps(scenario, &directory(state));
     shift_steps(scenario);
     marks_steps(scenario);
-    // The console host's `cls` pushes the screen into the history, so the
-    // marks stay, the newest on `cls`'s own line.
+    // The console host's `cls` erases the history too, with the marks'
+    // lines.
     terminal::type_with_echo(scenario, "cls", terminal::Echo::Shown);
     scenario.speech().expect(&[PROMPT]);
-    mark(scenario, UP, Some("ready> cls"));
+    mark(scenario, UP, None);
 }
 
 pub(crate) fn setup_line_key_windows_terminal(

@@ -125,7 +125,7 @@ The facts the rules rest on, measured in both terminals (`docs/performance.md`) 
 - Both pad every row to the width and give a wrapped line whole; Windows Terminal's range for the buffer's last row ends one cell short.
 - The document's range ends where the document ended when the range was taken, so a read whose text is taken after output moved the end lower stops at the old end; during a scroll region's flood this cut 186 of 200 console host reads and 130 of 200 Windows Terminal reads, and none with no output arriving (`experiments/a-terminal-read-ends-at-the-document-end-it-started-with`).
 - The alternate screen is one screen tall, with no history; a range kept at its top is accepted on the main screen after it closes.
-- The console host's `cls` pushes the screen into the history; Windows Terminal's clear erases the screen and the history, refusing a kept start. Windows PowerShell 5.1's `cls` in Windows Terminal homes the caret in one write and erases in the next.
+- Windows PowerShell 5.1's `cls` erases the screen and the history in both terminals, refusing a kept start: the console host, behind a pseudoconsole, emits the erase of the history after it (the `clear-host` conformance stream). Windows PowerShell 5.1's `cls` in Windows Terminal homes the caret in one write and erases in the next.
 - Reverse video covers only the cells written in it, so telling a selected row needs each row's colour runs, and Windows Terminal does not implement `FindAttribute`.
 - Windows Terminal raises no text-changed event for writes made only of blank lines.
 - The console host's four console WinEvents are its change signals; its scroll update counts rows moved in its window, not rotations, so the reading does not use it (Dickson, 2026-10-25).
