@@ -11,7 +11,9 @@
 //! a snapshot rebuilds its read exactly; a terminal session survives a
 //! flight recorder's dump and replay; and the colours of a key's window
 //! reach the echo's read whatever reads the outpost leaves unsent or takes
-//! at once; and "Report status bar" reads the footer after a fresh read,
+//! at once; with "speak passwords" on, a typed character is heard as typed
+//! and its asterisk as shown; lines of one or two characters after Enter
+//! are output, not echo; and "Report status bar" reads the footer after a fresh read,
 //! spelled and copied on later presses, the review cursor left alone.
 
 mod terminal_support;
@@ -405,6 +407,51 @@ fn a_read_after_every_window_carries_no_key() {
     // A line of output after the window: no key.
     session.write("\r\nlate\r\n", 1400);
     assert_eq!(session.heard(), plain(&["late"]));
+}
+
+#[test]
+fn with_passwords_spoken_a_character_is_heard_as_typed_and_its_asterisk_as_shown() {
+    // A password prompt with "speak passwords" on: the character is echoed
+    // as it is typed, and the asterisk the prompt shows for it is output
+    // in the key's window.
+    let mut session = showing(30, 4, 10, "Password: ");
+    session.input(&Input::Settings(ReaderSettings {
+        speak_terminal_passwords: true,
+        ..ReaderSettings::default()
+    }));
+    let (key, input) = typed("s", 1000);
+    session.input(&input);
+    assert_eq!(session.heard(), plain(&["s"]));
+    session.write("*", 1050);
+    assert_eq!(session.heard(), [said(Some(key), "*")]);
+    assert_eq!(
+        session.requests(),
+        [TextOp::TerminalColours {
+            from_ms: 1000,
+            until_ms: 1300
+        }]
+    );
+}
+
+#[test]
+fn lines_of_one_and_two_characters_after_enter_are_output_not_echo() {
+    // Enter, then a program printing "y" and "ok": short as they are, both
+    // are output, never taken for the echo of typing.
+    let mut session = showing(30, 6, 10, "ready> ");
+    let (key, input) = typed("\r", 1000);
+    session.input(&input);
+    session.write("\r\ny\r\nok\r\nready> ", 1050);
+    assert_eq!(
+        session.heard(),
+        [said(Some(key), "y"), said(Some(key), "ok"), said(None, "ready>")]
+    );
+    assert_eq!(
+        session.requests(),
+        [TextOp::TerminalColours {
+            from_ms: 1000,
+            until_ms: 1300
+        }]
+    );
 }
 
 #[test]

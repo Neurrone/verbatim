@@ -410,6 +410,15 @@ pub struct Session {
     /// before a search.
     pub output_before_histories: VecDeque<(String, u64)>,
     held_colours: VecDeque<(QueryId, TextOp)>,
+    /// Whether the outpost holds the terminal's reading for Core's flood
+    /// policy ([`TextOp::TerminalHold`]), and if so whether the text
+    /// changed since: while it holds, a write is only noted, as the
+    /// outpost's reading state does (`verbatim_outpost::terminal::reading`).
+    holding: Option<bool>,
+    /// Whether what Core queues is played only when the test calls
+    /// [`Session::play`] or [`Session::play_one`], so that output can be
+    /// written while a group plays.
+    pub manual_play: bool,
     /// Requests not yet answered, in the order Core made them: the outpost
     /// answers each once Core's step is done, in order.
     pending: VecDeque<(QueryId, TextOp)>,
@@ -447,6 +456,8 @@ impl Session {
             output_before_finds: VecDeque::new(),
             output_before_histories: VecDeque::new(),
             held_colours: VecDeque::new(),
+            holding: None,
+            manual_play: false,
             pending: VecDeque::new(),
             queued: VecDeque::new(),
             at_ms: 0,
@@ -476,7 +487,7 @@ impl Session {
     pub fn input(&mut self, input: &Input) {
         let effects = self.step(input.clone());
         self.run(effects);
-        self.play();
+        self.settle();
     }
 
     /// Feeds `inputs` one after another before the outpost answers any
@@ -488,7 +499,7 @@ impl Session {
             self.take(effects, None);
         }
         self.run(Vec::new());
-        self.play();
+        self.settle();
     }
 
     /// Takes in `effects`, then answers the requests they and their answers
@@ -513,6 +524,8 @@ impl Session {
         }
         if self.unanswered_finds && matches!(op, TextOp::TerminalFind { .. }) {
             self.reply(query_id, TextReply::Unanswered);
+        } else if let Some(reply) = self.flood_answer(op) {
+            self.reply(query_id, reply);
         } else if let Some(reply) = self.outpost.answer(op, self.at_ms) {
             self.reply(query_id, reply);
         }
@@ -521,13 +534,43 @@ impl Session {
         }
     }
 
+    /// The outpost's answer to a request of Core's flood policy, as its
+    /// reading state answers it: a hold only noted; a read of what is new,
+    /// taken only when the text changed while held; a cancel reading what
+    /// changed while held. `None` for any other request.
+    fn flood_answer(&mut self, op: &TextOp) -> Option<TextReply> {
+        let changed = self.holding == Some(true);
+        let (read, waited) = match op {
+            TextOp::TerminalHold => {
+                self.holding = Some(self.holding.unwrap_or(false));
+                return Some(TextReply::TerminalUnchanged);
+            }
+            TextOp::TerminalRead { hold } => {
+                self.holding = hold.then_some(false);
+                (changed, true)
+            }
+            TextOp::TerminalCancel => {
+                self.holding = None;
+                (changed, false)
+            }
+            _ => return None,
+        };
+        if !read {
+            return Some(TextReply::TerminalUnchanged);
+        }
+        let (_, mut snapshot) = self.outpost.read(None, self.at_ms);
+        snapshot.waited = waited;
+        self.outpost.answered(&snapshot);
+        Some(TextReply::TerminalSnapshot(Box::new(snapshot)))
+    }
+
     /// Delivers the colours requests held back, arriving at `at_ms`.
     pub fn deliver_colours(&mut self, at_ms: u64) {
         self.at_ms = at_ms;
         while let Some((query_id, op)) = self.held_colours.pop_front() {
             self.answer(query_id, &op);
         }
-        self.play();
+        self.settle();
     }
 
     /// Writes `bytes` to the terminal, then a live read begun at `at_ms`.
@@ -539,6 +582,10 @@ impl Session {
     /// A live read begun at `at_ms`, sent to Core as the outpost sends it.
     pub fn live(&mut self, at_ms: u64) {
         self.at_ms = at_ms;
+        if let Some(changed) = &mut self.holding {
+            *changed = true;
+            return;
+        }
         let (_, snapshot) = self.outpost.read(None, at_ms);
         self.send(snapshot);
     }
@@ -562,7 +609,7 @@ impl Session {
             .expect("the outpost answers its reads");
         let effects = self.completed(query_id, reply);
         self.run(effects);
-        self.play();
+        self.settle();
     }
 
     /// Answers the caret read before a held key as failed, so the key is
@@ -571,7 +618,7 @@ impl Session {
         let query_id = self.caret_read.take().expect("a caret read held back");
         let effects = self.completed(query_id, TextReply::Unanswered);
         self.run(effects);
-        self.play();
+        self.settle();
     }
 
     /// Answers the caret read before a held key as a terminal's outpost
@@ -584,7 +631,7 @@ impl Session {
         self.outpost.answered(&snapshot);
         let effects = self.completed(query_id, TextReply::TerminalSnapshot(Box::new(snapshot)));
         self.run(effects);
-        self.play();
+        self.settle();
     }
 
     fn completed(&mut self, query_id: QueryId, reply: TextReply) -> Vec<Effect> {
@@ -659,15 +706,31 @@ impl Session {
         }
     }
 
+    /// Plays what is queued, unless the test plays it
+    /// ([`Session::manual_play`]).
+    fn settle(&mut self) {
+        if !self.manual_play {
+            self.play();
+        }
+    }
+
     /// Plays every utterance queued, in order, reaching its marks.
     pub fn play(&mut self) {
-        while let Some((marks, said)) = self.queued.pop_front() {
-            self.heard.push(said);
-            for mark in marks {
-                let effects = self.step(Input::MarkReached { mark });
-                self.run(effects);
-            }
+        while self.play_one() {}
+    }
+
+    /// Plays the next utterance queued, reaching its marks; `false` when
+    /// nothing is queued.
+    pub fn play_one(&mut self) -> bool {
+        let Some((marks, said)) = self.queued.pop_front() else {
+            return false;
+        };
+        self.heard.push(said);
+        for mark in marks {
+            let effects = self.step(Input::MarkReached { mark });
+            self.run(effects);
         }
+        true
     }
 
     /// When the shell's quiet-period timer is due, if it is armed.

@@ -1041,5 +1041,8 @@ answers to the requests they make.
 
 `tests/terminal_reading.rs` drives `reduce` with snapshots of the
 simulated terminal (`tests/terminal_support`), whose outpost reads as the
-real one does. `tests/terminal_cost.rs` is a measurement, not a test
+real one does, and holds its reading while Core's flood policy asks it to;
+`tests/terminal_floods.rs` drives the reading rules and the flood policy
+together through floods at the harness's terminal size and history.
+`tests/terminal_cost.rs` is a measurement, not a test
 (`docs/performance.md`, "A terminal's reads in Core").
