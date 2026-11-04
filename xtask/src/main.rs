@@ -13,8 +13,9 @@
 //! (`xtask/src/ownership.rs`), then the documentation check. On Windows it
 //! then runs the workspace-hack checks, rustfmt, and clippy (warnings
 //! denied) and unit tests for the whole workspace; on any other host,
-//! clippy and unit tests for [`LINUX_CRATES`] alone, which GitHub Actions
-//! runs as the `ci-linux` job. Everything builds for the host's own
+//! clippy for [`LINUX_CRATES`] alone, then their unit tests instrumented
+//! as the coverage gate (`coverage gate`), which GitHub Actions runs as
+//! the `ci-linux` job. Everything builds for the host's own
 //! architecture.
 //!
 //! On Windows `ci` ends with the fault step, [`faults`].
@@ -148,6 +149,7 @@ const LINUX_CRATES: &[&str] = &[
     "verbatim-input",
     "verbatim-audio",
     "verbatim-text",
+    "verbatim-ext-api",
     "verbatim-reader-rules",
     "verbatim-outpost-logic",
     "verbatim-listener-logic",
@@ -412,6 +414,16 @@ fn ci() -> ExitCode {
     if run_steps("ci", &fault_steps()) != ExitCode::SUCCESS {
         return ExitCode::FAILURE;
     }
+    // On another host the unit tests run instrumented, as the coverage
+    // gate (`xtask/src/coverage.rs`).
+    #[cfg(not(windows))]
+    {
+        println!("xtask ci: unit tests and the coverage gate");
+        if coverage::run(&args(&["gate"])) != ExitCode::SUCCESS {
+            eprintln!("xtask ci: step failed: unit tests and the coverage gate");
+            return ExitCode::FAILURE;
+        }
+    }
 
     println!("xtask ci: all steps passed");
     ExitCode::SUCCESS
@@ -608,18 +620,17 @@ fn windows_steps() -> Vec<Step> {
 }
 
 /// `ci`'s cargo steps on any other host: clippy (warnings denied, all
-/// targets) and unit tests for [`LINUX_CRATES`] alone. rustfmt and the
-/// workspace-hack checks read source and metadata the same way on every
-/// host, so the Windows jobs' run of them suffices.
+/// targets) for [`LINUX_CRATES`] alone; their unit tests run after it, as
+/// the coverage gate. rustfmt and the workspace-hack checks read source
+/// and metadata the same way on every host, and the Windows jobs run every
+/// crate's doctests, so the Windows jobs' run of them suffices.
 fn other_host_steps() -> Vec<Step> {
     let packages: Vec<String> = LINUX_CRATES
         .iter()
         .flat_map(|name| ["-p".to_owned(), (*name).to_owned()])
         .collect();
     let mut clippy = args(&["clippy", "--all-targets"]);
-    clippy.extend(packages.iter().cloned());
+    clippy.extend(packages);
     clippy.extend(args(&["--", "-D", "warnings"]));
-    let mut test = args(&["test"]);
-    test.extend(packages);
-    vec![("clippy", clippy), ("unit tests", test)]
+    vec![("clippy", clippy)]
 }

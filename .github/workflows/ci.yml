@@ -122,6 +122,19 @@ jobs:
         with:
           path: ~/verbatim-wx
           key: wxwidgets-3.3.3-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('crates/verbatim-gui/build/wx.rs') }}
+      # eSpeak NG's build (crates/verbatim-synth-espeak/build.rs) goes to a
+      # fixed directory per submodule commit and architecture in the same
+      # way; the key follows the commit and the recipe file.
+      - name: Point the eSpeak NG build at a cached directory
+        id: espeak
+        shell: pwsh
+        run: |
+          Add-Content -Path $env:GITHUB_ENV -Value "VERBATIM_ESPEAK_DIR=$env:USERPROFILE\verbatim-espeak"
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "commit=$(git rev-parse HEAD:third_party/espeak-ng)"
+      - uses: actions/cache@v6
+        with:
+          path: ~/verbatim-espeak
+          key: espeak-ng-${{ steps.espeak.outputs.commit }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('crates/verbatim-synth-espeak/build.rs') }}
       # `cargo xtask ci` checks the workspace-hack crate with cargo-hakari
       # and runs the unit tests with cargo-nextest.
       - uses: taiki-e/install-action@v2
@@ -196,6 +209,19 @@ jobs:
         with:
           path: ~/verbatim-wx
           key: wxwidgets-3.3.3-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('crates/verbatim-gui/build/wx.rs') }}
+      # eSpeak NG's build (crates/verbatim-synth-espeak/build.rs) goes to a
+      # fixed directory per submodule commit and architecture in the same
+      # way; the key follows the commit and the recipe file.
+      - name: Point the eSpeak NG build at a cached directory
+        id: espeak
+        shell: pwsh
+        run: |
+          Add-Content -Path $env:GITHUB_ENV -Value "VERBATIM_ESPEAK_DIR=$env:USERPROFILE\verbatim-espeak"
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "commit=$(git rev-parse HEAD:third_party/espeak-ng)"
+      - uses: actions/cache@v6
+        with:
+          path: ~/verbatim-espeak
+          key: espeak-ng-${{ steps.espeak.outputs.commit }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('crates/verbatim-synth-espeak/build.rs') }}
       # `cargo xtask ci` checks the workspace-hack crate with cargo-hakari
       # and runs the unit tests with cargo-nextest.
       - uses: taiki-e/install-action@v2
@@ -225,7 +251,9 @@ jobs:
 
   # `cargo xtask ci` on Linux: the dependency check, the scans and the
   # documentation check, then clippy and unit tests for the crates in
-  # LINUX_CRATES (xtask/src/main.rs), the platform-neutral tier and xtask.
+  # LINUX_CRATES (xtask/src/main.rs), the platform-neutral tier and xtask,
+  # the tests instrumented: the platform-neutral and logic crates' line
+  # coverage must reach 90% (the coverage gate, docs/tooling/coverage.md).
   # Nothing names a target, so it builds for the runner's own architecture.
   # No submodule, wxWidgets, cargo-hakari or speech warm-up: none of them is
   # in what it builds or runs.
@@ -238,6 +266,12 @@ jobs:
       # rust-toolchain.toml pins the toolchain, installed on the first cargo
       # invocation.
       - uses: Swatinem/rust-cache@v2
+      # The unit tests run instrumented, as the coverage gate
+      # (`cargo xtask coverage gate`), with the release LLVM_COV_VERSION in
+      # xtask/src/coverage.rs names.
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov@0.9.1
       - name: Run CI checks
         run: cargo xtask ci
 
@@ -350,6 +384,19 @@ jobs:
         with:
           path: ~/verbatim-wx
           key: wxwidgets-3.3.3-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('crates/verbatim-gui/build/wx.rs') }}
+      # eSpeak NG's build (crates/verbatim-synth-espeak/build.rs) goes to a
+      # fixed directory per submodule commit and architecture in the same
+      # way; the key follows the commit and the recipe file.
+      - name: Point the eSpeak NG build at a cached directory
+        id: espeak
+        shell: pwsh
+        run: |
+          Add-Content -Path $env:GITHUB_ENV -Value "VERBATIM_ESPEAK_DIR=$env:USERPROFILE\verbatim-espeak"
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "commit=$(git rev-parse HEAD:third_party/espeak-ng)"
+      - uses: actions/cache@v6
+        with:
+          path: ~/verbatim-espeak
+          key: espeak-ng-${{ steps.espeak.outputs.commit }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('crates/verbatim-synth-espeak/build.rs') }}
       # mockapp is the scripted application the spelling errors scenario
       # reads, since the runner's classic Notepad has no spell checker.
       - name: Build Verbatim, its child processes, the agent, and mockapp (debug)
@@ -363,13 +410,31 @@ jobs:
         run: |
           cargo test -p verbatim-e2e --test e2e --no-run
           cargo build -p xtask
+      # A pinned ffmpeg release, cached by its version, which a cache miss
+      # downloads and checks against its SHA-256; Chocolatey took about
+      # 20 seconds a group.
+      - id: ffmpeg-cache
+        uses: actions/cache@v6
+        with:
+          path: ~/ffmpeg
+          key: ffmpeg-9.0.2-essentials-${{ runner.os }}-${{ runner.arch }}
       - name: Make sure ffmpeg is installed
         shell: pwsh
+        env:
+          CACHE_HIT: ${{ steps.ffmpeg-cache.outputs.cache-hit }}
         run: |
-          if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
-            choco install ffmpeg --no-progress -y
+          $dir = "$env:USERPROFILE\ffmpeg"
+          if ($env:CACHE_HIT -ne 'true') {
+            $archive = "$env:RUNNER_TEMP\ffmpeg.zip"
+            Invoke-WebRequest https://github.com/GyanD/codexffmpeg/releases/download/9.0.2/ffmpeg-9.0.2-essentials_build.zip -OutFile $archive
+            $hash = (Get-FileHash -Algorithm SHA256 $archive).Hash
+            if ($hash -ne '60F467265B1E312373DBCD92200C2618A74850F98D3D078E94296BB3FA2047BA') { throw "ffmpeg's archive has SHA-256 $hash" }
+            New-Item -ItemType Directory -Force $dir | Out-Null
+            & "$env:SystemRoot\System32\tar.exe" -xf $archive -C $dir --strip-components 2 ffmpeg-9.0.2-essentials_build/bin/ffmpeg.exe
+            if ($LASTEXITCODE -ne 0) { throw "tar could not extract ffmpeg.exe" }
           }
-          ffmpeg -version | Select-Object -First 1
+          Add-Content -Path $env:GITHUB_PATH -Value $dir
+          & "$dir\ffmpeg.exe" -version | Select-Object -First 1
       # The Windows Terminal scenarios drive the harness's own portable copy
       # of Windows Terminal, at the release pinned in
       # crates/verbatim-e2e/src/windows_terminal.rs, never the runner's
@@ -524,8 +589,16 @@ jobs:
       # scenarios stays far below GitHub's 500 artifacts a job. The videos
       # are already compressed, so the archives are not (compression
       # level 0).
-      - name: Install the artifact upload library
+      # The library, installed without its scripts, is plain JavaScript,
+      # cached by its pinned version.
+      - id: artifact-client-cache
         if: always()
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}\artifact-client
+          key: artifact-client-6.3.1-${{ runner.os }}
+      - name: Install the artifact upload library
+        if: always() && steps.artifact-client-cache.outputs.cache-hit != 'true'
         shell: pwsh
         run: npm install --prefix "$env:RUNNER_TEMP\artifact-client" --no-save --ignore-scripts --no-audit --no-fund @actions/artifact@6.3.1
       - name: Upload each scenario's directory
@@ -545,22 +618,31 @@ jobs:
               return;
             }
             const failed = [];
-            for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
-              if (!entry.isDirectory() || entry.name === 'history') {
-                continue;
-              }
-              const folder = path.join(root, entry.name);
+            const scenarios = fs.readdirSync(root, { withFileTypes: true })
+              .filter((entry) => entry.isDirectory() && entry.name !== 'history')
+              .map((entry) => entry.name);
+            const upload = async (name) => {
+              const folder = path.join(root, name);
               const files = fs.readdirSync(folder, { recursive: true, withFileTypes: true })
                 .filter((file) => file.isFile())
                 .map((file) => path.join(file.parentPath, file.name));
               try {
-                const { size } = await client.uploadArtifact(`e2e-${entry.name}`, files, root, { compressionLevel: 0 });
-                core.info(`e2e-${entry.name}: ${files.length} files, ${size} bytes`);
+                const { size } = await client.uploadArtifact(`e2e-${name}`, files, root, { compressionLevel: 0 });
+                core.info(`e2e-${name}: ${files.length} files, ${size} bytes`);
               } catch (error) {
-                failed.push(entry.name);
-                core.error(`e2e-${entry.name}: ${error.message}`);
+                failed.push(name);
+                core.error(`e2e-${name}: ${error.message}`);
               }
-            }
+            };
+            // Four uploads at a time, since each spends most of its time
+            // waiting on round trips to the artifact service.
+            const queue = [...scenarios];
+            const worker = async () => {
+              while (queue.length > 0) {
+                await upload(queue.shift());
+              }
+            };
+            await Promise.all(Array.from({ length: 4 }, worker));
             if (failed.length > 0) {
               core.setFailed(`no artifact for: ${failed.join(', ')}`);
             }

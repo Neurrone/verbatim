@@ -27,8 +27,12 @@ libraries with CMake, using Ninja on x64 when it is on `PATH`. That takes
 about a minute and a half on the development machine and happens once per
 architecture: the result is kept in `target/wxwidgets`, or under
 `VERBATIM_WX_DIR` when that is set, and reused by every later build
-(`docs/crates/verbatim-gui.md` has the details). GitHub Actions fetches the
-eSpeak NG submodule in every job and caches the wxWidgets build.
+(`docs/crates/verbatim-gui.md` has the details). eSpeak NG's own build
+takes about a minute per target directory, unless `VERBATIM_ESPEAK_DIR`
+names a folder: then it is built once per submodule commit and
+architecture under that folder and reused by every target directory and
+worktree (`docs/crates/verbatim-synth-espeak.md`). GitHub Actions fetches
+the eSpeak NG submodule in every job and caches both builds.
 
 `cargo xtask ci` also needs `cargo-hakari`, which checks the workspace-hack
 crate described next, and on Windows `cargo-nextest`, which runs the unit
@@ -95,7 +99,9 @@ the end-to-end suite's own build relinks. On Linux, where the `ci-linux` job run
 documentation check, then Clippy and unit tests only for the crates in
 `LINUX_CRATES` (`xtask/src/main.rs`): the platform-neutral tier, the
 logic crates (`verbatim-reader-rules`, `verbatim-outpost-logic` and
-`verbatim-listener-logic`) and xtask.
+`verbatim-listener-logic`) and xtask, the tests instrumented as the
+unit level's coverage gate (`docs/tooling/coverage.md`, "The unit level's
+gate"), so the Linux job also installs cargo-llvm-cov.
 rustfmt and the workspace-hack checks run only on Windows, since they read
 source and metadata the same way on every host. On Linux xtask builds only
 its portable part, so `ci`, `docs`, `replay`, `e2e-plan` and `coverage`
@@ -235,17 +241,46 @@ build into their own `target` directory; do not point them at one shared
 `CARGO_TARGET_DIR`. On a shared one, workspace crates from different
 checkouts overwrite each other's output, every switch between checkouts
 recompiles them all, and the suite stages Verbatim from the worktree's own
-`target\debug`, not the shared one. Share only wxWidgets, by setting
-`VERBATIM_WX_DIR` to one directory for all of them. A worktree's build is
+`target\debug`, not the shared one. Share wxWidgets and eSpeak NG, by
+setting `VERBATIM_WX_DIR` and `VERBATIM_ESPEAK_DIR` each to one directory
+for all of them, and share compiled third-party crates through sccache
+(below). A worktree's build is
 used for one piece of work, so build it with `CARGO_INCREMENTAL=0`, which
 leaves out the incremental state (about half of a worktree's target
 directory, 2.7 of 5.4 GB measured on 2026-10-29), and delete its target
 directory when the worktree is removed: on 2026-10-29 four kept worktree
 target directories and the main one filled the development machine's disk. A worktree whose path
-is deep (such as one under `.claude\worktrees`) also needs
-`CMAKE_GENERATOR=Ninja`, since MSBuild's tracking files in eSpeak NG's
-CMake build exceed the path length limit there. On a 16 GB machine, build
+is deep (such as one under `.claude\worktrees`) needs `VERBATIM_ESPEAK_DIR`
+set to a short path, or else `CMAKE_GENERATOR=Ninja`, since MSBuild's
+tracking files in eSpeak NG's CMake build exceed the path length limit
+under the worktree's own target directory. On a 16 GB machine, build
 with `-j 4`, and never build while end-to-end scenarios run: a build
 alongside a run once ran memory out and the run was killed.
 A second worktree's build needs about 5.5 GB once `cargo xtask ci` has
 run in it.
+
+Worktree builds share compiled third-party crates through sccache
+(0.19.0, `cargo install sccache --locked`) as the compiler wrapper. A
+builder sets, in its own environment only:
+
+```
+RUSTC_WRAPPER=sccache
+SCCACHE_CACHE_SIZE=5G
+CARGO_INCREMENTAL=0
+VERBATIM_WX_DIR=<one folder for every worktree>
+VERBATIM_ESPEAK_DIR=<one short folder for every worktree>
+```
+
+and builds into the worktree's own `target`, with `CARGO_TARGET_DIR`
+unset: sccache hashes that variable as it is, so worktrees that each set
+their own target directory never share an entry. With these, a second
+worktree's cold `cargo build --workspace --all-targets -j 4` took 115
+seconds against 148 for the first, every third-party crate (155 of 237
+cacheable compilations) coming from the cache, and the cache held 477 MB
+after two worktrees' builds (2026-11-04). Workspace crates never hit
+across worktrees, since their paths differ, and executables, test
+binaries and procedural macros are never cached, as sccache cannot cache
+anything the linker makes. The main checkout keeps its incremental
+builds and so does not use sccache, which refuses incremental builds.
+Cached third-party libraries keep the first worktree's folder as their
+compilation directory in debug information, which no lookup uses.

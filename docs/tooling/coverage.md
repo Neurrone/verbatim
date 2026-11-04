@@ -70,6 +70,23 @@ On Linux it measures the unit level alone, the crates in `LINUX_CRATES`
 (`xtask/src/main.rs`) through `cargo test`, as `cargo xtask ci` tests
 them there.
 
+## The unit level's gate
+
+`cargo xtask ci` on Linux, which GitHub runs as the `ci-linux` job, runs
+the unit tests of `LINUX_CRATES` instrumented, as `cargo xtask coverage
+gate`, rather than through a plain `cargo test`, and fails when the line
+coverage of the nine platform-neutral and three logic crates
+(`xtask/src/tiers.rs`) over their total is below 90% (Dickson,
+2026-11-04). It prints each crate's figure and the total. Test code is
+left out: only each crate's `src` folder counts, without the files of
+test modules declared as `#[cfg(test)] mod name;` and without the lines
+of items marked `#[cfg(test)]`. The gate measures these crates alone
+because their logic is what unit tests should reach; the Windows-calling
+crates are reached by the mockapp and end-to-end levels. Those crates'
+doctests run in the Windows jobs, not under the gate. The gate runs on
+Windows too, as `cargo xtask coverage gate`, with the same pinned
+cargo-llvm-cov.
+
 ## Processes that end without exiting
 
 The profile runtime writes a process's counts when it exits, but the

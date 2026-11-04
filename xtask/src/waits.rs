@@ -142,7 +142,7 @@ pub(crate) fn collect_rust_files(folder: &Path, files: &mut Vec<PathBuf>) -> Res
 /// For each line of `source`, whether it lies in an item marked
 /// `#[cfg(test)]`: from the attribute to the brace that closes the item it
 /// marks, counting braces outside comments and strings.
-fn cfg_test_lines(source: &str) -> Vec<bool> {
+pub(crate) fn cfg_test_lines(source: &str) -> Vec<bool> {
     let lines: Vec<&str> = source.lines().collect();
     let mut marked = vec![false; lines.len()];
     let mut index = 0;

@@ -19,6 +19,13 @@
 //! `cargo llvm-cov show-env` prints, and every process writes its profile
 //! into that folder. The harness's own crates are left out of the report.
 //!
+//! `coverage gate` is the unit level's coverage gate, which `cargo xtask
+//! ci` runs on a host other than Windows (GitHub's `ci-linux` job) in place
+//! of a plain test run: it runs the unit tests of [`LINUX_CRATES`]
+//! instrumented, prints each platform-neutral and logic crate's line
+//! coverage with test code left out, and fails when their total is below
+//! [`GATE_PERCENT`].
+//!
 //! `coverage merge <dir>` reads the lcov files of a coverage run's levels
 //! from `<dir>`, `unit.lcov`, `mockapp.lcov`, `faults.lcov` and every
 //! end-to-end group's `e2e-<group>.lcov`, and writes the end-to-end level's `e2e.lcov`, all
@@ -38,8 +45,8 @@ use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
-#[cfg(not(windows))]
 use crate::LINUX_CRATES;
+use crate::tiers::{TIERS, Tier, WORKSPACE_HACK};
 #[cfg(windows)]
 use crate::{ALONE_TESTS, FAULT_TESTS, SERIAL_TESTS, nextest_step, unit_test_filter};
 use crate::{Step, args};
@@ -69,9 +76,10 @@ pub fn run(args: &[String]) -> ExitCode {
         [] => measure(),
         [verb, name, profiles] if verb == "report" => report(name, Path::new(profiles)),
         [verb, dir] if verb == "merge" => merge(Path::new(dir)),
+        [verb] if verb == "gate" => gate(),
         _ => {
             eprintln!(
-                "usage: cargo xtask coverage | cargo xtask coverage report <name> <profiles> | cargo xtask coverage merge <dir>"
+                "usage: cargo xtask coverage | cargo xtask coverage report <name> <profiles> | cargo xtask coverage merge <dir> | cargo xtask coverage gate"
             );
             return ExitCode::from(2);
         }
@@ -317,6 +325,159 @@ fn report(name: &str, profiles: &Path) -> Result<(), String> {
     println!("xtask coverage: {name}: {copied} profiles");
     print!("{}", write_reports(name, Some(HARNESS_FILES))?);
     Ok(())
+}
+
+/// The unit level's floor: the platform-neutral and logic crates' line
+/// coverage, test code left out, over their total, in percent (Dickson,
+/// 2026-11-04).
+pub const GATE_PERCENT: u64 = 90;
+
+/// The crates the gate measures: the platform-neutral and logic tiers
+/// (`xtask/src/tiers.rs`), but the workspace-hack crate, which has no code.
+pub fn gate_crates() -> Vec<&'static str> {
+    TIERS
+        .iter()
+        .filter(|(tier, _)| matches!(tier, Tier::PlatformNeutral | Tier::Logic))
+        .flat_map(|(_, crates)| crates.iter().copied())
+        .filter(|name| *name != WORKSPACE_HACK)
+        .collect()
+}
+
+/// `cargo xtask coverage gate`: the unit tests of [`LINUX_CRATES`],
+/// instrumented, then the gate over [`gate_crates`].
+fn gate() -> Result<(), String> {
+    check_tools()?;
+    let out = output_dir();
+    std::fs::create_dir_all(&out).map_err(|error| format!("{}: {error}", out.display()))?;
+    let lcov = out.join("gate.lcov");
+    let mut test = args(&["llvm-cov", "test", "--lcov", "--output-path"]);
+    test.push(lcov.display().to_string());
+    for name in LINUX_CRATES {
+        test.extend(["-p".to_owned(), (*name).to_owned()]);
+    }
+    cargo(&test)?;
+    let text =
+        std::fs::read_to_string(&lcov).map_err(|error| format!("{}: {error}", lcov.display()))?;
+    let root = workspace();
+    let lines = relative(parse_lcov(&text)?, &root);
+    let mut product = Lines::new();
+    for name in gate_crates() {
+        add(&mut product, &product_lines(&root, name, &lines)?);
+    }
+    let (summary, passed) = gate_summary(&gate_crates(), &product);
+    print!("{summary}");
+    if passed {
+        Ok(())
+    } else {
+        Err(format!(
+            "the platform-neutral and logic crates' unit-test line coverage is below {GATE_PERCENT}%"
+        ))
+    }
+}
+
+/// The gate's summary, a line per crate and the total, and whether the
+/// total reaches [`GATE_PERCENT`]. `lines` holds paths relative to the
+/// workspace.
+pub fn gate_summary(crates: &[&str], lines: &Lines) -> (String, bool) {
+    let mut summary = String::new();
+    for name in crates {
+        let prefix = format!("crates/{name}/");
+        let own: Lines = lines
+            .iter()
+            .filter(|(path, _)| path.starts_with(&prefix))
+            .map(|(path, counts)| (path.clone(), counts.clone()))
+            .collect();
+        summary.push_str(&summary_line(name, &own));
+    }
+    summary.push_str(&summary_line("total", lines));
+    let (found, hit) = lines
+        .values()
+        .map(tally)
+        .fold((0, 0), |(found, hit), (f, h)| (found + f, hit + h));
+    let passed = hit * 100 >= GATE_PERCENT * found;
+    let _ = writeln!(
+        summary,
+        "gate: {} (the total must be at least {GATE_PERCENT}%)",
+        if passed { "passed" } else { "failed" }
+    );
+    (summary, passed)
+}
+
+/// Crate `name`'s lines of `lines` with its test code left out: only the
+/// files of its `src` folder, but files of test modules, and in the rest
+/// the lines of items marked `#[cfg(test)]`.
+fn product_lines(root: &Path, name: &str, lines: &Lines) -> Result<Lines, String> {
+    let prefix = format!("crates/{name}/src/");
+    let mut files = Vec::new();
+    crate::waits::collect_rust_files(&root.join("crates").join(name).join("src"), &mut files)?;
+    let mut sources = BTreeMap::new();
+    for file in files {
+        let source =
+            std::fs::read_to_string(&file).map_err(|error| format!("{}: {error}", file.display()))?;
+        let relative = file
+            .strip_prefix(root)
+            .unwrap_or(&file)
+            .to_string_lossy()
+            .replace('\\', "/");
+        sources.insert(relative, source);
+    }
+    let test_files = test_module_files(&sources);
+    let mut product = Lines::new();
+    for (path, counts) in lines {
+        if !path.starts_with(&prefix) || test_files.iter().any(|test| path.starts_with(test)) {
+            continue;
+        }
+        let test_lines = sources
+            .get(path)
+            .map(|source| crate::waits::cfg_test_lines(source))
+            .unwrap_or_default();
+        let kept = counts
+            .iter()
+            .filter(|(line, _)| {
+                !line
+                    .checked_sub(1)
+                    .and_then(|index| test_lines.get(index as usize))
+                    .copied()
+                    .unwrap_or(false)
+            })
+            .map(|(line, count)| (*line, *count))
+            .collect();
+        product.insert(path.clone(), kept);
+    }
+    Ok(product)
+}
+
+/// The test modules in files of their own among `sources` (relative paths
+/// with forward slashes, and contents): for each `#[cfg(test)] mod name;`,
+/// the paths its module's file and folder start with, `<dir>/name.rs`,
+/// `<dir>/name/`, where `<dir>` is the declaring file's folder for a
+/// `lib.rs`, `main.rs` or `mod.rs`, and otherwise that folder and the
+/// file's name.
+pub fn test_module_files(sources: &BTreeMap<String, String>) -> Vec<String> {
+    let mut tests = Vec::new();
+    for (path, source) in sources {
+        let (folder, file) = path.rsplit_once('/').unwrap_or(("", path));
+        let dir = match file {
+            "lib.rs" | "main.rs" | "mod.rs" => folder.to_owned(),
+            _ => format!("{folder}/{}", file.trim_end_matches(".rs")),
+        };
+        let lines: Vec<&str> = source.lines().map(str::trim).collect();
+        for pair in lines.windows(2) {
+            if pair[0] != "#[cfg(test)]" {
+                continue;
+            }
+            let declared = pair[1]
+                .strip_prefix("pub(crate) mod ")
+                .or_else(|| pair[1].strip_prefix("pub mod "))
+                .or_else(|| pair[1].strip_prefix("mod "))
+                .and_then(|rest| rest.strip_suffix(';'));
+            if let Some(name) = declared {
+                tests.push(format!("{dir}/{name}.rs"));
+                tests.push(format!("{dir}/{name}/"));
+            }
+        }
+    }
+    tests
 }
 
 /// The paths in folder `dir`.
@@ -703,6 +864,61 @@ mod tests {
         ]);
         let below = lines(&[("a.rs", &[(1, 0), (2, 5)]), ("c.rs", &[(1, 1)])]);
         assert_eq!(e2e_only(&e2e, &below), "3 b.rs\n1 a.rs\n");
+    }
+
+    #[test]
+    fn the_gate_prints_each_crate_and_fails_a_total_below_the_floor() {
+        let read = lines(&[
+            ("crates/a/src/lib.rs", &[(1, 1), (2, 1), (3, 1), (4, 1)]),
+            ("crates/b/src/lib.rs", &[(1, 1), (2, 1), (3, 1), (4, 1), (5, 0)]),
+        ]);
+        assert_eq!(
+            gate_summary(&["a", "b"], &read),
+            (
+                "a: 100.0% of lines (4 of 4)\n\
+                 b: 80.0% of lines (4 of 5)\n\
+                 total: 88.8% of lines (8 of 9)\n\
+                 gate: failed (the total must be at least 90%)\n"
+                    .to_owned(),
+                false
+            )
+        );
+        let read = lines(&[("crates/a/src/lib.rs", &[(1, 1), (2, 1), (3, 1), (4, 1), (5, 1), (6, 1), (7, 1), (8, 1), (9, 1), (10, 0)])]);
+        assert!(gate_summary(&["a"], &read).1);
+    }
+
+    #[test]
+    fn test_modules_in_files_of_their_own_are_found_from_their_declarations() {
+        let sources = BTreeMap::from([
+            (
+                "crates/a/src/lib.rs".to_owned(),
+                "mod rows;\n#[cfg(test)]\nmod tests;\n".to_owned(),
+            ),
+            (
+                "crates/a/src/rows.rs".to_owned(),
+                "fn f() {}\n    #[cfg(test)]\n    mod generated;\n#[cfg(test)]\nmod inline {\n}\n"
+                    .to_owned(),
+            ),
+        ]);
+        assert_eq!(
+            test_module_files(&sources),
+            [
+                "crates/a/src/tests.rs",
+                "crates/a/src/tests/",
+                "crates/a/src/rows/generated.rs",
+                "crates/a/src/rows/generated/",
+            ]
+        );
+    }
+
+    #[test]
+    fn every_gated_crate_is_tested_on_linux() {
+        let missing: Vec<&str> = gate_crates()
+            .into_iter()
+            .filter(|name| !LINUX_CRATES.contains(name))
+            .collect();
+        assert_eq!(missing, Vec::<&str>::new());
+        assert_eq!(gate_crates().len(), 12);
     }
 
     #[test]
