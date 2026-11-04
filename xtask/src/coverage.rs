@@ -361,10 +361,14 @@ fn gate() -> Result<(), String> {
     let root = workspace();
     let lines = relative(parse_lcov(&text)?, &root);
     let mut product = Lines::new();
+    let mut without_code = Vec::new();
     for name in gate_crates() {
         add(&mut product, &product_lines(&root, name, &lines)?);
+        if !has_functions(&root, name)? {
+            without_code.push(name);
+        }
     }
-    let (summary, passed) = gate_summary(&gate_crates(), &product);
+    let (summary, passed) = gate_summary(&gate_crates(), &without_code, &product);
     print!("{summary}");
     if passed {
         Ok(())
@@ -375,10 +379,30 @@ fn gate() -> Result<(), String> {
     }
 }
 
+/// Whether crate `name`'s `src` folder defines any function, so that its
+/// unit tests have lines to measure; a skeleton, such as the extension
+/// API's before M5, has none.
+fn has_functions(root: &Path, name: &str) -> Result<bool, String> {
+    let mut files = Vec::new();
+    crate::waits::collect_rust_files(&root.join("crates").join(name).join("src"), &mut files)?;
+    for file in files {
+        let source = std::fs::read_to_string(&file)
+            .map_err(|error| format!("{}: {error}", file.display()))?;
+        if source.lines().any(|line| {
+            let line = line.trim_start();
+            !line.starts_with("//") && (line.contains("fn ") || line.starts_with("fn"))
+        }) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// The gate's summary, a line per crate and the total, and whether the
 /// total reaches [`GATE_PERCENT`]. `lines` holds paths relative to the
-/// workspace.
-pub fn gate_summary(crates: &[&str], lines: &Lines) -> (String, bool) {
+/// workspace; a crate of `without_code`, which defines no function, may
+/// have no lines measured.
+pub fn gate_summary(crates: &[&str], without_code: &[&str], lines: &Lines) -> (String, bool) {
     let mut summary = String::new();
     // A crate with no lines measured means the profile or the paths did
     // not match, never that the crate is covered, so it fails the gate.
@@ -390,7 +414,7 @@ pub fn gate_summary(crates: &[&str], lines: &Lines) -> (String, bool) {
             .filter(|(path, _)| path.starts_with(&prefix))
             .map(|(path, counts)| (path.clone(), counts.clone()))
             .collect();
-        if own.values().map(tally).all(|(found, _)| found == 0) {
+        if !without_code.contains(name) && own.values().map(tally).all(|(found, _)| found == 0) {
             unmeasured.push(*name);
         }
         summary.push_str(&summary_line(name, &own));
@@ -889,7 +913,7 @@ mod tests {
             ),
         ]);
         assert_eq!(
-            gate_summary(&["a", "b"], &read),
+            gate_summary(&["a", "b"], &[], &read),
             (
                 "a: 100.0% of lines (4 of 4)\n\
                  b: 80.0% of lines (4 of 5)\n\
@@ -914,14 +938,20 @@ mod tests {
                 (10, 0),
             ],
         )]);
-        assert!(gate_summary(&["a"], &read).1);
+        assert!(gate_summary(&["a"], &[], &read).1);
+    }
+
+    #[test]
+    fn a_crate_without_code_may_have_no_lines_measured() {
+        let read = lines(&[("crates/a/src/lib.rs", &[(1, 1)])]);
+        assert!(gate_summary(&["a", "b"], &["b"], &read).1);
     }
 
     #[test]
     fn the_gate_fails_when_a_crate_has_no_lines_measured() {
         let read = lines(&[("crates/a/src/lib.rs", &[(1, 1)])]);
         assert_eq!(
-            gate_summary(&["a", "b"], &read),
+            gate_summary(&["a", "b"], &[], &read),
             (
                 "a: 100.0% of lines (1 of 1)\n\
                  b: 0.0% of lines (0 of 0)\n\
