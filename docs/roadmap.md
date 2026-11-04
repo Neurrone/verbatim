@@ -161,8 +161,9 @@ full read's item.
 ### Slow applications: Verbatim's short limits
 
 Decided by Dickson on 2026-11-04, from the timeout audit of that day, to
-be built after the third build as one build with its own design and
-adversarial review (placement pending Dickson's confirmation): a slow
+be built right after the third build, before the caret and selection
+rework, as one build with its own design and adversarial review
+(Dickson, 2026-11-04): a slow
 application is waited for, as NVDA waits, rather than cut off. The
 ancestor walk's bound in a new window (500 ms), the window-message limit
 (`MESSAGE_TIMEOUT_MS`, 500 ms), the text deadline (`TEXT_DEADLINE`, 2 s)
@@ -177,7 +178,10 @@ user cannot use a busy application before it answers anyway. Reason: every
 failure the audit traced to these limits was an application that answered
 within 0.5 to 4.5 s; they account for five entries in [the known
 failures](flaky-tests.md) and part of three more. The key-holding bounds,
-the multi-press window and the terminal key window are unchanged.
+the multi-press window and the terminal key window are unchanged. The
+"application not responding" sound plays when Windows judges the window
+hung, not for every abandoned query (Dickson, 2026-11-04); NVDA has no such
+sound.
 
 Follow-up, not established from the code alone: Core refuses a foreground
 report of the window holding its focus (`crates/verbatim-core/src/reduce.rs`,
