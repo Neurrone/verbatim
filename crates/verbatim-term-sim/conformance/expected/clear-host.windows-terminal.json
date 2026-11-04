@@ -1,0 +1,313 @@
+{
+  "flavor": "WindowsTerminal",
+  "width": 120,
+  "height": 30,
+  "answers": [
+    {
+      "text": "before 72                                                                                                               \r\nbefore 73                                                                                                               \r\nbefore 74                                                                                                               \r\nbefore 75                                                                                                               \r\nbefore 76                                                                                                               \r\nbefore 77                                                                                                               \r\nbefore 78                                                                                                               \r\nbefore 79                                                                                                               \r\nbefore 80                                                                                                               \r\nbefore 81                                                                                                               \r\nbefore 82                                                                                                               \r\nbefore 83                                                                                                               \r\nbefore 84                                                                                                               \r\nbefore 85                                                                                                               \r\nbefore 86                                                                                                               \r\nbefore 87                                                                                                               \r\nbefore 88                                                                                                               \r\nbefore 89                                                                                                               \r\nbefore 90                                                                                                               \r\nbefore 91                                                                                                               \r\nbefore 92                                                                                                               \r\nbefore 93                                                                                                               \r\nbefore 94                                                                                                               \r\nbefore 95                                                                                                               \r\nbefore 96                                                                                                               \r\nbefore 97                                                                                                               \r\nbefore 98                                                                                                               \r\nbefore 99                                                                                                               \r\nbefore 100                                                                                                              \r\n                                                                                                                        \r\n",
+      "screen": "before 72                                                                                                               \r\nbefore 73                                                                                                               \r\nbefore 74                                                                                                               \r\nbefore 75                                                                                                               \r\nbefore 76                                                                                                               \r\nbefore 77                                                                                                               \r\nbefore 78                                                                                                               \r\nbefore 79                                                                                                               \r\nbefore 80                                                                                                               \r\nbefore 81                                                                                                               \r\nbefore 82                                                                                                               \r\nbefore 83                                                                                                               \r\nbefore 84                                                                                                               \r\nbefore 85                                                                                                               \r\nbefore 86                                                                                                               \r\nbefore 87                                                                                                               \r\nbefore 88                                                                                                               \r\nbefore 89                                                                                                               \r\nbefore 90                                                                                                               \r\nbefore 91                                                                                                               \r\nbefore 92                                                                                                               \r\nbefore 93                                                                                                               \r\nbefore 94                                                                                                               \r\nbefore 95                                                                                                               \r\nbefore 96                                                                                                               \r\nbefore 97                                                                                                               \r\nbefore 98                                                                                                               \r\nbefore 99                                                                                                               \r\nbefore 100                                                                                                              \r\n                                                                                                                        \r\n",
+      "from_start": false,
+      "shrank": false,
+      "at_document_start": false,
+      "alternate": false,
+      "first_row": "before 1                                                                                                                \r\n",
+      "caret_rows_to_end": 1,
+      "caret_line": "                                                                                                                        \r\n",
+      "caret_column": 0,
+      "colours": [
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ]
+      ]
+    },
+    {
+      "text": "                                                                                                                        \r\n",
+      "screen": "                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n",
+      "from_start": false,
+      "shrank": true,
+      "at_document_start": true,
+      "alternate": true,
+      "first_row": "                                                                                                                        \r\n",
+      "caret_rows_to_end": 1,
+      "caret_line": "                                                                                                                        \r\n",
+      "caret_column": 0,
+      "colours": [
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ]
+      ]
+    },
+    {
+      "text": "after the clear                                                                                                         \r\n                                                                                                                        \r\n",
+      "screen": "after the clear                                                                                                         \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n",
+      "from_start": true,
+      "shrank": false,
+      "at_document_start": true,
+      "alternate": true,
+      "first_row": "after the clear                                                                                                         \r\n",
+      "caret_rows_to_end": 1,
+      "caret_line": "                                                                                                                        \r\n",
+      "caret_column": 0,
+      "colours": [
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ]
+      ]
+    }
+  ]
+}

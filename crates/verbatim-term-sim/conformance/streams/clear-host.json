@@ -1,0 +1,13 @@
+{
+  "about": "Windows PowerShell 5.1's Clear-Host, as cls runs it, after more than three screens of output, and a line printed after it.",
+  "chunks": [
+    "\u001b[?25l\u001b[2J\u001b[m\u001b[Hbefore 1\u001b[?25h\r\nbefore 2\r\nbefore 3\r\nbefore 4\r\nbefore 5\r\nbefore 6\r\nbefore 7\r\nbefore 8\r\nbefore 9\r\nbefore 10\r\nbefore 11\r\nbefore 12\r\nbefore 13\r\nbefore 14\r\nbefore 15\r\nbefore 16\r\nbefore 17\r\nbefore 18\r\nbefore 19\r\nbefore 20\r\nbefore 21\r\nbefore 22\r\nbefore 23\r\nbefore 24\r\nbefore 25\r\nbefore 26\r\nbefore 27\r\nbefore 28\r\nbefore 29\r\nbefore 30\r\nbefore 31\r\nbefore 32\r\nbefore 33\r\nbefore 34\r\nbefore 35\r\nbefore 36\r\nbefore 37\r\nbefore 38\r\nbefore 39\r\nbefore 40\r\nbefore 41\r\nbefore 42\r\nbefore 43\r\nbefore 44\r\nbefore 45\r\nbefore 46\r\nbefore 47\r\nbefore 48\r\nbefore 49\r\nbefore 50\r\nbefore 51\r\nbefore 52\r\nbefore 53\r\nbefore 54\r\nbefore 55\r\nbefore 56\r\nbefore 57\r\nbefore 58\r\nbefore 59\r\nbefore 60\r\nbefore 61\r\nbefore 62\r\nbefore 63\r\nbefore 64\r\nbefore 65\r\nbefore 66\r\nbefore 67\r\nbefore 68\r\nbefore 69\r\nbefore 70\r\nbefore 71\r\nbefore 72\r\nbefore 73\r\nbefore 74\r\nbefore 75\r\nbefore 76\r\nbefore 77\r\nbefore 78\r\nbefore 79\r\nbefore 80\r\nbefore 81\r\nbefore 82\r\nbefore 83\r\nbefore 84\r\nbefore 85\r\nbefore 86\r\nbefore 87\r\nbefore 88\r\nbefore 89\r\nbefore 90\r\nbefore 91\r\nbefore 92\r\nbefore 93\r\nbefore 94\r\nbefore 95\r\nbefore 96\r\nbefore 97\r\nbefore 98\r\nbefore 99\r\nbefore 100\r\n",
+    "\u001b[?25l\u001b[H\u001b[?25h\u001b[?25l\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\u001b[H\u001b[?25h\u001b[?25l\u001b[3J\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\u001b[H\u001b[?25h",
+    "after the clear\r\n"
+  ],
+  "at_ms": [
+    148,
+    532,
+    857
+  ]
+}
