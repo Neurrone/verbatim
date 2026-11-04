@@ -863,6 +863,14 @@ remains, in order:
   equals the installed build: Pi's regular mode resized, set aside until
   the corpus can record a resize (Dickson, 2026-10-25); fzf, once Dickson
   installs it. htop is dropped (Dickson, 2026-10-25).
+- The terminal simulator's line feed in the console host (Dickson,
+  2026-11-04): the console host's default output mode turns a bare line
+  feed into a carriage return and line feed, but `verbatim-term-sim` moves
+  down a row without returning, so a script writing LF replays wrongly;
+  `a_flood_above_a_footer_past_the_console_hosts_history_says_more_than_it_holds`
+  (`crates/verbatim-core/tests/terminal_floods.rs`) writes CRLF to work
+  around it. Confirm the console host's behaviour with a conformance
+  recording before changing the simulator.
 - A program silent on a key that then prints output and redraws a status
   row within 300 ms has the redrawn row spoken at once as the key's
   answer, ahead of the queued output: "Rows the keys own" counts every
