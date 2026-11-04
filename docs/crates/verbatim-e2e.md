@@ -681,9 +681,11 @@ under `src/scenarios/` documents exactly what it asserts.
   said, and a second text box, an application with no outpost, which only
   the listener's facts reveal, announced), `alt_tab_switcher` (two
   Windows Forms text boxes opened in order, Alt held and Tab pressed, the
-  switcher's item for the first window said alone, its row, column and
-  position read by the agent from the switcher's list first, and Alt
-  released, the first window announced), `return_after_retirement` (a text box brought forward
+  switcher's item for the first window said alone, every item's name, row,
+  column and position read by the agent from the switcher's list first;
+  then, Alt still held, Tab pressed once for each item, each next item said
+  alone, the last followed by the first, round to the first window's item
+  again; and Alt released, the first window announced), `return_after_retirement` (a text box brought forward
   again once Core reports its outpost retired after 10 seconds without
   attention, announced as before through a new outpost; its Verbatim is
   launched with the test-only `VERBATIM_TEST_RETIREMENT`, which shortens
