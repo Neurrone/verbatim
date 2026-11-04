@@ -18,7 +18,7 @@ it when the suite is done.
 Public API:
 
 - `protocol` — the agent's own wire vocabulary, versioned separately from
-  the control plane's (`AGENT_PROTOCOL_VERSION`, currently 30) and framed
+  the control plane's (`AGENT_PROTOCOL_VERSION`, currently 32) and framed
   with the same newline-JSON helpers the control plane uses
   (`verbatim_control::protocol::write_message`/`read_message`). Its pids
   are raw OS process ids naming a process a test is driving, not
@@ -30,7 +30,11 @@ Public API:
     the `q` that stops a recording's ffmpeg cleanly), `KillProcess` (a
     launched child with everything in its job), `EndLaunched` (every process the
     agent launched that still runs, ended by its own handle: the
-    pre-launch sweep, never by image name), `EndLaunch` (protocol version
+    pre-launch sweep, never by image name; it then waits, on the jobs' own
+    messages and up to the time the request gives, for every process of
+    each job it ended to have exited, so a staged file one of them held
+    can be copied over once it answers, and answers with an error naming
+    those still running when the wait runs out), `EndLaunch` (protocol version
     30: one launch at cleanup, waited for and if still running ended with
     its job, only through the handles kept from its launch; a pid the agent
     no longer holds a launch for is reported exited and never opened, since
@@ -73,17 +77,27 @@ Public API:
     requiring the title to mark unsaved changes or not; `Present`; `Absent`; `AllMinimized`), where a cloaked window, kept but
     not shown, counts as not shown in every condition, as it does for
     `CloseWindows`, which neither closes nor waits for one, `MinimizeAll` (the taskbar's Minimize All command,
-    waited for, then a minimize sent directly to each window still
-    restored, logged at info, since the command once left a window just
-    opened restored, suspected but not confirmed to be because the taskbar
-    had not taken it in yet; then a wait
-    until every window that can be minimized is, then the desktop
-    brought to the foreground; answered `Minimized`, which says which of
-    the two held, since protocol version 12, so a scenario that cannot
-    start names the window that kept the foreground rather than
-    reporting windows left restored), `CloseWindows` (an ordinary close
-    request to every visible window whose title contains some text, then a
-    wait for them to go), `CloseWindow` (the same for one window by its
+    waited for up to `TASKBAR_LIMIT_MS`, then a minimize sent directly to
+    each window still restored, logged at info, since the command once
+    left a window just opened restored, suspected but not confirmed to be
+    because the taskbar had not taken it in yet; then a wait, up to the
+    request's timeout, until every window that can be minimized is, then
+    the desktop brought to the foreground with `SetForegroundWindow` and a
+    second wait, up to the same timeout, for it to hold the foreground,
+    so the request takes at most `minimize_all_limit` of its timeout,
+    which the client reads its reply within; answered `Minimized` with a
+    `TaskbarCommand`, whether the taskbar handled the command, there is no
+    taskbar, or it did not answer in time with the error, and a
+    `MinimizeOutcome`, the desktop in front or the step that failed:
+    windows not all minimized in time, no desktop window, or
+    `SetForegroundWindow` refusing or accepting the desktop without it
+    taking the foreground in time, so a scenario that cannot start names
+    its cause and the window that kept the foreground), `CloseWindows` (an
+    ordinary close request to every visible window whose title contains
+    some text, then a wait for them to go, answered `WindowsClosed` with
+    each window still shown when the wait ended, as `ForegroundInfo`
+    describes a window, so a failure names each one and whether Windows
+    judges it not responding), `CloseWindow` (the same for one window by its
     handle, while it is still owned by the process and class it was found
     with, whatever its title has become, since protocol version 20, and
     refused since version 21 for a window in the connection's recorded
@@ -138,14 +152,23 @@ Public API:
     `CloseAbandonedWindows` first waits for a scenario still watched on
     another connection to end, since a killed test process's connection is
     seen to end only once the agent has answered the request it was
-    making.
+    making. Either refusal names the asking connection, the connection
+    watching, still open, and how long ago it recorded its windows; the
+    agent does not track what that connection's process is doing, so the
+    refusal does not say whether it is another run or an earlier
+    connection of the same run whose request is still being answered.
   - State a test fixes its expectations from, read independently of any
     screen reader: `FocusedElement` (the focused object through MSAA, with
     no UI Automation connection: the focus window's client object, the
     child its `accFocus` names, that child's name, whether it is selected
     when it can be, and, for a Win32 list view such as the desktop's, the
     focused item's position and the item count from the list view's own
-    messages), `FocusByAutomationId` (focuses the foreground window's
+    messages, as a `ListPosition`, which otherwise says why there is none:
+    the window is not a list view, with its class and whether the focus
+    was followed through as many windows as the agent follows, the list
+    has no focused item, or it did not answer within a second, with the
+    message and the error; a name or state that cannot be read fails the
+    request rather than reading as empty), `FocusByAutomationId` (focuses the foreground window's
     element with that identifier with UI Automation's `SetFocus`, injecting
     no input, and answers how many children it has), `ControlledItems`
     (of the first element the focused element's `ControllerFor` relation
@@ -168,8 +191,10 @@ Public API:
     each one's name, grid
     row and column, position and the list's size). The
     requests that keep UI Automation, which need facts only
-    it has, log how long each took, at warn from two seconds, so their slow
-    answers are counted apart from Verbatim's
+    it has, report an element or pattern as not found only when UI
+    Automation answers with none, and any other failure with its HRESULT
+    and message; they log how long each took, at warn from two seconds,
+    so their slow answers are counted apart from Verbatim's
     (`books/dev/src/explanation/design/listener-without-connections.md`, section 4.5).
   - Evidence: `WaitForFile` (a file appearing, checked again on each change
     notification for its folder), `CreateEvent` and `WaitForEvent` (a named
@@ -220,7 +245,11 @@ Public API:
   leaves its message; `console_title` titles the console window a console
   program opens from its first frame (`STARTUPINFO`'s title), since the
   console host started directly otherwise shows its own path until the
-  shell sets a title. Both fields default when omitted on the wire.
+  shell sets a title. Both fields default when omitted on the wire. A
+  launch that fails names the program and the step: creating the capture
+  file, with its path, the standard input pipe, the job,
+  `CreateProcessW`, the job's assignment, or the resume of its first
+  thread.
   `stdin_piped` (protocol version 14) gives the child a pipe as its
   standard input, whose writing end the agent keeps with the launch for
   `WriteStdin`: the recording stops its capture by writing `q` to it,

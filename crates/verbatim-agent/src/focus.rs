@@ -27,7 +27,37 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use windows::core::{BSTR, Interface};
 
-use crate::protocol::{FocusedElement, SwitcherItem};
+use crate::protocol::{FocusedElement, ListPosition, SwitcherItem};
+
+/// How long [`list_view_position`] waits for the list view to answer each
+/// of its messages.
+const LIST_VIEW_LIMIT_MS: u32 = 1000;
+
+/// Once [`focused_element`] has followed the focus into more windows than
+/// this, it stops and reads the window it has reached.
+const FOCUS_HOPS: u32 = 4;
+
+/// `result`, a UI Automation lookup, with windows-core's answer for a null
+/// result (an empty error, `S_OK`) read as `missing`, and any other error
+/// reported with its HRESULT and message as `what` failing, so a failed
+/// call is never taken for an element that is not there.
+fn found<T>(
+    result: windows::core::Result<T>,
+    what: &str,
+    missing: impl FnOnce() -> String,
+) -> io::Result<T> {
+    result.map_err(|error| {
+        if error.code().0 == 0 {
+            io::Error::other(missing())
+        } else {
+            io::Error::other(format!(
+                "{what} failed with {:#010x}: {}",
+                error.code().0,
+                error.message()
+            ))
+        }
+    })
+}
 
 /// Focuses the first element of the foreground window whose UI Automation
 /// identifier is `automation_id`, with UI Automation's `SetFocus`, which
@@ -93,11 +123,11 @@ fn find_in_foreground(automation_id: &str) -> io::Result<(IUIAutomation, IUIAuto
         unsafe { automation.CreatePropertyCondition(UIA_AutomationIdPropertyId, &value) }
             .map_err(io::Error::other)?;
     // SAFETY: as above.
-    let element = unsafe { root.FindFirst(TreeScope_Descendants, &condition) }.map_err(|_| {
-        io::Error::other(format!(
-            "no element of the foreground window has the identifier {automation_id:?}"
-        ))
-    })?;
+    let element = found(
+        unsafe { root.FindFirst(TreeScope_Descendants, &condition) },
+        &format!("FindFirst for the identifier {automation_id:?}"),
+        || format!("no element of the foreground window has the identifier {automation_id:?}"),
+    )?;
     Ok((automation, element))
 }
 
@@ -212,8 +242,9 @@ fn through_uia<T>(request: &str, read: impl FnOnce() -> io::Result<T>) -> io::Re
 ///
 /// # Errors
 ///
-/// Returns an error if no window has the keyboard focus or its accessible
-/// object cannot be read.
+/// Returns an error if no window has the keyboard focus, or its accessible
+/// object, the focused object's name, or its state cannot be read: a
+/// failed read is never taken for an empty name or no state.
 pub fn focused_element() -> io::Result<FocusedElement> {
     // SAFETY: initializes COM for this connection's thread, which the
     // marshaling of a cross-process `IAccessible` needs; a thread already
@@ -226,6 +257,7 @@ pub fn focused_element() -> io::Result<FocusedElement> {
     // while the keyboard focus is still on it, just after a dialog closes:
     // that window is then read the same way, a few windows deep at most.
     let mut hops = 0;
+    let mut hop_limit = false;
     let (object, child, focus) = loop {
         let client = client_of(window)?;
         // SAFETY: a plain cross-process call on a live object.
@@ -249,7 +281,8 @@ pub fn focused_element() -> io::Result<FocusedElement> {
         }
         // The object is in `inner`, which its position is read from too.
         window = inner;
-        if hops > 4 {
+        if hops > FOCUS_HOPS {
+            hop_limit = true;
             break (object, CHILDID_SELF.cast_signed(), focus);
         }
     };
@@ -257,16 +290,30 @@ pub fn focused_element() -> io::Result<FocusedElement> {
     // SAFETY: as above.
     let name = unsafe { object.get_accName(&child) }
         .map(|name| name.to_string())
-        .unwrap_or_default();
+        .map_err(|error| {
+            io::Error::other(format!(
+                "the focused object's name could not be read (get_accName, in a window of class {:?}): {error}",
+                class_name(window)
+            ))
+        })?;
     // SAFETY: as above.
-    let state = unsafe { object.get_accState(&child) }
+    let state = unsafe { object.get_accState(&child) }.map_err(|error| {
+        io::Error::other(format!(
+            "the focused object's state could not be read (get_accState, in a window of class {:?}): {error}",
+            class_name(window)
+        ))
+    })?;
+    let state = i32::try_from(&state)
         .ok()
-        .and_then(|state| i32::try_from(&state).ok())
         .and_then(|state| u32::try_from(state).ok())
-        .unwrap_or(0);
+        .ok_or_else(|| {
+            io::Error::other(format!(
+                "the focused object's state (get_accState) is not a number: {state:?}"
+            ))
+        })?;
     let selected =
         (state & STATE_SYSTEM_SELECTABLE != 0).then_some(state & STATE_SYSTEM_SELECTED != 0);
-    let position = list_view_position(window);
+    let position = list_view_position(window, hop_limit);
     tracing::info!(
         window = window.0 as isize,
         class = class_name(window),
@@ -327,14 +374,16 @@ fn focused_window() -> Option<HWND> {
 
 /// The focused item's position in the list view `window`, counting from
 /// one, and how many items it has, from the list view's own messages
-/// (`LVM_GETNEXTITEM` for the focused item, `LVM_GETITEMCOUNT`); `None`
-/// when `window` is not a list view, has no focused item, or does not
-/// answer within a second.
-fn list_view_position(window: HWND) -> Option<(i32, i32)> {
-    if class_name(window) != "SysListView32" {
-        return None;
+/// (`LVM_GETNEXTITEM` for the focused item, `LVM_GETITEMCOUNT`), or why
+/// there is none: `window` is not a list view (`hop_limit` saying the
+/// focus was followed as far as the agent follows it), has no focused
+/// item, or does not answer within [`LIST_VIEW_LIMIT_MS`].
+fn list_view_position(window: HWND, hop_limit: bool) -> ListPosition {
+    let class = class_name(window);
+    if class != "SysListView32" {
+        return ListPosition::NotListView { class, hop_limit };
     }
-    let ask = |message: u32, wparam: usize, lparam: isize| -> Option<isize> {
+    let ask = |message: u32, name: &str, wparam: usize, lparam: isize| {
         let mut answer = 0usize;
         // SAFETY: the list view's messages take plain integers and answer
         // one; nothing points into this process.
@@ -345,20 +394,33 @@ fn list_view_position(window: HWND) -> Option<(i32, i32)> {
                 WPARAM(wparam),
                 LPARAM(lparam),
                 SMTO_ABORTIFHUNG,
-                1000,
+                LIST_VIEW_LIMIT_MS,
                 Some(&raw mut answer),
             )
         };
-        (sent.0 != 0).then_some(answer.cast_signed())
+        if sent.0 == 0 {
+            Err(ListPosition::NotAnswering {
+                message: name.to_owned(),
+                limit_ms: u64::from(LIST_VIEW_LIMIT_MS),
+                error: windows::core::Error::from_thread().message(),
+            })
+        } else {
+            Ok(answer.cast_signed())
+        }
     };
-    let focused = ask(
-        LVM_GETNEXTITEM,
-        usize::MAX,
-        isize::try_from(LVNI_FOCUSED).ok()?,
-    )?;
-    let count = ask(LVM_GETITEMCOUNT, 0, 0)?;
-    let index = i32::try_from(focused).ok().filter(|index| *index >= 0)?;
-    Some((index + 1, i32::try_from(count).ok()?))
+    let read = || -> Result<ListPosition, ListPosition> {
+        let flags = isize::try_from(LVNI_FOCUSED).unwrap_or_default();
+        let focused = ask(LVM_GETNEXTITEM, "LVM_GETNEXTITEM", usize::MAX, flags)?;
+        let Some(index) = i32::try_from(focused).ok().filter(|index| *index >= 0) else {
+            return Ok(ListPosition::NoFocusedItem);
+        };
+        let count = ask(LVM_GETITEMCOUNT, "LVM_GETITEMCOUNT", 0, 0)?;
+        Ok(ListPosition::At {
+            position: index + 1,
+            count: i32::try_from(count).unwrap_or(i32::MAX),
+        })
+    };
+    read().unwrap_or_else(|failure| failure)
 }
 
 /// The screen position of the character on line `line` at `column`, both
@@ -464,8 +526,11 @@ fn uia_position_through_uia(line: u32, column: u32) -> io::Result<(i32, i32)> {
     // SAFETY: plain COM calls on live interfaces.
     let focus = unsafe { automation.GetFocusedElement() }.map_err(io::Error::other)?;
     // SAFETY: as above.
-    let pattern: IUIAutomationTextPattern = unsafe { focus.GetCurrentPatternAs(UIA_TextPatternId) }
-        .map_err(|_| io::Error::other("the focused element has no text pattern"))?;
+    let pattern: IUIAutomationTextPattern = found(
+        unsafe { focus.GetCurrentPatternAs(UIA_TextPatternId) },
+        "GetCurrentPatternAs for the text pattern",
+        || "the focused element has no text pattern".to_owned(),
+    )?;
     // SAFETY: as above.
     let range = unsafe { pattern.DocumentRange() }.map_err(io::Error::other)?;
     // SAFETY: as above; the range is collapsed to its start.
@@ -566,8 +631,11 @@ fn switcher_items_through_uia() -> io::Result<Vec<SwitcherItem>> {
         unsafe { automation.CreatePropertyCondition(UIA_AutomationIdPropertyId, &id) }
             .map_err(io::Error::other)?;
     // SAFETY: as above.
-    let list = unsafe { root.FindFirst(TreeScope_Descendants, &list_condition) }
-        .map_err(|_| io::Error::other("the switcher has no list of running applications"))?;
+    let list = found(
+        unsafe { root.FindFirst(TreeScope_Descendants, &list_condition) },
+        "FindFirst for the switcher's list",
+        || "the switcher has no list of running applications".to_owned(),
+    )?;
     // SAFETY: as above.
     let every = unsafe { automation.CreateTrueCondition() }.map_err(io::Error::other)?;
     // SAFETY: as above.

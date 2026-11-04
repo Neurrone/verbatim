@@ -79,11 +79,30 @@ use serde::{Deserialize, Serialize};
 /// modules and a minidump; version 30 added [`Request::EndLaunch`], so
 /// cleanup ends a launch only through the agent's own handles; version 31
 /// answers [`Request::SetForeground`] with a [`ForegroundOutcome`], so a
-/// window not brought forward is reported with the step that failed. A
-/// test run against an older agent is refused at `Hello`
-/// instead of losing its connection mid-run, or running without the
-/// exclusion.
-pub const AGENT_PROTOCOL_VERSION: u32 = 31;
+/// window not brought forward is reported with the step that failed;
+/// version 32 names the cause of every setup failure: the focused item's
+/// [`ListPosition`], [`Request::MinimizeAll`]'s [`TaskbarCommand`] and
+/// [`MinimizeOutcome`], the windows left open in
+/// [`ReplyPayload::WindowsClosed`], and a wait for the ended processes in
+/// [`Request::EndLaunched`]. A test run against an older agent is refused
+/// at `Hello` instead of losing its connection mid-run, or running without
+/// the exclusion.
+pub const AGENT_PROTOCOL_VERSION: u32 = 32;
+
+/// How long the agent gives the taskbar to handle its Minimize All command
+/// ([`Request::MinimizeAll`]), in milliseconds.
+pub const TASKBAR_LIMIT_MS: u32 = 5_000;
+
+/// The longest [`Request::MinimizeAll`] with `timeout` can take on the
+/// agent's side: the taskbar's command, then the wait for every window to
+/// be minimized and the wait for the desktop to take the foreground, each
+/// up to `timeout`; a client reads the reply with a timeout derived from
+/// it, so the reply always arrives.
+#[must_use]
+pub fn minimize_all_limit(timeout: std::time::Duration) -> std::time::Duration {
+    std::time::Duration::from_millis(u64::from(TASKBAR_LIMIT_MS))
+        .saturating_add(timeout.saturating_mul(2))
+}
 
 /// The command of a [`Request::LaunchProcess`] that names the agent's own
 /// executable, wherever it was deployed: the recordings launch
@@ -210,8 +229,14 @@ pub enum Request {
     /// with everything each one started (its job object), and reports how
     /// many were running: the pre-launch sweep a test runs, so a process an
     /// aborted earlier run left behind is ended by its own handle, never by
-    /// its image name. Answered by [`ReplyPayload::EndedLaunched`].
-    EndLaunched,
+    /// its image name. Waits up to `timeout_ms` for every process of the
+    /// jobs it ended to have exited, so the files they held are free once
+    /// it answers. Answered by [`ReplyPayload::EndedLaunched`], or by
+    /// [`Frame::Error`] naming the processes still running.
+    EndLaunched {
+        /// How long to wait for the ended processes, in milliseconds.
+        timeout_ms: u64,
+    },
     /// Ends a launch at cleanup: waits up to `wait_ms` for process `pid`,
     /// which this agent launched, to exit, and if it still runs, terminates
     /// its job and waits up to `ended_wait_ms` for it to go, all through
@@ -262,8 +287,10 @@ pub enum Request {
     /// Minimizes every window as the taskbar's Show Desktop command does,
     /// the state every end-to-end scenario starts from, waits up to
     /// `timeout_ms` for every window that can be minimized to be, then
-    /// gives the desktop the foreground and waits for it to hold it.
-    /// Answered by [`ReplyPayload::Minimized`].
+    /// gives the desktop the foreground and waits, again up to
+    /// `timeout_ms`, for it to hold it; the taskbar's command is given
+    /// [`TASKBAR_LIMIT_MS`] first ([`minimize_all_limit`]). Answered by
+    /// [`ReplyPayload::Minimized`].
     MinimizeAll {
         /// How long to wait, in milliseconds.
         timeout_ms: u64,
@@ -498,7 +525,7 @@ pub enum Request {
     /// window open before the scenario started is never the scenario's,
     /// and every File Explorer folder window has the same process and
     /// class. Answered by [`ReplyPayload::WindowsClosed`], `remaining`
-    /// being 1 when it is still shown.
+    /// holding the window when it is still shown.
     CloseWindow {
         /// The window's handle ([`WindowInfo::window`]).
         window: u64,
@@ -755,15 +782,14 @@ pub enum ReplyPayload {
         /// The processes, in the order Windows lists them.
         processes: Vec<ProcessInfo>,
     },
-    /// Answer to [`Request::MinimizeAll`]: whether every window that can
-    /// be minimized was, whether the desktop then took the foreground
-    /// (false when the windows were not all minimized, as it was not
-    /// tried), and the desktop as it was when the waits ended.
+    /// Answer to [`Request::MinimizeAll`]: what became of the taskbar's
+    /// command, the desktop in front or the step that failed, and the
+    /// desktop as it was when the waits ended.
     Minimized {
-        /// Whether every window that can be minimized was.
-        minimized: bool,
-        /// Whether the desktop holds the foreground.
-        desktop_in_front: bool,
+        /// What became of the taskbar's Minimize All command.
+        taskbar: TaskbarCommand,
+        /// The desktop in front, or the step that failed.
+        outcome: MinimizeOutcome,
         /// The foreground window and the visible windows.
         desktop: ForegroundInfo,
     },
@@ -876,11 +902,13 @@ pub enum ReplyPayload {
         /// The chains, windows' first, in the order asked for.
         chains: Vec<WaitChain>,
     },
-    /// Answer to [`Request::CloseWindows`] and [`Request::CloseWindow`]: how many matching windows were
-    /// still open when the wait ended; zero means every one closed.
+    /// Answer to [`Request::CloseWindows`], [`Request::CloseProcessWindows`]
+    /// and [`Request::CloseWindow`]: the windows asked to close that were
+    /// still shown when the wait ended, as they were then; empty means
+    /// every one closed.
     WindowsClosed {
-        /// Windows still open.
-        remaining: u32,
+        /// Windows still shown.
+        remaining: Vec<WindowInfo>,
     },
     /// Answer to [`Request::RecordWindows`].
     WindowsRecorded {
@@ -1271,11 +1299,159 @@ pub struct ProcessDiagnostics {
 pub struct FocusedElement {
     /// Its name.
     pub name: String,
-    /// Its position in its list and how many items there are, counting
-    /// from one, when it is the focused item of a Win32 list view.
-    pub position: Option<(i32, i32)>,
+    /// Its position in its list and how many items there are, when it is
+    /// the focused item of a Win32 list view, or why there is none.
+    pub position: ListPosition,
     /// Whether it is selected, when it can be.
     pub selected: Option<bool>,
+}
+
+/// The focused object's position in its Win32 list view, as
+/// [`FocusedElement`] reports it, or why it has none, so a failure names
+/// its cause.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ListPosition {
+    /// The focused item's position, counting from one, and how many items
+    /// the list has.
+    At {
+        /// The position, from one.
+        position: i32,
+        /// How many items the list has.
+        count: i32,
+    },
+    /// The window the focused object is in is not a list view.
+    NotListView {
+        /// Its class name.
+        class: String,
+        /// Whether the focus was followed through as many windows as the
+        /// agent follows, so the window read is the last it reached.
+        hop_limit: bool,
+    },
+    /// The list view has no focused item (`LVM_GETNEXTITEM` answered -1).
+    NoFocusedItem,
+    /// The list view did not answer a message within `limit_ms`, or its
+    /// thread was not responding.
+    NotAnswering {
+        /// The message, such as `LVM_GETNEXTITEM`.
+        message: String,
+        /// How long the answer was waited for.
+        limit_ms: u64,
+        /// The error `SendMessageTimeoutW` gave.
+        error: String,
+    },
+}
+
+impl ListPosition {
+    /// What happened, as a failure message says it.
+    #[must_use]
+    pub fn describe(&self) -> String {
+        match self {
+            Self::At { position, count } => format!("item {position} of {count}"),
+            Self::NotListView { class, hop_limit } => {
+                let limit = if *hop_limit {
+                    ", the last window the agent follows the focus into,"
+                } else {
+                    ""
+                };
+                format!(
+                    "the focused object is in a window of class {class:?}{limit} not a list view"
+                )
+            }
+            Self::NoFocusedItem => "the list view has no focused item".to_owned(),
+            Self::NotAnswering {
+                message,
+                limit_ms,
+                error,
+            } => format!("the list view did not answer {message} within {limit_ms} ms: {error}"),
+        }
+    }
+}
+
+/// What became of the taskbar's Minimize All command, as
+/// [`ReplyPayload::Minimized`] reports it: the windows it leaves restored
+/// are minimized directly in any case, so this explains a failure rather
+/// than deciding one.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TaskbarCommand {
+    /// The taskbar handled the command.
+    Handled,
+    /// There is no taskbar window (`Shell_TrayWnd`) to send it to.
+    NoTaskbar,
+    /// The taskbar did not handle it within `limit_ms`, or its thread was
+    /// not responding.
+    NotHandled {
+        /// How long it was waited for.
+        limit_ms: u64,
+        /// The error `SendMessageTimeoutW` gave.
+        error: String,
+    },
+}
+
+impl TaskbarCommand {
+    /// What happened, as a failure message says it.
+    #[must_use]
+    pub fn describe(&self) -> String {
+        match self {
+            Self::Handled => "the taskbar handled its Minimize All command".to_owned(),
+            Self::NoTaskbar => "there is no taskbar to send Minimize All to".to_owned(),
+            Self::NotHandled { limit_ms, error } => format!(
+                "the taskbar did not handle its Minimize All command within {limit_ms} ms: {error}"
+            ),
+        }
+    }
+}
+
+/// Answer to [`Request::MinimizeAll`]: the desktop in front, or the step
+/// of getting it there that failed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MinimizeOutcome {
+    /// Every window that can be minimized is, and the desktop holds the
+    /// foreground.
+    DesktopInFront,
+    /// Not every window that can be minimized was within `limit_ms`, so
+    /// the desktop was not given the foreground.
+    NotMinimized {
+        /// How long the windows were waited for.
+        limit_ms: u64,
+    },
+    /// There is no desktop window (`Progman`) to give the foreground.
+    NoDesktopWindow,
+    /// `SetForegroundWindow` refused the desktop's window, and the desktop
+    /// did not hold the foreground within `limit_ms`.
+    Refused {
+        /// How long the desktop was waited for in front.
+        limit_ms: u64,
+    },
+    /// `SetForegroundWindow` accepted the desktop's window, but the
+    /// desktop did not hold the foreground within `limit_ms`.
+    NotInFront {
+        /// How long the desktop was waited for in front.
+        limit_ms: u64,
+    },
+}
+
+impl MinimizeOutcome {
+    /// What happened, as a failure message says it.
+    #[must_use]
+    pub fn describe(self) -> String {
+        match self {
+            Self::DesktopInFront => "the desktop is in front".to_owned(),
+            Self::NotMinimized { limit_ms } => {
+                format!("not every window was minimized within {limit_ms} ms")
+            }
+            Self::NoDesktopWindow => "every window was minimized, but there is no desktop \
+                                      window (Progman) to bring forward"
+                .to_owned(),
+            Self::Refused { limit_ms } => format!(
+                "every window was minimized, but SetForegroundWindow refused the desktop's \
+                 window, and the desktop did not take the foreground within {limit_ms} ms"
+            ),
+            Self::NotInFront { limit_ms } => format!(
+                "every window was minimized, and SetForegroundWindow accepted the desktop's \
+                 window, but the desktop did not take the foreground within {limit_ms} ms"
+            ),
+        }
+    }
 }
 
 /// A process, as [`Request::ChildProcesses`] reports it.

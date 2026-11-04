@@ -48,9 +48,9 @@ use std::sync::{Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::Duration;
 
 use verbatim_agent::protocol::{
-    EventOutcome, ForegroundInfo, ForegroundOutcome, LaunchEnd, ProcessDiagnostics, ProcessExit,
-    ProcessInfo, ProcessState, SwitcherItem, WaitChain, WaitNode, WaitNodeKind, WaitNodeStatus,
-    WindowCondition, WindowInfo,
+    EventOutcome, ForegroundInfo, ForegroundOutcome, LaunchEnd, ListPosition, MinimizeOutcome,
+    ProcessDiagnostics, ProcessExit, ProcessInfo, ProcessState, SwitcherItem, TaskbarCommand,
+    WaitChain, WaitNode, WaitNodeKind, WaitNodeStatus, WindowCondition, WindowInfo,
 };
 use verbatim_config::{ConfigStore, Settings};
 use verbatim_control::client::{Client as ControlClient, ok_or_error};
@@ -445,7 +445,7 @@ impl Scenario {
         // sweep deletes.
         let mut agent = AgentClient::connect(&agent_addr)?;
         close_notepad_tabs(&mut agent, DOCUMENT_MARKER)?;
-        let ended = agent.end_launched()?;
+        let ended = agent.end_launched(CLOSE_TIMEOUT)?;
         if ended > 0 {
             println!("ended {ended} process(es) an earlier run left running");
         }
@@ -512,17 +512,21 @@ impl Scenario {
             match connect_nvda(&mut agent) {
                 Ok(connected) => Some(connected),
                 Err(error) => {
-                    close_documents(&mut agent, &opened)?;
-                    return Err(error);
+                    let closed = close_documents(&mut agent, &opened);
+                    return Err(with_cleanup(error, "closing the harness documents", closed));
                 }
             }
         } else {
             None
         };
-        let (minimized, desktop_in_front, desktop) = agent.minimize_all(MINIMIZE_TIMEOUT)?;
-        if let Some(failure) = minimize_failure(minimized, desktop_in_front, &desktop) {
-            close_documents(&mut agent, &opened)?;
-            return Err(io::Error::other(failure));
+        let (taskbar, outcome, desktop) = agent.minimize_all(MINIMIZE_TIMEOUT)?;
+        if let Some(failure) = minimize_failure(&taskbar, outcome, &desktop) {
+            let closed = close_documents(&mut agent, &opened);
+            return Err(with_cleanup(
+                io::Error::other(failure),
+                "closing the harness documents",
+                closed,
+            ));
         }
         if let Some((speech, timeline, nvda)) = nvda {
             if crate::recording::enabled() {
@@ -564,10 +568,12 @@ impl Scenario {
             match Recording::start(&mut agent, &run_dir) {
                 Ok(recording) => Some(recording),
                 Err(error) => {
-                    close_documents(&mut agent, &opened)?;
-                    return Err(io::Error::other(format!(
-                        "the recording could not start: {error}"
-                    )));
+                    let closed = close_documents(&mut agent, &opened);
+                    return Err(with_cleanup(
+                        io::Error::other(format!("the recording could not start: {error}")),
+                        "closing the harness documents",
+                        closed,
+                    ));
                 }
             }
         } else {
@@ -595,34 +601,52 @@ impl Scenario {
         let launched = agent.launch_verbatim(&exe_str, &run_dir, &env, &stderr_path);
         let (verbatim_pid, ignored) = match launched {
             Ok((launched, ignored)) => (launched.pid, ignored),
-            Err(error) => {
+            Err(mut error) => {
                 if let Some(recording) = &mut recording {
-                    recording.stop(&mut agent)?;
+                    let stopped = recording.stop(&mut agent);
+                    error = with_cleanup(error, "stopping the recording", stopped);
                 }
-                close_documents(&mut agent, &opened)?;
-                return Err(error);
+                let closed = close_documents(&mut agent, &opened);
+                return Err(with_cleanup(error, "closing the harness documents", closed));
             }
         };
         let ready = agent.wait_for_event(&ready_event, verbatim_pid, READY_TIMEOUT);
         let connected = match ready {
             Ok(EventOutcome::Signalled) => connect(&agent_addr),
             Ok(EventOutcome::Exited { exit_code }) => Err(io::Error::other(format!(
-                "Verbatim exited ({exit_code:?}) before it was ready; see {stderr_path}"
+                "Verbatim exited ({exit_code:?}) before it was ready; see {stderr_path}, \
+                 {STDERR_FILE_NAME} in the scenario's artifacts"
             ))),
             Ok(EventOutcome::TimedOut) => Err(io::Error::other(format!(
-                "Verbatim did not say it was ready within {READY_TIMEOUT:?}"
+                "Verbatim did not say it was ready within {READY_TIMEOUT:?}, and was still \
+                 running when the wait ended; see {stderr_path}, {STDERR_FILE_NAME} in the \
+                 scenario's artifacts"
             ))),
             Err(error) => Err(error),
         };
         let (mut control, speech, timeline) = match connected {
             Ok(connected) => connected,
             Err(error) => {
-                agent.kill_process(verbatim_pid)?;
+                let killed = agent.kill_process(verbatim_pid).map(|_| ());
+                let mut error = with_cleanup(error, "ending Verbatim", killed);
+                // Read once Verbatim is ended, so it holds all it wrote; the
+                // runner writes it to the scenario's artifacts
+                // ([`write_start_failure`]), as no scenario is made to
+                // collect it.
+                let stderr_log = match agent.read_whole_file(&stderr_path) {
+                    Ok(bytes) => Some(bytes),
+                    Err(read) => {
+                        error = with_cleanup(error, &format!("reading {stderr_path}"), Err(read));
+                        None
+                    }
+                };
                 if let Some(recording) = &mut recording {
-                    recording.stop(&mut agent)?;
+                    let stopped = recording.stop(&mut agent);
+                    error = with_cleanup(error, "stopping the recording", stopped);
                 }
-                close_documents(&mut agent, &opened)?;
-                return Err(error);
+                let closed = close_documents(&mut agent, &opened);
+                let error = with_cleanup(error, "closing the harness documents", closed);
+                return Err(StartFailure::error(&error, stderr_log));
             }
         };
         require_ready(&mut control)?;
@@ -1411,9 +1435,26 @@ impl Scenario {
         if let Some(ready) = ready
             && !self.agent.wait_for_file(ready, WINDOW_TIMEOUT)?
         {
-            return Err(io::Error::other(format!(
+            let message = format!(
                 "{ready} was not written within {WINDOW_TIMEOUT:?}, so the window titled {title:?} was not brought forward"
-            )));
+            );
+            let desktop = match self.agent.foreground_info() {
+                Ok(desktop) => desktop,
+                Err(error) => {
+                    return Err(io::Error::other(format!(
+                        "{message}; the desktop could not be read to record the launch: {error}"
+                    )));
+                }
+            };
+            let evidence = LaunchEvidence::record(
+                &mut self.agent,
+                &self.run_dir,
+                &desktop,
+                Some(window.window),
+                launch.pid,
+            );
+            self.launch_evidence.push(evidence.clone());
+            return Err(WindowWaitFailure::error(message, evidence));
         }
         let outcome = self.agent.set_foreground(window.window)?;
         if !outcome.in_front() {
@@ -1521,8 +1562,8 @@ impl Scenario {
     /// foreground, naming what kept it, as the start does.
     pub fn return_to_desktop(&mut self) -> io::Result<()> {
         self.begin_action("bring the desktop back to the foreground");
-        let (minimized, desktop_in_front, desktop) = self.agent.minimize_all(MINIMIZE_TIMEOUT)?;
-        match minimize_failure(minimized, desktop_in_front, &desktop) {
+        let (taskbar, outcome, desktop) = self.agent.minimize_all(MINIMIZE_TIMEOUT)?;
+        match minimize_failure(&taskbar, outcome, &desktop) {
             Some(failure) => Err(io::Error::other(failure)),
             None => Ok(()),
         }
@@ -1904,9 +1945,15 @@ impl Scenario {
             )));
         }
         let focus = self.agent.focused_element()?;
-        let Some((position, size)) = focus.position else {
+        let ListPosition::At {
+            position,
+            count: size,
+        } = focus.position
+        else {
             return Err(io::Error::other(format!(
-                "the desktop item's position could not be read: {focus:?}"
+                "the desktop item's position could not be read: {}; the focused object is named {:?}",
+                focus.position.describe(),
+                focus.name
             )));
         };
         let state = match focus.selected {
@@ -2776,9 +2823,9 @@ impl Scenario {
                     }
                     for pid in pids {
                         match self.agent.close_process_windows(pid, CLOSE_TIMEOUT) {
-                            Ok(0) => {}
-                            Ok(remaining) => problems.push(format!(
-                                "{remaining} window(s) of process {pid}, which owned the window titled {title:?}, did not close within {CLOSE_TIMEOUT:?}"
+                            Ok(remaining) => problems.extend(not_closed(
+                                &format!("the window(s) of process {pid}, which owned the window titled {title:?},"),
+                                &remaining,
                             )),
                             Err(error) => problems.push(format!(
                                 "could not close the windows of process {pid}, which owned the window titled {title:?}: {error}"
@@ -2791,10 +2838,10 @@ impl Scenario {
                     // launch is ended below if it still runs.
                     if let Some(window) = &launched.window {
                         match self.agent.close_window(window, CLOSE_TIMEOUT) {
-                            Ok(true) => {}
-                            Ok(false) => problems.push(format!(
+                            Ok(None) => {}
+                            Ok(Some(left)) => problems.push(format!(
                                 "the window {} did not close within {CLOSE_TIMEOUT:?}",
-                                describe_window(window)
+                                describe_window(&left)
                             )),
                             Err(error) => problems.push(format!(
                                 "could not close {}: {error}",
@@ -2804,9 +2851,9 @@ impl Scenario {
                     }
                 }
                 Closing::ByTitle => match self.agent.close_windows(title, CLOSE_TIMEOUT) {
-                    Ok(0) => {}
-                    Ok(remaining) => problems.push(format!(
-                        "{remaining} window(s) titled {title:?} did not close within {CLOSE_TIMEOUT:?}"
+                    Ok(remaining) => problems.extend(not_closed(
+                        &format!("the window(s) titled {title:?}"),
+                        &remaining,
                     )),
                     Err(error) => problems.push(format!("could not close {title:?}: {error}")),
                 },
@@ -2923,10 +2970,10 @@ impl Scenario {
         };
         for window in &windows {
             match self.agent.close_window(window, CLOSE_TIMEOUT) {
-                Ok(true) => {}
-                Ok(false) => problems.push(format!(
+                Ok(None) => {}
+                Ok(Some(left)) => problems.push(format!(
                     "Notepad's window {} did not close within {CLOSE_TIMEOUT:?}",
-                    describe_window(window)
+                    describe_window(&left)
                 )),
                 Err(error) => problems.push(format!(
                     "could not close {}: {error}",
@@ -3071,7 +3118,7 @@ fn sweep_leftovers(agent: &mut AgentClient, directory: &str) -> io::Result<()> {
     // Tabs first, as tabs: a Notepad ended by its handle keeps them for its
     // next session, without their documents, which are deleted below.
     close_notepad_tabs(agent, DOCUMENT_MARKER)?;
-    let ended = agent.end_launched()?;
+    let ended = agent.end_launched(CLOSE_TIMEOUT)?;
     if ended > 0 {
         println!("ended {ended} process(es) an earlier run left running");
     }
@@ -3091,11 +3138,7 @@ fn sweep_leftovers(agent: &mut AgentClient, directory: &str) -> io::Result<()> {
     if !remaining.is_empty() {
         return Err(io::Error::other(format!(
             "window(s) an earlier scenario left open did not close within {CLOSE_TIMEOUT:?}: {}",
-            remaining
-                .iter()
-                .map(describe_window)
-                .collect::<Vec<_>>()
-                .join("; ")
+            describe_windows(&remaining)
         )));
     }
     // What is left with the harness's title has no process or handle the
@@ -3104,9 +3147,10 @@ fn sweep_leftovers(agent: &mut AgentClient, directory: &str) -> io::Result<()> {
     // are the windows of a run whose agent has since restarted, which only
     // their titles identify.
     let remaining = agent.close_windows(DOCUMENT_MARKER, CLOSE_TIMEOUT)?;
-    if remaining > 0 {
+    if !remaining.is_empty() {
         return Err(io::Error::other(format!(
-            "{remaining} window(s) an earlier run left open, titled with {DOCUMENT_MARKER:?}, did not close"
+            "window(s) an earlier run left open, titled with {DOCUMENT_MARKER:?}, did not close within {CLOSE_TIMEOUT:?}: {}",
+            describe_windows(&remaining)
         )));
     }
     for name in agent.list_files(directory)?.iter().filter(|name| {
@@ -3129,12 +3173,35 @@ fn sweep_leftovers(agent: &mut AgentClient, directory: &str) -> io::Result<()> {
     Ok(())
 }
 
-/// `window`'s title, class, process id, and program, for a report.
+/// `window`'s title, class, process id, and program, and whether Windows
+/// judges it not responding, for a report.
 fn describe_window(window: &WindowInfo) -> String {
+    let hung = if window.hung { ", not responding" } else { "" };
     format!(
-        "{:?} (class {}, pid {}, {})",
+        "{:?} (class {}, pid {}, {}{hung})",
         window.title, window.class, window.pid, window.image
     )
+}
+
+/// That `what`, windows asked to close, did not close, naming each of
+/// `remaining`, those still shown when the wait ended; `None` when none is.
+fn not_closed(what: &str, remaining: &[WindowInfo]) -> Option<String> {
+    (!remaining.is_empty()).then(|| {
+        format!(
+            "{what} did not close within {CLOSE_TIMEOUT:?}: {}",
+            describe_windows(remaining)
+        )
+    })
+}
+
+/// Each of `windows` as [`describe_window`] gives it, separated by
+/// semicolons.
+fn describe_windows(windows: &[WindowInfo]) -> String {
+    windows
+        .iter()
+        .map(describe_window)
+        .collect::<Vec<_>>()
+        .join("; ")
 }
 
 /// A harness document a scenario edits in Windows 11 Notepad, opened
@@ -3600,7 +3667,7 @@ fn copy_into_stage(source_dir: &Path, stage_dir: &Path) -> io::Result<()> {
         }
         let destination = stage_dir.join(name);
         if !files_match(&source, &destination)? {
-            fs::copy(&source, &destination)?;
+            stage_copy(&source, &destination)?;
         }
     }
     copy_dir_into_stage(&source_dir.join(ESPEAK_DATA), &stage_dir.join(ESPEAK_DATA))?;
@@ -3633,10 +3700,25 @@ fn copy_dir_into_stage(source: &Path, destination: &Path) -> io::Result<()> {
         if entry.file_type()?.is_dir() {
             copy_dir_into_stage(&entry.path(), &target)?;
         } else if !files_match(&entry.path(), &target)? {
-            fs::copy(entry.path(), &target)?;
+            stage_copy(&entry.path(), &target)?;
         }
     }
     Ok(())
+}
+
+/// Copies `source` to `destination` in the stage, naming both on failure,
+/// as when a process still running from the stage holds `destination`.
+fn stage_copy(source: &Path, destination: &Path) -> io::Result<()> {
+    fs::copy(source, destination).map(|_| ()).map_err(|error| {
+        io::Error::new(
+            error.kind(),
+            format!(
+                "could not copy {} to {}: {error}",
+                source.display(),
+                destination.display()
+            ),
+        )
+    })
 }
 
 /// Whether `source` and `destination` already hold identical bytes.
@@ -3718,7 +3800,8 @@ const DESKTOP_CLASS: &str = "Progman";
 
 /// Why the start of a scenario, every window minimized and the desktop in
 /// front ([`AgentClient::minimize_all`]), did not happen: windows left
-/// restored, a desktop that did not take the foreground, naming the window
+/// restored, with what became of the taskbar's command, a desktop that did
+/// not take the foreground, naming the step that failed and the window
 /// that kept it, or, once both held, a shown window other than the desktop
 /// that is not minimized and can be activated, naming it. That last is a
 /// window Show Desktop does not minimize, such as a message box or another
@@ -3727,17 +3810,19 @@ const DESKTOP_CLASS: &str = "Progman";
 /// Windows 11's Widgets board's window does when Windows shows it on its
 /// own. `None` when every check held.
 fn minimize_failure(
-    minimized: bool,
-    desktop_in_front: bool,
+    taskbar: &TaskbarCommand,
+    outcome: MinimizeOutcome,
     desktop: &ForegroundInfo,
 ) -> Option<String> {
-    if !minimized {
+    if let MinimizeOutcome::NotMinimized { .. } = outcome {
         return Some(format!(
-            "not every window was minimized within {MINIMIZE_TIMEOUT:?}: {}",
+            "{}; {}: {}",
+            outcome.describe(),
+            taskbar.describe(),
             describe_foreground(desktop)
         ));
     }
-    if !desktop_in_front {
+    if outcome != MinimizeOutcome::DesktopInFront {
         let holder = desktop.foreground.as_ref().map_or_else(
             || "no window".to_owned(),
             |window| {
@@ -3748,8 +3833,8 @@ fn minimize_failure(
             },
         );
         return Some(format!(
-            "every window was minimized, but the desktop did not take the foreground within \
-             {MINIMIZE_TIMEOUT:?}; {holder} kept it: {}",
+            "{}; {holder} kept it: {}",
+            outcome.describe(),
             describe_foreground(desktop)
         ));
     }
@@ -3921,6 +4006,76 @@ impl std::fmt::Display for WindowWaitFailure {
 }
 
 impl std::error::Error for WindowWaitFailure {}
+
+/// `error`, a failed start's, with `cleanup`'s failure appended when the
+/// cleanup step `step` failed too, so the cause survives and the failed
+/// cleanup is still reported; what the error carries for the scenario's
+/// artifacts ([`WindowWaitFailure`], [`StartFailure`]) is kept.
+fn with_cleanup(mut error: io::Error, step: &str, cleanup: io::Result<()>) -> io::Error {
+    let Err(failure) = cleanup else {
+        return error;
+    };
+    let note = format!("\nthen {step} failed too: {failure}");
+    if let Some(inner) = error.get_mut() {
+        if let Some(wait) = inner.downcast_mut::<WindowWaitFailure>() {
+            wait.message.push_str(&note);
+            return error;
+        }
+        if let Some(start) = inner.downcast_mut::<StartFailure>() {
+            start.message.push_str(&note);
+            return error;
+        }
+    }
+    io::Error::new(error.kind(), format!("{error}{note}"))
+}
+
+/// A start that failed once Verbatim was launched, with Verbatim's stderr
+/// log as read after it was ended: the error such a start returns, so the
+/// runner can write the log to the scenario's artifacts
+/// ([`write_start_failure`]) though no [`Scenario`] was made to collect
+/// it.
+#[derive(Debug)]
+struct StartFailure {
+    message: String,
+    stderr_log: Option<Vec<u8>>,
+}
+
+impl StartFailure {
+    /// `error`'s message with `stderr_log`, as an I/O error of its kind.
+    fn error(error: &io::Error, stderr_log: Option<Vec<u8>>) -> io::Error {
+        io::Error::new(
+            error.kind(),
+            Self {
+                message: error.to_string(),
+                stderr_log,
+            },
+        )
+    }
+}
+
+impl std::fmt::Display for StartFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for StartFailure {}
+
+/// Writes what a failed start's `error` carries to the scenario's
+/// artifacts in `dir`: Verbatim's stderr log, as [`STDERR_FILE_NAME`],
+/// when the start failed once Verbatim was launched ([`StartFailure`]).
+/// Writes nothing otherwise.
+pub(crate) fn write_start_failure(dir: &Path, error: &io::Error) -> io::Result<()> {
+    let Some(log) = error
+        .get_ref()
+        .and_then(|inner| inner.downcast_ref::<StartFailure>())
+        .and_then(|failure| failure.stderr_log.as_deref())
+    else {
+        return Ok(());
+    };
+    fs::create_dir_all(dir)?;
+    fs::write(dir.join(STDERR_FILE_NAME), log)
+}
 
 /// What was recorded of the launch `error` failed on, when a window wait
 /// ran out ([`LaunchEvidence`]).
@@ -4283,10 +4438,12 @@ mod minimize_tests {
             foreground: Some(window("phase 6", "WindowsTerminal.exe", 29864)),
             windows: Vec::new(),
         };
-        let failure = minimize_failure(true, false, &desktop).expect("a failure");
+        let refused = MinimizeOutcome::Refused { limit_ms: 15_000 };
+        let failure =
+            minimize_failure(&TaskbarCommand::Handled, refused, &desktop).expect("a failure");
         assert!(
             failure.starts_with(
-                "every window was minimized, but the desktop did not take the foreground"
+                "every window was minimized, but SetForegroundWindow refused the desktop's window"
             ),
             "{failure}"
         );
@@ -4295,11 +4452,22 @@ mod minimize_tests {
             "{failure}"
         );
         assert!(
-            minimize_failure(false, false, &desktop)
-                .expect("a failure")
-                .starts_with("not every window was minimized")
+            minimize_failure(
+                &TaskbarCommand::Handled,
+                MinimizeOutcome::NotMinimized { limit_ms: 15_000 },
+                &desktop
+            )
+            .expect("a failure")
+            .starts_with("not every window was minimized")
         );
-        assert_eq!(minimize_failure(true, true, &desktop), None);
+        assert_eq!(
+            minimize_failure(
+                &TaskbarCommand::Handled,
+                MinimizeOutcome::DesktopInFront,
+                &desktop
+            ),
+            None
+        );
     }
 
     /// A console window the console host has made but not yet shown, its
@@ -4438,7 +4606,11 @@ mod minimize_tests {
             windows: vec![terminal, cloaked, widgets, desktop_window, message_box],
         };
         assert_eq!(
-            minimize_failure(true, true, &desktop),
+            minimize_failure(
+                &TaskbarCommand::Handled,
+                MinimizeOutcome::DesktopInFront,
+                &desktop
+            ),
             Some(
                 "a window other than the desktop is still shown and not minimized, so it would \
                  take the foreground when a window in front closes: \"System Properties\" of \
@@ -4447,13 +4619,45 @@ mod minimize_tests {
             )
         );
         desktop.windows.pop();
-        assert_eq!(minimize_failure(true, true, &desktop), None);
+        assert_eq!(
+            minimize_failure(
+                &TaskbarCommand::Handled,
+                MinimizeOutcome::DesktopInFront,
+                &desktop
+            ),
+            None
+        );
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A cleanup that fails after a start failed is appended to the
+    /// start's error, which keeps its cause and the stderr log it carries
+    /// for the scenario's artifacts.
+    #[test]
+    fn a_failed_cleanup_is_appended_to_the_start_failure_it_followed() {
+        let start = StartFailure::error(
+            &io::Error::other("Verbatim did not say it was ready"),
+            Some(b"log".to_vec()),
+        );
+        let error = with_cleanup(
+            start,
+            "closing the harness documents",
+            Err(io::Error::other("a tab did not close")),
+        );
+        assert_eq!(
+            error.to_string(),
+            "Verbatim did not say it was ready\nthen closing the harness documents failed too: a tab did not close"
+        );
+        let dir =
+            std::env::temp_dir().join(format!("verbatim-e2e-start-failure-{}", std::process::id()));
+        write_start_failure(&dir, &error).expect("writes");
+        assert_eq!(fs::read(dir.join(STDERR_FILE_NAME)).expect("reads"), b"log");
+        fs::remove_dir_all(&dir).expect("removes");
+    }
 
     #[test]
     fn an_outpost_log_is_told_by_the_pid_it_ends_with() {

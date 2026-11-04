@@ -113,7 +113,10 @@ use crate::protocol::{KillOutcome, LaunchEnd, ProcessInfo, ProcessState};
 ///
 /// Returns an error if the process cannot be spawned (bad path, permission
 /// denied, and so on), or if `stderr_to` is set and the capture file cannot
-/// be created.
+/// be created; each names `command` and the step that failed: the capture
+/// file, with its path, the standard input pipe, the job,
+/// `CreateProcessW`, the job's assignment, or the resume of its first
+/// thread.
 pub fn launch(
     command: &str,
     args: &[String],
@@ -123,10 +126,20 @@ pub fn launch(
     console_title: Option<&str>,
     (minimized, withhold_foreground, stdin_piped): (bool, bool, bool),
 ) -> io::Result<(u32, bool)> {
+    let failed = |step: &str, error: &dyn std::fmt::Display| {
+        io::Error::other(format!(
+            "could not launch {command}: {step} failed: {error}"
+        ))
+    };
     let capture = stderr_to
-        .map(|path| std::fs::File::create(path).and_then(|file| inheritable(&file)))
+        .map(|path| {
+            std::fs::File::create(path)
+                .and_then(|file| inheritable(&file))
+                .map_err(|error| failed(&format!("creating the capture file {path}"), &error))
+        })
         .transpose()?;
-    let (stdin_reader, stdin) = stdin_pipe(stdin_piped)?;
+    let (stdin_reader, stdin) =
+        stdin_pipe(stdin_piped).map_err(|error| failed("creating the stdin pipe", &error))?;
     let mut command_line = wide(&command_line(command, args));
     let environment = (!env.is_empty()).then(|| environment_block(env));
     let directory = working_dir.map(wide);
@@ -136,7 +149,8 @@ pub fn launch(
         .chain(&stdin_reader)
         .map(|handle| HANDLE(handle.as_raw_handle()))
         .collect();
-    let handle_list = HandleList::new(&inherited)?;
+    let handle_list = HandleList::new(&inherited)
+        .map_err(|error| failed("listing the handles it inherits", &error))?;
     let mut startup = STARTUPINFOEXW::default();
     startup.StartupInfo.cb = u32::try_from(size_of::<STARTUPINFOEXW>()).unwrap_or(u32::MAX);
     startup.StartupInfo.lpTitle = title
@@ -150,7 +164,7 @@ pub fn launch(
                 .unwrap_or_default();
     }
     set_standard_handles(&mut startup, capture.as_ref(), stdin_reader.as_ref());
-    let job = create_job()?;
+    let job = create_job().map_err(|error| failed("creating its job", &error))?;
     let mut info = PROCESS_INFORMATION::default();
     // SAFETY: every pointer passed points into a buffer that outlives the
     // call: the command line is writable and nul-terminated, as the
@@ -179,7 +193,7 @@ pub fn launch(
             &raw mut info,
         )
     }
-    .map_err(io::Error::other)?;
+    .map_err(|error| failed("CreateProcessW", &error))?;
     drop(handle_list);
     // The child holds its own end of the pipe now; the agent's copy would
     // keep the pipe open after the child exited.
@@ -193,10 +207,8 @@ pub fn launch(
     // SAFETY: a plain call taking a process id; failure is its answer.
     let foreground_allowed =
         !withhold_foreground && unsafe { AllowSetForegroundWindow(pid) }.is_ok();
-    if let Err(error) = crate::jobs::watch_job(&job, pid)
-        .and_then(|()| assign_to_job(&job, &child))
-        .and_then(|()| resume(&thread))
-    {
+    if let Err((step, error)) = start_in_job(&job, &child, &thread, pid) {
+        let error = failed(&step, &error);
         crate::jobs::forget(pid);
         // SAFETY: `child` is open, with the full access CreateProcessW
         // grants.
@@ -233,6 +245,21 @@ pub fn launch(
         },
     );
     Ok((pid, foreground_allowed))
+}
+
+/// Starts the suspended child `pid` in `job`: has the job watched, assigns
+/// the child to it, and resumes its first thread, answering the step that
+/// failed with its error.
+fn start_in_job(
+    job: &OwnedHandle,
+    child: &OwnedHandle,
+    thread: &OwnedHandle,
+    pid: u32,
+) -> Result<(), (String, io::Error)> {
+    crate::jobs::watch_job(job, pid).map_err(|error| ("watching its job".to_owned(), error))?;
+    assign_to_job(job, child)
+        .map_err(|error| (format!("assigning process {pid} to its job"), error))?;
+    resume(thread).map_err(|error| (format!("resuming process {pid}'s first thread"), error))
 }
 
 /// A pipe for a child's standard input when `piped`: the reading end,
@@ -939,25 +966,50 @@ pub(crate) fn in_launched_job(pid: u32) -> bool {
 }
 
 /// Ends every child the agent launched that is still running, with
-/// everything in its job, and returns how many were running.
+/// everything in its job, waits up to `timeout`, on the job watcher's
+/// notifications ([`crate::jobs::wait_until_empty`]), for every process of
+/// each job it ended to have exited, so the files they held, such as a
+/// staged executable, are free once it returns, and returns how many
+/// children were running.
 ///
 /// # Errors
 ///
-/// Returns an error if a job cannot be terminated.
-pub fn end_launched() -> io::Result<u32> {
-    let launched = LAUNCHED.lock().unwrap_or_else(PoisonError::into_inner);
+/// Returns an error if a job cannot be terminated, or processes of a job
+/// it ended are still running once the wait runs out, naming them.
+pub fn end_launched(timeout: Duration) -> io::Result<u32> {
+    let deadline = Instant::now() + timeout;
     let mut ended = 0u32;
-    for entry in launched.values() {
-        if job_has_processes(&entry.job) {
-            if !already_exited(HANDLE(entry.child.as_raw_handle())) {
-                ended += 1;
+    let mut terminated = Vec::new();
+    {
+        let launched = LAUNCHED.lock().unwrap_or_else(PoisonError::into_inner);
+        for (&pid, entry) in launched.iter() {
+            if job_has_processes(&entry.job) {
+                if !already_exited(HANDLE(entry.child.as_raw_handle())) {
+                    ended += 1;
+                }
+                // SAFETY: the job handle stays open while the lock is held.
+                unsafe { TerminateJobObject(HANDLE(entry.job.as_raw_handle()), 1) }
+                    .map_err(io::Error::other)?;
+                terminated.push(pid);
             }
-            // SAFETY: the job handle stays open while the lock is held.
-            unsafe { TerminateJobObject(HANDLE(entry.job.as_raw_handle()), 1) }
-                .map_err(io::Error::other)?;
         }
     }
-    Ok(ended)
+    let running: Vec<String> = terminated
+        .into_iter()
+        .filter_map(|pid| {
+            crate::jobs::wait_until_empty(pid, deadline.saturating_duration_since(Instant::now()))
+                .err()
+                .map(|error| error.to_string())
+        })
+        .collect();
+    if running.is_empty() {
+        Ok(ended)
+    } else {
+        Err(io::Error::other(format!(
+            "ended every launched process, but not all had exited within {timeout:?}: {}",
+            running.join("; ")
+        )))
+    }
 }
 
 /// Held for reading by every test that launches a child, and for writing
@@ -1242,7 +1294,7 @@ mod tests {
             .write()
             .unwrap_or_else(PoisonError::into_inner);
         let pid = long_running();
-        assert!(end_launched().expect("ends") >= 1);
+        assert!(end_launched(WAIT).expect("ends") >= 1);
         assert!(matches!(
             wait_for_exit(pid, WAIT).expect("waits"),
             ProcessState::Exited { .. }

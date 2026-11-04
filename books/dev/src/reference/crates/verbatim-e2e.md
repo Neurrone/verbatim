@@ -68,8 +68,9 @@ scenario, recorded or not, and recording changes nothing else:
 2. Sweeps what an earlier run left: Windows 11 Notepad's harness tabs are
    closed as tabs first (a Notepad ended by its handle keeps its tabs for
    its next session, without their documents), then every process the
-   agent launched that still runs is ended by its own handle
-   (`EndLaunched`), the windows an abandoned scenario left are reported
+   agent launched that still runs is ended by its own handle and waited
+   for until every process of its job has exited, so the stage's files
+   are free to copy over (`EndLaunched`), the windows an abandoned scenario left are reported
    and closed by handle (`CloseAbandonedWindows`, under "Cleanup"), other
    windows titled with `DOCUMENT_MARKER` are closed, and harness files and
    folders in the run directory are deleted. Anything that will not go
@@ -92,12 +93,26 @@ scenario, recorded or not, and recording changes nothing else:
    included, is not minimized, since such a window would take the
    foreground whenever the window in front closed (`minimize_failure`). A
    window with `WS_EX_NOACTIVATE`, such as the Widgets board's, never takes
-   the foreground, so it passes.
+   the foreground, so it passes. A failure names the step the agent
+   reported (`MinimizeOutcome`), with what became of the taskbar's command
+   when the windows were not all minimized, and the window that kept the
+   foreground when the desktop did not take it.
 5. Starts the recording, when recording, and waits for ffmpeg to capture
    its first frame; then creates a named event through the agent,
    launches Verbatim with its name in `VERBATIM_READY_EVENT`, and waits for
    Verbatim to set it once it is ready for input; then opens the command
-   and speech connections and checks the status reports it ready.
+   and speech connections and checks the status reports it ready. When
+   Verbatim exits first, or is still running when the wait ends, the
+   failure says which and names its stderr log; Verbatim is ended, and its
+   stderr log, read then, travels with the error (`StartFailure`), so the
+   runner writes it to the scenario's artifacts as `stderr.log` though no
+   scenario was made.
+
+A step that fails after the start has opened something still cleans up
+what it opened (the recording, Verbatim, the Notepad document); a
+cleanup step that fails too is appended to the original error
+(`with_cleanup`), which keeps its cause and what it carries for the
+artifacts.
 
 Verbatim is launched with `RUST_LOG` set from `RUST_LOG_ENV`
 (`VERBATIM_E2E_RUST_LOG`), or `DEFAULT_RUST_LOG` when it is unset; the
@@ -110,8 +125,10 @@ message, as NVDA speaks none), then the desktop's announcement, as
 desktop item, read independently by the agent through MSAA, its name,
 "not selected" when it is not, and its position and the item count, from
 the list view's own messages. When the agent cannot read the item's
-position, `desktop_speech` returns an error rather than an expectation
-without the item.
+position, `desktop_speech` returns an error naming why (`ListPosition`:
+not a list view, no focused item, or no answer in time) rather than an
+expectation without the item; a name or state the agent cannot read
+fails the read itself rather than reading as empty.
 
 ## Speech assertions
 
@@ -907,7 +924,12 @@ Each exists in both terminals unless named for one.
 
   Every request that waits on the agent's side is read with a timeout
   ten seconds longer than its wait, set on the socket handle replies are
-  read from, so a failure is a named timeout. A tunnel reads with
+  read from, so a failure is a named timeout; for `minimize_all` the wait
+  is the agent's longest answer, `minimize_all_limit`, the taskbar's limit
+  and two waits of the timeout given. A request whose answer cannot be
+  read, or that the agent closed the connection before answering, fails
+  naming the request, its id and the read timeout, and an error the agent
+  answers with reads as the agent's error, not as an unexpected reply. A tunnel reads with
   `CONTROL_REPLY_TIMEOUT` (30 seconds, the agent's own hang bound), so a
   slow reply to a request such as `DumpRecorder` is not a failure; a
   tunnel subscribed to events reads with `CONTROL_POLL_INTERVAL` (2

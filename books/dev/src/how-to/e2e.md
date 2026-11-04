@@ -527,8 +527,9 @@ losing any of them fails the run:
   listed, as cloaked, since the agent's window list does not say which
   application a frame hosts.
 - `wait-chains.txt`, only when a launched application's window did not
-  open within 30 seconds, or opened but did not take the foreground
-  within 30 seconds: one line per thread, the wait chain (Windows'
+  open within 30 seconds, opened but did not take the foreground
+  within 30 seconds, or opened but the file it was to write once ready
+  was not written within 30 seconds: one line per thread, the wait chain (Windows'
   Wait Chain Traversal) of the thread owning the opened window, when it
   opened, and of each window the failure reports as not responding, and
   of the threads of the launched process that own a window, or of all
@@ -564,7 +565,9 @@ losing any of them fails the run:
   run's folder for harness files, and the harness copies it here and
   deletes it there.
 - `stderr.log`: Verbatim's captured standard output and error, with its
-  `verbatim::latency` lines.
+  `verbatim::latency` lines. When Verbatim did not become ready, the
+  launch fails before any other artifact is collected, and the runner
+  writes this file from the failed launch's error.
 - Every file of the launch's log directory, `logs\<Verbatim's pid>` next
   to Verbatim's executable: `listener.log`, one
   `outpost-<image>-<pid>.log` per application, Core's own as

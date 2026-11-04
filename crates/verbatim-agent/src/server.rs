@@ -300,7 +300,7 @@ fn dispatch(connection: u64, id: u64, request: Request) -> Frame {
             },
             Err(error) => error_frame(id, &error),
         },
-        request @ (Request::EndLaunched
+        request @ (Request::EndLaunched { .. }
         | Request::EndLaunch { .. }
         | Request::ChildProcesses { .. }
         | Request::JobExits { .. }
@@ -501,13 +501,15 @@ fn end_launch(id: u64, pid: u32, wait_ms: u64, ended_wait_ms: u64) -> Frame {
 
 fn process_request(id: u64, request: Request) -> Frame {
     match request {
-        Request::EndLaunched => match process::end_launched() {
-            Ok(ended) => Frame::Reply {
-                to: id,
-                payload: ReplyPayload::EndedLaunched { ended },
-            },
-            Err(error) => error_frame(id, &error),
-        },
+        Request::EndLaunched { timeout_ms } => {
+            match process::end_launched(Duration::from_millis(timeout_ms)) {
+                Ok(ended) => Frame::Reply {
+                    to: id,
+                    payload: ReplyPayload::EndedLaunched { ended },
+                },
+                Err(error) => error_frame(id, &error),
+            }
+        }
         Request::ChildProcesses { pid } => match process::child_processes(pid) {
             Ok(processes) => Frame::Reply {
                 to: id,
@@ -852,13 +854,13 @@ fn desktop_request(id: u64, request: Request) -> Frame {
             }
         }
         Request::MinimizeAll { timeout_ms } => {
-            let (minimized, desktop_in_front, desktop) =
+            let (taskbar, outcome, desktop) =
                 desktop::minimize_all(Duration::from_millis(timeout_ms));
             Frame::Reply {
                 to: id,
                 payload: ReplyPayload::Minimized {
-                    minimized,
-                    desktop_in_front,
+                    taskbar,
+                    outcome,
                     desktop,
                 },
             }
@@ -914,15 +916,15 @@ fn scenario_windows_request(connection: u64, id: u64, request: Request) -> Frame
             &class,
             Duration::from_millis(timeout_ms),
         )
-        .map(|gone| ReplyPayload::WindowsClosed {
-            remaining: u32::from(!gone),
+        .map(|left| ReplyPayload::WindowsClosed {
+            remaining: left.into_iter().collect(),
         }),
         Request::WaitForNewWindowsGone { timeout_ms } => {
             scenario_windows::wait_for_new_gone(connection, Duration::from_millis(timeout_ms))
                 .map(|remaining| ReplyPayload::NewWindows { remaining })
         }
         Request::CloseAbandonedWindows { timeout_ms } => {
-            scenario_windows::close_abandoned(Duration::from_millis(timeout_ms))
+            scenario_windows::close_abandoned(connection, Duration::from_millis(timeout_ms))
                 .map(|(found, remaining)| ReplyPayload::AbandonedWindows { found, remaining })
         }
         other => Err(io::Error::other(format!(

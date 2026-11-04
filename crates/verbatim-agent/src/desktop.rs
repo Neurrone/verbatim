@@ -36,7 +36,10 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use windows::core::{BOOL, PWSTR, w};
 
-use crate::protocol::{ForegroundInfo, ForegroundOutcome, WindowCondition, WindowInfo};
+use crate::protocol::{
+    ForegroundInfo, ForegroundOutcome, MinimizeOutcome, TASKBAR_LIMIT_MS, TaskbarCommand,
+    WindowCondition, WindowInfo,
+};
 use crate::wait;
 
 /// The foreground window and every visible, titled top-level window,
@@ -55,11 +58,11 @@ pub fn foreground_info() -> ForegroundInfo {
 /// Sends a close request to every shown top-level window whose title
 /// contains `title_contains` ([`shown_top_level_windows`]), and waits up
 /// to `timeout` for them to go, on window events ([`wait::until`]).
-/// Returns how many were still shown when it gave up; zero means all
-/// closed. A window that is closed and cloaked, as the Settings app keeps
-/// its closed window, has gone from the desktop.
+/// Returns those still shown when it gave up, as they were then; none
+/// means all closed. A window that is closed and cloaked, as the Settings
+/// app keeps its closed window, has gone from the desktop.
 #[must_use]
-pub fn close_windows(title_contains: &str, timeout: Duration) -> u32 {
+pub fn close_windows(title_contains: &str, timeout: Duration) -> Vec<WindowInfo> {
     let matching = || -> Vec<HWND> {
         shown_top_level_windows()
             .into_iter()
@@ -79,7 +82,7 @@ pub fn close_windows(title_contains: &str, timeout: Duration) -> u32 {
         }
     }
     wait::until(|| matching().is_empty(), timeout);
-    u32::try_from(matching().len()).unwrap_or(u32::MAX)
+    matching().into_iter().map(window_info).collect()
 }
 
 /// Sends a close request to `window` while it is shown
@@ -89,10 +92,11 @@ pub fn close_windows(title_contains: &str, timeout: Duration) -> u32 {
 /// change its title while it lives, as a File Explorer window does when it
 /// navigates. The process and class, which never change while the window
 /// lives, are checked instead, so a handle Windows has given another window
-/// since is never closed. Returns whether it has gone; a window that is
-/// closed and cloaked has, as for [`close_windows`].
+/// since is never closed. Returns the window, as it is then, when it has
+/// not gone; a window that is closed and cloaked has, as for
+/// [`close_windows`].
 #[must_use]
-pub fn close_window(window: u64, pid: u32, class: &str, timeout: Duration) -> bool {
+pub fn close_window(window: u64, pid: u32, class: &str, timeout: Duration) -> Option<WindowInfo> {
     let window = HWND(usize::try_from(window).unwrap_or(0) as *mut c_void);
     let is_open = || {
         let mut owner = 0u32;
@@ -110,17 +114,17 @@ pub fn close_window(window: u64, pid: u32, class: &str, timeout: Duration) -> bo
         }
     }
     wait::until(|| !is_open(), timeout);
-    !is_open()
+    is_open().then(|| window_info(window))
 }
 
 /// Sends a close request to every shown top-level window
 /// ([`shown_top_level_windows`]) of process `pid`, and waits up to
 /// `timeout` for them to go, on window events ([`wait::until`]), whatever
-/// their titles. Returns how many were still shown when it gave up; zero
-/// means all closed. The caller makes sure `pid` names a process whose
-/// every window is the scenario's.
+/// their titles. Returns those still shown when it gave up, as they were
+/// then; none means all closed. The caller makes sure `pid` names a
+/// process whose every window is the scenario's.
 #[must_use]
-pub fn close_process_windows(pid: u32, timeout: Duration) -> u32 {
+pub fn close_process_windows(pid: u32, timeout: Duration) -> Vec<WindowInfo> {
     let owned = || -> Vec<HWND> {
         shown_top_level_windows()
             .into_iter()
@@ -140,7 +144,7 @@ pub fn close_process_windows(pid: u32, timeout: Duration) -> u32 {
         }
     }
     wait::until(|| owned().is_empty(), timeout);
-    u32::try_from(owned().len()).unwrap_or(u32::MAX)
+    owned().into_iter().map(window_info).collect()
 }
 
 /// The process that owns `window`; 0 for an invalid handle.
@@ -200,29 +204,45 @@ pub fn wait_for(condition: &WindowCondition, timeout: Duration) -> (bool, Foregr
 /// activating another window (`SW_SHOWMINNOACTIVE`; `SW_MINIMIZE` activates
 /// the next top-level window in Z order, which can be the taskbar). Waits up to `timeout` for
 /// every window that can be minimized to be ([`WindowCondition::AllMinimized`]),
-/// and then for the desktop to hold the foreground. Returns whether each
-/// held, the second false when the first did not, as the desktop is then
-/// not given the foreground, and the desktop as it was.
+/// and then up to `timeout` again for the desktop to hold the foreground.
+/// Returns what became of the taskbar's command, the desktop in front or
+/// the step that failed, and the desktop as it was; the desktop is not
+/// given the foreground when the windows were not all minimized.
 #[must_use]
-pub fn minimize_all(timeout: Duration) -> (bool, bool, ForegroundInfo) {
+pub fn minimize_all(timeout: Duration) -> (TaskbarCommand, MinimizeOutcome, ForegroundInfo) {
     /// The taskbar's command that minimizes every window.
     const MINIMIZE_ALL: usize = 419;
+    let limit_ms = u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX);
     // SAFETY: looks a window up by class; no pointer is kept.
-    if let Ok(taskbar) = unsafe { FindWindowW(w!("Shell_TrayWnd"), None) } {
-        // SAFETY: a command message carrying no pointer; it returns once
-        // the taskbar has handled it, or after the limit if the taskbar
-        // does not answer.
-        unsafe {
-            let _ = SendMessageTimeoutW(
-                taskbar,
-                WM_COMMAND,
-                WPARAM(MINIMIZE_ALL),
-                LPARAM(0),
-                SMTO_ABORTIFHUNG,
-                TASKBAR_LIMIT_MS,
-                None,
-            );
+    let taskbar = match unsafe { FindWindowW(w!("Shell_TrayWnd"), None) } {
+        Err(_) => TaskbarCommand::NoTaskbar,
+        Ok(taskbar) => {
+            // SAFETY: a command message carrying no pointer; it returns
+            // once the taskbar has handled it, or after the limit if the
+            // taskbar does not answer.
+            let sent = unsafe {
+                SendMessageTimeoutW(
+                    taskbar,
+                    WM_COMMAND,
+                    WPARAM(MINIMIZE_ALL),
+                    LPARAM(0),
+                    SMTO_ABORTIFHUNG,
+                    TASKBAR_LIMIT_MS,
+                    None,
+                )
+            };
+            if sent.0 == 0 {
+                TaskbarCommand::NotHandled {
+                    limit_ms: u64::from(TASKBAR_LIMIT_MS),
+                    error: windows::core::Error::from_thread().message(),
+                }
+            } else {
+                TaskbarCommand::Handled
+            }
         }
+    };
+    if taskbar != TaskbarCommand::Handled {
+        tracing::info!(taskbar = taskbar.describe(), "Minimize All");
     }
     for window in shown_top_level_windows()
         .into_iter()
@@ -242,14 +262,14 @@ pub fn minimize_all(timeout: Duration) -> (bool, bool, ForegroundInfo) {
     }
     let (minimized, desktop) = wait_for(&WindowCondition::AllMinimized, timeout);
     if !minimized {
-        return (false, false, desktop);
+        return (taskbar, MinimizeOutcome::NotMinimized { limit_ms }, desktop);
     }
     // SAFETY: looks a window up by class; no pointer is kept.
     let Ok(desktop_window) = (unsafe { FindWindowW(w!("Progman"), None) }) else {
-        return (true, false, foreground_info());
+        return (taskbar, MinimizeOutcome::NoDesktopWindow, foreground_info());
     };
     // SAFETY: a window just found; a stale one fails.
-    let _ = unsafe { SetForegroundWindow(desktop_window) };
+    let accepted = unsafe { SetForegroundWindow(desktop_window) }.as_bool();
     let (in_front, desktop) = wait_for(
         &WindowCondition::Foreground {
             title_contains: window_text(desktop_window),
@@ -257,7 +277,12 @@ pub fn minimize_all(timeout: Duration) -> (bool, bool, ForegroundInfo) {
         },
         timeout,
     );
-    (true, in_front, desktop)
+    let outcome = match (in_front, accepted) {
+        (true, _) => MinimizeOutcome::DesktopInFront,
+        (false, true) => MinimizeOutcome::NotInFront { limit_ms },
+        (false, false) => MinimizeOutcome::Refused { limit_ms },
+    };
+    (taskbar, outcome, desktop)
 }
 
 /// Brings `window` to the foreground as clicking its taskbar button does,
@@ -526,9 +551,6 @@ pub(crate) fn class_name(window: HWND) -> String {
     String::from_utf16_lossy(&buffer[..usize::try_from(length).unwrap_or(0)])
 }
 
-/// How long the taskbar is given to handle Minimize All.
-const TASKBAR_LIMIT_MS: u32 = 5_000;
-
 /// How long process `pid` has run, in milliseconds; `None` when it cannot
 /// be read.
 fn process_age_ms(pid: u32) -> Option<u64> {
@@ -612,7 +634,7 @@ mod tests {
                 "verbatim-agent-test-no-window-has-this-title",
                 Duration::from_millis(50)
             ),
-            0
+            Vec::new()
         );
     }
 

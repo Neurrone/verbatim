@@ -39,7 +39,7 @@ use std::collections::HashSet;
 use std::ffi::c_void;
 use std::io;
 use std::sync::{Condvar, Mutex, MutexGuard, PoisonError};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::UI::WindowsAndMessaging::{GetWindowThreadProcessId, PostMessageW, WM_CLOSE};
@@ -93,6 +93,8 @@ enum State {
     Watching {
         /// The connection that recorded it.
         connection: u64,
+        /// When it was recorded.
+        since: Instant,
         /// Every top-level window there was when the scenario started.
         baseline: HashSet<WindowIdentity>,
     },
@@ -112,18 +114,19 @@ impl Watch {
     /// Records `baseline` as the baseline of the scenario `connection`
     /// starts.
     fn record(&mut self, connection: u64, baseline: HashSet<WindowIdentity>) -> io::Result<()> {
-        match self.state {
+        match &self.state {
             State::Idle => {
                 self.state = State::Watching {
                     connection,
+                    since: Instant::now(),
                     baseline,
                 };
                 Ok(())
             }
-            State::Watching { .. } => Err(io::Error::other(
-                "the windows of a scenario are already being watched, for a connection still open: \
-                 another run is using this agent",
-            )),
+            State::Watching { .. } => Err(io::Error::other(format!(
+                "this connection ({connection}) cannot record its scenario's windows: {}",
+                self.describe_watch()
+            ))),
             State::Abandoned(_) => Err(io::Error::other(
                 "the windows a scenario abandoned have not been closed yet (CloseAbandonedWindows)",
             )),
@@ -136,6 +139,7 @@ impl Watch {
             State::Watching {
                 connection: watched,
                 baseline,
+                ..
             } if *watched == connection => Ok(baseline),
             _ => Err(io::Error::other(
                 "this connection has recorded no windows (RecordWindows) to check against",
@@ -157,6 +161,30 @@ impl Watch {
         }
     }
 
+    /// The scenario being watched, as an error names it: the connection
+    /// that recorded its baseline, still open, and how long ago it did.
+    /// Which process holds that connection, and what it is doing, the
+    /// agent does not know: it may be another run using this agent, or an
+    /// earlier connection of the same run whose request the agent is still
+    /// answering.
+    fn describe_watch(&self) -> String {
+        match &self.state {
+            State::Watching {
+                connection, since, ..
+            } => format!(
+                "connection {connection}, still open, recorded the windows of the scenario it \
+                 runs {:?} ago, and its watch ends when that connection closes or its cleanup \
+                 finds no window left",
+                since.elapsed()
+            ),
+            State::Idle => "no scenario is being watched".to_owned(),
+            State::Abandoned(left) => format!(
+                "a scenario was abandoned with {} window(s) not yet closed",
+                left.len()
+            ),
+        }
+    }
+
     /// Whether `connection` is running the scenario being watched.
     fn watched_by(&self, connection: u64) -> bool {
         matches!(self.state, State::Watching { connection: watched, .. } if watched == connection)
@@ -173,6 +201,7 @@ impl Watch {
         let State::Watching {
             connection: watched,
             baseline,
+            ..
         } = &self.state
         else {
             return false;
@@ -278,7 +307,7 @@ pub(crate) fn record(connection: u64) -> io::Result<u32> {
 /// the same process and class, so a handle Windows has given the owner's
 /// own folder window since passes that check; a window that was open
 /// before the scenario started is never the scenario's, so it is refused.
-/// Returns whether it has gone.
+/// Returns the window, as it is then, when it has not gone.
 ///
 /// # Errors
 ///
@@ -290,7 +319,7 @@ pub(crate) fn close_window(
     pid: u32,
     class: &str,
     timeout: Duration,
-) -> io::Result<bool> {
+) -> io::Result<Option<WindowInfo>> {
     let identity = WindowIdentity {
         window,
         pid,
@@ -350,8 +379,12 @@ pub(crate) fn connection_ended(connection: u64) {
 /// # Errors
 ///
 /// Returns an error when another connection's scenario is still being
-/// watched after `timeout`: another run is using this agent.
-pub(crate) fn close_abandoned(timeout: Duration) -> io::Result<(Vec<WindowInfo>, Vec<WindowInfo>)> {
+/// watched after `timeout`, naming that connection and how long ago it
+/// recorded its windows ([`Watch::describe_watch`]).
+pub(crate) fn close_abandoned(
+    connection: u64,
+    timeout: Duration,
+) -> io::Result<(Vec<WindowInfo>, Vec<WindowInfo>)> {
     let (mut watch, _) = WATCH_ENDED
         .wait_timeout_while(lock(), timeout, |watch| watch.abandoned().is_none())
         .unwrap_or_else(PoisonError::into_inner);
@@ -359,8 +392,9 @@ pub(crate) fn close_abandoned(timeout: Duration) -> io::Result<(Vec<WindowInfo>,
         .abandoned()
         .ok_or_else(|| {
             io::Error::other(format!(
-                "a scenario on another connection was still being watched after {timeout:?}: \
-                 another run is using this agent"
+                "a scenario was still being watched {timeout:?} after this connection \
+                 ({connection}) asked to close what an abandoned one left: {}",
+                watch.describe_watch()
             ))
         })?
         .to_vec();

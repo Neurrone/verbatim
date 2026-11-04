@@ -164,7 +164,9 @@ use verbatim_config::Settings;
 
 use crate::artifacts::{self, OutpostCrash, ScenarioSummary};
 use crate::compare::{self, ReportHeader};
-use crate::scenario::{Document, Scenario, launch_evidence_of, write_launch_evidence};
+use crate::scenario::{
+    Document, Scenario, launch_evidence_of, write_launch_evidence, write_start_failure,
+};
 use crate::scenarios::{
     alt_tab_switcher, caret_keys, crash_recovery, demo_notepad_editing, demo_review_cursor,
     demo_say_all, demo_settings_dialog_keys, demo_terminal_session, document_keys, editing,
@@ -2296,14 +2298,18 @@ pub fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
 
 /// Writes what a failed launch's error carries, recorded when its
 /// document's window did not open or take the foreground in time (the wait
-/// chains, and the launched process's facts and minidump), to the
-/// scenario's artifacts in `dir`; a launch fails before there is a
-/// scenario to collect them.
+/// chains, and the launched process's facts and minidump), or when
+/// Verbatim did not become ready (its stderr log), to the scenario's
+/// artifacts in `dir`; a launch fails before there is a scenario to
+/// collect them.
 fn record_launch_evidence(dir: &std::path::Path, error: &io::Error) {
     if let Some(evidence) = launch_evidence_of(error)
         && let Err(write) = write_launch_evidence(dir, std::slice::from_ref(evidence))
     {
         eprintln!("could not write what was recorded of the launch: {write}");
+    }
+    if let Err(write) = write_start_failure(dir, error) {
+        eprintln!("could not write Verbatim's stderr log from the failed start: {write}");
     }
 }
 

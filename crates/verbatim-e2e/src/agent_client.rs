@@ -23,9 +23,9 @@ use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use verbatim_agent::protocol::{
     AGENT_PROTOCOL_VERSION, EventOutcome, FocusedElement, ForegroundInfo, ForegroundOutcome, Frame,
-    KillOutcome, LaunchEnd, ProcessDiagnostics, ProcessExit, ProcessInfo, ProcessState,
-    ReplyPayload, Request, RequestEnvelope, SessionInfo, SwitcherItem, WaitChain, WindowCondition,
-    WindowInfo,
+    KillOutcome, LaunchEnd, MinimizeOutcome, ProcessDiagnostics, ProcessExit, ProcessInfo,
+    ProcessState, ReplyPayload, Request, RequestEnvelope, SessionInfo, SwitcherItem,
+    TaskbarCommand, WaitChain, WindowCondition, WindowInfo, minimize_all_limit,
 };
 use verbatim_control::client::Client as ControlClient;
 use verbatim_control::protocol::{MessageReader, write_message};
@@ -115,15 +115,56 @@ impl AgentClient {
         }
     }
 
-    /// Sends one request and waits for its matching reply or error.
+    /// Sends one request and waits for its matching reply or error. A
+    /// failure to send it or read its answer, a read that times out or a
+    /// connection the agent closed, names the request, its id, and the
+    /// read timeout, keeping the error's kind.
     fn request(&mut self, request: Request) -> io::Result<Frame> {
         let id = self.next_id;
         self.next_id += 1;
-        write_message(&mut self.stream, &RequestEnvelope { id, request })?;
+        let envelope = RequestEnvelope { id, request };
+        if let Err(error) = write_message(&mut self.stream, &envelope) {
+            return Err(io::Error::new(
+                error.kind(),
+                format!(
+                    "could not send {} (request {id}) to the agent: {error}",
+                    request_name(&envelope.request)
+                ),
+            ));
+        }
         loop {
-            let frame: Frame = self.reader.read()?.ok_or_else(|| {
-                io::Error::new(io::ErrorKind::UnexpectedEof, "agent closed the connection")
-            })?;
+            let read: io::Result<Option<Frame>> = self.reader.read();
+            let frame = match read {
+                Ok(Some(frame)) => frame,
+                Ok(None) => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::UnexpectedEof,
+                        format!(
+                            "the agent closed the connection before answering {} (request {id})",
+                            request_name(&envelope.request)
+                        ),
+                    ));
+                }
+                Err(error) => {
+                    let timeout = self
+                        .reader
+                        .get_ref()
+                        .get_ref()
+                        .read_timeout()
+                        .ok()
+                        .flatten()
+                        .map_or_else(String::new, |timeout| {
+                            format!(" within the read timeout of {timeout:?}")
+                        });
+                    return Err(io::Error::new(
+                        error.kind(),
+                        format!(
+                            "no answer to {} (request {id}) was read from the agent{timeout}: {error}",
+                            request_name(&envelope.request)
+                        ),
+                    ));
+                }
+            };
             match &frame {
                 Frame::Reply { to, .. } | Frame::Error { to, .. } if *to == id => return Ok(frame),
                 _ => {}
@@ -454,13 +495,20 @@ impl AgentClient {
     }
 
     /// Ends every process the agent launched that is still running, by its
-    /// own handle, and returns how many were.
+    /// own handle, waits up to `timeout` for every process of the jobs it
+    /// ended to have exited, and returns how many were running.
     ///
     /// # Errors
     ///
-    /// Returns an error if the request fails.
-    pub fn end_launched(&mut self) -> io::Result<u32> {
-        match self.request(Request::EndLaunched)? {
+    /// Returns an error if the request fails, including when processes it
+    /// ended are still running once the wait runs out.
+    pub fn end_launched(&mut self, timeout: Duration) -> io::Result<u32> {
+        match self.request_waiting(
+            Request::EndLaunched {
+                timeout_ms: millis(timeout),
+            },
+            timeout,
+        )? {
             Frame::Reply {
                 payload: ReplyPayload::EndedLaunched { ended },
                 ..
@@ -543,28 +591,34 @@ impl AgentClient {
     }
 
     /// Minimizes every window, as Show Desktop does, waits up to `timeout`
-    /// for every window that can be minimized to be, then for the desktop
-    /// to hold the foreground; returns whether each held, and the desktop.
+    /// for every window that can be minimized to be, then up to `timeout`
+    /// again for the desktop to hold the foreground; returns what became
+    /// of the taskbar's command, the desktop in front or the step that
+    /// failed, and the desktop. The reply is read with a timeout derived
+    /// from the agent's longest answer ([`minimize_all_limit`]).
     ///
     /// # Errors
     ///
     /// Returns an error if the request fails.
-    pub fn minimize_all(&mut self, timeout: Duration) -> io::Result<(bool, bool, ForegroundInfo)> {
+    pub fn minimize_all(
+        &mut self,
+        timeout: Duration,
+    ) -> io::Result<(TaskbarCommand, MinimizeOutcome, ForegroundInfo)> {
         match self.request_waiting(
             Request::MinimizeAll {
                 timeout_ms: millis(timeout),
             },
-            timeout,
+            minimize_all_limit(timeout),
         )? {
             Frame::Reply {
                 payload:
                     ReplyPayload::Minimized {
-                        minimized,
-                        desktop_in_front,
+                        taskbar,
+                        outcome,
                         desktop,
                     },
                 ..
-            } => Ok((minimized, desktop_in_front, desktop)),
+            } => Ok((taskbar, outcome, desktop)),
             other => Err(unexpected("MinimizeAll", &other)),
         }
     }
@@ -970,13 +1024,17 @@ impl AgentClient {
     /// Asks every shown top-level window of process `pid`, which must be
     /// in the job of a program the agent launched, to close, waiting up to
     /// `timeout`, on window events, for them to go, whatever their titles
-    /// ([`Request::CloseProcessWindows`]). Returns how many were still
-    /// open.
+    /// ([`Request::CloseProcessWindows`]). Returns those still open, as
+    /// they were when the wait ended.
     ///
     /// # Errors
     ///
     /// Returns an error if the request fails or is refused.
-    pub fn close_process_windows(&mut self, pid: u32, timeout: Duration) -> io::Result<u32> {
+    pub fn close_process_windows(
+        &mut self,
+        pid: u32,
+        timeout: Duration,
+    ) -> io::Result<Vec<WindowInfo>> {
         match self.request_waiting(
             Request::CloseProcessWindows {
                 pid,
@@ -994,12 +1052,17 @@ impl AgentClient {
 
     /// Asks every visible top-level window whose title contains
     /// `title_contains` to close, waiting up to `timeout`, on window events,
-    /// for them to go. Returns how many were still open.
+    /// for them to go. Returns those still open, as they were when the
+    /// wait ended.
     ///
     /// # Errors
     ///
     /// Returns an error if the request fails.
-    pub fn close_windows(&mut self, title_contains: &str, timeout: Duration) -> io::Result<u32> {
+    pub fn close_windows(
+        &mut self,
+        title_contains: &str,
+        timeout: Duration,
+    ) -> io::Result<Vec<WindowInfo>> {
         match self.request_waiting(
             Request::CloseWindows {
                 title_contains: title_contains.to_owned(),
@@ -1018,12 +1081,17 @@ impl AgentClient {
     /// Asks `window` to close by its handle, while it is still shown and
     /// owned by the process and class it was found with, whatever its title
     /// has become, waiting up to `timeout`, on window events, for it to go.
-    /// Returns whether it has gone.
+    /// Returns the window, as it was when the wait ended, when it has not
+    /// gone.
     ///
     /// # Errors
     ///
     /// Returns an error if the request fails.
-    pub fn close_window(&mut self, window: &WindowInfo, timeout: Duration) -> io::Result<bool> {
+    pub fn close_window(
+        &mut self,
+        window: &WindowInfo,
+        timeout: Duration,
+    ) -> io::Result<Option<WindowInfo>> {
         match self.request_waiting(
             Request::CloseWindow {
                 window: window.window,
@@ -1036,7 +1104,7 @@ impl AgentClient {
             Frame::Reply {
                 payload: ReplyPayload::WindowsClosed { remaining },
                 ..
-            } => Ok(remaining == 0),
+            } => Ok(remaining.into_iter().next()),
             other => Err(unexpected("CloseWindow", &other)),
         }
     }
@@ -1485,6 +1553,26 @@ fn millis(duration: Duration) -> u64 {
     u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
 }
 
+/// The error for `frame`, an answer to `request_name` that is not the
+/// reply it expects: the agent's own error, as the agent gives it, or a
+/// reply of another kind.
 fn unexpected(request_name: &str, frame: &Frame) -> io::Error {
-    io::Error::other(format!("unexpected reply to {request_name}: {frame:?}"))
+    match frame {
+        Frame::Error { message, .. } => io::Error::other(format!(
+            "the agent could not carry out {request_name}: {message}"
+        )),
+        Frame::Reply { .. } => {
+            io::Error::other(format!("unexpected reply to {request_name}: {frame:?}"))
+        }
+    }
+}
+
+/// The name of `request`'s kind, such as `MinimizeAll`, for an error.
+fn request_name(request: &Request) -> String {
+    let described = format!("{request:?}");
+    described
+        .split(|character: char| !character.is_alphanumeric())
+        .next()
+        .unwrap_or_default()
+        .to_owned()
 }

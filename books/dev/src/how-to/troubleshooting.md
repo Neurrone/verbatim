@@ -184,7 +184,8 @@ scenario opened that also holds your tabs, as above:
   no cleanup runs; the agent notices its connection end and keeps the
   abandoned scenario's windows. The next launch then closes Notepad
   harness tabs as tabs, ends every process the agent launched that still
-  runs by its own handle (`EndLaunched`), prints and closes by handle each
+  runs by its own handle and waits for them to exit (`EndLaunched`),
+  prints and closes by handle each
   window the abandoned scenario left open, failing only if one will not
   close, closes harness windows by title, deletes harness files and
   folders in `target/e2e-stage`, and minimizes the desktop. Closing by
@@ -192,7 +193,8 @@ scenario opened that also holds your tabs, as above:
   scenario are closed. Restarting the agent forgets the recorded
   windows, leaving only the title sweep.
 - A launch that fails after opening its Notepad document closes that tab
-  and deletes the document before reporting.
+  and deletes the document before reporting; when that cleanup fails too,
+  its failure is appended to the launch's own.
 - Minimizing sends the taskbar's Minimize All, waits for the taskbar to
   handle it, then minimizes directly, without activating another window,
   each window still restored, because Minimize All has left a just-opened
