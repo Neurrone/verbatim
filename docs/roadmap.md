@@ -158,6 +158,27 @@ needs the parent's automation id, did not apply and the plain window
 "Task Switching" filled in from window handles was spoken before the
 full read's item.
 
+### Slow applications: Verbatim's short limits
+
+Decided by Dickson on 2026-11-04, from the timeout audit of that day, to
+be built after the third build as one build with its own design and
+adversarial review (placement pending Dickson's confirmation): a slow
+application is waited for, as NVDA waits, rather than cut off. The
+ancestor walk's bound in a new window (500 ms), the window-message limit
+(`MESSAGE_TIMEOUT_MS`, 500 ms), the text deadline (`TEXT_DEADLINE`, 2 s)
+and the navigation step's deadline (400 ms) become the outer handling
+deadline, `HANDLING_DEADLINE` (10 s, NVDA's `NORMAL_CORE_ALIVE_TIMEOUT`);
+UI Automation's transaction timeout rises from 5 to 10 s, with the limits
+derived from it; when Windows judges the window hung during a call
+(`IsHungAppWindow`), the outpost abandons the worker at once; and a held
+window's title is said after 5 s, Windows' own hung threshold, instead of
+1 s (the gap record's replacement in the third build takes 5 s), since the
+user cannot use a busy application before it answers anyway. Reason: every
+failure the audit traced to these limits was an application that answered
+within 0.5 to 4.5 s; they account for five entries in [the known
+failures](flaky-tests.md) and part of three more. The key-holding bounds,
+the multi-press window and the terminal key window are unchanged.
+
 Follow-up, not established from the code alone: Core refuses a foreground
 report of the window holding its focus (`crates/verbatim-core/src/reduce.rs`,
 `reduce_focus_changed`) with no check that the focus is alive, so a window
