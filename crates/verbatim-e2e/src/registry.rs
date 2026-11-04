@@ -2255,7 +2255,7 @@ fn run_compare(def: &ScenarioDef) {
     let mut problems: Vec<String> = Vec::new();
 
     let mut state = None;
-    let body_outcome = panic::catch_unwind(AssertUnwindSafe(|| {
+    let body_outcome = caught(|| {
         crate::scenarios::expect_desktop(&mut scenario);
         let mut created = (def.setup)(&mut scenario)
             .unwrap_or_else(|error| panic!("scenario {:?}: setup failed: {error}", def.name));
@@ -2267,12 +2267,10 @@ fn run_compare(def: &ScenarioDef) {
         if let Err(payload) = result {
             panic::resume_unwind(payload);
         }
-    }));
+    });
     problems.extend(scenario.release_held_keys());
     let steps = scenario.speech().take_comparison();
-    let teardown_outcome = state.map(|state| {
-        panic::catch_unwind(AssertUnwindSafe(|| (def.teardown)(&mut scenario, state)))
-    });
+    let teardown_outcome = state.map(|state| caught(|| (def.teardown)(&mut scenario, state)));
     if let Some(Err(payload)) = &teardown_outcome {
         problems.push(format!(
             "teardown failed: {}",
@@ -2393,7 +2391,7 @@ fn run(def: &ScenarioDef) {
     let mut problems: Vec<String> = Vec::new();
 
     let mut state = None;
-    let body_outcome = panic::catch_unwind(AssertUnwindSafe(|| {
+    let body_outcome = caught(|| {
         scenario.speech().expect_sequence(&startup_speech());
         crate::scenarios::expect_desktop(&mut scenario);
         // The measure set asserts no speech after the desktop's.
@@ -2410,7 +2408,7 @@ fn run(def: &ScenarioDef) {
         if let Err(payload) = result {
             panic::resume_unwind(payload);
         }
-    }));
+    });
     // When the body ended, on the wall clock `gdigrab` stamps the video's
     // first frame with, so the recording's check can tell that the video
     // reaches it.
@@ -2482,9 +2480,7 @@ fn run(def: &ScenarioDef) {
             scenario.speech().take_remaining();
         }
     }
-    let teardown_outcome = state.map(|state| {
-        panic::catch_unwind(AssertUnwindSafe(|| (def.teardown)(&mut scenario, state)))
-    });
+    let teardown_outcome = state.map(|state| caught(|| (def.teardown)(&mut scenario, state)));
     if let Some(Err(payload)) = &teardown_outcome {
         problems.push(format!(
             "teardown failed: {}",
@@ -2588,6 +2584,29 @@ fn run(def: &ScenarioDef) {
             )
         );
     }
+}
+
+thread_local! {
+    /// How many [`caught`] calls this thread is inside.
+    static CAUGHT_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+/// Runs a scenario's setup, body or teardown, catching a panic, whose
+/// message the scenario's report then carries; while it runs,
+/// [`panic_is_reported_later`] is true on this thread, so the suite's panic
+/// hook does not print that message a first time.
+fn caught<R>(part: impl FnOnce() -> R) -> std::thread::Result<R> {
+    CAUGHT_DEPTH.with(|depth| depth.set(depth.get() + 1));
+    let result = panic::catch_unwind(AssertUnwindSafe(part));
+    CAUGHT_DEPTH.with(|depth| depth.set(depth.get() - 1));
+    result
+}
+
+/// Whether a panic on this thread now is caught by a scenario and its
+/// message printed in the scenario's report, for the suite's panic hook.
+#[must_use]
+pub fn panic_is_reported_later() -> bool {
+    CAUGHT_DEPTH.with(std::cell::Cell::get) > 0
 }
 
 /// The scenarios this test process has run, and the outpost crashes they

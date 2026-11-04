@@ -290,6 +290,13 @@ fn main() -> ExitCode {
     // check runs before every scenario.
     trials.sort_by(|a, b| a.name().cmp(b.name()));
     trials.retain(|trial| command_line::selected(trial.name(), &filters, arguments.exact));
+    // A panic a scenario catches is printed once, in its report.
+    let default = panic::take_hook();
+    panic::set_hook(Box::new(move |info| {
+        if !verbatim_e2e::registry::panic_is_reported_later() {
+            default(info);
+        }
+    }));
     let conclusion = libtest_mimic::run(&arguments, trials);
     for line in summary
         .lock()
