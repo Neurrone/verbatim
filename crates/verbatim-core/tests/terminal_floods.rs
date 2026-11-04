@@ -239,3 +239,197 @@ fn a_flood_that_starts_under_a_wrapped_line_counts_its_rows_once() {
     );
     assert_eq!(session.requests(), requests(false));
 }
+
+/// A full-screen program drawing its 30 rows on the alternate screen in one
+/// write, at limits of 10: the new screen's rows are a burst like any
+/// other, its first 10 heard, the 10 between skipped and its last 10
+/// heard; closing it brings the main screen back as a new screen, whose
+/// rows are spoken whole.
+fn redraw_limit(flavor: Flavor) {
+    let mut session = terminal(flavor, "", 10);
+    let rows = (1..=30)
+        .map(|row| format!("screen row {row}"))
+        .collect::<Vec<_>>()
+        .join("\r\n");
+    session.write(&format!("\r\n\x1b[?1049h\x1b[H\x1b[2J{rows}"), 100);
+    session.play();
+    let mut speech = heard("screen row", 1..=10);
+    speech.push(said(None, "Phrase(SkippedLines(10))"));
+    speech.extend(heard("screen row", 21..=30));
+    assert_eq!(session.heard(), speech);
+    assert_eq!(session.requests(), requests(false));
+    session.write(&format!("\x1b[?1049lclosed\r\n{PROMPT}"), 200);
+    session.play();
+    assert_eq!(
+        session.heard(),
+        vec![
+            said(None, &format!("{PROMPT}command")),
+            said(None, "closed"),
+            said(None, PROMPT.trim_end()),
+        ]
+    );
+    assert_eq!(session.requests(), Vec::new());
+}
+
+#[test]
+fn a_full_screen_redraw_goes_through_the_limits_in_the_console_host() {
+    redraw_limit(Flavor::ConsoleHost);
+}
+
+#[test]
+fn a_full_screen_redraw_goes_through_the_limits_in_windows_terminal() {
+    redraw_limit(Flavor::WindowsTerminal);
+}
+
+/// Windows PowerShell's `Clear-Host` in Windows Terminal, as it writes it:
+/// the caret homed, then the screen and the history erased.
+const CLEAR_HOST: &str = "\x1b[H\x1b[2J\x1b[3J";
+
+/// In Windows Terminal, 200 lines of history and a group's worth of lines
+/// at limits of 10, then, once the first has been heard, the screen and
+/// history cleared and 100 lines written while the outpost holds, as
+/// `clear; dir` in one line: the read at the group's end finds the document
+/// shorter than the last read's, its start refused and nothing of it kept,
+/// so the whole document is read and is all new, its 101 lines counted as
+/// about, less the 10 heard last.
+#[test]
+fn output_after_windows_terminals_clear_is_all_new_and_counted_as_about() {
+    let mut session = terminal(Flavor::WindowsTerminal, &written("old line", 1..=200), 10);
+    session.write(&format!("\r\n{}", written("before line", 1..=10)), 100);
+    assert!(session.play_one());
+    assert_eq!(session.heard(), heard("before line", 1..=1));
+    session.write(
+        &format!("{CLEAR_HOST}{}{PROMPT}", written("cleared line", 1..=100)),
+        200,
+    );
+    session.play();
+    assert_eq!(
+        session.heard(),
+        burst(
+            heard("before line", 2..=10),
+            "Phrase(SkippedAboutLines(91))",
+            heard("cleared line", 92..=100)
+        )
+    );
+    assert_eq!(session.requests(), requests(true));
+}
+
+/// In Windows Terminal at limits of 15, a group's worth of lines; once the
+/// first has been heard, the screen and history cleared and a group's worth
+/// written with no line break after the last, so the screen starts at the
+/// document's start; once the first of those has been heard, 9,100 lines
+/// written while the outpost holds. The read at the cleared group's end
+/// keeps nothing of the screen before, which the clear set aside and which
+/// is no longer in the buffer, so it is a lost read, and the whole
+/// document, Windows Terminal's 9,031 rows, holds nothing of the last
+/// read: more went by than it holds, less the 15 heard last.
+#[test]
+fn a_flood_after_windows_terminals_clear_says_more_than_it_holds() {
+    let mut session = terminal(Flavor::WindowsTerminal, "", 15);
+    session.write(&format!("\r\n{}", written("before line", 1..=15)), 100);
+    assert!(session.play_one());
+    assert_eq!(session.heard(), heard("before line", 1..=1));
+    let cleared = written("cleared line", 1..=15);
+    session.write(
+        &format!("{CLEAR_HOST}{}", cleared.trim_end_matches("\r\n")),
+        200,
+    );
+    for _ in 0..15 {
+        assert!(session.play_one());
+    }
+    let mut first = heard("before line", 2..=15);
+    first.extend(heard("cleared line", 1..=1));
+    assert_eq!(session.heard(), first);
+    session.write(
+        &format!("\r\n{}{PROMPT}", written("fill line", 1..=9100)),
+        300,
+    );
+    session.play();
+    assert_eq!(
+        session.heard(),
+        burst(
+            heard("cleared line", 2..=15),
+            "Phrase(SkippedMoreThanLines(9016))",
+            heard("fill line", 9087..=9100)
+        )
+    );
+    // The read at the before lines' group's end, holding again for the
+    // cleared lines' group, then that group's requests, its read lost.
+    let mut both = vec![TextOp::TerminalHold, TextOp::TerminalRead { hold: true }];
+    both.extend(requests(true).into_iter().skip(1));
+    assert_eq!(session.requests(), both);
+}
+
+/// A fresh console host, with no history, taking 9,100 lines in one write
+/// before its first read, at limits of 10: its 9,001 rows keep fill lines
+/// 101 to 9,100 and the prompt, the read keeps nothing of the screen before
+/// and no screen is aside, so it is a lost read, and the whole document
+/// holds nothing of the last read: its first 10 lines are heard, then more
+/// than it holds less the 20 heard went by.
+#[test]
+fn a_flood_onto_a_fresh_console_host_says_more_than_it_holds() {
+    let mut session = terminal(Flavor::ConsoleHost, "", 10);
+    session.write(
+        &format!("\r\n{}{PROMPT}", written("fill line", 1..=9100)),
+        100,
+    );
+    session.play();
+    assert_eq!(
+        session.heard(),
+        burst(
+            heard("fill line", 101..=110),
+            "Phrase(SkippedMoreThanLines(8981))",
+            heard("fill line", 9092..=9100)
+        )
+    );
+    let mut lost = vec![TextOp::TerminalReadNow(TerminalScope::Whole)];
+    lost.extend(requests(false));
+    assert_eq!(session.requests(), lost);
+}
+
+/// The console host with the screen cleared, its last row a footer below a
+/// scroll region over the rows above, at limits of 15: a group's worth of
+/// lines written into the region, then, once the first has been heard,
+/// lines to 12,000 and the footer redrawn while the outpost holds. The read
+/// at the group's end finds its start gone with the rotating history, the
+/// whole document holds nothing of the last read but the footer at its
+/// row, so the lines above it are all new: more than the console host's
+/// 9,001 rows less the 15 heard last went by, then the footer's new text.
+/// Removing the region and clearing the screen speaks what follows. Each
+/// line starts with a carriage return and a line feed, as the console
+/// host's default output mode turns a line feed into both.
+#[test]
+fn a_flood_above_a_footer_past_the_console_hosts_history_says_more_than_it_holds() {
+    let mut session = terminal(Flavor::ConsoleHost, "", 15);
+    session.write("\r\n\x1b[2J\x1b[1;29r\x1b[30;1Hstatus: busy\x1b[29;1H", 100);
+    session.play();
+    assert_eq!(session.heard(), vec![said(None, "status: busy")]);
+    assert_eq!(session.requests(), Vec::new());
+    let lines = |range: std::ops::RangeInclusive<u32>| {
+        range.fold(String::new(), |mut text, line| {
+            let _ = write!(text, "\r\nflood line {line}");
+            text
+        })
+    };
+    session.write(&lines(1..=15), 200);
+    assert!(session.play_one());
+    assert_eq!(session.heard(), heard("flood line", 1..=1));
+    session.write(
+        &format!("{}\x1b[s\x1b[30;1Hstatus: done\x1b[u", lines(16..=12_000)),
+        300,
+    );
+    session.play();
+    let mut speech = heard("flood line", 2..=15);
+    speech.push(said(None, "Phrase(SkippedMoreThanLines(8986))"));
+    speech.extend(heard("flood line", 11_987..=12_000));
+    speech.push(said(None, "status: done"));
+    assert_eq!(session.heard(), speech);
+    assert_eq!(session.requests(), requests(true));
+    session.write(&format!("\x1b[r\x1b[2J\x1b[Hfooter gone\r\n{PROMPT}"), 400);
+    session.play();
+    assert_eq!(
+        session.heard(),
+        vec![said(None, "footer gone"), said(None, PROMPT.trim_end())]
+    );
+    assert_eq!(session.requests(), Vec::new());
+}
