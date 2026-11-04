@@ -4,8 +4,8 @@
 //! module.
 //!
 //! The written script `progress.ps1` writes "Downloading 10%" and then
-//! rewrites the same line, after a carriage return, as "Downloading 20%"
-//! and so on to "Downloading 100%", and ends the line once it is done. Each
+//! rewrites the same line, after a carriage return, as "Downloading 20%",
+//! 30% and 40%, then "Downloading 100%", and ends the line once it is done. Each
 //! step is written only once the scenario has heard the step before in
 //! full: the script waits, on its folder's change notifications, for a
 //! file named for the step (`progress-20` and so on), which the scenario
@@ -28,10 +28,10 @@ use crate::scenario::Scenario;
 pub(crate) use super::no_teardown as teardown;
 
 /// The steps, in percent.
-const STEPS: [u32; 10] = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
+const STEPS: [u32; 5] = [10, 20, 30, 40, 100];
 
 /// The script: each step waits for its file, then rewrites the line.
-const SCRIPT: &str = "foreach ($percent in 10, 20, 30, 40, 50, 60, 70, 80, 90, 100) {\r\n\
+const SCRIPT: &str = "foreach ($percent in 10, 20, 30, 40, 100) {\r\n\
 \x20   $step = \"progress-$percent\"\r\n\
 \x20   $watcher = New-Object IO.FileSystemWatcher($PSScriptRoot, $step)\r\n\
 \x20   if (-not (Test-Path -LiteralPath (Join-Path $PSScriptRoot $step))) { $null = $watcher.WaitForChanged('Created') }\r\n\

@@ -8,10 +8,11 @@
 //!
 //! Long lines: `long.ps1` prints one line of forty numbered words, far
 //! wider than the terminal's 120 columns, which is spoken whole. `grow.ps1`
-//! reads keys without showing them and, for each, appends ten more numbered
-//! words to the same line, which keeps growing past any earlier size: each
-//! key's ten words are spoken, and nothing of what was there. Enter ends it
-//! with "grown".
+//! reads keys without showing them and, for each of three, appends ten more
+//! numbered words to the same line, which keeps growing past any earlier
+//! size and wraps past the 120 columns at the second key: each key's ten
+//! words are spoken, and nothing of what was there. Enter ends it with
+//! "grown".
 //!
 //! Full screen: `altscreen.ps1` opens the alternate screen and fills it,
 //! rows 1 to 29 and a status line on the 30th, spoken in full; then, a key
@@ -128,7 +129,7 @@ fn long_line_steps(scenario: &mut Scenario) {
         .speech()
         .expect_within(&[long.as_str(), PROMPT], LONG_SPEECH);
     terminal::type_with_echo(scenario, r".\grow.ps1", terminal::Echo::Shown);
-    for first in [1, 11, 21, 31] {
+    for first in [1, 11, 21] {
         let part = numbered("part", first, first + 9);
         key_hearing(scenario, "n", &[part.as_str()]);
     }

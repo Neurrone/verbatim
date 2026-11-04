@@ -1,9 +1,9 @@
-//! Selection lists drawn in a terminal, as `windows_terminal_marker_list`,
-//! `conhost_marker_list`, `windows_terminal_redrawn_list` and
-//! `conhost_redrawn_list`, each its own code (`docs/testing.md`). The
+//! Selection lists drawn in a terminal, as `windows_terminal_marker_list`
+//! and `conhost_marker_list`, each its own code (`docs/testing.md`). The
 //! shared setup is described in the `terminal` module.
 //!
-//! Each script prints "Pick a fruit:" and a five-item list with a ">"
+//! Each scenario runs two scripts, `marker.ps1` and then `redraw.ps1`. Each
+//! script prints "Pick a fruit:" and a five-item list with a ">"
 //! marker on its first item, then moves the marker with Down and Up Arrow
 //! until Enter chooses, each move in one write, as list prompts draw
 //! (`docs/parity/terminals.md`, "Line keys and lists a program draws").
@@ -177,22 +177,12 @@ fn console_host_opening(scenario: &mut Scenario, state: &mut ScenarioState) {
 pub(crate) fn body_marker_windows_terminal(scenario: &mut Scenario, state: &mut ScenarioState) {
     windows_terminal_opening(scenario, state);
     list_steps(scenario, r".\marker.ps1", key_hearing);
+    list_steps(scenario, r".\redraw.ps1", redrawn_key_hearing);
 }
 
 /// `conhost_marker_list`.
 pub(crate) fn body_marker_console_host(scenario: &mut Scenario, state: &mut ScenarioState) {
     console_host_opening(scenario, state);
     list_steps(scenario, r".\marker.ps1", key_hearing);
-}
-
-/// `windows_terminal_redrawn_list`.
-pub(crate) fn body_redrawn_windows_terminal(scenario: &mut Scenario, state: &mut ScenarioState) {
-    windows_terminal_opening(scenario, state);
-    list_steps(scenario, r".\redraw.ps1", redrawn_key_hearing);
-}
-
-/// `conhost_redrawn_list`.
-pub(crate) fn body_redrawn_console_host(scenario: &mut Scenario, state: &mut ScenarioState) {
-    console_host_opening(scenario, state);
     list_steps(scenario, r".\redraw.ps1", redrawn_key_hearing);
 }

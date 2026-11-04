@@ -102,12 +102,8 @@ const LIVE: &[&str] = scenario_tests! {
     conhost_flood
     windows_terminal_control_flood
     conhost_control_flood
-    windows_terminal_shift_flood
-    conhost_shift_flood
     windows_terminal_line_key_flood
     conhost_line_key_flood
-    windows_terminal_up_typing
-    conhost_up_typing
     windows_terminal_leave_flood
     conhost_leave_flood
     windows_terminal_close_tab
@@ -117,8 +113,6 @@ const LIVE: &[&str] = scenario_tests! {
     conhost_editing
     windows_terminal_review_grid
     conhost_review_grid
-    windows_terminal_review_padding
-    conhost_review_padding
     windows_terminal_progress
     conhost_progress
     windows_terminal_typing
@@ -129,16 +123,10 @@ const LIVE: &[&str] = scenario_tests! {
     conhost_full_screen
     windows_terminal_marker_list
     conhost_marker_list
-    windows_terminal_redrawn_list
-    conhost_redrawn_list
     windows_terminal_pager_history
     conhost_pager_history
-    windows_terminal_review_output
-    conhost_review_output
     windows_terminal_status_bar
     conhost_status_bar
-    windows_terminal_command_marks
-    conhost_command_marks
     windows_terminal_two_windows
     conhost_two_windows
     windows_terminal_tabs

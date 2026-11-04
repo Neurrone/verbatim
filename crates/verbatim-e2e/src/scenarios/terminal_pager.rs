@@ -1,5 +1,5 @@
-//! A pager run once on a fresh terminal, then scrolling a line at a time
-//! on the alternate screen over a shell screen with history, as
+//! A pager scrolling a line at a time on the alternate screen over a shell
+//! screen with history, as
 //! `windows_terminal_pager_history` and `conhost_pager_history`, each its
 //! own code (`docs/testing.md`). The
 //! shared setup is described in the `terminal` module.
@@ -18,13 +18,11 @@
 //! screen when a pager closes (`docs/design/terminal-model.md`, "Screens",
 //! Dickson, 2026-10-24).
 //!
-//! Each scenario opens with the pager run once on the fresh terminal, at
-//! the top of the document: closing it brings back a shell screen of three
-//! rows, heard whole as the command, "closed" and the prompt. It is the
-//! opening step, not its own scenario, because it needs a fresh terminal
-//! and so would pay a second terminal launch.
+//! A full-screen program closed on a fresh terminal, at the top of the
+//! document, is covered by `*_full_screen` (`terminal_screens`), which hears
+//! the same command, "closed" and the prompt.
 //!
-//! The pager then runs again after `lines.ps1` has printed 100 lines,
+//! The pager runs after `lines.ps1` has printed 100 lines,
 //! "history line 1" to "history line 100", heard through the flood policy
 //! with both limits at 15 ([`HALF`]) as lines 1 to 15, "skipped 71 lines",
 //! lines 87 to 100 and the prompt. The limits are 15, not lower, so that
@@ -176,19 +174,9 @@ fn pager_until_closed(scenario: &mut Scenario) {
     scenario.deviates_from_nvda("docs/parity/terminals.md", "New terminal output");
 }
 
-/// Opens the pager on the fresh terminal and closes it onto the shell's
-/// screen at the top of the document, heard whole.
-fn closed_at_top(scenario: &mut Scenario) {
-    pager_until_closed(scenario);
-    scenario
-        .speech()
-        .expect(&[r"ready> .\pager.ps1", "closed", PROMPT]);
-}
-
 /// `windows_terminal_pager_history`.
 pub(crate) fn body_history_windows_terminal(scenario: &mut Scenario, state: &mut ScenarioState) {
     terminal::expect_windows_terminal_prompt_read(scenario, state, terminal::LAUNCH_REPEATS);
-    closed_at_top(scenario);
     history_steps(scenario);
     pager_until_closed(scenario);
     closed_over_history(scenario);
@@ -203,7 +191,6 @@ pub(crate) fn body_history_console_host(scenario: &mut Scenario, state: &mut Sce
         state,
         &[&format!("{title} window"), "terminal", "blank"],
     );
-    closed_at_top(scenario);
     history_steps(scenario);
     pager_until_closed(scenario);
     closed_over_history(scenario);
