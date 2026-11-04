@@ -51,7 +51,13 @@ fn directories() -> Option<(PathBuf, PathBuf)> {
     let cargo = std::env::var_os("CARGO")?;
     let manifest_dir = std::env::var_os("CARGO_MANIFEST_DIR")?;
     let output = Command::new(cargo)
-        .args(["metadata", "--format-version", "1", "--no-deps", "--offline"])
+        .args([
+            "metadata",
+            "--format-version",
+            "1",
+            "--no-deps",
+            "--offline",
+        ])
         .current_dir(manifest_dir)
         .output()
         .ok()?;

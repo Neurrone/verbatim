@@ -350,12 +350,12 @@ fn gate() -> Result<(), String> {
     let out = output_dir();
     std::fs::create_dir_all(&out).map_err(|error| format!("{}: {error}", out.display()))?;
     let lcov = out.join("gate.lcov");
-    let mut test = args(&["llvm-cov", "test", "--lcov", "--output-path"]);
-    test.push(lcov.display().to_string());
+    let mut run = args(&["llvm-cov", "test", "--lcov", "--output-path"]);
+    run.push(lcov.display().to_string());
     for name in LINUX_CRATES {
-        test.extend(["-p".to_owned(), (*name).to_owned()]);
+        run.extend(["-p".to_owned(), (*name).to_owned()]);
     }
-    cargo(&test)?;
+    cargo(&run)?;
     let text =
         std::fs::read_to_string(&lcov).map_err(|error| format!("{}: {error}", lcov.display()))?;
     let root = workspace();
@@ -412,8 +412,8 @@ fn product_lines(root: &Path, name: &str, lines: &Lines) -> Result<Lines, String
     crate::waits::collect_rust_files(&root.join("crates").join(name).join("src"), &mut files)?;
     let mut sources = BTreeMap::new();
     for file in files {
-        let source =
-            std::fs::read_to_string(&file).map_err(|error| format!("{}: {error}", file.display()))?;
+        let source = std::fs::read_to_string(&file)
+            .map_err(|error| format!("{}: {error}", file.display()))?;
         let relative = file
             .strip_prefix(root)
             .unwrap_or(&file)
@@ -870,7 +870,10 @@ mod tests {
     fn the_gate_prints_each_crate_and_fails_a_total_below_the_floor() {
         let read = lines(&[
             ("crates/a/src/lib.rs", &[(1, 1), (2, 1), (3, 1), (4, 1)]),
-            ("crates/b/src/lib.rs", &[(1, 1), (2, 1), (3, 1), (4, 1), (5, 0)]),
+            (
+                "crates/b/src/lib.rs",
+                &[(1, 1), (2, 1), (3, 1), (4, 1), (5, 0)],
+            ),
         ]);
         assert_eq!(
             gate_summary(&["a", "b"], &read),
@@ -883,7 +886,21 @@ mod tests {
                 false
             )
         );
-        let read = lines(&[("crates/a/src/lib.rs", &[(1, 1), (2, 1), (3, 1), (4, 1), (5, 1), (6, 1), (7, 1), (8, 1), (9, 1), (10, 0)])]);
+        let read = lines(&[(
+            "crates/a/src/lib.rs",
+            &[
+                (1, 1),
+                (2, 1),
+                (3, 1),
+                (4, 1),
+                (5, 1),
+                (6, 1),
+                (7, 1),
+                (8, 1),
+                (9, 1),
+                (10, 0),
+            ],
+        )]);
         assert!(gate_summary(&["a"], &read).1);
     }
 

@@ -162,7 +162,8 @@ fn shared(source: &Path, dir: &Path) -> Built {
         }
         let build = build(source, dir);
         let lib = dir.join("lib");
-        fs::create_dir_all(&lib).unwrap_or_else(|error| panic!("create {}: {error}", lib.display()));
+        fs::create_dir_all(&lib)
+            .unwrap_or_else(|error| panic!("create {}: {error}", lib.display()));
         for (name, folder) in LIBRARIES {
             let file = format!("{name}.lib");
             let made = [
