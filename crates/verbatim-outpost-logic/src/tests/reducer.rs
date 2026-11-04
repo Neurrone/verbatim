@@ -1571,9 +1571,14 @@ impl Run {
                 self.issued(*request);
             }
         }
+        // The shell carries out every effect of the call before any answer
+        // comes back, so a program the call dispatched is in flight when a
+        // test's answer commits a title that ends the watch.
+        for effect in &effects {
+            self.apply(effect);
+        }
         let mut answered = Vec::new();
         for effect in effects {
-            self.apply(&effect);
             let gap = self.reducer.intake.gap();
             let reads = gap.awaits() == Some(Awaits::Focus);
             let closed = matches!(effect, Effect::TestGapBound { .. }) && !gap.is_open();
@@ -2580,6 +2585,11 @@ const fn arrives(what: What) -> (Action, Asks) {
 }
 
 /// A tick at the time the reducer's next timer gives.
+/// An advance of the clocks by `at`, `observed` and `wall` milliseconds.
+const fn by(at: u16, observed: u16, wall: u16) -> Action {
+    Action::Advance(Advance::By { at, observed, wall })
+}
+
 const TO_TIMER: Action = Action::Advance(Advance::ToTimer {
     observed: 0,
     wall: 0,
@@ -2594,7 +2604,8 @@ const TO_TIMER: Action = Action::Advance(Advance::ToTimer {
 /// (`docs/crates/verbatim-outpost-logic.md`); from the
 /// mutation baseline, a take of a node no watch is on while one waits; and
 /// a title committed while the program in flight holds the watch, which
-/// ends it at once.
+/// ends it at once; and a title answered in the tick that dispatched a
+/// replacement program holding the watch, which ends it all the same.
 fn fixed() -> Vec<Vec<(Action, Asks)>> {
     let in_front = What::Foreground {
         window: 0,
@@ -2619,14 +2630,7 @@ fn fixed() -> Vec<Vec<(Action, Asks)>> {
             (Action::Close, PLAIN),
             arrives(in_front),
             (TO_TIMER, PLAIN),
-            (
-                Action::Advance(Advance::By {
-                    at: 1_000,
-                    observed: 1_000,
-                    wall: 0,
-                }),
-                PLAIN,
-            ),
+            (by(1_000, 1_000, 0), PLAIN),
         ],
         vec![
             (uia(false), PLAIN),
@@ -2639,11 +2643,7 @@ fn fixed() -> Vec<Vec<(Action, Asks)>> {
             (Action::Commit(Commit::CopyDropped { top: 0 }), PLAIN),
             (Action::Armed(1_000), PLAIN),
             (
-                Action::Advance(Advance::By {
-                    at: 1_000,
-                    observed: 1_000,
-                    wall: 0,
-                }),
+                by(1_000, 1_000, 0),
                 Asks {
                     publish: 2,
                     related: true,
@@ -2673,11 +2673,7 @@ fn fixed() -> Vec<Vec<(Action, Asks)>> {
             arrives(in_front),
             (Action::Commit(Commit::Take), PLAIN),
             (
-                Action::Advance(Advance::By {
-                    at: 1_100,
-                    observed: 1_100,
-                    wall: 0,
-                }),
+                by(1_100, 1_100, 0),
                 Asks {
                     related: true,
                     title: true,
@@ -2686,11 +2682,25 @@ fn fixed() -> Vec<Vec<(Action, Asks)>> {
             ),
             (Action::Commit(Commit::Checked { answered: false }), PLAIN),
         ],
+        vec![
+            arrives(What::CaretKey),
+            (Action::Commit(Commit::Own(false)), PLAIN),
+            arrives(in_front),
+            (
+                by(12_000, 12_000, 12_000),
+                Asks {
+                    related: true,
+                    title: true,
+                    ..PLAIN
+                },
+            ),
+            (Action::Commit(Commit::Take), PLAIN),
+        ],
     ]
 }
 
 /// Every fixed case keeps the reducer's rules, and gives the same effects
-/// when run twice; the last ends the held watch by a title.
+/// when run twice; the last two end the held watch by a title.
 #[test]
 fn fixed_cases_keep_the_reducers_rules() {
     let mut ended = 0;
@@ -2703,7 +2713,7 @@ fn fixed_cases_keep_the_reducers_rules() {
             .copied()
             .unwrap_or(0);
     }
-    assert_eq!(ended, 1, "the title's case ends the held watch");
+    assert_eq!(ended, 2, "the title's cases end the held watch");
 }
 
 /// The source an entry from `from` is given as.
