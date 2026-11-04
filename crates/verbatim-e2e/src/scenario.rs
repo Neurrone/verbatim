@@ -612,7 +612,12 @@ impl Scenario {
         };
         let ready = agent.wait_for_event(&ready_event, verbatim_pid, READY_TIMEOUT);
         let connected = match ready {
-            Ok(EventOutcome::Signalled) => connect(&agent_addr),
+            // The status check is part of connecting, so that its failure
+            // takes the cleanup below as every other start failure does.
+            Ok(EventOutcome::Signalled) => connect(&agent_addr).and_then(|mut connected| {
+                require_ready(&mut connected.0)?;
+                Ok(connected)
+            }),
             Ok(EventOutcome::Exited { exit_code }) => Err(io::Error::other(format!(
                 "Verbatim exited ({exit_code:?}) before it was ready; see {stderr_path}, \
                  {STDERR_FILE_NAME} in the scenario's artifacts"
@@ -624,7 +629,7 @@ impl Scenario {
             ))),
             Err(error) => Err(error),
         };
-        let (mut control, speech, timeline) = match connected {
+        let (control, speech, timeline) = match connected {
             Ok(connected) => connected,
             Err(error) => {
                 let killed = agent.kill_process(verbatim_pid).map(|_| ());
@@ -649,7 +654,6 @@ impl Scenario {
                 return Err(StartFailure::error(&error, stderr_log));
             }
         };
-        require_ready(&mut control)?;
 
         Ok(Self {
             _lock: lock,
