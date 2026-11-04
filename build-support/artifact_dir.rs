@@ -35,13 +35,12 @@ pub fn artifact_dir() -> PathBuf {
     // build directory it names (a `--target-dir` given on the command line,
     // which also moves the build directory unless one is configured), the
     // build directory is the target directory.
-    match directories() {
-        Some((target, build)) => match profile.strip_prefix(&build) {
-            Ok(relative) => target.join(relative),
-            Err(_) => profile.to_path_buf(),
-        },
-        None => profile.to_path_buf(),
+    if let Some((target, build)) = directories()
+        && let Ok(relative) = profile.strip_prefix(&build)
+    {
+        return target.join(relative);
     }
+    profile.to_path_buf()
 }
 
 /// The target and build directories `cargo metadata` reports for this

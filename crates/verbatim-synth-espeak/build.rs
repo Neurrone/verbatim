@@ -61,20 +61,17 @@ fn main() {
     }
     println!("cargo:rerun-if-env-changed=VERBATIM_ESPEAK_DIR");
 
-    let built = match shared_dir(&source) {
-        Some(dir) => shared(&source, &dir),
-        None => {
-            let out = PathBuf::from(std::env::var("OUT_DIR").expect("set by cargo"));
-            let build = build(&source, &out);
-            Built {
-                libraries: LIBRARIES
-                    .iter()
-                    .flat_map(|(_, folder)| {
-                        [build.join(folder), build.join(folder).join("Release")]
-                    })
-                    .collect(),
-                data: build.join("espeak-ng-data"),
-            }
+    let built = if let Some(dir) = shared_dir(&source) {
+        shared(&source, &dir)
+    } else {
+        let out = PathBuf::from(std::env::var("OUT_DIR").expect("set by cargo"));
+        let build = build(&source, &out);
+        Built {
+            libraries: LIBRARIES
+                .iter()
+                .flat_map(|(_, folder)| [build.join(folder), build.join(folder).join("Release")])
+                .collect(),
+            data: build.join("espeak-ng-data"),
         }
     };
 
