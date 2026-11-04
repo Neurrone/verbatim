@@ -522,8 +522,26 @@ losing any of them fails the run:
   within 10 seconds, the file holds one line giving the reason. The same
   lines are appended to the failure message. When the
   window was the scenario's document, which opens before Verbatim, the
-  launch fails before any other artifact is collected, and this file is
-  the only one.
+  launch fails before any other artifact is collected, and this file and
+  the two below are the only ones.
+- `launched-process-<pid>.txt`, beside `wait-chains.txt` and only with
+  it: the process the harness launched to open the window, as the agent
+  read it when the wait ran out. One fact a line: whether it still runs
+  or its exit code; the processor time it has spent in user and in kernel
+  mode, which tells a process busy working from one blocked or idle;
+  which `System.Windows.Forms` it loaded, the precompiled native image
+  (`System.Windows.Forms.ni.dll`) or the plain assembly
+  (`System.Windows.Forms.dll`), which the runtime compiles as it loads,
+  or neither; every module it has loaded, in load order; and the
+  minidump, or why there is none. A part the agent could not read says
+  why, and when the agent does not read them within 10 seconds the file
+  holds the reason alone. The failure message gives the first three facts
+  on one line and names these files.
+- `launched-process-<pid>.dmp`, with it: the process's minidump, with
+  its threads' stacks and information, its handles and its unloaded
+  modules, for a debugger such as WinDbg. The agent writes it into the
+  run's folder for harness files, and the harness copies it here and
+  deletes it there.
 - `stderr.log`: Verbatim's captured standard output and error, with its
   `verbatim::latency` lines.
 - Every file of the launch's log directory, `logs\<Verbatim's pid>` next

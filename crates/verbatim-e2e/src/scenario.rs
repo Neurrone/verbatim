@@ -44,8 +44,8 @@ use std::sync::{Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::Duration;
 
 use verbatim_agent::protocol::{
-    EventOutcome, ForegroundInfo, ProcessExit, ProcessInfo, ProcessState, WaitChain, WaitNode,
-    WaitNodeKind, WaitNodeStatus, WindowCondition, WindowInfo,
+    EventOutcome, ForegroundInfo, ProcessDiagnostics, ProcessExit, ProcessInfo, ProcessState,
+    SwitcherItem, WaitChain, WaitNode, WaitNodeKind, WaitNodeStatus, WindowCondition, WindowInfo,
 };
 use verbatim_config::{ConfigStore, Settings};
 use verbatim_control::client::{Client as ControlClient, ok_or_error};
@@ -69,6 +69,12 @@ const AUDIO_FILE_NAME: &str = "verbatim-audio.wav";
 /// foreground in time
 /// ([`window_wait_chains`]), one chain a line.
 const WAIT_CHAINS_FILE_NAME: &str = "wait-chains.txt";
+
+/// The start of the names of the files recording the launched process
+/// when its window did not open or take the foreground in time
+/// ([`LaunchEvidence`]): `launched-process-<pid>.txt`, its processor time
+/// and modules, and `launched-process-<pid>.dmp`, its minidump.
+const LAUNCHED_PROCESS_FILE_STEM: &str = "launched-process";
 
 /// Text in the title of every window the harness opens on purpose: the
 /// document a [`Document`] names is named with it, so
@@ -133,7 +139,7 @@ const VERBATIM_IMAGES: [&str; 4] = [
 /// The extensions of the harness files the pre-launch sweep deletes: the
 /// documents a [`Document`] names, and the fixtures
 /// written at [`Scenario::harness_file`] paths.
-const HARNESS_FILE_EXTENSIONS: [&str; 2] = ["txt", "json"];
+const HARNESS_FILE_EXTENSIONS: [&str; 3] = ["txt", "json", "dmp"];
 
 /// Environment variable overriding the path to `verbatim.exe`. Defaults to
 /// `target/debug/verbatim.exe` under the workspace root, which a
@@ -274,10 +280,10 @@ pub struct Scenario {
     /// The NVDA the scenario runs against in compare mode; `None` when it
     /// runs against Verbatim.
     nvda: Option<NvdaRun>,
-    /// The wait chains recorded when a window the scenario launched did not
-    /// open or take the foreground in time ([`window_wait_chains`]), one
-    /// chain a line, for [`WAIT_CHAINS_FILE_NAME`].
-    wait_chains: Vec<String>,
+    /// What was recorded when a window the scenario launched did not open
+    /// or take the foreground in time ([`LaunchEvidence`]), for the
+    /// scenario's artifacts.
+    launch_evidence: Vec<LaunchEvidence>,
     /// The executable Verbatim was launched from, for a second start
     /// ([`Scenario::replace_verbatim`]); empty in compare mode.
     launch_exe: String,
@@ -499,7 +505,7 @@ impl Scenario {
                 exited: false,
                 held: Vec::new(),
                 nvda: Some(nvda),
-                wait_chains: Vec::new(),
+                launch_evidence: Vec::new(),
                 launch_exe: String::new(),
                 launch_env: Vec::new(),
                 replaced: Vec::new(),
@@ -598,7 +604,7 @@ impl Scenario {
             exited: false,
             held: Vec::new(),
             nvda: None,
-            wait_chains: Vec::new(),
+            launch_evidence: Vec::new(),
             launch_exe: exe_str,
             launch_env,
             replaced: Vec::new(),
@@ -1329,14 +1335,15 @@ impl Scenario {
             .iter()
             .find(|window| present && !window.cloaked && window.title.contains(title))
         else {
-            let chains = window_wait_chains(&mut self.agent, &desktop, None, launch.pid);
-            self.wait_chains.extend(chains.iter().cloned());
+            let evidence =
+                LaunchEvidence::record(&mut self.agent, &self.run_dir, &desktop, None, launch.pid);
+            self.launch_evidence.push(evidence.clone());
             return Err(WindowWaitFailure::error(
                 format!(
                     "no window titled {title:?} opened within {WINDOW_TIMEOUT:?}: {}",
                     describe_foreground(&desktop)
                 ),
-                chains,
+                evidence,
             ));
         };
         if by_handle && let Some(launched) = self.launched.last_mut() {
@@ -1664,8 +1671,14 @@ impl Scenario {
             WINDOW_TIMEOUT,
         )?;
         let Some(window) = desktop.foreground.clone().filter(|_| met) else {
-            let chains = window_wait_chains(&mut self.agent, &desktop, Some(opened), launch.pid);
-            self.wait_chains.extend(chains.iter().cloned());
+            let evidence = LaunchEvidence::record(
+                &mut self.agent,
+                &self.run_dir,
+                &desktop,
+                Some(opened),
+                launch.pid,
+            );
+            self.launch_evidence.push(evidence.clone());
             return Err(WindowWaitFailure::error(
                 format!(
                     "the window titled {title:?} did not take the foreground within {WINDOW_TIMEOUT:?}{}: {}",
@@ -1676,7 +1689,7 @@ impl Scenario {
                     },
                     describe_foreground(&desktop)
                 ),
-                chains,
+                evidence,
             ));
         };
         if let Some(launched) = self
@@ -1958,14 +1971,15 @@ impl Scenario {
         self.agent.uia_character_position(line, column)
     }
 
-    /// The open Alt+Tab switcher's item named `name`, read by the agent:
-    /// its row, column and position, each from one, and the list's size.
+    /// Every item of the open Alt+Tab switcher's list, read by the agent,
+    /// in the list's order: each one's name, its row, column and position,
+    /// each from one, and the list's size.
     ///
     /// # Errors
     ///
     /// Returns an error if the request fails.
-    pub fn switcher_item(&mut self, name: &str) -> io::Result<(u32, u32, u32, u32)> {
-        self.agent.switcher_item(name)
+    pub fn switcher_items(&mut self) -> io::Result<Vec<SwitcherItem>> {
+        self.agent.switcher_items()
     }
 
     /// The process id of the program the scenario launched last, and the
@@ -2406,10 +2420,10 @@ impl Scenario {
         if let Err(error) = fs::write(dir.join(TIMELINE_FILE_NAME), self.timeline.render()) {
             problems.push(format!("could not write the timeline: {error}"));
         }
-        if !self.wait_chains.is_empty()
-            && let Err(error) = write_wait_chains(dir, &self.wait_chains)
-        {
-            problems.push(format!("could not write the wait chains: {error}"));
+        if let Err(error) = write_launch_evidence(dir, &self.launch_evidence) {
+            problems.push(format!(
+                "could not write what was recorded of a launch whose window did not appear: {error}"
+            ));
         }
         if self.is_comparing() {
             return problems;
@@ -3049,13 +3063,13 @@ fn open_document(
         .iter()
         .find(|window| present && window.title.contains(&marker))
     else {
-        let chains = window_wait_chains(agent, &desktop, None, launch.pid);
+        let evidence = LaunchEvidence::record(agent, run_dir, &desktop, None, launch.pid);
         return Err(WindowWaitFailure::error(
             format!(
                 "no window titled {marker:?} opened within {WINDOW_TIMEOUT:?}: {}",
                 describe_foreground(&desktop)
             ),
-            chains,
+            evidence,
         ));
     };
     if !agent.set_foreground(window.window)? {
@@ -3074,13 +3088,13 @@ fn open_document(
         WINDOW_TIMEOUT,
     )?;
     let Some(window) = desktop.foreground.clone().filter(|_| met) else {
-        let chains = window_wait_chains(agent, &desktop, Some(opened), launch.pid);
+        let evidence = LaunchEvidence::record(agent, run_dir, &desktop, Some(opened), launch.pid);
         return Err(WindowWaitFailure::error(
             format!(
                 "the window titled {marker:?} did not take the foreground within {WINDOW_TIMEOUT:?}: {}",
                 describe_foreground(&desktop)
             ),
-            chains,
+            evidence,
         ));
     };
     launched.owners.push(window.pid);
@@ -3651,28 +3665,110 @@ fn settings_prelaunch(windows: &[WindowInfo]) -> Vec<u32> {
     pids
 }
 
-/// A window wait that ran out, with the wait chains recorded for it
-/// ([`window_wait_chains`]): the error a launch whose window did not open
-/// returns, so the runner can write the chains to the scenario's artifacts
-/// ([`wait_chains_of`]) even when no [`Scenario`] was made.
+/// What the harness records when a window a launch was to open did not
+/// open, or did not take the foreground, in time: the wait chains
+/// ([`window_wait_chains`]) and the launched process's processor time,
+/// modules and minidump (`Request::ProcessDiagnostics`), each part that
+/// could not be read saying why.
+#[derive(Clone, Debug)]
+pub(crate) struct LaunchEvidence {
+    /// The launched process.
+    pid: u32,
+    /// The wait chains, one a line.
+    chains: Vec<String>,
+    /// The launched process's state, processor time and modules, one fact
+    /// a line ([`describe_process`]), for `launched-process-<pid>.txt`.
+    process: Vec<String>,
+    /// One line summing the process up, for the failure's message.
+    summary: String,
+    /// The minidump's bytes, for `launched-process-<pid>.dmp`, when it was
+    /// written and read.
+    dump: Option<Vec<u8>>,
+}
+
+impl LaunchEvidence {
+    /// Records the evidence of the launch of `pid`, whose window, `window`
+    /// when it opened, did not open or take the foreground in time, with
+    /// `desktop` as the wait ended. The minidump is written by the agent
+    /// into `run_dir`, its folder for the harness's files, read back, and
+    /// deleted there.
+    fn record(
+        agent: &mut AgentClient,
+        run_dir: &str,
+        desktop: &ForegroundInfo,
+        window: Option<u64>,
+        pid: u32,
+    ) -> Self {
+        let chains = window_wait_chains(agent, desktop, window, pid);
+        let dump_path = format!(r"{run_dir}\{DOCUMENT_MARKER}launched-{pid}.dmp");
+        let (mut process, summary, written) = match agent.process_diagnostics(pid, &dump_path) {
+            Ok(read) => {
+                let (process, summary) = describe_process(pid, &read);
+                (process, summary, read.dump_error.is_none())
+            }
+            Err(error) => {
+                let why = format!("the launched process {pid} could not be read: {error}");
+                (vec![why.clone()], why, false)
+            }
+        };
+        let dump = if written {
+            match agent.read_whole_file(&dump_path) {
+                Ok(bytes) => Some(bytes),
+                Err(error) => {
+                    process.push(format!("the minidump could not be read back: {error}"));
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        if let Err(error) = agent.delete_file(&dump_path) {
+            process.push(format!(
+                "the minidump {dump_path} could not be deleted on the agent's machine: {error}"
+            ));
+        }
+        Self {
+            pid,
+            chains,
+            process,
+            summary,
+            dump,
+        }
+    }
+}
+
+/// A launch whose window did not open or take the foreground in time, with
+/// what was recorded of it ([`LaunchEvidence`]): the error such a launch
+/// returns, so the runner can write the evidence to the scenario's
+/// artifacts ([`launch_evidence_of`]) even when no [`Scenario`] was made.
 #[derive(Debug)]
 struct WindowWaitFailure {
     message: String,
-    chains: Vec<String>,
+    evidence: LaunchEvidence,
 }
 
 impl WindowWaitFailure {
-    /// `message` with `chains` appended, as an I/O error.
-    fn error(message: String, chains: Vec<String>) -> io::Error {
-        io::Error::other(Self { message, chains })
+    /// `message` with `evidence` summed up, as an I/O error.
+    fn error(message: String, evidence: LaunchEvidence) -> io::Error {
+        io::Error::other(Self { message, evidence })
     }
 }
 
 impl std::fmt::Display for WindowWaitFailure {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(formatter, "{}", self.message)?;
-        if !self.chains.is_empty() {
-            write!(formatter, "\nwait chains:\n{}", self.chains.join("\n"))?;
+        let pid = self.evidence.pid;
+        let dump = if self.evidence.dump.is_some() {
+            format!(" and {LAUNCHED_PROCESS_FILE_STEM}-{pid}.dmp")
+        } else {
+            String::new()
+        };
+        write!(
+            formatter,
+            "{}\n{}; see {WAIT_CHAINS_FILE_NAME}, {LAUNCHED_PROCESS_FILE_STEM}-{pid}.txt{dump} in the scenario's artifacts",
+            self.message, self.evidence.summary,
+        )?;
+        if !self.evidence.chains.is_empty() {
+            write!(formatter, "\nwait chains:\n{}", self.evidence.chains.join("\n"))?;
         }
         Ok(())
     }
@@ -3680,19 +3776,99 @@ impl std::fmt::Display for WindowWaitFailure {
 
 impl std::error::Error for WindowWaitFailure {}
 
-/// The wait chains `error` carries, when a window wait ran out
-/// ([`window_wait_chains`]).
-pub(crate) fn wait_chains_of(error: &io::Error) -> Option<&[String]> {
+/// What was recorded of the launch `error` failed on, when a window wait
+/// ran out ([`LaunchEvidence`]).
+pub(crate) fn launch_evidence_of(error: &io::Error) -> Option<&LaunchEvidence> {
     error
         .get_ref()
         .and_then(|inner| inner.downcast_ref::<WindowWaitFailure>())
-        .map(|failure| failure.chains.as_slice())
+        .map(|failure| &failure.evidence)
 }
 
-/// Writes `chains` to [`WAIT_CHAINS_FILE_NAME`] in `dir`.
-pub(crate) fn write_wait_chains(dir: &Path, chains: &[String]) -> io::Result<()> {
+/// Writes what was recorded of each launch in `evidence` to `dir`: every
+/// wait chain to [`WAIT_CHAINS_FILE_NAME`], and each launched process's
+/// facts and minidump to files named for it
+/// ([`LAUNCHED_PROCESS_FILE_STEM`]). Writes nothing when there is none.
+pub(crate) fn write_launch_evidence(dir: &Path, evidence: &[LaunchEvidence]) -> io::Result<()> {
+    if evidence.is_empty() {
+        return Ok(());
+    }
     fs::create_dir_all(dir)?;
-    fs::write(dir.join(WAIT_CHAINS_FILE_NAME), chains.join("\n") + "\n")
+    let chains: Vec<&str> = evidence
+        .iter()
+        .flat_map(|launch| launch.chains.iter().map(String::as_str))
+        .collect();
+    fs::write(dir.join(WAIT_CHAINS_FILE_NAME), chains.join("\n") + "\n")?;
+    for launch in evidence {
+        let stem = format!("{LAUNCHED_PROCESS_FILE_STEM}-{}", launch.pid);
+        fs::write(
+            dir.join(format!("{stem}.txt")),
+            launch.process.join("\n") + "\n",
+        )?;
+        if let Some(dump) = &launch.dump {
+            fs::write(dir.join(format!("{stem}.dmp")), dump)?;
+        }
+    }
+    Ok(())
+}
+
+/// The facts of launched process `pid` as the agent read them (`read`),
+/// one a line: whether it runs, its processor time, which
+/// `System.Windows.Forms` it loaded (`.ni.dll`, the precompiled native
+/// image, or `.dll`, compiled as it loads), each module, and the
+/// minidump; and one line summing up the first three.
+fn describe_process(pid: u32, read: &ProcessDiagnostics) -> (Vec<String>, String) {
+    let state = match read.state {
+        ProcessState::Running => "running".to_owned(),
+        ProcessState::Exited {
+            exit_code: Some(code),
+        } => format!("exited with code {code}"),
+        ProcessState::Exited { exit_code: None } => "exited".to_owned(),
+    };
+    let time = match (read.user_ms, read.kernel_ms) {
+        (Some(user), Some(kernel)) => {
+            format!("processor time {user} ms in user mode and {kernel} ms in kernel mode")
+        }
+        _ => "processor time could not be read".to_owned(),
+    };
+    let forms = if read.modules_error.is_some() {
+        "System.Windows.Forms unknown, since the modules could not be read".to_owned()
+    } else {
+        read.modules
+            .iter()
+            .find_map(|module| {
+                let name = Path::new(module).file_name()?.to_str()?;
+                if name.eq_ignore_ascii_case("System.Windows.Forms.ni.dll") {
+                    Some(format!(
+                        "System.Windows.Forms loaded as the precompiled native image {module}"
+                    ))
+                } else if name.eq_ignore_ascii_case("System.Windows.Forms.dll") {
+                    Some(format!(
+                        "System.Windows.Forms loaded as the plain assembly {module}"
+                    ))
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_else(|| "System.Windows.Forms not loaded".to_owned())
+    };
+    let mut lines = vec![
+        format!("process {pid}: {state}"),
+        time.clone(),
+        forms.clone(),
+    ];
+    if let Some(error) = &read.modules_error {
+        lines.push(format!("modules: {error}"));
+    } else {
+        lines.push(format!("modules, {} in load order:", read.modules.len()));
+        lines.extend(read.modules.iter().cloned());
+    }
+    lines.push(match &read.dump_error {
+        None => format!("minidump: {LAUNCHED_PROCESS_FILE_STEM}-{pid}.dmp"),
+        Some(error) => format!("minidump: {error}"),
+    });
+    let summary = format!("launched process {pid}: {state}, {time}, {forms}");
+    (lines, summary)
 }
 
 /// When a window wait ran out with `desktop` as it ended: the wait chain of
@@ -4039,6 +4215,44 @@ mod minimize_tests {
         assert_eq!(
             describe_wait_chain(&denied),
             "pid 14224, thread 7000: could not be read: Access is denied. (0x80070005)"
+        );
+    }
+
+    /// A launched process is described by its state, its processor time,
+    /// which `System.Windows.Forms` it loaded, its modules and its
+    /// minidump, and summed up by the first three.
+    #[test]
+    fn a_launched_process_is_described_with_its_windows_forms_image() {
+        let forms = r"C:\Windows\assembly\NativeImages_v4.0.30319_64\System.Windows.Forms\0f8d\System.Windows.Forms.ni.dll";
+        let read = ProcessDiagnostics {
+            state: ProcessState::Running,
+            user_ms: Some(31_250),
+            kernel_ms: Some(1_500),
+            modules: vec![
+                r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe".to_owned(),
+                forms.to_owned(),
+            ],
+            modules_error: None,
+            dump_error: None,
+        };
+        let (lines, summary) = describe_process(14224, &read);
+        let time = "processor time 31250 ms in user mode and 1500 ms in kernel mode";
+        let loaded = format!("System.Windows.Forms loaded as the precompiled native image {forms}");
+        assert_eq!(
+            lines,
+            vec![
+                "process 14224: running".to_owned(),
+                time.to_owned(),
+                loaded.clone(),
+                "modules, 2 in load order:".to_owned(),
+                r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe".to_owned(),
+                forms.to_owned(),
+                "minidump: launched-process-14224.dmp".to_owned(),
+            ]
+        );
+        assert_eq!(
+            summary,
+            format!("launched process 14224: running, {time}, {loaded}")
         );
     }
 

@@ -69,11 +69,18 @@ use serde::{Deserialize, Serialize};
 /// added [`Request::ScreenReaderFlag`], [`Request::LocalClock`],
 /// [`Request::WaitForJobProcess`], [`Request::EditCharacterPosition`],
 /// [`Request::UiaCharacterPosition`] and [`Request::SwitcherItem`], for the
-/// lifecycle, clock, recovery, review location and Alt+Tab scenarios. A test
+/// lifecycle, clock, recovery, review location and Alt+Tab scenarios;
+/// version 29 replaced `Request::SwitcherItem` with
+/// [`Request::SwitcherItems`], so a scenario cycling the switcher's list
+/// knows every item, and added [`Request::CloseProcessWindows`], so
+/// cleanup closes a launched program's windows by its process rather than
+/// their titles, and [`Request::ProcessDiagnostics`], so a launched window
+/// that does not appear is reported with its process's processor time,
+/// modules and a minidump. A test
 /// run against an older agent is refused at `Hello`
 /// instead of losing its connection mid-run, or running without the
 /// exclusion.
-pub const AGENT_PROTOCOL_VERSION: u32 = 28;
+pub const AGENT_PROTOCOL_VERSION: u32 = 29;
 
 /// The command of a [`Request::LaunchProcess`] that names the agent's own
 /// executable, wherever it was deployed: the recordings launch
@@ -339,15 +346,12 @@ pub enum Request {
         /// The character on it, from zero.
         column: u32,
     },
-    /// Reads the item of the Alt+Tab switcher's list ("Running
-    /// applications", UI Automation id `SwitchItemListControl`) named
-    /// `name`, while the switcher is open, through UI Automation: its grid
+    /// Reads every item of the Alt+Tab switcher's list ("Running
+    /// applications", UI Automation id `SwitchItemListControl`), while the
+    /// switcher is open, through UI Automation: each item's name, its grid
     /// row and column and its position in the list. Answered by
-    /// [`ReplyPayload::SwitcherItem`].
-    SwitcherItem {
-        /// The item's name, its window's title.
-        name: String,
-    },
+    /// [`ReplyPayload::SwitcherItems`].
+    SwitcherItems,
     /// Lists the processes that have exited in the job of the process `pid`
     /// the agent launched (every process it started, and they started), in
     /// the order they exited: how a test finds that one of Verbatim's own
@@ -441,6 +445,30 @@ pub enum Request {
         title_contains: String,
         /// How long to wait for them to close, in milliseconds.
         timeout_ms: u64,
+    },
+    /// Sends a close request to every shown top-level window (visible,
+    /// titled, and not cloaked, owned ones included) of process `pid`, and
+    /// waits up to `timeout_ms` for them to go, whatever their titles.
+    /// Refused unless `pid` is in the job of a program the agent launched,
+    /// so a process shared with windows that are not the scenario's, such
+    /// as File Explorer's, is never closed this way. Answered by
+    /// [`ReplyPayload::WindowsClosed`].
+    CloseProcessWindows {
+        /// The process whose windows are closed.
+        pid: u32,
+        /// How long to wait for them to close, in milliseconds.
+        timeout_ms: u64,
+    },
+    /// Records what a launched process is doing when its window did not
+    /// appear in time: its processor time, the modules it has loaded, and
+    /// a minidump with its threads' information written to `dump_path`.
+    /// Answered by [`ReplyPayload::ProcessDiagnostics`], or by
+    /// [`Frame::Error`] when they are not read within 10 seconds.
+    ProcessDiagnostics {
+        /// The process.
+        pid: u32,
+        /// Where to write the minidump, agent-local.
+        dump_path: String,
     },
     /// Sends a close request to one window by its handle, while it is still
     /// shown and still owned by process `pid` with class `class`, so a handle
@@ -770,17 +798,13 @@ pub enum ReplyPayload {
         /// The vertical coordinate.
         y: i32,
     },
-    /// Answer to [`Request::SwitcherItem`].
-    SwitcherItem {
-        /// Its row, counted from one.
-        row: u32,
-        /// Its column, counted from one.
-        column: u32,
-        /// Its position in the list, counted from one.
-        position: u32,
-        /// How many items the list has.
-        set_size: u32,
+    /// Answer to [`Request::SwitcherItems`].
+    SwitcherItems {
+        /// The items, in the list's order.
+        items: Vec<SwitcherItem>,
     },
+    /// Answer to [`Request::ProcessDiagnostics`].
+    ProcessDiagnostics(ProcessDiagnostics),
     /// Answer to [`Request::ControlledItems`].
     ControlledItems {
         /// The size of the set the controlled element's first child
@@ -1111,6 +1135,41 @@ pub enum WindowCondition {
     /// Every visible top-level window that can be minimized is, or is
     /// cloaked, kept by the window manager but not shown.
     AllMinimized,
+}
+
+/// One item of the Alt+Tab switcher's list, for
+/// [`Request::SwitcherItems`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SwitcherItem {
+    /// Its name, its window's title.
+    pub name: String,
+    /// Its row, counted from one.
+    pub row: u32,
+    /// Its column, counted from one.
+    pub column: u32,
+    /// Its position in the list, counted from one.
+    pub position: u32,
+    /// How many items the list has.
+    pub set_size: u32,
+}
+
+/// What a launched process was doing, for
+/// [`Request::ProcessDiagnostics`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProcessDiagnostics {
+    /// Whether it still runs, or its exit code.
+    pub state: ProcessState,
+    /// The processor time it has spent in user mode, in milliseconds;
+    /// `None` when it could not be read.
+    pub user_ms: Option<u64>,
+    /// The processor time it has spent in kernel mode, in milliseconds.
+    pub kernel_ms: Option<u64>,
+    /// The full path of each module it has loaded, in load order.
+    pub modules: Vec<String>,
+    /// Why its modules could not be read, when they could not.
+    pub modules_error: Option<String>,
+    /// Why the minidump could not be written; `None` when it was.
+    pub dump_error: Option<String>,
 }
 
 /// The focused object as MSAA reports it, for
@@ -1452,6 +1511,45 @@ mod tests {
                     },
                 ],
             },
+        };
+
+        let mut buffer = Vec::new();
+        write_message(&mut buffer, &request).expect("writes");
+        write_message(&mut buffer, &frame).expect("writes");
+
+        let mut reader = buffer.as_slice();
+        let read_request: RequestEnvelope = read_message(&mut reader)
+            .expect("reads")
+            .expect("not end of stream");
+        let read_frame: Frame = read_message(&mut reader)
+            .expect("reads")
+            .expect("not end of stream");
+        assert_eq!(read_request, request);
+        assert_eq!(read_frame, frame);
+    }
+
+    #[test]
+    fn a_process_diagnostics_request_round_trips() {
+        let request = RequestEnvelope {
+            id: 15,
+            request: Request::ProcessDiagnostics {
+                pid: 14224,
+                dump_path: r"C:\stage\launched-14224.dmp".to_owned(),
+            },
+        };
+        let frame = Frame::Reply {
+            to: 15,
+            payload: ReplyPayload::ProcessDiagnostics(ProcessDiagnostics {
+                state: ProcessState::Running,
+                user_ms: Some(31_250),
+                kernel_ms: None,
+                modules: vec![
+                    r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe".to_owned(),
+                    r"C:\Windows\assembly\NativeImages_v4.0.30319_64\System.Windows.Forms\0f8d\System.Windows.Forms.ni.dll".to_owned(),
+                ],
+                modules_error: None,
+                dump_error: Some("Access is denied.".to_owned()),
+            }),
         };
 
         let mut buffer = Vec::new();

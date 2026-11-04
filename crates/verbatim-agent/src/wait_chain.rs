@@ -55,29 +55,32 @@ pub fn wait_chains_within(
     pids: Vec<u32>,
     timeout: Duration,
 ) -> Result<Vec<WaitChain>, String> {
-    answer_within(timeout, move || wait_chains(&windows, &pids))
+    answer_within("the wait chains", timeout, move || {
+        wait_chains(&windows, &pids)
+    })
 }
 
 /// `read`'s answer, run on a thread of its own, or why there is none
-/// within `timeout`.
-fn answer_within<T: Send + 'static>(
+/// within `timeout`; `what` names the answer in that reason.
+pub(crate) fn answer_within<T: Send + 'static>(
+    what: &'static str,
     timeout: Duration,
     read: impl FnOnce() -> T + Send + 'static,
 ) -> Result<T, String> {
     let (sender, receiver) = mpsc::sync_channel(1);
     thread::Builder::new()
-        .name("wait-chains".to_owned())
+        .name("diagnostics".to_owned())
         .spawn(move || {
             // The receiver is gone when the answer came too late.
             let _ = sender.send(read());
         })
-        .map_err(|error| format!("the wait chain thread could not be started: {error}"))?;
+        .map_err(|error| format!("the thread reading {what} could not be started: {error}"))?;
     receiver.recv_timeout(timeout).map_err(|error| match error {
         mpsc::RecvTimeoutError::Timeout => {
-            format!("the wait chains were not read within {timeout:?}")
+            format!("{what} were not read within {timeout:?}")
         }
         mpsc::RecvTimeoutError::Disconnected => {
-            "the wait chain thread ended without an answer".to_owned()
+            format!("the thread reading {what} ended without an answer")
         }
     })
 }
@@ -401,7 +404,9 @@ mod tests {
     #[test]
     fn a_reading_past_its_bound_is_answered_with_why() {
         let (release, released) = mpsc::channel::<()>();
-        let answer = answer_within(Duration::from_millis(50), move || released.recv());
+        let answer = answer_within("the wait chains", Duration::from_millis(50), move || {
+            released.recv()
+        });
         assert_eq!(
             answer.map(|_| ()),
             Err("the wait chains were not read within 50ms".to_owned())

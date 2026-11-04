@@ -167,7 +167,7 @@ use verbatim_config::Settings;
 
 use crate::artifacts::{self, OutpostCrash, ScenarioSummary};
 use crate::compare::{self, ReportHeader};
-use crate::scenario::{Document, Scenario, wait_chains_of, write_wait_chains};
+use crate::scenario::{Document, Scenario, launch_evidence_of, write_launch_evidence};
 use crate::scenarios::{
     alt_tab_switcher, caret_keys, crash_recovery, demo_notepad_editing, demo_review_cursor,
     demo_say_all, demo_settings_dialog_keys, demo_terminal_session, document_keys, editing,
@@ -2244,7 +2244,7 @@ fn run_compare(def: &ScenarioDef) {
     let mut scenario =
         Scenario::compare_with(def.settings, def.document.map(|document| document()))
             .unwrap_or_else(|error| {
-                record_launch_wait_chains(&dir, &error);
+                record_launch_evidence(&dir, &error);
                 panic!(
                     "scenario {:?}: starting against NVDA failed: {error}",
                     def.name
@@ -2382,7 +2382,7 @@ fn run(def: &ScenarioDef) {
         def.quick_retirement,
     )
     .unwrap_or_else(|error| {
-        record_launch_wait_chains(&dir, &error);
+        record_launch_evidence(&dir, &error);
         panic!(
             "scenario {:?}: launching Verbatim through the agent failed: {error}",
             def.name
@@ -2659,14 +2659,16 @@ pub fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
         .unwrap_or_else(|| "(a panic with no message)".to_owned())
 }
 
-/// Writes the wait chains a failed launch's error carries, recorded when
-/// its document's window did not open or take the foreground in time, to the scenario's artifacts
-/// in `dir`; a launch fails before there is a scenario to collect them.
-fn record_launch_wait_chains(dir: &std::path::Path, error: &io::Error) {
-    if let Some(chains) = wait_chains_of(error)
-        && let Err(write) = write_wait_chains(dir, chains)
+/// Writes what a failed launch's error carries, recorded when its
+/// document's window did not open or take the foreground in time (the wait
+/// chains, and the launched process's facts and minidump), to the
+/// scenario's artifacts in `dir`; a launch fails before there is a
+/// scenario to collect them.
+fn record_launch_evidence(dir: &std::path::Path, error: &io::Error) {
+    if let Some(evidence) = launch_evidence_of(error)
+        && let Err(write) = write_launch_evidence(dir, std::slice::from_ref(evidence))
     {
-        eprintln!("could not write the wait chains: {write}");
+        eprintln!("could not write what was recorded of the launch: {write}");
     }
 }
 

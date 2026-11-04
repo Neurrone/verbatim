@@ -25,7 +25,7 @@ use crate::protocol::{
     RequestEnvelope,
 };
 use crate::{
-    clock, desktop, events, files, focus, jobs, keys, process, scenario_windows, session,
+    clock, desktop, diagnostics, events, files, focus, jobs, keys, process, scenario_windows, session,
     terminals, tunnel, typing, wait_chain,
 };
 
@@ -330,6 +330,39 @@ fn dispatch(connection: u64, id: u64, request: Request) -> Frame {
             },
             Err(error) => error_frame(id, &error),
         },
+        Request::ProcessDiagnostics { pid, dump_path } => {
+            match diagnostics::diagnostics_within(
+                pid,
+                dump_path,
+                diagnostics::DIAGNOSTICS_TIMEOUT,
+            ) {
+                Ok(read) => Frame::Reply {
+                    to: id,
+                    payload: ReplyPayload::ProcessDiagnostics(read),
+                },
+                Err(message) => Frame::Error { to: id, message },
+            }
+        }
+        Request::CloseProcessWindows { pid, timeout_ms } => {
+            if process::in_launched_job(pid) {
+                Frame::Reply {
+                    to: id,
+                    payload: ReplyPayload::WindowsClosed {
+                        remaining: desktop::close_process_windows(
+                            pid,
+                            Duration::from_millis(timeout_ms),
+                        ),
+                    },
+                }
+            } else {
+                Frame::Error {
+                    to: id,
+                    message: format!(
+                        "process {pid} is not in the job of a program the agent launched, so its windows are not closed by its process"
+                    ),
+                }
+            }
+        }
         Request::WaitChains { windows, pids } => {
             match wait_chain::wait_chains_within(windows, pids, wait_chain::WAIT_CHAINS_TIMEOUT) {
                 Ok(chains) => Frame::Reply {
@@ -362,7 +395,7 @@ fn dispatch(connection: u64, id: u64, request: Request) -> Frame {
         | Request::ScreenReaderFlag
         | Request::EditCharacterPosition { .. }
         | Request::UiaCharacterPosition { .. }
-        | Request::SwitcherItem { .. }
+        | Request::SwitcherItems
         | Request::LocalClock { .. }) => state_request(id, request),
         Request::ListFiles { path } => list_reply(id, files::list(&path)),
         Request::ListFolders { path } => list_reply(id, files::list_folders(&path)),
@@ -607,15 +640,10 @@ fn state_request(id: u64, request: Request) -> Frame {
         Request::UiaCharacterPosition { line, column } => {
             position_reply(id, focus::uia_character_position(line, column))
         }
-        Request::SwitcherItem { name } => match focus::switcher_item(&name) {
-            Ok((row, column, position, set_size)) => Frame::Reply {
+        Request::SwitcherItems => match focus::switcher_items() {
+            Ok(items) => Frame::Reply {
                 to: id,
-                payload: ReplyPayload::SwitcherItem {
-                    row,
-                    column,
-                    position,
-                    set_size,
-                },
+                payload: ReplyPayload::SwitcherItems { items },
             },
             Err(error) => error_frame(id, &error),
         },

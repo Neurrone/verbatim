@@ -32,6 +32,7 @@
 pub mod capture;
 mod clock;
 pub mod desktop;
+mod diagnostics;
 mod events;
 mod files;
 mod focus;

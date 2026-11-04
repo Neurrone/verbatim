@@ -80,7 +80,19 @@ Public API:
     with, whatever its title has become, since protocol version 20, and
     refused since version 21 for a window in the connection's recorded
     starting windows, since every File Explorer folder window shares one
-    process and class), and
+    process and class), `CloseProcessWindows` (protocol version 29: the
+    same for every shown window of one process, whatever their titles,
+    refused unless the process is in the job of a program the agent
+    launched, so a process whose windows are shared, such as File
+    Explorer's, is never closed this way), `ProcessDiagnostics` (protocol
+    version 29, private `diagnostics` module: a launched process's state,
+    its user and kernel processor time from `GetProcessTimes`, the full
+    path of each module it has loaded from a Tool Help snapshot, and a
+    minidump written to a path given, from `MiniDumpWriteDump` in the
+    system folder's `dbghelp.dll`, loaded once, with thread information,
+    handles and unloaded modules, one dump at a time; each part that cannot
+    be read says why, and the request is read on a thread of its own and
+    answered with an error after 10 seconds, as `WaitChains` is), and
     `TakeForeignTerminalWindows` (every Windows
     Terminal window shown since the last such request by a process outside
     the jobs of every process the agent launched, forgotten as it is
@@ -143,9 +155,10 @@ Public API:
     line and column of the focused Win32 edit control, from `EM_LINEINDEX`
     and `EM_POSFROMCHAR`), `UiaCharacterPosition` (the same from the
     focused UI Automation element's text: the top left of the character's
-    first bounding rectangle, rounded), and `SwitcherItem` (the open Alt+Tab
-    switcher's item of a name, from its `SwitchItemListControl` list: its
-    grid row and column and its position and the list's size). The
+    first bounding rectangle, rounded), and `SwitcherItems` (every item of
+    the open Alt+Tab switcher's `SwitchItemListControl` list, in its order,
+    read in one call with their properties cached: each one's name, grid
+    row and column, position and the list's size). The
     requests that keep UI Automation, which need facts only
     it has, log how long each took, at warn from two seconds, so their slow
     answers are counted apart from Verbatim's

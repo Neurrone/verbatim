@@ -429,8 +429,8 @@ input methods above:
   `edit_character_position` and `uia_character_position` (the screen
   place of a character by line and column, from a Win32 edit control's
   own messages or a UI Automation text's bounding rectangle),
-  `switcher_item` (the open Alt+Tab switcher's item for a window: its
-  row, column and position in the list),
+  `switcher_items` (every item of the open Alt+Tab switcher's list, in
+  its order: each one's name, row, column and position in the list),
   `focus_by_automation_id` (focuses an element with UI Automation's
   `SetFocus` and returns how many children it has), `controlled_items`
   (of the first element the focused element controls, the set size its
@@ -870,23 +870,27 @@ Each exists in both terminals unless named for one.
     `end_launched`, `child_processes`, `job_exits`, `wait_for_exit`,
     `wait_for_job_empty`.
   - Windows: `set_foreground`, `wait_for_window`, `minimize_all`,
-    `foreground_info`, `close_windows`, `close_window`, `record_windows`,
+    `foreground_info`, `close_windows`, `close_window`,
+    `close_process_windows`, `record_windows`,
     `wait_for_new_windows_gone`, `close_abandoned_windows`,
-    `take_foreign_terminal_windows`, `wait_chains` (the wait chains of
-    windows' and processes' threads, which a launch whose window did not
-    open in time appends to its failure and writes to `wait-chains.txt`,
-    the runner writing it for a launch that fails before the scenario
-    exists).
+    `take_foreign_terminal_windows`, `wait_chains` and
+    `process_diagnostics` (the wait chains of windows' and processes'
+    threads, and a launched process's processor time, modules and
+    minidump, which a launch whose window did not open in time sums up in
+    its failure and writes to `wait-chains.txt` and
+    `launched-process-<pid>.txt` and `.dmp`, the runner writing them for a
+    launch that fails before the scenario exists).
   - Accessibility reads: `focused_element`, `focus_by_automation_id`,
     `name_by_automation_id`, `controlled_items`,
     `key_toggled`, `screen_reader_flag`, `local_clock`,
     `wait_for_job_process`, `edit_character_position`,
-    `uia_character_position`, `switcher_item`.
+    `uia_character_position`, `switcher_items`.
   - Input: `send_keys`, `press_key`, `release_key`, `type_text`,
     `send_keys_paced`, `repeat_key`, `type_text_paced`, each returning the
     harness number of its last input.
   - Files and events: `write_file`, `delete_file`, `read_file`,
-    `copy_file` (in chunks), `list_files`, `list_folders`, `delete_folder`,
+    `copy_file` and `read_whole_file` (in chunks, to a file or into
+    memory), `list_files`, `list_folders`, `delete_folder`,
     `wait_for_file`, `create_event`, `wait_for_event`.
   - `session_info`, and `open_control_tunnel`, which relays Verbatim's
     control-plane pipe over the connection and hands back a ready

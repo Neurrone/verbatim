@@ -113,6 +113,46 @@ pub fn close_window(window: u64, pid: u32, class: &str, timeout: Duration) -> bo
     !is_open()
 }
 
+/// Sends a close request to every shown top-level window
+/// ([`shown_top_level_windows`]) of process `pid`, and waits up to
+/// `timeout` for them to go, on window events ([`wait::until`]), whatever
+/// their titles. Returns how many were still shown when it gave up; zero
+/// means all closed. The caller makes sure `pid` names a process whose
+/// every window is the scenario's.
+#[must_use]
+pub fn close_process_windows(pid: u32, timeout: Duration) -> u32 {
+    let owned = || -> Vec<HWND> {
+        shown_top_level_windows()
+            .into_iter()
+            .filter(|&window| window_pid(window) == pid)
+            .collect()
+    };
+    for window in owned() {
+        // Checked again just before the close: a window destroyed since the
+        // enumeration could have its handle reused by an unrelated one.
+        if window_pid(window) != pid {
+            continue;
+        }
+        // SAFETY: PostMessageW carries no pointer and tolerates a window
+        // that has since gone; its owner was checked just above.
+        unsafe {
+            let _ = PostMessageW(Some(window), WM_CLOSE, WPARAM(0), LPARAM(0));
+        }
+    }
+    wait::until(|| owned().is_empty(), timeout);
+    u32::try_from(owned().len()).unwrap_or(u32::MAX)
+}
+
+/// The process that owns `window`; 0 for an invalid handle.
+fn window_pid(window: HWND) -> u32 {
+    let mut pid = 0u32;
+    // SAFETY: tolerates any handle, writing 0 for an invalid one.
+    unsafe {
+        GetWindowThreadProcessId(window, Some(&raw mut pid));
+    }
+    pid
+}
+
 /// Whether `condition` holds on the desktop now.
 #[must_use]
 pub fn holds(condition: &WindowCondition) -> bool {
@@ -400,11 +440,7 @@ fn is_minimized(window: HWND) -> bool {
 
 /// What a test is told of `window`.
 pub(crate) fn window_info(window: HWND) -> WindowInfo {
-    let mut pid = 0u32;
-    // SAFETY: tolerates any handle, writing 0 for an invalid one.
-    unsafe {
-        GetWindowThreadProcessId(window, Some(&raw mut pid));
-    }
+    let pid = window_pid(window);
     WindowInfo {
         window: window.0 as u64,
         pid,

@@ -23,8 +23,8 @@ use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use verbatim_agent::protocol::{
     AGENT_PROTOCOL_VERSION, EventOutcome, FocusedElement, ForegroundInfo, Frame, KillOutcome,
-    ProcessExit, ProcessInfo, ProcessState, ReplyPayload, Request, RequestEnvelope, SessionInfo,
-    WaitChain, WindowCondition, WindowInfo,
+    ProcessDiagnostics, ProcessExit, ProcessInfo, ProcessState, ReplyPayload, Request,
+    RequestEnvelope, SessionInfo, SwitcherItem, WaitChain, WindowCondition, WindowInfo,
 };
 use verbatim_control::client::Client as ControlClient;
 use verbatim_control::protocol::{MessageReader, write_message};
@@ -863,27 +863,19 @@ impl AgentClient {
         }
     }
 
-    /// The open Alt+Tab switcher's item named `name`: its row, column and
-    /// position, each from one, and the list's size.
+    /// Every item of the open Alt+Tab switcher's list, in the list's
+    /// order ([`Request::SwitcherItems`]).
     ///
     /// # Errors
     ///
     /// Returns an error if the request fails.
-    pub fn switcher_item(&mut self, name: &str) -> io::Result<(u32, u32, u32, u32)> {
-        match self.request(Request::SwitcherItem {
-            name: name.to_owned(),
-        })? {
+    pub fn switcher_items(&mut self) -> io::Result<Vec<SwitcherItem>> {
+        match self.request(Request::SwitcherItems)? {
             Frame::Reply {
-                payload:
-                    ReplyPayload::SwitcherItem {
-                        row,
-                        column,
-                        position,
-                        set_size,
-                    },
+                payload: ReplyPayload::SwitcherItems { items },
                 ..
-            } => Ok((row, column, position, set_size)),
-            other => Err(unexpected("SwitcherItem", &other)),
+            } => Ok(items),
+            other => Err(unexpected("SwitcherItems", &other)),
         }
     }
 
@@ -915,6 +907,56 @@ impl AgentClient {
                 ..
             } => Ok(chains),
             other => Err(unexpected("WaitChains", &other)),
+        }
+    }
+
+    /// The processor time, modules and a minidump, written to `dump_path`
+    /// on the agent's machine, of process `pid`
+    /// ([`Request::ProcessDiagnostics`]).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails, or the agent does not read
+    /// them in time.
+    pub fn process_diagnostics(
+        &mut self,
+        pid: u32,
+        dump_path: &str,
+    ) -> io::Result<ProcessDiagnostics> {
+        match self.request(Request::ProcessDiagnostics {
+            pid,
+            dump_path: dump_path.to_owned(),
+        })? {
+            Frame::Reply {
+                payload: ReplyPayload::ProcessDiagnostics(read),
+                ..
+            } => Ok(read),
+            other => Err(unexpected("ProcessDiagnostics", &other)),
+        }
+    }
+
+    /// Asks every shown top-level window of process `pid`, which must be
+    /// in the job of a program the agent launched, to close, waiting up to
+    /// `timeout`, on window events, for them to go, whatever their titles
+    /// ([`Request::CloseProcessWindows`]). Returns how many were still
+    /// open.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails or is refused.
+    pub fn close_process_windows(&mut self, pid: u32, timeout: Duration) -> io::Result<u32> {
+        match self.request_waiting(
+            Request::CloseProcessWindows {
+                pid,
+                timeout_ms: millis(timeout),
+            },
+            timeout,
+        )? {
+            Frame::Reply {
+                payload: ReplyPayload::WindowsClosed { remaining },
+                ..
+            } => Ok(remaining),
+            other => Err(unexpected("CloseProcessWindows", &other)),
         }
     }
 
@@ -1284,13 +1326,23 @@ impl AgentClient {
         let mut partial = to.as_os_str().to_owned();
         partial.push(".part");
         let partial = std::path::PathBuf::from(partial);
-        self.copy_into(path, &partial)?;
+        self.copy_into(path, &mut std::fs::File::create(&partial)?)?;
         std::fs::rename(&partial, to)
     }
 
-    fn copy_into(&mut self, path: &str, to: &std::path::Path) -> io::Result<()> {
-        use std::io::Write;
-        let mut out = std::fs::File::create(to)?;
+    /// The whole of a file on the agent's machine, of any size, read in
+    /// chunks as [`AgentClient::copy_file`] reads it.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a request fails or the file cannot be read.
+    pub fn read_whole_file(&mut self, path: &str) -> io::Result<Vec<u8>> {
+        let mut contents = Vec::new();
+        self.copy_into(path, &mut contents)?;
+        Ok(contents)
+    }
+
+    fn copy_into(&mut self, path: &str, out: &mut impl io::Write) -> io::Result<()> {
         let mut offset = 0u64;
         loop {
             let chunk = match self.request(Request::ReadFileChunk {
