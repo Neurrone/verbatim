@@ -1,9 +1,8 @@
 //! Commands, their output, typed echo, and a password prompt in a terminal
 //! (milestone M4; `docs/parity/terminals.md`, "Typing"):
 //! `windows_terminal_commands` in Windows Terminal and
-//! `conhost_commands` in the console host, and
-//! `windows_terminal_spoken_password` and `conhost_spoken_password` with the
-//! "speak passwords" setting on, each its own code (`docs/testing.md`).
+//! `conhost_commands` in the console host, each its own code
+//! (`docs/testing.md`).
 //! The shared setup is described in the `terminal` module.
 //!
 //! Every scenario first reads the prompt line with the review cursor
@@ -21,17 +20,16 @@
 //!    prints "done": its echo, then the prompt "Password:", is spoken.
 //! 3. It types `secret` one character at a time. With "speak passwords" off
 //!    (the default), each character is not spoken: the prompt shows an
-//!    asterisk for it, and that new output is what is
-//!    spoken. With "speak passwords" on, each character is spoken, then its
-//!    asterisk.
+//!    asterisk for it, and that new output is what is spoken. With "speak
+//!    passwords" on, each character is spoken, then its asterisk, which
+//!    Core's `with_passwords_spoken_a_character_is_heard_as_typed_and_its_asterisk_as_shown`
+//!    covers (`crates/verbatim-core/tests/terminal_reading.rs`).
 //! 4. Enter: "done", and then "ready>". Every asterisk was spoken as it
 //!    was shown, so the line is not read again.
 //!
 //! Every step asserts exactly what it says before the next key.
 
 use std::io;
-
-use verbatim_config::Settings;
 
 use super::terminal::{self, Echo, PROMPT};
 use crate::registry::ScenarioState;
@@ -58,23 +56,6 @@ pub(crate) fn setup_windows_terminal(scenario: &mut Scenario) -> io::Result<Scen
 
 pub(crate) fn setup_console_host(scenario: &mut Scenario) -> io::Result<ScenarioState> {
     terminal::open_console_host(scenario, "commands", SCRIPTS)
-}
-
-pub(crate) fn setup_spoken_password_windows_terminal(
-    scenario: &mut Scenario,
-) -> io::Result<ScenarioState> {
-    terminal::open_windows_terminal(scenario, "spoken-password", SCRIPTS)
-}
-
-pub(crate) fn setup_spoken_password_console_host(
-    scenario: &mut Scenario,
-) -> io::Result<ScenarioState> {
-    terminal::open_console_host(scenario, "spoken-password", SCRIPTS)
-}
-
-/// The spoken-password scenarios' settings: "speak passwords" on.
-pub(crate) fn speak_passwords(settings: &mut Settings) {
-    settings.reader.speak_terminal_passwords = true;
 }
 
 /// Types `character` at the password prompt and asserts exactly `heard`.
@@ -123,45 +104,6 @@ pub(crate) fn body_console_host(scenario: &mut Scenario, state: &mut ScenarioSta
     scenario.speech().expect(&["Password:"]);
     for character in ["s", "e", "c", "r", "e", "t"] {
         type_password_character(scenario, character, &["*"]);
-    }
-    scenario.send_keys(&["enter"]).expect("presses enter");
-    scenario.speech().expect(&["done", PROMPT]);
-}
-
-/// `windows_terminal_spoken_password`.
-pub(crate) fn body_spoken_password_windows_terminal(
-    scenario: &mut Scenario,
-    state: &mut ScenarioState,
-) {
-    terminal::expect_windows_terminal_prompt_read(scenario, state, terminal::LAUNCH_REPEATS);
-    terminal::type_with_echo(scenario, "echo hello", Echo::Typed);
-    scenario.speech().expect(&["hello", PROMPT]);
-    terminal::type_with_echo(scenario, r".\password.ps1", Echo::Typed);
-    scenario.speech().expect(&["Password:"]);
-    for character in ["s", "e", "c", "r", "e", "t"] {
-        type_password_character(scenario, character, &[character, "*"]);
-    }
-    scenario.send_keys(&["enter"]).expect("presses enter");
-    scenario.speech().expect(&["done", PROMPT]);
-}
-
-/// `conhost_spoken_password`.
-pub(crate) fn body_spoken_password_console_host(
-    scenario: &mut Scenario,
-    state: &mut ScenarioState,
-) {
-    let title = terminal::title(state).to_owned();
-    terminal::expect_prompt_read(
-        scenario,
-        state,
-        &[&format!("{title} window"), "terminal", "blank"],
-    );
-    terminal::type_with_echo(scenario, "echo hello", Echo::Typed);
-    scenario.speech().expect(&["hello", PROMPT]);
-    terminal::type_with_echo(scenario, r".\password.ps1", Echo::Typed);
-    scenario.speech().expect(&["Password:"]);
-    for character in ["s", "e", "c", "r", "e", "t"] {
-        type_password_character(scenario, character, &[character, "*"]);
     }
     scenario.send_keys(&["enter"]).expect("presses enter");
     scenario.speech().expect(&["done", PROMPT]);

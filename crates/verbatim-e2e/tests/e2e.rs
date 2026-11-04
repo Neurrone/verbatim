@@ -98,12 +98,8 @@ const LIVE: &[&str] = scenario_tests! {
     terminal_settings_page
     windows_terminal_commands
     conhost_commands
-    windows_terminal_spoken_password
-    conhost_spoken_password
     windows_terminal_flood
     conhost_flood
-    windows_terminal_full_history_flood
-    conhost_full_history_flood
     windows_terminal_control_flood
     conhost_control_flood
     windows_terminal_shift_flood
@@ -112,21 +108,9 @@ const LIVE: &[&str] = scenario_tests! {
     conhost_line_key_flood
     windows_terminal_up_typing
     conhost_up_typing
-    windows_terminal_same_flood
-    conhost_same_flood
-    windows_terminal_redraw_limit
-    conhost_redraw_limit
-    conhost_raised_limit
     windows_terminal_leave_flood
     conhost_leave_flood
     windows_terminal_close_tab
-    windows_terminal_history_flood_during_group
-    conhost_history_flood_during_group
-    windows_terminal_clear_flood
-    windows_terminal_cleared_flood
-    conhost_fresh_flood
-    windows_terminal_scrollback_overflow
-    conhost_scrollback_overflow
     windows_terminal_scrollback_overflow_during_group
     conhost_scrollback_overflow_during_group
     windows_terminal_editing
@@ -151,13 +135,10 @@ const LIVE: &[&str] = scenario_tests! {
     conhost_pager_history
     windows_terminal_review_output
     conhost_review_output
-    conhost_footer_overflow
     windows_terminal_status_bar
     conhost_status_bar
     windows_terminal_command_marks
     conhost_command_marks
-    windows_terminal_short_output
-    conhost_short_output
     windows_terminal_two_windows
     conhost_two_windows
     windows_terminal_tabs

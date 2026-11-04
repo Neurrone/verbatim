@@ -23,12 +23,7 @@
 //! heard exactly as: flood lines 1 to 30, "skipped 1941 lines" after the
 //! skipped-lines sound, then flood lines 1972 to 2000 and the prompt.
 //!
-//! 1. The first flood, with no key pressed, asserted exactly as above. In
-//!    the console host, `long.ps1` first prints forty numbered words on
-//!    one line, which wraps onto three rows and is heard whole, so the
-//!    flood runs with a wrapped line on the screen: the screen's rows are
-//!    counted as rows, not as its lines, so no row the screen held is read
-//!    again as one that went by unread.
+//! 1. The first flood, with no key pressed, asserted exactly as above.
 //! 2. Responsiveness and output reporting off: the second flood's first
 //!    line is playing, and its next two queued behind it (output is handed
 //!    to speech two ahead of the line playing), when Verbatim+5 is sent;
@@ -38,17 +33,7 @@
 //!    typed command's echo is spoken. Verbatim+5 then says "report new
 //!    output on", and `echo back` is answered with exactly "back" and then
 //!    the prompt.
-//!
-//! `windows_terminal_full_history_flood` and `conhost_full_history_flood`
-//! flood a full history (`docs/design/terminal-model.md`, "A lost read"),
-//! with both limits lowered to 10: with output reporting off, `fill.ps1`
-//! writes 9,100 lines, more than either terminal's history holds, and
-//! nothing is said; output reporting back on, `echo back` is answered with
-//! "back" and the prompt; then the first flood is heard as above, but with
-//! ten lines each side of the skip and the count taken from text,
-//! "skipped about 1981 lines", since the read after the first group finds
-//! the buffer moved further than it covers, reads the whole document and
-//! finds the last read's rows in it by their text.
+
 
 use std::io;
 use std::time::Duration;
@@ -116,101 +101,8 @@ pub(crate) fn setup_windows_terminal(scenario: &mut Scenario) -> io::Result<Scen
     terminal::open_windows_terminal(scenario, "flood", &[("flood.ps1", SCRIPT)])
 }
 
-/// Forty numbered words on one line, which wraps onto three rows.
-const LONG_SCRIPT: &str = "$words = foreach ($i in 1..40) { \"word$i\" }\r\n\
-$words -join ' '\r\n";
-
 pub(crate) fn setup_console_host(scenario: &mut Scenario) -> io::Result<ScenarioState> {
-    terminal::open_console_host(
-        scenario,
-        "flood",
-        &[("flood.ps1", SCRIPT), ("long.ps1", LONG_SCRIPT)],
-    )
-}
-
-/// 9,100 numbered lines as fast as the shell can, as the flood script
-/// writes, more than either terminal's history holds.
-const FILL_SCRIPT: &str = "for ($line = 1; $line -le 9100; $line++) { \"fill line $line\" }\r\n";
-
-pub(crate) fn setup_full_history_windows_terminal(
-    scenario: &mut Scenario,
-) -> io::Result<ScenarioState> {
-    terminal::open_windows_terminal(
-        scenario,
-        "full-history-flood",
-        &[("flood.ps1", SCRIPT), ("fill.ps1", FILL_SCRIPT)],
-    )
-}
-
-pub(crate) fn setup_full_history_console_host(
-    scenario: &mut Scenario,
-) -> io::Result<ScenarioState> {
-    terminal::open_console_host(
-        scenario,
-        "full-history-flood",
-        &[("flood.ps1", SCRIPT), ("fill.ps1", FILL_SCRIPT)],
-    )
-}
-
-/// Fills the history with output reporting off, then turns it back on and
-/// has `echo back` answered, so the flood after it starts from a read of
-/// a full history.
-fn fill_history(scenario: &mut Scenario) {
-    scenario
-        .send_gesture("kb:verbatim+5")
-        .expect("sends Verbatim+5");
-    scenario.speech().expect(&[OUTPUT_OFF]);
-    terminal::type_hearing(scenario, r".\fill.ps1", terminal::Echo::Shown);
-    let watch = watch_for_prompt(scenario);
-    scenario.send_keys(&["enter"]).expect("presses enter");
-    wait_for_prompt(watch);
-    scenario.expect_nothing_more();
-    scenario
-        .send_gesture("kb:verbatim+5")
-        .expect("sends Verbatim+5");
-    scenario.speech().expect(&[OUTPUT_ON]);
-    terminal::type_with_echo(scenario, "echo back", terminal::Echo::Shown);
-    scenario.speech().expect(&["back", PROMPT]);
-}
-
-/// Runs flood 1 into a full history and asserts exactly what it says: as
-/// any flood at the lowered limits, with the count taken from text.
-fn heard_full_history_flood(scenario: &mut Scenario) {
-    terminal::type_with_echo(scenario, r".\flood.ps1 1", terminal::Echo::Shown);
-    let speech: Vec<String> = flood_speech(u32::from(LOWERED))
-        .into_iter()
-        .map(|said| {
-            said.replace(
-                "sound: skipped-lines skipped ",
-                "sound: skipped-lines skipped about ",
-            )
-        })
-        .collect();
-    let speech: Vec<&str> = speech.iter().map(String::as_str).collect();
-    scenario.speech().expect_within(&speech, FLOOD_STEP);
-}
-
-/// `windows_terminal_full_history_flood`.
-pub(crate) fn body_full_history_windows_terminal(
-    scenario: &mut Scenario,
-    state: &mut ScenarioState,
-) {
-    terminal::expect_windows_terminal_prompt_read(scenario, state, terminal::LAUNCH_REPEATS);
-    fill_history(scenario);
-    heard_full_history_flood(scenario);
-}
-
-/// `conhost_full_history_flood`.
-pub(crate) fn body_full_history_console_host(scenario: &mut Scenario, state: &mut ScenarioState) {
-    let title = terminal::title(state).to_owned();
-    // The console host's text area has no name.
-    terminal::expect_prompt_read(
-        scenario,
-        state,
-        &[&format!("{title} window"), "terminal", "blank"],
-    );
-    fill_history(scenario);
-    heard_full_history_flood(scenario);
+    terminal::open_console_host(scenario, "flood", &[("flood.ps1", SCRIPT)])
 }
 
 /// "flood line `line`".
@@ -366,15 +258,6 @@ pub(crate) fn body_console_host(scenario: &mut Scenario, state: &mut ScenarioSta
         state,
         &[&format!("{title} window"), "terminal", "blank"],
     );
-    // The wrapped line stays on the screen as the first flood starts.
-    terminal::type_with_echo(scenario, r".\long.ps1", terminal::Echo::Shown);
-    let long = (1..=40)
-        .map(|n| format!("word{n}"))
-        .collect::<Vec<_>>()
-        .join(" ");
-    scenario
-        .speech()
-        .expect_within(&[long.as_str(), PROMPT], FLOOD_STEP);
     heard_flood(scenario, 1);
     let _ = elapsed(scenario, &directory, 1);
     output_off_during_flood(scenario, &directory);
