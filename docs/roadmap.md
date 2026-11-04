@@ -77,11 +77,17 @@ process, the console host and the collision, and the inferred event and
 timeout claims; debugger guides for the collision's mechanism, the
 pending connection's hold, I/O thread counts, a new connection's
 thread, `AddFocusChangedEventHandler`'s requests and the
-`NavigationHelperProxyOneCore` thread (Dickson, 2026-11-04). `cargo xtask ci` neither builds
-nor runs `uia-facts/`, so its time does not grow; a separate GitHub
-workflow builds it on a schedule and whenever a crate it uses changes,
-so that no reproduction stops compiling. A design and its adversarial
-review come first.
+`NavigationHelperProxyOneCore` thread (Dickson, 2026-11-04). The samples run against a provider
+program of `uia-facts/`'s own, never the main build's mockapp, so a change
+to mockapp cannot change a reproduction; the facts already checked by
+mockapp tests stay there. `cargo xtask ci` neither builds nor runs
+`uia-facts/`, so its time does not grow; a separate GitHub workflow only
+builds it, on x64 and ARM64, on a schedule and whenever a crate it uses
+changes, so that no reproduction stops compiling, and the samples are run
+on demand on this machine. Verbatim's own figures from old builds stay as
+history with no reproduction, and Qt's stale focus and the Excel case cite
+NVDA's issues (Dickson, 2026-11-04). The design was reviewed adversarially
+on 2026-11-04.
 
 ### The focus pipeline rework
 
