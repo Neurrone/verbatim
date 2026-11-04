@@ -443,6 +443,7 @@ Events and controls:
 Text and selection:
 
 - `text_box_selection_keys` fails at Control+Delete over the selection "alpha " in some runs, saying "alpha" where "beta", "selection removed" is expected: the key's watch answers from its first check, before the edit control has handled the key. The caret and selection rework removes the first check and runs the scenario ten times; if it still fails, the likely cause, unconfirmed, is Core comparing "alpha" while the outpost's word unit reads "alpha " with its white space.
+- `text_box_caret_keys` fails at Control+V in some runs, saying nothing where the pasted line is expected (run 41848692720): the watch's baseline is the newest caret the outpost reported before the key, whose anchor no request names, so the outpost released it while the watch waited for the caret event after a read the paste moved, and the watch then answered with no `same_line` ([the flaky-test entry](flaky-tests.md#the-caret-watchs-baseline-anchor-released-while-it-waits)). The rework's one baseline per text node, kept with the focus Core holds, removes it (Dickson, 2026-11-04).
 - The parity ledger's statement that Alt+Up and Alt+Down Arrow speak the line when the application moves the caret has no capture behind it; the caret and selection rework's captures settle it.
 
 ## M4.2 — Parity small items

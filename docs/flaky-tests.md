@@ -31,7 +31,7 @@ Scenarios: the `windows_terminal_` scenarios generally, for example `windows_ter
 
 Recorded by Claude, 2026-11-04, pending Dickson's acceptance.
 
-- `object_navigation_in_settings`, and `wpf_password` (run 41697089785, and run 41564027712 before it)
+- `object_navigation_in_settings`, and `wpf_password` (run 41697089785, run 41564027712 before it, and runs 41839012031 and 41848692720)
   - How: Verbatim's own Settings dialog took the focus about 2.9 s after Enter, and only its title was said; in `wpf_password` the dialog was said as "… window" where "… dialog" and its first field were expected ("Verbatim Settings: Speech", where "… dialog", the categories list and "Speech 1 of 3" were expected).
   - Cause: the outpost's gap record's bound passed with no focus reported, so the window's text was sent, the gap record's late-focus case.
   - Fix: [the focus pipeline rework's third build](roadmap.md#the-focus-pipeline-rework), whose first commit replaces the gap record.
@@ -47,6 +47,15 @@ Recorded by Claude, 2026-11-04, pending Dickson's acceptance.
   - How: 2.0 s after the second Verbatim+Alt+Up (the previous command mark), Verbatim played its "application not responding" sound where the mark's line "ready> .\long.ps1" was expected.
   - Cause: the mark lay above the rows Core keeps, so Core asked the outpost to search the terminal (`TerminalFind`); the search, a remote operation in Windows Terminal (`crates/verbatim-uia-rops/src/terminal_find.rs`), took 3.2 s, past the outpost's 2 s text deadline (`TEXT_DEADLINE`), so the worker was abandoned, and `finish` (`crates/verbatim-app/src/main.rs`) plays the sound for any abandoned query, without asking whether Windows judges the window hung. Windows Terminal was answering throughout. NVDA has no such sound.
   - Fix: whether the sound plays only when Windows judges the window hung is a question for Dickson (what users hear); the search's cost in a real Windows Terminal, never measured, is to be measured and fixed with [M6.4 terminal residuals](roadmap.md#m64--terminal-residuals)' measurements.
+
+## The caret watch's baseline anchor released while it waits
+
+Recorded by Claude, 2026-11-04.
+
+- `text_box_caret_keys` (run 41848692720)
+  - How: at Control+V on the start of "alpha beta gamma", nothing was said within 15 s where "mangoalpha beta gamma" was expected; the outpost's answer to the key's watch had no `same_line`, so Core, judging a key by where the caret landed, spoke nothing.
+  - Cause: the watch's baseline is the newest caret the outpost reported before the key (`baseline`, `crates/verbatim-outpost/src/text/mod.rs`), here a caret event's anchor that no request names. The paste moved the caret while the watch read it, so the watch waited for the caret event, and the shell released the anchors no live request names, that one among them; when the event came the baseline no longer resolved. A run whose first read is not overtaken answers before the release and passes.
+  - Fix: [the caret and selection rework](roadmap.md#the-caret-and-selection-rework), whose one baseline per text node lives as long as the focus Core holds (Dickson, 2026-11-04).
 
 ## Windows Terminal raises no TextChanged for a typed character
 
@@ -134,8 +143,8 @@ Recorded by Claude, 2026-11-04, pending Dickson's acceptance.
 
 ## Synthesizer host tests on GitHub's runner
 
-- `verbatim-synth-host`'s `hosting` tests `a_hosted_synthesizer_streams_audio_and_marks_in_order`, `a_cancelled_utterance_ends_without_the_hosts_answer_and_the_host_carries_on` and `an_utterance_cancelled_before_any_audio_ends_without_any_and_the_host_carries_on`
-  - How: all three failed together under `cargo xtask ci` with "the synthesizer host sent nothing for 10s" (run 41267826098, 2026-11-01, a documents-only commit); the runs before and after it passed.
+- `verbatim-synth-host`'s `hosting` tests `a_hosted_synthesizer_streams_audio_and_marks_in_order`, `a_cancelled_utterance_ends_without_the_hosts_answer_and_the_host_carries_on`, `an_utterance_cancelled_before_any_audio_ends_without_any_and_the_host_carries_on` and `onecore_speaks_a_raised_capital_within_one_utterance`
+  - How: the first three failed together under `cargo xtask ci` with "the synthesizer host sent nothing for 10s" (run 41267826098, 2026-11-01, a documents-only commit), the runs before and after it passing; the second and fourth failed the same way in the x64 job of run 41853488071 (2026-11-04), whose ARM64 job passed them.
   - Cause: not found. The speech platform's first activation in a fresh runner session can take more than ten seconds, which is why the unit-test jobs run `cargo xtask warm-speech` first; whether that warm-up did not hold here is not known.
   - Fix: none yet.
 
