@@ -111,6 +111,11 @@ pub struct Contained {
     pub process: OwnedHandle,
     /// The process's own id, for logs.
     pub pid: u32,
+    /// Whether dropping this value terminates the job, in a build
+    /// instrumented for coverage: cleared by
+    /// [`Contained::end_when_pipes_close`].
+    #[cfg(coverage)]
+    kill_on_drop: bool,
 }
 
 impl Contained {
@@ -189,16 +194,35 @@ impl Contained {
         let _ = unsafe { WaitForSingleObject(HANDLE(self.process.as_raw_handle()), u32::MAX) };
         Ok(())
     }
+
+    /// Lets the child go as its pipes close, for a child that exits by
+    /// itself once its command pipe closes, such as a synthesizer host. In
+    /// a build instrumented for coverage nothing kills it, so it exits on
+    /// its own once the caller has closed its ends of the pipes, and writes
+    /// its profile (`docs/tooling/coverage.md`); its ending follows the
+    /// pipes' closing whatever the timing, since nothing else ends it. In
+    /// every other build this is a drop, which kills it.
+    pub fn end_when_pipes_close(self) {
+        #[cfg(coverage)]
+        {
+            let mut this = self;
+            this.kill_on_drop = false;
+        }
+    }
 }
 
 /// In a build instrumented for coverage, whose jobs do not kill on close
 /// ([`create_job`]), a drop ends the child as closing the job does in
 /// every other build, with exit code 0, the code the system gives a
 /// process ended by closing its kill-on-close job, so a drop is not
-/// reported as a [`Contained::kill`].
+/// reported as a [`Contained::kill`]; but not after
+/// [`Contained::end_when_pipes_close`].
 #[cfg(coverage)]
 impl Drop for Contained {
     fn drop(&mut self) {
+        if !self.kill_on_drop {
+            return;
+        }
         // SAFETY: the job handle this value owns, open until this returns.
         let _ = unsafe { TerminateJobObject(HANDLE(self.job.as_raw_handle()), 0) };
     }
@@ -268,6 +292,8 @@ fn spawn_contained(
         // SAFETY: `spawned.process` is a valid process handle we now own.
         process: unsafe { OwnedHandle::from_raw_handle(spawned.process.0 as RawHandle) },
         pid: spawned.pid,
+        #[cfg(coverage)]
+        kill_on_drop: true,
     })
 }
 

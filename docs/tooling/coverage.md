@@ -90,8 +90,18 @@ runs is unchanged. Only Verbatim's own exit, which drops nothing,
 differs: it closes the host's pipe and kills nothing, so the host always
 exits after Verbatim and writes its profile. An outpost or the listener
 still running then ends the same way, through its own end on the closed
-pipe. A host Verbatim ends while it runs, one lost or replaced by a
-switch of synthesizer, is killed and writes no profile.
+pipe. A host replaced by a switch of synthesizer ends the same way: the
+driver dropped by the switch closes the host's pipes and kills nothing
+(`Contained::end_when_pipes_close`), so the host exits once it reads the
+closed pipe, whenever that is. A host lost to a failure, one that hung,
+exited or answered out of turn, is still killed and writes no profile.
+
+The test binaries with a `main` of their own (`harness = false`, run by
+libtest-mimic) return their exit code from `main` rather than calling
+libtest-mimic's `exit()`: that calls `std::process::exit`, which on
+Windows is `ExitProcess`, and so skips the program's exit handlers, the
+profile runtime's write among them, and a binary ended that way reported
+none of the lines its tests ran in its own process.
 
 The mockapp windows that the tests and scenarios end by killing them
 write no profile; their lines count only where a test runs the same code
@@ -163,8 +173,8 @@ scenarios ran on GitHub's runner. It cannot show:
 - What the scenarios the CI suite leaves out run: the local-only
   scenarios, the demonstrations and the measure set
   (`docs/tooling/e2e.md`).
-- What mockapp's windows run, and what a synthesizer host Verbatim ends
-  while it runs ran, since they are killed and write no profile (above).
+- What mockapp's windows run, and what a synthesizer host Verbatim loses
+  to a failure ran, since they are killed and write no profile (above).
 - Code in processes that are not Verbatim's: the applications the
   scenarios drive, such as Notepad, the console host and Windows Terminal.
 - Code no instrumented binary contains, such as code for another

@@ -44,7 +44,10 @@ and the log stem `synth-<id>`. The driver's ends are a
 the host's messages; there is no reader thread
 (`docs/design/communication.md`, section 7). The host lives exactly as
 long as its `HostedSynth`: switching synthesizer drops the driver, which
-drops the job handle and so ends the process.
+drops the job handle and so ends the process. In a build instrumented for
+coverage the dropped driver closes the host's pipes and leaves the host
+to exit by itself (`Contained::end_when_pipes_close`), so it writes its
+profile (`docs/tooling/coverage.md`).
 
 Reading. The synth thread reads the host's pipe itself, and only when it
 wants the next message and none is already read: a read asks for 4096

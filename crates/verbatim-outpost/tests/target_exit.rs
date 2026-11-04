@@ -166,11 +166,11 @@ fn a_spare_takes_its_application_from_assign_and_ends_on_one_it_cannot_watch() {
     assert!(status.success(), "the stand-in exited with {status}");
 }
 
-fn main() {
+fn main() -> std::process::ExitCode {
     if std::env::args().any(|arg| arg == TARGET) {
         let mut rest = Vec::new();
         let _ = std::io::stdin().read_to_end(&mut rest);
-        return;
+        return std::process::ExitCode::SUCCESS;
     }
     // The tests run with libtest's command line (`libtest-mimic`), so
     // cargo-nextest can list them and run each in a process of its own;
@@ -196,5 +196,5 @@ fn main() {
             })
         })
         .collect();
-    libtest_mimic::run(&arguments, trials).exit()
+    libtest_mimic::run(&arguments, trials).exit_code()
 }

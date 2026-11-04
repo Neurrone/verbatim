@@ -246,7 +246,7 @@ fn a_shutdown_whose_wake_the_port_refuses_still_ends() {
     drop(refusal);
 }
 
-fn main() {
+fn main() -> std::process::ExitCode {
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|arg| arg == "--pipe-in") {
         stand_in(&args);
@@ -276,5 +276,5 @@ fn main() {
             })
         })
         .collect();
-    libtest_mimic::run(&arguments, trials).exit()
+    libtest_mimic::run(&arguments, trials).exit_code()
 }

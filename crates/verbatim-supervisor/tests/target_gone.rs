@@ -435,12 +435,12 @@ fn a_replacement_waiting_out_its_backoff_is_not_started_for_an_application_that_
     );
 }
 
-fn main() {
+fn main() -> std::process::ExitCode {
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|arg| arg == APPLICATION) {
         let mut rest = Vec::new();
         let _ = std::io::stdin().read_to_end(&mut rest);
-        return;
+        return std::process::ExitCode::SUCCESS;
     }
     if args.iter().any(|arg| arg == "--pipe-in") {
         stand_in(&args);
@@ -474,5 +474,5 @@ fn main() {
             })
         })
         .collect();
-    libtest_mimic::run(&arguments, trials).exit()
+    libtest_mimic::run(&arguments, trials).exit_code()
 }

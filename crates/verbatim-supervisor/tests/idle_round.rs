@@ -365,12 +365,12 @@ fn a_round_asks_the_listener_then_every_outpost_behind_the_facts_before_it() {
     end(second_app);
 }
 
-fn main() {
+fn main() -> std::process::ExitCode {
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|arg| arg == APPLICATION) {
         let mut rest = Vec::new();
         let _ = std::io::stdin().read_to_end(&mut rest);
-        return;
+        return std::process::ExitCode::SUCCESS;
     }
     if args.iter().any(|arg| arg == "--pipe-in") {
         stand_in(&args);
@@ -394,5 +394,5 @@ fn main() {
             })
         })
         .collect();
-    libtest_mimic::run(&arguments, trials).exit()
+    libtest_mimic::run(&arguments, trials).exit_code()
 }

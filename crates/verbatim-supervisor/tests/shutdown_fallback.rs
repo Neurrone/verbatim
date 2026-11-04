@@ -98,7 +98,7 @@ fn a_child_that_does_not_exit_in_time_is_killed_and_the_kill_is_reported() {
     );
 }
 
-fn main() {
+fn main() -> std::process::ExitCode {
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|arg| arg == "--listener") {
         stuck_child(&args);
@@ -122,5 +122,5 @@ fn main() {
             })
         })
         .collect();
-    libtest_mimic::run(&arguments, trials).exit()
+    libtest_mimic::run(&arguments, trials).exit_code()
 }

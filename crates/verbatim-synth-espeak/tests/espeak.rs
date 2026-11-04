@@ -459,7 +459,7 @@ fn a_mark_after_a_full_stop_is_reported_where_the_next_sentence_starts() {
     );
 }
 
-fn main() {
+fn main() -> std::process::ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if let [option, name] = args.as_slice()
         && option == SPEAK
@@ -470,7 +470,7 @@ fn main() {
             .expect("a known case");
         let record = case.speak(&mut new_driver());
         record.write(&mut std::io::stdout().lock());
-        return;
+        return std::process::ExitCode::SUCCESS;
     }
     let tests: [(&str, fn()); 9] = [
         (
@@ -522,5 +522,5 @@ fn main() {
             })
         })
         .collect();
-    libtest_mimic::run(&arguments, trials).exit()
+    libtest_mimic::run(&arguments, trials).exit_code()
 }

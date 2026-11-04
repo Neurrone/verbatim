@@ -219,6 +219,29 @@ impl HostedSynth {
     }
 }
 
+/// In a build instrumented for coverage, a driver dropped while Verbatim
+/// runs, as a switch of synthesizer drops it, closes its host's pipes and
+/// leaves the host to exit by itself on its closed command pipe, as
+/// Verbatim's exit does, so it writes its profile; a host lost to a
+/// failure is still ended ([`HostedSynth::lose_host`]). Every other build
+/// ends it by dropping its [`Contained`] (`docs/tooling/coverage.md`).
+#[cfg(coverage)]
+impl Drop for HostedSynth {
+    fn drop(&mut self) {
+        if let Some(Host {
+            commands,
+            replies,
+            contained,
+            ..
+        }) = self.host.take()
+        {
+            drop(commands);
+            drop(replies);
+            contained.end_when_pipes_close();
+        }
+    }
+}
+
 impl Host {
     fn start(
         exe: &std::path::Path,

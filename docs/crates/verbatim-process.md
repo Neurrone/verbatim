@@ -39,7 +39,11 @@ Public API:
   job does not kill on close and dropping a `Contained` terminates the
   job instead, with exit code 0 as closing a kill-on-close job gives, so a child left running when Verbatim exits ends when its
   pipes close and writes its coverage profile
-  (`docs/tooling/coverage.md`). `has_exited()` says whether the process has
+  (`docs/tooling/coverage.md`). `end_when_pipes_close()` lets a child go
+  that exits by itself once its command pipe closes: in a build
+  instrumented for coverage nothing kills it, so it exits once the
+  caller's pipe ends are closed and writes its profile, and in every
+  other build it is a drop. `has_exited()` says whether the process has
   exited, once the system has finished ending it; `wait(timeout)` waits
   up to `timeout` for it to and says whether it exited or the time ran
   out (`Waited`), or returns the error when the wait itself fails, and
