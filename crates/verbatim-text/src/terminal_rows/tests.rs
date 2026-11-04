@@ -658,7 +658,7 @@ fn output_repeated_after_a_clear_that_erases_rows_of_the_last_read_is_silent() {
 
 #[test]
 fn a_footer_below_a_cleared_screen_pushed_into_the_history_does_not_overflow() {
-    // `conhost_footer_overflow`'s shape: the console host pushes the
+    // A footer flood in the console host: the console host pushes the
     // cleared screen into the history, a footer is drawn on the last row
     // under a scroll region, and the first line of output above it scrolls
     // the region into the history, its rows staying where they were, and

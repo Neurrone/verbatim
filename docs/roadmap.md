@@ -866,8 +866,8 @@ remains, in order:
 - A program silent on a key that then prints output and redraws a status
   row within 300 ms has the redrawn row spoken at once as the key's
   answer, ahead of the queued output: "Rows the keys own" counts every
-  read in the key window as the keys' (`conhost_footer_overflow`, 1 of 3
-  local runs on 2026-11-03, [the known failures](flaky-tests.md)). A known
+  read in the key window as the keys' (`conhost_footer_overflow`, since
+  retired, 1 of 3 local runs on 2026-11-03). A known
   limit until here (Dickson, 2026-11-03): replay the recorded reads
   ([the evidence](../experiments/a-redraw-in-a-keys-window-is-spoken-as-its-answer/readme.md))
   through the rules to confirm the cause, then ask whether a key's

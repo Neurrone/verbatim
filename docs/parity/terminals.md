@@ -123,15 +123,14 @@ settings", Core's flood policy).
   lines" and the newest "Last lines to speak" (30) are kept. The summary
   is "skipped lines" when the count is lost; "skipped more than N lines"
   when the lines went by past the terminal's history, as when one write
-  larger than the history follows a fresh or cleared screen
-  (`conhost_fresh_flood`, `windows_terminal_clear_flood`), N the
+  larger than the history follows a fresh or cleared screen, N the
   history's rows left unspoken; and "skipped about N lines" when a lost
   read counted them from text, as after Windows Terminal's clear followed
   by more than a screen of output before the next read, such as
   `clear; dir` typed as one line, whose every line after the clear is new
-  (Dickson, 2026-10-25; `windows_terminal_cleared_flood`). Nothing is
-  lost for good: every line is still there for the review cursor (the
-  `*_flood` and `*_scrollback_overflow` scenarios).
+  (Dickson, 2026-10-25). Nothing is lost for good: every line is still
+  there for the review cursor (the `*_flood` and
+  `*_scrollback_overflow_during_group` scenarios).
 - The terminal is read on demand while Core's queue is full: the outpost
   only notes changes until Core asks, when a group's last line is handed
   to speech (rule 1).
@@ -155,8 +154,8 @@ Control+C, Control+D, and Control+Pause. Verbatim: **different** (rule
   of the line and not spoken again as output, and a line changed some
   other way (a password prompt's asterisks) drops the held typing
   unspoken, so a tab completion's added text is read and a password is
-  never spoken. A line of one or two characters is output like any other
-  (`*_short_output`).
+  never spoken. A line of one or two characters is output like any
+  other.
 - A line rewritten in place echoes the typing only when what it gained
   is exactly the typing (a character typed in the middle of a command),
   so a clock ticking on a password prompt's line never speaks the
@@ -207,7 +206,7 @@ Control+C, Control+D, and Control+Pause. Verbatim: **different** (rule
   Verbatim reads the line's change once, both in it, and says "echo
   onex" without the character's own echo (Dickson, 2026-10-09). When a
   read shows the recalled line before the "x", as at human speed, the
-  line is spoken and the "x" echoed (Dickson, 2026-10-26; `*_up_typing`).
+  line is spoken and the "x" echoed (Dickson, 2026-10-26; `*_line_key_flood`).
 - The console host's keys are translated with the console host's own
   keyboard layout, its thread learned from the console window's
   `WinEvents`, as NVDA does.
@@ -246,7 +245,7 @@ when a key moved the caret or the focus arrived, and otherwise stays on
 its text, moving with it as output scrolls; with it off, only the user
 moves it. So reviewing a line above the caret and letting a script print
 two lines leaves Verbatim's review cursor on the line reviewed. The
-`*_review_output` scenarios still assert NVDA's behaviour; they are among
+`*_review_grid` scenarios still assert NVDA's behaviour; they are among
 the terminal scenarios `docs/roadmap.md`, "The terminal redesign",
 brings back to passing.
 
@@ -354,8 +353,8 @@ Different (Dickson, 2026-10-23):
 - When the program redraws the list and leaves the caret below it,
   Verbatim says the line that gained the marker, whole, as the key's
   answer, where NVDA says "blank" for each key and drops the marker's
-  change as probably typed (`windows_terminal_redrawn_list`,
-  `conhost_redrawn_list`).
+  change as probably typed (`windows_terminal_marker_list`,
+  `conhost_marker_list`).
 - A pager moving a line on its alternate screen
   (`windows_terminal_pager_history`, `conhost_pager_history`): Verbatim says the line the move brought onto the
   screen alone, where NVDA says the prompt, ":", at the end of its wait

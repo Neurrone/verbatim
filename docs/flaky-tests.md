@@ -6,16 +6,16 @@ Each entry gives the exact name, how it fails, how often and where, the cause wh
 
 ## Windows Terminal's first focus, ancestor walk past its bound
 
-Scenarios: the `windows_terminal_` scenarios generally, for example `windows_terminal_scrollback_overflow` and `windows_terminal_clear_flood`, and `windows_terminal_spoken_password`.
+Scenarios: the `windows_terminal_` scenarios generally, for example `windows_terminal_progress` and `windows_terminal_tabs`.
 
-- How: a new Windows Terminal window's first focus speaks the title without "window". For `windows_terminal_spoken_password` on GitHub's runner (run 41163500778, 2026-10-31) the expected "ready>" was heard as "verbatim-e2e-spoken-password-mvvtyykb terminal".
-- How often: `windows_terminal_progress` and one other scenario failed this way in one full run on GitHub's runner, after the crate split (run 41211072805, 2026-10-31). `windows_terminal_redraw_limit`, `windows_terminal_tabs` and one other scenario failed this way after the caret watch build (run 41225371284, 2026-10-31). `windows_terminal_review_padding` and `windows_terminal_same_flood` failed this way after the first determinism build (run 41233417983, 2026-10-31). On 2026-10-31, with the reducer build, `windows_terminal_scrollback_overflow` failed 10 of 10 locally, and `windows_terminal_clear_flood` 4 of 9, and 4 of 9 before the reducer build too.
+- How: a new Windows Terminal window's first focus speaks the title without "window". On GitHub's runner (run 41163500778, 2026-10-31) the expected "ready>" was heard as "verbatim-e2e-spoken-password-mvvtyykb terminal".
+- How often: `windows_terminal_progress` and one other scenario failed this way in one full run on GitHub's runner, after the crate split (run 41211072805, 2026-10-31). `windows_terminal_tabs` and two other scenarios failed this way after the caret watch build (run 41225371284, 2026-10-31), and two scenarios after the first determinism build (run 41233417983, 2026-10-31). On 2026-10-31, with the reducer build, two Windows Terminal flood scenarios since retired failed 10 of 10 and 4 of 9 locally.
 - Cause: the listener's ancestor walk for the focus passes its 500 ms bound, so the window's entry is missing from the chain.
 - Fix: out of scope until [the focus pipeline rework's remaining design](design/focus-pipeline-rework-remaining.md), which holds it.
 
 ## Windows Terminal launch speech, not this cause
 
-- Scenarios: the `*_up_typing`, `*_typing` and `*_commands` Windows Terminal scenarios.
+- Scenarios: the `*_line_key_flood`, `*_typing` and `*_commands` Windows Terminal scenarios.
 - How: the launch focus sometimes speaks "... terminal" without "... window", and the desktop's announcement is sometimes cancelled.
 - Cause: not found; possibly the first entry's.
 - Fix: [M6.4 terminal residuals](roadmap.md#m64--terminal-residuals).
@@ -43,14 +43,10 @@ Recorded by Claude, 2026-11-04, pending Dickson's acceptance.
   - How: "Task Switching" was heard before the switcher's item "… row 1 column 2 2 of 4".
   - Cause: the listener's read of the item's first focus passed its bound (its nearest-window lookup took 697 ms) and was published with no ancestors read, so the Alt+Tab rule, which needs the item's parent's automation id, did not apply, and the plain window "Task Switching" filled in from window handles was spoken; the full read 23 ms later spoke the item.
   - Fix: [the focus pipeline rework's third build](roadmap.md#the-focus-pipeline-rework): a read published at its bound says which facts it did not read, and Core takes no containers from it.
-- `windows_terminal_command_marks` (run 41697089785)
+- `windows_terminal_control_flood`'s command marks steps (run 41697089785, when they were `windows_terminal_command_marks`)
   - How: 2.0 s after the second Verbatim+Alt+Up (the previous command mark), Verbatim played its "application not responding" sound where the mark's line "ready> .\long.ps1" was expected.
   - Cause: the mark lay above the rows Core keeps, so Core asked the outpost to search the terminal (`TerminalFind`); the search, a remote operation in Windows Terminal (`crates/verbatim-uia-rops/src/terminal_find.rs`), took 3.2 s, past the outpost's 2 s text deadline (`TEXT_DEADLINE`), so the worker was abandoned, and `finish` (`crates/verbatim-app/src/main.rs`) plays the sound for any abandoned query, without asking whether Windows judges the window hung. Windows Terminal was answering throughout. NVDA has no such sound.
   - Fix: whether the sound plays only when Windows judges the window hung is a question for Dickson (what users hear); the search's cost in a real Windows Terminal, never measured, is to be measured and fixed with [M6.4 terminal residuals](roadmap.md#m64--terminal-residuals)' measurements.
-- `windows_terminal_clear_flood`
-  - How: a typed "." was spoken as "." by the terminal's output timer rather than echoed as the typed character "dot".
-  - Cause: Windows Terminal showed the "." 472 ms after the key reached it, under the runner's load, past the 300 ms key window (`KEY_WINDOW_MS`, `crates/verbatim-text/src/terminal_reading.rs`), so the reading rules took it as output, as `typing_shown_after_300_milliseconds_is_output_not_echo` specifies. Not Verbatim's delay: Core and the outpost each took under 2 ms.
-  - Fix: a known limit of the key window, with the footer redraw's misreading the other way, under [M6.4 terminal residuals](roadmap.md#m64--terminal-residuals).
 
 ## Windows Terminal raises no TextChanged for a typed character
 
@@ -84,14 +80,6 @@ Recorded by Claude, 2026-11-04, pending Dickson's acceptance.
 
 ## Terminal scenarios, single failures on GitHub's runner
 
-- `windows_terminal_full_history_flood` (run 41572436376)
-  - How: "ready>" is heard when "report new output" is turned back on, before the command is typed: "utterances no assertion matched were waiting before typing".
-  - Cause: the harness. `wait_for_caret_on` (`crates/verbatim-e2e/src/scenarios/terminal.rs`) returns on a snapshot whose caret is on the prompt's line before that line's text holds the prompt; Windows Terminal's next snapshot, 31 ms later, added "ready>", which arrived after reporting was on.
-  - Fix: the testing improvements session (2026-11-03): the wait also requires the prompt's text.
-- `conhost_footer_overflow` (locally, 1 of 3 runs, 2026-11-03)
-  - How: "flood line 20" is heard between "flood line 3" and "flood line 4", at the start of the 12,000-line flood that "n" starts.
-  - Cause, probable but not replayed: the script redraws its footer at line 20, about 90 ms after the key, and every read within the 300 ms key window (`KEY_WINDOW_MS`, `owner` in `crates/verbatim-text/src/terminal_reading.rs`) counts as the keys', so "Rows the keys own" (`docs/design/terminal-model.md`) speaks the redrawn row at once as the key's answer, ahead of the queued flood. The key "n" is read by the script without an echo. Not caused by the scenario's lowered limits: the same reads would misspeak at 30.
-  - Fix: a known limit until [M6.4 terminal residuals](roadmap.md#m64--terminal-residuals) (Dickson, 2026-11-03).
 - `conhost_long_lines` (run 41333390347)
   - How: after Enter, "r" is heard where "part1 part2 ... part10" is expected; the snapshot then has the caret on an empty line and "ready>" on the screen's first row.
   - Cause: not found; the typed-character rules (`crates/verbatim-core/src/terminal_model.rs`) are suspected, not shown. Once in 32 runs.
@@ -99,7 +87,7 @@ Recorded by Claude, 2026-11-04, pending Dickson's acceptance.
 
 ## A new console host not responding at its outpost's first call
 
-Scenarios: `measure_keys_conhost` and `measure_keys_conhost_unmoved` (release build, 2026-10-31, on main's code with temporary log lines), and `conhost_full_history_flood` (debug build, 2026-11-01, 1 of 3 with the first determinism build; its outpost was killed at shutdown, and the next scenario, `notepad_editing`, found no Notepad window within 30 s, then passed 10 of 10).
+Scenarios: `measure_keys_conhost` and `measure_keys_conhost_unmoved` (release build, 2026-10-31, on main's code with temporary log lines), and `conhost_full_history_flood`, since retired (debug build, 2026-11-01, 1 of 3 with the first determinism build; its outpost was killed at shutdown, and the next scenario, `notepad_editing`, found no Notepad window within 30 s, then passed 10 of 10).
 
 - How: setup fails with "no window titled ... opened within 30s"; the PowerShell console's window is hidden and not responding, or not shown at all. The outpost given the new `conhost.exe` starts watching it, and its worker's first call passes its 10 s deadline about 10 s later and finishes only at shutdown, 2 to 35 s after. 3 of 20 runs; in one, a crate split build's unit tests were running on the same desktop.
 - Cause: not found. In two `conhost_full_history_flood` failures on 2026-11-01 whose artifacts were kept, Verbatim waited on the console host and not the reverse: the window never answered the outpost's first message (the arbitration's `WM_GETOBJECT` probe timed out at 3 s, where a healthy console answers in about 0.4 s), the outpost's worker then blocked in an MSAA read until the outpost was killed, and the console host stayed hung after every Verbatim process had exited. Both runs also had Explorer's notification area not answering (`Shell_NotifyIcon` timed out at Verbatim's start) and the Widgets process not responding, which no passing run showed. What the console host's window thread waited on is not in the logs.

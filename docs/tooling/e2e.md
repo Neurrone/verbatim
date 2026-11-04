@@ -178,8 +178,8 @@ The harness reads these; set them in the terminal that runs `cargo test`.
   `cargo xtask vm test`, not by hand. It skips the local staging, since
   `cargo xtask vm deploy` staged the guest; the fixed `settings.toml` is
   still written afresh for every scenario, through the agent, so a
-  scenario that changes a setting (`windows_terminal_spoken_password`
-  turns "speak passwords" on) never leaves it changed for the next.
+  scenario that changes a setting (`windows_terminal_control_flood`
+  lowers the flood limits) never leaves it changed for the next.
 - `VERBATIM_E2E_AUDIBLE=1`: an audible run, through the real audio
   device ("Hearing and recording a run" below). `cargo xtask vm test` sets
   it always.

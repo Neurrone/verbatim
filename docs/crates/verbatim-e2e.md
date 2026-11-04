@@ -792,13 +792,13 @@ under `src/scenarios/` documents exactly what it asserts.
 Each exists in both terminals unless named for one.
 
 - `_commands`: commands, typed echo, and a password prompt;
-  `_spoken_password`: its typing spoken with "speak passwords" on;
   `_editing`: a command corrected with Backspace, punctuation echoed by
   name, and the review cursor's current word down a column;
-  `_review_grid`: the review cursor down a column of a text table;
-  `_progress`: a line rewritten in place, spoken whole the first time and
-  then by the word that changed; `_short_output`: one- and two-character
-  lines spoken like any other.
+  `_review_grid`: the review cursor down a column of a text table, then
+  following the caret after output written while it reviewed, then
+  stopping at a short row's last character, padding never being
+  reviewed; `_progress`: a line rewritten in place, spoken whole the first
+  time and then by the word that changed.
 - Typing (`scenarios/terminal_typing.rs`): a password typed into a script
   that never shows it and rewrites its prompt's line after each key,
   hearing only the count that changed; a character typed in the middle of
@@ -812,45 +812,40 @@ Each exists in both terminals unless named for one.
   `scenarios/terminal_pager.rs`): a selection list whose marker moves with
   the caret, or is redrawn whole on each move, each move said once; a
   pager on the alternate screen, moved down a line and back, each move
-  saying only the line it brought on, and closed, the shell's screen
-  spoken again, first on the fresh terminal at the top of the document,
-  then over a shell screen with history (`*_pager_history`).
+  saying only the line it brought on, and closed over a shell screen with
+  history, that screen spoken again (`*_pager_history`).
 - Keys during output (`scenarios/terminal_key_timing.rs`): Control cuts
   off everything still queued once the flood's last line is queued, and
-  lines written after it are spoken (`*_control_flood`); Shift twice
-  pauses and resumes a short output with nothing lost (`*_shift_flood`); Up Arrow during
-  a flood's speech cuts it and says the recalled line (`*_line_key_flood`);
-  Up Arrow with a character typed at once says the recalled line with the
-  character, once (`*_up_typing`).
+  lines written after it are spoken; Shift twice then pauses and resumes
+  a short output with nothing lost; and Verbatim+Alt+Up Arrow and
+  Verbatim+Alt+Down Arrow move between the commands entered, those the
+  flood carried above the rows Core keeps found by the outpost's search,
+  then after `cls`, which erases them in Windows Terminal and keeps them
+  in the console host (`*_control_flood`). Up Arrow then a character typed
+  once its line is heard says the recalled line and echoes the character,
+  and Up Arrow during a flood's speech cuts it and says the recalled line
+  (`*_line_key_flood`).
 - Floods: `_flood`, at the shipped limits, the suite's one check of
   them, 2,000 lines heard as lines 1 to 30, "skipped 1941 lines" after the
   skipped-lines sound, and lines 1,972 to 2,000 with the prompt, then a
-  flood cut off by Verbatim+5 and one with output reporting off; in the
-  console host the first flood runs with a wrapped line on the screen.
-  Every other flood scenario lowers both limits through
+  flood cut off by Verbatim+5 and one with output reporting off. Every
+  other flood scenario lowers both limits through
   `ScenarioDef::settings`, since what is heard takes time set by the
   limits, not by the flood's size: to 10 (`terminal_flood::LOWERED`), or
   to 15 (`terminal_flood::HALF`) where a large write must land while a
   group plays or a 30-row screen must be heard whole; scripts that print
   a group's worth of lines are written with the group's size, and every
   count is computed from the same constants.
-  `scenarios/terminal_flood_kinds.rs` covers identical lines
-  (`*_same_flood`), a full-screen redraw past lowered limits
-  (`*_redraw_limit`), and limits raised to 31, under which a 62-line
-  burst the default would split is heard whole (`conhost_raised_limit`,
-  the console host only, since Core applies the limits the same for
-  every terminal). The acceptance floods
-  (`scenarios/terminal_overflow.rs`, `_scrollback_overflow`) print a
-  group's worth of lines, wait for a file, then write 12,000 lines, past
-  the history, heard as their first 15, "skipped more than N lines", and
-  the last 15, N being the lines the terminal's buffer holds less the 15
-  last lines (9,016 in Windows Terminal, 8,986 in the console host); their
-  `_during_group` twins, and `_history_flood_during_group` with 5,000
-  lines within the history, write the second part while the first group
-  still plays, so it joins their burst. Further flood variants
-  (`*_full_history_flood`, `conhost_fresh_flood`,
-  `windows_terminal_clear_flood`, `windows_terminal_cleared_flood`,
-  `conhost_footer_overflow`) are documented in their modules. Outpost logs are collected in
+  The acceptance floods (`scenarios/terminal_overflow.rs`,
+  `_scrollback_overflow_during_group`) print a group's worth of lines,
+  wait for a file the scenario writes as the first is heard, then write
+  12,000 lines, past the history, while the group still plays, heard as
+  the rest of the group, "skipped more than N lines", and the last 15, N
+  being the lines the terminal's buffer holds less the 15 last lines
+  (9,016 in Windows Terminal, 8,986 in the console host), so each
+  terminal's provider reads its whole document. The flood policy's counts
+  for the other kinds of flood are tested with the reading rules in
+  `crates/verbatim-core/tests/terminal_floods.rs`. Outpost logs are collected in
   chunks, since a flood's debug log can be larger than one read of the
   agent's.
 - Windows and tabs (`scenarios/terminal_windows.rs`): `_two_windows`
@@ -863,13 +858,7 @@ Each exists in both terminals unless named for one.
   harness error), the rest finished while away and not spoken. A second
   Windows Terminal window or tab is handed to the harness's running copy,
   which must own it; the tabs scenario turns `confirmCloseAllTabs` off.
-- Review (`scenarios/terminal_review_output.rs`,
-  `scenarios/terminal_review_padding.rs`): the review cursor follows the
-  caret to the prompt after output; it stops at a short row's last
-  character, padding never being reviewed.
-- Footers (`scenarios/terminal_footer.rs`,
-  `scenarios/terminal_status_bar.rs`): a flood longer than the console
-  host's history in a scroll region above a footer; three lines written
+- Footers (`scenarios/terminal_status_bar.rs`): three lines written
   above a footer, read with Verbatim+End before and after it changes. No
   scenario floods above a footer that a read must find while output
   arrives, because such a read can leave the footer out

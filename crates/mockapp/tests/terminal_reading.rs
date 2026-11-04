@@ -737,8 +737,8 @@ fn the_hooks_change_events_wait_for_a_window_read_through_msaa() {
     app.quit();
 }
 
-/// Up Arrow and "x" pressed at once in the console host
-/// (`conhost_up_typing`): the shell has drawn the recalled line and put
+/// Up Arrow and "x" pressed at once in the console host: the shell has
+/// drawn the recalled line and put
 /// the caret after it, and writes the "x" between the calls of the caret
 /// key's read, after its caret and before its line. The line read shows
 /// "x" with the caret before it, a state the terminal never had; read again

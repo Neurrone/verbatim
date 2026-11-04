@@ -1,6 +1,6 @@
 # A redraw in a key's window is spoken as its answer
 
-The evidence for the known limit in `docs/roadmap.md`, M6.4, and `docs/flaky-tests.md`, `conhost_footer_overflow`: one failed local run of that scenario on 2026-11-03, at commit 000f36f3, on Dickson's x64 machine (Windows 11, build 26200). Two runs before it passed.
+The evidence for the known limit in `docs/roadmap.md`, M6.4: one failed local run of `conhost_footer_overflow`, a scenario since retired, on 2026-11-03, at commit 000f36f3, on Dickson's x64 machine (Windows 11, build 26200). Two runs before it passed.
 
 What was heard: after "n" starts the script's 12,000-line flood, "flood line 2" and "flood line 3", then "flood line 20", then "flood line 4", where 4 to 15 and the skip were expected before anything later.
 

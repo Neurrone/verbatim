@@ -256,8 +256,8 @@ before its first `ShowWindow`, for more than 30 seconds after a flood;
 Windows Terminal's window does not appear in that time either. The
 hidden window can hold the foreground, and the harness waits for a shown
 window. It affects any `conhost_` or `windows_terminal_` scenario run
-straight after `conhost_leave_flood`, `conhost_full_history_flood` or
-`windows_terminal_full_history_flood`, recording on or off. The harness
+straight after a long flood such as `conhost_leave_flood`, recording
+on or off. The harness
 does not wait for the manager (Dickson, 2026-10-26); instead, before a
 scenario's setup, wait until the counter `\Process(dwm)\% Processor Time`
 reads under 130 percent, for example with
