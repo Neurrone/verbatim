@@ -196,7 +196,8 @@ const READ_BUDGET: Duration = Duration::from_secs(2);
 /// It does
 /// not bound the call under way: the transaction timeout bounds each
 /// provider call, not a UIA operation (`docs/uia-bugs.md`, "A timeout
-/// bounds each provider call, not an operation"), so one operation that
+/// bounds each request and window message, not an operation"), so one
+/// operation that
 /// makes several provider calls, as the nearest-window lookup's
 /// `NormalizeElementBuildCache` does, can run past the deadline with each
 /// of its provider calls answered within the timeout, and its read is then

@@ -5,8 +5,8 @@
 //! operation: a `FindFirst` over a window's subtree, or a dialog's text
 //! gathered from its children, makes many provider calls, and waits a full
 //! [`TRANSACTION_TIMEOUT`](crate::TRANSACTION_TIMEOUT) for each one a held application
-//! does not answer (`docs/uia-bugs.md`, "A timeout bounds each provider
-//! call, not an operation"). A UIA call cannot be cancelled, so such an operation is run on
+//! does not answer (`docs/uia-bugs.md`, "A timeout bounds each request
+//! and window message, not an operation"). A UIA call cannot be cancelled, so such an operation is run on
 //! a [`BoundedClient`]'s thread, with its own client, while the caller
 //! waits for its answer until a deadline. An operation that passes its
 //! deadline is abandoned with its thread: the caller goes on without the
