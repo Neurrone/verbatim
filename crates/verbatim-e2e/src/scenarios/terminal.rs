@@ -325,7 +325,7 @@ fn require_no_other_terminal_window(
 /// a folder of the run's own named `name`, and brings it forward. The
 /// `WindowsTerminal.exe` launched hands its command line to the running
 /// one, which must own the new window, and exits; no other Windows
-/// Terminal process may open a window. The window is closed by its title
+/// Terminal process may open a window. The window is closed by its handle
 /// at cleanup, and the running Windows Terminal exits once its first
 /// window closes too.
 ///
@@ -390,8 +390,9 @@ pub(crate) fn open_windows_terminal_for_tabs(
 /// Opens a second tab in the window `first` opened
 /// ([`open_windows_terminal_for_tabs`]), running the shell in a folder of
 /// the run's own named `name`, titled with the first tab's title and
-/// " two", so the window, titled with the tab in front's, is closed by the
-/// first's at cleanup whichever is in front. The `WindowsTerminal.exe`
+/// " two", which contains the first's, so the shell the tab runs is waited
+/// for at cleanup under the first window's launch whichever tab is in
+/// front, as the window is closed by its process. The `WindowsTerminal.exe`
 /// launched hands its command line to the running one (`-w 0`, its most
 /// recent window) and exits; the new tab is in front once the window's
 /// title is its own.

@@ -4,15 +4,19 @@
 //! through the M2 agent, drives it, and cleans up what it opened. Every
 //! scenario starts from the same desktop: every window minimized, as the
 //! taskbar's Show Desktop leaves it, whether or not the run is recorded.
-//! Cleanup ([`Scenario::clean_up`]) closes each window the scenario opened
-//! by its title (a Windows 11 Notepad document by closing its tab, never
-//! its window, since Notepad keeps the tabs of a closed window for its next
-//! session), checks that the process that owned it has exited when the
-//! scenario started that program, ends anything else it launched by its
-//! process id, and fails the scenario when anything will not close. It
-//! then proves nothing was left: every window shown that was not open when
-//! the scenario started must have gone, whatever its title has become.
-//! Nothing is ever ended by its image name.
+//! Cleanup ([`Scenario::clean_up`]) closes the windows the scenario opened
+//! by the processes that own them when the scenario started that program,
+//! and otherwise by the window's handle (a Windows 11 Notepad document by
+//! closing its tab, never its window, since Notepad keeps the tabs of a
+//! closed window for its next session; the Settings app's window by its
+//! title, as [`Closing::ByTitle`] says why). It checks that the processes
+//! that owned them have exited when the scenario started that program,
+//! and that the process it launched has exited, ending it through the
+//! agent's own handle when it has not, and fails the scenario when
+//! anything will not close. It then proves nothing was left: every window
+//! shown that was not open when the scenario started must have gone,
+//! whatever its title has become. Nothing is ever ended by its image name
+//! or its title.
 //!
 //! Configuration is always fixed and isolated, never the developer's own
 //! live state. In runner-direct mode (the default; see [`REMOTE_ENV`]),
@@ -79,8 +83,8 @@ const LAUNCHED_PROCESS_FILE_STEM: &str = "launched-process";
 /// Text in the title of every window the harness opens on purpose: the
 /// document a [`Document`] names is named with it, so
 /// its window can be told from the user's own windows of the same
-/// application, found by title, and closed by title (a Notepad harness tab
-/// as a tab), as NVDA's system tests name their Notepad documents.
+/// application and found by title (a Notepad harness tab closed as a tab),
+/// as NVDA's system tests name their Notepad documents.
 pub const DOCUMENT_MARKER: &str = "verbatim-e2e-";
 
 /// How long a window the harness waits for is given to appear and take the
@@ -202,32 +206,74 @@ fn live_instance_lock() -> &'static Mutex<()> {
 
 /// One application a scenario launched, for cleanup.
 struct Launched {
+    /// The process the agent launched, which must have exited once its
+    /// windows have closed, and is ended through the agent's own handle
+    /// when it has not ([`Scenario::end_launch`]).
     pid: u32,
-    /// The title of its window, which names it: it is closed by this title,
-    /// unless it is closed by its handle (`window`). `None` for a program
-    /// with no window of the scenario's own, which is ended by its process
-    /// id.
+    /// The title of its window, which names it in reports and for
+    /// [`Scenario::expect_exit_at_cleanup`]. `None` for a program with no
+    /// window of the scenario's own, which is ended by its process id.
     title: Option<String>,
-    /// The window it opened, found by its title, when it is closed by its
-    /// handle rather than its title: a File Explorer window, which takes
-    /// another title when it navigates to another folder, or when its
-    /// folder is deleted. `None` for a window closed by its title.
+    /// The window it opened, found by its title as it appeared.
     window: Option<WindowInfo>,
     /// The processes that owned its windows, recorded as each was waited
-    /// for: they must exit once the windows close, when `owners_exit`.
+    /// for: they must exit once the windows close, when `closing` is
+    /// [`Closing::ByOwner`] or [`Closing::NotepadTabs`].
     owners: Vec<u32>,
-    /// Whether the programs owning its windows exit when they close: the
-    /// scenario started the program, which had no window open before.
-    /// Not for a window a shared process owns, such as File Explorer's.
-    owners_exit: bool,
+    /// How its windows are closed.
+    closing: Closing,
     /// The harness document it opened, deleted once its window has gone.
     document: Option<String>,
-    /// Whether it is Windows 11 Notepad, whose harness tab is closed as a
-    /// tab, so Notepad does not keep it for its next session.
-    notepad: bool,
     /// Other processes that must exit once its windows close, such as the
     /// shell a terminal ran ([`Scenario::expect_exit_at_cleanup`]).
     also_exit: Vec<u32>,
+}
+
+/// How cleanup closes the windows of one launch ([`Scenario::clean_up`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Closing {
+    /// Every window of each process that owned one, by its process
+    /// (`Request::CloseProcessWindows`), whatever their titles: the
+    /// scenario started the program, which had no window open before, so
+    /// every window of it is the scenario's, and its owners must exit.
+    ByOwner,
+    /// The window it opened, by its handle, whatever its title has become:
+    /// a window a process shared with windows that are not the scenario's
+    /// owns, such as a File Explorer window, which File Explorer retitles
+    /// as it navigates or when its folder is deleted, or a second window of
+    /// the harness's running Windows Terminal.
+    ByHandle,
+    /// The window titled with its title: the Settings app's window, the one
+    /// window closed by title. Its process, `ApplicationFrameHost.exe`,
+    /// frames every packaged app's windows, so its windows are not all the
+    /// scenario's, and the window may be the Settings app's cloaked frame
+    /// from before the scenario, which Windows shows again when Settings
+    /// opens, so it is in the scenario's starting windows, which the agent
+    /// never closes by handle.
+    ByTitle,
+    /// Windows 11 Notepad's harness tabs, closed as tabs, which only their
+    /// titles tell apart, so Notepad does not keep them for its next
+    /// session; its owners must exit ([`Scenario::end_notepad`]).
+    NotepadTabs,
+}
+
+impl Closing {
+    /// Whether the processes that owned the windows must exit once they
+    /// close.
+    fn owners_exit(self) -> bool {
+        matches!(self, Self::ByOwner | Self::NotepadTabs)
+    }
+
+    /// How a launch whose owner exits when `owner_exits` closes: by its
+    /// owners when the scenario started the program, by its window's
+    /// handle when a shared process owns it.
+    fn launched(owner_exits: bool) -> Self {
+        if owner_exits {
+            Self::ByOwner
+        } else {
+            Self::ByHandle
+        }
+    }
 }
 
 /// Owns the lifecycle of one live Verbatim instance driven through the M2
@@ -1088,19 +1134,31 @@ impl Scenario {
         Ok(())
     }
 
-    /// Closes every window whose title contains `title`, as the harness's
-    /// cleanup closes them, and fails unless all of them closed.
+    /// Closes the application the scenario launched with its window titled
+    /// `title`, before the scenario ends, as cleanup closes it
+    /// ([`Scenario::clean_up`]), and fails unless it closed and exited.
     ///
     /// # Errors
     ///
-    /// Returns an error if the request fails or a window stays open.
-    pub fn close_windows_titled(&mut self, title: &str) -> io::Result<()> {
-        self.begin_action(&format!("close the windows titled {title:?}"));
-        match self.agent.close_windows(title, CLOSE_TIMEOUT)? {
-            0 => Ok(()),
-            remaining => Err(io::Error::other(format!(
-                "{remaining} window(s) titled {title:?} did not close within {CLOSE_TIMEOUT:?}"
-            ))),
+    /// Returns an error if the scenario launched no window so titled, or
+    /// anything did not close or exit.
+    pub fn close_launched(&mut self, title: &str) -> io::Result<()> {
+        self.begin_action(&format!("close the application titled {title:?}"));
+        let index = self
+            .launched
+            .iter()
+            .position(|launched| launched.title.as_deref() == Some(title))
+            .ok_or_else(|| {
+                io::Error::other(format!("the scenario launched no window titled {title:?}"))
+            })?;
+        let launched = self.launched.remove(index);
+        self.started.push(launched.pid);
+        self.started.extend(launched.owners.iter().copied());
+        let problems = self.close(&launched);
+        if problems.is_empty() {
+            Ok(())
+        } else {
+            Err(io::Error::other(problems.join("\n")))
         }
     }
 
@@ -1184,8 +1242,10 @@ impl Scenario {
     /// before ([`Scenario::require_absent`]), its first window minimized
     /// and inactive, then brings that window forward as clicking its
     /// taskbar button does, and waits for it to take the foreground.
-    /// The window is closed by its title at cleanup, and when
-    /// `owner_exits`, the process that owned it must exit then.
+    /// At cleanup, when `owner_exits`, every window of the process that
+    /// owned it is closed by that process, which must exit then; otherwise
+    /// the window is closed by its handle. The launched process must have
+    /// exited then too.
     ///
     /// A window opened in front is refused the foreground unless the agent
     /// may allow it, which it may only while it injected the last input
@@ -1229,7 +1289,7 @@ impl Scenario {
     ) -> io::Result<WindowInfo> {
         self.begin_action(&launch_action(command, title));
         let launch = self.agent.launch_minimized(command, args)?;
-        self.bring_forward(launch, title, owner_exits, false, ready)
+        self.bring_forward(launch, title, Closing::launched(owner_exits), ready)
     }
 
     /// [`Scenario::launch_titled`], the program's standard input a pipe
@@ -1252,7 +1312,7 @@ impl Scenario {
         let launch = self
             .agent
             .launch_minimized_with_stdin(command, args, output_to)?;
-        self.bring_forward(launch, title, true, false, None)
+        self.bring_forward(launch, title, Closing::ByOwner, None)
     }
 
     /// Writes `line` and a line feed to the standard input of `pid`,
@@ -1298,8 +1358,8 @@ impl Scenario {
         }
     }
 
-    /// Records `launch` for cleanup, its window titled with `title` and its
-    /// owner exiting at cleanup when `owner_exits`, waits for that window,
+    /// Records `launch` for cleanup, its window titled with `title` and
+    /// closed as `closing` says, waits for that window,
     /// opened minimized and inactive, to appear, restores it and sets it as
     /// the foreground, injecting nothing, and waits for it to take the
     /// foreground ([`Scenario::launch_titled`]); with `ready`, only once
@@ -1308,8 +1368,7 @@ impl Scenario {
         &mut self,
         launch: AgentLaunch,
         title: &str,
-        owner_exits: bool,
-        by_handle: bool,
+        closing: Closing,
         ready: Option<&str>,
     ) -> io::Result<WindowInfo> {
         self.launched.push(Launched {
@@ -1317,9 +1376,8 @@ impl Scenario {
             title: Some(title.to_owned()),
             window: None,
             owners: Vec::new(),
-            owners_exit: owner_exits,
+            closing,
             document: None,
-            notepad: false,
             also_exit: Vec::new(),
         });
         let (present, desktop) = self.agent.wait_for_window(
@@ -1346,7 +1404,7 @@ impl Scenario {
                 evidence,
             ));
         };
-        if by_handle && let Some(launched) = self.launched.last_mut() {
+        if let Some(launched) = self.launched.last_mut() {
             launched.window = Some(window.clone());
         }
         if let Some(ready) = ready
@@ -1371,8 +1429,8 @@ impl Scenario {
     /// brings it forward as [`Scenario::launch_titled`] does, and fails
     /// unless the process the agent launched owns it: for a program that
     /// could otherwise hand its command line to an instance already
-    /// running, such as Windows Terminal. The window is closed by its title
-    /// at cleanup, and the process must exit then. With `ready`, the window
+    /// running, such as Windows Terminal. Its windows are closed by its
+    /// process at cleanup, and the process must exit then. With `ready`, the window
     /// is brought forward only once that file exists
     /// ([`Scenario::launch_titled_once`]).
     ///
@@ -1391,7 +1449,7 @@ impl Scenario {
         self.begin_action(&launch_action(command, title));
         let launch = self.agent.launch_minimized(command, args)?;
         let launched = launch.pid;
-        let window = self.bring_forward(launch, title, true, false, ready)?;
+        let window = self.bring_forward(launch, title, Closing::ByOwner, ready)?;
         if window.pid != launched {
             return Err(io::Error::other(format!(
                 "the window titled {title:?} belongs to {} (pid {}), not to the process the harness launched, pid {launched}: {}",
@@ -1432,7 +1490,7 @@ impl Scenario {
     ) -> io::Result<WindowInfo> {
         self.begin_action(&launch_action(command, title));
         let launch = self.agent.launch_console(command, args, title)?;
-        self.bring_forward(launch, title, true, false, ready)
+        self.bring_forward(launch, title, Closing::ByOwner, ready)
     }
 
     /// Brings the harness document `name`, which Notepad opened before
@@ -1583,7 +1641,7 @@ impl Scenario {
         let launch = self
             .agent
             .launch_without_foreground_right("explorer.exe", std::slice::from_ref(&folder))?;
-        self.bring_forward(launch, &marker, false, true, None)?;
+        self.bring_forward(launch, &marker, Closing::ByHandle, None)?;
         Ok(marker)
     }
 
@@ -1592,7 +1650,7 @@ impl Scenario {
     /// [`Scenario::launch_titled`] does, so it takes the foreground
     /// whatever input came last. No Settings window
     /// may be open before, so the window is the scenario's own; it is
-    /// closed by its title at cleanup. The Settings app's process may stay,
+    /// closed by its title at cleanup ([`Closing::ByTitle`]). The Settings app's process may stay,
     /// suspended, with its window cloaked, as it does after a user closes
     /// it.
     ///
@@ -1602,7 +1660,11 @@ impl Scenario {
     /// fails, or the window does not take the foreground.
     pub fn open_settings_page(&mut self, uri: &str) -> io::Result<WindowInfo> {
         self.require_absent(SETTINGS_TITLE)?;
-        self.launch_titled("explorer.exe", &[uri.to_owned()], SETTINGS_TITLE, false)
+        self.begin_action(&launch_action("explorer.exe", SETTINGS_TITLE));
+        let launch = self
+            .agent
+            .launch_minimized("explorer.exe", &[uri.to_owned()])?;
+        self.bring_forward(launch, SETTINGS_TITLE, Closing::ByTitle, None)
     }
 
     /// Has cleanup wait, once the window titled `title` that the scenario
@@ -2623,13 +2685,18 @@ impl Scenario {
         Ok(())
     }
 
-    /// Closes what the scenario opened, last opened first: each window by
-    /// its title (a Notepad harness tab as a tab, a File Explorer window by
-    /// its handle, before its folder is deleted), waiting for it to go and,
-    /// when the scenario started its program, for the process that owned
-    /// it to exit (a Notepad that holds other tabs is ended as
-    /// [`Scenario::end_notepad`] says); anything launched without a window of its own by its
-    /// process id; then the harness documents, folders, and files. Last, it
+    /// Closes what the scenario opened, last opened first, as each launch's
+    /// [`Closing`] says: every window of a program the scenario started by
+    /// its owning process, a window a shared process owns by its handle (a
+    /// File Explorer window before its folder is deleted), a Notepad
+    /// harness tab as a tab, and the Settings app's window by its title;
+    /// waiting for them to go and, when the scenario started the program,
+    /// for the processes that owned them to exit (a Notepad that holds
+    /// other tabs is ended as [`Scenario::end_notepad`] says); then for the
+    /// process it launched to exit, ending it through the agent's own
+    /// handle when it still runs ([`Scenario::end_launch`]); anything
+    /// launched without a window of its own by its process id; then the
+    /// harness documents, folders, and files. Last, it
     /// checks that every window shown now that was not open when the
     /// scenario started has gone, whatever its title has become, waiting
     /// for them on window events up to the close timeout and closing none
@@ -2657,8 +2724,8 @@ impl Scenario {
                 problems.push(format!("could not delete the harness file {file}: {error}"));
             }
         }
-        // Closing by title is how the scenario closes its own windows; this
-        // proves nothing was left. A window left open stays open, and the
+        // The closing steps close the scenario's own windows; this proves
+        // nothing was left. A window left open stays open, and the
         // next scenario's start reports it again and closes it by handle.
         match self.agent.wait_for_new_windows_gone(CLOSE_TIMEOUT) {
             Ok(remaining) => problems.extend(remaining.iter().map(|window| {
@@ -2678,47 +2745,76 @@ impl Scenario {
     /// Closes one launched application, as [`Scenario::clean_up`] says.
     fn close(&mut self, launched: &Launched) -> Vec<String> {
         let mut problems = Vec::new();
-        // Whether every harness tab closed, so that Notepad's remaining
-        // windows hold none and may be closed ([`Scenario::end_notepad`]).
-        let mut tabs_closed = false;
         if let Some(title) = &launched.title {
-            if launched.notepad {
-                // Every harness tab, the scenario's and any Notepad restored
-                // from an earlier run's session, so Notepad can exit. Never
-                // its window while a harness tab is open: Notepad keeps the
-                // tabs of a window that closes for its next session.
-                match close_notepad_tabs(&mut self.agent, DOCUMENT_MARKER) {
-                    Ok(()) => tabs_closed = true,
-                    Err(error) => problems.push(error.to_string()),
+            // Whether every harness tab closed, so that Notepad's remaining
+            // windows hold none and may be closed ([`Scenario::end_notepad`]).
+            let mut tabs_closed = false;
+            match launched.closing {
+                Closing::NotepadTabs => {
+                    // Every harness tab, the scenario's and any Notepad
+                    // restored from an earlier run's session, so Notepad can
+                    // exit. Never its window while a harness tab is open:
+                    // Notepad keeps the tabs of a window that closes for its
+                    // next session.
+                    match close_notepad_tabs(&mut self.agent, DOCUMENT_MARKER) {
+                        Ok(()) => tabs_closed = true,
+                        Err(error) => problems.push(error.to_string()),
+                    }
                 }
-            } else if let Some(window) = &launched.window {
-                match self.agent.close_window(window, CLOSE_TIMEOUT) {
-                    Ok(true) => {}
-                    Ok(false) => problems.push(format!(
-                        "the window {} did not close within {CLOSE_TIMEOUT:?}",
-                        describe_window(window)
-                    )),
-                    Err(error) => problems.push(format!(
-                        "could not close {}: {error}",
-                        describe_window(window)
-                    )),
+                Closing::ByOwner => {
+                    // Each process that owned a window: the owners recorded
+                    // as the window took the foreground, and the window's
+                    // own when it opened but did not.
+                    let mut pids = launched.owners.clone();
+                    if let Some(window) = &launched.window
+                        && !pids.contains(&window.pid)
+                    {
+                        pids.push(window.pid);
+                    }
+                    for pid in pids {
+                        match self.agent.close_process_windows(pid, CLOSE_TIMEOUT) {
+                            Ok(0) => {}
+                            Ok(remaining) => problems.push(format!(
+                                "{remaining} window(s) of process {pid}, which owned the window titled {title:?}, did not close within {CLOSE_TIMEOUT:?}"
+                            )),
+                            Err(error) => problems.push(format!(
+                                "could not close the windows of process {pid}, which owned the window titled {title:?}: {error}"
+                            )),
+                        }
+                    }
                 }
-            } else {
-                match self.agent.close_windows(title, CLOSE_TIMEOUT) {
+                Closing::ByHandle => {
+                    // A window that never opened has nothing to close; its
+                    // launch is ended below if it still runs.
+                    if let Some(window) = &launched.window {
+                        match self.agent.close_window(window, CLOSE_TIMEOUT) {
+                            Ok(true) => {}
+                            Ok(false) => problems.push(format!(
+                                "the window {} did not close within {CLOSE_TIMEOUT:?}",
+                                describe_window(window)
+                            )),
+                            Err(error) => problems.push(format!(
+                                "could not close {}: {error}",
+                                describe_window(window)
+                            )),
+                        }
+                    }
+                }
+                Closing::ByTitle => match self.agent.close_windows(title, CLOSE_TIMEOUT) {
                     Ok(0) => {}
                     Ok(remaining) => problems.push(format!(
                         "{remaining} window(s) titled {title:?} did not close within {CLOSE_TIMEOUT:?}"
                     )),
                     Err(error) => problems.push(format!("could not close {title:?}: {error}")),
-                }
+                },
             }
-            let owners: &[u32] = if launched.owners_exit {
+            let owners: &[u32] = if launched.closing.owners_exit() {
                 &launched.owners
             } else {
                 &[]
             };
             for &owner in owners.iter().chain(&launched.also_exit) {
-                if launched.notepad && tabs_closed {
+                if launched.closing == Closing::NotepadTabs && tabs_closed {
                     problems.extend(self.end_notepad(owner, title));
                     continue;
                 }
@@ -2732,6 +2828,8 @@ impl Scenario {
                     )),
                 }
             }
+            let waited = owners.contains(&launched.pid) || launched.also_exit.contains(&launched.pid);
+            problems.extend(self.end_launch(launched.pid, title, waited));
         } else {
             let ended = self
                 .agent
@@ -2756,6 +2854,46 @@ impl Scenario {
             ));
         }
         problems
+    }
+
+    /// Waits for process `pid`, which the agent launched to open the window
+    /// titled `title`, to exit once its windows have closed, for up to the
+    /// close timeout, or not at all when `waited`, since it owned the window
+    /// and was waited for already; and when it still runs, ends it, with
+    /// everything in its job, through the agent's own handle, as
+    /// [`AgentClient::end_launched`] ends a launch an earlier run left, and
+    /// reports that. A launch that handed its window to another process
+    /// and exited, as `explorer.exe` and a second `WindowsTerminal.exe` do,
+    /// has exited long before, so a clean run waits for nothing here. The
+    /// job holds only the launch and what it started, never a shared
+    /// process such as the desktop's `explorer.exe`, so nothing else is
+    /// ended. Returns each failure.
+    fn end_launch(&mut self, pid: u32, title: &str, waited: bool) -> Vec<String> {
+        let wait = if waited { Duration::ZERO } else { CLOSE_TIMEOUT };
+        match self.agent.wait_for_exit(pid, wait) {
+            Ok(ProcessState::Exited { .. }) => return Vec::new(),
+            Ok(ProcessState::Running) => {}
+            Err(error) => {
+                return vec![format!(
+                    "could not wait for process {pid}, launched to open the window titled {title:?}, to exit: {error}"
+                )];
+            }
+        }
+        let ended = self
+            .agent
+            .kill_process(pid)
+            .and_then(|_| self.agent.wait_for_exit(pid, CLOSE_TIMEOUT));
+        vec![match ended {
+            Ok(ProcessState::Exited { .. }) => format!(
+                "process {pid}, launched to open the window titled {title:?}, was still running {CLOSE_TIMEOUT:?} after its windows closed, so it was ended with everything it started"
+            ),
+            Ok(ProcessState::Running) => format!(
+                "process {pid}, launched to open the window titled {title:?}, did not exit within {CLOSE_TIMEOUT:?} of being ended"
+            ),
+            Err(error) => format!(
+                "could not end process {pid}, launched to open the window titled {title:?}: {error}"
+            ),
+        }]
     }
 
     /// Ends Windows 11 Notepad process `owner` once the harness tabs of its
@@ -2963,6 +3101,11 @@ fn sweep_leftovers(agent: &mut AgentClient, directory: &str) -> io::Result<()> {
                 .join("; ")
         )));
     }
+    // What is left with the harness's title has no process or handle the
+    // agent knows: the agent ended every process it launched above and
+    // closed every window an abandoned scenario it watched left, so these
+    // are the windows of a run whose agent has since restarted, which only
+    // their titles identify.
     let remaining = agent.close_windows(DOCUMENT_MARKER, CLOSE_TIMEOUT)?;
     if remaining > 0 {
         return Err(io::Error::other(format!(
@@ -3047,9 +3190,8 @@ fn open_document(
         title: Some(marker.clone()),
         window: None,
         owners: Vec::new(),
-        owners_exit: true,
+        closing: Closing::NotepadTabs,
         document: Some(path),
-        notepad: true,
         also_exit: Vec::new(),
     };
     let (present, desktop) = agent.wait_for_window(
@@ -3996,9 +4138,9 @@ fn describe_foreground(info: &ForegroundInfo) -> String {
 /// run of the test binary. A document of a fixed name would let an
 /// application restore state saved by an earlier run, as Windows 11 Notepad
 /// restores a file's last selection, which a failed run can leave anywhere;
-/// a new name has none. A window titled with it is closed by that title at
-/// cleanup, and by the next launch's sweep if a run aborted before its
-/// cleanup.
+/// a new name has none. A window titled with it is found by that title,
+/// and closed by that title by the next launch's sweep when nothing else
+/// identifies it ([`sweep_leftovers`]).
 #[must_use]
 pub fn harness_marker(name: &str) -> String {
     static TOKEN: OnceLock<String> = OnceLock::new();

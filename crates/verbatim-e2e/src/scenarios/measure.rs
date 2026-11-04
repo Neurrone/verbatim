@@ -312,7 +312,7 @@ pub(crate) fn body_focus_new_application(scenario: &mut Scenario, _state: &mut S
         truth.write(&serde_json::json!({ "step": "launched", "kind": kind, "title": title }));
         truth.drain(scenario, "after launch");
         scenario
-            .close_windows_titled(&title)
+            .close_launched(&title)
             .expect("closes the application's window");
         truth.drain(scenario, "after close");
     }

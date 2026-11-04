@@ -4,7 +4,8 @@
 //! and
 //! [`Request::CloseAbandonedWindows`](crate::protocol::Request::CloseAbandonedWindows).
 //!
-//! The harness closes the windows a scenario opened by their titles, but a
+//! The harness closes the windows a scenario opened by their processes or
+//! handles, but a program can open a window the harness never found, and a
 //! window can lose the title it was found by: a File Explorer window whose
 //! folder is deleted is retitled with the parent folder. So when a scenario
 //! starts, the agent records every top-level window there is, its

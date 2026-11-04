@@ -290,14 +290,15 @@ impl Group {
 
 /// Scenario-specific state a [`ScenarioDef::setup`] creates and its matching
 /// [`ScenarioDef::teardown`] restores. `None` when a scenario needs nothing
-/// beyond `Scenario::launch` itself; `TargetPid` names a process launched via
-/// [`Scenario::launch_titled`] that teardown must kill.
+/// beyond `Scenario::launch` itself; `TargetPid` names the process owning a
+/// window launched via [`Scenario::launch_titled`], which cleanup closes.
 #[derive(Debug)]
 pub enum ScenarioState {
     /// No extra state: `setup` did nothing beyond validating preconditions.
     None,
-    /// The pid of a target application `setup` launched via
-    /// [`Scenario::launch_titled`], for `teardown` to kill.
+    /// The pid of the process owning the window of a target application
+    /// `setup` launched via [`Scenario::launch_titled`], for the body;
+    /// cleanup closes it ([`Scenario::clean_up`]).
     TargetPid(u32),
     /// Names `setup` recorded for `teardown`, such as the folders that were
     /// there before the scenario.
@@ -308,8 +309,8 @@ pub enum ScenarioState {
     /// A window `setup` opened with a title of the run's own
     /// ([`Scenario::launch_titled`]), such as a terminal's.
     Window {
-        /// The launch that opened it, for `teardown` to close it by its
-        /// title ([`Scenario::kill_target`]).
+        /// The process that owns it, which cleanup closes it by
+        /// ([`Scenario::clean_up`]).
         pid: u32,
         /// Its title.
         title: String,

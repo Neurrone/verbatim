@@ -260,8 +260,9 @@ registry", and at the top of each module in
 more was said.
 
 Each terminal scenario opens a window of its own titled
-`verbatim-e2e-<name>-<token>` and closes it by that title, so your own
-terminals are left alone, and runs its shell in a folder of the same name
+`verbatim-e2e-<name>-<token>`, found by that title, and closes it by the
+process the harness started, which owns it, so your own terminals are
+left alone, and runs its shell in a folder of the same name
 in `target/e2e-stage`, deleted once the window has closed. The terminal
 scenarios type through the agent's `TypeText`, which maps each character
 with the foreground window's keyboard layout, so any layout that can type
@@ -300,8 +301,9 @@ host's shell is started the same way, since its window takes the
 foreground as it is created, before the notice is printed. Before it
 drives the window, it asserts that the process the agent launched owns
 the window, and that no other Windows Terminal process opened a window
-meanwhile. At cleanup it closes that window by its title, and the copy's
-process, which had no other window, must exit; nothing else is closed.
+meanwhile. At cleanup it closes the windows of that copy's process,
+which it started and which had no other window, and that process must
+exit; nothing else is closed.
 
 Nothing else a run starts can reach your Windows Terminal either. Windows
 gives a console program started from a process without a console a new

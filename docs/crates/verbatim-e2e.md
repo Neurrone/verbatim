@@ -298,7 +298,7 @@ shorter (`compare::QuietPeriod`).
   `launch_owning_window`,
   `launch_console`, `bring_window_forward`, `bring_document_forward`,
   `open_folder`, `open_settings_page`, `run_handing_off`,
-  `close_windows_titled`, `focus_by_automation_id`, and
+  `close_launched`, `focus_by_automation_id`, and
   `terminal::expect_prompt_read`'s writing of the file that lets the shell
   show its first prompt) calls `Scenario::begin_action`, which in compare
   mode closes the step under way and starts one with the action as its
@@ -463,25 +463,41 @@ input methods above:
   quit Verbatim.
 - `expect_exit_at_cleanup(title, pid)` adds a process, such as a
   terminal's shell, that must exit once the window closes.
-- `close_windows_titled` closes every window whose title contains the
-  text, failing unless all closed.
+- `close_launched` closes the application the scenario launched with a
+  window of the title given, as cleanup closes it, failing unless it
+  closed and exited.
 
 ### Cleanup
 
 `clean_up` closes what the scenario opened, last first, and returns every
-problem as a failure of the run. A window is closed by its title and,
-when the scenario started its program, the process that owned it must
-exit. A File Explorer window (`open_folder`) is closed by its handle
-instead, recorded as it opened, since File Explorer retitles it as it
-navigates; it is closed, and waited for until it has gone, before the
-harness folders are deleted. Windows 11 Notepad is closed only by closing
-its harness tabs, never its window, since Notepad keeps the tabs of a
-closed window for its next session; a Notepad process still running
-afterwards fails the run. A program with no window of its own is ended by
-its process id. Nothing is ever ended by its image name. The `Drop` impl
-quits or ends Verbatim and runs the cleanup when a panic skipped it.
+problem as a failure of the run. Each launch is closed by process, not by
+title: when the scenario started the program, every window of each
+process that owned one is closed by that process
+(`CloseProcessWindows`), whatever their titles, and those processes must
+exit. A window a shared process owns is closed by its handle, recorded as
+it opened: a File Explorer window (`open_folder`), since File Explorer
+retitles it as it navigates, closed and waited for until it has gone
+before the harness folders are deleted, and a second window of the
+harness's running Windows Terminal. Then the process the agent launched
+must have exited too; one still running after the close timeout is ended,
+with everything it started, through the agent's own handle for it, as at
+a run's start, and that fails the run. A launch that handed its window to
+another process, as `explorer.exe` does, exited long before, so a clean
+run waits for nothing more. Two kinds of window are still closed by title,
+since nothing else identifies them: the Settings app's window
+(`open_settings_page`), whose process, `ApplicationFrameHost.exe`, frames
+every packaged app's windows and whose window may be the Settings app's
+cloaked frame from before the scenario, which the agent never closes by
+handle; and Windows 11 Notepad's harness tabs, closed as tabs, never its
+window, since Notepad keeps the tabs of a closed window for its next
+session. Notepad is never killed while it may hold a harness tab: its
+remaining windows are closed by handle and it is killed only after
+that, which fails the run. A program with no window of its own is ended
+by its process id. Nothing is ever ended by its image name or its title.
+`close_launched` closes one launch so before the scenario ends. The `Drop`
+impl quits or ends Verbatim and runs the cleanup when a panic skipped it.
 
-Closing by title cannot prove that nothing was left, since a window can
+Closing the windows it found cannot prove that nothing was left, since a window can
 lose the title it was found by, so the cleanup's last step asks the agent
 to wait, on window events and up to the close timeout, for every shown
 window that was not among the scenario's starting windows to be gone
