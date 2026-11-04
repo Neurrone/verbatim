@@ -7,7 +7,7 @@ UI Automation (UIA) is Microsoft's current accessibility API, and the only one s
 Most of UIA's internals are not documented. Every claim about them here is marked in one of four ways:
 
 - Documented: the claim links a Microsoft Learn page.
-- Measured: the claim links the readme of the experiment that observed it, with a debugger, a trace or timings. The experiments ran on one x64 machine, Windows 11 build 26200, and their readmes give each setup and figure.
+- Measured: the claim links the readme of the experiment that observed it, with a debugger, a trace or timings. The experiments ran on one x64 machine, a QEMU virtual machine under Proxmox with 12 virtual processors and 16 GB of memory, running Windows 11 Pro 25H2, build 26200, whose display adapter has no 3D acceleration, so the Desktop Window Manager composes on the processor, and their readmes give each setup and figure.
 - From source: the claim names a framework's published source, read on 2026-11-02 (the repositories are under "References").
 - Inferred: the claim says so, and names what it rests on.
 

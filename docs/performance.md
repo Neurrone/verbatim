@@ -33,8 +33,10 @@ recorded.
 Every other figure is a measurement and gives its build and conditions,
 and its date where that matters to reading it. "This machine" is the
 development machine: x64, a QEMU virtual machine with 12 virtual
-processors of an AMD Ryzen 7 5700G and 16 GB of memory, running Windows
-11 Pro build 26200.
+processors of an AMD Ryzen 7 5700G and 16 GB of memory under Proxmox,
+running Windows 11 Pro 25H2, build 26200. Its display adapter, a VirtIO
+display-only driver, has no 3D acceleration, so the Desktop Window
+Manager composes on the processor.
 
 ## What counts as a call
 
