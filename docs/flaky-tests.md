@@ -101,6 +101,15 @@ Scenarios and tests: `notepad_editing`, `notepad_selection_keys` and `notepad_ty
 - Cause: not found. Load from a concurrent build did not reproduce it. The console host entry above, whose kept artifacts show the new window hung on its own with Explorer's notification area also not answering, may be the same; no Notepad failure's artifacts have been kept yet.
 - Fix: none yet. The next harness failure carries the wait chains of the not-responding windows' threads and of the launched Notepad's threads, in the failure message and in `wait-chains.txt`, which say what a hung window's thread waits on; the mockapp test's failure does not. A roadmap follow-up under M4.
 
+## Scrollback scenarios after a long flood, locally
+
+Recorded by Claude, 2026-11-04, pending Dickson's acceptance.
+
+- Scenarios: `windows_terminal_scrollback_overflow_during_group` and `conhost_scrollback_overflow_during_group`, locally, when they run after `conhost_flood`.
+- How: Windows Terminal's window never appears ("no window titled ... opened within 30s"), and the console host's first focus is said without "window". 3 of 3 times each in a round of the terminal scenarios, and once more with `conhost_flood` run alone just before, by a separate command with a fresh agent; both pass run alone.
+- Cause: in part found. The launch evidence (`launched-process-<pid>.txt` and `wait-chains.txt`) shows Windows Terminal's main thread waiting for 30 seconds on an ALPC call to `dwm.exe`, the Desktop Window Manager, having used 155 ms of processor time. What keeps DWM from answering after a long flood, on a machine with no graphics adapter while the run's screen recording is captured, is not found.
+- Fix: none yet.
+
 ## The scheduled exploration of the outpost reducer
 
 - The Explore workflow's `explore` job, `verbatim-outpost-logic`'s `explore_reducer` with seed 1
