@@ -147,7 +147,7 @@ const DEMONSTRATIONS: &[&str] = scenario_tests! {
 };
 
 // The measure set, the measurement workloads of
-// `books/dev/src/explanation/design/communication.md` section 11: ignored, run by name or with
+// `docs/design/communication.md` section 11: ignored, run by name or with
 // `cargo xtask vm test --group measure`, never by the suite, whose runs
 // deselect them with `--skip measure_` (books/dev/src/how-to/e2e.md).
 const MEASURE_SET: &[&str] = scenario_tests! {

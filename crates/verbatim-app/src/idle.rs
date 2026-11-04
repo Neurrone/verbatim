@@ -1,5 +1,5 @@
 //! The harness's idle barrier on the reducer's side: a round through every
-//! child (`books/dev/src/explanation/design/communication.md`, section 6.7).
+//! child (`docs/design/communication.md`, section 6.7).
 //!
 //! The control plane's `AwaitIdle` waiters are posted straight to the
 //! reducer's port, each naming the harness's last numbered input, whose

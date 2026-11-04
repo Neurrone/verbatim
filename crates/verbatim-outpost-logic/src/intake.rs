@@ -461,7 +461,7 @@ impl Intake {
     /// drop, or the end of the listener's reads, removes the markers it
     /// resolves. An entry with a key replaces the one waiting with the same
     /// key, unless an idle query waits between them
-    /// (`books/dev/src/explanation/design/communication.md`, section 6.7): the older entry then
+    /// (`docs/design/communication.md`, section 6.7): the older entry then
     /// keeps its place ahead of the query. A foreground change also
     /// removes a focus waiting on its window's client object from the same
     /// thread, unless the focus was raised after the change

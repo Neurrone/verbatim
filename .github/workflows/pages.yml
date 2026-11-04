@@ -1,16 +1,18 @@
 # The documentation site: every book under books/ built with mdBook, beside
 # the homepage books/index.html. Every push and pull request that touches
-# books/ builds it, so a broken book fails before it reaches main; only a
-# push to main publishes it to GitHub Pages.
+# books/, or CONTRIBUTING.md, which the Development guide includes, builds
+# it, so a broken book fails before it reaches main; only a push to main
+# publishes it to GitHub Pages. Includes are invisible to cargo xtask docs,
+# so a new include outside books/ joins the paths below.
 
 name: Pages
 
 on:
   push:
     branches: [main]
-    paths: ["books/**", ".github/workflows/pages.yml"]
+    paths: ["books/**", "CONTRIBUTING.md", ".github/workflows/pages.yml"]
   pull_request:
-    paths: ["books/**", ".github/workflows/pages.yml"]
+    paths: ["books/**", "CONTRIBUTING.md", ".github/workflows/pages.yml"]
   workflow_dispatch:
 
 permissions:
@@ -34,7 +36,8 @@ jobs:
         run: |
           mkdir -p site
           cp books/index.html site/index.html
-          for book in dev extensions user; do
+          for config in books/*/book.toml; do
+            book=$(basename "$(dirname "$config")")
             mdbook build "books/$book" --dest-dir "$PWD/site/$book"
           done
       - uses: actions/upload-pages-artifact@v5

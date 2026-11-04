@@ -2296,7 +2296,7 @@ fn a_forwarded_copy_opens_the_starting_outposts_record() {
 }
 
 /// The idle barrier's round waits while the outpost's record of a
-/// `WinEvent` focus in a UIA window is open (`books/dev/src/explanation/design/communication.md`,
+/// `WinEvent` focus in a UIA window is open (`docs/design/communication.md`,
 /// section 6.7): the outpost reaches the round's query and holds its
 /// answer, and once the bound is reached it reads the focus and answers
 /// behind that read.

@@ -5,7 +5,6 @@ A design record keeps, for one piece of finished work, the problem, the alternat
 Records of work still being designed or built are kept in the repository and are published here once that work is finished.
 
 - [Ownership](ownership.md) — one owner for every fact, the rules every component follows, and the five builds that applied them: the one judge, input, messages, output, and the outpost store and reducer.
-- [Communication](communication.md) — every pipe and thread from an event or a key to sound.
 - [The focus pipeline](focus-pipeline.md) — how focus events reach Verbatim.
 - [The listener without connections](listener-without-connections.md) — why only an application's own outpost connects to it.
 - [UIA shapes](uia-shapes.md) — every cached UIA read declared with its request.

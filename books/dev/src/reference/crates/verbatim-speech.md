@@ -32,7 +32,7 @@ Public API:
   has no push at which to see a cancel (the speech manager cancels the
   mixer first, then the job, whose waker it calls).
 - `CancelToken` — an utterance's cancellation
-  (`books/dev/src/explanation/design/communication.md`, section 7.3): a flag and the one waker
+  (`docs/design/communication.md`, section 7.3): a flag and the one waker
   a driver registered, under one lock, so `on_cancel` decides whether to
   wake at once by reading the flag in the hold that registers the waker.
   `cancel()` sets the flag and calls the waker once, after unlocking;
@@ -447,7 +447,7 @@ around the capital. A driver with neither has the pitch changes removed.
 
 Host message frames (`hosting.rs`). Each message is one frame of the
 transport, whose header, raw section and 32 MB limit are
-`verbatim_process::transport`'s (`books/dev/src/explanation/design/communication.md`, section
+`verbatim_process::transport`'s (`docs/design/communication.md`, section
 4.2). Every body is JSON, serde's encoding of the message. A PCM frame's
 body is `{"Pcm":{"utterance":7,"sample_rate":22050,"channels":1,"samples":[0,2646]}}`,
 the last its samples' place in the frame's raw section, which they fill,

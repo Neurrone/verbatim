@@ -305,7 +305,7 @@ that carries them on the pipes, `Message`, is
   ancestors, selected child, window facts and text, and when reading
   began.
 - `EventTiming` records each point of an event's way, in microseconds
-  (`books/dev/src/explanation/design/communication.md`, section 10.1); `hop_us` is the time
+  (`docs/design/communication.md`, section 10.1); `hop_us` is the time
   between two stamps.
 - `event_input` is the reducer's input an outpost's event is: the app and
   the merge's tests both reduce what it gives.

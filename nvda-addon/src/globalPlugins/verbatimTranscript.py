@@ -4,7 +4,7 @@
 
 """Serves a transcript of NVDA's speech to Verbatim's development tooling.
 
-A research instrument, not a test oracle: `docs/nvda-transcript.md` in the
+A research instrument, not a test oracle: `books/dev/src/how-to/nvda.md` in the
 Verbatim repository describes how it is used. The plugin listens on
 127.0.0.1 only, on port 44100 plus the Windows session id of the NVDA that
 loaded it (so each session's NVDA has its own port), accepts one client at a

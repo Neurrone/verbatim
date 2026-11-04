@@ -1,3 +1,3 @@
 # Tutorials
 
-Tutorials will take a first app module from rules alone to a hook written in Rust.
+Written with milestone M5, when extensions arrive.

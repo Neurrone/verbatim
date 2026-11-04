@@ -34,7 +34,7 @@ pub(super) enum Role {
 }
 
 /// verbatim.exe's ends of a child's two pipes, both overlapped
-/// (`books/dev/src/explanation/design/communication.md`, section 4.1); the child's ends are
+/// (`docs/design/communication.md`, section 4.1); the child's ends are
 /// overlapped too, served by its I/O thread's completion port, with every
 /// thread of the child writing its own messages (section 4.6).
 pub(super) struct ChildPipes {

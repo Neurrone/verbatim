@@ -25,7 +25,7 @@
 //!   reducer's and the speech queue's, whose post never waits and takes no
 //!   lock; a backlog waits in memory in front of the reducer, as the
 //!   communication design keeps every backlog
-//!   (`books/dev/src/explanation/design/communication.md`, section 4.8).
+//!   (`docs/design/communication.md`, section 4.8).
 //! - It touches no lock, and makes no call that dispatches sent messages,
 //!   which would deliver the next key while this one is half handled.
 //!   `cargo xtask ci` checks the hook thread's modules for both
@@ -336,7 +336,7 @@ impl Drop for InputHook {
 
 /// The hook thread's priority: it decides each key and hands it on, for
 /// microseconds per key, and Windows removes a low-level hook that keeps a
-/// key waiting too long (`books/dev/src/explanation/design/communication.md`, section 6.1).
+/// key waiting too long (`docs/design/communication.md`, section 6.1).
 const HOOK_PRIORITY: ThreadPriority = ThreadPriority::Highest;
 
 /// The body of the hook thread: install the hook, publish readiness, pump

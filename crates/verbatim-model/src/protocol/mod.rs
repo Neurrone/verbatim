@@ -133,7 +133,7 @@ pub struct EventTiming {
     /// When verbatim.exe took in what it relayed to the outpost: for a
     /// listener's fact, when its relay thread took the read's completion;
     /// for a request Core made, when the request was queued for the
-    /// outpost (`books/dev/src/explanation/design/communication.md`, section 10.1). 0 for an event the
+    /// outpost (`docs/design/communication.md`, section 10.1). 0 for an event the
     /// outpost observed itself.
     pub core_received_at_us: u64,
     /// How long verbatim.exe held it, in microseconds, measured on one
@@ -710,7 +710,7 @@ pub enum CoreToOutpost {
         acknowledged: u64,
     },
     /// The harness's idle barrier, round `round`
-    /// (`books/dev/src/explanation/design/communication.md`, section 6.7): answered
+    /// (`docs/design/communication.md`, section 6.7): answered
     /// [`OutpostToCore::IdleAnswer`] once the outpost's worker has handled
     /// everything that reached its intake before the query, with the caret
     /// those entries noted, and no caret key's watch or owed terminal read
@@ -826,7 +826,7 @@ pub enum CoreToListener {
         sent_at_us: u64,
     },
     /// The harness's idle barrier, round `round`
-    /// (`books/dev/src/explanation/design/communication.md`, section 6.7): answered
+    /// (`docs/design/communication.md`, section 6.7): answered
     /// [`ListenerToCore::IdleAnswer`] once the listener's `WinEvent` thread
     /// and its reading threads have nothing in progress, behind every
     /// message it sent before.

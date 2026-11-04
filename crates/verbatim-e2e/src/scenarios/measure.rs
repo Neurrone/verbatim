@@ -1,5 +1,5 @@
 //! The measure set: the measurement workloads that
-//! `books/dev/src/explanation/design/communication.md` section 11 runs at every migration step,
+//! `docs/design/communication.md` section 11 runs at every migration step,
 //! its first step's baseline and every later step's comparison. They
 //! measure nothing themselves: they give Verbatim focus changes, typing and
 //! Backspace to handle, and its latency ledger logs the figures, one line
@@ -335,7 +335,7 @@ pub(crate) fn setup_speech_real(scenario: &mut Scenario) -> io::Result<ScenarioS
     Ok(ScenarioState::None)
 }
 
-/// `measure_speech_real` (`books/dev/src/explanation/design/communication.md`, section 10.3):
+/// `measure_speech_real` (`docs/design/communication.md`, section 10.3):
 /// the speech path through the real synthesizer host and audio device, so
 /// the ledger's host and device stages, the device clock among them, have
 /// figures. In two Windows Forms text boxes: focus changes into each by

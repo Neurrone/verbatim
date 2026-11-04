@@ -2,7 +2,7 @@
 //! of the CPU's scheduling (`cargo xtask trace start|stop`), run by `cargo
 //! xtask trace waits <trace.etl> [process.exe ...]`.
 //!
-//! `books/dev/src/explanation/design/communication.md` (sections 6.1 and 11) asks, for each
+//! `docs/design/communication.md` (sections 6.1 and 11) asks, for each
 //! slow hand-off, whether the thread that should have taken it was ready
 //! and not run, and checks that raised thread priorities never keep
 //! Verbatim's own GUI thread, or the foreground application's, waiting.

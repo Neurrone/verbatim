@@ -70,6 +70,9 @@ harness, NVDA captures and troubleshooting.
 - [Experiments](../experiments/readme.md) — the experiments behind the
   UIA faults and the surveys behind design choices, one folder each.
 - Design records of work still being designed or built:
+  - [communication.md](design/communication.md) — every pipe and thread
+    from an event or a key to sound; published once its audio step is
+    built.
   - [ownership-milestone-rules.md](design/ownership-milestone-rules.md) —
     the ownership rules each planned milestone follows, and the evidence
     behind them.

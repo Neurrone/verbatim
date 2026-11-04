@@ -1966,7 +1966,7 @@ impl<R: Reading> Readers<R> {
     /// Runs `waiter` once no event queued before this call is waiting for
     /// its read or being read, at once if none is, under the readers'
     /// lock, behind the outcome of every one of them: the idle barrier's
-    /// answer goes behind them (`books/dev/src/explanation/design/communication.md`, section
+    /// answer goes behind them (`docs/design/communication.md`, section
     /// 6.7). Events queued after this call are not waited for. Never waits
     /// on a read. Once the readers are stopping, `waiter` is dropped unrun.
     pub(crate) fn when_idle(&self, waiter: IdleWaiter) {

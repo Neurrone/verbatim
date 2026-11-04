@@ -606,7 +606,7 @@ Each file's module comment says exactly what it asserts; in outline:
   before it checks that the held call keeps it there, so the binary
   requires the `faults` feature and runs in `cargo xtask faults`.
 - `idle_barrier.rs`: the outpost's part of the harness's idle barrier
-  (`books/dev/src/explanation/design/communication.md`, section 6.7): the answer to an idle
+  (`docs/design/communication.md`, section 6.7): the answer to an idle
   query goes behind every message the outpost sent before it, and is held
   back while a caret key's watch is open.
 - `caret_watch.rs`, over `caret_watch.json` (a UIA document and a

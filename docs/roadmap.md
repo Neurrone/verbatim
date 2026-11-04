@@ -360,7 +360,7 @@ The decisions, in brief:
 ### Deferred
 
 - Review keys straight to the reducer
-  ([communication](../books/dev/src/explanation/design/communication.md), section 11) is reconsidered
+  ([communication](design/communication.md), section 11) is reconsidered
   when the command set is settled (Dickson, 2026-10-14).
 
 ### Follow-ups from M4.6
@@ -378,7 +378,7 @@ The decisions, in brief:
 
 ### The simulation of the reducers, deferred
 
-Built only if the second measure above is met. A simulation joining the reducers through pretend pipes, with their concurrency, as Dropbox's Trinity did beside its CanopyCheck tests of single pure owners. It needs two prerequisites: the transport's merge, priority and overflow rules as pure code it can call, since the real pipes merge by key, put urgent messages first and drop the oldest past 64 (`books/dev/src/explanation/design/communication.md`, section 4.4), and a recorder of the worker's commits. It is hand-written, since the simulation frameworks assume async code, and it has a fault model for application answers (slow, failing, reordered, the application exiting), counters for the states reached, a separate random stream per component, and the end-to-end suite kept, since that catches what no simulation models.
+Built only if the second measure above is met. A simulation joining the reducers through pretend pipes, with their concurrency, as Dropbox's Trinity did beside its CanopyCheck tests of single pure owners. It needs two prerequisites: the transport's merge, priority and overflow rules as pure code it can call, since the real pipes merge by key, put urgent messages first and drop the oldest past 64 (`docs/design/communication.md`, section 4.4), and a recorder of the worker's commits. It is hand-written, since the simulation frameworks assume async code, and it has a fault model for application answers (slow, failing, reordered, the application exiting), counters for the states reached, a separate random stream per component, and the end-to-end suite kept, since that catches what no simulation models.
 
 A simulated application would follow it, once the simulation has shown value by the same kind of judgement. In order:
 
@@ -822,7 +822,7 @@ second real engine (Dickson, 2026-10-29).
   every waiting utterance, as NVDA does, where Verbatim judges it only
   for the focus just left (the focus pipeline audit).
 - The audio step of the communication design
-  ([communication](../books/dev/src/explanation/design/communication.md), section 11; Dickson,
+  ([communication](design/communication.md), section 11; Dickson,
   2026-10-08): the audio stream stays awake after speech, writing silence,
   for a configurable period, 30 seconds by default as in NVDA, because
   Bluetooth, USB, HDMI and virtual-machine endpoints otherwise clip or

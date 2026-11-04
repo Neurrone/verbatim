@@ -228,7 +228,7 @@ fn run(
     // and control-plane commands, each one packet posted to it. The port is
     // first in, first out across all its posters, so the reducer takes its
     // inputs in the order they reached it, as NVDA queues keys with events
-    // (`books/dev/src/explanation/design/communication.md`, section 4.5). A post never waits.
+    // (`docs/design/communication.md`, section 4.5). A post never waits.
     let (command_tx, command_rx) = port_queue::<ShellCommand>()?;
 
     // The theme the configuration names, with its sounds, presents speech
@@ -654,7 +654,7 @@ fn build_speech_manager(
         mixer.tap(Box::new(recorder));
     }
     // The mixer's delivery thread only moves messages, so it runs raised
-    // (`books/dev/src/explanation/design/communication.md`, section 6.1).
+    // (`docs/design/communication.md`, section 6.1).
     mixer.on_delivery_thread(Box::new(|| {
         verbatim_process::scheduling::prioritize_role(
             "the audio events delivery",
@@ -1010,7 +1010,7 @@ struct ReducerThread<'a> {
     held_due: Option<(TraceId, Instant)>,
     /// Control-plane `AwaitIdle` waiters that reached their place in line,
     /// and the idle barrier's round through every child that answers them
-    /// (`books/dev/src/explanation/design/communication.md`, section 6.7).
+    /// (`docs/design/communication.md`, section 6.7).
     barrier: idle::IdleBarrier<Sender<()>>,
     /// Given spares that failed before their `Ready` and whose `Ended` is
     /// still to come: their applications' held facts went to the next
@@ -1446,7 +1446,7 @@ impl ReducerThread<'_> {
         }
     }
 
-    /// Moves the idle barrier on (`books/dev/src/explanation/design/communication.md`, section
+    /// Moves the idle barrier on (`docs/design/communication.md`, section
     /// 6.7), between steps, so the reducer is never in the middle of one.
     /// Once every outpost the round asked has answered or ended, takes in
     /// everything already queued for the reducer, then checks its own
@@ -1645,7 +1645,7 @@ impl ReducerThread<'_> {
     /// change, of the held anchors or of the position of the last message
     /// handled alone, is left for the outpost, and the next command written
     /// to it, a request or the relay's ping within three seconds, carries
-    /// it (`books/dev/src/explanation/design/communication.md`, step 11): the caret's anchor
+    /// it (`docs/design/communication.md`, step 11): the caret's anchor
     /// changes with every key, and a write for each would cost a pipe
     /// write and the outpost's reader wake on the typing path.
     fn send_views(&mut self) {
@@ -2091,7 +2091,7 @@ fn asks_dump(who: &Asker, ticket: DumpTicket) -> bool {
 
 /// Posts the supervisor's messages to the reducer thread's port, in line
 /// with its keys and commands, so the reducer takes them all in the order
-/// they arrived (`books/dev/src/explanation/design/communication.md`, section 4.5); and lets the
+/// they arrived (`docs/design/communication.md`, section 4.5); and lets the
 /// supervisor's relay watch the reducer through the port's counts, logging
 /// a stall it reports (section 6.8).
 fn outpost_sink(command_tx: Commands) -> verbatim_supervisor::EventSink {

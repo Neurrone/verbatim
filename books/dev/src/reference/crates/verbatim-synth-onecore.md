@@ -32,7 +32,7 @@ audibly jumps from 1.0x to 3.25x — the jump is the feature. Appended
 silence is set to its minimum at startup, as NVDA does, and the speech
 manager trims what is left. `speak` waits on the synthesis operation's
 completion (its thread is dedicated), or for the cancel, whichever comes
-first, with no timer (`books/dev/src/explanation/design/communication.md`, section 7.3): it
+first, with no timer (`docs/design/communication.md`, section 7.3): it
 waits on events, one the completion sets, one the waker it registers
 with the sink (`SynthSink::on_cancel`) sets, and the interrupt event when
 it has one, on which it asks the sink's `is_cancelled` and waits again

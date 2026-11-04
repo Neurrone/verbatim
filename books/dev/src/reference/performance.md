@@ -161,7 +161,7 @@ only.
 
 Every fact the listener sees and every request Core makes passes through
 verbatim.exe, so its share is a stage of its own in the latency line
-(`books/dev/src/explanation/design/communication.md`, section 10.1; `books/dev/src/how-to/inspect.md`
+(`docs/design/communication.md`, section 10.1; `books/dev/src/how-to/inspect.md`
 lists the stages). Budget: verbatim.exe's own stage at most 1 to 2 ms,
 and its added hop no worse than the platform's floor for crossing
 processes, every exception attributed.
@@ -177,7 +177,7 @@ processes, every exception attributed.
 - The reducer parses every outpost frame on its own thread, whatever its
   size, with no wake-up of its own: a few microseconds for the common
   messages. A terminal's text and colours travel in the frame's raw
-  section (`books/dev/src/explanation/design/communication.md`, section 4.2), so a
+  section (`docs/design/communication.md`, section 4.2), so a
   whole-document read of 9,031 rows takes 0.08 to 0.12 ms for 0.29 MB of
   Latin text and 0.09 to 0.18 ms for 0.36 MB of Cyrillic, and an ordinary
   read with its screen's 30 rows of 120 colour runs 0.03 to 0.04 ms
@@ -1638,7 +1638,7 @@ machine, three runs, medians in µs over both terminals:
   bytes, 40 to 41.
 
 Every case is within the reducer's budget of 2 ms a step
-(`books/dev/src/explanation/design/communication.md`, decision 9) at the median, so the
+(`docs/design/communication.md`, decision 9) at the median, so the
 alignment of a whole document stays on the reducer (Dickson, 2026-10-26,
 who would rather optimize than move it off as an effect). The slowest of
 the 31 runs of the lost read and of the clear and reprint reach 1.9 to 2.7

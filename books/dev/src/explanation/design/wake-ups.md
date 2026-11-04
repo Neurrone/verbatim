@@ -11,7 +11,7 @@ wake-ups were counted and each source fixed where it starts. The rule
 that follows is a standing one (`CLAUDE.md`, "Standing rules"): every
 change is judged on wake-ups and processor time as well as latency. The
 current figures per workload are in `books/dev/src/reference/performance.md`; the
-communication design's baseline is `books/dev/src/explanation/design/communication.md`,
+communication design's baseline is `docs/design/communication.md`,
 section 18.
 
 A wake-up is a thread switched in after waiting. Traces are taken and
@@ -61,7 +61,7 @@ The items keep their numbers, since code and the crate guides cite them.
    changed list waits in the outpost's writer and goes in the same write
    as Core's next command to that outpost, or with the next ping, so it
    never costs a write of its own and is at most one ping interval late
-   (`books/dev/src/reference/crates/verbatim-app.md`; `books/dev/src/explanation/design/communication.md`,
+   (`books/dev/src/reference/crates/verbatim-app.md`; `docs/design/communication.md`,
    step 11).
 5. Every outpost message woke three threads before the reducer handled
    it. The transport of the communication design removed the outpost's

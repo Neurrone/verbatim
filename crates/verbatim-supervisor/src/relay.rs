@@ -1,5 +1,5 @@
 //! The relay: the completion port the owner thread waits on, and the pipes
-//! it serves through it (`books/dev/src/explanation/design/communication.md`, sections 4.7 and
+//! it serves through it (`docs/design/communication.md`, sections 4.7 and
 //! 6.2).
 //!
 //! The owner thread is the relay. It waits only on the port, for:

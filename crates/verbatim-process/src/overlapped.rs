@@ -1,6 +1,6 @@
 //! Overlapped pipes and an I/O completion port, for a thread that reads and
 //! writes many pipes without blocking on any of them
-//! (`books/dev/src/explanation/design/communication.md`, sections 4 and 6).
+//! (`docs/design/communication.md`, sections 4 and 6).
 //!
 //! [`pipe`] makes a pipe as the standard library makes its child pipes:
 //! with `NtCreateNamedPipeFile` on the named pipe file system's root and an
@@ -444,7 +444,7 @@ impl PortFile {
 /// thread that waits on it together with other events
 /// ([`crate::event::wait_any`]) rather than on a port: the synth thread
 /// reading its host, and a synthesizer host reading Core's commands and
-/// writing its audio (`books/dev/src/explanation/design/communication.md`, section 7). The
+/// writing its audio (`docs/design/communication.md`, section 7). The
 /// event is reset as each operation starts and set when it finishes, at
 /// once or later.
 #[derive(Debug)]

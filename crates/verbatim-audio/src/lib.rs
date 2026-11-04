@@ -83,7 +83,7 @@ impl std::error::Error for AudioError {}
 
 /// Where a device's own clock had got to: how many frames it had played
 /// since it last started, and how long before the reading was returned
-/// that was so (`books/dev/src/explanation/design/communication.md`, section 10.1, "Device
+/// that was so (`docs/design/communication.md`, section 10.1, "Device
 /// clock").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ClockReading {

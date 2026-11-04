@@ -367,7 +367,7 @@ to its bound.
 
 ## Public API
 
-`run_listener` is the listener runtime (`books/dev/src/explanation/design/communication.md`,
+`run_listener` is the listener runtime (`docs/design/communication.md`,
 section 6.3).
 
 - Its main thread is its I/O thread (completion port,

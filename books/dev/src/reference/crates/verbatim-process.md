@@ -70,7 +70,7 @@ Public API:
   creates, can hold Core's pipes open after the child exits. The outpost
   binary, as an outpost and as the listener, and the synthesizer host use
   it.
-- `clock` (`books/dev/src/explanation/design/communication.md`, section 3.3) — the clock every
+- `clock` (`docs/design/communication.md`, section 3.3) — the clock every
   process of a run stamps the times it compares across processes with:
   `now_us()`, the performance counter in microseconds plus one offset to
   the Unix epoch. `offset()` is the offset the launching process handed on
@@ -82,7 +82,7 @@ Public API:
   the system's clock is set meanwhile. `Clock` and `ObservationClock`
   are the clocks a test may replace: `Instant::now`, and the shared
   clock's `now_us`, as `Arc`'d closures.
-- `overlapped` (`books/dev/src/explanation/design/communication.md`, sections 4 and 6) —
+- `overlapped` (`docs/design/communication.md`, sections 4 and 6) —
   `pipe(flow, buffer, other)` makes a pipe with no name, as the standard
   library makes its child pipes (`NtCreateNamedPipeFile` on the named
   pipe file system's root with an empty name, the other end opened
@@ -109,7 +109,7 @@ Public API:
   finished, `wait` waits for it, and `cancel_read` cancels a read in
   flight and waits for it to end (only a read is ever cancelled).
   `transport` uses it.
-- `event` (`books/dev/src/explanation/design/communication.md`, sections 7.3 and 7.4) —
+- `event` (`docs/design/communication.md`, sections 7.3 and 7.4) —
   `Event`, an unnamed manual-reset event (`new`, `set`, `reset`,
   `is_set`), and `wait_any(events, timeout)`, which waits until any of
   up to 64 events is set and returns the lowest one's index, or `None`
@@ -118,7 +118,7 @@ Public API:
   deadline and a caller looping to one never spins: what the synth thread waits on for its host's
   next frame and its utterance's cancel together, and a synthesizer host
   for its write to Core and Core's next command.
-- `port_queue` (`books/dev/src/explanation/design/communication.md`, sections 4.5 and 6.2) —
+- `port_queue` (`docs/design/communication.md`, sections 4.5 and 6.2) —
   how verbatim.exe's reducer takes its inputs: `port_queue()` gives a
   `Poster<T>`, cloned for every thread that posts, and a `PortQueue<T>`,
   the one taker, on a completion port of their own. `Poster::send(item)`
@@ -141,7 +141,7 @@ Public API:
   with the item as subject, which gives the item back as a refused
   packet does; it is compiled only into this crate's tests and under its
   `faults` feature ([verbatim-faults](verbatim-faults.md)).
-- `scheduling` (`books/dev/src/explanation/design/communication.md`, section 6.1) —
+- `scheduling` (`docs/design/communication.md`, section 6.1) —
   `prioritize_current_thread(priority)` runs the calling thread at a
   `ThreadPriority` (`Normal`, `AboveNormal`, `Highest`, `TimeCritical`);
   `prioritize_role(role, priority)` does the same and logs a refusal as
@@ -152,12 +152,12 @@ Public API:
   sender's finishing thread), and the `WinEvent` threads. Each caller
   names its level once per role in a constant of its own. Every other thread keeps
   normal priority: raising the threads that compute did not pay when
-  measured (`books/dev/src/explanation/design/communication.md`, section 11, step 3).
+  measured (`docs/design/communication.md`, section 11, step 3).
   Power throttling is left to Windows, since the same measurement found
   no gain from opting out that would pay for the energy. Timer resolution
   is not raised.
 - `transport` — the frames and senders of the pipes between verbatim.exe
-  and its outposts, listener and synthesizer hosts (`books/dev/src/explanation/design/communication.md`, section
+  and its outposts, listener and synthesizer hosts (`docs/design/communication.md`, section
   4). A frame is `Content-Length: ` and the body's length in ten digits;
   for a frame with a raw section, a line break and `Raw-Length: ` with
   the raw section's length in ten digits; a blank line; then the body, a
@@ -290,7 +290,7 @@ Public API:
   `TerminalSnapshot`, or a reply with a `TerminalSnapshot`,
   `TerminalHistory`, or `TerminalFound`, its `RequestId` in the JSON as
   any reply's) has a raw section (the private
-  `message::raw` module; `books/dev/src/explanation/design/communication.md`, section 4.2): each
+  `message::raw` module; `docs/design/communication.md`, section 4.2): each
   text is UTF-8 there and a range in the JSON, `"raw":[start,length]` in a
   `TerminalText` and `"text":[start,length]` for a history's or match's
   text, and colour runs are 16-byte records of four little-endian `u32`s

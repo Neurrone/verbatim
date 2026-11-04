@@ -27,10 +27,11 @@
 //! 4. A book's `SUMMARY.md`, `books/<book>/src/SUMMARY.md`, links every
 //!    Markdown file under that `src/` folder, because mdBook publishes only
 //!    the pages its summary lists.
-//! 5. A relative link in a book's page resolves inside that book's `src/`
-//!    folder, because the published site carries nothing else: a page
-//!    names an agent-only document, a source file or another book by its
-//!    full address instead.
+//! 5. A relative link in a book's page resolves to a page inside that
+//!    book's `src/` folder, because the published site carries nothing
+//!    else: a page names an agent-only document, a source file or another
+//!    book by its full address instead. The page is a file other than the
+//!    summary, since mdBook publishes neither a folder nor `SUMMARY.md`.
 //!
 //! Names are compared exactly, letter case included, as GitHub compares
 //! them, although Windows' own file system would accept another case.
@@ -80,6 +81,14 @@ fn book_source(path: &str) -> Option<&str> {
     let (book, inside) = rest.split_once('/')?;
     inside.strip_prefix("src/")?;
     Some(&path[..BOOKS.len() + book.len() + "/src/".len()])
+}
+
+/// Whether `resolved`, a path inside the book whose source folder is
+/// `source`, is a file mdBook publishes at that path: a name with an
+/// extension (a folder has none) other than the book's summary.
+fn is_published_page(resolved: &str, source: &str) -> bool {
+    let name = resolved.rsplit('/').next().unwrap_or(resolved);
+    resolved != format!("{source}SUMMARY.md") && name.contains('.')
 }
 
 /// Directories, from the repository root, whose documents are not checked.
@@ -205,7 +214,7 @@ impl Disk {
     }
 }
 
-/// The three rules over `documents`, each a path from the repository root
+/// The five rules over `documents`, each a path from the repository root
 /// with `/` between its parts and the file's text, sorted by path, with
 /// `exists` saying whether a path from the root names a file or directory.
 fn check_documents(
@@ -228,12 +237,16 @@ fn check_documents(
                             "{path}:{line}: the link ({target}) names {resolved}, which does not exist"
                         )),
                         Some(resolved) => {
-                            if let Some(source) = book_source(path)
-                                && !format!("{resolved}/").starts_with(source)
-                            {
-                                violations.push(format!(
-                                    "{path}:{line}: the link ({target}) leaves the book {source}; name {resolved} by its full address"
-                                ));
+                            if let Some(source) = book_source(path) {
+                                if !format!("{resolved}/").starts_with(source) {
+                                    violations.push(format!(
+                                        "{path}:{line}: the link ({target}) leaves the book {source}; name {resolved} by its full address"
+                                    ));
+                                } else if !is_published_page(&resolved, source) {
+                                    violations.push(format!(
+                                        "{path}:{line}: the link ({target}) names {resolved}, which the book does not publish as a page; link a page"
+                                    ));
+                                }
                             }
                         }
                     }
@@ -746,15 +759,23 @@ mod tests {
     #[test]
     fn a_link_in_a_book_must_stay_inside_that_book() {
         let documents = fixture(&[
-            ("books/dev/src/SUMMARY.md", "- [Page](part/page.md)\n"),
+            (
+                "books/dev/src/SUMMARY.md",
+                "- [Intro](intro.md)\n- [Page](part/page.md)\n",
+            ),
             (
                 "books/dev/src/part/page.md",
-                "[sibling](../SUMMARY.md), [agent](../../../../docs/a.md),\n\
+                "[sibling](../intro.md), [agent](../../../../docs/a.md),\n\
                  [other book](../../../user/src/SUMMARY.md), [source](/crates/foo/src/lib.rs),\n\
-                 [web](https://example.com/docs/a.md) and `docs/a.md`.\n",
+                 [web](https://example.com/docs/a.md) and `docs/a.md`.\n\
+                 [summary](../SUMMARY.md) and [folder](../part).\n",
             ),
+            ("books/dev/src/intro.md", ""),
             ("books/user/src/SUMMARY.md", ""),
-            ("docs/a.md", "[into a book](../books/dev/src/part/page.md)\n"),
+            (
+                "docs/a.md",
+                "[into a book](../books/dev/src/part/page.md)\n",
+            ),
         ]);
         assert_eq!(
             run_check(&documents, &["crates/foo/src/lib.rs"]),
@@ -764,6 +785,10 @@ mod tests {
                 "books/dev/src/part/page.md:2: the link (../../../user/src/SUMMARY.md) leaves the book books/dev/src/; name books/user/src/SUMMARY.md by its full address"
                     .to_owned(),
                 "books/dev/src/part/page.md:2: the link (/crates/foo/src/lib.rs) leaves the book books/dev/src/; name crates/foo/src/lib.rs by its full address"
+                    .to_owned(),
+                "books/dev/src/part/page.md:4: the link (../SUMMARY.md) names books/dev/src/SUMMARY.md, which the book does not publish as a page; link a page"
+                    .to_owned(),
+                "books/dev/src/part/page.md:4: the link (../part) names books/dev/src/part, which the book does not publish as a page; link a page"
                     .to_owned(),
             ]
         );

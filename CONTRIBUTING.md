@@ -8,7 +8,7 @@ Contributions are welcome. Three things to read before the first one:
 - The "NVDA provenance" section of `CLAUDE.md`. The platform-neutral
   crates listed there must stay original work; code ported from NVDA
   belongs only in the Windows-specific crates, with its source named.
-- `docs/readme.md`, the documentation index, starting with
+- The Development guide, `books/dev/`, starting with
   `books/dev/src/explanation/architecture.md` for the decisions of record.
 
 After cloning, fetch eSpeak NG's source, which Verbatim builds as its

@@ -406,7 +406,7 @@ the same tables and code, which the arbitrator's own lists are built from.
 - `Outpost::observe_heard` hands a `HeardObserver` each event the outpost's
   own handlers and hook take in, as a `Heard`, once queued.
 
-Inside an outpost (`books/dev/src/explanation/design/communication.md`, section 6.4;
+Inside an outpost (`docs/design/communication.md`, section 6.4;
 `books/dev/src/explanation/design/ownership.md`):
 
 - The mailbox (`outpost::shell::Mailbox`): the hook callbacks
@@ -1359,7 +1359,7 @@ UIA limiter keys it.
 ## Messages to Core
 
 The thread that sends a message writes it itself (`outpost::outbound`,
-through the transport's `Sender`; `books/dev/src/explanation/design/communication.md`, section
+through the transport's `Sender`; `docs/design/communication.md`, section
 4.3): at once with one `WriteFile` when no write is in flight, otherwise
 into the sender's backlog, which the I/O thread writes as writes complete.
 Nothing that sends ever waits, so the reducer can always abandon a worker.
@@ -1384,7 +1384,7 @@ The supervisor and the listener never wait to send either.
 ## The idle barrier
 
 The harness's `AwaitIdle` (`verbatim-app`'s `idle` module;
-`books/dev/src/explanation/design/communication.md`, section 6.7) is answered after a round in
+`docs/design/communication.md`, section 6.7) is answered after a round in
 which every child said nothing that came before the question was in
 progress. The round is in band, so it covers pipes and backlogs.
 
@@ -1446,7 +1446,7 @@ The outpost's side (`Outpost::shutdown`), in order:
    a terminal's kept start (`Store::release_everything`).
 6. What waits is written, every write in flight completes
    (`ChildIo::finish`), and the pipe closes, since an exit would cancel a
-   write (`books/dev/src/explanation/design/communication.md`, section 4.6).
+   write (`docs/design/communication.md`, section 4.6).
 7. The thread leaves COM's apartment. `run_pipe`, the process's exit
    path, then gives back the process's hold
    (`verbatim_uia::release_mta_usage`), ending the registering thread with

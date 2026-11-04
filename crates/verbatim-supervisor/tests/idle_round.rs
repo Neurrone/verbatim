@@ -1,5 +1,5 @@
 //! The relay's part of the harness's idle barrier
-//! (`books/dev/src/explanation/design/communication.md`, section 6.7): a round asks the
+//! (`docs/design/communication.md`, section 6.7): a round asks the
 //! listener first, then every outpost behind every fact relayed to it
 //! before, telling the app which outposts it asked before it asks them; a
 //! listener that ends during the round counts as having answered; and an

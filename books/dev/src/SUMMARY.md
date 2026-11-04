@@ -74,7 +74,6 @@
 - [Walkthroughs: six end-to-end narratives](explanation/walkthroughs.md)
 - [Design records](explanation/design/readme.md)
   - [Ownership: one owner for every fact](explanation/design/ownership.md)
-  - [Communication and threading: one design from an event or a key to sound](explanation/design/communication.md)
   - [How events reach Verbatim and are processed: a design aligned with NVDA](explanation/design/focus-pipeline.md)
   - [The focus listener without connections: a design](explanation/design/listener-without-connections.md)
   - [UIA shapes: every cached read declared with the request that fills it](explanation/design/uia-shapes.md)

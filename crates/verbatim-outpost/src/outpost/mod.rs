@@ -983,7 +983,7 @@ enum Finisher {
 
 /// The priority of a thread that only finishes the outpost's writes to
 /// Core, or reads Core's pipe and hands each command on, for microseconds
-/// per wake (`books/dev/src/explanation/design/communication.md`, section 6.1).
+/// per wake (`docs/design/communication.md`, section 6.1).
 const IO_PRIORITY: ThreadPriority = ThreadPriority::Highest;
 
 impl Outpost {
@@ -1876,7 +1876,7 @@ fn fault(context: &Context, detail: String) {
 /// section 19.2): it sends [`OutpostToCore::SpareReady`] and watches
 /// the application Core's [`CoreToOutpost::Assign`] gives it from
 /// then on. It runs on the transport's child side
-/// (`books/dev/src/explanation/design/communication.md`, sections 4.6 and 6.4): the calling
+/// (`docs/design/communication.md`, sections 4.6 and 6.4): the calling
 /// thread becomes the outpost's I/O thread, which reads commands from
 /// `pipe_in` and finishes the writes to `pipe_out` that pend, while every
 /// thread that sends Core a message writes it itself. It runs until Core

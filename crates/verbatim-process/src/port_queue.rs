@@ -1,6 +1,6 @@
 //! A queue whose every item is one packet posted to an I/O completion
 //! port: how verbatim.exe's reducer takes its inputs
-//! (`books/dev/src/explanation/design/communication.md`, sections 4.5 and 6.2).
+//! (`docs/design/communication.md`, sections 4.5 and 6.2).
 //!
 //! Any thread posts an item with [`Poster::send`], one
 //! `PostQueuedCompletionStatus` that never waits, the item boxed and its

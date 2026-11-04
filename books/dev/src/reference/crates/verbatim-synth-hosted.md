@@ -42,7 +42,7 @@ and launches the host on them with `launch_with_ends`, with
 and the log stem `synth-<id>`. The driver's ends are a
 `transport::EventWriter` for commands and a `transport::EventReader` for
 the host's messages; there is no reader thread
-(`books/dev/src/explanation/design/communication.md`, section 7). The host lives exactly as
+(`docs/design/communication.md`, section 7). The host lives exactly as
 long as its `HostedSynth`: switching synthesizer drops the driver, which
 drops the job handle and so ends the process. In a build instrumented for
 coverage the dropped driver closes the host's pipes and leaves the host
@@ -71,7 +71,7 @@ before the `Speak` request's write begins. With the host's `FirstAudio`
 stamps and a stamp as that frame is handled, it reports a `SynthTiming`
 to the sink: the request, the trip to the host, the host's first chunk,
 and the trip back to the frame's handling
-(`books/dev/src/explanation/design/communication.md`, section 10.1).
+(`docs/design/communication.md`, section 10.1).
 
 Cancellation (sections 7.2 and 7.3). Once the request is written, the
 driver registers a waker with the sink (`SynthSink::on_cancel`) that sets

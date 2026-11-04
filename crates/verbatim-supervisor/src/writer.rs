@@ -1,5 +1,5 @@
 //! Each child's writer: a [`Sender`] on its command pipe, so nothing that
-//! makes a decision ever waits on a pipe (`books/dev/src/explanation/design/communication.md`,
+//! makes a decision ever waits on a pipe (`docs/design/communication.md`,
 //! section 4.3). The thread
 //! that queues a command writes it itself when the pipe is free and
 //! nothing waits; while a write is in flight, commands wait in a bounded
@@ -25,7 +25,7 @@
 //!   every part of a UIA focus's read (its marker, its read or drop, and
 //!   the end of a listener's reads), since an outpost waits on a marker
 //!   until its read or drop arrives;
-//! - the idle barrier's query (`books/dev/src/explanation/design/communication.md`, section 6.7)
+//! - the idle barrier's query (`docs/design/communication.md`, section 6.7)
 //!   always gets through, past the bound, behind everything queued before
 //!   it, and no fact queued after it replaces one queued before it, which
 //!   would move that fact behind the query;
@@ -33,7 +33,7 @@
 //!   outcome straight away instead of waiting behind a stuck outpost.
 //!
 //! The list of the nodes Core holds in an outpost is not a command of its
-//! own (`books/dev/src/explanation/design/communication.md`, step 11): the reducer leaves the
+//! own (`docs/design/communication.md`, step 11): the reducer leaves the
 //! latest list in the writer's slot ([`WriterHandle::leave_held`]), a newer
 //! one replacing a list not yet sent, and whichever write to the outpost
 //! comes next, a request from the reducer, a ping from the relay, or any
@@ -251,7 +251,7 @@ impl<M: ToChild> Outgoing<M> {
 
 /// Now, as verbatim.exe takes in something it relays to an outpost: a
 /// listener's fact as its read completed, or a request as it was queued
-/// (`books/dev/src/explanation/design/communication.md`, section 10.1), on the run's shared
+/// (`docs/design/communication.md`, section 10.1), on the run's shared
 /// clock, which every process's stamps share.
 /// The data is `verbatim_core::supervisor::Received`.
 pub(super) fn received_now() -> Received {

@@ -681,7 +681,7 @@ dump worth keeping becomes a regression test as
 ## The measure set
 
 The registry's `measure` group holds the measure set, the measurement
-workloads that `books/dev/src/explanation/design/communication.md` section 11 runs at every
+workloads that `docs/design/communication.md` section 11 runs at every
 migration step: its first step records the baseline, and later steps
 compare their figures with it. They are measurement, not tests
 (`books/dev/src/reference/testing.md`): they assert Verbatim's startup speech and the
@@ -745,7 +745,7 @@ The scenarios, all named `measure_`:
   ([holding caret keys](../explanation/design/key-holding.md), "A key held with
   auto-repeat"), is not in the default set, and is named with
   `--scenario`.
-- `measure_speech_real` (`books/dev/src/explanation/design/communication.md`, section 10.3):
+- `measure_speech_real` (`docs/design/communication.md`, section 10.3):
   the speech path through the real synthesizer host and audio device, so
   the ledger's host and device clock stages have figures: two Windows
   Forms text boxes brought forward 20 times by turns, three rounds of
@@ -781,7 +781,7 @@ Against the VM, `cargo xtask vm test --group measure` runs the set, with
 `measure_speech_real` failing at once in a silent run, and
 `cargo xtask vm test --scenario measure_keys_conhost` one of it, in debug.
 
-`books/dev/src/explanation/design/communication.md` section 11 compares debug and release, so
+`docs/design/communication.md` section 11 compares debug and release, so
 measure both. Debug is what a
 run stages by default: it builds the debug binaries and stages them from
 `target\debug`. For release, build every binary the run stages, then name

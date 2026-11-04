@@ -72,7 +72,7 @@ which only the owner turns into its sealed message; the `lifecycle-for-tests` fe
 `Event(pid, outpost_id, position, message)`, the payload boxed: it parses
 each frame, stamps node ids with the outpost's id, records when the relay
 read it, and numbers the messages that carry node ids
-(`books/dev/src/explanation/design/communication.md`, section 4.8). A frame that is not a message
+(`docs/design/communication.md`, section 4.8). A frame that is not a message
 ends its outpost: `Frames` drops that outpost's later frames at once,
 handing on only its end, and the relay drops every frame from an outpost
 it has already ended. Messages go through the `EventSink` given to `new` (a
@@ -92,13 +92,13 @@ since its subject is private to the crate ([verbatim-faults](verbatim-faults.md)
 heartbeat.
 `EventSink::watched(progress, stalled)` reports a `ReducerStall` once the
 reducer thread has taken nothing for three heartbeats while inputs waited;
-nothing is ended for it (`books/dev/src/explanation/design/communication.md`, section 6.8).
+nothing is ended for it (`docs/design/communication.md`, section 6.8).
 
 How it works:
 
 - The owner and relay (`owner`, `relay`) is one thread, `verbatim-relay`,
   that makes every lifecycle decision and owns the records
-  (`books/dev/src/explanation/design/communication.md`, section 6.2). It waits only on one
+  (`docs/design/communication.md`, section 6.2). It waits only on one
   completion port, timing out at the next heartbeat (3 s) or sweep (30 s).
   It reads every child's pipe (`transport::PortReader`) and handles each
   frame in the pass that read it: a listener's frame decodes as a

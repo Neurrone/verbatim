@@ -101,7 +101,7 @@ loop while the hook is installed.
 ## Implementation notes
 
 The hook thread runs at `THREAD_PRIORITY_HIGHEST`
-(`verbatim_process::scheduling`; `books/dev/src/explanation/design/communication.md`, section
+(`verbatim_process::scheduling`; `docs/design/communication.md`, section
 11, step 3). It keeps its state in a thread-local (the hook procedure is a
 bare callback with no user pointer, and only ever runs on the thread that
 installed it), gathers each key's inputs for the machine (`KeyInput`: the
@@ -117,7 +117,7 @@ reader would go deaf to the keyboard with no error. So is the never-drop
 rule: a key pressed while Verbatim is backed up must still act once the
 reducer reaches it. Both hold because the reports go to completion
 ports, whose post never waits and whose backlog waits in memory in front
-of the reducer, as every backlog in `books/dev/src/explanation/design/communication.md` does
+of the reducer, as every backlog in `docs/design/communication.md` does
 (section 4.8). Each post allocates a box, so the allocator's own
 synchronisation stays on the hook thread; the hook takes no lock of
 Verbatim's. A re-entered hook procedure, should a callback ever dispatch

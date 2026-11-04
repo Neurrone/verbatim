@@ -55,7 +55,7 @@ descriptors, and the current value of each. It then serves commands until
 Core closes the command pipe, when it exits successfully. If a write to
 Core fails, Core is gone and the host exits with a failure code.
 
-One thread (`books/dev/src/explanation/design/communication.md`, sections 6.5 and 7.4). The
+One thread (`docs/design/communication.md`, sections 6.5 and 7.4). The
 host has only its main thread, which waits only on events. The command
 pipe is read through a `transport::EventReader`, whose read is in flight
 whenever nothing else is being read; its event wakes the thread when a

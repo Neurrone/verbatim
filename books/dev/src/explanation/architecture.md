@@ -182,7 +182,7 @@ Verbatim runs as four kinds of process:
    application, a watchdog that abandons and replaces a worker past its
    deadline, and an I/O thread that reads Core's commands, answers pings,
    and finishes the writes to Core that pended; every other thread writes
-   its own messages to Core (`books/dev/src/explanation/design/communication.md`, section 6.4).
+   its own messages to Core (`docs/design/communication.md`, section 6.4).
 3. **The focus listener process (`verbatim-listener.exe`)** (D13), one
    for the desktop, containing its `WinEvent` thread, its UIA event
    threads, a reading thread for each application whose UIA focus it
@@ -969,7 +969,7 @@ all in `--secure` instances. Core's internal channels to outposts and the
 synth host are the parent-child case and use inherited handles instead
 (section 1): pipes made with no name at any moment, as the standard
 library makes its child pipes, overlapped on Core's side, so no ACL
-surface (`books/dev/src/explanation/design/communication.md`, section 4.1). Remote access never reuses the pipe;
+surface (`docs/design/communication.md`, section 4.1). Remote access never reuses the pipe;
 it is the separate, opt-in TLS transport with pairing.
 
 ## 11. GUI

@@ -10,7 +10,7 @@
 //!   mailbox; nothing else changes a record, and there is no shared map
 //!   lock. Its heartbeat and sweep run when its wait's deadline passes.
 //! - The owner thread is also the relay ([`relay`];
-//!   `books/dev/src/explanation/design/communication.md`, section 6.2): it waits only on an I/O
+//!   `docs/design/communication.md`, section 6.2): it waits only on an I/O
 //!   completion port, reads the listener's pipe and routes each fact in the
 //!   pass that read it, writing it to its outpost there and then, so a fact
 //!   crosses verbatim.exe with one thread's wake-up; it reads every
@@ -211,7 +211,7 @@ const STAYED_UP: Duration = Duration::from_mins(1);
 /// the app every outpost's messages in the order they reached the
 /// supervisor. The
 /// app's sink posts them to the reducer thread's port, among its keys and
-/// commands (`books/dev/src/explanation/design/communication.md`, section 4.5); a channel of
+/// commands (`docs/design/communication.md`, section 4.5); a channel of
 /// [`OutpostMessage`]s converts into a sink, for tests.
 #[derive(Clone)]
 pub struct EventSink {
@@ -228,7 +228,7 @@ struct ReducerWatch {
 
 /// A stall of the thread taking the sink's messages, the reducer: it has
 /// taken none of its inputs for at least three ping intervals while some
-/// waited (`books/dev/src/explanation/design/communication.md`, section 6.8). It is a fault of
+/// waited (`docs/design/communication.md`, section 6.8). It is a fault of
 /// its own, and nothing is ended for it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ReducerStall {
@@ -519,7 +519,7 @@ pub enum OutpostMessage {
     /// parsed: the app passes it through [`Frames`], which turns it into
     /// the [`OutpostMessage::Event`] it carries.
     Frame(Frame),
-    /// The idle barrier's round `round` (`books/dev/src/explanation/design/communication.md`,
+    /// The idle barrier's round `round` (`docs/design/communication.md`,
     /// section 6.7; [`Supervisor::query_idle`]): the listener has answered,
     /// or has gone, and every outpost in `outposts` is asked now, each
     /// behind every fact relayed to it before, one still starting once it
@@ -799,7 +799,7 @@ impl Supervisor {
 
     /// Leaves for one outpost generation the list of its nodes and text
     /// anchors Core still holds, with the position of the last of its
-    /// messages the app has handled (`books/dev/src/explanation/design/communication.md`, step
+    /// messages the app has handled (`docs/design/communication.md`, step
     /// 11). Nothing is written for it: the next command written to that
     /// generation, a request from the app or the relay's ping within
     /// three seconds, carries it after its own frame, in the same write. A
@@ -896,7 +896,7 @@ impl Supervisor {
     }
 
     /// Runs the idle barrier's round `round` through the children
-    /// (`books/dev/src/explanation/design/communication.md`, section 6.7): the listener is asked
+    /// (`docs/design/communication.md`, section 6.7): the listener is asked
     /// first, behind every command sent to it before; once it answers, or
     /// if it has gone, every outpost, ready or starting, is asked behind
     /// every fact relayed to it before, and the app hears which

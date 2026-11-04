@@ -37,7 +37,7 @@ rubato = { version = "5", default-features = false }
 serde = { version = "1", features = ["derive", "rc"] }
 serde_json = "1"
 # UTF-8 validation of the terminal text in an outpost frame's raw section
-# (books/dev/src/explanation/design/communication.md, section 4.2).
+# (docs/design/communication.md, section 4.2).
 simdutf8 = "0.1"
 # Text segmentation for M4 (books/dev/src/reference/crates/verbatim-text.md): ICU4X's segmenters
 # with their compiled data (Unicode's

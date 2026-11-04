@@ -64,7 +64,7 @@ audio service not running, or a resource the engine lacked. It covers
 in place as well as one that went away: changing the default device's
 format failed an open made while the engine reconfigured, and Windows
 raised only property changes, none after that open returned
-(`books/dev/src/explanation/design/communication.md`, section 16). A device
+(`docs/design/communication.md`, section 16). A device
 removed during an open that fails with it costs one more open a second
 later, which asks for the default device afresh: it reaches the new
 default, or gets `E_NOTFOUND` and then waits for a notification with no

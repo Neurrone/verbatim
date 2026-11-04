@@ -10,7 +10,7 @@
 //! ends the process.
 //!
 //! The synth thread reads the host's pipe itself
-//! (`books/dev/src/explanation/design/communication.md`, sections 7.2 and 7.3). While it waits
+//! (`docs/design/communication.md`, sections 7.2 and 7.3). While it waits
 //! for the host it waits on the pipe's read and on its utterance's cancel
 //! together, so a cancel is written to the host at once. Having written
 //! it, the driver returns: it does not wait for the host to end the
@@ -639,7 +639,7 @@ fn write_by(
 
 /// Runs `write`, returning `now`'s stamp taken just before it begins, so
 /// the write's own time falls in the hop to the host
-/// (`books/dev/src/explanation/design/communication.md`, section 10.1).
+/// (`docs/design/communication.md`, section 10.1).
 fn stamped(now: impl FnOnce() -> u64, write: impl FnOnce() -> io::Result<()>) -> io::Result<u64> {
     let sent_at_us = now();
     write()?;
@@ -658,7 +658,7 @@ struct DriverStamps {
 }
 
 /// Splits a hosted synthesizer's start into its stages from the driver's
-/// stamps and the host's (`books/dev/src/explanation/design/communication.md`, section 10.1).
+/// stamps and the host's (`docs/design/communication.md`, section 10.1).
 fn split_synthesis(driver: &DriverStamps, host: HostTiming) -> SynthTiming {
     SynthTiming {
         request_us: driver.sent.saturating_sub(driver.asked),

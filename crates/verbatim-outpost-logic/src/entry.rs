@@ -193,7 +193,7 @@ pub enum Item {
         /// The terminal's node.
         node_id: NodeId,
     },
-    /// The idle barrier (`books/dev/src/explanation/design/communication.md`, section 6.7):
+    /// The idle barrier (`docs/design/communication.md`, section 6.7):
     /// it ends its batch, and is reached once everything that arrived
     /// before it has been handled and a noted caret is read. Core's round
     /// is answered then once no deferred work is pending, a test's settle

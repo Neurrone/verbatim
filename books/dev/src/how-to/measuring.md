@@ -5,7 +5,7 @@ How to measure Verbatim's latency, wake-ups and processor time on this machine.
 ## Measuring performance
 
 Verbatim is judged on latency, wake-ups and processor time together
-(`books/dev/src/explanation/design/communication.md`, section 18; `books/dev/src/explanation/design/wake-ups.md`).
+(`docs/design/communication.md`, section 18; `books/dev/src/explanation/design/wake-ups.md`).
 Two commands measure them on this machine against a locally running
 agent, which each starts and ends itself. Both take over the desktop as
 every end-to-end run does, so run them on the console (`cargo xtask
@@ -43,7 +43,7 @@ announcement: verbatim.exe's own stage with its hop to the outpost, the
 outpost's outbound queue and its pipe back, and the wait for the reducer;
 and a key's way to its speech queued. The stages are those the latency
 line names, listed with it under "Driving a running Verbatim with
-verbatim-inspect" ([inspect.md](inspect.md)) (`books/dev/src/explanation/design/communication.md`, section 10.1, gives
+verbatim-inspect" ([inspect.md](inspect.md)) (`docs/design/communication.md`, section 10.1, gives
 each one's stamps): the listener's way to verbatim.exe, for instance,
 shows as listener handling, listener queue, and listener's pipe to
 verbatim.exe, followed by verbatim.exe's own stage. A total is what the

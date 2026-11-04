@@ -41,7 +41,7 @@ input's effects (`follow_ups`), so one input is reduced at a time;
 `Effect::Show` posts the menu or a shell list to the GUI, dropped with a
 warning before the GUI is up. The reducer thread
 waits only on its own I/O completion port
-(`verbatim_process::port_queue`; `books/dev/src/explanation/design/communication.md`, section
+(`verbatim_process::port_queue`; `docs/design/communication.md`, section
 6.2) and takes everything posted to it, one packet per input, in the
 order it arrived: the supervisor's messages, each outpost's frames among
 them, posted by the relay as it reads them (through an `EventSink` that
@@ -50,7 +50,7 @@ gestures and typing, speech marks, GUI events and
 control-plane commands, so a key is reduced before an application's
 reaction that reached Core after it, and after one that reached Core
 before it, however busy the reducer was, as NVDA queues keys with events
-(`books/dev/src/explanation/design/communication.md`, section 4.5), and a review or
+(`docs/design/communication.md`, section 4.5), and a review or
 object-navigation gesture is reduced and its effects executed by the same
 path as an accessibility event; `Effect::Activate` is executed there alongside
 `Speak` and `Fetch`, and so are
@@ -130,7 +130,7 @@ The end-to-end harness's hooks (private `harness` module):
   numbered key, so on the reducer thread it waits until the input it
   names has been handled, then
   runs a round through every child (`idle.rs`, `IdleBarrier`;
-  `books/dev/src/explanation/design/communication.md`, section 6.7). The supervisor's relay
+  `docs/design/communication.md`, section 6.7). The supervisor's relay
   asks the listener, then every outpost, whether anything that came before
   the question is still in progress, and tells the reducer which outposts
   it asked (`OutpostMessage::IdleQueried`). Each child answers behind
@@ -276,7 +276,7 @@ Milestone M4's text protocol is wired here (`books/dev/src/reference/crates/verb
   outpost's writer (`Supervisor::leave_nodes_held`), and the next command
   written there, a request or the relay's ping within three seconds,
   carries it in the same write, after its own frame
-  (`books/dev/src/explanation/design/communication.md`, step 11): the caret's anchor changes
+  (`docs/design/communication.md`, step 11): the caret's anchor changes
   with every key, and a terminal's output changes the position with every
   message (`books/dev/src/explanation/design/wake-ups.md`, item 4).
 
@@ -524,9 +524,9 @@ knowing for review:
   thread) is kept as the last key, and each line ends with the time from it to the speech
   queued, whatever trace the speech came on. verbatim.exe's relay stamps
   (`EventTiming::core_received_at_us` and those after it, and
-  `core_read_at_us` on the way back; `books/dev/src/explanation/design/communication.md`, section 10.1),
+  `core_read_at_us` on the way back; `docs/design/communication.md`, section 10.1),
   and the senders' own stamps (the listener's handling's end and write, the
-  outpost's write; `books/dev/src/explanation/design/communication.md`, section 10.1)
+  outpost's write; `docs/design/communication.md`, section 10.1)
   split the spans across verbatim.exe: the listener's handling, its queue and
   its pipe to verbatim.exe (or the reducer's span to verbatim.exe), the
   time a fact was held for its starting outpost, verbatim.exe's own relay

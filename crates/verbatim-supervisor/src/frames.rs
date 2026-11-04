@@ -1,4 +1,4 @@
-//! The reducer's side of an outpost's frames (`books/dev/src/explanation/design/communication.md`,
+//! The reducer's side of an outpost's frames (`docs/design/communication.md`,
 //! sections 4.8 and 6.2): the relay reads every outpost's pipe and posts
 //! each frame it does not handle itself whole, unparsed, among the
 //! reducer's other inputs ([`OutpostMessage::Frame`]); the reducer passes

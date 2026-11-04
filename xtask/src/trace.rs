@@ -1,7 +1,7 @@
 //! `cargo xtask trace start` and `cargo xtask trace stop`: record a Windows
 //! Performance Recorder trace of the CPU's scheduling (WPR's built-in CPU
 //! profile: context switches and ready threads), which
-//! `books/dev/src/explanation/design/communication.md` uses to attribute each slow hand-off to
+//! `docs/design/communication.md` uses to attribute each slow hand-off to
 //! its cause and to check that raised thread priorities never keep
 //! Verbatim's GUI thread waiting.
 //!

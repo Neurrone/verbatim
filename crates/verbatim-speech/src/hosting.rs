@@ -5,7 +5,7 @@
 //! messages, so a host runs any driver unchanged: Core asks it to speak a
 //! [`SpeechSequence`] and the host streams back PCM, marks, and the outcome.
 //! Each message is one frame of the transport every pipe between Verbatim's
-//! processes uses (`books/dev/src/explanation/design/communication.md`, section 4.2), which
+//! processes uses (`docs/design/communication.md`, section 4.2), which
 //! lives in a Windows crate; this module gives each frame's parts. Every
 //! message is a JSON body; PCM's samples travel in the frame's raw section
 //! as little-endian `i16`s, the body giving their place there, since a
@@ -70,7 +70,7 @@ pub struct HostDescription {
 /// utterance names it, so Core can tell a cancelled utterance's last
 /// frames, still on their way when the next utterance is asked for, from
 /// the next utterance's, and drop them unread
-/// (`books/dev/src/explanation/design/communication.md`, section 7.2).
+/// (`docs/design/communication.md`, section 7.2).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FromHost {
     /// The synthesizer started; the first message a host sends.
@@ -183,7 +183,7 @@ pub fn decode_to_host(body: &[u8]) -> io::Result<ToHost> {
 }
 
 /// How the transport that carries these messages puts a frame together
-/// (`books/dev/src/explanation/design/communication.md`, section 4.2): a JSON body alone, or a
+/// (`docs/design/communication.md`, section 4.2): a JSON body alone, or a
 /// body and then a raw section. This module decides which a message's
 /// frame is ([`put_from_host`], [`put_pcm`]), so a PCM frame cannot be
 /// written without its samples.

@@ -207,7 +207,7 @@ impl Stages {
         let awaited = at(event.awaited_at_us);
         let read_calls = calls_besides(event.calls, event.awaited_calls);
         // verbatim.exe's relay stamps, on what it relayed to the outpost
-        // (`books/dev/src/explanation/design/communication.md`, section 10.1): with them, the span from
+        // (`docs/design/communication.md`, section 10.1): with them, the span from
         // the listener or the reducer to the outpost is split at
         // verbatim.exe, and its own time is its own stage. A relay time of
         // 0 is a real one, under a microsecond.

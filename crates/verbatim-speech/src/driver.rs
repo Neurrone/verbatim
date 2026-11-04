@@ -246,7 +246,7 @@ impl std::error::Error for SynthError {}
 
 /// How long the parts of a synthesizer's start took, for a driver that can
 /// tell them apart, as a synthesizer host's driver can
-/// (`books/dev/src/explanation/design/communication.md`, section 10.1): the request made and
+/// (`docs/design/communication.md`, section 10.1): the request made and
 /// written, its trip to the host, the host's synthesizer to its first
 /// chunk, and that chunk's trip back. Each in microseconds; together they
 /// are the span from synthesis started to the synthesizer's first audio.
@@ -302,7 +302,7 @@ pub trait SynthSink {
 /// ([`SynthSink::on_cancel`]).
 pub type CancelWake = Box<dyn Fn() + Send + Sync>;
 
-/// An utterance's cancellation (`books/dev/src/explanation/design/communication.md`, section
+/// An utterance's cancellation (`docs/design/communication.md`, section
 /// 7.3): a flag, and the waker the driver speaking it registered through
 /// [`SynthSink::on_cancel`], called once, from whichever thread cancels,
 /// as the flag is set, so a driver waiting for its synthesizer or its host

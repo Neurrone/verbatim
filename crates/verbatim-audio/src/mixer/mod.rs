@@ -359,7 +359,7 @@ impl MixerBuilder {
 
     /// Runs `start` on the delivery thread before it delivers anything:
     /// for the application to raise its priority, since it only moves
-    /// messages (`books/dev/src/explanation/design/communication.md`, section 6.1).
+    /// messages (`docs/design/communication.md`, section 6.1).
     pub fn on_delivery_thread(&mut self, start: Box<dyn FnOnce() + Send>) {
         self.on_delivery_thread = Some(start);
     }

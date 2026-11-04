@@ -170,14 +170,14 @@ const MENU_END_GRACE: Duration = Duration::from_millis(50);
 
 /// The priority of the listener's main thread, its I/O thread, which reads
 /// Core's pipe, handles each command, and finishes the writes to Core that
-/// pended, for microseconds per wake (`books/dev/src/explanation/design/communication.md`,
+/// pended, for microseconds per wake (`docs/design/communication.md`,
 /// section 6.1).
 const IO_PRIORITY: ThreadPriority = ThreadPriority::Highest;
 
 /// The listener's messages to Core: written by the thread that produces
 /// each one, through the transport's [`Sender`], and held in [`Waiting`]
 /// only while a write is in flight, which the I/O thread then finishes
-/// (`books/dev/src/explanation/design/communication.md`, sections 4.3 and 6.3).
+/// (`docs/design/communication.md`, sections 4.3 and 6.3).
 struct Outgoing {
     sender: Sender<Waiting>,
     /// The processes whose facts are dropped.
@@ -465,7 +465,7 @@ fn sent(sent: &Result<(), SendError<Infallible>>) {
 }
 
 /// A threadpool timer that ends a menu end's grace
-/// (`books/dev/src/explanation/design/communication.md`, section 4.7): no thread of the
+/// (`docs/design/communication.md`, section 4.7): no thread of the
 /// listener's waits for it, and its callback sends the end itself.
 struct GraceTimer {
     timer: PTP_TIMER,
@@ -1217,7 +1217,7 @@ impl Listener {
         }
     }
 
-    /// The idle barrier's query for `round` (`books/dev/src/explanation/design/communication.md`,
+    /// The idle barrier's query for `round` (`docs/design/communication.md`,
     /// section 6.7): handed to the `WinEvent` thread behind every event
     /// delivered to it, then to the reading threads behind every event
     /// queued for them, and answered once both have nothing in progress.
@@ -1765,7 +1765,7 @@ fn process_of_thread(thread: u32) -> Option<u32> {
 }
 
 /// Runs the focus listener on the transport's child side
-/// (`books/dev/src/explanation/design/communication.md`, sections 4.6 and 6.3): the calling
+/// (`docs/design/communication.md`, sections 4.6 and 6.3): the calling
 /// thread becomes its I/O thread, which reads Core's commands from
 /// `pipe_in` and finishes the writes to `pipe_out` that pend, while every
 /// thread that produces a fact writes it itself. Returns once Core asks it
