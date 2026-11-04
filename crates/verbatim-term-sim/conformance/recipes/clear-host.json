@@ -1,0 +1,12 @@
+{
+  "about": "Windows PowerShell 5.1's Clear-Host, as cls runs it, after more than three screens of output, and a line printed after it.",
+  "command": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File crates\\verbatim-term-sim\\conformance\\recipes\\clear-host.ps1",
+  "steps": [
+    {
+      "wait": 3000
+    },
+    {
+      "quiet": 800
+    }
+  ]
+}
