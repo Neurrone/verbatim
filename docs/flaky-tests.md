@@ -107,8 +107,8 @@ Recorded by Claude, 2026-11-04, pending Dickson's acceptance.
 
 - Scenarios: `windows_terminal_scrollback_overflow_during_group` and `conhost_scrollback_overflow_during_group`, locally, when they run after `conhost_flood`.
 - How: Windows Terminal's window never appears ("no window titled ... opened within 30s"), and the console host's first focus is said without "window". 3 of 3 times each in a round of the terminal scenarios, and once more with `conhost_flood` run alone just before, by a separate command with a fresh agent; both pass run alone.
-- Cause: in part found. The launch evidence (`launched-process-<pid>.txt` and `wait-chains.txt`) shows Windows Terminal's main thread waiting for 30 seconds on an ALPC call to `dwm.exe`, the Desktop Window Manager, having used 155 ms of processor time. What keeps DWM from answering after a long flood, on a machine with no graphics adapter while the run's screen recording is captured, is not found.
-- Fix: none yet.
+- Cause: this machine's display adapter, a VirtIO display-only driver with no 3D acceleration, leaves the Desktop Window Manager to compose the screen on the processor. During `conhost_flood` `dwm.exe` used two whole processors of the twelve (200%), and went on at 190 to 200% for about 60 seconds after the scenario and its recording had ended, working off the flood's redraws, before falling to its idle 12 to 15% (sampled every 2 seconds, 2026-11-04). A scenario started in that minute waits on DWM: the launch evidence (`launched-process-<pid>.txt`, `wait-chains.txt`) shows Windows Terminal's main thread waiting 30 seconds on an ALPC call to `dwm.exe`, having used 155 ms of processor time. GitHub's runner, which passes these scenarios, was not measured.
+- Fix: none yet. A graphics adapter with 3D acceleration for the VM would remove the cause; a harness wait for DWM to be idle before a launch would only hide it.
 
 ## The scheduled exploration of the outpost reducer
 
