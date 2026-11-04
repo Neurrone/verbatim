@@ -77,11 +77,13 @@ use serde::{Deserialize, Serialize};
 /// their titles, and [`Request::ProcessDiagnostics`], so a launched window
 /// that does not appear is reported with its process's processor time,
 /// modules and a minidump; version 30 added [`Request::EndLaunch`], so
-/// cleanup ends a launch only through the agent's own handles. A test
-/// run against an older agent is refused at `Hello`
+/// cleanup ends a launch only through the agent's own handles; version 31
+/// answers [`Request::SetForeground`] with a [`ForegroundOutcome`], so a
+/// window not brought forward is reported with the step that failed. A
+/// test run against an older agent is refused at `Hello`
 /// instead of losing its connection mid-run, or running without the
 /// exclusion.
-pub const AGENT_PROTOCOL_VERSION: u32 = 30;
+pub const AGENT_PROTOCOL_VERSION: u32 = 31;
 
 /// The command of a [`Request::LaunchProcess`] that names the agent's own
 /// executable, wherever it was deployed: the recordings launch
@@ -852,12 +854,9 @@ pub enum ReplyPayload {
     EventWait(EventOutcome),
     /// Answer to [`Request::WaitForExit`].
     ProcessStatus(ProcessState),
-    /// Answer to [`Request::SetForeground`]: whether the window is the
-    /// foreground window.
-    Foreground {
-        /// `false` when Windows refused.
-        taken: bool,
-    },
+    /// Answer to [`Request::SetForeground`]: the window in front, or the
+    /// step that failed.
+    Foreground(ForegroundOutcome),
     /// Answer to [`Request::SessionInfo`].
     SessionInfo(SessionInfo),
     /// Answer to [`Request::ReadFile`]: the file's raw bytes, base64
@@ -970,6 +969,70 @@ pub enum ProcessState {
         /// The process's exit code, when the OS reported one.
         exit_code: Option<i32>,
     },
+}
+
+/// Answer to [`Request::SetForeground`]: the window in front, or the
+/// step of bringing it forward that failed, so that a failure names its
+/// cause rather than only that the window is not in front.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ForegroundOutcome {
+    /// The window is the foreground window.
+    InFront,
+    /// The minimize of a restored window not in front could not be posted
+    /// to the window, as for a handle no longer valid.
+    MinimizeNotPosted,
+    /// The window did not handle the posted minimize within `limit_ms`:
+    /// its thread was not answering messages.
+    NotMinimized {
+        /// How long the minimize was waited for.
+        limit_ms: u64,
+    },
+    /// The restore of the minimized window could not be posted to it.
+    RestoreNotPosted,
+    /// The window did not handle the posted restore within `limit_ms`:
+    /// its thread was not answering messages.
+    NotRestored {
+        /// How long the restore was waited for.
+        limit_ms: u64,
+    },
+    /// `SetForegroundWindow` refused the window, and it is not in front.
+    Refused,
+    /// `SetForegroundWindow` accepted the window, but it was not in front
+    /// within `limit_ms`.
+    NotInFront {
+        /// How long the window was waited for in front.
+        limit_ms: u64,
+    },
+}
+
+impl ForegroundOutcome {
+    /// Whether the window is the foreground window.
+    #[must_use]
+    pub fn in_front(self) -> bool {
+        self == Self::InFront
+    }
+
+    /// What happened, as a failure message says it.
+    #[must_use]
+    pub fn describe(self) -> String {
+        match self {
+            Self::InFront => "it is in front".to_owned(),
+            Self::MinimizeNotPosted => {
+                "the minimize before its restore could not be posted to it".to_owned()
+            }
+            Self::NotMinimized { limit_ms } => format!(
+                "it did not handle the minimize before its restore within {limit_ms} ms, so it was not answering messages"
+            ),
+            Self::RestoreNotPosted => "its restore could not be posted to it".to_owned(),
+            Self::NotRestored { limit_ms } => format!(
+                "it did not handle its restore within {limit_ms} ms, so it was not answering messages"
+            ),
+            Self::Refused => "SetForegroundWindow refused it".to_owned(),
+            Self::NotInFront { limit_ms } => format!(
+                "SetForegroundWindow accepted it, but it was not in front within {limit_ms} ms"
+            ),
+        }
+    }
 }
 
 /// Answer to [`Request::SessionInfo`]: diagnostics about the agent's own

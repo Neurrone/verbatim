@@ -36,7 +36,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use windows::core::{BOOL, PWSTR, w};
 
-use crate::protocol::{ForegroundInfo, WindowCondition, WindowInfo};
+use crate::protocol::{ForegroundInfo, ForegroundOutcome, WindowCondition, WindowInfo};
 use crate::wait;
 
 /// The foreground window and every visible, titled top-level window,
@@ -285,7 +285,7 @@ pub fn minimize_all(timeout: Duration) -> (bool, bool, ForegroundInfo) {
 /// ignores the minimized show state it is launched with and opens restored
 /// and inactive (found 2026-10-09). Such a window is logged, at info.
 ///
-/// The answer is the window being the foreground. When
+/// The answer is the window in front, or the step that failed. When
 /// `SetForegroundWindow` refuses and the window is not in front, the call
 /// fails at once; when it accepts, the window is waited for on window
 /// events up to [`MINIMIZE_LIMIT`], since with the restore posted rather
@@ -299,7 +299,8 @@ pub fn minimize_all(timeout: Duration) -> (bool, bool, ForegroundInfo) {
 /// was then in front, so a slow switch can be explained from the agent's
 /// log.
 #[must_use]
-pub fn set_foreground(window: u64) -> bool {
+pub fn set_foreground(window: u64) -> ForegroundOutcome {
+    let limit_ms = u64::try_from(MINIMIZE_LIMIT.as_millis()).unwrap_or(u64::MAX);
     let started = Instant::now();
     let mut steps = SwitchSteps::default();
     let window = HWND(usize::try_from(window).unwrap_or(0) as *mut c_void);
@@ -320,7 +321,7 @@ pub fn set_foreground(window: u64) -> bool {
         if !posted {
             tracing::info!("the minimize was not posted to the window");
             steps.log(window, started, false, false);
-            return false;
+            return ForegroundOutcome::MinimizeNotPosted;
         }
         let minimized = wait::until(|| is_minimized(window), MINIMIZE_LIMIT);
         steps.minimized = minimized.then(|| started.elapsed());
@@ -330,7 +331,7 @@ pub fn set_foreground(window: u64) -> bool {
                  minimizes it whenever the window answers"
             );
             steps.log(window, started, false, false);
-            return false;
+            return ForegroundOutcome::NotMinimized { limit_ms };
         }
     }
     if is_minimized(window) {
@@ -340,7 +341,7 @@ pub fn set_foreground(window: u64) -> bool {
         if !posted {
             tracing::info!("the restore was not posted to the window");
             steps.log(window, started, false, false);
-            return false;
+            return ForegroundOutcome::RestoreNotPosted;
         }
         let restored = wait::until(|| !is_minimized(window), MINIMIZE_LIMIT);
         steps.restored = restored.then(|| started.elapsed());
@@ -350,7 +351,7 @@ pub fn set_foreground(window: u64) -> bool {
                  restores it whenever the window answers"
             );
             steps.log(window, started, false, false);
-            return false;
+            return ForegroundOutcome::NotRestored { limit_ms };
         }
     }
     // SAFETY: tolerates any handle; a stale one fails.
@@ -364,7 +365,11 @@ pub fn set_foreground(window: u64) -> bool {
         in_front_now()
     };
     steps.log(window, started, accepted, in_front);
-    in_front
+    match (in_front, accepted) {
+        (true, _) => ForegroundOutcome::InFront,
+        (false, true) => ForegroundOutcome::NotInFront { limit_ms },
+        (false, false) => ForegroundOutcome::Refused,
+    }
 }
 
 /// When each step of one [`set_foreground`] call finished, measured from

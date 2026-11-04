@@ -839,9 +839,7 @@ fn desktop_request(id: u64, request: Request) -> Frame {
         },
         Request::SetForeground { window } => Frame::Reply {
             to: id,
-            payload: ReplyPayload::Foreground {
-                taken: desktop::set_foreground(window),
-            },
+            payload: ReplyPayload::Foreground(desktop::set_foreground(window)),
         },
         Request::WaitForWindow {
             condition,

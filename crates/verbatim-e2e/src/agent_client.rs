@@ -22,9 +22,10 @@ use std::time::Duration;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use verbatim_agent::protocol::{
-    AGENT_PROTOCOL_VERSION, EventOutcome, FocusedElement, ForegroundInfo, Frame, KillOutcome,
-    LaunchEnd, ProcessDiagnostics, ProcessExit, ProcessInfo, ProcessState, ReplyPayload, Request,
-    RequestEnvelope, SessionInfo, SwitcherItem, WaitChain, WindowCondition, WindowInfo,
+    AGENT_PROTOCOL_VERSION, EventOutcome, FocusedElement, ForegroundInfo, ForegroundOutcome, Frame,
+    KillOutcome, LaunchEnd, ProcessDiagnostics, ProcessExit, ProcessInfo, ProcessState,
+    ReplyPayload, Request, RequestEnvelope, SessionInfo, SwitcherItem, WaitChain, WindowCondition,
+    WindowInfo,
 };
 use verbatim_control::client::Client as ControlClient;
 use verbatim_control::protocol::{MessageReader, write_message};
@@ -500,17 +501,17 @@ impl AgentClient {
     }
 
     /// Brings `window` to the foreground without injecting input, and
-    /// returns whether it is the foreground window.
+    /// returns the window in front or the step that failed.
     ///
     /// # Errors
     ///
     /// Returns an error if the request fails.
-    pub fn set_foreground(&mut self, window: u64) -> io::Result<bool> {
+    pub fn set_foreground(&mut self, window: u64) -> io::Result<ForegroundOutcome> {
         match self.request(Request::SetForeground { window })? {
             Frame::Reply {
-                payload: ReplyPayload::Foreground { taken },
+                payload: ReplyPayload::Foreground(outcome),
                 ..
-            } => Ok(taken),
+            } => Ok(outcome),
             other => Err(unexpected("SetForeground", &other)),
         }
     }

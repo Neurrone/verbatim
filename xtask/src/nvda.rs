@@ -788,18 +788,21 @@ fn run_step(
                         .as_deref()
                         .is_none_or(|title| window.title.contains(title))
             });
-            let taken = match &window {
-                Some(window) => agent.set_foreground(window.window)?,
-                None => false,
+            let Some(window) = window else {
+                return Err(io::Error::other(format!(
+                    "no window of {image} titled {title:?} is open; the remaining steps were not run"
+                )));
             };
-            *target = window.filter(|_| taken).map(|window| window.window);
             // The steps after it press keys in whatever is in front:
             // without the window, none of them may run.
-            if !taken {
+            let outcome = agent.set_foreground(window.window)?;
+            if !outcome.in_front() {
                 return Err(io::Error::other(format!(
-                    "no window of {image} titled {title:?} took the foreground; the remaining steps were not run"
+                    "the window of {image} titled {title:?} did not take the foreground: {}; the remaining steps were not run",
+                    outcome.describe()
                 )));
             }
+            *target = Some(window.window);
         }
         Step::OpenMenu => open_menu()?,
         Step::Type(text) => {

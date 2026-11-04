@@ -58,9 +58,13 @@ Public API:
     each waited for on the window's minimized state, a request that is
     not posted failing the call at once, and a request whose wait fails
     logged as still queued, to be carried out whenever the window
-    answers; the answer is whether the window is in front, waited for
-    when `SetForegroundWindow` accepts it and read at once when it
-    refuses; each call logs, at info, the window's title and when each
+    answers; the answer, a `ForegroundOutcome`, is the window in front
+    or the step that failed (a minimize or restore not posted, or not
+    handled within the limit, or `SetForegroundWindow` refusing the
+    window, or accepting it without the window coming to the front), so
+    a failure names its cause; the window in front is waited for when
+    `SetForegroundWindow` accepts it and read at once when it refuses;
+    each call logs, at info, the window's title and when each
     step finished, measured from the call's start: the minimize requested
     and observed, the restore observed, and `SetForegroundWindow`'s
     answer, with whether it accepted the window and whether the window

@@ -48,9 +48,9 @@ use std::sync::{Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::Duration;
 
 use verbatim_agent::protocol::{
-    EventOutcome, ForegroundInfo, LaunchEnd, ProcessDiagnostics, ProcessExit, ProcessInfo,
-    ProcessState, SwitcherItem, WaitChain, WaitNode, WaitNodeKind, WaitNodeStatus, WindowCondition,
-    WindowInfo,
+    EventOutcome, ForegroundInfo, ForegroundOutcome, LaunchEnd, ProcessDiagnostics, ProcessExit,
+    ProcessInfo, ProcessState, SwitcherItem, WaitChain, WaitNode, WaitNodeKind, WaitNodeStatus,
+    WindowCondition, WindowInfo,
 };
 use verbatim_config::{ConfigStore, Settings};
 use verbatim_control::client::{Client as ControlClient, ok_or_error};
@@ -1415,10 +1415,11 @@ impl Scenario {
                 "{ready} was not written within {WINDOW_TIMEOUT:?}, so the window titled {title:?} was not brought forward"
             )));
         }
-        if !self.agent.set_foreground(window.window)? {
+        let outcome = self.agent.set_foreground(window.window)?;
+        if !outcome.in_front() {
             return Err(io::Error::other(format!(
                 "the window titled {title:?} could not be brought to the foreground: {}",
-                describe_foreground(&desktop)
+                not_brought_forward(&mut self.agent, outcome)
             )));
         }
         let opened = window.window;
@@ -1550,11 +1551,12 @@ impl Scenario {
                     describe_foreground(&desktop)
                 ))
             })?;
-        if !self.agent.set_foreground(window.window)? {
+        let outcome = self.agent.set_foreground(window.window)?;
+        if !outcome.in_front() {
             return Err(io::Error::other(format!(
                 "the window {:?} could not be brought to the foreground: {}",
                 window.title,
-                describe_foreground(&desktop)
+                not_brought_forward(&mut self.agent, outcome)
             )));
         }
         self.wait_for(
@@ -3209,11 +3211,12 @@ fn open_document(
             evidence,
         ));
     };
-    if !agent.set_foreground(window.window)? {
+    let outcome = agent.set_foreground(window.window)?;
+    if !outcome.in_front() {
         return Err(io::Error::other(format!(
             "Notepad's window {:?} could not be brought to the foreground: {}",
             window.title,
-            describe_foreground(&desktop)
+            not_brought_forward(agent, outcome)
         )));
     }
     let opened = window.window;
@@ -3261,10 +3264,12 @@ fn close_notepad_tabs(agent: &mut AgentClient, marker: &str) -> io::Result<()> {
         else {
             return Ok(());
         };
-        if !agent.set_foreground(window.window)? {
+        let outcome = agent.set_foreground(window.window)?;
+        if !outcome.in_front() {
             return Err(io::Error::other(format!(
-                "Notepad's tab {:?} could not be brought to the foreground to close it",
-                window.title
+                "Notepad's tab {:?} could not be brought to the foreground to close it: {}",
+                window.title,
+                not_brought_forward(agent, outcome)
             )));
         }
         let key = if window.title.starts_with('*') {
@@ -4102,6 +4107,17 @@ fn describe_wait_node(node: &WaitNode) -> String {
 }
 
 /// `info` as one line: the foreground window, then the visible windows.
+/// Why a window was not brought forward, from `outcome`, the step that
+/// failed, and the desktop as it stands after the attempt, read from
+/// `agent`, rather than as it stood before it.
+fn not_brought_forward(agent: &mut AgentClient, outcome: ForegroundOutcome) -> String {
+    let after = match agent.foreground_info() {
+        Ok(desktop) => describe_foreground(&desktop),
+        Err(error) => format!("the desktop could not be read: {error}"),
+    };
+    format!("{}; after the attempt, {after}", outcome.describe())
+}
+
 fn describe_foreground(info: &ForegroundInfo) -> String {
     let describe = |window: &WindowInfo| {
         format!(
