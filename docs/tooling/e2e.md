@@ -57,7 +57,26 @@ list them as ignored, never as passed, and stay green with no agent
 anywhere. A run with `--ignored` runs them, and each fails, rather than
 passing, when the `VERBATIM_E2E_ENDPOINT` environment variable is unset.
 
-To actually run the suite locally:
+To run a few scenarios locally, each `n` times:
+
+```
+cargo xtask e2e <scenario>... --runs <n>
+```
+
+It builds the agent and the test binary, starts the agent, waits until it
+listens, runs each scenario once per round, each in its own `cargo test`
+with its log in `target/e2e-runs/<scenario>-<run>.log`, prints a line per
+run, and ends the agent. Every xtask command runs in a job that ends
+everything in it when the command exits (`xtask/src/contain.rs`), and the
+agent's launches are in jobs that end with the agent, so stopping the
+command by any means, Ctrl+C or ending its process, ends the agent,
+Verbatim and the programs it launched; nothing is left for the next run.
+It refuses to start while something already listens on the agent's port.
+Scripts and builders use this command rather than starting an agent by
+hand, because an agent started in the background outlives the script
+that started it (2026-11-04).
+
+To run the whole suite against an agent of your own:
 
 ```
 cargo build -p verbatim-agent

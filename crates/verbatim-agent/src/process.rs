@@ -38,8 +38,10 @@ use windows::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS,
 };
 use windows::Win32::System::JobObjects::{
-    AssignProcessToJobObject, CreateJobObjectW, JOBOBJECT_BASIC_ACCOUNTING_INFORMATION,
-    JobObjectBasicAccountingInformation, QueryInformationJobObject, TerminateJobObject,
+    AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    JOBOBJECT_BASIC_ACCOUNTING_INFORMATION, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+    JobObjectBasicAccountingInformation, JobObjectExtendedLimitInformation,
+    QueryInformationJobObject, SetInformationJobObject, TerminateJobObject,
 };
 use windows::Win32::System::Threading::{
     CREATE_NO_WINDOW, CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT, CreateProcessW,
@@ -565,11 +567,29 @@ const FINISHED_KEPT: Duration = Duration::from_mins(5);
 /// The children [`launch`] started, by pid.
 static LAUNCHED: Mutex<BTreeMap<u32, Launched>> = Mutex::new(BTreeMap::new());
 
+/// A launch's job, which ends everything in it when its last handle
+/// closes: the agent holds it in the launch's entry, so when the agent
+/// exits, by any path, what it launched ends with it, rather than running
+/// on with no agent to end it. An entry is dropped only once its job is
+/// empty, so dropping one ends nothing.
 fn create_job() -> io::Result<OwnedHandle> {
     // SAFETY: no name and default security; the handle is owned below.
     let job = unsafe { CreateJobObjectW(None, PCWSTR::null()) }.map_err(io::Error::other)?;
     // SAFETY: `job` is a fresh handle nothing else owns.
-    Ok(unsafe { OwnedHandle::from_raw_handle(job.0) })
+    let job = unsafe { OwnedHandle::from_raw_handle(job.0) };
+    let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+    limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    // SAFETY: `limits` outlives the call, and its size is passed with it.
+    unsafe {
+        SetInformationJobObject(
+            HANDLE(job.as_raw_handle()),
+            JobObjectExtendedLimitInformation,
+            (&raw const limits).cast(),
+            u32::try_from(size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>()).unwrap_or(u32::MAX),
+        )
+    }
+    .map_err(io::Error::other)?;
+    Ok(job)
 }
 
 fn assign_to_job(job: &OwnedHandle, child: &OwnedHandle) -> io::Result<()> {

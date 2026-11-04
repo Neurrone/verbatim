@@ -111,11 +111,15 @@ mod waits;
 #[cfg(windows)]
 mod conformance;
 #[cfg(windows)]
+mod contain;
+#[cfg(windows)]
 mod demo;
 #[cfg(windows)]
 mod durations;
 #[cfg(windows)]
 mod group;
+#[cfg(windows)]
+mod local_e2e;
 #[cfg(windows)]
 mod nvda;
 #[cfg(windows)]
@@ -153,6 +157,16 @@ const LINUX_CRATES: &[&str] = &[
 
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().skip(1).collect();
+    // Held to the end of the process: everything a command starts ends
+    // with it, on every path (`contain`).
+    #[cfg(windows)]
+    let _job = match contain::this_process() {
+        Ok(job) => job,
+        Err(error) => {
+            eprintln!("could not place this command in a job: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
     match args.first().map(String::as_str) {
         Some("ci") => ci(),
         Some("docs") => docs::run(),
@@ -173,6 +187,8 @@ fn main() -> ExitCode {
         Some("demo") => demo::run(&args[1..]),
         #[cfg(windows)]
         Some("nvda") => nvda::run(&args[1..]),
+        #[cfg(windows)]
+        Some("e2e") => local_e2e::run(&args[1..]),
         #[cfg(windows)]
         Some("e2e-group") => group::run(&args[1..]),
         #[cfg(windows)]
@@ -243,6 +259,10 @@ fn usage() {
     #[cfg(windows)]
     eprintln!(
         "  measure  run the measure set on this machine and report each latency stage's distribution (cargo xtask measure [--release | --verbatim-exe <path>]; docs/tooling/measuring.md)"
+    );
+    #[cfg(windows)]
+    eprintln!(
+        "  e2e   run end-to-end scenarios against this machine with an agent it starts and ends (cargo xtask e2e <scenario>... [--runs <n>])"
     );
     #[cfg(windows)]
     eprintln!(

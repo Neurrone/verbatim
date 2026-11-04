@@ -18,7 +18,7 @@ it when the suite is done.
 Public API:
 
 - `protocol` — the agent's own wire vocabulary, versioned separately from
-  the control plane's (`AGENT_PROTOCOL_VERSION`, currently 28) and framed
+  the control plane's (`AGENT_PROTOCOL_VERSION`, currently 30) and framed
   with the same newline-JSON helpers the control plane uses
   (`verbatim_control::protocol::write_message`/`read_message`). Its pids
   are raw OS process ids naming a process a test is driving, not
@@ -318,8 +318,10 @@ terminates its whole job. Before this, killing a launcher that runs the
 real program as its own child, such as the Chocolatey shim that `ffmpeg`
 on `PATH` often is, left the real program running: ten desktop captures
 accumulated this way and slowed window activation enough to make the
-Notepad scenario fail. The job does not kill on close, so the agent
-exiting leaves its children as it always did.
+Notepad scenario fail. The job kills on close, and the agent holds it in
+the launch's entry, so the agent exiting, by any path, ends everything it
+launched, which no later agent could otherwise find to end; an entry is
+dropped only once its job is empty.
 `KillProcess`'s tolerance for an already-exited process handles two
 distinct races: a pid that cannot be opened at all, and one that opens
 fine but has already exited — the latter discovered because
