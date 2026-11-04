@@ -797,8 +797,15 @@ fn run_step(
             // without the window, none of them may run.
             let outcome = agent.set_foreground(window.window)?;
             if !outcome.in_front() {
+                // The window in front after the attempt, not before it.
+                let after = match agent.foreground_info()?.foreground {
+                    Some(front) => {
+                        format!("{:?} of {} (pid {})", front.title, front.image, front.pid)
+                    }
+                    None => "no window".to_owned(),
+                };
                 return Err(io::Error::other(format!(
-                    "the window of {image} titled {title:?} did not take the foreground: {}; the remaining steps were not run",
+                    "the window of {image} titled {title:?} did not take the foreground: {}; after the attempt, {after} is in front; the remaining steps were not run",
                     outcome.describe()
                 )));
             }

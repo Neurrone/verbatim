@@ -4261,7 +4261,6 @@ fn describe_wait_node(node: &WaitNode) -> String {
     format!("{kind} ({status})")
 }
 
-/// `info` as one line: the foreground window, then the visible windows.
 /// Why a window was not brought forward, from `outcome`, the step that
 /// failed, and the desktop as it stands after the attempt, read from
 /// `agent`, rather than as it stood before it.
@@ -4273,6 +4272,7 @@ fn not_brought_forward(agent: &mut AgentClient, outcome: ForegroundOutcome) -> S
     format!("{}; after the attempt, {after}", outcome.describe())
 }
 
+/// `info` as one line: the foreground window, then the visible windows.
 fn describe_foreground(info: &ForegroundInfo) -> String {
     let describe = |window: &WindowInfo| {
         format!(
@@ -4441,24 +4441,18 @@ mod minimize_tests {
         let refused = MinimizeOutcome::Refused { limit_ms: 15_000 };
         let failure =
             minimize_failure(&TaskbarCommand::Handled, refused, &desktop).expect("a failure");
-        assert!(
-            failure.starts_with(
-                "every window was minimized, but SetForegroundWindow refused the desktop's window"
-            ),
-            "{failure}"
+        assert_eq!(
+            failure,
+            "every window was minimized, but SetForegroundWindow refused the desktop's window, and the desktop did not take the foreground within 15000 ms; \"phase 6\" of WindowsTerminal.exe (pid 29864) kept it: foreground window \"phase 6\" (WindowsTerminal.exe pid 29864, class Class, minimized); visible windows: "
         );
-        assert!(
-            failure.contains("\"phase 6\" of WindowsTerminal.exe (pid 29864) kept it"),
-            "{failure}"
-        );
-        assert!(
+        assert_eq!(
             minimize_failure(
                 &TaskbarCommand::Handled,
                 MinimizeOutcome::NotMinimized { limit_ms: 15_000 },
                 &desktop
             )
-            .expect("a failure")
-            .starts_with("not every window was minimized")
+            .expect("a failure"),
+            "not every window was minimized within 15000 ms; the taskbar handled its Minimize All command: foreground window \"phase 6\" (WindowsTerminal.exe pid 29864, class Class, minimized); visible windows: "
         );
         assert_eq!(
             minimize_failure(

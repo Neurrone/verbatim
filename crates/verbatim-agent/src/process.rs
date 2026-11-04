@@ -997,9 +997,19 @@ pub fn end_launched(timeout: Duration) -> io::Result<u32> {
     let running: Vec<String> = terminated
         .into_iter()
         .filter_map(|pid| {
-            crate::jobs::wait_until_empty(pid, deadline.saturating_duration_since(Instant::now()))
-                .err()
-                .map(|error| error.to_string())
+            let error = crate::jobs::wait_until_empty(
+                pid,
+                deadline.saturating_duration_since(Instant::now()),
+            )
+            .err()?;
+            // Windows does not guarantee the job's notifications, so a job
+            // whose last exit was never notified is read once more before
+            // its processes are reported as still running.
+            let launched = LAUNCHED.lock().unwrap_or_else(PoisonError::into_inner);
+            launched
+                .get(&pid)
+                .is_some_and(|entry| job_has_processes(&entry.job))
+                .then(|| error.to_string())
         })
         .collect();
     if running.is_empty() {
@@ -1295,8 +1305,9 @@ mod tests {
             .unwrap_or_else(PoisonError::into_inner);
         let pid = long_running();
         assert!(end_launched(WAIT).expect("ends") >= 1);
+        // Read at once: the call returns only once the child has exited.
         assert!(matches!(
-            wait_for_exit(pid, WAIT).expect("waits"),
+            status(pid).expect("reads"),
             ProcessState::Exited { .. }
         ));
     }
