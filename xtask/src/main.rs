@@ -159,16 +159,19 @@ const LINUX_CRATES: &[&str] = &[
 
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().skip(1).collect();
-    // Held to the end of the process: everything a command starts ends
-    // with it, on every path (`contain`).
+    // Everything a command starts ends with it, on every path (`contain`).
+    // The handle is never closed here: closed as `main` returns, it would
+    // end this process too, before its exit code is set, so every command
+    // exited 0. Windows closes it as the process exits, once the code is
+    // set.
     #[cfg(windows)]
-    let _job = match contain::this_process() {
-        Ok(job) => job,
+    match contain::this_process() {
+        Ok(job) => std::mem::forget(job),
         Err(error) => {
             eprintln!("could not place this command in a job: {error}");
             return ExitCode::FAILURE;
         }
-    };
+    }
     match args.first().map(String::as_str) {
         Some("ci") => ci(),
         Some("docs") => docs::run(),

@@ -23,7 +23,8 @@ use windows::core::PCWSTR;
 /// starts afterwards is in the job from its start, as is everything it
 /// starts in turn, such as a console host `start` runs, so when this
 /// process exits, by any path, what it started ends with it; the
-/// handle is closed then, or when the returned value is dropped.
+/// handle is closed then, or when the returned value is dropped, which
+/// ends this process as well.
 pub fn this_process() -> windows::core::Result<OwnedHandle> {
     // SAFETY: creates an unnamed job; the handle is owned below.
     let job = unsafe { CreateJobObjectW(None, PCWSTR::null()) }?;
