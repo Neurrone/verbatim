@@ -572,9 +572,12 @@ no line.
 
 Match a failure to [the known failures](../flaky-tests.md) before rerunning it or debugging it.
 
-Once the run's logs are collected, every failure prints three things,
-and the `failures:` section at the end of the run prints each again in
-full. First, what failed: for a speech assertion, the expected and actual
+Once the run's logs are collected, every failure's report is made, and
+the `failures:` section at the end of the run prints it, the one place it
+is printed. Where the scenario ran, its line says
+`scenario "<name>": fail; its report is in the failures section at the end of the run`,
+and each panic on its test's thread prints one line naming the test and
+where it panicked. The report holds three things. First, what failed: for a speech assertion, the expected and actual
 sequences, escaped (`{:?}`), with the index of the first utterance that
 differs and the first character in it that differs; for any other
 failure, its panic's message; and any problem found after the body.

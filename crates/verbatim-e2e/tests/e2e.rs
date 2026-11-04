@@ -22,8 +22,11 @@
 //! `libtest-mimic` differs: any number of filters
 //! (`verbatim_e2e::command_line`), the tests run in the order of their
 //! names, each on a thread of its own, and each failure's whole report in
-//! the `failures:` section at the end.
+//! the `failures:` section at the end. That section is the only place a
+//! report is printed: a panic on a test's thread prints one line where it
+//! happened, naming where it panicked ([`install_panic_hook`]).
 
+use std::io::{self, Write as _};
 use std::panic::{self, AssertUnwindSafe};
 use std::process::ExitCode;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -252,8 +255,8 @@ fn scenario_trial(name: &'static str, summary: &Arc<Mutex<RunSummary>>) -> Trial
 /// than on the main thread, which `libtest-mimic` runs a test on with
 /// `--test-threads=1`, and whose stack is the linker's. A panic is
 /// its failure, carrying the panic's message: for a scenario, its whole
-/// report (`registry::run_named`), which the panic hook printed as it
-/// failed and the `failures:` section prints again at the end.
+/// report (`registry::run_named`), which the `failures:` section prints
+/// at the end.
 fn on_test_thread(name: &'static str, test: impl FnOnce() + Send + 'static) -> Result<(), Failed> {
     thread::Builder::new()
         .name(name.to_owned())
@@ -265,6 +268,32 @@ fn on_test_thread(name: &'static str, test: impl FnOnce() + Send + 'static) -> R
         .join()
         .unwrap_or_else(|payload| Err(panic_message(payload.as_ref())))
         .map_err(Failed::from)
+}
+
+/// Has a panic on a test's thread, a thread named after a test in
+/// `tests`, print one line naming the test and where it panicked, rather
+/// than its message: every panic there reaches the test's failure, whose
+/// whole report the `failures:` section prints once at the end of the run
+/// (a scenario's body's and teardown's are in its report). A panic on any
+/// other thread, whose message reaches no report, is printed in full as
+/// before.
+fn install_panic_hook(tests: Vec<String>) {
+    let default = panic::take_hook();
+    panic::set_hook(Box::new(move |info| {
+        let current = thread::current();
+        match current.name() {
+            Some(name) if tests.iter().any(|test| test == name) => {
+                let location = info
+                    .location()
+                    .map_or_else(String::new, |location| format!(" at {location}"));
+                let _ = writeln!(
+                    io::stderr(),
+                    "test {name} panicked{location}; its report is in the failures section at the end of the run"
+                );
+            }
+            _ => default(info),
+        }
+    }));
 }
 
 fn main() -> ExitCode {
@@ -290,6 +319,7 @@ fn main() -> ExitCode {
     // check runs before every scenario.
     trials.sort_by(|a, b| a.name().cmp(b.name()));
     trials.retain(|trial| command_line::selected(trial.name(), &filters, arguments.exact));
+    install_panic_hook(trials.iter().map(|trial| trial.name().to_owned()).collect());
     let conclusion = libtest_mimic::run(&arguments, trials);
     for line in summary
         .lock()
