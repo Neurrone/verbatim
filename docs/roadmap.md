@@ -16,7 +16,8 @@ M4.1". M4.5 (logic foundations) and M4.6 (generated tests) are complete. The pro
 layout was weighed again and kept: an outpost process per application
 and a separate focus listener (D9, D13; Dickson, 2026-11-02). The focus
 pipeline rework's second build is built (2026-11-02). The owner endings build is
-built (2026-11-03). Next: the rework's third build.
+built (2026-11-03). Next: the UIA facts build, then the rework's third
+build.
 
 ## M4 — Text, editing, and terminals
 
@@ -47,6 +48,41 @@ change, checked with `cargo xtask ci` and its related scenarios ten
 times, with the full suite where every scenario is affected. A change in
 what is heard goes to Dickson first; while he is away, it follows NVDA
 where NVDA is clear, recorded as provisional.
+
+### The UIA facts build
+
+Decided by Dickson on 2026-11-04, to be built before the focus pipeline
+rework's third build and before this machine's Windows is updated, so
+that every UI Automation fact Verbatim's design rests on can be checked
+again on the current Windows and after the update. Every fact in
+`docs/uia-bugs.md` and every claim of `docs/explainers/uia.md` gets a
+reproduction in `uia-facts/`, a Cargo workspace of its own outside the
+main one: one folder per fact, with a README holding the fact, its
+method, its recorded results with their date and machine and how to
+rerun it, and either a binary that prints its outcome beside the
+recorded one (repeated trials and a threshold where the fact is a rate)
+or, where only a debugger shows it, a guide with the steps and the stacks
+to expect. Deterministic facts already checked by a mockapp test stay in
+`cargo xtask ci` with no copy. A claim cited from source or from
+Microsoft Learn links its source instead. The UIA reproductions'
+code moves out of `experiments/` into `uia-facts/`, so no fact is
+reproduced in two places. The open questions and inferences of the two
+documents get one too: binaries for the connection-recovery `Find`
+skip, the runtime id's lifetime, the event worker per process, whether
+the transaction timeout bounds an event's cache fetch, `GetFocusedElement`
+during a queued remote operation, an MSAA call's wait in a busy thread,
+slow handlers and coalescing, the flood's growth with its backlog,
+connection recovery's effect on call results, late focus in a second
+process, the console host and the collision, and the inferred event and
+timeout claims; debugger guides for the collision's mechanism, the
+pending connection's hold, I/O thread counts, a new connection's
+thread, `AddFocusChangedEventHandler`'s requests and the
+`NavigationHelperProxyOneCore` thread; and NVDA #20654's freeze against
+a held provider (Dickson, 2026-11-04). `cargo xtask ci` neither builds
+nor runs `uia-facts/`, so its time does not grow; a separate GitHub
+workflow builds it on a schedule and whenever a crate it uses changes,
+so that no reproduction stops compiling. A design and its adversarial
+review come first.
 
 ### The focus pipeline rework
 
