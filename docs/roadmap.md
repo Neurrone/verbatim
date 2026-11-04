@@ -149,9 +149,8 @@ bound is published again rather than discarded. With both forms fixed,
 GitHub runner.
 
 The same build makes a read published at its bound say which facts it
-did not read, and Core take no containers from such a read (Claude,
-2026-11-04, pending Dickson's acceptance; matching NVDA, which has no
-bound and reads the parent live): in `alt_tab_switcher` (coverage run
+did not read, and Core take no containers from such a read (Dickson,
+2026-11-04; matching NVDA, which has no bound and reads the parent live): in `alt_tab_switcher` (coverage run
 41708393940) the listener's read of the switcher's item was cut at its
 bound before the item's parent was read, so the Alt+Tab rule
 (`drops_ancestry`, `crates/verbatim-core/src/applications.rs`), which
