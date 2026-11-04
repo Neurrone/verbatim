@@ -86,8 +86,10 @@ builds it, on x64 and ARM64, on a schedule and whenever a crate it uses
 changes, so that no reproduction stops compiling, and the samples are run
 on demand on this machine. Verbatim's own figures from old builds stay as
 history with no reproduction, and Qt's stale focus and the Excel case cite
-NVDA's issues (Dickson, 2026-11-04). The design was reviewed adversarially
-on 2026-11-04.
+NVDA's issues (Dickson, 2026-11-04). The design, reviewed adversarially on
+2026-11-04, is [the UIA facts design](design/uia-facts.md), which is
+deleted once the build is finished, since the folders it produces
+describe and reproduce themselves (Dickson, 2026-11-04).
 
 ### The focus pipeline rework
 
