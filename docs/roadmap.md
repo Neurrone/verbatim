@@ -725,6 +725,11 @@ inside UIA (`docs/design/listener-without-connections.md`).
   decisions, announced only once every hook is installed and Core knows
   the focus (ff25f3dd, 46b993fa). A generated test against a model checks
   that at most one outpost serves an application at any time.
+- The decisions in `crates/verbatim-app/src/main.rs` moved into pure,
+  unit-tested code beside the owner thread's, in the same design (Dickson,
+  2026-11-04): about 350 of its lines decide (the idle barrier, query
+  deadlines and routing, the exit), and today only the end-to-end suite
+  runs them.
 
 ## M6.3 — Speech and audio pipeline
 
