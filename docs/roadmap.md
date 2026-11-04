@@ -77,8 +77,7 @@ process, the console host and the collision, and the inferred event and
 timeout claims; debugger guides for the collision's mechanism, the
 pending connection's hold, I/O thread counts, a new connection's
 thread, `AddFocusChangedEventHandler`'s requests and the
-`NavigationHelperProxyOneCore` thread; and NVDA #20654's freeze against
-a held provider (Dickson, 2026-11-04). `cargo xtask ci` neither builds
+`NavigationHelperProxyOneCore` thread (Dickson, 2026-11-04). `cargo xtask ci` neither builds
 nor runs `uia-facts/`, so its time does not grow; a separate GitHub
 workflow builds it on a schedule and whenever a crate it uses changes,
 so that no reproduction stops compiling. A design and its adversarial
