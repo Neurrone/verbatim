@@ -590,5 +590,7 @@ All decided by Dickson on 2026-11-04.
   - the 3,621 registrations with the longest at 32 ms.
 - Qt's stale cached keyboard focus and Excel 2016's freeze point to NVDA's record, NVDA #20764 and NVDA's source comment, with no reproduction. They are listed in the "Cited, not reproduced" table.
 - uia-facts has its own provider program, and no fact binary launches mockapp.
+- The UI Automation faults recorded through applications that ship with Windows, such as File Explorer's reused runtime id, Windows Terminal's identities and the runs against real applications, are reproduced, since those applications are always available.
+- `parallel-uia-calls` stays in `experiments/` until the third build has moved the last of its facts, so for that time some of its facts are reproduced in two places.
 - The workflow only builds and lints, on x64 and ARM64, and runs no binary. Running stays on demand on Dickson's machine, before and after a Windows update.
 - windows-bindgen is not used.
