@@ -38,7 +38,9 @@ fn heard(name: &str, range: std::ops::RangeInclusive<u32>) -> Vec<Said> {
 /// Core queues is played only when the test plays it.
 fn terminal(flavor: Flavor, text: &str, limit: u16) -> Session {
     let mut outpost = Outpost::new(flavor, 120, 30, history(flavor));
-    outpost.sim.write(format!("{text}{PROMPT}command").as_bytes());
+    outpost
+        .sim
+        .write(format!("{text}{PROMPT}command").as_bytes());
     let mut session = Session::with(outpost);
     session.input(&Input::Settings(ReaderSettings {
         terminal_full_lines: limit,
@@ -83,7 +85,10 @@ fn burst(first: Vec<Said>, phrase: &str, last: Vec<Said>) -> Vec<Said> {
 fn full_history_flood(flavor: Flavor) {
     let mut session = terminal(flavor, &written("fill line", 1..=9100), 10);
     session.write(&format!("\r\n{}", written("flood line", 1..=12)), 100);
-    session.write(&format!("{}{PROMPT}", written("flood line", 13..=2000)), 200);
+    session.write(
+        &format!("{}{PROMPT}", written("flood line", 13..=2000)),
+        200,
+    );
     session.play();
     assert_eq!(
         session.heard(),
@@ -114,7 +119,10 @@ fn during_group(flavor: Flavor, after: u32) -> Session {
     session.write(&format!("\r\n{}", written("before line", 1..=15)), 100);
     assert!(session.play_one());
     assert_eq!(session.heard(), heard("before line", 1..=1));
-    session.write(&format!("{}{PROMPT}", written("after line", 1..=after)), 200);
+    session.write(
+        &format!("{}{PROMPT}", written("after line", 1..=after)),
+        200,
+    );
     session.play();
     session
 }
@@ -168,7 +176,10 @@ fn a_flood_past_the_history_while_a_group_plays_says_more_than_the_console_host_
 
 #[test]
 fn a_flood_past_the_history_while_a_group_plays_says_more_than_windows_terminal_holds() {
-    past_history(Flavor::WindowsTerminal, "Phrase(SkippedMoreThanLines(9016))");
+    past_history(
+        Flavor::WindowsTerminal,
+        "Phrase(SkippedMoreThanLines(9016))",
+    );
 }
 
 /// `count` lines that read alike, each ended.
@@ -213,7 +224,10 @@ fn a_flood_that_starts_under_a_wrapped_line_counts_its_rows_once() {
         .join(" ");
     let mut session = terminal(Flavor::ConsoleHost, &format!("{words}\r\n"), 30);
     session.write(&format!("\r\n{}", written("flood line", 1..=32)), 100);
-    session.write(&format!("{}{PROMPT}", written("flood line", 33..=2000)), 200);
+    session.write(
+        &format!("{}{PROMPT}", written("flood line", 33..=2000)),
+        200,
+    );
     session.play();
     assert_eq!(
         session.heard(),

@@ -34,7 +34,6 @@
 //!    output on", and `echo back` is answered with exactly "back" and then
 //!    the prompt.
 
-
 use std::io;
 use std::time::Duration;
 

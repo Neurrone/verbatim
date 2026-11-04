@@ -178,8 +178,8 @@ use crate::scenarios::{
     system_information_tree, terminal_commands, terminal_editing, terminal_flood,
     terminal_key_timing, terminal_lists, terminal_overflow, terminal_pager, terminal_progress,
     terminal_review_grid, terminal_screens, terminal_settings_page, terminal_status_bar,
-    terminal_typing, terminal_windows, text_box_say_all, theme_panel, typed_words, verbatim_lifecycle,
-    word_selection,
+    terminal_typing, terminal_windows, text_box_say_all, theme_panel, typed_words,
+    verbatim_lifecycle, word_selection,
 };
 use crate::speech::{FailurePoint, SpeechFailure};
 

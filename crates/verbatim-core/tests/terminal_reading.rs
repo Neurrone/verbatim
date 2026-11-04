@@ -443,7 +443,11 @@ fn lines_of_one_and_two_characters_after_enter_are_output_not_echo() {
     session.write("\r\ny\r\nok\r\nready> ", 1050);
     assert_eq!(
         session.heard(),
-        [said(Some(key), "y"), said(Some(key), "ok"), said(None, "ready>")]
+        [
+            said(Some(key), "y"),
+            said(Some(key), "ok"),
+            said(None, "ready>")
+        ]
     );
     assert_eq!(
         session.requests(),

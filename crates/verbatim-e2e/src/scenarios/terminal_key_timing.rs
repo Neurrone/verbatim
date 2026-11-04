@@ -138,7 +138,10 @@ pub(crate) fn setup_control_windows_terminal(scenario: &mut Scenario) -> io::Res
     terminal::open_windows_terminal(
         scenario,
         "control-flood",
-        &[("gated.ps1", &scripts_control()), ("short.ps1", SHORT_SCRIPT)],
+        &[
+            ("gated.ps1", &scripts_control()),
+            ("short.ps1", SHORT_SCRIPT),
+        ],
     )
 }
 
@@ -146,7 +149,10 @@ pub(crate) fn setup_control_console_host(scenario: &mut Scenario) -> io::Result<
     terminal::open_console_host(
         scenario,
         "control-flood",
-        &[("gated.ps1", &scripts_control()), ("short.ps1", SHORT_SCRIPT)],
+        &[
+            ("gated.ps1", &scripts_control()),
+            ("short.ps1", SHORT_SCRIPT),
+        ],
     )
 }
 
@@ -225,7 +231,6 @@ fn control_steps(scenario: &mut Scenario, directory: &str) {
         .speech()
         .expect(&[&line(101), &line(102), &line(103), PROMPT]);
 }
-
 
 /// Shift twice while the output's first line plays: paused and resumed,
 /// nothing lost.
@@ -310,7 +315,6 @@ fn line_key_steps(scenario: &mut Scenario) {
     }
     scenario.speech().expect(&[r"ready> .\long.ps1"]);
 }
-
 
 /// A command run, recalled with Up Arrow, typed after once the recalled
 /// line is heard, and run.
