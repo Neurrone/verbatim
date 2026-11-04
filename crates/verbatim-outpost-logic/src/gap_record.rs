@@ -45,7 +45,11 @@
 //! top-level window against the foreground ([`GapRecord::at_bound`]); an
 //! unrelated window closes the record. Otherwise the record stays open
 //! until a report closes it, its bound passed ([`Bound::Passed`]), so it
-//! is not waited for again until a foreground change arms it anew.
+//! is not waited for again until a foreground change arms it anew. Each
+//! bound armed has a number, which the entry its test queues carries, so an
+//! entry whose bound a foreground change, a copy or a new record replaced
+//! while it waited reads nothing: the new bound is read only once its own
+//! test has found its window related.
 
 use std::collections::BTreeMap;
 
@@ -122,6 +126,9 @@ struct Open {
     due_us: u64,
     /// Where its bound stands.
     bound: Bound,
+    /// Its bound's number, which the bound's entry carries, so that an
+    /// entry queued for a bound since replaced reads nothing.
+    bound_number: u64,
     /// What it waits for.
     awaits: Awaits,
 }
@@ -183,6 +190,8 @@ pub struct GapRecord {
     /// The newest observation of a UIA focus whose sender had no window
     /// above it.
     last_no_window_us: Option<u64>,
+    /// How many bounds have been armed, the last one's number.
+    bounds: u64,
 }
 
 /// Whether a report observed at `reported_us` answers a copy observed at
@@ -215,6 +224,18 @@ impl GapRecord {
     #[cfg(test)]
     pub(crate) fn top_level(&self) -> Option<isize> {
         self.open.map(|open| open.top_level)
+    }
+
+    /// The number of the open record's bound, which its bound's entry
+    /// carries.
+    pub fn bound_number(&self) -> Option<u64> {
+        self.open.map(|open| open.bound_number)
+    }
+
+    /// The next bound's number.
+    fn arm(&mut self) -> u64 {
+        self.bounds += 1;
+        self.bounds
     }
 
     /// The open record's trace: its newest copy's or foreground change's.
@@ -291,10 +312,10 @@ impl GapRecord {
                 // the copy arms its own, as it would on opening a record:
                 // otherwise a focus whose UIA event never comes, after a
                 // gap read the worker could not finish, is never read.
-                let (due_us, bound) = if open.bound == Bound::Passed {
-                    (at_us.saturating_add(BOUND_US), Bound::Waiting)
+                let (due_us, bound, bound_number) = if open.bound == Bound::Passed {
+                    (at_us.saturating_add(BOUND_US), Bound::Waiting, self.arm())
                 } else {
-                    (open.due_us, open.bound)
+                    (open.due_us, open.bound, open.bound_number)
                 };
                 self.open = Some(Open {
                     window,
@@ -302,6 +323,7 @@ impl GapRecord {
                     trace,
                     due_us,
                     bound,
+                    bound_number,
                     awaits: Awaits::Focus,
                     ..open
                 });
@@ -327,6 +349,7 @@ impl GapRecord {
             return CopyDropped::ReadNow;
         }
         let due_us = at_us.saturating_add(BOUND_US);
+        let bound_number = self.arm();
         self.open = Some(Open {
             window,
             top_level,
@@ -334,6 +357,7 @@ impl GapRecord {
             trace,
             due_us,
             bound: Bound::Waiting,
+            bound_number,
             awaits: Awaits::Focus,
         });
         CopyDropped::Opened { due_us }
@@ -352,6 +376,7 @@ impl GapRecord {
             Some(open) if open.top_level == window && open.awaits == Awaits::Focus => Awaits::Focus,
             _ => awaits,
         };
+        let bound_number = self.arm();
         self.open = Some(Open {
             window,
             top_level: window,
@@ -359,6 +384,7 @@ impl GapRecord {
             trace,
             due_us: at_us.saturating_add(BOUND_US),
             bound: Bound::Waiting,
+            bound_number,
             awaits,
         });
     }
@@ -405,17 +431,17 @@ impl GapRecord {
         })
     }
 
-    /// The bound's entry is handled at `now_us`: the record still open, its
-    /// bound passed, is to be read, and stays open until a report closes
-    /// it; `Err` with its due time when the bound has not passed yet, as
-    /// when the timer fired a little early, or a foreground change armed a
-    /// new bound since, and the bound is waited for again; `Ok(None)` with
-    /// no record open.
-    pub fn bound_reached(&mut self, now_us: u64) -> Result<Option<GapRead>, u64> {
+    /// The entry of bound number `bound` is handled at `now_us`: the record
+    /// still open with that bound, passed, is to be read, and stays open
+    /// until a report closes it; `Err` with its due time when the bound has
+    /// not passed yet, as when the timer fired a little early, and the
+    /// bound is waited for again; `Ok(None)` with no record open, or with
+    /// another bound armed since, by a foreground change, a copy or a new
+    /// record, whose own test decides its read.
+    pub fn bound_reached(&mut self, bound: u64, now_us: u64) -> Result<Option<GapRead>, u64> {
         match self.open.as_mut() {
-            // A second entry, queued at a bound a foreground change armed
-            // while the first waited: the first's read is the record's one.
             None => Ok(None),
+            Some(open) if open.bound_number != bound => Ok(None),
             Some(open) if open.bound == Bound::Passed => Ok(None),
             Some(open) if now_us < open.due_us => {
                 open.bound = Bound::Waiting;
@@ -480,9 +506,9 @@ mod tests {
                 due_us: 1_000 + BOUND_US
             }
         );
-        assert_eq!(record.bound_reached(BOUND_US), Err(1_000 + BOUND_US));
+        assert_eq!(record.bound_reached(1, BOUND_US), Err(1_000 + BOUND_US));
         assert_eq!(
-            record.bound_reached(1_000 + BOUND_US),
+            record.bound_reached(1, 1_000 + BOUND_US),
             Ok(Some(GapRead {
                 window: WINDOW,
                 stamp_us: 1_000
@@ -517,7 +543,7 @@ mod tests {
         let _ = record.copy_dropped(WINDOW, TOP, at(2_000));
         assert_eq!(record.waiting_due_us(), None, "the restamp keeps it");
         assert_eq!(record.due_us(), Some(1_000 + BOUND_US));
-        assert_eq!(record.bound_reached(BOUND_US), Err(1_000 + BOUND_US));
+        assert_eq!(record.bound_reached(1, BOUND_US), Err(1_000 + BOUND_US));
         assert_eq!(record.waiting_due_us(), Some(1_000 + BOUND_US));
     }
 
@@ -530,7 +556,7 @@ mod tests {
         let _ = record.copy_dropped(WINDOW, TOP, at(1_000));
         let _ = record.at_bound();
         assert_eq!(
-            record.bound_reached(1_000 + BOUND_US),
+            record.bound_reached(1, 1_000 + BOUND_US),
             Ok(Some(GapRead {
                 window: WINDOW,
                 stamp_us: 1_000,
@@ -650,7 +676,7 @@ mod tests {
         record.copy_dropped(WINDOW, TOP, at(1_000));
         assert!(record.pending());
         assert_eq!(
-            record.bound_reached(1_000 + BOUND_US),
+            record.bound_reached(1, 1_000 + BOUND_US),
             Ok(Some(GapRead {
                 window: WINDOW,
                 stamp_us: 1_000
@@ -672,7 +698,7 @@ mod tests {
         );
         assert!(!record.reported(Some(TOP), 5_000, false));
         assert_eq!(
-            record.bound_reached(BOUND_US),
+            record.bound_reached(1, BOUND_US),
             Ok(Some(GapRead {
                 window: 0x12,
                 stamp_us: 150_000
@@ -722,7 +748,7 @@ mod tests {
             "an older copy in another window answers nothing"
         );
         assert_eq!(
-            record.bound_reached(50_000 + BOUND_US),
+            record.bound_reached(1, 50_000 + BOUND_US),
             Ok(Some(GapRead {
                 window: WINDOW,
                 stamp_us: 50_000
@@ -777,19 +803,45 @@ mod tests {
         );
     }
 
-    /// A bound's entry handled after the record's bound has passed, as a
-    /// second entry queued at a bound a later foreground change armed,
-    /// reads nothing: the record has one read.
+    /// A bound's entry queued for a bound since replaced, by a copy in
+    /// another top-level window or a foreground change into the record's
+    /// own, reads nothing, and leaves the new bound, being tested, to its
+    /// own test.
+    #[test]
+    fn an_entry_for_a_replaced_bound_reads_nothing() {
+        let mut record = GapRecord::default();
+        let _ = record.copy_dropped(WINDOW, TOP, at(1_000));
+        let _ = record.at_bound();
+        let _ = record.copy_dropped(0x21, OTHER_TOP, at(2_000));
+        let _ = record.at_bound();
+        assert_eq!(record.bound_reached(1, 2_000 + BOUND_US), Ok(None));
+        assert!(record.pending(), "the new record's bound is still handled");
+        assert_eq!(record.waiting_due_us(), None);
+        record.foreground(OTHER_TOP, at(3_000), Awaits::Focus);
+        let _ = record.at_bound();
+        assert_eq!(record.bound_reached(2, 3_000 + BOUND_US), Ok(None));
+        assert!(record.pending(), "the rearmed bound is still handled");
+        assert_eq!(
+            record.bound_reached(3, 3_000 + BOUND_US),
+            Ok(Some(GapRead {
+                window: OTHER_TOP,
+                stamp_us: 3_000
+            }))
+        );
+    }
+
+    /// A second entry of a bound handled after the bound has passed reads
+    /// nothing: a bound has one read.
     #[test]
     fn a_second_bound_entry_reads_nothing() {
         let mut record = GapRecord::default();
         record.copy_dropped(WINDOW, TOP, at(1_000));
         assert!(
             record
-                .bound_reached(1_000 + BOUND_US)
+                .bound_reached(1, 1_000 + BOUND_US)
                 .is_ok_and(|read| read.is_some())
         );
-        assert_eq!(record.bound_reached(2_000 + BOUND_US), Ok(None));
+        assert_eq!(record.bound_reached(1, 2_000 + BOUND_US), Ok(None));
         assert!(record.is_open());
     }
 }

@@ -956,7 +956,7 @@ fn classify(item: &Item) -> (Option<Key>, Category, isize) {
         Item::Query { .. }
         | Item::NotedCaret { .. }
         | Item::Barrier { .. }
-        | Item::GapBound
+        | Item::GapBound { .. }
         | Item::GapRead { .. } => (None, Category::Exempt, 0),
     }
 }
@@ -2428,7 +2428,11 @@ mod tests {
     fn the_bounds_entry_waits_behind_a_marker() {
         let mut intake = WithMarks::default();
         push_item(&mut intake, marker(7), 1);
-        intake.push_gap_bound(Entry::own(Item::GapBound, TraceId::from_raw(12), 0));
+        intake.push_gap_bound(Entry::own(
+            Item::GapBound { bound: 1 },
+            TraceId::from_raw(12),
+            0,
+        ));
         assert_eq!(handed_out(&mut intake), Vec::<u64>::new());
         push_item(
             &mut intake,
@@ -2447,7 +2451,7 @@ mod tests {
             matches!(
                 planned.entries()[..],
                 [Entry {
-                    item: Item::GapBound,
+                    item: Item::GapBound { .. },
                     ..
                 }]
             ),

@@ -2604,7 +2604,8 @@ const TO_TIMER: Action = Action::Advance(Advance::ToTimer {
 /// (`docs/crates/verbatim-outpost-logic.md`); from the
 /// mutation baseline, a take of a node no watch is on while one waits; and
 /// a title committed while the program in flight holds the watch, which
-/// ends it at once; and a title answered in the tick that dispatched a
+/// ends it at once; a gap record's bound's entry taken after a copy in
+/// another top-level window replaced the record; and a title answered in the tick that dispatched a
 /// replacement program holding the watch, which ends it all the same.
 fn fixed() -> Vec<Vec<(Action, Asks)>> {
     let in_front = What::Foreground {
@@ -2696,6 +2697,51 @@ fn fixed() -> Vec<Vec<(Action, Asks)>> {
             ),
             (Action::Commit(Commit::Take), PLAIN),
         ],
+        stale_bound_entry(),
+    ]
+}
+
+/// The exploration's case of a gap record replaced while its bound's entry
+/// waits: the record of one top-level window, found related at its bound,
+/// queues its entry; a copy dropped in another top-level window replaces
+/// it; at the late tick that tests the new record's bound, the program the
+/// tick dispatched takes the first record's entry, which reads nothing.
+fn stale_bound_entry() -> Vec<(Action, Asks)> {
+    let finished = Action::Finished {
+        reported: false,
+        panicked: false,
+        cut: false,
+    };
+    let late = by(12_000, 12_000, 12_000);
+    vec![
+        arrives(What::NameChange(0)),
+        arrives(What::FocusNow),
+        (
+            Action::Commit(Commit::Report {
+                top: 0,
+                whole: false,
+                owes: true,
+            }),
+            PLAIN,
+        ),
+        arrives(What::FocusNow),
+        (finished, PLAIN),
+        (finished, PLAIN),
+        (finished, PLAIN),
+        arrives(What::Foreground {
+            window: 0,
+            front: 2,
+            uia: true,
+        }),
+        (
+            late,
+            Asks {
+                related: true,
+                ..PLAIN
+            },
+        ),
+        (Action::Commit(Commit::CopyDropped { top: 1 }), PLAIN),
+        (late, PLAIN),
     ]
 }
 
