@@ -90,12 +90,9 @@ fn root() -> PathBuf {
     if let Some(root) = std::env::var_os("VERBATIM_WX_DIR") {
         return PathBuf::from(root);
     }
-    // OUT_DIR is <target>/<profile>/build/<package>-<hash>/out.
-    let out_dir = PathBuf::from(std::env::var("OUT_DIR").expect("set by cargo"));
-    out_dir
-        .ancestors()
-        .nth(4)
-        .expect("OUT_DIR is <target>/<profile>/build/<package>/out")
+    crate::artifact_dir::artifact_dir()
+        .parent()
+        .expect("the executables' folder is in the target directory")
         .join("wxwidgets")
 }
 

@@ -2,6 +2,8 @@
 //! cxx bridge (`src/bridge.rs`) and `cpp/gui.cpp` compiled against it, and
 //! the link lines for both.
 
+#[path = "../../build-support/artifact_dir.rs"]
+mod artifact_dir;
 #[path = "build/wx.rs"]
 mod wx;
 

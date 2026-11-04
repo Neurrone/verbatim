@@ -43,9 +43,24 @@ Visual Studio for its ARM64-hosted toolset, because the `cmake` crate
 otherwise asks for the x64-hosted one, which an ARM64 machine may not
 have.
 
+Where it builds. With `VERBATIM_ESPEAK_DIR` unset, the CMake build goes
+to the crate's own output directory, so every target directory builds
+it. When it is set and the submodule is checked out at a commit with no
+changes to its tracked files, the build goes to
+`<VERBATIM_ESPEAK_DIR>/<commit>-<architecture>` instead, shared by every
+target directory and worktree as `VERBATIM_WX_DIR` is for wxWidgets: a
+lock file serializes builds that start together, and once built the
+folder keeps only `lib`, `espeak-ng-data` and a stamp naming the recipe
+(`RECIPE` in `build.rs`, raised when the recipe changes), so later builds
+skip CMake. A changed source is built in the output directory, so it
+neither reuses nor replaces the commit's build. GitHub Actions caches the
+folder, keyed on the submodule's commit and `build.rs`.
+
 Data. The compiled data, `espeak-ng-data`, is about 30 MB. The build
-copies it next to the executables in `target/<profile>`, replacing any
-older copy, and bakes that path into the crate as
+copies it next to the executables, in the target directory's profile
+folder (found from `OUT_DIR` and `cargo metadata` by
+`build-support/artifact_dir.rs`, whatever the build directory's layout),
+replacing any older copy, and bakes that path into the crate as
 `VERBATIM_ESPEAK_BUILD_DATA`. At run time the driver looks for
 `espeak-ng-data` next to the running executable first and falls back to
 the build's copy. Anything that runs Verbatim from another folder must

@@ -21,6 +21,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::{env, fs};
 
+#[path = "../../build-support/artifact_dir.rs"]
+mod artifact_dir;
+
 fn main() {
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("set by cargo"));
     copy_sounds(&manifest_dir.join("../../sounds"));
@@ -46,12 +49,7 @@ fn main() {
 /// missing.
 fn copy_sounds(sounds: &Path) {
     println!("cargo:rerun-if-changed={}", sounds.display());
-    let profile_dir = env::var("OUT_DIR")
-        .ok()
-        .map(PathBuf::from)
-        .and_then(|out_dir| out_dir.ancestors().nth(3).map(Path::to_path_buf))
-        .expect("OUT_DIR is target/<profile>/build/<crate>/out");
-    let destination = profile_dir.join("sounds");
+    let destination = artifact_dir::artifact_dir().join("sounds");
     let copy = || -> std::io::Result<()> {
         fs::create_dir_all(&destination)?;
         for entry in fs::read_dir(sounds)? {
