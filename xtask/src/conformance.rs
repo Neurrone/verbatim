@@ -21,7 +21,7 @@
 use std::fmt::Write as _;
 use std::io::{BufRead as _, BufReader, Write as IoWrite};
 use std::net::{TcpListener, TcpStream};
-use std::os::windows::io::AsRawHandle as _;
+use std::os::windows::io::{AsRawHandle as _, FromRawHandle as _, OwnedHandle};
 use std::process::{Command, ExitCode, Stdio};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
@@ -39,6 +39,12 @@ use windows::Win32::System::Console::{
     DISABLE_NEWLINE_AUTO_RETURN, ENABLE_PROCESSED_OUTPUT, ENABLE_VIRTUAL_TERMINAL_PROCESSING,
     ENABLE_WRAP_AT_EOL_OUTPUT, SetConsoleMode, SetConsoleOutputCP, SetConsoleTitleW,
 };
+use windows::Win32::System::JobObjects::{
+    AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
+    SetInformationJobObject,
+};
+use windows::Win32::System::Threading::GetCurrentProcess;
 use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Accessibility::{
     IUIAutomationElement, IUIAutomationTextPattern, IUIAutomationTextRange, TextUnit_Character,
@@ -87,6 +93,15 @@ pub fn regenerate(args: &[String]) -> ExitCode {
     if flavors.is_empty() {
         flavors = vec![Flavor::ConsoleHost, Flavor::WindowsTerminal];
     }
+    // Held to the end of the process: every terminal this command starts
+    // is in its job, so none outlives it, whatever path it ends on.
+    let _job = match end_children_with_this_process() {
+        Ok(job) => job,
+        Err(error) => {
+            eprintln!("could not place this command in a job: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
     let uia = match Uia::new() {
         Ok(uia) => uia,
         Err(error) => {
@@ -208,6 +223,36 @@ fn run(
     // window's state.
     let _ = unsafe { PostMessageW(Some(window), WM_CLOSE, WPARAM(0), LPARAM(0)) };
     result
+}
+
+/// Places this process in a new job that ends every process in it when
+/// its last handle closes, and returns that handle. A process this one
+/// starts afterwards is in the job from its start, as is everything it
+/// starts in turn, such as the console host `start` runs, so when this
+/// process exits, by any path, the terminals it started end with it; the
+/// handle is closed then, or when the returned value is dropped.
+fn end_children_with_this_process() -> windows::core::Result<OwnedHandle> {
+    // SAFETY: creates an unnamed job; the handle is owned below.
+    let job = unsafe { CreateJobObjectW(None, PCWSTR::null()) }?;
+    // SAFETY: `job` was just returned open, and nothing else owns it.
+    let job = unsafe { OwnedHandle::from_raw_handle(job.0) };
+    let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+    limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    // SAFETY: `limits` outlives the call, and its size is passed with it.
+    unsafe {
+        SetInformationJobObject(
+            HANDLE(job.as_raw_handle()),
+            JobObjectExtendedLimitInformation,
+            (&raw const limits).cast(),
+            u32::try_from(size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>()).unwrap_or(u32::MAX),
+        )
+    }?;
+    // SAFETY: returns the pseudo-handle naming this process; no
+    // precondition.
+    let this_process = unsafe { GetCurrentProcess() };
+    // SAFETY: the job is open, and the pseudo-handle names this process.
+    unsafe { AssignProcessToJobObject(HANDLE(job.as_raw_handle()), this_process) }?;
+    Ok(job)
 }
 
 /// The player's connection, once it has made it.
