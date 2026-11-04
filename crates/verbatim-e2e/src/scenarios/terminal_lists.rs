@@ -1,5 +1,5 @@
 //! Selection lists drawn in a terminal, as `windows_terminal_marker_list`
-//! and `conhost_marker_list`, each its own code (`docs/testing.md`). The
+//! and `conhost_marker_list`, each its own code (`books/dev/src/reference/testing.md`). The
 //! shared setup is described in the `terminal` module.
 //!
 //! Each scenario runs two scripts, `marker.ps1` and then `redraw.ps1`. Each

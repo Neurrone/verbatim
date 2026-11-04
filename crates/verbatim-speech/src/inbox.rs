@@ -1,4 +1,4 @@
-//! The speech queue thread's inbox (`docs/design/ownership.md`): every event the queue thread takes, from the
+//! The speech queue thread's inbox (`books/dev/src/explanation/design/ownership.md`): every event the queue thread takes, from the
 //! manager, [`SpeechControl`](crate::SpeechControl), the settings host,
 //! the synth thread and the mixer's playback listener, is posted to one
 //! inbox, first in, first out across posters, so a key's cancel and every

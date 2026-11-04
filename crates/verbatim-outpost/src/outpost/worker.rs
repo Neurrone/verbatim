@@ -1,4 +1,4 @@
-//! The workers (`docs/design/ownership.md`): the threads that call into the application.
+//! The workers (`books/dev/src/explanation/design/ownership.md`): the threads that call into the application.
 //!
 //! One worker generation is in charge. It takes one program at a time from
 //! its inbox, which the reducer's shell fills, runs it on the copies the
@@ -15,7 +15,7 @@
 //! when it builds an event or a reply, which carries it to Core with the
 //! timing ([`take_calls`]). Calls a program makes without publishing
 //! anything, for an event it drops, are taken and logged when it ends and
-//! belong to no trace (`docs/performance.md`, "Cancelled traces").
+//! belong to no trace (`books/dev/src/reference/performance.md`, "Cancelled traces").
 //!
 //! A hung cross-process call cannot be stopped safely, so when a program
 //! passes its deadline, or waits on a window the user has left, the
@@ -246,7 +246,7 @@ pub(super) fn take_calls() -> CallCounts {
 /// Starts a worker generation, which takes its programs from
 /// `jobs`. With `warm`, it creates its UIA client at once instead of on its
 /// first read: a spare's worker makes it while the spare waits for its
-/// application (`docs/design/focus-pipeline.md`, section 19.2).
+/// application (`books/dev/src/explanation/design/focus-pipeline.md`, section 19.2).
 pub(super) fn spawn(
     context: Arc<Context>,
     (generation, warm): (u64, bool),
@@ -1483,7 +1483,7 @@ impl Worker<'_> {
     /// judge the next key from the caret the terminal moved: Windows
     /// Terminal sometimes moves its caret with no text change, and the
     /// console host's caret event is its cursor's move
-    /// (`docs/design/terminal-model.md`, "Where it runs": one caret).
+    /// (`books/dev/src/explanation/design/terminal-model.md`, "Where it runs": one caret).
     fn caret_event(&mut self, node_id: NodeId, trace: TraceId, observed_at_us: u64) {
         if self.check_open_watch(node_id, true) {
             if self.focused_terminal(node_id) {
@@ -1549,7 +1549,7 @@ impl Worker<'_> {
     /// output is read whether or not it is the newest focus, since Core
     /// speaks output only for its own focus, and Core's focus is among the
     /// nodes the outpost has not released
-    /// (`docs/design/ownership.md`).
+    /// (`books/dev/src/explanation/design/ownership.md`).
     fn focused_terminal(&self, node_id: NodeId) -> bool {
         self.context.store.runtime_id_of(node_id).is_some()
             && self.context.store.has_terminal(node_id)
@@ -1767,7 +1767,7 @@ impl Worker<'_> {
 
     /// Answers Core's request of the focused terminal `node_id` for a read
     /// at once ([`TextOp::TerminalReadNow`], and [`TextOp::ReadCaret`], the
-    /// read before a held key, `docs/design/key-holding.md`), whatever its
+    /// read before a held key, `books/dev/src/explanation/design/key-holding.md`), whatever its
     /// on-demand state. A fresh read before a review command clears a held
     /// state's mark that the text changed, since it reads what was held.
     fn terminal_read_now(
@@ -1881,7 +1881,7 @@ impl Worker<'_> {
     /// first read, which speaks nothing, since what it held before the focus
     /// arrived is not new output, taken once the subscription has moved to
     /// the terminal, so output written after the read began raises a change
-    /// that reads it (`docs/design/terminal-model.md`, "Reading rules", rule
+    /// that reads it (`books/dev/src/explanation/design/terminal-model.md`, "Reading rules", rule
     /// 15), its caret read first for a terminal published at its bound; or
     /// a `SensitiveSlider`'s lookup for a thumb published at its bound. The
     /// commit of the attempt's result clears it, read or failed.
@@ -2028,7 +2028,7 @@ impl Worker<'_> {
         (ancestors, selected_child): read::Enrichment,
     ) {
         // A focus in a window of a process Verbatim ignores is not
-        // reported, as Core would drop it (`docs/tooling/e2e.md`).
+        // reported, as Core would drop it (`books/dev/src/how-to/e2e.md`).
         if let Some(hwnd) = window
             && self.context.in_ignored_window(hwnd)
         {
@@ -2257,7 +2257,7 @@ impl Worker<'_> {
         if kind == WinEventKind::ConsoleUpdate {
             // The console host's text changed: its updates are the focused
             // console terminal's text changes, as its UIA text changes are
-            // not subscribed to (`docs/crates/verbatim-outpost.md`,
+            // not subscribed to (`books/dev/src/reference/crates/verbatim-outpost.md`,
             // "Terminals").
             if let Some(node_id) = self.focused_console_terminal(hwnd) {
                 // As for a UIA text change: a caret key's evidence is
@@ -2757,7 +2757,7 @@ impl Worker<'_> {
         // An event whose own window's application the system reports hung
         // is dropped before any window lookup or read, as NVDA's UIA
         // handlers drop it first, a window of 0 passing untested
-        // (`docs/testing.md`, "The crates on a reducer's path").
+        // (`books/dev/src/reference/testing.md`, "The crates on a reducer's path").
         // Its element and range, taken from the store, go with it.
         if hung(event.hwnd) {
             if let UiaKind::ActiveTextPosition(Some(range)) = event.kind {
@@ -3306,7 +3306,7 @@ impl Worker<'_> {
     /// `GetForegroundWindow` named its window, and the events that did not
     /// were stale or raised early by the application itself, as File
     /// Explorer raises one as it creates its window and the system's own
-    /// follows once the window is in front (`docs/crates/verbatim-outpost.md`,
+    /// follows once the window is in front (`books/dev/src/reference/crates/verbatim-outpost.md`,
     /// "Foreground changes and focus-now").
     ///
     /// A window not in front at the test is dropped and never kept, as NVDA drops
@@ -3316,7 +3316,7 @@ impl Worker<'_> {
     /// announced as the focus enters it, from the focus's ancestry, where the
     /// top-level window is an ancestor like any other: the reducer speaks
     /// the entered ancestors when the focus's top-level window changes
-    /// (`docs/design/focus-pipeline.md`, section 16.4). A console window's
+    /// (`books/dev/src/explanation/design/focus-pipeline.md`, section 16.4). A console window's
     /// foreground event comes before the window is in front, and the window
     /// is read through UI Automation besides, so its title is the console
     /// window element's, the text area's parent.
@@ -3324,7 +3324,7 @@ impl Worker<'_> {
     /// Every change in front is read and reported: whether the focus is
     /// already in its window, NVDA's two tests against its last queued
     /// focus, is Core's verdict, which refuses a foreground change of the
-    /// window its focus is in (`docs/design/ownership.md`).
+    /// window its focus is in (`books/dev/src/explanation/design/ownership.md`).
     ///
     /// Within a focus group, a change dropped lets the next older entry be
     /// tried, newest first ([`super::reducer`]), as NVDA's `pumpAll`
@@ -3475,7 +3475,7 @@ impl Worker<'_> {
         // A repeat of the focus is read in full and judged in Core, whose
         // duplicate rule compares it with the last focus it took, of any
         // application, as NVDA's `isDuplicateIAccessibleEvent` compares
-        // with its last queued focus (`docs/design/ownership.md`).
+        // with its last queued focus (`books/dev/src/explanation/design/ownership.md`).
         let resolved_child = candidate.resolved_child();
         // NVDA accepts an MSAA focus only when the object or one of its
         // ancestors has the focused state (`shouldAllowIAccessibleFocusEvent`),
@@ -3618,7 +3618,7 @@ impl Worker<'_> {
     }
 
     /// A UIA focus as the focus listener judged and read it from the
-    /// event's own element (`docs/design/focus-pipeline.md`, section 12):
+    /// event's own element (`books/dev/src/explanation/design/focus-pipeline.md`, section 12):
     /// it was no repeat of the focus Core holds, its nearest window
     /// passed NVDA's acceptance test against the foreground window, the
     /// element had the keyboard focus when the listener read it, as
@@ -3649,7 +3649,7 @@ impl Worker<'_> {
             // NVDA's acceptance test against the foreground window was
             // made by the listener, before it read the focus, as NVDA
             // makes it before it queues one
-            // (`docs/design/focus-pipeline.md`, section 16.2).
+            // (`books/dev/src/explanation/design/focus-pipeline.md`, section 16.2).
             let reported = Self::uia_focus_window(context, read.hwnd, read.window)?;
             // The listener makes no backend verdict; the outpost's one
             // verdict per window decides which backend's focus counts in
@@ -3816,7 +3816,7 @@ impl Worker<'_> {
     /// found, as Windows Terminal's tab focus elements,
     /// which are in no tree, are not, nothing is kept, its text cannot be
     /// read, and nothing is followed, as NVDA hears nothing local before
-    /// its group is added to a focus (`docs/design/focus-pipeline.md`,
+    /// its group is added to a focus (`books/dev/src/explanation/design/focus-pipeline.md`,
     /// sections 12.5 and 17).
     fn find_focus_element(&mut self, runtime_id: &[i32], text: bool) -> Option<NodeId> {
         let finding = Instant::now();
@@ -4009,7 +4009,7 @@ impl Worker<'_> {
         let focused = self.focused_terminal(node_id);
         match op {
             // The read before a held key is a read of the terminal, whose
-            // caret answers the request (`docs/design/key-holding.md`).
+            // caret answers the request (`books/dev/src/explanation/design/key-holding.md`).
             TextOp::ReadCaret if focused => {
                 let terminal = self.terminal_copy(node_id);
                 self.read_terminal(node_id, terminal, Some(request), (None, false), trace);
@@ -4492,7 +4492,7 @@ fn follow_of(context: &Context, made: FocusMade) -> (Follow, Option<NodeId>) {
 /// `node_id` of `role`, with `chain`, its ancestors and itself, as NVDA
 /// moves its local group with the focus (`UIAHandler/__init__.py` 642 to
 /// 756; `NVDAObjects/UIA/__init__.py` 1623 to 1630;
-/// `docs/design/focus-pipeline.md`, section 17): to the node's own element
+/// `books/dev/src/explanation/design/focus-pipeline.md`, section 17): to the node's own element
 /// when the outpost has it, with the extended group when the node may have
 /// text, and the base group otherwise; the console host's text area
 /// (`console`) takes the extended group without its text and caret

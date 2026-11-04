@@ -148,7 +148,7 @@ add-on's dialog). NVDA's add-on clicks the center of the rectangle it
 recorded for the chosen icon when it made the list, so an icon that
 moved since, as tray icons do when another is added or removed, leaves
 a different icon, or none, under the click. Verbatim: **different**
-(`docs/crates/verbatim-gui.md`, `refind`; the module documentation of
+(`books/dev/src/reference/crates/verbatim-gui.md`, `refind`; the module documentation of
 `crates/verbatim-gui/src/tray_list.rs`): the list records no
 rectangles; a click has the outpost walk the tray or taskbar again and
 read the rectangle of each button with the chosen item's UIA runtime id or

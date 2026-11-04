@@ -24,7 +24,7 @@ use verbatim_model::protocol::{CoreToListener, CoreToOutpost, ListenerToCore, Ou
 mod raw;
 
 /// The most bytes one message may take, its frame's header aside, in either
-/// direction between Core and a child (`docs/design/communication.md`, section
+/// direction between Core and a child (`books/dev/src/explanation/design/communication.md`, section
 /// 4.2; Dickson, 2026-10-07): room for 10 MB
 /// of terminal output and JSON's escaping. A writer never sends more, and a
 /// reader that is told of more treats the other end as failed rather than
@@ -35,7 +35,7 @@ pub const MAX_MESSAGE_BYTES: usize = crate::transport::MAX_FRAME_BYTES;
 /// A message of the Core-outpost protocol as a frame carries it: its JSON
 /// body, and for a message that carries a terminal's text and colours, a
 /// raw section holding them, the body giving their places
-/// (`docs/design/communication.md`, section 4.2). Every other message is a
+/// (`books/dev/src/explanation/design/communication.md`, section 4.2). Every other message is a
 /// body alone, and is refused with a raw section.
 pub trait Message: Sized {
     /// Appends this message's frame to `buffer`.
@@ -128,7 +128,7 @@ impl Message for String {
 ///
 /// The frame goes to `writer` in one `write_all`, so on a bare pipe, as the
 /// listener and every outpost write to, a message is one `WriteFile`
-/// (`docs/design/communication.md`, section 4.3).
+/// (`books/dev/src/explanation/design/communication.md`, section 4.3).
 ///
 /// # Errors
 ///
@@ -186,7 +186,7 @@ pub fn read_message<R: BufRead, T: Message>(reader: &mut R) -> io::Result<Option
 /// fields and `"TargetExited"` for one without. `None` for a body that
 /// starts neither way. verbatim.exe's relay reads it on every frame from
 /// an outpost, to handle pongs, `Ready` and `TargetExited` itself and pass
-/// every other frame on whole (`docs/design/communication.md`, section
+/// every other frame on whole (`books/dev/src/explanation/design/communication.md`, section
 /// 6.2).
 #[must_use]
 pub fn message_kind(body: &[u8]) -> Option<&str> {

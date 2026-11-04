@@ -1,4 +1,4 @@
-//! A terminal's colours (`docs/design/terminal-model.md`, "Lists and
+//! A terminal's colours (`books/dev/src/explanation/design/terminal-model.md`, "Lists and
 //! colours" and "Costs"): each screen row's runs of one foreground and background, from the
 //! screen's top to the document's end, read in the reads in a key's window.
 //!
@@ -18,7 +18,7 @@
 //! per chunk and a walk of the chunks its colours change in, and a row
 //! whose every cell differs from its neighbours a walk of all of it, its
 //! worst case. Measured on a 120 by 30 screen in that worst case
-//! (`docs/performance.md`, "A terminal's colours"), reading every cell
+//! (`books/dev/src/reference/performance.md`, "A terminal's colours"), reading every cell
 //! regardless costs the same as this, while it reads an ordinary screen in
 //! a fraction of the time.
 //!
@@ -60,7 +60,7 @@ pub struct ColourRun {
 
 /// How many cells a row of several colours is checked in at a time: a
 /// chunk of one colour costs one check, a chunk of several a walk of its
-/// cells. Chosen by measurement (`docs/performance.md`, "A terminal's
+/// cells. Chosen by measurement (`books/dev/src/reference/performance.md`, "A terminal's
 /// colours").
 pub const COLOUR_CHUNK: usize = 16;
 

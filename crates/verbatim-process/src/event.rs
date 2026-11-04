@@ -2,7 +2,7 @@
 //! pipe and for a signal from another thread together waits on, as the
 //! synth thread waits for its host's next frame and for its utterance's
 //! cancel, and a synthesizer host for its write to Core and for Core's
-//! next command (`docs/design/communication.md`, sections 7.3 and 7.4).
+//! next command (`books/dev/src/explanation/design/communication.md`, sections 7.3 and 7.4).
 
 use std::io;
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle, RawHandle};

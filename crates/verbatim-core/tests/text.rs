@@ -1776,7 +1776,7 @@ fn the_review_cursor_meets_each_character_of_a_line_break() {
 }
 
 /// A terminal row's line ends at its last character: padding is never
-/// reviewed (`docs/design/terminal-model.md`, "Features and settings"), so moving on
+/// reviewed (`books/dev/src/explanation/design/terminal-model.md`, "Features and settings"), so moving on
 /// from the last character is at the edge, padded or not.
 #[test]
 fn a_terminal_rows_line_ends_at_its_last_character() {
@@ -1817,7 +1817,7 @@ fn a_terminal_keeps_a_cell_column_and_reads_past_the_text_as_blank() {
     caret_event(&mut state, 13, line("ab中文cd    \r\n", 200, 2));
     settle(&mut state, line("ab中文cd    \r\n", 200, 2));
     // Every review command in a terminal reads the review cursor's line
-    // again first, where the cursor is (`docs/design/terminal-model.md`,
+    // again first, where the cursor is (`books/dev/src/explanation/design/terminal-model.md`,
     // "The review cursor"); a line read the same keeps its cell column.
     let seeded = |state: &mut SrState, command: ReviewCommand, chunk: TextChunk| {
         let effects = reduce(state, &self::command(command, 0));
@@ -2451,7 +2451,7 @@ fn review_bottom_reads_the_last_line_from_its_start() {
 }
 
 /// In a terminal, bottom first reads the review cursor's row again, as
-/// every review command there does (`docs/design/terminal-model.md`, "The
+/// every review command there does (`books/dev/src/explanation/design/terminal-model.md`, "The
 /// review cursor"), then the text's last row.
 #[test]
 fn review_bottom_in_a_terminal_reads_the_last_row() {
@@ -2587,7 +2587,7 @@ fn start_of_line_says_the_lines_first_character() {
 }
 
 /// In a terminal, start of line reads the review cursor's row again first
-/// (`docs/design/terminal-model.md`, "The review cursor"), then says the
+/// (`books/dev/src/explanation/design/terminal-model.md`, "The review cursor"), then says the
 /// row's first cell.
 #[test]
 fn start_of_line_in_a_terminal_says_the_rows_first_cell() {

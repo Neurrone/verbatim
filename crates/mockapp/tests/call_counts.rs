@@ -1,4 +1,4 @@
-//! The operation ledger's ratchet (`docs/performance.md`): for each operation
+//! The operation ledger's ratchet (`books/dev/src/reference/performance.md`): for each operation
 //! on each backend, exactly how many cross-process calls the client side
 //! makes, by kind, and exactly how many calls mockapp's providers answer, by
 //! method.
@@ -173,7 +173,7 @@ impl Ratchet {
         assert!(
             self.mismatches.is_empty(),
             "an operation's cost moved; when that is deliberate, update this test and \
-             docs/performance.md together.\n{}",
+             books/dev/src/reference/performance.md together.\n{}",
             self.mismatches.join("\n")
         );
     }
@@ -374,7 +374,7 @@ fn msaa_focus_changes_cost_exactly() {
 
     // The same focus event again: read in full and reported, since whether
     // it repeats the focus is Core's verdict
-    // (`docs/design/ownership.md`).
+    // (`books/dev/src/explanation/design/ownership.md`).
     let (reported, cost) = measure_msaa_focus(&mut app, hwnd, &outpost, ("item2", ITEM_TWO));
     assert_eq!(reported.chain(), [Some("Options"), Some("Two")]);
     ratchet.check(
@@ -1344,19 +1344,19 @@ fn uia_focus_changes(remote: bool, expected: &FocusCosts<'_>) {
 /// only. The listener reads every focus the classic way, with no remote
 /// operation and no connection, and without asking again for the keyboard
 /// focus and the nearest window it has just read
-/// (`docs/design/listener-without-connections.md`, section 3, step 8): the
+/// (`books/dev/src/explanation/design/listener-without-connections.md`, section 3, step 8): the
 /// refreshed cache and one step per ancestor, so a steady-state focus
 /// costs 4 calls by both of the outpost's paths.
 ///
 /// Since the listener tests acceptance before it reads a focus
-/// (`docs/design/focus-pipeline.md`, section 16.2), each focus costs,
+/// (`books/dev/src/explanation/design/focus-pipeline.md`, section 16.2), each focus costs,
 /// before its read, the nearest window of the windowless element
 /// (`NormalizeElementBuildCache`, one call). The nearest window cost
 /// mockapp, for a button or the list, 1 `WM_GETOBJECT`, 14
 /// `ProviderOptions`, 6 `GetPropertyValue`, 4 `HostRawElementProvider`, 5
 /// `Navigate`, and 1 `FragmentRoot`, and for the list's item 1, 10, 4, 3,
 /// 3, and 1. The listener compares a focus with no earlier focus: Core
-/// judges repeats (`docs/design/ownership.md`), which
+/// judges repeats (`books/dev/src/explanation/design/ownership.md`), which
 /// took the comparison with the last focus accepted (`CompareElements`,
 /// one call, which mockapp answers nothing for) out of every focus after
 /// the first.
@@ -1365,7 +1365,7 @@ fn uia_focus_changes(remote: bool, expected: &FocusCosts<'_>) {
 /// "Who owns each duplicated fact", the verdicts): the outpost alone
 /// judges the window, and probes it at the cold focus only, before it
 /// reports the listener's read, with the raw probe
-/// (`docs/design/listener-without-connections.md`, section 3, step 4): one
+/// (`books/dev/src/explanation/design/listener-without-connections.md`, section 3, step 4): one
 /// window message, which costs mockapp one `WM_GETOBJECT`, two
 /// `ProviderOptions`, one `HostRawElementProvider` and one `Navigate`.
 fn uia_focus_changes_cost_exactly_remote() {
@@ -1516,7 +1516,7 @@ fn uia_focus_changes_cost_exactly_classic() {
 
 /// A focus event repeated on the element the listener last read, which
 /// still has the keyboard focus, is read in full, and Core judges the
-/// repeat (`docs/design/ownership.md`): the listener
+/// repeat (`books/dev/src/explanation/design/ownership.md`): the listener
 /// finds the windowless sender's nearest window, for NVDA's native check
 /// (one call, `NormalizeElementBuildCache`, the window's verdict already
 /// kept), reads the sender's keyboard focus, then reads it as any focus,
@@ -1574,7 +1574,7 @@ fn uia_repeated_focus_costs_exactly() {
 }
 
 /// The focus listener makes no connection to an application's window
-/// (`docs/design/listener-without-connections.md`, sections 2 and 7): its
+/// (`books/dev/src/explanation/design/listener-without-connections.md`, sections 2 and 7): its
 /// real reader judges and reads a cold focus in a mockapp window, its
 /// window probed, then a steady-state focus, a focus into a list and one to
 /// a list item, and the calls it counted on this thread include no call
@@ -1616,7 +1616,7 @@ fn the_listener_makes_no_connection() {
 }
 
 /// The listener's walks stop below the process boundary
-/// (`docs/design/listener-without-connections.md`, sections 3 and 7): one
+/// (`books/dev/src/explanation/design/listener-without-connections.md`, sections 3 and 7): one
 /// mockapp's UIA window is made the child of another mockapp's MSAA
 /// window, by `SetParent` from this process, as the Settings page's content
 /// is the child of `ApplicationFrameHost`'s frame; or, staying top-level,
@@ -1795,7 +1795,7 @@ fn uia_focus_chains_stop_below_the_process_boundary() {
 /// window is the child of another process's window, stops before any
 /// step, as the focus listener reads it, given the nearest window its
 /// checks found: the element's own window, recognized by its runtime id
-/// (`docs/design/listener-without-connections.md`, section 10, step 6).
+/// (`books/dev/src/explanation/design/listener-without-connections.md`, section 10, step 6).
 /// The walk makes no call and the parent receives nothing. Without that
 /// recognition the walk steps into the parent, and the check after the
 /// step drops it, so the chain is the same but the step shows: a call,
@@ -1883,7 +1883,7 @@ fn uia_walk_from_a_window_element_held_without_its_handle_stops_below_the_bounda
 /// parent receives only the `WM_GETOBJECT` with `UiaRootObjectId` and a
 /// nonzero `wParam` that UIA's client side sends as the read returns the
 /// child window's element (decision 13 of
-/// `docs/design/listener-without-connections.md`). Before the outposts
+/// `books/dev/src/explanation/design/listener-without-connections.md`). Before the outposts
 /// stopped below the boundary, the classic read's step up into the parent
 /// cost it 6 `WM_GETOBJECT`s and 27 MSAA calls (5 and 27 for an owner);
 /// before the parent was a plain window, the MSAA read of its client area
@@ -1897,7 +1897,7 @@ const FOCUS_NOW_PARENT_HITS: [&[(&str, u32)]; 2] = [&[("WM_GETOBJECT", 1)], &[]]
 /// (`docs/design/focus-pipeline-rework.md`, "A window's name, and the one
 /// fallback"). UIA's client side still connects to the parent as the
 /// outpost's read returns the child window's element (decision 13 of
-/// `docs/design/listener-without-connections.md`), which the parent's
+/// `books/dev/src/explanation/design/listener-without-connections.md`), which the parent's
 /// `WM_GETOBJECT`s, split by kind, show, and nothing else reaches it. Both
 /// of the outpost's reads, the listener's chain completed and a focus-now
 /// query, by the remote program and classically. With the parent read
@@ -2022,7 +2022,7 @@ fn get_objects(
 /// UIA provider, here as it takes a foreground event for it: the raw probe
 /// alone, one `WM_GETOBJECT` with a zero `wParam`, and no connection to the
 /// window after it finds the provider
-/// (`docs/design/listener-without-connections.md`, decision 2). The probe
+/// (`books/dev/src/explanation/design/listener-without-connections.md`, decision 2). The probe
 /// costs mockapp one `WM_GETOBJECT`, two `ProviderOptions`, one
 /// `HostRawElementProvider` and one `Navigate`. Its verdict is kept for the
 /// window's lifetime, so a second foreground event costs nothing.
@@ -2074,7 +2074,7 @@ fn an_outposts_probe_that_finds_a_provider_makes_no_connection() {
 /// parent is still stalled, and the parent's process counts no provider
 /// call at all, only the connection messages UIA's client side sends it as
 /// the outpost's reads return the child window's element (decision 13 of
-/// `docs/design/listener-without-connections.md`). Each window above the
+/// `books/dev/src/explanation/design/listener-without-connections.md`). Each window above the
 /// boundary is a pane carrying its handle: the top-level window, which has
 /// a system menu, marked a top-level window's client and named by its
 /// text, and the child window between, which has none, not marked. Read by
@@ -2548,7 +2548,7 @@ fn uia_navigation_steps_cost_exactly() {
 /// focus's element filled as a node and each ancestor as an ancestor, so
 /// the provider is not asked for the focus's description, nor for an
 /// ancestor's beyond the one the layout judgment reads, and no cached read
-/// fails (`docs/design/uia-shapes.md`, section 4.2).
+/// fails (`books/dev/src/explanation/design/uia-shapes.md`, section 4.2).
 fn uia_ancestors_with_descriptions_off_cost_exactly() {
     let title = common::unique_title("mockapp-counts-uia-ancestors");
     let mut app = common::spawn("counts.json", "uia", &title);
@@ -2687,7 +2687,7 @@ fn a_node_with_no_kept_element_and_no_route_is_gone_with_no_call() {
 /// fresh. The outpost moves its registration to elements it keeps, so one
 /// held past UI Automation's sweep is cold, and costs 9 provider calls for
 /// the registration instead of 3, and 6 for the move to the same element
-/// instead of 0 (`docs/uia-bugs.md`, "UI Automation's copy of an
+/// instead of 0 (`books/dev/src/reference/uia-bugs.md`, "UI Automation's copy of an
 /// element's runtime id lapses").
 fn uia_event_registrations_cost_exactly() {
     let title = common::unique_title("mockapp-counts-uia-registrations");
@@ -2728,7 +2728,7 @@ fn uia_event_registrations_cost_exactly() {
     // sweep, and a registration on an element whose copy has lapsed reads it
     // from the provider again: 9 provider calls in place of 3 here, and
     // provider hits on the move below that otherwise costs none
-    // (`docs/uia-bugs.md`, "UI Automation's copy of an element's runtime id
+    // (`books/dev/src/reference/uia-bugs.md`, "UI Automation's copy of an element's runtime id
     // lapses"). Reading the runtime id just before each measured step,
     // outside the measure, renews the copy, so each step is measured warm.
     warm_runtime_id(under_test.element("First"));
@@ -2753,7 +2753,7 @@ fn uia_event_registrations_cost_exactly() {
 
     // A move to the element already followed, by another reference to it,
     // makes no call: the registration compares the elements and keeps the
-    // group where it is (`docs/design/focus-pipeline.md`, section 17).
+    // group where it is (`books/dev/src/explanation/design/focus-pipeline.md`, section 17).
     warm_runtime_id(under_test.element("First"));
     let again = AgileReference::new(under_test.element("First")).expect("an agile reference");
     let ((), cost) = under_test.measure(hwnd, |_| {
@@ -3187,7 +3187,7 @@ fn right_arrow(before: &verbatim_model::CaretReport) -> CaretWatch {
 /// Then a selection no key made is reported the same way, with how it
 /// changed. Then the caret, moved on with nothing selected, is read as the
 /// outpost reads it before a held caret key is passed on
-/// (`TextOp::ReadCaret`, `docs/design/key-holding.md`): the report's read,
+/// (`TextOp::ReadCaret`, `books/dev/src/explanation/design/key-holding.md`): the report's read,
 /// leaving the kept selection alone. Returns the calls and hits of the
 /// answer, of the report, of the report with a selection change, and of
 /// the read before a held key.
@@ -4761,7 +4761,7 @@ fn uia_notes(hwnd: HWND) -> UiaText {
 /// selected item is its value, and the selection of another of its items,
 /// a change of that value, through an outpost reading with remote
 /// operations or the classic walk as `remote` says
-/// (`docs/performance.md`, "A focus change onto a combo box without the
+/// (`books/dev/src/reference/performance.md`, "A focus change onto a combo box without the
 /// Value pattern, UIA"). The first focus in the window, on the combo box
 /// with the pattern, probes it for arbitration and is not measured. The
 /// listener reads the focus the classic way whatever the outpost's path:
@@ -4984,7 +4984,7 @@ fn uia_text_focus(fixture: &str, id: &str, remote: bool, setup: &[&str]) -> Repo
 }
 
 /// The calls a focus on a text field costs, its caret read with it and
-/// counted in the focus's one message (`docs/performance.md`, "A focus on
+/// counted in the focus's one message (`books/dev/src/reference/performance.md`, "A focus on
 /// a text field"): a UIA document with nothing selected, with a selection,
 /// whose text is read with the caret, and protected with a selection,
 /// whose text is read as any field's, and a terminal, each remotely and
@@ -5146,7 +5146,7 @@ fn text_field_focuses_cost_exactly() {
 
 /// The calls a focus-now query on a text field costs, the answer Core
 /// asks for at its start, after a replaced outpost, and after a menu
-/// closes or Alt+Tab (`docs/performance.md`, "The focus-now answer on a
+/// closes or Alt+Tab (`books/dev/src/reference/performance.md`, "The focus-now answer on a
 /// text field"): mockapp's UIA document with nothing selected, remotely
 /// and classically, its caret read with the focus by the reported
 /// focus's reading code and carried in the answer, its line "alpha

@@ -1,5 +1,5 @@
 //! The `cargo xtask ci` check that test code waits for evidence, never for
-//! time (`docs/testing.md`, "Waits are for evidence"): it fails on a fixed
+//! time (`books/dev/src/reference/testing.md`, "Waits are for evidence"): it fails on a fixed
 //! sleep or a retry loop anywhere in test code, and lists the sleeps left in
 //! production code for review.
 //!
@@ -97,7 +97,7 @@ pub fn check(root: &Path) -> Result<(), String> {
         return Ok(());
     }
     let mut report = String::from(
-        "test code must wait for evidence, not for time or by retrying (docs/testing.md):\n",
+        "test code must wait for evidence, not for time or by retrying (books/dev/src/reference/testing.md):\n",
     );
     for finding in &in_tests {
         let _ = writeln!(

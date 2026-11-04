@@ -1,7 +1,7 @@
 # Sounds
 
 The sounds of Verbatim's built-in default theme, shared by every platform
-and installed beside the program (`docs/crates/verbatim-model.md`, "Themes"). The
+and installed beside the program (`books/dev/src/reference/crates/verbatim-model.md`, "Themes"). The
 platform-neutral code only loads files from this directory, so every
 build uses the same sounds. A theme names a sound by its file name; a
 user theme that does not carry a sound of that name uses the one here.

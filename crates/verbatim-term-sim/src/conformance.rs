@@ -1,4 +1,4 @@
-//! The conformance corpus and its expectations (`docs/design/terminal-model.md`,
+//! The conformance corpus and its expectations (`books/dev/src/explanation/design/terminal-model.md`,
 //! "Testing"): streams written chunk by chunk into a terminal and read
 //! after each chunk, and what the real console host and Windows Terminal
 //! answered. `cargo xtask regenerate-terminal-conformance-expectations`

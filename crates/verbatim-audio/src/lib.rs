@@ -9,7 +9,7 @@
 //! source's audio until the device reports it played, so it knows when each
 //! utterance and index mark is heard and reports that as a
 //! [`PlaybackEvent`], whichever synthesizer produced the audio, through a
-//! delivery thread of its own (`docs/design/ownership.md`).
+//! delivery thread of its own (`books/dev/src/explanation/design/ownership.md`).
 //!
 //! The WASAPI device lives in `verbatim-audio-wasapi`, so nothing here
 //! depends on Windows. [`SilentDevice`] plays at real-time speed without a
@@ -83,7 +83,7 @@ impl std::error::Error for AudioError {}
 
 /// Where a device's own clock had got to: how many frames it had played
 /// since it last started, and how long before the reading was returned
-/// that was so (`docs/design/communication.md`, section 10.1, "Device
+/// that was so (`books/dev/src/explanation/design/communication.md`, section 10.1, "Device
 /// clock").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ClockReading {
@@ -98,7 +98,7 @@ pub type Waker = Arc<dyn Fn() + Send + Sync>;
 
 /// An auto-reset event: set from any thread, waited on by one. A set made
 /// while nobody waits stays set until the next wait takes it, so a wake is
-/// never lost (`docs/design/ownership.md`). The
+/// never lost (`books/dev/src/explanation/design/ownership.md`). The
 /// WASAPI device makes Windows events; [`CondvarSignal`] is the portable
 /// one, for test devices.
 pub trait Signal: Send + Sync {

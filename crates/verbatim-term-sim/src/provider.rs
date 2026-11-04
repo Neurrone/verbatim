@@ -4,7 +4,7 @@
 //! history rotates and fail when they lie beyond the active buffer; the
 //! document ending at the end of the lower of the last row with text and
 //! the cursor's; rows joined by line breaks, none after the last, and none
-//! after a row whose line wraps onto the next (`docs/design/terminal-model.md`,
+//! after a row whose line wraps onto the next (`books/dev/src/explanation/design/terminal-model.md`,
 //! "The terminals"). The conformance expectations check every answer
 //! against the real terminals.
 

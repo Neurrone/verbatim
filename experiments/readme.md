@@ -1,6 +1,6 @@
 # Experiments
 
-This folder keeps the experiments behind `docs/uia-bugs.md`, the record of faults in Windows' UI Automation that Verbatim has established: for each one, the scripts or code that were run, the tool patches and prototype source they ran with, the raw text outputs, and a readme that defines each experiment by its identifier, with its setup, its result and its numbers. They were scratch work, run on Dickson's x64 machine (Windows 11, build 26200) between 2026-10-07 and 2026-11-02. Nothing here is built or tested by the workspace: prototype manifests are kept as `Cargo.toml.txt`, and each readme says how to rebuild and rerun its experiments.
+This folder keeps the experiments behind `books/dev/src/reference/uia-bugs.md`, the record of faults in Windows' UI Automation that Verbatim has established: for each one, the scripts or code that were run, the tool patches and prototype source they ran with, the raw text outputs, and a readme that defines each experiment by its identifier, with its setup, its result and its numbers. They were scratch work, run on Dickson's x64 machine (Windows 11, build 26200) between 2026-10-07 and 2026-11-02. Nothing here is built or tested by the workspace: prototype manifests are kept as `Cargo.toml.txt`, and each readme says how to rebuild and rerun its experiments.
 
 Left out everywhere: screen recordings, ETW traces, symbol caches, binaries and build output. Paths to a session's scratch folder are redacted to `<scratch folder>`.
 
@@ -14,7 +14,7 @@ Left out everywhere: screen recordings, ETW traces, symbol caches, binaries and 
 - [Desktop-wide focus handlers in a second process deliver late](desktop-wide-focus-handlers-in-a-second-process-deliver-late/readme.md): P2's delivery timings, `p2b`, `p2c` and `p2d`.
 - [A registration that times out reports success](a-registration-that-times-out-reports-success/readme.md): E-TT and E3, which also serve the limitation that a timeout bounds each provider call, not an operation, `e57`, when such a registration starts to deliver, and `e58`, what reaches the application and other registrations meanwhile, and whether it can be removed.
 
-The other faults in `docs/uia-bugs.md` rest on commits and tests named in their entries, with no separate experiment.
+The other faults in `books/dev/src/reference/uia-bugs.md` rest on commits and tests named in their entries, with no separate experiment.
 
 ## Limitations
 
@@ -28,14 +28,14 @@ The other faults in `docs/uia-bugs.md` rest on commits and tests named in their 
 
 ## Design experiments
 
-- [The listener's read below another process's window](the-listeners-read-below-another-processs-window/readme.md): how a busy parent window of another process, and a remote operation queued in its process, delay or drop the listener's read of a focus in the child window (`docs/design/listener-without-connections.md`, decision 13 and risk 14).
+- [The listener's read below another process's window](the-listeners-read-below-another-processs-window/readme.md): how a busy parent window of another process, and a remote operation queued in its process, delay or drop the listener's read of a focus in the child window (`books/dev/src/explanation/design/listener-without-connections.md`, decision 13 and risk 14).
 - [The console host raises its caret events on its blink timer](the-console-host-raises-its-caret-events-on-its-blink-timer/readme.md): whether the console host gives a held caret key's watch any evidence sooner than its console caret event; every caret signal it raises comes on the next tick of its 530 ms cursor blink timer, and nothing between ticks (2026-10-26).
 - [A terminal's read ends at the document end it started with](a-terminal-read-ends-at-the-document-end-it-started-with/readme.md): why a read during a flood under a scroll region leaves out the footer below the caret (`conhost_footer_flood`, GitHub run 40317394858); output that moves the document's end between the document range and the snapshot's text cuts the text at the old end, in both terminals, in 93 and 65 percent of reads during a fast flood and none after it (2026-10-26).
 - [A redraw in a key's window is spoken as its answer](a-redraw-in-a-keys-window-is-spoken-as-its-answer/readme.md): the one failed run of `conhost_footer_overflow` behind M6.4's known limit, Core's inputs and the timeline, where a footer redrawn 90 ms after a key was spoken ahead of the queued flood (2026-11-03).
 - [CoCancelCall ends an MSAA COM call, but not a window message](cocancelcall-ends-an-msaa-com-call-but-not-a-window-message/readme.md): whether `CoCancelCall`, as NVDA's watchdog uses it, can end the outpost's MSAA calls into a hung application; it ends an `IAccessible` call through a proxy, but not the `WM_GETOBJECT` of an acquisition (`docs/design/phase6-design.md`, "Time limits that hold (2026-10-11)").
 - [CoCancelCall does not end a UIA client call](cocancelcall-does-not-end-a-uia-client-call/readme.md): whether `CoCancelCall` ends a UIA client call blocked in an application (`docs/roadmap.md`, M6.1); it ends none, since UIA's client waits on its own channel rather than in a COM call.
 - [Concurrent UIA calls into one application are served one at a time](parallel-uia-calls/readme.md): whether parallel UIA, remote operation and MSAA calls into one application gain anything, and whether one slow or stuck call holds the others, measured on a synthetic provider, mockapp and nine real applications across frameworks, with the debugger's view of UIA's single request thread in the application (2026-11-02).
-- [The ownership study](ownership-study/readme.md): the read-only study of which facts are decided in more than one process or thread, its prior art and the audit of the structure between processes, behind `docs/design/ownership.md` (2026-10-30).
+- [The ownership study](ownership-study/readme.md): the read-only study of which facts are decided in more than one process or thread, its prior art and the audit of the structure between processes, behind `books/dev/src/explanation/design/ownership.md` (2026-10-30).
 - [M4.6's mutation classes](logic-tests-study/judgement.md): the class of each mutant the generated tests were measured against, and the targets still missed, cited by the roadmap's follow-ups from M4.6 (2026-11-03).
 
 - [GetFocusedElement after the focus moves](getfocusedelement-after-the-focus-moves/readme.md): whether the outpost's `GetFocusedElementBuildCache` connects into another application when the system focus moves to it between the outpost's check and the call, with the race made to happen every time between two shown mockapp windows (the same study, 2026-10-29).

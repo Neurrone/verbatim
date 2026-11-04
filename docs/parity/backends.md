@@ -40,7 +40,7 @@ times its cached verdict from before the probe, so a "no" that took the
 whole wait is out of date when stored ([The UIA client](../nvda/uia.md),
 "The per-window UIA decision").
 
-Verbatim: **different** (`docs/design/listener-without-connections.md`,
+Verbatim: **different** (`books/dev/src/explanation/design/listener-without-connections.md`,
 decision 2; the outposts' probe decided by Dickson on 2026-10-20; the one
 verdict per window decided by Dickson on 2026-10-30,
 `docs/design/focus-pipeline-rework.md`, "Who owns each duplicated fact",
@@ -69,7 +69,7 @@ does not pump (Dickson, 2026-10-30;
 
 NVDA leaves UIA's connection timeout at its default of 2 seconds and its
 transaction timeout at its default of 20. Verbatim: **different**
-(`docs/design/listener-without-connections.md`, section 5): the
+(`books/dev/src/explanation/design/listener-without-connections.md`, section 5): the
 connection timeout is UIA's default of 2 seconds, as NVDA's is, but the
 transaction timeout is 5 seconds.
 
@@ -99,8 +99,8 @@ Verbatim: **matched (unverified)**, case by case:
   `shouldAllowUIAFocusEvent`, then reads the element's states, value,
   and details afresh with one cache-building call, and its ancestors one
   step up at a time, every call on the element it holds and none a
-  remote operation (`docs/design/focus-pipeline.md`, section 12;
-  `docs/design/listener-without-connections.md`, sections 2 and 3).
+  remote operation (`books/dev/src/explanation/design/focus-pipeline.md`, section 12;
+  `books/dev/src/explanation/design/listener-without-connections.md`, sections 2 and 3).
   Pinned by mockapp's `a_focus_reports_the_states_read_when_it_is_handled`
   and Core's
   `a_focus_read_after_its_item_was_selected_is_announced_without_the_selection`.
@@ -131,7 +131,7 @@ Verbatim: **matched (unverified)**, case by case:
   which are in no tree, is reported from the listener's read with its own
   ancestors; its changes are followed from its window until its own event
   brings the element, and review and navigation start from the nearest
-  ancestor found (`docs/design/focus-pipeline.md`, decision 3 of section
+  ancestor found (`books/dev/src/explanation/design/focus-pipeline.md`, decision 3 of section
   15).
 - A focus's ancestors are read only until they meet the previous focus's
   chain, whose rest is reused, as NVDA's focus ancestry does. Different:
@@ -211,7 +211,7 @@ clients asks
   Windows 11 build 26200 against the taskbar's clock button and against
   mockapp, whose group raises the change correctly through
   `UiaRaiseAutomationPropertyChangedEvent` on its own provider
-  (`docs/uia-bugs.md`, "Ancestors cannot be cached or listened to").
+  (`books/dev/src/reference/uia-bugs.md`, "Ancestors cannot be cached or listened to").
   NVDA's `event_stateChange` speaks a state change on a focus ancestor
   (its issue 10890), but under selective registration UIA never hands
   it one, so for UIA NVDA too speaks property changes of the focus
@@ -291,8 +291,8 @@ and processing it newest first, stopping at the first valid one, when
 the next other event comes; the menu event is tried last.
 
 Verbatim: **matched (unverified)**, in each outpost's intake
-(`docs/design/focus-pipeline.md`, sections 5.1 and 5.2, which own the
-ordering; [verbatim-outpost](../crates/verbatim-outpost.md), the queue
+(`books/dev/src/explanation/design/focus-pipeline.md`, sections 5.1 and 5.2, which own the
+ordering; [verbatim-outpost](../../books/dev/src/reference/crates/verbatim-outpost.md), the queue
 under `Outpost`; `outpost/reducer/hold.rs` for the hand-over's hold). Every MSAA event is counted by the thread it carries,
 whichever hook took it in. Every foreground change of a batch is tried
 with the focus events of the run it is in (Dickson, 2026-10-20), and a
@@ -392,7 +392,7 @@ events within one flush, so they are rare, and none is changed.
 
 NVDA: `normalizeIAccessible`
 ([IA2 usage](../nvda/ia2.md)). Verbatim: **partial**: the verbatim-ia2
-QueryService path exists ([verbatim-ia2](../crates/verbatim-ia2.md)),
+QueryService path exists ([verbatim-ia2](../../books/dev/src/reference/crates/verbatim-ia2.md)),
 unverified; IA2 text and hypertext consumption is not yet (M7).
 
 ### JAB

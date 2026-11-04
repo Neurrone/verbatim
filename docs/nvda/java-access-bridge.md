@@ -5,7 +5,7 @@ accessibility APIs; the *Java Access Bridge* (JAB) is Oracle's
 translation layer, and `source/JABHandler.py` is NVDA's client for
 it. The bridge itself — architecture, C API, reference lifetime — is
 covered in
-[The Java Access Bridge](../explainers/java-access-bridge.md); this
+[The Java Access Bridge](../../books/dev/src/explanation/windows/java-access-bridge.md); this
 file is NVDA's side.
 
 ## How the bridge works

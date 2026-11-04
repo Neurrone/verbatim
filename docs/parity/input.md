@@ -8,7 +8,7 @@ swallow, double-tap passthrough,
 trapped-key release swallowing, unbound-chord fallthrough.
 NVDA: `keyboardHandler` ([Keyboard input](../nvda/input.md)). Verbatim:
 **partial**. The semantics are matched, verified by unit tests and
-transcribed ([verbatim-input](../crates/verbatim-input.md)); no live
+transcribed ([verbatim-input](../../books/dev/src/reference/crates/verbatim-input.md)); no live
 side-by-side session with NVDA has been made. Sticky and
 locked modifier states are not yet built. Different, by decision
 (Dickson, 2026-10-03): Caps Lock is a Verbatim key by default (see
@@ -36,7 +36,7 @@ a review command, or the time, menu or tray-list gesture, pressed while
 a caret key is held for its caret read runs after that key has been
 passed on and its watch answered, or 100 ms after the pass, whichever is
 first; the caret key says nothing, and a reading command reads the line
-the key moved to (`docs/design/ownership.md`; Core's `a_review_command_pressed_while_a_caret_key_is_held_runs_after_its_read_pass_and_watch`).
+the key moved to (`books/dev/src/explanation/design/ownership.md`; Core's `a_review_command_pressed_while_a_caret_key_is_held_runs_after_its_read_pass_and_watch`).
 A command pressed while the watch of a caret key already passed on is
 still open waits for it in the same way. Different, by decision
 (Dickson, 2026-10-30): the wait for the watch is Verbatim's own, so the
@@ -117,7 +117,7 @@ Verbatim does not. A protected field echoes only the protected character
 ("star") and no words; typing into a terminal waits until the
 terminal's text changes unless "Speak passwords" is on, so a password
 prompt speaks nothing, and Enter drops what was held. Different
-(Dickson, 2026-10-06; `docs/crates/verbatim-input-windows.md`): the
+(Dickson, 2026-10-06; `books/dev/src/reference/crates/verbatim-input-windows.md`): the
 characters come from the keyboard hook's own translation of each key,
 not from inside the application; dead keys compose correctly, a letter
 typed before the application has handled the dead key aside, against

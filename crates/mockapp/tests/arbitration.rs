@@ -151,7 +151,7 @@ fn a_busy_uia_window_is_read_once_it_answers() {
     assert_eq!(name(&uia).as_deref(), Some("Mockapp Events Fixture"));
 
     // Within the connection timeout, which ends a lookup of a window busy
-    // for longer (`docs/design/listener-without-connections.md`, section 5).
+    // for longer (`books/dev/src/explanation/design/listener-without-connections.md`, section 5).
     let stall = verbatim_uia::CONNECTION_TIMEOUT / 2;
     app.stall(stall);
     let read = name(&uia);

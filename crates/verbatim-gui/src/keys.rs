@@ -15,7 +15,7 @@
 //!   as its Change button does.
 //! - Enter anywhere else activates OK.
 //! - Space on the Theme page's sound choice plays the sound it shows
-//!   (`docs/crates/verbatim-gui.md`, the Theme page).
+//!   (`books/dev/src/reference/crates/verbatim-gui.md`, the Theme page).
 //! - Every other key is left to the focused control.
 
 /// A key the router distinguishes.

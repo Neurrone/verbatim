@@ -1,5 +1,5 @@
 //! Narrowing the outpost's `WinEvent` hook to what windows read through UIA
-//! need (`docs/design/wake-ups.md`, "Narrowing the outpost's hook").
+//! need (`books/dev/src/explanation/design/wake-ups.md`, "Narrowing the outpost's hook").
 //!
 //! An out-of-context hook wakes the event thread for every event it is
 //! subscribed to, before anything can drop it. The value, state, name,

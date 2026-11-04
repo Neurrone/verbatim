@@ -924,7 +924,7 @@ impl Run {
 
 /// A generated test's configuration: the seed and case count given, no
 /// failure persistence, no fork and no timeout, every field written out
-/// (`docs/crates/verbatim-reader-rules.md`).
+/// (`books/dev/src/reference/crates/verbatim-reader-rules.md`).
 fn config(seed: u64, cases: u32) -> Config {
     Config {
         cases,

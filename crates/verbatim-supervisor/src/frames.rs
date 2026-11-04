@@ -1,4 +1,4 @@
-//! The reducer's side of an outpost's frames (`docs/design/communication.md`,
+//! The reducer's side of an outpost's frames (`books/dev/src/explanation/design/communication.md`,
 //! sections 4.8 and 6.2): the relay reads every outpost's pipe and posts
 //! each frame it does not handle itself whole, unparsed, among the
 //! reducer's other inputs ([`OutpostMessage::Frame`]); the reducer passes
@@ -9,7 +9,7 @@
 //! as it arrives, so each outpost's messages reach the reducer in the order
 //! the outpost wrote them, and its end after all of them. A terminal's
 //! whole-document read of 9,000 lines, its text in the frame's raw section,
-//! takes 0.02 to 0.3 ms to parse in a release build (`docs/performance.md`).
+//! takes 0.02 to 0.3 ms to parse in a release build (`books/dev/src/reference/performance.md`).
 //!
 //! Parsing here does what the outposts' reader threads did: it stamps every
 //! node id with the outpost's generation, records when the relay read the

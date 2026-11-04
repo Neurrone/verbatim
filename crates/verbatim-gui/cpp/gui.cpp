@@ -402,7 +402,7 @@ private:
     std::int64_t indication_;
 };
 
-// The Theme page (docs/crates/verbatim-gui.md): the theme list,
+// The Theme page (books/dev/src/reference/crates/verbatim-gui.md): the theme list,
 // its description, the settings that go with it, the indications tree with
 // a find field, the selected indication's controls, and the theme buttons.
 // Rust holds the state (crates/verbatim-gui/src/theme_panel.rs); after every
@@ -848,7 +848,7 @@ private:
     wxSlider* slider_;
 };
 
-// The Terminal page (docs/crates/verbatim-gui.md; docs/parity/system.md, "The
+// The Terminal page (books/dev/src/reference/crates/verbatim-gui.md; docs/parity/system.md, "The
 // terminal settings"): "Report new output", the two line limits as sliders, and
 // speaking passwords typed in terminals, top to bottom, which is also the
 // tab order. Rust holds the state (crates/verbatim-gui/src/terminal_panel.rs),

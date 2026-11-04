@@ -1,6 +1,6 @@
 //! `cargo xtask e2e <scenario>... [--runs <n>]`: runs end-to-end scenarios
 //! against this machine, each `n` times, with an agent this command starts
-//! and ends (`docs/tooling/e2e.md`, "Running scenarios locally"). The
+//! and ends (`books/dev/src/how-to/e2e.md`, "Running scenarios locally"). The
 //! agent is this command's child, inside its job (`crate::contain`), so
 //! stopping the command, by any means, ends the agent, and the agent's
 //! launches end with it; no agent is left listening for the next run.
@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitCode, Stdio};
 use std::time::{Duration, Instant};
 
-/// Where the agent listens: the endpoint `docs/tooling/e2e.md` names.
+/// Where the agent listens: the endpoint `books/dev/src/how-to/e2e.md` names.
 const ENDPOINT: &str = "127.0.0.1:44001";
 
 /// How long the agent has to start listening.

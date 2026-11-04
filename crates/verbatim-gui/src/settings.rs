@@ -60,7 +60,7 @@ pub(crate) enum ControlChange {
 /// The Speech page's current controls: the plans they were built from, so
 /// a change reported by index becomes a setting value, and each change
 /// sent and not yet answered by the synth thread
-/// (`docs/design/ownership.md`).
+/// (`books/dev/src/explanation/design/ownership.md`).
 #[derive(Debug, Default)]
 pub(crate) struct SpeechControls {
     generation: u32,

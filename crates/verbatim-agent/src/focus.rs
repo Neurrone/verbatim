@@ -5,7 +5,7 @@
 //! screen reader to say before it says it. Three requests need facts only
 //! UI Automation has and keep it: [`focus_by_automation_id`],
 //! [`controlled_items`], and [`name_by_automation_id`]
-//! (`docs/design/listener-without-connections.md`, section 4.5).
+//! (`books/dev/src/explanation/design/listener-without-connections.md`, section 4.5).
 
 use std::io;
 
@@ -177,7 +177,7 @@ const SLOW_UIA_REQUEST: std::time::Duration = std::time::Duration::from_secs(2);
 /// Runs `read`, one of the requests that keep UI Automation, and logs
 /// how long it took, at warn when it took [`SLOW_UIA_REQUEST`] or longer,
 /// so the scenarios that use them can count the agent's slow answers apart
-/// from Verbatim's (`docs/design/listener-without-connections.md`, section
+/// from Verbatim's (`books/dev/src/explanation/design/listener-without-connections.md`, section
 /// 4.5).
 fn through_uia<T>(request: &str, read: impl FnOnce() -> io::Result<T>) -> io::Result<T> {
     let started = std::time::Instant::now();
@@ -203,7 +203,7 @@ fn through_uia<T>(request: &str, read: impl FnOnce() -> io::Result<T>) -> io::Re
 
 /// The focused object's name, its position in its list when it is an item
 /// of a Win32 list view, and whether it is selected, when it can be, read
-/// through MSAA (`docs/design/listener-without-connections.md`, decision
+/// through MSAA (`books/dev/src/explanation/design/listener-without-connections.md`, decision
 /// 10): the window with the keyboard focus of the thread in the foreground,
 /// its client object (`AccessibleObjectFromWindow`), and the child its
 /// `accFocus` names, followed into the window of an object it names. The desktop's list, which every scenario reads at its
@@ -530,7 +530,7 @@ fn uia_position_through_uia(line: u32, column: u32) -> io::Result<(i32, i32)> {
 /// list's size. The switcher's window is found by its class, its list by
 /// its automation id, `SwitchItemListControl`, and the items, its
 /// children, are read one property at a time: the agent is the harness's
-/// own reader, apart from Verbatim's shapes (`docs/design/uia-shapes.md`).
+/// own reader, apart from Verbatim's shapes (`books/dev/src/explanation/design/uia-shapes.md`).
 ///
 /// # Errors
 ///

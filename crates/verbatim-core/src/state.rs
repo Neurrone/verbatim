@@ -197,7 +197,7 @@ impl Navigator {
 
 /// A unit of text the outpost sent, shared so the state's clone, which the
 /// flight recorder takes at each checkpoint, copies a pointer and not the
-/// text (`docs/architecture.md`, section 2).
+/// text (`books/dev/src/explanation/architecture.md`, section 2).
 pub(crate) type SharedChunk = Arc<TextChunk>;
 
 /// How the review cursor reviews the navigator object's text.
@@ -376,12 +376,12 @@ pub(crate) enum WaitingKey {
     /// pressed while a held key waited: run once the key ahead of it has
     /// been passed on and its watch answered, or the bound since the pass
     /// has run out, as NVDA runs scripts one at a time in the order
-    /// queued (`docs/design/ownership.md`).
+    /// queued (`books/dev/src/explanation/design/ownership.md`).
     Command(Box<verbatim_model::Input>),
 }
 
 /// The caret keys the hook held back and pressed while one's caret is
-/// read, each handled in the order pressed (`docs/design/key-holding.md`,
+/// read, each handled in the order pressed (`books/dev/src/explanation/design/key-holding.md`,
 /// "Keys behind a held key"); the read itself is a query
 /// ([`crate::queries::Then::HeldRead`]).
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -669,7 +669,7 @@ pub struct SrState {
     #[serde(default)]
     pub(crate) caret_history: [Option<TimedCaret>; CARET_HISTORY],
     /// The caret keys the keyboard hook held back
-    /// (`docs/design/key-holding.md`).
+    /// (`books/dev/src/explanation/design/key-holding.md`).
     #[serde(default)]
     pub(crate) held_keys: HeldKeys,
     /// The key numbers of what recent user inputs caused, by trace, which
@@ -759,7 +759,7 @@ impl SrState {
     }
 
     /// Whether a caret key pressed now is held back until the focus's
-    /// caret has been read (`docs/design/key-holding.md`): the focus has
+    /// caret has been read (`books/dev/src/explanation/design/key-holding.md`): the focus has
     /// text, or may have, as for the caret keys whose evidence is watched.
     /// The keyboard hook holds caret keys only while this holds.
     #[must_use]
@@ -818,13 +818,13 @@ impl SrState {
     /// back for the window only when its process's integrity is known and
     /// no higher than Verbatim's, since Windows drops a key Verbatim sends
     /// again to a window of higher integrity, and a key lost costs more
-    /// than a key judged without its caret (`docs/design/key-holding.md`,
+    /// than a key judged without its caret (`books/dev/src/explanation/design/key-holding.md`,
     /// "Elevated windows"). Caret keys are held while the focus has text
     /// ([`holds_caret_keys`](Self::holds_caret_keys)). A console host
     /// window's keys are translated with the keyboard layout of the console
     /// host's own thread, named by its event, since Windows names the
     /// console's first attached process as the window's owner
-    /// (`docs/crates/verbatim-input-windows.md`, "Typed text"); any other
+    /// (`books/dev/src/reference/crates/verbatim-input-windows.md`, "Typed text"); any other
     /// window's with its owner's, which the hook reads itself.
     #[must_use]
     pub fn hook_foreground(&self) -> Option<HookForeground> {
@@ -889,7 +889,7 @@ impl SrState {
 
     /// The details to fetch, as the active theme decides: a detail whose
     /// indication is off is not fetched, so off also saves the
-    /// cross-process call (`docs/crates/verbatim-core.md`). Like
+    /// cross-process call (`books/dev/src/reference/crates/verbatim-core.md`). Like
     /// [`held_nodes`](Self::held_nodes), this is a view the shell sends
     /// out: every outpost is given it, and leaves out what is not wanted
     /// when it reads a node or text. Everything until the shell says

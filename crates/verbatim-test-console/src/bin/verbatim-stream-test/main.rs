@@ -2,7 +2,7 @@
 //! into the terminal it runs in, each way programs stream it, at up to 60
 //! frames a second, beside a redrawn status row with a spinner and a timer
 //! and a prompt that takes typing (`docs/roadmap.md`, "The terminal
-//! redesign"). See `docs/crates/verbatim-test-console.md` for its phases
+//! redesign"). See `books/dev/src/reference/crates/verbatim-test-console.md` for its phases
 //! and how they are driven.
 //!
 //! `verbatim-stream-test [--run <phase>]... [--pipe <name>] [--fps <n>]

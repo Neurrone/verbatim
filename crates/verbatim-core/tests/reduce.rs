@@ -5231,7 +5231,7 @@ fn a_focus_entering_another_top_level_window_speaks_its_entered_ancestors_outerm
     // No foreground report came for the Settings window, as none comes for
     // a window read through UI Automation: the focus entering it cuts off
     // the speech of the window left, then speaks its entered ancestors, the
-    // window first, then the focus (`docs/design/focus-pipeline.md`,
+    // window first, then the focus (`books/dev/src/explanation/design/focus-pipeline.md`,
     // section 16.4).
     let state = switch_to(&SrState::new(), Pid(1));
     let window_node = node(1, Role::Window, Some("Settings"), None, StateSet::new());

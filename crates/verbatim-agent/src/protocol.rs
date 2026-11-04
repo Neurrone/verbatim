@@ -1028,7 +1028,7 @@ pub struct WindowInfo {
     /// listed window is shown; the foreground window can be hidden, as a
     /// console window is between its creation and the console host's first
     /// `ShowWindow`, which can wait tens of seconds on the Desktop Window
-    /// Manager (`docs/tooling/troubleshooting.md`).
+    /// Manager (`books/dev/src/how-to/troubleshooting.md`).
     #[serde(default)]
     pub hidden: bool,
 }

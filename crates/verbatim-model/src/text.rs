@@ -1,6 +1,6 @@
 //! The text protocol (milestone M4): how an outpost sends text to Core and
 //! how Core asks an outpost to read text, wait for the caret, select, or
-//! move the caret (`docs/crates/verbatim-model.md`, "The text protocol").
+//! move the caret (`books/dev/src/reference/crates/verbatim-model.md`, "The text protocol").
 //!
 //! The rules the types follow:
 //!
@@ -583,7 +583,7 @@ pub enum TextOp {
     /// [`TextReply::WatchEnded`] when the watch ends without it.
     AwaitCaret(CaretWatch),
     /// Read the caret as it is now, before a held caret key is passed on
-    /// (`docs/design/key-holding.md`): answered [`TextReply::Caret`], with
+    /// (`books/dev/src/explanation/design/key-holding.md`): answered [`TextReply::Caret`], with
     /// `moved` false and the time of the read, the caret's line and the
     /// selection, and the line the selection starts in when that is an
     /// earlier one. The read is kept as the outpost's newest caret report
@@ -628,7 +628,7 @@ pub enum TextOp {
     /// Read several units ahead (say-all): answered [`TextReply::Chunks`],
     /// or as [`TextOp::Read`] is when the first unit cannot be read.
     ReadAhead(TextReadAhead),
-    /// A focused terminal's on-demand reading (`docs/design/terminal-model.md`,
+    /// A focused terminal's on-demand reading (`books/dev/src/explanation/design/terminal-model.md`,
     /// "Reading rules", rule 1): Core's output queue is full, so the outpost
     /// only notes that the terminal's text changed from now on, without
     /// reading it. Answered [`TextReply::Done`].

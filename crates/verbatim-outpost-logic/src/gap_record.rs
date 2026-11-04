@@ -3,7 +3,7 @@
 //! change into one of the application's windows, for the application's
 //! focus to be told to Core (`docs/design/focus-pipeline-rework-remaining.md`,
 //! "The gap, closed by the outpost's own reports";
-//! `docs/design/listener-without-connections.md`, decision 11).
+//! `books/dev/src/explanation/design/listener-without-connections.md`, decision 11).
 //!
 //! UI Automation sometimes delivers an application's focus events late or
 //! never while the `WinEvent` focus still comes, or after their senders are

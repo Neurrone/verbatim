@@ -43,7 +43,7 @@ helper window) so *Windows* attenuates other sessions. Modes: no
 ducking, duck while speaking or playing sounds (timed around speech
 activity, `_setDuckingState` calls at output start/stop), duck
 always. Requires uiAccess to affect other processes' audio
-([Processes and security](../explainers/processes-and-security.md)); without it the
+([Processes and security](../../books/dev/src/explanation/windows/processes-and-security.md)); without it the
 setting is disabled.
 
 ## Tones and sounds

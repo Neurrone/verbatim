@@ -8,7 +8,7 @@
 //! walk's bound, a caret key's watch or the gap record's bound, at a
 //! resolution finer than the system's 15.6 ms timer, so the thread wakes
 //! only when a timer is due or something is appended
-//! (`docs/design/wake-ups.md`, item 3).
+//! (`books/dev/src/explanation/design/wake-ups.md`, item 3).
 
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle, RawHandle};
 use std::time::Instant;

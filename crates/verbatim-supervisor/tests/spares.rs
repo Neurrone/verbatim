@@ -1,5 +1,5 @@
 //! The supervisor's spare outposts and its one failure path
-//! (`docs/design/focus-pipeline.md`, section 19): two spares are started
+//! (`books/dev/src/explanation/design/focus-pipeline.md`, section 19): two spares are started
 //! once Core's own outpost is ready; a start for an application takes the
 //! oldest, which is never listed again, and its replacement starts at once;
 //! a fact that may not start an outpost, or one from an ignored process,

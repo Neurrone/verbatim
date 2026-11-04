@@ -1,4 +1,4 @@
-//! A terminal's reads (`docs/design/terminal-model.md`, "Where it runs"):
+//! A terminal's reads (`books/dev/src/explanation/design/terminal-model.md`, "Where it runs"):
 //! the outpost reads a focused terminal and sends each read to Core as a
 //! [`TerminalSnapshot`], and Core's terminal model aligns it and applies
 //! the reading rules; Core asks for the reads it needs
@@ -7,7 +7,7 @@
 use serde::{Deserialize, Serialize};
 
 /// One read of a focused terminal as the outpost sends it to Core
-/// (`docs/design/terminal-model.md`, "Where it runs", and "The read"): the
+/// (`books/dev/src/explanation/design/terminal-model.md`, "Where it runs", and "The read"): the
 /// wire form of the reading rules' read, which Core rebuilds exactly. Each
 /// snapshot is whole by itself and names nothing of an earlier read. Every
 /// text is sent without the spaces that pad its lines, with each line's

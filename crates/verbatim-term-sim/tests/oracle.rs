@@ -1,5 +1,5 @@
 //! The oracle checked against readers whose faults are known
-//! (`docs/design/terminal-model.md`, "Testing"): deliberately flawed
+//! (`books/dev/src/explanation/design/terminal-model.md`, "Testing"): deliberately flawed
 //! readers, a silent one, ones that miscount or misplace, and ones that
 //! withhold lines for reasons whose premise is false, are caught on fixed
 //! streams, with exactly the violations their faults cause; readers whose
@@ -2100,7 +2100,7 @@ fn the_ground_truth_reader_passes_the_corpus() {
 /// Random streams, from the oracle's fixed configuration: run by a
 /// `TestRunner` built from it rather than by the `proptest!` macro, which
 /// the determinism rule leaves out of the crates on a reducer's path
-/// (`docs/testing.md`, "The crates on a reducer's path").
+/// (`books/dev/src/reference/testing.md`, "The crates on a reducer's path").
 #[test]
 fn the_ground_truth_reader_passes_random_streams() {
     let mut runner = proptest::test_runner::TestRunner::new(random_config());

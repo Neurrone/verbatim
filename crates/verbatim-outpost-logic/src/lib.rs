@@ -1,4 +1,4 @@
-//! The outpost's reducer (`docs/design/ownership.md`): the pure state machine that holds every
+//! The outpost's reducer (`books/dev/src/explanation/design/ownership.md`): the pure state machine that holds every
 //! remembered fact of the outpost's application, with no Windows type and
 //! no application object. Inputs come in mailbox order; effects go out.
 //! The outpost's shell (`verbatim-outpost`'s `outpost::shell` module) runs
@@ -148,7 +148,7 @@ pub enum Work {
 }
 
 /// A caret read of an edit control's client area cut at its value change
-/// check (`docs/design/ownership.md`): the read part read the caret and synced with the `WinEvent`
+/// check (`books/dev/src/explanation/design/ownership.md`): the read part read the caret and synced with the `WinEvent`
 /// thread, so every value change the control raised before the sync waits
 /// ahead of the read part's end in the mailbox. The part that finishes it
 /// makes the comparison and the rest of the read's calls.

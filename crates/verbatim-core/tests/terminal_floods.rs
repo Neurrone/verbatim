@@ -1,5 +1,5 @@
 //! Floods of terminal output through Core's terminal model and its flood
-//! policy together (`docs/design/terminal-model.md`, "Core's flood policy"
+//! policy together (`books/dev/src/explanation/design/terminal-model.md`, "Core's flood policy"
 //! and "A lost read"), driven through `reduce` with the simulated terminal
 //! at the size the harness opens each terminal, 120 by 30 with its default
 //! history (`verbatim_term_sim::conformance::history`), read as the outpost

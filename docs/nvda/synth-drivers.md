@@ -79,7 +79,7 @@ routing and ducking still apply.
 ## The SAPI drivers, concretely
 
 API background for both generations:
-[Speech APIs](../explainers/speech-apis.md).
+[Speech APIs](../../books/dev/src/explanation/windows/speech-apis.md).
 
 - **SAPI 5** (`source/synthDrivers/sapi5.py`): the centerpiece is
   `SynthDriverAudioStream`, a COM object NVDA implements (interfaces

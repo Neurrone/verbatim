@@ -1,9 +1,9 @@
-//! The setup the terminal scenarios share (`docs/crates/verbatim-e2e.md`,
+//! The setup the terminal scenarios share (`books/dev/src/reference/crates/verbatim-e2e.md`,
 //! "Shared setups"), so their results depend neither on the user's
 //! own terminals and settings nor on timing.
 //!
 //! A scenario in Windows Terminal and its twin in the console host are
-//! separate code, each with its own expectations (`docs/testing.md`): the
+//! separate code, each with its own expectations (`books/dev/src/reference/testing.md`): the
 //! helpers here open a terminal and drive the shell, and every expectation
 //! is the caller's.
 //!
@@ -648,7 +648,7 @@ pub(crate) const SECOND_WINDOW_REPEATS: usize = 2;
 /// [`expect_prompt_read`] for a Windows Terminal window as it opens: its
 /// title and "window", its terminal, "<title> terminal", and "blank". The
 /// terminal is an optional utterance up to `repeats` times before the one
-/// heard in full (`docs/testing.md`, "Optional utterances";
+/// heard in full (`books/dev/src/reference/testing.md`, "Optional utterances";
 /// [`LAUNCH_REPEATS`]): each repeat cuts off the one before it, so every
 /// one said but the last may be cut off. A repeat may be followed by its
 /// line, "blank", an optional utterance accepted only after a repeat.
@@ -696,7 +696,7 @@ pub(crate) fn require_launch_blank_after_repeat(outcomes: &[OptionalOutcome], te
 /// "<title> terminal" with its line, "blank", or, for an identity whose
 /// element the outpost cannot find, without it, and it comes before or
 /// after the announcement heard in full. The repeats are optional
-/// utterances (`docs/testing.md`, "Optional utterances"): before the
+/// utterances (`books/dev/src/reference/testing.md`, "Optional utterances"): before the
 /// announcement, "<title> terminal" up to [`SECOND_WINDOW_REPEATS`] times,
 /// each repeat cutting off the one before it; after it, until the first
 /// prompt, up to as many times "<title> terminal" each optionally followed

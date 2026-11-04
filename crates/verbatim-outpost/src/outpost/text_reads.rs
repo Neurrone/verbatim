@@ -459,7 +459,7 @@ pub(super) fn text_event_from(
         // Which element is replaced, by which: each one's runtime id, which
         // UIA keeps with the element, and its class name, which `Kept`
         // holds, so nothing is read beyond the cache (decision 7 of
-        // `docs/design/uia-shapes.md`).
+        // `books/dev/src/explanation/design/uia-shapes.md`).
         let describe = |element: &Cached<Kept>| (element.runtime_id(), element.read().class_name);
         let replaced = context
             .store
@@ -603,7 +603,7 @@ pub(super) fn answer(context: &RequestContext<'_>, node_id: NodeId, op: &TextOp)
 }
 
 /// Reads `node_id`'s caret before a held caret key is passed on
-/// ([`TextOp::ReadCaret`], `docs/design/key-holding.md`): the read a caret
+/// ([`TextOp::ReadCaret`], `books/dev/src/explanation/design/key-holding.md`): the read a caret
 /// event's report makes, one round trip through UIA where the window's
 /// provider runs remote operations (the caret read program), and the edit
 /// control's messages otherwise, with no formatting. It is kept among the
@@ -1089,7 +1089,7 @@ fn edit_client(context: &RequestContext<'_>, node_id: NodeId) -> Option<isize> {
 }
 
 /// Ends the read part of a caret read of an edit control's client area
-/// cut at its value change check (`docs/design/ownership.md`): waits for the `WinEvent` thread to take
+/// cut at its value change check (`books/dev/src/explanation/design/ownership.md`): waits for the `WinEvent` thread to take
 /// every event raised before now (`Nudger::sync`), up to two wakes of that
 /// thread and no call to the application, since the control may have
 /// raised its value change while it answered the read just made. Every

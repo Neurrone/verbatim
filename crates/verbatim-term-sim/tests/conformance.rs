@@ -2,7 +2,7 @@
 //! the corpus replayed and read as the real console host and Windows
 //! Terminal were, their answers compared field by field with the
 //! expectations `cargo xtask regenerate-terminal-conformance-expectations`
-//! recorded (`docs/design/terminal-model.md`, "Testing").
+//! recorded (`books/dev/src/explanation/design/terminal-model.md`, "Testing").
 
 #![expect(
     clippy::disallowed_methods,

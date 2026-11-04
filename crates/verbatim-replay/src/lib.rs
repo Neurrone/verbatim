@@ -1,10 +1,10 @@
-//! Replays a flight-recorder dump (`docs/crates/verbatim-core.md`, "The
+//! Replays a flight-recorder dump (`books/dev/src/reference/crates/verbatim-core.md`, "The
 //! dump format") through Core's reducer from the state it starts at, and
 //! renders each input with the effects it produced on one compact line.
 //!
 //! `cargo xtask replay` prints a whole dump this way, and the end-to-end
 //! suite prints the inputs around a failure the same way
-//! (`docs/crates/verbatim-replay.md`).
+//! (`books/dev/src/reference/crates/verbatim-replay.md`).
 
 use std::fmt::Write as _;
 use std::path::Path;

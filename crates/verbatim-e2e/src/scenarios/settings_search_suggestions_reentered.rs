@@ -93,7 +93,7 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     // log received the second in one Escape of three,
     // `target/e2e-evidence/m42-desktop-2-2026-10-22/part3a-nvda-2.log`):
     // an optional utterance at the start of the Tab's step
-    // (`docs/testing.md`, "Optional utterances"), which may arrive before
+    // (`books/dev/src/reference/testing.md`, "Optional utterances"), which may arrive before
     // or after the Tab is sent.
     scenario
         .send_keys_expecting(

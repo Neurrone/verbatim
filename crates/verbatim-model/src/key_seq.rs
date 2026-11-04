@@ -1,5 +1,5 @@
 //! The key number: the order of the user's inputs, which fences speech
-//! (`docs/design/ownership.md`).
+//! (`books/dev/src/explanation/design/ownership.md`).
 
 use serde::{Deserialize, Serialize};
 

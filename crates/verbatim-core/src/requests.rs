@@ -1,5 +1,5 @@
 //! The request table: the single owner of "exactly one outcome per query"
-//! for the shell's own queries (`docs/crates/verbatim-core.md`, "The
+//! for the shell's own queries (`books/dev/src/reference/crates/verbatim-core.md`, "The
 //! request table"); the reducer's are recorded in its own state.
 //!
 //! Every query the shell sends an outpost is recorded here, on the reducer

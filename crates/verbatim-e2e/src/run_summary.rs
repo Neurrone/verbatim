@@ -1,5 +1,5 @@
 //! The end-of-run summary the suite's test binary prints after every
-//! scenario it ran (`docs/tooling/e2e.md`, "The end-of-run summary"): one
+//! scenario it ran (`books/dev/src/how-to/e2e.md`, "The end-of-run summary"): one
 //! line per scenario, in the order they ran, with its name, its result and
 //! its seconds, so people and tools read a run's outcome without parsing
 //! timestamps.

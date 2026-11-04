@@ -1,4 +1,4 @@
-//! The theme in use (`docs/crates/verbatim-model.md`, "Themes"): loading the
+//! The theme in use (`books/dev/src/reference/crates/verbatim-model.md`, "Themes"): loading the
 //! one the configuration names and making
 //! a theme active, which the speech pipeline presents with and the reducer
 //! fetches for.
@@ -26,7 +26,7 @@ use crate::saver::ThemeWriter;
 
 /// The settings dialog's Theme page's view of Verbatim: where themes are,
 /// the theme section of the settings, which the GUI thread owns
-/// (`docs/design/ownership.md`), the GUI's lane to the mixer for the sounds the page plays,
+/// (`books/dev/src/explanation/design/ownership.md`), the GUI's lane to the mixer for the sounds the page plays,
 /// and the speech manager and reducer for making a theme active.
 pub(crate) struct AppThemeHost {
     pub(crate) themes_dir: PathBuf,

@@ -1,5 +1,5 @@
 //! The harness's idle barrier on the reducer's side: a round through every
-//! child (`docs/design/communication.md`, section 6.7).
+//! child (`books/dev/src/explanation/design/communication.md`, section 6.7).
 //!
 //! The control plane's `AwaitIdle` waiters are posted straight to the
 //! reducer's port, each naming the harness's last numbered input, whose
@@ -239,7 +239,7 @@ impl<W> IdleBarrier<W> {
 /// The harness's marks of handled input that came while a lock key's
 /// announcement was still to come, which the reducer thread hands on, in
 /// order, once it has been made, so the harness reads no speech before it
-/// (`docs/design/ownership.md`).
+/// (`books/dev/src/explanation/design/ownership.md`).
 #[derive(Debug, Default)]
 pub(crate) struct HeldMarks(Vec<u64>);
 

@@ -1,7 +1,7 @@
 # The median duration in seconds of each end-to-end scenario on GitHub's
 # runner, over the e2e jobs of 2 runs of CI on main, written by
 # `cargo xtask e2e-durations`; `cargo xtask e2e-plan` sizes the CI groups
-# by it (docs/tooling/e2e.md, "How CI runs the suite").
+# by it (books/dev/src/how-to/e2e.md, "How CI runs the suite").
 # One scenario per line: seconds, then the name.
 45.9 alt_tab_switcher
 18.1 conhost_commands

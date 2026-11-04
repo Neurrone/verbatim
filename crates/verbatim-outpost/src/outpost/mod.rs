@@ -2,7 +2,7 @@
 //! decision D9). One outpost watches one application for its whole life:
 //! the application is set once, when the outpost starts, or, for a spare
 //! started before it had one, when the supervisor assigns it
-//! (`docs/design/focus-pipeline.md`, section 19), and never changes after.
+//! (`books/dev/src/explanation/design/focus-pipeline.md`, section 19), and never changes after.
 //! Its parts:
 //!
 //! 1. The mailbox ([`shell`]): the MSAA hook callbacks, the UIA
@@ -31,7 +31,7 @@
 //! ([`store`]) keeps agile references, so a replacement worker can use what
 //! an abandoned one minted.
 //!
-//! Held objects (`docs/crates/verbatim-outpost.md`): the store keeps the
+//! Held objects (`books/dev/src/reference/crates/verbatim-outpost.md`): the store keeps the
 //! live UIA element or MSAA object behind every node the outpost reports.
 //! Each message that carries node ids has a position, counted the same way
 //! by Core; when Core reports the nodes it still holds and the position of
@@ -476,7 +476,7 @@ impl<'a> RequestContext<'a> {
     /// the focus listener read for the UIA focus this outpost last reported,
     /// and its window is one the outpost's application serves: the outpost
     /// looks up no window of another process by its handle
-    /// (`docs/design/listener-without-connections.md`, section 4.3).
+    /// (`books/dev/src/explanation/design/listener-without-connections.md`, section 4.3).
     fn focus_route(&self, runtime_id: &[i32]) -> Option<focus_path::Route> {
         let route = self.follow(|follow| {
             follow
@@ -983,7 +983,7 @@ enum Finisher {
 
 /// The priority of a thread that only finishes the outpost's writes to
 /// Core, or reads Core's pipe and hands each command on, for microseconds
-/// per wake (`docs/design/communication.md`, section 6.1).
+/// per wake (`books/dev/src/explanation/design/communication.md`, section 6.1).
 const IO_PRIORITY: ThreadPriority = ThreadPriority::Highest;
 
 impl Outpost {
@@ -1052,7 +1052,7 @@ impl Outpost {
     }
 
     /// A spare outpost, with no application, in a test's own process
-    /// (`docs/design/focus-pipeline.md`, section 19.2): it does everything
+    /// (`books/dev/src/explanation/design/focus-pipeline.md`, section 19.2): it does everything
     /// of an outpost's start that needs no application, its worker's UIA
     /// client included, writes [`OutpostToCore::SpareReady`] to
     /// `pipe`, and watches the application [`Outpost::assign`] gives it
@@ -1093,7 +1093,7 @@ impl Outpost {
     /// When `warm` is set, its worker creates its UIA client at once
     /// rather than on its first read: a spare does, so the client is
     /// ready before its application's first focus
-    /// (`docs/design/focus-pipeline.md`, section 19.2).
+    /// (`books/dev/src/explanation/design/focus-pipeline.md`, section 19.2).
     fn build(
         outbound: Outbound,
         finisher: Finisher,
@@ -1141,7 +1141,7 @@ impl Outpost {
         // The MSAA hooks, process-scoped (decision D13), installed once the
         // outpost has its application: focus, foreground, menu opening,
         // alert, and tooltip events, which the listener forwards only until
-        // it hears this hook is in (`docs/design/focus-pipeline.md`,
+        // it hears this hook is in (`books/dev/src/explanation/design/focus-pipeline.md`,
         // section 12.4), and value, state, name, selection, and destroy
         // events. A destroy is queued only for a window, the one kind of
         // object whose end the outpost tracks.
@@ -1214,7 +1214,7 @@ impl Outpost {
     /// reported to Core ([`OutpostToCore::Fault`]), and no `Ready` is
     /// sent: the caller ends the outpost, since an application no hook
     /// watches would have its `WinEvent`s handed over to nothing
-    /// (`docs/design/focus-pipeline.md`, section 19.8, item 5).
+    /// (`books/dev/src/explanation/design/focus-pipeline.md`, section 19.8, item 5).
     pub fn assign(&self, target_pid: u32) -> Result<(), String> {
         let context = &self.context;
         if context
@@ -1318,7 +1318,7 @@ impl Outpost {
     /// The calling thread must be in COM's multithreaded apartment, or able
     /// to join it, since it releases UIA objects. What happens to the
     /// process afterwards is the caller's: the outpost binary ends itself
-    /// without running DLL detach code (`docs/architecture.md`, "Process
+    /// without running DLL detach code (`books/dev/src/explanation/architecture.md`, "Process
     /// lifetime").
     pub fn shutdown(self) {
         self.shut_down(None);
@@ -1477,7 +1477,7 @@ impl Outpost {
 
     /// Tells the outpost that no focus listener forwards its application's
     /// `WinEvent`s to it: its own hook's copies are handled as they come,
-    /// never held for the hand-over (`docs/design/ownership.md`), as for an outpost run alone
+    /// never held for the hand-over (`books/dev/src/explanation/design/ownership.md`), as for an outpost run alone
     /// ([`run_attach`]) or one a test hands facts to itself.
     pub fn without_listener(&self) {
         self.context.mailbox.post(Posted::WithoutListener);
@@ -1739,7 +1739,7 @@ fn capture_text(context: &Context, event: &Cached<TextEvent>, kind: UiaKind) -> 
 }
 
 /// Starts the focus-following UIA subscription
-/// (`docs/design/focus-pipeline.md`, section 17): one registration, on one thread and client, listening
+/// (`books/dev/src/explanation/design/focus-pipeline.md`, section 17): one registration, on one thread and client, listening
 /// nowhere until the worker reports a focus whose element it has. Its two
 /// groups are NVDA's two local groups (`UIAHandler/__init__.py`,
 /// `_createLocalEventHandlerGroup`): the base group, given every UIA focus,
@@ -1872,11 +1872,11 @@ fn fault(context: &Context, detail: String) {
 }
 
 /// Runs an outpost driven by the Core pipes, watching `target_pid` for its
-/// whole life, or, for `None`, as a spare (`docs/design/focus-pipeline.md`,
+/// whole life, or, for `None`, as a spare (`books/dev/src/explanation/design/focus-pipeline.md`,
 /// section 19.2): it sends [`OutpostToCore::SpareReady`] and watches
 /// the application Core's [`CoreToOutpost::Assign`] gives it from
 /// then on. It runs on the transport's child side
-/// (`docs/design/communication.md`, sections 4.6 and 6.4): the calling
+/// (`books/dev/src/explanation/design/communication.md`, sections 4.6 and 6.4): the calling
 /// thread becomes the outpost's I/O thread, which reads commands from
 /// `pipe_in` and finishes the writes to `pipe_out` that pend, while every
 /// thread that sends Core a message writes it itself. It runs until Core

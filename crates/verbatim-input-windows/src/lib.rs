@@ -25,11 +25,11 @@
 //!   reducer's and the speech queue's, whose post never waits and takes no
 //!   lock; a backlog waits in memory in front of the reducer, as the
 //!   communication design keeps every backlog
-//!   (`docs/design/communication.md`, section 4.8).
+//!   (`books/dev/src/explanation/design/communication.md`, section 4.8).
 //! - It touches no lock, and makes no call that dispatches sent messages,
 //!   which would deliver the next key while this one is half handled.
 //!   `cargo xtask ci` checks the hook thread's modules for both
-//!   (`docs/design/ownership.md`).
+//!   (`books/dev/src/explanation/design/ownership.md`).
 //!
 //! Besides bound gestures the hook reports what a passed key did that the
 //! reducer needs to know: an observed gesture (a caret key) and the text a
@@ -77,7 +77,7 @@ use verbatim_process::scheduling::{ThreadPriority, prioritize_role};
 pub const OWN_INPUT_TAG: usize = 0x5642_544D;
 
 /// The high half of the `dwExtraInfo` Verbatim puts on a key it held back
-/// and now passes on to the application (`docs/design/key-holding.md`);
+/// and now passes on to the application (`books/dev/src/explanation/design/key-holding.md`);
 /// the low half is the key's place in line ([`HeldStroke::sequence`]), or
 /// 0 on the modifiers and releases sent around a held key. The hook passes
 /// these keys straight down the hook chain, deciding and reporting
@@ -106,7 +106,7 @@ pub(crate) fn passed_on_sequence(extra_info: usize) -> Option<u32> {
 /// (architecture section 5): the focus listener learns which window is in
 /// front, Core decides from it whether keys may be held back for it,
 /// whether the focus has text whose caret keys are held
-/// (`docs/design/key-holding.md`), and which thread's keyboard layout
+/// (`books/dev/src/explanation/design/key-holding.md`), and which thread's keyboard layout
 /// translates its keys, and the reducer's thread publishes that here after
 /// each input ([`ForegroundView::set`]). The hook reads it with one
 /// lock-free load per key and applies it only while the window it names is
@@ -210,7 +210,7 @@ pub enum KeyReport {
     /// A key transition the hook would have passed to the application but
     /// held back, because a held key ahead of it has not reached the
     /// application yet: it is passed on after the keys ahead of it, in the
-    /// order pressed, never read (`docs/design/key-holding.md`, "Keys
+    /// order pressed, never read (`books/dev/src/explanation/design/key-holding.md`, "Keys
     /// behind a held key"). What the key did is reported as for a key
     /// passed at once, by the other reports, which come before this one.
     Deferred {
@@ -336,7 +336,7 @@ impl Drop for InputHook {
 
 /// The hook thread's priority: it decides each key and hands it on, for
 /// microseconds per key, and Windows removes a low-level hook that keeps a
-/// key waiting too long (`docs/design/communication.md`, section 6.1).
+/// key waiting too long (`books/dev/src/explanation/design/communication.md`, section 6.1).
 const HOOK_PRIORITY: ThreadPriority = ThreadPriority::Highest;
 
 /// The body of the hook thread: install the hook, publish readiness, pump

@@ -1,4 +1,4 @@
-//! `docs/uia-bugs.md`, "A cache request fails while UIA's first-time setup
+//! `books/dev/src/reference/uia-bugs.md`, "A cache request fails while UIA's first-time setup
 //! runs on another thread": several threads of a fresh process, as an
 //! outpost starts its UIA threads together, each create a client and build
 //! a cache request at once. They all succeed only because `verbatim_uia`

@@ -9,13 +9,13 @@ Contributions are welcome. Three things to read before the first one:
   crates listed there must stay original work; code ported from NVDA
   belongs only in the Windows-specific crates, with its source named.
 - `docs/readme.md`, the documentation index, starting with
-  `docs/architecture.md` for the decisions of record.
+  `books/dev/src/explanation/architecture.md` for the decisions of record.
 
 After cloning, fetch eSpeak NG's source, which Verbatim builds as its
 default synthesizer, with
 `git submodule update --init third_party/espeak-ng`. Building it needs
 CMake; the `nvda` submodule is optional reference material.
-`docs/tooling/setup.md` has the full first-time setup.
+`books/dev/src/how-to/setup.md` has the full first-time setup.
 
 Before opening a pull request, run `cargo xtask ci`. It is exactly what
 continuous integration runs, and it includes the check that the

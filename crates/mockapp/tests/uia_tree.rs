@@ -187,7 +187,7 @@ fn expected_tree(title: &str, window: verbatim_model::WindowHandle) -> Node {
 /// is off the screen (see [`expected_tree`]). Those two have UIA ask the
 /// window's thread (`WM_GETTITLEBARINFOEX`), whose answer waits on the
 /// Desktop Window Manager, seconds behind while the other tests make and
-/// destroy windows (`docs/tooling/troubleshooting.md`), so a read of them
+/// destroy windows (`books/dev/src/how-to/troubleshooting.md`), so a read of them
 /// would outlast UIA's timeout under the full run.
 fn walk(
     uia: &Uia,
@@ -281,7 +281,7 @@ fn uia_client_reads_the_scripted_tree() {
 /// location or whether they are off the screen has UIA ask the window's
 /// thread (`WM_GETTITLEBARINFOEX`), whose answer waits on the Desktop
 /// Window Manager, seconds behind while the other tests make and destroy
-/// windows (`docs/tooling/troubleshooting.md`).
+/// windows (`books/dev/src/how-to/troubleshooting.md`).
 fn event_shapes_read_what_the_full_read_gives() {
     let title = common::unique_title("mockapp-uia-event-shapes");
     let app = common::spawn("tree.json", "uia", &title);

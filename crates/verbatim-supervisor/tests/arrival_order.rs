@@ -1,5 +1,5 @@
 //! The reducer's order of arrival with the relay reading the outposts'
-//! pipes (`docs/design/communication.md`, sections 4.5, 4.8, 6.2 and 6.8;
+//! pipes (`books/dev/src/explanation/design/communication.md`, sections 4.5, 4.8, 6.2 and 6.8;
 //! migration step 7). The test stands in for verbatim.exe's reducer: it
 //! takes its inputs from a port queue, as the reducer does, into which the
 //! supervisor's sink posts and the test posts its own keys, and passes the

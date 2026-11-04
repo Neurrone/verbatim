@@ -1,6 +1,6 @@
 //! The review cursor's current word, its column kept going up, and its
 //! repeated presses (milestone M4 item 5), as `text_box_review_words` and
-//! `notepad_review_words` (each its own code, as `docs/testing.md` requires): the test of what the
+//! `notepad_review_words` (each its own code, as `books/dev/src/reference/testing.md` requires): the test of what the
 //! `demo_review_cursor` demonstration shows beyond `notepad_review_cursor`,
 //! on the same table. Numpad 5 reads the current word; going back up the
 //! table with numpad 7 keeps the column, as going down does (Verbatim's

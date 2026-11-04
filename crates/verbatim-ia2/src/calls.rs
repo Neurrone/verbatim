@@ -1,5 +1,5 @@
 //! The count of cross-process calls this crate makes, per thread
-//! (`docs/performance.md`, "What counts as a call").
+//! (`books/dev/src/reference/performance.md`, "What counts as a call").
 //!
 //! A call counts when it reaches the application's process: an
 //! `IAccessible` method (`accName`, `accValue`, `accRole`, `accState`,

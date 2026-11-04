@@ -381,14 +381,14 @@ impl Operation {
                 .map_err(Error::Execute)?;
         }
         // One cross-process round trip, counted as one UIA call
-        // (`docs/performance.md`).
+        // (`books/dev/src/reference/performance.md`).
         verbatim_uia::calls::count(verbatim_model::CallKind::Uia);
         // From its arrival in the application until UIA begins evaluating
         // it there, a remote operation makes every new UIA connection from
         // another process to the application fail without an error, a
-        // defect of UIA's (`docs/uia-bugs.md`): only the application's own
+        // defect of UIA's (`books/dev/src/reference/uia-bugs.md`): only the application's own
         // outpost sends it one and connects to it, so no other Verbatim
-        // process meets it (`docs/design/listener-without-connections.md`,
+        // process meets it (`books/dev/src/explanation/design/listener-without-connections.md`,
         // section 2).
         let result = remote.Execute(&program.bytecode).map_err(Error::Execute)?;
         let outcome = Outcome { result };
@@ -450,7 +450,7 @@ pub mod work {
 }
 
 /// Counting the instructions remote programs execute, to measure them
-/// against the platform's limit on one run (`docs/performance.md`, "The
+/// against the platform's limit on one run (`books/dev/src/reference/performance.md`, "The
 /// instruction limit"). While counting is on for a thread, every program
 /// that thread runs is run in its counting form, which has the same
 /// results and effects, and how many of the program's own instructions it

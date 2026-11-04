@@ -1,6 +1,6 @@
 //! How Verbatim's processes and its latency-critical threads ask to be
 //! scheduled, under whatever power plan the machine has (Dickson's decision
-//! of 2026-10-08, `docs/roadmap.md`; `docs/design/communication.md`, section 6.1).
+//! of 2026-10-08, `docs/roadmap.md`; `books/dev/src/explanation/design/communication.md`, section 6.1).
 //!
 //! - The threads that only move messages as an event crosses processes run
 //!   at a raised priority ([`prioritize_current_thread`]), so a thread made
@@ -8,7 +8,7 @@
 //!   application is busy rather than waiting out their quantum. They do
 //!   microseconds of work per message and block between messages. Each
 //!   caller names its level in one constant of its own. Measured on
-//!   2026-10-13 (`docs/design/communication.md`, section 11, step 3), this
+//!   2026-10-13 (`books/dev/src/explanation/design/communication.md`, section 11, step 3), this
 //!   took verbatim.exe's own stage's maximum from about 4 ms to under
 //!   half a millisecond, with no measurable change in processor time or
 //!   wake-ups; raising the threads that compute did not pay, and is not

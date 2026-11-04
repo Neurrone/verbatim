@@ -1,6 +1,6 @@
 //! The observation point of a producer's wait for room, compiled only with
 //! the `faults` feature, which only `cargo xtask faults` turns on
-//! (`docs/crates/verbatim-audio.md`): a test waits for a producer to have
+//! (`books/dev/src/reference/crates/verbatim-audio.md`): a test waits for a producer to have
 //! begun waiting before it checks that the producer stays blocked. Only
 //! producers reach it, never the audio thread.
 

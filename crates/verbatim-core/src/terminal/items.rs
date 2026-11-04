@@ -1,5 +1,5 @@
 //! What a terminal's reading rules say, as Core's flood policy takes it
-//! (`docs/design/terminal-model.md`, "Core's flood policy"), and what a key
+//! (`books/dev/src/explanation/design/terminal-model.md`, "Core's flood policy"), and what a key
 //! is to the rules.
 
 use serde::{Deserialize, Serialize};
@@ -19,7 +19,7 @@ pub(crate) enum TerminalUnit {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) enum TerminalItem {
     /// Output: a new line whole, a redrawn row from the word that changed,
-    /// or a held line as it was last read (`docs/design/terminal-model.md`,
+    /// or a held line as it was last read (`books/dev/src/explanation/design/terminal-model.md`,
     /// "New text" and "Changed rows"). Spoken by the flood policy, one
     /// utterance each; an empty one is a blank line, counted but not
     /// spoken.

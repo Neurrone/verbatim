@@ -1,4 +1,4 @@
-//! Counts of cross-process calls, by kind (`docs/performance.md`).
+//! Counts of cross-process calls, by kind (`books/dev/src/reference/performance.md`).
 //!
 //! The backend crates count every call that reaches the application's
 //! process as they make it; the outpost sends the counts for each event and
@@ -37,7 +37,7 @@ pub struct CallCounts {
     /// Of the UIA calls, those that connect to a window by its handle:
     /// `ElementFromHandle` and its cache-building form, and `GetFocusedElement`'s cache-building form, which reaches the
     /// focused window the same way
-    /// (`docs/design/listener-without-connections.md`, terms). Each is
+    /// (`books/dev/src/explanation/design/listener-without-connections.md`, terms). Each is
     /// counted under its own kind too, so [`total`](Self::total) leaves
     /// this count out.
     pub connections: u32,

@@ -2,7 +2,7 @@
 //! requests to reopen that a device makes through
 //! [`AudioDevice::needs_reopen`](crate::AudioDevice::needs_reopen).
 //!
-//! The rule (`docs/design/communication.md`, section 16, on audio device
+//! The rule (`books/dev/src/explanation/design/communication.md`, section 16, on audio device
 //! recovery): a device that failed to open is opened again only on
 //! evidence that an open could now succeed. That evidence is a
 //! notification: the default device changed, or a device arrived or became

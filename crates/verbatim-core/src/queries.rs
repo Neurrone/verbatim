@@ -2,7 +2,7 @@
 //! navigation or an activation, whether an outpost answers it or Core
 //! answers it from a terminal's memory, recorded in one table under one
 //! numbering from its request to its one ending, with what its answer
-//! continues (`docs/crates/verbatim-core.md`, "Core's queries").
+//! continues (`books/dev/src/reference/crates/verbatim-core.md`, "Core's queries").
 //!
 //! A query is asked by [`Queries::ask`], which records it and returns the
 //! request's effect, or by [`Queries::ask_memory`] for one only Core

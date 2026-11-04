@@ -17,12 +17,12 @@ use super::writer::{Outgoing, ToChild};
 /// killed through its job.
 ///
 /// A clean shutdown is quick (measured over the end-to-end suite: see
-/// `docs/crates/verbatim-outpost.md`, "Shutting down"), except while a call
+/// `books/dev/src/reference/crates/verbatim-outpost.md`, "Shutting down"), except while a call
 /// or a remote operation into an application is in progress, which the
 /// outpost lets finish rather than cut off: killing a UI Automation client
 /// in the middle of a call is the leading suspect in a Windows Terminal
 /// crash inside `UIAutomationCore.dll` on 2026-10-08
-/// (`docs/crates/verbatim-outpost.md`, "Shutting down"). Such a call ends by UIA's own timeouts
+/// (`books/dev/src/reference/crates/verbatim-outpost.md`, "Shutting down"). Such a call ends by UIA's own timeouts
 /// even when the application never answers: a call waiting on a provider
 /// that does not answer is ended by UIA's transaction timeout, which
 /// Verbatim sets to 5 seconds (`verbatim_uia::TRANSACTION_TIMEOUT`; a
@@ -30,7 +30,7 @@ use super::writer::{Outgoing, ToChild};
 /// `remote_ops` tests pin), and the connection timeout, which Verbatim sets
 /// to 2 seconds (`verbatim_uia::CONNECTION_TIMEOUT`), ends a call to a
 /// provider that cannot be reached. A timeout bounds each request and
-/// window message, not an operation (`docs/uia-bugs.md`), so an operation
+/// window message, not an operation (`books/dev/src/reference/uia-bugs.md`), so an operation
 /// of several requests waits a full timeout for each one the application
 /// does not answer, as a search does when it first reads its start element
 /// and then walks from it in one request inside the provider; the

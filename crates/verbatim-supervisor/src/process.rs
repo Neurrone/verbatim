@@ -27,14 +27,14 @@ pub(super) enum Role {
     /// An outpost watching one application for its whole life (decision D9).
     Outpost(Pid),
     /// A spare outpost, started with no application and given one later
-    /// (`docs/design/focus-pipeline.md`, section 19), by its launch's id.
+    /// (`books/dev/src/explanation/design/focus-pipeline.md`, section 19), by its launch's id.
     Spare(verbatim_model::OutpostId),
     /// The focus listener (decision D13).
     Listener,
 }
 
 /// verbatim.exe's ends of a child's two pipes, both overlapped
-/// (`docs/design/communication.md`, section 4.1); the child's ends are
+/// (`books/dev/src/explanation/design/communication.md`, section 4.1); the child's ends are
 /// overlapped too, served by its I/O thread's completion port, with every
 /// thread of the child writing its own messages (section 4.6).
 pub(super) struct ChildPipes {

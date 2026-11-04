@@ -61,14 +61,14 @@
 //! closed registration's callbacks, until the registering thread ends, as
 //! does a focus handler of a registration whose setting up failed after
 //! it was added, if its removal fails. Whether the close's second try at a
-//! group can succeed is not tested (`docs/uia-bugs.md`, "A registration
+//! group can succeed is not tested (`books/dev/src/reference/uia-bugs.md`, "A registration
 //! that times out reports success").
 //! `RemoveAllEventHandlers` is called only then, once the process has
 //! finished with UIA ([`crate::release_mta_usage`]), and removes it.
 //!
 //! No call is given a deadline or abandoned: UIA ends a registration call
 //! into an application that does not answer at its connection timeout
-//! (`docs/uia-bugs.md`, "A registration that times out reports success"),
+//! (`books/dev/src/reference/uia-bugs.md`, "A registration that times out reports success"),
 //! and the next move waits for it.
 
 use std::collections::VecDeque;
@@ -243,7 +243,7 @@ pub enum Subscription<E = IUIAutomationElement> {
     /// control (runtime ids starting 14, not 42), and UIA delivers those to
     /// a client whose focus handler is alone, or registered after its
     /// group, but not to one whose focus handler came first (measured
-    /// 2026-10-12, `docs/design/focus-pipeline.md`, section 16.8).
+    /// 2026-10-12, `books/dev/src/explanation/design/focus-pipeline.md`, section 16.8).
     Focus {
         /// Called for each focus change.
         callback: FocusCallback<E>,
@@ -325,7 +325,7 @@ pub struct Part {
 impl Part {
     /// A part every group holds for shape `S`: each event's element arrives
     /// with `S`'s request filled, and the subscription's callbacks receive
-    /// it as a [`Cached<S>`] (`docs/design/uia-shapes.md`).
+    /// it as a [`Cached<S>`] (`books/dev/src/explanation/design/uia-shapes.md`).
     #[must_use]
     pub fn shaped<S: Ungated>(subscription: Subscription<Cached<S>>) -> Self {
         Self {
@@ -533,7 +533,7 @@ impl Registration {
     /// every move and close asked for before it, and this waits for it
     /// however long it takes, with no deadline of its own: UIA ends a
     /// registration on an application that does not answer at its
-    /// connection timeout ([`crate::CONNECTION_TIMEOUT`]; `docs/uia-bugs.md`,
+    /// connection timeout ([`crate::CONNECTION_TIMEOUT`]; `books/dev/src/reference/uia-bugs.md`,
     /// "A registration that times out reports success"), so a desktop-wide
     /// registration that advises several such applications waits that
     /// long for each. The time it took is logged at debug level, and at
@@ -1041,7 +1041,7 @@ fn serve(ready: &mpsc::Sender<windows::core::Result<()>>, received: &mpsc::Recei
 
 /// Whether registration `registration`'s call into an application, which
 /// took `elapsed`, ended by UIA's connection timeout: such a call reports
-/// success (`docs/uia-bugs.md`, "A registration that times out reports
+/// success (`books/dev/src/reference/uia-bugs.md`, "A registration that times out reports
 /// success"), so its time past the timeout is the only sign. Each one is
 /// an observation point for a test that counts them.
 fn timed_out(registration: u64, elapsed: Duration) -> bool {
@@ -1157,7 +1157,7 @@ impl Follower {
         // focus handler registered after the group receives the second
         // identity Windows Terminal raises focus from (NVDA itself does,
         // its handler registered again after its group: 55 times in 40
-        // openings; `docs/design/focus-pipeline.md`, section 16.8).
+        // openings; `books/dev/src/explanation/design/focus-pipeline.md`, section 16.8).
         let has_focus = built
             .iter()
             .any(|built| matches!(built.handler, Handler::Focus(_)));
@@ -1316,7 +1316,7 @@ impl Follower {
     /// Removes from each of `registered` the group added there, once each,
     /// and answers those whose removal failed, which stay live on the
     /// client (a removal made in the gap after a registration that timed
-    /// out fails and leaves the group live; `docs/uia-bugs.md`, "A
+    /// out fails and leaves the group live; `books/dev/src/reference/uia-bugs.md`, "A
     /// registration that times out reports success").
     fn remove(&self, client: &Client, registered: Vec<Registered>) -> Vec<Registered> {
         let mut failed = Vec::new();
@@ -1501,7 +1501,7 @@ impl Follower {
 
 /// Whether `a` and `b` are the same element, by UIA's own comparison,
 /// which compares their runtime ids, kept with each element
-/// (`docs/performance.md`, "What counts as a call"). NVDA tests whether
+/// (`books/dev/src/reference/performance.md`, "What counts as a call"). NVDA tests whether
 /// an element has its group by membership of a set of the element
 /// pointers it added the group to, not by `CompareElements`, so it
 /// removes and adds the group again for a new pointer to the same

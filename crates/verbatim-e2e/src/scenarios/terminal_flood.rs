@@ -62,7 +62,7 @@ pub(crate) const LOWERED: u16 = 10;
 
 /// Both limits at half their default, for a scenario whose output must land
 /// while a group plays, such as a 12,000-line write, which takes Windows
-/// Terminal about two seconds (`docs/performance.md`, "A terminal flood"),
+/// Terminal about two seconds (`books/dev/src/reference/performance.md`, "A terminal flood"),
 /// or that must hear a 30-row screen whole: 30 lines are not more than 15
 /// waiting behind a group of 15, so none is skipped.
 pub(crate) const HALF: u16 = 15;

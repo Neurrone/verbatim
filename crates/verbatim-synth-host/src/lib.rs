@@ -1,6 +1,6 @@
 //! What `verbatim-synth-host.exe` runs once it has its synthesizer: one
 //! thread serving Core over its two pipes (decision D18;
-//! `docs/design/communication.md`, sections 6.5 and 7). A library, so a
+//! `books/dev/src/explanation/design/communication.md`, sections 6.5 and 7). A library, so a
 //! test can serve Core with a scripted driver through the same code.
 //!
 //! The thread waits only on events. Idle, it waits on the command pipe's
@@ -315,7 +315,7 @@ impl Host {
 
 /// When a `Speak` was taken in: on the shared clock, for Core's trip to
 /// the host, and on this process's own clock, for the first chunk's time,
-/// which runs from here (`docs/design/communication.md`, section 10.1), so
+/// which runs from here (`books/dev/src/explanation/design/communication.md`, section 10.1), so
 /// the time the request waits its turn behind an utterance still ending
 /// is counted in it.
 #[derive(Clone, Copy)]

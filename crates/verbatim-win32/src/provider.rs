@@ -1,5 +1,5 @@
 //! The process that serves a window's UI Automation, read with local calls
-//! only (`docs/design/listener-without-connections.md`, section 4.3): its
+//! only (`books/dev/src/explanation/design/listener-without-connections.md`, section 4.3): its
 //! owner by `GetWindowThreadProcessId`, except a console window, whose owner
 //! by that call is the console's client and whose provider is its console
 //! host. Also where a window's process ends: its parent window, or a
@@ -154,7 +154,7 @@ fn threads_own_window(pid: u32, hwnd: isize) -> bool {
 /// window under a visible owner and under the desktop when the owner is
 /// hidden. That window is answered when its [`provider_process`] is not
 /// `hwnd`'s, so a console window above counts as its console host's
-/// (`docs/design/listener-without-connections.md`, "The process boundary").
+/// (`books/dev/src/explanation/design/listener-without-connections.md`, "The process boundary").
 /// `None` for a top-level window with no visible owner, for a window above
 /// served by the same process, and for a window that no longer exists. A
 /// walk up stops at `hwnd` when this answers a window. Local calls only; a

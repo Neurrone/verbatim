@@ -1,4 +1,4 @@
-//! Core's terminal model (`docs/design/terminal-model.md`, "Where it
+//! Core's terminal model (`books/dev/src/explanation/design/terminal-model.md`, "Where it
 //! runs"), driven through `reduce` with snapshots of the simulated
 //! terminal, read as the outpost reads it for Core, with Core's requests
 //! for reads, history, colours and the screen's shape answered from it

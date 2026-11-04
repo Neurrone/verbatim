@@ -233,7 +233,7 @@ function Register-VerbatimAgentTask {
     # LogonType Interactive plus a UserId (no password/S4U) is Task
     # Scheduler's "run only when user is logged on": the task gets the
     # user's real interactive token, the only kind a screen reader can
-    # speak through (docs/architecture.md's window-station rule, verified
+    # speak through (books/dev/src/explanation/architecture.md's window-station rule, verified
     # at agent startup by verbatim-agent's own SessionInfo check). SYSTEM
     # or "run whether user is logged on or not" both hand it a
     # non-interactive session instead, which must never happen here.

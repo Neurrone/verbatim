@@ -64,7 +64,7 @@ pub enum FocusEvent {
 
 /// The reason a focus or selection is dropped when its sender has no
 /// window above it, which in a new File Explorer window is a sender gone
-/// before its read (`docs/design/listener-without-connections.md`, risk 13).
+/// before its read (`books/dev/src/explanation/design/listener-without-connections.md`, risk 13).
 pub const NO_WINDOW: &str = "it has no window above it, so NVDA makes no object for it";
 
 /// The reason a focus is dropped when the lookup of its sender's nearest

@@ -447,7 +447,7 @@ fn is_window_element(runtime_id: &[i32], hwnd: isize) -> bool {
 /// the program cannot reach, the rule the classic walk stops by
 /// ([`below_the_boundary`]). Its window is the one its runtime id names,
 /// `[42, handle]` ([`is_window_element`]), since a read inside the provider
-/// can leave a window's handle out (`docs/uia-bugs.md`, "Inside a remote
+/// can leave a window's handle out (`books/dev/src/reference/uia-bugs.md`, "Inside a remote
 /// operation, conhost's window has no handle or title"), or the one whose
 /// handle it reports. A handle the element reports of a window that no
 /// longer exists is neither, so a fragment element reporting one does not
@@ -737,7 +737,7 @@ pub fn focus_ancestry_remote(_uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
     // A walk that stopped at neither a known ancestor nor the depth limit
     // ended at a null parent. Inside a program a top-level window's parent
     // is null, as is the parent of a window below the process boundary
-    // (verified, `docs/crates/verbatim-uia-rops.md`), and only a walk
+    // (verified, `books/dev/src/reference/crates/verbatim-uia-rops.md`), and only a walk
     // whose last element is such a window's own element, or reports a
     // top-level window's handle, is complete ([`ends_at_the_top`]). Any
     // other ended at a missing parent below the window, even one whose
@@ -801,7 +801,7 @@ pub(crate) fn absent_record(bits: i32) -> Absent {
 /// leaves such a property out of an element's cache when the element does
 /// not support it, and returns which it left out as the element's
 /// [`Absent`] record, which its read answers as "not supported"
-/// (`docs/design/uia-shapes.md`, section 7, decision 3).
+/// (`books/dev/src/explanation/design/uia-shapes.md`, section 7, decision 3).
 pub(crate) struct RemoteCache {
     /// The checked properties, as the program's constants, each with its
     /// bit in an [`Absent`] record.
@@ -902,7 +902,7 @@ fn tell(before_call: Option<&dyn Fn(&'static str)>, call: &'static str) {
 /// fill's request and the element and its selected child by its element
 /// fill's. Stops at a known ancestor, at the
 /// depth limit, below the desktop root, below the process boundary
-/// (`docs/design/listener-without-connections.md`, terms), at a step into a
+/// (`books/dev/src/explanation/design/listener-without-connections.md`, terms), at a step into a
 /// window that reads as a plain window ([`FocusQuery::plain`]), and when the
 /// query's time is up, which is asked before every call but the element's
 /// own focus read, so that at most the call under way runs past it, or the
@@ -1036,7 +1036,7 @@ pub fn focus_ancestry_classic(uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
         // top-level window owned by another process's, as a dialog can be,
         // is the last ancestor, and the outpost of its application
         // continues the chain from that window through MSAA
-        // (`docs/design/listener-without-connections.md`, section 3, step
+        // (`books/dev/src/explanation/design/listener-without-connections.md`, section 3, step
         // 11, and section 4.2). A local check, made for an element with a
         // window of its own and for the nearest window's own element held
         // without its handle.

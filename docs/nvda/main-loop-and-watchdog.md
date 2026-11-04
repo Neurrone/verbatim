@@ -317,7 +317,7 @@ calls. The evidence that this diagnosis is correct, not folklore:
    ([SendMessageW remarks, Microsoft Learn](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-sendmessagew)),
    and COM calls into
    a single-threaded apartment are delivered through that same message
-   queue with no default timeout ([COM](../explainers/com.md)) — so a hung
+   queue with no default timeout ([COM](../../books/dev/src/explanation/windows/com.md)) — so a hung
    or non-pumping app blocks any caller indefinitely.
 3. **The bug record**: nvaccess/nvda issue [#1806](https://github.com/nvaccess/nvda/issues/1806) (convert every
    `sendMessage` to `cancellableSendMessage` "to eliminate freezing when

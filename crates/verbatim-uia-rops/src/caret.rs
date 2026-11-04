@@ -1,5 +1,5 @@
 //! The caret read for a caret report (milestone M4;
-//! `docs/crates/verbatim-uia-rops.md`, "Layer 3: the caret read"): the caret and the
+//! `books/dev/src/reference/crates/verbatim-uia-rops.md`, "Layer 3: the caret read"): the caret and the
 //! selection, whether they moved from where they were known to be, the
 //! caret's line and the caret's place in it, another unit at the caret
 //! (a word, a paragraph), and the formatting of the text to be spoken,
@@ -357,7 +357,7 @@ pub struct CaretAnswer {
     /// start; empty when it asked for none.
     pub runs: Vec<Run>,
     /// With a [`CaretQuery::previous_selection`], how the selection changed
-    /// from it, by the text protocol's rule (`docs/crates/verbatim-model.md`,
+    /// from it, by the text protocol's rule (`books/dev/src/reference/crates/verbatim-model.md`,
     /// "Requests and replies"): two selections that neither overlap nor
     /// touch are an unselection then a selection; otherwise the start side
     /// changes, then the end side. Empty when the selection did not move;

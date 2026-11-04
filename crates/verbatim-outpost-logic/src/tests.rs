@@ -1,4 +1,4 @@
-//! The reducer's replay tests (`docs/design/ownership.md`): recorded inputs given to the reducer, with its
+//! The reducer's replay tests (`books/dev/src/explanation/design/ownership.md`): recorded inputs given to the reducer, with its
 //! asks answered as the shell answers them, and the effects it answers with asserted. Each replays one
 //! ordering the outpost's threads can produce, at the times given, so an
 //! ordering that once needed a real bound, a real deadline or a race to
@@ -511,7 +511,7 @@ fn the_gap_records_timer_follows_the_record_in_the_order_it_changes() {
     assert_eq!(replay.reducer.next_timer(now(5)), None);
 }
 
-/// Found by the outpost's generated test (`docs/crates/verbatim-outpost-logic.md`, invariant 16): a foreground change taken in
+/// Found by the outpost's generated test (`books/dev/src/reference/crates/verbatim-outpost-logic.md`, invariant 16): a foreground change taken in
 /// after the close still opens the gap record, whose bound is then neither
 /// timed nor tested, so no window text reaches Core after the close.
 #[test]
@@ -2134,7 +2134,7 @@ fn a_timed_out_probe_committed_before_its_worker_is_abandoned_stays_recorded() {
     assert_eq!(verdict_copies(&effects).len(), 0);
 }
 
-/// Found by the outpost's generated test (`docs/crates/verbatim-outpost-logic.md`, invariant 13): a probe that leaves the record
+/// Found by the outpost's generated test (`books/dev/src/reference/crates/verbatim-outpost-logic.md`, invariant 13): a probe that leaves the record
 /// as it was, the same verdict from the same observation, sends no copy
 /// and does not narrow the hook again.
 #[test]
@@ -2991,7 +2991,7 @@ fn a_focus_published_at_its_bound_closes_the_record() {
     assert_eq!(gap_timers(&effects), [None]);
 }
 
-/// Found by the outpost's generated test (`docs/crates/verbatim-outpost-logic.md`): a tick past both a walk's bound and the gap
+/// Found by the outpost's generated test (`books/dev/src/reference/crates/verbatim-outpost-logic.md`): a tick past both a walk's bound and the gap
 /// record's asks for the publication and then the gap's test; the shell
 /// answers the publication first, whose report of the focus closes the
 /// record, and the test's window text, read for a record no longer open,
@@ -3033,7 +3033,7 @@ fn a_record_closed_by_a_publication_in_its_tick_sends_no_title() {
     assert!(!replay.reducer.intake.gap().is_open());
 }
 
-/// Found by the outpost's generated test (`docs/crates/verbatim-outpost-logic.md`): a foreground change's program takes the open
+/// Found by the outpost's generated test (`books/dev/src/reference/crates/verbatim-outpost-logic.md`): a foreground change's program takes the open
 /// caret key's watch, and a tick past the gap record's bound finds its
 /// window in front and sends its window text. The text's foreground fact,
 /// on another node, ends the watch at once, though the program in flight

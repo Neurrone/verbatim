@@ -55,7 +55,7 @@ pub(crate) const READ_AHEAD: u8 = 20;
 pub(crate) const HANDED: usize = 2;
 
 /// The next batch is read once fewer than this many utterances are left to
-/// speak, handed to speech and buffered together (`docs/performance.md`,
+/// speak, handed to speech and buffered together (`books/dev/src/reference/performance.md`,
 /// "Say-all"): even short ones last far longer than a batch's read takes,
 /// classically against a busy provider, so speech never runs dry.
 pub(crate) const LOW_WATER: usize = 10;

@@ -1,5 +1,5 @@
 //! Keys the keyboard hook held back, passed on to the application in the
-//! order pressed (`docs/design/key-holding.md`).
+//! order pressed (`books/dev/src/explanation/design/key-holding.md`).
 //!
 //! The hook reports a held caret key with the stroke it came from
 //! (`verbatim_input_windows::KeyReport::Held`), and every key transition

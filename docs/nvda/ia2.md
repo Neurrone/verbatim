@@ -1,7 +1,7 @@
 # IA2 usage
 
 NVDA consumes IAccessible2 as an upgrade layer over its MSAA objects.
-API background: [IA2](../explainers/ia2.md). The consumers are the
+API background: [IA2](../../books/dev/src/explanation/windows/ia2.md). The consumers are the
 `IAccessible` NVDAObjects, the virtual buffer backends
 ([Virtual buffers](virtual-buffers.md)), and the in-process live-region code.
 

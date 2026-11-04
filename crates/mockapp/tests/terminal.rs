@@ -1,4 +1,4 @@
-//! A terminal's reading (`docs/design/terminal-model.md`, "The rules")
+//! A terminal's reading (`books/dev/src/explanation/design/terminal-model.md`, "The rules")
 //! against mockapp's UIA text provider, whose `set-text` command rewrites a
 //! node's text the way a terminal's buffer changes, here as a terminal
 //! gives it, every row padded to the width and ended by a carriage return

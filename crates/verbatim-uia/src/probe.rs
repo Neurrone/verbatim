@@ -1,7 +1,7 @@
 //! The UIA arbitration probe: the raw probe, one `WM_GETOBJECT` with
 //! `UiaRootObjectId`, which the outposts make on their own application's
 //! windows and the focus listener on the windows of the focuses it reads
-//! (`docs/design/listener-without-connections.md`, decision 2).
+//! (`books/dev/src/explanation/design/listener-without-connections.md`, decision 2).
 
 use windows::Win32::Foundation::{
     ERROR_ACCESS_DENIED, ERROR_INVALID_WINDOW_HANDLE, ERROR_TIMEOUT, GetLastError, HWND, LPARAM,
@@ -78,7 +78,7 @@ pub fn raw_probe_verdict(sent: bool, answer: isize, last_error: u32) -> RawProbe
 /// The raw probe: asks a window whether it has a native UIA server-side
 /// provider with one `WM_GETOBJECT` for `UiaRootObjectId`, sign-extended
 /// as UIA sends it, rather than with a UIA connection
-/// (`docs/design/listener-without-connections.md`, section 3, step 4, and
+/// (`books/dev/src/explanation/design/listener-without-connections.md`, section 3, step 4, and
 /// decision 2). The outposts make it on their own application's windows
 /// and the focus listener on the windows of the focuses it reads. The
 /// window is asked once and its answer is the answer, as NVDA asks
@@ -86,7 +86,7 @@ pub fn raw_probe_verdict(sent: bool, answer: isize, last_error: u32) -> RawProbe
 /// "no" for this call, which the arbitrator does not keep.
 /// `UiaHasServerSideProvider`, which NVDA calls, sends two `WM_GETOBJECT`s, first with a
 /// nonzero wParam and then with wParam 0, and then connects (experiment
-/// `e39`; `docs/design/listener-without-connections.md`, the raw probe
+/// `e39`; `books/dev/src/explanation/design/listener-without-connections.md`, the raw probe
 /// in its terms); the raw probe sends
 /// only the second, with wParam 0, and nothing more. It answers correctly
 /// where a new connection would meet another process's queued remote

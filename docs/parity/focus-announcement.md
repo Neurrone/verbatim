@@ -8,7 +8,7 @@ Focus announcement content and property order (name, role, value,
 states in fixed order, description, shortcut, position, level).
 NVDA: `speakObject` ordering ([Speech](../nvda/speech.md)). Verbatim:
 **matched (verified)**: the per-property order is transcribed in
-`verbatim-core` ([verbatim-core](../crates/verbatim-core.md)), E2E
+`verbatim-core` ([verbatim-core](../../books/dev/src/reference/crates/verbatim-core.md)), E2E
 scenarios assert the wording, and each case below is pinned by the tests
 it names, or by reducer, mapping, and mockapp tests. The cases not yet
 built are in "Focus announcement cases not yet built". Different: an
@@ -61,7 +61,7 @@ empty field has no placeholder to speak.
   foreground window, by decision (NVDA's own menu keeps its frame hidden
   and says only "NVDA menu"). The frame's own focus and foreground events stay
   suppressed, since it transits focus (the hidden-frame suppression in
-  `docs/crates/verbatim-outpost.md`); the menu's opening is reported in
+  `books/dev/src/reference/crates/verbatim-outpost.md`); the menu's opening is reported in
   the frame's window with the frame as its ancestor, and the reducer
   names a new foreground window from the top of the focus's ancestry, as
   NVDA does when no foreground event named it (every scenario that opens
@@ -112,7 +112,7 @@ empty field has no placeholder to speak.
   to another process in a new wrapper of its own, so two sightings of
   one object never share an `IUnknown`, as measured against mockapp,
   whose provider keeps one object per node
-  (`docs/crates/verbatim-ia2.md`, "Identity"). The ancestors are NVDA's,
+  (`books/dev/src/reference/crates/verbatim-ia2.md`, "Identity"). The ancestors are NVDA's,
   those reached through `accParent`: a tree view item's logical parents,
   which Verbatim reads among the focus's ancestors through the control's
   own messages, are not NVDA's ancestors, whose tree view items are the

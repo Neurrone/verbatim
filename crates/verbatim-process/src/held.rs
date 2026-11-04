@@ -8,7 +8,7 @@
 //! Processes Verbatim was told to ignore entirely: the end-to-end harness
 //! names the owner's own Windows Terminal, which must never be read while a
 //! test runs on the owner's desktop, since it once crashed inside UI
-//! Automation while the suite read it (`docs/tooling/e2e.md`). Each is held
+//! Automation while the suite read it (`books/dev/src/how-to/e2e.md`). Each is held
 //! open from the moment it is named, so
 //! its pid names that process and no other for as long as Verbatim runs,
 //! and a process that later reuses the pid of one that exited is never

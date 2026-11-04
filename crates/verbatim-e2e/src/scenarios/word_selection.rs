@@ -1,6 +1,6 @@
 //! Moving up a line and selecting by word (milestone M4 item 3), as
 //! `text_box_word_selection` and `notepad_word_selection`
-//! (each its own code, as `docs/testing.md` requires): the test of what the `demo_notepad_editing` demonstration shows
+//! (each its own code, as `books/dev/src/reference/testing.md` requires): the test of what the `demo_notepad_editing` demonstration shows
 //! beyond `notepad_editing`. Up Arrow speaks the line it reaches;
 //! Shift+Control+Right Arrow selects a word and then the next, each
 //! spoken followed by "selected"; Shift+Control+Left Arrow takes the

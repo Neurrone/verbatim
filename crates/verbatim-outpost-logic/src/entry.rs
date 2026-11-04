@@ -1,7 +1,7 @@
 //! What the mailbox carries to the reducer: an entry, with no application
 //! object in it. A UIA event's element and an active text position's range
 //! are parked in the store as the entry is pushed, and the entry carries
-//! the key they are parked under (`docs/design/ownership.md`).
+//! the key they are parked under (`books/dev/src/explanation/design/ownership.md`).
 
 use verbatim_model::protocol::{DeliveredFact, EventTiming, Query, RequestId, UiaSnapshotFact};
 use verbatim_model::{NodeId, Notification, TraceId};
@@ -193,7 +193,7 @@ pub enum Item {
         /// The terminal's node.
         node_id: NodeId,
     },
-    /// The idle barrier (`docs/design/communication.md`, section 6.7):
+    /// The idle barrier (`books/dev/src/explanation/design/communication.md`, section 6.7):
     /// it ends its batch, and is reached once everything that arrived
     /// before it has been handled and a noted caret is read. Core's round
     /// is answered then once no deferred work is pending, a test's settle

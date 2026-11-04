@@ -7,7 +7,7 @@
 //! with the listener's own reader ([`FocusReader`], on the test's thread,
 //! where its calls are counted apart from the outpost's), and hands the
 //! outpost the read, as the listener sends it
-//! (`docs/design/focus-pipeline.md`, section 12).
+//! (`books/dev/src/explanation/design/focus-pipeline.md`, section 12).
 //!
 //! A focus-now query reads the system's keyboard focus, which a test must
 //! not take from the desktop it runs on, so this outpost reads it from the
@@ -53,7 +53,7 @@
 //!
 //! The outpost's own hook takes in mockapp's MSAA focus, foreground, menu,
 //! alert, and tooltip events, as every outpost's does
-//! (`docs/design/focus-pipeline.md`, section 12.4). A fact the test hands
+//! (`books/dev/src/explanation/design/focus-pipeline.md`, section 12.4). A fact the test hands
 //! over carries no `WinEvent` stamp, so the outpost never takes it for the
 //! twin of an event its hook took in: a test hands over an MSAA fact for an
 //! event mockapp never raised, or raised before the outpost was made. Only
@@ -669,7 +669,7 @@ impl OutpostUnderTest {
         under_test
     }
 
-    /// A spare outpost (`docs/design/focus-pipeline.md`, section 19), with
+    /// A spare outpost (`books/dev/src/explanation/design/focus-pipeline.md`, section 19), with
     /// no application yet, which has said so and nothing else;
     /// [`Self::assign`] gives it `app`. It reads `app`'s window as the
     /// foreground window.

@@ -2,7 +2,7 @@
 //! [--from <line>] [--to <line>]`: replays a run's flight-recorder dump through Core's reducer
 //! from the state it starts at, and prints each input on one line with the
 //! effects it produced, flagging every input whose effect count differs
-//! from the one the dump recorded (`docs/tooling/e2e.md`, "Replaying a run").
+//! from the one the dump recorded (`books/dev/src/how-to/e2e.md`, "Replaying a run").
 //! It first prints the commit the dump's build and its own were made from,
 //! with a warning when they differ or either had uncommitted changes.
 

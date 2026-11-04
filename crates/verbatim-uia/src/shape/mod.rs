@@ -1,5 +1,5 @@
 //! Shapes: every cached read of a UIA element declared together with the
-//! cache request that fills it (`docs/design/uia-shapes.md`).
+//! cache request that fills it (`books/dev/src/explanation/design/uia-shapes.md`).
 //!
 //! A shape is a plain struct whose fields are what one purpose reads of an
 //! element: properties, each read with a named kind, groups, which are
@@ -11,7 +11,7 @@
 //! [`Cached::read`]: so a property the request did not hold is never read,
 //! and UIA is never made to raise and report an error for one, which cost
 //! a quarter of a processor in a terminal flood
-//! (`docs/design/wake-ups.md`, item 12).
+//! (`books/dev/src/explanation/design/wake-ups.md`, item 12).
 //!
 //! A shape may have gates: run-time choices, from the active theme, of
 //! which of its fields are fetched. A gated property's gate is a `bool`
@@ -769,7 +769,7 @@ impl<S: Shape> Clone for Request<S> {
 /// [`request`](Self::request), and wraps what a program returns with
 /// [`claim`](Self::claim). That a program fills its caches from this list
 /// and nothing else is that crate's reviewed code, not something the
-/// compiler proves (`docs/design/uia-shapes.md`, section 3.5, items 8 and
+/// compiler proves (`books/dev/src/explanation/design/uia-shapes.md`, section 3.5, items 8 and
 /// 9). Neither `Clone` nor `Copy`.
 pub struct Fill<S: Shape> {
     request: Request<S>,

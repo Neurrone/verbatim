@@ -1,5 +1,5 @@
 //! The text a key types: the source of `Input::CharacterTyped`
-//! (`docs/crates/verbatim-input-windows.md`, "Typed text").
+//! (`books/dev/src/reference/crates/verbatim-input-windows.md`, "Typed text").
 //!
 //! The hook translates each key it passes to the application with
 //! `ToUnicodeEx`, using the foreground thread's keyboard layout, before the

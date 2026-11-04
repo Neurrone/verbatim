@@ -1,4 +1,4 @@
-//! Scripted-input tests for what a terminal says (`docs/design/terminal-model.md`,
+//! Scripted-input tests for what a terminal says (`books/dev/src/explanation/design/terminal-model.md`,
 //! "Core's flood policy"): the flood policy over the backlog of output not
 //! yet spoken (a burst's first 30 lines in full, then the last 30 of what
 //! waits), output arriving in several batches, the answers to keys spoken

@@ -1,4 +1,4 @@
-//! The memory and the alignment, one case of `docs/design/terminal-model.md`,
+//! The memory and the alignment, one case of `books/dev/src/explanation/design/terminal-model.md`,
 //! "The read", "The alignment", "Lingering", "Screens" and "Starting
 //! again", each: a stream written into the simulated terminal, read as the
 //! outpost reads it, and what the memory made of the read asserted whole.
@@ -1346,7 +1346,7 @@ fn a_stream_through_a_full_history_takes_no_vote_on_the_screens_shift() {
     // A stream through a full history moves every row up, so each read is
     // found by text and no row of the history block has its text lower
     // than its place: the vote on the screen rows' shift is never taken
-    // ("The alignment"; `docs/performance.md`, "The terminal memory's
+    // ("The alignment"; `books/dev/src/reference/performance.md`, "The terminal memory's
     // cost, estimated").
     let mut watch = Watch::console(10, 3, 3);
     watch.write("s1\r\ns2\r\ns3\r\ns4\r\ns5\r\ns6\r\ns7");

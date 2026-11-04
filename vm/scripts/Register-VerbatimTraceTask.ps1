@@ -5,7 +5,7 @@ stop a Windows Performance Recorder trace of the CPU's scheduling, for the
 communication design's measurements.
 
 .DESCRIPTION
-docs/design/communication.md attributes each slow hand-off to its cause
+books/dev/src/explanation/design/communication.md attributes each slow hand-off to its cause
 from an ETW trace of context switches and ready threads, and checks that
 Verbatim's raised thread priorities never keep its own GUI thread waiting.
 WPR records such a trace, but it needs administrator rights, and an

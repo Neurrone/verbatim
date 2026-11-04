@@ -1,6 +1,6 @@
 //! The messages between verbatim.exe and its children, the focus listener
 //! and the outposts, and the types they carry (milestone M4.4,
-//! `docs/design/ownership.md`): one enum for each direction and
+//! `books/dev/src/explanation/design/ownership.md`): one enum for each direction and
 //! role ([`CoreToOutpost`], [`CoreToListener`], [`OutpostToCore`] and
 //! [`ListenerToCore`]), each variant of a declared kind ([`Kind`]). The
 //! framing that carries them on the pipes is the outpost crate's own;
@@ -124,7 +124,7 @@ pub struct EventTiming {
     pub written_at_us: u64,
     /// The cross-process calls the outpost's worker made between taking the
     /// entry from its queue and publishing this message, by kind
-    /// (`docs/performance.md`). Zero from the listener, which makes none, and
+    /// (`books/dev/src/reference/performance.md`). Zero from the listener, which makes none, and
     /// from an older peer.
     pub calls: CallCounts,
     /// The part of `calls` a caret key's watch made in the checks that found
@@ -133,7 +133,7 @@ pub struct EventTiming {
     /// When verbatim.exe took in what it relayed to the outpost: for a
     /// listener's fact, when its relay thread took the read's completion;
     /// for a request Core made, when the request was queued for the
-    /// outpost (`docs/design/communication.md`, section 10.1). 0 for an event the
+    /// outpost (`books/dev/src/explanation/design/communication.md`, section 10.1). 0 for an event the
     /// outpost observed itself.
     pub core_received_at_us: u64,
     /// How long verbatim.exe held it, in microseconds, measured on one
@@ -192,7 +192,7 @@ pub struct UiaSnapshotFact {
 /// (0 for an element that is not a window), and whether UIA counts it both
 /// a control and content. The outpost filters what it reports from these
 /// and finds its own elements by the runtime ids below a window
-/// (`docs/design/focus-pipeline.md`, section 12.5).
+/// (`books/dev/src/explanation/design/focus-pipeline.md`, section 12.5).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct UiaAncestorFact {
     /// The ancestor's cached parts.
@@ -233,7 +233,7 @@ pub enum AncestorsEnd {
 
 /// A UIA focus as the focus listener judged and read it from the event's
 /// own element, on the thread for the element's application
-/// (`docs/design/focus-pipeline.md`, section 12.1): the element had the
+/// (`books/dev/src/explanation/design/focus-pipeline.md`, section 12.1): the element had the
 /// keyboard focus, read live, when it was read.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct UiaFocusRead {
@@ -290,7 +290,7 @@ pub struct UiaFocusRead {
 /// receives the event is told (`idEventThread` and `dwmsEventTime`): with
 /// the event's kind and address, what tells the listener's copy of an event
 /// and the outpost's own hook's copy apart from other events
-/// (`docs/design/focus-pipeline.md`, section 12.4, "The MSAA hand-over,
+/// (`books/dev/src/explanation/design/focus-pipeline.md`, section 12.4, "The MSAA hand-over,
 /// exactly"). The thread is also the one NVDA's limiter counts the event
 /// by.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -367,7 +367,7 @@ pub enum DeliveredFact {
     /// The focus listener received a UIA focus event in this application
     /// and is reading it: entries the outpost takes in after this wait
     /// until the read arrives or is dropped, and the focus is handled in
-    /// this place (`docs/design/focus-pipeline.md`, section 12.4, decision
+    /// this place (`books/dev/src/explanation/design/focus-pipeline.md`, section 12.4, decision
     /// 1 of section 15), as NVDA's UIA events pass in order through the
     /// one thread that judges them.
     UiaFocusMarker {
@@ -397,7 +397,7 @@ pub enum DeliveredFact {
         /// Whether the focus was dropped because its sender had no window
         /// above it, as a sender gone before its read has: the event for
         /// where the focus went may never come, so the outpost reads its
-        /// gap record at once (`docs/design/listener-without-connections.md`,
+        /// gap record at once (`books/dev/src/explanation/design/listener-without-connections.md`,
         /// risk 13). The one fact a drop carries for the gap record, which
         /// the outpost alone closes, by its own reports
         /// (`docs/design/focus-pipeline-rework-remaining.md`, "The gap,
@@ -491,7 +491,7 @@ pub enum DeliveredFact {
 impl DeliveredFact {
     /// Whether this fact is an MSAA `WinEvent`'s, which an outpost's own
     /// hook takes in once it is installed, and the listener forwards only
-    /// until then (`docs/design/focus-pipeline.md`, section 12.4).
+    /// until then (`books/dev/src/explanation/design/focus-pipeline.md`, section 12.4).
     #[must_use]
     pub fn is_win_event(&self) -> bool {
         matches!(
@@ -646,7 +646,7 @@ pub enum CoreToOutpost {
     /// raised after `through`, and every one it forwarded before is ahead
     /// of this message, so the listener's copies and the outpost's hook's
     /// are matched from now on only for events raised while the hook went
-    /// in (`docs/design/focus-pipeline.md`, section 12.4, "The overlap's
+    /// in (`books/dev/src/explanation/design/focus-pipeline.md`, section 12.4, "The overlap's
     /// ends"). Relayed in order behind every fact the listener sent before
     /// it ([`ListenerToCore::ForwardingEnded`]).
     ForwardingEnded {
@@ -691,7 +691,7 @@ pub enum CoreToOutpost {
     /// read until the first arrives.
     Fetches(crate::Fetches),
     /// The nodes from this outpost that Core still holds
-    /// (`docs/crates/verbatim-outpost.md`, held objects), as the numbers the
+    /// (`books/dev/src/reference/crates/verbatim-outpost.md`, held objects), as the numbers the
     /// outpost issued, and the position of the last message from this
     /// outpost that Core has handled ([`OutpostToCore::carries_nodes`] says
     /// which messages count). The outpost releases every other node it
@@ -703,14 +703,14 @@ pub enum CoreToOutpost {
         /// The text anchors Core holds in this outpost
         /// (`SrState::held_anchors` in `verbatim-core`): the outpost keeps
         /// these, and may forget any other once it has minted newer ones
-        /// (the text protocol, `docs/crates/verbatim-model.md`).
+        /// (the text protocol, `books/dev/src/reference/crates/verbatim-model.md`).
         #[serde(default)]
         anchors: Vec<u64>,
         /// The position of the last message Core has handled.
         acknowledged: u64,
     },
     /// The harness's idle barrier, round `round`
-    /// (`docs/design/communication.md`, section 6.7): answered
+    /// (`books/dev/src/explanation/design/communication.md`, section 6.7): answered
     /// [`OutpostToCore::IdleAnswer`] once the outpost's worker has handled
     /// everything that reached its intake before the query, with the caret
     /// those entries noted, and no caret key's watch or owed terminal read
@@ -728,7 +728,7 @@ pub enum CoreToOutpost {
     /// has not exited within its time limit. Nothing is answered: the pipe
     /// closing and the process exiting are the answer.
     Shutdown,
-    /// To a spare outpost (`docs/design/focus-pipeline.md`, section 19): the
+    /// To a spare outpost (`books/dev/src/explanation/design/focus-pipeline.md`, section 19): the
     /// application it watches from now on, for the rest of its life. It
     /// installs its process-scoped `WinEvent` hook for that application,
     /// starts waiting for its exit, and sends [`OutpostToCore::Ready`]; or,
@@ -786,7 +786,7 @@ pub enum CoreToListener {
     /// The outpost `outpost` watching `pid` has its own `WinEvent` hook in,
     /// so the listener forwards none of `pid`'s `WinEvent` facts raised
     /// from now on, and answers [`ListenerToCore::ForwardingEnded`] behind
-    /// every fact it has forwarded (`docs/design/focus-pipeline.md`,
+    /// every fact it has forwarded (`books/dev/src/explanation/design/focus-pipeline.md`,
     /// section 12.4).
     HookInstalled {
         /// The application.
@@ -826,7 +826,7 @@ pub enum CoreToListener {
         sent_at_us: u64,
     },
     /// The harness's idle barrier, round `round`
-    /// (`docs/design/communication.md`, section 6.7): answered
+    /// (`books/dev/src/explanation/design/communication.md`, section 6.7): answered
     /// [`ListenerToCore::IdleAnswer`] once the listener's `WinEvent` thread
     /// and its reading threads have nothing in progress, behind every
     /// message it sent before.
@@ -925,7 +925,7 @@ pub enum Query {
     /// The shell's tray icons or taskbar buttons, for Core's system tray
     /// list dialog, asked of the outpost of the process that owns the
     /// taskbar, which reads them within its own application
-    /// (`docs/design/listener-without-connections.md`, decision 9).
+    /// (`books/dev/src/explanation/design/listener-without-connections.md`, decision 9).
     /// Answered [`QueryResult::ShellItems`].
     ShellItems {
         /// Which shell surface.
@@ -1098,7 +1098,7 @@ pub enum OutpostToCore {
         /// console host's outpost reports, the console's client, the
         /// window's owner by `GetWindowThreadProcessId`, as NVDA gives a
         /// console window and its text area the client's app module
-        /// (`docs/design/focus-pipeline.md`, section 5.4). `None` for the
+        /// (`books/dev/src/explanation/design/focus-pipeline.md`, section 5.4). `None` for the
         /// target itself.
         #[serde(default)]
         application: Option<Pid>,
@@ -1150,7 +1150,7 @@ pub enum OutpostToCore {
     TargetExited,
     /// A spare outpost has done everything of its start that needs no
     /// application, and waits for [`CoreToOutpost::Assign`]
-    /// (`docs/design/focus-pipeline.md`, section 19.2). Its first message.
+    /// (`books/dev/src/explanation/design/focus-pipeline.md`, section 19.2). Its first message.
     SpareReady {
         /// The outpost's own process id.
         outpost_pid: Pid,
@@ -1655,7 +1655,7 @@ impl ListenerToCore {
 }
 
 /// What kind of message a variant of a direction enum is
-/// (`docs/design/ownership.md`), as its
+/// (`books/dev/src/explanation/design/ownership.md`), as its
 /// `kind` method says, one exhaustive match per enum, so a new variant is
 /// given a kind where it is added.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

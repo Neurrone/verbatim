@@ -1,4 +1,4 @@
-//! The hand-over's hold (`docs/design/ownership.md`; Dickson, 2026-10-25 and 2026-10-31): how an
+//! The hand-over's hold (`books/dev/src/explanation/design/ownership.md`; Dickson, 2026-10-25 and 2026-10-31): how an
 //! outpost's own `WinEvent` hook takes over from the focus listener.
 //!
 //! An application's focus, foreground, menu opening, alert, and tooltip

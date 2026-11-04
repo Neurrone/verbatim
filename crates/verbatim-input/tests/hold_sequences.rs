@@ -2,7 +2,7 @@
 //! through the decision machine, from a view that lets keys be held,
 //! checked against invariants that need no model and a small reference
 //! model of what the application should receive
-//! (`docs/crates/verbatim-input.md`), for each keyboard layout's bindings.
+//! (`books/dev/src/reference/crates/verbatim-input.md`), for each keyboard layout's bindings.
 //!
 //! The alphabet is twenty steps: the press and release of Right Arrow (a
 //! press of a key already down is its auto-repeat), A, Shift, Alt,
@@ -20,7 +20,7 @@
 //! only while a place waits. The permit never falls to `None` while a
 //! deferred press or a mask waits in line: a release would then pass at
 //! once, ahead of its press or of the mask, the known limitation of "The
-//! hook's hold decision" (`docs/design/key-holding.md`, "Limitations").
+//! hook's hold decision" (`books/dev/src/explanation/design/key-holding.md`, "Limitations").
 //! The walk's `None` stands for a view that lets no key be held, so no
 //! mask is due for a gesture made with it; the hook's
 //! other `None`, a view that lets keys be held with no text and nothing in

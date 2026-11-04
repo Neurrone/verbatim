@@ -19,6 +19,9 @@ pipeline rework's second build is built (2026-11-02). The owner endings build is
 built (2026-11-03). Next: the UIA facts build, then the rework's third
 build.
 
+The published site's homepage, `books/index.html`, carries one line of
+this status per milestone, and changes with it.
+
 ## M4 — Text, editing, and terminals
 
 - TextPattern support in the model; caret tracking, typed-character echo,
@@ -55,7 +58,7 @@ Decided by Dickson on 2026-11-04, to be built before the focus pipeline
 rework's third build and before this machine's Windows is updated, so
 that every UI Automation fact Verbatim's design rests on can be checked
 again on the current Windows and after the update. Every fact in
-`docs/uia-bugs.md` and every claim of `docs/explainers/uia.md` gets a
+`books/dev/src/reference/uia-bugs.md` and every claim of `books/dev/src/explanation/windows/uia.md` gets a
 reproduction in `uia-facts/`, a Cargo workspace of its own outside the
 main one: one folder per fact, with a README holding the fact, its
 method, its recorded results with their date and machine and how to
@@ -297,7 +300,7 @@ Further follow-ups from the focus work and the ownership builds:
 
 Every fact has one owner, logic is a pure reducer with calls as its
 effects, and no process holds a copy of another's state to judge against
-([ownership](design/ownership.md), Dickson, 2026-10-30). It preserves what
+([ownership](../books/dev/src/explanation/design/ownership.md), Dickson, 2026-10-30). It preserves what
 is heard, except the three changes the design names. Built in a session of
 its own, a few large builds, each designed against the code and reviewed
 just before it. All five builds are built; the rules for the planned milestones are in [the milestone rules](design/ownership-milestone-rules.md).
@@ -357,7 +360,7 @@ The decisions, in brief:
 ### Deferred
 
 - Review keys straight to the reducer
-  ([communication](design/communication.md), section 11) is reconsidered
+  ([communication](../books/dev/src/explanation/design/communication.md), section 11) is reconsidered
   when the command set is settled (Dickson, 2026-10-14).
 
 ### Follow-ups from M4.6
@@ -375,14 +378,14 @@ The decisions, in brief:
 
 ### The simulation of the reducers, deferred
 
-Built only if the second measure above is met. A simulation joining the reducers through pretend pipes, with their concurrency, as Dropbox's Trinity did beside its CanopyCheck tests of single pure owners. It needs two prerequisites: the transport's merge, priority and overflow rules as pure code it can call, since the real pipes merge by key, put urgent messages first and drop the oldest past 64 (`docs/design/communication.md`, section 4.4), and a recorder of the worker's commits. It is hand-written, since the simulation frameworks assume async code, and it has a fault model for application answers (slow, failing, reordered, the application exiting), counters for the states reached, a separate random stream per component, and the end-to-end suite kept, since that catches what no simulation models.
+Built only if the second measure above is met. A simulation joining the reducers through pretend pipes, with their concurrency, as Dropbox's Trinity did beside its CanopyCheck tests of single pure owners. It needs two prerequisites: the transport's merge, priority and overflow rules as pure code it can call, since the real pipes merge by key, put urgent messages first and drop the oldest past 64 (`books/dev/src/explanation/design/communication.md`, section 4.4), and a recorder of the worker's commits. It is hand-written, since the simulation frameworks assume async code, and it has a fault model for application answers (slow, failing, reordered, the application exiting), counters for the states reached, a separate random stream per component, and the end-to-end suite kept, since that catches what no simulation models.
 
 A simulated application would follow it, once the simulation has shown value by the same kind of judgement. In order:
 
 - The worker's reads behind one trait, as the listener's reading threads already are (`Reading` in the listener's focus reading), so a program runs unchanged against it.
 - A tree of elements with UI Automation's and MSAA's answers, and its events, in memory.
-- A fault model taken from `docs/uia-bugs.md`: a hung window, a call past its timeout, an element gone between two calls, a focus event late or repeated, a reused runtime id.
-- Conformance checked as the simulated terminal's is: mockapp is the reference for UI Automation's and MSAA's own behaviour, and recorded end-to-end sessions for real applications'. Every difference is a defect in the model or a new entry in `docs/uia-bugs.md`.
+- A fault model taken from `books/dev/src/reference/uia-bugs.md`: a hung window, a call past its timeout, an element gone between two calls, a focus event late or repeated, a reused runtime id.
+- Conformance checked as the simulated terminal's is: mockapp is the reference for UI Automation's and MSAA's own behaviour, and recorded end-to-end sessions for real applications'. Every difference is a defect in the model or a new entry in `books/dev/src/reference/uia-bugs.md`.
 
 It does not replace mockapp, which tests the real client stack, COM and the cross-process calls at real timing; the simulated application tests the logic above the calls, in memory, under a seeded scheduler. Code outside every simulation should then be only the calls themselves: COM and UI Automation, the hooks, the pipes' I/O, the audio device and the engines.
 
@@ -394,7 +397,7 @@ is kept in the repository.
 
 Tests and tooling:
 
-- `call_counts::uia_focus_chains_stop_below_the_process_boundary` was recorded as failing intermittently under `cargo xtask ci`, a defect by `docs/testing.md`, but did not fail in 456 runs on 2026-11-03, alone, with its binary and under load ([the known failures](flaky-tests.md)). Its next failure's message is to be kept and its cause found from the count that moved.
+- `call_counts::uia_focus_chains_stop_below_the_process_boundary` was recorded as failing intermittently under `cargo xtask ci`, a defect by `books/dev/src/reference/testing.md`, but did not fail in 456 runs on 2026-11-03, alone, with its binary and under load ([the known failures](flaky-tests.md)). Its next failure's message is to be kept and its cause found from the count that moved.
 - Audit every end-to-end scenario for timing races, each fixed by waiting for evidence, not a longer bound; find why the agent's bring-forward always takes its slowest path (up to 1.4 s).
 - Root-cause, from the GitHub run logs, the ARM64 unit test `the_codeview_record_read_is_the_one_dbghelp_reports` (`verbatim-trace-waits`), which failed on main before 2026-10-15 and does not reproduce here.
 - The trace tool's symbol lookup for ARM64X images, such as ntdll, needs a fix testable only on the ARM64 runner (deferred, Dickson, 2026-10-21).
@@ -625,7 +628,7 @@ package reader get generated tests of their own.
   `experiments/windows-terminal-raises-focus-from-a-second-runtime-identity/`.
 
 - Configuration versioned, by the ownership model's version rule
-  ([ownership](design/ownership.md); Dickson, 2026-10-30): the rule
+  ([ownership](../books/dev/src/explanation/design/ownership.md); Dickson, 2026-10-30): the rule
   tables and the fetch configuration carry a version published by Core
   alone, every judgement the listener or an outpost makes under them
   names that version, and a receiver recognises a judgement made under
@@ -735,7 +738,7 @@ is left is MSAA cancellation:
   browsers in M7; it removes no mechanism.
 
 Found while weighing the process layout (2026-11-01;
-`docs/uia-bugs.md`, "A hung window named in a system focus event holds
+`books/dev/src/reference/uia-bugs.md`, "A hung window named in a system focus event holds
 a process's UIA events"):
 
 - The ghost window: when a window stops answering, Windows shows its
@@ -769,7 +772,7 @@ on a thread of its own while its replacement is started after the backoff
 (`crates/verbatim-supervisor/src/owner.rs`, the failure path),
 so for up to `SHUTDOWN_LIMIT` a stuck outpost and its replacement can
 both be in the application, where two Verbatim processes' calls collide
-inside UIA (`docs/design/listener-without-connections.md`).
+inside UIA (`books/dev/src/explanation/design/listener-without-connections.md`).
 
 - The supervisor checks an application's exit twice, from the outpost's
   report and by polling the process; M6.2's single child record keeps
@@ -819,7 +822,7 @@ second real engine (Dickson, 2026-10-29).
   every waiting utterance, as NVDA does, where Verbatim judges it only
   for the focus just left (the focus pipeline audit).
 - The audio step of the communication design
-  ([communication](design/communication.md), section 11; Dickson,
+  ([communication](../books/dev/src/explanation/design/communication.md), section 11; Dickson,
   2026-10-08): the audio stream stays awake after speech, writing silence,
   for a configurable period, 30 seconds by default as in NVDA, because
   Bluetooth, USB, HDMI and virtual-machine endpoints otherwise clip or
@@ -831,7 +834,7 @@ second real engine (Dickson, 2026-10-29).
   generated invariant tests for the mixer driven pass by pass on the fake
   device (every utterance ends once, a cancel ends only older ones, nothing
   plays after its cancel, marks in order, a waiting producer always woken)
-  (`docs/performance.md`, "Threads after the output build"), with no state
+  (`books/dev/src/reference/performance.md`, "Threads after the output build"), with no state
   shared between threads; before them, a test driver that runs the
   mixer's pass (`AudioLoop::pass`) on the test thread with events
   delivered in the same step, onto which the mixer tests that check its
@@ -892,7 +895,7 @@ second real engine (Dickson, 2026-10-29).
 
 What remains of the terminal redesign (Dickson, 2026-10-29).
 
-Built from [the terminal model](design/terminal-model.md) (accepted by
+Built from [the terminal model](../books/dev/src/explanation/design/terminal-model.md) (accepted by
 Dickson on 2026-10-25), which states what is read, the rules and the
 limits; each part is one step in the sense of `REVIEW.md`, with nothing
 pushed until the last. The model in `verbatim-text`, its move into Core's
@@ -946,13 +949,13 @@ remains, in order:
   frames a second in each way programs stream, with a footer, a header and
   a middle status row, expected to speak the streamed text once, in order,
   with no word split, whatever the reads' timing.
-- The measurements after, in [performance](performance.md), for typing, a
+- The measurements after, in [performance](../books/dev/src/reference/performance.md), for typing, a
   20,000-line flood, a Pi stream at its recorded pace, a clock ticking
   once a second, and a full-screen program refreshing rows, against the
   baseline of processor time, wake-ups and change-to-speech time taken on
   2026-10-23 on the build before the reading changes (runs under
   `target/perf/terminal-baseline-*`; the memory baseline in
-  [performance](performance.md), "Memory use").
+  [performance](../books/dev/src/reference/performance.md), "Memory use").
 - [The terminals parity entry](parity/terminals.md), the crates'
   documents and these entries brought in line with the model.
 - The whole terminal suite, `cargo xtask ci`, and the push.
@@ -975,7 +978,7 @@ Related items, each to be settled within the redesign or after it:
   and Core step (Dickson, 2026-10-17).
 - `windows_terminal_two_windows` may say "<title> terminal" two or three
   times, from Windows Terminal's second runtime identity (Dickson,
-  2026-10-19; [UIA faults](uia-bugs.md), "Windows Terminal raises focus
+  2026-10-19; [UIA faults](../books/dev/src/reference/uia-bugs.md), "Windows Terminal raises focus
   from a second runtime identity"); the rule is M5's.
 - The console host's say-all repeats one row: its text pattern clamps an
   expansion below the last row with text back onto that row, and nothing
@@ -1046,7 +1049,7 @@ Formatting and the rich edit control:
 - Formatting in classic edit controls, plain and rich, as NVDA reads it;
   they read none today.
 - Formatting in review commands and say-all, which read none today
-  (`docs/crates/verbatim-core.md`, "Formatting").
+  (`books/dev/src/reference/crates/verbatim-core.md`, "Formatting").
 
 Text and selection:
 
@@ -1147,7 +1150,7 @@ Security work other milestones carry, each with its test:
   IA2 object again when it is named by an event, so a state change on an
   IA2 focus ancestor can be spoken. Plain MSAA objects named by events are
   oleacc wrappers whose COM identity never matches an object reached
-  through `accParent` (found 2026-10-08, `docs/crates/verbatim-ia2.md`,
+  through `accParent` (found 2026-10-08, `books/dev/src/reference/crates/verbatim-ia2.md`,
   "Identity"), so without such ids neither NVDA nor Verbatim speaks those.
 - Interaction-before-full-render E2E on a very large page.
 - Scan-mode generalization: the same projection over an ordinary app.
@@ -1276,13 +1279,13 @@ each of them end to end.
   listener reports for the window in front, published in the hook's
   `ForegroundView`): with UIAccess, keys Verbatim
   sends on reach elevated windows, so they are held there too
-  ([holding caret keys](design/key-holding.md), "Elevated windows";
+  ([holding caret keys](../books/dev/src/explanation/design/key-holding.md), "Elevated windows";
   Dickson, 2026-10-22).
 - In the keyboard decision machine, a release whose key's press still
   waits in the line waits behind it whatever the permit, so a key
   released as a window Verbatim cannot hold keys in comes to the front
   is not left down; with UIAccess no send Verbatim makes is dropped, so
-  the rule holds in every window ([verbatim-input](crates/verbatim-input.md);
+  the rule holds in every window ([verbatim-input](../books/dev/src/reference/crates/verbatim-input.md);
   Dickson, 2026-11-01).
 - The secure desktop and the lock screen wait for UIAccess support,
   without which Verbatim cannot read the secure desktop (Dickson,
@@ -1529,7 +1532,7 @@ commands, with no fidelity regression anywhere else.
 - A braille display's gestures are user inputs that are not keys, so
   they need key numbers ordered against the keyboard's: the keyboard
   hook's thread is the one minter and takes only keys
-  (`docs/design/ownership.md`), so M18's design
+  (`books/dev/src/explanation/design/ownership.md`), so M18's design
   decides how a braille gesture is numbered, as NVDA queues its speech
   cancel behind what is already queued.
 

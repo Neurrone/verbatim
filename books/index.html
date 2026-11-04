@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Verbatim documentation</title>
+<style>
+  :root { color-scheme: light dark; --text: #1d1d1f; --muted: #555; --bg: #ffffff; --link: #0b57d0; }
+  @media (prefers-color-scheme: dark) {
+    :root { --text: #e8e8ea; --muted: #a8a8ad; --bg: #16161a; --link: #8ab4f8; }
+  }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 1.0625rem/1.6 system-ui, sans-serif; }
+  main { max-width: 44rem; margin: 0 auto; padding: 2rem 1rem 4rem; }
+  a { color: var(--link); }
+  h1 { font-size: 2rem; margin-bottom: 0.25rem; }
+  h2 { margin-top: 2rem; }
+  .lede { color: var(--muted); margin-top: 0; }
+</style>
+</head>
+<body>
+<main>
+<h1>Verbatim documentation</h1>
+<p class="lede">Verbatim is a screen reader for Windows 11, on x64 and ARM64, written in Rust.</p>
+
+<h2><a href="user/">User Guide</a></h2>
+<p>For people using Verbatim. Not written yet.</p>
+
+<h2><a href="dev/">Development Guide</a></h2>
+<p>For people working on Verbatim itself: setting up, running the tests, the crates and their APIs, the architecture and the reasons behind its design.</p>
+
+<h2><a href="extensions/">Extensions Development Guide</a></h2>
+<p>For people writing extensions: app modules and speech engines. Written with milestone M5, when extensions arrive.</p>
+
+<h2>Status</h2>
+<p>Milestones are scoped by the risk each retires, not by date.</p>
+<ul>
+  <li>Complete: M0, foundations; M1, the self-voicing prototype; M2, the test harness and VM; M3, desktop usability core; M4.5, logic foundations; M4.6, generated tests.</li>
+  <li>In progress: M4, text, editing and terminals.</li>
+  <li>Next: M5, extensions; then M6, the native synthesizer host and Eloquence.</li>
+</ul>
+<p>The <a href="https://github.com/Neurrone/verbatim/blob/main/docs/roadmap.md">full roadmap</a> and the <a href="https://github.com/Neurrone/verbatim">source code</a> are on GitHub.</p>
+</main>
+</body>
+</html>

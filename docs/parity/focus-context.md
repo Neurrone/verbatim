@@ -186,7 +186,7 @@ one for a window read through UI Automation; the reducer, when the focus
 line shares nothing with the previous one below the desktop, cuts speech
 off and speaks the entered presentable ancestors outermost first, the
 top-level window among them by the rule in "Top-level windows in the
-ancestry", then the focus (`docs/design/focus-pipeline.md`, section
+ancestry", then the focus (`books/dev/src/explanation/design/focus-pipeline.md`, section
 16.4).
 
 The title rule (Dickson, 2026-10-30): the window's title is always said

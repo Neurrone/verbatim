@@ -1,4 +1,4 @@
-//! `docs/uia-bugs.md`, "Elements cannot be passed to another process"
+//! `books/dev/src/reference/uia-bugs.md`, "Elements cannot be passed to another process"
 //! (E-marshal in its experiments folder): a UIA element marshaled by COM
 //! for another process cannot be unmarshaled there, in either of COM's
 //! forms, though the same bytes work in the process that made them, and an

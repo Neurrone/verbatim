@@ -16,7 +16,7 @@
 //!   `--pipe-out`.
 //! - `--pipe-in <handle> --pipe-out <handle> --spare <launch>`: the same,
 //!   as a spare the supervisor keeps waiting
-//!   (`docs/design/focus-pipeline.md`, section 19): it starts with no
+//!   (`books/dev/src/explanation/design/focus-pipeline.md`, section 19): it starts with no
 //!   application, and watches the one the supervisor's `Assign` names for
 //!   the rest of its life, set once as at spawn. `<launch>` is the
 //!   supervisor's number for this launch, which names its log.

@@ -1,5 +1,5 @@
 //! `cargo xtask replay <flight-recorder.jsonl> [--from <line>] [--to
-//! <line>]`: runs `verbatim-replay` (`docs/crates/verbatim-replay.md`) with
+//! <line>]`: runs `verbatim-replay` (`books/dev/src/reference/crates/verbatim-replay.md`) with
 //! the arguments given, so xtask itself builds none of Core, which keeps
 //! its own build, and the documentation job's, small.
 

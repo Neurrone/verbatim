@@ -400,7 +400,7 @@ type Found = (Option<u64>, usize, usize, String);
 /// that Core received in `window_us`, each replayed and rendered on one
 /// line with its marks, `failing trace` and `untimed`, as
 /// `verbatim_replay::failure_inputs` gives them
-/// (`docs/crates/verbatim-replay.md`), prefixed with the file's name. A
+/// (`books/dev/src/reference/crates/verbatim-replay.md`), prefixed with the file's name. A
 /// dump that cannot be read is one line saying why.
 fn recorder_lines(text: &str, trace: Option<TraceId>, window_us: Option<(u64, u64)>) -> Vec<Found> {
     let contents = match verbatim_core::dump::read_dump(&mut text.as_bytes()) {

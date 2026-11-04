@@ -1,7 +1,7 @@
 //! A pager scrolling a line at a time on the alternate screen over a shell
 //! screen with history, as
 //! `windows_terminal_pager_history` and `conhost_pager_history`, each its
-//! own code (`docs/testing.md`). The
+//! own code (`books/dev/src/reference/testing.md`). The
 //! shared setup is described in the `terminal` module.
 //!
 //! `pager.ps1` draws as a pager does: it opens the alternate screen, fills
@@ -15,7 +15,7 @@
 //! "closed", in one write, so that every read after it finds the same
 //! screen; the main screen comes back as a new screen, so its rows are
 //! spoken, the command, "closed" and the prompt, as NVDA speaks the shell's
-//! screen when a pager closes (`docs/design/terminal-model.md`, "Screens",
+//! screen when a pager closes (`books/dev/src/explanation/design/terminal-model.md`, "Screens",
 //! Dickson, 2026-10-24).
 //!
 //! A full-screen program closed on a fresh terminal, at the top of the
@@ -32,7 +32,7 @@
 //! closing it finds that screen back at its places, a new screen, so only
 //! its visible rows are spoken, the newest 27 history lines, the command,
 //! "closed" and the prompt, 30 lines, with no skip
-//! (`docs/design/terminal-model.md`, "The aside screen", Dickson,
+//! (`books/dev/src/explanation/design/terminal-model.md`, "The aside screen", Dickson,
 //! 2026-10-25). The text scrolls through rows that stay put, so the screen
 //! diff finds how far from the text (`docs/parity/terminals.md`, "Line keys
 //! and lists a program draws"), and each move speaks only the line it brought

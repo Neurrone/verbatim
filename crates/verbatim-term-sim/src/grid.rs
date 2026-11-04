@@ -1,6 +1,6 @@
 //! The terminal's state: a buffer of rows with fixed coordinates, the
 //! screen at its bottom, the cursor, and the alternate screen
-//! (`docs/design/terminal-model.md`, "The model"). Every row carries an
+//! (`books/dev/src/explanation/design/terminal-model.md`, "The model"). Every row carries an
 //! identity that follows it through scrolls, rotation and clears, which the
 //! real terminals do not expose and the oracle's checks rest on.
 

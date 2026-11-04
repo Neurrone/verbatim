@@ -1,4 +1,4 @@
-//! The oracle (`docs/design/terminal-model.md`, "Testing"): invariants over
+//! The oracle (`books/dev/src/explanation/design/terminal-model.md`, "Testing"): invariants over
 //! the simulated terminal's ground truth that any reader of terminals must
 //! keep, whatever the stream did, checked over random streams, every short
 //! stream of a small alphabet, and the recorded corpus. The oracle judges;
@@ -196,7 +196,7 @@ pub enum Spoken {
 }
 
 /// Why a reader withholds a new line, each the silence of a reading rule
-/// of `docs/design/terminal-model.md`, with the premise the oracle checks,
+/// of `books/dev/src/explanation/design/terminal-model.md`, with the premise the oracle checks,
 /// accepted when some explanation consistent with the reads makes it true
 /// (see the module's documentation). Two are holds, which the same or a
 /// later read must resolve, the last read, taken after the quiet period,
@@ -248,7 +248,7 @@ pub enum Reason {
     WrittenBack,
 }
 
-/// A case `docs/design/terminal-model.md` lists under "Limits", which a
+/// A case `books/dev/src/explanation/design/terminal-model.md` lists under "Limits", which a
 /// reader states at a read for the oracle to accept what it causes there,
 /// and only when the limit's precondition holds in the ground truth.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -325,7 +325,7 @@ pub enum Reply {
     Heard(Heard),
     /// Read again at once with this query, before anything more is
     /// written, as a reader reads the whole document when the read keeps
-    /// no row of its last read (`docs/design/terminal-model.md`, "The
+    /// no row of its last read (`books/dev/src/explanation/design/terminal-model.md`, "The
     /// read").
     Again(Query),
 }
@@ -417,7 +417,7 @@ pub fn observe(terminal: &mut Terminal, stream: &Stream, reader: &mut dyn Reader
 /// The most times a reader may ask to read again at one point: a change
 /// costs at most two reads, the second of the whole document, or, for a
 /// first read, of its screen and the screen above it
-/// (`docs/design/terminal-model.md`, "The read").
+/// (`books/dev/src/explanation/design/terminal-model.md`, "The read").
 pub const AGAIN_LIMIT: usize = 1;
 
 /// One read of `terminal` by `reader`, taken again as often as the reader asks;
@@ -723,7 +723,7 @@ struct Check<'a> {
     reads: &'a [Observation],
     /// Whether the main screen's history went away, as when the alternate
     /// screen opens or the history is erased, which a reader cannot tell
-    /// apart (`docs/design/terminal-model.md`, "Screens"), and has not
+    /// apart (`books/dev/src/explanation/design/terminal-model.md`, "Screens"), and has not
     /// come back.
     aside: bool,
     /// Each read's lines; `None` for a read on the alternate screen.
@@ -1978,7 +1978,7 @@ fn smallest_rotation(last: &Observation, read: &Observation) -> usize {
 
 /// The text of row `row` of `rows`: padding, the spaces after its line's
 /// last character, left out, so a row that wraps onto a row with text
-/// keeps the spaces at its end (`docs/design/terminal-model.md`, "Rows");
+/// keeps the spaces at its end (`books/dev/src/explanation/design/terminal-model.md`, "Rows");
 /// empty for a row that shows nothing.
 fn row_text(rows: &[Seen], row: usize) -> &str {
     let seen = &rows[row];
@@ -2149,7 +2149,7 @@ pub const STATUSES: [&str; 3] = ["\u{280b} 1s", "\u{2819} 1s", "\u{2819} 2s"];
 pub const PIECES: [&[u8]; 4] = [b"caf\xc3", b"\xa9", b"ok \xe2\x9c", b"\x93"];
 
 /// One of the operations programs do to a terminal
-/// (`docs/design/terminal-model.md`, "The model"), as the oracle's streams
+/// (`books/dev/src/explanation/design/terminal-model.md`, "The model"), as the oracle's streams
 /// write them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Op {

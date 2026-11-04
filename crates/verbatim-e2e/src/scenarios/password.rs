@@ -2,7 +2,7 @@
 //! `text_box_password` in a Windows Forms password text box, a standard
 //! Win32 edit control read through MSAA and its window messages, and as
 //! `wpf_password` in a WPF `PasswordBox`, read through UI Automation (each
-//! its own code, as `docs/testing.md` requires): a protected field's text
+//! its own code, as `books/dev/src/reference/testing.md` requires): a protected field's text
 //! is read as any field's, masked as the control gives it, on focus, by
 //! character, and for Backspace, Delete, Control+Backspace and
 //! Control+Delete, while its typed characters stay echoed as

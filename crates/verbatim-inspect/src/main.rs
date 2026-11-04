@@ -350,7 +350,7 @@ fn print_latency_record(record: &LatencyRecord) {
 
 /// One stage of a latency timeline as a line: its time and, for the stages
 /// that make cross-process calls, how many they made; for the outpost read,
-/// also its time as a ratio to the floor (`docs/performance.md`, "The floor
+/// also its time as a ratio to the floor (`books/dev/src/reference/performance.md`, "The floor
 /// and the ratio"). The floor is the operation's minimum call count times
 /// the cost of one call measured against the same application; only the
 /// end-to-end suite measures that cost, so here the ratio is reported as

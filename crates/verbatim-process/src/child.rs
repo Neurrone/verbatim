@@ -22,7 +22,7 @@ macro_rules! report_error {
 /// every object released, and COM left. It ends with `TerminateProcess`
 /// rather than by returning from `main`, so no DLL's process-detach code
 /// runs: `UIAutomationCore.dll`'s sometimes hangs or crashes in a process
-/// that has used UIA as a client (`docs/architecture.md`, "Process
+/// that has used UIA as a client (`books/dev/src/explanation/architecture.md`, "Process
 /// lifetime"). Nothing is left for that code to do; standard error, the
 /// log, is written unbuffered.
 pub fn end_without_detach(code: u32) -> ! {
@@ -41,7 +41,7 @@ pub fn end_without_detach(code: u32) -> ! {
 /// coverage (`cfg(coverage)`, which cargo-llvm-cov sets), and does nothing
 /// in any other build. The profile runtime writes it at exit, which a
 /// process ending with `TerminateProcess` never reaches, so such a process
-/// calls this first (`docs/tooling/coverage.md`).
+/// calls this first (`books/dev/src/how-to/coverage.md`).
 pub fn write_coverage_profile() {
     #[cfg(coverage)]
     {

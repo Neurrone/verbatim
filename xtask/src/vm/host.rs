@@ -2,7 +2,7 @@
 //! [`Host`] trait, expressed as PowerShell run through [`HyperVHost`]. Verb
 //! modules (`create`, `deploy`, `test`, `lifecycle`, `logs`) only ever see
 //! `&dyn Host`, so a future QEMU/KVM implementation (the deferred CI story
-//! in `docs/architecture.md` section 14) can be dropped in without touching
+//! in `books/dev/src/explanation/architecture.md` section 14) can be dropped in without touching
 //! them.
 //!
 //! PowerShell is invoked non-interactively against a temp script file

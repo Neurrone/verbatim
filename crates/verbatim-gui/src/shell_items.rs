@@ -7,7 +7,7 @@
 //! outpost a query; the outpost reads the items, or the positions of the
 //! buttons that may be the one item clicked, which no list carries, within
 //! its own application
-//! (`docs/design/listener-without-connections.md`, decision 9) and the
+//! (`books/dev/src/explanation/design/listener-without-connections.md`, decision 9) and the
 //! answer comes back through the host's delivery callback, on another
 //! thread, which the GUI uses to send it down the same channel
 //! [`GuiHandle`](crate::GuiHandle) posts commands through. The GUI thread

@@ -1,4 +1,4 @@
-//! The caret watch's generated test (`docs/crates/verbatim-outpost-logic.md`,
+//! The caret watch's generated test (`books/dev/src/reference/crates/verbatim-outpost-logic.md`,
 //! the caret watch): every sequence of up to
 //! [`DEPTH`] steps of the inputs that move a caret key's watch, given to
 //! [`Reducer::input`] and [`Reducer::tick`], enumerated without randomness. After every step it

@@ -1,4 +1,4 @@
-//! The reading rules, one rule of `docs/design/terminal-model.md`, "Reading
+//! The reading rules, one rule of `books/dev/src/explanation/design/terminal-model.md`, "Reading
 //! rules", or one case of "Evidence", each: a stream written into the
 //! simulated terminal, read as the outpost reads it at the times given,
 //! with keys as they reach the program, and the speech, the lines withheld

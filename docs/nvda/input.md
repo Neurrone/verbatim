@@ -164,7 +164,7 @@ reads the caret wherever it has got to.
 ## Typed characters, IME, and composition
 
 Out-of-process key events cannot tell NVDA what an app actually
-inserted ([Input and text](../explainers/input-and-text.md)), so this comes from
+inserted ([Input and text](../../books/dev/src/explanation/windows/input-and-text.md)), so this comes from
 the injected side ([Process injection](process-injection.md)):
 
 - `typedCharacter.cpp` hooks `WM_CHAR` delivery in-process and

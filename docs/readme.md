@@ -1,16 +1,40 @@
-# Verbatim documentation
+# Verbatim's working documents
 
-The index of everything under `docs/`, with reading paths for the
-common reasons to be here. Each document opens with its own status
-where it has one; this index names what each holds.
+The documents under `docs/` are the project's working material, read by
+the agents that build Verbatim and not published: the plans, the design
+records of work still being designed or built, the NVDA parity ledger and
+the notes on how NVDA works. Each document opens with its own status where
+it has one; this index names what each holds.
+
+The documentation meant for people is published from `books/`, one mdBook
+each, arranged after the Diataxis framework: tutorials, how-to guides,
+reference and explanation.
+
+- [The Verbatim Development Guide](../books/dev/src/SUMMARY.md): the
+  architecture and its decisions of record, the walkthroughs, the crate
+  guides, the tooling guides, the testing standard, test coverage, the
+  performance ledger, the faults in UI Automation, the glossary, the
+  design records of finished work and the Windows background explainers.
+- [The Extensions Development Guide](../books/extensions/src/SUMMARY.md),
+  written in M5.
+- [The User Guide](../books/user/src/SUMMARY.md), not written yet.
+
+A design record moves from `docs/design/` into the Development guide's
+Explanation section, under `books/dev/src/explanation/design/`, in the
+commit that cuts it down once its work is built, because only finished
+work is published. A published page names a document here by its full
+GitHub address, since the site carries nothing from `docs/`
+(`cargo xtask docs`, rule 5).
 
 ## Reading paths
 
 **New to the project.** Read the repository `CLAUDE.md`, then
-[Walkthroughs](walkthroughs.md), then [Architecture](architecture.md),
-keeping [the glossary](glossary.md) at hand for the project's invented
-vocabulary. If Windows APIs are unfamiliar,
-[the explainers](explainers/readme.md) have a reading order.
+[Walkthroughs](../books/dev/src/explanation/walkthroughs.md), then
+[Architecture](../books/dev/src/explanation/architecture.md), keeping
+[the glossary](../books/dev/src/reference/glossary.md) at hand for the
+project's invented vocabulary. If Windows APIs are unfamiliar,
+[the explainers](../books/dev/src/explanation/windows/readme.md) have a
+reading order.
 
 **Working on NVDA parity.** [The parity ledger](parity/readme.md) is the
 per-behaviour checklist, and its statuses are the definition of done;
@@ -18,65 +42,37 @@ each entry links the file in [docs/nvda](nvda/readme.md) that documents
 how NVDA does it.
 
 **Building a feature.** [The roadmap](roadmap.md) scopes the work; the
-crate you change has a guide in [docs/crates](crates/readme.md) that
-must be kept current; the design records below hold the reasons behind
-the work; [the UIA faults](uia-bugs.md) say what UI Automation gets
-wrong.
+crate you change has a guide in
+[the crate guides](../books/dev/src/reference/crates/readme.md) that must
+be kept current; the design records below and the finished ones in
+[the Development guide](../books/dev/src/explanation/design/readme.md)
+hold the reasons behind the work;
+[the UIA faults](../books/dev/src/reference/uia-bugs.md) say what UI
+Automation gets wrong.
 
-**Running and debugging things.** [The tooling guides](tooling/readme.md)
-cover setup, `verbatim-inspect`, `mockapp`, measuring, the end-to-end
-suite, the VM harness, NVDA captures and troubleshooting.
+**Running and debugging things.**
+[The tooling guides](../books/dev/src/how-to/readme.md) cover setup,
+`verbatim-inspect`, `mockapp`, measuring, the end-to-end suite, the VM
+harness, NVDA captures and troubleshooting.
 
-## The full map
+## The documents here
 
-- [Architecture](architecture.md) — the decisions of record, the process
-  and thread model, backend strategy, testing strategy, the crate map
-  and the top risks.
 - [Roadmap](roadmap.md) — the work ahead, milestone by milestone, with
   the open follow-ups.
 - [Completed milestones](roadmap-done.md) — what each finished milestone
   delivered.
-- [Crate guides](crates/readme.md) — one file per crate: its public API
-  and how its intricate parts work.
-- [Walkthroughs](walkthroughs.md) — a focus change, a command key, an
-  utterance, a query, recovery from failures and an end-to-end run,
-  followed across processes and crates.
 - [Parity ledger](parity/readme.md) — what NVDA does for each behaviour
   and where Verbatim stands.
 - [docs/nvda](nvda/readme.md) — how NVDA implements its features, cited
   against the pinned source.
-- [Explainers](explainers/readme.md) — Windows API background and the
-  Rust concurrency vocabulary Verbatim uses.
-- [Tooling](tooling/readme.md) — which command to type, one guide per
-  purpose.
-- [The testing standard](testing.md) — what every test must meet.
-- [Test coverage](test-coverage.md) — every gesture and user-facing feature, with the tests that cover it at each level and the gaps still open.
 - [Known failing and flaky tests](flaky-tests.md) — each test known to fail,
   with its cause and the work that fixes it.
-- [Performance](performance.md) — the operation ledger: what counts as a
-  call, and for each operation and backend the call counts CI asserts
-  and the measured costs.
-- [Faults in UI Automation](uia-bugs.md) — the faults Verbatim has
-  established in UIA and in applications' providers, each with its
-  reproduction test.
 - [Experiments](../experiments/readme.md) — the experiments behind the
   UIA faults and the surveys behind design choices, one folder each.
-- [Glossary](glossary.md) — Verbatim's invented vocabulary.
-- Design records — the problem, the alternatives weighed, the reasons
-  and the limits behind each piece of work:
-  - [ownership.md](design/ownership.md) — one owner for every fact, the
-    rules every component follows, and the five builds that applied them:
-    the one judge, input, messages, output, and the outpost store and
-    reducer.
+- Design records of work still being designed or built:
   - [ownership-milestone-rules.md](design/ownership-milestone-rules.md) —
     the ownership rules each planned milestone follows, and the evidence
     behind them.
-  - [communication.md](design/communication.md) — every pipe and thread
-    from an event or a key to sound.
-  - [focus-pipeline.md](design/focus-pipeline.md) — how focus events
-    reach Verbatim.
-  - [listener-without-connections.md](design/listener-without-connections.md)
-    — why only an application's own outpost connects to it.
   - [focus-pipeline-rework.md](design/focus-pipeline-rework.md) — the
     reconciliations between the listener, the outposts and Core to
     remove.
@@ -93,21 +89,15 @@ suite, the VM harness, NVDA captures and troubleshooting.
     verdict on the rule that only an application's own outpost calls it.
   - [caret-selection-rework.md](design/caret-selection-rework.md) — one
     caret baseline and one request per key.
-  - [uia-shapes.md](design/uia-shapes.md) — every cached UIA read
-    declared with its request.
-  - [wake-ups.md](design/wake-ups.md) — the sources of Verbatim's
-    wake-ups and the reason for each fix.
-  - [terminal-model.md](design/terminal-model.md) — how terminal screens
-    change, and the rules Verbatim reads them by.
-  - [key-holding.md](design/key-holding.md) — holding caret keys as NVDA
-    does.
   - [windows-terminal-twin-focus.md](design/windows-terminal-twin-focus.md)
     — the rule for Windows Terminal's second terminal identity.
-  - [extensions.md](design/extensions.md) — the extension system.
+  - [extensions.md](design/extensions.md) — the extension system,
+    published once M5 builds it.
   - [security-model.md](design/security-model.md) — the threat model
     (assets, trust boundaries, adversaries and classes of threat), the
     architectural mitigations for each class, the gaps in today's code,
-    and a comparison with NVDA and other screen readers.
+    and a comparison with NVDA and other screen readers; published once
+    Dickson has vetted it.
   - [m5-extensions-work.md](design/m5-extensions-work.md) and
     [m6-native-synth-work.md](design/m6-native-synth-work.md) — the order
     of work and the tests for M5 and M6.

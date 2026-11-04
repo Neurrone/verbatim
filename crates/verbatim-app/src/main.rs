@@ -228,7 +228,7 @@ fn run(
     // and control-plane commands, each one packet posted to it. The port is
     // first in, first out across all its posters, so the reducer takes its
     // inputs in the order they reached it, as NVDA queues keys with events
-    // (`docs/design/communication.md`, section 4.5). A post never waits.
+    // (`books/dev/src/explanation/design/communication.md`, section 4.5). A post never waits.
     let (command_tx, command_rx) = port_queue::<ShellCommand>()?;
 
     // The theme the configuration names, with its sounds, presents speech
@@ -243,7 +243,7 @@ fn run(
     let (themes_dir, sounds_dir) = (config.themes_dir(), config.sounds_dir());
 
     // The saver owns `settings.toml` from here on, and each section of it
-    // moves to its one owner (`docs/design/ownership.md`): the speech section to the synth
+    // moves to its one owner (`books/dev/src/explanation/design/ownership.md`): the speech section to the synth
     // thread, the reader section to the reducer thread, the theme section
     // to the GUI thread.
     let (saver, speech_writer, reader_writer, theme_writer) =
@@ -310,7 +310,7 @@ fn run(
 
     // Core's view of the window in front, for the keyboard hook: whether
     // it may hold keys there, whether the focus has text whose caret keys
-    // it holds (`docs/design/key-holding.md`), and which thread's layout
+    // it holds (`books/dev/src/explanation/design/key-holding.md`), and which thread's layout
     // translates them, published by the reducer thread (architecture
     // section 5).
     let foreground = Arc::new(ForegroundView::new());
@@ -480,7 +480,7 @@ fn run(
     // settles first, speech cancelled so a commit does not wait behind an
     // utterance, then the saver writes what it was given, the synth
     // thread's commit included, both within one bound
-    // (`docs/design/ownership.md`).
+    // (`books/dev/src/explanation/design/ownership.md`).
     let deadline = Instant::now() + EXIT_SAVE_TIMEOUT;
     if !manager.settle(deadline) {
         tracing::warn!(
@@ -598,7 +598,7 @@ fn load_locales(exe_dir: &std::path::Path, config: &ConfigStore) {
 /// each in a synthesizer host, through the mixer and WASAPI by default,
 /// observed by the latency ledger, and presenting speech with `theme`.
 /// `VERBATIM_TEST_AUDIO=null` is a
-/// test-only escape hatch (documented in docs/crates/verbatim-audio.md) that
+/// test-only escape hatch (documented in books/dev/src/reference/crates/verbatim-audio.md) that
 /// adds the capture synth and plays through [`SilentDevice`] instead, which
 /// takes real time but makes no sound.
 ///
@@ -654,7 +654,7 @@ fn build_speech_manager(
         mixer.tap(Box::new(recorder));
     }
     // The mixer's delivery thread only moves messages, so it runs raised
-    // (`docs/design/communication.md`, section 6.1).
+    // (`books/dev/src/explanation/design/communication.md`, section 6.1).
     mixer.on_delivery_thread(Box::new(|| {
         verbatim_process::scheduling::prioritize_role(
             "the audio events delivery",
@@ -662,7 +662,7 @@ fn build_speech_manager(
         );
     }));
     // The speech queue's inbox is a completion port, so the keyboard hook's
-    // cancel takes no lock (`docs/design/ownership.md`).
+    // cancel takes no lock (`books/dev/src/explanation/design/ownership.md`).
     let (inbox, taker) = port_queue::<QueueItem>()
         .map_err(|error| verbatim_speech::SynthError::Unavailable(error.to_string()))?;
     let (manager, token, gui_sounds) = SpeechManager::new(SpeechManagerConfig {
@@ -1010,7 +1010,7 @@ struct ReducerThread<'a> {
     held_due: Option<(TraceId, Instant)>,
     /// Control-plane `AwaitIdle` waiters that reached their place in line,
     /// and the idle barrier's round through every child that answers them
-    /// (`docs/design/communication.md`, section 6.7).
+    /// (`books/dev/src/explanation/design/communication.md`, section 6.7).
     barrier: idle::IdleBarrier<Sender<()>>,
     /// Given spares that failed before their `Ready` and whose `Ended` is
     /// still to come: their applications' held facts went to the next
@@ -1204,7 +1204,7 @@ impl ReducerThread<'_> {
     /// whether or not that outpost has reported for it yet, and by none
     /// when that host cannot be read: the client's own outpost serves none
     /// of the console window, and connects to no other application's window
-    /// (`docs/design/listener-without-connections.md`, section 4.3).
+    /// (`books/dev/src/explanation/design/listener-without-connections.md`, section 4.3).
     fn want_focus_now(&mut self, pid: Pid) {
         if self.context.supervisor.is_ignored(pid) {
             return; // Nothing is asked of a process Verbatim ignores.
@@ -1446,7 +1446,7 @@ impl ReducerThread<'_> {
         }
     }
 
-    /// Moves the idle barrier on (`docs/design/communication.md`, section
+    /// Moves the idle barrier on (`books/dev/src/explanation/design/communication.md`, section
     /// 6.7), between steps, so the reducer is never in the middle of one.
     /// Once every outpost the round asked has answered or ended, takes in
     /// everything already queued for the reducer, then checks its own
@@ -1512,7 +1512,7 @@ impl ReducerThread<'_> {
     /// has facts or a focus query waiting for it, as a replacement for a
     /// crashed one does), no application's focus is wanted, no key the
     /// hook held back is still waiting to reach its application
-    /// (`docs/design/key-holding.md`), no key or command waits in Core's
+    /// (`books/dev/src/explanation/design/key-holding.md`), no key or command waits in Core's
     /// held-key line, no lock key's announcement is still to come, and no
     /// terminal's quiet-period timer is armed, since what waits for it is
     /// spoken when it ends.
@@ -1641,11 +1641,11 @@ impl ReducerThread<'_> {
     /// The held nodes are written to an outpost when the set Core holds
     /// there changed, or after a focus report of its was handled, so the
     /// outpost releases what Core let go of within one pipe hop
-    /// (`docs/design/ownership.md`). Any other
+    /// (`books/dev/src/explanation/design/ownership.md`). Any other
     /// change, of the held anchors or of the position of the last message
     /// handled alone, is left for the outpost, and the next command written
     /// to it, a request or the relay's ping within three seconds, carries
-    /// it (`docs/design/communication.md`, step 11): the caret's anchor
+    /// it (`books/dev/src/explanation/design/communication.md`, step 11): the caret's anchor
     /// changes with every key, and a write for each would cost a pipe
     /// write and the outpost's reader wake on the typing path.
     fn send_views(&mut self) {
@@ -1880,7 +1880,7 @@ impl ReducerThread<'_> {
     /// shell's surface `kind`, its items or where a clicked item is,
     /// starting one when there is none, so verbatim.exe makes no UIA
     /// connection into the shell's windows
-    /// (`docs/design/listener-without-connections.md`, decision 9). The
+    /// (`books/dev/src/explanation/design/listener-without-connections.md`, decision 9). The
     /// outcome goes to `ask`'s callback, exactly once, within
     /// [`wanted::SHELL_ITEMS_WAIT`] of now; `None` when there is no
     /// taskbar, when its process gets no outpost or none is ready before
@@ -1961,7 +1961,7 @@ impl ReducerThread<'_> {
         // barrier's round, its end is its answer.
         self.barrier.ended(outpost);
         // When the supervisor gives the application a next generation,
-        // at once or after its backoff (`docs/design/focus-pipeline.md`,
+        // at once or after its backoff (`books/dev/src/explanation/design/focus-pipeline.md`,
         // section 19.5), and it is the attention application, or the
         // focus's when that is another (a Settings page's content,
         // inside ApplicationFrameHost's window), the replacement is
@@ -2091,7 +2091,7 @@ fn asks_dump(who: &Asker, ticket: DumpTicket) -> bool {
 
 /// Posts the supervisor's messages to the reducer thread's port, in line
 /// with its keys and commands, so the reducer takes them all in the order
-/// they arrived (`docs/design/communication.md`, section 4.5); and lets the
+/// they arrived (`books/dev/src/explanation/design/communication.md`, section 4.5); and lets the
 /// supervisor's relay watch the reducer through the port's counts, logging
 /// a stall it reports (section 6.8).
 fn outpost_sink(command_tx: Commands) -> verbatim_supervisor::EventSink {

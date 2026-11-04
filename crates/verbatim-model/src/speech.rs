@@ -443,7 +443,7 @@ pub struct Utterance {
     pub validity: Option<FocusValidity>,
     /// Whether say-all is reading this utterance, so the theme's "play
     /// sounds during say all" setting decides whether its indications play
-    /// their sounds or are spoken instead (`docs/crates/verbatim-config.md`,
+    /// their sounds or are spoken instead (`books/dev/src/reference/crates/verbatim-config.md`,
     /// "Themes"). `false` for every other utterance.
     #[serde(default)]
     pub say_all: bool,

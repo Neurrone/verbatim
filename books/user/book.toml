@@ -1,0 +1,19 @@
+[book]
+title = "Verbatim User Guide"
+language = "en"
+src = "src"
+
+[build]
+# A page the summary lists but the folder lacks is an error, not a new
+# empty page.
+create-missing = false
+# Only the include preprocessor runs: the default index preprocessor would
+# publish each readme.md as index.html, which breaks every link to it.
+use-default-preprocessors = false
+
+[preprocessor.links]
+
+[output.html]
+site-url = "/verbatim/user/"
+git-repository-url = "https://github.com/Neurrone/verbatim"
+edit-url-template = "https://github.com/Neurrone/verbatim/edit/main/books/user/{path}"

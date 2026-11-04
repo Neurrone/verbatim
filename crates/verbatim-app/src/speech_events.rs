@@ -1,6 +1,6 @@
 //! The speech pipeline's observer: the latency ledger, plus the index marks
 //! the reducer placed, which re-enter it as `Input::MarkReached` so say-all
-//! advances as playback reaches each piece (`docs/crates/verbatim-core.md`,
+//! advances as playback reaches each piece (`books/dev/src/reference/crates/verbatim-core.md`,
 //! "Say-all"), and each utterance with marks cut off before playback
 //! reached them all, which re-enters as `Input::UtteranceCancelled` so
 //! nothing the reducer waits on is lost by a cut, or failed, which
@@ -9,9 +9,9 @@
 //!
 //! Every synthesizer reports its marks: `OneCore` places them itself from its
 //! bookmarks, and eSpeak NG from its mark events
-//! (`docs/crates/verbatim-synth-espeak.md`, "Index marks"); a driver that
+//! (`books/dev/src/reference/crates/verbatim-synth-espeak.md`, "Index marks"); a driver that
 //! cannot place marks has each sequence split at them by the speech manager
-//! (`docs/crates/verbatim-speech.md`, "Mark fallback"). Either way the mixer
+//! (`books/dev/src/reference/crates/verbatim-speech.md`, "Mark fallback"). Either way the mixer
 //! reports a mark when the device has played the audio before it.
 
 use std::sync::Arc;

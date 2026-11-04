@@ -1,5 +1,5 @@
 //! `cargo xtask nvda`: the NVDA transcript add-on and its client
-//! (`docs/tooling/nvda.md`).
+//! (`books/dev/src/how-to/nvda.md`).
 //!
 //! `build` packs `nvda-addon/src` into the committed
 //! `nvda-addon/verbatimTranscript.nvda-addon`, and a unit test, so part of
@@ -824,7 +824,7 @@ fn run_step(
 
 /// Fails, just before one key or character of `step` is sent, unless the
 /// capture's window, `target` by its handle, is in front and responding
-/// (`docs/tooling/nvda.md`, "Keeping keys in the capture's window").
+/// (`books/dev/src/how-to/nvda.md`, "Keeping keys in the capture's window").
 fn require_in_front(agent: &mut AgentClient, target: Option<u64>, step: &Step) -> io::Result<()> {
     let foreground = agent.foreground_info()?.foreground;
     in_front(target, foreground.as_ref()).map_err(|why| {

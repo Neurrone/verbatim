@@ -1,5 +1,5 @@
 //! Reads of a text's units and ranges for the text protocol's requests
-//! (`docs/crates/verbatim-model.md`, "The text protocol"): a unit read
+//! (`books/dev/src/reference/crates/verbatim-model.md`, "The text protocol"): a unit read
 //! after a movement, or several units ahead for say-all ([`text_units`]);
 //! the text between two points, or selecting it ([`text_range`]); and a
 //! point's place on the screen ([`text_location`]). Each starts from a

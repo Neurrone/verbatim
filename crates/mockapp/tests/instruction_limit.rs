@@ -1,6 +1,6 @@
 //! UIA's limit on the instructions one remote operation may execute, and how
 //! many each of Verbatim's programs executes, against mockapp's real,
-//! out-of-process provider (`docs/performance.md`, "The instruction
+//! out-of-process provider (`books/dev/src/reference/performance.md`, "The instruction
 //! limit").
 //!
 //! The limit is not published (NVDA's local emulator of remote operations
@@ -725,7 +725,7 @@ fn terminal_snapshots_execute_exactly() {
     assert!(started < LIMIT / 2);
 }
 
-/// A terminal's rows read by their place (`docs/design/terminal-model.md`,
+/// A terminal's rows read by their place (`books/dev/src/explanation/design/terminal-model.md`,
 /// "Reading rules", rule 4): at its largest input, as many runs as
 /// one read takes, each reaching its rows, and for one run, as a single
 /// candidate rotation whose block left the read asks. The program has no

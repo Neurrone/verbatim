@@ -126,7 +126,7 @@ pub fn retirement_decision(
     !holds_attention && !nodes_held && since_us(last_attention_us, now_us) >= idle_after
 }
 
-/// The backoff between an outpost's failures (`docs/design/focus-pipeline.md`,
+/// The backoff between an outpost's failures (`books/dev/src/explanation/design/focus-pipeline.md`,
 /// section 19.5): one application's outposts that fail while serving it, or
 /// the spares that fail while they wait. The first failure is replaced at
 /// once; each further one waits twice as long as the one before, from
@@ -280,7 +280,7 @@ impl HeldFacts {
     }
 }
 
-/// The spare outposts (`docs/design/focus-pipeline.md`, section 19):
+/// The spare outposts (`books/dev/src/explanation/design/focus-pipeline.md`, section 19):
 /// whether they are kept yet, which wait, oldest first, and whether each has
 /// said it is ready. A spare given to an application never returns to the
 /// list, and its replacement is wanted at once. A spare that fails while it

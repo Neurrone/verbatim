@@ -10,7 +10,7 @@
 //!   mailbox; nothing else changes a record, and there is no shared map
 //!   lock. Its heartbeat and sweep run when its wait's deadline passes.
 //! - The owner thread is also the relay ([`relay`];
-//!   `docs/design/communication.md`, section 6.2): it waits only on an I/O
+//!   `books/dev/src/explanation/design/communication.md`, section 6.2): it waits only on an I/O
 //!   completion port, reads the listener's pipe and routes each fact in the
 //!   pass that read it, writing it to its outpost there and then, so a fact
 //!   crosses verbatim.exe with one thread's wake-up; it reads every
@@ -37,7 +37,7 @@
 //! - The supervisor therefore runs on one thread, the relay; the app parses
 //!   every frame on its reducer thread ([`Frames`]).
 //! - It keeps two spare outposts started and waiting, with no application
-//!   (`docs/design/focus-pipeline.md`, section 19), from the moment Core's
+//!   (`books/dev/src/explanation/design/focus-pipeline.md`, section 19), from the moment Core's
 //!   own outpost is ready: a start for an application takes the oldest,
 //!   sends it `Assign`, and tells the app the generation `Started`; a
 //!   spare given never returns, and its replacement starts at once.
@@ -88,7 +88,7 @@ pub use writer::QueueError;
 const ABANDONED_WORKER_LIMIT: usize = 8;
 
 /// How many spare outposts the supervisor keeps waiting
-/// (`docs/design/focus-pipeline.md`, section 19).
+/// (`books/dev/src/explanation/design/focus-pipeline.md`, section 19).
 pub const SPARES: usize = 2;
 
 /// The supervisor's periods and limits. Verbatim runs with
@@ -108,7 +108,7 @@ pub struct Timings {
     /// How long the replacement of an outpost's second failure in a row
     /// waits: a second. Each failure after it waits twice as long as the
     /// one before, up to [`backoff_limit`](Self::backoff_limit)
-    /// (`docs/design/focus-pipeline.md`, section 19.5). The first failure
+    /// (`books/dev/src/explanation/design/focus-pipeline.md`, section 19.5). The first failure
     /// is replaced at once.
     pub backoff_first: Duration,
     /// The longest a failed outpost's replacement waits: 30 seconds.
@@ -211,7 +211,7 @@ const STAYED_UP: Duration = Duration::from_mins(1);
 /// the app every outpost's messages in the order they reached the
 /// supervisor. The
 /// app's sink posts them to the reducer thread's port, among its keys and
-/// commands (`docs/design/communication.md`, section 4.5); a channel of
+/// commands (`books/dev/src/explanation/design/communication.md`, section 4.5); a channel of
 /// [`OutpostMessage`]s converts into a sink, for tests.
 #[derive(Clone)]
 pub struct EventSink {
@@ -228,7 +228,7 @@ struct ReducerWatch {
 
 /// A stall of the thread taking the sink's messages, the reducer: it has
 /// taken none of its inputs for at least three ping intervals while some
-/// waited (`docs/design/communication.md`, section 6.8). It is a fault of
+/// waited (`books/dev/src/explanation/design/communication.md`, section 6.8). It is a fault of
 /// its own, and nothing is ended for it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ReducerStall {
@@ -427,7 +427,7 @@ pub enum OutpostMessage {
         message: Box<OutpostToCore>,
     },
     /// A spare outpost said it is ready, and `waiting` spares are ready and
-    /// waiting now (`docs/design/focus-pipeline.md`, section 19). Verbatim
+    /// waiting now (`books/dev/src/explanation/design/focus-pipeline.md`, section 19). Verbatim
     /// is ready for the end-to-end harness once [`SPARES`] are, so every
     /// scenario's applications take a spare.
     SpareReady {
@@ -480,7 +480,7 @@ pub enum OutpostMessage {
         sealed: Sealed,
     },
     /// The generation `outpost` given to `target_pid` failed before its
-    /// `Ready` (`docs/design/focus-pipeline.md`, section 19.5), and the
+    /// `Ready` (`books/dev/src/explanation/design/focus-pipeline.md`, section 19.5), and the
     /// application's held facts, and the idle query held for it, go to the
     /// generation `next`: the next spare, or an outpost launched for the
     /// application. Sent when `next` is given, at once or when the
@@ -519,7 +519,7 @@ pub enum OutpostMessage {
     /// parsed: the app passes it through [`Frames`], which turns it into
     /// the [`OutpostMessage::Event`] it carries.
     Frame(Frame),
-    /// The idle barrier's round `round` (`docs/design/communication.md`,
+    /// The idle barrier's round `round` (`books/dev/src/explanation/design/communication.md`,
     /// section 6.7; [`Supervisor::query_idle`]): the listener has answered,
     /// or has gone, and every outpost in `outposts` is asked now, each
     /// behind every fact relayed to it before, one still starting once it
@@ -799,7 +799,7 @@ impl Supervisor {
 
     /// Leaves for one outpost generation the list of its nodes and text
     /// anchors Core still holds, with the position of the last of its
-    /// messages the app has handled (`docs/design/communication.md`, step
+    /// messages the app has handled (`books/dev/src/explanation/design/communication.md`, step
     /// 11). Nothing is written for it: the next command written to that
     /// generation, a request from the app or the relay's ping within
     /// three seconds, carries it after its own frame, in the same write. A
@@ -834,7 +834,7 @@ impl Supervisor {
     /// ([`leave_nodes_held`](Self::leave_nodes_held)): the app writes it
     /// after it handled a focus report, or a message that changed the nodes
     /// Core holds there, so the outpost releases what Core let go of within
-    /// one pipe hop (`docs/design/ownership.md`).
+    /// one pipe hop (`books/dev/src/explanation/design/ownership.md`).
     /// Nothing happens if the generation has ended.
     pub fn send_nodes_held(
         &self,
@@ -896,7 +896,7 @@ impl Supervisor {
     }
 
     /// Runs the idle barrier's round `round` through the children
-    /// (`docs/design/communication.md`, section 6.7): the listener is asked
+    /// (`books/dev/src/explanation/design/communication.md`, section 6.7): the listener is asked
     /// first, behind every command sent to it before; once it answers, or
     /// if it has gone, every outpost, ready or starting, is asked behind
     /// every fact relayed to it before, and the app hears which

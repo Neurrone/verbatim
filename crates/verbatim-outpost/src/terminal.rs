@@ -1,4 +1,4 @@
-//! A focused terminal's reads (`docs/design/terminal-model.md`, "Where it
+//! A focused terminal's reads (`books/dev/src/explanation/design/terminal-model.md`, "Where it
 //! runs" and "The read"), public so mockapp's tests drive them as the
 //! worker does.
 //!
@@ -457,7 +457,7 @@ pub fn read<'a>(
             });
         }
     };
-    // What each read costs (`docs/performance.md`, "A terminal
+    // What each read costs (`books/dev/src/reference/performance.md`, "A terminal
     // flood").
     tracing::debug!(
         path = path.name(),

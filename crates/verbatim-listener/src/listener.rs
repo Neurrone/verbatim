@@ -49,7 +49,7 @@
 //! The one place the listener calls into applications is the reading
 //! threads, one per application, which judge and read each UIA focus from
 //! the event's own element, as NVDA does, since no other process can hold
-//! that element (`docs/design/focus-pipeline.md`, section 12). The callback
+//! that element (`books/dev/src/explanation/design/focus-pipeline.md`, section 12). The callback
 //! sends the application's outpost a marker at once and queues the element
 //! for its application's thread; the thread's read, or its drop, follows
 //! the marker by the same route. Each read is a few calls on elements the
@@ -60,10 +60,10 @@
 //! application holds only its own thread. One exposure is UIA's own and cannot be contained here: a
 //! hung window named in a focus `WinEvent` holds UIA's delivery of every
 //! focus event to the listener until it answers, as it holds NVDA's
-//! (`docs/uia-bugs.md`, "A hung window named in a system focus event holds a
+//! (`books/dev/src/reference/uia-bugs.md`, "A hung window named in a system focus event holds a
 //! process's UIA events").
 //!
-//! The hand-over of MSAA events (`docs/design/focus-pipeline.md`, section
+//! The hand-over of MSAA events (`books/dev/src/explanation/design/focus-pipeline.md`, section
 //! 12.4, "The MSAA hand-over, exactly"): every application's outpost takes
 //! its focus, foreground, menu, alert, and tooltip events from its own
 //! process-scoped hook, so they reach it by one route, in the order Windows
@@ -170,14 +170,14 @@ const MENU_END_GRACE: Duration = Duration::from_millis(50);
 
 /// The priority of the listener's main thread, its I/O thread, which reads
 /// Core's pipe, handles each command, and finishes the writes to Core that
-/// pended, for microseconds per wake (`docs/design/communication.md`,
+/// pended, for microseconds per wake (`books/dev/src/explanation/design/communication.md`,
 /// section 6.1).
 const IO_PRIORITY: ThreadPriority = ThreadPriority::Highest;
 
 /// The listener's messages to Core: written by the thread that produces
 /// each one, through the transport's [`Sender`], and held in [`Waiting`]
 /// only while a write is in flight, which the I/O thread then finishes
-/// (`docs/design/communication.md`, sections 4.3 and 6.3).
+/// (`books/dev/src/explanation/design/communication.md`, sections 4.3 and 6.3).
 struct Outgoing {
     sender: Sender<Waiting>,
     /// The processes whose facts are dropped.
@@ -465,7 +465,7 @@ fn sent(sent: &Result<(), SendError<Infallible>>) {
 }
 
 /// A threadpool timer that ends a menu end's grace
-/// (`docs/design/communication.md`, section 4.7): no thread of the
+/// (`books/dev/src/explanation/design/communication.md`, section 4.7): no thread of the
 /// listener's waits for it, and its callback sends the end itself.
 struct GraceTimer {
     timer: PTP_TIMER,
@@ -679,7 +679,7 @@ impl Outgoing {
     /// desktop-wide subscriptions were all installed, as NVDA's UIA
     /// handlers ignore every event received before the handler's
     /// initialization has finished, after its global handlers are
-    /// registered (`docs/design/focus-pipeline.md`, section 18). Such an
+    /// registered (`books/dev/src/explanation/design/focus-pipeline.md`, section 18). Such an
     /// event is the focus UI Automation reports to a new focus
     /// registration, which can be an element that only holds its own
     /// framework's focus, such as the taskbar's Start button while the
@@ -1217,7 +1217,7 @@ impl Listener {
         }
     }
 
-    /// The idle barrier's query for `round` (`docs/design/communication.md`,
+    /// The idle barrier's query for `round` (`books/dev/src/explanation/design/communication.md`,
     /// section 6.7): handed to the `WinEvent` thread behind every event
     /// delivered to it, then to the reading threads behind every event
     /// queued for them, and answered once both have nothing in progress.
@@ -1351,7 +1351,7 @@ fn focus_subscription(
 /// The desktop-wide subscription to UIA menu openings: each is judged and
 /// read as a focus on the menu by its application's reading thread, as
 /// NVDA's automation event handler maps it to a focus and judges it
-/// (`docs/design/focus-pipeline.md`, section 18), unless a focus is
+/// (`books/dev/src/explanation/design/focus-pipeline.md`, section 18), unless a focus is
 /// pending as it arrives, when NVDA drops it.
 fn menu_subscription(
     outgoing: &Arc<Outgoing>,
@@ -1713,11 +1713,11 @@ fn window_pid(hwnd: isize) -> u32 {
 /// 266 to 273; `UIA._get_processID`, `NVDAObjects/UIA/__init__.py` 2336 to
 /// 2346). Every event for a console window then reaches the outpost that
 /// receives its UIA events, which reports the client as the application
-/// (`docs/design/focus-pipeline.md`, section 5.4). `None` when the host
+/// (`books/dev/src/explanation/design/focus-pipeline.md`, section 5.4). `None` when the host
 /// cannot be read: the event is dropped rather than sent to the client,
 /// whose outpost would otherwise take the console host's window as its
 /// application's (Dickson, 2026-10-19;
-/// `docs/design/listener-without-connections.md`, section 10, step 3).
+/// `books/dev/src/explanation/design/listener-without-connections.md`, section 10, step 3).
 fn routed_process(class: &str, owner: u32, host: impl FnOnce() -> Option<u32>) -> Option<u32> {
     if class == CONSOLE_WINDOW_CLASS {
         host()
@@ -1765,7 +1765,7 @@ fn process_of_thread(thread: u32) -> Option<u32> {
 }
 
 /// Runs the focus listener on the transport's child side
-/// (`docs/design/communication.md`, sections 4.6 and 6.3): the calling
+/// (`books/dev/src/explanation/design/communication.md`, sections 4.6 and 6.3): the calling
 /// thread becomes its I/O thread, which reads Core's commands from
 /// `pipe_in` and finishes the writes to `pipe_out` that pend, while every
 /// thread that produces a fact writes it itself. Returns once Core asks it

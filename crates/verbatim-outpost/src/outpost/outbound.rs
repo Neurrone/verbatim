@@ -1,8 +1,8 @@
 //! The outpost's messages to Core: written to Core's pipe by the thread
 //! that sends each one, through the transport's [`Sender`], and held in one
 //! queue, its backlog, only while a write is in flight, which the outpost's
-//! I/O thread then finishes (`docs/crates/verbatim-outpost.md`, "Messages
-//! to Core"; `docs/design/communication.md`, section 4.3).
+//! I/O thread then finishes (`books/dev/src/reference/crates/verbatim-outpost.md`, "Messages
+//! to Core"; `books/dev/src/explanation/design/communication.md`, section 4.3).
 //!
 //! - Pongs, `Ready`, `TargetExited` and `SpareReady` go ahead of everything else that
 //!   waits, behind only the write in flight, so heartbeat delivery never

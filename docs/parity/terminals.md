@@ -3,9 +3,9 @@
 How new output in a terminal is read.
 
 Verbatim's reading of terminals is [the terminal
-model](../design/terminal-model.md), which states each rule with its
-reason; `docs/crates/verbatim-core.md`, "Core's terminal model", and
-`docs/crates/verbatim-outpost.md`, "Terminals", describe the code. The
+model](../../books/dev/src/explanation/design/terminal-model.md), which states each rule with its
+reason; `books/dev/src/reference/crates/verbatim-core.md`, "Core's terminal model", and
+`books/dev/src/reference/crates/verbatim-outpost.md`, "Terminals", describe the code. The
 terminal scenarios named below each run in both terminals, as
 `conhost_` and `windows_terminal_` scenarios. A rule cited as "rule N"
 is that reading rule of the terminal model.
@@ -200,7 +200,7 @@ Control+C, Control+D, and Control+Pause. Verbatim: **different** (rule
   for the caret's line (Dickson, 2026-10-25). With no read between the
   homing and the erase, `cls` typed on a prompt on the screen's first row
   reads as Control+W erasing a word and says nothing (a limit of
-  `docs/design/terminal-model.md`).
+  `books/dev/src/explanation/design/terminal-model.md`).
 - Up Arrow and a character typed at once: NVDA says the character, "x",
   as it is typed and then the recalled line with it, "echo onex";
   Verbatim reads the line's change once, both in it, and says "echo
@@ -289,7 +289,7 @@ Verbatim: **matched (verified)**.
   5); in its other runs, a single "<title> terminal", in two of them
   with "blank". `windows_terminal_two_windows` and
   `windows_terminal_leave_flood` accept the repeats as optional
-  utterances (`docs/testing.md`, "Optional utterances") and require the
+  utterances (`books/dev/src/reference/testing.md`, "Optional utterances") and require the
   window, the terminal heard in full with its line, and then the prompt.
   Telling the identities apart is left to Windows Terminal's app module
   (`docs/roadmap.md`, M5).
@@ -307,7 +307,7 @@ grouping", "list", and the tab moved to ("<title> 1 of 2") in full, and
 on releasing Control the tab's terminal and its line.
 
 Verbatim: **matched (verified)** for Control+Tab and Control+Shift+Tab
-(`docs/design/focus-pipeline.md`, section 10.1, items 2 and 3). The
+(`books/dev/src/explanation/design/focus-pipeline.md`, section 10.1, items 2 and 3). The
 focus listener judges and reads each focus from the event's own element
 on its thread for the application, a few milliseconds after the event,
 and the outpost reports every focus it read, in the order the events
@@ -423,7 +423,7 @@ What the pinned source shows for the two terminals, uncaptured:
   terminal's rendering.
 
 Verbatim: **different** (Dickson, 2026-10-23 and 2026-10-26;
-`docs/design/terminal-model.md`, "Features and settings"), Verbatim's
+`books/dev/src/explanation/design/terminal-model.md`, "Features and settings"), Verbatim's
 own commands for a terminal, so no capture is taken:
 
 - "Report status bar", on NVDA's gestures (NVDA+End in the desktop

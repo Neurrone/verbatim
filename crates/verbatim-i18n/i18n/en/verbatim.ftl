@@ -30,7 +30,7 @@ button-apply = &Apply
 speech-synthesizer-group = Synthesizer
 speech-change-synth = C&hange...
 
-## The Theme settings page (docs/crates/verbatim-gui.md). The
+## The Theme settings page (books/dev/src/reference/crates/verbatim-gui.md). The
 ## dialog's own Categories and Apply take C and A, so the page avoids them.
 
 settings-category-theme = Theme
@@ -83,7 +83,7 @@ theme-remove-question = Remove the theme { $name }? This cannot be undone.
 theme-error-title = Theme
 theme-in-use = The configuration uses { $name }, so it cannot be removed.
 
-## The Terminal settings page (docs/crates/verbatim-gui.md). The dialog's own
+## The Terminal settings page (books/dev/src/reference/crates/verbatim-gui.md). The dialog's own
 ## Categories and Apply take C and A.
 
 settings-category-terminal = Terminal
@@ -275,7 +275,7 @@ toggle-scroll-lock = scroll lock
 toggle-state-on = { $key } on
 toggle-state-off = { $key } off
 
-## Themes (docs/crates/verbatim-model.md, "Themes"): the indication catalogue's
+## Themes (books/dev/src/reference/crates/verbatim-model.md, "Themes"): the indication catalogue's
 ## categories and entries as the theme
 ## panel lists them, how each is reported, the words for formatting and
 ## events, and the problems found loading a theme.

@@ -1,5 +1,5 @@
 //! The outpost's part of the harness's idle barrier
-//! (`docs/design/communication.md`, section 6.7) in a real outpost,
+//! (`books/dev/src/explanation/design/communication.md`, section 6.7) in a real outpost,
 //! against mockapp's UIA text provider: the answer to an idle query goes
 //! behind every message the outpost sent before it, one whose write is in
 //! flight and one waiting in its backlog included, and is held back while

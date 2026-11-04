@@ -1,4 +1,4 @@
-//! Theme packages: a theme's directory zipped (`docs/crates/verbatim-config.md`,
+//! Theme packages: a theme's directory zipped (`books/dev/src/reference/crates/verbatim-config.md`,
 //! "Themes"). Only the files a theme is made of are read or written:
 //! plain file names, no directories, within fixed limits, so a package can
 //! neither write outside the theme's directory nor fill the disk.

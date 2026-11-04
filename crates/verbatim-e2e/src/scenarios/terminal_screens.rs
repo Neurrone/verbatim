@@ -1,7 +1,7 @@
 //! Long lines and a full-screen program in a terminal, as
 //! `windows_terminal_long_lines`, `conhost_long_lines`,
 //! `windows_terminal_full_screen` and `conhost_full_screen`, each its own
-//! code (`docs/testing.md`). The shared setup is described in the
+//! code (`books/dev/src/reference/testing.md`). The shared setup is described in the
 //! `terminal` module. The expected speech is what NVDA said for the same
 //! keys, captured live on 2026-10-09, where the two agree (`docs/parity/terminals.md`,
 //! "New terminal output").
@@ -21,7 +21,7 @@
 //! the new first row) and back up ("row 30", the new last), and closes the
 //! alternate screen: the main screen comes back as a new screen, so its
 //! rows are spoken, the command, "closed" and the prompt
-//! (`docs/design/terminal-model.md`, "Screens", Dickson, 2026-10-24). The
+//! (`books/dev/src/explanation/design/terminal-model.md`, "Screens", Dickson, 2026-10-24). The
 //! keys are read without being shown, so they echo nothing. Each step,
 //! the fill included, is one call of the raw standard output stream's
 //! `Write`, which Windows PowerShell 5.1 passes to one `WriteFile`

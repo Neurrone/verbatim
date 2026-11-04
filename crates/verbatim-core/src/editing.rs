@@ -51,16 +51,16 @@ pub(crate) const MAX_TYPED_WORD: usize = 256;
 /// The longest a held key waits for the watch of the key ahead of it to be
 /// answered, counted from when that key was passed on: 100 ms, NVDA's
 /// default wait for the caret to move, which NVDA lengthens in Windows
-/// Terminal (`docs/design/key-holding.md`, "Core"). Past it the waiting
+/// Terminal (`books/dev/src/explanation/design/key-holding.md`, "Core"). Past it the waiting
 /// key's caret is read as if the watch had been answered, since a key that
 /// moved nothing gets no answer before the watch's own bound
-/// (`docs/design/key-holding.md`, "Keys behind a held key").
+/// (`books/dev/src/explanation/design/key-holding.md`, "Keys behind a held key").
 pub(crate) const KEY_AHEAD_BOUND_MS: u64 = 100;
 
 /// The longest a held caret key waits for the read of the caret before it
 /// (`TextOp::ReadCaret`), counted from when the read is asked: past it the
 /// key is passed on without the read, as the hook would have passed it
-/// (`docs/design/key-holding.md`, "The bound").
+/// (`books/dev/src/explanation/design/key-holding.md`, "The bound").
 pub(crate) const HELD_READ_BOUND_MS: u64 = 150;
 
 /// NVDA speaks a selection change of this many characters or more as a
@@ -252,7 +252,7 @@ pub(crate) fn text_focus(state: &SrState) -> Option<NodeId> {
 }
 
 /// Handles a caret key the keyboard hook held back
-/// (`docs/design/key-holding.md`): the focus's outpost reads the caret
+/// (`books/dev/src/explanation/design/key-holding.md`): the focus's outpost reads the caret
 /// before it, as NVDA's caret scripts read the caret before they send the
 /// key. A key pressed while another's caret is read waits behind it, and
 /// is handled in order once the keys before it are.
@@ -1328,7 +1328,7 @@ pub(crate) fn caret_moved_by_core(state: &mut SrState, node: NodeId, line: TextC
 /// A terminal's review cursor follows the caret only when its reading rules
 /// find that a key moved the caret, which its outpost tells
 /// (`crate::terminal`), never on a caret report alone, since a program
-/// moves the cursor as it draws (`docs/design/terminal-model.md`,
+/// moves the cursor as it draws (`books/dev/src/explanation/design/terminal-model.md`,
 /// "Reading rules", rule 24).
 fn follow_caret(state: &mut SrState, node: NodeId) {
     if state.settings.follow_caret

@@ -1,5 +1,5 @@
 //! `cargo xtask coverage`: line coverage per test level, measured with
-//! cargo-llvm-cov (`docs/tooling/coverage.md`). It runs on every host.
+//! cargo-llvm-cov (`books/dev/src/how-to/coverage.md`). It runs on every host.
 //!
 //! With no arguments it runs the instrumented tests level by level, the
 //! unit tests and then, on Windows, mockapp's tests, each through

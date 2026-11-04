@@ -8,7 +8,7 @@
 //! The scenarios share one binary rather than having one each because every
 //! test binary links the whole harness with its own debug information:
 //! a binary per scenario made the suite most of a build's size on disk
-//! (`docs/tooling/setup.md`, "Build disk use").
+//! (`books/dev/src/how-to/setup.md`, "Build disk use").
 //!
 //! Every test here is ignored, so a workspace test run, and `cargo xtask
 //! ci`, lists them as ignored rather than running them; the end-to-end job
@@ -46,7 +46,7 @@ macro_rules! scenario_tests {
 // The disabled scenarios (`registry::DISABLED`, each with its reason) have
 // no test here.
 const LIVE: &[&str] = scenario_tests! {
-    "live: drives a real Verbatim through a running agent; the end-to-end job runs it with --ignored (docs/tooling/e2e.md)":
+    "live: drives a real Verbatim through a running agent; the end-to-end job runs it with --ignored (books/dev/src/how-to/e2e.md)":
     menu_and_settings_dialog
     second_application_and_verbatim_menu
     rapid_tabbing_in_settings
@@ -147,11 +147,11 @@ const DEMONSTRATIONS: &[&str] = scenario_tests! {
 };
 
 // The measure set, the measurement workloads of
-// `docs/design/communication.md` section 11: ignored, run by name or with
+// `books/dev/src/explanation/design/communication.md` section 11: ignored, run by name or with
 // `cargo xtask vm test --group measure`, never by the suite, whose runs
-// deselect them with `--skip measure_` (docs/tooling/e2e.md).
+// deselect them with `--skip measure_` (books/dev/src/how-to/e2e.md).
 const MEASURE_SET: &[&str] = scenario_tests! {
-    "a measurement workload, run by name (docs/tooling/e2e.md)":
+    "a measurement workload, run by name (books/dev/src/how-to/e2e.md)":
     measure_focus_windows_terminal
     measure_focus_windows_terminal_tabs
     measure_focus_text_box
@@ -175,7 +175,7 @@ const MEASURE_SET: &[&str] = scenario_tests! {
 /// the first thing worth checking when the suite behaves strangely. It
 /// fails when no agent is named.
 /// It is ignored like the scenarios: it needs a running agent, and the
-/// end-to-end job runs it with `--ignored` (docs/tooling/e2e.md).
+/// end-to-end job runs it with `--ignored` (books/dev/src/how-to/e2e.md).
 fn agent_reports_an_interactive_window_station() {
     let endpoint = verbatim_e2e::endpoint().unwrap_or_else(|| {
         panic!(

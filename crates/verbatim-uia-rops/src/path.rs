@@ -3,7 +3,7 @@
 //! id is the path's next. The outpost finds its own copy of a focus's
 //! element this way, from the nearest ancestor with a window of its own,
 //! by the runtime ids of the chain the focus listener read from the
-//! event's own element (`docs/design/focus-pipeline.md`, section 12.5):
+//! event's own element (`books/dev/src/explanation/design/focus-pipeline.md`, section 12.5):
 //! a UIA element cannot be handed from the process that received the event
 //! to another. A remote program walks the whole path in one round trip;
 //! the classic implementation behind the same signature takes one call per

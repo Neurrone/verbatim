@@ -123,7 +123,7 @@ pub struct AncestorParts {
 /// lookup, and a first call on an element, and which UIA's own focus
 /// tracking waits on twice for a hung window named in a focus `WinEvent`.
 /// Two seconds, UIA's own default and NVDA's
-/// (`docs/design/listener-without-connections.md`, section 5). Like
+/// (`books/dev/src/explanation/design/listener-without-connections.md`, section 5). Like
 /// [`TRANSACTION_TIMEOUT`] it is a setting of the process, not of a
 /// client, so it is set once per process, by UIA's first-time setup
 /// ([`ensure_ready`]), and creating a client leaves it as it is (measured
@@ -137,7 +137,7 @@ pub const CONNECTION_TIMEOUT: std::time::Duration = std::time::Duration::from_se
 /// the outpost worker's ten-second deadline, so a slow call fails and the
 /// worker carries on rather than being abandoned, and over the two to
 /// three seconds an application that is starting up can take to answer
-/// (`docs/design/focus-pipeline.md`, section 6.1; Dickson, 2026-10-10). It
+/// (`books/dev/src/explanation/design/focus-pipeline.md`, section 6.1; Dickson, 2026-10-10). It
 /// bounds each provider call, not an operation: a search such as
 /// `FindFirst` waits a full timeout for each call it makes that the
 /// application does not answer, so the outpost gives such operations a
@@ -167,7 +167,7 @@ impl Uia {
     }
 
     /// The cache request of `S`, a shape with no gates
-    /// (`docs/design/uia-shapes.md`). Local.
+    /// (`books/dev/src/explanation/design/uia-shapes.md`). Local.
     ///
     /// # Errors
     ///
@@ -177,7 +177,7 @@ impl Uia {
     }
 
     /// The cache request of `S` for `gates`, which every element it fills
-    /// carries (`docs/design/uia-shapes.md`). Local.
+    /// carries (`books/dev/src/explanation/design/uia-shapes.md`). Local.
     ///
     /// # Errors
     ///
@@ -273,7 +273,7 @@ impl Uia {
         count(CallKind::Uia);
         crate::calls::count_connection();
         // A new connection to the focused application, made only by that
-        // application's outpost (`docs/design/listener-without-connections.md`,
+        // application's outpost (`books/dev/src/explanation/design/listener-without-connections.md`,
         // section 2).
         // SAFETY: `cache` is a live cache request from this client; the
         // call is a normal cross-process fetch.
@@ -380,7 +380,7 @@ impl Uia {
         // client-side window proxy in place of the application's element
         // when it arrives while a remote operation from another process
         // waits to be evaluated there; only the window's own application's
-        // outpost makes it (`docs/design/listener-without-connections.md`,
+        // outpost makes it (`books/dev/src/explanation/design/listener-without-connections.md`,
         // section 2).
         // SAFETY: HWND wraps a caller-supplied handle;
         // ElementFromHandleBuildCache tolerates an invalid handle by
@@ -644,7 +644,7 @@ impl Uia {
     /// ([`parent_across_process_boundary`](crate::parent_across_process_boundary)),
     /// it stops and returns that parent or owner window as the window to
     /// continue through the other API, local calls only
-    /// (`docs/design/listener-without-connections.md`, section 4.3).
+    /// (`books/dev/src/explanation/design/listener-without-connections.md`, section 4.3).
     ///
     /// The automation id of the walk's first step, `element`'s raw-view
     /// parent, is put in `parent_automation_id` when the step finds it,
@@ -808,7 +808,7 @@ impl Uia {
     /// another process read and sent as their parts ([`AncestorParts`]),
     /// nearest first: the focus listener reads a focus's ancestors from the
     /// event's own element, and the outpost, which cannot receive that
-    /// element (`docs/design/focus-pipeline.md`, section 12), reports them
+    /// element (`books/dev/src/explanation/design/focus-pipeline.md`, section 12), reports them
     /// from this. Each node is minted from its runtime id with no element
     /// kept; the same stops and the same filtering apply.
     #[must_use]
@@ -1210,7 +1210,7 @@ pub fn release_mta_usage() {
 /// whichever thread happens to be in it. Every use of UIA in the crate
 /// calls this first, the provider probe included, because while one
 /// thread is still setting UIA up, another thread's `CreateCacheRequest`
-/// fails (`docs/uia-bugs.md`, "A cache request fails while UIA's
+/// fails (`books/dev/src/reference/uia-bugs.md`, "A cache request fails while UIA's
 /// first-time setup runs on another thread"), and an outpost starts
 /// several UIA threads at once.
 ///
@@ -1315,7 +1315,7 @@ fn enable_recovery_and_coalescing(client: &IUIAutomation6) -> windows::core::Res
 /// Sets the process's connection and transaction timeouts to
 /// [`CONNECTION_TIMEOUT`] and [`TRANSACTION_TIMEOUT`] through `client`:
 /// process-wide settings, though made
-/// through a client (`docs/uia-bugs.md`, "The connection timeout applies
+/// through a client (`books/dev/src/reference/uia-bugs.md`, "The connection timeout applies
 /// to the whole process").
 fn set_process_timeouts(client: &IUIAutomation2) -> windows::core::Result<()> {
     let milliseconds =
@@ -1342,7 +1342,7 @@ fn set_process_timeouts(client: &IUIAutomation2) -> windows::core::Result<()> {
 /// the full tree, matching NVDA with its simple review mode off (the
 /// recorded decision on [`Uia::neighbor`]). `description` is the node's
 /// description whatever the theme, as NVDA's judgment reads it whatever
-/// its setting (decision 4 of `docs/design/uia-shapes.md`).
+/// its setting (decision 4 of `books/dev/src/explanation/design/uia-shapes.md`).
 fn is_layout(snapshot: &NodeSnapshot, description: Option<&str>) -> bool {
     use verbatim_model::Role;
     fn blank(text: Option<&str>) -> bool {

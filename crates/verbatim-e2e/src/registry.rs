@@ -129,14 +129,14 @@
 //!   CI's `e2e` job runs it, skips them. Each still asserts what it shows,
 //!   so a broken feature fails rather than recording a misleading video.
 //! - [`Group::Measure`]: the measure set, workloads that make Verbatim's
-//!   latency ledger log the figures `docs/design/communication.md`
+//!   latency ledger log the figures `books/dev/src/explanation/design/communication.md`
 //!   section 11 compares at every migration step. They are measurement,
 //!   not tests, and are left out like the demonstrations: a selection
 //!   with no `--scenario` or `--group` leaves them out ([`select`]), and
 //!   their tests are ignored and named `measure_`, so the
 //!   suite's runs deselect them with `--skip measure_`. Their speech is
 //!   collected without being asserted ([`SpeechCollector::collect_only`](crate::speech::SpeechCollector::collect_only));
-//!   `docs/tooling/e2e.md` says how to run them.
+//!   `books/dev/src/how-to/e2e.md` says how to run them.
 //!
 //! A scenario marked [`ScenarioDef::local_only`] needs what GitHub's
 //! Windows Server runner lacks: Windows 11 Notepad, a Settings app that
@@ -1768,7 +1768,7 @@ pub fn run_named(name: &str) {
     }
     assert!(
         crate::endpoint().is_some(),
-        "{} is not set: a live scenario needs a running agent (docs/tooling/e2e.md)",
+        "{} is not set: a live scenario needs a running agent (books/dev/src/how-to/e2e.md)",
         crate::ENDPOINT_ENV
     );
     let comparing = compare::selects(name, std::env::var(compare::ENV).ok().as_deref())

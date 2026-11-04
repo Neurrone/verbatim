@@ -1,5 +1,5 @@
 //! A command mark's line sought in a terminal's history by its text
-//! (`docs/design/terminal-model.md`, "Features and settings", moving by
+//! (`books/dev/src/explanation/design/terminal-model.md`, "Features and settings", moving by
 //! command): `FindText` for the line's first row, outward from the mark's
 //! own row, counted from where the next read starts: alternately the next
 //! match at or below that row and the next above it, the row itself first,
@@ -11,7 +11,7 @@
 //! ("flood line 14" in "flood line 140"). At most [`FIND_MATCHES`] matches
 //! that start a row are taken, the bound the console host's search needed,
 //! over at most [`FIND_CALLS`] `FindText` calls, so that a needle found
-//! mostly within rows cannot walk the whole history (`docs/performance.md`,
+//! mostly within rows cannot walk the whole history (`books/dev/src/reference/performance.md`,
 //! "A terminal's upward search").
 //!
 //! A `FindText` that fails, or whose range's calls fail, as Windows
@@ -37,7 +37,7 @@ use crate::opcode::Comparison;
 use crate::operation::Value;
 
 /// How many matches that start a row a search takes at most
-/// (`docs/performance.md`, "A terminal's upward search").
+/// (`books/dev/src/reference/performance.md`, "A terminal's upward search").
 pub const FIND_MATCHES: usize = 20;
 
 /// How many `FindText` calls a search makes at most, counting the hits
@@ -45,7 +45,7 @@ pub const FIND_MATCHES: usize = 20;
 /// with up to four hits within rows for each row it starts still gets all
 /// [`FIND_MATCHES`], while one found mostly within rows, such as a short
 /// input, ends after about 300 milliseconds at the estimated 3 a call
-/// remotely rather than walking the whole history (`docs/performance.md`,
+/// remotely rather than walking the whole history (`books/dev/src/reference/performance.md`,
 /// "A terminal's upward search").
 pub const FIND_CALLS: usize = 5 * FIND_MATCHES;
 

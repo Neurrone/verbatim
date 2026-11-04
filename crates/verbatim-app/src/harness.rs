@@ -92,7 +92,7 @@ impl Readiness {
     /// gestures, the focus listener is running, the outpost reading
     /// Verbatim's own windows (its menu and dialogs) is ready, the
     /// supervisor's spare outposts are ready, so every application a
-    /// scenario starts takes a spare (`docs/design/focus-pipeline.md`,
+    /// scenario starts takes a spare (`books/dev/src/explanation/design/focus-pipeline.md`,
     /// section 19.8, item 2), and Core knows the focus, so the first focus
     /// report cannot arrive after, and cut off, the speech of a key pressed
     /// straight away. With no foreground window at all there is no focus to

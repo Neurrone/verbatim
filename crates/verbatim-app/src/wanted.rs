@@ -1,5 +1,5 @@
 //! The requests the app holds for an application whose outpost is not
-//! ready yet (`docs/design/ownership.md`): a focus-now request, asked of the replacement once
+//! ready yet (`books/dev/src/explanation/design/ownership.md`): a focus-now request, asked of the replacement once
 //! it is ready, and the list dialogs' requests for the shell's items or for
 //! where a clicked item is, asked of the taskbar's process. One owner holds
 //! both, keyed by the process whose outpost they wait for, and each entry
@@ -27,7 +27,7 @@ use verbatim_model::Pid;
 /// The list dialog's whole wait for its list or a clicked item's position,
 /// 3 seconds from its request, whether the taskbar's outpost is starting,
 /// the query waits behind other work in the outpost, or the walk is slow
-/// (`docs/design/listener-without-connections.md`, section 10, step 11).
+/// (`books/dev/src/explanation/design/listener-without-connections.md`, section 10, step 11).
 /// Core does not cut the walk off: it gives the outpost the shorter times
 /// below, so the walk answers with what it read in time.
 pub(crate) const SHELL_ITEMS_WAIT: Duration = Duration::from_secs(3);

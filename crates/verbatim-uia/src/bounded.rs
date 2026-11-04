@@ -1,11 +1,11 @@
 //! Operations with a deadline of their own, run on a thread of their own
-//! (`docs/design/focus-pipeline.md`, section 6.1).
+//! (`books/dev/src/explanation/design/focus-pipeline.md`, section 6.1).
 //!
 //! UIA's timeouts bound each call UIA makes into a provider, not an
 //! operation: a `FindFirst` over a window's subtree, or a dialog's text
 //! gathered from its children, makes many provider calls, and waits a full
 //! [`TRANSACTION_TIMEOUT`](crate::TRANSACTION_TIMEOUT) for each one a held application
-//! does not answer (`docs/uia-bugs.md`, "A timeout bounds each request
+//! does not answer (`books/dev/src/reference/uia-bugs.md`, "A timeout bounds each request
 //! and window message, not an operation"). A UIA call cannot be cancelled, so such an operation is run on
 //! a [`BoundedClient`]'s thread, with its own client, while the caller
 //! waits for its answer until a deadline. An operation that passes its

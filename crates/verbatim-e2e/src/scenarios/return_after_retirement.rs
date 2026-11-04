@@ -1,5 +1,5 @@
 //! An application returned to after its outpost was retired (risk R2's
-//! idle retirement; `docs/design/focus-pipeline.md`, section 19): the
+//! idle retirement; `books/dev/src/explanation/design/focus-pipeline.md`, section 19): the
 //! harness's Windows Forms text box comes to the foreground and is read by
 //! an outpost of its own; a second text box, another process, then takes
 //! the foreground and keeps it. Once Core reports, on its event

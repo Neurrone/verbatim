@@ -112,7 +112,7 @@ uia_shape! {
     /// What an element's states are mapped from, but whether it is off the
     /// screen, which is its [`Place`]'s: a read of many elements, such as
     /// a walk's or a container's children's, never asks for that
-    /// (`docs/design/uia-shapes.md`, decision 9).
+    /// (`books/dev/src/explanation/design/uia-shapes.md`, decision 9).
     #[allow(clippy::struct_excessive_bools, reason = "one field per cached UIA flag")]
     pub struct States {
         gates: none;
@@ -190,7 +190,7 @@ uia_shape! {
     /// base cache, on every element it walks to or is sent with an event,
     /// holds neither, and it reads both per object when it needs them
     /// (`UIAHandler/__init__.py`, `baseCachePropertyIDs`;
-    /// `docs/design/uia-shapes.md`, decision 9).
+    /// `books/dev/src/explanation/design/uia-shapes.md`, decision 9).
     pub struct Place {
         gates: none;
         groups {}
@@ -227,7 +227,7 @@ uia_shape! {
     /// registration delivers it: NVDA's base cache request
     /// (`UIAHandler/__init__.py` 61 to 74 and 547 to 555), with the Text
     /// pattern, and the two properties that refine a role for dialogs and
-    /// toggle buttons (`docs/design/uia-shapes.md`, decision 6).
+    /// toggle buttons (`books/dev/src/explanation/design/uia-shapes.md`, decision 6).
     pub struct ListenerEvent {
         gates: none;
         groups {
@@ -267,7 +267,7 @@ uia_shape! {
     /// The Text pattern a focus event's sender carries in its cache
     /// ([`ListenerEvent`] prefetches it), read only by the focus listener's
     /// console check of a console's text area, so the pattern costs no
-    /// call (`docs/design/listener-without-connections.md`, section 3,
+    /// call (`books/dev/src/explanation/design/listener-without-connections.md`, section 3,
     /// step 5).
     pub struct TextAreaPattern {
         gates: none;
@@ -328,7 +328,7 @@ uia_shape! {
     /// grid, position in its set, and level. UIA fills them inside the
     /// application with the event, so the item is reported with no call
     /// (Dickson, 2026-10-29). Not its [`Place`], which is never in an
-    /// event's cache (`docs/design/uia-shapes.md`, decision 9) and is not
+    /// event's cache (`books/dev/src/explanation/design/uia-shapes.md`, decision 9) and is not
     /// spoken, so a state set it carries is never off the screen.
     pub struct ListenerSelection {
         gates: none;
@@ -718,7 +718,7 @@ uia_shape! {
     /// An ancestor of a focus, or a window an MSAA walk crosses into: a
     /// [`Node`], with its description whatever the theme, which NVDA's
     /// layout judgment reads whatever its setting (`presentationType`;
-    /// Dickson, 2026-10-13, decision 4 of `docs/design/uia-shapes.md`), and
+    /// Dickson, 2026-10-13, decision 4 of `books/dev/src/explanation/design/uia-shapes.md`), and
     /// whether UIA counts it a control and content.
     pub struct Ancestor {
         gates: AncestorGates;
@@ -797,7 +797,7 @@ uia_shape! {
     /// own text is gathered from: its role, value, states, which never hold
     /// whether it is off the screen ([`Place`]), and name, and its description
     /// whatever the theme, as NVDA's `basicText` includes it (decision 5 of
-    /// `docs/design/uia-shapes.md`).
+    /// `books/dev/src/explanation/design/uia-shapes.md`).
     pub struct DialogText {
         gates: none;
         groups {
@@ -957,7 +957,7 @@ impl SuggestionsRefresh {
 uia_shape! {
     /// Which providers serve an element, cached with an outpost's lookup by
     /// handle or of the focused element and read only by the proxy rule
-    /// (`docs/design/listener-without-connections.md`, section 5).
+    /// (`books/dev/src/explanation/design/listener-without-connections.md`, section 5).
     pub struct ProviderOrigin {
         gates: none;
         groups {}

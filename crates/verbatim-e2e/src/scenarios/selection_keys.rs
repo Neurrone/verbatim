@@ -1,7 +1,7 @@
 //! Keys pressed over a selection (milestone M4 item 3), as
 //! `text_box_selection_keys` in the Windows Forms text box and as
 //! `notepad_selection_keys` in Windows 11 Notepad (each its own code, as
-//! `docs/testing.md` requires): Backspace, Control+Backspace, Delete,
+//! `books/dev/src/reference/testing.md` requires): Backspace, Control+Backspace, Delete,
 //! Control+Delete, Control+X, Control+V and Enter, each over a word
 //! selected with Shift+Control+Right Arrow, and in Notepad Backspace and
 //! Control+Backspace over a line's last word selected with Shift+End, say
@@ -170,7 +170,7 @@ pub(crate) fn text_box_body(scenario: &mut Scenario, _state: &mut ScenarioState)
 
 /// Shift+Right Arrow followed at once by Right Arrow, in one batch, so
 /// that Right is pressed before the application can have reported the
-/// selection Shift+Right made (`docs/design/key-holding.md`, "How often a
+/// selection Shift+Right made (`books/dev/src/explanation/design/key-holding.md`, "How often a
 /// key's effect was misjudged"): each key is judged from the caret it
 /// started from, so Shift+Right's selection is said, cut off by Right's
 /// character, "l", and then the selection Right cleared. NVDA says only "l"

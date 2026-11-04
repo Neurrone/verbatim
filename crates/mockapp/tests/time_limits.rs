@@ -1,5 +1,5 @@
 //! UIA's time limits against a provider that never answers
-//! (`docs/design/focus-pipeline.md`, section 6): mockapp holds the next
+//! (`books/dev/src/explanation/design/focus-pipeline.md`, section 6): mockapp holds the next
 //! provider call (`hold`) until the test releases it, and each limit is
 //! shown to end the wait while the call is still held.
 //!

@@ -1,4 +1,4 @@
-//! The alignment's computations (`docs/design/terminal-model.md`, "The
+//! The alignment's computations (`books/dev/src/explanation/design/terminal-model.md`, "The
 //! alignment"): the longest common subsequence of rows with the tie-break
 //! of fewest blocks and then fewest rows moved, and the pairing of the
 //! rows left between kept rows by likeness.

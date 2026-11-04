@@ -1,7 +1,7 @@
 # Where responsibilities go, and what crosses a boundary
 
 Read during phase 4. Map responsibilities onto the architecture that exists
-(`docs/architecture.md`), rather than inventing an NVDA-shaped one.
+(`books/dev/src/explanation/architecture.md`), rather than inventing an NVDA-shaped one.
 
 ## Which part owns each responsibility
 

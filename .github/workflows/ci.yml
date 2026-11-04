@@ -1,4 +1,4 @@
-# CI per docs/architecture.md D3: GitHub-hosted Windows runners build and run
+# CI per books/dev/src/explanation/architecture.md D3: GitHub-hosted Windows runners build and run
 # unit and provider tests, then the end-to-end suite runner-direct (the e2e
 # job below); a Linux runner lints and tests the platform-neutral tier and
 # xtask (the ci-linux job).
@@ -19,9 +19,9 @@ on:
   # - `gh workflow run ci.yml -f scenario=<name> -f repeat=<n>` runs one
   #   end-to-end scenario n times on GitHub's runner, as evidence for an
   #   intermittent failure, without a push for each run. Only the e2e job
-  #   runs, and every run's artifacts are kept (docs/tooling/e2e.md).
+  #   runs, and every run's artifacts are kept (books/dev/src/how-to/e2e.md).
   # - `gh workflow run ci.yml -f coverage=true` measures line coverage per
-  #   test level (docs/tooling/coverage.md): the ci job runs
+  #   test level (books/dev/src/how-to/coverage.md): the ci job runs
   #   `cargo xtask coverage` instead of `cargo xtask ci`, the e2e groups run
   #   the suite against an instrumented build, and the coverage job merges
   #   the levels.
@@ -47,7 +47,7 @@ env:
 
 jobs:
   # Whether anything other than documentation changed: a push or pull
-  # request that changes only Markdown files and docs/ runs the docs job
+  # request that changes only Markdown files, docs/ and books/ runs the docs job
   # alone, since building and testing would test nothing new. A run started
   # by hand, or a push whose base is unknown, counts as a code change.
   changes:
@@ -74,7 +74,7 @@ jobs:
             echo "code=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          if git diff --name-only "$base" "$GITHUB_SHA" | grep -qvE '(\.md$|^docs/)'; then
+          if git diff --name-only "$base" "$GITHUB_SHA" | grep -qvE '(\.md$|^docs/|^books/)'; then
             echo "code=true" >> "$GITHUB_OUTPUT"
           else
             echo "code=false" >> "$GITHUB_OUTPUT"
@@ -253,7 +253,7 @@ jobs:
   # documentation check, then clippy and unit tests for the crates in
   # LINUX_CRATES (xtask/src/main.rs), the platform-neutral tier and xtask,
   # the tests instrumented: the platform-neutral and logic crates' line
-  # coverage must reach 90% (the coverage gate, docs/tooling/coverage.md).
+  # coverage must reach 90% (the coverage gate, books/dev/src/how-to/coverage.md).
   # Nothing names a target, so it builds for the runner's own architecture.
   # No submodule, wxWidgets, cargo-hakari or speech warm-up: none of them is
   # in what it builds or runs.
@@ -286,7 +286,7 @@ jobs:
   # The suite is split into groups, one runner each, running in parallel
   # as NVDA's system tests do. The plan job chooses how many, every run;
   # each group's `cargo xtask e2e-group` names its scenarios, the share
-  # for that count (docs/tooling/e2e.md, "How CI runs the suite"). A run
+  # for that count (books/dev/src/how-to/e2e.md, "How CI runs the suite"). A run
   # started by hand repeats one scenario, so it is one job.
   # How many groups the e2e job runs the suite in, as its matrix
   # (`{"group":[1,2,...]}`): the fewest whose estimates from
@@ -346,7 +346,7 @@ jobs:
       # A coverage run instruments every build of this job, with the
       # environment `cargo llvm-cov show-env` prints, and each process
       # writes a profile of its own (%p, %m) to target/coverage-profiles
-      # (docs/tooling/coverage.md). It is set before the build cache, whose
+      # (books/dev/src/how-to/coverage.md). It is set before the build cache, whose
       # key then follows it.
       - uses: taiki-e/install-action@v2
         if: inputs.coverage
@@ -438,7 +438,7 @@ jobs:
       # The Windows Terminal scenarios drive the harness's own portable copy
       # of Windows Terminal, at the release pinned in
       # crates/verbatim-e2e/src/windows_terminal.rs, never the runner's
-      # installed one (docs/tooling/e2e.md). This step downloads it, checks its
+      # installed one (books/dev/src/how-to/e2e.md). This step downloads it, checks its
       # pinned SHA-256, and unpacks it into target/e2e-stage, exactly as
       # the suite's first launch would, so the runner tests the same
       # version as a developer's machine and a failed download is reported
@@ -452,7 +452,7 @@ jobs:
       # cannot minimize it, and it takes the foreground whenever the window
       # in front closes, so it is closed before the suite. The suite's
       # starting-state check fails, naming it, if such a window is left
-      # (docs/tooling/e2e.md).
+      # (books/dev/src/how-to/e2e.md).
       - name: Close the runner image's paging-file message box
         shell: pwsh
         run: Get-Process SystemPropertiesPerformance -ErrorAction SilentlyContinue | Stop-Process
@@ -463,7 +463,7 @@ jobs:
       # demonstrations, the measure set, and the local-only scenarios
       # (the registry's local_only flag), which need a Windows 11 desktop
       # the runner's Windows Server is not; VERBATIM_E2E_SKIP_LOCAL_ONLY
-      # makes one that ran anyway fail (docs/tooling/e2e.md).
+      # makes one that ran anyway fail (books/dev/src/how-to/e2e.md).
       # The agent is started in the same step as the suite: GitHub's Windows
       # runner ends the processes a step started when that step finishes, so
       # an agent started in a step of its own was gone (connection refused)
@@ -661,7 +661,7 @@ jobs:
   # lcov files and every e2e group's with `cargo xtask coverage merge`,
   # writes HTML reports of the e2e level and the merged one with genhtml,
   # and uploads them with the other levels' reports as `coverage-report`
-  # (docs/tooling/coverage.md). It runs when a group failed too, since a
+  # (books/dev/src/how-to/coverage.md). It runs when a group failed too, since a
   # failing scenario's profile still counts.
   coverage:
     needs: [ci, e2e]

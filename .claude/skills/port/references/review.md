@@ -26,7 +26,7 @@ is subtly wrong despite passing its tests. Look especially for:
 - undocumented intentional divergence.
 
 And for cost, which the design's costing and the ledger
-(`docs/performance.md`) fix in advance:
+(`books/dev/src/reference/performance.md`) fix in advance:
 
 - a call into the application that the costing did not predict, or one
   made from a process other than the one the design names;

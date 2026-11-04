@@ -1,5 +1,5 @@
 //! The outpost's reports whose focus node it has not released: what it
-//! reads changes for (`docs/design/ownership.md`).
+//! reads changes for (`books/dev/src/explanation/design/ownership.md`).
 //!
 //! An outpost reads changes for every node it has not released, and Core's
 //! targeting decides what is spoken. Core's focus line is always a set of

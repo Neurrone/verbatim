@@ -6,7 +6,7 @@
 //! The list view and tree view messages are sent with
 //! `SendMessageTimeoutW`, giving up after [`MESSAGE_TIMEOUT_MS`] or at once
 //! when the owning application is hung, as the list view's and the edit
-//! control's own messages are (`docs/design/focus-pipeline.md`, section
+//! control's own messages are (`books/dev/src/explanation/design/focus-pipeline.md`, section
 //! 6.3); each answers zero when it fails, and counts as one window message.
 //! Only messages
 //! whose parameters are plain integers are offered, never one that carries a

@@ -1,7 +1,7 @@
 //! Window queries made with local calls only: none of them sends the
 //! window a message or calls into another process, so they are safe on any
 //! thread and cannot block on a hung application, and they are not counted
-//! (`docs/performance.md`, "What counts as a call"). Window handles are
+//! (`books/dev/src/reference/performance.md`, "What counts as a call"). Window handles are
 //! `isize`, zero for none, and every function tolerates any handle value,
 //! failing on one that names no window. The outposts, the focus listener,
 //! the MSAA client and Core's supervisor all read windows through them.
@@ -333,7 +333,7 @@ fn ghost_window_from_hung_window() -> Option<unsafe extern "system" fn(HWND) -> 
 /// ([`crate::provider::served_by`]), so a console window is its console host's
 /// and never its client's, whom `GetWindowThreadProcessId` names, even when
 /// the host cannot be read from the client
-/// (`docs/design/listener-without-connections.md`, section 4.3). Every
+/// (`books/dev/src/explanation/design/listener-without-connections.md`, section 4.3). Every
 /// filter below decides by it. Local calls only.
 #[must_use]
 pub fn served_by(handle: isize, target_pid: u32) -> bool {

@@ -1,6 +1,6 @@
 //! `cargo xtask e2e-plan`: decides how many groups GitHub's `e2e` job runs
 //! the end-to-end suite in, and prints the job's matrix as JSON,
-//! `{"group":[1,2,...]}` (`docs/tooling/e2e.md`, "How CI runs the suite").
+//! `{"group":[1,2,...]}` (`books/dev/src/how-to/e2e.md`, "How CI runs the suite").
 //! It runs on every host, since the `plan` job runs it on Linux, where
 //! xtask builds neither the registry crate nor the test binary.
 //!
@@ -26,7 +26,7 @@
 //! single scenario estimated over the budget, which no count can place.
 //!
 //! With `--coverage`, for a coverage run's groups, which run an instrumented
-//! build (`docs/tooling/coverage.md`), every estimate is multiplied by
+//! build (`books/dev/src/how-to/coverage.md`), every estimate is multiplied by
 //! [`COVERAGE_SLOWDOWN`] before it is held against the budget, so the run
 //! gets more groups rather than longer ones. Only the count changes: the
 //! split for a count is the same, so `cargo xtask e2e-group` needs no flag.
@@ -49,7 +49,7 @@ pub const BUDGET_SECONDS: f64 = 540.0;
 /// How much longer a scenario takes against the instrumented build of a
 /// coverage run than the table says: the instrumented unit and mockapp
 /// tests' measured slowdown, at most 1.17, with a margin
-/// (`docs/tooling/e2e.md`, "How CI runs the suite").
+/// (`books/dev/src/how-to/e2e.md`, "How CI runs the suite").
 pub const COVERAGE_SLOWDOWN: f64 = 1.25;
 
 /// One registry entry as its source states it.

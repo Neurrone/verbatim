@@ -2,7 +2,7 @@
 //! (milestone M4; `docs/parity/terminals.md`, "Typing"):
 //! `windows_terminal_commands` in Windows Terminal and
 //! `conhost_commands` in the console host, each its own code
-//! (`docs/testing.md`).
+//! (`books/dev/src/reference/testing.md`).
 //! The shared setup is described in the `terminal` module.
 //!
 //! Every scenario first reads the prompt line with the review cursor

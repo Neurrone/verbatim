@@ -42,7 +42,7 @@
 //!
 //! The crate is Windows-specific and GPL like NVDA, from which the
 //! instruction table and builder design are ported.
-//! `docs/crates/verbatim-uia-rops.md` is the reviewer's guide.
+//! `books/dev/src/reference/crates/verbatim-uia-rops.md` is the reviewer's guide.
 
 mod builder;
 mod caret;

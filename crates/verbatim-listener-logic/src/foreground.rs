@@ -26,12 +26,12 @@
 //! process attached to the console (a shell), whose keyboard layout is not
 //! the one the console host translates keys with, while a `WinEvent`
 //! always names the thread that raised it, the console host's own (NVDA's
-//! issue 10113, `consoleWindowsToThreadIDs`; `docs/crates/verbatim-input-windows.md`,
+//! issue 10113, `consoleWindowsToThreadIDs`; `books/dev/src/reference/crates/verbatim-input-windows.md`,
 //! "Typed text"). A console's foreground event names it. When the listener
 //! starts with a console window already in front, no foreground event
 //! comes for it, so the listener hooks every console's events until one of
 //! that window's own names its thread, and then unhooks them: a console
-//! busy with output raises thousands a second (`docs/design/wake-ups.md`).
+//! busy with output raises thousands a second (`books/dev/src/explanation/design/wake-ups.md`).
 //!
 //! [`ForegroundWatch`] is the pure state of that, on the listener's
 //! `WinEvent` thread; the listener makes the local reads and the hooking.

@@ -1,4 +1,4 @@
-//! The saver (`docs/design/ownership.md`): the one thread that owns `settings.toml` and writes it whole.
+//! The saver (`books/dev/src/explanation/design/ownership.md`): the one thread that owns `settings.toml` and writes it whole.
 //!
 //! Each section of the file has one owner, which hands the saver its new
 //! value through a section writer: the speech section the synth thread

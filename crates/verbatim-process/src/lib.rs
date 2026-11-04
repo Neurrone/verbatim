@@ -5,7 +5,7 @@
 //! (`PROC_THREAD_ATTRIBUTE_JOB_LIST`), so it is contained from its first
 //! instruction, and dies when Core's job handle closes, whatever ends Core;
 //! in a build instrumented for coverage it ends instead when its pipes
-//! close, so it writes its profile (`docs/tooling/coverage.md`).
+//! close, so it writes its profile (`books/dev/src/how-to/coverage.md`).
 //! Creation and containment are one step: a Core that dies while
 //! launching a child cannot leave it outside a job, running or suspended.
 //! It talks to Core over two pipes the caller makes, typically with
@@ -199,7 +199,7 @@ impl Contained {
     /// itself once its command pipe closes, such as a synthesizer host. In
     /// a build instrumented for coverage nothing kills it, so it exits on
     /// its own once the caller has closed its ends of the pipes, and writes
-    /// its profile (`docs/tooling/coverage.md`); its ending follows the
+    /// its profile (`books/dev/src/how-to/coverage.md`); its ending follows the
     /// pipes' closing whatever the timing, since nothing else ends it. In
     /// every other build this is a drop, which kills it.
     pub fn end_when_pipes_close(self) {
@@ -329,7 +329,7 @@ fn create_job(memory_cap: Option<usize>) -> io::Result<OwnedHandle> {
     let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
     // In a build instrumented for coverage a closed job kills nothing, so
     // the children Verbatim leaves running as it exits end when their
-    // pipes close, and write their profiles (`docs/tooling/coverage.md`);
+    // pipes close, and write their profiles (`books/dev/src/how-to/coverage.md`);
     // every drop of a `Contained` still ends its child.
     limits.BasicLimitInformation.LimitFlags = if cfg!(coverage) {
         JOB_OBJECT_LIMIT(0)

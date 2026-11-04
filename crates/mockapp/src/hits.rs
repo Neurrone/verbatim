@@ -1,6 +1,6 @@
 //! Provider-side hit counters: how many times each provider method was
 //! called, for the tests that pin each operation's cost exactly
-//! (`docs/performance.md`, the operation ledger).
+//! (`books/dev/src/reference/performance.md`, the operation ledger).
 //!
 //! One counter per provider method, shared by every node's provider object,
 //! plus one for `WM_GETOBJECT`, which the host window answers. A test reads

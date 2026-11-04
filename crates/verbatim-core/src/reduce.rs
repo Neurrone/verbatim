@@ -126,7 +126,7 @@ fn reduce_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
         // A command or script pressed while a held key waits, or while
         // the watch of the held key last passed on is open, runs after it,
         // as NVDA runs scripts one at a time in the order queued
-        // (`docs/design/ownership.md`).
+        // (`books/dev/src/explanation/design/ownership.md`).
         Input::Command { .. } | Input::Script { .. }
             if state.held_busy() || state.held_keys.awaiting_watch.is_some() =>
         {
@@ -134,7 +134,7 @@ fn reduce_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
         }
         Input::Command { .. } | Input::Script { .. } => command_input(state, input),
         // A key pressed while a held key waits reaches the application
-        // after it, so it is handled after it (`docs/design/key-holding.md`,
+        // after it, so it is handled after it (`books/dev/src/explanation/design/key-holding.md`,
         // "Keys behind a held key").
         Input::CaretKey { .. } | Input::CharacterTyped { .. } | Input::ClearingKey { .. }
             if state.held_busy() =>
@@ -417,7 +417,7 @@ fn is_stale_focus(
         })
 }
 
-/// Core's duplicate-focus rule (`docs/design/focus-pipeline.md`, section
+/// Core's duplicate-focus rule (`books/dev/src/explanation/design/focus-pipeline.md`, section
 /// 4.2; `docs/parity/focus-events.md`, "Duplicate focus suppression"): a focus whose
 /// element is the same as the last focus Core queued, while that element
 /// still has the keyboard focus, is dropped before anything else judges
@@ -513,7 +513,7 @@ fn keep_newer_reading(state: &mut SrState, node: &NodeSnapshot, ancestors: &[Nod
 /// Whether an event from elsewhere, observed at `observed_at_us`, was
 /// observed before the newest foreground change Core applied: its speech
 /// would have been queued before that change, which cancels it in NVDA
-/// (`docs/design/focus-pipeline.md`, section 7). An event with no
+/// (`books/dev/src/explanation/design/focus-pipeline.md`, section 7). An event with no
 /// observation time (0) is never judged so.
 fn observed_before_foreground_change(state: &SrState, observed_at_us: u64) -> bool {
     observed_at_us != 0

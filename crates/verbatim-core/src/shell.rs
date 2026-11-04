@@ -9,7 +9,7 @@
 //! cancellable and recorded in one place. The scripts of the gestures that
 //! are not review commands, the menu, the time and the shell's lists, are
 //! here too: each asks the shell to read or show something
-//! (`docs/design/ownership.md`).
+//! (`books/dev/src/explanation/design/ownership.md`).
 
 use verbatim_model::{
     Earcon, Effect, GuiRequest, Input, LockKey, Message, Phrase, Script, SegmentContent,

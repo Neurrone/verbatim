@@ -1,4 +1,4 @@
-//! One object-navigation step (roadmap M3, `docs/crates/verbatim-outpost.md`):
+//! One object-navigation step (roadmap M3, `books/dev/src/reference/crates/verbatim-outpost.md`):
 //! the neighbor of an element in the raw view, with Verbatim's cached
 //! property set, and the element's nearest window, which the outpost needs
 //! to correct the neighbor's backend. A remote program takes the step and

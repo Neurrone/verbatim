@@ -1,7 +1,7 @@
 //! A flood past the terminal's history arriving in one write while a group
 //! plays, as `windows_terminal_scrollback_overflow_during_group` in Windows
 //! Terminal and `conhost_scrollback_overflow_during_group` in the console
-//! host, each its own code (`docs/testing.md`). These are the acceptance
+//! host, each its own code (`books/dev/src/reference/testing.md`). These are the acceptance
 //! tests of the terminal reading package (`docs/parity/terminals.md`, "The
 //! backlog" and "Reading a terminal on demand"): when Core reaches the end
 //! of a group it asks, and the outpost reads up to the end; the anchor's
@@ -37,7 +37,7 @@
 //! and the prompt. The outpost reads nothing until Core asks as the group's
 //! last line is handed to speech, 13 lines after the go file, and Windows
 //! Terminal takes a write of 10,000 lines in 1.5 to 1.7 seconds
-//! (`docs/performance.md`, "A terminal flood"), long before those lines are
+//! (`books/dev/src/reference/performance.md`, "A terminal flood"), long before those lines are
 //! heard.
 //!
 //! Verbatim says "skipped more than N lines", N being the number of lines

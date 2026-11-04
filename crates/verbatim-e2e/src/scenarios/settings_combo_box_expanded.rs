@@ -27,7 +27,7 @@
 //! focus, but the change reaches the outpost through its own subscription
 //! and the focus through the focus listener, so which the outpost takes in
 //! first varies from press to press; the outpost restores the provider's
-//! order (`docs/design/focus-pipeline.md`, section 12.4). Since the race is
+//! order (`books/dev/src/explanation/design/focus-pipeline.md`, section 12.4). Since the race is
 //! intermittent, a pass alone proves little: the judge of that order is
 //! the outpost's intake test
 //! `the_old_focus_uia_events_behind_a_focus_inside_it_are_planned_first`,

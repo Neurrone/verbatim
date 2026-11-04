@@ -103,7 +103,7 @@ There are three ways for workers to coordinate:
 
 - **Share memory and take turns.** A lock (a `Mutex` in Rust) lets one thread at a time change a value. Simple, but easy to get wrong: forgetting the lock, holding it too long, or two threads each waiting for a lock the other holds (a deadlock).
 - **Send messages.** Each worker keeps its own data and tells the others what happened, through channels (inside a process) or pipes (between processes). The Go language's motto sums it up: "Do not communicate by sharing memory; instead, share memory by communicating."
-- **One owner per fact.** Only one worker may change a given thing; others ask it or are told. This is what Verbatim's ownership rules (`docs/design/ownership.md`) enforce.
+- **One owner per fact.** Only one worker may change a given thing; others ask it or are told. This is what Verbatim's ownership rules (`books/dev/src/explanation/design/ownership.md`) enforce.
 
 Processes force message passing, because they cannot share memory. Threads allow all three styles. Rust prevents threads from touching shared memory without a lock (a "data race"), and exercise 5 shows the compiler refusing. But Rust cannot stop two owners from deciding the same thing differently, nor stop messages arriving in an order you did not expect. Those are design problems, and they need design rules.
 
@@ -207,11 +207,11 @@ The rules these suggest hold whether Verbatim's readers are processes or threads
 
 Written by Claude for this project, so they share its framing; read them after an independent source on the same topic.
 
-9. [`docs/explainers/processes-and-security.md`](../docs/explainers/processes-and-security.md)
-10. [`docs/explainers/windows-and-messages.md`](../docs/explainers/windows-and-messages.md)
-11. [`docs/explainers/com.md`](../docs/explainers/com.md)
-12. [`docs/explainers/ipc.md`](../docs/explainers/ipc.md)
-13. [`docs/explainers/rust-concurrency.md`](../docs/explainers/rust-concurrency.md)
+9. [`books/dev/src/explanation/windows/processes-and-security.md`](../books/dev/src/explanation/windows/processes-and-security.md)
+10. [`books/dev/src/explanation/windows/windows-and-messages.md`](../books/dev/src/explanation/windows/windows-and-messages.md)
+11. [`books/dev/src/explanation/windows/com.md`](../books/dev/src/explanation/windows/com.md)
+12. [`books/dev/src/explanation/windows/ipc.md`](../books/dev/src/explanation/windows/ipc.md)
+13. [`books/dev/src/explanation/windows/rust-concurrency.md`](../books/dev/src/explanation/windows/rust-concurrency.md)
 14. [`docs/nvda/main-loop-and-watchdog.md`](../docs/nvda/main-loop-and-watchdog.md): how NVDA's single main thread and watchdog work.
 
 ### Fourth: the crates and async

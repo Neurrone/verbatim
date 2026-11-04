@@ -2,7 +2,7 @@
 //! a seed and a case count read from `VERBATIM_EXPLORE_SEED` and
 //! `VERBATIM_EXPLORE_CASES`, run only by the nightly workflow
 //! (`.github/workflows/explore.yml`). The one file of the crate that reads
-//! the environment (`docs/testing.md`, "Exploration tests"); a failure it finds is shrunk and added to the gate as a fixed
+//! the environment (`books/dev/src/reference/testing.md`, "Exploration tests"); a failure it finds is shrunk and added to the gate as a fixed
 //! case, never kept as a seed.
 
 use super::{config, run_generated};
@@ -29,7 +29,7 @@ fn explored() -> (u64, u32) {
 }
 
 #[test]
-#[ignore = "exploration: run by the nightly workflow with its own seed (docs/testing.md, Exploration tests)"]
+#[ignore = "exploration: run by the nightly workflow with its own seed (books/dev/src/reference/testing.md, Exploration tests)"]
 fn explore_in_flight() {
     let (seed, cases) = explored();
     let again = format!(

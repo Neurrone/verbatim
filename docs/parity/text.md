@@ -9,8 +9,8 @@ selection deltas. NVDA: [TextInfo](../nvda/text-infos.md) and
 [Editable text and terminals](../nvda/editable-text-and-terminals.md).
 Verbatim: **matched (verified)** for UIA text and the Win32 edit and
 rich edit controls, through the text protocol
-(`docs/crates/verbatim-model.md`, "The text protocol";
-`docs/crates/verbatim-core.md`, "Text (milestone M4)"; the
+(`books/dev/src/reference/crates/verbatim-model.md`, "The text protocol";
+`books/dev/src/reference/crates/verbatim-core.md`, "Text (milestone M4)"; the
 `notepad_editing` and `notepad_review_cursor` scenarios); an MSAA object
 that is neither has no text.
 
@@ -46,7 +46,7 @@ Verbatim: **matched (verified)** (the `caret_keys` scenarios,
 `notepad_editing`, `notepad_review_cursor`). Caret keys pass to the
 application, and Core asks the outpost to watch for evidence of the
 key's effect, never waiting for it
-(`docs/crates/verbatim-core.md`, "Text (milestone M4)"). Core then
+(`books/dev/src/reference/crates/verbatim-core.md`, "Text (milestone M4)"). Core then
 speaks NVDA's unit: the character for Left and Right Arrow, Home, and
 End; the provider's word for Control with Left or Right Arrow, a word of
 one character (Notepad's full stop) by its name, as NVDA spells it; the
@@ -89,7 +89,7 @@ application's caret event; the caret Core holds is the newest by the
 time each report was observed or read, not the last to arrive, so a
 caret key's reply read before a caret event that reached Core first does
 not move the caret, or the review cursor following it, back
-(`docs/crates/verbatim-core.md`, "Text (milestone M4)", owns the
+(`books/dev/src/reference/crates/verbatim-core.md`, "Text (milestone M4)", owns the
 mechanism).
 
 A review command while the review cursor follows the caret, say-all from
@@ -164,7 +164,7 @@ Windows Terminal (`_caretMovementTimeoutMultiplier`,
 `nvda/source/NVDAObjects/UIA/winConsoleUIA.py` 470 and 486), so 300 ms
 there.
 
-Verbatim: **different** ([holding caret keys](../design/key-holding.md),
+Verbatim: **different** ([holding caret keys](../../books/dev/src/explanation/design/key-holding.md),
 which owns the mechanism; Dickson, 2026-10-08 and 2026-10-22). Verbatim
 holds every caret key while the focus has text, as NVDA's caret scripts
 do: the hook swallows it, the focus's outpost reads the caret and its
@@ -190,7 +190,7 @@ remove: Control+Backspace in a Windows Forms password box says "4 star"
 `target/e2e-evidence/m42-protected-fixes-2026-10-22/`).
 Verbatim: **different** (Dickson, 2026-10-08): what Backspace deleted is
 worked out by comparing the line read before the key with the line
-after it ([holding caret keys](../design/key-holding.md)). The text
+after it ([holding caret keys](../../books/dev/src/explanation/design/key-holding.md)). The text
 removed at the caret is spoken, in any language, and nothing when
 nothing was removed: the classic edit control's Control+Backspace
 inserts a DEL character, where NVDA would speak the word it expected to
@@ -319,7 +319,7 @@ and cleared at each comparison with a selection, and cleared by a
 focus), when
 the control's value change waits once the caret is read, or when the old
 selection's text no longer matches what its range holds
-(`docs/crates/verbatim-core.md`, "Text (milestone M4)"). General terms
+(`books/dev/src/reference/crates/verbatim-core.md`, "Text (milestone M4)"). General terms
 are the whole new selection followed by "selected" when anything was
 selected, then, when anything was unselected, the whole new selection
 followed by "selected instead", or "selection removed" when nothing is
@@ -490,7 +490,7 @@ Verbatim: **different**, in four cases:
   (`a_new_focus_uses_the_system_caret_again`).
 - In a focused console host terminal, the system caret's events are
   never used: the console's caret event (`EVENT_CONSOLE_CARET`) is its
-  caret event (`docs/crates/verbatim-outpost.md`, "Terminals"), read
+  caret event (`books/dev/src/reference/crates/verbatim-outpost.md`, "Terminals"), read
   once per move, because it also comes for a move of a selection's end
   and Verbatim's terminal reading is built on it (`conhost_editing`;
   `the_console_hosts_system_caret_is_not_its_caret_event`). NVDA does the

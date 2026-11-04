@@ -1,5 +1,5 @@
 //! The review cursor's text requests in a terminal Core reads
-//! (`docs/design/terminal-model.md`, "The review cursor"), answered from
+//! (`books/dev/src/explanation/design/terminal-model.md`, "The review cursor"), answered from
 //! the terminal's memory of its rows, never from a live provider range,
 //! which could point at other text once output rotates a full history:
 //! Core first takes a fresh read, so the memory's alignment has moved every
@@ -633,7 +633,7 @@ fn read_range(
 /// not yet tried kept for the next press. Each search costs an estimated 60
 /// milliseconds when its line is the nearest of 20 rows starting with its
 /// text and at most about 300 when its text is mostly found within rows
-/// (`docs/performance.md`, "A terminal's command marks"), so a press waits
+/// (`books/dev/src/reference/performance.md`, "A terminal's command marks"), so a press waits
 /// at most about 900 milliseconds for its searches.
 pub(crate) const MARK_SEARCHES: u32 = 3;
 
@@ -666,7 +666,7 @@ enum Resolved {
 
 /// Moves the review cursor to the nearest command mark strictly above
 /// (`forward` false) or below the review position at `from`, or the caret
-/// (`docs/design/terminal-model.md`, "Features and settings"), after the
+/// (`books/dev/src/explanation/design/terminal-model.md`, "Features and settings"), after the
 /// fresh read: each mark, nearest first, is found by its line's text,
 /// within the memory near its place, and above the memory by the search
 /// the outpost runs ([`TextOp::TerminalFind`]), outward from its place; a
@@ -949,7 +949,7 @@ pub(crate) fn placed(
     }
 }
 
-/// The footer "Report status bar" reads (`docs/design/terminal-model.md`,
+/// The footer "Report status bar" reads (`books/dev/src/explanation/design/terminal-model.md`,
 /// "Features and settings"), as the last read found the screen: the lines
 /// below the caret's line; with none, the run of rows at the screen's
 /// bottom that a program has rewritten, trailing blank rows skipped; with

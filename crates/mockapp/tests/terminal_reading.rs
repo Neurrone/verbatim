@@ -1,4 +1,4 @@
-//! A focused terminal's on-demand reading (`docs/design/terminal-model.md`,
+//! A focused terminal's on-demand reading (`books/dev/src/explanation/design/terminal-model.md`,
 //! "Reading rules", rule 1) through a real outpost's worker, against mockapp's UIA text
 //! provider presenting a Windows Terminal control (UIA class
 //! `TermControl`), its text given as a terminal gives it, every row padded
@@ -547,7 +547,7 @@ fn the_console_hosts_caret_comes_from_its_console() {
 /// A console host's caret move with no text change reaches Core: its caret
 /// event reads the terminal, as Windows Terminal's caret events do, and the
 /// read, its text as before, carries the moved caret, so Core's reading
-/// rules judge the next key from it (`docs/design/terminal-model.md`,
+/// rules judge the next key from it (`books/dev/src/explanation/design/terminal-model.md`,
 /// "Where it runs": one caret).
 fn a_console_caret_move_with_no_text_change_is_read() {
     let (mut app, outpost, area) = start_with(
@@ -1018,7 +1018,7 @@ fn console_watch(
 
 /// The console host raises its caret event only on its cursor's blink
 /// timer, so its caret key's watch re-reads the caret every 5 ms
-/// (`docs/design/key-holding.md`, "The console host's caret poll"): a
+/// (`books/dev/src/explanation/design/key-holding.md`, "The console host's caret poll"): a
 /// caret the application moves after the watch's first check, with no
 /// event, answers the key, and the terminal is read after it.
 fn a_console_hosts_caret_moved_without_an_event_answers_its_watch() {

@@ -1,0 +1,56 @@
+# The documentation site: every book under books/ built with mdBook, beside
+# the homepage books/index.html. Every push and pull request that touches
+# books/ builds it, so a broken book fails before it reaches main; only a
+# push to main publishes it to GitHub Pages.
+
+name: Pages
+
+on:
+  push:
+    branches: [main]
+    paths: ["books/**", ".github/workflows/pages.yml"]
+  pull_request:
+    paths: ["books/**", ".github/workflows/pages.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One publish at a time; a newer push replaces a waiting one, but a
+# publish already running finishes.
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: mdbook@0.5.4
+      - name: Build the books
+        run: |
+          mkdir -p site
+          cp books/index.html site/index.html
+          for book in dev extensions user; do
+            mdbook build "books/$book" --dest-dir "$PWD/site/$book"
+          done
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5

@@ -108,7 +108,7 @@ inside the target process:
 - Security posture: injection does not cross integrity levels or into
   AppContainer/protected processes; those apps simply run without
   in-process features (and NVDA's uiAccess flag governs what it can
-  reach at all — [Processes and security](../explainers/processes-and-security.md)).
+  reach at all — [Processes and security](../../books/dev/src/explanation/windows/processes-and-security.md)).
 - Failure posture: MessageBox-on-error in the injection paths
   (visible in `injection.cpp`) reflects its status as
   must-never-fail plumbing; in-process crashes take the *host app*

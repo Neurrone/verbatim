@@ -1,4 +1,4 @@
-//! `docs/uia-bugs.md`, "Focus events cannot be limited to one application"
+//! `books/dev/src/reference/uia-bugs.md`, "Focus events cannot be limited to one application"
 //! (E-scope and P1 in its experiments folder): the documented call that
 //! would limit focus events to one window is refused; an event handler
 //! group on one window, which is accepted, hears that application's own

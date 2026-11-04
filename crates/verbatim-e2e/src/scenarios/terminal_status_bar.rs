@@ -1,4 +1,4 @@
-//! "Report status bar" in a terminal (`docs/design/terminal-model.md`,
+//! "Report status bar" in a terminal (`books/dev/src/explanation/design/terminal-model.md`,
 //! "Features and settings"), as `windows_terminal_status_bar` in Windows
 //! Terminal and `conhost_status_bar` in the console host. The shared setup
 //! is described in the `terminal` module.
@@ -16,7 +16,7 @@
 //! gone"; with nothing below the caret and no row a program rewrote,
 //! Verbatim+End reads the prompt's line, the last with text. No flood
 //! runs above the footer, because a read taken while output moves the
-//! document's end can leave the footer out (`docs/design/terminal-model.md`,
+//! document's end can leave the footer out (`books/dev/src/explanation/design/terminal-model.md`,
 //! "Limits"). NVDA has no terminal status bar, so each press is Verbatim's
 //! own (`docs/parity/terminals.md`, "Reading a terminal on demand").
 

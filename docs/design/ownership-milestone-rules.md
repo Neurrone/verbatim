@@ -1,6 +1,6 @@
 # The ownership rules for the planned milestones
 
-The ownership refactor's builds are all built: [the one judge build](ownership.md), [the input build](ownership.md), [the messages build](ownership.md), [the output build](ownership.md) and [the outpost's reducer build](ownership.md), under [the ownership model](ownership.md). What remains of the plan is the list below: the rules each planned milestone follows under the model, to be moved into the roadmap's milestone sections as each is designed. The evidence list names the commits behind each rule; the study, the audits and the reviews are in `experiments/ownership-study/`.
+The ownership refactor's builds are all built: [the one judge build](../../books/dev/src/explanation/design/ownership.md), [the input build](../../books/dev/src/explanation/design/ownership.md), [the messages build](../../books/dev/src/explanation/design/ownership.md), [the output build](../../books/dev/src/explanation/design/ownership.md) and [the outpost's reducer build](../../books/dev/src/explanation/design/ownership.md), under [the ownership model](../../books/dev/src/explanation/design/ownership.md). What remains of the plan is the list below: the rules each planned milestone follows under the model, to be moved into the roadmap's milestone sections as each is designed. The evidence list names the commits behind each rule; the study, the audits and the reviews are in `experiments/ownership-study/`.
 
 ## Rules
 

@@ -1,5 +1,5 @@
 //! How an outpost's messages that carry a terminal's text cross the pipe
-//! (`docs/design/communication.md`, section 4.2): an event with a
+//! (`books/dev/src/explanation/design/communication.md`, section 4.2): an event with a
 //! terminal's read, and the replies with one, with its history, or with
 //! the rows a search found. Each such message is a frame with a raw
 //! section. Every text it carries is in the raw section as UTF-8, its

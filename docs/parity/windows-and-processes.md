@@ -38,7 +38,7 @@ provider and through MSAA otherwise ([The UIA client](../nvda/uia.md),
 the process boundary, and the outpost of the focus's application
 completes the chain with the host or owner window and every window above
 it, read from Windows' own state with no call into the other process
-(`docs/design/listener-without-connections.md`, decision 7 and section
+(`books/dev/src/explanation/design/listener-without-connections.md`, decision 7 and section
 4.4; `docs/design/focus-pipeline-rework.md`, "Calls that reach another
 application" and "The foreground wait"): each is described as NVDA's
 MSAA client for it, a pane named by its text, marked a top-level
@@ -101,7 +101,7 @@ thread from each event without opening it
 273); Verbatim routes them to the console host's outpost and drops them
 when the host cannot be read from the event's thread, so that no outpost
 but the console host's reads its window (Dickson, 2026-10-19;
-`docs/design/listener-without-connections.md`, section 10, step 3).
+`books/dev/src/explanation/design/listener-without-connections.md`, section 10, step 3).
 
 ### A control's own focus with a focused child
 
@@ -138,7 +138,7 @@ NVDA cuts it). A focus or foreground change on such a window
 (`ForegroundStaging`, `LauncherTipWnd`,
 `ApplicationManager_DesktopShellWindow`) is reported with the window's
 class and taken like any other focus (decision D6;
-`docs/crates/verbatim-core.md`, its rules for particular applications'
+`books/dev/src/reference/crates/verbatim-core.md`, its rules for particular applications'
 windows): the focus, the navigator and, for a foreground change, the
 foreground object move to the staging window, and speech is cut when the
 foreground window changed, but nothing is said for it, whatever its
@@ -197,14 +197,14 @@ focus that is not a foreground change, whose node was read through UI
 Automation, whose application is `explorer` (`WindowFacts::application`,
 named as NVDA names an application module), and whose node's own class
 (`NodeDetails::class_name`) and role are NVDA's, before anything else
-judges it (decision D6; `docs/crates/verbatim-core.md`, its rules for
+judges it (decision D6; `books/dev/src/reference/crates/verbatim-core.md`, its rules for
 particular applications' windows), so it moves nothing and cuts nothing;
 the outpost's own read is refused by the same rule. The class of the
 window the focus is in is not matched: Windows Terminal's terminal
 control is in an `InputSite` window too (`ExactV2/flight.jsonl`), so a
 pane of another class there, or one of that class in another
 application, is taken as any focus. No scenario can use Alt+Tab
-(`docs/testing.md`), so Core's unit tests pin the rule
+(`books/dev/src/reference/testing.md`), so Core's unit tests pin the rule
 (`a_uia_focus_on_the_task_switching_pane_is_refused_whole`,
 `a_uia_focus_on_the_windows_10_task_switching_frame_is_refused_whole`,
 `a_pane_is_refused_only_by_its_own_class_in_file_explorer`,

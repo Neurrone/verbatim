@@ -280,7 +280,7 @@ pub fn minimize_all(timeout: Duration) -> (bool, bool, ForegroundInfo) {
 /// 2026-10-17 that was the taskbar, whose Start button Verbatim then
 /// announced. `SetForegroundWindow` alone succeeds only while the agent
 /// may set the foreground, which it may only after injecting the last
-/// input (`docs/tooling/troubleshooting.md`, "Windows' foreground lock
+/// input (`books/dev/src/how-to/troubleshooting.md`, "Windows' foreground lock
 /// keeps launched applications behind"). msinfo32 is such a window: it
 /// ignores the minimized show state it is launched with and opens restored
 /// and inactive (found 2026-10-09). Such a window is logged, at info.

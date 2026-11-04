@@ -80,7 +80,7 @@ pub enum OutpostTarget {
     /// One application, by its process id (`--target-pid`).
     Application(Pid),
     /// None yet: a spare, by the supervisor's number for its launch, which
-    /// names its log (`--spare`; `docs/design/focus-pipeline.md`, section
+    /// names its log (`--spare`; `books/dev/src/explanation/design/focus-pipeline.md`, section
     /// 19).
     Spare(OutpostId),
 }

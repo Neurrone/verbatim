@@ -1,5 +1,5 @@
 //! The memory of a terminal's rows and the alignment of each read against
-//! it (`docs/design/terminal-model.md`, "The model", "The read" and "The
+//! it (`books/dev/src/explanation/design/terminal-model.md`, "The model", "The read" and "The
 //! alignment"): what each row of a read is (new, kept and from where, grown,
 //! rewritten and from which row, a lingering row returned, or a row shown
 //! before that carries no history), where each row of the last read went,

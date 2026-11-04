@@ -1,5 +1,5 @@
 //! Themes: one model for verbosity, speech, and sounds
-//! (`docs/crates/verbatim-model.md`, "Themes").
+//! (`books/dev/src/reference/crates/verbatim-model.md`, "Themes").
 //!
 //! The indication catalogue names every kind of thing Verbatim can report,
 //! each with a stable id and a category. A [`Theme`] says, for each
@@ -909,7 +909,7 @@ impl Default for Fetches {
 
 /// Settings that go with the theme but are not part of it: ordinary
 /// settings that a configuration profile may change, like the theme's
-/// choice itself (`docs/crates/verbatim-config.md`, "Themes").
+/// choice itself (`books/dev/src/reference/crates/verbatim-config.md`, "Themes").
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ThemeOptions {

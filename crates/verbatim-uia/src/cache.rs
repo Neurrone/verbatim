@@ -1,7 +1,7 @@
 //! Building a cache request from a list of properties, for the shape
 //! module's requests ([`crate::Request`]) and a registration's parts
 //! (architecture section 4: "cache requests everywhere"). The lists
-//! themselves come from the shapes (`docs/design/uia-shapes.md`), so a
+//! themselves come from the shapes (`books/dev/src/explanation/design/uia-shapes.md`), so a
 //! request and the read of the elements it fills cannot disagree.
 
 use windows::Win32::UI::Accessibility::{

@@ -102,7 +102,7 @@ control; its base `event_selection` speaks only a selection inside an
 element the focus controls, and every other selection is a change of
 state, spoken only for the focus or its ancestors. Selecting the focused
 item itself is such a change of state, and Verbatim speaks it
-("selected"), as NVDA does ([verbatim-core](../crates/verbatim-core.md)).
+("selected"), as NVDA does ([verbatim-core](../../books/dev/src/reference/crates/verbatim-core.md)).
 Verbatim: **different** (Dickson, 2026-10-08; the roadmap's M3 item
 "announce a focused list's selected item"): it speaks MSAA selection
 changes and a focused list's selected item ("Fruits list Apple" where
@@ -157,7 +157,7 @@ the list is open, since Settings' search index differs between
 editions. It is local-only, because GitHub's runner's Settings raises
 no selection event for a first suggestion as the list opens, so there
 "Suggestions available" plays to completion ([the end-to-end
-guide](../tooling/e2e.md), the local-only scenarios). Start's results
+guide](../../books/dev/src/how-to/e2e.md), the local-only scenarios). Start's results
 that are in a Chromium document NVDA reads through IA2 are not yet
 built; they belong to the phase that implements IA2 (browsers, M7).
 
@@ -333,7 +333,7 @@ Settings raises the combo box's expand state change before the item's
 focus, and when the change reaches the outpost behind the item's focus
 marker, the outpost plans it ahead of the item's focus, since the item
 is inside the combo box that was the focus
-(`docs/design/focus-pipeline.md`, section 12.4; the outpost's intake test
+(`books/dev/src/explanation/design/focus-pipeline.md`, section 12.4; the outpost's intake test
 `the_old_focus_uia_events_behind_a_focus_inside_it_are_planned_first`),
 so Verbatim says "expanded" there too.
 

@@ -1,6 +1,6 @@
 //! `cargo xtask e2e-group <index>/<count>`: prints the end-to-end
 //! scenarios of one of the `e2e` job's `count` groups, one name per line,
-//! for the job to run with `--exact` (`docs/tooling/e2e.md`, "How CI runs
+//! for the job to run with `--exact` (`books/dev/src/how-to/e2e.md`, "How CI runs
 //! the suite"). The count is the one `cargo xtask e2e-plan` chose
 //! (`xtask/src/plan.rs`), which the job passes as its matrix's size.
 //!

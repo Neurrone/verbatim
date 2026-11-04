@@ -22,10 +22,10 @@
 //! reports it completed when its last frame has played, cancelled when the
 //! generation has been raised since, or failed when synthesis or audio
 //! fails. A cancel raises the generation before it cancels the job's token
-//! (`docs/design/ownership.md`), so an utterance
+//! (`books/dev/src/explanation/design/ownership.md`), so an utterance
 //! the cancel cut never ends completed.
 //!
-//! Settings (`docs/design/ownership.md`). The synth thread owns the driver's values, the committed
+//! Settings (`books/dev/src/explanation/design/ownership.md`). The synth thread owns the driver's values, the committed
 //! values and whether the active synthesizer is the user's choice, and it
 //! alone writes the settings host's mirror; changes, commits, reverts and
 //! switches reach it in order through the queue thread, and it saves
@@ -95,7 +95,7 @@ fn snapshot_values(driver: &dyn SynthDriver) -> Vec<(SettingId, SettingValue)> {
 /// The registry's choice for the running `driver`, so the name the
 /// settings show is the one the Select Synthesizer list shows, in
 /// Verbatim's own language: a synthesizer host never loads the user's
-/// locale (`docs/design/ownership.md`).
+/// locale (`books/dev/src/explanation/design/ownership.md`).
 fn choice_of(registry: &SynthRegistry, driver: &dyn SynthDriver) -> SynthChoice {
     let id = driver.id();
     registry.choice(&id).unwrap_or_else(|| SynthChoice {
@@ -144,7 +144,7 @@ pub struct SpeechManagerConfig {
 /// The right to speak: [`SpeechManager::new`] makes the only one, and every
 /// function that speaks or plays an event takes it, so only the thread
 /// holding it, the reducer's, speaks ("Only the reducer speaks",
-/// `docs/architecture.md`, section 2). It can be sent to another thread
+/// `books/dev/src/explanation/architecture.md`, section 2). It can be sent to another thread
 /// but not shared or cloned. It holds that thread's lane to the mixer's
 /// events' source, which its earcons play through.
 pub struct SpeakToken {
@@ -604,7 +604,7 @@ impl SpeechManager {
         SettingsHost::new(Arc::clone(&self.inbox), Arc::clone(&self.mirror))
     }
 
-    /// Settles the pipeline for exit (`docs/design/ownership.md`): cancels speech, as a key does,
+    /// Settles the pipeline for exit (`books/dev/src/explanation/design/ownership.md`): cancels speech, as a key does,
     /// so nothing waits behind a playing utterance, then waits until the
     /// synth thread has carried out everything posted before, a commit
     /// included, or until `deadline`. Returns `false` when the deadline
@@ -1072,7 +1072,7 @@ impl QueueThread {
         // even when the synthesizer's driver, woken by the cancel, returns
         // and has it finished: the synth thread's records after it saw the
         // token are ordered after the raised generation
-        // (`docs/design/ownership.md`).
+        // (`books/dev/src/explanation/design/ownership.md`).
         self.control.cancel();
         if let Some(cancel) = &self.in_flight {
             cancel.cancel();

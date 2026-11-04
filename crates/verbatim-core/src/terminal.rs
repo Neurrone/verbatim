@@ -1,4 +1,4 @@
-//! What a focused terminal says (`docs/design/terminal-model.md`, "Core's
+//! What a focused terminal says (`books/dev/src/explanation/design/terminal-model.md`, "Core's
 //! flood policy"): the terminal's outpost reads it, Core's terminal model
 //! (`crate::terminal_model`) gives each read to the reading rules, and what
 //! they say is spoken here:
@@ -34,7 +34,7 @@
 //!   utterance) drops the output still waiting, as a key press does in
 //!   NVDA, and output read before the cut is never spoken after it. "Report
 //!   new output" off (Verbatim+5) speaks no output at all.
-//! - On-demand reading (`docs/design/terminal-model.md`, "When to read"): once
+//! - On-demand reading (`books/dev/src/explanation/design/terminal-model.md`, "When to read"): once
 //!   as many lines wait as a group speaks, the outpost is told to hold
 //!   ([`TextOp::TerminalHold`]), and only notes that the terminal changed.
 //!   When the group's last line is handed to speech, Core asks for what is

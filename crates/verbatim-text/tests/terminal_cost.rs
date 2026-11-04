@@ -1,7 +1,7 @@
 //! The cost of the terminal memory and reading rules
 //! (`verbatim_text::terminal_rows` and `verbatim_text::terminal_reading`)
 //! for the reads that cost them most, in the simulated terminal: a
-//! measurement, not a test (`docs/performance.md`, "A terminal's rotation").
+//! measurement, not a test (`books/dev/src/reference/performance.md`, "A terminal's rotation").
 //! It asserts nothing about the times, and is ignored so that no test run
 //! includes it; run it in a release build:
 //!
@@ -452,7 +452,7 @@ fn spread(times: &mut [Duration]) -> String {
 }
 
 #[test]
-#[ignore = "a measurement, not a test: run in a release build with --ignored --nocapture (docs/performance.md, \"A terminal's rotation\")"]
+#[ignore = "a measurement, not a test: run in a release build with --ignored --nocapture (books/dev/src/reference/performance.md, \"A terminal's rotation\")"]
 fn the_reading_rules_cost_of_the_costliest_reads() {
     let mut report = String::new();
     for case in CASES {

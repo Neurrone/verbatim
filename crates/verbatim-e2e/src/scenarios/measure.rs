@@ -1,12 +1,12 @@
 //! The measure set: the measurement workloads that
-//! `docs/design/communication.md` section 11 runs at every migration step,
+//! `books/dev/src/explanation/design/communication.md` section 11 runs at every migration step,
 //! its first step's baseline and every later step's comparison. They
 //! measure nothing themselves: they give Verbatim focus changes, typing and
 //! Backspace to handle, and its latency ledger logs the figures, one line
 //! per announcement at info on the `verbatim::latency` target, which a run
 //! keeps in its artifacts. They are the registry's `measure` group, left
 //! out of every run that does not name them, like the demonstrations, and
-//! they are measurement, not tests (`docs/testing.md`).
+//! they are measurement, not tests (`books/dev/src/reference/testing.md`).
 //!
 //! They follow the harness's rules: every scenario starts from the
 //! minimized desktop and asserts Verbatim's startup speech; the window a
@@ -335,7 +335,7 @@ pub(crate) fn setup_speech_real(scenario: &mut Scenario) -> io::Result<ScenarioS
     Ok(ScenarioState::None)
 }
 
-/// `measure_speech_real` (`docs/design/communication.md`, section 10.3):
+/// `measure_speech_real` (`books/dev/src/explanation/design/communication.md`, section 10.3):
 /// the speech path through the real synthesizer host and audio device, so
 /// the ledger's host and device stages, the device clock among them, have
 /// figures. In two Windows Forms text boxes: focus changes into each by
@@ -440,7 +440,7 @@ fn arrow_keys(scenario: &mut Scenario, truth: &Truth, (title, target): (&str, &s
 /// How many times [`select_then_right`] selects and presses Right.
 const SELECT_THEN_RIGHT: usize = 10;
 
-/// The first case of holding keys (`docs/design/key-holding.md`, "How
+/// The first case of holding keys (`books/dev/src/explanation/design/key-holding.md`, "How
 /// often a key's effect was misjudged"): select then copy's first press selects the first word of
 /// the top line, from a start marker at the line's start through the
 /// review cursor on the word's last character, and Right Arrow follows at
@@ -493,7 +493,7 @@ fn dump_recorder(scenario: &mut Scenario, truth: &Truth, name: &str, round: usiz
         .expect("dumps the flight recorder");
 }
 
-/// A stale caret case of `docs/design/key-holding.md`: Shift+Right Arrow
+/// A stale caret case of `books/dev/src/explanation/design/key-holding.md`: Shift+Right Arrow
 /// followed at once by Right Arrow, in one batch, from the top of
 /// [`arrow_text`], so that Right is pressed before the application can
 /// have reported the selection Shift+Right made, [`STALE_ROUNDS`] times.
@@ -570,7 +570,7 @@ pub(crate) fn setup_stale_caret_console_host(scenario: &mut Scenario) -> io::Res
 
 /// How long say-all's first utterance in the console host may take to be
 /// heard: the command's first row and the read-ahead's twenty rows after
-/// it, which repeat the second row (`docs/design/key-holding.md`, "How
+/// it, which repeat the second row (`books/dev/src/explanation/design/key-holding.md`, "How
 /// often a key's effect was misjudged").
 const SAY_ALL_FIRST_UTTERANCE: std::time::Duration = std::time::Duration::from_secs(180);
 
@@ -580,7 +580,7 @@ const SAY_ALL_FIRST_UTTERANCE: std::time::Duration = std::time::Duration::from_s
 const LONG_COMMAND: &str = "echo alpha bravo charlie delta foxtrot golfer hotel india juliet kilo lima mike november oscar papa quebec romeo sierra tango uniform victor whiskey";
 
 /// `measure_stale_caret_conhost`: the other stale caret case of
-/// `docs/design/key-holding.md`, a say-all caret move the application
+/// `books/dev/src/explanation/design/key-holding.md`, a say-all caret move the application
 /// refuses. A command that wraps onto a second row is typed
 /// ([`LONG_COMMAND`]); then, [`STALE_ROUNDS`] times, Home
 /// puts the cursor at its start, say-all from the caret reads on from
@@ -654,7 +654,7 @@ pub(crate) fn setup_held_repeat_text_box(scenario: &mut Scenario) -> io::Result<
 }
 
 /// `measure_held_repeat_text_box`: the case where a held key's wait for
-/// the key ahead of it repeats (`docs/design/key-holding.md`, "Keys
+/// the key ahead of it repeats (`books/dev/src/explanation/design/key-holding.md`, "Keys
 /// behind a held key"). [`HELD_REPEAT_ROUNDS`] times, Control+End puts the
 /// caret at the end of the Windows Forms text box's text, where Right
 /// Arrow moves nothing, and Right Arrow is held for about a second with

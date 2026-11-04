@@ -3,8 +3,8 @@
 This directory holds the VM harness: a Packer template that builds a
 provisioning-ready Windows 11 Pro Hyper-V image, a harness provisioner
 that turns that image into an unattended E2E lab machine, and the assets
-`cargo xtask vm` drives from there (see `docs/architecture.md` section 14).
-`docs/tooling/vm.md` is the full guide to every verb.
+`cargo xtask vm` drives from there (see `books/dev/src/explanation/architecture.md` section 14).
+`books/dev/src/how-to/vm.md` is the full guide to every verb.
 
 ## Host requirements
 

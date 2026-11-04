@@ -1,5 +1,5 @@
 //! The keyboard hook's two callbacks, which run on the hook thread
-//! (`docs/design/ownership.md`):
+//! (`books/dev/src/explanation/design/ownership.md`):
 //! the speech effect of a key, and the reports of what
 //! each caused, each turned into its commands for the reducer and posted
 //! to the reducer's port, in the order the hook decided them, with nothing

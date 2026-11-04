@@ -1,4 +1,4 @@
-//! `docs/uia-bugs.md`, "The connection timeout applies to the whole
+//! `books/dev/src/reference/uia-bugs.md`, "The connection timeout applies to the whole
 //! process" (E1 in its experiments folder): the connection and
 //! transaction timeouts a client sets belong to its process, and the last
 //! setting by any client is what every client reads; and Verbatim's

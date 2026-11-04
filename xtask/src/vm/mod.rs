@@ -1,5 +1,5 @@
 //! `cargo xtask vm <verb>`: the Hyper-V E2E harness (milestone M2, per
-//! `docs/architecture.md` section 14).
+//! `books/dev/src/explanation/architecture.md` section 14).
 //!
 //! Every verb goes through the [`host::Host`] trait, which is the only
 //! place Hyper-V-specific PowerShell lives; verb logic in the other modules

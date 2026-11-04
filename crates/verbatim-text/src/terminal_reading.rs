@@ -1,4 +1,4 @@
-//! The reading rules of a terminal (`docs/design/terminal-model.md`,
+//! The reading rules of a terminal (`books/dev/src/explanation/design/terminal-model.md`,
 //! "Reading rules"), on top of the row memory and its alignment
 //! ([`crate::terminal_rows`]): what each row is, new output with growing
 //! lines, redrawn and volatile rows, spinners, keys and their window, typed

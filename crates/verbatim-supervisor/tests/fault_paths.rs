@@ -1,5 +1,5 @@
 //! The relay's failure paths, each run through its fault point
-//! (`docs/crates/verbatim-faults.md`, "Failure paths"): a
+//! (`books/dev/src/reference/crates/verbatim-faults.md`, "Failure paths"): a
 //! message the app's port refuses is delivered again, in order, and a
 //! shutdown whose mailbox wake the relay's port refuses still ends.
 //!

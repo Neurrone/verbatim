@@ -1,5 +1,5 @@
 //! What the outpost follows, and what a program's commit changes of it
-//! (`docs/design/ownership.md`): the follow state, the focus line's paths, the caret key's
+//! (`books/dev/src/explanation/design/ownership.md`): the follow state, the focus line's paths, the caret key's
 //! watch and owed work, all reducer state with no application object. A
 //! program is given a copy ([`Facts`]) and applies its own commits to it
 //! with the same function the reducer applies them with ([`apply`]), so
@@ -384,7 +384,7 @@ pub struct FollowState {
     /// The elements of the outpost's older UIA reports, each with its node
     /// and the group it was given, by token, which keep their groups until
     /// the store releases their node, so the outpost hears the changes of
-    /// every node it has not released (`docs/design/ownership.md`).
+    /// every node it has not released (`books/dev/src/explanation/design/ownership.md`).
     pub kept_groups: Vec<(NodeId, Group, u64)>,
     /// The caret key's watch for evidence.
     pub watch: Watch,

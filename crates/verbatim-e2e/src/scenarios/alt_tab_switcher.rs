@@ -14,7 +14,7 @@
 //! the desktop has, so the whole list is read through the agent, from the
 //! switcher's own list, once the switcher is in front and before any of
 //! its speech is asserted. Alt+Tab is what the scenario is about, so it is pressed
-//! (`docs/testing.md`, "The harness does not change what it measures");
+//! (`books/dev/src/reference/testing.md`, "The harness does not change what it measures");
 //! which window it reaches is known because the harness opened both, in
 //! order, after every other window was minimized.
 

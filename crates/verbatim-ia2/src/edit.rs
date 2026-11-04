@@ -20,7 +20,7 @@
 //!
 //! Every message is sent with `SendMessageTimeoutW`, aborting if the
 //! application is hung and waiting at most half a second, and counts as one
-//! window message (`docs/performance.md`); allocating and copying the
+//! window message (`books/dev/src/reference/performance.md`); allocating and copying the
 //! target's memory are calls into the kernel, not into the application,
 //! and are not counted. A password field's text reads as stars, as NVDA
 //! reads it.

@@ -179,16 +179,16 @@ pub struct HookForeground {
     /// Whether the hook may hold keys back for this window: not when its
     /// process has higher integrity than Verbatim's, or either cannot be
     /// read, since Windows drops a key Verbatim sends again to such a
-    /// window (`docs/design/key-holding.md`, "Elevated windows").
+    /// window (`books/dev/src/explanation/design/key-holding.md`, "Elevated windows").
     pub holds_keys: bool,
     /// Whether the focus has text whose caret Verbatim reads, so that the
     /// hook holds its caret keys back while `holds_keys` lets it
-    /// (`docs/design/key-holding.md`).
+    /// (`books/dev/src/explanation/design/key-holding.md`).
     pub focus_has_text: bool,
     /// The thread whose keyboard layout translates the keys typed into
     /// this window, when it is not the thread Windows names as the
     /// window's owner: a console host window's own thread
-    /// (`docs/crates/verbatim-input-windows.md`, "Typed text").
+    /// (`books/dev/src/reference/crates/verbatim-input-windows.md`, "Typed text").
     pub keyboard_thread: Option<u32>,
 }
 
@@ -448,7 +448,7 @@ pub enum NormalizedEvent {
         /// The node whose text changed.
         node_id: NodeId,
     },
-    /// One read of a focused terminal (`docs/design/terminal-model.md`,
+    /// One read of a focused terminal (`books/dev/src/explanation/design/terminal-model.md`,
     /// "Where it runs"): its text, screen and caret, which Core's terminal
     /// model aligns and its reading rules judge. Sent in place of
     /// [`TextChanged`](Self::TextChanged) for a terminal the outpost reads
@@ -782,7 +782,7 @@ pub enum Input {
         pressed_at_ms: u64,
     },
     /// A caret key the keyboard hook held back from the application, as
-    /// NVDA's caret scripts hold theirs (`docs/design/key-holding.md`): the
+    /// NVDA's caret scripts hold theirs (`books/dev/src/explanation/design/key-holding.md`): the
     /// reducer has the focus's outpost read the caret before the key, then
     /// passes the key on ([`Effect::PassHeldKey`]) and watches for its
     /// evidence from that exact caret, as for [`Input::CaretKey`]. The key
@@ -1155,12 +1155,12 @@ pub enum ReviewCommand {
     /// third and later.
     ReportFocus,
     /// Report the status bar: in a terminal, its footer
-    /// (`docs/design/terminal-model.md`, "Features and settings"); spelled
+    /// (`books/dev/src/explanation/design/terminal-model.md`, "Features and settings"); spelled
     /// on the second press in a streak, copied to the clipboard on the
     /// third.
     ReportStatusBar,
     /// Move the review cursor to the previous command mark in a terminal
-    /// and speak its line (`docs/design/terminal-model.md`, "Features and
+    /// and speak its line (`books/dev/src/explanation/design/terminal-model.md`, "Features and
     /// settings").
     PreviousCommandMark,
     /// Move the review cursor to the next command mark in a terminal.
@@ -1170,7 +1170,7 @@ pub enum ReviewCommand {
 /// An event Verbatim indicates at once, outside the speech queue, named
 /// semantically so the active theme decides how it is reported: a sound
 /// played immediately on its own mixer source, words spoken, both, or
-/// nothing (`docs/crates/verbatim-model.md`, "Themes"). Each is an indication of the
+/// nothing (`books/dev/src/reference/crates/verbatim-model.md`, "Themes"). Each is an indication of the
 /// catalogue's Events category ([`crate::Indication::of_earcon`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[non_exhaustive]
@@ -1251,7 +1251,7 @@ pub enum Effect {
     /// key with this trace ID waits for the watch of the key ahead of it,
     /// or for the read of its caret, at most this many milliseconds from
     /// now, when the shell enters [`Input::HeldKeyDue`] with its trace ID.
-    /// A later one replaces it (`docs/design/key-holding.md`, "Keys behind
+    /// A later one replaces it (`books/dev/src/explanation/design/key-holding.md`, "Keys behind
     /// a held key").
     BoundHeldKey(Option<(TraceId, u64)>),
     /// Core gave up on its query `query_id` to `outpost`, which it no longer

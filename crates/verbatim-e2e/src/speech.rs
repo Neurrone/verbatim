@@ -173,7 +173,7 @@ pub fn cut_off(text: &str) -> Expected {
 /// whose presence the application decides by its own timing, accepted at
 /// this place in the sequence heard in full, cut off, whatever cut it
 /// off, or not said at all, and nothing else in its place. Each use is approved
-/// and listed in `docs/testing.md` ("Optional utterances"), and what
+/// and listed in `books/dev/src/reference/testing.md` ("Optional utterances"), and what
 /// became of it is reported with the run ([`OptionalOutcome`]). It must be
 /// followed in the same sequence by an utterance of other text, which
 /// shows that it was not said.
@@ -1368,7 +1368,7 @@ impl SpeechCollector {
     /// Every utterance not yet matched that was queued before Verbatim
     /// reports it has handled the input numbered `after_input` and
     /// everything before it, and is idle, in order: for the one step whose
-    /// speech cannot be known before it runs (`docs/testing.md`, "Exact
+    /// speech cannot be known before it runs (`books/dev/src/reference/testing.md`, "Exact
     /// assertions"). The caller asserts on every one returned; each counts
     /// as matched.
     ///
@@ -1671,7 +1671,7 @@ impl SpeechCollector {
     /// utterances ([`optional`]) may have arrived before the input: the
     /// unmatched utterances may be exactly those, in order, each up to the
     /// times it declares, and are then left for the step's assertion of
-    /// `expected` to match (`docs/testing.md`, "Optional utterances").
+    /// `expected` to match (`books/dev/src/reference/testing.md`, "Optional utterances").
     /// Any other unmatched utterance fails as it does there.
     ///
     /// # Panics
@@ -1778,7 +1778,7 @@ impl SpeechCollector {
     /// most the step timeout, and asserts that the last utterance is
     /// exactly `last`. The utterances before it, said between the step's
     /// input and the exit, are taken unasserted: which come depends on when
-    /// the exit overtakes the application's events (`docs/testing.md`,
+    /// the exit overtakes the application's events (`books/dev/src/reference/testing.md`,
     /// "Exact assertions").
     ///
     /// # Panics

@@ -10,7 +10,7 @@
 //! Two callers install these, with two scopes (decision D13). A per-application
 //! outpost installs its subscriptions with `idProcess` set to the target pid,
 //! so it sees only that application's events, its focus, foreground, menu,
-//! alert, and tooltip events included (`docs/design/focus-pipeline.md`,
+//! alert, and tooltip events included (`books/dev/src/explanation/design/focus-pipeline.md`,
 //! section 12.4). The focus listener installs its subscriptions with
 //! `idProcess` zero, so it sees those events across the whole desktop, reads
 //! the owning pid from each with a hang-safe local call, and forwards a fact
@@ -128,7 +128,7 @@ pub enum WinEventKind {
     /// `idChild` the cell, its column in the low word and its row in the
     /// high. The console host raises it on its cursor's blink timer, about
     /// every half second, when the cursor has moved since the last, and at
-    /// once for a selection's move (`docs/crates/verbatim-outpost.md`,
+    /// once for a selection's move (`books/dev/src/reference/crates/verbatim-outpost.md`,
     /// "Terminals").
     ConsoleCaret,
 }
@@ -179,7 +179,7 @@ const SUBSCRIPTIONS: [(u32, WinEventKind); 24] = [
 /// The per-application outpost's subscription set (decision D13): the
 /// process-scoped focus, foreground, menu opening, alert, and tooltip
 /// events, so every MSAA event of the application reaches its outpost by
-/// one route in the order Windows raised it (`docs/design/focus-pipeline.md`,
+/// one route in the order Windows raised it (`books/dev/src/explanation/design/focus-pipeline.md`,
 /// section 12.4); the name, description, value, state, and selection
 /// events; the caret and text selection (milestone M4); object destruction
 /// (for windows going away). The end
@@ -233,7 +233,7 @@ pub const LISTENER_SUBSCRIPTIONS: &[WinEventKind] = &[
 /// `thread`, and `time`, so two hooks' copies of one event are told apart
 /// from other events by these alone, except from an identical event raised
 /// by the same thread within the same tick of the clock
-/// (`docs/design/focus-pipeline.md`, section 12.4, "The MSAA hand-over,
+/// (`books/dev/src/explanation/design/focus-pipeline.md`, section 12.4, "The MSAA hand-over,
 /// exactly").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct WinEvent {

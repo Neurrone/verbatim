@@ -11,7 +11,7 @@
 //! node, as an [`Agile<Kept>`]: an apartment-agile reference whose cache is
 //! read only as the [`Kept`] shape, which every shape whose elements are
 //! kept covers, so a reader knows what it may read whichever request filled
-//! the element (`docs/design/uia-shapes.md`, section 6). A reader that
+//! the element (`books/dev/src/explanation/design/uia-shapes.md`, section 6). A reader that
 //! needs more refreshes the element into a declared shape. NVDA never
 //! re-finds an element: it holds the live element on its `NVDAObject`.
 //! Caching here gives the same property: object navigation and node
@@ -23,7 +23,7 @@
 //!
 //! Nodes stay until the outpost releases them ([`NodeIdRegistry::retain`]),
 //! which it does for every node Core no longer holds
-//! (`docs/crates/verbatim-outpost.md`, held objects). A walk issues and
+//! (`books/dev/src/reference/crates/verbatim-outpost.md`, held objects). A walk issues and
 //! looks up nodes through [`Interning`], which the outpost's object store
 //! implements to tag each with the request that named it; the registry
 //! implements it too, untagged, for a reader with no store. Unlike the MSAA registry, nodes are not dropped when

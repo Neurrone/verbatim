@@ -1,4 +1,4 @@
-//! The caret key's watch (`docs/design/key-holding.md`): the outpost's open
+//! The caret key's watch (`books/dev/src/explanation/design/key-holding.md`): the outpost's open
 //! check for a key's evidence, held as one state. The reducer alone decides
 //! its times, on the run's shared clock; each program's copy applies the
 //! same transitions with no clock, its times left at zero, since no
@@ -57,7 +57,7 @@ pub enum Watch {
         /// When it ends without evidence.
         bound: u64,
     },
-    /// The console host's poll (`docs/design/key-holding.md`, "The console
+    /// The console host's poll (`books/dev/src/explanation/design/key-holding.md`, "The console
     /// host's caret poll"): a read due at `next`, the last at `until`.
     Polling {
         /// The watch.

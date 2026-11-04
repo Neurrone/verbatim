@@ -1,6 +1,6 @@
 //! A terminal Core reads, for the tests and measurements of Core's terminal
 //! model: the simulated terminal (`verbatim-term-sim`) read as the outpost
-//! reads a real one once it reads for Core (`docs/design/terminal-model.md`,
+//! reads a real one once it reads for Core (`books/dev/src/explanation/design/terminal-model.md`,
 //! "Where it runs"), and a reducer driven with its snapshots, answering
 //! Core's requests for reads, history, colours and the screen's shape, and
 //! playing the speech Core queues by reaching each utterance's marks.

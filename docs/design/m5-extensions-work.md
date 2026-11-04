@@ -10,7 +10,7 @@ Each step is reviewed as `REVIEW.md` says: one adversarial review of the step's 
 
 ### Step 0: M4.4, the precondition
 
-The roadmap places M4.4 (message types in their final home) before M5 because the extension API exposes events and commands. It is done: the messages are `verbatim_model::protocol`'s ([the messages build](ownership.md)), so the WIT event types and the rule tables are defined against the types in their final home.
+The roadmap places M4.4 (message types in their final home) before M5 because the extension API exposes events and commands. It is done: the messages are `verbatim_model::protocol`'s ([the messages build](../../books/dev/src/explanation/design/ownership.md)), so the WIT event types and the rule tables are defined against the types in their final home.
 
 ### Step 0b: the design restated against the outpost's reducer
 
@@ -88,7 +88,7 @@ Tests: those of `windows-terminal-twin-focus.md`, "The judge", including that th
 
 ### Step 10: documents
 
-What: the developer guide under `docs/extensions/` (planned): writing a module, the manifest and rule reference, the API reference generated from the WIT, the Rust workflow and its tests, hot reload and the developer folder, packaging a `.vext`; crate documents for `verbatim-ext` and `verbatim-ext-api`; glossary entries; D6 amended with the runtime decision and the ratification measurements; CLAUDE.md's coding standards amended for the two named-target exceptions (`wasm32-unknown-unknown` for guests, `i686-pc-windows-msvc` for the x86 host in M6); the roadmap's M5 bullet about the Wasm synthesizer moved to M6, the M9 entry reduced by the viewer, and the M5 entry closed into `roadmap-done.md`.
+What: the developer guide in the Extensions guide, `books/extensions/`: writing a module, the manifest and rule reference, the API reference generated from the WIT, the Rust workflow and its tests, hot reload and the developer folder, packaging a `.vext`; crate documents for `verbatim-ext` and `verbatim-ext-api`; glossary entries; D6 amended with the runtime decision and the ratification measurements; CLAUDE.md's coding standards amended for the two named-target exceptions (`wasm32-unknown-unknown` for guests, `i686-pc-windows-msvc` for the x86 host in M6); the roadmap's M5 bullet about the Wasm synthesizer moved to M6, the M9 entry reduced by the viewer, and the M5 entry closed into `roadmap-done.md`.
 
 ## Hot reload for built-ins, stated once
 

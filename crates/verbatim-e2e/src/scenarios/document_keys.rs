@@ -1,6 +1,6 @@
 //! Caret, selection and deleting keys whose words depend on the whole
 //! document, each in the Windows Forms text box (`text_box_`) and in
-//! Windows 11 Notepad (`notepad_`), each its own code, as `docs/testing.md`
+//! Windows 11 Notepad (`notepad_`), each its own code, as `books/dev/src/reference/testing.md`
 //! requires: Control+A, Shift with Page Down and Page Up, Shift with
 //! Control+End and Control+Home, and Backspace over the first two lines,
 //! on a document of two lines (`*_document_keys`), with, in Notepad, the

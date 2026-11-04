@@ -1,4 +1,4 @@
-//! `docs/uia-bugs.md`, "A hung window named in a system focus event holds a
+//! `books/dev/src/reference/uia-bugs.md`, "A hung window named in a system focus event holds a
 //! process's UIA events": the case under "Not affected" from E-delivery,
 //! that a server-side provider held while raising its own event holds only
 //! its own events. No test reproduces the hold itself; the entry says why.

@@ -6,7 +6,7 @@
 //! to its fragment root (`IRawElementProviderAdviseEvents`), and closes
 //! its pipe. mockapp keeps running and answers another client afterwards.
 //! While a read is held, a ping is still answered: the outpost's I/O
-//! thread writes the pong itself (`docs/design/communication.md`, section
+//! thread writes the pong itself (`books/dev/src/explanation/design/communication.md`, section
 //! 6.8), so a worker stuck in a call never makes the outpost look dead.
 //!
 //! mockapp's `hold` command holds the read: the provider call it makes

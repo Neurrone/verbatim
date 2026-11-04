@@ -1,4 +1,4 @@
-//! The reducer's thread and its shell (`docs/design/ownership.md`): the mailbox every producer appends to,
+//! The reducer's thread and its shell (`books/dev/src/explanation/design/ownership.md`): the mailbox every producer appends to,
 //! the thread that drains it into the reducer ([`super::reducer`]) and
 //! applies the reducer's effects, the reducer's timers in its timed wait,
 //! the queries' reply tokens, and the worker generations.

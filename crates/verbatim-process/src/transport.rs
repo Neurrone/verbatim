@@ -1,5 +1,5 @@
 //! The transport for the pipes between verbatim.exe and its outposts,
-//! listener and synthesizer hosts (`docs/design/communication.md`, section
+//! listener and synthesizer hosts (`books/dev/src/explanation/design/communication.md`, section
 //! 4): how a message is framed, how a thread reads an overlapped end,
 //! blocking ([`BlockingReader`]), through a completion port
 //! ([`PortReader`]), or by waiting on its event with others
@@ -55,7 +55,7 @@ pub const MAX_FRAME_BYTES: usize = 32 * 1024 * 1024;
 
 /// The buffer of an event pipe in the direction its data flows, so a focus
 /// read with its ancestors, or a reply with a line of text, completes its
-/// write at once (`docs/design/communication.md`, section 4.1).
+/// write at once (`books/dev/src/explanation/design/communication.md`, section 4.1).
 pub const EVENT_PIPE_BUFFER: u32 = 64 * 1024;
 
 /// What a header starts with, what starts its raw section's line, what
@@ -552,7 +552,7 @@ const READS_PER_TURN: usize = 16;
 
 /// An overlapped end read through a completion port by the thread serving
 /// the port, one read in flight, each frame's parts handed out whole and in
-/// order (`docs/design/communication.md`, sections 4.1 and 4.8). A read
+/// order (`books/dev/src/explanation/design/communication.md`, sections 4.1 and 4.8). A read
 /// asks for the pipe's buffer while the next frame's length is unknown, and
 /// for the whole rest of a frame once it is known, so a large frame is read
 /// in one read into a buffer of its size, however the pipe driver splits
@@ -744,7 +744,7 @@ fn frame_bounds(bytes: &[u8]) -> io::Result<Option<(usize, Lengths)>> {
 /// with other events ([`crate::event::wait_any`]), one read in flight, each
 /// frame's parts handed out whole and in order: how the synth thread reads
 /// its host's frames, and a synthesizer host Core's commands
-/// (`docs/design/communication.md`, sections 7.3 and 7.4). As a
+/// (`books/dev/src/explanation/design/communication.md`, sections 7.3 and 7.4). As a
 /// [`PortReader`] does, a read asks for `read_size` bytes while the next
 /// frame's length is unknown and for the whole rest of a frame once it is
 /// known; the end of the pipe between frames ends the reading, and inside a
@@ -882,7 +882,7 @@ impl Drop for EventReader {
 /// for each write's completion, or on its event together with other
 /// events ([`crate::event::wait_any`]): a synthesizer host's paced writes
 /// to Core, and the synth thread's commands to its host
-/// (`docs/design/communication.md`, sections 4.3 and 7). A write once
+/// (`books/dev/src/explanation/design/communication.md`, sections 4.3 and 7). A write once
 /// started is always finished: nothing here cancels one, and a writer
 /// dropped with a write in flight leaves its memory to the kernel rather
 /// than free it, as [`PipeIo`] does.
@@ -1422,7 +1422,7 @@ pub enum Served {
     CommandsEnded,
 }
 
-/// A child's side of its two pipes (`docs/design/communication.md`,
+/// A child's side of its two pipes (`books/dev/src/explanation/design/communication.md`,
 /// sections 4.6 and 6.3 to 6.4): one I/O thread, waiting only on a
 /// completion port, reads verbatim.exe's commands and finishes the writes
 /// to verbatim.exe that pended, while every thread that produces a message
@@ -1515,7 +1515,7 @@ impl ChildIo {
     /// Waits, serving the port, until `sender`, which the caller has
     /// closed, has written everything and closed its pipe: a child never
     /// exits with a write in flight, since its exit would cancel the write
-    /// and cut the frame (`docs/design/communication.md`, section 4.6).
+    /// and cut the frame (`books/dev/src/explanation/design/communication.md`, section 4.6).
     /// Commands read meanwhile are not handed out. The wait is for the
     /// completions alone; verbatim.exe's time limit for the shutdown bounds
     /// it.

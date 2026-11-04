@@ -1,6 +1,6 @@
 //! The focus listener's judging and reading of each UIA focus event, from
 //! the event's own element, on a thread for the element's application
-//! (`docs/design/focus-pipeline.md`, section 12; decision D13 as amended
+//! (`books/dev/src/explanation/design/focus-pipeline.md`, section 12; decision D13 as amended
 //! on 2026-10-11).
 //!
 //! A UIA element cannot be handed from the process that received its event
@@ -14,7 +14,7 @@
 //!
 //! - NVDA's focus handler's checks, in its order, before anything of the
 //!   sender is read (`FocusReader::judge_before_reading`;
-//!   `docs/design/focus-pipeline.md`, section 18): a sender whose cached
+//!   `books/dev/src/explanation/design/focus-pipeline.md`, section 18): a sender whose cached
 //!   window the system reports hung is dropped; one whose nearest window's
 //!   class is on NVDA's MSAA class list, or that has none, is not native
 //!   and is dropped, the window's verdict otherwise being its outpost's
@@ -32,10 +32,10 @@
 //!   window and without the native check. NVDA's duplicate test is not
 //!   made: a focus that passes the other checks is read in full, and Core,
 //!   which holds the focus, judges a repeat
-//!   (`docs/design/ownership.md`);
+//!   (`books/dev/src/explanation/design/ownership.md`);
 //! - then the classic read, every call on an element the listener holds,
 //!   with no connection to any window and no remote operation
-//!   (`docs/design/listener-without-connections.md`, sections 2 and 3):
+//!   (`books/dev/src/explanation/design/listener-without-connections.md`, sections 2 and 3):
 //!   when the sender has the runtime id of the focus the thread read
 //!   before, whether that earlier element still has the keyboard focus,
 //!   the evidence that the runtime id still names it; then the sender's
@@ -75,7 +75,7 @@
 //!
 //! Each application's read under way is its work in flight in the
 //! schedule (`verbatim_reader_rules::in_flight`,
-//! `docs/crates/verbatim-reader-rules.md`), which abandons a thread whose read runs past
+//! `books/dev/src/reference/crates/verbatim-reader-rules.md`), which abandons a thread whose read runs past
 //! [`READ_DEADLINE`], the budget and the one call that can be under way
 //! when the budget passes, and, as NVDA's watchdog cancels a slow call
 //! once the user has moved on (`docs/nvda/main-loop-and-watchdog.md`,
@@ -109,7 +109,7 @@
 //! as its application has an outpost: it ends, once it has read every event
 //! waiting, when the listener learns that the application's outpost has
 //! ended ([`Readers::outpost_ended`]), and at the listener's shutdown
-//! (`docs/design/focus-pipeline.md`, section 16.6). An event that arrives
+//! (`books/dev/src/explanation/design/focus-pipeline.md`, section 16.6). An event that arrives
 //! after that, for an application still running, starts a new thread.
 
 use std::cell::Cell;
@@ -167,7 +167,7 @@ const MAX_ANCESTORS: u32 = 64;
 /// observation, for a focus in the top-level window of the focus before
 /// it, before the read makes no more calls into the application: asked
 /// before each call after the first, each of which UIA ends after its
-/// transaction timeout (`docs/design/listener-without-connections.md`,
+/// transaction timeout (`books/dev/src/explanation/design/listener-without-connections.md`,
 /// section 5). A read of an application that answers takes milliseconds
 /// (section 10, step 6), so only a slow application meets it, and its
 /// focus is then reported with what was read by then, the windows not
@@ -195,7 +195,7 @@ const READ_BUDGET: Duration = Duration::from_secs(2);
 ///
 /// It does
 /// not bound the call under way: the transaction timeout bounds each
-/// provider call, not a UIA operation (`docs/uia-bugs.md`, "A timeout
+/// provider call, not a UIA operation (`books/dev/src/reference/uia-bugs.md`, "A timeout
 /// bounds each request and window message, not an operation"), so one
 /// operation that
 /// makes several provider calls, as the nearest-window lookup's
@@ -606,7 +606,7 @@ fn skipped_by_class(classes: &WindowClasses, forced_uia: bool) -> bool {
 /// The focus a reading thread read last: the evidence that a runtime id
 /// now names another element (`same_as_last`), where the ancestor read
 /// stops, and, while it is current, what a menu opening is compared with
-/// (`docs/design/ownership.md`). It is the
+/// (`books/dev/src/explanation/design/ownership.md`). It is the
 /// thread's own fact: no judgement of Core's is kept, so a focus Core
 /// refused can be the last read, and Core decides what is spoken.
 struct LastFocus {
@@ -669,7 +669,7 @@ impl FocusReader {
     /// A reader with a UIA client of its own, made on the calling thread,
     /// which joins COM's multithreaded apartment. Every read is the classic
     /// walk, which makes no remote operation
-    /// (`docs/design/listener-without-connections.md`, section 2).
+    /// (`books/dev/src/explanation/design/listener-without-connections.md`, section 2).
     ///
     /// # Errors
     ///
@@ -913,7 +913,7 @@ impl FocusReader {
                 // order (step 6), unless the checks made it already; its
                 // nearest window was found for NVDA's native check, so the
                 // read does not ask it again
-                // (`docs/design/listener-without-connections.md`, section 3,
+                // (`books/dev/src/explanation/design/listener-without-connections.md`, section 3,
                 // step 8).
                 let query = FocusQuery {
                     element: &input,
@@ -1200,7 +1200,7 @@ impl FocusReader {
     /// `runtime_id`, is read: a port of NVDA's focus handler,
     /// `IUIAutomationFocusChangedEventHandler_HandleFocusChangedEvent`
     /// (`UIAHandler/__init__.py` 874 to 958), step by step in its order
-    /// (`docs/design/focus-pipeline.md`, section 18). Answers the window
+    /// (`books/dev/src/explanation/design/focus-pipeline.md`, section 18). Answers the window
     /// the focus is judged with, the sender's nearest window unless a menu
     /// opening is redirected, or why the event is dropped.
     ///
@@ -1213,12 +1213,12 @@ impl FocusReader {
     /// check. The current focus is this reading thread's own last read while
     /// that read is current for the opening, `queue`: nothing moved away
     /// from the application since that read's event was queued
-    /// ([`QueuePlace::current_since`]; `docs/design/ownership.md`). Its drop while a focus is pending is made as it
+    /// ([`QueuePlace::current_since`]; `books/dev/src/explanation/design/ownership.md`). Its drop while a focus is pending is made as it
     /// arrives (`Readers::focus_pending`).
     ///
     /// NVDA's duplicate test (step 3) is not made here: a focus that passes
     /// the other checks is read in full, and Core, which holds the focus,
-    /// judges whether it repeats it (`docs/design/ownership.md`).
+    /// judges whether it repeats it (`books/dev/src/explanation/design/ownership.md`).
     ///
     /// The read's time, `budget`, is asked before each call after the
     /// first. Once it is up, a focus whose window's verdict is known is
@@ -1227,7 +1227,7 @@ impl FocusReader {
     /// (`NVDAObjects/UIA/__init__.py`) that needs no call into the
     /// application is made, and one that needs a call is skipped and lets
     /// focus through, as NVDA lets it through when such a read fails
-    /// (`docs/design/listener-without-connections.md`, section 5). Made:
+    /// (`books/dev/src/explanation/design/listener-without-connections.md`, section 5). Made:
     /// the hung window (step 1), from the event's cached window; the native
     /// check (step 2), its window's class alone, with no call
     /// ([`native_window`](Self::native_window)); the acceptance test and
@@ -1352,7 +1352,7 @@ impl FocusReader {
         // through. It is a plain read, not one inside a remote operation,
         // because Windows Terminal's second identity of its terminal
         // answers the two differently, and only the plain read drops it as
-        // NVDA does (`docs/design/focus-pipeline.md`, section 16.8). The
+        // NVDA does (`books/dev/src/explanation/design/focus-pipeline.md`, section 16.8). The
         // sender's is made by the read's classic walk
         // (`FocusQuery::require_focus`), after the keyboard focus of the
         // element held under the same runtime id, as NVDA reads its last
@@ -1362,7 +1362,7 @@ impl FocusReader {
         // keep-id evidence, read in NVDA's order"); the walk makes it once,
         // since a focus that moves on while it is read is followed by the
         // focus event of where it went
-        // (`docs/design/listener-without-connections.md`, section 3, step
+        // (`books/dev/src/explanation/design/listener-without-connections.md`, section 3, step
         // 8).
         //
         // Out of time, the live read is not made, and the sender's keyboard
@@ -1456,7 +1456,7 @@ impl FocusReader {
         Ok(nearest)
     }
 
-    /// Logs, at debug, what section 16.3 of `docs/design/focus-pipeline.md`
+    /// Logs, at debug, what section 16.3 of `books/dev/src/explanation/design/focus-pipeline.md`
     /// asks to see of each read: the sender's runtime id, class name,
     /// framework, and own native window handle, `hwnd`, and, for a menu
     /// opening compared with the thread's current last read, whether UI
@@ -1483,7 +1483,7 @@ impl FocusReader {
 }
 
 /// Logs, at debug, each of a focus's ancestor facts, nearest first, with
-/// the read that produced them (`docs/design/focus-pipeline.md`, section
+/// the read that produced them (`books/dev/src/explanation/design/focus-pipeline.md`, section
 /// 16.4: where a console window element is lost).
 fn log_ancestor_facts(path: &str, facts: &[UiaAncestorFact]) {
     for fact in facts {
@@ -1645,7 +1645,7 @@ struct Shared<R: Reading> {
     /// The watchdog's alarm: its timer set, under the readers' lock, as the
     /// schedule says, to the soonest time anything is due, which wakes no
     /// thread, and cancelled once nothing is; its event set at the
-    /// shutdown (`docs/design/wake-ups.md`, item 3).
+    /// shutdown (`books/dev/src/explanation/design/wake-ups.md`, item 3).
     alarm: Alarm,
     /// The failed cached reads the reading threads have made
     /// (`verbatim_uia::calls`).
@@ -1966,7 +1966,7 @@ impl<R: Reading> Readers<R> {
     /// Runs `waiter` once no event queued before this call is waiting for
     /// its read or being read, at once if none is, under the readers'
     /// lock, behind the outcome of every one of them: the idle barrier's
-    /// answer goes behind them (`docs/design/communication.md`, section
+    /// answer goes behind them (`books/dev/src/explanation/design/communication.md`, section
     /// 6.7). Events queued after this call are not waited for. Never waits
     /// on a read. Once the readers are stopping, `waiter` is dropped unrun.
     pub(crate) fn when_idle(&self, waiter: IdleWaiter) {
@@ -3567,7 +3567,7 @@ mod tests {
     }
 
     /// Found by the read scheduler's generated test
-    /// (`docs/crates/verbatim-listener-logic.md`): a tick
+    /// (`books/dev/src/reference/crates/verbatim-listener-logic.md`): a tick
     /// abandons two applications' reads, the first with an event waiting,
     /// whose new thread cannot start. The failed start is stepped once the
     /// tick's effects are applied, so the second application's drop is sent

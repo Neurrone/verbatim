@@ -1,7 +1,7 @@
 # Manual-dispatch-only smoke test: does GitHub's larger Windows runner tier
 # actually support nested virtualization at all? This is the empirical
 # question that decides whether running the milestone M2 Hyper-V harness
-# (docs/architecture.md section 14, decision D3) in CI is even worth
+# (books/dev/src/explanation/architecture.md section 14, decision D3) in CI is even worth
 # investigating further, before this project spends any real design effort
 # depending on it.
 #

@@ -84,7 +84,7 @@ pub fn console_reports_formatting(hwnd: isize) -> Option<bool> {
 
 /// [`console_reports_formatting`] from an element of the console the caller
 /// already holds, with no connection to its window
-/// (`docs/design/listener-without-connections.md`, section 3, step 5): the
+/// (`books/dev/src/explanation/design/listener-without-connections.md`, section 3, step 5): the
 /// focus listener's check, from an event's sender, `sender`. The sender is
 /// the console's text area, when `automation_id`, its cached automation id,
 /// is "Text Area", whose Text pattern its cache holds; else the console

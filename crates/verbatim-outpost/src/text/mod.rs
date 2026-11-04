@@ -1,5 +1,5 @@
 //! The outpost's side of the text protocol (milestone M4,
-//! `docs/crates/verbatim-model.md`, "The text protocol").
+//! `books/dev/src/reference/crates/verbatim-model.md`, "The text protocol").
 //!
 //! [`perform`] carries out one [`TextOp`] on a [`TextSource`], the
 //! backend-neutral view of one node's text: UIA's `TextPattern`
@@ -580,7 +580,7 @@ pub trait CaretSignal {
 /// the result, or, when the caller asked for the cut and the comparison
 /// needs to know, what the read found, for [`finish_report`] or
 /// [`finish_answer`] to finish once the caller knows
-/// (`docs/design/ownership.md`).
+/// (`books/dev/src/explanation/design/ownership.md`).
 #[derive(Debug)]
 pub(crate) enum Checked<T, C> {
     /// The read's result.

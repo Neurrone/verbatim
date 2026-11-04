@@ -281,7 +281,7 @@ pub(super) fn window_uses_uia(context: &RequestContext<'_>, hwnd: isize) -> bool
 /// Whether the outpost's application serves window `hwnd`, by the
 /// window's provider process, read locally ([`served_by`]). An outpost
 /// connects to, probes, and walks up into only such windows
-/// (`docs/design/listener-without-connections.md`, section 4.3).
+/// (`books/dev/src/explanation/design/listener-without-connections.md`, section 4.3).
 pub(super) fn serves(context: &Context, hwnd: isize) -> bool {
     served_by(hwnd, context.target_pid())
 }
@@ -289,7 +289,7 @@ pub(super) fn serves(context: &Context, hwnd: isize) -> bool {
 /// [`window_uses_uia`] for a window of the outpost's own application;
 /// `false`, without a probe, for any other process's window, which the
 /// outpost reads through MSAA whether it has a provider or not
-/// (`docs/design/listener-without-connections.md`, sections 4.3 and 4.4).
+/// (`books/dev/src/explanation/design/listener-without-connections.md`, sections 4.3 and 4.4).
 fn own_window_uses_uia(context: &RequestContext<'_>, hwnd: isize) -> bool {
     serves(context, hwnd) && window_uses_uia(context, hwnd)
 }
@@ -1060,7 +1060,7 @@ fn uia_remote_enrichment(
     }
     // A window's own element read inside the provider can lack what the
     // client side's window proxy gives it, its handle and title among them
-    // (`docs/uia-bugs.md`, "Inside a remote operation, conhost's window has
+    // (`books/dev/src/reference/uia-bugs.md`, "Inside a remote operation, conhost's window has
     // no handle or title"): such an ancestor of this application's is read
     // again through the proxy, one call, as the listener's classic walk
     // reads every ancestor.
@@ -1398,7 +1398,7 @@ pub(super) type DialogMemo = Option<(NodeId, Option<String>)>;
 /// already inside, a superset of Core's line, is given the text that
 /// report carried for it, with no call, so Core, which speaks it only when
 /// its own line enters the dialog, always has it
-/// (`docs/design/ownership.md`).
+/// (`books/dev/src/explanation/design/ownership.md`).
 ///
 /// `memo` is taken: a dialog it names is given its text without reading it
 /// again. With `remember`, the last text read is kept in it for the next
@@ -1526,7 +1526,7 @@ fn dialog_text_of(context: &RequestContext<'_>, node: &NodeSnapshot) -> Option<S
 /// a console window is its console host's), or is on Core's hidden frame,
 /// so the focused element is never read in another application, whose
 /// window this outpost would connect to
-/// (`docs/design/listener-without-connections.md`, section 4.3); and when
+/// (`books/dev/src/explanation/design/listener-without-connections.md`, section 4.3); and when
 /// the focus window is no longer a window. A focus window stood in for by
 /// a ghost window, or hung (`verbatim_win32::window::event_window_unreadable`, local calls), is
 /// answered as a plain window, with the plain windows above it, and nothing
@@ -2184,7 +2184,7 @@ fn corrected_backend(
         return neighbor;
     };
     // Another process's window is kept as read: the outpost makes no
-    // connection to it (`docs/design/listener-without-connections.md`,
+    // connection to it (`books/dev/src/explanation/design/listener-without-connections.md`,
     // section 4.3).
     if window == 0 || window == from_window || !own_window_uses_uia(context, window) {
         return neighbor;

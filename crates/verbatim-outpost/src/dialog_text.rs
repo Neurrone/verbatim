@@ -215,7 +215,7 @@ fn text_of<O: DialogObject>(child: &O, role: Role, name: Option<String>) -> Opti
 /// A UI Automation dialog whose text is gathered: nothing of its own
 /// element is read, only its children, each read as a
 /// [`verbatim_uia::DialogText`] (Dickson, 2026-10-13, decision 5 of
-/// `docs/design/uia-shapes.md`).
+/// `books/dev/src/explanation/design/uia-shapes.md`).
 pub struct UiaDialog<'a> {
     uia: &'a Uia,
     request: &'a Request<DialogText>,

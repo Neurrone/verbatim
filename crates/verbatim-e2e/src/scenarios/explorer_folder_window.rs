@@ -26,7 +26,7 @@
 //! opening in run 39603654902; in none of 5 local runs of this scenario,
 //! though other File Explorer runs have met it on a development machine.
 //! Whether it comes depends on how quickly the machine loads the folder,
-//! so it is an optional utterance (`docs/testing.md`, "Optional
+//! so it is an optional utterance (`books/dev/src/reference/testing.md`, "Optional
 //! utterances", approved by Dickson for Enter on 2026-10-17 and for
 //! Backspace and the opening on 2026-10-21) rather than an expectation
 //! that depends on the machine: heard in full, cut off by the item's

@@ -1,5 +1,5 @@
 //! The count of cross-process calls this crate makes, per thread
-//! (`docs/performance.md`, "What counts as a call").
+//! (`books/dev/src/reference/performance.md`, "What counts as a call").
 //!
 //! A call counts when it reaches the application's process: a UIA client
 //! method that the application's provider answers, such as
@@ -27,7 +27,7 @@
 //! Beside the calls, each thread counts its failed cached reads: a
 //! `Cached*` read that UIA answers with a failure, which it does for a
 //! property or pattern the element's cache request did not hold, raising
-//! and reporting an error inside itself (`docs/design/uia-shapes.md`,
+//! and reporting an error inside itself (`books/dev/src/explanation/design/uia-shapes.md`,
 //! section 3.6). A failed read is not a call, so it is counted apart from
 //! [`CallCounts`], and kept in every build profile. Its readers gather it
 //! per thread into counters they own: a [`Registration`] for UIA's
@@ -37,7 +37,7 @@
 //! window by its handle (`ElementFromHandle`, `ElementFromHandleBuildCache`,
 //! `GetFocusedElementBuildCache`), in
 //! [`CallCounts::connections`], which the focus listener must keep at zero
-//! (`docs/design/listener-without-connections.md`, section 2).
+//! (`books/dev/src/explanation/design/listener-without-connections.md`, section 2).
 //!
 //! [`Registration`]: crate::Registration
 

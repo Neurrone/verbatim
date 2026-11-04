@@ -871,7 +871,7 @@ pub fn typing_echo_name(mode: verbatim_model::TypingEcho) -> String {
 /// digits have none, or when `character` is more than one code point. The
 /// table is the `character-name-` messages of each locale's Fluent file,
 /// keyed by code point, so another language's names are data, not code
-/// (`docs/crates/verbatim-i18n.md`).
+/// (`books/dev/src/reference/crates/verbatim-i18n.md`).
 #[must_use]
 pub fn character_name(character: &str, language: Option<&str>) -> Option<String> {
     let code = single_code_point(character)?;

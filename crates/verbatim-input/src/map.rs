@@ -20,7 +20,7 @@ use verbatim_model::GestureId;
 /// what the application did with it. Some observed gestures are held
 /// ([`GestureMap::holds`]): while Core's view lets keys be held, their key
 /// is held back for its caret to be read and sent again
-/// (`docs/design/key-holding.md`). Identifiers are already normalized by
+/// (`books/dev/src/explanation/design/key-holding.md`). Identifiers are already normalized by
 /// [`GestureId`], so lookup is order- and case-insensitive.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct GestureMap {

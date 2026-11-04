@@ -1,6 +1,6 @@
 //! The review cursor over an editor's text (milestone M4 item 5), as
 //! `text_box_review_cursor` in the Windows Forms text box and as
-//! `notepad_review_cursor` in Windows 11 Notepad (each its own code, as `docs/testing.md` requires): reading
+//! `notepad_review_cursor` in Windows 11 Notepad (each its own code, as `books/dev/src/reference/testing.md` requires): reading
 //! the current line, word, and character without moving the caret, moving
 //! by line, word, and character, the line's ends (the end being its line
 //! break, named as NVDA names it) and the text's top and
@@ -231,7 +231,7 @@ pub(crate) fn text_box_body(scenario: &mut Scenario, _state: &mut ScenarioState)
     review(scenario, "kb:verbatim+f10", "N selected");
     // Right Arrow just after the selection the copy's first press made is
     // judged from where the selection left the caret, read before the key
-    // is passed on (`docs/design/key-holding.md`): the character after
+    // is passed on (`books/dev/src/explanation/design/key-holding.md`): the character after
     // the selection, then the selection removed, as NVDA says them
     // (captured 2026-10-22, NVDA alpha-58022,732d1ce2).
     scenario
@@ -391,7 +391,7 @@ pub(crate) fn notepad_body(scenario: &mut Scenario, _state: &mut ScenarioState) 
     review(scenario, "kb:verbatim+f10", "N selected");
     // Right Arrow just after the selection the copy's first press made is
     // judged from where the selection left the caret, read before the key
-    // is passed on (`docs/design/key-holding.md`): the character after
+    // is passed on (`books/dev/src/explanation/design/key-holding.md`): the character after
     // the selection, then the selection removed, as NVDA says them
     // (captured 2026-10-22, NVDA alpha-58022,732d1ce2).
     scenario

@@ -3,7 +3,7 @@
 //! the `demo_terminal_session` demonstration shows beyond the other
 //! terminal scenarios, as `windows_terminal_editing` in Windows Terminal
 //! and `conhost_editing` in the console host, each its own code
-//! (`docs/testing.md`). The shared setup is described in the `terminal`
+//! (`books/dev/src/reference/testing.md`). The shared setup is described in the `terminal`
 //! module.
 //!
 //! What it asserts, each step heard in full before the next:

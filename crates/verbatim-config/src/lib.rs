@@ -198,7 +198,7 @@ pub struct SpeechConfig {
 }
 
 /// The theme in use and the settings that go with it, the `[theme]`
-/// section of `settings.toml` (`docs/crates/verbatim-config.md`, "Themes"):
+/// section of `settings.toml` (`books/dev/src/reference/crates/verbatim-config.md`, "Themes"):
 /// the id of a theme in the `themes` folder, or
 /// `default` for the built-in default theme, plus the sound volume and the
 /// say-all and learning checkboxes, which are ordinary settings.

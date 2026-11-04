@@ -71,7 +71,7 @@ Each has its record: one reading thread per application (D9, D13); the 2-second 
 ## Records to correct
 
 - `docs/parity/backends.md`: NVDA's timed-out probe as "no provider" holds only on NVDA's main thread; the focused-state test does not match "ancestors included".
-- `docs/design/listener-without-connections.md`: an application answering in 2 to 20 seconds is not always "spoken earlier and with less"; a windowless focus with no kept verdict is not spoken at all.
+- `books/dev/src/explanation/design/listener-without-connections.md`: an application answering in 2 to 20 seconds is not always "spoken earlier and with less"; a windowless focus with no kept verdict is not spoken at all.
 - `docs/parity/focus-events.md`: "A slow read the user has moved on from" rests on a claim NVDA's source contradicts for MSAA; "When speech is cut off" states NVDA's rule as any new top-level window.
 - `docs/parity/focus-context.md`: the shell's foreground filter is ported (since 13dcd2db); NVDA's MSAA equality weighs role and name only after window, identity and location; the role exclusions for presentability are not all carried.
 - `docs/parity/backends.md` and the listener design: the MSAA and listener budgets leave a new window unannounced until the next focus, which neither states.

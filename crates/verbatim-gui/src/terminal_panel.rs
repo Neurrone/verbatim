@@ -1,4 +1,4 @@
-//! The settings dialog's Terminal page (`docs/crates/verbatim-gui.md`;
+//! The settings dialog's Terminal page (`books/dev/src/reference/crates/verbatim-gui.md`;
 //! `docs/parity/system.md`, "The terminal settings"): its model, pure apart from the
 //! [`TerminalHost`] it reads and changes the settings through.
 //!

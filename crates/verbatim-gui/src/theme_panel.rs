@@ -1,4 +1,4 @@
-//! The settings dialog's Theme page (`docs/crates/verbatim-gui.md`): its
+//! The settings dialog's Theme page (`books/dev/src/reference/crates/verbatim-gui.md`): its
 //! model, pure apart from the theme files and the
 //! [`ThemeHost`] it makes changes live through.
 //!

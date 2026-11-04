@@ -4,7 +4,7 @@ This is the design for "The UIA facts build" in `docs/roadmap.md`, the one docum
 
 ## Scope
 
-Every fact of `docs/uia-bugs.md` and every claim of `docs/explainers/uia.md` gets a reproduction, the ones behind workarounds, internal details and statistics included, and so do the explainer's open questions and inferences. These are excluded by Dickson's decisions of 2026-11-04, each left recorded as the documents state it, with no reproduction:
+Every fact of `books/dev/src/reference/uia-bugs.md` and every claim of `books/dev/src/explanation/windows/uia.md` gets a reproduction, the ones behind workarounds, internal details and statistics included, and so do the explainer's open questions and inferences. These are excluded by Dickson's decisions of 2026-11-04, each left recorded as the documents state it, with no reproduction:
 
 - Verbatim's `conhost_two_windows` inference.
 - The inferences about NVDA's exposure: NVDA #7345 and #8539 fitting the shared worker, #11002's one worker per process, and which way #20169's jam happened.
@@ -76,8 +76,8 @@ What Cargo shares between two workspaces in one target directory, and why:
 
 ## The folder per fact
 
-- Name rule: the fact stated as a present-tense sentence, in lower case, words joined by hyphens, with apostrophes dropped. This is the rule `experiments/` uses, and where the fact is a heading of `docs/uia-bugs.md`, the folder name is that heading, so a citation can be read across from one to the other. The folder is also the package name and the binary's name.
-- Index: `uia-facts/readme.md` lists every folder by the section of `docs/uia-bugs.md` or `docs/explainers/uia.md` it reproduces, with its kind. A second table, "Cited, not reproduced", lists each claim that links its source instead and gives the link. That table holds the Learn-documented claims, the framework source declarations, NVDA's issues, Qt's stale focus and Excel 2016's freeze, and the excluded items under "Scope".
+- Name rule: the fact stated as a present-tense sentence, in lower case, words joined by hyphens, with apostrophes dropped. This is the rule `experiments/` uses, and where the fact is a heading of `books/dev/src/reference/uia-bugs.md`, the folder name is that heading, so a citation can be read across from one to the other. The folder is also the package name and the binary's name.
+- Index: `uia-facts/readme.md` lists every folder by the section of `books/dev/src/reference/uia-bugs.md` or `books/dev/src/explanation/windows/uia.md` it reproduces, with its kind. A second table, "Cited, not reproduced", lists each claim that links its source instead and gives the link. That table holds the Learn-documented claims, the framework source declarations, NVDA's issues, Qt's stale focus and Excel 2016's freeze, and the excluded items under "Scope".
 - README sections, in order:
   - Fact: one paragraph, matching the document's statement.
   - What Verbatim relies on: the code and decisions, as listed for the folder below.
@@ -92,7 +92,7 @@ What Cargo shares between two workspaces in one target directory, and why:
 - Output: each binary prints a header (date, Windows build, `UIAutomationCore.dll` version, commit), then one line per claim, for example `connection wait: observed 2,183 ms (5 trials, 2,171 to 2,196) band 2.0 to 2.3 s: pass`. A figure that is printed but not judged is marked "recorded for trends". Its exit code is 0 when every judged claim passes, 1 when any differs, and 2 when none differs but some are inconclusive.
 - Verdicts:
   - A deterministic outcome (an HRESULT, a count of provider calls, delivered or not, an order of answers): pass when it equals the recorded value, differ when it does not. The binary runs the case 3 times. All three must agree, or the verdict is inconclusive. Where the setup sleeps into a stall, as the collision does, it runs the recorded number of trials (6) and requires every one.
-  - A relation, for every duration that depends on the machine. Examples are MSAA's 1.2 to 2.6 ms, the other UI thread's 0.4 to 1.2 ms, Edge's 222 ms against 220 ms, `FindAll`'s 0.4 ms median and 696 ms, the 2.6 ms and 228 ms holds, the sent-message ratios, the parallel gains, the second process's 0.7 to 2.7 s, and the flood's counts. These are judged by the relation the claim states, and the figure is only printed, as `docs/testing.md` asks (no tolerances; a figure that varies by machine is recorded for trends). Each relation is an order or a share of evidence the binary holds:
+  - A relation, for every duration that depends on the machine. Examples are MSAA's 1.2 to 2.6 ms, the other UI thread's 0.4 to 1.2 ms, Edge's 222 ms against 220 ms, `FindAll`'s 0.4 ms median and 696 ms, the 2.6 ms and 228 ms holds, the sent-message ratios, the parallel gains, the second process's 0.7 to 2.7 s, and the flood's counts. These are judged by the relation the claim states, and the figure is only printed, as `books/dev/src/reference/testing.md` asks (no tolerances; a figure that varies by machine is recorded for trends). Each relation is an order or a share of evidence the binary holds:
     - "A answers while B waits": A's reply arrives before B's provider is released, which the binary itself signals.
     - "B waits behind A": B's reply comes after A's provider call returns, by the provider's own call log.
     - "at most about 2 times": the speed-up stays below the serial-share bound. The binary computes that bound from the same run's measured I/O-thread and UI-thread share, so the bound moves with the machine.
@@ -105,7 +105,7 @@ What Cargo shares between two workspaces in one target directory, and why:
     - With zero occurrences: differ when (1 - p) to the power n is below 0.05, since a run that long would have seen the fault, and inconclusive otherwise. Zero occurrences never pass.
     - With at least one occurrence: compute a 95 percent Wilson interval for the observed and for the recorded rate. Pass when the recorded rate lies inside the observed interval, differ when the two intervals do not overlap, inconclusive otherwise.
   - An open question (Not known, or inferred with nothing recorded): the binary prints its answer with "new". The first run's answer goes into the README as the recorded result, and later runs judge against it by the rules above.
-- Fixed target and code path, as `docs/testing.md` asks, where it applies:
+- Fixed target and code path, as `books/dev/src/reference/testing.md` asks, where it applies:
   - Each arm names one target and one API sequence, and nothing branches on the environment.
   - A missing precondition (an application not installed, a locked desktop, cdb absent) prints inconclusive with the reason. It never passes and never takes another path.
   - Waits are for evidence (a provider's signal, an event, a reply). The one exception is the length of a deliberate stall, since some facts are about a timed stall. The README states which.
@@ -142,7 +142,7 @@ None of the old tools was built or run for this design, so "rerun by command" be
 - Reproduces: the collision (`e1` to `e36`): the proxy answer after 2 s and the "no provider" answer after 3 s; the walk up; the whole process exposed; the spared set (`e10`, `e12`, `e23`, `e25`, `e27`, `e29`, `e34`); the delay to other clients (`e28`, `e28c`). The conhost arm (`e35`, the roadmap's "console host and the collision"). The second form, 3 of 42, as a rate. `GetFocusedElement` during a queued operation (Not known). The predicting-outcomes case. Guide: the collision's mechanism under cdb (Not known).
 - Evidence now: the collide tool with its scripts and outputs. The second form is in `experiments/two-new-connections-beside-a-pending-call/`, its program `experiments/cross-process-calls-study-program/xproc.rs` run with `XP_EXP=second_form` after applying `scratch-support.patch` at b15ad7bf; its listener arm calls an outpost test API that has changed since. The mockapp-stall test of 20 of 20 at timeouts of 500 to 5,000 ms is prose only. The Notepad and Windows Terminal launch rates (1 in 25, 3 in 100, the 3,008 ms probe) needed a Verbatim build from before Verbatim kept its own calls apart, and stay as history.
 - Replaces: the collide tool's patches and scripts; `two-new-connections-beside-a-pending-call/`; `xproc.rs`'s `second_form` arm.
-- Verbatim relies on: the rule that only an application's own outpost connects to it or sends it a remote operation (`docs/design/listener-without-connections.md`, section 2; the comment in `crates/verbatim-uia-rops/src/operation.rs`). If the fault went away the rule is merely unneeded; if the spared set shrank, Verbatim breaks, since the outpost makes both remote operations and lookups into its own application (`e12`), and the listener reads held elements while outposts run operations. The second form is accepted in decision 3 of the same design.
+- Verbatim relies on: the rule that only an application's own outpost connects to it or sends it a remote operation (`books/dev/src/explanation/design/listener-without-connections.md`, section 2; the comment in `crates/verbatim-uia-rops/src/operation.rs`). If the fault went away the rule is merely unneeded; if the spared set shrank, Verbatim breaks, since the outpost makes both remote operations and lookups into its own application (`e12`), and the listener reads held elements while outposts run operations. The second form is accepted in decision 3 of the same design.
 
 ### a-pending-connection-holds-its-own-processs-other-calls
 
@@ -158,7 +158,7 @@ None of the old tools was built or run for this design, so "rerun by command" be
 - Reproduces: `UIA_E_TIMEOUT` after 2.0 to 2.2 s to any window, an idle UI thread included. A lookup with the provider description cached shows a proxy-only answer or the timeout, printed per stall kind.
 - Evidence now: the parallel-calls `run-mockapp.ps1`, its suspended arms. The proxy-only answer is recorded for the collision and the timeout for the parallel-calls stall, which are different stalls.
 - Replaces: `run-mockapp.ps1`'s suspended arms.
-- Verbatim relies on: the proxy rule (`docs/crates/verbatim-uia.md`), which refuses a proxy-only answer by reading the cached provider description, and the focus-now answer at an outpost's start (`docs/design/listener-without-connections.md`, decision 8). If the description's form changed, a proxy's answer would be taken as the application's own and read as "pane".
+- Verbatim relies on: the proxy rule (`books/dev/src/reference/crates/verbatim-uia.md`), which refuses a proxy-only answer by reading the cached provider description, and the focus-now answer at an outpost's start (`books/dev/src/explanation/design/listener-without-connections.md`, decision 8). If the description's form changed, a proxy's answer would be taken as the application's own and read as "pane".
 
 ### uiahasserversideprovider-says-no-for-a-new-conhost-window-while-another-process-has-an-event-handler
 
@@ -174,7 +174,7 @@ None of the old tools was built or run for this design, so "rerun by command" be
 - Reproduces: the test `arbitration` (mockapp's two backends). Beyond the test, the binary covers real providers, which mockapp cannot stand for. It compares the raw probe's answer and `UiaHasServerSideProvider`'s on named targets, each with its expected answer. With a provider: the provider program's window, Notepad's edit window, File Explorer's `DirectUIHWND`, and Windows Terminal 1.24's window. Without one: a plain Win32 window the binary creates, and `conhost.exe`'s `ConsoleWindowClass` window started directly. A target that answers other than expected, or a disagreement between the two probes, is differ. The 88-window agreement stays the recorded history of an unnamed sweep.
 - Evidence now: `cargo test -p mockapp --test arbitration`; the 88-window sweep by `e39-classify.ps1`, whose answer depended on the applications open then.
 - Replaces: `e39-classify.ps1`, `e39-raw*`.
-- Verbatim relies on: `verbatim_uia::raw_probe` (`crates/verbatim-uia/src/probe.rs`), which sends `SendMessageTimeoutW(WM_GETOBJECT, 0, UiaRootObjectId)` and takes exactly `0x10000` as a UIA provider, and every probe the listener and the outposts make (`docs/design/listener-without-connections.md`, decision 2). Microsoft documents no meaning for the answer. If the value changed, every UIA window would be judged MSAA, or the reverse, and read through the wrong backend.
+- Verbatim relies on: `verbatim_uia::raw_probe` (`crates/verbatim-uia/src/probe.rs`), which sends `SendMessageTimeoutW(WM_GETOBJECT, 0, UiaRootObjectId)` and takes exactly `0x10000` as a UIA provider, and every probe the listener and the outposts make (`books/dev/src/explanation/design/listener-without-connections.md`, decision 2). Microsoft documents no meaning for the answer. If the value changed, every UIA window would be judged MSAA, or the reverse, and read through the wrong backend.
 
 ### a-hung-window-named-in-a-system-focus-event-holds-a-processs-uia-events
 
@@ -193,7 +193,7 @@ None of the old tools was built or run for this design, so "rerun by command" be
   The figures for Verbatim's own listener in `states`, `both` and `altf` are Verbatim's exposure, kept as history (see "Decisions Dickson owns").
 - Evidence now: the hung-window focusproto with `h1_stacks.py`, `h3_variants.py`, `h4_ishung.py`, `h6_lost.py`, `h2_trace.py` and the `p4/` scripts; the 2026-11-01 series for `ghost`, `h7`, `q1`, `q3`, `states`, `both` and `altf`; E-delivery, E-hung-proxy, `e_mapping`, `e_hung_cause` and `e_cross` in the October experiments. The listener's figures needed a running Verbatim's log, and the 7.8 s case a mockapp kept running all evening.
 - Replaces: the focusproto of the hung-window folder and its `h*.py`, `p4/`; the series of 2026-11-01; `experiments.rs`'s E-* tests on this fault.
-- Verbatim relies on: outposts holding no focus registration, so that a hang holds only the listener (`docs/design/focus-pipeline.md`, section 12.3; the module comment of `crates/verbatim-listener/src/listener.rs`); D9's amended reason; the 2-second `CONNECTION_TIMEOUT`; the listener dropping a focus in a hung window (`window_is_hung` in `crates/verbatim-listener/src/focus_read.rs`), which rests on `IsHungAppWindow`'s mark. If a process with no focus registration began to be held, every outpost's events would stop during any hang; if the hold lengthened, the listener's silence would exceed what was accepted. Verbatim uses `CUIAutomation8` only, so the older coclass's wait affects nothing.
+- Verbatim relies on: outposts holding no focus registration, so that a hang holds only the listener (`books/dev/src/explanation/design/focus-pipeline.md`, section 12.3; the module comment of `crates/verbatim-listener/src/listener.rs`); D9's amended reason; the 2-second `CONNECTION_TIMEOUT`; the listener dropping a focus in a hung window (`window_is_hung` in `crates/verbatim-listener/src/focus_read.rs`), which rests on `IsHungAppWindow`'s mark. If a process with no focus registration began to be held, every outpost's events would stop during any hang; if the hold lengthened, the listener's silence would exceed what was accepted. Verbatim uses `CUIAutomation8` only, so the older coclass's wait affects nothing.
 
 ### uias-client-threads-and-focus-tracking-calls
 
@@ -209,7 +209,7 @@ None of the old tools was built or run for this design, so "rerun by command" be
 - Reproduces: the worker shared by any number of client objects (inferred; 1 to 8 objects, one held). Whether the worker ends when its queue is empty (inferred), from thread ids across idle gaps. Four events on four thread ids. A slow handler delaying later events and a slow query in a handler (inferred). Whether UIA drops events behind a slow handler (Not known). Handlers called on a non-UI thread.
 - Evidence now: the hung-window focusproto's `h3_variants.py` (two client objects); the events arm of the parallel-calls `ops.ps1` (four thread ids). The rest has no record.
 - Replaces: parts of `ops.ps1`'s events arm and `h3_variants.py`.
-- Verbatim relies on: D9 as amended on 2026-11-02 (`docs/architecture.md`), whose stated reason is the shared worker and the flood, and each outpost holding its own application's registrations. If the worker became per client object, D9's reason would be wrong.
+- Verbatim relies on: D9 as amended on 2026-11-02 (`books/dev/src/explanation/architecture.md`), whose stated reason is the shared worker and the flood, and each outpost holding its own application's registrations. If the worker became per client object, D9's reason would be wrong.
 
 ### another-clients-stuck-call-holds-an-events-cache-fetch
 
@@ -225,7 +225,7 @@ None of the old tools was built or run for this design, so "rerun by command" be
 - Reproduces: `q2`, `q2_thr`, `q2long`, judged by relation with the counts printed for trends: delivery stops (83 to 110 events, then none for 90 s); the other client process unaffected; text with coalescing on delivered (2,529, 2,641 of 30,000); losses at 2,000 to 5,000 a second. Whether coalescing dropped those (Not known). The worker's work grows with the backlog (Not known), timed as the worker's processor time at 4 backlog sizes. Selective registration under a flood (inferred). Guide: the work-item thread's dumps.
 - Evidence now: evprobe with `q2.py`, `q2long.py` and `evc.py` and their outputs. mockapp's flood command is tested by `uia_flood_raises_each_name_change` in mockapp's `events` tests, which checks the command, not the fault.
 - Replaces: `evprobe`, `q2.py`, `q2long.py`, `evc.py`.
-- Verbatim relies on: D9 as amended on 2026-11-02 (`docs/architecture.md`) and each outpost holding its own application's registrations. If the flood stopped, D9's reason would be wrong; if a flood began stopping other processes, the per-application isolation would fail.
+- Verbatim relies on: D9 as amended on 2026-11-02 (`books/dev/src/explanation/architecture.md`) and each outpost holding its own application's registrations. If the flood stopped, D9's reason would be wrong; if a flood began stopping other processes, the per-application isolation would fail.
 
 ### desktop-wide-focus-handlers-in-a-second-process-deliver-late
 
@@ -241,7 +241,7 @@ None of the old tools was built or run for this design, so "rerun by command" be
 - Reproduces: fresh provider processes, Notepad and Settings, each started 20 times under one desktop-wide handler. The binary counts late and missing focus as a rate.
 - Evidence now: none kept. The fault was met in end-to-end scenarios no longer in the suite and in `settings_system_page`, which does not report it. The recovery is tested by the `a_winevent_focus_` tests of `crates/mockapp/tests/focus_reports.rs`.
 - Replaces: none kept (new).
-- Verbatim relies on: the recovery, not a workaround: the application's outpost waits a second from the `WinEvent` focus copy for its UIA focus and otherwise reads the focus itself (`docs/design/listener-without-connections.md`, decision 11).
+- Verbatim relies on: the recovery, not a workaround: the application's outpost waits a second from the `WinEvent` focus copy for its UIA focus and otherwise reads the focus itself (`books/dev/src/explanation/design/listener-without-connections.md`, decision 11).
 
 ### the-connection-timeout-applies-to-the-whole-process
 
@@ -262,7 +262,7 @@ None of the old tools was built or run for this design, so "rerun by command" be
 ### a-timeout-bounds-each-request-and-window-message-not-an-operation
 
 - Kind: binary.
-- Reproduces: the limitation of that name in `docs/uia-bugs.md`, with the explainer's search waits. It covers the ordered waits; E-TT's 13.2 s (13,208 ms); the queued search of 1,083 to 1,106 ms; the stall sweep at 100, 200, 500 and 1,000 ms (332, 618, 1,545 and 4,207 ms); E3's 22,111 ms. The runtime id re-read that starts a search is cited from `uia-answers-some-calls-in-the-client`. Connection recovery's `Find` skip and its 2.6 s edge (Not known), swept in 100 ms steps.
+- Reproduces: the limitation of that name in `books/dev/src/reference/uia-bugs.md`, with the explainer's search waits. It covers the ordered waits; E-TT's 13.2 s (13,208 ms); the queued search of 1,083 to 1,106 ms; the stall sweep at 100, 200, 500 and 1,000 ms (332, 618, 1,545 and 4,207 ms); E3's 22,111 ms. The runtime id re-read that starts a search is cited from `uia-answers-some-calls-in-the-client`. Connection recovery's `Find` skip and its 2.6 s edge (Not known), swept in 100 ms steps.
 - Evidence now: the parallel-calls `search-timeouts.ps1` and `timeouts.ps1`; E-TT and E3 in the October experiments, with the rerun `e-tt-rerun.txt`. The stall test was removed in 31d462fc.
 - Replaces: `search-timeouts.ps1`; E-TT and E3 in `experiments.rs`; `e-tt-rerun.txt`.
 - Verbatim relies on: only the explanation in `crates/verbatim-supervisor/src/retire.rs` and `crates/verbatim-uia/src/bounded.rs`; the general rule is checked by the folder above.
@@ -289,7 +289,7 @@ None of the old tools was built or run for this design, so "rerun by command" be
 - Reproduces: no overlap in provider work. A slow call holds every call into the process from any client, thread or window, remote operations included, and no other process's. First in, first out across windows, threads and clients. The 950 ms request. With `UseComThreading`: a busy UI thread with nothing queued holds nothing (0.4 to 1.2 ms), and a `CoWaitForMultipleHandles` provider holds the others. The provider program without `UseComThreading`: reads answer, a new connection fails at the timeout, `Invoke` waits for the UI thread. Connection recovery's effect on these outcomes (Not known), with each arm rerun with recovery on.
 - Evidence now: the parallel-calls `serve` program (`serve.rs`) with `run-serve.ps1` and `run-serve-xproc.ps1`, `iothread-sequence.ps1`, `run-pairs.ps1`, and AccessKit's `run-akapp.ps1`; the collide tool's `e16` and `e28c`.
 - Replaces: `serve.rs`, `run-serve*.ps1`, `iothread-sequence.ps1`, `run-pairs.ps1` (mockapp arms).
-- Verbatim relies on: D9's per-application outposts and "parallel queries within one application are given up" (`docs/architecture.md`, section 1). If UIA became parallel, nothing breaks; if a stuck application held calls into another, the isolation would fail.
+- Verbatim relies on: D9's per-application outposts and "parallel queries within one application are given up" (`books/dev/src/explanation/architecture.md`, section 1). If UIA became parallel, nothing breaks; if a stuck application held calls into another, the isolation would fail.
 
 ### the-uia-channel-and-the-provider-io-thread
 
@@ -305,7 +305,7 @@ None of the old tools was built or run for this design, so "rerun by command" be
 - Reproduces: MSAA answers in 1.2 to 2.6 ms while UIA waits. How long an MSAA call into a busy UI thread waits (Not known), swept from 1 to 60 s. oleacc's `accName` sends `WM_GETTEXTLENGTH` and `WM_GETTEXT`, counted by the binary's own window. Sent messages run at 0.52 to 0.78 times the single-thread rate with more threads. Contention in the window manager (inferred), compared across threads of one process and of two.
 - Evidence now: the parallel-calls `msaa-while-stuck.ps1`, `msaa-path.ps1`, `msaa-path-mockapp.ps1`, and the MSAA arms of `run-mockapp.ps1`.
 - Replaces: `msaa-while-stuck.ps1`, `msaa-path*.ps1`, the MSAA arms of `run-mockapp.ps1`.
-- Verbatim relies on: the hung-window workaround's claim that MSAA keeps working, and the outposts' MSAA reads of other processes' windows (`docs/design/listener-without-connections.md`, sections 4.3 and 4.4). A change would slow those reads behind UIA's.
+- Verbatim relies on: the hung-window workaround's claim that MSAA keeps working, and the outposts' MSAA reads of other processes' windows (`books/dev/src/explanation/design/listener-without-connections.md`, sections 4.3 and 4.4). A change would slow those reads behind UIA's.
 
 ### parallel-client-threads-gain-at-most-twice-on-one-application
 
@@ -321,7 +321,7 @@ None of the old tools was built or run for this design, so "rerun by command" be
 - Reproduces: a suspended UI thread holds every call in Notepad, Edge, VS Code, Firefox, Windows Forms and WPF (WPF's measured hold). Chromium serves page and browser on one thread. Two File Explorer processes are independent (1 to 10 ms). One operation holds Firefox 2.6 ms and WPF 228 ms. Edge's 222 ms `GetText` against B's 220 ms. `FindAll` beside B, 0.4 ms median and 696 ms on a 20,000-element page, which the binary writes and serves from a file. Windows Terminal 1.24.12741.0 portable: the text calls wait while its XAML thread is suspended. Guide: `NavigationHelperProxyOneCore::s_CoreUIThreadProc` in Windows Terminal, and the 391 of 847 samples in `GetText`.
 - Evidence now: the parallel-calls `run-real.ps1`, `stacks.ps1`, `wpf-window.ps1`, `winforms-window.ps1` and `wt-serving-thread.ps1`. No application version but Windows Terminal's is recorded.
 - Replaces: `run-real.ps1`, `wpf-window.ps1`, `winforms-window.ps1`, `wt-serving-thread.ps1`.
-- Verbatim relies on: D9's per-application outposts (`docs/architecture.md`, section 1), which hold that a slow call holds its own application only.
+- Verbatim relies on: D9's per-application outposts (`books/dev/src/explanation/architecture.md`, section 1), which hold that a slow call holds its own application only.
 
 ### requests-per-client-operation
 
@@ -336,7 +336,7 @@ None of the old tools was built or run for this design, so "rerun by command" be
 - Kind: a kept CI test and a binary.
 - Reproduces: test `uia_event_registrations_cost_exactly`, which pins the warm registration costs with the runtime id read first. Beyond it, the binary covers two things.
   - The calls that make no provider call, by the provider program's call log: `Cached*` reads, `GetRuntimeId` after the first read and on a sender inside its callback, `CompareElements` with one side stalled, and the desktop parent. It also shows title-bar parts coming from proxies and `GetFocusedElement` going to the focused process.
-  - UI Automation's copy of an element's runtime id lapsing (the `docs/uia-bugs.md` entry), which needs the pauses a test may not make: the cold registration's 9 calls against 3, and the move's 6 calls after 250 ms or more (30 of 30) and none at 0 or 100 ms (20 of 20); the pause sweep, warm at 0 to 190 ms and cold at 1,000 and 3,000 ms (deterministic), with the 210 to 400 ms alternation printed for trends; the copy kept per element: reading `First`'s name, another button's or the window's, or registering on another button, leaves `First` cold; the workaround's 256 of 256 warm registrations over pauses of 0 to 3,000 ms and 50 of 50 free moves, as rates; `AdviseEventRemoved` arriving after a removal returns, and no other provider call after a call returns; a search's re-read of its start's runtime id after about 0.65 s (inferred).
+  - UI Automation's copy of an element's runtime id lapsing (the `books/dev/src/reference/uia-bugs.md` entry), which needs the pauses a test may not make: the cold registration's 9 calls against 3, and the move's 6 calls after 250 ms or more (30 of 30) and none at 0 or 100 ms (20 of 20); the pause sweep, warm at 0 to 190 ms and cold at 1,000 and 3,000 ms (deterministic), with the 210 to 400 ms alternation printed for trends; the copy kept per element: reading `First`'s name, another button's or the window's, or registering on another button, leaves `First` cold; the workaround's 256 of 256 warm registrations over pauses of 0 to 3,000 ms and 50 of 50 free moves, as rates; `AdviseEventRemoved` arriving after a removal returns, and no other provider call after a call returns; a search's re-read of its start's runtime id after about 0.65 s (inferred).
 - Evidence now: `uia_event_registrations_cost_exactly` in `crates/mockapp/tests/call_counts.rs`; the parallel-calls `ops.ps1` no-call arms; `experiments/compareelements-makes-no-call/`, run as `xproc.rs`'s `compare` arm after applying `scratch-support.patch` at b15ad7bf. The lapse's outputs are recorded but its code was not kept.
 - Replaces: `compareelements-makes-no-call/`; `xproc.rs`'s `compare` arm; `ops.ps1`'s no-call arms.
 - Verbatim relies on: D13's contract that the listener's callbacks make no cross-process call (the module comment of `crates/verbatim-listener/src/listener.rs`: building a fact is local memory reads, plus `GetRuntimeId`, a local read on a cached element); the listener's comparison with the current focus (`compare_elements` in `crates/verbatim-listener/src/focus_read.rs`); the follower's group comparison (`crates/verbatim-uia/src/subscribe.rs`); and the lapse's workaround, reading the runtime id just before a registration. If any of these calls began calling the provider, a hung application would block the listener's callbacks and every focus with them.
@@ -347,7 +347,7 @@ None of the old tools was built or run for this design, so "rerun by command" be
 - Reproduces: test `the_instruction_limit_is_measured`, in mockapp's `instruction_limit` tests.
 - Evidence now: that test.
 - Replaces: none.
-- Verbatim relies on: `docs/performance.md`, "The instruction limit", and `docs/crates/verbatim-uia-rops.md`: every program is sized under half the limit so it can be counted, the caret read reaching about 7,700; a run past the limit falls back to classic calls (hundreds of calls). A lower limit would push programs to the fallback and break the counting tests.
+- Verbatim relies on: `books/dev/src/reference/performance.md`, "The instruction limit", and `books/dev/src/reference/crates/verbatim-uia-rops.md`: every program is sized under half the limit so it can be counted, the caret read reaching about 7,700; a run past the limit falls back to classic calls (hundreds of calls). A lower limit would push programs to the fallback and break the counting tests.
 
 ### focus-events-cannot-be-limited-to-one-application
 
@@ -363,7 +363,7 @@ None of the old tools was built or run for this design, so "rerun by command" be
 - Reproduces: the four tests of `crates/mockapp/tests/uia_bugs/elements_cannot_be_passed_to_another_process.rs`. The tests hold a sender briefly. Beyond them, the binary covers P3: a kept sender is still read live after 31 s and 152 s, a pause no test may make.
 - Evidence now: the four tests; `p3_held.py` with the focus-limitation folder's focusproto; E-marshal.
 - Replaces: `p3_held.py`; E-marshal.
-- Verbatim relies on: the process that receives a UIA event being the only one that can read its element, which is why the listener judges and reads each focus itself (`docs/uia-bugs.md`, the limitation's entry).
+- Verbatim relies on: the process that receives a UIA event being the only one that can read its element, which is why the listener judges and reads each focus itself (`books/dev/src/reference/uia-bugs.md`, the limitation's entry).
 
 ### ancestors-cannot-be-cached-or-listened-to
 
@@ -387,7 +387,7 @@ None of the old tools was built or run for this design, so "rerun by command" be
 - Reproduces: 300 child processes that make UIA calls and exit normally, with no `TerminateProcess`. The binary counts hangs (no exit within 10 s) and crash codes as a rate (1 to 3 percent).
 - Evidence now: commits 1f69859e and fed532be; no script.
 - Replaces: none kept (new).
-- Verbatim relies on: its processes ending themselves with `TerminateProcess` once shut down, so the detach code never runs: outposts and the listener (`docs/architecture.md`, section 1), and the mockapp test runner (`crates/mockapp/tests/common/harness.rs`).
+- Verbatim relies on: its processes ending themselves with `TerminateProcess` once shut down, so the detach code never runs: outposts and the listener (`books/dev/src/explanation/architecture.md`, section 1), and the mockapp test runner (`crates/mockapp/tests/common/harness.rs`).
 
 ### a-remote-operations-keyboard-focus-read-can-differ-from-a-plain-read
 
@@ -395,7 +395,7 @@ None of the old tools was built or run for this design, so "rerun by command" be
 - Reproduces: Windows Terminal 1.24 portable, two windows: the binary compares a remote operation's `GetFocusedElement` with a plain read after each switch, as a rate.
 - Evidence now: end-to-end runs in prose and commit ab18245e; `windows_terminal_two_windows` and `windows_terminal_leave_flood` test the workaround, and seeing the fault needs ab18245e reverted.
 - Replaces: the revert of ab18245e.
-- Verbatim relies on: the listener reading the sender's keyboard focus with a plain property read after the acceptance test, and dropping the focus when it has none (ab18245e; `docs/performance.md`).
+- Verbatim relies on: the listener reading the sender's keyboard focus with a plain property read after the acceptance test, and dropping the focus when it has none (ab18245e; `books/dev/src/reference/performance.md`).
 
 ### inside-a-remote-operation-conhosts-window-has-no-handle-or-title
 
@@ -411,7 +411,7 @@ None of the old tools was built or run for this design, so "rerun by command" be
 - Reproduces: the handling tests in `crates/mockapp/tests/focus_reports.rs` (`a_reused_runtime_id_keeps_its_node_with_its_element_gone_remote`, `_classic`, and the `a_text_focus_under_the_runtime_id_of_` and `a_terminal_under_the_runtime_id_of_one_that_lost_the_focus_is_read_afresh` tests). Those tests check Verbatim's handling against mockapp. Beyond them, the binary shows that File Explorer itself reuses the ids: it navigates File Explorer folders and records the runtime ids of destroyed and new elements, as a rate.
 - Evidence now: commit c67806c5; no probe of the fault.
 - Replaces: none kept (new).
-- Verbatim relies on: the listener reading, before reporting a UIA focus whose runtime id already names a node, whether the element held under that id still has the keyboard focus, and Core taking the focus as a duplicate only when it does (`docs/uia-bugs.md`, the entry's workaround).
+- Verbatim relies on: the listener reading, before reporting a UIA focus whose runtime id already names a node, whether the element held under that id still has the keyboard focus, and Core taking the focus as a duplicate only when it does (`books/dev/src/reference/uia-bugs.md`, the entry's workaround).
 
 ### windows-terminal-raises-focus-from-a-second-runtime-identity
 
@@ -454,15 +454,15 @@ Code, scripts and patches move. The recorded outputs that a README cites move to
   - `experiments/two-new-connections-beside-a-pending-call/`
   - `experiments/mockapp-experiments-2026-10-10/`, since every experiment in it is one of the UIA facts above
 - Trimmed:
-  - `experiments/uiahasserversideprovider-says-no-for-a-new-conhost-window-while-another-process-has-an-event-handler/`: only `kept-runs/` and a short readme remain, the evidence of the excluded `conhost_two_windows` inference that `docs/uia-bugs.md` still cites.
+  - `experiments/uiahasserversideprovider-says-no-for-a-new-conhost-window-while-another-process-has-an-event-handler/`: only `kept-runs/` and a short readme remain, the evidence of the excluded `conhost_two_windows` inference that `books/dev/src/reference/uia-bugs.md` still cites.
   - `experiments/focus-pipeline-rework-measurements/`: `programs.rs`'s three `UiaHasServerSideProvider` programs and `server-side-provider-under-stall.txt` leave. The rest stays, since `docs/design/focus-pipeline-rework.md`, the parity documents and two mockapp tests cite it.
   - `experiments/cross-process-calls-study-program/`: stays whole, since the study's other design experiments still use `xproc.rs`. Its readme names the `compare` and `second_form` arms as moved.
 - Untouched, since none is a fact of the two documents: the MSAA `CoCancelCall` folder; the Settings frame's lag; the console caret, terminal read and redraw folders; the cross-process study's other experiments; the ownership and logic-tests studies; `experiments/security-model-survey/`.
 - `experiments/readme.md` drops the moved entries and points to `uia-facts/readme.md`.
 - Citations redirected, each in the build that moves its folder:
-  - `docs/uia-bugs.md`: each entry's "Reproduction test" and "Evidence" sections.
-  - `docs/explainers/uia.md`: the link definitions `[pc]`, `[hung]`, `[hung2]`, `[flood]`, `[collide]`, `[cancel]`, `[timeout-scope]`, `[registration]`, `[scope]`, `[compare]` and `[elements]` are replaced by per-folder links. `[pc]` splits by section across seven folders, so each sentence names its own folder.
-  - The other documents: `docs/tooling/debugging.md`, `docs/design/listener-without-connections.md`, `docs/design/focus-pipeline.md`, `docs/design/focus-pipeline-rework.md`, `docs/design/cross-process-calls-study.md`, `docs/design/ownership.md`, `docs/design/windows-terminal-twin-focus.md`, `docs/design/m5-extensions-work.md`, `docs/roadmap.md`, `docs/parity/backends.md`.
+  - `books/dev/src/reference/uia-bugs.md`: each entry's "Reproduction test" and "Evidence" sections.
+  - `books/dev/src/explanation/windows/uia.md`: the link definitions `[pc]`, `[hung]`, `[hung2]`, `[flood]`, `[collide]`, `[cancel]`, `[timeout-scope]`, `[registration]`, `[scope]`, `[compare]` and `[elements]` are replaced by per-folder links. `[pc]` splits by section across seven folders, so each sentence names its own folder.
+  - The other documents: `books/dev/src/how-to/debugging.md`, `books/dev/src/explanation/design/listener-without-connections.md`, `books/dev/src/explanation/design/focus-pipeline.md`, `docs/design/focus-pipeline-rework.md`, `docs/design/cross-process-calls-study.md`, `books/dev/src/explanation/design/ownership.md`, `docs/design/windows-terminal-twin-focus.md`, `docs/design/m5-extensions-work.md`, `docs/roadmap.md`, `docs/parity/backends.md`.
 
   A final grep for each deleted folder's name, over everything outside `experiments/` and `nvda/`, must find nothing.
 

@@ -158,7 +158,7 @@ pub enum KeySource {
 }
 
 /// What Core's view of the window in front lets the machine do with a key
-/// that would reach the application (`docs/design/key-holding.md`). One
+/// that would reach the application (`books/dev/src/explanation/design/key-holding.md`). One
 /// value, so that a focus with text in a window that may not hold keys
 /// cannot be given.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -199,7 +199,7 @@ pub struct KeyInput {
 
 /// What the hook does with a key transition: pass it, or swallow it, for
 /// good or to be sent again from its place in the line of keys held back
-/// (`docs/design/key-holding.md`, "Keys behind a held key").
+/// (`books/dev/src/explanation/design/key-holding.md`, "Keys behind a held key").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Verdict {
     /// Pass it to the application now.
@@ -497,7 +497,7 @@ impl LoneModifier {
 /// - While Core's view lets keys be held ([`HoldPermit`]), a caret key's
 ///   press is held back for its caret to be read and sent again by Core,
 ///   and every later transition that would pass waits behind it in line
-///   (`docs/design/key-holding.md`).
+///   (`books/dev/src/explanation/design/key-holding.md`).
 /// - A bound gesture swallowed while Alt, a Windows key, or Control and
 ///   Shift together are down in the application puts a mask behind it in
 ///   line, the unknown key pressed and released ([`Decision::mask`]), so
@@ -657,7 +657,7 @@ impl DecisionMachine {
     }
 
     /// The verdict on a transition the rules above passed or swallowed,
-    /// recording what it did to its key (`docs/crates/verbatim-input.md`): a caret key's press is held while the
+    /// recording what it did to its key (`books/dev/src/reference/crates/verbatim-input.md`): a caret key's press is held while the
     /// permit lets it be; any other transition that would pass is deferred
     /// while a transition waits in the line and the permit lets it be,
     /// unless it is a lock key or Verbatim's own; a release is swallowed

@@ -1,5 +1,5 @@
 //! An application's outpost generation as the supervisor's owner thread
-//! knows it (`docs/design/ownership.md`): one state per stage of its life, each holding only what
+//! knows it (`books/dev/src/explanation/design/ownership.md`): one state per stage of its life, each holding only what
 //! that stage has, and each transition a method that consumes the state
 //! and returns the next with the notices to send, in order. Leaving
 //! `Ready` emits the listener's `HookRemoved` in the same step, and so does
@@ -194,7 +194,7 @@ pub enum Notice {
 
 /// A lifecycle notice for the app, as the typestates make it: plain data,
 /// which only the supervisor's owner turns into the message the app takes
-/// as the supervisor's own (`docs/crates/verbatim-supervisor.md`). Each variant is one of the owner's messages, with its fields in
+/// as the supervisor's own (`books/dev/src/reference/crates/verbatim-supervisor.md`). Each variant is one of the owner's messages, with its fields in
 /// the same order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Lifecycle {

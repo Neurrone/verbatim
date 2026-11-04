@@ -241,7 +241,7 @@ pub(crate) fn log_arrival(event: &str, id: i32, element: &IUIAutomationElement) 
 /// The name the threads UI Automation runs Verbatim's event handlers on
 /// are given, when they have none, so a trace of the CPU's scheduling
 /// tells them from UI Automation's other threads
-/// (`docs/design/wake-ups.md`).
+/// (`books/dev/src/explanation/design/wake-ups.md`).
 const CALLBACK_THREAD_NAME: &str = "verbatim-uia-callback";
 
 thread_local! {

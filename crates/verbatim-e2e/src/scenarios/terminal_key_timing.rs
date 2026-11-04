@@ -1,7 +1,7 @@
 //! Keys pressed while a terminal's output is being spoken, or at once
 //! after another key (`docs/parity/terminals.md`, "The backlog" and
 //! "Typing"; Dickson, 2026-10-07 and 2026-10-09), each scenario in both
-//! terminals as its own code (`docs/testing.md`). The shared setup is
+//! terminals as its own code (`books/dev/src/reference/testing.md`). The shared setup is
 //! described in the `terminal` module.
 //!
 //! - `*_control_flood`: Control while a flood is being spoken, as in NVDA
@@ -12,7 +12,7 @@
 //!   line 1" to "flood line 100" and waits for the file `more` before it
 //!   writes lines 101 to 103. Which bursts Verbatim reads the hundred
 //!   lines in depends on timing, so their speech is not asserted line by
-//!   line (`docs/testing.md`, "Exact assertions", the owner's exceptions):
+//!   line (`books/dev/src/reference/testing.md`, "Exact assertions", the owner's exceptions):
 //!   the scenario asserts that "flood line 1" starts to play and waits for
 //!   "flood line 100" to be queued, the evidence that the whole flood was
 //!   read, then presses Control. Everything still queued is cut off: the
@@ -29,7 +29,7 @@
 //!   Nothing is cut off or lost: the first line and the two queued behind
 //!   it are heard in full, then the rest and the prompt.
 //!
-//!   Then the command marks (`docs/design/terminal-model.md`, "Features
+//!   Then the command marks (`books/dev/src/explanation/design/terminal-model.md`, "Features
 //!   and settings"): `echo three` is entered, heard as "three" and the
 //!   prompt, and Enter on each typed line has marked it.
 //!   Verbatim+Alt+Up Arrow five times moves the review cursor to each
@@ -41,7 +41,7 @@
 //!   Verbatim+Alt+Down Arrow goes back to the newer "echo one", then to
 //!   `gated.ps1`'s line. Last, `cls`, heard as the prompt, which in both
 //!   terminals erases the history with the marks' lines
-//!   (`docs/design/terminal-model.md`, "The terminals"), so
+//!   (`books/dev/src/explanation/design/terminal-model.md`, "The terminals"), so
 //!   Verbatim+Alt+Up Arrow says nothing. NVDA has no command marks, so each press is Verbatim's own
 //!   (`docs/parity/terminals.md`, "Reading a terminal on demand"); the
 //!   marks steps come after Control's timing-dependent part, so they are

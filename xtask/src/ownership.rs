@@ -1,16 +1,16 @@
 //! The `cargo xtask ci` checks that the owners keep their rules, by two
 //! rules over named modules:
 //!
-//! - The pure rule (`docs/design/ownership.md`):
+//! - The pure rule (`books/dev/src/explanation/design/ownership.md`):
 //!   a module whose transitions are replayed in tests may name nothing that
 //!   blocks, shares, spawns, reads a clock or calls out of the process.
 //!   The outpost's reducer is held to it as a directory, every file in it
-//!   (`docs/design/ownership.md`),
+//!   (`books/dev/src/explanation/design/ownership.md`),
 //!   with an allow-list of its own: the module's own items, the model,
 //!   Core's focus rules, `std`'s ordered collections and `VecDeque`,
 //!   `cmp`, `mem`, `Arc` and `Duration`; its `#[cfg(test)]` modules, inline or in files of their
 //!   own, are skipped.
-//! - The hook rule (`docs/design/ownership.md`): the modules whose code runs on the keyboard hook's
+//! - The hook rule (`books/dev/src/explanation/design/ownership.md`): the modules whose code runs on the keyboard hook's
 //!   thread may name nothing that takes a lock, waits, logs, does I/O or
 //!   dispatches sent messages, and nothing that would have the thread take
 //!   work from another thread as a message: the hook thread takes only
@@ -18,14 +18,14 @@
 //!   skipped. The hook thread's start-up in `lib.rs`, `hook_thread`, is
 //!   read alone by the same rule, but may report on a channel and log once
 //!   before the loop, and may not run a message loop of its own.
-//! - The audio rule (`docs/design/ownership.md`): the module of the audio thread's pass may
+//! - The audio rule (`books/dev/src/explanation/design/ownership.md`): the module of the audio thread's pass may
 //!   name nothing that takes a lock, waits, allocates, formats or logs, and
 //!   may use only atomics, `Arc`, time, `VecDeque`, `rtrb` and the audio
 //!   crate's own device, record and store types. A method that allocates
 //!   inside an allowed type is a review rule, held by the mixer's
 //!   allocation test.
 //!
-//! - The determinism rule (`docs/testing.md`, "The crates on a reducer's path"), over every crate on a reducer's path, which the tier
+//! - The determinism rule (`books/dev/src/reference/testing.md`, "The crates on a reducer's path"), over every crate on a reducer's path, which the tier
 //!   check derives from the dependency graph ([`determinism`]): each keeps
 //!   a `clippy.toml` identical to `verbatim-core`'s, which names every
 //!   entry of [`DETERMINISM_ENTRIES`], so Clippy rejects hash collections,
@@ -322,7 +322,7 @@ const HOOK_START_FORBIDDEN: [&str; 24] = [
 /// What a pure module may not name: identifiers, matched whole, and paths,
 /// matched as written. A responder answers its asker when it is dropped,
 /// so one held in a pure module would answer as a replay drops its state
-/// (`docs/design/ownership.md`).
+/// (`books/dev/src/explanation/design/ownership.md`).
 const FORBIDDEN: [&str; 17] = [
     "thread",
     "Mutex",
@@ -358,7 +358,7 @@ pub fn check(root: &Path) -> Result<(), String> {
         Ok(())
     } else {
         Err(format!(
-            "a checked module names something outside its rule (the pure rule, docs/design/ownership.md; the hook rule, docs/design/ownership.md):\n{report}"
+            "a checked module names something outside its rule (the pure rule, books/dev/src/explanation/design/ownership.md; the hook rule, books/dev/src/explanation/design/ownership.md):\n{report}"
         ))
     }
 }
@@ -622,7 +622,7 @@ fn expand(tree: &str) -> Vec<String> {
 
 /// What each covered crate's `clippy.toml` must name, as Clippy's
 /// `disallowed-types` and `disallowed-methods` entries
-/// (`docs/testing.md`, "The crates on a reducer's path").
+/// (`books/dev/src/reference/testing.md`, "The crates on a reducer's path").
 const DETERMINISM_ENTRIES: [&str; 122] = [
     "std::collections::HashMap",
     "std::collections::HashSet",
@@ -749,7 +749,7 @@ const DETERMINISM_ENTRIES: [&str; 122] = [
 ];
 /// The files that may `expect` `clippy::disallowed_types` and
 /// `clippy::disallowed_methods`, with a reason, and no other file of a
-/// covered crate may (`docs/testing.md`, "The crates on a reducer's path"): the
+/// covered crate may (`books/dev/src/reference/testing.md`, "The crates on a reducer's path"): the
 /// two cost measurements, which time with `Instant`;
 /// the replay fixture's test, which reads its file; the mint's own test;
 /// the conformance corpus's reader and its test; and each generated test's
@@ -812,7 +812,7 @@ const FORBIDDEN_MODULES: [&str; 5] = [
 /// variables, seed at random and persist failures to files; the prelude's
 /// `ProptestConfig` is listed by name, since a match after a letter is not
 /// a match
-/// (`docs/testing.md`, "The crates on a reducer's path").
+/// (`books/dev/src/reference/testing.md`, "The crates on a reducer's path").
 const FORBIDDEN_CALLS: [&str; 9] = [
     "enabled!",
     "event_enabled!",
@@ -839,7 +839,7 @@ const LINT_FLAGS: [&str; 8] = [
 
 /// Runs the determinism rule over the `covered` crates, each in
 /// `crates/<name>`, from the workspace root `root`
-/// (`docs/testing.md`, "The crates on a reducer's path"), returning the
+/// (`books/dev/src/reference/testing.md`, "The crates on a reducer's path"), returning the
 /// findings as the error.
 pub fn determinism(root: &Path, covered: &BTreeSet<String>) -> Result<(), String> {
     let mut report = String::new();
@@ -889,7 +889,7 @@ pub fn determinism(root: &Path, covered: &BTreeSet<String>) -> Result<(), String
         Ok(())
     } else {
         Err(format!(
-            "a crate on a reducer's path breaks the determinism rule (docs/testing.md, \"The crates on a reducer's path\"):\n{report}"
+            "a crate on a reducer's path breaks the determinism rule (books/dev/src/reference/testing.md, \"The crates on a reducer's path\"):\n{report}"
         ))
     }
 }

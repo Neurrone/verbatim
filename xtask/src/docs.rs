@@ -1,6 +1,7 @@
 //! `cargo xtask docs`: the check that the repository's Markdown documents
-//! point only at things that exist, and that `docs/readme.md` indexes every
-//! document under `docs/`.
+//! point only at things that exist, that `docs/readme.md` indexes every
+//! document under `docs/`, and that each published book under `books/`
+//! lists every page it holds and links nothing outside itself.
 //!
 //! Every Markdown file of the repository is checked except those under
 //! `nvda/`, `third_party/`, `.git/`, `.claude/worktrees/` (other sessions'
@@ -23,6 +24,13 @@
 //!    (planned) ``, which exempts that one span and says so to the reader.
 //! 3. `docs/readme.md` links every Markdown file under `docs/`, directly or
 //!    through one of [`INDEXES`] that it links directly.
+//! 4. A book's `SUMMARY.md`, `books/<book>/src/SUMMARY.md`, links every
+//!    Markdown file under that `src/` folder, because mdBook publishes only
+//!    the pages its summary lists.
+//! 5. A relative link in a book's page resolves inside that book's `src/`
+//!    folder, because the published site carries nothing else: a page
+//!    names an agent-only document, a source file or another book by its
+//!    full address instead.
 //!
 //! Names are compared exactly, letter case included, as GitHub compares
 //! them, although Windows' own file system would accept another case.
@@ -38,6 +46,7 @@ use std::process::ExitCode;
 /// The first components a backticked span must start with to be read as a
 /// repository path by rule 2.
 const REPOSITORY_ROOTS: &[&str] = &[
+    "books/",
     "crates/",
     "docs/",
     "xtask/",
@@ -59,13 +68,19 @@ const DOCS_INDEX: &str = "docs/readme.md";
 
 /// The indexes `docs/readme.md` may delegate to: a document they link
 /// counts as indexed when `docs/readme.md` links the index itself.
-const INDEXES: &[&str] = &[
-    "docs/crates/readme.md",
-    "docs/parity/readme.md",
-    "docs/nvda/readme.md",
-    "docs/explainers/readme.md",
-    "docs/tooling/readme.md",
-];
+const INDEXES: &[&str] = &["docs/parity/readme.md", "docs/nvda/readme.md"];
+
+/// The folder holding the published books, one folder per book.
+const BOOKS: &str = "books/";
+
+/// The source folder of the book holding `path`, `books/<book>/src/`, when
+/// `path` is a page of a book.
+fn book_source(path: &str) -> Option<&str> {
+    let rest = path.strip_prefix(BOOKS)?;
+    let (book, inside) = rest.split_once('/')?;
+    inside.strip_prefix("src/")?;
+    Some(&path[..BOOKS.len() + book.len() + "/src/".len()])
+}
 
 /// Directories, from the repository root, whose documents are not checked.
 const EXCLUDED: &[&str] = &[
@@ -212,7 +227,15 @@ fn check_documents(
                         Some(resolved) if !exists(&resolved) => violations.push(format!(
                             "{path}:{line}: the link ({target}) names {resolved}, which does not exist"
                         )),
-                        Some(_) => {}
+                        Some(resolved) => {
+                            if let Some(source) = book_source(path)
+                                && !format!("{resolved}/").starts_with(source)
+                            {
+                                violations.push(format!(
+                                    "{path}:{line}: the link ({target}) leaves the book {source}; name {resolved} by its full address"
+                                ));
+                            }
+                        }
                     }
                 }
                 Item::Code {
@@ -235,33 +258,69 @@ fn check_documents(
         }
     }
     violations.extend(unindexed(documents));
+    violations.extend(unlisted(documents));
+    violations
+}
+
+/// The relative links of the document at `file` among `documents`, each
+/// resolved to a path from the repository root.
+fn links_of(documents: &[(String, String)], file: &str) -> BTreeSet<String> {
+    documents
+        .iter()
+        .find(|(path, _)| path == file)
+        .map(|(path, text)| {
+            scan(text)
+                .into_iter()
+                .filter_map(|item| match item {
+                    Item::Link { target, .. } => link_path(&target),
+                    Item::Code { .. } => None,
+                })
+                .filter_map(|relative| resolve(path, &relative))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Rule 4: a violation for each page of a book that the book's
+/// `SUMMARY.md` does not link, and for each book with no summary.
+fn unlisted(documents: &[(String, String)]) -> Vec<String> {
+    let mut violations = Vec::new();
+    let mut summaries: HashMap<&str, Option<BTreeSet<String>>> = HashMap::new();
+    for (path, _) in documents {
+        let Some(source) = book_source(path) else {
+            continue;
+        };
+        let summary = format!("{source}SUMMARY.md");
+        if *path == summary {
+            continue;
+        }
+        let listed = summaries.entry(source).or_insert_with(|| {
+            documents
+                .iter()
+                .any(|(other, _)| *other == summary)
+                .then(|| links_of(documents, &summary))
+        });
+        match listed {
+            None => violations.push(format!(
+                "{path}:1: the book has no {summary}, so mdBook would publish nothing"
+            )),
+            Some(listed) if !listed.contains(path.as_str()) => violations.push(format!(
+                "{path}:1: {summary} does not list this page, so mdBook would not publish it"
+            )),
+            Some(_) => {}
+        }
+    }
     violations
 }
 
 /// Rule 3: a violation for each document under `docs/` that
 /// [`DOCS_INDEX`] does not reach.
 fn unindexed(documents: &[(String, String)]) -> Vec<String> {
-    let links_of = |file: &str| -> BTreeSet<String> {
-        documents
-            .iter()
-            .find(|(path, _)| path == file)
-            .map(|(path, text)| {
-                scan(text)
-                    .into_iter()
-                    .filter_map(|item| match item {
-                        Item::Link { target, .. } => link_path(&target),
-                        Item::Code { .. } => None,
-                    })
-                    .filter_map(|relative| resolve(path, &relative))
-                    .collect()
-            })
-            .unwrap_or_default()
-    };
-    let direct = links_of(DOCS_INDEX);
+    let direct = links_of(documents, DOCS_INDEX);
     let mut reached = direct.clone();
     for index in INDEXES {
         if direct.contains(*index) {
-            reached.extend(links_of(index));
+            reached.extend(links_of(documents, index));
         }
     }
     documents
@@ -637,12 +696,12 @@ mod tests {
         let documents = fixture(&[
             (
                 "docs/readme.md",
-                "[a](a.md), [crates](crates/readme.md), [b](b.md)\n",
+                "[a](a.md), [nvda](nvda/readme.md), [b](b.md)\n",
             ),
             ("docs/a.md", "[deep](deep/c.md)\n"),
             ("docs/b.md", ""),
-            ("docs/crates/readme.md", "[one](one.md)\n"),
-            ("docs/crates/one.md", ""),
+            ("docs/nvda/readme.md", "[one](one.md)\n"),
+            ("docs/nvda/one.md", ""),
             ("docs/deep/c.md", ""),
             ("docs/parity/readme.md", "[two](two.md)\n"),
             ("docs/parity/two.md", ""),
@@ -656,6 +715,55 @@ mod tests {
                 "docs/parity/readme.md:1: docs/readme.md does not link this document, directly or through an index it links"
                     .to_owned(),
                 "docs/parity/two.md:1: docs/readme.md does not link this document, directly or through an index it links"
+                    .to_owned(),
+            ]
+        );
+    }
+
+    #[test]
+    fn every_page_of_a_book_must_be_listed_in_its_summary() {
+        let documents = fixture(&[
+            (
+                "books/dev/src/SUMMARY.md",
+                "# Summary\n\n- [Intro](intro.md)\n  - [Deep](part/deep.md)\n",
+            ),
+            ("books/dev/src/intro.md", ""),
+            ("books/dev/src/part/deep.md", ""),
+            ("books/dev/src/stray.md", ""),
+            ("books/user/src/intro.md", ""),
+        ]);
+        assert_eq!(
+            run_check(&documents, &[]),
+            vec![
+                "books/dev/src/stray.md:1: books/dev/src/SUMMARY.md does not list this page, so mdBook would not publish it"
+                    .to_owned(),
+                "books/user/src/intro.md:1: the book has no books/user/src/SUMMARY.md, so mdBook would publish nothing"
+                    .to_owned(),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_link_in_a_book_must_stay_inside_that_book() {
+        let documents = fixture(&[
+            ("books/dev/src/SUMMARY.md", "- [Page](part/page.md)\n"),
+            (
+                "books/dev/src/part/page.md",
+                "[sibling](../SUMMARY.md), [agent](../../../../docs/a.md),\n\
+                 [other book](../../../user/src/SUMMARY.md), [source](/crates/foo/src/lib.rs),\n\
+                 [web](https://example.com/docs/a.md) and `docs/a.md`.\n",
+            ),
+            ("books/user/src/SUMMARY.md", ""),
+            ("docs/a.md", "[into a book](../books/dev/src/part/page.md)\n"),
+        ]);
+        assert_eq!(
+            run_check(&documents, &["crates/foo/src/lib.rs"]),
+            vec![
+                "books/dev/src/part/page.md:1: the link (../../../../docs/a.md) leaves the book books/dev/src/; name docs/a.md by its full address"
+                    .to_owned(),
+                "books/dev/src/part/page.md:2: the link (../../../user/src/SUMMARY.md) leaves the book books/dev/src/; name books/user/src/SUMMARY.md by its full address"
+                    .to_owned(),
+                "books/dev/src/part/page.md:2: the link (/crates/foo/src/lib.rs) leaves the book books/dev/src/; name crates/foo/src/lib.rs by its full address"
                     .to_owned(),
             ]
         );

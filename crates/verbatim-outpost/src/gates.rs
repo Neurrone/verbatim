@@ -1,5 +1,5 @@
 //! The gates of the UIA shapes the outpost fetches with
-//! (`docs/design/uia-shapes.md`, section 4), from the details the active
+//! (`books/dev/src/explanation/design/uia-shapes.md`, section 4), from the details the active
 //! theme reports ([`Fetches`]): one function per gated shape. A detail the
 //! theme reports as off is not fetched, so the provider is not asked for
 //! it. This is the one link the types cannot make, since the theme is in

@@ -1,6 +1,6 @@
 //! Editing (milestone M4 items 3 and 4), as `text_box_editing` in the
 //! Windows Forms text box and as `notepad_editing` in Windows 11 Notepad
-//! (each its own code, as `docs/testing.md` requires): focus on the
+//! (each its own code, as `books/dev/src/reference/testing.md` requires): focus on the
 //! text saying the caret's line rather than the whole text; the caret by
 //! character, word, and line; selecting and unselecting with Shift; typing
 //! with character echo; deleting with Backspace and Delete; and End and

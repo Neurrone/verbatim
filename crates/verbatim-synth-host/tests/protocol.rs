@@ -1,4 +1,4 @@
-//! The host protocol of `docs/design/communication.md` section 7, with a
+//! The host protocol of `books/dev/src/explanation/design/communication.md` section 7, with a
 //! scripted driver whose timing the test decides: `HostedSynth` asks for
 //! the next utterance right behind a cancel without waiting for the
 //! cancelled one's end, and drops the cancelled one's frames wherever it
@@ -528,7 +528,7 @@ fn a_frozen_host_is_ended_rather_than_waited_for_for_good() {
 const HANDSHAKES: usize = 20;
 
 /// The host's first-chunk stage runs from its taking the request in
-/// (`docs/design/communication.md`, section 10.1), so the time a request
+/// (`books/dev/src/explanation/design/communication.md`, section 10.1), so the time a request
 /// waits in the host behind a cancelled utterance is in it, and the stages
 /// before the first chunk leave no gap. The old utterance's second chunk
 /// holds the host at the gate, which the new utterance's sink opens once

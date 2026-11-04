@@ -1,4 +1,4 @@
-//! `docs/uia-bugs.md`, "A registration that times out reports success"
+//! `books/dev/src/reference/uia-bugs.md`, "A registration that times out reports success"
 //! (E-TT in its experiments folder): with short timeouts,
 //! `AddEventHandlerGroup` on a window whose provider is held in its call
 //! returns success while the provider still has not answered, where a
@@ -14,7 +14,7 @@
 //! A registration that timed out delivers nothing for about 2 seconds
 //! after it returned (e57 and e58), and no test shows it: nothing marks
 //! the end of that gap, so a test could not tell an event lost in it from
-//! one delivered late (`docs/uia-bugs.md` says why).
+//! one delivered late (`books/dev/src/reference/uia-bugs.md` says why).
 
 use std::sync::mpsc;
 use std::time::Duration;

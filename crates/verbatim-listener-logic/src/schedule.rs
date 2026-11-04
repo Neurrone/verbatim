@@ -1,5 +1,5 @@
 //! The focus listener's read scheduler as a pure transition
-//! (`docs/design/ownership.md`): which reading
+//! (`books/dev/src/explanation/design/ownership.md`): which reading
 //! thread reads which application's UIA event, when a read is abandoned or
 //! published at its bound, when an event waiting behind abandoned reads is
 //! dropped, which idle waiters may run, and whether a menu opening's
@@ -9,7 +9,7 @@
 //! microseconds on the shell's monotonic clock, and returns the
 //! [`ScheduleEffect`]s, in the order the shell applies them under its lock.
 //! Each application's read under way is its work in flight
-//! ([`InFlight`], `docs/crates/verbatim-reader-rules.md`), which decides its abandonment, its
+//! ([`InFlight`], `books/dev/src/reference/crates/verbatim-reader-rules.md`), which decides its abandonment, its
 //! publication at its bound and the half-second judgment of whether the
 //! user has moved on; what it needs of Windows it asks by an effect
 //! ([`ScheduleEffect::AskMovedOn`], [`ScheduleEffect::Publish`]), which
@@ -1927,7 +1927,7 @@ mod tests {
     }
 
     /// Found by the read scheduler's generated test
-    /// (`docs/crates/verbatim-listener-logic.md`): an idle
+    /// (`books/dev/src/reference/crates/verbatim-listener-logic.md`): an idle
     /// waiter runs in the push whose replacement gives the one event
     /// queued before it its outcome, not at a later step.
     #[test]
@@ -1957,7 +1957,7 @@ mod tests {
     }
 
     /// Found by the read scheduler's generated test
-    /// (`docs/crates/verbatim-listener-logic.md`): an
+    /// (`books/dev/src/reference/crates/verbatim-listener-logic.md`): an
     /// application whose outpost has ended is let go once its last
     /// abandoned read returns with nothing waiting.
     #[test]

@@ -346,7 +346,7 @@ const MEDIUM: u32 = 0x2000;
 const HIGH: u32 = 0x3000;
 
 /// Keys are held back for a window only when its process's integrity is
-/// known and no higher than Verbatim's (`docs/design/key-holding.md`,
+/// known and no higher than Verbatim's (`books/dev/src/explanation/design/key-holding.md`,
 /// "Elevated windows"); nothing is known before the listener reports.
 #[test]
 fn keys_are_held_only_for_a_window_of_no_higher_integrity() {
@@ -364,7 +364,7 @@ fn keys_are_held_only_for_a_window_of_no_higher_integrity() {
 
 /// A console host window's keys are translated with the layout of the
 /// thread its event named, any other window's with its owner's, which the
-/// hook reads itself (`docs/crates/verbatim-input-windows.md`, "Typed
+/// hook reads itself (`books/dev/src/reference/crates/verbatim-input-windows.md`, "Typed
 /// text").
 #[test]
 fn a_console_window_takes_the_thread_its_event_named() {

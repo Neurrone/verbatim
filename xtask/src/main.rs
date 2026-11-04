@@ -26,23 +26,24 @@
 //!
 //! `coverage`, on every host, measures line coverage per test level with
 //! cargo-llvm-cov, and reports and merges a coverage run's levels
-//! (`docs/tooling/coverage.md`). See `xtask/src/coverage.rs`.
+//! (`books/dev/src/how-to/coverage.md`). See `xtask/src/coverage.rs`.
 //!
 //! `docs` checks the repository's Markdown documents: that every relative
 //! link and every backticked repository path names something that exists,
-//! and that `docs/readme.md` indexes every document under `docs/`. See
-//! `xtask/src/docs.rs`.
+//! that `docs/readme.md` indexes every document under `docs/`, and that
+//! each published book under `books/` lists every page in its summary and
+//! links nothing outside itself. See `xtask/src/docs.rs`.
 //!
 //! The commands below exist on Windows only.
 //!
-//! `faults` builds and runs the fault tests (`docs/testing.md`, and
-//! `docs/crates/verbatim-faults.md`, "Failure paths"): clippy
+//! `faults` builds and runs the fault tests (`books/dev/src/reference/testing.md`, and
+//! `books/dev/src/reference/crates/verbatim-faults.md`, "Failure paths"): clippy
 //! of every crate with a `faults` feature with that feature on, one package
 //! at a time, then each fault test target, into `target/debug`. No other
 //! command turns a `faults` feature on, so the ordinary steps build and
 //! lint exactly the shipped configuration.
 //!
-//! `vm` drives the milestone M2 Hyper-V E2E harness (`docs/architecture.md`
+//! `vm` drives the milestone M2 Hyper-V E2E harness (`books/dev/src/explanation/architecture.md`
 //! section 14): building and importing the golden VM, deploying builds into
 //! it, and running `crates/verbatim-e2e`'s suite against it. See
 //! `xtask/src/vm/mod.rs` for the verb list.
@@ -52,7 +53,7 @@
 //! a demonstration's in `videos/demos`. See `xtask/src/demo.rs`.
 //!
 //! `nvda` builds the NVDA transcript add-on, captures what NVDA speaks, and
-//! compares an end-to-end scenario with NVDA (`docs/tooling/nvda.md`).
+//! compares an end-to-end scenario with NVDA (`books/dev/src/how-to/nvda.md`).
 //! See `xtask/src/nvda.rs`.
 //!
 //! `e2e-group` prints the end-to-end scenarios of one of the CI `e2e`
@@ -138,7 +139,7 @@ mod vm;
 /// passed to cargo as `-p`: the platform-neutral tier, the logic crates,
 /// and xtask itself, so
 /// the unit tests of the documentation check and the scans run there too
-/// (`docs/crates/readme.md`). Every crate here
+/// (`books/dev/src/reference/crates/readme.md`). Every crate here
 /// must build on Linux, which GitHub's `ci-linux` job proves.
 const LINUX_CRATES: &[&str] = &[
     "verbatim-model",
@@ -231,17 +232,17 @@ fn usage() {
         "  e2e-plan  print the CI e2e job's matrix of groups, sized by xtask/e2e-durations.txt (--coverage for a coverage run's instrumented build)"
     );
     eprintln!(
-        "  coverage  line coverage of the unit, mockapp and fault tests into target/coverage; report <name> <profiles> and merge <dir> for a coverage run (docs/tooling/coverage.md)"
+        "  coverage  line coverage of the unit, mockapp and fault tests into target/coverage; report <name> <profiles> and merge <dir> for a coverage run (books/dev/src/how-to/coverage.md)"
     );
     eprintln!(
-        "  docs  check that the documents' links and backticked repository paths exist, and that docs/readme.md indexes every document under docs"
+        "  docs  check that the documents' links and backticked repository paths exist, that docs/readme.md indexes every document under docs, and that each book under books lists its pages and links nothing outside itself"
     );
     eprintln!(
         "  replay  replay a flight-recorder dump through Core's reducer and print each input with its effects (cargo xtask replay <flight-recorder.jsonl> [--from <line>] [--to <line>])"
     );
     #[cfg(windows)]
     eprintln!(
-        "  faults  clippy with the faults feature, then the fault tests, into target/debug (docs/testing.md)"
+        "  faults  clippy with the faults feature, then the fault tests, into target/debug (books/dev/src/reference/testing.md)"
     );
     #[cfg(windows)]
     eprintln!("  vm    Hyper-V E2E harness; run `cargo xtask vm` alone for its verbs");
@@ -259,11 +260,11 @@ fn usage() {
     );
     #[cfg(windows)]
     eprintln!(
-        "  trace  WPR traces of the CPU's scheduling: start, stop, waits <trace.etl>, or scenario <name> to trace a window inside one scenario and read it (docs/tooling/measuring.md)"
+        "  trace  WPR traces of the CPU's scheduling: start, stop, waits <trace.etl>, or scenario <name> to trace a window inside one scenario and read it (books/dev/src/how-to/measuring.md)"
     );
     #[cfg(windows)]
     eprintln!(
-        "  measure  run the measure set on this machine and report each latency stage's distribution (cargo xtask measure [--release | --verbatim-exe <path>]; docs/tooling/measuring.md)"
+        "  measure  run the measure set on this machine and report each latency stage's distribution (cargo xtask measure [--release | --verbatim-exe <path>]; books/dev/src/how-to/measuring.md)"
     );
     #[cfg(windows)]
     eprintln!(
@@ -576,7 +577,7 @@ fn nextest_step(name: &'static str, command: &[&str], filter: &str, serial: bool
 /// clippy and unit tests for the whole workspace. The workspace-hack crate
 /// must match what cargo-hakari would generate, and every package must
 /// depend on it, or commands that select different packages build
-/// dependencies apart again (`docs/tooling/setup.md`, "The workspace-hack
+/// dependencies apart again (`books/dev/src/how-to/setup.md`, "The workspace-hack
 /// crate"). The unit tests run under cargo-nextest, many at once, but for
 /// [`ALONE_TESTS`], which run after them with nothing else beside them,
 /// and [`SERIAL_TESTS`], which run last, one at a time; then the doctests,

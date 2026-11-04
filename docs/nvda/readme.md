@@ -10,7 +10,7 @@ Rules for this folder:
 
 - **NVDA only.** These files describe NVDA's behavior and implementation,
   not Verbatim's. Comparisons, divergence decisions, and Verbatim status
-  live in [Architecture](../architecture.md) (decisions of record) and
+  live in [Architecture](../../books/dev/src/explanation/architecture.md) (decisions of record) and
   [Parity ledger](../parity/readme.md) (the per-behavior ledger).
 - **Cited.** Every nontrivial claim names the NVDA source file (and
   function or class) it comes from, as a path relative to the `nvda/`
@@ -25,7 +25,7 @@ Rules for this folder:
   special support from NVDA's core (those cases — Office, browsers — have
   their own files).
 
-Windows API background assumed by these files is in `docs/explainers/`;
+Windows API background assumed by these files is in `books/dev/src/explanation/windows/`;
 read that folder first if MSAA, IA2, UIA, COM apartments, winevents, or
 Windows IPC primitives are unfamiliar.
 

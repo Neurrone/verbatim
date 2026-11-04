@@ -1,8 +1,8 @@
 # Windows Terminal's second terminal identity: a design for M5
 
-Status: a design for M5, not implemented. Dickson decided (2026-10-18) that the rule belongs in a Windows Terminal app module, built when M5 brings extensions, rather than in the core focus judgement; the roadmap's M5 entry tracks it, and `docs/design/extensions.md`, section 6, places the module's hook. Until it is built, the tests accept the repeated "terminal" as an optional utterance (`docs/testing.md`, "Optional utterances"), which covers one repeat but not a late one, so that repeat can still fail a scenario.
+Status: a design for M5, not implemented. Dickson decided (2026-10-18) that the rule belongs in a Windows Terminal app module, built when M5 brings extensions, rather than in the core focus judgement; the roadmap's M5 entry tracks it, and `docs/design/extensions.md`, section 6, places the module's hook. Until it is built, the tests accept the repeated "terminal" as an optional utterance (`books/dev/src/reference/testing.md`, "Optional utterances"), which covers one repeat but not a late one, so that repeat can still fail a scenario.
 
-Background is in [the focus pipeline](focus-pipeline.md), section 16.8 (the second identity, and NVDA receiving it) and section 18 (the listener's focus judgement). Evidence is in [`experiments/windows-terminal-raises-focus-from-a-second-runtime-identity/`](../../experiments/windows-terminal-raises-focus-from-a-second-runtime-identity/readme.md).
+Background is in [the focus pipeline](../../books/dev/src/explanation/design/focus-pipeline.md), section 16.8 (the second identity, and NVDA receiving it) and section 18 (the listener's focus judgement). Evidence is in [`experiments/windows-terminal-raises-focus-from-a-second-runtime-identity/`](../../experiments/windows-terminal-raises-focus-from-a-second-runtime-identity/readme.md).
 
 ## The problem
 

@@ -1,5 +1,5 @@
 //! Typed character and word echo (milestone M4 item 4), as
-//! `text_box_typed_words` and `notepad_typed_words` (each its own code, as `docs/testing.md` requires): the test
+//! `text_box_typed_words` and `notepad_typed_words` (each its own code, as `books/dev/src/reference/testing.md` requires): the test
 //! of what the `demo_notepad_editing` demonstration shows beyond
 //! `notepad_editing`. Typed punctuation and spaces are echoed by name
 //! ("comma", "dot", "space"); Verbatim+3 turns typed-word echo on, saying

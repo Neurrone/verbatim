@@ -193,7 +193,7 @@ pub const RUST_LOG_ENV: &str = "VERBATIM_E2E_RUST_LOG";
 /// what each outpost read and when, what it released, and what the listener
 /// reported, not only what the flight recorder kept; every move of a UIA
 /// subscription, with each call it made and its result
-/// (`docs/design/focus-pipeline.md`, section 17); and the arrival of every
+/// (`books/dev/src/explanation/design/focus-pipeline.md`, section 17); and the arrival of every
 /// UIA event and `WinEvent` in each process, a `WinEvent` with how long
 /// ago it was raised, so a delay before an event reached Verbatim shows.
 pub const DEFAULT_RUST_LOG: &str = "info,verbatim_outpost=debug,verbatim_listener=debug,verbatim_supervisor=debug,verbatim_uia::subscribe=debug,verbatim_uia::com=debug,verbatim_ia2::hook=debug";
@@ -965,7 +965,7 @@ impl Scenario {
     /// the Exit item of its menu: waits on its process handle for it to
     /// exit with code 0, then takes its speech to the connection's end,
     /// whose last utterance must be exactly `last`; what was said between
-    /// the keys and it is not asserted (`docs/testing.md`, "Exact
+    /// the keys and it is not asserted (`books/dev/src/reference/testing.md`, "Exact
     /// assertions"). The run then asks Verbatim for nothing more and does
     /// not quit it ([`Scenario::quit_verbatim`]).
     ///
@@ -1250,7 +1250,7 @@ impl Scenario {
     ///
     /// A window opened in front is refused the foreground unless the agent
     /// may allow it, which it may only while it injected the last input
-    /// (`docs/tooling/troubleshooting.md`, "Windows' foreground lock keeps launched
+    /// (`books/dev/src/how-to/troubleshooting.md`, "Windows' foreground lock keeps launched
     /// applications behind"); a minimized window restored and set as the
     /// foreground, as Notepad's documents are brought forward, takes it
     /// whatever input came last. A program that ignores the minimized show
@@ -1621,7 +1621,7 @@ impl Scenario {
     /// folder window the shell opens minimized takes the foreground while
     /// minimized, and once restored its file list has no keyboard focus,
     /// in NVDA as in Verbatim (measured 2026-10-09;
-    /// `docs/tooling/troubleshooting.md`). The window is closed at cleanup by
+    /// `books/dev/src/how-to/troubleshooting.md`). The window is closed at cleanup by
     /// its handle, recorded as it opened, since File Explorer retitles it
     /// as it navigates; `explorer.exe` is the shell, so its process stays.
     /// Returns the folder's name, which is the window's title.
@@ -3337,7 +3337,7 @@ fn connect_nvda(agent: &mut AgentClient) -> io::Result<(SpeechCollector, Timelin
     let port = crate::nvda::session_port(session)?;
     let (transcript, hello) = crate::nvda::Transcript::connect(port).map_err(|error| {
         io::Error::other(format!(
-            "compare mode reads NVDA's speech from its transcript add-on (docs/tooling/nvda.md), \
+            "compare mode reads NVDA's speech from its transcript add-on (books/dev/src/how-to/nvda.md), \
              so NVDA with the add-on must be running in the agent's session, session {session}: {error}"
         ))
     })?;
@@ -3780,7 +3780,7 @@ fn minimize_failure(
 /// cloaked, and keeps a Settings a scenario opened so once its window
 /// closes, so it is Windows' prelaunch or a Settings left suspended by this
 /// or an earlier scenario, and no window a scenario left
-/// (`docs/tooling/e2e.md`, on `foreground.txt`). Which it is cannot be
+/// (`books/dev/src/how-to/e2e.md`, on `foreground.txt`). Which it is cannot be
 /// told: a scenario
 /// opens Settings through `explorer.exe`, and the window it waits for is
 /// the frame host's, so no `SystemSettings.exe` is among the processes it

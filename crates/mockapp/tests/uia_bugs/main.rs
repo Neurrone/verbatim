@@ -1,6 +1,6 @@
 //! Tests that reproduce faults in Windows' UI Automation, or show that the
 //! workaround Verbatim relies on still holds, one module per fault, each
-//! named after the fault's heading in `docs/uia-bugs.md`, which records the
+//! named after the fault's heading in `books/dev/src/reference/uia-bugs.md`, which records the
 //! fault, its evidence, and which faults have no reproduction test yet.
 //! `support` holds the mechanics they share.
 //!

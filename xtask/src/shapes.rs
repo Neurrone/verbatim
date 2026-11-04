@@ -1,5 +1,5 @@
 //! The `cargo xtask ci` check that every cached read of a UIA element goes
-//! through a shape (`docs/design/uia-shapes.md`, section 3.5, item 7).
+//! through a shape (`books/dev/src/explanation/design/uia-shapes.md`, section 3.5, item 7).
 //!
 //! Inside `verbatim-uia` the compiler confines Verbatim's own cached
 //! readers to the shape module, but `Live` hands out the raw element, whose
@@ -90,7 +90,7 @@ fn check_sources(sources: &[(String, String)]) -> Result<(), String> {
         return Ok(());
     }
     let mut report = String::from(
-        "UIA caches are read through shapes alone (docs/design/uia-shapes.md, section 3.5):\n",
+        "UIA caches are read through shapes alone (books/dev/src/explanation/design/uia-shapes.md, section 3.5):\n",
     );
     for (rule, finding) in &findings {
         let _ = writeln!(
@@ -178,7 +178,7 @@ mod tests {
         assert_eq!(
             check_sources(&outside),
             Err(format!(
-                "UIA caches are read through shapes alone (docs/design/uia-shapes.md, section 3.5):\n  \
+                "UIA caches are read through shapes alone (books/dev/src/explanation/design/uia-shapes.md, section 3.5):\n  \
                  crates/verbatim-outpost/src/outpost/read.rs:1: a cached read outside the shape module: {}\n  \
                  crates/mockapp/tests/events.rs:2: a cached read outside the shape module: {}\n",
                 read.trim(),

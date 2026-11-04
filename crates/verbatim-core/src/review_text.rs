@@ -88,7 +88,7 @@ pub(crate) fn run(
     match navigator.text.clone() {
         // A terminal's review cursor is a place in the outpost's memory of
         // its rows, which output can move: every command first reads the
-        // line where it is now (`docs/design/terminal-model.md`, "The
+        // line where it is now (`books/dev/src/explanation/design/terminal-model.md`, "The
         // review cursor").
         ReviewText::At(position) if grid => Outcome::Done(seed(
             state,
@@ -120,7 +120,7 @@ pub(crate) fn run(
 }
 
 /// Moves the review cursor to the previous or next command mark of the
-/// navigator's terminal (`docs/design/terminal-model.md`, "Features and
+/// navigator's terminal (`books/dev/src/explanation/design/terminal-model.md`, "Features and
 /// settings"): Core's terminal model answers it as the line move it is,
 /// landing at the review cursor's column and speaking the line, so the
 /// review position and what is said follow a line move's; nothing is said
@@ -324,7 +324,7 @@ fn execute(
             let character = text::character_at(&line.text, position.offset, grid);
             if grid {
                 // Cells, up to the row's last character: padding is never
-                // reviewed (`docs/design/terminal-model.md`, "Features and settings").
+                // reviewed (`books/dev/src/explanation/design/terminal-model.md`, "Features and settings").
                 // A cell past the text, where moving down a column leaves
                 // the cursor, is at the edge already.
                 let next = position.column

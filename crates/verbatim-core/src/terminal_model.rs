@@ -1,4 +1,4 @@
-//! Core's model of each terminal it reads (`docs/design/terminal-model.md`,
+//! Core's model of each terminal it reads (`books/dev/src/explanation/design/terminal-model.md`,
 //! "Where it runs"): the reading rules, with their memory of the terminal's
 //! rows, run here in the reducer, and the outpost only reads what Core asks
 //! for and sends each read back as a snapshot ([`TerminalSnapshot`]).
@@ -598,7 +598,7 @@ pub(crate) fn key(
 }
 
 /// The keys a key input is to the reading rules
-/// (`docs/design/terminal-model.md`, "Keys"): a caret key by its unit, any
+/// (`books/dev/src/explanation/design/terminal-model.md`, "Keys"): a caret key by its unit, any
 /// other key passed as `Other`, text typed by what it types, and a key that
 /// clears the line as `Forget`, the caret key that follows it as `Other`.
 pub(crate) fn key_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
@@ -947,7 +947,7 @@ pub(crate) fn answered_read(
 }
 
 /// The read before a held key in terminal `node`
-/// (`docs/design/key-holding.md`), a snapshot: aligned as a live read is,
+/// (`books/dev/src/explanation/design/key-holding.md`), a snapshot: aligned as a live read is,
 /// and its caret given as the answer [`crate::editing::held_read`] takes, as
 /// read when the read ended ([`read_at`]), so the key is taken as pressed
 /// just after it. Without a caret, the read is unanswered.
@@ -1194,7 +1194,7 @@ fn queue(state: &mut SrState, node: NodeId, waiting: Waiting) -> Vec<Effect> {
     )]
 }
 
-/// "Report status bar" (`docs/design/terminal-model.md`, "Features and
+/// "Report status bar" (`books/dev/src/explanation/design/terminal-model.md`, "Features and
 /// settings"): in the focused terminal Core reads, its footer, answered
 /// after a fresh read as every review command is, and spelled on the
 /// second press and copied on the third; elsewhere "No status line found",
@@ -1217,7 +1217,7 @@ pub(crate) fn report_status_bar(state: &mut SrState, trace_id: TraceId, repeat: 
 }
 
 /// A move to the previous or next command mark in terminal `node`
-/// (`docs/design/terminal-model.md`, "Features and settings"), the review
+/// (`books/dev/src/explanation/design/terminal-model.md`, "Features and settings"), the review
 /// position at `from`: answered as request `query_id`, the line move the
 /// caller waits on, after a fresh read. `None` when Core does not model
 /// the terminal.

@@ -130,7 +130,7 @@ fn caret_reply(reply: TextReply) -> CaretReply {
 /// both routes it takes: UIA's own event, and the `WinEvent` UIA raises for
 /// MSAA clients alongside it. Until then the event may still be on its way,
 /// and a step that moved on would have it answer, or be reported after,
-/// the next step's key (`docs/crates/mockapp.md`).
+/// the next step's key (`books/dev/src/reference/crates/mockapp.md`).
 fn heard_caret_event(outpost: &OutpostUnderTest) {
     outpost.heard(&[
         Heard::UiaTextSelection,
@@ -265,7 +265,7 @@ fn a_caret_move_raised_later_answers_the_watch() {
 }
 
 /// A held caret key's caret, read before the key is passed on
-/// (`TextOp::ReadCaret`, `docs/design/key-holding.md`), is its watch's
+/// (`TextOp::ReadCaret`, `books/dev/src/explanation/design/key-holding.md`), is its watch's
 /// baseline, though the application moved the caret there without
 /// reporting it: the watch stays open until the key's own move, and is
 /// answered with the caret where the key took it. Judged from the focus's
@@ -1087,7 +1087,7 @@ fn focus_edit(name: &str) -> (common::MockApp, OutpostUnderTest, NodeId, CaretRe
 /// "x" typed over the selected "alpha" in a classic edit control, its
 /// caret event raised before its value change, as the Windows Forms text
 /// box raises the caret's location change before the client's value
-/// change (`docs/crates/verbatim-outpost.md`, "Text and caret", checked live
+/// change (`books/dev/src/reference/crates/verbatim-outpost.md`, "Text and caret", checked live
 /// on 2026-10-08): the
 /// value change waiting at the caret event, the report says its change in
 /// general terms, the selection removed, as NVDA's edit control does

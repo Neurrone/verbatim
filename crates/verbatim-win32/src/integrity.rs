@@ -2,7 +2,7 @@
 //! foreground window's process's for every foreground change, and
 //! verbatim.exe reads its own, so that Core can decide whether the
 //! keyboard hook may hold keys back for the window in front (architecture
-//! section 5; `docs/design/key-holding.md`, "Elevated windows").
+//! section 5; `books/dev/src/explanation/design/key-holding.md`, "Elevated windows").
 //!
 //! Windows drops input Verbatim sends to a window of higher integrity, an
 //! elevated application's, without an error, since Verbatim runs without

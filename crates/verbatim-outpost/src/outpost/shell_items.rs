@@ -3,7 +3,7 @@
 //! and [`Query::ShellItemPosition`](verbatim_model::protocol::Query::ShellItemPosition),
 //! read by File Explorer's outpost within its own application, so Core
 //! makes no UIA connection into the shell's windows
-//! (`docs/design/listener-without-connections.md`, decision 9).
+//! (`books/dev/src/explanation/design/listener-without-connections.md`, decision 9).
 //!
 //! The notification area is the `TrayNotifyWnd` child of `Shell_TrayWnd`,
 //! with the overflow flyout window when it is visible; the taskbar is
@@ -11,7 +11,7 @@
 //! window is walked in the control view, each element read as
 //! `verbatim_uia::ShellButton`, and every named, on-screen button becomes
 //! a [`ShellItem`]. The walk reads whether each button is off the screen
-//! but never where it is (`docs/architecture.md`, "Bulk reads carry only
+//! but never where it is (`books/dev/src/explanation/architecture.md`, "Bulk reads carry only
 //! cheap properties"): a click asks where the chosen item is, which the
 //! outpost answers by walking the same surface again and reading
 //! `verbatim_uia::Place` for each button whose runtime id or name is the

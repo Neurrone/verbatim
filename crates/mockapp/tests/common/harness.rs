@@ -8,10 +8,10 @@
 //! connected to UIA providers sometimes hangs at full CPU, or crashes, in
 //! `UIAutomationCore.dll`'s own process-detach code as it exits normally,
 //! after all its tests have passed, and nothing tried on our side avoids it
-//! (`docs/uia-bugs.md`, "A process that used UIA can hang or crash as it
+//! (`books/dev/src/reference/uia-bugs.md`, "A process that used UIA can hang or crash as it
 //! exits"). Verbatim's own processes are not affected, because outposts and
 //! the listener end themselves with `TerminateProcess` once they have shut
-//! down, and never run that code (`docs/architecture.md`, section 1,
+//! down, and never run that code (`books/dev/src/explanation/architecture.md`, section 1,
 //! "Process and thread model"); these test binaries are the only processes
 //! that use UIA as a client and exit normally.
 //!

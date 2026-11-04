@@ -2,7 +2,7 @@
 
 How NVDA speaks on the login screen and UAC prompts, and how it
 locks itself down there. Background on the desktop/session security
-model: [Processes and security](../explainers/processes-and-security.md).
+model: [Processes and security](../../books/dev/src/explanation/windows/processes-and-security.md).
 
 ## Getting onto secure screens
 
@@ -34,7 +34,7 @@ Distinct from secure screens: an administrator command prompt, an
 elevated installer, or Task Manager runs elevated *on the normal
 desktop*, and it is the ordinary user-session NVDA that must read
 it — across the integrity-level wall
-([Processes and security](../explainers/processes-and-security.md)).
+([Processes and security](../../books/dev/src/explanation/windows/processes-and-security.md)).
 Everything hinges on the uiAccess flag, which only an *installed*
 NVDA has (signed binaries in Program Files):
 

@@ -1,5 +1,5 @@
 //! Text segmentation for Verbatim's text model (milestone M4;
-//! `docs/crates/verbatim-text.md`).
+//! `books/dev/src/reference/crates/verbatim-text.md`).
 //!
 //! Platform-neutral and original: the rules are Unicode's (UAX 29 for
 //! characters, words, and sentences; UAX 11 for terminal cell widths), as
@@ -108,7 +108,7 @@ pub(crate) fn squeezed(text: &str) -> String {
 
 /// Whether a terminal line `new` only lost text from `old`: compared
 /// without spaces, `old` contains it and is longer
-/// (`docs/design/terminal-model.md`, "Rows the keys own" and "The alignment").
+/// (`books/dev/src/explanation/design/terminal-model.md`, "Rows the keys own" and "The alignment").
 pub(crate) fn lost_text(old: &str, new: &str) -> bool {
     let (old, new) = (squeezed(old), squeezed(new));
     old.len() > new.len() && old.contains(&new)

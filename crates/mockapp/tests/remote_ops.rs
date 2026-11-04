@@ -343,7 +343,7 @@ fn a_deep_chain_reads_the_same_both_ways() {
 /// which the program leaves out of its cache, reads as a valid entry, as
 /// UI Automation reads "not supported", and its read makes no failed
 /// cached read: the program's absent record answers it
-/// (`docs/design/uia-shapes.md`, section 7, decision 3). The focus and
+/// (`books/dev/src/explanation/design/uia-shapes.md`, section 7, decision 3). The focus and
 /// every ancestor, none of which mockapp gives the property.
 fn a_remotely_read_element_without_validity_reads_valid_with_no_failed_read() {
     let mut fixture = Fixture::start("mockapp-rops-absent");
@@ -639,7 +639,7 @@ fn failure(answer: &Result<impl std::fmt::Debug, Error>) -> Option<windows::core
 /// success with what it read before: the classic walk's hop that times out
 /// is not the root, and a remote program that times out is not answered
 /// by the classic walk, which would wait on the application a second time
-/// (`docs/crates/verbatim-uia-rops.md`, "Fallback rules"). With every
+/// (`books/dev/src/reference/crates/verbatim-uia-rops.md`, "Fallback rules"). With every
 /// provider call slow (`slow`), the live focus read answers in time but a
 /// hop that fills an ancestor's cache, many calls, does not; with the
 /// window thread stalled (`stall`) for less than two timeouts, the classic

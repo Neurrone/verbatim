@@ -1,7 +1,7 @@
 //! The mixer (decision D17): one audio thread that sums every source into
 //! the device and reports when each utterance and index mark is heard.
 //!
-//! Ownership (`docs/design/ownership.md`). The
+//! Ownership (`books/dev/src/explanation/design/ownership.md`). The
 //! audio thread owns the mixer's state, and nothing outside it reads or
 //! writes that state. Everything it takes in comes through queues built
 //! before it starts: each producing thread has a lane of its own, a
@@ -38,7 +38,7 @@
 //! frame, cancelled by a raised generation or at shutdown, or failed by
 //! [`SpeechLane::fail`] or by the device changing format under it.
 //!
-//! Sounds (`docs/crates/verbatim-audio.md`). A source also mixes sounds over
+//! Sounds (`books/dev/src/reference/crates/verbatim-audio.md`). A source also mixes sounds over
 //! its own audio, each a *voice*: one placed in an utterance
 //! ([`SpeechLane::sound`]) starts when the source's audio reaches its place
 //! and plays on over what follows, and one played at once ([`Lane::play`])
@@ -178,7 +178,7 @@ pub(crate) struct SourceShared {
     /// or discarded, in the lane's count.
     released: AtomicU64,
     /// Set when the source or its lane has room again
-    /// (`docs/design/ownership.md`).
+    /// (`books/dev/src/explanation/design/ownership.md`).
     room: Arc<dyn Signal>,
     /// The producers' waits for room begun, for tests.
     #[cfg(feature = "faults")]
@@ -359,7 +359,7 @@ impl MixerBuilder {
 
     /// Runs `start` on the delivery thread before it delivers anything:
     /// for the application to raise its priority, since it only moves
-    /// messages (`docs/design/communication.md`, section 6.1).
+    /// messages (`books/dev/src/explanation/design/communication.md`, section 6.1).
     pub fn on_delivery_thread(&mut self, start: Box<dyn FnOnce() + Send>) {
         self.on_delivery_thread = Some(start);
     }

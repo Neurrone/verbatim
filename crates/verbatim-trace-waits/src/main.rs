@@ -2,7 +2,7 @@
 //! of the CPU's scheduling (`cargo xtask trace start|stop`), run by `cargo
 //! xtask trace waits <trace.etl> [process.exe ...]`.
 //!
-//! `docs/design/communication.md` (sections 6.1 and 11) asks, for each
+//! `books/dev/src/explanation/design/communication.md` (sections 6.1 and 11) asks, for each
 //! slow hand-off, whether the thread that should have taken it was ready
 //! and not run, and checks that raised thread priorities never keep
 //! Verbatim's own GUI thread, or the foreground application's, waiting.
@@ -1171,7 +1171,7 @@ mod tests {
 
     /// `--wakers verbatim-outpost.exe:<name>` takes that process's threads
     /// of that name, and an empty name its unnamed threads, as
-    /// `docs/tooling/measuring.md` ("Measuring performance") documents.
+    /// `books/dev/src/how-to/measuring.md` ("Measuring performance") documents.
     #[test]
     fn a_process_waker_selector_takes_that_process_named_and_unnamed_threads() {
         let mut waits = Waits::default();
@@ -1201,7 +1201,7 @@ mod tests {
 
     /// `<process.exe>:#<thread id>` takes the one thread of that id in a
     /// process of that image, unnamed threads included, as
-    /// `docs/tooling/measuring.md` ("Measuring performance") documents.
+    /// `books/dev/src/how-to/measuring.md` ("Measuring performance") documents.
     #[test]
     fn a_thread_id_selector_takes_that_thread_alone() {
         let mut waits = Waits::default();
@@ -1227,7 +1227,7 @@ mod tests {
 
     /// `--timeline` reads its times as the logs give them and keeps what
     /// overlaps its window, whatever the trace's date, as
-    /// `docs/crates/verbatim-trace-waits.md` documents.
+    /// `books/dev/src/reference/crates/verbatim-trace-waits.md` documents.
     #[test]
     fn a_timeline_keeps_what_overlaps_its_window() {
         let from = parse_clock("21:37:09.4250");
@@ -1252,7 +1252,7 @@ mod tests {
 
     /// `<process.exe>:*` takes every thread of a process of that image,
     /// named or not, as `--blocked notepad.exe:*` is used
-    /// (`docs/crates/verbatim-trace-waits.md`).
+    /// (`books/dev/src/reference/crates/verbatim-trace-waits.md`).
     #[test]
     fn a_star_selector_takes_every_thread_of_that_image() {
         let mut waits = Waits::default();

@@ -1,6 +1,6 @@
 # Every lock this crate declares is an `outpost::lock::Lock`, which records
 # in debug builds that its thread holds it, so a call into an application
-# made under it fails the check (docs/crates/verbatim-faults.md, "Failure paths"). A plain mutex would escape the check.
+# made under it fails the check (books/dev/src/reference/crates/verbatim-faults.md, "Failure paths"). A plain mutex would escape the check.
 
 disallowed-types = [
     { path = "std::sync::Mutex", reason = "use outpost::lock::Lock, which the debug-build lock check records" },

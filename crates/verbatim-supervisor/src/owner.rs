@@ -2,7 +2,7 @@
 //! owns the per-application records and the listener record (outpost
 //! redesign, "The supervisor"). Everything else only reports to it.
 //!
-//! It is also the relay (`docs/design/communication.md`, sections 4.7 and
+//! It is also the relay (`books/dev/src/explanation/design/communication.md`, sections 4.7 and
 //! 6.2): it waits only on the relay's completion port ([`super::relay`]),
 //! reads the listener's frames and routes each fact in the pass that read
 //! it, writing it to its outpost inline; reads every outpost's frames,
@@ -59,7 +59,7 @@ use verbatim_process::held::{IgnoredProcesses, Target};
 /// The relay thread's priority: it reads each of the listener's facts and
 /// routes it to its outpost, reads each outpost's frame and hands it on,
 /// finishes writes that pended, and handles each child's reports, for
-/// microseconds per wake (`docs/design/communication.md`, section 6.1).
+/// microseconds per wake (`books/dev/src/explanation/design/communication.md`, section 6.1).
 const RELAY_PRIORITY: ThreadPriority = ThreadPriority::Highest;
 
 /// A fact reported to the owner.
@@ -194,7 +194,7 @@ struct Record {
 }
 
 /// Where the idle barrier's round is in the relay
-/// (`docs/design/communication.md`, section 6.7).
+/// (`books/dev/src/explanation/design/communication.md`, section 6.7).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum IdleStage {
     /// The listener has been asked and has not answered.
@@ -334,7 +334,7 @@ struct Owner {
     /// The watch over the reducer, read at each heartbeat.
     reducer: ReducerWatch,
     /// The spare outposts kept waiting, and the replacements owed
-    /// (`docs/design/focus-pipeline.md`, section 19).
+    /// (`books/dev/src/explanation/design/focus-pipeline.md`, section 19).
     spares: Spares,
     /// Every spare's process, by outpost id, from its launch until it is
     /// given or ends: `None` while its launch is at work.
@@ -362,7 +362,7 @@ struct SpareChild {
 }
 
 /// The relay's watch over the thread taking the app's inputs, the reducer
-/// (`docs/design/communication.md`, section 6.8): a fault of its own,
+/// (`books/dev/src/explanation/design/communication.md`, section 6.8): a fault of its own,
 /// reported and never acted on.
 #[derive(Default)]
 struct ReducerWatch {
@@ -553,7 +553,7 @@ impl Owner {
         let reading = read.pipe.take(completion, &port, |body| match source {
             Source::Listener => {
                 // When verbatim.exe took the message in, before it is
-                // parsed (`docs/design/communication.md`, section 10.1).
+                // parsed (`books/dev/src/explanation/design/communication.md`, section 10.1).
                 let received = received_now();
                 self.listener_message(outpost, received, decode_message(body)?);
                 Ok(())
@@ -587,7 +587,7 @@ impl Owner {
     /// once the owner has ended that outpost: a pong and
     /// `TargetExited` are handled here, `Ready` is handled here and handed
     /// on, and every other frame is handed on to the app whole, unparsed,
-    /// with when it was read (`docs/design/communication.md`, section
+    /// with when it was read (`books/dev/src/explanation/design/communication.md`, section
     /// 6.2). Only the frame's kind is read, from its first bytes; a pong,
     /// a few dozen bytes, is parsed for its count of abandoned workers. A
     /// frame handed on is copied out of the reader's buffer it was lent
@@ -1368,7 +1368,7 @@ impl Owner {
     }
 
     /// Sends the listener a message of the MSAA hand-over
-    /// (`docs/design/focus-pipeline.md`, section 12.4), or holds it, in
+    /// (`books/dev/src/explanation/design/focus-pipeline.md`, section 12.4), or holds it, in
     /// order, while the listener's launch is at work. With no listener, it
     /// is not needed: the next one is told the applications whose outposts
     /// have their hooks in on its command line.
@@ -1673,7 +1673,7 @@ impl Owner {
         };
         if let Some(held_us) = record.held.first_held_us() {
             // The time the supervisor held the application's first fact
-            // for its outpost's start (`docs/design/focus-pipeline.md`,
+            // for its outpost's start (`books/dev/src/explanation/design/focus-pipeline.md`,
             // section 19.6).
             tracing::info!(
                 %outpost,
@@ -1691,7 +1691,7 @@ impl Owner {
         };
         for mut held in record.held.take() {
             // The time it was held for the outpost's start, reported apart
-            // from the relay's own (`docs/design/communication.md`, section 10.1).
+            // from the relay's own (`books/dev/src/explanation/design/communication.md`, section 10.1).
             held.timing.core_held_us = super::writer::elapsed_us(held.received);
             deliver(&writer, held);
         }
@@ -2238,7 +2238,7 @@ fn fact_window(fact: &DeliveredFact) -> Option<isize> {
 /// in the window `hwnd`, is the process that serves that window
 /// ([`verbatim_win32::provider::provider_process`]), so no outpost is started for a
 /// console's client on account of its console window, whose console host
-/// serves it (`docs/design/listener-without-connections.md`, section 4.3).
+/// serves it (`books/dev/src/explanation/design/listener-without-connections.md`, section 4.3).
 /// A debug build fails; a release build logs the error. A window closed
 /// since is not checked. Local calls only, once per outpost started.
 fn check_served_by(pid: Pid, hwnd: isize) {

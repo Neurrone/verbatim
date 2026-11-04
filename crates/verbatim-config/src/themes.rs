@@ -1,4 +1,4 @@
-//! Theme files (`docs/crates/verbatim-config.md`, "Themes").
+//! Theme files (`books/dev/src/reference/crates/verbatim-config.md`, "Themes").
 //!
 //! A theme is a directory in the user's themes folder, named by the
 //! theme's id: a TOML manifest, `theme.toml`, holding the theme's name,

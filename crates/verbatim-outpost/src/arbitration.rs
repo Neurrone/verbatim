@@ -9,7 +9,7 @@
 //! own application's windows and by the focus listener alike, with the raw
 //! probe, one `WM_GETOBJECT` and no UIA connection
 //! ([`verbatim_uia::raw_probe`];
-//! `docs/design/listener-without-connections.md`, decision 2). A window
+//! `books/dev/src/explanation/design/listener-without-connections.md`, decision 2). A window
 //! with a provider is still set aside
 //! for MSAA when its provider is one NVDA does not use: an old console's,
 //! or a list view's outside Windows Forms ([`post_probe_check`]), which
@@ -20,7 +20,7 @@
 //! The verdicts probes found are the outpost reducer's state ([`Verdicts`]):
 //! a program reads its own copy and commits each probe as it returns, and
 //! the event thread reads the push-time copy
-//! (`docs/design/ownership.md`). The arbitrator
+//! (`books/dev/src/explanation/design/ownership.md`). The arbitrator
 //! holds the configuration they are read with: the class lists and the
 //! clocks.
 //!
@@ -122,7 +122,7 @@ type Probe = Arc<dyn Fn(isize) -> verbatim_uia::RawProbe + Send + Sync>;
 
 /// What a judgement of window backends reads and records verdicts through:
 /// a program's copy of the reducer's verdicts, at its entry's observation
-/// (`docs/design/ownership.md`).
+/// (`books/dev/src/explanation/design/ownership.md`).
 pub(crate) trait Judgement {
     /// The observation the judgement is made at: its entry's event's, or
     /// now on the arbitrator's observation clock for a judgement with no
@@ -356,7 +356,7 @@ pub fn post_probe_check(classes: &WindowClasses) -> Option<PostProbeCheck> {
 /// window classes all begin `WindowsForms10.`. It agreed with the UIA
 /// framework id `WinForm` on every one of over 170 windows of Windows Forms,
 /// WPF, Qt, Firefox and Win32 applications
-/// (`docs/design/listener-without-connections.md`, section 3, step 5).
+/// (`books/dev/src/explanation/design/listener-without-connections.md`, section 3, step 5).
 fn has_windows_forms_class(raw: &str) -> bool {
     raw.starts_with("WindowsForms10.")
 }
@@ -366,7 +366,7 @@ fn has_windows_forms_class(raw: &str) -> bool {
 /// the application did not answer. A console asks `console`; a list view is
 /// answered from its class name alone, with no call into the application,
 /// by an outpost and the listener alike
-/// (`docs/design/listener-without-connections.md`, section 3, step 5).
+/// (`books/dev/src/explanation/design/listener-without-connections.md`, section 3, step 5).
 fn provider_usable(
     check: PostProbeCheck,
     classes: &WindowClasses,

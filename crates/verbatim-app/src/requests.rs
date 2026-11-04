@@ -1,5 +1,5 @@
 //! Who asks the shell's own queries of outposts, and where each outcome
-//! goes (`docs/crates/verbatim-app.md`, `requests`).
+//! goes (`books/dev/src/reference/crates/verbatim-app.md`, `requests`).
 //!
 //! A reply is routed by its request id's asker ([`reply_input`]): one to a
 //! query of Core's reducer, which records its own queries, re-enters the

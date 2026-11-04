@@ -1,7 +1,7 @@
 //! Caret, editing and selection keys within a line or two, as
 //! `text_box_caret_keys` in the Windows Forms text box and as
 //! `notepad_caret_keys` in Windows 11 Notepad (each its own code, as
-//! `docs/testing.md` requires): the numpad's Delete, Shift+Delete and
+//! `books/dev/src/reference/testing.md` requires): the numpad's Delete, Shift+Delete and
 //! Shift+Backspace, selecting a line break, a word and lines with Shift,
 //! Enter after Control+Right, Control+Backspace at a line's end, typing
 //! with Tab, undo, copy, cut and paste, and Control+V and Enter over a

@@ -41,7 +41,7 @@
 //! - [`map`] — control-type, role, and state mapping into the model.
 //! - The shape module ([`Shape`], [`Cached`], [`Request`], [`Live`]) — every
 //!   cached read of an element, declared together with the cache request
-//!   that fills it (`docs/design/uia-shapes.md`): the only cached reads in
+//!   that fills it (`books/dev/src/explanation/design/uia-shapes.md`): the only cached reads in
 //!   the workspace.
 //! - [`provider_process`], [`served_by`] and [`console_host_of`] — the
 //!   process that serves a window's UIA, a console window's being its

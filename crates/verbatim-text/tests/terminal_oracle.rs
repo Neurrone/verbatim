@@ -1,6 +1,6 @@
 //! The terminal reading rules (`verbatim_text::terminal_reading`, on the
 //! row memory of `verbatim_text::terminal_rows`) checked by the simulated
-//! terminal's oracle (`docs/design/terminal-model.md`, "Testing"). The
+//! terminal's oracle (`books/dev/src/explanation/design/terminal-model.md`, "Testing"). The
 //! reader under test is the real rules: every read is given to a
 //! `TerminalReader` at the stream's times (a recorded stream's, or 10
 //! milliseconds apart for one written by hand, the last read 10 seconds

@@ -1,4 +1,4 @@
-# The nightly exploration of the generated tests (docs/testing.md, "Exploration tests"): each owner's exploration test, named
+# The nightly exploration of the generated tests (books/dev/src/reference/testing.md, "Exploration tests"): each owner's exploration test, named
 # explore_ and ignored so that no other run includes it, run with the run
 # number as its seed; and cargo-mutants on the covered files changed since
 # the workflow's last successful run, or on all of them when started by hand

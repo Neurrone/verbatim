@@ -8,7 +8,7 @@
 //! `verbatim::latency` target, when its audio starts: how long each stage
 //! took, from Windows raising the event to the audio engine taking the first
 //! sample, in milliseconds, with the cross-process calls the outpost's read
-//! made (`docs/performance.md`). A caret key's line starts when the keyboard
+//! made (`books/dev/src/reference/performance.md`). A caret key's line starts when the keyboard
 //! hook saw the key, and divides the outpost's work into the wait for
 //! evidence that the key did something and the read after it. Time spent
 //! waiting behind earlier speech is
@@ -207,7 +207,7 @@ impl Stages {
         let awaited = at(event.awaited_at_us);
         let read_calls = calls_besides(event.calls, event.awaited_calls);
         // verbatim.exe's relay stamps, on what it relayed to the outpost
-        // (`docs/design/communication.md`, section 10.1): with them, the span from
+        // (`books/dev/src/explanation/design/communication.md`, section 10.1): with them, the span from
         // the listener or the reducer to the outpost is split at
         // verbatim.exe, and its own time is its own stage. A relay time of
         // 0 is a real one, under a microsecond.

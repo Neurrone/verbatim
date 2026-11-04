@@ -1,5 +1,5 @@
 //! The check of the crate tiers, `cargo xtask ci`'s first step
-//! (`docs/crates/readme.md`): every workspace
+//! (`books/dev/src/reference/crates/readme.md`): every workspace
 //! member is classed in one tier, and what each tier's crates may reach
 //! is read from the dependency graph, so the boundaries are facts of the
 //! graph rather than conventions.
@@ -29,7 +29,7 @@
 //!   one-way dependencies.
 //!
 //! It also derives the crates the determinism rule covers
-//! (`docs/testing.md`, "The crates on a reducer's path"), from the graph with
+//! (`books/dev/src/reference/testing.md`, "The crates on a reducer's path"), from the graph with
 //! its development edges ([`covered`]), and holds each of their direct
 //! third-party dependencies to [`DETERMINISTIC_THIRD_PARTY`].
 
@@ -164,7 +164,7 @@ pub const REDUCERS: &[&str] = &[
 
 /// The third-party crates a crate on a reducer's path may depend on
 /// directly, by a normal, build or development edge
-/// (`docs/testing.md`, "The crates on a reducer's path").
+/// (`books/dev/src/reference/testing.md`, "The crates on a reducer's path").
 ///
 /// The rule for adding one: the functions called from the path, and the
 /// crate's own dependencies they reach, are checked from its source for a
@@ -187,7 +187,7 @@ pub const DETERMINISTIC_THIRD_PARTY: &[&str] = &[
 ];
 
 /// The generated crate that unifies third-party features across the
-/// workspace (`docs/tooling/setup.md`), exempt from
+/// workspace (`books/dev/src/how-to/setup.md`), exempt from
 /// [`is_raw_windows_binding`].
 pub const WORKSPACE_HACK: &str = "workspace-hack";
 

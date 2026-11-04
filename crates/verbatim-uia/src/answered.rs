@@ -1,4 +1,4 @@
-//! The proxy rule (`docs/design/listener-without-connections.md`, section
+//! The proxy rule (`books/dev/src/explanation/design/listener-without-connections.md`, section
 //! 5): an outpost's lookup by handle, or of the focused element, in a
 //! window whose verdict says it has a provider is not answered when the
 //! element it returns is served only by `UIAutomationCore.dll`'s own proxies,

@@ -1,7 +1,7 @@
 //! The code that runs on the hook thread: the hook procedure, which gathers
 //! each key's inputs, has the decision machine decide it, and carries out
 //! its verdict, and the thread's one message loop
-//! (`docs/design/ownership.md`).
+//! (`books/dev/src/explanation/design/ownership.md`).
 //!
 //! Nothing here blocks or takes a lock: `cargo xtask ci` checks that this
 //! module names nothing that does (`xtask/src/ownership.rs`, the hook

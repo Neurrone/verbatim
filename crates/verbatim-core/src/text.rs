@@ -4,7 +4,7 @@
 //! spoken segments for characters, words, lines, and spelling.
 //!
 //! Offsets are byte offsets into the UTF-8 text an outpost sent; Core never
-//! does arithmetic on provider positions (`docs/crates/verbatim-model.md`,
+//! does arithmetic on provider positions (`books/dev/src/reference/crates/verbatim-model.md`,
 //! "Positions"). Segmentation is
 //! `verbatim-text`'s.
 

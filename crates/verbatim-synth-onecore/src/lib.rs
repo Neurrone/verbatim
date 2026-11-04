@@ -208,7 +208,7 @@ impl OneCoreSynth {
     /// wait on `interrupt` and ask its sink whether the utterance was
     /// cancelled each time it is set: what a synthesizer host gives it, its
     /// command event, so a `Cancel` read on the host's one thread stops the
-    /// wait (`docs/design/communication.md`, section 7.3).
+    /// wait (`books/dev/src/explanation/design/communication.md`, section 7.3).
     #[must_use]
     pub fn interrupted_by(mut self, interrupt: Arc<Event>) -> Self {
         self.interrupt = Some(interrupt);
@@ -424,7 +424,7 @@ pub enum Waited {
 
 /// Waits until `completed` is set, which the synthesis's completion does,
 /// or until the utterance is cancelled, whichever comes first, with no
-/// timer and nothing waking to look (`docs/design/communication.md`,
+/// timer and nothing waking to look (`books/dev/src/explanation/design/communication.md`,
 /// section 7.3). A cancel reaches the wait two ways: through the sink's
 /// waker ([`SynthSink::on_cancel`]), which sets an event of the wait's own,
 /// as a cancel on another thread does when the driver runs in Core; and,

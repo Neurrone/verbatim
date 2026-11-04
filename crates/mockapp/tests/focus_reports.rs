@@ -1,6 +1,6 @@
 //! How a UIA focus from mockapp's provider is judged and read by the focus
 //! listener's reader and reported by a real outpost
-//! (`docs/design/focus-pipeline.md`, section 12): under which node, when
+//! (`books/dev/src/explanation/design/focus-pipeline.md`, section 12): under which node, when
 //! the provider reuses a dead element's runtime id; with which states,
 //! when they changed after the focus event; dropped when its element lost
 //! the keyboard focus before it was read, and reported when it had it
@@ -120,7 +120,7 @@ impl Client {
 /// runtime id it has, but the dead one's keyboard focus cannot be read, so
 /// the focus is no repeat (section 16.3); a focus event repeated on the new
 /// element, which still has the focus, is read in full and reported under
-/// the same node, for Core to judge (`docs/design/ownership.md`). Both ways the reader reads a focus: with remote operations
+/// the same node, for Core to judge (`books/dev/src/explanation/design/ownership.md`). Both ways the reader reads a focus: with remote operations
 /// and without.
 ///
 /// The calls each read makes are pinned, the outpost's own included, which
@@ -487,7 +487,7 @@ fn a_controls_own_focus_reports_its_focused_child() {
 /// An MSAA focus event at the address of the focus last reported is read
 /// in full and reported again, a full object under the same node and a
 /// simple child too, since whether it repeats the focus is Core's verdict
-/// (`docs/design/ownership.md`). Both events are
+/// (`books/dev/src/explanation/design/ownership.md`). Both events are
 /// raised before the outpost is made, so its own hook has neither.
 fn a_repeated_msaa_focus_is_read_in_full() {
     let title = common::unique_title("mockapp-msaa-duplicate");
@@ -618,7 +618,7 @@ fn a_focus_carries_its_parents_automation_id() {
 /// listener read it is reported, whatever has happened since: Windows
 /// Terminal's Control+Tab gives the focus to the tab it leaves, then to
 /// the tab it selects, and NVDA queues both, culling the first once the
-/// second is applied (`docs/design/focus-pipeline.md`, section 10.1, item
+/// second is applied (`books/dev/src/explanation/design/focus-pipeline.md`, section 10.1, item
 /// 2). The focus is reported with its states as the listener read them,
 /// still selected, and the item moved to after it.
 fn a_focus_read_while_it_had_the_keyboard_focus_is_reported_though_the_focus_moved_on() {
@@ -765,7 +765,7 @@ fn a_focus_is_found_by_its_path_and_followed() {
 /// focus elements, which are in no tree, have none, is reported from the
 /// listener's read, and nothing is followed. A focus event repeated on it
 /// while it keeps the keyboard focus is read in full too, for Core to
-/// judge (`docs/design/ownership.md`); once the focus
+/// judge (`books/dev/src/explanation/design/ownership.md`); once the focus
 /// has been elsewhere and comes back, its focus event is read in full and
 /// finds the element: the focus is reported under its node, now with its
 /// ancestors, and its changes are followed from then on.
@@ -1195,7 +1195,7 @@ fn focus_in_caret_fixture(
 
 /// The focus-following subscription moves with the focus as NVDA's local
 /// group does, added to the new focus and removed from the old one alone
-/// (`docs/design/focus-pipeline.md`, section 17): after the focus leaves
+/// (`books/dev/src/explanation/design/focus-pipeline.md`, section 17): after the focus leaves
 /// the document for a button and returns, a text change the document
 /// raises is heard and reported.
 fn a_text_change_after_the_focus_returns_to_a_document_is_heard() {
@@ -1274,7 +1274,7 @@ fn a_change_of_an_unreleased_older_focus_is_heard_for_its_node() {
 /// keeps its place behind the focus, though the outpost's subscription
 /// queues it between the focus's marker and its read: only the old
 /// focus's state changes are planned ahead of a focus inside it
-/// (`docs/design/focus-pipeline.md`, section 12.4), since NVDA speaks a
+/// (`books/dev/src/explanation/design/focus-pipeline.md`, section 12.4), since NVDA speaks a
 /// value change only for the focus itself and so says nothing for this
 /// one. mockapp moves the focus from the combo box to its item and then
 /// changes the combo box's value; the test delivers the item's marker
@@ -1341,7 +1341,7 @@ fn a_value_change_of_the_old_focus_queued_behind_a_focus_inside_it_keeps_its_pla
 /// A windowless UIA focus is tested by NVDA's acceptance test against its
 /// nearest window, in the listener, after the repeat check and before the
 /// focus is read, as NVDA tests it before it queues a focus
-/// (`docs/design/focus-pipeline.md`, sections 16.2 and 16.3): with another
+/// (`books/dev/src/explanation/design/focus-pipeline.md`, sections 16.2 and 16.3): with another
 /// application's window in front, mockapp's button's focus is dropped
 /// after one call, the nearest window's, and the outpost, handed the drop,
 /// says nothing. A dropped focus never becomes the last focus accepted, so
@@ -1379,7 +1379,7 @@ fn a_focus_dropped_before_its_window_is_in_front_is_reported_once_it_is() {
 
 /// A foreground event for a window read through UI Automation is dropped,
 /// even with the window in front, as NVDA drops every MSAA event for such
-/// a window (`docs/design/focus-pipeline.md`, section 16.4): the outpost
+/// a window (`books/dev/src/explanation/design/focus-pipeline.md`, section 16.4): the outpost
 /// says nothing for it, and the focus inside the window that follows is
 /// reported alone, the window first among its ancestors, with no
 /// foreground report before it.
@@ -1716,7 +1716,7 @@ fn a_winevent_focus_its_uia_focus_follows_is_reported_once() {
 /// A `WinEvent` focus in a UIA window whose UIA focus event came but was
 /// dropped because its sender had no window above it, as a new File
 /// Explorer window's first focuses are once their senders are gone
-/// (`docs/design/listener-without-connections.md`, risk 13): the drop
+/// (`books/dev/src/explanation/design/listener-without-connections.md`, risk 13): the drop
 /// answers the outpost's record as its marker resolves, the record's read
 /// taking the marker's place, and the outpost reads its focus without
 /// waiting for the bound and reports it once.
@@ -1971,7 +1971,7 @@ fn a_winevent_focus_no_uia_focus_follows_is_read_at_its_bound_and_heard_once_whe
 /// itself the window's element read inside its provider has no handle or
 /// title, and the outpost reads it again through the window's proxy;
 /// mockapp's root provider names its host, so its window element has both
-/// there too, and that fault is not reproduced here (`docs/uia-bugs.md`,
+/// there too, and that fault is not reproduced here (`books/dev/src/reference/uia-bugs.md`,
 /// "Inside a remote operation, conhost's window has no handle or title").
 fn a_winevent_focus_in_a_console_window_no_uia_focus_follows_is_read_with_its_window() {
     let title = common::unique_title("mockapp-unanswered-console");
@@ -2296,7 +2296,7 @@ fn a_forwarded_copy_opens_the_starting_outposts_record() {
 }
 
 /// The idle barrier's round waits while the outpost's record of a
-/// `WinEvent` focus in a UIA window is open (`docs/design/communication.md`,
+/// `WinEvent` focus in a UIA window is open (`books/dev/src/explanation/design/communication.md`,
 /// section 6.7): the outpost reaches the round's query and holds its
 /// answer, and once the bound is reached it reads the focus and answers
 /// behind that read.
@@ -2330,7 +2330,7 @@ fn the_idle_answer_waits_for_the_wait_for_a_uia_focus() {
 
 /// A focus event repeated on the element the listener last read, which
 /// still has the keyboard focus, is read in full and reported, and Core
-/// judges the repeat (`docs/design/ownership.md`):
+/// judges the repeat (`books/dev/src/explanation/design/ownership.md`):
 /// the listener makes five calls, the windowless sender's nearest window
 /// for NVDA's native check, the sender's keyboard focus, and the read,
 /// whose runtime id is its last read's: whether that element still has
@@ -2467,7 +2467,7 @@ fn a_menu_opening_is_judged_as_a_focus_on_the_menu() {
 /// A UIA menu opening whose sender UI Automation counts as the current
 /// focus, the last focus the listener accepted with no newer focus queued
 /// since, is judged as that focus, as NVDA's automation event handler
-/// redirects it to its focus object (`docs/design/focus-pipeline.md`,
+/// redirects it to its focus object (`books/dev/src/explanation/design/focus-pipeline.md`,
 /// section 18): with the focus's window and without NVDA's native check,
 /// so the windowless sender's nearest window is not read. Five calls: the
 /// comparison (`CompareElements`), the focus's keyboard focus, and the
@@ -2925,7 +2925,7 @@ fn a_focus_in_a_window_with_no_uia_provider_is_read_and_dropped_by_its_outpost()
 /// focus's new description, and a search box's relation naming its list
 /// and then nothing as its suggestions opening and closing, each change
 /// in one call, the refresh of the box's cache, which reads the relation
-/// with the rest (`docs/performance.md`).
+/// with the rest (`books/dev/src/reference/performance.md`).
 fn a_focus_s_help_text_and_suggestions_are_followed() {
     let title = common::unique_title("mockapp-suggestions");
     let mut app = common::spawn("controller.json", "uia", &title);
@@ -3154,7 +3154,7 @@ fn a_selection_in_a_focused_list_carries_its_states_and_position_from_the_cache(
 
 /// An unnamed grouping with a description is focus context whatever the
 /// theme, as NVDA's layout judgment reads the description whatever its
-/// setting (`docs/design/uia-shapes.md`, decision 4): with a theme that
+/// setting (`books/dev/src/explanation/design/uia-shapes.md`, decision 4): with a theme that
 /// reports descriptions as off, the outpost's own read of a focus's
 /// ancestors, for Core's ancestors query, reports the grouping, without
 /// the description the theme does not report.

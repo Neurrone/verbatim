@@ -173,7 +173,7 @@ more usefully and changes nothing spoken on focus.
 
 NVDA reports failure and stays; Verbatim
 re-seeds navigator from focus on `Gone` and announces it:
-**different**, documented in [verbatim-core](../crates/verbatim-core.md); NVDA-side
+**different**, documented in [verbatim-core](../../books/dev/src/reference/crates/verbatim-core.md); NVDA-side
 behavior in [Focus and the navigator](../nvda/focus-and-navigator.md).
 A navigation the application did not answer (too slow, or the read
 failed) is not `Gone`: the navigator stays where it is,

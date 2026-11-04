@@ -2,7 +2,7 @@
 //! queue for the application, holding both events and Core's queries,
 //! handled in the order they arrived, with NVDA's limiter rules for MSAA
 //! events (`orderedWinEventLimiter.py`, and `pumpAll` in NVDA's
-//! `IAccessibleHandler`; `docs/design/focus-pipeline.md` section 5).
+//! `IAccessibleHandler`; `books/dev/src/explanation/design/focus-pipeline.md` section 5).
 //!
 //! - One waiting entry per object and event kind, and, for an MSAA focus,
 //!   foreground change or other MSAA event but a menu opening, per thread
@@ -103,7 +103,7 @@
 //!   marker the moment the event arrives and reads the focus from the
 //!   event's own element, and nothing taken in after the marker is planned
 //!   until the read takes the marker's place, or a drop removes it
-//!   (`docs/design/focus-pipeline.md`, section 12.4, decision 1 of section
+//!   (`books/dev/src/explanation/design/focus-pipeline.md`, section 12.4, decision 1 of section
 //!   15). NVDA's UIA events likewise pass in order through the one thread
 //!   that judges them, so an event raised after a focus is never handled
 //!   before it. A read whose marker the intake never saw, as when the
@@ -123,7 +123,7 @@
 //!   read, and go unsaid. The intake cannot tell a state change raised
 //!   before the focus from one raised after it, and moves both, so either
 //!   is spoken, as NVDA speaks a state change of the focus or of any of
-//!   its ancestors in either order (`docs/design/focus-pipeline.md`,
+//!   its ancestors in either order (`books/dev/src/explanation/design/focus-pipeline.md`,
 //!   section 12.4). A state change is a change of any property the worker
 //!   reports as the element's states ([`super::entry::is_state_property`]), such
 //!   as the expand and toggle states. The old focus's name and value
@@ -155,7 +155,7 @@
 //!   whose window is not in front when its batch is handled is stale or
 //!   raised early by the application itself, and the worker drops it, as
 //!   NVDA's `processForegroundWinEvent` does (measured live on
-//!   2026-10-09; `docs/crates/verbatim-outpost.md`, "Foreground changes and
+//!   2026-10-09; `books/dev/src/reference/crates/verbatim-outpost.md`, "Foreground changes and
 //!   focus-now").
 //!
 //! The intake is the reducer's ([`super`]): the mailbox's producers only
@@ -461,7 +461,7 @@ impl Intake {
     /// drop, or the end of the listener's reads, removes the markers it
     /// resolves. An entry with a key replaces the one waiting with the same
     /// key, unless an idle query waits between them
-    /// (`docs/design/communication.md`, section 6.7): the older entry then
+    /// (`books/dev/src/explanation/design/communication.md`, section 6.7): the older entry then
     /// keeps its place ahead of the query. A foreground change also
     /// removes a focus waiting on its window's client object from the same
     /// thread, unless the focus was raised after the change

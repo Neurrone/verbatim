@@ -15,8 +15,8 @@ Statuses:
   behavior, but no test or live comparison pins it yet. These are the
   entries most likely to hide inconsistency bugs.
 - **different (Dn)** — deliberately divergent, recorded in
-  [Architecture](../architecture.md) decision Dn or noted inline in
-  [the crate guides](../crates/readme.md).
+  [Architecture](../../books/dev/src/explanation/architecture.md) decision Dn or noted inline in
+  [the crate guides](../../books/dev/src/reference/crates/readme.md).
 - **partial** — implemented for some of the cases the entry names, and
   the entry lists which; each case's own state is given in plain words.
 - **different** — divergent, with no decision number, and the entry
@@ -48,7 +48,7 @@ is declared at the step that shows it, with
 `Scenario::deviates_from_nvda("docs/parity/<file>.md", "<entry heading>")`
 called after the step's input, beside the comment that cites the entry.
 Compare mode judges that step against the entry
-([the NVDA transcript guide](../tooling/nvda.md), "Comparing a
+([the NVDA transcript guide](../../books/dev/src/how-to/nvda.md), "Comparing a
 scenario"), and a unit test checks that every entry a declaration names
 is a `###` heading of the file it names, so renaming an entry means
 renaming its declarations.
@@ -116,7 +116,7 @@ Verbatim: **matched (verified)** by decision, not by accident: users'
 ears and hands already know them, so Verbatim speaks the same English
 words and binds the same keys wherever it implements the same command
 (E2E scenarios assert the wording; the gesture tables live in
-[verbatim-input](../crates/verbatim-input.md)). Only the English catalogue
+[verbatim-input](../../books/dev/src/reference/crates/verbatim-input.md)). Only the English catalogue
 is shared vocabulary; Verbatim's other-language resources are written
 fresh, never taken from NVDA's translations. The laptop layout has the
 numpad bindings too, as NVDA binds them for every layout. Different

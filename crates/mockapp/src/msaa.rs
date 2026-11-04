@@ -38,7 +38,7 @@ thread_local! {
     /// `accSelection` alike, as a provider that keeps its objects does. A
     /// client in another process still meets a new object each time:
     /// oleacc wraps every object it delivers in a wrapper of its own
-    /// (`docs/crates/verbatim-ia2.md`). Objects live on the window thread
+    /// (`books/dev/src/reference/crates/verbatim-ia2.md`). Objects live on the window thread
     /// that made them.
     static OBJECTS: std::cell::RefCell<std::collections::HashMap<(isize, usize), IAccessible>> =
         std::cell::RefCell::default();

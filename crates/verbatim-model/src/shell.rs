@@ -1,6 +1,6 @@
 //! The shell's tray icons and taskbar buttons, as the system tray list
 //! dialog shows them: what Core asks File Explorer's outpost for and the
-//! outpost answers (`docs/design/listener-without-connections.md`,
+//! outpost answers (`books/dev/src/explanation/design/listener-without-connections.md`,
 //! decision 9).
 
 use serde::{Deserialize, Serialize};

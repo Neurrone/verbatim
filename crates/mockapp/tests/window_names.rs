@@ -5,7 +5,7 @@
 //! had when it took the foreground, and its rename, off the focus, is not
 //! spoken. NVDA speaks a name change only for the focus, so the outpost
 //! tells the renamed object from the focus by its identity and does not
-//! read or report it (`docs/crates/verbatim-outpost.md`, "MSAA name,
+//! read or report it (`books/dev/src/reference/crates/verbatim-outpost.md`, "MSAA name,
 //! value, and state changes").
 //!
 //! The outpost runs in this process (`common::outpost`). mockapp's

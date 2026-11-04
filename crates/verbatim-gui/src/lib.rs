@@ -505,7 +505,7 @@ impl GuiCore {
 
     /// The synth thread answered: each control whose change it answered
     /// and whose value the driver refused or clamped snaps back to the
-    /// driver's value (`docs/design/ownership.md`).
+    /// driver's value (`books/dev/src/explanation/design/ownership.md`).
     fn settings_answered(&self, answer: &verbatim_speech::SettingsAnswer) {
         let snaps = self.speech.borrow_mut().answered(answer);
         for snap in snaps {

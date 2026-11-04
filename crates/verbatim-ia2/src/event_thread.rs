@@ -3,7 +3,7 @@
 //! the focus listener (decision D13) use it, differing only in their pid and
 //! subscription set. The thread starts with no hook, and installs its one
 //! set when its owner asks ([`EventThread::hook`]): a spare outpost starts
-//! it before it has an application (`docs/design/focus-pipeline.md`,
+//! it before it has an application (`books/dev/src/explanation/design/focus-pipeline.md`,
 //! section 19). Its owner can also nudge it ([`Nudger`]): a message the
 //! thread hands to the owner's nudge handler between events, on the thread
 //! that owns the hooks, which is how an outpost unhooks some of its kinds
@@ -52,7 +52,7 @@ pub struct EventHandlers {
 pub type MakeHandlers = Arc<dyn Fn() -> EventHandlers + Send + Sync>;
 
 /// The `WinEvent` thread's priority: it only moves each event on, for
-/// microseconds per wake (`docs/design/communication.md`, section 6.1).
+/// microseconds per wake (`books/dev/src/explanation/design/communication.md`, section 6.1).
 const EVENT_THREAD_PRIORITY: ThreadPriority = ThreadPriority::Highest;
 
 /// The event thread: pumps messages so the out-of-context callbacks of its

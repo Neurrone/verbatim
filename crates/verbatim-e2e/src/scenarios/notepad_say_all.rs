@@ -9,7 +9,7 @@
 //! read as its two lines), and speaks by sentence: the second line's one
 //! sentence is one utterance, with a mark where its wrapped second part
 //! starts. Say-all hands speech two utterances ahead of the one playing
-//! (`docs/performance.md`, "Say-all"), so once the second line has started,
+//! (`books/dev/src/reference/performance.md`, "Say-all"), so once the second line has started,
 //! the third is queued. Control then cuts both off, as any key does, and
 //! say-all stops: the third line is never heard. The caret was left at
 //! the start of the second line, so Right Arrow speaks that line's second

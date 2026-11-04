@@ -1,14 +1,14 @@
 //! `cargo xtask e2e-durations <runs>`: rewrites `xtask/e2e-durations.txt`,
 //! the table `cargo xtask e2e-plan` sizes the CI groups by, from the `e2e`
 //! jobs of the last `<runs>` completed runs of CI on `main` (pushes), read
-//! with the `gh` CLI (`docs/tooling/e2e.md`, "How CI runs the suite").
+//! with the `gh` CLI (`books/dev/src/how-to/e2e.md`, "How CI runs the suite").
 //!
 //! Every `e2e` job counts, one per group (`e2e (1)`, `e2e (2)`, ...) or
 //! the single job of a run before the groups, when it succeeded or failed;
 //! a cancelled or skipped one, or one whose log has expired, is left out.
 //! A job's log ends with the suite's end-of-run summary, a heading then
 //! `summary: <name> <pass|fail> <seconds>s` for each scenario that ran
-//! (`docs/tooling/e2e.md`, "The end-of-run summary"), and a scenario's
+//! (`books/dev/src/how-to/e2e.md`, "The end-of-run summary"), and a scenario's
 //! duration is its summary line's. A log from before the summary has none,
 //! and there, since the scenarios run one at a time (`--test-threads=1`),
 //! a scenario's duration is the time between its `test <name> ... ok` or
@@ -137,7 +137,7 @@ fn render(samples: &BTreeMap<String, Vec<f64>>, runs: usize) -> String {
         "# The median duration in seconds of each end-to-end scenario on GitHub's\n\
          # runner, over the e2e jobs of {runs} runs of CI on main, written by\n\
          # `cargo xtask e2e-durations`; `cargo xtask e2e-plan` sizes the CI groups\n\
-         # by it (docs/tooling/e2e.md, \"How CI runs the suite\").\n\
+         # by it (books/dev/src/how-to/e2e.md, \"How CI runs the suite\").\n\
          # One scenario per line: seconds, then the name.\n"
     );
     for (name, values) in samples {
