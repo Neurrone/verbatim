@@ -25,8 +25,8 @@ use crate::protocol::{
     RequestEnvelope,
 };
 use crate::{
-    clock, desktop, diagnostics, events, files, focus, jobs, keys, process, scenario_windows, session,
-    terminals, tunnel, typing, wait_chain,
+    clock, desktop, diagnostics, events, files, focus, jobs, keys, process, scenario_windows,
+    session, terminals, tunnel, typing, wait_chain,
 };
 
 /// The number the next key stroke or typed character the agent injects
@@ -331,11 +331,8 @@ fn dispatch(connection: u64, id: u64, request: Request) -> Frame {
             Err(error) => error_frame(id, &error),
         },
         Request::ProcessDiagnostics { pid, dump_path } => {
-            match diagnostics::diagnostics_within(
-                pid,
-                dump_path,
-                diagnostics::DIAGNOSTICS_TIMEOUT,
-            ) {
+            match diagnostics::diagnostics_within(pid, dump_path, diagnostics::DIAGNOSTICS_TIMEOUT)
+            {
                 Ok(read) => Frame::Reply {
                     to: id,
                     payload: ReplyPayload::ProcessDiagnostics(read),

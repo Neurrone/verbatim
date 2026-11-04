@@ -93,7 +93,9 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     // first, until the first window's item again.
     for step in 1..=count {
         scenario.send_keys(&["tab"]).expect("sends Tab");
-        scenario.speech().expect(&[&said(&items[(1 + step) % count])]);
+        scenario
+            .speech()
+            .expect(&[&said(&items[(1 + step) % count])]);
     }
 
     scenario.release_key("alt").expect("releases Alt");

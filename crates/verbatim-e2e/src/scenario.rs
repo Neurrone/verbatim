@@ -2828,7 +2828,8 @@ impl Scenario {
                     )),
                 }
             }
-            let waited = owners.contains(&launched.pid) || launched.also_exit.contains(&launched.pid);
+            let waited =
+                owners.contains(&launched.pid) || launched.also_exit.contains(&launched.pid);
             problems.extend(self.end_launch(launched.pid, title, waited));
         } else {
             let ended = self
@@ -2869,7 +2870,11 @@ impl Scenario {
     /// process such as the desktop's `explorer.exe`, so nothing else is
     /// ended. Returns each failure.
     fn end_launch(&mut self, pid: u32, title: &str, waited: bool) -> Vec<String> {
-        let wait = if waited { Duration::ZERO } else { CLOSE_TIMEOUT };
+        let wait = if waited {
+            Duration::ZERO
+        } else {
+            CLOSE_TIMEOUT
+        };
         match self.agent.wait_for_exit(pid, wait) {
             Ok(ProcessState::Exited { .. }) => return Vec::new(),
             Ok(ProcessState::Running) => {}
@@ -3910,7 +3915,11 @@ impl std::fmt::Display for WindowWaitFailure {
             self.message, self.evidence.summary,
         )?;
         if !self.evidence.chains.is_empty() {
-            write!(formatter, "\nwait chains:\n{}", self.evidence.chains.join("\n"))?;
+            write!(
+                formatter,
+                "\nwait chains:\n{}",
+                self.evidence.chains.join("\n")
+            )?;
         }
         Ok(())
     }

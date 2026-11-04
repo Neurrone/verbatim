@@ -157,7 +157,7 @@ Public API:
     focused UI Automation element's text: the top left of the character's
     first bounding rectangle, rounded), and `SwitcherItems` (every item of
     the open Alt+Tab switcher's `SwitchItemListControl` list, in its order,
-    read in one call with their properties cached: each one's name, grid
+    each one's name, grid
     row and column, position and the list's size). The
     requests that keep UI Automation, which need facts only
     it has, log how long each took, at warn from two seconds, so their slow

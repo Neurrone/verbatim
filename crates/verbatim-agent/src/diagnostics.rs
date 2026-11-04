@@ -135,8 +135,9 @@ fn processor_time(pid: u32) -> Option<(u64, u64)> {
 /// opened, or was loading a module as the list was taken.
 fn modules(pid: u32) -> Result<Vec<String>, String> {
     // SAFETY: snapshots the process's modules; the handle is closed below.
-    let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, pid) }
-        .map_err(|error| format!("the modules could not be listed: {error}"))?;
+    let snapshot =
+        unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, pid) }
+            .map_err(|error| format!("the modules could not be listed: {error}"))?;
     let mut entry = MODULEENTRY32W {
         dwSize: u32::try_from(size_of::<MODULEENTRY32W>()).unwrap_or(u32::MAX),
         ..Default::default()

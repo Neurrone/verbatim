@@ -529,8 +529,8 @@ fn uia_position_through_uia(line: u32, column: u32) -> io::Result<(i32, i32)> {
 /// and column, each from one, its position in the list, from one, and the
 /// list's size. The switcher's window is found by its class, its list by
 /// its automation id, `SwitchItemListControl`, and the items, its
-/// children, are read with their properties in one call
-/// (`FindAllBuildCache`).
+/// children, are read one property at a time: the agent is the harness's
+/// own reader, apart from Verbatim's shapes (`docs/design/uia-shapes.md`).
 ///
 /// # Errors
 ///
@@ -544,7 +544,7 @@ pub fn switcher_items() -> io::Result<Vec<SwitcherItem>> {
 fn switcher_items_through_uia() -> io::Result<Vec<SwitcherItem>> {
     use windows::Win32::UI::Accessibility::{
         UIA_GridItemColumnPropertyId, UIA_GridItemRowPropertyId,
-        UIA_IsGridItemPatternAvailablePropertyId, UIA_NamePropertyId, UIA_PositionInSetPropertyId,
+        UIA_IsGridItemPatternAvailablePropertyId, UIA_PositionInSetPropertyId,
     };
     use windows::Win32::UI::WindowsAndMessaging::FindWindowW;
     use windows::core::w;
@@ -569,23 +569,9 @@ fn switcher_items_through_uia() -> io::Result<Vec<SwitcherItem>> {
     let list = unsafe { root.FindFirst(TreeScope_Descendants, &list_condition) }
         .map_err(|_| io::Error::other("the switcher has no list of running applications"))?;
     // SAFETY: as above.
-    let cache = unsafe { automation.CreateCacheRequest() }.map_err(io::Error::other)?;
-    for property in [
-        UIA_NamePropertyId,
-        UIA_IsGridItemPatternAvailablePropertyId,
-        UIA_GridItemRowPropertyId,
-        UIA_GridItemColumnPropertyId,
-        UIA_PositionInSetPropertyId,
-        UIA_SizeOfSetPropertyId,
-    ] {
-        // SAFETY: as above.
-        unsafe { cache.AddProperty(property) }.map_err(io::Error::other)?;
-    }
-    // SAFETY: as above.
     let every = unsafe { automation.CreateTrueCondition() }.map_err(io::Error::other)?;
     // SAFETY: as above.
-    let found = unsafe { list.FindAllBuildCache(TreeScope_Children, &every, &cache) }
-        .map_err(io::Error::other)?;
+    let found = unsafe { list.FindAll(TreeScope_Children, &every) }.map_err(io::Error::other)?;
     // SAFETY: as above.
     let length = unsafe { found.Length() }.map_err(io::Error::other)?;
     let mut items = Vec::new();
@@ -593,31 +579,37 @@ fn switcher_items_through_uia() -> io::Result<Vec<SwitcherItem>> {
         // SAFETY: as above, with an index below the array's length.
         let item = unsafe { found.GetElement(index) }.map_err(io::Error::other)?;
         let number = |property| -> io::Result<i32> {
-            // SAFETY: as above; the property was cached with the item.
-            let value = unsafe { item.GetCachedPropertyValue(property) }.map_err(io::Error::other)?;
+            // SAFETY: as above.
+            let value =
+                unsafe { item.GetCurrentPropertyValue(property) }.map_err(io::Error::other)?;
             i32::try_from(&value).map_err(io::Error::other)
         };
-        // SAFETY: as above; the name was cached with the item.
-        let name = unsafe { item.CachedName() }.map_err(io::Error::other)?;
+        // SAFETY: as above.
+        let name = unsafe { item.CurrentName() }.map_err(io::Error::other)?;
         let name = name.to_string();
-        // SAFETY: as above; the property was cached with the item.
-        let grid = unsafe { item.GetCachedPropertyValue(UIA_IsGridItemPatternAvailablePropertyId) }
-            .map_err(io::Error::other)?;
+        // SAFETY: as above.
+        let grid =
+            unsafe { item.GetCurrentPropertyValue(UIA_IsGridItemPatternAvailablePropertyId) }
+                .map_err(io::Error::other)?;
         if !bool::try_from(&grid).unwrap_or(false) {
             return Err(io::Error::other(format!(
                 "the switcher's item {name:?} has no grid position"
             )));
         }
         let from_one = |value: i32| {
-            u32::try_from(value + 1)
-                .map_err(|_| io::Error::other(format!("the switcher's item {name:?} has no grid position")))
+            u32::try_from(value + 1).map_err(|_| {
+                io::Error::other(format!("the switcher's item {name:?} has no grid position"))
+            })
         };
         let counted = |value: i32| {
-            u32::try_from(value).ok().filter(|&value| value > 0).ok_or_else(|| {
-                io::Error::other(format!(
-                    "the switcher's item {name:?} reports no position in its list"
-                ))
-            })
+            u32::try_from(value)
+                .ok()
+                .filter(|&value| value > 0)
+                .ok_or_else(|| {
+                    io::Error::other(format!(
+                        "the switcher's item {name:?} reports no position in its list"
+                    ))
+                })
         };
         items.push(SwitcherItem {
             row: from_one(number(UIA_GridItemRowPropertyId)?)?,
