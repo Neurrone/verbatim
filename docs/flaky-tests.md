@@ -48,6 +48,15 @@ Recorded by Claude, 2026-11-04, pending Dickson's acceptance.
   - Cause: the mark lay above the rows Core keeps, so Core asked the outpost to search the terminal (`TerminalFind`); the search, a remote operation in Windows Terminal (`crates/verbatim-uia-rops/src/terminal_find.rs`), took 3.2 s, past the outpost's 2 s text deadline (`TEXT_DEADLINE`), so the worker was abandoned, and `finish` (`crates/verbatim-app/src/main.rs`) plays the sound for any abandoned query, without asking whether Windows judges the window hung. Windows Terminal was answering throughout. NVDA has no such sound.
   - Fix: whether the sound plays only when Windows judges the window hung is a question for Dickson (what users hear); the search's cost in a real Windows Terminal, never measured, is to be measured and fixed with [M6.4 terminal residuals](roadmap.md#m64--terminal-residuals)' measurements.
 
+## Windows Terminal busy opening its tab switcher
+
+Recorded by Claude, 2026-11-04, pending Dickson's acceptance.
+
+- `windows_terminal_tabs` (run 41859263092)
+  - How: at Control+Shift+Tab, "sound: app-not-responding" was heard where "Tab switcher grouping", "list" and the first tab were expected.
+  - Cause: the key, a caret key in the terminal, opened a caret watch; Windows Terminal did not answer the watch's read for 2 s while it opened its tab switcher, so the outpost abandoned its worker ("a call passed its deadline", 15:43:34.285), and Core plays the sound for any abandoned query, without asking whether Windows judges the window hung.
+  - Fix: the same question for Dickson as the command marks entry above, whether the sound plays only when Windows judges the window hung; and whether Control+Shift+Tab should open a caret watch in a terminal at all, with [M6.4 terminal residuals](roadmap.md#m64--terminal-residuals).
+
 ## The caret watch's baseline anchor released while it waits
 
 Recorded by Claude, 2026-11-04.
@@ -74,6 +83,10 @@ Recorded by Claude, 2026-11-04.
   - How: missed a typed "o" in 2 of 6 runs on the base build.
   - Cause: not found.
   - Fix: [M6.4 terminal residuals](roadmap.md#m64--terminal-residuals).
+- `conhost_typing`, a wrapped line's new row spoken (run 41859263092, 2026-11-04; recorded by Claude, pending Dickson's acceptance)
+  - How: after the 108th "a" of `echo aaa…xyz` filled the 120-column row, "blank" was spoken and credited to the key, so the harness found an unmatched "blank" before typing "x".
+  - Cause: the console host's provider showed the wrap in two snapshots 13 ms apart, both with the caret at the start of the empty next row: the first's text held only the typed row, so the typed "a" was echoed; the second's held the empty row too, and Core took that row's appearance as a new line of output (flight recorder lines 697 and 699). The rule that typing wrapped past the right margin is echoed, not spoken as a new line, holds only when the row comes in the same snapshot as the character.
+  - Fix: proposed for [M6.4 terminal residuals](roadmap.md#m64--terminal-residuals): an empty row appearing below the typed line, where the caret already is, is not new output.
 
 ## File Explorer
 
