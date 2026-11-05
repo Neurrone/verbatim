@@ -20,7 +20,7 @@ The provider program with two UIA windows on two UI threads, `UseComThreading`; 
 | Figure | Date | Machine | Source | Threshold |
 |---|---|---|---|---|
 | `UIA_E_TIMEOUT` after 2.0 to 2.2 s, to any window, an idle UI thread's included | 2026-11-02 | Build 26200.9711 | `experiments/parallel-uia-calls/`, "A UI thread suspended, or a provider held, for 4 seconds" (`run-mockapp.ps1`'s suspended arms) | `UIA_E_TIMEOUT`; band 2,000 to 2,350 ms |
-| First uia-facts run, `connection`: `UIA_E_TIMEOUT` 5 of 5 to each window; idle thread's window 2,195.9 ms (2,184.0 to 2,199.4), busy thread's 2,199.1 ms (2,195.7 to 2,201.9) | 2026-11-05 | Build 26200.9711, `UIAutomationCore.dll` 7.2.26100.9549 | The commit that added this folder | Pass |
+| First uia-facts run, `connection`: `UIA_E_TIMEOUT` 5 of 5 to each window; idle thread's window 2,195.9 ms (2,184.0 to 2,199.4), busy thread's 2,199.1 ms (2,195.7 to 2,201.9) | 2026-11-05 | Build 26200.9711, `UIAutomationCore.dll` 7.2.26100.9549, AMD Ryzen 7 5700G | 1682f8cb | Pass |
 | First uia-facts run, `description`: `queued` timeout 3 of 3 (pass); `busy` timeout 3 of 3 (new); `held` timeout 3 of 3 (new) | 2026-11-05 | As above | As above | `queued` pass; the others recorded as the answer |
 
 So on this machine, for all three stalls, the lookup times out; it does not return UIA's proxies alone. The proxy-only answer is the collision's alone (`books/dev/src/reference/uia-bugs.md`).

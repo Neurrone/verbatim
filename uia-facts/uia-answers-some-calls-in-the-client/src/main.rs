@@ -881,6 +881,7 @@ fn operations(args: &Args, report: &mut Report) {
 
 fn search_reread(report: &mut Report) {
     let mut rows = Vec::new();
+    let mut by_pause = Vec::new();
     for pause in [0_u64, 300, 600, 700, 1_000] {
         let runs3: Vec<usize> = (0..3)
             .map(|_| {
@@ -908,11 +909,16 @@ fn search_reread(report: &mut Report) {
             })
             .collect();
         rows.push(format!("{pause} ms: {}", runs(&runs3)));
+        by_pause.push(runs3);
     }
+    // Each run's reads at the five pauses, judged as one outcome.
+    let per_run: Vec<Vec<usize>> = (0..3)
+        .map(|run| by_pause.iter().map(|pause| pause[run]).collect())
+        .collect();
     report.claim(
-        "a search's reads of its start's runtime id, by the time since the start was fetched",
+        "a search's reads of its start's runtime id, at pauses of 0, 300, 600, 700 and 1,000 ms",
         &rows.join("; "),
-        "re-read from about 0.65 s (inferred)",
-        Verdict::New,
+        "[0, 0, 1, 1, 1]",
+        deterministic(&per_run, &vec![0, 0, 1, 1, 1]),
     );
 }

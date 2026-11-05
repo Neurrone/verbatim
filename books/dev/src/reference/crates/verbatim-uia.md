@@ -79,7 +79,10 @@ call waits up to `CONNECTION_TIMEOUT` to connect and
   proxies when every provider it names, whatever its role (main,
   override, nested), is from `UIAutomationCore.dll`, so File Explorer's
   child windows whose main provider is the MSAA proxy under an override
-  from `DUI70.dll` are answered. A refusal is logged at debug, and from a
+  from `DUI70.dll` are answered; that test is public as
+  `served_only_by_uia_proxies(description)`, which the UIA facts'
+  programs (`uia-facts/`) apply to the lookups they classify. A refusal
+  is logged at debug, and from a
   window's fourth refusal in a row at info with the count
   (`REFUSALS_BEFORE_INFO`), so a window that never answers shows in the
   logs; a refusal is never retried, the next event or query that needs

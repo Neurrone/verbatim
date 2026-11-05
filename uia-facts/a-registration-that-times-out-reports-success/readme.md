@@ -29,7 +29,7 @@ Every trial runs in a client process of its own (the program's `trial` role), as
 | E-TT: success after 1,089 ms, held in `FragmentRoot` | 2026-10-10 | Build 26200 | `experiments/mockapp-experiments-2026-10-10/` at b0a1989 | `ok`; band 1,000 to 1,200 ms |
 | The wait follows the connection timeout: 532 to 551 ms at 500 ms, 2,190 to 2,226 at 2,000, 5,514 to 5,541 at 5,000 (e57); 540 to 549 and 5,453 to 5,504 ms (the CI test) | 2026-10-18 | Build 26200 | e57, `recorded/e57/`; the CI test | Bands from the connection timeout |
 | e58: one advise at the release; nothing for 6 s with no event; C and D lose none; with no stall, the removal succeeds and frees the handler | 2026-10-18 | Build 26200 | `recorded/e58/` (5 trials each) | Deterministic |
-| First uia-facts run, `ett`: `ok` 5 of 5, 1,091.5 ms (1,090.8 to 1,095.6) | 2026-11-05 | Build 26200.9711, `UIAutomationCore.dll` 7.2.26100.9549 | FIXCOMMIT | Pass |
+| First uia-facts run, `ett`: `ok` 5 of 5, 1,091.5 ms (1,090.8 to 1,095.6) | 2026-11-05 | Build 26200.9711, `UIAutomationCore.dll` 7.2.26100.9549, AMD Ryzen 7 5700G | fdd501b9 | Pass |
 | First uia-facts run, `connection`: `ok` 5 of 5; 541.0 ms (538.0 to 545.6) at 500 ms; 5,521.9 ms (5,511.7 to 5,529.5) at 5,000 ms | 2026-11-05 | As above | As above | Pass |
 | First uia-facts run, `e57`: `ok` 5 of 5 after 2,197.7 ms (2,190.1 to 2,203.5); every event raised from the stall's end heard, each within 100 ms of its raise, 5 of 5; the first heard was raised 201 ms after the return, as the stall ended | 2026-11-05 | As above | As above | The wait passes; the delivery is this record |
 | First uia-facts run, `e58-silence`: one advise within 20 ms of the release 3 of 3; nothing for 6 s 3 of 3 | 2026-11-05 | As above | As above | Pass |

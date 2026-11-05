@@ -313,23 +313,9 @@ pub fn description(element: &IUIAutomationElement) -> Result<String> {
 }
 
 /// Whether a provider description names providers and every one comes
-/// from `UIAutomationCore.dll`: the answer of UIA's own proxies alone. This
-/// is the proxy rule of `crates/verbatim-uia/src/answered.rs`
-/// (`served_only_by_uia_proxies`, private there), restated so that the
-/// fact checks the rule Verbatim applies.
-#[must_use]
-pub fn served_only_by_uia_proxies(description: &str) -> bool {
-    let mut modules = description
-        .split('(')
-        .filter_map(|part| {
-            part.strip_prefix("unmanaged:")
-                .or_else(|| part.strip_prefix("managed:"))
-        })
-        .map(|rest| rest.split(')').next().unwrap_or(rest).trim())
-        .peekable();
-    modules.peek().is_some()
-        && modules.all(|module| module.eq_ignore_ascii_case("UIAutomationCore.dll"))
-}
+/// from `UIAutomationCore.dll`: the answer of UIA's own proxies alone, by
+/// Verbatim's own proxy rule.
+pub use verbatim_uia::served_only_by_uia_proxies;
 
 /// Casts a client object to an older interface.
 ///

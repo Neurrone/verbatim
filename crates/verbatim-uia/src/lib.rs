@@ -60,6 +60,7 @@
 //!   ranges (milestone M4), which the outpost's text protocol reads with.
 
 mod answered;
+pub use answered::served_only_by_uia_proxies;
 mod bounded;
 mod cache;
 pub mod calls;

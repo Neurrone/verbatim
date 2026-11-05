@@ -667,12 +667,7 @@ fn duration_ms(d: Duration) -> u64 {
 
 fn e58_remove(report: &mut Report) {
     let cases: [(&str, bool, u64, Removal); 3] = [
-        (
-            "remove",
-            true,
-            500,
-            ("UIA_E_TIMEOUT".to_owned(), false, false, true),
-        ),
+        ("remove", true, 500, ("ok".to_owned(), true, false, false)),
         (
             "remove-late",
             true,

@@ -27,7 +27,7 @@ Judged: relations (each probe's reply before or after the release, by this progr
 | Figure | Date | Machine | Source | Threshold |
 |---|---|---|---|---|
 | At most one call in the provider, every mode; a slow call holding every probe into the process from any thread, window or process, remote operations included; FIFO; the 950 ms request; 0.4 to 1.2 ms with nothing queued; the pumping wait holding; without `UseComThreading` reads answer, a new connection times out, `Invoke` waits | 2026-11-02 | Build 26200.9711 | `experiments/parallel-uia-calls/` (`serve.rs` with `run-serve.ps1`, `run-serve-xproc.ps1`, `iothread-sequence.ps1`, `run-pairs.ps1`) and the collision experiments' `e16` and `e28c` | Deterministic and relations |
-| First uia-facts run, `no-overlap`: peak 1 in 3 of 3, with and without `UseComThreading` | 2026-11-05 | Build 26200.9711, `UIAutomationCore.dll` 7.2.26100.9549 | The commit that added this folder | Pass |
+| First uia-facts run, `no-overlap`: peak 1 in 3 of 3, with and without `UseComThreading` | 2026-11-05 | Build 26200.9711, `UIAutomationCore.dll` 7.2.26100.9549, AMD Ryzen 7 5700G | 1682f8cb | Pass |
 | First uia-facts run, `held`: every probe into the process waited for the release, the other process's read answered during the hold, and the waiting read started only after the held call returned, 3 of 3 | 2026-11-05 | As above | As above | Pass |
 | First uia-facts run, `fifo`: window 0's request served before window 2's, and window 2's read waited for the release, 3 of 3 | 2026-11-05 | As above | As above | Pass |
 | First uia-facts run, `busy-only`: answered 3 of 3, 0.2 ms | 2026-11-05 | As above | As above | Pass; the time for trends |

@@ -38,9 +38,12 @@ const REFUSALS_BEFORE_INFO: u32 = 3;
 static REFUSALS: LazyLock<Mutex<HashMap<isize, u32>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
-/// Whether `description`, a provider description as UIA reports it, names
-/// providers and every one of them comes from `UIAutomationCore.dll`.
-pub(crate) fn served_only_by_uia_proxies(description: &str) -> bool {
+/// Whether `description`, a provider description as UIA reports it (UIA
+/// property 30107), names providers and every one of them comes from
+/// `UIAutomationCore.dll`: the proxy rule's test, which the UIA facts'
+/// programs apply to the lookups they classify.
+#[must_use]
+pub fn served_only_by_uia_proxies(description: &str) -> bool {
     let mut modules = description
         .split('(')
         .filter_map(|part| {

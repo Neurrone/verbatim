@@ -23,9 +23,9 @@ Judged: every cancel's answer (a relation over all the kind's trials), the call'
 
 | Figure | Date | Machine | Source | Threshold |
 |---|---|---|---|---|
-| Every cancel `RPC_E_NO_CONTEXT`, 5,614 of 5,614 over 203 trials; held calls returned 0.0 to 2.9 ms after the release; new connections failed `UIA_E_TIMEOUT` before the release | 2026-10-30 | Build 26200 | The experiment `cocancelcall-does-not-end-a-uia-client-call`, run at 5797c075; its outputs are in `recorded/` | Deterministic; band 2,000 to 2,350 ms |
+| Every cancel `RPC_E_NO_CONTEXT`, 5,614 of 5,614 over 203 trials; held calls returned 0.0 to 2.9 ms after the release; new connections failed `UIA_E_TIMEOUT` before the release | 2026-10-30 | Build 26200 | The `CoCancelCall` experiment of 2026-10-30, run at 5797c075; its outputs are in `recorded/` | Deterministic; band 2,000 to 2,350 ms |
 | Abandoning: every later call waited for the release; the first answer after it within 2 ms either way | 2026-11-02 | Build 26200.9711 | `experiments/parallel-uia-calls/`, "Abandoning a stuck call" | A relation; the 2 ms for trends |
-| First uia-facts run, `property`, `text`, `findall`, `remote`: every cancel `RPC_E_NO_CONTEXT` (294 cancels in 12 trials each), every call `ok`, each returning only at the release or the stall's end | 2026-11-05 | Build 26200.9711, `UIAutomationCore.dll` 7.2.26100.9549 | The commit that added this folder | Pass |
+| First uia-facts run, `property`, `text`, `findall`, `remote`: every cancel `RPC_E_NO_CONTEXT` (294 cancels in 12 trials each), every call `ok`, each returning only at the release or the stall's end | 2026-11-05 | Build 26200.9711, `UIAutomationCore.dll` 7.2.26100.9549, AMD Ryzen 7 5700G | 1682f8cb | Pass |
 | First uia-facts run, `connection`: every cancel `RPC_E_NO_CONTEXT`; `UIA_E_TIMEOUT` 12 of 12, each before the release; 2,008.5 ms (1,999.8 to 2,022.2) | 2026-11-05 | As above | As above | The band inconclusive; the rest pass |
 | First uia-facts run, `disabled`: `RPC_E_NO_CONTEXT` 3 of 3 | 2026-11-05 | As above | As above | Pass |
 | First uia-facts run, `abandon`: every later read `ok` and only after the release, on new threads and on the same thread; the first answer after the release 0.8 ms (new threads) and 0.5 ms (same thread) | 2026-11-05 | As above | As above | Pass; the times for trends |

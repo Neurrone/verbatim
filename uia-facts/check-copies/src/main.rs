@@ -9,8 +9,9 @@
 //!   `default-features` and features);
 //! - `[workspace.lints]`;
 //! - `[profile.dev]`, less the main root's per-package overrides;
-//! - a package of uia-facts' lock that the main lock names but holds at no
-//!   such version and source;
+//! - a package of uia-facts' lock that the main lock holds at no such
+//!   version and source, when the main lock names it or it is a
+//!   third-party package;
 //! - the top-level `env` blocks of `.github/workflows/ci.yml` and
 //!   `.github/workflows/uia-facts.yml`, which rust-cache's key hashes.
 //!
@@ -92,8 +93,11 @@ fn check(here: &Path, main_root: &Path, failures: &mut Vec<String>) -> Result<()
     // A package the main lock also names must be one of the main lock's
     // entries for it; the main lock may hold versions uia-facts' graph
     // does not use, which the derivation prunes.
+    // A third-party package the main lock does not name would be a crate
+    // the main build never built.
     for package in &our_lock {
-        if their_names.contains(package.0.as_str()) && !their_lock.contains(package) {
+        let named = their_names.contains(package.0.as_str());
+        if (named || package.2 != "path") && !their_lock.contains(package) {
             failures.push(format!(
                 "Cargo.lock: {} {} ({}) is not in the main lock",
                 package.0, package.1, package.2

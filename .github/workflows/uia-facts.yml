@@ -33,6 +33,8 @@ on:
       - "Cargo.lock"
       - ".config/hakari.toml"
       - "rust-toolchain.toml"
+      - ".cargo/config.toml"
+      - ".github/workflows/ci.yml"
       - ".github/workflows/uia-facts.yml"
 
 env:
