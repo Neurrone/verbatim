@@ -568,7 +568,7 @@ Binaries that need the desktop (focus, Windows Terminal, File Explorer, a suspen
 
     It also builds the request-reader and timeout folders: new connections timing out; the connection timeout per process; a call's wait from its own start; a timeout bounding each request, not an operation; the registration that reports success; nothing cancelling; one request at a time; the channel guide; MSAA beside UIA; parallel threads; the requests guide; UIA answering in the client; the instruction limit.
   - What it moves: `the-connection-timeout-applies-to-the-whole-process`, `a-registration-that-times-out-reports-success`, `cocancelcall-does-not-end-a-uia-client-call`, `compareelements-makes-no-call`, and the E1, E-TT and E3 parts of `mockapp-experiments-2026-10-10`.
-  - What it measures: the first-build and rebuild times, and the CI cache restore. These replace the estimates above in `uia-facts/readme.md`.
+  - What it measures: the first-build and rebuild times, and whether the CI job restores main's cache, reported to Dickson and not recorded in `uia-facts/readme.md`.
 - The events and focus build:
   - What it builds: the hung window and the client-threads guide; the worker; the event cache fetch; the flood; both late-focus folders; the focus and elements limitations; ancestors; the first-time setup race; the exit fault.
   - What it adds to the provider program: the focus WinEvent, shown and hidden windows, and element removal.
