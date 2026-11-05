@@ -125,6 +125,13 @@ impl Args {
         args
     }
 
+    /// Whether case `name` was named with `--case`: the cases that take
+    /// over the desktop run only then.
+    #[must_use]
+    pub fn names(&self, name: &str) -> bool {
+        self.cases.iter().any(|case| case == name)
+    }
+
     /// Whether case `name` runs.
     #[must_use]
     pub fn wants(&self, name: &str) -> bool {

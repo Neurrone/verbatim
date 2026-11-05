@@ -15,6 +15,7 @@ use uia_facts_support::args::{Args, trials};
 use uia_facts_support::events::{self, Handler, Heard, OnEvent};
 use uia_facts_support::provider::Provider;
 use uia_facts_support::report::{Report, Verdict, deterministic, relation, runs};
+use uia_facts_support::role::{self, Role};
 use uia_facts_support::stats::us_to_ms;
 use uia_facts_support::{note, now_us, uia};
 use windows::Win32::Foundation::{CloseHandle, WAIT_OBJECT_0};
@@ -111,9 +112,35 @@ fn sleeping(name: &'static str, ms: u64, returned: Arc<Mutex<Option<u64>>>) -> O
 /// A case: its name, what it does, and its function.
 type Case = (&'static str, &'static str, fn(&Args, &mut Report));
 
+/// The `removing` role: for each `register` command, registers name
+/// changes on the window it names, reports `registered`, and once it hears
+/// an event reports `heard <thread id>` and removes the registration.
+fn removing(hwnd: isize) -> ! {
+    let client = uia::client();
+    for _ in role::commands() {
+        let reports = register(&client, hwnd, None);
+        role::report("registered");
+        let heard = loop {
+            match reports.recv_timeout(Duration::from_secs(3)) {
+                Ok(events::Report::Heard(h)) => break Some(h),
+                Ok(events::Report::Freed) => {}
+                Err(_) => break None,
+            }
+        };
+        // SAFETY: a live client object.
+        unsafe { client.RemoveAllEventHandlers() }.expect("the registration removed");
+        role::report(&heard.map_or_else(|| "none".to_owned(), |h| format!("heard {}", h.thread)));
+    }
+    uia_facts_support::exit_now(0)
+}
+
 fn main() {
     let args = Args::parse();
     uia::mta();
+    if let Some((name, rest)) = &args.role {
+        assert_eq!(name, "removing", "unknown role {name}");
+        removing(rest[0].parse().expect("a window handle"));
+    }
     let mut report = Report::start("a-client-processs-events-run-on-one-worker");
     let cases: [Case; 5] = [
         (
@@ -123,7 +150,7 @@ fn main() {
         ),
         (
             "threads",
-            "one handler: four events 800 ms apart, each awaited, asking every 50 ms after each whether its thread has ended; then four raised at once",
+            "one handler: four events 800 ms apart, each awaited, asking every 50 ms after each whether its thread has ended; four events to registrations each removed after its event; then four raised at once",
             threads,
         ),
         (
@@ -222,11 +249,12 @@ fn ended(id: u32) -> bool {
 
 fn threads(args: &Args, report: &mut Report) {
     let mut distinct = Vec::new();
+    let mut distinct_removed = Vec::new();
     let mut not_registering = Vec::new();
     let mut ends = Vec::new();
     let mut burst = Vec::new();
     for _ in 0..trials() {
-        let mut provider = Provider::launch(&["--windows", "uia:0"]);
+        let mut provider = Provider::launch(&["--windows", "uia:0,uia:1"]);
         args.pause_for_debugger(&[("provider", provider.pid), ("client", std::process::id())]);
         let client = uia::client();
         // SAFETY: no precondition.
@@ -265,25 +293,36 @@ fn threads(args: &Args, report: &mut Report) {
         distinct.push(unique.len());
         not_registering.push(ids.iter().all(|id| *id != me));
         ends.push(gone);
-        let mut fresh = Vec::new();
-        let mut kept = Vec::new();
+        // As the original ran them: each event to a registration of its
+        // own, removed once its event is heard, 800 ms apart.
+        // This process already holds registrations, which keep its worker,
+        // so the events go to a client process of its own (`removing`).
+        let mut removed = Vec::new();
+        let mut removing = Role::start("removing", &[provider.hwnd(1).to_string()]);
         for i in 0..4 {
-            let client = uia::client();
-            let reports = register(&client, provider.hwnd(0), None);
-            let name = format!("fresh{i}");
-            raise(&mut provider, 0, &name);
-            if let Some(h) = wait_for(&reports, &mut Vec::new(), &name, Duration::from_secs(3)) {
-                fresh.push(h.thread);
+            removing.send("register");
+            assert_eq!(
+                removing.expect_line(),
+                "registered",
+                "the registration is made"
+            );
+            let name = format!("removed{i}");
+            raise(&mut provider, 1, &name);
+            let line = removing.expect_line();
+            if let Some(thread) = line.strip_prefix("heard ") {
+                removed.push(thread.parse::<u32>().expect("a thread id"));
             }
-            kept.push((client, reports));
             uia::pause(
                 Duration::from_millis(800),
                 "the originals' 800 ms between events",
             );
         }
         note::evidence(&format!(
-            "threads of four events at four fresh client objects: {fresh:?}"
+            "threads of four events, each to a registration removed after it: {removed:?}"
         ));
+        removed.sort_unstable();
+        removed.dedup();
+        distinct_removed.push(removed.len());
         let names: Vec<String> = (0..4).map(|i| format!("burst{i}")).collect();
         for name in &names {
             raise(&mut provider, 0, name);
@@ -300,10 +339,16 @@ fn threads(args: &Args, report: &mut Report) {
         burst.push(ids.len());
     }
     report.claim(
-        "distinct thread ids of four events 800 ms apart",
+        "distinct thread ids of four events 800 ms apart, each to a registration removed after its event",
+        &runs(&distinct_removed),
+        "4 (four events on four thread ids, ops.ps1's run 2, which removed each handler after its event)",
+        deterministic(&distinct_removed, &4),
+    );
+    report.claim(
+        "distinct thread ids of four events 800 ms apart to one registration kept",
         &runs(&distinct),
-        "4 (four events on four thread ids)",
-        deterministic(&distinct, &4),
+        "",
+        Verdict::New,
     );
     report.claim(
         "every handler runs on a thread other than the one that registered it",

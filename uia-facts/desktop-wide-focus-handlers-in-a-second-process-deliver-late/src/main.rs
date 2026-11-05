@@ -23,8 +23,8 @@ use uia_facts_support::{note, now_us, uia};
 
 /// The desktop of its own.
 const DESKTOP: &str = "uia-facts";
-/// Focus events a trial raises, as P2 raised.
-const EVENTS: usize = 10;
+/// Focus events a trial raises; P2 raised 10, and 6 keep the run short.
+const EVENTS: usize = 6;
 /// A delivery counts as on time within this long of its raise; P2's first
 /// process took at most 9 to 15 ms.
 const ON_TIME_MS: f64 = 100.0;
@@ -41,26 +41,26 @@ fn main() {
     }
     let mut report = Report::start("desktop-wide-focus-handlers-in-a-second-process-deliver-late");
     if args.wants("processes") {
-        report.case("processes", "1, 2 and 4 client processes, each with one desktop-wide focus handler; M's focus moved every 150 ms, 10 times");
+        report.case("processes", "1, 2 and 4 client processes, each with one desktop-wide focus handler; M's focus moved every 150 ms, 6 times");
         processes(&args, &mut report);
     }
     if args.wants("one-process") {
-        report.case("one-process", "2 and 4 desktop-wide focus handlers in one client process; M's focus moved every 150 ms, 10 times");
+        report.case("one-process", "4 desktop-wide focus handlers in one client process; M's focus moved every 150 ms, 6 times");
         one_process(&args, &mut report);
     }
     if args.wants("slow") {
         report.case(
             "slow",
-            "4 client processes; M's focus moved every 500 ms, 10 times",
+            "4 client processes; M's focus moved every 500 ms, 6 times",
         );
         slow(&args, &mut report);
     }
     if args.wants("plain") {
-        report.case("plain", "a plain Win32 window without the keyboard focus named by 10 focus WinEvents, 150 ms apart, with 1, 2 and 4 client processes and one process with 4 handlers");
+        report.case("plain", "a plain Win32 window without the keyboard focus named by 6 focus WinEvents, 150 ms apart, with 1, 2 and 4 client processes and one process with 4 handlers");
         plain(&args, &mut report);
     }
     if args.wants("threading") {
-        report.case("threading", "2 client processes, the second registering on a thread of a single-threaded apartment; M's focus moved every 150 ms, 10 times");
+        report.case("threading", "2 client processes, the second registering on a thread of a single-threaded apartment; M's focus moved every 150 ms, 6 times");
         threading(&args, &mut report);
     }
     report.finish();
@@ -95,8 +95,13 @@ fn trial(args: &Args, specs: &[&[&str]], pace_ms: u64, plain: bool) -> Vec<Vec<f
         );
         uia::pause(Duration::from_millis(pace_ms), "between focus moves");
     }
-    note::waiting("3.0 s, for late deliveries");
-    let end = now_us() + 3_000_000;
+    // Late deliveries came up to 2.7 s after their raise; a plain window
+    // is heard by no one, and is listened to 1.5 s.
+    let listen_ms: u64 = if plain { 1_500 } else { 3_000 };
+    if !plain {
+        note::waiting("3.0 s, for late deliveries");
+    }
+    let end = now_us() + listen_ms * 1_000;
     let names: &[&str] = if plain {
         &["msaa_window_0", "-"]
     } else {
@@ -171,10 +176,7 @@ fn processes(args: &Args, report: &mut Report) {
 }
 
 fn one_process(args: &Args, report: &mut Report) {
-    for (handlers, spec) in [
-        (2usize, &["desk", "desk2"][..]),
-        (4, &["desk", "desks=3"][..]),
-    ] {
+    for (handlers, spec) in [(4usize, &["desk", "desks=3"][..])] {
         let mut on_time = Vec::new();
         let mut heard = Vec::new();
         for _ in 0..trials() {

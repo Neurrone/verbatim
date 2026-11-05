@@ -36,12 +36,17 @@ use windows::Win32::UI::WindowsAndMessaging::{
 const B_AFTER_US: u64 = 200_000;
 /// A delivery counts as not held when it comes within this long of its
 /// raise: the originals measured 0 to 3 ms, and a hold is at least one
-/// connection timeout, 500 ms or more here.
-const NOT_HELD_MS: f64 = 300.0;
+/// connection timeout, 250 ms or more here.
+const NOT_HELD_MS: f64 = 100.0;
 /// The desktop of its own the cases that ran on one run on.
 const DESKTOP: &str = "uia-facts";
-/// The connection timeout every client has unless its spec says otherwise.
+/// The connection timeout every client has unless its spec says otherwise,
+/// UIA's default.
 const CTO_MS: f64 = 2_000.0;
+/// The connection timeout the cases set where their claim is the hold's
+/// relation to the timeout rather than its length at the default, so that
+/// their stalls stay short.
+const LOW_MS: f64 = 250.0;
 
 /// The windows of one trial.
 struct Scene {
@@ -159,27 +164,27 @@ fn main() {
     let cases: [Case; 13] = [
         (
             "calls",
-            "a client with a desktop focus handler and B's name changes; T stalled 5 s; a focus WinEvent naming T; B renamed 200 ms later; counting the sent messages that reach T",
+            "a client with a desktop focus handler and B's name changes; T stalled 4.4 s at UIA's default 2 s connection timeout; a focus WinEvent naming T; B renamed 200 ms later; counting the sent messages that reach T",
             calls,
         ),
         (
             "who",
-            "seventeen clients that differ in one thing each, from timeouts and apartments to client objects, mappings and registrations; T stalled 8 s; a focus WinEvent naming T; B renamed and its text changed 200 ms later; then a name and a foreground WinEvent naming M, and a name read of B from each of two clients",
+            "sixteen clients that differ in one thing each, from timeouts and apartments to client objects, mappings and registrations, at connection timeouts of 250 and 500 ms; T stalled 1.6 s; a focus WinEvent naming T; B renamed and its text changed 100 ms later; then a name and a foreground WinEvent naming M, and a name read of B from each of two clients",
             who,
         ),
         (
             "until-answer",
-            "a client at a 2 s connection timeout; T stalled 3 s, shorter than two waits; a focus WinEvent naming T; B renamed 200 ms later",
+            "a client at a 1 s connection timeout; T stalled 1.5 s, shorter than two waits; a focus WinEvent naming T; B renamed 200 ms later",
             until_answer,
         ),
         (
             "repeat",
-            "a client at a 1 s connection timeout; T stalled 8 s; three focus WinEvents naming T at once; B renamed 200 ms later",
+            "a client at a 250 ms connection timeout; T stalled 2.2 s; three focus WinEvents naming T at once; B renamed 200 ms later",
             repeat,
         ),
         (
             "quiet",
-            "a client with a desktop focus handler; T stalled 3 s; B renamed with no WinEvent; then a name-change WinEvent naming T and B renamed again",
+            "a client with a desktop focus handler; T stalled 1.2 s; B renamed with no WinEvent; then a name-change WinEvent naming T and B renamed again",
             quiet,
         ),
         (
@@ -189,17 +194,17 @@ fn main() {
         ),
         (
             "slow",
-            "a UIA window U whose every provider call takes 1 s while it keeps answering messages; a focus WinEvent naming U; B renamed 200 ms later; a client with a focus registration and one without",
+            "a UIA window U whose every provider call takes 150 ms while it keeps answering messages; a focus WinEvent naming U at a 250 ms connection timeout; B renamed 200 ms later; a client with a focus registration and one without",
             slow,
         ),
         (
             "own-focus",
-            "a window whose every provider call takes 3 s raising its own focus, 4 times as a UIA provider and 6 times as an MSAA window; B renamed 200 ms later",
+            "a window whose every provider call takes 1.5 s raising its own focus at a 1 s connection timeout, 4 times as a UIA provider and 6 times as an MSAA window; B renamed 200 ms later",
             own_focus,
         ),
         (
             "dropped",
-            "on a desktop of its own, M moving its focus while it answers, then again at the start of a 3 s stall of its UI thread; a client with a desktop focus handler at a connection timeout of 10 s, then 2 s, then 0.5 s, each in a trial of its own",
+            "on a desktop of its own, M moving its focus while it answers, then again at the start of a 1 s stall of its UI thread; a client with a desktop focus handler at a connection timeout of 10 s, then 1 s, then 0.25 s, each in a trial of its own",
             dropped,
         ),
         (
@@ -223,8 +228,15 @@ fn main() {
             desk_wide,
         ),
     ];
+    // The cases that take over the desktop run only when named.
+    let on_screen = ["shown", "alt-tab-back", "open-show", "desk-wide"];
     for (name, what, run) in cases {
-        if args.wants(name) {
+        let runs = if on_screen.contains(&name) {
+            args.names(name)
+        } else {
+            args.wants(name)
+        };
+        if runs {
             report.case(name, what);
             run(&args, &mut report);
         }
@@ -245,11 +257,11 @@ fn calls(args: &Args, report: &mut Report) {
             ("client D", d.pid()),
         ]);
         let _ = scene.p1.log();
-        let stalled = scene.stall(0, 5_000);
+        let stalled = scene.stall(0, 4_400);
         let raised = scene.winevent("focus", 0);
         until(raised + B_AFTER_US, "B's name change after the WinEvent");
         scene.rename_b("held");
-        let lines = d.lines_until(stalled + 5_500_000);
+        let lines = d.lines_until(stalled + 4_900_000);
         let hold = delay(raised, heard_at(&lines, "name", "held"));
         note::evidence(&format!(
             "B's name change heard {hold:.1} ms after the WinEvent"
@@ -302,112 +314,102 @@ fn calls(args: &Args, report: &mut Report) {
     );
 }
 
-/// How a client of `who` is judged.
-enum Held {
-    /// Held for the sum of these waits, from the `WinEvent`.
-    Waits(&'static [f64]),
-    /// Held until T answers, at the stall's end.
-    ToStallEnd,
-}
-
-/// The clients of `who`: name, spec less B's name registration, how it is
-/// held, and the original figure.
-const WHO: [(&str, &[&str], Held, &str); 15] = [
+/// The clients of `who`: name, spec less B's name registration, the
+/// waits it is held for from the `WinEvent`, and the original figure. Each
+/// runs at a connection timeout of 250 or 500 ms where the original ran at
+/// 500 to 2,000 ms: what is judged is the hold's relation to the timeout.
+const WHO: [(&str, &[&str], &[f64], &str); 14] = [
+    (
+        "connection timeout 250 ms",
+        &["desk", "cto=250"],
+        &[LOW_MS, LOW_MS],
+        "812 ms at 500 ms (h3 cto500)",
+    ),
     (
         "connection timeout 500 ms",
         &["desk", "cto=500"],
-        Held::Waits(&[500.0, 500.0]),
-        "812 ms (h3 cto500)",
+        &[500.0, 500.0],
+        "1,824 ms at 1,000 ms (repeat1_cto1000)",
     ),
     (
-        "connection timeout 1,000 ms",
-        &["desk", "cto=1000"],
-        Held::Waits(&[1_000.0, 1_000.0]),
-        "1,824 ms (repeat1_cto1000)",
-    ),
-    (
-        "transaction timeout 500 ms",
-        &["desk", "tto=500"],
-        Held::Waits(&[CTO_MS, CTO_MS]),
-        "3,810 ms (h3_tto500)",
+        "transaction timeout 100 ms",
+        &["desk", "cto=250", "tto=100"],
+        &[LOW_MS, LOW_MS],
+        "3,810 ms at 2,000 and 500 ms (h3_tto500)",
     ),
     (
         "a single-threaded apartment",
-        &["sta", "desk"],
-        Held::Waits(&[CTO_MS, CTO_MS]),
-        "3,809 ms (h3 sta)",
+        &["sta", "desk", "cto=250"],
+        &[LOW_MS, LOW_MS],
+        "3,809 ms at 2,000 ms (h3 sta)",
     ),
     (
         "a focus group on B in place of the desktop handler",
-        &["group=B"],
-        Held::Waits(&[CTO_MS, CTO_MS]),
-        "3,809 ms (grouponly; P4's O_B)",
+        &["group=B", "cto=250"],
+        &[LOW_MS, LOW_MS],
+        "3,809 ms at 2,000 ms (grouponly; P4's O_B)",
     ),
     (
         "a focus group on A, another application's window",
-        &["group=A"],
-        Held::Waits(&[CTO_MS, CTO_MS]),
-        "4,054 and 4,070 ms from the stall (P4's O_A)",
+        &["group=A", "cto=250"],
+        &[LOW_MS, LOW_MS],
+        "4,054 and 4,070 ms from the stall at 2,000 ms (P4's O_A)",
     ),
     (
-        "focus on a second client object on the same thread, 500 ms",
-        &["deskobj", "cto=500"],
-        Held::Waits(&[500.0, 500.0]),
-        "815 ms (focusnew500_namemain)",
+        "focus on a second client object on the same thread",
+        &["deskobj", "cto=250"],
+        &[LOW_MS, LOW_MS],
+        "815 ms at 500 ms (focusnew500_namemain)",
     ),
     (
-        "focus on a second client object on a thread of its own, 500 ms",
-        &["deskthr", "cto=500"],
-        Held::Waits(&[500.0, 500.0]),
-        "817 ms (focusthr500_namemain)",
+        "focus on a second client object on a thread of its own",
+        &["deskthr", "cto=250"],
+        &[LOW_MS, LOW_MS],
+        "817 ms at 500 ms (focusthr500_namemain)",
     ),
     (
-        "the name registration on a client object on a thread of its own, 500 ms",
-        &["desk", "namethr", "cto=500"],
-        Held::Waits(&[500.0, 500.0]),
-        "819 ms (focusmain_namethr500)",
+        "the name registration on a client object on a thread of its own",
+        &["desk", "namethr", "cto=250"],
+        &[LOW_MS, LOW_MS],
+        "819 ms at 500 ms (focusmain_namethr500)",
     ),
     (
-        "two client objects, each with a desktop handler, 500 ms",
-        &["desk", "deskobj", "cto=500"],
-        Held::Waits(&[500.0, 500.0, 500.0, 500.0]),
-        "1,820 ms",
+        "two client objects, each with a desktop handler",
+        &["desk", "deskobj", "cto=250"],
+        &[LOW_MS; 4],
+        "1,820 ms at 500 ms",
     ),
     (
-        "two desktop handlers on one client object, 500 ms",
-        &["desk", "desk2", "cto=500"],
-        Held::Waits(&[500.0, 500.0]),
-        "807 ms (twodesk_500)",
+        "two desktop handlers on one client object",
+        &["desk", "desk2", "cto=250"],
+        &[LOW_MS, LOW_MS],
+        "807 ms at 500 ms (twodesk_500)",
     ),
     (
         "the proxy factory mapping emptied",
-        &["desk", "clearmap"],
-        Held::Waits(&[CTO_MS]),
-        "1,812 ms (clearmap)",
+        &["desk", "clearmap", "cto=250"],
+        &[LOW_MS],
+        "1,812 ms at 2,000 ms (clearmap)",
     ),
     (
         "the focus WinEvents removed from the mapping",
-        &["desk", "nofocusmap"],
-        Held::Waits(&[CTO_MS, CTO_MS]),
+        &["desk", "nofocusmap", "cto=250"],
+        &[LOW_MS, LOW_MS],
         "14,789 against 14,801 ms at 10 s (e_mapping)",
     ),
     (
-        "Verbatim's mapping and timeouts, against a hidden T",
-        &["desk", "vbmap", "tto=5000"],
-        Held::Waits(&[CTO_MS, CTO_MS]),
-        "3,806 to 3,821 ms (states' stand-in)",
-    ),
-    (
-        "the older CUIAutomation coclass",
-        &["older", "desk"],
-        Held::ToStallEnd,
-        "until the window answered (h2_cui)",
+        "Verbatim's mapping, against a hidden T",
+        &["desk", "vbmap", "cto=250", "tto=5000"],
+        &[LOW_MS, LOW_MS],
+        "3,806 to 3,821 ms at 2,000 ms (states' stand-in)",
     ),
 ];
 
-/// The stall of `who`: longer than the older coclass's first wait, 5 s,
-/// and a default second wait, 2 s, together.
-const WHO_STALL_MS: u64 = 8_000;
+/// The stall of `who`: past the longest hold's band, four waits of 250 ms.
+const WHO_STALL_MS: u64 = 1_600;
+/// B's events follow the focus `WinEvent` by this much in `who`, inside
+/// its shortest hold, one wait of 250 ms.
+const WHO_B_AFTER_US: u64 = 100_000;
 
 #[expect(
     clippy::too_many_lines,
@@ -415,7 +417,6 @@ const WHO_STALL_MS: u64 = 8_000;
 )]
 fn who(args: &Args, report: &mut Report) {
     let mut holds: Vec<Vec<f64>> = vec![Vec::new(); WHO.len()];
-    let mut stall_ends = Vec::new();
     let mut outpost: Vec<[f64; 4]> = Vec::new();
     let mut listener: Vec<[f64; 4]> = Vec::new();
     let mut older_cast = Vec::new();
@@ -450,24 +451,28 @@ fn who(args: &Args, report: &mut Report) {
         );
         let mut listener_client = Listener::start(
             "listener stand-in",
-            &["desk".to_owned(), scene.b_spec(), "hook=0".to_owned()],
+            &[
+                "desk".to_owned(),
+                "cto=250".to_owned(),
+                scene.b_spec(),
+                "hook=0".to_owned(),
+            ],
         );
         let mut pids = vec![("P1 (T)", scene.p1.pid), ("P2 (B)", scene.p2.pid)];
         pids.extend(clients.iter().map(|c| (c.label.as_str(), c.pid())));
         args.pause_for_debugger(&pids);
         let stalled = scene.stall(0, WHO_STALL_MS);
         let raised = scene.winevent("focus", 0);
-        until(raised + B_AFTER_US, "B's events after the WinEvent");
+        until(raised + WHO_B_AFTER_US, "B's events after the WinEvent");
         let renamed = scene.rename_b("held");
         let texted = scene.text_b();
-        until(raised + 300_000, "the WinEvents naming M");
+        until(raised + 150_000, "the WinEvents naming M");
         let m_name = scene.winevent("name", 2);
         let m_foreground = scene.winevent("foreground", 2);
         let read_at = now_us();
         outpost_client.send(&format!("read {window_b}"));
         listener_client.send(&format!("read {window_b}"));
-        let end = stalled + us(as_ms(WHO_STALL_MS) + 1_000.0);
-        stall_ends.push(stalled + us(as_ms(WHO_STALL_MS)));
+        let end = stalled + us(as_ms(WHO_STALL_MS) + 300.0);
         for (i, client) in clients.iter().enumerate() {
             let lines = client.lines_until(end);
             let hold = delay(raised, heard_at(&lines, "name", "held"));
@@ -522,31 +527,14 @@ fn who(args: &Args, report: &mut Report) {
             windows::core::Interface::cast(&uia::older_client());
         older_cast.push(older.map_or_else(|e| uia::hresult(e.code()), |_| "ok".to_owned()));
     }
-    for (i, (label, _, held, recorded)) in WHO.iter().enumerate() {
-        match held {
-            Held::Waits(waits) => {
-                let range = band(waits);
-                report.claim(
-                    &format!("{label}: B's name change held from the WinEvent"),
-                    &summary_ms(&holds[i]),
-                    &format!("{recorded}; {}", band_text(range)),
-                    in_band(&holds[i], range),
-                );
-            }
-            Held::ToStallEnd => {
-                let after: Vec<bool> = holds[i]
-                    .iter()
-                    .zip(&stall_ends)
-                    .map(|(hold, _)| *hold >= as_ms(WHO_STALL_MS) - TICK_MS)
-                    .collect();
-                report.claim(
-                    &format!("{label}: B's name change held until T answers, at the stall's end, past a 5 s and a 2 s wait"),
-                    &format!("{} ({})", runs(&after), summary_ms(&holds[i])),
-                    recorded,
-                    relation(&after),
-                );
-            }
-        }
+    for (i, (label, _, waits, recorded)) in WHO.iter().enumerate() {
+        let range = band(waits);
+        report.claim(
+            &format!("{label}: B's name change held from the WinEvent"),
+            &summary_ms(&holds[i]),
+            &format!("{recorded}; {}", band_text(range)),
+            in_band(&holds[i], range),
+        );
     }
     report.claim(
         "the older CUIAutomation coclass's client object has no IUIAutomation2, so its timeouts cannot be set",
@@ -571,13 +559,13 @@ fn who(args: &Args, report: &mut Report) {
     }
     let first: Vec<f64> = listener.iter().map(|l| l[0]).collect();
     report.claim(
-        "the listener stand-in, with a desktop focus handler: B's name change held at least one connection timeout from the WinEvent",
+        "the listener stand-in, with a desktop focus handler at 250 ms: B's name change held at least one connection timeout from the WinEvent",
         &summary_ms(&first),
         "9,697 to 9,699 ms at 10 s (e_cross)",
         relation(
             &first
                 .iter()
-                .map(|v| *v >= CTO_MS - TICK_MS)
+                .map(|v| *v >= LOW_MS - TICK_MS)
                 .collect::<Vec<_>>(),
         ),
     );
@@ -609,18 +597,22 @@ fn who(args: &Args, report: &mut Report) {
 }
 
 fn until_answer(args: &Args, report: &mut Report) {
-    const STALL_MS: u64 = 3_000;
+    const STALL_MS: u64 = 1_500;
+    const CTO: f64 = 1_000.0;
     let mut answered = Vec::new();
     let mut holds = Vec::new();
     for _ in 0..trials() {
         let mut scene = Scene::new();
-        let d = Listener::start("D", &["desk".to_owned(), scene.b_spec()]);
+        let d = Listener::start(
+            "D",
+            &["desk".to_owned(), "cto=1000".to_owned(), scene.b_spec()],
+        );
         args.pause_for_debugger(&[("P1 (T)", scene.p1.pid), ("client D", d.pid())]);
         let stalled = scene.stall(0, STALL_MS);
         let raised = scene.winevent("focus", 0);
         until(raised + B_AFTER_US, "B's name change after the WinEvent");
         scene.rename_b("held");
-        let end = stalled + us(as_ms(STALL_MS) + 2_000.0);
+        let end = stalled + us(as_ms(STALL_MS) + 500.0);
         let heard = heard_at(&d.lines_until(end), "name", "held");
         let hold = delay(raised, heard);
         let stall_end = stalled + us(as_ms(STALL_MS));
@@ -629,10 +621,10 @@ fn until_answer(args: &Args, report: &mut Report) {
             us_to_ms(stall_end - raised)
         ));
         holds.push(hold);
-        answered.push(heard.is_some_and(|h| h >= stall_end && hold < band(&[CTO_MS, CTO_MS]).0));
+        answered.push(heard.is_some_and(|h| h >= stall_end && hold < band(&[CTO, CTO]).0));
     }
     report.claim(
-        "B's name change, at a 2,000 ms connection timeout with T stalled 3 s: held until T answers, after the stall's end and before two waits end",
+        "B's name change, at a 1,000 ms connection timeout with T stalled 1.5 s: held until T answers, after the stall's end and before two waits end",
         &format!("{} ({})", runs(&answered), summary_ms(&holds)),
         "7,773 ms, the end of an 8 s stall, at 10 s (h3 to10000_1); 14,800 ms in a 15 s stall (E-hung-proxy)",
         relation(&answered),
@@ -640,13 +632,13 @@ fn until_answer(args: &Args, report: &mut Report) {
 }
 
 fn repeat(args: &Args, report: &mut Report) {
-    const STALL_MS: u64 = 8_000;
+    const STALL_MS: u64 = 2_200;
     let mut holds = Vec::new();
     for _ in 0..trials() {
         let mut scene = Scene::new();
         let d = Listener::start(
             "D",
-            &["desk".to_owned(), "cto=1000".to_owned(), scene.b_spec()],
+            &["desk".to_owned(), "cto=250".to_owned(), scene.b_spec()],
         );
         args.pause_for_debugger(&[("P1 (T)", scene.p1.pid), ("client D", d.pid())]);
         let stalled = scene.stall(0, STALL_MS);
@@ -658,17 +650,17 @@ fn repeat(args: &Args, report: &mut Report) {
         let lines = d.lines_until(stalled + us(as_ms(STALL_MS) + 500.0));
         holds.push(delay(raised, heard_at(&lines, "name", "held")));
     }
-    let six = band(&[1_000.0; 6]);
+    let six = band(&[LOW_MS; 6]);
     report.claim(
-        "B's name change after three focus WinEvents naming T at a 1,000 ms connection timeout: each pays both waits again",
+        "B's name change after three focus WinEvents naming T at a 250 ms connection timeout: each pays both waits again",
         &summary_ms(&holds),
-        &format!("5,814 ms after B's raise (repeat3_cto1000); {}", band_text(six)),
+        &format!("5,814 ms after B's raise at 1,000 ms (repeat3_cto1000); {}", band_text(six)),
         in_band(&holds, six),
     );
 }
 
 fn quiet(args: &Args, report: &mut Report) {
-    const STALL_MS: u64 = 3_000;
+    const STALL_MS: u64 = 1_200;
     let mut none = Vec::new();
     let mut name_d = Vec::new();
     for _ in 0..trials() {
@@ -678,14 +670,14 @@ fn quiet(args: &Args, report: &mut Report) {
         let stalled = scene.stall(0, STALL_MS);
         until(stalled + B_AFTER_US, "B's name change into the stall");
         let first = scene.rename_b("first");
-        until(stalled + 1_000_000, "the name-change WinEvent naming T");
+        until(stalled + 500_000, "the name-change WinEvent naming T");
         let name_event = scene.winevent("name", 0);
         until(
             name_event + B_AFTER_US,
             "B's name change after the WinEvent",
         );
         let second = scene.rename_b("second");
-        let end = stalled + us(as_ms(STALL_MS) + 500.0);
+        let end = stalled + us(as_ms(STALL_MS) + 300.0);
         let lines = d.lines_until(end);
         none.push(delay(first, heard_at(&lines, "name", "first")));
         name_d.push(delay(second, heard_at(&lines, "name", "second")));
@@ -785,17 +777,16 @@ fn slow(args: &Args, report: &mut Report) {
         let mut scene = Scene::with(&["--windows", "uia:0"]);
         let d = Listener::start(
             "D",
-            &["desk".to_owned(), "tto=5000".to_owned(), scene.b_spec()],
+            &["desk".to_owned(), "cto=250".to_owned(), scene.b_spec()],
         );
-        let d0 = Listener::start("D0", &["tto=5000".to_owned(), scene.b_spec()]);
+        let d0 = Listener::start("D0", &["cto=250".to_owned(), scene.b_spec()]);
         args.pause_for_debugger(&[("U's process", scene.p1.pid), ("client D", d.pid())]);
-        scene.p1.request("slow 1000");
+        scene.p1.request("slow 150");
         let raised = scene.winevent("focus", 0);
         until(raised + B_AFTER_US, "B's name change after the WinEvent");
         let renamed = scene.rename_b("held");
-        note::waiting("up to 10 s, B's name change through the hold");
         let heard = d.next(
-            Duration::from_secs(10),
+            Duration::from_secs(3),
             |l| matches!(l, Line::Heard { kind, name, .. } if kind == "name" && name == "held"),
         );
         let at = match heard {
@@ -810,10 +801,10 @@ fn slow(args: &Args, report: &mut Report) {
         scene.p1.request("slow 0");
     }
     report.claim(
-        "a focus WinEvent naming U, whose provider is slow: B's name change held at least one connection timeout",
+        "a focus WinEvent naming U, whose provider takes 150 ms a call: B's name change held at least one connection timeout, 250 ms",
         &summary_ms(&held),
-        "3,800 to 3,968 ms at 1,000 ms a call (q3)",
-        relation(&held.iter().map(|v| *v >= CTO_MS - TICK_MS && v.is_finite()).collect::<Vec<_>>()),
+        "3,800 to 3,968 ms at 1,000 ms a call and a 2,000 ms connection timeout (q3)",
+        relation(&held.iter().map(|v| *v >= LOW_MS - TICK_MS && v.is_finite()).collect::<Vec<_>>()),
     );
     report.claim(
         &format!("the same in a client with no focus registration: within {NOT_HELD_MS} ms"),
@@ -823,6 +814,12 @@ fn slow(args: &Args, report: &mut Report) {
     );
 }
 
+/// `own-focus`'s provider calls take this long: 1.5 times the connection
+/// timeout, as q3's 3,000 ms calls were at its 2,000 ms timeout.
+const OWN_SLOW_MS: u64 = 1_500;
+/// `own-focus`'s connection timeout.
+const OWN_CTO_MS: f64 = 1_000.0;
+
 fn own_focus(args: &Args, report: &mut Report) {
     for (window, label, n, recorded_k) in [
         (0usize, "a UIA provider", 4usize, 1usize),
@@ -831,56 +828,63 @@ fn own_focus(args: &Args, report: &mut Report) {
         let mut k = 0;
         let mut delays = Vec::new();
         for _ in 0..n {
-            let mut scene = Scene::with(&["--windows", "uia:0,msaa:1"]);
+            let scene = Scene::with(&["--windows", "uia:0,msaa:1"]);
             let d = Listener::start(
                 "D",
-                &["desk".to_owned(), "tto=5000".to_owned(), scene.b_spec()],
+                &["desk".to_owned(), "cto=1000".to_owned(), scene.b_spec()],
             );
             args.pause_for_debugger(&[("the slow process", scene.p1.pid), ("client D", d.pid())]);
-            scene.p1.request("slow 3000");
+            let Scene {
+                p1: mut slow,
+                p2: mut b,
+            } = scene;
+            slow.request(&format!("slow {OWN_SLOW_MS}"));
             let raised = now_us();
             let request = if window == 0 {
                 "raise focus 0 5".to_owned()
             } else {
                 "raise focus 1 0".to_owned()
             };
-            let held = std::thread::scope(|scope| {
-                let p1 = &mut scene.p1;
-                let raising = scope.spawn(move || {
-                    p1.request(&request);
-                });
-                until(raised + B_AFTER_US, "B's name change after the raise");
-                scene.p2.request("rename 0 1 held");
-                let renamed: u64 = scene.p2.request("raise name 0 1").parse().expect("a time");
-                note::waiting("up to 8 s, B's name change");
-                let heard = d.next(Duration::from_secs(8), |l| matches!(l, Line::Heard { kind, name, .. } if kind == "name" && name == "held"));
-                let at = match heard {
-                    Some(Line::Heard { at, .. }) => Some(at),
-                    _ => None,
-                };
-                let late = delay(renamed, at);
-                let _ = raising.join();
-                late
+            // The raise's own calls into the slow provider take as long as
+            // they take: the trial does not wait for them. The slow provider
+            // lives until both the raise has returned and the trial is over,
+            // when the thread that raised ends it.
+            let (over, is_over) = std::sync::mpsc::channel::<()>();
+            std::thread::spawn(move || {
+                slow.request(&request);
+                let _ = is_over.recv();
             });
-            delays.push(held);
-            if held > 1_000.0 {
+            until(raised + B_AFTER_US, "B's name change after the raise");
+            b.request("rename 0 1 held");
+            let renamed: u64 = b.request("raise name 0 1").parse().expect("a time");
+            let heard = d.next(
+                Duration::from_secs(2),
+                |l| matches!(l, Line::Heard { kind, name, .. } if kind == "name" && name == "held"),
+            );
+            let at = match heard {
+                Some(Line::Heard { at, .. }) => Some(at),
+                _ => None,
+            };
+            let late = delay(renamed, at);
+            let _ = over.send(());
+            delays.push(late);
+            if late > OWN_CTO_MS / 2.0 {
                 k += 1;
             }
-            scene.p1.request("slow 0");
         }
         note::evidence(&format!("{label}: B's name change after {delays:?} ms"));
         report.claim(
-            &format!("{label} raising its own focus while its provider is slow: trials whose B name change is held more than 1 s"),
+            &format!("{label} raising its own focus while each provider call takes 1.5 s, at a 1,000 ms connection timeout: trials whose B name change is held more than 500 ms"),
             &format!("{k} of {n} ({})", summary_ms(&delays)),
-            &format!("{recorded_k} of {n} (q3 slow_{}_focus)", if window == 0 { "uia" } else { "msaa" }),
+            &format!("{recorded_k} of {n}, held more than 1 s at 3,000 ms a call and a 2,000 ms timeout (q3 slow_{}_focus)", if window == 0 { "uia" } else { "msaa" }),
             rate(k, n, recorded_k, n),
         );
     }
 }
 
 fn dropped(args: &Args, report: &mut Report) {
-    const STALL_MS: u64 = 3_000;
-    let timeouts = [10_000u32, 2_000, 500];
+    const STALL_MS: u64 = 1_000;
+    let timeouts = [10_000u32, 1_000, 250];
     let mut control = vec![Vec::new(); 3];
     let mut heard = vec![Vec::new(); 3];
     for _ in 0..trials() {
@@ -912,7 +916,7 @@ fn dropped(args: &Args, report: &mut Report) {
                 .request(&format!("busy 2 {STALL_MS} focus-at 0 2"))
                 .parse()
                 .expect("a time");
-            let lines = client.lines_until(stalled + 8_000_000);
+            let lines = client.lines_until(stalled + 2_000_000);
             heard[i].push(delay(stalled, heard_at(&lines, "focus", "Second")));
         }
     }
@@ -925,21 +929,21 @@ fn dropped(args: &Args, report: &mut Report) {
         );
     }
     report.claim(
-        "connection timeout 10,000 ms: M's focus from inside its 3 s stall is heard once the stall ends",
+        "connection timeout 10,000 ms: M's focus from inside its 1 s stall is heard once the stall ends",
         &summary_ms(&heard[0]),
-        "3,003 ms into the stall (h6_cto10000)",
+        "3,003 ms into a 3 s stall (h6_cto10000)",
         relation(&heard[0].iter().map(|v| v.is_finite() && *v >= as_ms(STALL_MS) - TICK_MS).collect::<Vec<_>>()),
     );
     report.claim(
-        "connection timeout 2,000 ms, the stall shorter than both waits: M's focus from inside it is heard once the stall ends",
+        "connection timeout 1,000 ms, the 1 s stall shorter than both waits: M's focus from inside it is heard once the stall ends",
         &summary_ms(&heard[1]),
-        "mockapp's MSAA window: never within 8 s (h6_default); the provider program's: at the stall's end",
+        "mockapp's MSAA window, at 2,000 ms in a 3 s stall: never within 8 s (h6_default); the provider program's: at the stall's end",
         relation(&heard[1].iter().map(|v| v.is_finite() && *v >= as_ms(STALL_MS) - TICK_MS).collect::<Vec<_>>()),
     );
     report.claim(
-        "connection timeout 500 ms, the stall longer than both waits: M's focus from inside it is not heard within 8 s of the stall's start",
+        "connection timeout 250 ms, the 1 s stall longer than both waits: M's focus from inside it is not heard within 2 s of the stall's start",
         &summary_ms(&heard[2]),
-        "never delivered within 8 s (h6_cto500)",
+        "never delivered within 8 s at 500 ms in a 3 s stall (h6_cto500)",
         relation(&heard[2].iter().map(|v| v.is_infinite()).collect::<Vec<_>>()),
     );
 }

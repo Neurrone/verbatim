@@ -1,7 +1,7 @@
 //! A process that used UIA can hang or crash as it exits
 //! (`uia-facts/a-process-that-used-uia-can-hang-or-crash-as-it-exits/readme.md`).
 //!
-//! 300 child processes (the `exiter` role), 12 at a time, each start six
+//! 150 child processes (the `exiter` role), 12 at a time, each start six
 //! provider programs of their own and, from a thread each, connect as UIA
 //! clients to each of a provider's three windows (one with a UIA provider,
 //! one with its own `IAccessible`, one plain), read names, search a subtree
@@ -14,7 +14,7 @@
 
 use std::time::Duration;
 
-use uia_facts_support::args::Args;
+use uia_facts_support::args::{Args, trials};
 use uia_facts_support::events::{self, Handler};
 use uia_facts_support::provider::Provider;
 use uia_facts_support::report::{Report, rate};
@@ -22,8 +22,10 @@ use uia_facts_support::role::{self, Role};
 use uia_facts_support::{note, uia};
 use windows::Win32::UI::Accessibility::{TreeScope_Descendants, UIA_NamePropertyId};
 
-/// Children, as the design sets.
-const CHILDREN: usize = 300;
+/// Children a run: the fewest whose outcome separates a rate of 2 in 100
+/// from none, since 0.98 to the 150th power is below 0.05. `--trials n`
+/// runs n times as many.
+const CHILDREN: usize = 150;
 /// Threads in each child, each with a provider program of its own, as six
 /// threads each connecting to a mockapp of their own hung 1 in 40.
 const THREADS: usize = 6;
@@ -40,7 +42,7 @@ fn main() {
     }
     let mut report = Report::start("a-process-that-used-uia-can-hang-or-crash-as-it-exits");
     if args.wants("exit") {
-        report.case("exit", "300 child processes, 12 at a time, each using UIA from six threads against six provider programs of its own, ending them, and then ending normally, running UIA's detach code; counting those that hang or crash");
+        report.case("exit", "150 child processes, 12 at a time, each using UIA from six threads against six provider programs of its own, ending them, and then ending normally, running UIA's detach code; counting those that hang or crash");
         judge(&mut report);
     }
     report.finish();
@@ -117,12 +119,14 @@ fn judge(report: &mut Report) {
     let mut hangs = 0;
     let mut crashes = Vec::new();
     let mut started = 0;
-    note::progress(&format!("{CHILDREN} children, up to 10 s each to end"));
-    while started < CHILDREN {
-        let batch = AT_ONCE.min(CHILDREN - started);
-        let mut children: Vec<Role> = (0..batch).map(|_| Role::start("exiter", &[])).collect();
+    let children = CHILDREN * trials();
+    note::progress(&format!("{children} children, up to 10 s each to end"));
+    while started < children {
+        let batch = AT_ONCE.min(children - started);
+        let mut batch_children: Vec<Role> =
+            (0..batch).map(|_| Role::start("exiter", &[])).collect();
         started += batch;
-        for child in &mut children {
+        for child in &mut batch_children {
             let done = child.line(Duration::from_secs(30));
             if done.as_deref() != Some("done") {
                 note::evidence(&format!("a child reported {done:?}"));
@@ -148,10 +152,10 @@ fn judge(report: &mut Report) {
     report.claim(
         "children that hung or crashed as they ended",
         &format!(
-            "{faults} of {CHILDREN} ({hangs} hung, {} crashed)",
+            "{faults} of {children} ({hangs} hung, {} crashed)",
             crashes.len()
         ),
         "about 1 to 3 percent; 2 hangs in 100 runs after waiting 12 s for the providers to go",
-        rate(faults, CHILDREN, 2, 100),
+        rate(faults, children, 2, 100),
     );
 }

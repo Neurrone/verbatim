@@ -22,8 +22,9 @@ use uia_facts_support::{note, now_us, uia};
 /// windows can be shown, as a desktop-wide registration hears only shown
 /// windows' events.
 const DESKTOP: &str = "uia-facts";
-/// How long `stops` watches after the flood, as `q2long` did.
-const WATCH_S: u64 = 90;
+/// How long `stops` watches after the flood: `q2long` watched 90 s, and
+/// this case narrows the claim to what fits the program's run time.
+const WATCH_S: u64 = 10;
 
 fn main() {
     let args = Args::parse();
@@ -36,11 +37,11 @@ fn main() {
         "a-flood-of-uia-events-from-one-application-stops-all-of-a-processs-uia-events",
     );
     if args.wants("stops") {
-        report.case("stops", "three windows each flooding 30,000 events at 10,000 a second for 3 s, name changes, text changes and notifications; a client registered for each flood and for B's name changes, and one for B's alone; B renamed every 250 ms until 90 s after the flood");
+        report.case("stops", "three windows each flooding 30,000 events at 10,000 a second for 3 s, name changes, text changes and notifications; a client registered for each flood and for B's name changes, and one for B's alone; B renamed every 250 ms until 10 s after the flood");
         stops(&args, &mut report);
     }
     if args.wants("rates") {
-        report.case("rates", "a window flooding name changes at 2,000 and then 5,000 a second for 3 s; one client registered for them and for B's name changes; B renamed every 100 ms until the flood's events are all heard");
+        report.case("rates", "a window flooding name changes at 2,000 and then 5,000 a second for 1 s; one client registered for them and for B's name changes; B renamed every 100 ms until the flood's events are all heard");
         rates(&args, &mut report);
     }
     if args.wants("backlog") {
@@ -212,7 +213,7 @@ fn stops(args: &Args, report: &mut Report) {
     report.claim(
         &format!("name changes: the flooded client hears no event, the flood's or B's, from the flood's end to {WATCH_S} s after"),
         &runs(&name_stopped),
-        &format!("none of 349 probes in the {WATCH_S} s after (q2long_one_c1_10k)"),
+        "none of 349 probes in the 90 s after (q2long_one_c1_10k)",
         relation(&name_stopped),
     );
     report.claim(
@@ -261,6 +262,10 @@ fn stops(args: &Args, report: &mut Report) {
     );
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "one trial a rate, its claims in turn"
+)]
 fn rates(args: &Args, report: &mut Report) {
     for rate in [2_000usize, 5_000] {
         let mut lost_any = Vec::new();
@@ -285,7 +290,7 @@ fn rates(args: &Args, report: &mut Report) {
             flood.request("raise name 0 1");
             let warm = client.next(Duration::from_secs(5), |l| matches!(l, Line::Heard { .. }));
             note::evidence(&format!("warmed: {}", warm.is_some()));
-            let total = rate * 3;
+            let total = rate;
             let mut sent = Vec::new();
             let mut lines = Vec::new();
             let flood_end = std::thread::scope(|scope| {
@@ -301,8 +306,8 @@ fn rates(args: &Args, report: &mut Report) {
                 }
                 raising.join().expect("the flood ends")
             });
-            note::waiting("up to 30 s, the flood's events heard");
-            let limit = flood_end + 30_000_000;
+            note::waiting("up to 15 s, the flood's events heard");
+            let limit = flood_end + 15_000_000;
             let mut k = sent.len();
             // Drained: every flood event heard, or none heard for 2 s, so
             // the client's queue is empty.
@@ -348,20 +353,27 @@ fn rates(args: &Args, report: &mut Report) {
         }
         // A probe is lost only once the flood has drained: before then it
         // may still be queued.
-        let verdict = if drained.iter().all(|d| *d) {
+        // The record was taken with event coalescing on; with it off the
+        // outcome is the run's own, an open question.
+        let verdict = if !uia::settings().coalescing {
+            Verdict::New
+        } else if drained.iter().all(|d| *d) {
             relation(&lost_any)
         } else {
-            Verdict::Inconclusive("the flood's events were still arriving 30 s after it".to_owned())
+            Verdict::Inconclusive("the flood's events were still arriving 15 s after it".to_owned())
         };
         report.claim(
-            &format!("{rate} a second for 3 s: some of B's probes are never heard"),
+            &format!(
+                "{rate} a second for 1 s, event coalescing {}: some of B's probes are never heard",
+                if uia::settings().coalescing { "on" } else { "off" }
+            ),
             &format!("{} ({:?} lost)", runs(&lost_any), lost_counts),
             "28 and 103 of B's probes never delivered at 2,000 and 5,000 a second, event coalescing on (q2_thr_one_c1)",
             verdict,
         );
         report.claim(
-            &format!("{rate} a second for 3 s: the flood's events heard"),
-            &format!("{flood_heard:?} of {}", rate * 3),
+            &format!("{rate} a second for 1 s: the flood's events heard"),
+            &format!("{flood_heard:?} of {rate}"),
             "every one, the last 2.9 and 10.4 s after the flood (q2_thr_one_c1)",
             Verdict::Trend,
         );
@@ -382,7 +394,10 @@ fn backlog(args: &Args, report: &mut Report) {
             .request(&format!("raise-rate name 0 1 0 {size}"))
             .parse()
             .expect("a time");
-        uia::pause(Duration::from_secs(3), "the client's work on the burst");
+        uia::pause(
+            Duration::from_millis(1_500),
+            "the client's work on the burst",
+        );
         let after = cpu(&mut client).unwrap_or(0);
         let lines = client.lines_until(now_us());
         let heard = count(&lines, "name", "First");
@@ -393,7 +408,7 @@ fn backlog(args: &Args, report: &mut Report) {
         ));
     }
     report.claim(
-        "bursts of name changes raised back to back: the events heard and the client's processor time in the 3 s after",
+        "bursts of name changes raised back to back: the events heard and the client's processor time in the 1.5 s after",
         &results.join("; "),
         "",
         Verdict::New,

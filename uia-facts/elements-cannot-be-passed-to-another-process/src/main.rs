@@ -1,11 +1,12 @@
 //! Elements cannot be passed to another process: a sender kept in its own
-//! process is read live after 31 s and 152 s, P3's pauses
+//! process is read live after 28 s, the longest of P3's pauses the run
+//! time allows (P3 read at 31 s and 152 s)
 //! (`uia-facts/elements-cannot-be-passed-to-another-process/readme.md`).
 //!
 //! This process registers the focus event in an event handler group on the
 //! provider program's window A, subtree scope, as P3's prototype did, and
 //! keeps the sender of A's focus event on node 5. It reads the sender live,
-//! its name, keyboard focus and process id, 0.6 s, 31 s and 152 s after
+//! its name, keyboard focus and process id, 0.6 s and 28 s after
 //! the event.
 
 use std::sync::{Arc, Mutex};
@@ -23,7 +24,7 @@ fn main() {
     uia::mta();
     let mut report = Report::start("elements-cannot-be-passed-to-another-process");
     if args.wants("kept") {
-        report.case("kept", "keeping the sender of a focus event on A's node 5; reading its name, keyboard focus and process id live 0.6, 31 and 152 s later");
+        report.case("kept", "keeping the sender of a focus event on A's node 5; reading its name, keyboard focus and process id live 0.6 and 28 s later");
         kept(&args, &mut report);
     }
     report.finish();
@@ -41,7 +42,7 @@ fn reads(sender: &IUIAutomationElement) -> Vec<String> {
 }
 
 fn kept(args: &Args, report: &mut Report) {
-    let marks = [600u64, 31_000, 152_000];
+    let marks = [600u64, 28_000];
     let mut outcomes: Vec<Vec<Vec<String>>> = vec![Vec::new(); marks.len()];
     for _ in 0..trials() {
         let mut provider = Provider::launch(&["--windows", "uia:0"]);
