@@ -141,7 +141,7 @@ impl Queries {
     /// as a [`Asked::Read`].
     pub(crate) fn ask(&mut self, asking: Asking, then: Then) -> (QueryId, Effect) {
         let query_id = QueryId(self.next);
-        self.next += 1;
+        self.next = self.next.saturating_add(1);
         let (node_id, asked, effect) = match asking {
             Asking::Navigate(node_id, kind) => (
                 node_id,
@@ -186,7 +186,7 @@ impl Queries {
     /// number: no request is made.
     pub(crate) fn ask_memory(&mut self, node: NodeId, then: Then) -> QueryId {
         let query_id = QueryId(self.next);
-        self.next += 1;
+        self.next = self.next.saturating_add(1);
         self.open.insert(
             query_id,
             Open {

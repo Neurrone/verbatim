@@ -236,7 +236,7 @@ fn execute(
         offset: u32::try_from(
             text::character_at(&line.text, position.offset, grid)
                 .map_or(position.offset, |character| {
-                    position.offset + character.len()
+                    position.offset.saturating_add(character.len())
                 }),
         )
         .unwrap_or(u32::MAX),
@@ -271,7 +271,7 @@ fn execute(
         }
         ReviewCommand::ReviewCurrentWord => {
             let words = text::words(content, line.language_at(0));
-            let word = text::word_at(&words, position.offset).map(|range| &content[range]);
+            let word = text::word_at(&words, position.offset).and_then(|range| content.get(range));
             let segments = match (word, repeat) {
                 (None, _) => text::text_segments("", None),
                 (Some(word), 0) => text::word_segments(word, language),
@@ -308,7 +308,13 @@ fn execute(
             if grid && position.offset >= content.len() && position.column > text_width {
                 // Past the end of a terminal row's text: the blank cell to
                 // the left.
-                return move_column(state, trace_id, position, position.column - 1, grid);
+                return move_column(
+                    state,
+                    trace_id,
+                    position,
+                    position.column.saturating_sub(1),
+                    grid,
+                );
             }
             return match text::previous_character(&line.text, position.offset, grid) {
                 Some(range) => land_here(state, trace_id, position, range.start, grid),
@@ -327,8 +333,9 @@ fn execute(
                 // reviewed (`books/dev/src/explanation/design/terminal-model.md`, "Features and settings").
                 // A cell past the text, where moving down a column leaves
                 // the cursor, is at the edge already.
-                let next = position.column
-                    + character.map_or(1, |character| verbatim_text::cell_width(character).max(1));
+                let next = position.column.saturating_add(
+                    character.map_or(1, |character| verbatim_text::cell_width(character).max(1)),
+                );
                 if next >= text::column_of(content, content.len(), true) {
                     return edge(trace_id, Message::Right, character, language);
                 }
@@ -361,7 +368,7 @@ fn execute(
                 set_position(state, position_at(line, start, grid));
                 return vec![speak(
                     trace_id,
-                    text::word_segments(&content[target.clone()], language),
+                    text::word_segments(content.get(target.clone()).unwrap_or_default(), language),
                 )];
             }
             let at_edge = if forward { line.last } else { line.first };
@@ -371,7 +378,7 @@ fn execute(
                 Message::Top
             };
             if at_edge {
-                let word = current.map(|range| &content[range]);
+                let word = current.and_then(|range| content.get(range));
                 return vec![speak(
                     trace_id,
                     with_edge(message, text::word_segments(word.unwrap_or(""), language)),
@@ -451,7 +458,7 @@ fn execute(
             landing(LandingPlace::BeforePoint, TextUnit::Character, None),
         ),
         ReviewCommand::SetStartMarker => {
-            state.start_marker_generation += 1;
+            state.start_marker_generation = state.start_marker_generation.saturating_add(1);
             state.start_marker = Some(StartMarker::Text {
                 node,
                 at: cursor,
@@ -739,7 +746,7 @@ pub(crate) fn reply(
         (_, _) if !on_navigator => Vec::new(),
         (TextFollowUp::Seed { command, repeat }, TextReply::Read { chunk, .. }) => {
             let grid = navigator_grid(state);
-            let offset = chunk.offset as usize;
+            let offset = text::byte_offset(chunk.offset);
             let mut position = position_at(&Arc::new(chunk), offset, grid);
             // A terminal's line read again where the review cursor was,
             // unchanged, keeps its cell column, which may lie past the
@@ -812,8 +819,9 @@ fn land(
         let segments = match landing.speak {
             TextUnit::Word => {
                 let words = text::words(content, position.line.language_at(0));
-                let word =
-                    text::word_at(&words, position.offset).map_or("", |range| &content[range]);
+                let word = text::word_at(&words, position.offset)
+                    .and_then(|range| content.get(range))
+                    .unwrap_or_default();
                 text::word_segments(word, language)
             }
             _ => text::text_segments(content, position.line.language_at(0)),
@@ -836,9 +844,9 @@ fn land(
         LandingPlace::LastWord => {
             position_at(&line, words().last().map_or(0, |range| range.start), grid)
         }
-        LandingPlace::Point => position_at(&line, line.offset as usize, grid),
+        LandingPlace::Point => position_at(&line, text::byte_offset(line.offset), grid),
         LandingPlace::BeforePoint => {
-            let offset = text::boundary(content, line.offset as usize);
+            let offset = text::boundary(content, text::byte_offset(line.offset));
             let before =
                 text::previous_grapheme(content, offset).map_or(offset, |range| range.start);
             position_at(&line, before, grid)
@@ -852,7 +860,9 @@ fn land(
         ),
         TextUnit::Word => {
             let words = words();
-            let word = text::word_at(&words, position.offset).map_or("", |range| &content[range]);
+            let word = text::word_at(&words, position.offset)
+                .and_then(|range| content.get(range))
+                .unwrap_or_default();
             text::word_segments(word, language)
         }
         _ => text::text_segments(content, line.language_at(0)),
@@ -888,7 +898,7 @@ pub(crate) fn flat_extra(
             vec![speak(trace_id, text::text_segments(rest, None))]
         }
         ReviewCommand::SetStartMarker => {
-            state.start_marker_generation += 1;
+            state.start_marker_generation = state.start_marker_generation.saturating_add(1);
             state.start_marker = Some(StartMarker::Flat {
                 node,
                 offset,
@@ -901,7 +911,7 @@ pub(crate) fn flat_extra(
                 if let Some(navigator) = state.navigator.as_mut() {
                     navigator.review_offset = offset;
                 }
-                let character = text::grapheme_at(&flat, offset).map(|range| &flat[range]);
+                let character = text::grapheme_at(&flat, offset).and_then(|range| flat.get(range));
                 vec![speak(trace_id, text::character_segments(character, None))]
             }
             Ok(_) => vec![speak(trace_id, message(Message::NoStartMarker))],

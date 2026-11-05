@@ -114,7 +114,7 @@ pub(crate) fn answer(
         }
     };
     let mut mint = || {
-        *next_anchor += 1;
+        *next_anchor = next_anchor.saturating_add(1);
         TERMINAL_ANCHORS | *next_anchor
     };
     Ok(finish(model, plan, &mut mint, held))
@@ -227,7 +227,11 @@ fn finish(
         Plan::Read(moved, chunked) => {
             let review = Anchor {
                 row: chunked.row,
-                column: chunked.line.text[..chunked.offset].chars().count(),
+                column: chunked
+                    .line
+                    .text
+                    .get(..chunked.offset)
+                    .map_or(0, |before| before.chars().count()),
                 line_hash: chunked.line.hash,
             };
             let chunk = chunk_of(model, chunked);
@@ -272,12 +276,12 @@ impl Rows<'_> {
 
     /// The row the next read starts at: the screen's top.
     fn start_row(&self) -> isize {
-        (self.len() - self.height()).max(0)
+        self.len().saturating_sub(self.height()).max(0)
     }
 
     /// The last row.
     fn last(&self) -> isize {
-        self.len() - 1
+        self.len().saturating_sub(1)
     }
 
     /// The document's first row, when it is known: the memory's last read
@@ -297,7 +301,7 @@ impl Rows<'_> {
     /// hold.
     fn need(&self, row: Option<isize>) -> Need {
         let wanted = row.map_or(0, |row| {
-            usize::try_from(self.start_row() - row).unwrap_or(0)
+            usize::try_from(self.start_row().saturating_sub(row)).unwrap_or(0)
         });
         Need {
             above: u32::try_from(wanted).unwrap_or(u32::MAX),
@@ -329,7 +333,7 @@ impl Rows<'_> {
             return Err(self.need(Some(row)));
         }
         Ok(self.above.as_ref().and_then(|(first, rows, _)| {
-            usize::try_from(row - first)
+            usize::try_from(row.saturating_sub(*first))
                 .ok()
                 .and_then(|at| rows.get(at))
                 .cloned()
@@ -351,13 +355,15 @@ impl Rows<'_> {
         let screen = self.height().max(1);
         let top = self
             .known_first()
-            .map_or(row - screen, |first| (row - screen).max(first));
-        let bottom = (row + screen).min(self.last());
+            .map_or(row.saturating_sub(screen), |first| {
+                row.saturating_sub(screen).max(first)
+            });
+        let bottom = row.saturating_add(screen).min(self.last());
         // One read from a screen above the place to the document's end
         // covers the search.
         self.row(top)?;
         for distance in 0..=screen {
-            for candidate in [row - distance, row + distance] {
+            for candidate in [row.saturating_sub(distance), row.saturating_add(distance)] {
                 if (top..=bottom).contains(&candidate)
                     && self
                         .row(candidate)?
@@ -409,7 +415,8 @@ fn byte_at(text: &str, column: usize) -> usize {
 fn floor_boundary(text: &str, offset: usize) -> usize {
     let mut offset = offset.min(text.len());
     while !text.is_char_boundary(offset) {
-        offset -= 1;
+        // Never below 0, which is always a boundary.
+        offset = offset.saturating_sub(1);
     }
     offset
 }
@@ -456,7 +463,7 @@ fn resolve(
             };
             Point {
                 row,
-                offset: position.offset as usize,
+                offset: crate::text::byte_offset(position.offset),
             }
         }
     }))
@@ -478,7 +485,11 @@ fn moved(
         TextUnit::Page => rows.height().max(1),
         unit => return Ok(Err(TextReply::UnsupportedUnit(unit))),
     };
-    let wanted = point.row + isize::try_from(movement.count).unwrap_or(0) * per;
+    let wanted = point.row.saturating_add(
+        isize::try_from(movement.count)
+            .unwrap_or(0)
+            .saturating_mul(per),
+    );
     let target = if wanted > point.row {
         wanted.min(rows.last())
     } else if wanted < point.row && wanted < rows.first_kept() {
@@ -488,7 +499,7 @@ fn moved(
     } else {
         wanted
     };
-    let rows_moved = target - point.row;
+    let rows_moved = target.saturating_sub(point.row);
     let units = if per == 1 {
         rows_moved
     } else {
@@ -496,7 +507,10 @@ fn moved(
         if rows_moved == 0 {
             0
         } else {
-            rows_moved.signum() * (rows_moved.abs() + per - 1) / per
+            let pages = rows_moved.unsigned_abs().div_ceil(per.unsigned_abs());
+            isize::try_from(pages)
+                .unwrap_or(isize::MAX)
+                .saturating_mul(rows_moved.signum())
         }
     };
     let offset = if target == point.row { point.offset } else { 0 };
@@ -547,20 +561,20 @@ fn read_ahead(
     };
     let wanted = usize::from(ahead.count.clamp(1, MAX_READ_AHEAD));
     let mut chunks: Vec<Chunked> = Vec::new();
-    let mut bytes = 0;
+    let mut bytes: usize = 0;
     let mut row = point.row;
     while chunks.len() < wanted && bytes < MAX_READ_AHEAD_TEXT {
         let offset = if chunks.is_empty() { point.offset } else { 0 };
         let Some(chunked) = rows.chunked(row, offset)? else {
             break;
         };
-        bytes += chunked.line.text.len();
+        bytes = bytes.saturating_add(chunked.line.text.len());
         let last = chunked.last;
         chunks.push(chunked);
         if last {
             break;
         }
-        row += 1;
+        row = row.saturating_add(1);
     }
     if chunks.is_empty() {
         return Ok(Plan::Reply(TextReply::AnchorLost));
@@ -613,7 +627,9 @@ fn read_range(
         } else {
             line.text.len()
         };
-        text.push_str(&line.text[begin..end]);
+        if let Some(piece) = line.text.get(begin..end) {
+            text.push_str(piece);
+        }
         if row < to.row && !line.wraps {
             text.push_str("\r\n");
         }
@@ -698,11 +714,11 @@ pub(crate) fn mark(
     let first_kept = isize_of(rows.first_kept());
     let review = review
         .or_else(|| model.caret.map(|caret| isize_of(caret.row)))
-        .unwrap_or(len - 1);
+        .unwrap_or(len.saturating_sub(1));
     // Up goes above the review position's line, not its own first row.
     let mut review_start = review;
-    while review_start > first_kept && wraps_at(model, review_start - 1) {
-        review_start -= 1;
+    while review_start > first_kept && wraps_at(model, review_start.saturating_sub(1)) {
+        review_start = review_start.saturating_sub(1);
     }
     let beyond = |row: isize| {
         if forward {
@@ -736,7 +752,7 @@ pub(crate) fn mark(
                 },
                 _ if model.mark_searches >= MARK_SEARCHES => return Ok(None),
                 _ => {
-                    model.mark_searches += 1;
+                    model.mark_searches = model.mark_searches.saturating_add(1);
                     return Err(Search {
                         op,
                         hash: candidate.line_hash,
@@ -758,13 +774,13 @@ pub(crate) fn mark(
                 let chunked = Chunked {
                     row,
                     first: model.at_document_start && row == 0,
-                    last: row == len - 1,
+                    last: row == len.saturating_sub(1),
                     line,
                     offset: 0,
                 };
                 let moved = if forward { 1 } else { -1 };
                 let mut mint = || {
-                    *next_anchor += 1;
+                    *next_anchor = next_anchor.saturating_add(1);
                     TERMINAL_ANCHORS | *next_anchor
                 };
                 return Ok(Some(finish(
@@ -809,7 +825,7 @@ fn starts_at(model: &TerminalModel, row: isize, hash: u64) -> bool {
         .ok()
         .and_then(|at| rows.get(at))
         .is_some_and(|found| found.line_hash == hash)
-        && (row == first_kept || !wraps_at(model, row - 1))
+        && (row == first_kept || !wraps_at(model, row.saturating_sub(1)))
 }
 
 /// Where command mark `mark`'s line is now, within the memory: the line
@@ -823,7 +839,12 @@ fn within_memory(model: &TerminalModel, mark: Anchor) -> Result<Resolved, TextOp
     let len = isize_of(rows.len());
     if mark.row >= first_kept {
         let nearest = (0..len)
-            .flat_map(|distance| [mark.row - distance, mark.row + distance])
+            .flat_map(|distance| {
+                [
+                    mark.row.saturating_sub(distance),
+                    mark.row.saturating_add(distance),
+                ]
+            })
             .find(|&row| row >= first_kept && row < len && starts_at(model, row, mark.line_hash));
         let line = |row: isize| {
             usize::try_from(row)
@@ -867,7 +888,7 @@ fn from_search(rows: &[(isize, Row)], mark: Anchor) -> Resolved {
 fn mark_search(model: &TerminalModel, row: isize, sought: &super::MarkLine) -> TextOp {
     TextOp::TerminalFind {
         needle: sought.text.clone(),
-        from: i32::try_from(start_row(model) - row).unwrap_or(i32::MAX),
+        from: i32::try_from(start_row(model).saturating_sub(row)).unwrap_or(i32::MAX),
         rows: sought.rows,
     }
 }
@@ -876,7 +897,9 @@ fn mark_search(model: &TerminalModel, row: isize, sought: &super::MarkLine) -> T
 /// screen's top.
 fn start_row(model: &TerminalModel) -> isize {
     let screen = isize_of(usize::try_from(model.height).unwrap_or(0));
-    (isize_of(model.reader.memory().rows().len()) - screen).max(0)
+    isize_of(model.reader.memory().rows().len())
+        .saturating_sub(screen)
+        .max(0)
 }
 
 /// Where the start of read `read` lies among the memory's rows, from which
@@ -906,14 +929,14 @@ pub(super) fn placed_history(
         let len = isize_of(model.reader.memory().rows().len());
         return Some(HistoryRead {
             review: asked.review,
-            first: len - isize_of(rows.len()),
+            first: len.saturating_sub(isize_of(rows.len())),
             rows,
             reached: true,
         });
     }
     Some(HistoryRead {
         review: asked.review,
-        first: start - isize::try_from(rows_above).unwrap_or(isize::MAX),
+        first: start.saturating_sub(isize::try_from(rows_above).unwrap_or(isize::MAX)),
         rows,
         reached: rows_above < asked.above,
     })
@@ -938,7 +961,7 @@ pub(crate) fn placed(
         .iter()
         .filter_map(|found| {
             let first = rows_of(&found.text, model.width).into_iter().next()?;
-            let row = start - isize::try_from(found.above).unwrap_or(0);
+            let row = start.saturating_sub(isize::try_from(found.above).unwrap_or(0));
             (first.line_hash == hash && (row < first_kept || starts_at(model, row, hash)))
                 .then_some((row, first))
         })
@@ -964,8 +987,8 @@ pub(crate) fn footer(model: &TerminalModel) -> Vec<String> {
     let wraps = |row: usize| rows.get(row).is_some_and(|found| found.wraps);
     // The first row of the line holding `row`, on the screen.
     let start_of = |mut row: usize| {
-        while row > top && wraps(row - 1) {
-            row -= 1;
+        while row > top && wraps(row.saturating_sub(1)) {
+            row = row.saturating_sub(1);
         }
         row
     };
@@ -978,7 +1001,7 @@ pub(crate) fn footer(model: &TerminalModel) -> Vec<String> {
                 break;
             };
             line.push_str(found.text.as_str());
-            if !found.wraps || row + 1 == to {
+            if !found.wraps || row.saturating_add(1) == to {
                 let text = verbatim_text::trim_padding(&line);
                 if !text.trim().is_empty() {
                     lines.push(text.to_owned());
@@ -990,27 +1013,31 @@ pub(crate) fn footer(model: &TerminalModel) -> Vec<String> {
     };
     if let Some(caret) = model.caret {
         let mut end = caret.row;
-        while wraps(end) && end + 1 < len {
-            end += 1;
+        while wraps(end) && end.saturating_add(1) < len {
+            end = end.saturating_add(1);
         }
-        let below = lines(end + 1, len);
+        let below = lines(end.saturating_add(1), len);
         if !below.is_empty() {
             return below;
         }
     }
     let mut last = len;
-    while last > top && blank(last - 1) {
-        last -= 1;
+    while last > top && blank(last.saturating_sub(1)) {
+        last = last.saturating_sub(1);
     }
     let mut first = last;
-    while first > top && rows.get(first - 1).is_some_and(|found| found.redrawn) {
-        first -= 1;
+    while first > top
+        && rows
+            .get(first.saturating_sub(1))
+            .is_some_and(|found| found.redrawn)
+    {
+        first = first.saturating_sub(1);
     }
     if first < last {
         return lines(start_of(first), last);
     }
     if last > top {
-        return lines(start_of(last - 1), last);
+        return lines(start_of(last.saturating_sub(1)), last);
     }
     Vec::new()
 }

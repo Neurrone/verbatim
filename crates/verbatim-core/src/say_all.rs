@@ -183,7 +183,11 @@ pub(crate) fn reply(state: &mut SrState, trace_id: TraceId, reply: TextReply) ->
         for chunk in chunks {
             let by_sentence =
                 say_all.unit == TextUnit::Sentence && chunk.unit == TextUnit::Paragraph;
-            let from = if first { chunk.offset as usize } else { 0 };
+            let from = if first {
+                text::byte_offset(chunk.offset)
+            } else {
+                0
+            };
             first = false;
             say_all.last_chunk = Some((TextPosition::at(chunk.start), chunk.unit));
             say_all.finished |= chunk.last;
@@ -226,7 +230,9 @@ fn hold(say_all: &mut SayAll, unit: Option<BufferedPiece>) {
         .and_then(|unit| verbatim_text::last_pause(unit.text()));
     match (unit, pause) {
         (Some(unit), Some(pause)) => {
-            let split = unit.start + u32::try_from(pause).unwrap_or(u32::MAX);
+            let split = unit
+                .start
+                .saturating_add(u32::try_from(pause).unwrap_or(u32::MAX));
             let rest = (split < unit.end).then(|| BufferedPiece {
                 chunk: SharedChunk::clone(&unit.chunk),
                 start: split,
@@ -239,7 +245,7 @@ fn hold(say_all: &mut SayAll, unit: Option<BufferedPiece>) {
         }
         (unit, _) => {
             say_all.held.extend(unit);
-            say_all.held_units += 1;
+            say_all.held_units = say_all.held_units.saturating_add(1);
             if say_all.held_units >= MAX_HELD {
                 release(say_all);
             }
@@ -300,12 +306,12 @@ fn hand_out(state: &mut SrState) -> Vec<Effect> {
                 });
             }
             let mut text = piece.text().to_owned();
-            if index + 1 < pieces.len() && !text.ends_with(char::is_whitespace) {
+            if index.saturating_add(1) < pieces.len() && !text.ends_with(char::is_whitespace) {
                 text.push(' ');
             }
             segments.extend(text::text_segments(
                 &text,
-                piece.chunk.language_at(piece.start as usize),
+                piece.chunk.language_at(text::byte_offset(piece.start)),
             ));
         }
         // Read by say-all, so the theme's "play sounds during say all"
@@ -337,7 +343,7 @@ fn read_on_or_end(state: &mut SrState) -> Vec<Effect> {
     if say_all.finished {
         return end_if_done(state);
     }
-    if !reading && unstarted(say_all) + say_all.buffer.len() < LOW_WATER {
+    if !reading && unstarted(say_all).saturating_add(say_all.buffer.len()) < LOW_WATER {
         return read_next(state);
     }
     Vec::new()
@@ -366,7 +372,11 @@ fn pieces(
     } else {
         ranges.push(from..content.len());
     }
-    ranges.retain(|range| !text::is_blank(&content[range.clone()]));
+    ranges.retain(|range| {
+        content
+            .get(range.clone())
+            .is_some_and(|piece| !text::is_blank(piece))
+    });
     ranges
 }
 

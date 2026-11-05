@@ -30,7 +30,14 @@ pub(crate) fn line_content(text: &str, grid: bool) -> &str {
 /// The line break that ends a line's `text`, when it has one.
 pub(crate) fn line_break(text: &str) -> Option<&str> {
     let content = text.trim_end_matches(is_line_break);
-    (content.len() < text.len()).then(|| &text[content.len()..])
+    text.get(content.len()..).filter(|rest| !rest.is_empty())
+}
+
+/// A byte offset or length the model holds as a `u32`, as a `usize`, which
+/// holds every `u32` on the targets Verbatim builds for; saturating at
+/// `usize::MAX` otherwise.
+pub(crate) fn byte_offset(value: u32) -> usize {
+    usize::try_from(value).unwrap_or(usize::MAX)
 }
 
 /// The characters of a line's `text` as the caret and the review cursor
@@ -43,13 +50,12 @@ pub(crate) fn line_break(text: &str) -> Option<&str> {
 pub(crate) fn characters(text: &str, grid: bool) -> Vec<Range<usize>> {
     let content = line_content(text, grid);
     let mut characters = verbatim_text::graphemes(content);
-    if !grid {
+    if !grid && let Some(line_break) = text.get(content.len()..) {
         let end = content.len();
-        characters.extend(
-            text[end..]
-                .char_indices()
-                .map(|(index, c)| end + index..end + index + c.len_utf8()),
-        );
+        characters.extend(line_break.char_indices().map(|(index, c)| {
+            let start = end.saturating_add(index);
+            start..start.saturating_add(c.len_utf8())
+        }));
     }
     characters
 }
@@ -62,7 +68,7 @@ pub(crate) fn character_at(text: &str, offset: usize, grid: bool) -> Option<&str
     characters(text, grid)
         .into_iter()
         .find(|range| range.start <= offset && offset < range.end)
-        .map(|range| &text[range])
+        .and_then(|range| text.get(range))
 }
 
 /// The character ([`characters`]) of a line's `text` before the one at
@@ -106,7 +112,8 @@ pub(crate) fn position_in(text: &str, offset: usize, grid: bool) -> usize {
 pub(crate) fn boundary(text: &str, offset: usize) -> usize {
     let mut offset = offset.min(text.len());
     while !text.is_char_boundary(offset) {
-        offset -= 1;
+        // Never below 0, which is always a boundary.
+        offset = offset.saturating_sub(1);
     }
     offset
 }
@@ -140,7 +147,7 @@ pub(crate) fn previous_grapheme(content: &str, offset: usize) -> Option<Range<us
 /// The column of `offset` in `content`: terminal cells before it in a
 /// terminal (`grid`), grapheme clusters before it elsewhere.
 pub(crate) fn column_of(content: &str, offset: usize, grid: bool) -> usize {
-    let before = &content[..boundary(content, offset)];
+    let before = content.get(..boundary(content, offset)).unwrap_or_default();
     if grid {
         verbatim_text::cell_width(before)
     } else {
@@ -157,13 +164,16 @@ pub(crate) fn column_of(content: &str, offset: usize, grid: bool) -> usize {
 pub(crate) fn offset_at_column(content: &str, column: usize, grid: bool) -> usize {
     let clusters = verbatim_text::graphemes(content);
     if grid {
-        let mut cells = 0;
+        let mut cells: usize = 0;
         for range in &clusters {
-            let width = verbatim_text::cell_width(&content[range.clone()]).max(1);
-            if column < cells + width {
+            let width = content
+                .get(range.clone())
+                .map_or(0, verbatim_text::cell_width)
+                .max(1);
+            if column < cells.saturating_add(width) {
                 return range.start;
             }
-            cells += width;
+            cells = cells.saturating_add(width);
         }
         content.len()
     } else {
@@ -181,7 +191,11 @@ pub(crate) fn words(content: &str, language: Option<&str>) -> Vec<Range<usize>> 
     Segmenter::new()
         .words_in(content, rules, language)
         .into_iter()
-        .filter(|range| !is_blank(&content[range.clone()]))
+        .filter(|range| {
+            content
+                .get(range.clone())
+                .is_some_and(|word| !is_blank(word))
+        })
         .collect()
 }
 
@@ -276,10 +290,11 @@ pub(crate) fn spelled(
 ) -> Vec<UtteranceSegment> {
     verbatim_text::graphemes(text)
         .into_iter()
-        .map(|range| {
+        .filter_map(|range| text.get(range))
+        .map(|grapheme| {
             // Composed first, so a capital or a letter written with a
             // combining accent is found as the precomposed one is.
-            let character = verbatim_text::composed(&text[range]).into_owned();
+            let character = verbatim_text::composed(grapheme).into_owned();
             let content = if descriptions {
                 SegmentContent::CharacterDescription(character)
             } else if character == " " {
@@ -423,8 +438,8 @@ fn runs_within(formats: &[FormatRun], span: &Range<usize>) -> Vec<(Range<usize>,
     formats
         .iter()
         .filter_map(|run| {
-            let start = (run.start as usize).max(span.start);
-            let end = (run.end as usize).min(span.end);
+            let start = byte_offset(run.start).max(span.start);
+            let end = byte_offset(run.end).min(span.end);
             (start < end).then(|| (start..end, run.attributes.clone()))
         })
         .collect()
@@ -449,16 +464,17 @@ pub(crate) fn formatted_segments(
     let mut runs = runs_within(&chunk.formats, &span);
     if runs.is_empty() {
         // A character, or an empty unit, has its formatting at its start.
-        let at = chunk
-            .formats
-            .iter()
-            .find(|run| (run.start as usize) <= span.start && span.start <= run.end as usize)?;
+        let at = chunk.formats.iter().find(|run| {
+            byte_offset(run.start) <= span.start && span.start <= byte_offset(run.end)
+        })?;
         runs.push((span.clone(), at.attributes.clone()));
     }
     let extra_detail = matches!(how, Spoken::Word | Spoken::Character);
     let format = |change| UtteranceSegment::new(SegmentContent::Format(change));
-    let text = &chunk.text[spoken.clone()];
-    let mut segments: Vec<UtteranceSegment> = format_changes(reported, &runs[0].1, extra_detail)
+    // A span outside the chunk's text is read as text with no formatting.
+    let text = chunk.text.get(spoken.clone())?;
+    let (first, rest) = runs.split_first()?;
+    let mut segments: Vec<UtteranceSegment> = format_changes(reported, &first.1, extra_detail)
         .into_iter()
         .map(format)
         .collect();
@@ -467,14 +483,11 @@ pub(crate) fn formatted_segments(
     // (`docs/nvda/document-formatting.md`, "Line prefixes"); never for a
     // word or a character.
     if how == Spoken::Text
-        && let Some(bullet) = runs[0]
-            .1
-            .bullet
-            .filter(|bullet| *bullet != BulletStyle::None)
+        && let Some(bullet) = first.1.bullet.filter(|bullet| *bullet != BulletStyle::None)
     {
         segments.push(format(TextFormat::Bullet(bullet)));
     }
-    *reported = runs[0].1.clone();
+    *reported = first.1.clone();
     let single = how == Spoken::Character
         || (how == Spoken::Word && verbatim_text::graphemes(text.trim()).len() == 1);
     if single {
@@ -490,7 +503,7 @@ pub(crate) fn formatted_segments(
         return Some(segments);
     }
     if is_blank(text) {
-        for (_, attributes) in &runs[1..] {
+        for (_, attributes) in rest {
             *reported = attributes.clone();
         }
         segments.extend(text_segments("", None));
@@ -523,7 +536,9 @@ pub(crate) fn formatted_segments(
         }
         let start = range.start.max(spoken.start);
         let end = range.end.min(spoken.end);
-        joined.push_str(&chunk.text[start.min(end)..end]);
+        if let Some(piece) = chunk.text.get(start.min(end)..end) {
+            joined.push_str(piece);
+        }
     }
     flush(&mut joined, &mut segments);
     Some(segments)

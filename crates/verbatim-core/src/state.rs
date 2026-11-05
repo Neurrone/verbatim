@@ -578,7 +578,10 @@ pub(crate) struct QueuedMark {
 impl BufferedPiece {
     /// The piece's text.
     pub(crate) fn text(&self) -> &str {
-        &self.chunk.text[self.start as usize..self.end as usize]
+        // A piece is cut from its chunk's text at character boundaries
+        // (`say_all`'s pieces), so the range is always found.
+        let range = crate::text::byte_offset(self.start)..crate::text::byte_offset(self.end);
+        self.chunk.text.get(range).unwrap_or_default()
     }
 }
 
@@ -1033,7 +1036,7 @@ impl SrState {
     /// Allocates the next index mark.
     pub(crate) fn allocate_mark(&mut self) -> SpeechMark {
         let mark = SpeechMark(self.next_mark);
-        self.next_mark += 1;
+        self.next_mark = self.next_mark.saturating_add(1);
         mark
     }
 

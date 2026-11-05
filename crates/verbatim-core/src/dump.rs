@@ -255,7 +255,7 @@ pub fn read_dump<R: BufRead>(reader: &mut R) -> Result<DumpContents, DumpReadErr
         if reader.read_line(&mut line)? == 0 {
             break;
         }
-        line_number += 1;
+        line_number = line_number.saturating_add(1);
         let complete = line.ends_with('\n');
         let trimmed = line.trim_end_matches(['\n', '\r']);
 

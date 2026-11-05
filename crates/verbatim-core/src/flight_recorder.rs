@@ -109,9 +109,9 @@ impl<T, S> FlightRecorder<T, S> {
     pub fn record(&mut self, entry: T, bytes: usize, checkpoint: impl FnOnce() -> S) {
         let newest = self.newer.back_mut().unwrap_or(&mut self.oldest);
         newest.entries.push((entry, bytes));
-        newest.bytes += bytes;
-        self.entries += 1;
-        self.bytes += bytes;
+        newest.bytes = newest.bytes.saturating_add(bytes);
+        self.entries = self.entries.saturating_add(1);
+        self.bytes = self.bytes.saturating_add(bytes);
         if newest.entries.len() >= self.max_entries.div_ceil(2)
             || newest.bytes >= self.max_bytes.div_ceil(2)
         {
@@ -122,8 +122,8 @@ impl<T, S> FlightRecorder<T, S> {
                 break;
             };
             let dropped = std::mem::replace(&mut self.oldest, next);
-            self.entries -= dropped.entries.len();
-            self.bytes -= dropped.bytes;
+            self.entries = self.entries.saturating_sub(dropped.entries.len());
+            self.bytes = self.bytes.saturating_sub(dropped.bytes);
         }
     }
 

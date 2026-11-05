@@ -251,17 +251,19 @@ impl std::ops::DerefMut for Terminals {
 
 impl Terminals {
     /// Makes a model of terminal `node`, the most recently read, with the
-    /// next generation.
-    pub(crate) fn add(&mut self, node: NodeId, settings: Settings) {
+    /// next generation, and returns it.
+    pub(crate) fn add(&mut self, node: NodeId, settings: Settings) -> &mut TerminalModel {
         let generation = self.next_generation;
-        self.next_generation += 1;
+        self.next_generation = self.next_generation.saturating_add(1);
         self.models
-            .push(TerminalModel::new(node, settings, generation));
+            .push_mut(TerminalModel::new(node, settings, generation))
     }
 
-    /// Makes the model at `at` the most recently read.
-    fn move_to_back(&mut self, at: usize) {
-        self.models[at..].rotate_left(1);
+    /// Makes the model at `at`, which is one of them, the most recently
+    /// read, and returns it.
+    fn move_to_back(&mut self, at: usize) -> &mut TerminalModel {
+        let model = self.models.remove(at);
+        self.models.push_mut(model)
     }
 
     /// Removes every model `which` picks, returning the queries of the
@@ -367,7 +369,7 @@ impl TerminalModel {
             return;
         };
         self.keep_mark_line(mark);
-        self.pending_mark = Some((mark, at_ms + QUIET_MS));
+        self.pending_mark = Some((mark, at_ms.saturating_add(QUIET_MS)));
     }
 
     /// Keeps the line of `mark`, just set on a row the memory keeps.
@@ -376,11 +378,11 @@ impl TerminalModel {
         let Some(first) = usize::try_from(mark.row).ok().and_then(|row| rows.get(row)) else {
             return;
         };
-        let mut count = 1;
+        let mut count: u32 = 1;
         let mut row = usize::try_from(mark.row).unwrap_or(0);
-        while rows.get(row).is_some_and(|found| found.wraps) && row + 1 < rows.len() {
-            row += 1;
-            count += 1;
+        while rows.get(row).is_some_and(|found| found.wraps) && row.saturating_add(1) < rows.len() {
+            row = row.saturating_add(1);
+            count = count.saturating_add(1);
         }
         let line = MarkLine {
             hash: mark.line_hash,
@@ -423,9 +425,12 @@ impl TerminalModel {
         let caret = self.caret.map_or(kept.len(), |caret| caret.row);
         let found = (0..rows.len())
             .filter(|&row| {
-                rows[row] == NewRow::New
+                rows.get(row) == Some(&NewRow::New)
                     && kept.get(row).is_some_and(|found| found.line_hash == hash)
-                    && (row == 0 || kept.get(row - 1).is_some_and(|above| !above.wraps))
+                    && (row == 0
+                        || kept
+                            .get(row.saturating_sub(1))
+                            .is_some_and(|above| !above.wraps))
             })
             .min_by_key(|&row| row.abs_diff(caret));
         if let Some(row) = found {
@@ -440,7 +445,7 @@ impl TerminalModel {
     /// newest key given, when its window holds the read.
     fn speech_key(&self, at_ms: u64) -> Option<TraceId> {
         self.last_key
-            .filter(|(_, key_ms)| key_ms + KEY_WINDOW_MS >= at_ms)
+            .filter(|(_, key_ms)| key_ms.saturating_add(KEY_WINDOW_MS) >= at_ms)
             .map(|(trace, _)| trace)
     }
 }
@@ -466,17 +471,15 @@ fn model_of(state: &SrState, node: NodeId) -> Option<&TerminalModel> {
 /// recently read model is forgotten past [`MODELS`].
 fn model_or_new(state: &mut SrState, node: NodeId) -> &mut TerminalModel {
     if let Some(at) = state.terminals.iter().position(|model| model.node == node) {
-        state.terminals.move_to_back(at);
-    } else {
-        if state.terminals.len() >= MODELS {
-            let oldest = state.terminals[0].node;
-            state.drop_models(|model| model.node == oldest);
-        }
-        let settings = settings_of(state);
-        state.terminals.add(node, settings);
+        return state.terminals.move_to_back(at);
     }
-    let last = state.terminals.len() - 1;
-    &mut state.terminals[last]
+    if state.terminals.len() >= MODELS
+        && let Some(oldest) = state.terminals.first().map(|model| model.node)
+    {
+        state.drop_models(|model| model.node == oldest);
+    }
+    let settings = settings_of(state);
+    state.terminals.add(node, settings)
 }
 
 /// The focused terminal, when Core models it: the one the flood policy
@@ -582,7 +585,7 @@ pub(crate) fn key(
         node,
         TextOp::TerminalColours {
             from_ms: at_ms,
-            until_ms: at_ms + KEY_WINDOW_MS,
+            until_ms: at_ms.saturating_add(KEY_WINDOW_MS),
         },
     );
     let Some(model) = model_mut(state, node) else {
@@ -737,8 +740,8 @@ fn colours_of(colours: &[Vec<TerminalColourRun>]) -> Vec<Vec<ColourRun>> {
         .map(|row| {
             row.iter()
                 .map(|run| ColourRun {
-                    column: run.column as usize,
-                    length: run.length as usize,
+                    column: usize::try_from(run.column).unwrap_or(usize::MAX),
+                    length: usize::try_from(run.length).unwrap_or(usize::MAX),
                     foreground: run.foreground,
                     background: run.background,
                 })

@@ -74,7 +74,7 @@ pub fn wedge_decision(
     if abandoned >= limits.abandoned_workers && !application_hung {
         return Some(WedgeReason::AbandonedWorkers);
     }
-    if since_us(last_pong_us, now_us) >= limits.ping_interval * limits.missed_pongs {
+    if since_us(last_pong_us, now_us) >= limits.ping_interval.saturating_mul(limits.missed_pongs) {
         return Some(WedgeReason::MissedHeartbeats);
     }
     None
@@ -166,7 +166,7 @@ impl Backoff {
             failures => {
                 // 2^(failures - 2) times `first`, stopped at `limit` before
                 // it can overflow.
-                let doublings = (failures - 2).min(31);
+                let doublings = failures.saturating_sub(2).min(31);
                 first.saturating_mul(1 << doublings).min(limit)
             }
         };

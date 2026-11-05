@@ -40,7 +40,7 @@ impl RecordedInput {
         let mut counter = HeapCounter(0);
         // Counting cannot fail: the counter has no error to raise.
         let _ = self.serialize(&mut counter);
-        size_of::<Self>() + counter.0
+        size_of::<Self>().saturating_add(counter.0)
     }
 }
 
@@ -73,7 +73,7 @@ impl HeapCounter {
     /// Adds an element held on the heap: its inline size, then what it
     /// owns.
     fn element<T: Serialize + ?Sized>(&mut self, value: &T) -> Result<(), NeverFails> {
-        self.0 += size_of_val(value);
+        self.0 = self.0.saturating_add(size_of_val(value));
         value.serialize(self)
     }
 }
@@ -126,11 +126,11 @@ impl serde::Serializer for &mut HeapCounter {
         Ok(())
     }
     fn serialize_str(self, value: &str) -> Result<(), NeverFails> {
-        self.0 += value.len();
+        self.0 = self.0.saturating_add(value.len());
         Ok(())
     }
     fn serialize_bytes(self, value: &[u8]) -> Result<(), NeverFails> {
-        self.0 += value.len();
+        self.0 = self.0.saturating_add(value.len());
         Ok(())
     }
     fn serialize_none(self) -> Result<(), NeverFails> {

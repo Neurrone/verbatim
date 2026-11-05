@@ -409,14 +409,14 @@ fn asked(state: &SrState, ask: TerminalAsk) -> bool {
 fn hold_if_full(state: &mut SrState) -> Vec<Effect> {
     if crate::terminal_model::holds(state)
         || asked(state, TerminalAsk::Cancel)
-        || waiting_lines(&state.terminal.waiting)
-            + state
+        || waiting_lines(&state.terminal.waiting).saturating_add(
+            state
                 .terminal
                 .ahead
                 .iter()
                 .filter(|(_, line)| *line)
-                .count()
-            < state.settings.full_lines()
+                .count(),
+        ) < state.settings.full_lines()
     {
         return Vec::new();
     }
@@ -502,8 +502,8 @@ fn queue(state: &mut SrState, items: Vec<SaidItem>) {
     let group_left = terminal.group.unwrap_or(0);
     // The backlog once the output is added: the lines past the group's
     // ([`backlog_start`]).
-    let lines = waiting_lines(&terminal.waiting)
-        + items
+    let lines = waiting_lines(&terminal.waiting).saturating_add(
+        items
             .iter()
             .filter(|item| {
                 matches!(
@@ -511,7 +511,8 @@ fn queue(state: &mut SrState, items: Vec<SaidItem>) {
                     SaidItem::Item(TerminalItem::Output(_)) | SaidItem::Line(_)
                 )
             })
-            .count();
+            .count(),
+    );
     let backlog = match group_left {
         0 => lines,
         group => lines.saturating_sub(group),
@@ -529,7 +530,7 @@ fn queue(state: &mut SrState, items: Vec<SaidItem>) {
     let mut bounded = Bounded {
         group_left: (group_left > 0).then_some(group_left),
         skipping: group_left == 0,
-        dropping: backlog - keep,
+        dropping: backlog.saturating_sub(keep),
         skipped: None,
         in_line: false,
     };
@@ -668,7 +669,7 @@ impl Bounded {
         if let Some(left) = &mut self.group_left {
             if *left > 0 {
                 if item.is_line() {
-                    *left -= 1;
+                    *left = left.saturating_sub(1);
                 }
                 waiting.push_back(item.waiting());
                 return;
@@ -741,18 +742,19 @@ fn backlog_start(waiting: &VecDeque<Waiting>, group_left: usize) -> usize {
     if group_left == 0 {
         return 0;
     }
-    let mut lines = 0;
+    let mut lines: usize = 0;
     for (index, item) in waiting.iter().enumerate() {
         if is_line(item) {
-            lines += 1;
+            lines = lines.saturating_add(1);
             if lines == group_left {
-                return index
-                    + 1
-                    + waiting
+                let after = index.saturating_add(1);
+                return after.saturating_add(
+                    waiting
                         .iter()
-                        .skip(index + 1)
+                        .skip(after)
                         .take_while(|item| belongs(item))
-                        .count();
+                        .count(),
+                );
             }
         }
     }
@@ -855,16 +857,20 @@ fn bound(state: &mut SrState) {
             && (first || (counted.is_some() && belongs(item)))
         {
             if let Some(Waiting::Line(line, _)) = terminal.waiting.remove(index) {
-                bytes -= line.len();
+                bytes = bytes.saturating_sub(line.len());
             }
             first = false;
         }
         if let Some(counted) = counted {
             let count = Waiting::Skipped(with_line(before, counted));
-            if before.is_some() {
-                terminal.waiting[index - 1] = count;
-            } else {
-                terminal.waiting.insert(index, count);
+            // `before` is the count at the index before.
+            match index
+                .checked_sub(1)
+                .filter(|_| before.is_some())
+                .and_then(|before| terminal.waiting.get_mut(before))
+            {
+                Some(slot) => *slot = count,
+                None => terminal.waiting.insert(index, count),
             }
         }
     }
@@ -902,7 +908,7 @@ fn skips(waiting: &VecDeque<Waiting>, start: usize, full: usize) -> bool {
         match item {
             item if is_mark(item) => {}
             Waiting::Skipped(count) => skipped = skipped.plus(*count),
-            item if is_line(item) => lines += 1,
+            item if is_line(item) => lines = lines.saturating_add(1),
             _ => {}
         }
     }

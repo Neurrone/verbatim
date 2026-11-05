@@ -117,7 +117,7 @@ pub(crate) const TOGGLE_KEY_DELAY_MS: u64 = 30;
 fn toggle_key_pressed(state: &mut SrState, toggle: LockKey, pressed_at_ms: u64) -> Vec<Effect> {
     state
         .toggle_keys
-        .push_back((toggle, pressed_at_ms + TOGGLE_KEY_DELAY_MS));
+        .push_back((toggle, pressed_at_ms.saturating_add(TOGGLE_KEY_DELAY_MS)));
     Vec::new()
 }
 

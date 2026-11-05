@@ -1784,6 +1784,7 @@ fn navigator_command(
     };
 
     match command {
+        #[expect(clippy::unreachable, reason = "moving to the focus returned above")]
         ReviewCommand::ToFocus => unreachable!("handled above"),
         ReviewCommand::ReportObject => report_object(state, trace_id, repeat),
         ReviewCommand::Activate => {
@@ -2141,9 +2142,12 @@ pub(crate) fn flat_review_command(
         }
     } else if repeated_current && command == ReviewCommand::ReviewCurrentCharacter {
         // The character's description, from the character table.
-        for range in verbatim_text::graphemes(slice) {
+        for grapheme in verbatim_text::graphemes(slice)
+            .into_iter()
+            .filter_map(|range| slice.get(range))
+        {
             segments.push(UtteranceSegment::new(SegmentContent::CharacterDescription(
-                slice[range].to_owned(),
+                grapheme.to_owned(),
             )));
         }
     } else if repeated_current {
@@ -2340,14 +2344,12 @@ fn reduce_progress_changed(
         focus.snapshot.value.clone_from(&progress.value);
     }
     let place = progress.rect.map_or((0, 0), |rect| {
-        (rect.left + rect.width / 2, rect.top + rect.height / 2)
+        (
+            rect.left.saturating_add(rect.width / 2),
+            rect.top.saturating_add(rect.height / 2),
+        )
     });
-    #[expect(
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss,
-        reason = "a percentage held between 0 and 100"
-    )]
-    let hundredths = (percentage * 100.0).round() as u32;
+    let hundredths = saturating_u32((percentage * 100.0).round());
     let last = state
         .progress_reported
         .iter()
@@ -2363,13 +2365,21 @@ fn reduce_progress_changed(
     if state.progress_reported.len() > crate::state::PROGRESS_BARS_KEPT {
         state.progress_reported.remove(0);
     }
-    #[expect(
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss,
-        reason = "a percentage held between 0 and 100"
-    )]
-    let whole = percentage as u8;
+    let whole = u8::try_from(saturating_u32(percentage)).unwrap_or(u8::MAX);
     vec![Effect::PlayEarcon(Earcon::Progress(whole))]
+}
+
+/// `value` rounded toward zero to a `u32`, saturating: below 0 and NaN
+/// become 0, and past `u32::MAX` becomes `u32::MAX`. The crate's one
+/// conversion from a float to an integer.
+#[expect(
+    clippy::as_conversions,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "`as` from a float to an integer saturates, as this helper states"
+)]
+fn saturating_u32(value: f64) -> u32 {
+    value as u32
 }
 
 /// Handles a complete state-set replacement on the focused node (MSAA
@@ -2505,12 +2515,16 @@ fn reduce_ancestor_states_changed(
     else {
         return Vec::new();
     };
-    let ancestor = &focus.ancestors[index];
+    let Some(ancestor) = focus.ancestors.get(index) else {
+        return Vec::new();
+    };
     let (role, source) = (ancestor.role, source_of(ancestor));
     let old_states = focus.spoken_states(node_id).unwrap_or(ancestor.states);
     if ancestor.states != new_states {
         let mut ancestors = focus.ancestors.to_vec();
-        ancestors[index].states = new_states;
+        if let Some(ancestor) = ancestors.get_mut(index) {
+            ancestor.states = new_states;
+        }
         focus.ancestors = Arc::from(ancestors);
     }
     if old_states == new_states {
@@ -2519,7 +2533,9 @@ fn reduce_ancestor_states_changed(
     let spoken = focus.spoken();
     if let Some(entry) = spoken.ancestors.iter().position(|(id, _)| *id == node_id) {
         let mut entries = spoken.ancestors.to_vec();
-        entries[entry].1 = new_states;
+        if let Some((_, states)) = entries.get_mut(entry) {
+            *states = new_states;
+        }
         spoken.ancestors = Arc::from(entries);
     }
     let segments = state_change_segments(role, old_states, new_states);
@@ -2770,9 +2786,12 @@ fn focus_line<'a>(
     let kept = if at_new == report.ancestors.len() {
         at_old
     } else {
-        at_old + 1
+        at_old.saturating_add(1)
     };
-    let entered = report.ancestors.get(at_new + 1..).unwrap_or_default();
+    let entered = report
+        .ancestors
+        .get(at_new.saturating_add(1)..)
+        .unwrap_or_default();
     FocusLine {
         ancestors: old_line().take(kept).chain(entered).cloned().collect(),
         entered,

@@ -330,12 +330,18 @@ fn next_held(state: &mut SrState, mut behind: bool) -> Vec<Effect> {
         if let Some((trace_id, pressed_at_ms)) = front_waits
             && state.held_keys.awaiting_watch.is_some()
         {
-            let due = state.held_keys.passed_at_ms + KEY_AHEAD_BOUND_MS;
+            let due = state
+                .held_keys
+                .passed_at_ms
+                .saturating_add(KEY_AHEAD_BOUND_MS);
             if pressed_at_ms < due {
                 if state.held_keys.bounded != Some(trace_id) {
                     state.held_keys.bounded = Some(trace_id);
                     let now = pressed_at_ms.max(state.held_keys.passed_at_ms);
-                    effects.push(Effect::BoundHeldKey(Some((trace_id, due - now))));
+                    effects.push(Effect::BoundHeldKey(Some((
+                        trace_id,
+                        due.saturating_sub(now),
+                    ))));
                 }
                 blocked = Some(trace_id);
                 break;
@@ -506,7 +512,7 @@ pub(crate) fn held_read(state: &mut SrState, reading: HeldRead, reply: TextReply
             let at_ms = if reply.read_at_ms == 0 {
                 held.pressed_at_ms
             } else {
-                reply.read_at_ms + 1
+                reply.read_at_ms.saturating_add(1)
             };
             update_caret(state, reading.node, reply.caret, reply.read_at_ms);
             at_ms
@@ -599,17 +605,17 @@ fn deleted_text(
     grid: bool,
 ) -> Option<String> {
     let content = text::line_content(&line.text, grid);
-    let offset = text::boundary(content, offset as usize);
+    let offset = text::boundary(content, text::byte_offset(offset));
     match motion {
         CaretMotion::Backspace => match text::previous_grapheme(content, offset) {
-            Some(range) => Some(content[range].to_owned()),
+            Some(range) => content.get(range).map(str::to_owned),
             None if !grid && !line.first => line_break.map(str::to_owned),
             None => None,
         },
         CaretMotion::BackspaceWord => {
             let words = text::words(content, line.language_at(0));
             match words.iter().rev().find(|range| range.start < offset) {
-                Some(word) => Some(content[word.start..offset].to_owned()),
+                Some(word) => content.get(word.start..offset).map(str::to_owned),
                 None if offset == 0 && !grid && !line.first => line_break.map(str::to_owned),
                 None => None,
             }
@@ -645,7 +651,7 @@ fn removal(before: (&str, usize), after: (&str, usize), grid: bool) -> Removal {
     let read = |(text, caret): (&str, usize)| {
         let mut content = text::line_content(text, grid).to_owned();
         if grid && caret > content.len() {
-            content.push_str(&" ".repeat(caret - content.len()));
+            content.push_str(&" ".repeat(caret.saturating_sub(content.len())));
         }
         (content, caret)
     };
@@ -665,17 +671,18 @@ fn removal(before: (&str, usize), after: (&str, usize), grid: bool) -> Removal {
     let kept_before = was.get(..a) == now.get(..a);
     if a == b && kept_before && was.len() > now.len() {
         // The caret stayed and text after it went (Control+K).
-        let gone = was.len() - now.len();
-        if was.is_char_boundary(a + gone) && was.get(a + gone..) == now.get(a..) {
-            return Removal::Removed(was[a..a + gone].to_owned());
+        let end = a.saturating_add(was.len().saturating_sub(now.len()));
+        if let Some(gone) = was.get(a..end)
+            && was.get(end..) == now.get(a..)
+        {
+            return Removal::Removed(gone.to_owned());
         }
     }
     let kept_after = was.get(b..) == now.get(a..)
         || (grid && was.get(b..).map(str::trim_end) == now.get(a..).map(str::trim_end));
-    if kept_before && kept_after && a < b {
-        Removal::Removed(was[a..b].to_owned())
-    } else {
-        Removal::Nothing
+    match was.get(a..b) {
+        Some(gone) if kept_before && kept_after && a < b => Removal::Removed(gone.to_owned()),
+        _ => Removal::Nothing,
     }
 }
 
@@ -684,7 +691,7 @@ fn removal(before: (&str, usize), after: (&str, usize), grid: bool) -> Removal {
 /// line before the key.
 fn compared_text(line: &TextChunk, motion: CaretMotion, grid: bool) -> Option<String> {
     let content = text::line_content(&line.text, grid);
-    let offset = line.offset as usize;
+    let offset = text::byte_offset(line.offset);
     match motion {
         // The character as the outpost cuts it from the caret's line, a
         // line break at the line's end included: compared with the line's
@@ -694,14 +701,16 @@ fn compared_text(line: &TextChunk, motion: CaretMotion, grid: bool) -> Option<St
             let text = if grid { content } else { line.text.as_str() };
             Some(
                 text::grapheme_at(text, offset)
-                    .map_or(String::new(), |range| text[range].to_owned()),
+                    .and_then(|range| text.get(range))
+                    .map_or(String::new(), str::to_owned),
             )
         }
         CaretMotion::DeleteWord => {
             let words = text::words(content, line.language_at(0));
             Some(
                 text::word_at(&words, offset)
-                    .map_or(String::new(), |range| content[range].to_owned()),
+                    .and_then(|range| content.get(range))
+                    .map_or(String::new(), str::to_owned),
             )
         }
         _ => None,
@@ -849,8 +858,8 @@ fn backspace_segments(
     }
     let removed = pending.before.as_ref().map(|(text, offset)| {
         removal(
-            (text, *offset as usize),
-            (&line.text, line.offset as usize),
+            (text, text::byte_offset(*offset)),
+            (&line.text, text::byte_offset(line.offset)),
             grid,
         )
     });
@@ -959,8 +968,8 @@ fn other_key_segments(
         return (same_line != Some(false)).then(Vec::new);
     };
     let removed = removal(
-        (text, *offset as usize),
-        (&after.text, after.offset as usize),
+        (text, text::byte_offset(*offset)),
+        (&after.text, text::byte_offset(after.offset)),
         grid,
     );
     if let Removal::Removed(removed) = removed {
@@ -970,7 +979,7 @@ fn other_key_segments(
         return None;
     }
     if text::line_content(text, grid) == text::line_content(&after.text, grid) {
-        return Some(landing_segments(*offset as usize, after, grid));
+        return Some(landing_segments(text::byte_offset(*offset), after, grid));
     }
     Some(Vec::new())
 }
@@ -993,12 +1002,12 @@ fn removed_segments(removed: &str, language: Option<&str>) -> Vec<UtteranceSegme
 /// Inside a word: the word and then the character at the caret.
 fn landing_segments(from: usize, line: &TextChunk, grid: bool) -> Vec<UtteranceSegment> {
     let content = text::line_content(&line.text, grid);
-    let at = text::boundary(content, line.offset as usize);
+    let at = text::boundary(content, text::byte_offset(line.offset));
     let from = text::boundary(content, from);
     let language = line.language_at(at);
     let character = || {
         text::character_segments(
-            text::grapheme_at(content, at).map(|range| &content[range]),
+            text::grapheme_at(content, at).and_then(|range| content.get(range)),
             language,
         )
     };
@@ -1012,11 +1021,16 @@ fn landing_segments(from: usize, line: &TextChunk, grid: bool) -> Vec<UtteranceS
         .iter()
         .find(|word| word.start == at)
         .or_else(|| words.iter().find(|word| word.end == at))
+        .and_then(|word| content.get(word.clone()))
     {
-        return text::word_segments(&content[word.clone()], language);
+        return text::word_segments(word, language);
     }
-    if let Some(word) = words.iter().find(|word| word.start < at && at < word.end) {
-        let mut segments = text::word_segments(&content[word.clone()], language);
+    if let Some(word) = words
+        .iter()
+        .find(|word| word.start < at && at < word.end)
+        .and_then(|word| content.get(word.clone()))
+    {
+        let mut segments = text::word_segments(word, language);
         segments.extend(character());
         return segments;
     }
@@ -1061,7 +1075,7 @@ fn formatted(
     let content = text::chunk_content(chunk, grid);
     let spoken = match how {
         text::Spoken::Word => {
-            let start = content.len() - content.trim_start().len();
+            let start = content.len().saturating_sub(content.trim_start().len());
             start..content.trim_end().len().max(start)
         }
         // The character the chunk starts with, a line break included.
@@ -1093,7 +1107,7 @@ fn unit_segments(
 ) -> Vec<UtteranceSegment> {
     let line = &caret.line;
     let content = text::line_content(&line.text, grid);
-    let offset = line.offset as usize;
+    let offset = text::byte_offset(line.offset);
     match (unit, unit_chunk) {
         (TextUnit::Character, chunk) => {
             if let Some(segments) =
@@ -1765,14 +1779,18 @@ pub(crate) fn echo(state: &mut SrState, trace_id: TraceId, typed: &str) -> Vec<E
     let echo_characters = applies(state.settings.speak_typed_characters);
     let echo_words = applies(state.settings.speak_typed_words) && !protected;
     let mut effects = Vec::new();
-    for range in verbatim_text::graphemes(typed) {
-        let character = &typed[range];
+    for character in verbatim_text::graphemes(typed)
+        .into_iter()
+        .filter_map(|range| typed.get(range))
+    {
         // A letter, mark, or number continues the word, so a virama, a
         // Thai tone mark, or a zero-width non-joiner typed on its own does
         // not end it.
         let word_character = verbatim_text::is_word_grapheme(character);
         if word_character {
-            if echo_words && state.typed_word.len() + character.len() <= MAX_TYPED_WORD {
+            if echo_words
+                && state.typed_word.len().saturating_add(character.len()) <= MAX_TYPED_WORD
+            {
                 state.typed_word.push_str(character);
             }
         } else {

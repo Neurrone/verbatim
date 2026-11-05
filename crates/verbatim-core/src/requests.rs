@@ -82,7 +82,7 @@ impl<A> RequestTable<A> {
     }
 
     fn insert(&mut self, outpost: OutpostId, asker: A, deadline_us: Option<u64>) -> RequestId {
-        self.next += 1;
+        self.next = self.next.saturating_add(1);
         let id = RequestId::shell(self.next);
         self.entries.insert(
             id,

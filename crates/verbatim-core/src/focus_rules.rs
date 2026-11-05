@@ -329,7 +329,7 @@ pub fn already_entered<O: EnteredKey, N: EnteredKey>(
     previous: (&[O], &O),
     new: (&[N], &N),
 ) -> usize {
-    meeting(previous, new).map_or(0, |(_, at_new)| at_new + 1)
+    meeting(previous, new).map_or(0, |(_, at_new)| at_new.saturating_add(1))
 }
 
 #[cfg(test)]
