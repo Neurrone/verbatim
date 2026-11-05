@@ -564,14 +564,14 @@ The work is three builds. Each one moves its experiments folders, redirects thei
 Binaries that need the desktop (focus, Windows Terminal, File Explorer, a suspended UI thread in a real application) are run by the parent from one background script, as with the end-to-end scenarios. The builder runs the rest.
 
 - The workspace, support, workflow and calls build:
-  - What it builds: the workspace, the support crate, `check-copies`, `build.ps1`, the workflow, the ci and docs edits, and the provider program with the behaviours these folders use: the UIA window with and without `UseComThreading`; the tree; hold; slow calls; the busy UI thread; the pumping wait; several windows; the call and message logs; the MSAA object.
+  - What it builds: the workspace, the support crate, `check-copies`, `build.ps1`, the workflow, the ci and docs edits, and the provider program with the behaviours these folders use: the UIA window with and without `UseComThreading`; the tree; hold; slow calls; the busy UI thread; the pumping wait; several windows; the call and message logs; the MSAA object; raised events on request, and focus set within its tree, since the registration and the client-side answers folders raise events.
 
     It also builds the request-reader and timeout folders: new connections timing out; the connection timeout per process; a call's wait from its own start; a timeout bounding each request, not an operation; the registration that reports success; nothing cancelling; one request at a time; the channel guide; MSAA beside UIA; parallel threads; the requests guide; UIA answering in the client; the instruction limit.
   - What it moves: `the-connection-timeout-applies-to-the-whole-process`, `a-registration-that-times-out-reports-success`, `cocancelcall-does-not-end-a-uia-client-call`, `compareelements-makes-no-call`, and the E1, E-TT and E3 parts of `mockapp-experiments-2026-10-10`.
   - What it measures: the first-build and rebuild times, and the CI cache restore. These replace the estimates above in `uia-facts/readme.md`.
 - The events and focus build:
   - What it builds: the hung window and the client-threads guide; the worker; the event cache fetch; the flood; both late-focus folders; the focus and elements limitations; ancestors; the first-time setup race; the exit fault.
-  - What it adds to the provider program: raised events, the focus WinEvent, shown and hidden windows, and element removal.
+  - What it adds to the provider program: the focus WinEvent, shown and hidden windows, and element removal.
   - What it moves: the hung-window, flood, desktop-wide, focus-limitation and elements folders, and the rest of `mockapp-experiments-2026-10-10`, which this build deletes.
 - The connections, probe and applications build:
   - What it builds: the collision, with its conhost arm and its second form; the pending connection; `UiaHasServerSideProvider` and the raw probe; the remote operation's keyboard focus; conhost inside a remote operation; File Explorer's runtime id; Windows Terminal's identities; real applications.
