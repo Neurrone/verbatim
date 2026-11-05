@@ -76,7 +76,6 @@ mod verdicts;
 mod watch;
 
 use std::collections::{BTreeSet, VecDeque};
-use std::ops::Add;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -1154,7 +1153,8 @@ impl Reducer {
                 timing: EventTiming {
                     awaited_at_us,
                     awaited_calls: open.calls,
-                    calls: open.calls.add(calls),
+                    // Call counts add saturating.
+                    calls: std::ops::Add::add(open.calls, calls),
                     published_at_us: now.wall_us,
                     ..open.timing
                 },

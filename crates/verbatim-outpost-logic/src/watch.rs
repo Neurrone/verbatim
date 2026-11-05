@@ -4,7 +4,6 @@
 //! same transitions with no clock, its times left at zero, since no
 //! program reads them.
 
-use std::ops::AddAssign;
 use std::time::Duration;
 
 use verbatim_model::protocol::{EventTiming, RequestId};
@@ -277,7 +276,8 @@ impl Watch {
                 awaited_at_us: *awaited_at_us,
             })),
             Checked::Watching { calls } => {
-                open.calls.add_assign(*calls);
+                // Call counts add saturating.
+                std::ops::AddAssign::add_assign(&mut open.calls, *calls);
                 *self = match resume {
                     Resume::Bound(bound) => Self::Waiting { open, bound },
                     Resume::Poll { next, until } => Self::Polling { open, next, until },
