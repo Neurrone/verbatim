@@ -74,6 +74,10 @@ use verbatim_model::TraceId;
     clippy::cast_possible_truncation,
     reason = "a second in microseconds fits a u64"
 )]
+#[expect(
+    clippy::as_conversions,
+    reason = "rewritten by the focus pipeline's third build"
+)]
 pub const BOUND_US: u64 = verbatim_reader_rules::UIA_FOCUS_WAIT.as_micros() as u64;
 
 /// How long before a record's stamp a report in its top-level window may
@@ -233,6 +237,10 @@ impl GapRecord {
     }
 
     /// The next bound's number.
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "rewritten by the focus pipeline's third build"
+    )]
     fn arm(&mut self) -> u64 {
         self.bounds += 1;
         self.bounds

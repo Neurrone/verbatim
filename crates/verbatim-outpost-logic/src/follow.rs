@@ -176,12 +176,13 @@ impl FocusPath {
     #[must_use]
     pub fn route_to(&self, runtime_id: &[i32]) -> Option<Route> {
         let index = self.chain.iter().position(|(id, _)| id == runtime_id)?;
-        let (above, window) = self.chain[index..]
+        let from = self.chain.get(index..)?;
+        let (above, window) = from
             .iter()
             .enumerate()
             .find_map(|(above, &(_, window))| Some((above, window?)))?;
-        let root = index + above;
-        let path = self.chain[index..root]
+        let path = from
+            .get(..above)?
             .iter()
             .rev()
             .map(|(id, _)| id.clone())
@@ -481,11 +482,10 @@ impl FollowState {
         if let (Some((node, group, _)), Some(element)) = (before, before_element) {
             let kept = self
                 .kept_groups
-                .iter()
-                .position(|(kept, _, _)| *kept == node);
+                .iter_mut()
+                .find(|(kept, _, _)| *kept == node);
             if let Some(kept) = kept {
-                let (_, _, replaced) =
-                    std::mem::replace(&mut self.kept_groups[kept], (node, group, element));
+                let (_, _, replaced) = std::mem::replace(kept, (node, group, element));
                 dropped.push(replaced);
             } else {
                 self.kept_groups.push((node, group, element));
@@ -493,14 +493,11 @@ impl FollowState {
         }
         // The newest focus's element is followed as the newest, not kept.
         if let Some((node, _, _)) = target.wanted {
-            let mut index = 0;
-            while index < self.kept_groups.len() {
-                if self.kept_groups[index].0 == node {
-                    dropped.push(self.kept_groups.remove(index).2);
-                } else {
-                    index += 1;
-                }
-            }
+            dropped.extend(
+                self.kept_groups
+                    .extract_if(.., |(kept, _, _)| *kept == node)
+                    .map(|(_, _, element)| element),
+            );
         }
         self.unfollow(dropped, applied);
         applied.subscribe = Some(self.subscription());
@@ -547,15 +544,11 @@ impl FollowState {
     /// slider's, when its node is released, and the subscription is moved
     /// once if anything changed.
     pub fn release_groups(&mut self, released: &BTreeSet<u64>, applied: &mut Applied) {
-        let mut dropped = Vec::new();
-        let mut index = 0;
-        while index < self.kept_groups.len() {
-            if released.contains(&self.kept_groups[index].0.number()) {
-                dropped.push(self.kept_groups.remove(index).2);
-            } else {
-                index += 1;
-            }
-        }
+        let mut dropped: Vec<_> = self
+            .kept_groups
+            .extract_if(.., |(node, _, _)| released.contains(&node.number()))
+            .map(|(_, _, element)| element)
+            .collect();
         if self
             .followed
             .is_some_and(|(node, _, _)| released.contains(&node.number()))

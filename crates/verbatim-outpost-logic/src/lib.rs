@@ -26,6 +26,43 @@
 //! shell's: a [`Now`] given with each input, and [`Reducer::next_timer`]
 //! for the shell's timed wait.
 
+// Non-test code never panics, overflows or truncates silently: arithmetic
+// is checked or saturating, indexing goes through `get`, and casts through
+// `From` or `TryFrom`. Tests are exempt, since a panic is how a test fails.
+#![deny(
+    clippy::arithmetic_side_effects,
+    clippy::as_conversions,
+    clippy::exit,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic,
+    clippy::panic_in_result_fn,
+    clippy::string_slice,
+    clippy::todo,
+    clippy::unimplemented,
+    clippy::unreachable,
+    clippy::unwrap_in_result,
+    clippy::unwrap_used
+)]
+#![cfg_attr(
+    test,
+    allow(
+        clippy::arithmetic_side_effects,
+        clippy::as_conversions,
+        clippy::exit,
+        clippy::expect_used,
+        clippy::indexing_slicing,
+        clippy::panic,
+        clippy::panic_in_result_fn,
+        clippy::string_slice,
+        clippy::todo,
+        clippy::unimplemented,
+        clippy::unreachable,
+        clippy::unwrap_in_result,
+        clippy::unwrap_used
+    )
+)]
+
 mod entry;
 mod follow;
 mod gap_record;
@@ -39,6 +76,7 @@ mod verdicts;
 mod watch;
 
 use std::collections::{BTreeSet, VecDeque};
+use std::ops::Add;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -655,7 +693,8 @@ impl Reducer {
             && let Some(due_us) = self.facts.follow.watch.due()
         {
             let left = due_us.saturating_sub(now.wall_us);
-            times.push(now.at + Duration::from_micros(left));
+            // A time past the clock's range never comes.
+            times.extend(now.at.checked_add(Duration::from_micros(left)));
         }
         if let Some(due_us) = self
             .intake
@@ -664,7 +703,8 @@ impl Reducer {
             .filter(|_| !self.gap_timer_given && !self.stopping)
         {
             let left = due_us.saturating_sub(now.observed_us);
-            times.push(now.at + Duration::from_micros(left));
+            // A time past the clock's range never comes.
+            times.extend(now.at.checked_add(Duration::from_micros(left)));
         }
         times.into_iter().min()
     }
@@ -1114,7 +1154,7 @@ impl Reducer {
                 timing: EventTiming {
                     awaited_at_us,
                     awaited_calls: open.calls,
-                    calls: open.calls + calls,
+                    calls: open.calls.add(calls),
                     published_at_us: now.wall_us,
                     ..open.timing
                 },
@@ -1357,7 +1397,7 @@ impl Reducer {
     /// Queues the next older entry of `group`, if it has one.
     fn continue_group(&mut self, mut group: GroupTry) {
         if let Some(entry) = group.older.pop_front() {
-            group.rank += 1;
+            group.rank = group.rank.saturating_add(1);
             self.after.push_back((entry, Some(group)));
         }
     }
@@ -1462,7 +1502,7 @@ impl Reducer {
                     self.dispatch_entry(entry, Handling::Menu, batch, None, now, effects);
                 }
                 Planned::Focus(entries) => {
-                    self.focus_groups += 1;
+                    self.focus_groups = self.focus_groups.saturating_add(1);
                     let mut older: VecDeque<Entry> = entries.into();
                     let Some(newest) = older.pop_front() else {
                         continue;

@@ -191,7 +191,7 @@ pub enum Key {
     /// address and the thread that raised it, as NVDA's limiter keys it;
     /// the console host's events, which NVDA hooks apart, by kind and
     /// window alone, with thread 0.
-    Msaa(u8, isize, i32, i32, u32),
+    Msaa(WinKind, isize, i32, i32, u32),
     Uia(u8, i32, Vec<i32>),
     /// A window's foreground change, by the window and the thread that
     /// raised it, as NVDA's limiter keys it.
@@ -520,7 +520,7 @@ impl Intake {
                 if let Some(place) = place.as_mut()
                     && removed < *place
                 {
-                    *place -= 1;
+                    *place = place.saturating_sub(1);
                 }
             }
             if let (Key::Foreground(window, raiser), Item::Fact(_, stamp)) = (key, &entry.item) {
@@ -547,8 +547,8 @@ impl Intake {
             marker,
             entry,
         };
-        match place {
-            Some(place) => self.waiting[place] = waiting,
+        match place.and_then(|place| self.waiting.get_mut(place)) {
+            Some(slot) => *slot = waiting,
             None => self.waiting.push_back(waiting),
         }
         pushed
@@ -587,14 +587,15 @@ impl Intake {
         let ready = self
             .waiting
             .iter()
-            .position(|waiting| {
+            .enumerate()
+            .find(|(_, waiting)| {
                 waiting.marker.is_some() || matches!(waiting.entry.item, Item::Barrier { .. })
             })
-            .map_or(self.waiting.len(), |at| {
-                if self.waiting[at].marker.is_some() {
+            .map_or(self.waiting.len(), |(at, waiting)| {
+                if waiting.marker.is_some() {
                     at
                 } else {
-                    at + 1
+                    at.saturating_add(1)
                 }
             });
         if ready > 0 {
@@ -602,7 +603,7 @@ impl Intake {
             caret_after_update(&mut waiting, marks.focused.as_ref(), marks.terminal);
             let batch = plan(waiting, marks.focused.as_ref());
             self.batch = batch.into();
-            self.batch_number += 1;
+            self.batch_number = self.batch_number.saturating_add(1);
             if let Some(planned) = self.batch.pop_front() {
                 return Some((planned, self.batch_number));
             }
@@ -793,29 +794,32 @@ fn remove_keyed(waiting: &mut VecDeque<Waiting>, key: &Key, at: usize) -> Option
 /// the focus goes unsaid. Other events of the old focus, events of other
 /// elements and the listener's facts keep their places.
 fn old_focus_events_first(waiting: &mut VecDeque<Waiting>, place: usize, old: &[i32]) -> usize {
+    let start = place.saturating_add(1);
     let end = waiting
         .iter()
-        .skip(place + 1)
+        .skip(start)
         .position(|waiting| {
             waiting.marker.is_some() || matches!(waiting.entry.item, Item::Barrier { .. })
         })
-        .map_or(waiting.len(), |at| place + 1 + at);
+        .map_or(waiting.len(), |at| start.saturating_add(at));
     let mut place = place;
-    for at in place + 1..end {
+    for at in start..end {
         // The outpost's own events only: the listener's selections and
         // notifications share their keys, but arrive in the listener's
         // order already.
-        let of_old = matches!(
-            &waiting[at].entry.item,
-            Item::Uia(event)
-                if matches!(event.kind, UiaKind::Property(id) if is_state_property(id))
-                    && event.parts.runtime_id.as_slice() == old
-        );
+        let of_old = waiting.get(at).is_some_and(|waiting| {
+            matches!(
+                &waiting.entry.item,
+                Item::Uia(event)
+                    if matches!(event.kind, UiaKind::Property(id) if is_state_property(id))
+                        && event.parts.runtime_id.as_slice() == old
+            )
+        });
         if of_old && let Some(moved) = waiting.remove(at) {
             // Removing it and inserting it ahead leaves every later index
             // where it was.
             waiting.insert(place, moved);
-            place += 1;
+            place = place.saturating_add(1);
         }
     }
     place
@@ -884,13 +888,13 @@ fn remove_waiting(
         .rev()
         .take_while(|waiting| !is_query(waiting))
         .position(&matches)
-        .map(|back| at - 1 - back)
+        .and_then(|back| at.checked_sub(1)?.checked_sub(back))
         .or_else(|| {
             waiting
                 .range(at..)
                 .take_while(|waiting| !is_query(waiting))
                 .position(&matches)
-                .map(|ahead| at + ahead)
+                .and_then(|ahead| at.checked_add(ahead))
         })?;
     waiting.remove(found).map(|removed| (found, removed))
 }
@@ -917,18 +921,12 @@ fn classify(item: &Item) -> (Option<Key>, Category, isize) {
             // are read, so each kind merges into one per window while they
             // wait.
             WinKind::ConsoleUpdate | WinKind::ConsoleCaret => (
-                Some(Key::Msaa(*kind as u8, *hwnd, 0, 0, 0)),
+                Some(Key::Msaa(*kind, *hwnd, 0, 0, 0)),
                 Category::Other,
                 *hwnd,
             ),
             _ => (
-                Some(Key::Msaa(
-                    *kind as u8,
-                    *hwnd,
-                    *id_object,
-                    *id_child,
-                    *raiser,
-                )),
+                Some(Key::Msaa(*kind, *hwnd, *id_object, *id_child, *raiser)),
                 Category::Other,
                 *hwnd,
             ),
@@ -987,7 +985,7 @@ fn caret_after_update(
     };
     let uia_caret = Key::Uia(2, 0, runtime_id.clone());
     let console_caret =
-        window.map(|window| Key::Msaa(WinKind::ConsoleCaret as u8, window.get(), 0, 0, 0));
+        window.map(|window| Key::Msaa(WinKind::ConsoleCaret, window.get(), 0, 0, 0));
     let Some(at) = waiting.iter().position(|waiting| {
         let key = waiting.key.as_ref();
         key == Some(&uia_caret) || (key.is_some() && key == console_caret.as_ref())
@@ -996,9 +994,9 @@ fn caret_after_update(
     };
     let text_changed = Key::Uia(3, 0, runtime_id.clone());
     let console_update =
-        window.map(|window| Key::Msaa(WinKind::ConsoleUpdate as u8, window.get(), 0, 0, 0));
+        window.map(|window| Key::Msaa(WinKind::ConsoleUpdate, window.get(), 0, 0, 0));
     let mut newest_change = None;
-    for (index, later) in waiting.iter().enumerate().skip(at + 1) {
+    for (index, later) in waiting.iter().enumerate().skip(at.saturating_add(1)) {
         if !matches!(later.entry.item, Item::Msaa { .. } | Item::Uia(_)) {
             break;
         }
@@ -1063,7 +1061,7 @@ fn classify_fact(fact: &DeliveredFact, raiser: u32) -> (Option<Key>, Category, i
             } else {
                 WinKind::Alert
             };
-            let key = Key::Msaa(kind as u8, *hwnd, *id_object, *id_child, raiser);
+            let key = Key::Msaa(kind, *hwnd, *id_object, *id_child, raiser);
             (Some(key), Category::Other, *hwnd)
         }
         DeliveredFact::Foreground { hwnd } => {
@@ -1125,39 +1123,44 @@ fn raiser_of(item: &Item) -> u32 {
 /// (`winEventToNVDAEvent`); a UIA entry from one is dropped by the worker
 /// too, which tests its window as it starts it.
 fn admit(waiting: Vec<Waiting>, focused: Option<&Object>) -> Vec<Waiting> {
-    let mut keep = vec![false; waiting.len()];
-    let mut focus_kept = 0;
+    let mut focus_kept: usize = 0;
     let mut per_thread: BTreeMap<u32, usize> = BTreeMap::new();
-    for (index, item) in waiting.iter().enumerate().rev() {
-        let of_focus =
-            focused.is_some() && item.key.as_ref().and_then(Key::object).as_ref() == focused;
-        keep[index] = match item.category {
-            Category::Exempt | Category::Uncounted => true,
-            Category::Focus => {
-                focus_kept += 1;
-                let among_focus = focus_kept <= FOCUS_EVENTS_PER_BATCH;
-                if matches!(item.key, Some(Key::Foreground(..))) {
-                    // A foreground change is also one of its thread's other
-                    // events, as NVDA's limiter caches a foreground event
-                    // with both its focus events and its other events
-                    // (`orderedWinEventLimiter.py`, `addEvent`), so newer
-                    // focus events do not crowd it out.
+    // Newest first, then turned back to oldest first.
+    let mut keep: Vec<bool> = waiting
+        .iter()
+        .rev()
+        .map(|item| {
+            let of_focus =
+                focused.is_some() && item.key.as_ref().and_then(Key::object).as_ref() == focused;
+            match item.category {
+                Category::Exempt | Category::Uncounted => true,
+                Category::Focus => {
+                    focus_kept = focus_kept.saturating_add(1);
+                    let among_focus = focus_kept <= FOCUS_EVENTS_PER_BATCH;
+                    if matches!(item.key, Some(Key::Foreground(..))) {
+                        // A foreground change is also one of its thread's other
+                        // events, as NVDA's limiter caches a foreground event
+                        // with both its focus events and its other events
+                        // (`orderedWinEventLimiter.py`, `addEvent`), so newer
+                        // focus events do not crowd it out.
+                        let count = per_thread.entry(item.raiser).or_default();
+                        *count = count.saturating_add(1);
+                        among_focus || *count <= EVENTS_PER_THREAD
+                    } else {
+                        among_focus
+                    }
+                }
+                Category::Other => {
+                    // The focused object's events count, and are kept beyond
+                    // the limit, as NVDA's `alwaysAllowedObjects`.
                     let count = per_thread.entry(item.raiser).or_default();
-                    *count += 1;
-                    among_focus || *count <= EVENTS_PER_THREAD
-                } else {
-                    among_focus
+                    *count = count.saturating_add(1);
+                    *count <= EVENTS_PER_THREAD || of_focus
                 }
             }
-            Category::Other => {
-                // The focused object's events count, and are kept beyond
-                // the limit, as NVDA's `alwaysAllowedObjects`.
-                let count = per_thread.entry(item.raiser).or_default();
-                *count += 1;
-                *count <= EVENTS_PER_THREAD || of_focus
-            }
-        };
-    }
+        })
+        .collect();
+    keep.reverse();
 
     waiting
         .into_iter()
@@ -1224,13 +1227,13 @@ fn plan(waiting: Vec<Waiting>, focused: Option<&Object>) -> Vec<Planned> {
                 let group = run
                     .iter()
                     .rev()
-                    .filter_map(|&at| entries[at].take())
+                    .filter_map(|&at| entries.get_mut(at).and_then(Option::take))
                     .collect();
                 planned.push(Planned::Focus(group));
             }
             continue;
         }
-        let Some(entry) = entries[index].take() else {
+        let Some(entry) = entries.get_mut(index).and_then(Option::take) else {
             continue;
         };
         match key {
@@ -1278,9 +1281,9 @@ fn plan(waiting: Vec<Waiting>, focused: Option<&Object>) -> Vec<Planned> {
 fn ends_a_run(key: Option<&Key>) -> bool {
     match key {
         Some(Key::Msaa(kind, ..)) => ![
-            WinKind::ConsoleUpdate as u8,
-            WinKind::ConsoleCaret as u8,
-            WinKind::TextSelectionChange as u8,
+            WinKind::ConsoleUpdate,
+            WinKind::ConsoleCaret,
+            WinKind::TextSelectionChange,
         ]
         .contains(kind),
         Some(Key::MenuPopup(..)) => true,
@@ -1302,7 +1305,7 @@ fn ends_a_run(key: Option<&Key>) -> bool {
 /// behind every listener copy handled ([`super::hold`]), so a listener copy
 /// raised in the same tick as a hook copy is ahead of it.
 fn in_raised_order(kept: &[Waiting], run: &mut [usize]) {
-    let raised = |at: usize| match &kept[at].entry.item {
+    let raised = |at: usize| match &kept.get(at)?.entry.item {
         Item::Fact(_, Some(stamp)) => Some(stamp.time),
         _ => None,
     };
