@@ -10,23 +10,26 @@
 
 ## Method
 
-The caller is a thread of the multithreaded apartment that has called `CoEnableCallCancellation`, holding one client object and the elements it reads, fetched before each trial; the main thread cancels with `CoCancelCall(caller's thread id, 0)`, as NVDA's watchdog does. Each trial uses a new provider program with one UIA window, connection timeout 2,000 ms, transaction timeout 30,000 ms.
+The caller is a thread of the multithreaded apartment that has called `CoEnableCallCancellation`, holding one client object and the elements it reads, fetched before each trial; the main thread cancels with `CoCancelCall(caller's thread id, 0)`, as NVDA's watchdog does. Each trial uses a new provider program with one UIA window, connection timeout 2,000 ms (500 ms for `connection`), transaction timeout 30,000 ms.
 
-Kinds, each a case: `property` (`CurrentName` of node 1), `text` (`GetText(-1)` of node 3's document range), `findall` (`FindAll` of the window's descendants), `remote` (a remote operation reading node 3's name, through `verbatim-uia-rops`) and `connection` (`ElementFromHandle` of the new provider's window). For each kind, each of: the call's first provider method held (`hold *`, or for `connection` `hold GetObject` inside the window's `WM_GETOBJECT`), cancelled once at once or every 50 ms, released at 2,500 ms; or the UI thread busy for 2,500 ms, cancelled 300 ms in, once or every 50 ms. The 2,500 ms hold and the 50 ms pace are deliberate, the original's pace. `property` then holds the read once more on a caller that never enabled cancellation, cancelled once.
+Kinds, each a case: `property` (`CurrentName` of node 1), `text` (`GetText(-1)` of node 3's document range), `findall` (`FindAll` of the window's descendants), `remote` (a remote operation reading node 3's name, through `verbatim-uia-rops`) and `connection` (`ElementFromHandle` of the new provider's window). For each kind, each of: the call's first provider method held (`hold *`, or for `connection` `hold GetObject` inside the window's `WM_GETOBJECT`), cancelled once at once or every 50 ms, released at 500 ms; or the UI thread busy for 500 ms, cancelled once the call has reached it (the busy thread logs the call's message arriving), once or every 50 ms. `connection` holds or stalls 800 ms against its 500 ms connection timeout, so the timeout comes first. The hold and the 50 ms pace are deliberate, the 50 ms the original's pace. `property` then makes the read once more, its UI thread stalled, on a caller that never enabled cancellation, cancelled once.
 
-- `abandon`: node 1's name read held; later reads of node 2 at 500, 1,000 and 1,500 ms on new threads (`new`), or after the stuck read on its own thread (`same`); released at 2,000 ms.
+- `abandon`: node 1's name read held for 1,000 ms; later reads of node 2 at 250, 500 and 750 ms on new threads (`new`), or on the stuck read's own thread once it has failed on a 500 ms transaction timeout, while the provider is still stuck (`same`); released at 1,000 ms.
 
-Judged: every cancel's answer (a relation over all the kind's trials), the call's outcome (deterministic), that it returned only at the release or the stall's end (a relation), and for `connection` that it failed at the connection timeout before the release (a band).
+Judged for each kind and condition on its own: every cancel's answer (a relation), the call's outcome (deterministic), that it returned only at the release or the stall's end (a relation), and for `connection` that it failed at the connection timeout before the release (a band).
 
 ## Client settings
 
-Neither connection recovery nor event coalescing changes these outcomes (checked on 2026-11-05 by running every case by default and once each with `--recovery`, `--coalescing` and both).
+Event coalescing changes no outcome, and connection recovery changes one, `abandon`'s `same` (checked on 2026-11-05 by running every case by default and once each with `--recovery`, `--coalescing` and both; `abandon` again on 2026-11-06 after its stuck read was given a timeout shorter than the hold). The program judges each setting against its own record.
+
+- Connection recovery off, the default: the later reads on the stuck read's thread wait for the release and then succeed. `target\debug\nothing-cancels-a-uia-call.exe --case abandon`
+- Connection recovery on, as Verbatim's client has it: once the stuck read has timed out, each later read made on its thread into the same application fails at once, in 0.1 ms, with `UIA_E_TIMEOUT`, before the release. `target\debug\nothing-cancels-a-uia-call.exe --recovery --case abandon`
 
 ## Recorded results
 
 | Figure | Date | Machine | Source | Threshold |
 |---|---|---|---|---|
-| Every cancel `RPC_E_NO_CONTEXT`, 5,614 of 5,614 over 203 trials; held calls returned 0.0 to 2.9 ms after the release; new connections failed `UIA_E_TIMEOUT` before the release | 2026-10-30 | Build 26200 | The `CoCancelCall` experiment of 2026-10-30, run at 5797c075; its outputs are in `recorded/` | Deterministic; band 2,000 to 2,350 ms |
+| Every cancel `RPC_E_NO_CONTEXT`, 5,614 of 5,614 over 203 trials; held calls returned 0.0 to 2.9 ms after the release; new connections failed `UIA_E_TIMEOUT` before the release | 2026-10-30 | Build 26200 | The `CoCancelCall` experiment of 2026-10-30, run at 5797c075; its outputs are in `recorded/` | Deterministic; band 1,984 to 2,350 ms at a 2,000 ms timeout; 484 to 625 ms at the 500 ms the case now sets |
 | Abandoning: every later call waited for the release; the first answer after it within 2 ms either way | 2026-11-02 | Build 26200.9711 | `experiments/parallel-uia-calls/`, "Abandoning a stuck call" | A relation; the 2 ms for trends |
 | First uia-facts run, `property`, `text`, `findall`, `remote`: every cancel `RPC_E_NO_CONTEXT` (294 cancels in 12 trials each), every call `ok`, each returning only at the release or the stall's end | 2026-11-05 | Build 26200.9711, `UIAutomationCore.dll` 7.2.26100.9549, AMD Ryzen 7 5700G | 1682f8cb | Pass |
 | First uia-facts run, `connection`: every cancel `RPC_E_NO_CONTEXT`; `UIA_E_TIMEOUT` 12 of 12, each before the release; 2,008.5 ms (1,999.8 to 2,022.2) | 2026-11-05 | As above | As above | The band inconclusive; the rest pass |

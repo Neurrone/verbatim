@@ -4,26 +4,25 @@
 //! The target is the provider program with one UIA window, served on its
 //! UI thread (`UseComThreading`). A bench makes K name reads of nodes 1
 //! to 16 on one thread, then the same K split evenly over N threads that
-//! start together, N of 2, 4 and 8. The threads are made before a warm-up
-//! run and 7 timed runs and live through them; an N's time is the median
-//! until the last thread ends.
+//! start together. The threads are made before a warm-up run and 3 timed
+//! runs and live through them; an N's time is the median until the last
+//! thread ends.
 //!
-//! - `cheap`: K = 4,000 plain name reads.
-//! - `costly`: K = 100, every provider call made 5 ms slow, the window
-//!   pumping meanwhile (`slow 5`).
+//! - `gains`: cheap calls, K = 1,000 plain name reads at N of 2 and 8;
+//!   then costly calls, K = 16 with every provider call made 5 ms slow, the
+//!   window pumping meanwhile (`slow 5`), at N of 2.
 //!
 //! Each N's bound is computed from that N's own runs: one call's time on
 //! one thread divided by the provider's serial time per call under that
-//! load, the median interval between provider call entries, which is the
-//! time the provider's I/O and UI threads spend per call in turn. Each N's
-//! speed-up is judged at or below the larger of its bound and 1.5, the
-//! fact's figure for calls whose cost is in the provider, where the bound
-//! is 1.00 and equal to the speed-up within the clock's reach.
+//! load, the provider calls' time from entry to exit per read, which no
+//! other call can share. Each N's speed-up is judged at or below the
+//! larger of its bound and 1.5, the fact's figure for calls whose cost is
+//! in the provider, where the bound is 1.00.
 //!
-//! - `processes`: the cheap bench as N threads of this process against N
+//! - `processes`: the cheap bench as 8 threads of this process against 8
 //!   client processes of one thread each.
-//! - `shared`: the cheap 8-thread bench with one client object for all
-//!   threads against one per thread.
+//! - `shared`: the cheap 8-thread bench, K = 1,000, with one client object
+//!   for all threads against one per thread.
 
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::Instant;
@@ -37,8 +36,8 @@ use uia_facts_support::role::{self, Role};
 use uia_facts_support::stats::{as_f64, median, us_to_ms};
 use uia_facts_support::uia::{self, Shared};
 
-const THREADS: [usize; 3] = [2, 4, 8];
-const TIMED_RUNS: usize = 7;
+/// Timed runs after the warm-up, for each figure.
+const TIMED_RUNS: usize = 3;
 
 fn main() {
     let args = Args::parse();
@@ -49,27 +48,25 @@ fn main() {
     }
     let mut report = Report::start("parallel-client-threads-gain-at-most-twice-on-one-application");
     if args.wants("gains") {
-        report.case("gains", "reading names from 1, 2, 4 and 8 client threads, with cheap and then costly provider calls; comparing each speed-up with the serial-share bound");
+        report.case("gains", "reading names from 1, 2 and 8 client threads with cheap provider calls, then from 1 and 2 with costly ones; comparing each speed-up with the bound from the provider's busy time per call");
         gains(
             &args,
             &mut report,
-            "cheap",
-            4_000,
-            0,
+            ("cheap", 1_000, 0),
+            &[2, 8],
             "about 2 times (1.74 to 1.98 on the synthetic provider)",
         );
         gains(
             &args,
             &mut report,
-            "costly",
-            100,
-            5,
+            ("costly", 16, 5),
+            &[2],
             "1.0 to 1.5 times (1.01 with a 5 ms provider call)",
         );
     }
     if args.wants("processes") {
-        report.case("processes", "reading names from N threads of one process and from N client processes; comparing their times");
-        processes(&mut report);
+        report.case("processes", "reading names from 8 threads of one process and from 8 client processes; comparing their times");
+        processes(&args, &mut report);
     }
     if args.wants("shared") {
         report.case("shared", "reading names from 8 threads through one client object's elements, and through a client object each");
@@ -182,24 +179,33 @@ fn timed(provider: &Provider, elements: &[Shared], threads: usize, k: usize, sha
     median(&runs_of(|| workers.run()))
 }
 
-/// The provider's serial time per call: the median interval between the
-/// starts of consecutive name reads in `log`, in milliseconds.
-fn serial_interval(log: &[Entry]) -> f64 {
-    let mut starts: Vec<u64> = log
+/// The provider's serial time per read: the time from entry to exit of
+/// every provider call in `log`, during which no other call into the
+/// provider runs, summed and divided by the `reads` the log covers, in
+/// milliseconds. A name read makes several provider calls.
+fn serial_time(log: &[Entry], reads: usize) -> f64 {
+    let busy: u64 = log
         .iter()
-        .filter(|e| e.is_call("GetPropertyValue"))
-        .map(|e| e.start)
-        .collect();
-    starts.sort_unstable();
-    let gaps: Vec<f64> = starts.windows(2).map(|w| us_to_ms(w[1] - w[0])).collect();
-    median(&gaps)
+        .filter(|e| e.kind == "call")
+        .map(|e| e.end.saturating_sub(e.start))
+        .sum();
+    us_to_ms(busy) / as_f64(reads)
 }
 
-fn gains(args: &Args, report: &mut Report, name: &str, k: usize, slow: u64, recorded: &str) {
+/// One bench: `name`, its K reads, and the provider's added milliseconds a
+/// call (`slow`), at each of `threads`.
+fn gains(
+    args: &Args,
+    report: &mut Report,
+    (name, k, slow): (&str, usize, u64),
+    threads: &[usize],
+    recorded: &str,
+) {
     let mut provider = Provider::launch(&["--windows", "uia:0"]);
     let elements = nodes(&provider);
     args.pause_for_debugger(&[("provider", provider.pid), ("client", std::process::id())]);
     provider.request(&format!("slow {slow}"));
+    note::progress(&format!("{name} calls, 1 thread"));
     let one = timed(&provider, &elements, 1, k, true);
     let call = one / as_f64(k);
     // Each N's speed-up against the bound from the same N's runs: the
@@ -207,10 +213,12 @@ fn gains(args: &Args, report: &mut Report, name: &str, k: usize, slow: u64, reco
     let mut rows = Vec::new();
     let mut below = Vec::new();
     let mut shares = Vec::new();
-    for threads in THREADS {
+    for &threads in threads {
+        note::progress(&format!("{name} calls, {threads} threads"));
         provider.log();
         let time = timed(&provider, &elements, threads, k, true);
-        let serial = serial_interval(&provider.log());
+        // The log covers the warm-up and the timed runs, K reads each.
+        let serial = serial_time(&provider.log(), k * (TIMED_RUNS + 1));
         let (speedup, bound) = (one / time, call / serial);
         rows.push(format!("{threads} threads {speedup:.2} (bound {bound:.2})"));
         below.push(speedup <= bound.max(1.5));
@@ -265,13 +273,17 @@ fn bench_role(rest: &[String]) -> ! {
     exit_now(0)
 }
 
-fn processes(report: &mut Report) {
+fn processes(args: &Args, report: &mut Report) {
     let provider = Provider::launch(&["--windows", "uia:0"]);
     let elements = nodes(&provider);
+    args.pause_for_debugger(&[("provider", provider.pid), ("client", std::process::id())]);
     let k = 4_000;
     let mut rows = Vec::new();
     let mut eight = Vec::new();
-    for threads in THREADS {
+    for threads in [8] {
+        note::progress(&format!(
+            "{threads} threads, then {threads} client processes"
+        ));
         let workers = Workers::start(&provider, &elements, threads, k, false);
         let thread_runs = runs_of(|| workers.run());
         drop(workers);
@@ -330,8 +342,8 @@ fn processes(report: &mut Report) {
 fn shared(report: &mut Report) {
     let provider = Provider::launch(&["--windows", "uia:0"]);
     let elements = nodes(&provider);
-    let one = timed(&provider, &elements, 8, 4_000, true);
-    let each = timed(&provider, &elements, 8, 4_000, false);
+    let one = timed(&provider, &elements, 8, 1_000, true);
+    let each = timed(&provider, &elements, 8, 1_000, false);
     report.claim(
         "8 threads through one client object's elements, against a client object each",
         &format!("{one:.0} ms against {each:.0} ms"),

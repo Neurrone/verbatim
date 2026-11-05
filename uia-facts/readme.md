@@ -40,9 +40,9 @@ Each program prints a header (the date, the Windows build with its revision, `UI
 
 - A deterministic outcome (an HRESULT, a count of provider calls, delivered or not, an order) passes when every run equals the record, differs when the runs agree on another value, and is inconclusive when they disagree.
 - A relation (A answers while B waits, B waits behind A, a speed-up below a bound computed in the same run) passes when it holds in every run, differs when it holds in none, and is inconclusive otherwise. The durations around it are printed for trends, not judged, since they depend on the machine.
-- A band, only where the figure is a timeout UIA sets: from the timeout T to 1.15 times T plus 50 ms for one wait, and the sum of those for waits in turn. It passes when every trial lies inside, differs when every one lies outside, and is inconclusive otherwise.
+- A band, only where the figure is a timeout UIA sets: from the timeout T less one system tick (15.6 ms, since a wait can end up to a tick early: a 2,000 ms connection timeout once failed after 1,999.3 ms) to 1.15 times T plus 50 ms for one wait, and the sum of those for waits in turn. It passes when every trial lies inside, differs when every one lies outside, and is inconclusive otherwise.
 - A rate (k of n against a recorded k of n) runs its recorded n, and passes when the recorded rate lies inside the observed 95 percent Wilson interval, differs when the two intervals do not overlap, and is inconclusive otherwise; with no occurrence it differs only when the recorded rate would almost surely have shown one.
-- An open question prints its answer as new; its folder records the first run's answer.
+- An open question prints its answer as new until its folder records an answer; from then on later runs judge against that record by the rules above.
 - A missing precondition, such as a locked desktop, makes its claims inconclusive with the reason; nothing takes another path.
 
 ## The facts

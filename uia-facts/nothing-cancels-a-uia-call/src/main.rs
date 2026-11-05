@@ -15,22 +15,23 @@
 //! - `connection`: `ElementFromHandle` of a new provider's window, held
 //!   inside its `WM_GETOBJECT`.
 //!
-//! Cases of each kind: `hold-once` and `hold-repeat` (the
-//! call's first provider method held; cancelled once at once, or every
-//! 50 ms; released after 2,500 ms), `stall-once` and `stall-repeat` (the
-//! UI thread busy for 2,500 ms; cancelled 300 ms in, once or every 50 ms).
-//! `--case <kind>` runs one kind.
+//! Four conditions of each kind, each judged on its own: the call's first
+//! provider method held, cancelled once at once or every 50 ms, released
+//! after 500 ms; or the UI thread busy for 500 ms, cancelled once the call
+//! has reached it (the provider's `queued` entry), once or every 50 ms.
+//! `connection` holds or stalls 800 ms against a 500 ms connection
+//! timeout, so the timeout comes first. `--case <kind>` runs one kind;
+//! `property` then makes the stalled read once more on a caller that never
+//! enabled cancellation, cancelled once.
 //!
-//! Also: `disabled`, the property read held with cancellation never enabled
-//! on the caller, cancelled once; and `abandon`, a name read held
-//! for 2,000 ms while later reads run on new threads (`new`) or on the
-//! stuck read's own thread (`same`).
+//! Also `abandon`: a name read held for 1,000 ms while later reads run on
+//! new threads (`new`), or on the stuck read's own thread once it has
+//! failed on a 500 ms transaction timeout (`same`).
 
 use std::sync::mpsc;
 use std::time::Duration;
 
 use uia_facts_support::args::{Args, trials};
-use uia_facts_support::note;
 use uia_facts_support::provider::Provider;
 use uia_facts_support::report::{
     Report, Verdict, band, band_text, deterministic, in_band, relation, runs,
@@ -44,9 +45,19 @@ use windows::Win32::UI::Accessibility::{
     IUIAutomationTextPattern, TreeScope_Descendants, UIA_TextPatternId,
 };
 
-/// How long a held call is held, or the UI thread kept busy: longer than
-/// the connection timeout, so the new connection's timeout comes first.
-const HOLD: Duration = Duration::from_millis(2_500);
+/// How long a call of `kind` is held, or its UI thread kept busy, and the
+/// connection timeout its caller sets: for `connection` the hold is longer
+/// than the timeout, so the timeout comes first.
+fn hold_and_timeout(kind: Kind) -> (Duration, u32) {
+    if kind == Kind::Connection {
+        (Duration::from_millis(800), 500)
+    } else {
+        (Duration::from_millis(500), 2_000)
+    }
+}
+
+/// How long `abandon` holds the stuck read.
+const ABANDON_HOLD: Duration = Duration::from_millis(1_000);
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Kind {
@@ -119,7 +130,7 @@ fn main() {
         }
     }
     if args.wants("abandon") {
-        report.case("abandon", "holding node 1's name read; making later reads on new threads, or after the stuck read on its own thread; releasing at 2 s");
+        report.case("abandon", "holding node 1's name read for 1 s; making later reads on new threads, or on the stuck read's own thread once it has failed on a 500 ms timeout; releasing at 1 s");
         abandon(&mut report);
     }
     report.finish();
@@ -143,12 +154,18 @@ fn disabled(args: &Args, report: &mut Report) {
 }
 
 fn judge(args: &Args, report: &mut Report, kind: Kind) {
-    let mut answers = Vec::new();
-    let mut count = 0;
-    let mut after_release = Vec::new();
-    let mut outcomes = Vec::new();
-    let mut connection_times = Vec::new();
+    let name = kind.name();
     for (stall, repeat) in [(false, false), (false, true), (true, false), (true, true)] {
+        let condition = format!(
+            "{name}, {}, cancelled {}",
+            if stall { "stalled" } else { "held" },
+            if repeat { "every 50 ms" } else { "once" }
+        );
+        let mut answers = Vec::new();
+        let mut count = 0;
+        let mut after_release = Vec::new();
+        let mut outcomes = Vec::new();
+        let mut times = Vec::new();
         for _ in 0..trials() {
             let trial = trial(args, kind, stall, repeat, true);
             count += trial.answers.len();
@@ -156,62 +173,67 @@ fn judge(args: &Args, report: &mut Report, kind: Kind) {
                 trial.answers.iter().all(|a| a == "RPC_E_NO_CONTEXT") && !trial.answers.is_empty(),
             );
             outcomes.push(trial.call.outcome.clone());
+            times.push(trial.call.ms());
             if kind == Kind::Connection {
-                connection_times.push(trial.call.ms());
                 after_release.push(trial.call.end < trial.released);
             } else {
                 after_release.push(trial.call.end >= trial.released);
             }
         }
-    }
-    let name = kind.name();
-    report.claim(
-        &format!(
-            "{name}: every cancel, once or every 50 ms, held or stalled, answers RPC_E_NO_CONTEXT"
-        ),
-        &format!("{} ({count} cancels in 12 trials)", runs(&answers)),
-        "5,614 of 5,614 over 203 trials",
-        relation(&answers),
-    );
-    if kind == Kind::Connection {
         report.claim(
-            "connection: the call fails with UIA_E_TIMEOUT",
-            &runs(&outcomes),
-            "UIA_E_TIMEOUT",
-            deterministic(&outcomes, &"UIA_E_TIMEOUT".to_owned()),
+            &format!("{condition}: every cancel answers RPC_E_NO_CONTEXT"),
+            &format!(
+                "{} ({count} cancels in {} trials)",
+                runs(&answers),
+                answers.len()
+            ),
+            "5,614 of 5,614 over 203 trials",
+            relation(&answers),
         );
-        report.claim(
-            "connection: it fails before the release or the stall's end",
-            &runs(&after_release),
-            "true",
-            relation(&after_release),
-        );
-        let window = band(&[2_000.0]);
-        report.claim(
-            "connection: it fails at the connection timeout, not at a cancel",
-            &summary_ms(&connection_times),
-            &format!("2,000.5 to 2,015.1 ms, {}", band_text(window)),
-            in_band(&connection_times, window),
-        );
-    } else {
-        report.claim(
-            &format!("{name}: the call succeeds"),
-            &runs(&outcomes),
-            "ok",
-            deterministic(&outcomes, &"ok".to_owned()),
-        );
-        report.claim(
-            &format!("{name}: it returns only at the release or the stall's end"),
-            &runs(&after_release),
-            "true",
-            relation(&after_release),
-        );
+        if kind == Kind::Connection {
+            report.claim(
+                &format!("{condition}: the call fails with UIA_E_TIMEOUT"),
+                &runs(&outcomes),
+                "UIA_E_TIMEOUT",
+                deterministic(&outcomes, &"UIA_E_TIMEOUT".to_owned()),
+            );
+            report.claim(
+                &format!("{condition}: it fails before the release or the stall's end"),
+                &runs(&after_release),
+                "true",
+                relation(&after_release),
+            );
+            let window = band(&[f64::from(hold_and_timeout(kind).1)]);
+            report.claim(
+                &format!("{condition}: it fails at the connection timeout, not at a cancel"),
+                &summary_ms(&times),
+                &format!(
+                    "2,000.5 to 2,015.1 ms at a 2,000 ms timeout, {}",
+                    band_text(window)
+                ),
+                in_band(&times, window),
+            );
+        } else {
+            report.claim(
+                &format!("{condition}: the call succeeds"),
+                &runs(&outcomes),
+                "ok",
+                deterministic(&outcomes, &"ok".to_owned()),
+            );
+            report.claim(
+                &format!("{condition}: it returns only at the release or the stall's end"),
+                &runs(&after_release),
+                "true",
+                relation(&after_release),
+            );
+        }
     }
 }
 
 /// One trial of `kind`: the call made on a caller thread, cancelled from
 /// this thread.
 fn trial(args: &Args, kind: Kind, stall: bool, repeat: bool, enable: bool) -> Trial {
+    let (hold, connection_ms) = hold_and_timeout(kind);
     let mut provider = Provider::launch(&["--windows", "uia:0"]);
     let hwnd = provider.hwnd(0);
     let (ready, is_ready) = mpsc::channel();
@@ -223,7 +245,7 @@ fn trial(args: &Args, kind: Kind, stall: bool, repeat: bool, enable: bool) -> Tr
             unsafe { CoEnableCallCancellation(None) }.expect("cancellation is enabled");
         }
         let client = uia::client();
-        uia::set_timeouts(&client, 2_000, 30_000);
+        uia::set_timeouts(&client, connection_ms, 30_000);
         let (root, first, notes, range) = if kind == Kind::Connection {
             (None, None, None, None)
         } else {
@@ -265,9 +287,10 @@ fn trial(args: &Args, kind: Kind, stall: bool, repeat: bool, enable: bool) -> Tr
     });
     let thread = is_ready.recv().expect("the caller is ready");
     args.pause_for_debugger(&[("provider", provider.pid), ("client", std::process::id())]);
+    provider.log();
     let busy_from = now_us();
     if stall {
-        provider.request(&format!("busy 0 {}", HOLD.as_millis()));
+        provider.request(&format!("busy 0 {}", hold.as_millis()));
     } else if kind == Kind::Connection {
         provider.request("hold GetObject");
     } else {
@@ -276,33 +299,27 @@ fn trial(args: &Args, kind: Kind, stall: bool, repeat: bool, enable: bool) -> Tr
     let start = now_us();
     go.send(()).expect("the caller waits");
     if stall {
-        uia::pause(
-            Duration::from_millis(300),
-            "for the call to reach the provider",
-        );
+        // The busy thread logs the first message that reaches it: the
+        // call has started and waits on it.
+        let (_, reached) = provider.log_until(Duration::from_secs(30), |e| e.kind == "queued");
+        assert!(reached, "the call reaches the busy thread");
     } else {
         provider
             .held(Duration::from_secs(30))
             .expect("the call reaches the provider");
     }
     let mut answers = vec![cancel(thread)];
-    let release_at = start + u64::try_from(HOLD.as_micros()).expect("a short hold");
-    if repeat {
-        note::waiting(&format!(
-            "{:.1} s, cancelling the held call every 50 ms until its release",
-            HOLD.as_secs_f64()
-        ));
-    }
+    let release_at = start + u64::try_from(hold.as_micros()).expect("a short hold");
     while repeat && now_us() < release_at {
         uia::pause(Duration::from_millis(50), "before looking again");
         answers.push(cancel(thread));
     }
     uia::pause(
         Duration::from_micros(release_at.saturating_sub(now_us())),
-        "the call held until its release, 2.5 s after it began",
+        "the call held until its release",
     );
     let released = if stall {
-        busy_from + u64::try_from(HOLD.as_micros()).expect("a short hold")
+        busy_from + u64::try_from(hold.as_micros()).expect("a short hold")
     } else {
         let at = now_us();
         provider.request("release");
@@ -329,7 +346,11 @@ fn abandon(report: &mut Report) {
         for _ in 0..trials() {
             let mut provider = Provider::launch(&["--windows", "uia:0"]);
             let client = uia::client();
-            uia::set_timeouts(&client, 2_000, 30_000);
+            // In `same`, the stuck read fails on a transaction timeout
+            // shorter than the hold, so its thread is free while the
+            // provider is still stuck; in `new`, it waits for the release.
+            let transaction = if mode == "same" { 500 } else { 30_000 };
+            uia::set_timeouts(&client, 2_000, transaction);
             let root = uia::element(&client, provider.hwnd(0)).expect("the window's element");
             let first = uia::share(&uia::node(&client, &root, 1).expect("node 1"));
             let second = uia::share(&uia::node(&client, &root, 2).expect("node 2"));
@@ -339,17 +360,18 @@ fn abandon(report: &mut Report) {
                 provider
                     .held(Duration::from_secs(30))
                     .expect("the stuck read is held");
-                // Later reads at 500, 1,000 and 1,500 ms, each on a new
-                // thread, and the release at 2,000 ms.
+                // Later reads at 250, 500 and 750 ms, each on a new thread,
+                // and the release at 1,000 ms.
+                let step = ABANDON_HOLD / 4;
                 let mut later = Vec::new();
                 for _ in 0..3 {
-                    uia::pause(Duration::from_millis(500), "before the next later read");
+                    uia::pause(step, "before the next later read");
                     let second = second.clone();
                     later.push(uia::spawn(move || {
                         Timed::of(|| uia::name(&uia::resolve(&second)))
                     }));
                 }
-                uia::pause(Duration::from_millis(500), "before the release");
+                uia::pause(step, "before the release");
                 let at = now_us();
                 provider.request("release");
                 let _ = stuck.join();
@@ -369,35 +391,49 @@ fn abandon(report: &mut Report) {
                     .held(Duration::from_secs(30))
                     .expect("the stuck read is held");
                 uia::pause(
-                    Duration::from_millis(2_000),
-                    "with the later reads queued, before the release",
+                    ABANDON_HOLD,
+                    "the stuck read failed, the later reads made on its thread, before the release",
                 );
                 let at = now_us();
                 provider.request("release");
                 let (_, later) = thread.join().expect("the reads return");
                 later.into_iter().map(|t| (t, at)).collect()
             };
-            answered_after.push(
-                later
-                    .iter()
-                    .all(|(t, at)| t.end >= *at && t.outcome == "ok"),
-            );
+            // With connection recovery on, a read made on the thread whose
+            // read just timed out fails at once instead of waiting.
+            let fail_at_once = mode == "same" && uia::settings().recovery;
+            answered_after.push(later.iter().all(|(t, at)| {
+                if fail_at_once {
+                    t.outcome == "UIA_E_TIMEOUT" && t.end < *at
+                } else {
+                    t.end >= *at && t.outcome == "ok"
+                }
+            }));
             let first_answer = later.iter().map(|(t, _)| t.end).min().unwrap_or(0);
             first_after.push(us_to_ms(first_answer.saturating_sub(later[0].1)));
         }
-        report.claim(
-            &format!(
-                "abandon ({mode} thread): every later read succeeds, and only after the release"
-            ),
-            &runs(&answered_after),
-            "true",
-            relation(&answered_after),
-        );
-        report.claim(
-            &format!("abandon ({mode} thread): the first later answer after the release"),
-            &summary_ms(&first_after),
-            "within 2 ms",
-            Verdict::Trend,
-        );
+        if mode == "same" && uia::settings().recovery {
+            report.claim(
+                "abandon (same thread), with connection recovery on: every later read fails at once with UIA_E_TIMEOUT, before the release",
+                &runs(&answered_after),
+                "true (each in 0.1 ms)",
+                relation(&answered_after),
+            );
+        } else {
+            report.claim(
+                &format!(
+                    "abandon ({mode} thread): every later read succeeds, and only after the release"
+                ),
+                &runs(&answered_after),
+                "true",
+                relation(&answered_after),
+            );
+            report.claim(
+                &format!("abandon ({mode} thread): the first later answer after the release"),
+                &summary_ms(&first_after),
+                "within 2 ms",
+                Verdict::Trend,
+            );
+        }
     }
 }

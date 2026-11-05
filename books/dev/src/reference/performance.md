@@ -1831,8 +1831,8 @@ with remote operations on or off.
   the median (1.14 at the 95th percentile, 30 runs). Those are the warm
   costs, with UI Automation's copy of the element's runtime id fresh. The
   outpost moves the registration to elements it keeps
-  (`crates/verbatim-outpost/src/outpost/shell.rs`), and one held through a
-  pause of a second is cold: registering on it costs 9 provider
+  (`crates/verbatim-outpost/src/outpost/shell.rs`), and one held past UI
+  Automation's periodic sweep is cold: registering on it costs 9 provider
   calls instead of 3, and moving the registration to the element it
   already follows costs 6 instead of 0 (`books/dev/src/reference/uia-bugs.md`, "UI
   Automation's copy of an element's runtime id lapses").

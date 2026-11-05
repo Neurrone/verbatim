@@ -26,7 +26,7 @@ use std::time::{Duration, Instant};
 use uia_facts_support::args::{Args, trials};
 use uia_facts_support::note;
 use uia_facts_support::provider::Provider;
-use uia_facts_support::report::{Report, Verdict, deterministic, relation, runs};
+use uia_facts_support::report::{Report, TICK_MS, Verdict, deterministic, relation, runs};
 use uia_facts_support::role::{self, Role};
 use uia_facts_support::stats::{median, summary_ms};
 use uia_facts_support::uia::{self, Timed};
@@ -131,8 +131,8 @@ fn stuck(args: &Args, report: &mut Report) {
         let uia_probe = uia::spawn(move || Timed::of(|| uia::name(&uia::resolve(&far))));
         let reads: Vec<Timed> = objects.iter().map(|o| Timed::of(|| acc_name(o))).collect();
         uia::pause(
-            Duration::from_secs(1),
-            "with the UIA read held, before the MSAA reads",
+            Duration::from_millis(200),
+            "with the UIA read held, so the UIA probe is still waiting at the release",
         );
         let released = now_us();
         provider.request("release");
@@ -193,27 +193,33 @@ fn messages(report: &mut Report) {
     );
 }
 
+/// How long `busy-sweep` keeps the UI thread busy.
+const BUSY_MS: u64 = 20_000;
+
 fn busy_sweep(report: &mut Report) {
+    let mut waited = Vec::new();
     let mut rows = Vec::new();
-    for seconds in [1_u64, 5, 15, 60] {
+    for _ in 0..trials() {
         let mut provider = Provider::launch(&["--windows", "plain:0"]);
         let object = accessible(provider.hwnd(0));
-        provider.request(&format!("busy 0 {}", seconds * 1_000));
+        provider.request(&format!("busy 0 {BUSY_MS}"));
         note::waiting(&format!(
-            "{seconds} s, the UI thread busy under the accName read"
+            "{} s, the UI thread busy under the accName read",
+            BUSY_MS / 1_000
         ));
         let read = Timed::of(|| acc_name(&object));
-        rows.push(format!(
-            "busy {seconds} s: {} after {:.0} ms",
-            read.outcome,
-            read.ms()
-        ));
+        // A read that waited the whole busy time, to within a tick, and
+        // then answered: no bound cut it short.
+        #[expect(clippy::cast_precision_loss, reason = "a short busy time")]
+        let busy = BUSY_MS as f64;
+        waited.push(read.outcome == "ok" && read.ms() >= busy - TICK_MS);
+        rows.push(format!("{} after {:.0} ms", read.outcome, read.ms()));
     }
     report.claim(
-        "oleacc's accName into a UI thread busy for 1, 5, 15 and 60 s",
-        &rows.join("; "),
-        "",
-        Verdict::New,
+        "oleacc's accName into a UI thread busy for 20 s waits the whole busy time, then answers",
+        &format!("{} ({})", runs(&waited), rows.join("; ")),
+        "true (answered after 1,001, 5,001, 15,000 and 60,000 ms at 1, 5, 15 and 60 s)",
+        relation(&waited),
     );
 }
 
@@ -312,6 +318,7 @@ fn send_role(rest: &[String]) -> ! {
 fn processes(report: &mut Report) {
     let layout: Vec<String> = (0..8).map(|t| format!("plain:{t}")).collect();
     let mut rows = Vec::new();
+    let mut no_faster = Vec::new();
     for _ in 0..trials() {
         let provider = Provider::launch(&["--windows", &layout.join(",")]);
         let hwnds: Vec<isize> = (0..8).map(|w| provider.hwnd(w)).collect();
@@ -336,14 +343,15 @@ fn processes(report: &mut Report) {
             let _ = half.expect_line();
         }
         let two = uia::ms(start.elapsed());
+        no_faster.push(two >= threads);
         rows.push(format!(
             "8 threads of one process {threads:.0} ms, of two processes {two:.0} ms"
         ));
     }
     report.claim(
-        "20,000 messages by 8 threads, in one process against two",
-        &rows.join("; "),
-        "",
-        Verdict::New,
+        "20,000 messages by 8 threads take two processes no less time than one",
+        &format!("{} ({})", runs(&no_faster), rows.join("; ")),
+        "true (one process 802 to 810 ms, two 810 to 822 ms)",
+        relation(&no_faster),
     );
 }

@@ -18,9 +18,7 @@ use std::time::Duration;
 use uia_facts_support::args::{Args, trials};
 use uia_facts_support::note;
 use uia_facts_support::provider::Provider;
-use uia_facts_support::report::{
-    Report, Verdict, band, band_text, deterministic, in_band, relation, runs,
-};
+use uia_facts_support::report::{Report, band, band_text, deterministic, in_band, relation, runs};
 use uia_facts_support::stats::summary_ms;
 use uia_facts_support::uia::{self, UIA_E_TIMEOUT};
 use windows::Win32::UI::Accessibility::UIA_ProviderDescriptionPropertyId;
@@ -198,13 +196,13 @@ fn description(args: &Args, report: &mut Report) {
     report.claim(
         "the same lookup, its own window's UI thread busy with nothing queued",
         &format!("{busy:?}"),
-        "",
-        Verdict::New,
+        "timeout",
+        deterministic(&busy, &"timeout".to_owned()),
     );
     report.claim(
         "the same lookup, a name read held in the provider, the other window",
         &format!("{held:?}"),
-        "",
-        Verdict::New,
+        "timeout",
+        deterministic(&held, &"timeout".to_owned()),
     );
 }

@@ -37,6 +37,12 @@ pub fn set_role() {
     ROLE.store(true, Ordering::SeqCst);
 }
 
+/// Whether this process is a second client process.
+#[must_use]
+pub fn in_role() -> bool {
+    ROLE.load(Ordering::SeqCst)
+}
+
 /// Prints one line where this process's notes go.
 pub fn say(line: &str) {
     if ROLE.load(Ordering::SeqCst) {
@@ -49,6 +55,11 @@ pub fn say(line: &str) {
 /// Prints the line naming a deliberate wait, before it starts.
 pub fn waiting(what: &str) {
     say(&format!("waiting: {what}"));
+}
+
+/// Prints a progress line within a long case.
+pub fn progress(what: &str) {
+    say(&format!("progress: {what}"));
 }
 
 /// Prints the line naming a wait on a timeout of `ms` milliseconds, when

@@ -20,22 +20,16 @@
 //! - `e57`: connection timeout 2,000 ms, transaction timeout 5,000 ms; the
 //!   group registered during a stall, the stall released 200 ms after the
 //!   registration returns, and a focus event raised every 50 ms from the
-//!   stall's end to 2,500 ms after it; heard events listened for 2 s
-//!   after the last.
-//! - `timeouts`: `e57` at connection timeouts of 500, 2,000 and 5,000 ms
-//!   (transaction 5,000 ms) and transaction timeouts of 500 and 20,000 ms
-//!   (connection 2,000 ms).
-//! - `edge`: `e57` with events every 10 ms from 1,700 to 1,850 ms after the
-//!   stall's end.
-//! - `release-later`: the stall released 1,000, 1,700 and 3,000 ms after
-//!   the return, and outlasting it by 4,000 and 10,000 ms at a 500 ms
-//!   connection timeout and 6,000 ms at 2,000 ms; events every 50 ms from
-//!   the stall's end.
-//! - `next-event`: single events at 1,500 or 2,000 ms after the stall's
-//!   end, and the pair at 1,000 and 2,500 ms.
-//! - `second-process`: `e57` registered by a second client process. 3
-//!   trials.
-//! - `control`: `e57` with no stall, events from the return.
+//!   stall's end to 2,500 ms after it; heard events listened for 0.5 s
+//!   after the last. Then the same at a 500 ms connection timeout and at a
+//!   500 ms transaction timeout; with events every 10 ms from 1,700 to
+//!   1,850 ms after the stall's end; and with no stall, events from the
+//!   return.
+//! - `release-later`: the stall released 1,000 and 3,000 ms after the
+//!   return; events every 50 ms from the stall's end.
+//! - `next-event`: a single event 1,500 ms after the stall's end, and the
+//!   pair at 1,000 and 2,500 ms.
+//! - `second-process`: `e57` registered by a second client process.
 //! - `onset`: `e58-silence` with a focus event every 100 ms from the
 //!   stall's end to 3,000 ms after it, and the provider's log.
 //! - `e58-silence`: as `e57` with no event raised, the provider's log read
@@ -49,7 +43,7 @@
 //! - `e58-remove`: as `e57`, the group removed 500 ms after the release
 //!   (`remove`), 3,000 ms after it (`remove-late`), or with no stall
 //!   (`remove-nostall`); focus events at 1,000 and 4,000 ms after the
-//!   release; the handler's release watched for 15 s.
+//!   release; the handler's release watched for 5 s.
 //! - `between`: the inferred loss of events raised between a focus change
 //!   and a registration made for the new focus: a name change raised just
 //!   after the focus event, and one raised after the registration returns.
@@ -58,7 +52,7 @@ use std::collections::HashMap;
 use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
 
-use uia_facts_support::args::{Args, trials};
+use uia_facts_support::args::{self, Args, trials};
 use uia_facts_support::events::{self, Handler, Heard, Report as Event};
 use uia_facts_support::note;
 use uia_facts_support::provider::Provider;
@@ -83,7 +77,7 @@ const NODES: [usize; 4] = [5, 6, 7, 8];
 const RELEASE_AFTER: Duration = Duration::from_millis(200);
 /// How long events are listened for after the last raise: e57 listened 2
 /// to 4 s; events after the gap arrived within 1 to 11 ms.
-const LISTEN: Duration = Duration::from_secs(2);
+const LISTEN: Duration = Duration::from_millis(500);
 
 fn main() {
     let args = Args::parse();
@@ -159,14 +153,26 @@ fn recovery() -> bool {
     uia::settings().recovery
 }
 
-/// The (last event lost, first heard) offsets after the stall's end of a
-/// registration released 200 ms after it returned: the gap's edge with
-/// connection recovery on, every event heard from the stall's end without.
-fn gap_edge() -> (Option<u64>, Option<u64>) {
+/// The offsets after the stall's end, clear of the gap's end, up to which
+/// every event is lost and from which every event is heard: with
+/// connection recovery on, `lost_by` and `heard_from`, each about 300 ms
+/// from the recorded end so a tick of jitter cannot move an event across
+/// it; with recovery off, none lost and every one heard.
+fn clear_of_gap(lost_by: u64, heard_from: u64) -> (Option<u64>, u64) {
     if recovery() {
-        (Some(1_750), Some(1_800))
+        (Some(lost_by), heard_from)
     } else {
-        (None, Some(0))
+        (None, 0)
+    }
+}
+
+/// The text of [`clear_of_gap`]'s answer.
+fn clear_text((lost_by, heard_from): (Option<u64>, u64)) -> String {
+    match lost_by {
+        Some(lost_by) => {
+            format!("every event lost up to {lost_by} ms and heard from {heard_from} ms")
+        }
+        None => "every event heard".to_owned(),
     }
 }
 
@@ -259,6 +265,7 @@ fn setup(
     transaction_ms: u32,
 ) -> (Provider, IUIAutomation6, IUIAutomationElement) {
     let provider = Provider::launch(&["--windows", "uia:0"]);
+    args::pause_here(&[("provider", provider.pid), ("trial", std::process::id())]);
     let client = uia::client();
     uia::set_timeouts(&client, connection_ms, transaction_ms);
     let element = uia::element(&client, provider.hwnd(0)).expect("the window's element");
@@ -681,6 +688,7 @@ fn trial_scope() -> Vec<String> {
         });
         // B returns after the connection timeout; the stall ends 200 ms
         // after, as in e57.
+        note::waiting_ms(2_000, "B's registration's connection timeout");
         let (b_ok, b_reports) = b_registered.recv().expect("B registers");
         assert!(b_ok, "B reports success");
         uia::pause(
@@ -750,12 +758,19 @@ fn lost(raised: &[(String, u64)], heard: &[Heard]) -> Vec<String> {
         .collect()
 }
 
+/// How long a removal case watches for the handler's release: a release
+/// comes within milliseconds of a removal that succeeds, so its absence
+/// over this bound is the evidence that a failed removal left it in place.
+const FREED_WATCH: Duration = Duration::from_secs(5);
+
 /// A removal case's outcome: the removal's, whether the handler was freed
-/// within 15 s, and whether the events at 1,000 and 4,000 ms were heard.
+/// within [`FREED_WATCH`], and whether the events at 1,000 and 4,000 ms
+/// were heard.
 type Removal = (String, bool, bool, bool);
 
 /// One removal case: the removal's outcome, whether the handler was freed
-/// within 15 s, and whether the events at 1,000 and 4,000 ms were heard.
+/// within [`FREED_WATCH`], and whether the events at 1,000 and 4,000 ms
+/// were heard.
 fn removal(stall: bool, remove_after: Duration) -> Removal {
     let (mut provider, client, element) = setup(2_000, 5_000);
     let (handler, reports) = Handler::make();
@@ -798,7 +813,11 @@ fn removal(stall: bool, remove_after: Duration) -> Removal {
     }
     drop(group);
     let removed = removed.expect("the removal ran");
-    let freed_by = Instant::now() + Duration::from_secs(15);
+    note::waiting(&format!(
+        "up to {} s, watching for the handler's release",
+        FREED_WATCH.as_secs()
+    ));
+    let freed_by = Instant::now() + FREED_WATCH;
     let mut heard = Vec::new();
     let mut freed = false;
     while Instant::now() < freed_by && !freed {
@@ -866,7 +885,7 @@ fn e58_remove(report: &mut Report) {
             })
             .collect();
         report.claim(
-            &format!("{name}: the removal's outcome, the handler freed within 15 s, the events at 1,000 and 4,000 ms heard"),
+            &format!("{name}: the removal's outcome, the handler freed within 5 s, the events at 1,000 and 4,000 ms heard"),
             &runs(&trials),
             &format!("{recorded:?}"),
             deterministic(&trials, &recorded),
@@ -886,10 +905,10 @@ fn between(report: &mut Report) {
         ));
     }
     report.claim(
-        "a name change raised between a focus event and a registration made for that focus, heard; one after it, heard",
+        "(the focus heard, the registration made, a name change raised between them heard, one after it heard)",
         &runs(&results),
-        "(focus heard, registered, before heard, after heard)",
-        Verdict::New,
+        "(true, true, false, true)",
+        deterministic(&results, &(true, true, false, true)),
     );
 }
 
@@ -1117,6 +1136,20 @@ impl Gap {
         (last_lost, first.map(|f| self.events[f].offset))
     }
 
+    /// Whether every event raised up to `lost_by` ms after the stall's end
+    /// was lost and every one from `heard_from` ms heard.
+    fn split(&self, (lost_by, heard_from): (Option<u64>, u64)) -> bool {
+        self.events.iter().all(|e| {
+            if lost_by.is_some_and(|by| e.offset <= by) {
+                e.delay.is_none()
+            } else if e.offset >= heard_from {
+                e.delay.is_some()
+            } else {
+                true
+            }
+        })
+    }
+
     /// Lost, not late: every event heard was heard within 100 ms, and none
     /// was lost after the first heard.
     fn clean(&self) -> bool {
@@ -1145,13 +1178,8 @@ fn gaps(trials: usize, params: &[&str]) -> Vec<Gap> {
 
 fn timeouts(report: &mut Report) {
     let offsets = gap_offsets(50, 2_500);
-    for (connection, transaction) in [
-        (500, 5_000),
-        (2_000, 5_000),
-        (5_000, 5_000),
-        (2_000, 500),
-        (2_000, 20_000),
-    ] {
+    let expected = clear_of_gap(1_500, 2_300);
+    for (connection, transaction) in [(500, 5_000), (2_000, 500)] {
         let trials = gaps(
             trials(),
             &[
@@ -1164,11 +1192,12 @@ fn timeouts(report: &mut Report) {
             ],
         );
         let edges: Vec<(Option<u64>, Option<u64>)> = trials.iter().map(Gap::edge).collect();
+        let split: Vec<bool> = trials.iter().map(|g| g.split(expected)).collect();
         report.claim(
-            &format!("at connection {connection} ms and transaction {transaction} ms: (the last event lost, the first heard), ms after the stall's end"),
-            &runs(&edges),
-            &format!("{:?}", gap_edge()),
-            deterministic(&edges, &gap_edge()),
+            &format!("at connection {connection} ms and transaction {transaction} ms, after the stall's end, {}", clear_text(expected)),
+            &format!("{} (last lost, first heard: {})", runs(&split), runs(&edges)),
+            "true",
+            relation(&split),
         );
     }
 }
@@ -1223,19 +1252,12 @@ fn edge(report: &mut Report) {
 
 fn release_later(report: &mut Report) {
     let offsets = gap_offsets(50, 2_000);
-    for (connection, after, recorded) in [
-        (2_000, 1_000, (Some(950), Some(1_000))),
-        (2_000, 1_700, (Some(250), Some(300))),
-        (2_000, 3_000, (None, Some(0))),
-        (500, 4_000, (None, Some(0))),
-        (500, 10_000, (None, Some(0))),
-        (2_000, 6_000, (None, Some(0))),
+    // Released 1,000 ms after the return the gap ends 950 to 1,000 ms after
+    // the stall's end; released 3,000 ms after, it has ended already.
+    for (connection, after, expected) in [
+        (2_000, 1_000, clear_of_gap(700, 1_300)),
+        (2_000, 3_000, (None, 0)),
     ] {
-        let recorded = if recovery() {
-            recorded
-        } else {
-            (None, Some(0))
-        };
         let trials = gaps(
             trials(),
             &[
@@ -1248,21 +1270,18 @@ fn release_later(report: &mut Report) {
             ],
         );
         let edges: Vec<(Option<u64>, Option<u64>)> = trials.iter().map(Gap::edge).collect();
+        let split: Vec<bool> = trials.iter().map(|g| g.split(expected)).collect();
         report.claim(
-            &format!("released {after} ms after the return at connection {connection} ms: (the last event lost, the first heard), ms after the stall's end"),
-            &runs(&edges),
-            &format!("{recorded:?}"),
-            deterministic(&edges, &recorded),
+            &format!("released {after} ms after the return at connection {connection} ms, after the stall's end, {}", clear_text(expected)),
+            &format!("{} (last lost, first heard: {})", runs(&split), runs(&edges)),
+            "true",
+            relation(&split),
         );
     }
 }
 
 fn next_event(report: &mut Report) {
-    for (offsets, recorded) in [
-        ("1500", vec![false]),
-        ("2000", vec![true]),
-        ("1000,2500", vec![false, true]),
-    ] {
+    for (offsets, recorded) in [("1500", vec![false]), ("1000,2500", vec![false, true])] {
         let recorded = if recovery() {
             recorded
         } else {
@@ -1300,11 +1319,20 @@ fn second_process(report: &mut Report) {
         "\"ok\"",
         deterministic(&outcomes, &"ok".to_owned()),
     );
+    let expected = clear_of_gap(1_500, 2_300);
+    let split: Vec<bool> = trials.iter().map(|g| g.split(expected)).collect();
     report.claim(
-        "registered from a second client process: (the last event lost, the first heard), ms after the stall's end",
-        &runs(&edges),
-        &format!("{:?}", gap_edge()),
-        deterministic(&edges, &gap_edge()),
+        &format!(
+            "registered from a second client process, after the stall's end, {}",
+            clear_text(expected)
+        ),
+        &format!(
+            "{} (last lost, first heard: {})",
+            runs(&split),
+            runs(&edges)
+        ),
+        "true",
+        relation(&split),
     );
     report.claim(
         "registered from a second client process: lost, not late",
@@ -1404,16 +1432,31 @@ fn onset(report: &mut Report) {
         followed.push(flag(&words[2]));
         counts.push(format!("{} entries, {} WM_GETOBJECT", words[3], words[4]));
     }
-    let recorded = if recovery() {
-        ("1700".to_owned(), "1800".to_owned())
-    } else {
-        ("none".to_owned(), "0".to_owned())
-    };
+    // The events come every 100 ms; the first heard lies clear of the
+    // recorded 1,800 ms by 300 ms either way, or is the first event when
+    // there is no gap.
+    let expected = clear_of_gap(1_500, 2_100);
+    let split: Vec<bool> = edges
+        .iter()
+        .map(|(_, first)| {
+            let first: Option<u64> = first.parse().ok();
+            match expected {
+                (Some(lost_by), heard_from) => {
+                    first.is_some_and(|f| f > lost_by && f <= heard_from)
+                }
+                (None, _) => first == Some(0),
+            }
+        })
+        .collect();
     report.claim(
-        "onset: (the last event lost, the first heard), ms after the stall's end",
-        &runs(&edges),
-        &format!("{recorded:?}"),
-        deterministic(&edges, &recorded),
+        &format!("onset: after the stall's end, {}", clear_text(expected)),
+        &format!(
+            "{} (last lost, first heard: {})",
+            runs(&split),
+            runs(&edges)
+        ),
+        "true",
+        relation(&split),
     );
     // With connection recovery off no event is lost, so there is no gap
     // whose events could be followed.

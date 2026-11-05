@@ -7,6 +7,7 @@
 
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, ChildStdin, Command, Stdio};
+use std::sync::Mutex;
 use std::sync::mpsc::{Receiver, channel};
 use std::time::Duration;
 
@@ -15,7 +16,7 @@ use crate::job::Job;
 /// A second client process.
 pub struct Role {
     child: Child,
-    stdin: ChildStdin,
+    stdin: Mutex<ChildStdin>,
     lines: Receiver<String>,
     /// Its process id.
     pub pid: u32,
@@ -34,6 +35,7 @@ impl Role {
         let mut child = Command::new(exe)
             .args(crate::uia::settings().flags())
             .args(crate::note::verbose().then_some("--verbose"))
+            .args(crate::args::pausing().then_some("--pause"))
             .arg("--role")
             .arg(name)
             .args(args)
@@ -58,7 +60,7 @@ impl Role {
         let pid = child.id();
         Self {
             child,
-            stdin,
+            stdin: Mutex::new(stdin),
             lines,
             pid,
             _job: job,
@@ -71,16 +73,36 @@ impl Role {
     ///
     /// When the process has ended.
     pub fn send(&mut self, command: &str) {
-        writeln!(self.stdin, "{command}").expect("the second client takes commands");
-        self.stdin
-            .flush()
-            .expect("the second client takes commands");
+        self.write(command);
     }
 
-    /// The next line it reports, or `None` within `limit`.
+    fn write(&self, command: &str) {
+        let mut stdin = self
+            .stdin
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        writeln!(stdin, "{command}").expect("the second client takes commands");
+        stdin.flush().expect("the second client takes commands");
+    }
+
+    /// The next line it reports, or `None` within `limit`. Under
+    /// `--pause`, its pause lines are printed instead, and once it waits,
+    /// Enter here lets it go on ([`crate::args::pause_here`]).
     #[must_use]
     pub fn line(&self, limit: Duration) -> Option<String> {
-        self.lines.recv_timeout(limit).ok()
+        loop {
+            let text = self.lines.recv_timeout(limit).ok()?;
+            if text == crate::args::PAUSE_WAIT {
+                println!("{text}");
+                let mut enter = String::new();
+                let _ = std::io::stdin().read_line(&mut enter);
+                self.write("continue");
+            } else if text.starts_with("pause: ") {
+                println!("{text}");
+            } else {
+                return Some(text);
+            }
+        }
     }
 
     /// The next line it reports.

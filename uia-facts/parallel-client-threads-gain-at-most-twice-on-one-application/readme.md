@@ -10,14 +10,14 @@ No figure; D9 gives up parallel queries within one application (`books/dev/src/e
 
 ## Method
 
-The provider program with one UIA window served on its UI thread (`UseComThreading`). A bench makes K name reads of nodes 1 to 16 on one thread, then the same K split evenly over N threads that start together, N of 2, 4 and 8. The threads are made, with their client objects and elements, before a warm-up run and 7 timed runs, and live through them, so a run times the reads alone; each run starts every thread together and ends when the last is done, and an N's time is the median.
+The provider program with one UIA window served on its UI thread (`UseComThreading`). A bench makes K name reads of nodes 1 to 16 on one thread, then the same K split evenly over N threads that start together. The threads are made, with their client objects and elements, before a warm-up run and 3 timed runs, and live through them, so a run times the reads alone; each run starts every thread together and ends when the last is done, and an N's time is the median.
 
-- `gains`: first cheap calls, K = 4,000 plain name reads; then costly ones, K = 100, every provider call made 5 ms slow while the window keeps pumping (`slow 5`); each 5 ms wait lasts a system timer tick or more.
+- `gains`: first cheap calls, K = 1,000 plain name reads, at N of 2 and 8; then costly ones, K = 16, every provider call made 5 ms slow while the window keeps pumping (`slow 5`), at N of 2; each 5 ms wait lasts a system timer tick or more. A progress line names each bench as it starts.
 
-Each N's bound is the serial-share bound of its own runs: one call's time on one thread divided by the provider's serial time per call under that load, the median interval between provider call entries. Judged: each N's speed-up at or below the larger of its bound and 1.5, the fact's figure for calls whose cost is in the provider, where the bound is 1.00 (a relation). The speed-ups and the serial shares are printed for trends.
+Each N's bound is the serial-share bound of its own runs: one call's time on one thread divided by the provider's serial time per call under that load, the time from entry to exit of every provider call per read, by the provider's log, during which no other call into the provider runs. The log sees only the provider's own calls, not UIA's I/O thread, so for cheap calls the bound is far above the speed-up and the 1.5 decides. Judged: each N's speed-up at or below the larger of its bound and 1.5, the fact's figure for calls whose cost is in the provider, where the bound is 1.00 (a relation). The speed-ups and the serial shares are printed for trends.
 
-- `processes`: the cheap bench as N threads of this process, each with its own client object, against N client processes of one thread each, both kept alive across the runs and timed the same way, from the signal to start to the last one's end. Printed for trends, run by run.
-- `shared`: the cheap 8-thread bench with one client object's elements for every thread against a client object each, printed.
+- `processes`: the cheap bench, K = 4,000, as 8 threads of this process, each with its own client object, against 8 client processes of one thread each, both kept alive across the runs and timed the same way, from the signal to start to the last one's end. Printed for trends, run by run.
+- `shared`: the cheap 8-thread bench, K = 1,000, with one client object's elements for every thread against a client object each, printed.
 
 ## Client settings
 
@@ -41,7 +41,7 @@ The costly calls' share is 1.00, not about half, because the slow provider call 
 
 ## Debugger guide
 
-1. Run `target\debug\parallel-client-threads-gain-at-most-twice-on-one-application.exe --case cheap --pause` and press Enter at its pause; the 8-thread runs come last.
+1. Run `target\debug\parallel-client-threads-gain-at-most-twice-on-one-application.exe --case gains --pause` and press Enter at its pause; the cheap calls' 8-thread runs come before the costly calls.
 2. During an 8-thread run, take the client's stacks non-invasively, five times, a few hundred milliseconds apart: `cdb -pv -p <client pid> -y srv*C:\symbols*https://msdl.microsoft.com/download/symbols -c "~*k 20; qd"`.
 3. Expect, of the 8 reading threads' 40 stacks, nearly all (39 of 40 in the original) waiting for their replies, with frames from the top `ntdll!NtWaitForAlertByThreadId`, `ntdll!RtlWaitOnAddress`, `KERNELBASE!WaitOnAddress`, `UIAutomationCore!ChannelBasedClientConnection::WaitForResponse`, `ChannelBasedClientConnection::DoCallWithReturn`; none waiting on a lock. A thread writing its request shows `ReadWriteChannelInfo::BlockingWrite` under `ChannelBasedClientConnection::DoCallWithReturn`; the client's one I/O thread reads every reply in `OverlappedIOManager::IoThreadProc` and wakes the caller through `ChannelBasedClientConnection::SetResponseInfo`.
 4. It matches when the waits are on replies, not on each other: the gain is bounded in the provider, not by a lock in the client.

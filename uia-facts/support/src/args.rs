@@ -14,7 +14,44 @@
 //! - `--role <name> <arguments>`: run as a second client process
 //!   ([`crate::role`]).
 
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+/// `--pause`.
+static PAUSE: AtomicBool = AtomicBool::new(false);
+
+/// The pause line after which a paused process waits.
+pub const PAUSE_WAIT: &str = "pause: attach the debugger, then press Enter";
+
+/// Whether `--pause` was given; a second client process is given it too.
+#[must_use]
+pub fn pausing() -> bool {
+    PAUSE.load(Ordering::SeqCst)
+}
+
+/// Under `--pause`, prints each process id with its role and waits: for
+/// Enter, or in a second client process for the run's `continue`, which
+/// the run sends once Enter is pressed there ([`crate::role::Role::line`]).
+pub fn pause_here(processes: &[(&str, u32)]) {
+    if !pausing() {
+        return;
+    }
+    let in_role = crate::note::in_role();
+    for (role, pid) in processes {
+        let line = format!("pause: {role} is process {pid}");
+        if in_role {
+            crate::role::report(&line);
+        } else {
+            println!("{line}");
+        }
+    }
+    if in_role {
+        crate::role::report(PAUSE_WAIT);
+    } else {
+        println!("{PAUSE_WAIT}");
+    }
+    let mut line = String::new();
+    let _ = std::io::stdin().read_line(&mut line);
+}
 
 /// `--trials`, 1 when not given.
 static TRIALS: AtomicUsize = AtomicUsize::new(1);
@@ -57,7 +94,10 @@ impl Args {
                     assert!(n > 0, "--trials takes a count above 0");
                     TRIALS.store(n, Ordering::SeqCst);
                 }
-                "--pause" => args.pause = true,
+                "--pause" => {
+                    args.pause = true;
+                    PAUSE.store(true, Ordering::SeqCst);
+                }
                 "--verbose" => crate::note::set_verbose(),
                 "--recovery" => {
                     let settings = crate::uia::settings();
@@ -93,14 +133,6 @@ impl Args {
     /// Under `--pause`, prints each process id with its role and waits for
     /// Enter.
     pub fn pause_for_debugger(&self, processes: &[(&str, u32)]) {
-        if !self.pause {
-            return;
-        }
-        for (role, pid) in processes {
-            println!("pause: {role} is process {pid}");
-        }
-        println!("pause: attach the debugger, then press Enter");
-        let mut line = String::new();
-        let _ = std::io::stdin().read_line(&mut line);
+        pause_here(processes);
     }
 }

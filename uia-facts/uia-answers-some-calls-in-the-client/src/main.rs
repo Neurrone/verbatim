@@ -41,14 +41,14 @@ use uia_facts_support::note;
 use uia_facts_support::precondition;
 use uia_facts_support::provider::{Entry, Provider};
 use uia_facts_support::report::{Report, Verdict, deterministic, relation, runs};
-use uia_facts_support::uia::{self, Shared};
+use uia_facts_support::uia;
 use uia_facts_support::{now_us, rop};
-use verbatim_uia::{FOCUS_PROPERTIES, Part, PropertyEvent, Registration, Scope, Subscription};
+use verbatim_uia::FOCUS_PROPERTIES;
 use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Accessibility::{
-    IUIAutomation6, IUIAutomationElement, TreeScope_Children, TreeScope_Descendants,
-    TreeScope_Element, TreeScope_Subtree, UIA_ControlTypePropertyId, UIA_NamePropertyId,
-    UIA_TitleBarControlTypeId,
+    IUIAutomation6, IUIAutomationElement, IUIAutomationEventHandlerGroup, TreeScope_Children,
+    TreeScope_Descendants, TreeScope_Element, TreeScope_Subtree, UIA_ControlTypePropertyId,
+    UIA_NamePropertyId, UIA_TitleBarControlTypeId,
 };
 
 fn main() {
@@ -361,18 +361,51 @@ fn focus(report: &mut Report, in_front: bool) {
     }
 }
 
-/// A focus-following registration on `element` through Verbatim's own
-/// `Registration`, as `call_counts::uia_event_registrations_cost_exactly`
-/// makes it.
-fn follow(element: Shared) -> Registration {
-    Registration::with_parts(
-        vec![Part::shaped::<PropertyEvent>(Subscription::Properties {
-            properties: FOCUS_PROPERTIES.to_vec(),
-            callback: Arc::new(|_, _| {}),
-        })],
-        Scope::Elements(vec![element]),
-    )
-    .expect("the focus-following registration")
+/// A focus-following registration on one element, as Verbatim's follower
+/// makes it (`call_counts::uia_event_registrations_cost_exactly`): an
+/// event handler group holding a property-changed handler for Verbatim's
+/// focus properties on the element alone, added with
+/// `AddEventHandlerGroup` through the program's client object, which
+/// follows `--recovery` and `--coalescing`. Dropping it removes the group.
+struct Follow {
+    client: IUIAutomation6,
+    element: IUIAutomationElement,
+    group: IUIAutomationEventHandlerGroup,
+}
+
+impl Drop for Follow {
+    fn drop(&mut self) {
+        let _ = events::remove_group(&self.client, &self.element, &self.group);
+    }
+}
+
+/// Registers a [`Follow`] on `element`.
+fn follow(client: &IUIAutomation6, element: &IUIAutomationElement) -> Follow {
+    let (handler, _reports) = Handler::make();
+    let property = events::as_property_handler(&handler);
+    // SAFETY: a live client object.
+    let group = unsafe { client.CreateEventHandlerGroup() }.expect("a group");
+    // SAFETY: a live group and handler; Verbatim's focus property ids.
+    unsafe {
+        group.AddPropertyChangedEventHandler(TreeScope_Element, None, &property, &FOCUS_PROPERTIES)
+    }
+    .expect("the focus properties' handler");
+    events::add_group(client, element, &group).expect("the registration");
+    Follow {
+        client: client.clone(),
+        element: element.clone(),
+        group,
+    }
+}
+
+/// A move of a registration to the element it already follows, as
+/// Verbatim's follower decides it: `CompareElements` of the followed
+/// element and a fresh reference to it, which keeps the registration.
+fn same_element(client: &IUIAutomation6, followed: &Follow, again: &IUIAutomationElement) -> bool {
+    // SAFETY: a live client object and elements.
+    unsafe { client.CompareElements(&followed.element, again) }
+        .expect("the comparison")
+        .as_bool()
 }
 
 /// The provider calls of a `GetRuntimeId` read of `element` after `pause`,
@@ -382,6 +415,9 @@ fn read_after(w: &mut Window, element: &IUIAutomationElement, pause: Duration) -
     uia::pause(pause, "the pause before the GetRuntimeId read");
     counted(&mut w.provider, || runtime_id(element)).1.len()
 }
+
+/// The moves of the lapse's sweep, at pauses of 250 to 400 ms in turn.
+const SWEEP_MOVES: usize = 20;
 
 #[expect(clippy::too_many_lines, reason = "the lapse's claims, read in turn")]
 fn lapse(args: &Args, report: &mut Report) {
@@ -393,12 +429,12 @@ fn lapse(args: &Args, report: &mut Report) {
     let mut sum_holds = Vec::new();
     for _ in 0..trials() {
         let _ = runtime_id(&w.first);
-        let (warm_registration, warm) = counted(&mut w.provider, || follow(uia::share(&w.first)));
+        let (warm_registration, warm) = counted(&mut w.provider, || follow(&w.client, &w.first));
         drop(warm_registration);
         let _ = runtime_id(&w.first);
         uia::pause(cold, "for the copy of the runtime id to lapse");
         let (cold_registration, cold_calls) =
-            counted(&mut w.provider, || follow(uia::share(&w.first)));
+            counted(&mut w.provider, || follow(&w.client, &w.first));
         drop(cold_registration);
         let first = w.first.clone();
         let lapsed_read = read_after(&mut w, &first, cold);
@@ -408,8 +444,8 @@ fn lapse(args: &Args, report: &mut Report) {
     report.claim(
         "the registration's provider calls: (warm, cold after 1 s, a lapsed GetRuntimeId read alone)",
         &runs(&costs),
-        "(3, 9, 6) on mockapp, re-recorded on the provider program",
-        Verdict::New,
+        "(8, 14, 6) on the provider program; (3, 9, 6) on mockapp",
+        deterministic(&costs, &(8, 14, 6)),
     );
     report.claim(
         "the cold registration costs the warm one plus a lapsed GetRuntimeId read",
@@ -473,12 +509,12 @@ fn lapse(args: &Args, report: &mut Report) {
             .collect();
         kept.push((*what, lapsed));
     }
-    let other_button = uia::share(&uia::node(&w.client, &w.root, 7).expect("node 7"));
+    let other_button = uia::node(&w.client, &w.root, 7).expect("node 7");
     let lapsed: Vec<bool> = (0..trials())
         .map(|_| {
             let _ = runtime_id(&w.first);
             uia::pause(cold, "for the copy of the runtime id to lapse");
-            drop(follow(other_button.clone()));
+            drop(follow(&w.client, &other_button));
             !counted(&mut w.provider, || runtime_id(&w.first))
                 .1
                 .is_empty()
@@ -494,10 +530,50 @@ fn lapse(args: &Args, report: &mut Report) {
         );
     }
 
+    // The lapse is no fixed lifetime: moves after pauses of 250 to 400 ms
+    // find the copy warm in some runs and lapsed in others, so no pause
+    // below about a second can be relied on to stay warm.
+    let registration = follow(&w.client, &w.first);
+    let mut mixed = Vec::new();
+    let mut rates = Vec::new();
+    for _ in 0..trials() {
+        let mut lapsed = 0;
+        for i in 0..SWEEP_MOVES {
+            let _ = runtime_id(&w.first);
+            uia::pause(
+                Duration::from_millis(250 + 50 * u64::try_from(i % 4).expect("small")),
+                "the pause before the move",
+            );
+            let again = uia::resolve(&uia::share(&w.first));
+            let calls = counted(&mut w.provider, || {
+                same_element(&w.client, &registration, &again)
+            })
+            .1
+            .len();
+            if calls > 0 {
+                lapsed += 1;
+            }
+        }
+        mixed.push(lapsed > 0 && lapsed < SWEEP_MOVES);
+        rates.push(format!("{lapsed} of {SWEEP_MOVES}"));
+    }
+    report.claim(
+        "moves after pauses of 250, 300, 350 and 400 ms find the copy warm in some runs and lapsed in others",
+        &runs(&mixed),
+        "true (lapsed in 15 of 30)",
+        relation(&mixed),
+    );
+    report.claim(
+        "the moves that found the copy lapsed",
+        &rates.join("; "),
+        "15 of 30",
+        Verdict::Trend,
+    );
+
     let pauses = [0_u64, 500, 1_000, 1_500];
     let warm_count = {
         let _ = runtime_id(&w.first);
-        counted(&mut w.provider, || follow(uia::share(&w.first)))
+        counted(&mut w.provider, || follow(&w.client, &w.first))
             .1
             .len()
     };
@@ -509,7 +585,7 @@ fn lapse(args: &Args, report: &mut Report) {
                 "the pause before the registration",
             );
             let _ = runtime_id(&w.first);
-            let calls = counted(&mut w.provider, || follow(uia::share(&w.first)))
+            let calls = counted(&mut w.provider, || follow(&w.client, &w.first))
                 .1
                 .len();
             registrations.push(calls == warm_count);
@@ -521,16 +597,14 @@ fn lapse(args: &Args, report: &mut Report) {
         "true",
         relation(&registrations),
     );
-    let registration = follow(uia::share(&w.first));
     let mut moves = Vec::new();
     for _ in 0..trials() {
         for pause in pauses {
             uia::pause(Duration::from_millis(pause), "the pause before the move");
             let _ = runtime_id(&w.first);
-            let again = uia::share(&w.first);
+            let again = uia::resolve(&uia::share(&w.first));
             let calls = counted(&mut w.provider, || {
-                registration.retarget(Scope::Elements(vec![again]));
-                registration.settle();
+                same_element(&w.client, &registration, &again)
             })
             .1
             .len();
@@ -566,10 +640,9 @@ fn late_calls(report: &mut Report) {
         events::remove_group(&w.client, &w.root, &group).expect("the removal");
         let removed_at = now_us();
         spans.push((start, removed_at));
-        // Watched 500 ms for the removal's late advise and any stray call.
-        let (log, _) = w.provider.log_until(Duration::from_millis(500), |e| {
-            e.name == "AdviseEventRemoved"
-        });
+        // Watched the whole 500 ms for the removal's late advise and any
+        // stray call, which can come after the advise.
+        let (log, _) = w.provider.log_until(Duration::from_millis(500), |_| false);
         let removed = log
             .iter()
             .find(|e| e.name == "AdviseEventRemoved")

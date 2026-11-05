@@ -10,13 +10,13 @@ The hung-window workaround's claim that MSAA keeps working, and the outposts' MS
 
 ## Method
 
-- `stuck`: the provider program without `UseComThreading` and with `--bridge`: window 0 a UIA window, window 1 one with its own `IAccessible`, window 2 a plain window, all on UI thread 0, and window 3 a UIA window on UI thread 1. Window 0's node 1 read is held, on UIA's I/O thread, for 1,000 ms (a deliberate length). Meanwhile `accName` on each window's `OBJID_CLIENT` object, got before the hold: UIA's MSAA bridge (window 0), the window's own `IAccessible` (window 1), oleacc's window proxy (window 2); and a UIA read into window 3.
+- `stuck`: the provider program without `UseComThreading` and with `--bridge`: window 0 a UIA window, window 1 one with its own `IAccessible`, window 2 a plain window, all on UI thread 0, and window 3 a UIA window on UI thread 1. Window 0's node 1 read is held on UIA's I/O thread until the MSAA reads have answered and 200 ms more (a deliberate length), so the UIA read is still waiting at the release. Meanwhile `accName` on each window's `OBJID_CLIENT` object, got before the hold: UIA's MSAA bridge (window 0), the window's own `IAccessible` (window 1), oleacc's window proxy (window 2); and a UIA read into window 3.
 - `messages`: oleacc's `accName` on a plain window, the window's messages counted by the provider's log.
-- `busy-sweep`: oleacc's `accName` on a plain window while its UI thread is busy for 1, 5, 15 and 60 s. One run each.
+- `busy-sweep`: oleacc's `accName` on a plain window while its UI thread is busy for 20 s; judged to wait the whole busy time, to within a system tick, and then answer.
 - `sent-rate`: 20,000 `WM_GETTEXT`s sent by 1, 4 and 8 threads of this process, each thread to a plain window on a UI thread of its own.
-- `processes`: the 8-thread case as 8 threads of one process and as two processes of 4 threads.
+- `processes`: the 8-thread case as 8 threads of one process and as two processes of 4 threads; judged that the two processes take no less time than the one.
 
-Judged: whether each MSAA call answered before the release and the UIA read after it (relations); the message counts (deterministic); whether more threads send fewer messages a second than one (a relation). The times and rates are printed for trends; the sweep and the processes are new.
+Judged: whether each MSAA call answered before the release and the UIA read after it (relations); the message counts (deterministic); whether more threads send fewer messages a second than one (a relation); that the busy-sweep read waits the whole busy time (a relation); that two processes take no less time than one (a relation). The times and rates are printed for trends.
 
 ## Client settings
 
@@ -31,9 +31,9 @@ Neither connection recovery nor event coalescing changes the `stuck` case's outc
 | Sent messages at 0.52 to 0.78 times one thread's rate | 2026-11-02 | Build 26200.9711 | The same | Slower than one thread; the ratio for trends |
 | First uia-facts run, `stuck`: each of the three `accName`s answered during the hold, 3 of 3 (the bridge 0.9 ms, the window's own `IAccessible` 0.2 ms, oleacc's proxy 0.1 ms); the UIA read waited for the release, 3 of 3 | 2026-11-05 | Build 26200.9711, `UIAutomationCore.dll` 7.2.26100.9549, AMD Ryzen 7 5700G | 1682f8cb | Pass |
 | First uia-facts run, `messages`: (1, 1) in 3 of 3 | 2026-11-05 | As above | As above | Pass |
-| First uia-facts run, `busy-sweep`: answered after 1,001, 5,001, 15,000 and 60,000 ms | 2026-11-05 | As above | As above | New: an MSAA call into a busy UI thread waits the whole busy time, with no bound up to 60 s |
+| First uia-facts run, `busy-sweep`: answered after 1,001, 5,001, 15,000 and 60,000 ms | 2026-11-05 | As above | As above | The answer: an MSAA call into a busy UI thread waits the whole busy time, with no bound up to 60 s; the case now runs 20 s alone and states no bound up to 20 s |
 | First uia-facts run, `sent-rate`: slower than one thread 3 of 3 at 4 and at 8 threads; the rate 0.51 at 4 threads (0.49 to 0.53) and 0.51 at 8 (0.50 to 0.51) | 2026-11-05 | As above | As above | Pass; the ratio for trends |
-| First uia-facts run, `processes`: 8 threads of one process 802 to 810 ms, of two processes 810 to 822 ms | 2026-11-05 | As above | As above | New: two processes are no faster than one, which fits contention outside the processes |
+| First uia-facts run, `processes`: 8 threads of one process 802 to 810 ms, of two processes 810 to 822 ms | 2026-11-05 | As above | As above | The answer, judged since: two processes are no faster than one, which fits contention outside the processes |
 
 The `stuck` times are lower than the original's; they are printed for trends only.
 

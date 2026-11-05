@@ -156,12 +156,16 @@ pub fn relation(runs: &[bool]) -> Verdict {
     }
 }
 
-/// The band a wait on the timeouts `timeouts_ms` in turn lies in: from
-/// their sum to the sum of 1.15 times each plus 50 ms
-/// (`uia-facts/readme.md`, "Verdicts").
+/// The system timer's default tick, in milliseconds: a wait can end up to
+/// one tick before its timeout.
+pub const TICK_MS: f64 = 15.6;
+
+/// The band a wait on the timeouts `timeouts_ms` in turn lies in: from the
+/// sum of each less one system tick to the sum of 1.15 times each plus
+/// 50 ms (`uia-facts/readme.md`, "Verdicts").
 #[must_use]
 pub fn band(timeouts_ms: &[f64]) -> (f64, f64) {
-    let low = timeouts_ms.iter().sum();
+    let low = timeouts_ms.iter().map(|t| t - TICK_MS).sum();
     let high = timeouts_ms.iter().map(|t| t * 1.15 + 50.0).sum();
     (low, high)
 }

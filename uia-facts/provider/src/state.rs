@@ -14,7 +14,9 @@ use windows::Win32::System::Com::{
 use windows::Win32::System::DataExchange::GetClipboardFormatNameW;
 use windows::Win32::System::Performance::{QueryPerformanceCounter, QueryPerformanceFrequency};
 use windows::Win32::System::Threading::{CreateEventW, GetCurrentThreadId};
-use windows::Win32::UI::WindowsAndMessaging::{WM_GETOBJECT, WM_GETTEXT, WM_GETTEXTLENGTH};
+use windows::Win32::UI::WindowsAndMessaging::{
+    GetQueueStatus, QS_POSTMESSAGE, QS_SENDMESSAGE, WM_GETOBJECT, WM_GETTEXT, WM_GETTEXTLENGTH,
+};
 
 /// `CB_GETCOMBOBOXINFO`, which UIA's window proxy sends a window.
 const CB_GETCOMBOBOXINFO: u32 = 0x0164;
@@ -344,20 +346,48 @@ pub(crate) fn release() {
 }
 
 /// Keeps this UI thread from taking any message, for `ms` or, when 0,
-/// until `release`.
+/// until `release`. It looks at its message queue every millisecond
+/// without taking anything, and logs a `queued` entry whenever a message
+/// or sent message has arrived since it last looked: the evidence that a
+/// call has reached the busy thread.
 pub(crate) fn busy(ms: u64) {
-    if ms > 0 {
-        std::thread::sleep(Duration::from_millis(ms));
-        return;
-    }
     let state = state();
+    let until = (ms > 0).then(|| std::time::Instant::now() + Duration::from_millis(ms));
+    // SAFETY: no precondition; the call reads this thread's queue status
+    // and resets only its "new since last look" bits.
+    let _ = unsafe { GetQueueStatus(QS_POSTMESSAGE | QS_SENDMESSAGE) };
     let mut holds = lock(&state.holds);
     let generation = holds.generation;
-    while holds.generation == generation {
+    loop {
+        {
+            // SAFETY: as above.
+            let status = unsafe { GetQueueStatus(QS_POSTMESSAGE | QS_SENDMESSAGE) };
+            if status & 0xFFFF != 0 {
+                let now = now_us();
+                lock(&state.log).push(Entry {
+                    start: now,
+                    end: now,
+                    kind: "queued",
+                    name: "message".to_owned(),
+                    window: None,
+                    node: None,
+                    thread: thread_id(),
+                    extra: String::new(),
+                });
+            }
+        }
+        let ended = match until {
+            Some(until) => std::time::Instant::now() >= until,
+            None => holds.generation != generation,
+        };
+        if ended {
+            return;
+        }
         holds = state
             .released
-            .wait(holds)
-            .unwrap_or_else(PoisonError::into_inner);
+            .wait_timeout(holds, Duration::from_millis(1))
+            .unwrap_or_else(PoisonError::into_inner)
+            .0;
     }
 }
 

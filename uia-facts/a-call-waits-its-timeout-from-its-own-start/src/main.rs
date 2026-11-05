@@ -111,13 +111,17 @@ fn main() {
 }
 
 fn waits(args: &Args, report: &mut Report, timeout: u32, recorded: &str, condition: &str) {
-    let mut setup = Setup::new(2_000, timeout);
-    args.pause_for_debugger(&[
-        ("provider", setup.provider.pid),
-        ("client", std::process::id()),
-    ]);
+    // Each trial has its own provider and client object, so under
+    // connection recovery no trial's timed-out read fails the next at once.
     let trials: Vec<Timed> = (0..trials())
-        .map(|_| setup.held_read(|e| uia::name(e).map(|_| ())))
+        .map(|_| {
+            let mut setup = Setup::new(2_000, timeout);
+            args.pause_for_debugger(&[
+                ("provider", setup.provider.pid),
+                ("client", std::process::id()),
+            ]);
+            setup.held_read(|e| uia::name(e).map(|_| ()))
+        })
         .collect();
     let outcomes: Vec<String> = trials.iter().map(|t| t.outcome.clone()).collect();
     let times: Vec<f64> = trials.iter().map(Timed::ms).collect();

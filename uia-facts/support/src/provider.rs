@@ -31,7 +31,8 @@ pub struct Entry {
     pub start: u64,
     /// When it ended; equal to `start` for a message or an advise.
     pub end: u64,
-    /// `call`, `msg` or `advise`.
+    /// `call`, `msg`, `advise`, or `queued` (a message reaching a busy
+    /// thread).
     pub kind: String,
     /// The provider method, the message, or the advise call.
     pub name: String,
