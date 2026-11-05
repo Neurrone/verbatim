@@ -101,6 +101,17 @@ harness, NVDA captures and troubleshooting.
     architectural mitigations for each class, the gaps in today's code,
     and a comparison with NVDA and other screen readers; published once
     Dickson has vetted it.
+  - [containment.md](design/containment.md) — M4.7: what a panic or a
+    native crash ends in each process and thread, the GUI thread's
+    rules, the hook's pass-through and watcher, children's liveness and
+    the containment scan.
+  - [guardian.md](design/guardian.md) — M4.8: the guardian process that
+    restarts Core, Core's one panic path, the single instance, hang
+    detection, dumps, the restart breaker and the timeouts.
+  - [lints-and-unsafe.md](design/lints-and-unsafe.md) — M4.9: the
+    panic-free lints, fallbacks removed by construction, unsafe code in
+    wrapper crates, bounds on sizes applications control, terminal
+    alignment and fuzzing.
   - [m5-extensions-work.md](design/m5-extensions-work.md) and
     [m6-native-synth-work.md](design/m6-native-synth-work.md) — the order
     of work and the tests for M5 and M6.
