@@ -115,13 +115,13 @@ pub fn vk_from_name(name: &str) -> Option<KeyName> {
     if let (Some(c), None) = (chars.next(), chars.next()) {
         if c.is_ascii_lowercase() {
             return Some(KeyName {
-                vk: u16::from(c.to_ascii_uppercase() as u8),
+                vk: u16::try_from(c.to_ascii_uppercase()).ok()?,
                 extended: None,
             });
         }
         if c.is_ascii_digit() {
             return Some(KeyName {
-                vk: u16::from(c as u8),
+                vk: u16::try_from(c).ok()?,
                 extended: None,
             });
         }
@@ -147,10 +147,16 @@ pub fn name_from_vk(vk: u16, extended: bool) -> Option<&'static str> {
         return Some(name);
     }
     match vk {
-        0x41..=0x5A => Some(LETTERS[usize::from(vk - 0x41)]),
-        0x30..=0x39 => Some(DIGITS[usize::from(vk - 0x30)]),
+        0x41..=0x5A => offset_into(&LETTERS, vk, 0x41),
+        0x30..=0x39 => offset_into(&DIGITS, vk, 0x30),
         _ => None,
     }
+}
+
+/// The name `vk` takes in `names`, the run of names that starts at `first`.
+fn offset_into(names: &[&'static str], vk: u16, first: u16) -> Option<&'static str> {
+    let index = vk.checked_sub(first)?;
+    names.get(usize::from(index)).copied()
 }
 
 #[cfg(test)]

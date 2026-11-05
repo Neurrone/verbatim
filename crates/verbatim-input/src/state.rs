@@ -919,7 +919,7 @@ impl DecisionMachine {
     /// key name. Returns `None` only if the identifier fails to parse, which
     /// the well-formed names here never do.
     fn build_gesture(&self, current_key: KeyCode, main_name: &str) -> Option<GestureId> {
-        let mut parts: Vec<&str> = Vec::with_capacity(self.held_modifiers.len() + 1);
+        let mut parts: Vec<&str> = Vec::with_capacity(self.held_modifiers.len().saturating_add(1));
         for &(vk, extended) in &self.held_modifiers {
             // The key going down is the main key, not one of its own
             // modifiers, even when it is a modifier held across an auto-repeat.

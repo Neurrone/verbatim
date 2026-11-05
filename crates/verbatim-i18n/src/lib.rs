@@ -12,6 +12,43 @@
 //! checked `fl!` macro so a typo in a message ID fails the build.
 
 #![forbid(unsafe_code)]
+// Non-test code never panics, overflows or truncates silently: arithmetic
+// is checked or saturating, indexing goes through `get`, and casts through
+// `From` or `TryFrom`. Tests are exempt, since a panic is how a test fails.
+// `expect` is not denied here yet: parsing the embedded English resources expects
+// fixed, test-checked data to be well-formed.
+#![deny(
+    clippy::arithmetic_side_effects,
+    clippy::as_conversions,
+    clippy::exit,
+    clippy::indexing_slicing,
+    clippy::panic,
+    clippy::panic_in_result_fn,
+    clippy::string_slice,
+    clippy::todo,
+    clippy::unimplemented,
+    clippy::unreachable,
+    clippy::unwrap_in_result,
+    clippy::unwrap_used
+)]
+#![cfg_attr(
+    test,
+    allow(
+        clippy::arithmetic_side_effects,
+        clippy::as_conversions,
+        clippy::exit,
+        clippy::expect_used,
+        clippy::indexing_slicing,
+        clippy::panic,
+        clippy::panic_in_result_fn,
+        clippy::string_slice,
+        clippy::todo,
+        clippy::unimplemented,
+        clippy::unreachable,
+        clippy::unwrap_in_result,
+        clippy::unwrap_used
+    )
+)]
 
 use std::borrow::Cow;
 use std::fmt;
@@ -95,10 +132,9 @@ pub fn load_locale_dir_into(
     // Highest priority first: a translation in the locale folder wins, and
     // the embedded resources keep the fallback language available (the
     // loader refuses to load without it).
-    let assets = AssetsMultiplexor::new([
-        Box::new(LocaleDirAssets::try_new(locale_dir)?) as Box<dyn I18nAssets + Send + Sync>,
-        Box::new(EmbeddedLocalizations),
-    ]);
+    let from_dir: Box<dyn I18nAssets + Send + Sync> =
+        Box::new(LocaleDirAssets::try_new(locale_dir)?);
+    let assets = AssetsMultiplexor::new([from_dir, Box::new(EmbeddedLocalizations)]);
     let selected = i18n_embed::select(loader, &assets, requested).map_err(LocaleError::Load)?;
     // The languages just loaded come with Fluent's bidi isolation on again;
     // it stays off for every language, as `new_loader` explains.
