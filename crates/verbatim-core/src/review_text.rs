@@ -25,6 +25,7 @@ use verbatim_model::{
 };
 
 use crate::editing::{is_grid, may_have_text, selection_segments, speak, speak_each};
+use crate::proven;
 use crate::queries::Then;
 use crate::state::{
     Landing, LandingPlace, PendingText, ReviewPosition, ReviewText, SharedChunk, SrState,
@@ -271,7 +272,8 @@ fn execute(
         }
         ReviewCommand::ReviewCurrentWord => {
             let words = text::words(content, line.language_at(0));
-            let word = text::word_at(&words, position.offset).and_then(|range| content.get(range));
+            let word =
+                text::word_at(&words, position.offset).map(|range| proven::text_in(content, range));
             let segments = match (word, repeat) {
                 (None, _) => text::text_segments("", None),
                 (Some(word), 0) => text::word_segments(word, language),
@@ -368,7 +370,7 @@ fn execute(
                 set_position(state, position_at(line, start, grid));
                 return vec![speak(
                     trace_id,
-                    text::word_segments(content.get(target.clone()).unwrap_or_default(), language),
+                    text::word_segments(proven::text_in(content, target.clone()), language),
                 )];
             }
             let at_edge = if forward { line.last } else { line.first };
@@ -378,7 +380,7 @@ fn execute(
                 Message::Top
             };
             if at_edge {
-                let word = current.and_then(|range| content.get(range));
+                let word = current.map(|range| proven::text_in(content, range));
                 return vec![speak(
                     trace_id,
                     with_edge(message, text::word_segments(word.unwrap_or(""), language)),
@@ -820,8 +822,7 @@ fn land(
             TextUnit::Word => {
                 let words = text::words(content, position.line.language_at(0));
                 let word = text::word_at(&words, position.offset)
-                    .and_then(|range| content.get(range))
-                    .unwrap_or_default();
+                    .map_or("", |range| proven::text_in(content, range));
                 text::word_segments(word, language)
             }
             _ => text::text_segments(content, position.line.language_at(0)),
@@ -861,8 +862,7 @@ fn land(
         TextUnit::Word => {
             let words = words();
             let word = text::word_at(&words, position.offset)
-                .and_then(|range| content.get(range))
-                .unwrap_or_default();
+                .map_or("", |range| proven::text_in(content, range));
             text::word_segments(word, language)
         }
         _ => text::text_segments(content, line.language_at(0)),

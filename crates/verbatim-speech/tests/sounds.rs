@@ -414,6 +414,32 @@ fn waiting_for_an_event_returns_once_its_sound_has_played_to_its_end() {
 }
 
 #[test]
+fn waiting_past_the_clocks_range_returns_once_the_sound_has_played_to_its_end() {
+    let mut harness = harness(None);
+    let wav = loud_wav("exit-unbounded");
+    harness.manager.themes().set(ActiveTheme::new(
+        Theme::builtin_default(),
+        |_| Some(wav.clone()),
+        ThemeOptions::default(),
+    ));
+    // A timeout no `Instant` can hold: the wait has no deadline.
+    assert!(
+        harness
+            .manager
+            .play_earcon_to_end(&mut harness.token, Earcon::Exit, Duration::MAX),
+        "the exit sound is heard"
+    );
+    assert_eq!(
+        loud_count(&harness.tap.frames.get()),
+        SOUND_FRAMES,
+        "all of the sound played before it returned"
+    );
+    drop(harness);
+    std::fs::remove_dir_all(wav.parent().expect("the sound's folder"))
+        .expect("remove the sound's folder");
+}
+
+#[test]
 fn waiting_for_an_event_without_a_sound_returns_once_its_words_are_heard() {
     // No sounds loaded: the exit sound is spoken instead.
     let mut harness = harness(None);

@@ -47,6 +47,10 @@ impl ToggleKey {
     /// # Panics
     ///
     /// Never: the three identifiers are fixed and well-formed.
+    #[expect(
+        clippy::expect_used,
+        reason = "fixed literals; each is parsed by each_toggle_key_round_trips_through_its_code_and_gesture"
+    )]
     #[must_use]
     pub fn gesture(self) -> GestureId {
         let name = match self {

@@ -147,7 +147,7 @@ pub(crate) fn previous_grapheme(content: &str, offset: usize) -> Option<Range<us
 /// The column of `offset` in `content`: terminal cells before it in a
 /// terminal (`grid`), grapheme clusters before it elsewhere.
 pub(crate) fn column_of(content: &str, offset: usize, grid: bool) -> usize {
-    let before = content.get(..boundary(content, offset)).unwrap_or_default();
+    let before = crate::proven::text_in(content, ..boundary(content, offset));
     if grid {
         verbatim_text::cell_width(before)
     } else {
@@ -534,11 +534,11 @@ pub(crate) fn formatted_segments(
             }
             *reported = attributes.clone();
         }
-        let start = range.start.max(spoken.start);
-        let end = range.end.min(spoken.end);
-        if let Some(piece) = chunk.text.get(start.min(end)..end) {
-            joined.push_str(piece);
-        }
+        // A run's ends are the outpost's, which promises character
+        // boundaries; [`boundary`] keeps a broken promise readable.
+        let end = boundary(&chunk.text, range.end.min(spoken.end));
+        let start = boundary(&chunk.text, range.start.max(spoken.start)).min(end);
+        joined.push_str(crate::proven::text_in(&chunk.text, start..end));
     }
     flush(&mut joined, &mut segments);
     Some(segments)

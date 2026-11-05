@@ -34,6 +34,8 @@ mod align;
 
 use align::Likeness;
 
+use crate::proven::{items_in, text_in};
+
 /// How long a gone row lingers ("Lingering"), in milliseconds.
 pub const LINGERING_MS: u64 = 2000;
 
@@ -144,7 +146,7 @@ impl ReadText {
             )
         });
         crlf_lines(&self.text).map(move |span| {
-            let line = self.text.get(span).unwrap_or_default();
+            let line = text_in(&self.text, span);
             let length = lengths.next().unwrap_or(0);
             (line, length.saturating_sub(characters(line)))
         })
@@ -189,7 +191,7 @@ impl Text {
     #[must_use]
     pub fn as_str(&self) -> &str {
         // `start..end` is a range of `whole`, as every `Text` is made.
-        self.whole.get(self.start..self.end).unwrap_or_default()
+        text_in(&self.whole, self.start..self.end)
     }
 
     /// Its length in bytes.
@@ -1347,10 +1349,7 @@ fn line_offset(memory: &Screen, anchor: &Anchor) -> usize {
         return anchor.column;
     };
     let first = line_start(&memory.rows, index);
-    memory
-        .rows
-        .get(first..index)
-        .unwrap_or_default()
+    items_in(&memory.rows, first..index)
         .iter()
         .map(|row| row.text.chars().count())
         .sum::<usize>()
@@ -2427,8 +2426,7 @@ fn line_end(rows: &[Row], first: usize) -> usize {
 /// The column along its line of `column` in row `row`, in characters from
 /// the line's first row, as the reading rules count a caret.
 fn line_column(rows: &[Row], row: usize, column: usize) -> usize {
-    rows.get(line_start(rows, row)..row)
-        .unwrap_or_default()
+    items_in(rows, line_start(rows, row)..row)
         .iter()
         .map(|row| row.text.chars().count())
         .sum::<usize>()
@@ -2449,8 +2447,8 @@ fn written_past(
     if column <= from {
         return false;
     }
-    let old_text = line_text(old.get(first..=line_end(old, first)).unwrap_or_default());
-    let new_text = line_text(rows.get(to..=line_end(rows, to)).unwrap_or_default());
+    let old_text = line_text(items_in(old, first..=line_end(old, first)));
+    let new_text = line_text(items_in(rows, to..=line_end(rows, to)));
     let cells = |text: &str| {
         text.chars()
             .chain(std::iter::repeat(' '))
@@ -2479,7 +2477,7 @@ fn lines(rows: &[Row]) -> Vec<Line> {
         // its row's; a longer line's is its rows' joined, the stretch they
         // make up together while they are still in the string they were
         // split into, and its hash is the one each row has as its line's.
-        let line_rows = rows.get(first..end).unwrap_or_default();
+        let line_rows = items_in(rows, first..end);
         let (text, line_hash) = match line_rows {
             [start, rest @ ..] if !rest.is_empty() => {
                 let text = start
@@ -2659,12 +2657,10 @@ fn split_lines<'a>(
         // after the line's last character, so each row ends at the first of
         // them at the latest.
         let end = crate::trim_padding(line).len();
-        let line_hash = hash(line.get(..end).unwrap_or_default());
+        let line_hash = hash(text_in(line, ..end));
         for (at, piece) in pieces.iter().enumerate() {
             let start = piece.start.min(end);
-            let piece = line
-                .get(start..piece.end.min(end).max(start))
-                .unwrap_or_default();
+            let piece = text_in(line, start..piece.end.min(end).max(start));
             // A line of one row is that row's text.
             let row_hash = if last == 0 { line_hash } else { hash(piece) };
             let start = joined.len();
@@ -2783,7 +2779,7 @@ pub fn rows_of(text: &str, width: usize) -> Vec<Row> {
         .unwrap_or(0)
         .saturating_add(1);
     split_lines(
-        crlf_lines(text).map(|span| (text.get(span).unwrap_or_default(), 0)),
+        crlf_lines(text).map(|span| (text_in(text, span), 0)),
         rows,
         width,
     )
@@ -2844,11 +2840,17 @@ fn fold(a: u64, b: u64) -> u64 {
 /// What a row of the last read the alignment has not kept yet is.
 const GONE: OldRow = OldRow::Gone { lingering: false };
 
-/// Puts `value` at `at` of `table`, which holds it.
+/// Puts `value` at `at` of `table`, which holds it: a slot outside it is a
+/// logic bug, which stops a debug build and drops the value in a release
+/// one.
+#[track_caller]
 fn put<T>(table: &mut [T], at: usize, value: T) {
-    if let Some(slot) = table.get_mut(at) {
-        *slot = value;
-    }
+    let length = table.len();
+    let Some(slot) = table.get_mut(at) else {
+        debug_assert!(false, "slot {at} outside a table of {length} items");
+        return;
+    };
+    *slot = value;
 }
 
 /// Whether `rows` has row `at` and it has text.

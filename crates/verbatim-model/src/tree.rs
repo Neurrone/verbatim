@@ -636,6 +636,29 @@ use crate::{NodeId, OutpostId};
 mod tests {
     use super::*;
 
+    /// A state's bit in the serialized mask is its declaration order, so a
+    /// reordered or inserted variant cannot change the wire mask unseen.
+    #[test]
+    fn each_states_index_is_its_declaration_order() {
+        let indexes: Vec<(State, u32)> = State::ALL
+            .iter()
+            .map(|&state| (state, state.index()))
+            .collect();
+        let declared: Vec<(State, u32)> = State::ALL
+            .iter()
+            .map(|&state| (state, u32::from(state as u8)))
+            .collect();
+        assert_eq!(indexes, declared);
+        let positions: Vec<u32> = (0..22).collect();
+        assert_eq!(
+            indexes
+                .iter()
+                .map(|&(_, index)| index)
+                .collect::<Vec<u32>>(),
+            positions
+        );
+    }
+
     #[test]
     fn state_set_insert_contains_remove() {
         let mut states = StateSet::new();

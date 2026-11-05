@@ -228,9 +228,10 @@ impl AudioLoop {
     /// for what `record` adds.
     fn admits(&self, source: usize, record: &Record) -> bool {
         // Every lane's source is one of the sources the mixer was built
-        // with; a record for none is never admitted.
+        // with. A record for none is admitted, so `apply` drops it and the
+        // lane drains instead of stalling its producer.
         let Some(store) = self.sources.get(source) else {
-            return false;
+            return true;
         };
         let ring = !self.out.is_full();
         match record {
@@ -255,8 +256,21 @@ impl AudioLoop {
         let generation = self.generation;
         let current = |format: u64| format == generation;
         // Every lane's source is one of the sources the mixer was built
-        // with, and `admits` took no record for any other.
+        // with. A record for none is a logic bug, which stops a debug
+        // build; a release one drops the record, and a block's samples
+        // with it, so the lane drains instead of stalling its producer,
+        // since the audio thread cannot log.
         let Some(store) = self.sources.get_mut(source) else {
+            debug_assert!(false, "a record on lane {lane} for no source {source}");
+            if let Record::Frames { samples, .. } = record
+                && let Some(Ok(chunk)) = self
+                    .lanes
+                    .get_mut(lane)
+                    .and_then(|lane| lane.samples.as_mut())
+                    .map(|ring| ring.read_chunk(samples))
+            {
+                chunk.commit_all();
+            }
             return;
         };
         match record {

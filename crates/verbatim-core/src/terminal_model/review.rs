@@ -227,11 +227,9 @@ fn finish(
         Plan::Read(moved, chunked) => {
             let review = Anchor {
                 row: chunked.row,
-                column: chunked
-                    .line
-                    .text
-                    .get(..chunked.offset)
-                    .map_or(0, |before| before.chars().count()),
+                column: crate::proven::text_in(&chunked.line.text, ..chunked.offset)
+                    .chars()
+                    .count(),
                 line_hash: chunked.line.hash,
             };
             let chunk = chunk_of(model, chunked);
@@ -627,9 +625,7 @@ fn read_range(
         } else {
             line.text.len()
         };
-        if let Some(piece) = line.text.get(begin..end) {
-            text.push_str(piece);
-        }
+        text.push_str(crate::proven::text_in(&line.text, begin..end));
         if row < to.row && !line.wraps {
             text.push_str("\r\n");
         }

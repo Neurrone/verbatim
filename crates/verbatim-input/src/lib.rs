@@ -18,12 +18,11 @@
 // Non-test code never panics, overflows or truncates silently: arithmetic
 // is checked or saturating, indexing goes through `get`, and casts through
 // `From` or `TryFrom`. Tests are exempt, since a panic is how a test fails.
-// `expect` is not denied here yet: parsing the binding tables' gestures expects
-// fixed, test-checked data to be well-formed.
 #![deny(
     clippy::arithmetic_side_effects,
     clippy::as_conversions,
     clippy::exit,
+    clippy::expect_used,
     clippy::indexing_slicing,
     clippy::panic,
     clippy::panic_in_result_fn,

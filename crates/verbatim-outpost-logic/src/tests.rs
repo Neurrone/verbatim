@@ -511,6 +511,21 @@ fn the_gap_records_timer_follows_the_record_in_the_order_it_changes() {
     assert_eq!(replay.reducer.next_timer(now(5)), None);
 }
 
+#[test]
+fn a_gap_records_bound_past_the_clocks_range_is_never_timed() {
+    let mut replay = Replay::new();
+    let effects = replay.push(name_change(1), Source::Hook, 1);
+    let request = program(&effects).request;
+    replay.commit(request, copy_dropped(), 2);
+    replay.finish(request, false, 3);
+    // The bound is 998 ms after a shell clock already at its end.
+    let at_the_end = Now {
+        at: Duration::MAX,
+        ..now(3)
+    };
+    assert_eq!(replay.reducer.next_timer(at_the_end), None);
+}
+
 /// Found by the outpost's generated test (`books/dev/src/reference/crates/verbatim-outpost-logic.md`, invariant 16): a foreground change taken in
 /// after the close still opens the gap record, whose bound is then neither
 /// timed nor tested, so no window text reaches Core after the close.
@@ -1355,6 +1370,17 @@ fn polling() -> Replay {
         Some(Duration::from_millis(7))
     );
     replay
+}
+
+#[test]
+fn a_watch_due_past_the_clocks_range_is_never_timed() {
+    let replay = polling();
+    // The first read is 4 ms after a shell clock already at its end.
+    let at_the_end = Now {
+        at: Duration::MAX,
+        ..now(3)
+    };
+    assert_eq!(replay.reducer.next_timer(at_the_end), None);
 }
 
 #[test]

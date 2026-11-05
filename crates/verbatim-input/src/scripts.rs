@@ -330,6 +330,10 @@ const LAPTOP_BINDINGS: &[RawBinding] = &[
 /// Never panics in practice: every identifier in the desktop and laptop
 /// binding tables is a fixed literal pinned well-formed by this module's own
 /// tests, not user input.
+#[expect(
+    clippy::expect_used,
+    reason = "fixed literals; every entry is parsed by every_gesture_in_both_tables_parses_and_is_keyboard_sourced"
+)]
 #[must_use]
 pub fn bindings_for(layout: KeyboardLayout) -> Vec<(GestureId, ScriptAction)> {
     let own: &[RawBinding] = match layout {
@@ -362,6 +366,10 @@ pub fn bindings_for(layout: KeyboardLayout) -> Vec<(GestureId, ScriptAction)> {
 ///
 /// Never panics in practice: every identifier is a fixed literal pinned
 /// well-formed by this module's tests.
+#[expect(
+    clippy::expect_used,
+    reason = "fixed literals; every entry is parsed by caret_keys_are_distinct_and_never_bound"
+)]
 #[must_use]
 pub fn caret_bindings() -> Vec<(GestureId, CaretKey)> {
     const MOVES: &[(&str, CaretMotion)] = &[
@@ -446,6 +454,10 @@ pub fn caret_bindings() -> Vec<(GestureId, CaretKey)> {
 ///
 /// Never panics in practice: every identifier is a fixed literal pinned
 /// well-formed by this module's tests.
+#[expect(
+    clippy::expect_used,
+    reason = "fixed literals; every entry is parsed by clearing_keys_are_never_bound_nor_caret_keys"
+)]
 #[must_use]
 pub fn clearing_keys() -> Vec<GestureId> {
     [

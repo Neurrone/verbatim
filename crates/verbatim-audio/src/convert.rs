@@ -149,7 +149,9 @@ impl Converter {
             NonZeroUsize::new(usize::from(self.source.channels)).unwrap_or(NonZeroUsize::MIN);
         let expected = float_to_u64((u64_to_f64(resampling.frames_in) * resampling.ratio).round());
         // The partial chunk left over, then silence, until every output
-        // frame the input implies has come out of the filter.
+        // frame the input implies has come out of the filter. A pass that
+        // resamples nothing ends the utterance there, a little short,
+        // rather than repeating forever.
         while resampling.frames_out < expected {
             let partial = resampling.pending.len() / channels;
             resampling
@@ -157,6 +159,14 @@ impl Converter {
                 .resize(CHUNK_FRAMES.saturating_mul(channels.get()), 0.0);
             let frames = resampling.process(channels, partial);
             resampling.pending.clear();
+            if frames == 0 {
+                tracing::debug!(
+                    frames_out = resampling.frames_out,
+                    expected,
+                    "the resampler made no frames; the utterance ends short"
+                );
+                break;
+            }
             resampling.emit(frames, channels, Some(expected), self.device.channels, out);
         }
         resampling.resampler.reset();
@@ -173,19 +183,32 @@ impl Resampling {
     /// number of output frames written to `output`.
     fn process(&mut self, channels: NonZeroUsize, valid: usize) -> usize {
         let capacity = self.output.len() / channels;
-        let chunk = self
-            .pending
-            .get(..CHUNK_FRAMES.saturating_mul(channels.get()))
-            .unwrap_or_default();
-        // The pending chunk holds exactly CHUNK_FRAMES frames, and the
+        // The pending chunk holds at least CHUNK_FRAMES frames, and the
         // output buffer `output_frames_max` frames; with either short,
         // nothing is resampled.
-        let Ok(input) = InterleavedSlice::new(chunk, channels.get(), CHUNK_FRAMES) else {
+        let length = CHUNK_FRAMES.saturating_mul(channels.get());
+        let Some(chunk) = self.pending.get(..length) else {
+            tracing::debug!(
+                length,
+                pending = self.pending.len(),
+                "a resampler chunk short of input"
+            );
             return 0;
         };
-        let Ok(mut output) = InterleavedSlice::new_mut(&mut self.output, channels.get(), capacity)
-        else {
-            return 0;
+        let input = match InterleavedSlice::new(chunk, channels.get(), CHUNK_FRAMES) {
+            Ok(input) => input,
+            Err(error) => {
+                tracing::debug!(%error, "a resampler chunk that is not a buffer");
+                return 0;
+            }
+        };
+        let mut output = match InterleavedSlice::new_mut(&mut self.output, channels.get(), capacity)
+        {
+            Ok(output) => output,
+            Err(error) => {
+                tracing::debug!(%error, "a resampler output that is not a buffer");
+                return 0;
+            }
         };
         let indexing = Indexing::new().partial_len(valid);
         match self
@@ -196,7 +219,10 @@ impl Resampling {
             // The buffers are sized from the resampler's own maxima, so this
             // cannot happen; dropping the chunk keeps audio flowing if it
             // ever does.
-            Err(_) => 0,
+            Err(error) => {
+                tracing::debug!(%error, "the resampler failed on a chunk");
+                0
+            }
         }
     }
 
@@ -315,6 +341,37 @@ mod tests {
         assert!(
             next.iter().all(|sample| sample.abs() < 0.01),
             "nothing carried over"
+        );
+    }
+
+    #[test]
+    fn finish_ends_when_the_resampler_makes_no_frames() {
+        let source = PcmFormat {
+            sample_rate: 22_050,
+            channels: 1,
+        };
+        let mut converter = Converter::new(source, device(48_000, 1)).expect("builds");
+        let mut out = Vec::new();
+        converter.push(&[16_384; 32], &mut out);
+        // An output buffer with no room: every resampler call makes nothing.
+        converter
+            .resampling
+            .as_mut()
+            .expect("resamples")
+            .output
+            .clear();
+        converter.finish(&mut out);
+        assert_eq!(out, Vec::<f32>::new());
+
+        // The converter is reset for the next utterance.
+        let resampling = converter.resampling.as_ref().expect("resamples");
+        assert_eq!(
+            (
+                resampling.frames_in,
+                resampling.frames_out,
+                resampling.pending.len()
+            ),
+            (0, 0, 0)
         );
     }
 }

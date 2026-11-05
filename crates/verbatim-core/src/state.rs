@@ -581,7 +581,7 @@ impl BufferedPiece {
         // A piece is cut from its chunk's text at character boundaries
         // (`say_all`'s pieces), so the range is always found.
         let range = crate::text::byte_offset(self.start)..crate::text::byte_offset(self.end);
-        self.chunk.text.get(range).unwrap_or_default()
+        crate::proven::text_in(&self.chunk.text, range)
     }
 }
 

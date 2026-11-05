@@ -161,22 +161,24 @@ impl Likeness {
                 let slot = likeness.masks.len().checked_div(words).unwrap_or(0);
                 likeness.masks.extend(std::iter::repeat_n(0, words));
                 let number = u16::try_from(slot.saturating_add(1)).unwrap_or(u16::MAX);
-                match usize::try_from(u32::from(c)) {
-                    Ok(code) if code < 128 => {
-                        if let Some(entry) = likeness.ascii.get_mut(code) {
-                            *entry = number;
-                        }
-                    }
-                    _ => {
+                match usize::try_from(u32::from(c))
+                    .ok()
+                    .and_then(|code| likeness.ascii.get_mut(code))
+                {
+                    Some(entry) => *entry = number,
+                    None => {
                         likeness.other.insert(c, number);
                     }
                 }
                 slot
             });
             let word = slot.saturating_mul(words).saturating_add(at / 64);
-            if let Some(mask) = likeness.masks.get_mut(word) {
-                *mask |= 1 << (at % 64);
-            }
+            // The slot's masks were added above, `words` of them.
+            let Some(mask) = likeness.masks.get_mut(word) else {
+                debug_assert!(false, "no mask {word} for slot {slot}");
+                continue;
+            };
+            *mask |= 1 << (at % 64);
         }
         likeness.chars = chars;
         likeness
@@ -184,10 +186,14 @@ impl Likeness {
 
     /// The number of `c`'s mask, if the row holds it.
     fn slot(&self, c: char) -> Option<usize> {
-        let number = match usize::try_from(u32::from(c)) {
-            Ok(code) if code < 128 => self.ascii.get(code).copied().unwrap_or(0),
-            _ => self.other.get(&c).copied().unwrap_or(0),
-        };
+        // An ASCII character's number is in `ascii`, any other's in
+        // `other`, and 0 for one not seen.
+        let number = usize::try_from(u32::from(c))
+            .ok()
+            .and_then(|code| self.ascii.get(code))
+            .or_else(|| self.other.get(&c))
+            .copied()
+            .unwrap_or(0);
         usize::from(number).checked_sub(1)
     }
 
@@ -203,7 +209,9 @@ impl Likeness {
                 continue;
             };
             let start = slot.saturating_mul(words);
+            // Every slot has its `words` masks, as `of` makes them.
             let Some(mask) = self.masks.get(start..start.saturating_add(words)) else {
+                debug_assert!(false, "no masks for slot {slot}");
                 continue;
             };
             let mut carry = 0_u64;
@@ -269,7 +277,13 @@ pub(super) fn pair(
     let width = q.saturating_add(1);
     let cell = |a: usize, b: usize| a.saturating_mul(width).saturating_add(b);
     let mut best = vec![0_i64; p.saturating_add(1).saturating_mul(width)];
-    let value_at = |best: &[i64], a: usize, b: usize| best.get(cell(a, b)).copied().unwrap_or(0);
+    // Every `a` up to `p` and `b` up to `q` has its cell.
+    let value_at = |best: &[i64], a: usize, b: usize| {
+        best.get(cell(a, b)).copied().unwrap_or_else(|| {
+            debug_assert!(false, "no cell for {a}, {b}");
+            0
+        })
+    };
     // alike[a][b], row by row of `q`.
     let alike: Vec<bool> = old
         .iter()

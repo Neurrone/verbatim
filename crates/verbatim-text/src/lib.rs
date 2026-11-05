@@ -86,6 +86,7 @@ use icu_segmenter::options::{
 use icu_segmenter::{GraphemeClusterSegmenter, SentenceSegmenter, WordSegmenter};
 use jieba_rs::Jieba;
 
+mod proven;
 pub mod terminal_reading;
 pub mod terminal_rows;
 

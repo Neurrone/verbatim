@@ -218,4 +218,13 @@ mod tests {
         notices.opened();
         assert_eq!(notices.wait_limit(Duration::MAX), Duration::MAX);
     }
+
+    #[test]
+    fn a_retry_past_the_clocks_range_is_never_due() {
+        let (notices, _wakes) = notices();
+        notices.opening();
+        notices.failed(Some(Duration::MAX));
+        assert!(!notices.needs_reopen());
+        assert_eq!(notices.wait_limit(Duration::MAX), Duration::MAX);
+    }
 }

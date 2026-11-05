@@ -37,6 +37,7 @@ use verbatim_model::{
     UtteranceSegment,
 };
 
+use crate::proven;
 use crate::queries::{Asking, Then};
 use crate::state::{
     CARET_HISTORY, CaretContext, HeldKey, HeldRead, NavigatorRead, PendingCaret, PendingText,
@@ -608,14 +609,14 @@ fn deleted_text(
     let offset = text::boundary(content, text::byte_offset(offset));
     match motion {
         CaretMotion::Backspace => match text::previous_grapheme(content, offset) {
-            Some(range) => content.get(range).map(str::to_owned),
+            Some(range) => Some(proven::text_in(content, range).to_owned()),
             None if !grid && !line.first => line_break.map(str::to_owned),
             None => None,
         },
         CaretMotion::BackspaceWord => {
             let words = text::words(content, line.language_at(0));
             match words.iter().rev().find(|range| range.start < offset) {
-                Some(word) => content.get(word.start..offset).map(str::to_owned),
+                Some(word) => Some(proven::text_in(content, word.start..offset).to_owned()),
                 None if offset == 0 && !grid && !line.first => line_break.map(str::to_owned),
                 None => None,
             }
@@ -700,17 +701,17 @@ fn compared_text(line: &TextChunk, motion: CaretMotion, grid: bool) -> Option<St
         CaretMotion::Delete => {
             let text = if grid { content } else { line.text.as_str() };
             Some(
-                text::grapheme_at(text, offset)
-                    .and_then(|range| text.get(range))
-                    .map_or(String::new(), str::to_owned),
+                text::grapheme_at(text, offset).map_or(String::new(), |range| {
+                    proven::text_in(text, range).to_owned()
+                }),
             )
         }
         CaretMotion::DeleteWord => {
             let words = text::words(content, line.language_at(0));
             Some(
-                text::word_at(&words, offset)
-                    .and_then(|range| content.get(range))
-                    .map_or(String::new(), str::to_owned),
+                text::word_at(&words, offset).map_or(String::new(), |range| {
+                    proven::text_in(content, range).to_owned()
+                }),
             )
         }
         _ => None,

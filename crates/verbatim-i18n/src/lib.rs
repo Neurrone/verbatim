@@ -15,12 +15,11 @@
 // Non-test code never panics, overflows or truncates silently: arithmetic
 // is checked or saturating, indexing goes through `get`, and casts through
 // `From` or `TryFrom`. Tests are exempt, since a panic is how a test fails.
-// `expect` is not denied here yet: parsing the embedded English resources expects
-// fixed, test-checked data to be well-formed.
 #![deny(
     clippy::arithmetic_side_effects,
     clippy::as_conversions,
     clippy::exit,
+    clippy::expect_used,
     clippy::indexing_slicing,
     clippy::panic,
     clippy::panic_in_result_fn,
@@ -84,6 +83,10 @@ pub fn loader() -> &'static FluentLanguageLoader {
 /// Panics when the embedded English resources fail to load — that means the
 /// binary itself is broken (a bad `.ftl` was compiled in), so there is no
 /// sensible recovery.
+#[expect(
+    clippy::expect_used,
+    reason = "the embedded English resources are fixed; locale_dir_overrides_language_and_keeps_fallback loads them"
+)]
 #[must_use]
 pub fn new_loader() -> FluentLanguageLoader {
     let loader = fluent_language_loader!();

@@ -16,6 +16,7 @@
 use crate::terminal_rows::{Lost, NewRow, OldRow, Outcome, Read, Row, TerminalMemory, Text};
 use std::borrow::Cow;
 
+use crate::proven::{items_in, text_in};
 use crate::{Segmenter, WordRules, graphemes, is_space, squeezed};
 
 pub use crate::terminal_rows::LINGERING_MS;
@@ -434,10 +435,7 @@ impl Screen {
             return;
         };
         if start < dropped {
-            let above: usize = self
-                .rows
-                .get(start..dropped)
-                .unwrap_or_default()
+            let above: usize = items_in(&self.rows, start..dropped)
                 .iter()
                 .map(|row| row.text.len())
                 .sum();
@@ -449,10 +447,7 @@ impl Screen {
             }
         }
         self.rows = self.rows.split_off(dropped);
-        self.starts = self
-            .starts
-            .get(dropped..)
-            .unwrap_or_default()
+        self.starts = items_in(&self.starts, dropped..)
             .iter()
             .map(|start| start.saturating_sub(dropped))
             .collect();
@@ -535,12 +530,9 @@ impl Move {
                     .find(|line| line.rows.start == caret.line)
                     .map_or(caret.line.saturating_add(1), |line| line.rows.end),
             );
-        let fresh = outcome
-            .rows
-            .get(line_rows.clone())
-            .unwrap_or_default()
+        let fresh = items_in(&outcome.rows, line_rows.clone())
             .iter()
-            .zip(rows.get(line_rows).unwrap_or_default())
+            .zip(items_in(rows, line_rows))
             .all(|(kind, row)| row.is_blank() || *kind == NewRow::New);
         if fresh { Self::New } else { Self::Onto }
     }
@@ -800,7 +792,7 @@ impl TerminalReader {
                         let start = text.len().saturating_sub(rest.len()).max(cut);
                         speech.push(Speech::Growth {
                             row: index.saturating_add(skipped),
-                            text: text.get(start..).unwrap_or_default().to_owned(),
+                            text: text_in(&text, start..).to_owned(),
                         });
                     }
                 }
@@ -808,7 +800,7 @@ impl TerminalReader {
                     if let Some(start) = self.changed_start(&[&*said], &text) {
                         speech.push(Speech::Changed {
                             row: index.saturating_add(skipped),
-                            text: text.get(start.max(cut)..).unwrap_or_default().to_owned(),
+                            text: text_in(&text, start.max(cut)..).to_owned(),
                         });
                     }
                 }
@@ -991,9 +983,7 @@ impl TerminalReader {
         }
         let mut caret = outcome.caret.and_then(|row| {
             let line = outcome.lines.iter().find(|line| line.rows.contains(&row))?;
-            let before: usize = rows
-                .get(line.rows.start..row)
-                .unwrap_or_default()
+            let before: usize = items_in(rows, line.rows.start..row)
                 .iter()
                 .map(|row| row.text.chars().count())
                 .sum();
@@ -1102,7 +1092,7 @@ impl TerminalReader {
         let mut carried: std::collections::BTreeSet<usize> = std::collections::BTreeSet::new();
         for line in &outcome.lines {
             let start = line.rows.start;
-            let kinds = outcome.rows.get(line.rows.clone()).unwrap_or_default();
+            let kinds = items_in(&outcome.rows, line.rows.clone());
             // A line the read's first row continues keeps its start, above
             // the read, from the line its first row was in.
             // A read from the document's start has nothing above it: its
@@ -1132,7 +1122,7 @@ impl TerminalReader {
             // ([`put`]), so a line above the rows kept that holds nothing
             // needs none built.
             let kept = line.rows.end > keep_from;
-            let part = |at: usize| text.get(at.max(cut)..).unwrap_or_default().to_owned();
+            let part = |at: usize| text_in(text, at.max(cut)..).to_owned();
             let first = line
                 .rows
                 .clone()
@@ -1258,10 +1248,7 @@ impl TerminalReader {
                 && let Some(new_colours) = &new_colours
                 && let Some(at) = line.text.rfind(after.as_str())
             {
-                let mut column = line
-                    .text
-                    .get(..at)
-                    .map_or(0, |before| before.chars().count());
+                let mut column = text_in(&line.text, ..at).chars().count();
                 let mut row = start;
                 while row.saturating_add(1) < line.rows.end
                     && let Some(width) = rows.get(row).map(|row| row.text.chars().count())
@@ -1429,10 +1416,7 @@ impl TerminalReader {
                         start,
                         Speech::Growth {
                             row: start,
-                            text: text
-                                .get(said.max(cut).min(end)..end)
-                                .unwrap_or_default()
-                                .to_owned(),
+                            text: text_in(text, said.max(cut).min(end)..end).to_owned(),
                         },
                     ));
                     state.said = if end == text.len() {
@@ -1711,9 +1695,7 @@ impl TerminalReader {
             .iter()
             .rposition(|kind| *kind == KeyKind::Caret(Unit::Line))
             .is_some_and(|at| {
-                keys.kinds
-                    .get(at.saturating_add(1)..)
-                    .unwrap_or_default()
+                items_in(&keys.kinds, at.saturating_add(1)..)
                     .iter()
                     .any(|kind| matches!(kind, KeyKind::Typed(_)))
             });
@@ -1763,9 +1745,7 @@ impl TerminalReader {
             // the typing or a move, it waits for a read with colours
             // ("Colours").
             if colours.is_none() && !compared.clean() {
-                let row_end = rows
-                    .get(caret.line..=caret.row)
-                    .unwrap_or_default()
+                let row_end = items_in(rows, caret.line..=caret.row)
                     .iter()
                     .map(|row| row.text.chars().count())
                     .sum();
@@ -1847,7 +1827,7 @@ impl TerminalReader {
                     } else if let Some(start) = self.changed_start(&[&before.shown], &shown) {
                         speech.push(Speech::Changed {
                             row: caret.line,
-                            text: shown.get(start..).unwrap_or_default().to_owned(),
+                            text: text_in(&shown, start..).to_owned(),
                         });
                     }
                     answer = Some(caret.line);
@@ -2175,23 +2155,23 @@ impl<'a> Difference<'a> {
 
     /// What `old` had between the shared start and end.
     fn removed(&self) -> &str {
-        self.old
-            .get(self.start..self.old.len().saturating_sub(self.end))
-            .unwrap_or_default()
+        text_in(
+            &self.old,
+            self.start..self.old.len().saturating_sub(self.end),
+        )
     }
 
     /// What `new` has there.
     fn inserted(&self) -> &str {
-        self.new
-            .get(self.start..self.new.len().saturating_sub(self.end))
-            .unwrap_or_default()
+        text_in(
+            &self.new,
+            self.start..self.new.len().saturating_sub(self.end),
+        )
     }
 
     /// The characters the two share at their start.
     fn start_chars(&self) -> usize {
-        self.new
-            .get(..self.start)
-            .map_or(0, |start| start.chars().count())
+        text_in(&self.new, ..self.start).chars().count()
     }
 
     /// Whether exactly one character changed, neither a letter nor a
@@ -2228,14 +2208,10 @@ impl<'a> Difference<'a> {
             let mut expected: Vec<char> = old_head.to_vec();
             expected.extend(all.chars());
             if new_chars.get(..expected.len()) == Some(expected.as_slice()) {
-                let rest: String = new_chars
-                    .get(expected.len()..to.min(new_chars.len()))
-                    .unwrap_or_default()
+                let rest: String = items_in(&new_chars, expected.len()..to.min(new_chars.len()))
                     .iter()
                     .collect();
-                let after: String = new_chars
-                    .get(to.min(new_chars.len())..)
-                    .unwrap_or_default()
+                let after: String = items_in(&new_chars, to.min(new_chars.len())..)
                     .iter()
                     .collect();
                 let old_after: String = old_tail.iter().collect();
@@ -2390,8 +2366,7 @@ fn suggestion(caret: &Caret, rows: &[Row], colours: &[Option<&Vec<ColourRun>>]) 
     let runs = colours.get(caret.row).copied().flatten()?;
     let row = rows.get(caret.row)?;
     let column = caret.column.saturating_sub(
-        rows.get(caret.line..caret.row)
-            .unwrap_or_default()
+        rows.get(caret.line..caret.row)?
             .iter()
             .map(|row| row.text.chars().count())
             .sum::<usize>(),

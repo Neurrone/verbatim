@@ -56,6 +56,7 @@ pub mod flight_recorder;
 pub mod focus_rules;
 mod foreground;
 mod keys;
+mod proven;
 mod queries;
 mod recorder;
 mod reduce;

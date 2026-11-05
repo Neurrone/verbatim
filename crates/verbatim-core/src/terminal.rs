@@ -863,14 +863,18 @@ fn bound(state: &mut SrState) {
         }
         if let Some(counted) = counted {
             let count = Waiting::Skipped(with_line(before, counted));
-            // `before` is the count at the index before.
-            match index
+            // `before` is the count at the index before, which nothing
+            // above removed.
+            let slot = index
                 .checked_sub(1)
-                .filter(|_| before.is_some())
-                .and_then(|before| terminal.waiting.get_mut(before))
-            {
-                Some(slot) => *slot = count,
-                None => terminal.waiting.insert(index, count),
+                .and_then(|at| terminal.waiting.get_mut(at));
+            match (before, slot) {
+                (Some(_), Some(slot)) => *slot = count,
+                (Some(_), None) => {
+                    debug_assert!(false, "no count before the line at {index}");
+                    terminal.waiting.insert(index, count);
+                }
+                (None, _) => terminal.waiting.insert(index, count),
             }
         }
     }

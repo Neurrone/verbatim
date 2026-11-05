@@ -303,6 +303,10 @@ impl MixerBuilder {
 
     /// The control of `source`'s cancel generation and pause, for the one
     /// thread that cancels and pauses it.
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "a SourceKey is made only by this builder's source(), and sources are never removed"
+    )]
     #[must_use]
     pub fn control(&self, source: SourceKey) -> SourceControl {
         SourceControl {
@@ -314,6 +318,10 @@ impl MixerBuilder {
     /// A lane that plays sounds on `source`, for one thread: it holds
     /// [`SOUND_RECORDS`] records, and a sound that finds it full is not
     /// played.
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "a SourceKey is made only by this builder's source(), and sources are never removed"
+    )]
     pub fn lane(&mut self, source: SourceKey) -> Lane {
         let (producer, consumer) = RingBuffer::new(SOUND_RECORDS);
         self.lanes.push(LaneEnd {
@@ -331,6 +339,10 @@ impl MixerBuilder {
     /// The lane that writes utterances to `source`, for the one thread that
     /// synthesizes them: a ring of records and a ring of samples, sized for
     /// the source's capacity at the largest format the mixer accepts.
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "a SourceKey is made only by this builder's source(), and sources are never removed"
+    )]
     pub fn speech_lane(&mut self, source: SourceKey) -> SpeechLane {
         let (records, record_end) = RingBuffer::new(SPEECH_RECORDS);
         let (samples, sample_end) = RingBuffer::new(store::SAMPLES);

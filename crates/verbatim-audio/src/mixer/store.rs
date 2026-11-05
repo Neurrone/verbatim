@@ -897,11 +897,14 @@ impl SourceState {
             let input = samples(from.saturating_sub(start));
             let count = samples(to.saturating_sub(from));
             // Both runs are `count` long: `to` is within the mix and the
-            // voice.
+            // voice. A run outside either is a logic bug, which stops a
+            // debug build; a release one skips the voice for this mix, as
+            // the audio thread cannot log.
             let (Some(mixed), Some(frames)) = (
                 mix.get_mut(out..out.saturating_add(count)),
                 voice.frames.get(input..input.saturating_add(count)),
             ) else {
+                debug_assert!(false, "a voice's run outside the mix or the voice");
                 continue;
             };
             for (sample, frame) in mixed.iter_mut().zip(frames) {

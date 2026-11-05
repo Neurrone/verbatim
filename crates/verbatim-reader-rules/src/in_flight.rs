@@ -484,10 +484,12 @@ impl<T> InFlight<T> {
     }
 
     /// Abandons the item running for `reason`: it leaves, and the next
-    /// generation takes charge. Called only with an item running; with
-    /// none, nothing is decided.
+    /// generation takes charge. Called only with an item running: with
+    /// none, a logic bug, a debug build stops and a release one decides
+    /// nothing.
     fn abandon(&mut self, reason: Reason) -> Decision<T> {
         let Some(running) = self.running.take() else {
+            debug_assert!(false, "an abandonment for {reason:?} with no item running");
             return Decision::Nothing;
         };
         let dead = self.generation;

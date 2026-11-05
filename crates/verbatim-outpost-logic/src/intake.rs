@@ -547,8 +547,13 @@ impl Intake {
             marker,
             entry,
         };
-        match place.and_then(|place| self.waiting.get_mut(place)) {
-            Some(slot) => *slot = waiting,
+        // A place is an index into `waiting` that nothing above removed.
+        match place.map(|place| (place, self.waiting.get_mut(place))) {
+            Some((_, Some(slot))) => *slot = waiting,
+            Some((place, None)) => {
+                debug_assert!(false, "merge place {place} outside the waiting queue");
+                self.waiting.push_back(waiting);
+            }
             None => self.waiting.push_back(waiting),
         }
         pushed
@@ -1227,13 +1232,13 @@ fn plan(waiting: Vec<Waiting>, focused: Option<&Object>) -> Vec<Planned> {
                 let group = run
                     .iter()
                     .rev()
-                    .filter_map(|&at| entries.get_mut(at).and_then(Option::take))
+                    .filter_map(|&at| take_entry(&mut entries, at))
                     .collect();
                 planned.push(Planned::Focus(group));
             }
             continue;
         }
-        let Some(entry) = entries.get_mut(index).and_then(Option::take) else {
+        let Some(entry) = take_entry(&mut entries, index) else {
             continue;
         };
         match key {
@@ -1291,6 +1296,20 @@ fn ends_a_run(key: Option<&Key>) -> bool {
     }
 }
 
+/// Takes the entry at `at` of `entries`, `None` once taken. `entries` has
+/// one slot for each entry kept, and `at` is an index into those: a slot
+/// outside it is a logic bug, which stops a debug build and reads as taken
+/// in a release one.
+#[track_caller]
+fn take_entry(entries: &mut [Option<Entry>], at: usize) -> Option<Entry> {
+    let length = entries.len();
+    let Some(slot) = entries.get_mut(at) else {
+        debug_assert!(false, "entry {at} outside the {length} kept");
+        return None;
+    };
+    slot.take()
+}
+
 /// Puts `run`, indexes into `kept` in the order they arrived, in the order
 /// Windows raised its events, when every one carries the time it was
 /// raised: NVDA's one hook receives a run's events in that order, while an
@@ -1305,9 +1324,16 @@ fn ends_a_run(key: Option<&Key>) -> bool {
 /// behind every listener copy handled ([`super::hold`]), so a listener copy
 /// raised in the same tick as a hook copy is ahead of it.
 fn in_raised_order(kept: &[Waiting], run: &mut [usize]) {
-    let raised = |at: usize| match &kept.get(at)?.entry.item {
-        Item::Fact(_, Some(stamp)) => Some(stamp.time),
-        _ => None,
+    let raised = |at: usize| {
+        // A run holds indexes into `kept`.
+        let Some(waiting) = kept.get(at) else {
+            debug_assert!(false, "run index {at} outside the {} kept", kept.len());
+            return None;
+        };
+        match &waiting.entry.item {
+            Item::Fact(_, Some(stamp)) => Some(stamp.time),
+            _ => None,
+        }
     };
     let Some(first) = run.first().and_then(|&at| raised(at)) else {
         return;
