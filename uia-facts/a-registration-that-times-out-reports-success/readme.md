@@ -27,7 +27,7 @@ Every trial runs in a client process of its own (the program's `trial` role), as
 | Figure | Date | Machine | Source | Threshold |
 |---|---|---|---|---|
 | E-TT: success after 1,089 ms, held in `FragmentRoot` | 2026-10-10 | Build 26200 | `experiments/mockapp-experiments-2026-10-10/` at b0a1989 | `ok`; band 1,000 to 1,200 ms |
-| The wait follows the connection timeout: 532 to 551 ms at 500 ms, 2,190 to 2,226 at 2,000, 5,514 to 5,541 at 5,000 (e57); 540 to 549 and 5,453 to 5,504 ms (the CI test) | 2026-10-18 | Build 26200 | e57, `recorded/e57/`; the CI test | Bands from the connection timeout |
+| The wait follows the connection timeout: 532 to 551 ms at 500 ms, 2,190 to 2,226 at 2,000, 5,514 to 5,541 at 5,000, and the same at 2,000 with the transaction timeout at 500 and 20,000 ms (e57); 540 to 549 and 5,453 to 5,504 ms (the CI test) | 2026-10-18 | Build 26200 | e57, `recorded/e57/` (`m_*`, `t_*`); the CI test | Bands from the connection timeout |
 | e58: one advise at the release; nothing for 6 s with no event; C and D lose none; with no stall, the removal succeeds and frees the handler | 2026-10-18 | Build 26200 | `recorded/e58/` (5 trials each) | Deterministic |
 | First uia-facts run, `ett`: `ok` 5 of 5, 1,091.5 ms (1,090.8 to 1,095.6) | 2026-11-05 | Build 26200.9711, `UIAutomationCore.dll` 7.2.26100.9549, AMD Ryzen 7 5700G | fdd501b9 | Pass |
 | First uia-facts run, `connection`: `ok` 5 of 5; 541.0 ms (538.0 to 545.6) at 500 ms; 5,521.9 ms (5,511.7 to 5,529.5) at 5,000 ms | 2026-11-05 | As above | As above | Pass |
@@ -43,4 +43,12 @@ Every trial runs in a client process of its own (the program's `trial` role), as
 
 ## Evidence kept
 
-`recorded/e57/`: e57's outputs at connection timeouts of 500, 2,000 and 5,000 ms, in-process (`m_in_*`) and from a second process (`m_out_*`), one line per trial, which time the registration's wait. `recorded/e58/`: e58's `silent`, `scope` and `remove-nostall` outputs, one line per trial. E-TT's rerun output is with [the timeout-bounds folder](../a-timeout-bounds-each-request-and-window-message-not-an-operation/readme.md), whose search it times.
+These are e57's and e58's raw outputs, one line per trial, kept whole. Each line also records the events raised after the stall and whether each was heard, which these files are not cited for: only the fields named below are.
+
+- `recorded/e57/m_in_*` and `m_out_*`: the registration during a stall at connection timeouts of 500, 2,000 and 5,000 ms (transaction timeout 5,000 ms), in-process and from a second process. Cited: each line's `registered ok <ms>`, the registration's outcome and wait.
+- `recorded/e57/t_in_*` and `t_out_*`: the same at a connection timeout of 2,000 ms with the transaction timeout at 500 and 20,000 ms. Cited: `registered ok <ms>`, the wait following the connection timeout whatever the transaction timeout.
+- `recorded/e58/silent.out`: the `silent` case. Cited: `advises`, one advise at the release, and the empty log after the backlog.
+- `recorded/e58/scope.out`: the `scope` case. Cited: the `C:` and `D:` fields, each losing no event; its `A:` and `B:` fields are not.
+- `recorded/e58/remove-nostall.out`: the removal with no stall. Cited: the removal's `ok`, the handler's release, and neither event heard.
+
+E-TT's rerun output is with [the timeout-bounds folder](../a-timeout-bounds-each-request-and-window-message-not-an-operation/readme.md), whose search it times.

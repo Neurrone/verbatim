@@ -132,7 +132,7 @@ fn queued_search(args: &Args, report: &mut Report) {
         let root = uia::element(&client, provider.hwnd(0)).expect("the window's element");
         let first = uia::share(&uia::node(&client, &root, 1).expect("node 1"));
         // The search re-reads its start's runtime id when the element was
-        // fetched more than about 0.65 s before; this pause makes it.
+        // fetched 600 ms or more before, not at 300 ms; this pause makes it.
         uia::pause(Duration::from_secs(1));
         args.pause_for_debugger(&[("provider", provider.pid), ("client", std::process::id())]);
         provider.request("hold GetPropertyValue w=0 n=1");

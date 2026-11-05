@@ -15,7 +15,7 @@ The provider program with one UIA window served on its UI thread (`UseComThreadi
 - `cheap`: K = 4,000 plain name reads.
 - `costly`: K = 100, every provider call made 5 ms slow while the window keeps pumping (`slow 5`); each 5 ms wait lasts a system timer tick or more.
 
-Each N's bound is the serial-share bound of its own runs: one call's time on one thread divided by the provider's serial time per call under that load, the median interval between provider call entries. Judged: each N's speed-up at or below its bound (a relation). When the provider's time is the whole call, as with the costly calls, the bound is 1.00 and equal to the speed-up within the clock's reach, so the relation is printed, not judged. The speed-ups and the serial shares are printed for trends.
+Each N's bound is the serial-share bound of its own runs: one call's time on one thread divided by the provider's serial time per call under that load, the median interval between provider call entries. Judged: each N's speed-up at or below the larger of its bound and 1.5, the fact's figure for calls whose cost is in the provider, where the bound is 1.00 (a relation). The speed-ups and the serial shares are printed for trends.
 
 - `processes`: the cheap bench as N threads of this process, each with its own client object, against N client processes of one thread each, both kept alive across the runs and timed the same way, from the signal to start to the last one's end. Printed for trends, run by run.
 - `shared`: the cheap 8-thread bench with one client object's elements for every thread against a client object each, printed.
@@ -26,7 +26,7 @@ Each N's bound is the serial-share bound of its own runs: one call's time on one
 |---|---|---|---|---|
 | Speed-ups: synthetic provider 1.74 (STA) to 1.98 (agile) on cheap calls, 1.01 with a 5 ms provider call; mockapp 1.31 to 2.35; real applications 1.1 to 1.9; the bound 5 to 14 percent above the speed-up | 2026-11-02 | Build 26200.9711 | `experiments/parallel-uia-calls/`, "Throughput" and "Why several threads speed up cheap calls" (`run-xbench.ps1`, `parts.ps1`, `run-mockapp.ps1`) | At or below the bound |
 | First uia-facts run, `cheap`: 1.67, 1.71 and 1.72 at 2, 4 and 8 threads, against bounds of 1.73, 1.79 and 1.79 (a call 0.104 ms; serial shares 0.58, 0.56 and 0.56) | 2026-11-05 | Build 26200.9711, `UIAutomationCore.dll` 7.2.26100.9549, AMD Ryzen 7 5700G | fdd501b9 | Pass |
-| First uia-facts run, `costly`: 1.00, 1.00 and 1.04 at 2, 4 and 8 threads, each bound 1.00 (a call 47.5 ms, serial shares 1.00) | 2026-11-05 | As above | As above | For trends: within the fact's 1.0 to 1.5 times |
+| First uia-facts run, `costly`: 1.00, 1.00 and 1.04 at 2, 4 and 8 threads, each bound 1.00 (a call 47.5 ms, serial shares 1.00) | 2026-11-05 | As above | As above | Pass: at or below 1.5 |
 | First uia-facts run, `processes`: medians, threads 250, 263 and 261 ms against processes 240, 248 and 238 ms at 2, 4 and 8; at 8, threads as fast or faster in 2 of 7 runs | 2026-11-05 | As above | As above | For trends |
 | First uia-facts run, `shared`: 252 ms against 240 ms | 2026-11-05 | As above | As above | For trends |
 
