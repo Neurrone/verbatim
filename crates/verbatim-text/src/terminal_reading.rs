@@ -348,12 +348,12 @@ impl LineState {
         match self.hold.as_ref()? {
             Hold::Volatile => self
                 .changed_ms
-                .map(|at| at + quiet_period(self.interval_ms)),
+                .map(|at| at.saturating_add(quiet_period(self.interval_ms))),
             Hold::Word => self
                 .grew_ms
-                .map(|at| at + quiet_period(self.grew_interval_ms)),
-            Hold::Keys => keys.map(|(at, interval)| at + quiet_period(interval)),
-            Hold::Colours(_) => keys.map(|(at, _)| at + KEY_WINDOW_MS),
+                .map(|at| at.saturating_add(quiet_period(self.grew_interval_ms))),
+            Hold::Keys => keys.map(|(at, interval)| at.saturating_add(quiet_period(interval))),
+            Hold::Colours(_) => keys.map(|(at, _)| at.saturating_add(KEY_WINDOW_MS)),
         }
     }
 }
@@ -419,7 +419,7 @@ impl Screen {
     /// the read's first row, when it is kept.
     fn start(&self, row: usize) -> Option<usize> {
         let start = self.starts.get(row.checked_sub(self.skipped)?)?;
-        Some(start + self.skipped)
+        Some(start.saturating_add(self.skipped))
     }
 
     /// Drops the first `dropped` rows, as the memory trimmed them: a line
@@ -429,24 +429,35 @@ impl Screen {
         if dropped == 0 || dropped >= self.rows.len() {
             return;
         }
-        let start = self.starts[dropped];
+        // Every row has its line's start.
+        let Some(&start) = self.starts.get(dropped) else {
+            return;
+        };
         if start < dropped {
-            let above: usize = self.rows[start..dropped]
+            let above: usize = self
+                .rows
+                .get(start..dropped)
+                .unwrap_or_default()
                 .iter()
                 .map(|row| row.text.len())
                 .sum();
-            if let Some(mut line) = self.rows[start].line.take() {
-                line.cut = (line.cut + above).min(line.text.len());
-                self.rows[dropped].line = Some(line);
+            if let Some(mut line) = self.rows.get_mut(start).and_then(|row| row.line.take()) {
+                line.cut = line.cut.saturating_add(above).min(line.text.len());
+                if let Some(row) = self.rows.get_mut(dropped) {
+                    row.line = Some(line);
+                }
             }
         }
         self.rows = self.rows.split_off(dropped);
-        self.starts = self.starts[dropped..]
+        self.starts = self
+            .starts
+            .get(dropped..)
+            .unwrap_or_default()
             .iter()
             .map(|start| start.saturating_sub(dropped))
             .collect();
         self.top = self.top.saturating_sub(dropped);
-        self.skipped += dropped;
+        self.skipped = self.skipped.saturating_add(dropped);
         if let Some(caret) = &mut self.caret {
             caret.line = caret.line.max(self.skipped);
         }
@@ -522,11 +533,14 @@ impl Move {
                     .lines
                     .iter()
                     .find(|line| line.rows.start == caret.line)
-                    .map_or(caret.line + 1, |line| line.rows.end),
+                    .map_or(caret.line.saturating_add(1), |line| line.rows.end),
             );
-        let fresh = outcome.rows[line_rows.clone()]
+        let fresh = outcome
+            .rows
+            .get(line_rows.clone())
+            .unwrap_or_default()
             .iter()
-            .zip(&rows[line_rows])
+            .zip(rows.get(line_rows).unwrap_or_default())
             .all(|(kind, row)| row.is_blank() || *kind == NewRow::New);
         if fresh { Self::New } else { Self::Onto }
     }
@@ -667,7 +681,7 @@ impl TerminalReader {
         let open = self
             .keys
             .as_ref()
-            .is_some_and(|keys| key.at_ms <= keys.last_ms + KEY_WINDOW_MS);
+            .is_some_and(|keys| key.at_ms <= keys.last_ms.saturating_add(KEY_WINDOW_MS));
         if !open {
             self.keys = Some(Keys {
                 first_ms: key.at_ms,
@@ -726,7 +740,7 @@ impl TerminalReader {
         let Some(keys) = &self.keys else {
             return Owner::Program;
         };
-        let window = now >= keys.last_ms && now <= keys.last_ms + KEY_WINDOW_MS;
+        let window = now >= keys.last_ms && now <= keys.last_ms.saturating_add(KEY_WINDOW_MS);
         let unprompted = state
             .and_then(|state| state.unprompted_ms)
             .is_some_and(|at| at >= keys.first_ms.saturating_sub(UNPROMPTED_MS));
@@ -755,14 +769,19 @@ impl TerminalReader {
         let keys = self.last_key;
         let (top, skipped) = (self.screen.top, self.screen.skipped);
         for index in 0..self.screen.rows.len() {
-            let Some(line) = &self.screen.rows[index].line else {
+            let Some(line) = self
+                .screen
+                .rows
+                .get(index)
+                .and_then(|row| row.line.as_ref())
+            else {
                 continue;
             };
             let Some(due) = line.due(keys) else {
                 continue;
             };
-            let end = (index + 1..self.screen.rows.len())
-                .find(|&row| self.screen.starts[row] != index)
+            let end = (index.saturating_add(1)..self.screen.rows.len())
+                .find(|&row| self.screen.starts.get(row) != Some(&index))
                 .unwrap_or(self.screen.rows.len());
             if due > now && end > top {
                 continue;
@@ -778,27 +797,33 @@ impl TerminalReader {
                     if let Some(rest) = text.strip_prefix(&*said)
                         && !rest.is_empty()
                     {
+                        let start = text.len().saturating_sub(rest.len()).max(cut);
                         speech.push(Speech::Growth {
-                            row: index + skipped,
-                            text: text[(text.len() - rest.len()).max(cut)..].to_owned(),
+                            row: index.saturating_add(skipped),
+                            text: text.get(start..).unwrap_or_default().to_owned(),
                         });
                     }
                 }
                 Some(Hold::Volatile | Hold::Keys) => {
                     if let Some(start) = self.changed_start(&[&*said], &text) {
                         speech.push(Speech::Changed {
-                            row: index + skipped,
-                            text: text[start.max(cut)..].to_owned(),
+                            row: index.saturating_add(skipped),
+                            text: text.get(start.max(cut)..).unwrap_or_default().to_owned(),
                         });
                     }
                 }
                 Some(Hold::Colours(after)) => speech.push(Speech::Gained {
-                    row: index + skipped,
+                    row: index.saturating_add(skipped),
                     text: after,
                 }),
                 None => {}
             }
-            if let Some(line) = &mut self.screen.rows[index].line {
+            if let Some(line) = self
+                .screen
+                .rows
+                .get_mut(index)
+                .and_then(|row| row.line.as_mut())
+            {
                 line.hold = None;
                 line.volatile = false;
                 line.said = text;
@@ -816,10 +841,10 @@ impl TerminalReader {
             Hold::Word => text
                 .strip_prefix(&*line.said)
                 .filter(|rest| !rest.is_empty())
-                .map(|rest| text.len() - rest.len())?,
+                .map(|rest| text.len().saturating_sub(rest.len()))?,
             Hold::Volatile | Hold::Keys => self.changed_start(&[&*line.said], text)?,
         };
-        Some(text[start.max(line.cut)..].to_owned())
+        Some(text.get(start.max(line.cut)..)?.to_owned())
     }
 
     /// Where the changed-word rule speaks `new` from ("Changed rows"): the
@@ -910,7 +935,7 @@ impl TerminalReader {
             self.lingering.clear();
             outcome = memory.restart(read);
         }
-        self.reads += 1;
+        self.reads = self.reads.saturating_add(1);
         let previous = std::mem::take(&mut self.screen);
         self.lingering
             .retain(|gone| now.saturating_sub(gone.since_ms) <= LINGERING_MS);
@@ -932,13 +957,14 @@ impl TerminalReader {
         // nothing, needs no history beyond this read.
         let keep_from = memory.first_kept();
         let mut screen = Screen {
+            // The outcome has a kind for each of the read's rows.
             rows: outcome
                 .rows
                 .iter()
-                .enumerate()
-                .map(|(to, kind)| RowState {
-                    hash: rows[to].hash,
-                    text: rows[to].text.clone(),
+                .zip(rows)
+                .map(|(kind, row)| RowState {
+                    hash: row.hash,
+                    text: row.text.clone(),
                     colours: match kind {
                         NewRow::Kept { from, .. }
                         | NewRow::Grown { from }
@@ -958,12 +984,16 @@ impl TerminalReader {
         };
         for line in &outcome.lines {
             for row in line.rows.clone() {
-                screen.starts[row] = line.rows.start;
+                if let Some(start) = screen.starts.get_mut(row) {
+                    *start = line.rows.start;
+                }
             }
         }
         let mut caret = outcome.caret.and_then(|row| {
             let line = outcome.lines.iter().find(|line| line.rows.contains(&row))?;
-            let before: usize = rows[line.rows.start..row]
+            let before: usize = rows
+                .get(line.rows.start..row)
+                .unwrap_or_default()
                 .iter()
                 .map(|row| row.text.chars().count())
                 .sum();
@@ -975,7 +1005,7 @@ impl TerminalReader {
                 .as_ref()
                 .and_then(|suggested| text.strip_suffix(suggested.as_str()))
                 .map_or_else(|| text.clone(), |shown| shown.trim_end().to_owned());
-            let column = before + read.caret_column;
+            let column = before.saturating_add(read.caret_column);
             Some(Caret {
                 row,
                 line: line.rows.start,
@@ -1006,7 +1036,7 @@ impl TerminalReader {
             (Some(OldRow::Kept(to) | OldRow::Rewritten(to)), _)
             | (_, Some(OldRow::Kept(to) | OldRow::Rewritten(to))) => Some(Caret {
                 row: *to,
-                line: screen.starts[*to],
+                line: *screen.starts.get(*to)?,
                 ..caret.clone()
             }),
             _ => None,
@@ -1072,7 +1102,7 @@ impl TerminalReader {
         let mut carried: std::collections::BTreeSet<usize> = std::collections::BTreeSet::new();
         for line in &outcome.lines {
             let start = line.rows.start;
-            let kinds = &outcome.rows[line.rows.clone()];
+            let kinds = outcome.rows.get(line.rows.clone()).unwrap_or_default();
             // A line the read's first row continues keeps its start, above
             // the read, from the line its first row was in.
             // A read from the document's start has nothing above it: its
@@ -1102,19 +1132,22 @@ impl TerminalReader {
             // ([`put`]), so a line above the rows kept that holds nothing
             // needs none built.
             let kept = line.rows.end > keep_from;
-            let part = |at: usize| text[at.max(cut)..].to_owned();
+            let part = |at: usize| text.get(at.max(cut)..).unwrap_or_default().to_owned();
             let first = line
                 .rows
                 .clone()
-                .find(|&row| !rows[row].is_blank())
+                .find(|&row| rows.get(row).is_some_and(|row| !row.is_blank()))
                 .unwrap_or(start);
+            let first_kind = outcome.rows.get(first);
             // A line's history carries from the old line its first row with
             // text started, or that the read's first row continues; a row
             // split off a line starts a line of its own.
-            let base = match outcome.rows[first] {
-                NewRow::Kept { from, .. }
-                | NewRow::Grown { from }
-                | NewRow::Rewritten { from, .. } => previous
+            let base = match first_kind.copied() {
+                Some(
+                    NewRow::Kept { from, .. }
+                    | NewRow::Grown { from }
+                    | NewRow::Rewritten { from, .. },
+                ) => previous
                     .start(from)
                     .filter(|&old| old == from || (continued && first == start))
                     .and_then(|old| {
@@ -1122,18 +1155,18 @@ impl TerminalReader {
                         previous.row(old)
                     })
                     .and_then(|row| row.line.as_deref().cloned()),
-                NewRow::Returned { .. } => self
+                Some(NewRow::Returned { .. }) => self
                     .lingering
                     .iter()
-                    .position(|gone| gone.hash == rows[first].hash)
+                    .position(|gone| rows.get(first).is_some_and(|row| gone.hash == row.hash))
                     .map(|at| *self.lingering.remove(at).line),
                 _ => None,
             };
             // A row rewritten alone, away from its neighbours, keeps what it
             // last said and starts its change history afresh ("The
             // alignment").
-            let base = match outcome.rows[first] {
-                NewRow::Rewritten { alone: true, .. } => base.map(|old| LineState {
+            let base = match first_kind {
+                Some(NewRow::Rewritten { alone: true, .. }) => base.map(|old| LineState {
                     text: old.text,
                     said: old.said,
                     input: old.input,
@@ -1143,8 +1176,8 @@ impl TerminalReader {
                 _ => base,
             };
             // The text of the old line a row split off a line was in.
-            let split = match outcome.rows[first] {
-                NewRow::Kept { from, .. } if base.is_none() => previous
+            let split = match first_kind.copied() {
+                Some(NewRow::Kept { from, .. }) if base.is_none() => previous
                     .start(from)
                     .and_then(|old| previous.row(old))
                     .and_then(|row| row.line.as_ref())
@@ -1152,7 +1185,7 @@ impl TerminalReader {
                 _ => None,
             };
             let changed = line.rows.clone().zip(kinds).any(|(row, kind)| {
-                !rows[row].is_blank()
+                rows.get(row).is_some_and(|row| !row.is_blank())
                     && matches!(
                         kind,
                         NewRow::New | NewRow::Grown { .. } | NewRow::Rewritten { .. }
@@ -1225,11 +1258,17 @@ impl TerminalReader {
                 && let Some(new_colours) = &new_colours
                 && let Some(at) = line.text.rfind(after.as_str())
             {
-                let mut column = line.text[..at].chars().count();
+                let mut column = line
+                    .text
+                    .get(..at)
+                    .map_or(0, |before| before.chars().count());
                 let mut row = start;
-                while row + 1 < line.rows.end && column >= rows[row].text.chars().count() {
-                    column -= rows[row].text.chars().count();
-                    row += 1;
+                while row.saturating_add(1) < line.rows.end
+                    && let Some(width) = rows.get(row).map(|row| row.text.chars().count())
+                    && column >= width
+                {
+                    column = column.saturating_sub(width);
+                    row = row.saturating_add(1);
                 }
                 let held_at = Caret {
                     row,
@@ -1332,7 +1371,7 @@ impl TerminalReader {
                             start,
                             Speech::Growth {
                                 row: start,
-                                text: part(text.len() - rest.len()),
+                                text: part(text.len().saturating_sub(rest.len())),
                             },
                         ));
                     }
@@ -1366,14 +1405,21 @@ impl TerminalReader {
                 });
                 let end = if unfinished {
                     text.rfind(is_space).map_or(0, |at| {
-                        at + text[at..].chars().next().map_or(1, char::len_utf8)
+                        let space = text
+                            .get(at..)
+                            .and_then(|rest| rest.chars().next())
+                            .map_or(1, char::len_utf8);
+                        at.saturating_add(space)
                     })
                 } else {
                     text.len()
                 };
                 let said = state.said.len();
                 // Spaces alone wait with the word after them.
-                let end = if text[said.min(end)..end].trim().is_empty() {
+                let end = if text
+                    .get(said.min(end)..end)
+                    .is_none_or(|gained| gained.trim().is_empty())
+                {
                     said.min(end)
                 } else {
                     end
@@ -1383,7 +1429,10 @@ impl TerminalReader {
                         start,
                         Speech::Growth {
                             row: start,
-                            text: text[said.max(cut).min(end)..end].to_owned(),
+                            text: text
+                                .get(said.max(cut).min(end)..end)
+                                .unwrap_or_default()
+                                .to_owned(),
                         },
                     ));
                     state.said = if end == text.len() {
@@ -1457,7 +1506,7 @@ impl TerminalReader {
             let interval = state.changed_ms.map(|at| now.saturating_sub(at));
             let volatile = state.volatile
                 || interval.is_some_and(|interval| interval <= VOLATILE_MS)
-                || (waited && state.changed_read == Some(self.reads - 1));
+                || (waited && state.changed_read == Some(self.reads.saturating_sub(1)));
             state.interval_ms = interval;
             state.changed_ms = Some(now);
             state.changed_read = Some(self.reads);
@@ -1500,7 +1549,7 @@ impl TerminalReader {
             && !silent
             && let Some(new_colours) = &new_colours
             && let Some(row) = Self::emphasis(&emphasis_candidates, &screen, new_colours)
-            && let Some(line) = &mut screen.rows[row].line
+            && let Some(line) = screen.rows.get_mut(row).and_then(|row| row.line.as_mut())
         {
             key_speech.push(Speech::Answer {
                 row,
@@ -1510,8 +1559,10 @@ impl TerminalReader {
         }
         if let Some(new_colours) = &new_colours {
             for (row, colours) in new_colours.iter().enumerate() {
-                if let Some(colours) = colours {
-                    screen.rows[row].colours = Some((*colours).clone());
+                if let Some(colours) = colours
+                    && let Some(row) = screen.rows.get_mut(row)
+                {
+                    row.colours = Some((*colours).clone());
                 }
             }
         }
@@ -1561,7 +1612,7 @@ impl TerminalReader {
                 .rows
                 .iter()
                 .enumerate()
-                .map(|(index, row)| (index + previous.skipped, row))
+                .map(|(index, row)| (index.saturating_add(previous.skipped), row))
                 .filter(|&(old, _)| previous.start(old) == Some(old) && !carried.contains(&old))
                 .filter(|&(old, _)| {
                     matches!(outcome.old.get(old), Some(OldRow::Above | OldRow::Left))
@@ -1584,7 +1635,7 @@ impl TerminalReader {
         }
         if !window
             && let Some(keys) = &self.keys
-            && now > keys.last_ms + KEY_WINDOW_MS
+            && now > keys.last_ms.saturating_add(KEY_WINDOW_MS)
         {
             self.keys = None;
         }
@@ -1660,7 +1711,9 @@ impl TerminalReader {
             .iter()
             .rposition(|kind| *kind == KeyKind::Caret(Unit::Line))
             .is_some_and(|at| {
-                keys.kinds[at + 1..]
+                keys.kinds
+                    .get(at.saturating_add(1)..)
+                    .unwrap_or_default()
                     .iter()
                     .any(|kind| matches!(kind, KeyKind::Typed(_)))
             });
@@ -1710,7 +1763,9 @@ impl TerminalReader {
             // the typing or a move, it waits for a read with colours
             // ("Colours").
             if colours.is_none() && !compared.clean() {
-                let row_end = rows[caret.line..=caret.row]
+                let row_end = rows
+                    .get(caret.line..=caret.row)
+                    .unwrap_or_default()
                     .iter()
                     .map(|row| row.text.chars().count())
                     .sum();
@@ -1751,7 +1806,7 @@ impl TerminalReader {
                         keys.typed.retain(|(text, _)| {
                             let take = count >= text.chars().count();
                             if take {
-                                count -= text.chars().count();
+                                count = count.saturating_sub(text.chars().count());
                             }
                             !take
                         });
@@ -1792,7 +1847,7 @@ impl TerminalReader {
                     } else if let Some(start) = self.changed_start(&[&before.shown], &shown) {
                         speech.push(Speech::Changed {
                             row: caret.line,
-                            text: shown[start..].to_owned(),
+                            text: shown.get(start..).unwrap_or_default().to_owned(),
                         });
                     }
                     answer = Some(caret.line);
@@ -1836,8 +1891,12 @@ impl TerminalReader {
         let after: String = caret.text.chars().skip(caret.column).collect();
         last.char_indices()
             .map(|(at, _)| at)
-            .find(|&at| typed.ends_with(&last[..at]) && after.starts_with(&last[at..]))
-            .map(|at| last[at..].to_owned())
+            .find(|&at| {
+                last.get(..at).is_some_and(|head| typed.ends_with(head))
+                    && last.get(at..).is_some_and(|tail| after.starts_with(tail))
+            })
+            .and_then(|at| last.get(at..))
+            .map(str::to_owned)
     }
 
     /// The caret's line spoken in `unit` at the caret.
@@ -1861,7 +1920,8 @@ impl TerminalReader {
         };
         self.segmenter
             .word_at(text, offset, WordRules::for_text(text, None))
-            .map(|word| text[word].to_owned())
+            .and_then(|word| text.get(word))
+            .map(str::to_owned)
             .unwrap_or_default()
     }
 
@@ -1877,8 +1937,15 @@ impl TerminalReader {
         } else {
             let chars: Vec<char> = caret.text.chars().collect();
             let word = |c: char| !is_space(c);
-            let at_start = word(chars[column]) && !word(chars[column - 1]);
-            let at_end = word(chars[column - 1]) && !word(chars[column]);
+            // Within the line: 0 < column < length.
+            let here = chars.get(column).copied().is_some_and(word);
+            let before = column
+                .checked_sub(1)
+                .and_then(|before| chars.get(before))
+                .copied()
+                .is_some_and(word);
+            let at_start = here && !before;
+            let at_end = before && !here;
             if at_start || at_end {
                 Unit::Word
             } else {
@@ -1888,10 +1955,10 @@ impl TerminalReader {
         let text = match unit {
             Unit::Word => {
                 let chars: Vec<char> = caret.text.chars().collect();
-                if column < length && !is_space(chars[column]) {
+                if chars.get(column).is_some_and(|&c| !is_space(c)) {
                     self.word_at(&caret.text, column)
                 } else {
-                    self.word_at(&caret.text, column - 1)
+                    self.word_at(&caret.text, column.saturating_sub(1))
                 }
             }
             _ => character_at(&caret.text, column),
@@ -1926,7 +1993,10 @@ impl TerminalReader {
             Some(OldRow::Kept(to)) if *to < start => *to,
             _ => return false,
         };
-        let between = outcome.rows[above + 1..start].contains(&NewRow::New);
+        let between = outcome
+            .rows
+            .get(above.saturating_add(1)..start)
+            .is_some_and(|between| between.contains(&NewRow::New));
         let typed: String = self
             .keys
             .as_ref()
@@ -1960,15 +2030,15 @@ impl TerminalReader {
                 return false;
             };
             row > 0
-                && now(row - 1).is_some_and(|above| above != own)
-                && now(row + 1).is_some_and(|below| below != own)
+                && now(row.saturating_sub(1)).is_some_and(|above| above != own)
+                && now(row.saturating_add(1)).is_some_and(|below| below != own)
         };
         let mut picked = candidates.iter().copied().filter(|&row| {
             now(row).is_some_and(|new| {
-                screen.rows[row]
-                    .colours
-                    .as_ref()
-                    .is_none_or(|old| old != new)
+                screen
+                    .rows
+                    .get(row)
+                    .is_some_and(|state| state.colours.as_ref().is_none_or(|old| old != new))
             }) && stands_out(row)
         });
         match (picked.next(), picked.next()) {
@@ -2001,8 +2071,10 @@ fn above_read(previous: &Screen, from: usize) -> String {
 /// kept once the read is handled, `keep_from` on, and holds nothing: its
 /// history would be dropped unused.
 fn put(screen: &mut Screen, rows: &std::ops::Range<usize>, keep_from: usize, state: LineState) {
-    if rows.end > keep_from || state.hold.is_some() {
-        screen.rows[rows.start].line = Some(Box::new(state));
+    if (rows.end > keep_from || state.hold.is_some())
+        && let Some(row) = screen.rows.get_mut(rows.start)
+    {
+        row.line = Some(Box::new(state));
     }
 }
 
@@ -2062,23 +2134,27 @@ impl<'a> Difference<'a> {
         let shared = old_graphemes
             .iter()
             .zip(&new_graphemes)
-            .take_while(|(a, b)| old[(*a).clone()] == new[(*b).clone()])
+            .take_while(|(a, b)| old.get((*a).clone()) == new.get((*b).clone()))
             .count();
         let start = new_graphemes
             .get(..shared)
             .and_then(<[_]>::last)
             .map_or(0, |last| last.end);
-        let longest = old_graphemes.len().min(new_graphemes.len()) - shared;
+        let longest = old_graphemes
+            .len()
+            .min(new_graphemes.len())
+            .saturating_sub(shared);
         let end_graphemes = old_graphemes
             .iter()
             .rev()
             .zip(new_graphemes.iter().rev())
             .take(longest)
-            .take_while(|(a, b)| old[(*a).clone()] == new[(*b).clone()])
+            .take_while(|(a, b)| old.get((*a).clone()) == new.get((*b).clone()))
             .count();
-        let end = new_graphemes[new_graphemes.len() - end_graphemes..]
-            .first()
-            .map_or(0, |first| new.len() - first.start);
+        let end = new_graphemes
+            .get(new_graphemes.len().saturating_sub(end_graphemes)..)
+            .and_then(<[_]>::first)
+            .map_or(0, |first| new.len().saturating_sub(first.start));
         let (old_squeezed, new_squeezed) = (squeezed(&old), squeezed(&new));
         let gained = new_squeezed.len() > old_squeezed.len()
             && !new_squeezed.starts_with(&old_squeezed)
@@ -2099,17 +2175,23 @@ impl<'a> Difference<'a> {
 
     /// What `old` had between the shared start and end.
     fn removed(&self) -> &str {
-        &self.old[self.start..self.old.len() - self.end]
+        self.old
+            .get(self.start..self.old.len().saturating_sub(self.end))
+            .unwrap_or_default()
     }
 
     /// What `new` has there.
     fn inserted(&self) -> &str {
-        &self.new[self.start..self.new.len() - self.end]
+        self.new
+            .get(self.start..self.new.len().saturating_sub(self.end))
+            .unwrap_or_default()
     }
 
     /// The characters the two share at their start.
     fn start_chars(&self) -> usize {
-        self.new[..self.start].chars().count()
+        self.new
+            .get(..self.start)
+            .map_or(0, |start| start.chars().count())
     }
 
     /// Whether exactly one character changed, neither a letter nor a
@@ -2132,31 +2214,39 @@ impl<'a> Difference<'a> {
         if typed.is_empty() || to <= from {
             return None;
         }
-        let count = to - from;
+        let count = to.saturating_sub(from);
         let typed: Vec<char> = typed.chars().collect();
         let old_chars: Vec<char> = old.chars().collect();
         let new_chars: Vec<char> = new.chars().collect();
+        // The old line's characters before and from character `from`.
+        let (old_head, old_tail) = old_chars.split_at(from.min(old_chars.len()));
         let shown: String = typed.iter().take(count).collect();
         if shown.chars().count() != count {
             // The caret moved past more than the typing: what follows it is
             // text gained.
             let all: String = typed.iter().collect();
-            let mut expected: Vec<char> = old_chars[..from.min(old_chars.len())].to_vec();
+            let mut expected: Vec<char> = old_head.to_vec();
             expected.extend(all.chars());
-            if new_chars.len() >= expected.len() && new_chars[..expected.len()] == expected[..] {
-                let rest: String = new_chars[expected.len()..to.min(new_chars.len())]
+            if new_chars.get(..expected.len()) == Some(expected.as_slice()) {
+                let rest: String = new_chars
+                    .get(expected.len()..to.min(new_chars.len()))
+                    .unwrap_or_default()
                     .iter()
                     .collect();
-                let after: String = new_chars[to.min(new_chars.len())..].iter().collect();
-                let old_after: String = old_chars[from.min(old_chars.len())..].iter().collect();
+                let after: String = new_chars
+                    .get(to.min(new_chars.len())..)
+                    .unwrap_or_default()
+                    .iter()
+                    .collect();
+                let old_after: String = old_tail.iter().collect();
                 if after.trim_end() == old_after.trim_end() {
                     return Some((all, rest));
                 }
             }
             return None;
         }
-        let head: String = old_chars[..from.min(old_chars.len())].iter().collect();
-        let tail: String = old_chars[from.min(old_chars.len())..].iter().collect();
+        let head: String = old_head.iter().collect();
+        let tail: String = old_tail.iter().collect();
         let inserted = format!("{head}{shown}{tail}");
         let over: String = {
             let skip: String = tail.chars().skip(count).collect();
@@ -2205,10 +2295,10 @@ fn compare(before: &Caret, shown: &str, column: usize, typed: &str) -> (usize, C
     // the caret.
     if column == before.typing
         && !typed.is_empty()
-        && shown.chars().count() == column + 1
+        && shown.chars().count() == column.saturating_add(1)
         && before.shown.chars().count() <= column
     {
-        at = column + 1;
+        at = column.saturating_add(1);
     }
     // A caret read past typing other than spaces that the line does not
     // show yet: the caret and its line are read after the screen's text,
@@ -2219,7 +2309,7 @@ fn compare(before: &Caret, shown: &str, column: usize, typed: &str) -> (usize, C
         && new.chars().skip(before.typing).all(char::is_whitespace)
         && typed
             .chars()
-            .take(column - before.typing)
+            .take(column.saturating_sub(before.typing))
             .any(|c| !c.is_whitespace())
     {
         return (before.typing, Compared::Unchanged);
@@ -2248,10 +2338,14 @@ fn blanked(text: &str, column: usize, suggestion: Option<&str>) -> String {
         return text.to_owned();
     };
     let chars: Vec<char> = text.chars().collect();
-    let end = (column + suggested.chars().count()).min(chars.len());
-    let mut shown: String = chars[..column.min(chars.len())].iter().collect();
+    let end = column
+        .saturating_add(suggested.chars().count())
+        .min(chars.len());
+    let (head, _) = chars.split_at(column.min(chars.len()));
+    let (_, tail) = chars.split_at(end);
+    let mut shown: String = head.iter().collect();
     shown.extend(std::iter::repeat_n(' ', end.saturating_sub(column)));
-    shown.extend(&chars[end..]);
+    shown.extend(tail);
     shown.trim_end().to_owned()
 }
 
@@ -2266,9 +2360,12 @@ fn cut_after(text: &str, column: usize, end: usize) -> Option<(String, String)> 
     if after.is_empty() {
         return None;
     }
-    let mut cut: String = chars[..column].iter().collect();
-    cut.extend(std::iter::repeat_n(' ', end - column));
-    cut.extend(&chars[end..]);
+    // `column..end` is within the characters, as `after` found.
+    let (head, _) = chars.split_at(column);
+    let (_, tail) = chars.split_at(end);
+    let mut cut: String = head.iter().collect();
+    cut.extend(std::iter::repeat_n(' ', end.saturating_sub(column)));
+    cut.extend(tail);
     Some((cut.trim_end().to_owned(), after.to_owned()))
 }
 
@@ -2282,7 +2379,8 @@ fn byte_offset(text: &str, column: usize) -> Option<usize> {
 fn character_at(text: &str, column: usize) -> String {
     byte_offset(text, column)
         .and_then(|at| crate::grapheme_at(text, at))
-        .map(|range| text[range].to_owned())
+        .and_then(|range| text.get(range))
+        .map(str::to_owned)
         .unwrap_or_default()
 }
 
@@ -2290,28 +2388,28 @@ fn character_at(text: &str, column: usize) -> String {
 /// other than the cell before the caret's, the typing's ("Suggestions").
 fn suggestion(caret: &Caret, rows: &[Row], colours: &[Option<&Vec<ColourRun>>]) -> Option<String> {
     let runs = colours.get(caret.row).copied().flatten()?;
-    let row = &rows[caret.row];
-    let column = caret.column
-        - (caret.column.min(
-            rows[caret.line..caret.row]
-                .iter()
-                .map(|row| row.text.chars().count())
-                .sum::<usize>(),
-        ));
+    let row = rows.get(caret.row)?;
+    let column = caret.column.saturating_sub(
+        rows.get(caret.line..caret.row)
+            .unwrap_or_default()
+            .iter()
+            .map(|row| row.text.chars().count())
+            .sum::<usize>(),
+    );
     if column == 0 {
         return None;
     }
     let at = |cell: usize| {
         runs.iter()
-            .find(|run| cell >= run.column && cell < run.column + run.length)
+            .find(|run| cell >= run.column && cell < run.column.saturating_add(run.length))
             .map(|run| (run.foreground, run.background))
     };
-    let typing = at(column - 1)?;
+    let typing = at(column.saturating_sub(1))?;
     let chars: Vec<char> = row.text.chars().collect();
     let end = (column..chars.len())
         .take_while(|&cell| at(cell).is_some_and(|colour| colour != typing))
         .last()?;
-    let text: String = chars[column..=end].iter().collect();
+    let text: String = chars.get(column..=end)?.iter().collect();
     let text = text.trim_end().to_owned();
     (!text.is_empty()).then_some(text)
 }

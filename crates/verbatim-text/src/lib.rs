@@ -35,6 +35,42 @@
 //! the outpost, never here.
 
 #![forbid(unsafe_code)]
+// Non-test code never panics, overflows or truncates silently: arithmetic
+// is checked or saturating, indexing goes through `get`, and casts through
+// `From` or `TryFrom`. Tests are exempt, since a panic is how a test fails.
+#![deny(
+    clippy::arithmetic_side_effects,
+    clippy::as_conversions,
+    clippy::exit,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic,
+    clippy::panic_in_result_fn,
+    clippy::string_slice,
+    clippy::todo,
+    clippy::unimplemented,
+    clippy::unreachable,
+    clippy::unwrap_in_result,
+    clippy::unwrap_used
+)]
+#![cfg_attr(
+    test,
+    allow(
+        clippy::arithmetic_side_effects,
+        clippy::as_conversions,
+        clippy::exit,
+        clippy::expect_used,
+        clippy::indexing_slicing,
+        clippy::panic,
+        clippy::panic_in_result_fn,
+        clippy::string_slice,
+        clippy::todo,
+        clippy::unimplemented,
+        clippy::unreachable,
+        clippy::unwrap_in_result,
+        clippy::unwrap_used
+    )
+)]
 
 use std::borrow::Cow;
 use std::ops::Range;
@@ -85,19 +121,19 @@ pub fn trim_padding(line: &str) -> &str {
     // A terminal pads with ASCII spaces, so those are dropped eight bytes at
     // a time and other ASCII white space a byte at a time; only a
     // non-ASCII character then needs its property looked up.
-    let bytes = line.as_bytes();
-    let mut end = bytes.len();
-    while end >= 8 && bytes[end - 8..end] == [b' '; 8] {
-        end -= 8;
+    let mut bytes = line.as_bytes();
+    while let Some(head) = bytes.strip_suffix(&[b' '; 8]) {
+        bytes = head;
     }
-    while end > 0 && matches!(bytes[end - 1], b' ' | b'\t'..=b'\r') {
-        end -= 1;
+    while let [head @ .., b' ' | b'\t'..=b'\r'] = bytes {
+        bytes = head;
     }
-    let rest = &line[..end];
-    if rest.is_empty() || bytes[end - 1].is_ascii() {
-        rest
-    } else {
-        rest.trim_end_matches(char::is_whitespace)
+    // Only ASCII bytes went, so what is left ends at a character boundary.
+    let rest = line.get(..bytes.len()).unwrap_or(line);
+    match bytes.last() {
+        None => "",
+        Some(last) if last.is_ascii() => rest,
+        Some(_) => rest.trim_end_matches(char::is_whitespace),
     }
 }
 
@@ -209,9 +245,9 @@ pub fn lines(text: &str) -> Vec<Range<usize>> {
             continue;
         }
         lines.push(start..index);
-        start = index + c.len_utf8();
+        start = index.saturating_add(c.len_utf8());
         if c == '\r' && chars.next_if(|&(_, next)| next == '\n').is_some() {
-            start += 1;
+            start = start.saturating_add(1);
         }
     }
     lines.push(start..text.len());
@@ -343,20 +379,20 @@ impl Segmenter {
 pub fn last_pause(text: &str) -> Option<usize> {
     let chars: Vec<(usize, char)> = text.char_indices().collect();
     (1..chars.len()).rev().find_map(|index| {
-        let (_, mark) = chars[index];
-        let (_, before) = chars[index - 1];
+        let &(_, mark) = chars.get(index)?;
+        let &(_, before) = chars.get(index.checked_sub(1)?)?;
         if !is_sentence_end(mark) || before.is_whitespace() || is_sentence_end(before) {
             return None;
         }
-        let mut next = index + 1;
+        let mut next = index.saturating_add(1);
         if chars.get(next).is_some_and(|&(_, c)| is_closing(c)) {
-            next += 1;
+            next = next.saturating_add(1);
         }
         if !is_full_width_end(mark) && chars.get(next).is_some_and(|&(_, c)| !c.is_whitespace()) {
             return None;
         }
         while chars.get(next).is_some_and(|&(_, c)| c.is_whitespace()) {
-            next += 1;
+            next = next.saturating_add(1);
         }
         Some(chars.get(next).map_or(text.len(), |&(offset, _)| offset))
     })
@@ -440,8 +476,9 @@ fn jieba() -> &'static Jieba {
 fn ranges(boundaries: impl Iterator<Item = usize>) -> Vec<Range<usize>> {
     let boundaries: Vec<usize> = boundaries.collect();
     boundaries
-        .windows(2)
-        .map(|pair| pair[0]..pair[1])
+        .iter()
+        .zip(boundaries.iter().skip(1))
+        .map(|(&start, &end)| start..end)
         .filter(|range| !range.is_empty())
         .collect()
 }
@@ -450,7 +487,10 @@ fn ranges(boundaries: impl Iterator<Item = usize>) -> Vec<Range<usize>> {
 /// ([`is_space`]) merged into one, so spaces and tabs together are a
 /// single segment.
 fn merge_whitespace_runs(text: &str, segments: Vec<Range<usize>>) -> Vec<Range<usize>> {
-    let is_space = |range: &Range<usize>| text[range.clone()].chars().all(is_space);
+    let is_space = |range: &Range<usize>| {
+        text.get(range.clone())
+            .is_some_and(|segment| segment.chars().all(is_space))
+    };
     let mut merged: Vec<Range<usize>> = Vec::with_capacity(segments.len());
     for segment in segments {
         match merged.last_mut() {

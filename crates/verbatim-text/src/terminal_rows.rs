@@ -113,7 +113,7 @@ impl ReadText {
             let length = u32::try_from(characters(line)).unwrap_or(u32::MAX);
             text.push_str(line.trim_end_matches(' '));
             match lengths.last_mut() {
-                Some((count, last)) if *last == length => *count += 1,
+                Some((count, last)) if *last == length => *count = count.saturating_add(1),
                 _ => lengths.push((1, length)),
             }
         }
@@ -144,7 +144,7 @@ impl ReadText {
             )
         });
         crlf_lines(&self.text).map(move |span| {
-            let line = &self.text[span];
+            let line = self.text.get(span).unwrap_or_default();
             let length = lengths.next().unwrap_or(0);
             (line, length.saturating_sub(characters(line)))
         })
@@ -188,13 +188,14 @@ impl Text {
     /// The text.
     #[must_use]
     pub fn as_str(&self) -> &str {
-        &self.whole[self.start..self.end]
+        // `start..end` is a range of `whole`, as every `Text` is made.
+        self.whole.get(self.start..self.end).unwrap_or_default()
     }
 
     /// Its length in bytes.
     #[must_use]
     pub fn len(&self) -> usize {
-        self.end - self.start
+        self.end.saturating_sub(self.start)
     }
 
     /// Whether it is empty.
@@ -209,7 +210,7 @@ impl Text {
         Self {
             whole: Arc::clone(&self.whole),
             start: self.start,
-            end: self.start + length.min(self.len()),
+            end: self.start.saturating_add(length.min(self.len())),
         }
     }
 
@@ -456,7 +457,7 @@ impl<'a> Rows<'a> {
     /// How many rows the last read held.
     #[must_use]
     pub fn len(&self) -> usize {
-        self.above + self.kept.len()
+        self.above.saturating_add(self.kept.len())
     }
 
     /// Whether the last read held no rows.
@@ -619,12 +620,12 @@ impl Screen {
 
     /// The last read's row `row`, when it is kept.
     fn row(&self, row: usize) -> Option<&Row> {
-        self.index(row).map(|index| &self.rows[index])
+        self.index(row).and_then(|index| self.rows.get(index))
     }
 
     /// How many rows the last read held.
     fn total(&self) -> usize {
-        self.skipped + self.rows.len()
+        self.skipped.saturating_add(self.rows.len())
     }
 
     /// The index in `rows` of the first row kept once the read is trimmed:
@@ -650,11 +651,11 @@ impl Screen {
     /// document's start, when this read starts there, is dropped; the
     /// newest mark, `newest`, likewise.
     fn keep_marks(&mut self, marks: &[Anchor], newest: Option<Anchor>, total: usize) {
-        let shift = isize_of(self.total()) - isize_of(total);
+        let shift = isize_of(self.total()).saturating_sub(isize_of(total));
         let at_start = self.at_document_start;
         let kept = |mark: &Anchor| {
             Some(refind(*mark, total, 0, &self.rows).unwrap_or(Anchor {
-                row: mark.row + shift,
+                row: mark.row.saturating_add(shift),
                 ..*mark
             }))
             .filter(|mark| !at_start || mark.row >= 0)
@@ -671,9 +672,12 @@ impl Screen {
         if dropped == 0 {
             return 0;
         }
-        self.continued = self.rows[dropped - 1].wraps;
+        self.continued = self
+            .rows
+            .get(dropped.saturating_sub(1))
+            .is_some_and(|row| row.wraps);
         self.rows = self.rows.split_off(dropped);
-        self.skipped += dropped;
+        self.skipped = self.skipped.saturating_add(dropped);
         dropped
     }
 
@@ -702,7 +706,7 @@ impl Screen {
     /// and the reading rules keep holds none of the read's string.
     fn own_kept(&mut self) {
         let kept = self.trim_point();
-        for row in &mut self.rows[kept..] {
+        for row in self.rows.iter_mut().skip(kept) {
             row.text = row.text.owned();
         }
     }
@@ -747,7 +751,7 @@ impl Aside {
         let mut rows = BTreeMap::new();
         for (at, row) in memory.rows.iter().enumerate() {
             if !row.is_blank() {
-                let distance = total - at;
+                let distance = total.saturating_sub(at);
                 rows.entry(row.hash)
                     .and_modify(|kept: &mut usize| *kept = (*kept).min(distance))
                     .or_insert(distance);
@@ -771,7 +775,7 @@ impl Aside {
                 && self
                     .rows
                     .get(&row.hash)
-                    .is_some_and(|&distance| total - at >= distance)
+                    .is_some_and(|&distance| total.saturating_sub(at) >= distance)
         })
     }
 }
@@ -835,9 +839,9 @@ impl TerminalMemory {
     /// read is trimmed: a screen above the next read's start.
     #[must_use]
     pub fn first_kept(&self) -> usize {
-        self.screen
-            .as_ref()
-            .map_or(0, |screen| screen.skipped + screen.trim_point())
+        self.screen.as_ref().map_or(0, |screen| {
+            screen.skipped.saturating_add(screen.trim_point())
+        })
     }
 
     /// Keeps of the last read only what the next read needs: a screen above
@@ -901,7 +905,7 @@ impl TerminalMemory {
     /// row cannot be followed, as when the history overflowed and its line
     /// was not found again. Before the first read it is only numbered.
     pub fn add_place(&mut self, anchor: Anchor) -> u64 {
-        self.next_place += 1;
+        self.next_place = self.next_place.saturating_add(1);
         let number = self.next_place;
         if let Some(screen) = &mut self.screen {
             screen.places.push((number, anchor));
@@ -944,9 +948,9 @@ impl TerminalMemory {
         let index = screen.index(row)?;
         let first = line_start(&screen.rows, index);
         let mark = Anchor {
-            row: isize_of(screen.skipped + first),
+            row: isize_of(screen.skipped.saturating_add(first)),
             column: 0,
-            line_hash: screen.rows[first].line_hash,
+            line_hash: screen.rows.get(first)?.line_hash,
         };
         if !screen.marks.contains(&mark) {
             if screen.marks.len() >= MARKS {
@@ -980,7 +984,11 @@ impl TerminalMemory {
             screen.newest_mark = to;
         }
         match to {
-            Some(to) => screen.marks[at] = to,
+            Some(to) => {
+                if let Some(kept) = screen.marks.get_mut(at) {
+                    *kept = to;
+                }
+            }
             None => {
                 screen.marks.remove(at);
             }
@@ -1165,7 +1173,10 @@ impl TerminalMemory {
                 NewRow::Kept { from, .. } | NewRow::Grown { from } | NewRow::Rewritten { from, .. },
             ) => match *from {
                 0 => current.continued,
-                index => current.rows[index - 1].wraps,
+                index => current
+                    .rows
+                    .get(index.saturating_sub(1))
+                    .is_some_and(|row| row.wraps),
             },
             _ => false,
         };
@@ -1176,12 +1187,14 @@ impl TerminalMemory {
             .iter()
             .map(|kind| match *kind {
                 NewRow::Kept { from, moved } => NewRow::Kept {
-                    from: from + skip,
+                    from: from.saturating_add(skip),
                     moved,
                 },
-                NewRow::Grown { from } => NewRow::Grown { from: from + skip },
+                NewRow::Grown { from } => NewRow::Grown {
+                    from: from.saturating_add(skip),
+                },
                 NewRow::Rewritten { from, moved, alone } => NewRow::Rewritten {
-                    from: from + skip,
+                    from: from.saturating_add(skip),
                     moved,
                     alone,
                 },
@@ -1227,7 +1240,7 @@ impl TerminalMemory {
         self.aside = Some(Aside::of(current));
         let old = vec![OldRow::Gone { lingering: false }; current.total()];
         let mut next = Screen::fresh(rows, read, (width, height), current.height);
-        next.review = caret.map(|row| anchor_at(&next.rows, row, read.caret_column));
+        next.review = caret.and_then(|row| anchor_at(&next.rows, row, read.caret_column));
         if let Some(back) = back {
             next.keep_marks(&back.marks, None, back.total);
         }
@@ -1273,7 +1286,7 @@ impl TerminalMemory {
         next.review = current.review.as_ref().and_then(found).or_else(|| {
             shape
                 .caret
-                .map(|row| anchor_at(&next.rows, row, read.caret_column))
+                .and_then(|row| anchor_at(&next.rows, row, read.caret_column))
         });
         next.places = current
             .places
@@ -1297,22 +1310,30 @@ impl TerminalMemory {
 /// `total` rows, in `rows`, at `offset`, its character position within its
 /// line, which a resize keeps ("Starting again").
 fn refind(anchor: Anchor, total: usize, offset: usize, rows: &[Row]) -> Option<Anchor> {
-    let from_end = isize_of(total) - anchor.row;
+    let from_end = isize_of(total).saturating_sub(anchor.row);
     let (mut row, _) = rows
         .iter()
         .enumerate()
         .filter(|(at, row)| row.line_hash == anchor.line_hash && line_start(rows, *at) == *at)
-        .min_by_key(|(at, _)| (isize_of(rows.len()) - isize_of(*at) - from_end).abs())?;
+        .min_by_key(|(at, _)| {
+            isize_of(rows.len())
+                .saturating_sub(isize_of(*at))
+                .saturating_sub(from_end)
+                .unsigned_abs()
+        })?;
     let mut column = offset;
-    while rows[row].wraps && row + 1 < rows.len() {
-        let length = rows[row].text.chars().count();
+    while let Some(found) = rows.get(row)
+        && found.wraps
+        && row.saturating_add(1) < rows.len()
+    {
+        let length = found.text.chars().count();
         if column < length {
             break;
         }
-        column -= length;
-        row += 1;
+        column = column.saturating_sub(length);
+        row = row.saturating_add(1);
     }
-    Some(anchor_at(rows, row, column))
+    anchor_at(rows, row, column)
 }
 
 /// The character position of `anchor` within its line in `memory`: the
@@ -1326,11 +1347,14 @@ fn line_offset(memory: &Screen, anchor: &Anchor) -> usize {
         return anchor.column;
     };
     let first = line_start(&memory.rows, index);
-    memory.rows[first..index]
+    memory
+        .rows
+        .get(first..index)
+        .unwrap_or_default()
         .iter()
         .map(|row| row.text.chars().count())
         .sum::<usize>()
-        + anchor.column
+        .saturating_add(anchor.column)
 }
 
 /// A kept pair: an old row's index and the new row's it became.
@@ -1388,7 +1412,9 @@ impl Aligned {
         let skip = current.skipped;
         let mut fates: Vec<OldRow> = (0..skip)
             .map(|row| {
-                let to = isize_of(row) - isize_of(skip) + self.place;
+                let to = isize_of(row)
+                    .saturating_sub(isize_of(skip))
+                    .saturating_add(self.place);
                 match usize::try_from(to) {
                     Ok(to) if to < self.new.len() => OldRow::Kept(to),
                     Ok(_) => OldRow::Gone { lingering: false },
@@ -1433,8 +1459,10 @@ fn positions(memory: &Screen, rows: &[Row], read: &Read) -> bool {
     let block = read.above.min(rows.len());
     let mut compared = false;
     let mut text = false;
-    for (to, row) in rows[..block].iter().enumerate() {
-        let from = screen - isize_of(block) + isize_of(to);
+    for (to, row) in rows.iter().take(block).enumerate() {
+        let from = screen
+            .saturating_sub(isize_of(block))
+            .saturating_add(isize_of(to));
         let Some(old) = usize::try_from(from)
             .ok()
             .and_then(|from| memory.rows.get(from))
@@ -1459,7 +1487,7 @@ fn ambiguous(memory: &Screen, rows: &[Row], within: Range<usize>) -> bool {
         .caret
         .and_then(|row| row.checked_sub(memory.skipped))
         .unwrap_or(old.len());
-    let votes = shift_votes(old, 0..old.len().min(caret + 1), rows, within);
+    let votes = shift_votes(old, 0..old.len().min(caret.saturating_add(1)), rows, within);
     let best = votes.counts.iter().copied().max().unwrap_or(0);
     best > 0 && votes.counts.iter().filter(|&&count| count == best).count() > 1
 }
@@ -1477,16 +1505,23 @@ struct Votes {
 /// up by hash, so the read's rows are passed over once, and every shift
 /// the two ranges allow has its count.
 fn shift_votes(old: &[Row], old_range: Range<usize>, rows: &[Row], within: Range<usize>) -> Votes {
-    let low = isize_of(within.start) - isize_of(old_range.end) + 1;
-    let span = (within.len() + old_range.len()).saturating_sub(1);
+    let low = isize_of(within.start)
+        .saturating_sub(isize_of(old_range.end))
+        .saturating_add(1);
+    let span = within
+        .len()
+        .saturating_add(old_range.len())
+        .saturating_sub(1);
     let mut votes = Votes {
         low,
         counts: Vec::new(),
     };
     let mut at: BTreeMap<u64, Vec<usize>> = BTreeMap::new();
     for from in old_range {
-        if !old[from].is_blank() {
-            at.entry(old[from].hash).or_default().push(from);
+        if let Some(row) = old.get(from)
+            && !row.is_blank()
+        {
+            at.entry(row.hash).or_default().push(from);
         }
     }
     if at.is_empty() {
@@ -1494,12 +1529,20 @@ fn shift_votes(old: &[Row], old_range: Range<usize>, rows: &[Row], within: Range
     }
     votes.counts = vec![0; span];
     for to in within {
-        if let Some(froms) = at.get(&rows[to].hash)
-            && !rows[to].is_blank()
+        if let Some(row) = rows.get(to)
+            && let Some(froms) = at.get(&row.hash)
+            && !row.is_blank()
         {
             for &from in froms {
-                let slot = usize::try_from(isize_of(to) - isize_of(from) - low).unwrap_or(0);
-                votes.counts[slot] += 1;
+                let slot = usize::try_from(
+                    isize_of(to)
+                        .saturating_sub(isize_of(from))
+                        .saturating_sub(low),
+                )
+                .unwrap_or(0);
+                if let Some(count) = votes.counts.get_mut(slot) {
+                    *count = count.saturating_add(1);
+                }
             }
         }
     }
@@ -1521,7 +1564,7 @@ fn align_read(
 ) -> Aligned {
     let old = &memory.rows;
     let next = isize_of(memory.next.saturating_sub(memory.skipped));
-    let base = isize_of(read.above) - next;
+    let base = isize_of(read.above).saturating_sub(next);
     // Where a row of the history block was, as the shift to its place: by
     // the read's start, or, with the start refused, by the document's
     // start when both reads began there; otherwise it is not known.
@@ -1533,35 +1576,37 @@ fn align_read(
         isize::MAX
     };
     let history = memory.screen_start();
-    let old_text: Vec<usize> = (0..old.len())
-        .filter(|&from| !old[from].is_blank())
-        .collect();
-    let old_hashes: BTreeSet<u64> = old_text.iter().map(|&from| old[from].hash).collect();
+    let old_text: Vec<usize> = text_rows(old);
+    let old_hashes: BTreeSet<u64> = hashes(old, &old_text).collect();
     // A row whose text is once among the old rows and once in the read is
     // kept where that text went, so it does not grow elsewhere and no other
     // row grows into it.
     let count = |hash: u64, rows: &[Row]| rows.iter().filter(|row| row.hash == hash).count();
-    let went: BTreeSet<u64> = old_text
-        .iter()
-        .map(|&from| old[from].hash)
+    let went: BTreeSet<u64> = hashes(old, &old_text)
         .filter(|&hash| count(hash, old) == 1 && count(hash, rows) == 1)
         .collect();
     let grows = |from: usize, to: usize| {
+        let (Some(old_row), Some(new_row)) = (old.get(from), rows.get(to)) else {
+            return false;
+        };
         trusted
             && from >= history
-            && from < old.len()
-            && !old[from].is_blank()
-            && !went.contains(&old[from].hash)
-            && !went.contains(&rows[to].hash)
-            && rows[to].text.len() > old[from].text.len()
-            && rows[to].text.starts_with(&*old[from].text)
+            && !old_row.is_blank()
+            && !went.contains(&old_row.hash)
+            && !went.contains(&new_row.hash)
+            && new_row.text.len() > old_row.text.len()
+            && new_row.text.starts_with(&*old_row.text)
     };
-    let window: Vec<usize> = (0..rows.len())
-        .filter(|&to| {
-            !rows[to].is_blank()
-                && (old_hashes.contains(&rows[to].hash)
-                    || usize::try_from(isize_of(to) - base).is_ok_and(|from| grows(from, to)))
+    let window: Vec<usize> = rows
+        .iter()
+        .enumerate()
+        .filter(|&(to, row)| {
+            !row.is_blank()
+                && (old_hashes.contains(&row.hash)
+                    || usize::try_from(isize_of(to).saturating_sub(base))
+                        .is_ok_and(|from| grows(from, to)))
         })
+        .map(|(to, _)| to)
         .collect();
     // Found by text, the shift most of the last read's screen rows with
     // text took, when it put them lower than their places: a program that
@@ -1571,9 +1616,10 @@ fn align_read(
     // buffer, as in a stream, takes no vote.
     let lower = std::cell::OnceCell::new();
     let matches = |from: usize, to: usize| {
-        let shift = isize_of(to) - isize_of(from);
+        let shift = isize_of(to).saturating_sub(isize_of(from));
+        let same_text = same_hash(old, from, rows, to);
         if trusted && from < history {
-            shift == base && rows[to].hash == old[from].hash
+            shift == base && same_text
         } else if from < history && shift > place {
             // Found by text, a row of the history block is at its place or
             // higher, or lower by the one shift the screen's rows took when
@@ -1581,17 +1627,22 @@ fn align_read(
             // terminal puts the history's text lower while the screen's
             // rows go up, and a program printing the history again longer
             // moves both down ("The alignment").
-            rows[to].hash == old[from].hash
+            same_text
                 && *lower.get_or_init(|| screen_shift(memory, rows).filter(|&shift| shift > place))
                     == Some(shift)
         } else {
-            rows[to].hash == old[from].hash || (shift == base && grows(from, to))
+            same_text || (shift == base && grows(from, to))
         }
     };
     let pairs = align::keep(
         &old_text,
         &window,
-        |i, j| matches(old_text[i], window[j]),
+        |i, j| {
+            old_text
+                .get(i)
+                .zip(window.get(j))
+                .is_some_and(|(&from, &to)| matches(from, to))
+        },
         base,
     );
     // Found by their text, the rows did not move where most of them went.
@@ -1603,7 +1654,7 @@ fn align_read(
     let how = How {
         fixed,
         place: base,
-        rotation: usize::try_from(base - fixed).unwrap_or(0),
+        rotation: usize::try_from(base.saturating_sub(fixed)).unwrap_or(0),
         history,
         free: !trusted,
         whole: false,
@@ -1629,7 +1680,7 @@ fn screen_shift(memory: &Screen, rows: &[Row]) -> Option<isize> {
         .max()
         .filter(|&best| best > 0)?;
     let at = votes.counts.iter().position(|&count| count == best)?;
-    Some(votes.low + isize_of(at))
+    Some(votes.low.saturating_add(isize_of(at)))
 }
 
 /// The shift most of `pairs` share, the topmost on a tie: where a row that
@@ -1638,9 +1689,9 @@ fn commonest_shift(pairs: &[(usize, usize)], base: isize) -> isize {
     let mut shifts: BTreeMap<isize, (usize, usize)> = BTreeMap::new();
     for (at, &(from, to)) in pairs.iter().enumerate() {
         let entry = shifts
-            .entry(isize_of(to) - isize_of(from))
+            .entry(isize_of(to).saturating_sub(isize_of(from)))
             .or_insert((0, at));
-        entry.0 += 1;
+        entry.0 = entry.0.saturating_add(1);
     }
     shifts
         .into_iter()
@@ -1669,18 +1720,29 @@ fn align_whole(
     let screen = rows.len().saturating_sub(height);
     let uncounted = ambiguous(memory, rows, 0..rows.len());
     let within = if uncounted { screen } else { 0 };
-    let old_text: Vec<usize> = (0..old.len())
-        .filter(|&from| !old[from].is_blank())
-        .collect();
-    let hashes: BTreeSet<u64> = old_text.iter().map(|&from| old[from].hash).collect();
-    let window: Vec<usize> = (within..rows.len())
-        .filter(|&to| !rows[to].is_blank() && hashes.contains(&rows[to].hash))
+    let old_text: Vec<usize> = text_rows(old);
+    let old_set: BTreeSet<u64> = hashes(old, &old_text).collect();
+    let window: Vec<usize> = rows
+        .iter()
+        .enumerate()
+        .skip(within)
+        .filter(|(_, row)| !row.is_blank() && old_set.contains(&row.hash))
+        .map(|(to, _)| to)
         .collect();
     // The hashes side by side, as the subsequence compares every old row
     // with text with every row of the window.
-    let old_hashes: Vec<u64> = old_text.iter().map(|&from| old[from].hash).collect();
-    let new_hashes: Vec<u64> = window.iter().map(|&to| rows[to].hash).collect();
-    let pairs = align::keep(&old_text, &window, |i, j| new_hashes[j] == old_hashes[i], 0);
+    let old_hashes: Vec<u64> = hashes(old, &old_text).collect();
+    let new_hashes: Vec<u64> = hashes(rows, &window).collect();
+    let pairs = align::keep(
+        &old_text,
+        &window,
+        |i, j| {
+            new_hashes
+                .get(j)
+                .is_some_and(|new| old_hashes.get(i) == Some(new))
+        },
+        0,
+    );
     // The last read's rows found are those at or above its caret, as in
     // the test that made the read lost: a footer below the caret stays
     // where it is while the output passes it.
@@ -1709,7 +1771,7 @@ fn align_whole(
     let fixed = commonest_shift(&pairs, 0);
     // A place keeps its distance from the document's end, the last read
     // having read to it too.
-    let place = isize_of(rows.len()) - isize_of(memory.rows.len());
+    let place = isize_of(rows.len()).saturating_sub(isize_of(memory.rows.len()));
     let how = How {
         fixed,
         place,
@@ -1755,11 +1817,15 @@ fn classify(
     let old = &memory.rows;
     let (count, total) = (old.len(), rows.len());
     let refused = !whole && (read.shrank || !read.from_start);
-    let place = |from: usize| isize_of(from) + fixed;
+    let place = |from: usize| isize_of(from).saturating_add(fixed);
+    // A row of the read, and of the last read, by index: each table is made
+    // as long as its rows, and the alignment's pairs index both.
     let mut new = vec![NewRow::New; total];
     let mut fates = vec![OldRow::Gone { lingering: false }; count];
+    let is_new = |new: &[NewRow], to: usize| new.get(to) == Some(&NewRow::New);
+    let is_gone = |fates: &[OldRow], from: usize| fates.get(from) == Some(&GONE);
     for &(from, to) in kept {
-        new[to] = if rows[to].hash == old[from].hash {
+        let kind = if same_hash(old, from, rows, to) {
             NewRow::Kept {
                 from,
                 moved: isize_of(to) != place(from),
@@ -1767,11 +1833,12 @@ fn classify(
         } else {
             NewRow::Grown { from }
         };
-        fates[from] = OldRow::Kept(to);
+        put(&mut new, to, kind);
+        put(&mut fates, from, OldRow::Kept(to));
     }
     for &to in &shown {
-        if new[to] == NewRow::New {
-            new[to] = NewRow::Shown;
+        if is_new(&new, to) {
+            put(&mut new, to, NewRow::Shown);
         }
     }
     // A row the subsequence left gone is kept at the nearest new row with
@@ -1780,13 +1847,11 @@ fn classify(
     // (claude-code-reply recording); a history row is not looked for, so
     // it is found only at its place or higher.
     let gone: Vec<usize> = (history..count)
-        .filter(|&from| fates[from] == (OldRow::Gone { lingering: false }) && !old[from].is_blank())
+        .filter(|&from| is_gone(&fates, from) && has_text(old, from))
         .collect();
     // The read's rows with each gone row's text, found in one pass.
-    let mut with_text: BTreeMap<u64, Vec<usize>> = gone
-        .iter()
-        .map(|&from| (old[from].hash, Vec::new()))
-        .collect();
+    let mut with_text: BTreeMap<u64, Vec<usize>> =
+        hashes(old, &gone).map(|hash| (hash, Vec::new())).collect();
     if !with_text.is_empty() {
         for (to, row) in rows.iter().enumerate() {
             if let Some(found) = with_text.get_mut(&row.hash) {
@@ -1795,17 +1860,24 @@ fn classify(
         }
     }
     for from in gone {
-        let found = with_text[&old[from].hash]
-            .iter()
+        let found = old
+            .get(from)
+            .and_then(|row| with_text.get(&row.hash))
+            .into_iter()
+            .flatten()
             .copied()
-            .filter(|&to| new[to] == NewRow::New)
-            .min_by_key(|&to| (isize_of(to) - place(from)).abs());
+            .filter(|&to| is_new(&new, to))
+            .min_by_key(|&to| isize_of(to).saturating_sub(place(from)).unsigned_abs());
         if let Some(to) = found {
-            new[to] = NewRow::Kept {
-                from,
-                moved: isize_of(to) != place(from),
-            };
-            fates[from] = OldRow::Kept(to);
+            put(
+                &mut new,
+                to,
+                NewRow::Kept {
+                    from,
+                    moved: isize_of(to) != place(from),
+                },
+            );
+            put(&mut fates, from, OldRow::Kept(to));
         }
     }
     // A row whose text grew where it was is kept, as the subsequence over
@@ -1813,17 +1885,20 @@ fn classify(
     // text, a row's place is known only from the rows kept around it.
     if free && !kept.is_empty() {
         for from in history..count {
-            if fates[from] != (OldRow::Gone { lingering: false }) || old[from].is_blank() {
+            let Some(old_row) = old.get(from).filter(|row| !row.is_blank()) else {
+                continue;
+            };
+            if !is_gone(&fates, from) {
                 continue;
             }
             if let Ok(to) = usize::try_from(place(from))
-                && to < total
-                && new[to] == NewRow::New
-                && rows[to].text.len() > old[from].text.len()
-                && rows[to].text.starts_with(&*old[from].text)
+                && is_new(&new, to)
+                && let Some(new_row) = rows.get(to)
+                && new_row.text.len() > old_row.text.len()
+                && new_row.text.starts_with(&*old_row.text)
             {
-                new[to] = NewRow::Grown { from };
-                fates[from] = OldRow::Kept(to);
+                put(&mut new, to, NewRow::Grown { from });
+                put(&mut fates, from, OldRow::Kept(to));
             }
         }
     }
@@ -1836,25 +1911,29 @@ fn classify(
             if kept_from > from {
                 break;
             }
-            shift_above = Some(isize_of(kept_to) - isize_of(kept_from));
+            shift_above = Some(isize_of(kept_to).saturating_sub(isize_of(kept_from)));
             placed.next();
         }
-        if !old[from].is_blank() {
+        if has_text(old, from) {
             continue;
         }
         let below = placed
             .peek()
-            .map(|&&(kept_from, kept_to)| isize_of(kept_to) - isize_of(kept_from));
+            .map(|&&(kept_from, kept_to)| isize_of(kept_to).saturating_sub(isize_of(kept_from)));
         let row_shift = shift_above.or(below).unwrap_or(fixed);
-        let found = usize::try_from(isize_of(from) + row_shift)
+        let found = usize::try_from(isize_of(from).saturating_add(row_shift))
             .ok()
-            .filter(|&to| to < total && rows[to].is_blank() && new[to] == NewRow::New);
+            .filter(|&to| rows.get(to).is_some_and(Row::is_blank) && is_new(&new, to));
         if let Some(to) = found {
-            new[to] = NewRow::Kept {
-                from,
-                moved: row_shift != fixed,
-            };
-            fates[from] = OldRow::Kept(to);
+            put(
+                &mut new,
+                to,
+                NewRow::Kept {
+                    from,
+                    moved: row_shift != fixed,
+                },
+            );
+            put(&mut fates, from, OldRow::Kept(to));
         }
     }
     // Rows above where the memory's first row went are history in a read
@@ -1882,7 +1961,7 @@ fn classify(
         fixed
     };
     let top = usize::try_from(first_went).unwrap_or(0).min(total);
-    for kind in &mut new[..top] {
+    for kind in new.iter_mut().take(top) {
         if *kind == NewRow::New {
             *kind = NewRow::Shown;
         }
@@ -1900,39 +1979,45 @@ fn classify(
         }
         bounds.push((previous, None));
         for (above, below) in bounds {
-            let old_range =
-                above.map_or(0, |(from, _)| from + 1)..below.map_or(count, |(from, _)| from);
-            let new_range = above.map_or(0, |(_, to)| to + 1)..below.map_or(total, |(_, to)| to);
-            let prefer = below
-                .or(above)
-                .map_or(fixed, |(from, to)| isize_of(to) - isize_of(from));
+            let old_range = above.map_or(0, |(from, _)| from.saturating_add(1))
+                ..below.map_or(count, |(from, _)| from);
+            let new_range =
+                above.map_or(0, |(_, to)| to.saturating_add(1))..below.map_or(total, |(_, to)| to);
+            let prefer = below.or(above).map_or(fixed, |(from, to)| {
+                isize_of(to).saturating_sub(isize_of(from))
+            });
             let old_gap: Vec<(usize, Likeness)> = old_range
-                .filter(|&from| {
-                    from >= history
-                        && place(from) >= 0
-                        && fates[from] == OldRow::Gone { lingering: false }
-                        && !old[from].is_blank()
+                .filter(|&from| from >= history && place(from) >= 0 && is_gone(&fates, from))
+                .filter_map(|from| {
+                    let row = old.get(from).filter(|row| !row.is_blank())?;
+                    Some((from, Likeness::of(&row.text)))
                 })
-                .map(|from| (from, Likeness::of(&old[from].text)))
                 .collect();
             if old_gap.is_empty() {
                 continue;
             }
             let new_gap: Vec<(usize, Likeness)> = new_range
-                .filter(|&to| new[to] == NewRow::New && !rows[to].is_blank())
-                .map(|to| (to, Likeness::of(&rows[to].text)))
+                .filter(|&to| is_new(&new, to))
+                .filter_map(|to| {
+                    let row = rows.get(to).filter(|row| !row.is_blank())?;
+                    Some((to, Likeness::of(&row.text)))
+                })
                 .collect();
             let old_gap: Vec<(usize, &Likeness)> =
                 old_gap.iter().map(|(at, like)| (*at, like)).collect();
             let new_gap: Vec<(usize, &Likeness)> =
                 new_gap.iter().map(|(at, like)| (*at, like)).collect();
             for (from, to) in align::pair(&old_gap, &new_gap, prefer) {
-                new[to] = NewRow::Rewritten {
-                    from,
-                    moved: isize_of(to) != place(from),
-                    alone: false,
-                };
-                fates[from] = OldRow::Rewritten(to);
+                put(
+                    &mut new,
+                    to,
+                    NewRow::Rewritten {
+                        from,
+                        moved: isize_of(to) != place(from),
+                        alone: false,
+                    },
+                );
+                put(&mut fates, from, OldRow::Rewritten(to));
             }
         }
     }
@@ -1953,51 +2038,59 @@ fn classify(
         let to = line_start(rows, caret);
         if !free
             && isize_of(to) == place(first)
-            && !old[first].is_blank()
-            && fates[first] == (OldRow::Gone { lingering: false })
-            && new[to] == NewRow::New
+            && has_text(old, first)
+            && is_gone(&fates, first)
+            && is_new(&new, to)
             && !written_past(
                 (old, first, memory.caret_column),
                 (rows, to, line_column(rows, caret, read.caret_column)),
             )
         {
-            new[to] = NewRow::Rewritten {
-                from: first,
-                moved: false,
-                alone: false,
-            };
-            fates[first] = OldRow::Rewritten(to);
+            put(
+                &mut new,
+                to,
+                NewRow::Rewritten {
+                    from: first,
+                    moved: false,
+                    alone: false,
+                },
+            );
+            put(&mut fates, first, OldRow::Rewritten(to));
         }
     }
     // A row rewritten elsewhere than its place moved with its neighbours
     // when a row next to it was kept in the same move.
     for to in 0..new.len() {
-        let NewRow::Rewritten {
+        let Some(&NewRow::Rewritten {
             from, moved: true, ..
-        } = new[to]
+        }) = new.get(to)
         else {
             continue;
         };
-        let distance = isize_of(to) - place(from);
-        let with_neighbour = [to.checked_sub(1), Some(to + 1)]
+        let distance = isize_of(to).saturating_sub(place(from));
+        let with_neighbour = [to.checked_sub(1), to.checked_add(1)]
             .into_iter()
             .flatten()
             .any(|next| match new.get(next) {
                 Some(NewRow::Kept { from: kept, .. } | NewRow::Grown { from: kept }) => {
-                    isize_of(next) - place(*kept) == distance
+                    isize_of(next).saturating_sub(place(*kept)) == distance
                 }
                 _ => false,
             });
-        new[to] = NewRow::Rewritten {
-            from,
-            moved: true,
-            alone: !with_neighbour,
-        };
+        put(
+            &mut new,
+            to,
+            NewRow::Rewritten {
+                from,
+                moved: true,
+                alone: !with_neighbour,
+            },
+        );
     }
     // Gone rows that linger, and lingering rows taken back.
     let old_caret = memory.caret.and_then(|row| row.checked_sub(memory.skipped));
-    for from in 0..count {
-        if fates[from] != (OldRow::Gone { lingering: false }) {
+    for (from, (fate, old_row)) in fates.iter_mut().zip(old).enumerate() {
+        if *fate != GONE {
             continue;
         }
         let at = place(from);
@@ -2005,20 +2098,20 @@ fn classify(
         // history, or out of the buffer when the read starts at the
         // document's start.
         if at < 0 {
-            fates[from] = if read.at_document_start {
+            *fate = if read.at_document_start {
                 OldRow::Left
             } else {
                 OldRow::Above
             };
             continue;
         }
-        if old[from].is_blank() {
+        if old_row.is_blank() {
             continue;
         }
         let below_caret = old_caret.is_some_and(|row| from >= row)
             || caret.is_some_and(|row| at >= isize_of(row));
-        if old[from].redrawn || below_caret {
-            fates[from] = OldRow::Gone { lingering: true };
+        if old_row.redrawn || below_caret {
+            *fate = OldRow::Gone { lingering: true };
         }
     }
     let skip = isize_of(memory.skipped);
@@ -2026,20 +2119,25 @@ fn classify(
         .lingering
         .iter()
         .filter(|row| read.at_ms.saturating_sub(row.since_ms) <= LINGERING_MS)
-        .map(|row| (row.at - skip + fixed, row.row.hash))
+        .map(|row| {
+            (
+                row.at.saturating_sub(skip).saturating_add(fixed),
+                row.row.hash,
+            )
+        })
         .collect();
-    for to in 0..total {
-        if new[to] != NewRow::New || rows[to].is_blank() {
+    for (to, (kind, row)) in new.iter_mut().zip(rows).enumerate() {
+        if *kind != NewRow::New || row.is_blank() {
             continue;
         }
         let nearest = lingering
             .iter()
             .enumerate()
-            .filter(|(_, (_, hash))| *hash == rows[to].hash)
-            .min_by_key(|(_, (at, _))| (at - isize_of(to)).abs())
+            .filter(|(_, (_, hash))| *hash == row.hash)
+            .min_by_key(|(_, (at, _))| at.saturating_sub(isize_of(to)).unsigned_abs())
             .map(|(index, &(at, _))| (index, at));
         if let Some((index, at)) = nearest {
-            new[to] = NewRow::Returned {
+            *kind = NewRow::Returned {
                 moved: at != isize_of(to),
             };
             lingering.remove(index);
@@ -2047,11 +2145,11 @@ fn classify(
     }
     let caret_rows = |from: &usize| old_caret.is_none_or(|row| *from <= row);
     let kept_caret = (0..count).filter(caret_rows).any(|from| {
-        !old[from].is_blank()
-            && matches!(fates[from], OldRow::Kept(to) if !matches!(new[to], NewRow::Shown))
+        has_text(old, from)
+            && matches!(fates.get(from), Some(&OldRow::Kept(to)) if new.get(to) != Some(&NewRow::Shown))
     });
-    let kept_text =
-        (0..count).any(|from| !old[from].is_blank() && matches!(fates[from], OldRow::Kept(_)));
+    let kept_text = (0..count)
+        .any(|from| has_text(old, from) && matches!(fates.get(from), Some(OldRow::Kept(_))));
     let paired = fates
         .iter()
         .any(|fate| matches!(fate, OldRow::Rewritten(_)));
@@ -2085,21 +2183,21 @@ fn remember(
     let skip = isize_of(memory.skipped);
     // Where a row of the last read that did not move is now, counted as
     // the last read's rows are.
-    let shift = aligned.fixed - skip;
+    let shift = aligned.fixed.saturating_sub(skip);
     let mut lingering: Vec<Lingering> = memory
         .lingering
         .iter()
         .filter(|row| now.saturating_sub(row.since_ms) <= LINGERING_MS)
         .map(|row| Lingering {
-            at: row.at + shift,
+            at: row.at.saturating_add(shift),
             ..row.clone()
         })
         .collect();
-    for (to, kind) in aligned.new.iter().enumerate() {
-        let row = &mut rows[to];
+    // The alignment has a kind for each of the read's rows.
+    for (to, (kind, row)) in aligned.new.iter().zip(&mut rows).enumerate() {
         match *kind {
             NewRow::Kept { from, .. } | NewRow::Grown { from } => {
-                row.redrawn = memory.rows[from].redrawn;
+                row.redrawn = memory.rows.get(from).is_some_and(|old| old.redrawn);
             }
             NewRow::Rewritten { .. } => row.redrawn = true,
             NewRow::Returned { .. } => {
@@ -2108,7 +2206,7 @@ fn remember(
                     .iter()
                     .enumerate()
                     .filter(|(_, gone)| gone.row.hash == row.hash)
-                    .min_by_key(|(_, gone)| (gone.at - isize_of(to)).abs())
+                    .min_by_key(|(_, gone)| gone.at.saturating_sub(isize_of(to)).unsigned_abs())
                     .map(|(index, _)| index)
                 {
                     lingering.remove(index);
@@ -2119,11 +2217,13 @@ fn remember(
         }
     }
     for (from, fate) in aligned.old.iter().enumerate() {
-        if *fate == (OldRow::Gone { lingering: true }) {
+        if *fate == (OldRow::Gone { lingering: true })
+            && let Some(row) = memory.rows.get(from)
+        {
             lingering.push(Lingering {
-                row: memory.rows[from].clone(),
+                row: row.clone(),
                 since_ms: now,
-                at: isize_of(from) + aligned.fixed,
+                at: isize_of(from).saturating_add(aligned.fixed),
             });
         }
     }
@@ -2152,7 +2252,7 @@ fn remember(
         .and_then(|anchor| map_anchor(anchor, memory, aligned, &fates, &next, read));
     // Above the last read a mark keeps its place, as the review position
     // does ("The review anchor"), above a refused start too.
-    let place = aligned.place - isize_of(memory.skipped);
+    let place = aligned.place.saturating_sub(isize_of(memory.skipped));
     next.marks = memory
         .marks
         .iter()
@@ -2171,14 +2271,15 @@ fn remember(
     next
 }
 
-/// An anchor on row `row` of `rows`, at `column` clamped to its text.
-fn anchor_at(rows: &[Row], row: usize, column: usize) -> Anchor {
-    let found = &rows[row];
-    Anchor {
+/// An anchor on row `row` of `rows`, at `column` clamped to its text;
+/// `None` when there is no such row.
+fn anchor_at(rows: &[Row], row: usize, column: usize) -> Option<Anchor> {
+    let found = rows.get(row)?;
+    Some(Anchor {
         row: isize_of(row),
         column: column.min(found.text.chars().count()),
         line_hash: found.line_hash,
-    }
+    })
 }
 
 /// The review position, or a place, after a read ("The review anchor and
@@ -2200,18 +2301,18 @@ fn map_anchor(
     read: &Read,
 ) -> Option<Anchor> {
     let rows = &next.rows;
-    let shift = aligned.fixed - isize_of(memory.skipped);
+    let shift = aligned.fixed.saturating_sub(isize_of(memory.skipped));
     // Above the last read an anchor keeps its place ("The review anchor").
-    let place = aligned.place - isize_of(memory.skipped);
+    let place = aligned.place.saturating_sub(isize_of(memory.skipped));
     // Above a refused start the rows are gone, the document having shrunk
     // beneath them: an anchor there is found again by its line's text
     // nearest its old place, or else goes to the caret ("The review
     // cursor").
-    let above = |row: isize| row < isize_of(memory.skipped) || row + shift < 0;
+    let above = |row: isize| row < isize_of(memory.skipped) || row.saturating_add(shift) < 0;
     if aligned.refused && above(anchor.row) {
         return refind(anchor, memory.total(), line_offset(memory, &anchor), rows).or_else(|| {
             next.caret
-                .map(|row| anchor_at(rows, row, read.caret_column))
+                .and_then(|row| anchor_at(rows, row, read.caret_column))
         });
     }
     // Where row `row` of the last read is now, when it survived.
@@ -2221,12 +2322,12 @@ fn map_anchor(
         }
         let to = match usize::try_from(row) {
             Err(_) if memory.at_document_start => return None,
-            Err(_) => row + place,
+            Err(_) => row.saturating_add(place),
             Ok(from) => match fates.get(from)? {
                 OldRow::Kept(to) | OldRow::Rewritten(to) => return Some(isize_of(*to)),
-                OldRow::Above => row + place,
+                OldRow::Above => row.saturating_add(place),
                 OldRow::Gone { .. } => {
-                    let to = row + shift;
+                    let to = row.saturating_add(shift);
                     let written = memory.row(from).is_some_and(Row::is_blank)
                         && usize::try_from(to)
                             .is_ok_and(|to| aligned.new.get(to) == Some(&NewRow::New));
@@ -2252,16 +2353,16 @@ fn map_anchor(
         if row < 0 {
             break None;
         }
-        row -= 1;
+        row = row.saturating_sub(1);
     };
     match found {
-        Some(to) => Some(match usize::try_from(to) {
+        Some(to) => match usize::try_from(to) {
             Ok(to) if to < rows.len() => anchor_at(rows, to, anchor.column),
-            _ => Anchor { row: to, ..anchor },
-        }),
+            _ => Some(Anchor { row: to, ..anchor }),
+        },
         None => next
             .caret
-            .map(|row| anchor_at(rows, row, read.caret_column)),
+            .and_then(|row| anchor_at(rows, row, read.caret_column)),
     }
 }
 
@@ -2281,15 +2382,15 @@ fn map_mark(
 ) -> Option<Anchor> {
     let kept = |row: isize| (!at_document_start || row >= 0).then_some(Anchor { row, ..mark });
     let to = match usize::try_from(mark.row) {
-        Err(_) => return kept(mark.row + place),
+        Err(_) => return kept(mark.row.saturating_add(place)),
         Ok(from) => match fates.get(from)? {
             OldRow::Kept(to) => *to,
-            OldRow::Above => return kept(mark.row + place),
+            OldRow::Above => return kept(mark.row.saturating_add(place)),
             OldRow::Rewritten(_) | OldRow::Gone { .. } | OldRow::Left => return None,
         },
     };
     let first = line_start(rows, to);
-    Some(if rows[first].line_hash == mark.line_hash {
+    Some(if rows.get(first)?.line_hash == mark.line_hash {
         Anchor {
             row: isize_of(first),
             column: 0,
@@ -2306,8 +2407,10 @@ fn map_mark(
 /// The first row of the line holding row `row`.
 fn line_start(rows: &[Row], row: usize) -> usize {
     let mut first = row;
-    while first > 0 && rows[first - 1].wraps {
-        first -= 1;
+    while let Some(above) = first.checked_sub(1)
+        && rows.get(above).is_some_and(|row| row.wraps)
+    {
+        first = above;
     }
     first
 }
@@ -2315,8 +2418,8 @@ fn line_start(rows: &[Row], row: usize) -> usize {
 /// The last row of the line whose first row is `first`.
 fn line_end(rows: &[Row], first: usize) -> usize {
     let mut last = first;
-    while rows[last].wraps && last + 1 < rows.len() {
-        last += 1;
+    while rows.get(last).is_some_and(|row| row.wraps) && last.saturating_add(1) < rows.len() {
+        last = last.saturating_add(1);
     }
     last
 }
@@ -2324,11 +2427,12 @@ fn line_end(rows: &[Row], first: usize) -> usize {
 /// The column along its line of `column` in row `row`, in characters from
 /// the line's first row, as the reading rules count a caret.
 fn line_column(rows: &[Row], row: usize, column: usize) -> usize {
-    rows[line_start(rows, row)..row]
+    rows.get(line_start(rows, row)..row)
+        .unwrap_or_default()
         .iter()
         .map(|row| row.text.chars().count())
         .sum::<usize>()
-        + column
+        .saturating_add(column)
 }
 
 /// Whether the line whose first row is new row `to`, with the caret at
@@ -2345,13 +2449,13 @@ fn written_past(
     if column <= from {
         return false;
     }
-    let old_text = line_text(&old[first..=line_end(old, first)]);
-    let new_text = line_text(&rows[to..=line_end(rows, to)]);
+    let old_text = line_text(old.get(first..=line_end(old, first)).unwrap_or_default());
+    let new_text = line_text(rows.get(to..=line_end(rows, to)).unwrap_or_default());
     let cells = |text: &str| {
         text.chars()
             .chain(std::iter::repeat(' '))
             .skip(from)
-            .take(column - from)
+            .take(column.saturating_sub(from))
             .collect::<String>()
     };
     crate::lost_text(&old_text, &new_text) && cells(&old_text) == cells(&new_text)
@@ -2359,34 +2463,41 @@ fn written_past(
 
 /// The lines of `rows`, without their growth, which [`grew_from`] adds.
 fn lines(rows: &[Row]) -> Vec<Line> {
-    let mut lines = Vec::with_capacity(rows.iter().filter(|row| !row.wraps).count() + 1);
+    let mut lines = Vec::with_capacity(
+        rows.iter()
+            .filter(|row| !row.wraps)
+            .count()
+            .saturating_add(1),
+    );
     let mut first = 0;
     for (at, row) in rows.iter().enumerate() {
-        if row.wraps && at + 1 < rows.len() {
+        let end = at.saturating_add(1);
+        if row.wraps && end < rows.len() {
             continue;
         }
         // A line's last row has no padding, so a one-row line's text is
         // its row's; a longer line's is its rows' joined, the stretch they
         // make up together while they are still in the string they were
         // split into, and its hash is the one each row has as its line's.
-        let (text, line_hash) = if first == at {
-            (row.text.clone(), row.hash)
-        } else {
-            let rest = rows[first + 1..=at].iter().map(|row| &row.text);
-            let text = rows[first]
-                .text
-                .through(rest)
-                .filter(|text| crate::trim_padding(text).len() == text.len())
-                .unwrap_or_else(|| Text::from(line_text(&rows[first..=at])));
-            (text, rows[first].line_hash)
+        let line_rows = rows.get(first..end).unwrap_or_default();
+        let (text, line_hash) = match line_rows {
+            [start, rest @ ..] if !rest.is_empty() => {
+                let text = start
+                    .text
+                    .through(rest.iter().map(|row| &row.text))
+                    .filter(|text| crate::trim_padding(text).len() == text.len())
+                    .unwrap_or_else(|| Text::from(line_text(line_rows)));
+                (text, start.line_hash)
+            }
+            _ => (row.text.clone(), row.hash),
         };
         lines.push(Line {
-            rows: first..at + 1,
+            rows: first..end,
             hash: line_hash,
             text,
             grew_from: None,
         });
-        first = at + 1;
+        first = end;
     }
     lines
 }
@@ -2416,18 +2527,17 @@ fn grew_from(line: &Line, kinds: &[NewRow], memory: &Screen, continued: bool) ->
     else {
         return None;
     };
-    let starts = if from == 0 {
-        !memory.continued
-    } else {
-        !old[from - 1].wraps
+    let starts = match from.checked_sub(1) {
+        None => !memory.continued,
+        Some(above) => !old.get(above)?.wraps,
     };
     if !(starts || continued && line.rows.start == 0) {
         return None;
     }
     let end = (from..old.len())
-        .find(|&at| !old[at].wraps)
-        .unwrap_or(old.len() - 1);
-    let was = line_text(&old[from..=end]);
+        .find(|&at| old.get(at).is_some_and(|row| !row.wraps))
+        .unwrap_or(old.len().saturating_sub(1));
+    let was = line_text(old.get(from..=end)?);
     (!was.is_empty() && line.text.len() > was.len() && line.text.starts_with(&was))
         .then_some(was.len())
 }
@@ -2455,11 +2565,14 @@ fn measure(screen: &str, caret_row: &str, last_height: Option<usize>) -> (usize,
     };
     let fits = |width: usize| {
         width > 0
-            && others.iter().all(|cells| cells % width == 0)
-            && (last % width == 0 || (last + 1) % width == 0)
+            && others
+                .iter()
+                .all(|cells| cells.checked_rem(width) == Some(0))
+            && (last.checked_rem(width) == Some(0)
+                || last.saturating_add(1).checked_rem(width) == Some(0))
     };
     let caret = crate::cell_width(caret_row.strip_suffix("\r\n").unwrap_or(caret_row));
-    let fitting: Vec<usize> = [caret, caret + 1]
+    let fitting: Vec<usize> = [caret, caret.saturating_add(1)]
         .into_iter()
         .filter(|&width| caret > 0 && fits(width))
         .collect();
@@ -2495,7 +2608,10 @@ fn split_rows(text: &ReadText, width: usize) -> Vec<Row> {
         .lengths
         .iter()
         .map(|&(count, length)| {
-            let (count, length) = (count as usize, length as usize);
+            let (count, length) = (
+                usize::try_from(count).unwrap_or(usize::MAX),
+                usize::try_from(length).unwrap_or(usize::MAX),
+            );
             count.saturating_mul(length.div_ceil(width.max(1)).max(1))
         })
         .fold(0usize, usize::saturating_add);
@@ -2536,16 +2652,19 @@ fn split_lines<'a>(
     };
     for (line, spaces) in lines {
         row_pieces(line, spaces, width, &mut pieces);
-        let last = pieces.len() - 1;
+        // At least one piece, as `row_pieces` makes.
+        let last = pieces.len().saturating_sub(1);
         // Padding is the spaces after the line's last character ("Rows"):
         // a wrapped row keeps the spaces where it wrapped, but not those
         // after the line's last character, so each row ends at the first of
         // them at the latest.
         let end = crate::trim_padding(line).len();
-        let line_hash = hash(&line[..end]);
+        let line_hash = hash(line.get(..end).unwrap_or_default());
         for (at, piece) in pieces.iter().enumerate() {
             let start = piece.start.min(end);
-            let piece = &line[start..piece.end.min(end).max(start)];
+            let piece = line
+                .get(start..piece.end.min(end).max(start))
+                .unwrap_or_default();
             // A line of one row is that row's text.
             let row_hash = if last == 0 { line_hash } else { hash(piece) };
             let start = joined.len();
@@ -2583,13 +2702,14 @@ fn crlf_lines(text: &str) -> impl Iterator<Item = Range<usize>> {
     std::iter::from_fn(move || {
         let start = rest?;
         let mut from = start;
-        while let Some(found) = text[from..].find('\n') {
-            let at = from + found;
-            if at > start && text.as_bytes()[at - 1] == b'\r' {
-                rest = Some(at + 1);
-                return Some(start..at - 1);
+        while let Some(found) = text.get(from..).and_then(|rest| rest.find('\n')) {
+            let at = from.saturating_add(found);
+            let before = at.checked_sub(1);
+            if at > start && before.and_then(|before| text.as_bytes().get(before)) == Some(&b'\r') {
+                rest = Some(at.saturating_add(1));
+                return Some(start..at.saturating_sub(1));
             }
-            from = at + 1;
+            from = at.saturating_add(1);
         }
         rest = None;
         Some(start..text.len())
@@ -2610,9 +2730,9 @@ fn row_pieces(line: &str, spaces: usize, width: usize, pieces: &mut Vec<Range<us
         pieces.push(0..length);
     } else if line.is_ascii() {
         // Every printable ASCII character takes one cell, as does a space.
-        let mut at = 0;
+        let mut at: usize = 0;
         loop {
-            let end = (at + width).min(length);
+            let end = at.saturating_add(width).min(length);
             pieces.push(at..end);
             at = end;
             if at >= length {
@@ -2628,15 +2748,15 @@ fn row_pieces(line: &str, spaces: usize, width: usize, pieces: &mut Vec<Range<us
         // Hebrew and Arabic text.
         pieces.push(0..length);
     } else {
-        let (mut start, mut cells) = (0, 0);
+        let (mut start, mut cells): (usize, usize) = (0, 0);
         let padding = (line.len()..length).map(|at| (at, ' '));
         for (at, c) in line.char_indices().chain(padding) {
             let cell = unicode_width::UnicodeWidthChar::width(c).unwrap_or(0);
-            if width > 0 && cells + cell > width && at > start {
+            if width > 0 && cells.saturating_add(cell) > width && at > start {
                 pieces.push(start..at);
                 (start, cells) = (at, 0);
             }
-            cells += cell;
+            cells = cells.saturating_add(cell);
         }
         pieces.push(start..length);
     }
@@ -2646,7 +2766,7 @@ fn row_pieces(line: &str, spaces: usize, width: usize, pieces: &mut Vec<Range<us
 /// caret's row and those below it hold.
 fn caret_row(rows: usize, to_end: u32) -> Option<usize> {
     let to_end = usize::try_from(to_end).ok()?;
-    (to_end > 0 && to_end <= rows).then(|| rows - to_end)
+    (to_end > 0 && to_end <= rows).then(|| rows.saturating_sub(to_end))
 }
 
 /// The rows of `text`, a read's text from a row's start, split as the
@@ -2657,8 +2777,16 @@ fn caret_row(rows: usize, to_end: u32) -> Option<usize> {
 #[must_use]
 pub fn rows_of(text: &str, width: usize) -> Vec<Row> {
     let text = text.strip_suffix("\r\n").unwrap_or(text);
-    let rows = text.len() / (width + 2).max(1) + 1;
-    split_lines(crlf_lines(text).map(|span| (&text[span], 0)), rows, width)
+    let rows = text
+        .len()
+        .checked_div(width.saturating_add(2))
+        .unwrap_or(0)
+        .saturating_add(1);
+    split_lines(
+        crlf_lines(text).map(|span| (text.get(span).unwrap_or_default(), 0)),
+        rows,
+        width,
+    )
 }
 
 /// Whether a read's screen shows text: anything but padding, line breaks
@@ -2688,7 +2816,9 @@ pub fn hash(text: &str) -> u64 {
     }
     if !rest.is_empty() {
         let mut eight = [0; 8];
-        eight[..rest.len()].copy_from_slice(rest);
+        for (slot, byte) in eight.iter_mut().zip(rest) {
+            *slot = *byte;
+        }
         hash = fold(hash ^ u64::from_le_bytes(eight), HASH_FACTOR);
     }
     fold(hash ^ HASH_SEED, HASH_FINISH)
@@ -2704,13 +2834,49 @@ const HASH_FINISH: u64 = 0xbb67_ae85_84ca_a73b;
 /// The 128-bit product of `a` and `b`, its high and low halves combined
 /// by exclusive or.
 fn fold(a: u64, b: u64) -> u64 {
-    let product = u128::from(a) * u128::from(b);
-    #[expect(
-        clippy::cast_possible_truncation,
-        reason = "the two halves of the product, each taken whole"
-    )]
-    let (high, low) = ((product >> 64) as u64, product as u64);
+    // Never wraps: a product of two 64-bit numbers fits in 128 bits.
+    let product = u128::from(a).wrapping_mul(u128::from(b));
+    let high = u64::try_from(product >> 64).unwrap_or(u64::MAX);
+    let low = u64::try_from(product & u128::from(u64::MAX)).unwrap_or(u64::MAX);
     high ^ low
+}
+
+/// What a row of the last read the alignment has not kept yet is.
+const GONE: OldRow = OldRow::Gone { lingering: false };
+
+/// Puts `value` at `at` of `table`, which holds it.
+fn put<T>(table: &mut [T], at: usize, value: T) {
+    if let Some(slot) = table.get_mut(at) {
+        *slot = value;
+    }
+}
+
+/// Whether `rows` has row `at` and it has text.
+fn has_text(rows: &[Row], at: usize) -> bool {
+    rows.get(at).is_some_and(|row| !row.is_blank())
+}
+
+/// The indices of `rows` with text, in order.
+fn text_rows(rows: &[Row]) -> Vec<usize> {
+    rows.iter()
+        .enumerate()
+        .filter(|(_, row)| !row.is_blank())
+        .map(|(at, _)| at)
+        .collect()
+}
+
+/// The hashes of the rows of `rows` at `indices`, in order.
+fn hashes<'a>(rows: &'a [Row], indices: &'a [usize]) -> impl Iterator<Item = u64> + 'a {
+    indices
+        .iter()
+        .filter_map(|&at| rows.get(at))
+        .map(|row| row.hash)
+}
+
+/// Whether old row `from` of `old` and new row `to` of `rows` have the same
+/// text, as their hashes say.
+fn same_hash(old: &[Row], from: usize, rows: &[Row], to: usize) -> bool {
+    matches!((old.get(from), rows.get(to)), (Some(old), Some(new)) if old.hash == new.hash)
 }
 
 fn isize_of(value: usize) -> isize {
