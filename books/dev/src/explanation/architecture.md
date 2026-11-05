@@ -993,7 +993,10 @@ The threat model and its mitigations are in
 - No injection unless and until the D2 helper ships (M7), and then only via
   it.
 - Native synth DLLs and installed Wasm extensions run in sandboxed processes
-  of their own; Core never loads third-party native code in-process.
+  of their own. Core still loads some third-party native code in-process:
+  the shell extensions a file dialog brings, the input methods of its text
+  fields, and other programs' global hook DLLs on its message-pumping
+  threads. The GUI stays in Core by decision. Amended 2026-11-05 (Dickson).
 - **UIAccess**: reading elevated apps' UI from a non-elevated Verbatim
   requires `uiAccess=true`, which requires signed binaries in a trusted path —
   an installer/signing prerequisite tracked from the start (R5).

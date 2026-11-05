@@ -100,6 +100,8 @@ Arm64 is a first-class target. Builds and tests always use the host's own archit
 
 Use Clippy with the pedantic lint group from the start. Public Rust APIs should have doc comments so the workspace can be browsed with Rustdoc.
 
+Code reaches no fallback that could only be a logic bug: a miss is removed by construction, or passed up as an error, never defaulted silently.
+
 We are using GitHub actions for CI.
 
 ## Commands

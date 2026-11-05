@@ -16,8 +16,19 @@ M4.1". M4.5 (logic foundations) and M4.6 (generated tests) are complete. The pro
 layout was weighed again and kept: an outpost process per application
 and a separate focus listener (D9, D13; Dickson, 2026-11-02). The focus
 pipeline rework's second build is built (2026-11-02). The owner endings build is
-built (2026-11-03). Next: the UIA facts build, then the rework's third
-build.
+built (2026-11-03). Next, in this order (Dickson, 2026-11-05):
+
+1. the UIA facts build;
+2. "Slow applications: Verbatim's short limits";
+3. the focus pipeline rework's third build;
+4. the caret and selection rework, which ends M4;
+5. M4.2;
+6. M5;
+7. M6;
+8. M4.3;
+9. M4.8 (Guardian) and M4.7 (Containment);
+10. M4.9 (Lints and unsafe);
+11. M6.2, with the rest after.
 
 The published site's homepage, `books/index.html`, carries one line of
 this status per milestone, and changes with it.
@@ -173,7 +184,9 @@ about twenty rounds of fixes since 2026-10-21, mostly from carrying two
 jobs in one record and judging queued work by a lifecycle flag. A held
 window's title becomes a deadline in Core's foreground record, set at each
 foreground change Core accepts and cleared when Core takes a focus in that
-window, the title said from the window's text, which the listener's
+window, due 5 s after the change, Windows' own hung threshold, instead of
+1 s, since the user cannot use a busy application before it answers
+anyway (Dickson, 2026-11-04), the title said from the window's text, which the listener's
 foreground message gains, read locally with no message to the
 application (Dickson, 2026-11-03); the outpost keeps one pending read per application, queued a
 second after the first focus copy it dropped and checked against what it
@@ -207,20 +220,16 @@ full read's item.
 ### Slow applications: Verbatim's short limits
 
 Decided by Dickson on 2026-11-04, from the timeout audit of that day, to
-be built right after the third build, before the caret and selection
-rework, as one build with its own design and adversarial review
-(Dickson, 2026-11-04): a slow
+be built after the UIA facts build and before the focus pipeline
+rework's third build (Dickson, 2026-11-05), as one build with its own
+design and adversarial review (Dickson, 2026-11-04): a slow
 application is waited for, as NVDA waits, rather than cut off. The
 ancestor walk's bound in a new window (500 ms), the window-message limit
 (`MESSAGE_TIMEOUT_MS`, 500 ms), the text deadline (`TEXT_DEADLINE`, 2 s)
 and the navigation step's deadline (400 ms) become the outer handling
-deadline, `HANDLING_DEADLINE` (10 s, NVDA's `NORMAL_CORE_ALIVE_TIMEOUT`);
-UI Automation's transaction timeout rises from 5 to 10 s, with the limits
-derived from it; when Windows judges the window hung during a call
-(`IsHungAppWindow`), the outpost abandons the worker at once; and a held
-window's title is said after 5 s, Windows' own hung threshold, instead of
-1 s (the gap record's replacement in the third build takes 5 s), since the
-user cannot use a busy application before it answers anyway. Reason: every
+deadline, `HANDLING_DEADLINE`, the outpost's task deadline for each
+handled entry; when Windows judges the window hung during a call
+(`IsHungAppWindow`), the outpost abandons the worker at once. Reason: every
 failure the audit traced to these limits was an application that answered
 within 0.5 to 4.5 s; they account for five entries in [the known
 failures](flaky-tests.md) and part of three more. The key-holding bounds,
@@ -228,6 +237,35 @@ the multi-press window and the terminal key window are unchanged. The
 "application not responding" sound plays when Windows judges the window
 hung, not for every abandoned query (Dickson, 2026-11-04); NVDA has no such
 sound.
+
+The values (Dickson, 2026-11-05), each limit longer than everything
+inside it plus a margin: one UI Automation request 10 s (the transaction
+timeout, today 5 s), so that its own timeout fires first; the outpost's
+task deadline 11 s; and an outpost's clean shutdown up to 12 s, which
+[the guardian](design/guardian.md), section 12, makes fit by stopping a
+program at its next call boundary and cancelling the MSAA call in flight
+through COM. The same build fixes where today's limits nest wrongly:
+
+- a budget checked between calls (enrichment, the path, a walk, a read)
+  leaves room for one more call within the deadline, at most the task
+  deadline less one request, or has its own deadline;
+- the held window's title constant is separated from the listener's
+  failed-fast bound (`NEAREST_FAILED_FAST_BOUND`), which shares
+  `UIA_FOCUS_WAIT` today and stays under the 2 s connection timeout;
+- the shell items' call margin (`SHELL_ITEMS_CALL_MARGIN`, 500 ms) is
+  raised above one UI Automation call;
+- the tree dump's timeout (`DUMP_TREE_TIMEOUT`, 5 s, equal to the walk's
+  deadline) is made longer than the walk it waits for, so Core does not
+  give up first.
+
+It also fixes the remote buffers in `verbatim-ia2`'s edit-control and
+list-view reads (`crates/verbatim-ia2/src/edit.rs`,
+`crates/verbatim-ia2/src/list_view.rs`), which are freed when
+`SendMessageTimeoutW` times out while the message is still queued in the
+application, which later writes into freed or reused pages: a buffer is
+kept until its message is answered or the process ends, with one buffer
+reused per target process, so a slow application never makes it an
+unbounded leak.
 
 Follow-up, not established from the code alone: Core refuses a foreground
 report of the window holding its focus (`crates/verbatim-core/src/reduce.rs`,
@@ -549,6 +587,69 @@ These are decided designs that daily use needs.
 Exit: the settings dialog covers the settings package's inventory, and
 every indication plays or speaks as its cue says.
 
+## M4.7 — Containment
+
+Built with M4.8, after M4.3 (Dickson, 2026-11-05). The design is
+[containment](design/containment.md): every thread and callback edge
+contained, a panic in a child ending only what it must, a native-exception
+handler in every child that writes Verbatim's own dump so Windows Error
+Reporting never runs (the security model's L5), a GUI that cannot start
+making Verbatim fail to start, the GUI thread's rules, the hook passing
+keys while the reducer is stuck, the raw-input hook watcher with its
+reinstall, liveness judged from the working threads, the relay contained,
+and the containment scan in `cargo xtask ci`.
+
+Exit: the containment scan passes with every edge guarded and every
+thread from the one spawner; a unit test panics or throws at each kind of
+edge and asserts its stated outcome; `keyboard_hook_reinstalled_after_removal`
+passes; a forced native crash in an outpost, the listener and the
+synthesizer host each leaves a dump in Verbatim's folder and no Windows
+Error Reporting entry; and wake-ups and processor time are measured
+before and after.
+
+## M4.8 — Guardian
+
+Built with M4.7, after M4.3 (Dickson, 2026-11-05). The design is
+[the guardian](design/guardian.md): `verbatim.exe` as a guardian that
+starts and restarts `verbatim-core.exe`, Core's one panic path with its
+held keys released in order, the single instance and replacement through
+a private namespace (the security model's C6 and C2's startup names,
+moved here from M6.6), the launch rules, the end of the session, hang detection from the
+Core page's stamps, old children exiting before their replacements, the
+restart breaker with its last restart without extensions and then
+shutdown, dumps of Core written from outside, Windows Error Reporting's
+dialog suppressed for a fast-fail, a memory cap on Core (A2), the
+1-second silence budget, and the timeouts of its section 12, with MSAA
+calls cancelled through COM (moved here from M6.1).
+
+Exit: the `InjectFault` scenarios pass for a reducer panic, a relay panic,
+another Core thread's panic, a Core crash and a Core hang, each speaking
+the focus again with its time to speech recorded; the breaker shuts
+Verbatim down on the third crash within 120 seconds; a Low-integrity
+process cannot stop or replace Verbatim; the generated tests of the
+breaker and the owner's holds pass; and wake-ups and processor time are
+measured before and after.
+
+## M4.9 — Lints and unsafe
+
+After M4.7 and M4.8, and before M6.2 (Dickson, 2026-11-05). The design is
+[lints and unsafe](design/lints-and-unsafe.md): the panic-free lints in
+the Windows crates and then workspace-wide (the twelve crates that build
+on Linux are done), every fallback that could only be a logic bug removed
+by construction, the three latent bugs fixed, `unsafe_code` denied outside
+the wrapper crates with safe wrappers, bounds on sizes applications
+control (the security model's U2 to U4, moved here from M6.6), terminal
+alignment matched by row hash first with a cap and a scroll-shift
+fallback (U5), and generated tests and fuzzing at the parsers (X12).
+
+Exit: the lints are in `[workspace.lints.clippy]` with no crate-level
+copies and no exemption but the item-level ones the design names;
+`debug_assert!(false, ...)` and the `proven` modules are gone;
+`unsafe_code` is allowed only in the wrapper crates; the hostile
+`mockapp` mode and the wide-row terminal test pass within their stated
+bounds; each parser has its generated tests and a fuzz target in CI; and
+wake-ups and processor time are measured before and after.
+
 ## M5 — Extensions v1
 
 The design is [extensions](design/extensions.md); the order of work, with the
@@ -683,6 +784,13 @@ Verbatim can become Dickson's daily screen reader sooner (Dickson,
 and D18; the order of work, with its tests, is
 [the M6 work plan](design/m6-native-synth-work.md).
 
+Its first build is the synthesizer host's recovery (Dickson, 2026-11-05):
+a backoff between host starts; a start that can be cancelled, so a host
+that never becomes ready does not hold each utterance for its ten
+seconds; after repeated failures, a fallback to eSpeak NG, or to OneCore
+when eSpeak NG is the one failing, never to silence, saying why (the
+security model's A3); and a memory cap on the host.
+
 - The `verbatim_synth_v1` C ABI, the `SynthDriver` trait spelled as C
   exports, and the adapter crate that generates them; the `verbatim:synth`
   world with a tone synthesizer component, hosted by the same
@@ -730,13 +838,9 @@ abandoned but changes nothing spoken.
 `CoCancelCall` ends no UIA client call, because UIA waits on its own
 channel rather than in a COM call
 (`experiments/cocancelcall-does-not-end-a-uia-client-call/`, 2026-10-30),
-so the UIA readers keep abandonment, the bound and `READ_DEADLINE`. What
-is left is MSAA cancellation:
-
-- If built: cancelling the outpost worker's stuck `IAccessible` calls, as
-  NVDA's watchdog does, through each call's own cancel object, which
-  means fewer abandoned threads in MSAA and IAccessible2 outposts, mostly
-  browsers in M7; it removes no mechanism.
+so the UIA readers keep abandonment, the bound and `READ_DEADLINE`.
+Cancelling the outpost worker's stuck MSAA calls through COM is built in
+M4.8 ([the guardian](design/guardian.md), section 12).
 
 Found while weighing the process layout (2026-11-01;
 `books/dev/src/reference/uia-bugs.md`, "A hung window named in a system focus event holds
@@ -783,11 +887,9 @@ inside UIA (`books/dev/src/explanation/design/listener-without-connections.md`).
 - The replacement started only once the old process has exited, and the
   kill's place in that order, weighed against the crash inside Windows
   Terminal's `UIAutomationCore.dll` that the clean shutdown was added for.
-- `SHUTDOWN_LIMIT` (21 seconds) rests on UIA's default transaction timeout
-  of 20 seconds, which Verbatim lowered to 5 seconds on 2026-10-10, and a
-  timeout bounds each request and window message, not an operation; its
-  bound is
-  settled with the order above.
+- `SHUTDOWN_LIMIT`, 21 seconds today, becomes 12 seconds in M4.8
+  ([the guardian](design/guardian.md), section 12), the bound the order
+  above works with.
 - The supervisor's owner thread as a pure state machine, with the clock
   and I/O completions as inputs (Dickson, 2026-10-31, revisiting the
   ownership refactor's default of 2026-10-30;
@@ -802,11 +904,34 @@ inside UIA (`books/dev/src/explanation/design/listener-without-connections.md`).
   2026-11-04): about 350 of its lines decide (the idle barrier, query
   deadlines and routing, the exit), and today only the end-to-end suite
   runs them.
+- Retirement only on evidence that the fault is Verbatim's (Dickson,
+  2026-11-05): an outpost that looks stuck first checks itself with a
+  fresh worker making one cheap call; only if that also sticks does a
+  one-shot check process, the outpost binary in a check mode, make the
+  same call. The check answering while the outpost is stuck means
+  retire; the check stuck too means the application is at fault, so the
+  outpost's threads are capped and it waits.
+- Backoff that does not reset for a repeated failure of the same reason,
+  and a restart shown not to help stopping after a number of same-reason
+  failures, until the application comes to the foreground (Dickson,
+  2026-11-05).
+- Caps on the threads an outpost and the bounded UIA client can abandon
+  while an application is hung.
+- The listener restarted with a backoff, and a listener whose WinEvent
+  hook or UIA registration failed detected as blind rather than reported
+  ready.
+- A bound on the outbox of messages refused while a child is busy.
 
 ## M6.3 — Speech and audio pipeline
 
 The speech and audio pipeline looked at as a whole, after M6 adds a
 second real engine (Dickson, 2026-10-29).
+
+Its first build is the audio device's containment (Dickson, 2026-11-05):
+every error contained at the device edge; no busy loop reopening the
+device after a write fails; and a liveness check that notices speech
+requested with no frames reaching the device, never falling back to
+silence.
 
 - An audit of the speech and audio pipeline against NVDA, as the focus
   pipeline's was made: for each step, the rule, the order, what happens
@@ -1086,16 +1211,17 @@ After M6 (Dickson, 2026-10-31). Developer mode, and the fixes from [the security
 
 - Developer mode: said at startup, never reaching secure screens; the control protocol's two endpoints, the developer one only in developer mode (C1, C1a); the extension developer folder and debug-level logging only in developer mode (C7, L3). Test: with developer mode off, every developer method is refused and the developer folder is not watched.
 - The test agent bound to loopback with a deploy-time token, and the VM's firewall rule scoped to the host's switch (C4); it now listens on every interface with no authentication. Test: a connection from another machine, and one without the token, are refused.
-- Names that cannot be squatted to stop Verbatim: the startup mutex and replacement event in a private namespace, the pipe named per session and user, a pipe failure that never stops startup, and clients that check the server they reach (C2). Test: Verbatim starts and speaks while another session holds the old pipe name and while a Low-integrity process holds every name it can create, and a client refuses a server that is not Verbatim.
-- The process-wide `WM_QUIT` filter removed, with a lower-integrity copy refusing to start beside a higher one (C6); size limits on the control pipe's and configuration's readers, and no fallback to `%TEMP%\verbatim-defaults` or the current directory (C3). Test: a Low-integrity process's `WM_QUIT` leaves Verbatim running; an oversized line and an oversized or malformed settings file each give the stated outcome.
+- The control pipe named per session and user, a pipe failure that never stops startup, and clients that check the server they reach (C2's pipe half; its startup mutex and replacement event are M4.8's). Test: Verbatim starts and speaks while another session holds the old pipe name and while a Low-integrity process holds every pipe name it can create, and a client refuses a server that is not Verbatim.
+- Size limits on the control pipe's and configuration's readers, and no fallback to `%TEMP%\verbatim-defaults` or the current directory (C3). Test: an oversized line and an oversized or malformed settings file each give the stated outcome.
 - Keys injected from a lower integrity level never trigger gestures and are never held or re-sent (C5). Test: a gesture injected from Low integrity does nothing, and one injected at the user's level runs.
 - Theme import's name check refusing reserved device names and names ending in a dot or space, and writing relative to the staging folder's handle (X13). Test: a corpus of packages with `..`, drives, reserved names, trailing dots, alternate streams and a planted junction writes nothing outside the theme's folder.
-- Characters typed into protected fields recorded as stars (L2); native crashes dumped by Verbatim, never by Windows Error Reporting (L5). Test: after a scenario types known text into a password field and a forced native crash, no log, dump or crash file holds the text, and Windows' reporting has no entry for Verbatim.
+- Characters typed into protected fields recorded as stars (L2). Test: after a scenario types known text into a password field and a forced native crash, no log, dump or crash file holds the text.
 - COM unmarshalling hardened with `EOAC_NO_CUSTOM_MARSHAL`, and the write-restricted token for outposts, tested together against UIA, MSAA and a remote operation (X7, section 6.9). Test: `mockapp` and Notepad scenarios pass under both, and an object naming a custom unmarshaler is refused.
-- Walks with repeat detection, lists capped before fetching, property strings capped, an application named by a handle rather than a process id, a bound on outposts, and the background flood cap (U2 to U4, U7 to U9). Test: a hostile `mockapp` mode (a self-parent, a parent cycle, a very deep chain, a million children, a 30 MB name, a notification flood, a provider that hangs or crashes mid-call), each asserting the exact speech, that another application keeps speaking within a stated time, and that memory stays under its cap.
-- Terminal alignment's quadratic cost and Core's memory cap (U5, A2). Test: a terminal printing very wide rows of distinct characters keeps Core's time and memory within stated bounds.
+- An application named by a handle rather than a process id, a bound on outposts, and the background flood cap (U7 to U9). Test: the hostile `mockapp` mode of M4.9 gains a notification flood and a provider that hangs or crashes mid-call, each asserting the exact speech, that another application keeps speaking within a stated time, and that memory stays under its cap.
+- The per-process mitigations of [the security model](design/security-model.md), section 6.9, applied at each child's start: control-flow guard, strict handle checks, the image load policy, no child processes, the job's limits, and control-flow guard and shadow stacks at link time; never the Microsoft-only image policy for synthesizer hosts or outposts, and no extension-point policy for Core while the GUI is in Core, since NVDA's helper must read Verbatim's GUI for parity captures. Test: each process's mitigations, read back from it, equal its stated list on x64 and ARM64, and the `mockapp` and Notepad scenarios pass under them.
+- Pinned DLL search (X2), moved in from M8.7: each executable calls `SetDefaultDllDirectories` with the system and application folders before anything else loads. Test: a DLL planted beside a portable copy is not loaded.
 - Synthesizer escapes covering control and NUL characters (J1). Test: text with SSML, NULs and control characters is spoken as text by both built-in drivers.
-- `cargo deny` in `cargo xtask ci`, and fuzzing of the frame and raw-section decoders, terminal alignment and the control-plane reader first, a short run per change and a longer one nightly, each failure kept as a fixed regression test (X10, X12).
+- `cargo deny` in `cargo xtask ci` (X10).
 
 Exit: every item above is built with its test passing, and wake-ups and processor time are measured before and after each build.
 
@@ -1106,7 +1232,9 @@ Security work other milestones carry, each with its test:
 - M6.3: speech moved to another audio device while the default refuses Verbatim (A5), tested with the default held in exclusive mode; a cut string known to speech (U4).
 - M6.5: typed characters judged against the focus they were typed in (L9), tested by a password field that closes on its last character.
 - M7: the helper loaded narrowly, handed its channel, version-checked and treated as hostile (X8), tested with a mismatched helper and malformed messages; link destinations (S3).
-- M8.7, with the installer (the screen curtain with M8.4, and linear-time dictionaries, direction overrides and clipboard history with M8.2): a machine-wide, signed, administrator-owned installation (X1); pinned DLL search (X2), tested with a DLL planted beside a portable copy; signed updates from a process of their own (X9), tested with an unsigned and a wrongly signed download; never running elevated (B2); diagnostics' home and limits (L4); Core's restart with a degrading breaker (A1), tested by crashing Core repeatedly; the screen curtain built for a user who cannot see it (L8), tested across a display change, unlocking and a restart; linear-time dictionaries (J2); direction overrides spoken (S2); clipboard history (L7); the outposts' network block and process mitigations (section 6.9).
+- M8.7, with the installer (the screen curtain with M8.4, and linear-time dictionaries, direction overrides and clipboard history with M8.2): a machine-wide, signed, administrator-owned installation (X1); signed updates from a process of their own (X9), tested with an unsigned and a wrongly signed download; never running elevated (B2); diagnostics' home and limits (L4); the screen curtain built for a user who cannot see it (L8), tested across a display change, unlocking and a restart; linear-time dictionaries (J2); direction overrides spoken (S2); clipboard history (L7); the outposts' network block (section 6.9).
+- M4.7 and M4.8: native crashes dumped by Verbatim, never by Windows Error Reporting (L5); Core restarted by the guardian, with a breaker whose last restart runs without extensions (A1); Core's memory cap (A2); the single instance in a private namespace and the `WM_QUIT` filter removed (C2's startup names, C6).
+- M4.9: walks, lists and strings bounded (U2 to U4), terminal alignment below quadratic time (U5), and fuzzing at the parsers (X12).
 - M8.6: the UIAccess measurement first (B1), then the lock and secure-screen rules (B3 to B8) with the secure instance's menu and dialogs as an allowlist, no file choice, and the toolkit's dialogs routed to the log (G1, G2, G4), tested by a list of every window and command the secure instance can reach equalling the allowlist, and by each of NVDA's secure-screen advisories as a scenario; the administrator's copy for secure screens following no links (X13), tested with a planted junction; developer mode in UIAccess builds turned on only in Verbatim's own window (C1); the secure instance's children started without SYSTEM (B10), tested by reading their tokens; "Secure Desktop" announced on the switch (B11); and the secure instance's own curtain.
 - M9: no content in logs at default levels (L3), tested by scanning a full suite run's logs for the planted text.
 - M12: Remote's end-to-end encryption, announcements and lock behaviour (C8, B9), tested with a relay that tries to read and alter traffic and a session that locks.
@@ -1253,6 +1381,10 @@ are.
 
 - Configuration profiles (manual and triggered); localized UI shipped in at
   least two languages as proof.
+- Generated tests for loading and applying settings, over arbitrary files
+  and values: no panic, and every value used, clamped or refused with a
+  warning (Dickson, 2026-11-05), since the saved settings are read on every
+  start, the guardian's last restart included.
 
 ## M8.4 — Overlays
 
