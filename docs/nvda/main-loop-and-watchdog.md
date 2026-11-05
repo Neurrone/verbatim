@@ -103,7 +103,7 @@ cross-process call that the watchdog cannot otherwise cancel"
 are not cancelled by `CoCancelCall` is not something the source
 states, but Verbatim measured it: UIA's client waits for its answer on
 a channel of its own, not in a COM call, so the cancel finds nothing to
-end (`experiments/cocancelcall-does-not-end-a-uia-client-call/`).
+end (`uia-facts/nothing-cancels-a-uia-call/`).
 
 ## When an application stops responding
 

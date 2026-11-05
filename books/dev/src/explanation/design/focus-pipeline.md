@@ -110,8 +110,8 @@ Run in mockapp on 2026-10-10 (`experiments/mockapp-experiments-2026-10-10/`), ea
 - E-delivery: UIA delivers events per providing process; a held server-side provider holds only its own events.
 - E-scope: a focus registration scoped to one window is refused by the direct call and works only through an event handler group, undocumented (`experiments/focus-events-cannot-be-limited-to-one-application/`).
 - E-cost: each focus registration adds 47 to 90 provider calls per focus event on the application's UI thread.
-- E1: both UIA timeouts are process-wide (`experiments/the-connection-timeout-applies-to-the-whole-process/`).
-- E-TT: the transaction timeout bounds each call, not an operation, and a timed-out registration reports success (`experiments/a-registration-that-times-out-reports-success/`).
+- E1: both UIA timeouts are process-wide (`uia-facts/the-connection-timeout-applies-to-the-whole-process/`).
+- E-TT: the transaction timeout bounds each call, not an operation, and a timed-out registration reports success (`uia-facts/a-timeout-bounds-each-request-and-window-message-not-an-operation/`, `uia-facts/a-registration-that-times-out-reports-success/`).
 - E4: a provider that exits during a held call does not keep the client waiting.
 - E5: an outpost whose `GetFocusedElement` lands in another, held application waits on it, the isolation that call breaks.
 - E-marshal: an `IUIAutomationElement` cannot be unmarshaled in a process other than the one that created it, by any route tried (`experiments/elements-cannot-be-passed-to-another-process/`).

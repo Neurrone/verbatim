@@ -291,7 +291,7 @@ impl Ctx {
                     // Leave out the title bar and its buttons: UIA's own
                     // proxies answer them in the client, with no call into
                     // the provider. CompareElements makes no call
-                    // (experiments/compareelements-makes-no-call).
+                    // (uia-facts/uia-answers-some-calls-in-the-client).
                     let tb = client
                         .CreatePropertyCondition(UIA_ControlTypePropertyId, &VARIANT::from(UIA_TitleBarControlTypeId.0))
                         .unwrap();

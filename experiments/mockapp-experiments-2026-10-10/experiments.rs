@@ -493,44 +493,6 @@ fn e_cost() {
     println!("RESULT e_cost: a scoped group registration on a window took {} ms", ms(started));
 }
 
-/// E1: whether the connection and transaction timeouts are per client or
-/// per process.
-fn e1_timeout_scope() {
-    common::init_com();
-    let (ready_tx, ready_rx) = mpsc::channel::<()>();
-    let (read_tx, read_rx) = mpsc::channel::<Sender<(u32, u32)>>();
-    let other = std::thread::spawn(move || {
-        let uia = Uia::new().expect("uia");
-        let client: IUIAutomation2 = uia.client().cast().expect("IUIAutomation2");
-        ready_tx.send(()).expect("ready");
-        while let Ok(reply) = read_rx.recv() {
-            // SAFETY: plain reads.
-            let values = unsafe { (client.ConnectionTimeout().unwrap_or(0), client.TransactionTimeout().unwrap_or(0)) };
-            let _ = reply.send(values);
-        }
-    });
-    ready_rx.recv().expect("ready");
-    let read = || {
-        let (tx, rx) = mpsc::channel();
-        read_tx.send(tx).expect("ask");
-        rx.recv().expect("answer")
-    };
-    println!("RESULT e1: other client before: {:?}", read());
-    let uia = Uia::new().expect("uia");
-    println!("RESULT e1: other client after this thread's Uia::new: {:?}", read());
-    let client: IUIAutomation2 = uia.client().cast().expect("IUIAutomation2");
-    // SAFETY: plain sets.
-    unsafe {
-        client.SetConnectionTimeout(1000).expect("set");
-        client.SetTransactionTimeout(1000).expect("set");
-    }
-    // SAFETY: plain reads.
-    let own = unsafe { (client.ConnectionTimeout().unwrap_or(0), client.TransactionTimeout().unwrap_or(0)) };
-    println!("RESULT e1: this client set to 1000/1000 reads {own:?}; other client reads {:?}", read());
-    drop(read_tx);
-    other.join().expect("join");
-}
-
 /// What `GetFocusedElement` returns on a test's own desktop, for E2, E3
 /// and E5.
 fn focused_description(uia: &Uia) -> String {
@@ -597,97 +559,6 @@ fn timed<T: Send + 'static>(
     });
     let _ = limit;
     (rx, started)
-}
-
-/// E3: a held provider and `within(1 s)`, never released: with the default
-/// transaction timeout, then with 1 second.
-/// A call on an element fetched before the hold, so the held call is a
-/// transaction, not the connection: the thread fetches `a_hwnd`'s root,
-/// sets the transaction timeout when given, says it is ready, waits to be
-/// told to go, and then runs `call` inside `within(1 s)`.
-fn held_transaction(
-    app: &mut common::MockApp,
-    a_hwnd: isize,
-    transaction_ms: Option<u32>,
-    call: fn(&Uia, &IUIAutomationElement) -> String,
-) -> (Option<String>, Result<(u128, String), mpsc::RecvTimeoutError>, u128) {
-    let (ready_tx, ready_rx) = mpsc::channel();
-    let (go_tx, go_rx) = mpsc::channel::<()>();
-    let (done_tx, done_rx) = mpsc::channel();
-    std::thread::spawn(move || {
-        common::init_com();
-        let uia = Uia::new().expect("uia");
-        if let Some(timeout) = transaction_ms {
-            let client: IUIAutomation2 = uia.client().cast().expect("IUIAutomation2");
-            // SAFETY: a plain set.
-            unsafe { client.SetTransactionTimeout(timeout) }.expect("set");
-        }
-        let cache = uia.cache_request(&[UIA_ProcessIdPropertyId]).expect("cache");
-        let root = uia.element_from_handle(a_hwnd, &cache).expect("root");
-        ready_tx.send(()).expect("ready");
-        go_rx.recv().expect("go");
-        let begun = Instant::now();
-        let answer = uia
-            .within(Duration::from_secs(1), |uia| call(uia, &root))
-            .expect("within");
-        let _ = done_tx.send((ms(begun), answer));
-    });
-    ready_rx.recv().expect("ready");
-    app.hold();
-    go_tx.send(()).expect("go");
-    let method = held(app, Duration::from_secs(10));
-    let started = Instant::now();
-    let answer = done_rx.recv_timeout(LONG);
-    (method, answer, ms(started))
-}
-
-fn e3_hold_never_released() {
-    common::init_com();
-    for transaction_ms in [None, Some(1000u32)] {
-        let (mut a, a_hwnd) = start("exp-e3");
-        let (method, answer, after) = held_transaction(&mut a, a_hwnd, transaction_ms, |_, root| {
-            format!("{:?}", root.has_keyboard_focus())
-        });
-        println!(
-            "RESULT e3: transaction timeout {transaction_ms:?}: held {method:?}; returned {answer:?} ({after} ms after held)"
-        );
-        a.kill();
-    }
-}
-
-#[allow(dead_code)]
-fn e3_old() {
-    common::init_com();
-    for transaction_ms in [None, Some(1000u32)] {
-        let (mut a, a_hwnd) = start("exp-e3");
-        let (rx, _) = {
-            a.hold();
-            timed(LONG, move || {
-                let uia = Uia::new().expect("uia");
-                if let Some(timeout) = transaction_ms {
-                    let client: IUIAutomation2 = uia.client().cast().expect("IUIAutomation2");
-                    // SAFETY: a plain set.
-                    unsafe { client.SetTransactionTimeout(timeout) }.expect("set");
-                }
-                let cache = uia.base_cache_request().expect("cache");
-                let focused = uia.within(Duration::from_secs(1), |uia| {
-                    uia.element_from_handle(a_hwnd, &cache).and_then(|root| {
-                        root.has_keyboard_focus()
-                    })
-                });
-                format!("{focused:?}")
-            })
-        };
-        let method = held(&a, LONG);
-        let started = Instant::now();
-        let answer = rx.recv_timeout(LONG);
-        println!(
-            "RESULT e3: transaction timeout {transaction_ms:?}: held {method:?}; returned {:?} ({} ms after held)",
-            answer,
-            ms(started)
-        );
-        a.kill();
-    }
 }
 
 /// E4: a held call, then mockapp killed: when does the call return?
@@ -777,123 +648,6 @@ fn e5_focus_read_in_held_application() {
         ms(started)
     );
     b.release();
-}
-
-/// E-TT: with a 1-second transaction timeout, a held provider's
-/// `GetFocusedElement`, `CurrentName`, `CurrentHasKeyboardFocus` and an
-/// event handler group's registration.
-fn e_tt() {
-    common::init_com();
-    let (mut a, a_hwnd) = start("exp-tt");
-    let uia = Uia::new().expect("uia");
-    let client: IUIAutomation2 = uia.client().cast().expect("IUIAutomation2");
-    // SAFETY: a plain set; process-wide or not, E1 says.
-    unsafe { client.SetTransactionTimeout(1000) }.expect("set");
-    println!("RESULT e_tt: focused element here: {}", focused_description(&uia));
-    let calls: [(&str, Box<dyn FnOnce() -> String + Send>); 4] = [
-        (
-            "GetFocusedElement",
-            Box::new(|| {
-                let uia = Uia::new().expect("uia");
-                let cache = uia.base_cache_request().expect("cache");
-                format!("{:?}", uia.focused_element(&cache).map(|_| ()))
-            }),
-        ),
-        (
-            "CurrentName",
-            Box::new(move || {
-                let uia = Uia::new().expect("uia");
-                let cache = uia.cache_request(&[UIA_ProcessIdPropertyId]).expect("cache");
-                let root = uia.element_from_handle(a_hwnd, &cache);
-                format!("{:?}", root.and_then(|root| current_name(&root)))
-            }),
-        ),
-        (
-            "CurrentHasKeyboardFocus",
-            Box::new(move || {
-                let uia = Uia::new().expect("uia");
-                let cache = uia.cache_request(&[UIA_ProcessIdPropertyId]).expect("cache");
-                let root = uia.element_from_handle(a_hwnd, &cache);
-                format!("{:?}", root.and_then(|root| root.has_keyboard_focus()))
-            }),
-        ),
-        (
-            "AddEventHandlerGroup",
-            Box::new(move || {
-                let registration = Registration::new(
-                    vec![Subscription::Event {
-                        event: windows::Win32::UI::Accessibility::UIA_MenuOpenedEventId,
-                        callback: Arc::new(|_| {}),
-                    }],
-                    Scope::Windows(vec![a_hwnd]),
-                );
-                format!("{:?}", registration.map(|_| ()))
-            }),
-        ),
-    ];
-    for (label, call) in calls {
-        a.hold();
-        let (rx, _) = timed(LONG, call);
-        let method = held(&a, Duration::from_secs(10));
-        let started = Instant::now();
-        let answer = rx.recv_timeout(LONG);
-        println!(
-            "RESULT e_tt: {label}: held {method:?}; returned {answer:?} {} ms after held",
-            ms(started)
-        );
-        a.release();
-        // Whatever UIA queued behind the held call is answered now.
-        let _ = a.line(Duration::from_millis(500));
-    }
-}
-
-/// E-TT on transactions: each call on an element fetched before the hold,
-/// with a 1-second transaction timeout.
-fn e_tt_transactions() {
-    common::init_com();
-    let calls: [(&str, fn(&Uia, &IUIAutomationElement) -> String); 4] = [
-        ("CurrentName", |_, root| format!("{:?}", current_name(root))),
-        ("CurrentHasKeyboardFocus", |_, root| {
-            format!("{:?}", root.has_keyboard_focus())
-        }),
-        ("FindFirst", |uia, root| {
-            let value = VARIANT::from(BSTR::from("First"));
-            let condition = uia
-                .property_condition(UIA_NamePropertyId, &value)
-                .expect("condition");
-            let cache = uia.cache_request(&[UIA_NamePropertyId]).expect("cache");
-            format!(
-                "{:?}",
-                root.find_first_build_cache(TreeScope_Descendants, &condition, &cache)
-                    .map(|found| found.is_some())
-            )
-        }),
-        ("AddEventHandlerGroup", |uia, root| {
-            let client: IUIAutomation6 = uia.client().cast().expect("IUIAutomation6");
-            let cache = uia.cache_request(&[UIA_NamePropertyId]).expect("cache");
-            let (tx, _rx) = mpsc::channel();
-            let events: IUIAutomationEventHandler = handler::Events { tx: Mutex::new(tx) }.into();
-            // SAFETY: live client, element, cache and handler.
-            let added = unsafe {
-                client.CreateEventHandlerGroup().and_then(|group| {
-                    group.AddAutomationEventHandler(
-                        windows::Win32::UI::Accessibility::UIA_MenuOpenedEventId,
-                        TreeScope_Subtree,
-                        &cache,
-                        &events,
-                    )?;
-                    client.AddEventHandlerGroup(root, &group)
-                })
-            };
-            format!("{added:?}")
-        }),
-    ];
-    for (label, call) in calls {
-        let (mut a, a_hwnd) = start("exp-tt2");
-        let (method, answer, after) = held_transaction(&mut a, a_hwnd, Some(1000), call);
-        println!("RESULT e_tt2: {label}: held {method:?}; returned {answer:?} {after} ms after held");
-        a.kill();
-    }
 }
 
 /// E4 on a transaction: held, then mockapp killed.
@@ -2147,13 +1901,9 @@ fn main() {
         ("e_delivery", e_delivery),
         ("e_scope", e_scope),
         ("e_cost", e_cost),
-        ("e1_timeout_scope", e1_timeout_scope),
         ("e2_stall_within", e2_stall_within),
-        ("e3_hold_never_released", e3_hold_never_released),
         ("e4_hold_then_kill", e4_hold_then_kill),
         ("e5_focus_read_in_held_application", e5_focus_read_in_held_application),
-        ("e_tt", e_tt),
-        ("e_tt_transactions", e_tt_transactions),
         ("e4_transaction_then_kill", e4_transaction_then_kill),
     ]);
 }

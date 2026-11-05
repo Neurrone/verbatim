@@ -837,7 +837,7 @@ abandoned but changes nothing spoken.
 
 `CoCancelCall` ends no UIA client call, because UIA waits on its own
 channel rather than in a COM call
-(`experiments/cocancelcall-does-not-end-a-uia-client-call/`, 2026-10-30),
+(`uia-facts/nothing-cancels-a-uia-call/`, 2026-10-30),
 so the UIA readers keep abandonment, the bound and `READ_DEADLINE`.
 Cancelling the outpost worker's stuck MSAA calls through COM is built in
 M4.8 ([the guardian](design/guardian.md), section 12).

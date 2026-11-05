@@ -7,7 +7,7 @@ UI Automation (UIA) is Microsoft's current accessibility API, and the only one s
 Most of UIA's internals are not documented. Every claim about them here is marked in one of four ways:
 
 - Documented: the claim links a Microsoft Learn page.
-- Measured: the claim links the readme of the experiment that observed it, with a debugger, a trace or timings. The experiments ran on one x64 machine, a QEMU virtual machine under Proxmox with 12 virtual processors and 16 GB of memory, running Windows 11 Pro 25H2, build 26200, whose display adapter has no 3D acceleration, so the Desktop Window Manager composes on the processor, and their readmes give each setup and figure.
+- Measured: the claim links the readme of the experiment that observed it, with a debugger, a trace or timings, or of the UIA fact that reproduces it (`uia-facts/readme.md` is their index). The experiments ran on one x64 machine, a QEMU virtual machine under Proxmox with 12 virtual processors and 16 GB of memory, running Windows 11 Pro 25H2, build 26200, whose display adapter has no 3D acceleration, so the Desktop Window Manager composes on the processor, and their readmes give each setup and figure.
 - From source: the claim names a framework's published source, read on 2026-11-02 (the repositories are under "References").
 - Inferred: the claim says so, and names what it rests on.
 
@@ -220,7 +220,8 @@ Verbatim's own choices from this model are in [Architecture](../architecture.md)
 ## References
 
 - [UI Automation Fundamentals][learn-fundamentals], [Caching for clients][learn-caching], [Understanding Threading Issues][learn-threading], [ProviderOptions][learn-provideroptions], [UiaReturnRawElementProvider][learn-returnraw], [WM_GETOBJECT][learn-getobject], [ConnectionTimeout][learn-connectiontimeout], [TransactionTimeout][learn-transactiontimeout], [AddFocusChangedEventHandler][learn-addfocus], [IUIAutomation6][learn-uia6] (event coalescing and connection recovery), [CoreAutomationRemoteOperation][learn-rops], [CoCancelCall][learn-cocancelcall] and [IsHungAppWindow][learn-ishung] (Microsoft Learn).
-- Experiments: [concurrent UIA calls into one application][pc], with its readme's sections named in the text; [a hung window named in a system focus event][hung] and [its 2026-11-01 series][hung2]; [a flood of UIA events][flood]; [a new connection fails while another process's remote operation is queued][collide]; [CoCancelCall does not end a UIA client call][cancel]; [the connection timeout applies to the whole process][timeout-scope]; [a registration that times out reports success][registration]; [focus events cannot be limited to one application][scope]; [CompareElements makes no call][compare]; [elements cannot be passed to another process][elements].
+- Experiments: [concurrent UIA calls into one application][pc], with its readme's sections named in the text; [a hung window named in a system focus event][hung] and [its 2026-11-01 series][hung2]; [a flood of UIA events][flood]; [a new connection fails while another process's remote operation is queued][collide]; [focus events cannot be limited to one application][scope]; [elements cannot be passed to another process][elements].
+- UIA facts, each reproduced by its own program: [nothing cancels a UIA call][cancel]; [the connection timeout applies to the whole process][timeout-scope]; [a registration that times out reports success][registration]; [UIA answers some calls in the client][compare].
 - [Faults in UI Automation](../../reference/uia-bugs.md), the record of UIA's faults these experiments established.
 - Framework source, read on 2026-11-02: AccessKit (`adapters/windows/src`, `node.rs` and `context.rs`, commit f3026222), dotnet/wpf (`ElementProxy.cs` and `ElementUtil.cs`, commit dbd30269), dotnet/winforms (`AccessibleObject.cs`, main as of 2026-11-02), chromium (`ax_platform_node_win.cc`, commit d7abebf4), microsoft-ui-xaml (`UIAWrapper.cpp` and `UIAWindow.cpp`, commit 8da148dc), microsoft/terminal (`ScreenInfoUiaProviderBase.cpp`, `windowUiaProvider.cpp` and `TermControlAutomationPeer.cpp`, main as of 2026-11-02), qt/qtbase (`qwindowsuiamainprovider.cpp`, dev as of 2026-11-02), AvaloniaUI (`AutomationNode.cs`, main as of 2026-11-02), flutter (`ax_platform_node_win.cc`, commit 418d48f7), Firefox (`uiaRawElmProvider.h`, commit 141096d7) and openjdk/jfx (`GlassAccessible.cpp`, master as of 2026-11-02).
 - [Chromium's UIA provider documentation](https://chromium.googlesource.com/chromium/src/+/main/docs/accessibility/uiautomation.md).
@@ -243,9 +244,9 @@ Verbatim's own choices from this model are in [Architecture](../architecture.md)
 [hung2]: https://github.com/Neurrone/verbatim/blob/main/experiments/a-hung-window-named-in-a-system-focus-event-holds-a-processs-uia-events/2026-11-01/readme.md
 [flood]: https://github.com/Neurrone/verbatim/blob/main/experiments/a-flood-of-uia-events-from-one-application-stops-all-of-a-processs-uia-events/readme.md
 [collide]: https://github.com/Neurrone/verbatim/blob/main/experiments/a-new-connection-fails-while-another-processs-remote-operation-is-queued/readme.md
-[cancel]: https://github.com/Neurrone/verbatim/blob/main/experiments/cocancelcall-does-not-end-a-uia-client-call/readme.md
-[timeout-scope]: https://github.com/Neurrone/verbatim/blob/main/experiments/the-connection-timeout-applies-to-the-whole-process/readme.md
-[registration]: https://github.com/Neurrone/verbatim/blob/main/experiments/a-registration-that-times-out-reports-success/readme.md
+[cancel]: https://github.com/Neurrone/verbatim/blob/main/uia-facts/nothing-cancels-a-uia-call/readme.md
+[timeout-scope]: https://github.com/Neurrone/verbatim/blob/main/uia-facts/the-connection-timeout-applies-to-the-whole-process/readme.md
+[registration]: https://github.com/Neurrone/verbatim/blob/main/uia-facts/a-registration-that-times-out-reports-success/readme.md
 [scope]: https://github.com/Neurrone/verbatim/blob/main/experiments/focus-events-cannot-be-limited-to-one-application/readme.md
-[compare]: https://github.com/Neurrone/verbatim/blob/main/experiments/compareelements-makes-no-call/readme.md
+[compare]: https://github.com/Neurrone/verbatim/blob/main/uia-facts/uia-answers-some-calls-in-the-client/readme.md
 [elements]: https://github.com/Neurrone/verbatim/blob/main/experiments/elements-cannot-be-passed-to-another-process/readme.md

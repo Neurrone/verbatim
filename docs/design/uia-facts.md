@@ -279,7 +279,7 @@ None of the old tools was built or run for this design, so "rerun by command" be
 
 - Kind: binary and a debugger guide.
 - Reproduces: `CoCancelCall` answers `RPC_E_NO_CONTEXT` (5,614 of 5,614 over 203 trials) for property, text, `FindAll`, remote-operation and new-connection calls, with cancellation on and off. Abandoning frees only the client's wait, and the first answer after a release comes within 2 ms. Guide: `ChannelBasedClientConnection::WaitForResponse` on `WaitOnAddress` with no COM frame (`e_stacks`).
-- Evidence now: `cocancel_uia.rs` in `experiments/cocancelcall-does-not-end-a-uia-client-call/`, copied into mockapp's tests after applying `scratch-support.patch` at 5797c075; the parallel-calls `run-abandon.ps1`.
+- Evidence now: moved by the first build to `uia-facts/nothing-cancels-a-uia-call/recorded/`; the parallel-calls `run-abandon.ps1`.
 - Replaces: `cocancel_uia.rs` and its patch; `run-abandon.ps1`.
 - Verbatim relies on: `crates/verbatim-uia/src/bounded.rs` and the outpost watchdog, which bound calls by abandoning their thread. If `CoCancelCall` began to work, nothing breaks; Verbatim is only more conservative than needed.
 
@@ -337,7 +337,7 @@ None of the old tools was built or run for this design, so "rerun by command" be
 - Reproduces: test `uia_event_registrations_cost_exactly`, which pins the warm registration costs with the runtime id read first. Beyond it, the binary covers two things.
   - The calls that make no provider call, by the provider program's call log: `Cached*` reads, `GetRuntimeId` after the first read and on a sender inside its callback, `CompareElements` with one side stalled, and the desktop parent. It also shows title-bar parts coming from proxies and `GetFocusedElement` going to the focused process.
   - UI Automation's copy of an element's runtime id lapsing (the `books/dev/src/reference/uia-bugs.md` entry), which needs the pauses a test may not make: the cold registration's 9 calls against 3, and the move's 6 calls after 250 ms or more (30 of 30) and none at 0 or 100 ms (20 of 20); the pause sweep, warm at 0 to 190 ms and cold at 1,000 and 3,000 ms (deterministic), with the 210 to 400 ms alternation printed for trends; the copy kept per element: reading `First`'s name, another button's or the window's, or registering on another button, leaves `First` cold; the workaround's 256 of 256 warm registrations over pauses of 0 to 3,000 ms and 50 of 50 free moves, as rates; `AdviseEventRemoved` arriving after a removal returns, and no other provider call after a call returns; a search's re-read of its start's runtime id after about 0.65 s (inferred).
-- Evidence now: `uia_event_registrations_cost_exactly` in `crates/mockapp/tests/call_counts.rs`; the parallel-calls `ops.ps1` no-call arms; `experiments/compareelements-makes-no-call/`, run as `xproc.rs`'s `compare` arm after applying `scratch-support.patch` at b15ad7bf. The lapse's outputs are recorded but its code was not kept.
+- Evidence now: `uia_event_registrations_cost_exactly` in `crates/mockapp/tests/call_counts.rs`; the parallel-calls `ops.ps1` no-call arms; the `CompareElements` experiment, moved by the first build to `uia-facts/uia-answers-some-calls-in-the-client/recorded/`. The lapse's outputs are recorded but its code was not kept.
 - Replaces: `compareelements-makes-no-call/`; `xproc.rs`'s `compare` arm; `ops.ps1`'s no-call arms.
 - Verbatim relies on: D13's contract that the listener's callbacks make no cross-process call (the module comment of `crates/verbatim-listener/src/listener.rs`: building a fact is local memory reads, plus `GetRuntimeId`, a local read on a cached element); the listener's comparison with the current focus (`compare_elements` in `crates/verbatim-listener/src/focus_read.rs`); the follower's group comparison (`crates/verbatim-uia/src/subscribe.rs`); and the lapse's workaround, reading the runtime id just before a registration. If any of these calls began calling the provider, a hung application would block the listener's callbacks and every focus with them.
 
@@ -443,14 +443,14 @@ Code, scripts and patches move. The recorded outputs that a README cites move to
   - `experiments/a-new-connection-fails-while-another-processs-remote-operation-is-queued/`, its launch logs kept in the fact's `recorded/` as the history of Verbatim's exposure
   - `experiments/a-hung-window-named-in-a-system-focus-event-holds-a-processs-uia-events/`
   - `experiments/a-flood-of-uia-events-from-one-application-stops-all-of-a-processs-uia-events/`
-  - `experiments/the-connection-timeout-applies-to-the-whole-process/`
+  - the-connection-timeout-applies-to-the-whole-process (deleted by the first build)
   - `experiments/desktop-wide-focus-handlers-in-a-second-process-deliver-late/`
-  - `experiments/a-registration-that-times-out-reports-success/`
+  - a-registration-that-times-out-reports-success (deleted by the first build)
   - `experiments/focus-events-cannot-be-limited-to-one-application/`
   - `experiments/elements-cannot-be-passed-to-another-process/`
   - `experiments/windows-terminal-raises-focus-from-a-second-runtime-identity/`
-  - `experiments/cocancelcall-does-not-end-a-uia-client-call/`
-  - `experiments/compareelements-makes-no-call/`
+  - cocancelcall-does-not-end-a-uia-client-call (deleted by the first build)
+  - compareelements-makes-no-call (deleted by the first build)
   - `experiments/two-new-connections-beside-a-pending-call/`
   - `experiments/mockapp-experiments-2026-10-10/`, since every experiment in it is one of the UIA facts above
 - Trimmed:
