@@ -355,7 +355,7 @@ The registration's own request waits for the stalled thread and runs as the stal
 
 The gap silences every registration the registering process has on that window, including one made before the stall on another client object, which loses the same events. A registration on another window in the same process, and one on the same window in another process, hear every event (e58, 5 trials).
 
-During the gap, `RemoveEventHandlerGroup` on the registration fails at once with `UIA_E_TIMEOUT` and leaves it in place: the handler had not been freed 15 seconds later, and the registration delivers once the gap ends. Removed after the gap, it is removed at once and its handler released (e58, 5 trials each).
+During the gap, `RemoveEventHandlerGroup` on the registration fails at once with `UIA_E_TIMEOUT` and leaves it in place: the handler had not been freed 5 seconds later, and the registration delivers once the gap ends. Removed after the gap, it is removed at once and its handler released (e58, 5 trials each).
 
 #### Not affected
 

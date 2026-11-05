@@ -22,6 +22,20 @@ Then run a fact's program from `target/debug`, for example `target\debug\nothing
 
 The workflow builds and lints on x64 and ARM64 and runs no fact program, because each one judges the machine it runs on.
 
+## The UI Automation the records were taken with
+
+The current records were taken on 2026-11-05 and 2026-11-06 with this `UIAutomationCore.dll`, on Windows 10.0.26200.9711:
+
+- Path: `C:\Windows\System32\UIAutomationCore.dll`
+- File version: 7.2.26100.9549
+- SHA-256: `BE5037BF46E61566D3E5A83A6C628CEBE9035771E4AE741A7B9AA27B5696D989`
+
+After a Windows update, this PowerShell command prints the installed file's version and hash; when either differs from the above, rerun the facts:
+
+`$p="$env:SystemRoot\System32\UIAutomationCore.dll"; $v=(Get-Item $p).VersionInfo; "{0}.{1}.{2}.{3}" -f $v.FileMajorPart,$v.FileMinorPart,$v.FileBuildPart,$v.FilePrivatePart; (Get-FileHash $p -Algorithm SHA256).Hash`
+
+The numeric file version is used because the file's version string stays at 7.2.26100.1 across updates.
+
 ## The workspace
 
 `uia-facts/` is a Cargo workspace of its own, which the root `Cargo.toml` excludes, so it never joins the main build or `cargo xtask ci`. It depends on `crates/verbatim-uia` and `crates/verbatim-uia-rops` by path, so the facts call UIA through Verbatim's own code where Verbatim's own code is what they check, and it is GPL-3.0-or-later for that reason. Its code is original; an NVDA figure is cited as NVDA's record, never reproduced from NVDA's source.
