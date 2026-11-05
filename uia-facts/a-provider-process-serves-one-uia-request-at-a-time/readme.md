@@ -10,17 +10,21 @@ D9's per-application outposts and its giving up of parallel queries within one a
 
 ## Method
 
-The provider program has windows 0 and 1 on UI thread 0 and window 2 on UI thread 1, with `UseComThreading` unless an arm says otherwise; the client process's timeouts are 2,000 and 30,000 ms. Every element is fetched before a hold or a busy thread. A hold lasts 1,000 ms, a deliberate length; the order arm sends its second read 200 ms after the first, since nothing marks a request queued on a busy thread.
+The provider program has windows 0 and 1 on UI thread 0 and window 2 on UI thread 1, with `UseComThreading` unless a case says otherwise; the client process's timeouts are 2,000 and 30,000 ms. Every element is fetched before a hold or a busy thread. A hold lasts 1,000 ms, a deliberate length; the order case sends its second read 200 ms after the first, since nothing marks a request queued on a busy thread.
 
-- `no-overlap`: 8 client threads make 50 name reads each across the windows; the provider's peak of calls in progress at once, in both threading modes. 3 runs each.
-- `held`: window 0's node 1 read held, while probes run: node 2 of window 0 from another thread, window 2's node 1, a remote operation on window 0's node 3, a read from a second client process into window 1, and a read into a second provider process; and the provider's log shows when the waiting read started. 3 trials.
-- `fifo`: UI thread 0 busy; a read queued into window 0, then a read into window 2; the provider's order of serving them, and whether the second waited for the release. 3 trials.
-- `busy-only`: UI thread 0 busy with nothing queued; a read into window 2. 3 trials.
-- `pumping`: window 0's node 1 read waiting in `CoWaitForMultipleHandles` until released; a read into window 2. 3 trials.
-- `nocom`: the provider without `UseComThreading`, two windows on two UI threads, UI thread 0 busy: a read of window 0's node 1, a new connection to window 0, then its node 1's `Invoke`. 3 trials.
+- `no-overlap`: 8 client threads make 50 name reads each across the windows; the provider's peak of calls in progress at once, in both threading modes.
+- `held`: window 0's node 1 read held, while probes run: node 2 of window 0 from another thread, window 2's node 1, a remote operation on window 0's node 3, a read from a second client process into window 1, and a read into a second provider process; and the provider's log shows when the waiting read started.
+- `fifo`: UI thread 0 busy; a read queued into window 0, then a read into window 2; the provider's order of serving them, and whether the second waited for the release.
+- `busy-only`: UI thread 0 busy with nothing queued; a read into window 2.
+- `pumping`: window 0's node 1 read waiting in `CoWaitForMultipleHandles` until released; a read into window 2.
+- `nocom`: the provider without `UseComThreading`, two windows on two UI threads, UI thread 0 busy: a read of window 0's node 1, a new connection to window 0, then its node 1's `Invoke`.
 - `recovery`: `held`, `fifo`, `busy-only`, `pumping` and `nocom` again with connection recovery on in every client object, printed as new.
 
 Judged: relations (each probe's reply before or after the release, by this program's clock; the waiting read's start after the held call's end, by the provider's log), orders and counts (deterministic), and the new connection's wait (a band).
+
+## Client settings
+
+Neither connection recovery nor event coalescing changes these outcomes (checked on 2026-11-05 by running every case by default and once each with `--recovery`, `--coalescing` and both).
 
 ## Recorded results
 
@@ -35,11 +39,11 @@ Judged: relations (each probe's reply before or after the release, by this progr
 | First uia-facts run, `nocom`: the read answered, the new connection failed `UIA_E_TIMEOUT` after 2,014 ms (2,012 to 2,017), the `Invoke` waited for the UI thread, 3 of 3 | 2026-11-05 | As above | As above | Pass |
 | First uia-facts run, `recovery`: every outcome as without recovery; the new connection 2,013 ms (2,011 to 2,014) | 2026-11-05 | As above | As above | New: connection recovery changes none of these outcomes |
 
-The 950 ms request is not a separate arm: `held`'s probes are sent during a 1,000 ms hold and answered only after it, by the log after the held call's end.
+The 950 ms request is not a separate case: `held`'s probes are sent during a 1,000 ms hold and answered only after it, by the log after the held call's end.
 
 ## How to rerun
 
-`uia-facts/build.ps1`, then `target\debug\a-provider-process-serves-one-uia-request-at-a-time.exe`, or one arm with `--arm`. No desktop, application or debugger; it starts a second copy of itself as the other client process. About 1 minute.
+`uia-facts/build.ps1`, then `target\debug\a-provider-process-serves-one-uia-request-at-a-time.exe`, or one case with `--case`. No desktop, application or debugger; it starts a second copy of itself as the other client process.
 
 ## Evidence kept
 

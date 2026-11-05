@@ -12,12 +12,15 @@ Both UIA timeouts are settings of the client process, not of a client object: th
 
 The kept CI tests, in `crates/mockapp/tests/uia_bugs/the_connection_timeout_applies_to_the_whole_process.rs`, read the timeouts back: `timeouts_set_through_one_client_are_read_by_another` (E1), `the_first_client_in_a_process_has_verbatims_timeouts` and `making_a_client_keeps_the_timeouts_another_set`. The program shows what no test can, since it is a timed wait: that the value read back is the one a call waits by.
 
-Each arm runs 5 trials, a new provider program each, its one UIA window's UI thread busy until released. Client object A, on the main thread, sets the connection timeout; client object B, made on another thread, sets another; then A reads the busy window (`ElementFromHandle`, then `CurrentName`), which fails at the connection timeout in force.
+Each trial starts a new provider program, its one UIA window's UI thread busy until released. Client object A, on the main thread, sets the connection timeout; client object B, made on another thread, sets another; then A reads the busy window (`ElementFromHandle`, then `CurrentName`), which fails at the connection timeout in force.
 
-- `other-longer`: A sets 500 ms, B then 10,000 ms (`h5_main500_other10000`).
-- `other-shorter`: A sets 10,000 ms, B then 500 ms (`h5_main10000_other500`).
+- `whole-process`: A sets 500 ms and B then 10,000 ms (`h5_main500_other10000`); then A sets 10,000 ms and B 500 ms (`h5_main10000_other500`).
 
 Judged: the HRESULT (deterministic) and the wait (a band from B's timeout).
+
+## Client settings
+
+Neither connection recovery nor event coalescing changes these outcomes (checked on 2026-11-05 by running every case by default and once each with `--recovery`, `--coalescing` and both).
 
 ## Recorded results
 
@@ -25,12 +28,12 @@ Judged: the HRESULT (deterministic) and the wait (a band from B's timeout).
 |---|---|---|---|---|
 | E1: a client object made first read 1,000 and 1,000 after another set both | 2026-10-10 | Build 26200 | `experiments/mockapp-experiments-2026-10-10/` at b0a1989, now the CI tests | The tests |
 | `h5_main500_other10000`: 10,013 ms; `h5_main10000_other500`: 508 ms; `h5_default` 2,014 ms; `h5_main500` 514 ms | 2026-10-18 | Build 26200 | `experiments/a-hung-window-named-in-a-system-focus-event-holds-a-processs-uia-events/`, `h5_*.out` | `UIA_E_TIMEOUT`; bands 10,000 to 11,550 and 500 to 625 ms |
-| First uia-facts run, `other-longer`: `UIA_E_TIMEOUT` 5 of 5, 10,013 ms (10,010 to 10,019) | 2026-11-05 | Build 26200.9711, `UIAutomationCore.dll` 7.2.26100.9549, AMD Ryzen 7 5700G | 1682f8cb | Pass |
-| First uia-facts run, `other-shorter`: `UIA_E_TIMEOUT` 5 of 5, 506.9 ms (504.1 to 513.8) | 2026-11-05 | As above | As above | Pass |
+| First uia-facts run, `whole-process`, B longer: `UIA_E_TIMEOUT` 5 of 5, 10,013 ms (10,010 to 10,019) | 2026-11-05 | Build 26200.9711, `UIAutomationCore.dll` 7.2.26100.9549, AMD Ryzen 7 5700G | 1682f8cb | Pass |
+| First uia-facts run, `whole-process`, B shorter: `UIA_E_TIMEOUT` 5 of 5, 506.9 ms (504.1 to 513.8) | 2026-11-05 | As above | As above | Pass |
 
 ## How to rerun
 
-`uia-facts/build.ps1`, then `target\debug\the-connection-timeout-applies-to-the-whole-process.exe`, or one arm with `--arm`. No desktop, application or debugger. About 55 seconds. The tests: `cargo test -p mockapp --test uia_bugs -- --exact timeouts_set_through_one_client_are_read_by_another`, and the same with the other two names.
+`uia-facts/build.ps1`, then `target\debug\the-connection-timeout-applies-to-the-whole-process.exe`, or one case with `--case`. No desktop, application or debugger. The tests: `cargo test -p mockapp --test uia_bugs -- --exact timeouts_set_through_one_client_are_read_by_another`, and the same with the other two names.
 
 ## Evidence kept
 

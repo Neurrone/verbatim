@@ -12,11 +12,15 @@
 //!   and the few calls every fact makes.
 //! - [`precondition`]: an unlocked input desktop and cdb.
 //! - [`events`]: an event handler that reports what it hears.
-//! - [`args`]: `--arm`, `--trials`, `--pause` and `--role`.
+//! - [`args`]: `--case`, `--trials`, `--recovery`, `--coalescing`,
+//!   `--verbose`, `--pause` and `--role`.
+//! - [`note`]: the wait lines, the evidence printed under a claim that
+//!   does not pass, and `--verbose`'s trace.
 
 pub mod args;
 pub mod events;
 pub mod job;
+pub mod note;
 pub mod precondition;
 pub mod provider;
 pub mod report;

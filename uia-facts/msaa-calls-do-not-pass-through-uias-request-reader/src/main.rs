@@ -8,22 +8,23 @@
 //!   is held, on UIA's I/O thread, for 1,000 ms; meanwhile `accName` on
 //!   each window's `OBJID_CLIENT` object (UIA's MSAA bridge, the
 //!   window's own `IAccessible`, oleacc's window proxy), each object got
-//!   before the hold, and a UIA read into window 3. 3 trials.
+//!   before the hold, and a UIA read into window 3.
 //! - `messages`: oleacc's `accName` on the plain window, the window's
-//!   messages counted. 3 runs.
+//!   messages counted.
 //! - `busy-sweep`: oleacc's `accName` on the plain window while its UI
 //!   thread is busy for 1, 5, 15 and 60 s (Not known: how long an MSAA call
 //!   into a busy thread waits). One run each.
 //! - `sent-rate`: 20,000 `WM_GETTEXT`s sent by 1, 4 and 8 threads of this
 //!   process, each thread to a plain window on a UI thread of its own;
-//!   the rate against one thread's. 3 runs.
+//!   the rate against one thread's.
 //! - `processes`: the 8-thread case again as two processes of 4 threads,
-//!   toward the inferred contention in the window manager. 3 runs.
+//!   toward the inferred contention in the window manager.
 
 use std::sync::{Arc, Barrier};
 use std::time::{Duration, Instant};
 
-use uia_facts_support::args::Args;
+use uia_facts_support::args::{Args, trials};
+use uia_facts_support::note;
 use uia_facts_support::provider::Provider;
 use uia_facts_support::report::{Report, Verdict, deterministic, relation, runs};
 use uia_facts_support::role::{self, Role};
@@ -48,18 +49,26 @@ fn main() {
     }
     let mut report = Report::start("msaa-calls-do-not-pass-through-uias-request-reader");
     if args.wants("stuck") {
+        report.case("stuck", "holding a UIA read on UI thread 0 of a provider without COM threading; reading three windows through MSAA and one through UIA meanwhile");
         stuck(&args, &mut report);
     }
     if args.wants("messages") {
+        report.case(
+            "messages",
+            "reading a plain window's name through oleacc; counting the messages it sent",
+        );
         messages(&mut report);
     }
     if args.wants("busy-sweep") {
+        report.case("busy-sweep", "making a plain window's UI thread busy for 1, 5, 15 and 60 s; reading its name through oleacc each time");
         busy_sweep(&mut report);
     }
     if args.wants("sent-rate") {
+        report.case("sent-rate", "sending 20,000 WM_GETTEXT messages from 1, 4 and 8 threads, each to its own window; timing them");
         sent_rate(&mut report);
     }
     if args.wants("processes") {
+        report.case("processes", "sending the 8-thread case from one process and from two processes of 4 threads; timing them");
         processes(&mut report);
     }
     report.finish();
@@ -98,7 +107,7 @@ fn stuck(args: &Args, report: &mut Report) {
     let mut answered = [Vec::new(), Vec::new(), Vec::new()];
     let mut times = [Vec::new(), Vec::new(), Vec::new()];
     let mut uia_waits = Vec::new();
-    for _ in 0..3 {
+    for _ in 0..trials() {
         let mut provider = Provider::launch(&[
             "--windows",
             "uia:0,msaa:0,plain:0,uia:1",
@@ -121,7 +130,10 @@ fn stuck(args: &Args, report: &mut Report) {
             .expect("the UIA read is held");
         let uia_probe = uia::spawn(move || Timed::of(|| uia::name(&uia::resolve(&far))));
         let reads: Vec<Timed> = objects.iter().map(|o| Timed::of(|| acc_name(o))).collect();
-        uia::pause(Duration::from_secs(1));
+        uia::pause(
+            Duration::from_secs(1),
+            "with the UIA read held, before the MSAA reads",
+        );
         let released = now_us();
         provider.request("release");
         let probe = uia_probe.join().expect("the UIA probe");
@@ -159,7 +171,7 @@ fn stuck(args: &Args, report: &mut Report) {
 
 fn messages(report: &mut Report) {
     let mut counts = Vec::new();
-    for _ in 0..3 {
+    for _ in 0..trials() {
         let mut provider = Provider::launch(&["--windows", "plain:0"]);
         let object = accessible(provider.hwnd(0));
         provider.log();
@@ -171,6 +183,7 @@ fn messages(report: &mut Report) {
                 .count()
         };
         counts.push((count("WM_GETTEXTLENGTH"), count("WM_GETTEXT")));
+        note::evidence(&format!("messages: {log:?}"));
     }
     report.claim(
         "oleacc's accName on a plain window sends (WM_GETTEXTLENGTH, WM_GETTEXT)",
@@ -186,6 +199,9 @@ fn busy_sweep(report: &mut Report) {
         let mut provider = Provider::launch(&["--windows", "plain:0"]);
         let object = accessible(provider.hwnd(0));
         provider.request(&format!("busy 0 {}", seconds * 1_000));
+        note::waiting(&format!(
+            "{seconds} s, the UI thread busy under the accName read"
+        ));
         let read = Timed::of(|| acc_name(&object));
         rows.push(format!(
             "busy {seconds} s: {} after {:.0} ms",
@@ -232,13 +248,18 @@ fn send_all(hwnds: &[isize], per_window: usize) -> f64 {
     for thread in threads {
         thread.join().expect("a sender");
     }
-    uia::ms(start.elapsed())
+    let ms = uia::ms(start.elapsed());
+    note::evidence(&format!(
+        "{} senders, {per_window} messages each: {ms:.1} ms",
+        hwnds.len()
+    ));
+    ms
 }
 
 fn sent_rate(report: &mut Report) {
     let layout: Vec<String> = (0..8).map(|t| format!("plain:{t}")).collect();
     let mut ratios = [Vec::new(), Vec::new()];
-    for _ in 0..3 {
+    for _ in 0..trials() {
         let provider = Provider::launch(&["--windows", &layout.join(",")]);
         let hwnds: Vec<isize> = (0..8).map(|w| provider.hwnd(w)).collect();
         let one = send_all(&hwnds[..1], MESSAGES);
@@ -291,7 +312,7 @@ fn send_role(rest: &[String]) -> ! {
 fn processes(report: &mut Report) {
     let layout: Vec<String> = (0..8).map(|t| format!("plain:{t}")).collect();
     let mut rows = Vec::new();
-    for _ in 0..3 {
+    for _ in 0..trials() {
         let provider = Provider::launch(&["--windows", &layout.join(",")]);
         let hwnds: Vec<isize> = (0..8).map(|w| provider.hwnd(w)).collect();
         let per_window = MESSAGES / 8;

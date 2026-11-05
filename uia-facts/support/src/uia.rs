@@ -35,16 +35,80 @@ pub fn mta() {
         .expect("this thread joins the MTA");
 }
 
-/// A new `CUIAutomation8` client object.
+/// A client object's two `IUIAutomation6` settings that can change what UIA
+/// does: connection recovery and event coalescing. Both are off unless the
+/// program is run with `--recovery` or `--coalescing` ([`crate::args`]);
+/// [`client`] makes every client object with them, and a second client
+/// process started through [`crate::role::Role`] is given the same flags.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Settings {
+    /// Connection recovery on (`--recovery`).
+    pub recovery: bool,
+    /// Event coalescing on (`--coalescing`).
+    pub coalescing: bool,
+}
+
+impl Settings {
+    /// The settings as a header line names them.
+    #[must_use]
+    pub fn describe(self) -> String {
+        let on = |b: bool| if b { "on" } else { "off" };
+        format!(
+            "connection recovery {}, event coalescing {}",
+            on(self.recovery),
+            on(self.coalescing)
+        )
+    }
+
+    /// The settings as command-line flags.
+    #[must_use]
+    pub fn flags(self) -> Vec<&'static str> {
+        let mut flags = Vec::new();
+        if self.recovery {
+            flags.push("--recovery");
+        }
+        if self.coalescing {
+            flags.push("--coalescing");
+        }
+        flags
+    }
+}
+
+/// The settings [`client`] uses, as `recovery << 1 | coalescing`.
+static SETTINGS: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
+/// Sets the settings every client object this process makes uses; the
+/// command line's flags set them at start.
+pub fn use_settings(settings: Settings) {
+    let bits = (u8::from(settings.recovery) << 1) | u8::from(settings.coalescing);
+    SETTINGS.store(bits, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// The settings in use.
+#[must_use]
+pub fn settings() -> Settings {
+    let bits = SETTINGS.load(std::sync::atomic::Ordering::SeqCst);
+    Settings {
+        recovery: bits & 2 != 0,
+        coalescing: bits & 1 != 0,
+    }
+}
+
+/// A new `CUIAutomation8` client object with the settings in use.
 ///
 /// # Panics
 ///
-/// When it cannot be made.
+/// When it cannot be made or UIA refuses its settings.
 #[must_use]
 pub fn client() -> IUIAutomation6 {
     // SAFETY: the class and interface are UIA's own, made in process.
-    unsafe { CoCreateInstance(&CUIAutomation8, None, CLSCTX_INPROC_SERVER) }
-        .expect("a CUIAutomation8 client object")
+    let client: IUIAutomation6 =
+        unsafe { CoCreateInstance(&CUIAutomation8, None, CLSCTX_INPROC_SERVER) }
+            .expect("a CUIAutomation8 client object");
+    let settings = settings();
+    set_recovery(&client, settings.recovery);
+    set_coalescing(&client, settings.coalescing);
+    client
 }
 
 /// Sets the process's connection and transaction timeouts through `client`.
@@ -75,11 +139,7 @@ pub fn timeouts(client: &IUIAutomation6) -> (u32, u32) {
 }
 
 /// Turns the client object's connection recovery on or off.
-///
-/// # Panics
-///
-/// When UIA refuses it.
-pub fn set_recovery(client: &IUIAutomation6, on: bool) {
+fn set_recovery(client: &IUIAutomation6, on: bool) {
     let option = if on {
         ConnectionRecoveryBehaviorOptions_Enabled
     } else {
@@ -90,11 +150,7 @@ pub fn set_recovery(client: &IUIAutomation6, on: bool) {
 }
 
 /// Turns the client object's event coalescing on or off.
-///
-/// # Panics
-///
-/// When UIA refuses it.
-pub fn set_coalescing(client: &IUIAutomation6, on: bool) {
+fn set_coalescing(client: &IUIAutomation6, on: bool) {
     let option = if on {
         CoalesceEventsOptions_Enabled
     } else {
@@ -111,8 +167,10 @@ pub fn set_coalescing(client: &IUIAutomation6, on: bool) {
 ///
 /// UIA's error.
 pub fn element(client: &IUIAutomation6, hwnd: isize) -> Result<IUIAutomationElement> {
-    // SAFETY: a live client object; any window handle is accepted.
-    unsafe { client.ElementFromHandle(HWND(hwnd as *mut _)) }
+    traced("ElementFromHandle", || {
+        // SAFETY: a live client object; any window handle is accepted.
+        unsafe { client.ElementFromHandle(HWND(hwnd as *mut _)) }
+    })
 }
 
 /// `ElementFromHandleBuildCache` of window `hwnd` with `request`.
@@ -125,8 +183,10 @@ pub fn element_cached(
     hwnd: isize,
     request: &IUIAutomationCacheRequest,
 ) -> Result<IUIAutomationElement> {
-    // SAFETY: a live client object and cache request.
-    unsafe { client.ElementFromHandleBuildCache(HWND(hwnd as *mut _), request) }
+    traced("ElementFromHandleBuildCache", || {
+        // SAFETY: a live client object and cache request.
+        unsafe { client.ElementFromHandleBuildCache(HWND(hwnd as *mut _), request) }
+    })
 }
 
 /// The condition that an element's automation id is `id`; the provider
@@ -164,8 +224,10 @@ pub fn node(
     node: usize,
 ) -> Result<IUIAutomationElement> {
     let condition = automation_id(client, &format!("n{node}"))?;
-    // SAFETY: live element and condition.
-    unsafe { root.FindFirst(TreeScope_Descendants, &condition) }
+    traced(&format!("FindFirst of node {node}"), || {
+        // SAFETY: live element and condition.
+        unsafe { root.FindFirst(TreeScope_Descendants, &condition) }
+    })
 }
 
 /// The element's current name.
@@ -174,8 +236,10 @@ pub fn node(
 ///
 /// UIA's error.
 pub fn name(element: &IUIAutomationElement) -> Result<String> {
-    // SAFETY: a live element.
-    unsafe { element.CurrentName() }.map(|n| n.to_string())
+    traced("CurrentName", || {
+        // SAFETY: a live element.
+        unsafe { element.CurrentName() }.map(|n| n.to_string())
+    })
 }
 
 /// A cache request for `properties`.
@@ -200,7 +264,9 @@ pub fn cache_request(
 pub fn timed<T>(call: impl FnOnce() -> T) -> (T, Duration) {
     let start = Instant::now();
     let value = call();
-    (value, start.elapsed())
+    let took = start.elapsed();
+    crate::note::evidence(&format!("a timed call took {:.1} ms", ms(took)));
+    (value, took)
 }
 
 /// A duration in milliseconds.
@@ -283,11 +349,17 @@ impl Timed {
         let start = crate::now_us();
         let result = call();
         let end = crate::now_us();
-        Self {
+        let timed = Self {
             outcome: outcome(&result),
             start,
             end,
-        }
+        };
+        crate::note::evidence(&format!(
+            "a timed call: {} after {:.1} ms",
+            timed.outcome,
+            timed.ms()
+        ));
+        timed
     }
 
     /// How long it took, in milliseconds.
@@ -330,7 +402,24 @@ pub fn as_interface<T: Interface>(client: &IUIAutomation6) -> T {
 }
 
 /// Waits `length`: a deliberate pause, used only where the fact is about a
-/// timed stall or a pause, as each README states.
-pub fn pause(length: Duration) {
+/// timed stall or a pause, as each README states. A wait of a second or
+/// more is named first by `why` ([`crate::note::waiting`]), so that a long
+/// run does not look hung.
+pub fn pause(length: Duration, why: &str) {
+    if length >= Duration::from_secs(1) {
+        crate::note::waiting(&format!("{:.1} s, {why}", length.as_secs_f64()));
+    }
     std::thread::sleep(length);
+}
+
+/// Runs UIA call `what` under `--verbose`'s trace: its time and result.
+fn traced<T>(what: &str, call: impl FnOnce() -> Result<T>) -> Result<T> {
+    let start = Instant::now();
+    let result = call();
+    crate::note::trace(&format!(
+        "uia {what}: {} in {:.1} ms",
+        outcome(&result),
+        ms(start.elapsed())
+    ));
+    result
 }

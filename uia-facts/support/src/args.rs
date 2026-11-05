@@ -1,19 +1,35 @@
 //! A fact binary's command line:
 //!
-//! - `--arm <name>`, repeatable: run only the named arms (all when none is
+//! - `--case <name>`, repeatable: run only the named cases (all when none is
 //!   named);
-//! - `--trials <n>`: the trials of a rate, in place of the recorded n;
-//! - `--pause`: before each arm's first call, print each process id and
+//! - `--trials <n>`: repeat each claim n times, its verdict then needing
+//!   all n to agree; once by default, and a rate keeps its recorded n;
+//! - `--recovery` and `--coalescing`: turn the client objects' connection
+//!   recovery and event coalescing on; both are off by default;
+//! - `--verbose`: print each traced UIA call with its time and result,
+//!   the provider's call and message log, and each trial's figures
+//!   ([`crate::note`]);
+//! - `--pause`: before each case's first call, print each process id and
 //!   wait for Enter, so that a debugger can attach;
 //! - `--role <name> <arguments>`: run as a second client process
 //!   ([`crate::role`]).
 
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+/// `--trials`, 1 when not given.
+static TRIALS: AtomicUsize = AtomicUsize::new(1);
+
+/// How many times each claim runs: `--trials`, or once. A rate keeps its
+/// recorded n.
+#[must_use]
+pub fn trials() -> usize {
+    TRIALS.load(Ordering::SeqCst)
+}
+
 /// The parsed command line.
 #[derive(Default)]
 pub struct Args {
-    arms: Vec<String>,
-    /// `--trials`, when given.
-    pub trials: Option<usize>,
+    cases: Vec<String>,
     /// `--pause`.
     pub pause: bool,
     /// `--role` and its arguments, when this process is a second client.
@@ -32,18 +48,34 @@ impl Args {
         let mut words = std::env::args().skip(1);
         while let Some(word) = words.next() {
             match word.as_str() {
-                "--arm" => args.arms.push(words.next().expect("--arm takes a name")),
+                "--case" => args.cases.push(words.next().expect("--case takes a name")),
                 "--trials" => {
-                    args.trials = Some(
-                        words
-                            .next()
-                            .and_then(|n| n.parse().ok())
-                            .expect("--trials takes a count"),
-                    );
+                    let n: usize = words
+                        .next()
+                        .and_then(|n| n.parse().ok())
+                        .expect("--trials takes a count");
+                    assert!(n > 0, "--trials takes a count above 0");
+                    TRIALS.store(n, Ordering::SeqCst);
                 }
                 "--pause" => args.pause = true,
+                "--verbose" => crate::note::set_verbose(),
+                "--recovery" => {
+                    let settings = crate::uia::settings();
+                    crate::uia::use_settings(crate::uia::Settings {
+                        recovery: true,
+                        ..settings
+                    });
+                }
+                "--coalescing" => {
+                    let settings = crate::uia::settings();
+                    crate::uia::use_settings(crate::uia::Settings {
+                        coalescing: true,
+                        ..settings
+                    });
+                }
                 "--role" => {
                     let name = words.next().expect("--role takes a name");
+                    crate::note::set_role();
                     args.role = Some((name, words.by_ref().collect()));
                 }
                 other => panic!("unknown argument {other}"),
@@ -52,16 +84,10 @@ impl Args {
         args
     }
 
-    /// Whether arm `name` runs.
+    /// Whether case `name` runs.
     #[must_use]
     pub fn wants(&self, name: &str) -> bool {
-        self.arms.is_empty() || self.arms.iter().any(|arm| arm == name)
-    }
-
-    /// The trials of a rate whose recorded n is `recorded`.
-    #[must_use]
-    pub fn trials_or(&self, recorded: usize) -> usize {
-        self.trials.unwrap_or(recorded)
+        self.cases.is_empty() || self.cases.iter().any(|case| case == name)
     }
 
     /// Under `--pause`, prints each process id with its role and waits for

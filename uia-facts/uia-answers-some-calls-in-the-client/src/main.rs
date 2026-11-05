@@ -9,19 +9,19 @@
 //!   second `GetRuntimeId`; `GetRuntimeId` of a sender inside its event
 //!   callback; `CompareElements` of two applications' elements with one
 //!   application's UI thread busy; the parent of the window's element; the
-//!   names of the window's title bar and its parts. 3 runs each.
+//!   names of the window's title bar and its parts.
 //! - `focus-elsewhere`: `GetFocusedElement` while the provider is not in
-//!   front. 3 runs.
+//!   front.
 //! - `focus-here`: `GetFocusedElement` with the provider's window brought
-//!   to the foreground. Needs the unlocked desktop. 3 runs.
+//!   to the foreground. Needs the unlocked desktop.
 //! - `lapse`: UI Automation's copy of an element's runtime id lapsing, on
 //!   node 1 (`First`), through Verbatim's own `Registration`: the cold and
-//!   warm registration; the move to the element followed after a pause, as
-//!   rates; the pause sweep; the copy kept per element; the workaround's
-//!   warm registrations and free moves, as rates.
+//!   warm registration; the copy warm with no pause and lapsed after 1 s;
+//!   the copy kept per element; the workaround's warm registrations and
+//!   free moves after pauses of 0, 0.5, 1 and 1.5 s.
 //! - `late-calls`: `AdviseEventRemoved` arriving after a removal returns,
 //!   and no other provider call after a registration, a removal or a read
-//!   returns. 3 runs.
+//!   returns.
 //! - `search-reread`: whether a search re-reads its start's runtime id,
 //!   by the time since the start was fetched: 600 ms or more, not at 300.
 //! - `operations`: each client operation of the explainer's "What one
@@ -35,11 +35,12 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use uia_facts_support::args::Args;
+use uia_facts_support::args::{Args, trials};
 use uia_facts_support::events::{self, Handler, Report as Event};
+use uia_facts_support::note;
 use uia_facts_support::precondition;
 use uia_facts_support::provider::{Entry, Provider};
-use uia_facts_support::report::{Report, Verdict, deterministic, rate, relation, runs};
+use uia_facts_support::report::{Report, Verdict, deterministic, relation, runs};
 use uia_facts_support::uia::{self, Shared};
 use uia_facts_support::{now_us, rop};
 use verbatim_uia::{FOCUS_PROPERTIES, Part, PropertyEvent, Registration, Scope, Subscription};
@@ -55,27 +56,37 @@ fn main() {
     uia::mta();
     let mut report = Report::start("uia-answers-some-calls-in-the-client");
     if args.wants("no-call") {
+        report.case("no-call", "making each call that should stay in the client; counting the provider calls during it");
         no_call(&mut report);
     }
     if args.wants("focus-elsewhere") {
+        report.case("focus-elsewhere", "reading the focused element with another process in front; counting the provider calls");
         focus(&mut report, false);
     }
     if args.wants("focus-here") {
+        report.case("focus-here", "bringing the provider's window to the front; reading the focused element; counting the provider calls");
         match precondition::unlocked_desktop() {
             Ok(()) => focus(&mut report, true),
             Err(reason) => report.unmet("GetFocusedElement with the provider in front", &reason),
         }
     }
     if args.wants("lapse") {
+        report.case("lapse", "registering on, moving to and reading node 1 after pauses; counting the provider calls each makes");
         lapse(&args, &mut report);
     }
     if args.wants("late-calls") {
+        report.case("late-calls", "registering, reading and removing; watching the provider's log for 500 ms after each returns");
         late_calls(&mut report);
     }
     if args.wants("search-reread") {
+        report.case("search-reread", "searching from node 1 fetched 0 to 1,000 ms before; counting node 1's runtime id reads during the search");
         search_reread(&mut report);
     }
     if args.wants("operations") {
+        report.case(
+            "operations",
+            "making each client operation of the explainer once; counting its provider calls",
+        );
         operations(&args, &mut report);
     }
     report.finish();
@@ -95,7 +106,9 @@ fn counted<T>(provider: &mut Provider, call: impl FnOnce() -> T) -> (T, Vec<Stri
     let from = now_us();
     let value = call();
     let to = now_us();
-    (value, calls_between(&provider.log(), from, to))
+    let calls = calls_between(&provider.log(), from, to);
+    note::evidence(&format!("provider calls: {calls:?}"));
+    (value, calls)
 }
 
 struct Window {
@@ -141,7 +154,7 @@ fn no_call(report: &mut Report) {
     let mut compare = Vec::new();
     let mut parent = Vec::new();
     let mut title = Vec::new();
-    for _ in 0..3 {
+    for _ in 0..trials() {
         let mut w = window();
         let request =
             uia::cache_request(&w.client, &[UIA_NamePropertyId]).expect("a cache request");
@@ -311,7 +324,7 @@ fn no_call(report: &mut Report) {
 
 fn focus(report: &mut Report, in_front: bool) {
     let mut results = Vec::new();
-    for _ in 0..3 {
+    for _ in 0..trials() {
         let mut w = window();
         if in_front {
             let front = w.provider.request("foreground 0");
@@ -366,24 +379,24 @@ fn follow(element: Shared) -> Registration {
 /// its copy renewed just before the pause.
 fn read_after(w: &mut Window, element: &IUIAutomationElement, pause: Duration) -> usize {
     let _ = runtime_id(element);
-    uia::pause(pause);
+    uia::pause(pause, "the pause before the GetRuntimeId read");
     counted(&mut w.provider, || runtime_id(element)).1.len()
 }
 
 #[expect(clippy::too_many_lines, reason = "the lapse's claims, read in turn")]
 fn lapse(args: &Args, report: &mut Report) {
     let mut w = window();
-    let cold = Duration::from_millis(1_500);
+    let cold = Duration::from_millis(1_000);
     args.pause_for_debugger(&[("provider", w.provider.pid), ("client", std::process::id())]);
 
     let mut costs = Vec::new();
     let mut sum_holds = Vec::new();
-    for _ in 0..3 {
+    for _ in 0..trials() {
         let _ = runtime_id(&w.first);
         let (warm_registration, warm) = counted(&mut w.provider, || follow(uia::share(&w.first)));
         drop(warm_registration);
         let _ = runtime_id(&w.first);
-        uia::pause(cold);
+        uia::pause(cold, "for the copy of the runtime id to lapse");
         let (cold_registration, cold_calls) =
             counted(&mut w.provider, || follow(uia::share(&w.first)));
         drop(cold_registration);
@@ -393,7 +406,7 @@ fn lapse(args: &Args, report: &mut Report) {
         costs.push((warm.len(), cold_calls.len(), lapsed_read));
     }
     report.claim(
-        "the registration's provider calls: (warm, cold, a lapsed GetRuntimeId read alone)",
+        "the registration's provider calls: (warm, cold after 1 s, a lapsed GetRuntimeId read alone)",
         &runs(&costs),
         "(3, 9, 6) on mockapp, re-recorded on the provider program",
         Verdict::New,
@@ -405,109 +418,24 @@ fn lapse(args: &Args, report: &mut Report) {
         relation(&sum_holds),
     );
 
-    let registration = follow(uia::share(&w.first));
-    let move_cost = |w: &mut Window, pause: Duration, renew: bool| -> usize {
-        if renew {
-            uia::pause(pause);
-            let _ = runtime_id(&w.first);
-        } else {
-            let _ = runtime_id(&w.first);
-            uia::pause(pause);
-        }
-        let again = uia::share(&w.first);
-        counted(&mut w.provider, || {
-            registration.retarget(Scope::Elements(vec![again]));
-            registration.settle();
-        })
-        .1
-        .len()
-    };
-    let n = args.trials_or(30);
-    let late: usize = (0..n)
-        .filter(|i| {
-            move_cost(
-                &mut w,
-                Duration::from_millis(250 + 50 * u64::try_from(i % 4).expect("small")),
-                false,
-            ) > 0
-        })
-        .count();
-    report.claim(
-        "a move to the element followed after a pause of 250, 300, 350 or 400 ms makes provider calls",
-        &format!("{late} of {n}"),
-        "15 of 30",
-        rate(late, n, 15, 30),
-    );
-    let n = args.trials_or(20);
-    let free: usize = (0..n)
-        .filter(|i| {
-            move_cost(
-                &mut w,
-                Duration::from_millis(100 * u64::try_from(i % 2).expect("small")),
-                false,
-            ) == 0
-        })
-        .count();
-    report.claim(
-        "a move after a pause of 0 or 100 ms makes no provider call",
-        &format!("{free} of {n}"),
-        "18 of 20",
-        rate(free, n, 18, 20),
-    );
-
     let first = w.first.clone();
-    let mut warm_sweep = Vec::new();
-    for pause in [0, 50, 100, 150, 190] {
-        let runs3: Vec<bool> = (0..3)
-            .map(|_| read_after(&mut w, &first, Duration::from_millis(pause)) == 0)
-            .collect();
-        warm_sweep.push((pause, runs3.iter().all(|r| *r), runs3.iter().all(|r| !*r)));
-    }
-    let mut cold_sweep = Vec::new();
-    for pause in [1_000, 3_000] {
-        let runs3: Vec<bool> = (0..3)
-            .map(|_| read_after(&mut w, &first, Duration::from_millis(pause)) > 0)
-            .collect();
-        cold_sweep.push((pause, runs3.iter().all(|r| *r), runs3.iter().all(|r| !*r)));
-    }
-    // Below 200 ms the copy was warm or cold by the sweep's phase, so the
-    // short pauses are printed, not judged.
-    report.claim(
-        "after pauses of 0, 50, 100, 150 and 190 ms: (pause, warm in every run, cold in every run)",
-        &format!("{warm_sweep:?}"),
-        "",
-        Verdict::Trend,
-    );
-    report.claim(
-        "after pauses of 1,000 and 3,000 ms the copy is cold (each pause 3 runs)",
-        &format!("{cold_sweep:?}"),
-        "cold, 12 of 12 each",
-        if cold_sweep.iter().all(|s| s.1) {
-            Verdict::Pass
-        } else if cold_sweep.iter().any(|s| s.2) {
-            Verdict::Differ
-        } else {
-            Verdict::Inconclusive("the runs disagree".to_owned())
-        },
-    );
-    let middle: Vec<String> = [210, 230, 270, 290, 310, 400]
-        .iter()
-        .map(|p| {
-            format!(
-                "{p} ms {}",
-                if read_after(&mut w, &first, Duration::from_millis(*p)) == 0 {
-                    "warm"
-                } else {
-                    "cold"
-                }
-            )
-        })
+    let warm_reads: Vec<bool> = (0..trials())
+        .map(|_| read_after(&mut w, &first, Duration::ZERO) == 0)
         .collect();
     report.claim(
-        "from 210 to 400 ms",
-        &middle.join(", "),
-        "210 cold, 230 warm, 270 cold, 290 warm, 310 cold, 400 warm",
-        Verdict::Trend,
+        "with no pause, a GetRuntimeId read makes no provider call",
+        &runs(&warm_reads),
+        "true",
+        relation(&warm_reads),
+    );
+    let cold_reads: Vec<bool> = (0..trials())
+        .map(|_| read_after(&mut w, &first, cold) > 0)
+        .collect();
+    report.claim(
+        "after a pause of 1 s, a GetRuntimeId read makes provider calls",
+        &runs(&cold_reads),
+        "true",
+        relation(&cold_reads),
     );
 
     let second = uia::node(&w.client, &w.root, 6).expect("node 6");
@@ -533,79 +461,87 @@ fn lapse(args: &Args, report: &mut Report) {
     ];
     let mut kept = Vec::new();
     for (what, touch) in &others {
-        let runs3: Vec<bool> = (0..3)
+        let lapsed: Vec<bool> = (0..trials())
             .map(|_| {
                 let _ = runtime_id(&w.first);
-                uia::pause(cold);
+                uia::pause(cold, "for the copy of the runtime id to lapse");
                 touch(&w);
                 !counted(&mut w.provider, || runtime_id(&w.first))
                     .1
                     .is_empty()
             })
             .collect();
-        kept.push((*what, runs3));
+        kept.push((*what, lapsed));
     }
     let other_button = uia::share(&uia::node(&w.client, &w.root, 7).expect("node 7"));
-    let runs3: Vec<bool> = (0..3)
+    let lapsed: Vec<bool> = (0..trials())
         .map(|_| {
             let _ = runtime_id(&w.first);
-            uia::pause(cold);
+            uia::pause(cold, "for the copy of the runtime id to lapse");
             drop(follow(other_button.clone()));
             !counted(&mut w.provider, || runtime_id(&w.first))
                 .1
                 .is_empty()
         })
         .collect();
-    kept.push(("a registration on another button", runs3));
-    for (what, runs3) in kept {
+    kept.push(("a registration on another button", lapsed));
+    for (what, lapsed) in kept {
         report.claim(
             &format!("after {what}, First's copy has lapsed all the same"),
-            &runs(&runs3),
+            &runs(&lapsed),
             "true",
-            relation(&runs3),
+            relation(&lapsed),
         );
     }
 
-    let n = args.trials_or(256);
+    let pauses = [0_u64, 500, 1_000, 1_500];
     let warm_count = {
         let _ = runtime_id(&w.first);
         counted(&mut w.provider, || follow(uia::share(&w.first)))
             .1
             .len()
     };
-    let warm: usize = (0..n)
-        .filter(|i| {
-            uia::pause(Duration::from_millis(
-                u64::try_from(i * 3_000 / n.max(1)).expect("small"),
-            ));
+    let mut registrations = Vec::new();
+    for _ in 0..trials() {
+        for pause in pauses {
+            uia::pause(
+                Duration::from_millis(pause),
+                "the pause before the registration",
+            );
             let _ = runtime_id(&w.first);
-            counted(&mut w.provider, || follow(uia::share(&w.first)))
+            let calls = counted(&mut w.provider, || follow(uia::share(&w.first)))
                 .1
-                .len()
-                == warm_count
-        })
-        .count();
+                .len();
+            registrations.push(calls == warm_count);
+        }
+    }
     report.claim(
-        "with GetRuntimeId just before, registrations after pauses of 0 to 3,000 ms cost the warm calls",
-        &format!("{warm} of {n}"),
-        "256 of 256",
-        rate(warm, n, 256, 256),
+        "with GetRuntimeId just before, registrations after pauses of 0, 0.5, 1 and 1.5 s cost the warm calls",
+        &runs(&registrations),
+        "true",
+        relation(&registrations),
     );
-    let n = args.trials_or(50);
-    let free: usize = (0..n)
-        .filter(|i| {
-            move_cost(
-                &mut w,
-                Duration::from_millis(u64::try_from(i * 3_000 / n.max(1)).expect("small")),
-                true,
-            ) == 0
-        })
-        .count();
+    let registration = follow(uia::share(&w.first));
+    let mut moves = Vec::new();
+    for _ in 0..trials() {
+        for pause in pauses {
+            uia::pause(Duration::from_millis(pause), "the pause before the move");
+            let _ = runtime_id(&w.first);
+            let again = uia::share(&w.first);
+            let calls = counted(&mut w.provider, || {
+                registration.retarget(Scope::Elements(vec![again]));
+                registration.settle();
+            })
+            .1
+            .len();
+            moves.push(calls == 0);
+        }
+    }
     report.claim(
-        "with GetRuntimeId just before, moves to the element followed make no provider call",
-        &format!("{free} of {n}"),
-        "50 of 50",
-        rate(free, n, 50, 50),
+        "with GetRuntimeId just before, moves to the element followed after pauses of 0, 0.5, 1 and 1.5 s make no provider call",
+        &runs(&moves),
+        "true",
+        relation(&moves),
     );
     drop(registration);
 }
@@ -613,7 +549,7 @@ fn lapse(args: &Args, report: &mut Report) {
 fn late_calls(report: &mut Report) {
     let mut removed_late = Vec::new();
     let mut none_after = Vec::new();
-    for _ in 0..3 {
+    for _ in 0..trials() {
         let mut w = window();
         let (handler, _reports) = Handler::make();
         let group = events::focus_group(&w.client, &handler).expect("a group");
@@ -883,7 +819,7 @@ fn search_reread(report: &mut Report) {
     let mut rows = Vec::new();
     let mut by_pause = Vec::new();
     for pause in [0_u64, 300, 600, 700, 1_000] {
-        let runs3: Vec<usize> = (0..3)
+        let runs3: Vec<usize> = (0..trials())
             .map(|_| {
                 let mut w = window();
                 // The start is node 1, a fragment with a runtime id of its
@@ -891,7 +827,10 @@ fn search_reread(report: &mut Report) {
                 // and the search finds its child, node 6.
                 let condition = uia::name_is(&w.client, "node 6").expect("a condition");
                 let start = uia::node(&w.client, &w.root, 1).expect("node 1, fetched now");
-                uia::pause(Duration::from_millis(pause));
+                uia::pause(
+                    Duration::from_millis(pause),
+                    "the pause since the start was fetched",
+                );
                 w.provider.log();
                 let from = now_us();
                 // SAFETY: live element and condition.
@@ -911,10 +850,9 @@ fn search_reread(report: &mut Report) {
         rows.push(format!("{pause} ms: {}", runs(&runs3)));
         by_pause.push(runs3);
     }
-    // Only 0 and 1,000 ms are judged, each run's pair as one outcome:
-    // pauses near 300 ms fall warm or cold by the lapse's sweep, so 300,
+    // Only 0 and 1,000 ms are judged, each run's pair as one outcome; 300,
     // 600 and 700 ms are printed for trends.
-    let per_run: Vec<(usize, usize)> = (0..3)
+    let per_run: Vec<(usize, usize)> = (0..trials())
         .map(|run| (by_pause[0][run], by_pause[4][run]))
         .collect();
     report.claim(

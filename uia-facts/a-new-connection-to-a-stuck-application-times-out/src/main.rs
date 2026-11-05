@@ -1,30 +1,33 @@
 //! A new connection to a stuck application times out
 //! (`uia-facts/a-new-connection-to-a-stuck-application-times-out/readme.md`).
 //!
-//! Arms:
+//! Cases:
 //!
 //! - `connection`: the provider program with two windows on two UI threads;
 //!   UI thread 0 busy with a name read queued on it; `ElementFromHandle` of
 //!   window 1, on the idle thread, and then of window 0, each with the
-//!   connection timeout at 2,000 ms. 5 trials, a new provider each.
+//!   connection timeout at 2,000 ms, a new provider each.
 //! - `description`: `ElementFromHandleBuildCache` with the provider
 //!   description cached, per stall kind: `queued` (as above, window 1),
 //!   `busy` (UI thread 0 busy, nothing queued, window 0) and `held` (a name
-//!   read held in window 0's provider, window 1). 3 runs each.
+//!   read held in window 0's provider, window 1).
 
 use std::sync::mpsc;
 use std::time::Duration;
 
-use uia_facts_support::args::Args;
+use uia_facts_support::args::{Args, trials};
+use uia_facts_support::note;
 use uia_facts_support::provider::Provider;
-use uia_facts_support::report::{Report, Verdict, band, band_text, deterministic, in_band, runs};
+use uia_facts_support::report::{
+    Report, Verdict, band, band_text, deterministic, in_band, relation, runs,
+};
 use uia_facts_support::stats::summary_ms;
 use uia_facts_support::uia::{self, UIA_E_TIMEOUT};
 use windows::Win32::UI::Accessibility::UIA_ProviderDescriptionPropertyId;
 
-/// The connection timeout every arm sets.
+/// The connection timeout every case sets.
 const CONNECTION_MS: u32 = 2_000;
-/// The transaction timeout every arm sets, longer than any arm's stall, so
+/// The transaction timeout every case sets, longer than any case's stall, so
 /// the queued read waits for the release.
 const TRANSACTION_MS: u32 = 30_000;
 /// How long the queued read is given to reach the provider's channel
@@ -37,9 +40,11 @@ fn main() {
     uia::mta();
     let mut report = Report::start("a-new-connection-to-a-stuck-application-times-out");
     if args.wants("connection") {
+        report.case("connection", "making UI thread 0 busy with a read queued on it; connecting to the window on the idle thread, then to the busy thread's window, at a 2 s connection timeout");
         connection(&args, &mut report);
     }
     if args.wants("description") {
+        report.case("description", "stalling the provider three ways; looking up a window with its provider description cached; classifying the answer");
         description(&args, &mut report);
     }
     report.finish();
@@ -63,8 +68,8 @@ fn stuck(queue: bool) -> (Provider, Option<mpsc::Receiver<String>>) {
         let client = uia::client();
         let root = uia::element(&client, hwnd).expect("window 0's element");
         let first = uia::node(&client, &root, 1).expect("node 1");
-        fetched.send(()).expect("the arm waits");
-        gone.recv().expect("the arm says when");
+        fetched.send(()).expect("the case waits");
+        gone.recv().expect("the case says when");
         let read = uia::name(&first);
         let _ = done.send(uia::outcome(&read));
     });
@@ -81,10 +86,11 @@ fn connection(args: &Args, report: &mut Report) {
     let mut busy = Vec::new();
     let mut idle_out = Vec::new();
     let mut busy_out = Vec::new();
-    for _ in 0..5 {
+    for _ in 0..trials() {
         let (mut provider, queued) = stuck(true);
         args.pause_for_debugger(&[("provider", provider.pid), ("client", std::process::id())]);
-        uia::pause(QUEUE_PAUSE);
+        uia::pause(QUEUE_PAUSE, "for the queued read to reach the busy thread");
+        note::waiting_ms(CONNECTION_MS, "each new connection's connection timeout");
         let (result, took) = uia::timed(|| uia::element(&client, provider.hwnd(1)));
         idle.push(uia::ms(took));
         idle_out.push(uia::outcome(&result));
@@ -114,12 +120,27 @@ fn connection(args: &Args, report: &mut Report) {
         "UIA_E_TIMEOUT",
         deterministic(&busy_out, &timeout),
     );
-    report.claim(
-        "the busy thread's connection fails after the connection timeout",
-        &summary_ms(&busy),
-        &format!("2.0 to 2.2 s, {}", band_text(window)),
-        in_band(&busy, window),
-    );
+    if uia::settings().recovery {
+        // With connection recovery on, the connection made after the idle
+        // thread's had failed fails at once.
+        let at_once: Vec<bool> = busy
+            .iter()
+            .map(|ms| *ms < f64::from(CONNECTION_MS))
+            .collect();
+        report.claim(
+            "with connection recovery on, the busy thread's connection, made after the idle thread's failed, fails before the connection timeout",
+            &format!("{} ({})", runs(&at_once), summary_ms(&busy)),
+            "true, 0.2 ms",
+            relation(&at_once),
+        );
+    } else {
+        report.claim(
+            "the busy thread's connection fails after the connection timeout",
+            &summary_ms(&busy),
+            &format!("2.0 to 2.2 s, {}", band_text(window)),
+            in_band(&busy, window),
+        );
+    }
 }
 
 /// What a lookup with the provider description cached answered.
@@ -143,10 +164,10 @@ fn description(args: &Args, report: &mut Report) {
     let mut queued = Vec::new();
     let mut busy = Vec::new();
     let mut held = Vec::new();
-    for _ in 0..3 {
+    for _ in 0..trials() {
         let (mut provider, read) = stuck(true);
         args.pause_for_debugger(&[("provider", provider.pid), ("client", std::process::id())]);
-        uia::pause(QUEUE_PAUSE);
+        uia::pause(QUEUE_PAUSE, "for the queued read to reach the busy thread");
         queued.push(lookup(&client, provider.hwnd(1)));
         provider.request("release");
         let _ = read.map(|r| r.recv());

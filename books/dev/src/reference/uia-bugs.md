@@ -359,7 +359,7 @@ During the gap, `RemoveEventHandlerGroup` on the registration fails at once with
 
 #### Not affected
 
-Single reads under the same timeout fail as expected: `CurrentName` after 1,095 ms and `CurrentHasKeyboardFocus` after 1,092 ms, each with `UIA_E_TIMEOUT` (E-TT).
+Single reads under the same timeout fail as expected: `CurrentName` after 1,095 ms and `CurrentHasKeyboardFocus` after 1,092 ms, each with `UIA_E_TIMEOUT` (E-TT), with connection recovery off. With it on, as Verbatim's client has it, the first read still waits the timeout, but a read made right after one into the same application timed out fails at once, in 0.1 ms ([`uia-facts/a-call-waits-its-timeout-from-its-own-start/`](https://github.com/Neurrone/verbatim/blob/main/uia-facts/a-call-waits-its-timeout-from-its-own-start/readme.md), 2026-11-05).
 
 #### Workarounds that worked
 
@@ -631,9 +631,9 @@ A client holds an element for longer than UI Automation keeps its copy of the el
 
 #### Symptoms
 
-The call fetches the runtime id from the provider again before doing its own work. On mockapp's button `First`, a cold `AddEventHandlerGroup` cost 9 provider calls where a warm one cost 3: `FragmentRoot`, `HostRawElementProvider`, `GetRuntimeId`, `FragmentRoot`, `HostRawElementProvider` and `ProviderOptions`, which is exactly what a `GetRuntimeId` read alone costs when the copy has lapsed, then the warm call's `FragmentRoot`, `HostRawElementProvider` and `FragmentRoot`. Moving a registration to the element it already follows, which costs nothing warm, cost `GetRuntimeId` 1, `ProviderOptions` 1, `HostRawElementProvider` 2 and `FragmentRoot` 2 when the copy had lapsed. Against uia-facts' provider program, a move made provider calls in 15 of 30 runs after pauses of 250 to 400 ms, and none in 18 of 20 after 0 or 100 ms (2026-11-05). The answers are the same; only the cost differs.
+The call fetches the runtime id from the provider again before doing its own work. On mockapp's button `First`, a cold `AddEventHandlerGroup` cost 9 provider calls where a warm one cost 3: `FragmentRoot`, `HostRawElementProvider`, `GetRuntimeId`, `FragmentRoot`, `HostRawElementProvider` and `ProviderOptions`, which is exactly what a `GetRuntimeId` read alone costs when the copy has lapsed, then the warm call's `FragmentRoot`, `HostRawElementProvider` and `FragmentRoot`. Moving a registration to the element it already follows, which costs nothing warm, cost `GetRuntimeId` 1, `ProviderOptions` 1, `HostRawElementProvider` 2 and `FragmentRoot` 2 when the copy had lapsed. The answers are the same; only the cost differs.
 
-The lapse is not a fixed lifetime. A `GetRuntimeId` read after pauses of 1,000 and 3,000 ms was always cold; after 0, 50 and 100 ms always warm; after 150 and 190 ms warm or cold from run to run; and from 210 to 400 ms 270 and 310 ms were cold where 290 and 400 were warm (uia-facts' provider program, 2026-11-05). That fits a periodic sweep rather than an age limit, so no pause can be relied on to stay warm. The copy is kept per element: reading the name of `First`, of another button or of the window, or registering on another button, leaves `First` cold. Whether the copy is kept in the client's element or in UI Automation's server-side node was not determined.
+A `GetRuntimeId` read with no pause made no provider call, and one after a pause of 1 second made provider calls (uia-facts' provider program, 2026-11-05). The copy is kept per element: reading the name of `First`, of another button or of the window, or registering on another button, leaves `First` cold. Whether the copy is kept in the client's element or in UI Automation's server-side node was not determined.
 
 The same experiments found no provider call made after a registration, a removal or a read had returned: every call came before it returned, except `AdviseEventRemoved`, which comes late. So a test that counts provider calls right after one of them returns, as `crates/mockapp/tests/call_counts.rs` does, counts every call but a removal's `AdviseEventRemoved`.
 
@@ -643,7 +643,7 @@ The answers of the calls; only their provider calls change.
 
 #### Workarounds that worked
 
-- Reading the element's runtime id (`GetRuntimeId`) just before the call renews the copy: with it, the cold-prone registration cost the warm 3 provider calls in 256 of 256 runs at pauses from 0 to 3,000 ms, and the move to the element already followed cost nothing in 50 of 50. The read itself costs the 6 provider calls when the copy has lapsed, so it moves the cost rather than removing it.
+- Reading the element's runtime id (`GetRuntimeId`) just before the call renews the copy: with it, the registration cost the warm provider calls, and the move to the element already followed cost nothing, after pauses of 0, 0.5, 1 and 1.5 seconds (uia-facts' provider program, 2026-11-05). The read itself costs the 6 provider calls when the copy has lapsed, so it moves the cost rather than removing it.
 
 #### Workarounds that didn't work
 

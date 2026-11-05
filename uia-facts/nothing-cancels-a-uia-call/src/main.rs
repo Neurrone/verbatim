@@ -15,21 +15,22 @@
 //! - `connection`: `ElementFromHandle` of a new provider's window, held
 //!   inside its `WM_GETOBJECT`.
 //!
-//! Arms of each kind, 3 trials each: `hold-once` and `hold-repeat` (the
+//! Cases of each kind: `hold-once` and `hold-repeat` (the
 //! call's first provider method held; cancelled once at once, or every
 //! 50 ms; released after 2,500 ms), `stall-once` and `stall-repeat` (the
 //! UI thread busy for 2,500 ms; cancelled 300 ms in, once or every 50 ms).
-//! `--arm <kind>` runs one kind.
+//! `--case <kind>` runs one kind.
 //!
 //! Also: `disabled`, the property read held with cancellation never enabled
-//! on the caller, cancelled once, 3 trials; and `abandon`, a name read held
+//! on the caller, cancelled once; and `abandon`, a name read held
 //! for 2,000 ms while later reads run on new threads (`new`) or on the
-//! stuck read's own thread (`same`), 3 trials each.
+//! stuck read's own thread (`same`).
 
 use std::sync::mpsc;
 use std::time::Duration;
 
-use uia_facts_support::args::Args;
+use uia_facts_support::args::{Args, trials};
+use uia_facts_support::note;
 use uia_facts_support::provider::Provider;
 use uia_facts_support::report::{
     Report, Verdict, band, band_text, deterministic, in_band, relation, runs,
@@ -66,6 +67,17 @@ impl Kind {
             Kind::Connection => "connection",
         }
     }
+
+    /// The call, in plain words.
+    fn what(self) -> &'static str {
+        match self {
+            Kind::Property => "a name read of node 1",
+            Kind::Text => "GetText of node 3's document range",
+            Kind::FindAll => "FindAll of the window's descendants",
+            Kind::Remote => "a remote operation reading node 3's name",
+            Kind::Connection => "a new connection to the window",
+        }
+    }
 }
 
 /// One trial's result: each cancel's answer, and the call's outcome and
@@ -88,12 +100,37 @@ fn main() {
         Kind::Connection,
     ] {
         if args.wants(kind.name()) {
+            report.case(
+                kind.name(),
+                &format!(
+                    "{}: holding its first provider method or stalling the UI thread; cancelling it once or repeatedly; timing it{}",
+                    kind.what(),
+                    if kind == Kind::Property {
+                        "; then cancelling it on a caller that never enabled cancellation"
+                    } else {
+                        ""
+                    }
+                ),
+            );
             judge(&args, &mut report, kind);
+            if kind == Kind::Property {
+                disabled(&args, &mut report);
+            }
         }
     }
-    if args.wants("disabled") {
-        let trials: Vec<Trial> = (0..3)
-            .map(|_| trial(&args, Kind::Property, true, false, false))
+    if args.wants("abandon") {
+        report.case("abandon", "holding node 1's name read; making later reads on new threads, or after the stuck read on its own thread; releasing at 2 s");
+        abandon(&mut report);
+    }
+    report.finish();
+}
+
+/// The property read, held, with cancellation never enabled on the
+/// caller, cancelled once.
+fn disabled(args: &Args, report: &mut Report) {
+    {
+        let trials: Vec<Trial> = (0..trials())
+            .map(|_| trial(args, Kind::Property, true, false, false))
             .collect();
         let answers: Vec<Vec<String>> = trials.iter().map(|t| t.answers.clone()).collect();
         report.claim(
@@ -103,10 +140,6 @@ fn main() {
             deterministic(&answers, &vec!["RPC_E_NO_CONTEXT".to_owned()]),
         );
     }
-    if args.wants("abandon") {
-        abandon(&mut report);
-    }
-    report.finish();
 }
 
 fn judge(args: &Args, report: &mut Report, kind: Kind) {
@@ -116,7 +149,7 @@ fn judge(args: &Args, report: &mut Report, kind: Kind) {
     let mut outcomes = Vec::new();
     let mut connection_times = Vec::new();
     for (stall, repeat) in [(false, false), (false, true), (true, false), (true, true)] {
-        for _ in 0..3 {
+        for _ in 0..trials() {
             let trial = trial(args, kind, stall, repeat, true);
             count += trial.answers.len();
             answers.push(
@@ -243,7 +276,10 @@ fn trial(args: &Args, kind: Kind, stall: bool, repeat: bool, enable: bool) -> Tr
     let start = now_us();
     go.send(()).expect("the caller waits");
     if stall {
-        uia::pause(Duration::from_millis(300));
+        uia::pause(
+            Duration::from_millis(300),
+            "for the call to reach the provider",
+        );
     } else {
         provider
             .held(Duration::from_secs(30))
@@ -251,11 +287,20 @@ fn trial(args: &Args, kind: Kind, stall: bool, repeat: bool, enable: bool) -> Tr
     }
     let mut answers = vec![cancel(thread)];
     let release_at = start + u64::try_from(HOLD.as_micros()).expect("a short hold");
+    if repeat {
+        note::waiting(&format!(
+            "{:.1} s, cancelling the held call every 50 ms until its release",
+            HOLD.as_secs_f64()
+        ));
+    }
     while repeat && now_us() < release_at {
-        uia::pause(Duration::from_millis(50));
+        uia::pause(Duration::from_millis(50), "before looking again");
         answers.push(cancel(thread));
     }
-    uia::pause(Duration::from_micros(release_at.saturating_sub(now_us())));
+    uia::pause(
+        Duration::from_micros(release_at.saturating_sub(now_us())),
+        "the call held until its release, 2.5 s after it began",
+    );
     let released = if stall {
         busy_from + u64::try_from(HOLD.as_micros()).expect("a short hold")
     } else {
@@ -281,7 +326,7 @@ fn abandon(report: &mut Report) {
     for mode in ["new", "same"] {
         let mut answered_after = Vec::new();
         let mut first_after = Vec::new();
-        for _ in 0..3 {
+        for _ in 0..trials() {
             let mut provider = Provider::launch(&["--windows", "uia:0"]);
             let client = uia::client();
             uia::set_timeouts(&client, 2_000, 30_000);
@@ -298,13 +343,13 @@ fn abandon(report: &mut Report) {
                 // thread, and the release at 2,000 ms.
                 let mut later = Vec::new();
                 for _ in 0..3 {
-                    uia::pause(Duration::from_millis(500));
+                    uia::pause(Duration::from_millis(500), "before the next later read");
                     let second = second.clone();
                     later.push(uia::spawn(move || {
                         Timed::of(|| uia::name(&uia::resolve(&second)))
                     }));
                 }
-                uia::pause(Duration::from_millis(500));
+                uia::pause(Duration::from_millis(500), "before the release");
                 let at = now_us();
                 provider.request("release");
                 let _ = stuck.join();
@@ -323,7 +368,10 @@ fn abandon(report: &mut Report) {
                 provider
                     .held(Duration::from_secs(30))
                     .expect("the stuck read is held");
-                uia::pause(Duration::from_millis(2_000));
+                uia::pause(
+                    Duration::from_millis(2_000),
+                    "with the later reads queued, before the release",
+                );
                 let at = now_us();
                 provider.request("release");
                 let (_, later) = thread.join().expect("the reads return");

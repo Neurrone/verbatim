@@ -2,36 +2,31 @@
 //! (`uia-facts/a-provider-process-serves-one-uia-request-at-a-time/readme.md`).
 //!
 //! The provider program has windows 0 and 1 on UI thread 0 and window 2
-//! on UI thread 1, with `UseComThreading` unless an arm says otherwise.
+//! on UI thread 1, with `UseComThreading` unless a case says otherwise.
 //! Every element is fetched before a hold or a busy thread.
 //!
 //! - `no-overlap`: 8 client threads make 50 name reads each across the
 //!   three windows; the provider's peak of calls in progress at once. Both
-//!   threading modes, 3 runs each.
+//!   threading modes.
 //! - `held`: node 1's name read in window 0 held for 1,000 ms, while
 //!   probes run: node 2 of window 0 from another thread, window 2 (the
 //!   other UI thread), a remote operation on window 0's node 3, a read
 //!   from a second client process into window 1, and a read into a second
-//!   provider process. 3 trials.
+//!   provider process.
 //! - `fifo`: UI thread 0 busy; a read queued into window 0, then 200 ms
 //!   later a read into window 2, on the idle thread; released at 1,000 ms.
-//!   3 trials.
 //! - `busy-only`: UI thread 0 busy with nothing queued; a read into window
-//!   2. 3 trials.
+//!   2.
 //! - `pumping`: node 1's name read in window 0 waiting in
 //!   `CoWaitForMultipleHandles` until released; a read into window 2.
-//!   3 trials.
 //! - `nocom`: the provider without `UseComThreading`, UI thread 0 busy: a
 //!   read of window 0's node 1, a new connection to window 0, then an
-//!   `Invoke` of node 1. 3 trials.
-//! - `recovery`: `held`, `fifo`, `busy-only`, `pumping` and `nocom` again
-//!   with connection recovery on in every client object, their outcomes
-//!   printed as new (Not known).
+//!   `Invoke` of node 1.
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use uia_facts_support::args::Args;
+use uia_facts_support::args::{Args, trials};
+use uia_facts_support::note;
 use uia_facts_support::provider::Provider;
 use uia_facts_support::report::{
     Report, Verdict, band, band_text, deterministic, in_band, relation, runs,
@@ -44,16 +39,14 @@ use windows::Win32::UI::Accessibility::{
     IUIAutomation6, IUIAutomationInvokePattern, UIA_InvokePatternId,
 };
 
-/// Whether every client object of this run has connection recovery on.
-static RECOVERY: AtomicBool = AtomicBool::new(false);
 /// How long a held call is held.
 const HOLD: Duration = Duration::from_millis(1_000);
 const LAYOUT: &str = "uia:0,uia:0,uia:1";
 
+/// A client object with the settings in use, and the case's timeouts.
 fn client() -> IUIAutomation6 {
     let client = uia::client();
     uia::set_timeouts(&client, 2_000, 30_000);
-    uia::set_recovery(&client, RECOVERY.load(Ordering::SeqCst));
     client
 }
 
@@ -66,56 +59,49 @@ fn main() {
     }
     let mut report = Report::start("a-provider-process-serves-one-uia-request-at-a-time");
     if args.wants("no-overlap") {
+        report.case("no-overlap", "8 client threads reading names across three windows, in both threading modes; counting the provider's calls in progress at once");
         no_overlap(&mut report);
     }
-    let mut runs_of = vec![false];
-    if args.wants("recovery") {
-        runs_of.push(true);
+    let mut judge = Judge {
+        report: &mut report,
+    };
+    if args.wants("held") {
+        judge.report.case("held", "holding window 0's name read for 1 s; meanwhile reading another thread's window, running a remote operation, and reading from a second client process and into a second provider");
+        held(&args, &mut judge);
     }
-    for recovery in runs_of {
-        RECOVERY.store(recovery, Ordering::SeqCst);
-        let mut judge = Judge {
-            report: &mut report,
-            recovery,
-        };
-        if args.wants("held") || recovery {
-            held(&args, &mut judge);
-        }
-        if args.wants("fifo") || recovery {
-            fifo(&mut judge);
-        }
-        if args.wants("busy-only") || recovery {
-            busy_only(&mut judge);
-        }
-        if args.wants("pumping") || recovery {
-            pumping(&mut judge);
-        }
-        if args.wants("nocom") || recovery {
-            nocom(&mut judge);
-        }
+    if args.wants("fifo") {
+        judge.report.case("fifo", "making UI thread 0 busy; queueing a read into window 0, then one into window 2; reading the order the provider served them");
+        fifo(&mut judge);
+    }
+    if args.wants("busy-only") {
+        judge.report.case(
+            "busy-only",
+            "making UI thread 0 busy with nothing queued on it; reading window 2",
+        );
+        busy_only(&mut judge);
+    }
+    if args.wants("pumping") {
+        judge.report.case(
+            "pumping",
+            "holding a read that waits while dispatching COM calls; reading window 2 meanwhile",
+        );
+        pumping(&mut judge);
+    }
+    if args.wants("nocom") {
+        judge.report.case("nocom", "running the provider without COM threading and making UI thread 0 busy; reading, connecting to and invoking into window 0");
+        nocom(&mut judge);
     }
     report.finish();
 }
 
-/// Claims judged by their record, or, with connection recovery on, printed
-/// as new.
+/// The report the cases' claims go to.
 struct Judge<'a> {
     report: &'a mut Report,
-    recovery: bool,
 }
 
 impl Judge<'_> {
     fn claim(&mut self, claim: &str, observed: &str, recorded: &str, verdict: Verdict) {
-        if self.recovery {
-            self.report.claim(
-                &format!("with connection recovery on, {claim}"),
-                observed,
-                "",
-                Verdict::New,
-            );
-        } else {
-            self.report.claim(claim, observed, recorded, verdict);
-        }
+        self.report.claim(claim, observed, recorded, verdict);
     }
 }
 
@@ -148,7 +134,7 @@ fn read_on_thread(element: Shared) -> std::thread::JoinHandle<Timed> {
 fn no_overlap(report: &mut Report) {
     for threading in ["com", "nocom"] {
         let mut peaks = Vec::new();
-        for _ in 0..3 {
+        for _ in 0..trials() {
             let mut provider = Provider::launch(&["--windows", LAYOUT, "--threading", threading]);
             let client = client();
             let elements: Vec<Shared> = (0..3)
@@ -191,7 +177,7 @@ fn held(args: &Args, judge: &mut Judge) {
     let mut other_client = Vec::new();
     let mut other_process = Vec::new();
     let mut behind = Vec::new();
-    for _ in 0..3 {
+    for _ in 0..trials() {
         let mut provider = Provider::launch(&["--windows", LAYOUT]);
         let other = Provider::launch(&["--windows", "uia:0"]);
         let client = client();
@@ -218,7 +204,7 @@ fn held(args: &Args, judge: &mut Judge) {
         let elsewhere_probe = read_on_thread(elsewhere);
         role.send("go");
         let elsewhere = elsewhere_probe.join().expect("the other process's read");
-        uia::pause(HOLD);
+        uia::pause(HOLD, "holding the read for 1 s while the probes run");
         let released = now_us();
         provider.request("release");
         let [second, far] = probes.map(|p| p.join().expect("a probe"));
@@ -285,7 +271,7 @@ fn held(args: &Args, judge: &mut Judge) {
 fn fifo(judge: &mut Judge) {
     let mut orders = Vec::new();
     let mut waited = Vec::new();
-    for _ in 0..3 {
+    for _ in 0..trials() {
         let mut provider = Provider::launch(&["--windows", LAYOUT]);
         let client = client();
         let first = node(&client, &provider, 0, 1);
@@ -295,9 +281,12 @@ fn fifo(judge: &mut Judge) {
         let queued = read_on_thread(first);
         // The offset that orders the two requests: nothing marks a request
         // queued on a busy thread, so the second is sent 200 ms after.
-        uia::pause(Duration::from_millis(200));
+        uia::pause(Duration::from_millis(200), "before the probe");
         let idle = read_on_thread(far);
-        uia::pause(HOLD.saturating_sub(Duration::from_millis(200)));
+        uia::pause(
+            HOLD.saturating_sub(Duration::from_millis(200)),
+            "for the rest of the 1 s hold",
+        );
         let released = now_us();
         provider.request("release");
         let idle = idle.join().expect("the idle thread's read");
@@ -333,7 +322,7 @@ fn fifo(judge: &mut Judge) {
 fn busy_only(judge: &mut Judge) {
     let mut answered = Vec::new();
     let mut times = Vec::new();
-    for _ in 0..3 {
+    for _ in 0..trials() {
         let mut provider = Provider::launch(&["--windows", LAYOUT]);
         let client = client();
         let far = node(&client, &provider, 2, 1);
@@ -360,7 +349,7 @@ fn busy_only(judge: &mut Judge) {
 
 fn pumping(judge: &mut Judge) {
     let mut waited = Vec::new();
-    for _ in 0..3 {
+    for _ in 0..trials() {
         let mut provider = Provider::launch(&["--windows", LAYOUT]);
         let client = client();
         let first = node(&client, &provider, 0, 1);
@@ -371,7 +360,7 @@ fn pumping(judge: &mut Judge) {
             .held(Duration::from_secs(30))
             .expect("the read is held");
         let probe = read_on_thread(far);
-        uia::pause(HOLD);
+        uia::pause(HOLD, "holding the waiting read for 1 s");
         let released = now_us();
         provider.request("release");
         let probe = probe.join().expect("the probe");
@@ -391,7 +380,7 @@ fn nocom(judge: &mut Judge) {
     let mut connection_outcomes = Vec::new();
     let mut connection_times = Vec::new();
     let mut invoke_waits = Vec::new();
-    for _ in 0..3 {
+    for _ in 0..trials() {
         let mut provider = Provider::launch(&["--windows", "uia:0,uia:1", "--threading", "nocom"]);
         let client = client();
         let root = uia::element(&client, provider.hwnd(0)).expect("the window's element");
@@ -405,12 +394,16 @@ fn nocom(judge: &mut Judge) {
         let read = read_on_thread(first).join().expect("the read");
         let fresh = client.clone();
         let hwnd = provider.hwnd(0);
+        note::waiting_ms(2_000, "the new connection's connection timeout");
         let connection = Timed::of(|| uia::element(&fresh, hwnd));
         let invoked = uia::spawn(move || {
             // SAFETY: a live pattern, resolved on this thread.
             Timed::of(|| unsafe { invoke.resolve().expect("the pattern").Invoke() })
         });
-        uia::pause(Duration::from_millis(300));
+        uia::pause(
+            Duration::from_millis(300),
+            "for the Invoke to reach the busy thread",
+        );
         let released = now_us();
         provider.request("release");
         let invoked = invoked.join().expect("the invoke");

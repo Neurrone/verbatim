@@ -32,6 +32,8 @@ impl Role {
     pub fn start(name: &str, args: &[String]) -> Self {
         let exe = std::env::current_exe().expect("this executable's path");
         let mut child = Command::new(exe)
+            .args(crate::uia::settings().flags())
+            .args(crate::note::verbose().then_some("--verbose"))
             .arg("--role")
             .arg(name)
             .args(args)
@@ -43,9 +45,11 @@ impl Role {
         let stdin = child.stdin.take().expect("its standard input");
         let stdout = child.stdout.take().expect("its standard output");
         let (line, lines) = channel();
+        let role = name.to_owned();
         std::thread::spawn(move || {
             for text in BufReader::new(stdout).lines() {
                 let Ok(text) = text else { break };
+                crate::note::evidence(&format!("{role} process: {text}"));
                 if line.send(text).is_err() {
                     break;
                 }

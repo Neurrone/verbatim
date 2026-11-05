@@ -74,6 +74,9 @@ pub fn number(value: f64, decimals: usize) -> String {
 pub fn summary_ms(values: &[f64]) -> String {
     let (low, high) = range(values);
     let decimals = usize::from(high < 10_000.0);
+    if values.len() == 1 {
+        return format!("{} ms (1 trial)", number(values[0], decimals));
+    }
     format!(
         "{} ms ({} trials, {} to {})",
         number(median(values), decimals),

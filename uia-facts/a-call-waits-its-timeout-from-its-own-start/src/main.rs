@@ -1,25 +1,26 @@
 //! A call waits its timeout from its own start
 //! (`uia-facts/a-call-waits-its-timeout-from-its-own-start/readme.md`).
 //!
-//! Every arm runs against the provider program with one UIA window, the
+//! Every case runs against the provider program with one UIA window, the
 //! elements fetched before the provider holds node 1's
 //! `GetPropertyValue`, and the connection timeout at 2,000 ms.
 //!
 //! - `waits`: `CurrentName` of node 1, held, at transaction timeouts of
-//!   2,000, 5,000 and 20,000 ms; 5 trials each.
+//!   2,000, 5,000 and 20,000 ms.
 //! - `single-reads`: E-TT's reads at a 1,000 ms transaction timeout, both
 //!   timeouts 1,000 ms: `CurrentName` and `CurrentHasKeyboardFocus` of node
-//!   1, held; 5 trials each.
+//!   1, held.
 //! - `own-start`: at 2,000 ms, node 1's name read held on one thread, and
-//!   200 ms later node 2's name read on another; 5 trials. Each wait is
+//!   200 ms later node 2's name read on another. Each wait is
 //!   timed from its own call's start, and after the release the provider
 //!   log shows node 2's read served.
-//! - `timer`: the `waits` arm at 2,000 ms with the system timer at 1 ms
-//!   (`timeBeginPeriod(1)`); 5 trials.
+//! - `timer`: the `waits` case at 2,000 ms with the system timer at 1 ms
+//!   (`timeBeginPeriod(1)`).
 
 use std::time::Duration;
 
-use uia_facts_support::args::Args;
+use uia_facts_support::args::{Args, trials};
+use uia_facts_support::note;
 use uia_facts_support::provider::Provider;
 use uia_facts_support::report::{Report, band, band_text, deterministic, in_band, relation, runs};
 use uia_facts_support::stats::summary_ms;
@@ -65,6 +66,10 @@ impl Setup {
         read: impl Fn(&IUIAutomationElement) -> windows::core::Result<()>,
     ) -> Timed {
         self.provider.request("hold GetPropertyValue w=0 n=1");
+        note::waiting_ms(
+            uia::timeouts(&self.client).1,
+            "the held read's transaction timeout",
+        );
         let timed = Timed::of(|| read(&self.first));
         self.provider.request("release");
         self.provider.clear_held();
@@ -77,17 +82,18 @@ fn main() {
     uia::mta();
     let mut report = Report::start("a-call-waits-its-timeout-from-its-own-start");
     if args.wants("waits") {
+        report.case("waits", "holding node 1's name read in the provider at transaction timeouts of 2, 5 and 20 s, then E-TT's name and keyboard-focus reads at 1 s; timing each read until it fails");
         for (timeout, recorded) in [(2_000, "2.2 s"), (5_000, "5.5 s"), (20_000, "22.1 s")] {
             waits(&args, &mut report, timeout, recorded, "");
         }
-    }
-    if args.wants("single-reads") {
         single_reads(&args, &mut report);
     }
     if args.wants("own-start") {
+        report.case("own-start", "holding node 1's read at a 2 s timeout, then starting node 2's read on another thread 200 ms later; timing the second from its own start");
         own_start(&args, &mut report);
     }
     if args.wants("timer") {
+        report.case("timer", "setting the system timer to 1 ms; holding node 1's read at a 2 s timeout and timing it");
         // SAFETY: no precondition; undone below.
         let set = unsafe { timeBeginPeriod(1) };
         assert_eq!(set, 0, "the timer resolution is set");
@@ -110,7 +116,7 @@ fn waits(args: &Args, report: &mut Report, timeout: u32, recorded: &str, conditi
         ("provider", setup.provider.pid),
         ("client", std::process::id()),
     ]);
-    let trials: Vec<Timed> = (0..5)
+    let trials: Vec<Timed> = (0..trials())
         .map(|_| setup.held_read(|e| uia::name(e).map(|_| ())))
         .collect();
     let outcomes: Vec<String> = trials.iter().map(|t| t.outcome.clone()).collect();
@@ -121,7 +127,7 @@ fn waits(args: &Args, report: &mut Report, timeout: u32, recorded: &str, conditi
         TIMEOUT,
         deterministic(&outcomes, &TIMEOUT.to_owned()),
     );
-    // The timer arm's first run (2,201.2 ms, 2,199.3 to 2,207.4, on
+    // The timer case's first run (2,201.2 ms, 2,199.3 to 2,207.4, on
     // 2026-11-05) is its record: the same 1.1 times the timeout, so it is
     // judged by the same band.
     let window = band(&[f64::from(timeout)]);
@@ -148,7 +154,7 @@ fn single_reads(args: &Args, report: &mut Report) {
         }),
     ];
     for (name, read) in reads {
-        let trials: Vec<Timed> = (0..5).map(|_| setup.held_read(read)).collect();
+        let trials: Vec<Timed> = (0..trials()).map(|_| setup.held_read(read)).collect();
         let outcomes: Vec<String> = trials.iter().map(|t| t.outcome.clone()).collect();
         let times: Vec<f64> = trials.iter().map(Timed::ms).collect();
         report.claim(
@@ -157,12 +163,42 @@ fn single_reads(args: &Args, report: &mut Report) {
             TIMEOUT,
             deterministic(&outcomes, &TIMEOUT.to_owned()),
         );
-        report.claim(
-            &format!("E-TT's held {name} fails after one timeout"),
-            &summary_ms(&times),
-            &format!("1,082 to 1,095 ms, {}", band_text(window)),
-            in_band(&times, window),
-        );
+        if uia::settings().recovery {
+            // With connection recovery on, a read made after one into the
+            // same process timed out fails at once; only the first waits.
+            let (first, later) = if name == "CurrentName" {
+                (&times[..1], &times[1..])
+            } else {
+                (&times[..0], &times[..])
+            };
+            if !first.is_empty() {
+                report.claim(
+                    &format!("E-TT's first held {name} fails after one timeout"),
+                    &summary_ms(first),
+                    &format!("1,082 to 1,095 ms, {}", band_text(window)),
+                    in_band(first, window),
+                );
+            }
+            if later.is_empty() {
+                continue;
+            }
+            let at_once: Vec<bool> = later.iter().map(|ms| *ms < 1_000.0).collect();
+            report.claim(
+                &format!(
+                    "with connection recovery on, E-TT's held {name}, made after a read timed out, fails before the timeout"
+                ),
+                &format!("{} ({})", runs(&at_once), summary_ms(later)),
+                "true, 0.1 ms",
+                relation(&at_once),
+            );
+        } else {
+            report.claim(
+                &format!("E-TT's held {name} fails after one timeout"),
+                &summary_ms(&times),
+                &format!("1,082 to 1,095 ms, {}", band_text(window)),
+                in_band(&times, window),
+            );
+        }
     }
 }
 
@@ -175,7 +211,7 @@ fn own_start(args: &Args, report: &mut Report) {
     let mut seconds = Vec::new();
     let mut outcomes = Vec::new();
     let mut served = Vec::new();
-    for _ in 0..5 {
+    for _ in 0..trials() {
         setup.provider.log();
         setup.provider.request("hold GetPropertyValue w=0 n=1");
         let first = uia::share(&setup.first);
@@ -185,7 +221,7 @@ fn own_start(args: &Args, report: &mut Report) {
             .provider
             .held(Duration::from_secs(30))
             .expect("the first read reaches the provider");
-        uia::pause(OFFSET);
+        uia::pause(OFFSET, "the deliberate 200 ms before the second read");
         let b = uia::spawn(move || Timed::of(|| uia::name(&uia::resolve(&second))));
         let a = a.join().expect("the first read returns");
         let b = b.join().expect("the second read returns");

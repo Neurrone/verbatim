@@ -13,55 +13,54 @@
 //! trial's registration is in the process.
 //!
 //! - `ett`: E-TT's registration: both timeouts at 1,000 ms, the provider
-//!   holding `FragmentRoot`. 5 trials.
+//!   holding `FragmentRoot`.
 //! - `connection`: a registration during a stall returns after the
 //!   connection timeout, whatever the transaction timeout: 500 and
-//!   5,000 ms, and the reverse. 5 trials each.
+//!   5,000 ms, and the reverse.
 //! - `e57`: connection timeout 2,000 ms, transaction timeout 5,000 ms; the
 //!   group registered during a stall, the stall released 200 ms after the
 //!   registration returns, and a focus event raised every 50 ms from the
 //!   stall's end to 2,500 ms after it; heard events listened for 2 s
-//!   after the last. 5 trials.
-//! - `e57-no-recovery`: `e57` with connection recovery off. 3 trials.
+//!   after the last.
 //! - `timeouts`: `e57` at connection timeouts of 500, 2,000 and 5,000 ms
 //!   (transaction 5,000 ms) and transaction timeouts of 500 and 20,000 ms
-//!   (connection 2,000 ms). 3 trials each.
+//!   (connection 2,000 ms).
 //! - `edge`: `e57` with events every 10 ms from 1,700 to 1,850 ms after the
-//!   stall's end. 3 trials.
+//!   stall's end.
 //! - `release-later`: the stall released 1,000, 1,700 and 3,000 ms after
 //!   the return, and outlasting it by 4,000 and 10,000 ms at a 500 ms
 //!   connection timeout and 6,000 ms at 2,000 ms; events every 50 ms from
-//!   the stall's end. 3 trials each.
+//!   the stall's end.
 //! - `next-event`: single events at 1,500 or 2,000 ms after the stall's
-//!   end, and the pair at 1,000 and 2,500 ms. 3 trials each.
+//!   end, and the pair at 1,000 and 2,500 ms.
 //! - `second-process`: `e57` registered by a second client process. 3
 //!   trials.
-//! - `control`: `e57` with no stall, events from the return. 3 trials.
+//! - `control`: `e57` with no stall, events from the return.
 //! - `onset`: `e58-silence` with a focus event every 100 ms from the
-//!   stall's end to 3,000 ms after it, and the provider's log. 3 trials.
+//!   stall's end to 3,000 ms after it, and the provider's log.
 //! - `e58-silence`: as `e57` with no event raised, the provider's log read
-//!   6 s after the release. 3 trials.
+//!   6 s after the release.
 //! - `e58-scope`: two provider programs, P and Q. Before the stall of P,
 //!   this process's client object registers group A on P's window and C on
 //!   Q's, and a second client process registers D on P's window. During
 //!   the stall another client object registers B on P's window. Focus
 //!   events are raised on P every 100 ms from the stall's end to 3,000 ms
-//!   after it, and on Q every 100 ms from 50 to 2,950 ms. 3 trials.
+//!   after it, and on Q every 100 ms from 50 to 2,950 ms.
 //! - `e58-remove`: as `e57`, the group removed 500 ms after the release
 //!   (`remove`), 3,000 ms after it (`remove-late`), or with no stall
 //!   (`remove-nostall`); focus events at 1,000 and 4,000 ms after the
-//!   release; the handler's release watched for 15 s. 3 trials each.
+//!   release; the handler's release watched for 15 s.
 //! - `between`: the inferred loss of events raised between a focus change
 //!   and a registration made for the new focus: a name change raised just
 //!   after the focus event, and one raised after the registration returns.
-//!   3 trials.
 
 use std::collections::HashMap;
 use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
 
-use uia_facts_support::args::Args;
+use uia_facts_support::args::{Args, trials};
 use uia_facts_support::events::{self, Handler, Heard, Report as Event};
+use uia_facts_support::note;
 use uia_facts_support::provider::Provider;
 use uia_facts_support::report::{
     Report, Verdict, band, band_text, deterministic, in_band, relation, runs,
@@ -99,49 +98,51 @@ fn main() {
     }
     let mut report = Report::start("a-registration-that-times-out-reports-success");
     if args.wants("ett") {
+        report.case("ett", "holding the provider's FragmentRoot with both timeouts at 1 s; registering a focus handler group and timing the call");
         ett(&mut report);
     }
     if args.wants("connection") {
+        report.case("connection", "stalling the provider's UI thread; registering at a 500 ms connection and 5 s transaction timeout, then the reverse; timing the call");
         connection(&mut report, 500, 5_000, "532 to 551 ms");
         connection(&mut report, 5_000, 500, "5,453 to 5,541 ms");
     }
     if args.wants("e57") {
+        report.case("e57", "registering a focus handler while the provider's UI thread is stalled; releasing 200 ms after the call returns; raising a focus event every 50 ms; then the same at other timeouts, at 10 ms steps near the gap's end, and with no stall");
         e57(&mut report);
-    }
-    if args.wants("e57-no-recovery") {
-        e57_no_recovery(&mut report);
-    }
-    if args.wants("timeouts") {
         timeouts(&mut report);
-    }
-    if args.wants("edge") {
         edge(&mut report);
+        control(&mut report);
     }
     if args.wants("release-later") {
+        report.case("release-later", "registering during a stall; releasing it 1 to 3 s after the call returns, or letting it outlast the gap; raising focus events after it");
         release_later(&mut report);
     }
     if args.wants("next-event") {
+        report.case("next-event", "registering during a stall; raising one focus event 1.5 or 2 s after the stall's end, or a pair at 1 and 2.5 s");
         next_event(&mut report);
     }
     if args.wants("second-process") {
+        report.case("second-process", "registering from a second client process during a stall; raising a focus event every 50 ms after the stall's end");
         second_process(&mut report);
     }
-    if args.wants("control") {
-        control(&mut report);
-    }
     if args.wants("onset") {
+        report.case("onset", "registering during a stall; raising a focus event every 100 ms for 3 s; reading the provider's log for work after each event");
         onset(&mut report);
     }
     if args.wants("e58-silence") {
+        report.case("e58-silence", "registering during a stall and raising no event; watching the provider's log for 6 s after the release");
         e58_silence(&mut report);
     }
     if args.wants("e58-scope") {
+        report.case("e58-scope", "registering groups on two providers, from two client objects and from a second process; stalling one provider; raising events on both");
         e58_scope(&mut report);
     }
     if args.wants("e58-remove") {
+        report.case("e58-remove", "registering during a stall; removing the group 500 ms or 3 s after the release, or with no stall; raising events at 1 and 4 s");
         e58_remove(&mut report);
     }
     if args.wants("between") {
+        report.case("between", "raising a focus event and a name change at once; registering for name changes on hearing the focus; raising a second name change");
         between(&mut report);
     }
     report.finish();
@@ -149,9 +150,28 @@ fn main() {
 
 /// Runs one trial in a client process of its own, as e57 and e58 ran each
 /// trial in a test process of its own, so no registration of another trial
-/// or arm is in the process; answers the trial's result words.
-fn in_own_process(arm: &str, params: &[&str]) -> Vec<String> {
-    let mut words = vec![arm.to_owned()];
+/// or case is in the process; answers the trial's result words.
+/// Whether the client objects have connection recovery on (`--recovery`):
+/// the gap after a timed-out registration comes from it, so each gap claim
+/// is judged against the record for the setting in use, and with recovery
+/// off no event is lost.
+fn recovery() -> bool {
+    uia::settings().recovery
+}
+
+/// The (last event lost, first heard) offsets after the stall's end of a
+/// registration released 200 ms after it returned: the gap's edge with
+/// connection recovery on, every event heard from the stall's end without.
+fn gap_edge() -> (Option<u64>, Option<u64>) {
+    if recovery() {
+        (Some(1_750), Some(1_800))
+    } else {
+        (None, Some(0))
+    }
+}
+
+fn in_own_process(case: &str, params: &[&str]) -> Vec<String> {
+    let mut words = vec![case.to_owned()];
     words.extend(params.iter().map(|p| (*p).to_owned()));
     let child = Role::start("trial", &words);
     let line = child
@@ -172,7 +192,7 @@ fn trial(rest: &[String]) -> ! {
             u32::try_from(number(1)).expect("a timeout"),
             u32::try_from(number(2)).expect("a timeout"),
         ),
-        "e57" => trial_e57(rest[1] == "recovery"),
+        "e57" => trial_e57(),
         "e58-silence" => trial_silence(),
         "e58-scope" => trial_scope(),
         "removal" => {
@@ -232,29 +252,14 @@ fn listen(hwnd: isize) -> ! {
     exit_now(0)
 }
 
-/// A provider program, a client with the timeouts set, and its window's
-/// element fetched before any stall.
+/// A provider program, a client with the settings in use and the
+/// timeouts set, and its window's element fetched before any stall.
 fn setup(
     connection_ms: u32,
     transaction_ms: u32,
 ) -> (Provider, IUIAutomation6, IUIAutomationElement) {
-    setup_with(connection_ms, transaction_ms, true)
-}
-
-/// As [`setup`], with connection recovery on or off.
-fn setup_with(
-    connection_ms: u32,
-    transaction_ms: u32,
-    recovery: bool,
-) -> (Provider, IUIAutomation6, IUIAutomationElement) {
     let provider = Provider::launch(&["--windows", "uia:0"]);
     let client = uia::client();
-    // Made as verbatim_uia's create_client makes Verbatim's client and
-    // e57's: event coalescing and connection recovery on. The gap comes
-    // from connection recovery: without it, as e57-no-recovery shows,
-    // every event is heard from the stall's end.
-    uia::set_coalescing(&client, true);
-    uia::set_recovery(&client, recovery);
     uia::set_timeouts(&client, connection_ms, transaction_ms);
     let element = uia::element(&client, provider.hwnd(0)).expect("the window's element");
     (provider, client, element)
@@ -276,7 +281,10 @@ fn raise_at(
     let mut raised = Vec::new();
     for (i, offset) in offsets_ms.iter().enumerate() {
         let due = from + Duration::from_millis(*offset);
-        uia::pause(due.saturating_duration_since(Instant::now()));
+        uia::pause(
+            due.saturating_duration_since(Instant::now()),
+            "until the next event is due",
+        );
         let node = NODES[(first + i) % NODES.len()];
         let name = format!("{prefix}{i}");
         provider.request(&format!("rename {window} {node} {name}"));
@@ -319,8 +327,15 @@ fn register_stalled(
     group: &IUIAutomationEventHandlerGroup,
 ) -> Stalled {
     provider.request("busy 0");
+    note::waiting_ms(
+        uia::timeouts(client).0,
+        "the registration's connection timeout",
+    );
     let registration = Timed::of(|| events::add_group(client, element, group));
-    uia::pause(RELEASE_AFTER);
+    uia::pause(
+        RELEASE_AFTER,
+        "until the stall is released, 200 ms after the registration returned",
+    );
     let released_us = now_us();
     provider.request("release");
     Stalled {
@@ -335,6 +350,10 @@ fn trial_ett() -> Vec<String> {
     let (handler, _reports) = Handler::make();
     let group = events::focus_group(&client, &handler).expect("a group");
     provider.request("hold FragmentRoot");
+    note::waiting_ms(
+        uia::timeouts(&client).0,
+        "the registration's connection timeout",
+    );
     let registration = Timed::of(|| events::add_group(&client, &element, &group));
     provider.request("release");
     vec![registration.outcome.clone(), registration.ms().to_string()]
@@ -343,7 +362,7 @@ fn trial_ett() -> Vec<String> {
 fn ett(report: &mut Report) {
     let mut times = Vec::new();
     let mut outcomes = Vec::new();
-    for _ in 0..5 {
+    for _ in 0..trials() {
         let words = in_own_process("ett", &[]);
         outcomes.push(words[0].clone());
         times.push(words[1].parse().expect("a time"));
@@ -377,7 +396,7 @@ fn trial_connection(connection_ms: u32, transaction_ms: u32) -> Vec<String> {
 fn connection(report: &mut Report, connection_ms: u32, transaction_ms: u32, recorded: &str) {
     let mut times = Vec::new();
     let mut outcomes = Vec::new();
-    for _ in 0..5 {
+    for _ in 0..trials() {
         let words = in_own_process(
             "connection",
             &[&connection_ms.to_string(), &transaction_ms.to_string()],
@@ -407,14 +426,14 @@ fn connection(report: &mut Report, connection_ms: u32, transaction_ms: u32, reco
 /// up to 1,500 ms was lost, every one from 2,300 ms heard, every heard one
 /// prompt, and none lost after the first heard; and the last lost and first
 /// heard event's raise after the return, in ms, or `none`.
-fn trial_e57(recovery: bool) -> Vec<String> {
+fn trial_e57() -> Vec<String> {
     let offsets: Vec<u64> = (0..=50).map(|i| i * 50).collect();
-    let (mut provider, client, element) = setup_with(2_000, 5_000, recovery);
+    let (mut provider, client, element) = setup(2_000, 5_000);
     let (handler, reports) = Handler::make();
     let group = events::focus_group(&client, &handler).expect("a group");
     let stalled = register_stalled(&mut provider, &client, &element, &group);
     let raised = raise_at(&mut provider, 0, "ev", stalled.released, &offsets, 0);
-    uia::pause(LISTEN);
+    uia::pause(LISTEN, "listening for 2 s after the last event");
     let (heard, _) = events::drain(&reports);
     let delays = delays(&raised, &heard);
     let at = |i: usize| offsets[i];
@@ -446,29 +465,6 @@ fn trial_e57(recovery: bool) -> Vec<String> {
     ]
 }
 
-/// e57's trial with connection recovery off: the cause of the gap.
-fn e57_no_recovery(report: &mut Report) {
-    let mut all_heard = Vec::new();
-    let mut first = Vec::new();
-    for _ in 0..3 {
-        let words = in_own_process("e57", &["no-recovery"]);
-        all_heard.push(flag(&words[8]));
-        first.push(format!("{} ms", words[7]));
-    }
-    report.claim(
-        "with connection recovery off, every event raised from the stall's end is heard",
-        &runs(&all_heard),
-        "true",
-        relation(&all_heard),
-    );
-    report.claim(
-        "with connection recovery off, the first event heard, raised this long after the return",
-        &first.join("; "),
-        "201 ms, the stall's end",
-        Verdict::Trend,
-    );
-}
-
 fn e57(report: &mut Report) {
     let mut outcomes = Vec::new();
     let mut times = Vec::new();
@@ -476,9 +472,11 @@ fn e57(report: &mut Report) {
     let mut late_heard = Vec::new();
     let mut prompt = Vec::new();
     let mut no_loss_after = Vec::new();
+    let mut all_heard = Vec::new();
     let mut edges = Vec::new();
-    for _ in 0..5 {
-        let words = in_own_process("e57", &["recovery"]);
+    for _ in 0..trials() {
+        let words = in_own_process("e57", &[]);
+        all_heard.push(flag(&words[8]));
         outcomes.push(words[0].clone());
         times.push(words[1].parse().expect("a time"));
         early_lost.push(flag(&words[2]));
@@ -503,12 +501,21 @@ fn e57(report: &mut Report) {
         &format!("2,190 to 2,226 ms, {}", band_text(window)),
         in_band(&times, window),
     );
-    report.claim(
-        "every event raised up to 1,500 ms after the stall's end is lost",
-        &runs(&early_lost),
-        "true (lost up to 1,750 ms)",
-        relation(&early_lost),
-    );
+    if recovery() {
+        report.claim(
+            "every event raised up to 1,500 ms after the stall's end is lost",
+            &runs(&early_lost),
+            "true (lost up to 1,750 ms)",
+            relation(&early_lost),
+        );
+    } else {
+        report.claim(
+            "with connection recovery off, every event raised from the stall's end is heard",
+            &runs(&all_heard),
+            "true",
+            relation(&all_heard),
+        );
+    }
     report.claim(
         "every event raised from 2,300 ms after the stall's end is heard",
         &runs(&late_heard),
@@ -546,7 +553,10 @@ fn trial_silence() -> Vec<String> {
     let stalled = register_stalled(&mut provider, &client, &element, &group);
     // The silence is the claim: six seconds with nothing reaching the
     // provider, as e58 watched.
-    uia::pause(Duration::from_secs(6));
+    uia::pause(
+        Duration::from_secs(6),
+        "watching the provider log for 6 s of silence after the release",
+    );
     let log = provider.log();
     let backlog_end = stalled.released_us + 20_000;
     let adds: Vec<String> = log
@@ -571,7 +581,7 @@ fn trial_silence() -> Vec<String> {
 fn e58_silence(report: &mut Report) {
     let mut advised = Vec::new();
     let mut silent: Vec<usize> = Vec::new();
-    for _ in 0..3 {
+    for _ in 0..trials() {
         let words = in_own_process("e58-silence", &[]);
         advised.push(
             words[0]
@@ -600,18 +610,32 @@ fn e58_scope(report: &mut Report) {
     let mut same_loss = Vec::new();
     let mut other_window: Vec<usize> = Vec::new();
     let mut other_process: Vec<usize> = Vec::new();
-    for _ in 0..3 {
+    let mut a_and_b: Vec<(usize, usize)> = Vec::new();
+    for _ in 0..trials() {
         let words = in_own_process("e58-scope", &[]);
         same_loss.push(flag(&words[0]));
+        a_and_b.push((
+            words[3].parse::<usize>().expect("a count"),
+            words[4].parse::<usize>().expect("a count"),
+        ));
         other_window.push(words[1].parse().expect("a count"));
         other_process.push(words[2].parse().expect("a count"));
     }
-    report.claim(
-        "A, registered before the stall on another client object, loses the same events as B",
-        &runs(&same_loss),
-        "true",
-        relation(&same_loss),
-    );
+    if recovery() {
+        report.claim(
+            "A, registered before the stall on another client object, loses the same events as B",
+            &runs(&same_loss),
+            "true",
+            relation(&same_loss),
+        );
+    } else {
+        report.claim(
+            "with connection recovery off, the events A and B lose",
+            &runs(&a_and_b),
+            "(0, 0)",
+            deterministic(&a_and_b, &(0, 0)),
+        );
+    }
     report.claim(
         "C, on another process's window, loses no event",
         &runs(&other_window),
@@ -659,7 +683,10 @@ fn trial_scope() -> Vec<String> {
         // after, as in e57.
         let (b_ok, b_reports) = b_registered.recv().expect("B registers");
         assert!(b_ok, "B reports success");
-        uia::pause(RELEASE_AFTER);
+        uia::pause(
+            RELEASE_AFTER,
+            "until the stall is released, 200 ms after the registration returned",
+        );
         p_app.request("release");
         let released = Instant::now();
         let p_offsets: Vec<u64> = (0..=30).map(|i| i * 100).collect();
@@ -686,7 +713,7 @@ fn trial_scope() -> Vec<String> {
                 ));
             }
         }
-        uia::pause(LISTEN);
+        uia::pause(LISTEN, "listening for 2 s after the last event");
         let a_lost = lost(&p_raised, &events::drain(&a_reports).0);
         let b_lost = lost(&p_raised, &events::drain(&b_reports).0);
         let c_lost = lost(&q_raised, &events::drain(&c_reports).0);
@@ -708,6 +735,8 @@ fn trial_scope() -> Vec<String> {
             (!a_lost.is_empty() && a_lost == b_lost).to_string(),
             c_lost.len().to_string(),
             d_lost.len().to_string(),
+            a_lost.len().to_string(),
+            b_lost.len().to_string(),
         ]
     }
 }
@@ -758,7 +787,10 @@ fn removal(stall: bool, remove_after: Duration) -> Removal {
                 raised.len(),
             ));
         } else {
-            uia::pause((released + at).saturating_duration_since(Instant::now()));
+            uia::pause(
+                (released + at).saturating_duration_since(Instant::now()),
+                "until the next event is due",
+            );
             removed = Some(Timed::of(|| {
                 events::remove_group(&client, &element, &group)
             }));
@@ -812,7 +844,14 @@ fn e58_remove(report: &mut Report) {
         ),
     ];
     for (name, stall, after, recorded) in cases {
-        let trials: Vec<Removal> = (0..3)
+        // With connection recovery off there is no gap: the removal
+        // succeeds and the events before it are heard.
+        let recorded = match (recovery(), name) {
+            (false, "remove") => ("ok".to_owned(), true, false, false),
+            (false, "remove-late") => ("ok".to_owned(), true, true, false),
+            _ => recorded,
+        };
+        let trials: Vec<Removal> = (0..trials())
             .map(|_| {
                 let words = in_own_process(
                     "removal",
@@ -837,7 +876,7 @@ fn e58_remove(report: &mut Report) {
 
 fn between(report: &mut Report) {
     let mut results = Vec::new();
-    for _ in 0..3 {
+    for _ in 0..trials() {
         let words = in_own_process("between", &[]);
         results.push((
             flag(&words[0]),
@@ -885,7 +924,7 @@ fn trial_between() -> Vec<String> {
         };
         provider.request(&format!("rename 0 {NODE} after"));
         provider.request(&format!("raise name 0 {NODE}"));
-        uia::pause(LISTEN);
+        uia::pause(LISTEN, "listening for 2 s after the last event");
         let heard = events::drain(&reports).0;
         let names: Vec<String> = heard.iter().map(|h| h.name.clone()).collect();
         vec![
@@ -897,8 +936,8 @@ fn trial_between() -> Vec<String> {
     }
 }
 
-/// e57's registering client in a second process: makes a client as
-/// Verbatim's is with the timeouts given, fetches the window's element,
+/// e57's registering client in a second process: makes a client with
+/// the combination it was started with and the timeouts given, fetches the window's element,
 /// says `ready`; on `go` registers the focus group and says
 /// `registered <outcome> <start> <end>`, then `heard <name> <time>` for each
 /// event, until its standard input closes.
@@ -907,8 +946,6 @@ fn registrar(rest: &[String]) -> ! {
     let connection: u32 = rest[1].parse().expect("a timeout");
     let transaction: u32 = rest[2].parse().expect("a timeout");
     let client = uia::client();
-    uia::set_coalescing(&client, true);
-    uia::set_recovery(&client, true);
     uia::set_timeouts(&client, connection, transaction);
     let element = uia::element(&client, hwnd).expect("the window's element");
     role::report("ready");
@@ -916,6 +953,10 @@ fn registrar(rest: &[String]) -> ! {
     let _ = commands.next();
     let (handler, reports) = Handler::make();
     let group = events::focus_group(&client, &handler).expect("a group");
+    note::waiting_ms(
+        uia::timeouts(&client).0,
+        "the registration's connection timeout",
+    );
     let registration = Timed::of(|| events::add_group(&client, &element, &group));
     std::thread::spawn(move || {
         for report in reports {
@@ -964,6 +1005,7 @@ fn trial_gap(
     });
     if stall {
         provider.request("busy 0");
+        note::waiting_ms(connection, "the registration's connection timeout");
     }
     let (outcome, returned) = if let Some(role) = registrar.as_mut() {
         role.send("go");
@@ -981,12 +1023,15 @@ fn trial_gap(
         )
     };
     if stall {
-        uia::pause(Duration::from_millis(release_after));
+        uia::pause(
+            Duration::from_millis(release_after),
+            "until the stall is released",
+        );
         provider.request("release");
     }
     let from = Instant::now();
     let raised = raise_at(&mut provider, 0, "ev", from, offsets, 0);
-    uia::pause(LISTEN);
+    uia::pause(LISTEN, "listening for 2 s after the last event");
     let heard: Vec<Heard> = match &registrar {
         Some(role) => {
             let mut heard = Vec::new();
@@ -1108,7 +1153,7 @@ fn timeouts(report: &mut Report) {
         (2_000, 20_000),
     ] {
         let trials = gaps(
-            3,
+            trials(),
             &[
                 &connection.to_string(),
                 &transaction.to_string(),
@@ -1122,8 +1167,8 @@ fn timeouts(report: &mut Report) {
         report.claim(
             &format!("at connection {connection} ms and transaction {transaction} ms: (the last event lost, the first heard), ms after the stall's end"),
             &runs(&edges),
-            "(Some(1750), Some(1800))",
-            deterministic(&edges, &(Some(1_750), Some(1_800))),
+            &format!("{:?}", gap_edge()),
+            deterministic(&edges, &gap_edge()),
         );
     }
 }
@@ -1133,7 +1178,10 @@ fn edge(report: &mut Report) {
         .map(|i| (i * 10).to_string())
         .collect::<Vec<_>>()
         .join(",");
-    let trials = gaps(3, &["2000", "5000", "stall", "200", "local", &offsets]);
+    let trials = gaps(
+        trials(),
+        &["2000", "5000", "stall", "200", "local", &offsets],
+    );
     let mut within = Vec::new();
     let mut rows = Vec::new();
     for gap in &trials {
@@ -1152,12 +1200,25 @@ fn edge(report: &mut Report) {
             _ => false,
         });
     }
-    report.claim(
-        "in 10 ms steps, the gap's end lies between the last event lost and the first heard",
-        &rows.join("; "),
-        "1,981 to 2,001 ms after the return",
-        relation(&within),
-    );
+    if recovery() {
+        report.claim(
+            "in 10 ms steps, the gap's end lies between the last event lost and the first heard",
+            &rows.join("; "),
+            "1,981 to 2,001 ms after the return",
+            relation(&within),
+        );
+    } else {
+        let all_heard: Vec<bool> = trials
+            .iter()
+            .map(|g| g.events.iter().all(|e| e.delay.is_some()))
+            .collect();
+        report.claim(
+            "with connection recovery off, every event of the 10 ms steps is heard",
+            &runs(&all_heard),
+            "true",
+            relation(&all_heard),
+        );
+    }
 }
 
 fn release_later(report: &mut Report) {
@@ -1170,8 +1231,13 @@ fn release_later(report: &mut Report) {
         (500, 10_000, (None, Some(0))),
         (2_000, 6_000, (None, Some(0))),
     ] {
+        let recorded = if recovery() {
+            recorded
+        } else {
+            (None, Some(0))
+        };
         let trials = gaps(
-            3,
+            trials(),
             &[
                 &connection.to_string(),
                 "5000",
@@ -1197,7 +1263,15 @@ fn next_event(report: &mut Report) {
         ("2000", vec![true]),
         ("1000,2500", vec![false, true]),
     ] {
-        let trials = gaps(3, &["2000", "5000", "stall", "200", "local", offsets]);
+        let recorded = if recovery() {
+            recorded
+        } else {
+            vec![true; recorded.len()]
+        };
+        let trials = gaps(
+            trials(),
+            &["2000", "5000", "stall", "200", "local", offsets],
+        );
         let heard: Vec<Vec<bool>> = trials
             .iter()
             .map(|g| g.events.iter().map(|e| e.delay.is_some()).collect())
@@ -1213,7 +1287,10 @@ fn next_event(report: &mut Report) {
 
 fn second_process(report: &mut Report) {
     let offsets = gap_offsets(50, 2_500);
-    let trials = gaps(3, &["2000", "5000", "stall", "200", "remote", &offsets]);
+    let trials = gaps(
+        trials(),
+        &["2000", "5000", "stall", "200", "remote", &offsets],
+    );
     let edges: Vec<(Option<u64>, Option<u64>)> = trials.iter().map(Gap::edge).collect();
     let outcomes: Vec<String> = trials.iter().map(|g| g.outcome.clone()).collect();
     let clean: Vec<bool> = trials.iter().map(Gap::clean).collect();
@@ -1226,8 +1303,8 @@ fn second_process(report: &mut Report) {
     report.claim(
         "registered from a second client process: (the last event lost, the first heard), ms after the stall's end",
         &runs(&edges),
-        "(Some(1750), Some(1800))",
-        deterministic(&edges, &(Some(1_750), Some(1_800))),
+        &format!("{:?}", gap_edge()),
+        deterministic(&edges, &gap_edge()),
     );
     report.claim(
         "registered from a second client process: lost, not late",
@@ -1239,7 +1316,10 @@ fn second_process(report: &mut Report) {
 
 fn control(report: &mut Report) {
     let offsets = gap_offsets(50, 2_500);
-    let trials = gaps(3, &["2000", "5000", "nostall", "0", "local", &offsets]);
+    let trials = gaps(
+        trials(),
+        &["2000", "5000", "nostall", "0", "local", &offsets],
+    );
     let all_heard: Vec<bool> = trials
         .iter()
         .map(|g| g.events.iter().all(|e| e.delay.is_some_and(|d| d < 100.0)))
@@ -1276,7 +1356,7 @@ fn trial_onset() -> Vec<String> {
     provider.log();
     let stalled = register_stalled(&mut provider, &client, &element, &group);
     let raised = raise_at(&mut provider, 0, "ev", stalled.released, &offsets, 0);
-    uia::pause(LISTEN);
+    uia::pause(LISTEN, "listening for 2 s after the last event");
     let log = provider.log();
     let (heard, _) = events::drain(&reports);
     let delays = delays(&raised, &heard);
@@ -1318,24 +1398,33 @@ fn onset(report: &mut Report) {
     let mut edges = Vec::new();
     let mut followed = Vec::new();
     let mut counts = Vec::new();
-    for _ in 0..3 {
+    for _ in 0..trials() {
         let words = in_own_process("onset", &[]);
         edges.push((words[0].clone(), words[1].clone()));
         followed.push(flag(&words[2]));
         counts.push(format!("{} entries, {} WM_GETOBJECT", words[3], words[4]));
     }
+    let recorded = if recovery() {
+        ("1700".to_owned(), "1800".to_owned())
+    } else {
+        ("none".to_owned(), "0".to_owned())
+    };
     report.claim(
         "onset: (the last event lost, the first heard), ms after the stall's end",
         &runs(&edges),
-        "(\"1700\", \"1800\")",
-        deterministic(&edges, &("1700".to_owned(), "1800".to_owned())),
+        &format!("{recorded:?}"),
+        deterministic(&edges, &recorded),
     );
-    report.claim(
-        "onset: every event raised in the gap is followed by provider work before the next",
-        &runs(&followed),
-        "true",
-        relation(&followed),
-    );
+    // With connection recovery off no event is lost, so there is no gap
+    // whose events could be followed.
+    if recovery() {
+        report.claim(
+            "onset: every event raised in the gap is followed by provider work before the next",
+            &runs(&followed),
+            "true",
+            relation(&followed),
+        );
+    }
     report.claim(
         "onset: what reached the provider between the backlog and the first delivery",
         &counts.join("; "),

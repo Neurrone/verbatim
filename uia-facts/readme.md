@@ -14,9 +14,11 @@ They are run by hand on Dickson's machine, before and after a Windows update, to
 
 Then run a fact's program from `target/debug`, for example `target\debug\nothing-cancels-a-uia-call.exe`. Every program takes:
 
-- `--arm <name>`, repeatable: run only the named arms, which its folder lists.
-- `--trials <n>`: the trials of a rate, in place of the recorded number.
-- `--pause`: before each arm's calls, print each process id and wait for Enter, so a debugger can attach (the debugger guides use it).
+- `--case <name>`, repeatable: run only the named cases, which its folder lists.
+- `--trials <n>`: run each claim n times, its verdict then needing all n to agree; each claim runs once by default, and a rate keeps its recorded n.
+- `--pause`: before each case's calls, print each process id and wait for Enter, so a debugger can attach (the debugger guides use it).
+- `--verbose`: print each traced UIA call with its time and result, the provider program's call and message log, and each trial's figures, as they happen.
+- `--recovery` and `--coalescing`: turn the client objects' connection recovery and event coalescing on (`IUIAutomation6`). Both are off by default; Verbatim's own client has both on. Support's `uia::client()` applies them to every client object, and a second client process started through a role is given the same flags. Each folder says whether they change its outcomes, checked once by running every client case by default, with each flag alone and with both; where they do, its README gives the outcome of each combination that changes it and the command for each.
 
 The workflow builds and lints on x64 and ARM64 and runs no fact program, because each one judges the machine it runs on.
 
@@ -34,12 +36,12 @@ A figure measured on mockapp whose value depends on the provider's tree, such as
 
 ## Output and verdicts
 
-Each program prints a header (the date, the Windows build with its revision, `UIAutomationCore.dll`'s version, the processor and the commit), then one line per claim with what it observed, the record, and a verdict. It exits with 0 when every judged claim passes, 1 when any differs, and 2 when none differs but some are inconclusive.
+Each program prints a header (the date, the Windows build with its revision, `UIAutomationCore.dll`'s version, the processor, the commit and the client settings), then one line per claim with what it observed, the record, and a verdict. Before each case it prints one line saying in plain words what the case sets up and does, and before each deliberate wait of a second or more, a pause or a call left to wait on a timeout, a line naming it (`waiting: ...`). Under a claim whose verdict is differ or inconclusive it prints the evidence the case kept (`evidence: ...`): each timed call's outcome and time, the lines a second client process reported, such as a trial's events lost and heard with their times, and the figures the case records; a clean run prints none. It exits with 0 when every judged claim passes, 1 when any differs, and 2 when none differs but some are inconclusive.
 
-- A deterministic outcome (an HRESULT, a count of provider calls, delivered or not, an order) passes when every run equals the record, differs when the runs agree on another value, and is inconclusive when they disagree. It runs 3 times unless its folder says otherwise.
+- A deterministic outcome (an HRESULT, a count of provider calls, delivered or not, an order) passes when every run equals the record, differs when the runs agree on another value, and is inconclusive when they disagree.
 - A relation (A answers while B waits, B waits behind A, a speed-up below a bound computed in the same run) passes when it holds in every run, differs when it holds in none, and is inconclusive otherwise. The durations around it are printed for trends, not judged, since they depend on the machine.
-- A band, only where the figure is a timeout UIA sets: from the timeout T to 1.15 times T plus 50 ms for one wait, and the sum of those for waits in turn. It passes when all 5 trials lie inside, differs when the median lies outside, and is inconclusive otherwise.
-- A rate (k of n against a recorded k of n) passes when the recorded rate lies inside the observed 95 percent Wilson interval, differs when the two intervals do not overlap, and is inconclusive otherwise; with no occurrence it differs only when the recorded rate would almost surely have shown one.
+- A band, only where the figure is a timeout UIA sets: from the timeout T to 1.15 times T plus 50 ms for one wait, and the sum of those for waits in turn. It passes when every trial lies inside, differs when every one lies outside, and is inconclusive otherwise.
+- A rate (k of n against a recorded k of n) runs its recorded n, and passes when the recorded rate lies inside the observed 95 percent Wilson interval, differs when the two intervals do not overlap, and is inconclusive otherwise; with no occurrence it differs only when the recorded rate would almost surely have shown one.
 - An open question prints its answer as new; its folder records the first run's answer.
 - A missing precondition, such as a locked desktop, makes its claims inconclusive with the reason; nothing takes another path.
 

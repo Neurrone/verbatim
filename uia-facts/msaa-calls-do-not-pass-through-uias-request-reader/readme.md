@@ -10,13 +10,17 @@ The hung-window workaround's claim that MSAA keeps working, and the outposts' MS
 
 ## Method
 
-- `stuck`: the provider program without `UseComThreading` and with `--bridge`: window 0 a UIA window, window 1 one with its own `IAccessible`, window 2 a plain window, all on UI thread 0, and window 3 a UIA window on UI thread 1. Window 0's node 1 read is held, on UIA's I/O thread, for 1,000 ms (a deliberate length). Meanwhile `accName` on each window's `OBJID_CLIENT` object, got before the hold: UIA's MSAA bridge (window 0), the window's own `IAccessible` (window 1), oleacc's window proxy (window 2); and a UIA read into window 3. 3 trials.
-- `messages`: oleacc's `accName` on a plain window, the window's messages counted by the provider's log. 3 runs.
+- `stuck`: the provider program without `UseComThreading` and with `--bridge`: window 0 a UIA window, window 1 one with its own `IAccessible`, window 2 a plain window, all on UI thread 0, and window 3 a UIA window on UI thread 1. Window 0's node 1 read is held, on UIA's I/O thread, for 1,000 ms (a deliberate length). Meanwhile `accName` on each window's `OBJID_CLIENT` object, got before the hold: UIA's MSAA bridge (window 0), the window's own `IAccessible` (window 1), oleacc's window proxy (window 2); and a UIA read into window 3.
+- `messages`: oleacc's `accName` on a plain window, the window's messages counted by the provider's log.
 - `busy-sweep`: oleacc's `accName` on a plain window while its UI thread is busy for 1, 5, 15 and 60 s. One run each.
-- `sent-rate`: 20,000 `WM_GETTEXT`s sent by 1, 4 and 8 threads of this process, each thread to a plain window on a UI thread of its own. 3 runs.
-- `processes`: the 8-thread case as 8 threads of one process and as two processes of 4 threads. 3 runs.
+- `sent-rate`: 20,000 `WM_GETTEXT`s sent by 1, 4 and 8 threads of this process, each thread to a plain window on a UI thread of its own.
+- `processes`: the 8-thread case as 8 threads of one process and as two processes of 4 threads.
 
 Judged: whether each MSAA call answered before the release and the UIA read after it (relations); the message counts (deterministic); whether more threads send fewer messages a second than one (a relation). The times and rates are printed for trends; the sweep and the processes are new.
+
+## Client settings
+
+Neither connection recovery nor event coalescing changes the `stuck` case's outcomes (checked on 2026-11-05 by running every case by default and once each with `--recovery`, `--coalescing` and both). The other cases make no UIA client object, only oleacc's calls and window messages, so the flags reach nothing in them and they ran once.
 
 ## Recorded results
 
@@ -35,7 +39,7 @@ The `stuck` times are lower than the original's; they are printed for trends onl
 
 ## How to rerun
 
-`uia-facts/build.ps1`, then `target\debug\msaa-calls-do-not-pass-through-uias-request-reader.exe`, or one arm with `--arm`. No desktop, application or debugger. About 2 minutes, most of it the 60 s sweep.
+`uia-facts/build.ps1`, then `target\debug\msaa-calls-do-not-pass-through-uias-request-reader.exe`, or one case with `--case`. No desktop, application or debugger.
 
 ## Evidence kept
 

@@ -4,7 +4,7 @@
 
 Some calls make no request to the application (`books/dev/src/explanation/windows/uia.md`, "Making a connection"): `Cached*` reads; `GetRuntimeId` after the first read of an element, and on an event's sender inside its callback; `CompareElements` of elements whose runtime ids UIA has read, with one application stalled; the parent of a top-level element, the desktop; and the parts of a window that UIA's own proxies build, such as its title bar. `GetFocusedElement` does not go to an application of the client's choosing: its requests go to the process with the focus.
 
-UI Automation's copy of an element's runtime id lapses (`books/dev/src/reference/uia-bugs.md`, the fault of that name): a call that needs it after a pause fetches it from the provider again, so a cold registration costs what a warm one does plus a lapsed `GetRuntimeId` read (9 provider calls against 3 on mockapp's `First`), and a move of a registration to the element it already follows, free when warm, makes provider calls when the copy has lapsed. The lapse is not a fixed lifetime: pauses of 1,000 and 3,000 ms are always cold, and shorter pauses come out warm or cold from run to run, which fits a periodic sweep. The copy is kept per element. Reading the runtime id just before the call keeps it warm: 256 of 256 registrations and 50 of 50 moves over pauses of 0 to 3,000 ms. No provider call comes after a registration, a removal or a read returns, except `AdviseEventRemoved`, which comes after the removal returns. A search re-reads its start's runtime id when the start was fetched 600 ms or more before, and not at 300 ms.
+UI Automation's copy of an element's runtime id lapses (`books/dev/src/reference/uia-bugs.md`, the fault of that name): a call that needs it after a pause fetches it from the provider again, so a cold registration costs what a warm one does plus a lapsed `GetRuntimeId` read (9 provider calls against 3 on mockapp's `First`), and a move of a registration to the element it already follows, free when warm, makes provider calls when the copy has lapsed. A `GetRuntimeId` read with no pause makes no provider call, and one after a pause of 1 second makes provider calls. The copy is kept per element. Reading the runtime id just before the call keeps it warm: registrations and moves after pauses of 0, 0.5, 1 and 1.5 seconds cost the warm calls. No provider call comes after a registration, a removal or a read returns, except `AdviseEventRemoved`, which comes after the removal returns. A search re-reads its start's runtime id when the start was fetched 600 ms or more before, and not at 300 ms.
 
 ## What Verbatim relies on
 
@@ -16,13 +16,17 @@ The kept CI test `uia_event_registrations_cost_exactly` (`crates/mockapp/tests/c
 
 Every count is of the provider program's own calls (its log's `call` entries) that start between a call's start and its return, against one UIA window (`WS_OVERLAPPEDWINDOW`, so UIA's proxies build its title bar); the client process's timeouts are 2,000 and 5,000 ms.
 
-- `no-call`, 3 runs each: a `CachedName` read after `BuildUpdatedCache`; a second `GetRuntimeId`; `GetRuntimeId` of a name-change event's sender inside the callback; `CompareElements` of node 1 of two provider programs, both runtime ids read, one program's UI thread busy; the raw view parent of the window's element; the names of the window's title bar and its parts.
-- `focus-elsewhere`: `GetFocusedElement` with another process in front. 3 runs.
-- `focus-here`: `GetFocusedElement` with the provider's window brought to the foreground. Needs the unlocked desktop. 3 runs.
-- `lapse`: node 1 through Verbatim's own `Registration` (`verbatim_uia::Registration` with the focus-following property part, as the CI test makes it), the pauses deliberate since the fact is about them. The warm and cold registration (cold after 1,500 ms) and a lapsed `GetRuntimeId` read alone, 3 runs; the move to the element followed after pauses of 250 to 400 ms (30 trials) and of 0 or 100 ms (20 trials); the pause sweep by a `GetRuntimeId` read, 3 runs a pause; the copy kept per element, 3 runs each; the workaround over pauses of 0 to 3,000 ms (256 registrations, 50 moves).
-- `late-calls`: a registration, a read and a removal, the log watched 500 ms after. 3 runs.
-- `search-reread`: a `FindFirst` for node 6 from node 1, a fragment with a runtime id of its own, fetched 0, 300, 600, 700 and 1,000 ms before; the provider `GetRuntimeId` calls of node 1 itself during the search. 3 runs a pause.
+- `no-call`: a `CachedName` read after `BuildUpdatedCache`; a second `GetRuntimeId`; `GetRuntimeId` of a name-change event's sender inside the callback; `CompareElements` of node 1 of two provider programs, both runtime ids read, one program's UI thread busy; the raw view parent of the window's element; the names of the window's title bar and its parts.
+- `focus-elsewhere`: `GetFocusedElement` with another process in front.
+- `focus-here`: `GetFocusedElement` with the provider's window brought to the foreground. Needs the unlocked desktop.
+- `lapse`: node 1 through Verbatim's own `Registration` (`verbatim_uia::Registration` with the focus-following property part, as the CI test makes it), the pauses deliberate since the fact is about them. The warm and cold registration (cold after 1 s) and a lapsed `GetRuntimeId` read alone; a `GetRuntimeId` read with no pause and after 1 s; the copy kept per element; the workaround, a registration and a move each after pauses of 0, 0.5, 1 and 1.5 s with the runtime id read just before.
+- `late-calls`: a registration, a read and a removal, the log watched 500 ms after.
+- `search-reread`: a `FindFirst` for node 6 from node 1, a fragment with a runtime id of its own, fetched 0, 300, 600, 700 and 1,000 ms before; the provider `GetRuntimeId` calls of node 1 itself during the search.
 - `operations`: each operation of "What one request is" once, its provider calls printed for trends; it drives [the requests guide](../requests-per-client-operation/readme.md) and [the channel guide](../the-uia-channel-and-the-provider-io-thread/readme.md).
+
+## Client settings
+
+Neither connection recovery nor event coalescing changes these outcomes (checked on 2026-11-05 by running every case by default and once each with `--recovery`, `--coalescing` and both), except that `focus-here` needs the unlocked desktop and was not part of the check. The `lapse` case's registrations go through Verbatim's own `Registration`, whose client object is Verbatim's whatever the flags; its reads use the program's client object, which takes them.
 
 ## Recorded results
 
@@ -30,24 +34,20 @@ Every count is of the provider program's own calls (its log's `call` entries) th
 |---|---|---|---|---|
 | No request for cached reads, a second `GetRuntimeId`, the desktop parent and the proxies' parts; `GetFocusedElement` 6 requests into mockapp in front, none otherwise | 2026-11-02 | Build 26200.9711 | `experiments/parallel-uia-calls/`, "Requests per client operation" (`ops.ps1`) | 0 calls |
 | `CompareElements`: 10 of 10 "different" in under 0.1 ms, no call in either application, one stalled | 2026-10-29 | Build 26200 | The `CompareElements` experiment of `docs/design/cross-process-calls-study.md`, `recorded/compareelements.txt` | (false, 0 calls) |
-| The lapse: 9 against 3; cold after 1,000 and 3,000 ms; per element; 256 of 256 and 50 of 50 with the workaround; `AdviseEventRemoved` late | 2026-11-03 | Build 26200 | `books/dev/src/reference/uia-bugs.md`, from experiments whose code was not kept | As each claim |
+| The lapse: 9 against 3; per element; warm with the workaround; `AdviseEventRemoved` late | 2026-11-03 | Build 26200 | `books/dev/src/reference/uia-bugs.md`, from experiments whose code was not kept | As each claim |
 | First uia-facts run, `no-call`: 0 provider calls in 3 of 3 for the cached read, the second `GetRuntimeId`, the sender's `GetRuntimeId` in its callback, `CompareElements` (answered "different" within 100 ms with one application busy), the desktop parent and the title bar with its 5 parts | 2026-11-05 | Build 26200.9711, `UIAutomationCore.dll` 7.2.26100.9549, AMD Ryzen 7 5700G | fdd501b9 | Pass |
 | First uia-facts run, `focus-elsewhere`: neither the provider's element nor any provider call, 3 of 3 | 2026-11-05 | As above | 1682f8cb | Pass |
 | First uia-facts run, `focus-here`: the provider's element, with provider calls, (true, true) in 3 of 3 | 2026-11-05 | As above | 1d1e36ec | Pass |
 | First uia-facts run, `lapse`, costs: warm 8, cold 14, a lapsed `GetRuntimeId` read 6, 3 of 3; cold equals warm plus the lapsed read, 3 of 3 | 2026-11-05 | As above | 1682f8cb | The counts this record; the relation passes |
-| First uia-facts run, `lapse`, moves: provider calls in 15 of 30 after pauses of 250, 300, 350 and 400 ms; none in 18 of 20 after 0 or 100 ms | 2026-11-05 | As above | As above | This record, as rates |
-| First uia-facts run, `lapse`, sweep: warm after 0, 50 and 100 ms 3 of 3; after 150 and 190 ms warm in some runs and cold in others; cold after 1,000 and 3,000 ms 3 of 3; 210 warm, 230 warm, 270 cold, 290 warm, 310 cold, 400 warm | 2026-11-05 | As above | As above | Cold passes; the shorter pauses for trends |
 | First uia-facts run, `lapse`, per element: First's copy lapsed after reading First's name, another button's, the window's, and after a registration on another button, 3 of 3 each | 2026-11-05 | As above | As above | Pass |
-| First uia-facts run, `lapse`, workaround: 256 of 256 warm registrations; 50 of 50 free moves | 2026-11-05 | As above | As above | Pass |
+| Second uia-facts run, `lapse`, with the pauses above: costs (8, 14, 6) and cold equals warm plus the lapsed read; warm with no pause and cold after 1 s; First's copy lapsed after each of the four touches; with the runtime id read just before, 4 of 4 registrations at the warm cost and 4 of 4 moves with no provider call; 1 run each | 2026-11-05 | As above | The commit that adds this row | Pass |
 | First uia-facts run, `late-calls`: `AdviseEventRemoved` after the removal returned, 3 of 3; no other provider call after any of the three calls returned, 3 of 3 | 2026-11-05 | As above | As above | Pass |
-| First uia-facts run, `search-reread`: reads of the start's own runtime id during the search: 0 after 0 and 300 ms, 1 after 600, 700 and 1,000 ms, 3 of 3 each | 2026-11-05 | As above | fdd501b9 | 0 and 1,000 ms this record; 300, 600 and 700 ms for trends, since pauses near 300 ms fall warm or cold by the lapse's sweep |
+| First uia-facts run, `search-reread`: reads of the start's own runtime id during the search: 0 after 0 and 300 ms, 1 after 600, 700 and 1,000 ms, 3 of 3 each | 2026-11-05 | As above | fdd501b9 | 0 and 1,000 ms this record; 300, 600 and 700 ms for trends |
 | First uia-facts run, `operations`: provider calls per operation, each including any lookup of its node: `CurrentName` 3; a walker's first child 0, next sibling 16, step to the root 18; `FindFirst` 47 and with a cache request 62; `FindAll` 503 and with a cache request 848; `BuildUpdatedCache` 15; `ElementFromHandle` 13; a remote operation 6; adding and removing a handler 9 | 2026-11-05 | As above | 1682f8cb | For trends |
-
-During the sweep and the per-element runs, the `lapse` arm's own focus-following registration on `First`, made for the moves, stays live; the registrations of the cost and per-element runs are made and dropped around it.
 
 ## How to rerun
 
-`uia-facts/build.ps1`, then `target\debug\uia-answers-some-calls-in-the-client.exe`, or one arm with `--arm`. Every arm but `focus-here` needs no desktop; `focus-here` brings the provider's window to the foreground, so it needs the unlocked desktop and takes the focus for a moment. About 13 minutes, most of it the lapse's 256 registrations. The test: `cargo test -p mockapp --test call_counts -- --exact uia_event_registrations_cost_exactly`.
+`uia-facts/build.ps1`, then `target\debug\uia-answers-some-calls-in-the-client.exe`, or one case with `--case`. Every case but `focus-here` needs no desktop; `focus-here` brings the provider's window to the foreground, so it needs the unlocked desktop and takes the focus for a moment. The test: `cargo test -p mockapp --test call_counts -- --exact uia_event_registrations_cost_exactly`.
 
 ## Evidence kept
 

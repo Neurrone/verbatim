@@ -221,6 +221,9 @@ impl Provider {
     /// The log entries since the last read.
     pub fn log(&mut self) -> Vec<Entry> {
         let (lines, _) = self.request_lines("log");
+        for line in &lines {
+            crate::note::trace(&format!("provider log: {line}"));
+        }
         lines.iter().map(|line| Entry::parse(line)).collect()
     }
 

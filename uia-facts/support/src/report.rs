@@ -13,7 +13,7 @@ use windows::Win32::Storage::FileSystem::{
 use windows::Win32::System::SystemInformation::GetSystemDirectoryW;
 use windows::core::{HSTRING, w};
 
-use crate::stats::{as_f64, median, number, wilson};
+use crate::stats::{as_f64, number, wilson};
 
 /// A claim's outcome.
 #[derive(Clone, Debug, PartialEq)]
@@ -61,25 +61,38 @@ impl Report {
         }
     }
 
-    /// Prints one claim's line.
+    /// Starts case `name`: prints what it sets up and does, in plain
+    /// words, and forgets the evidence of the case before.
+    pub fn case(&mut self, name: &str, what: &str) {
+        crate::note::clear();
+        println!("case {name}: {what}");
+    }
+
+    /// Prints one claim's line, then, when its verdict is differ or
+    /// inconclusive, the case's evidence ([`crate::note`]).
     pub fn claim(&mut self, claim: &str, observed: &str, recorded: &str, verdict: Verdict) {
+        Self::line(claim, observed, recorded, &verdict);
+        if matches!(verdict, Verdict::Differ | Verdict::Inconclusive(_)) {
+            crate::note::print_evidence();
+        }
+        self.verdicts.push(verdict);
+    }
+
+    fn line(claim: &str, observed: &str, recorded: &str, verdict: &Verdict) {
         let recorded = if recorded.is_empty() {
             String::new()
         } else {
             format!("; recorded {recorded}")
         };
         println!("{claim}: observed {observed}{recorded}: {}", verdict.word());
-        self.verdicts.push(verdict);
     }
 
-    /// Prints a claim that a missing precondition left unjudged.
+    /// Prints a claim that a missing precondition left unjudged, with the
+    /// reason and no evidence, since nothing ran.
     pub fn unmet(&mut self, claim: &str, reason: &str) {
-        self.claim(
-            claim,
-            "nothing",
-            "",
-            Verdict::Inconclusive(reason.to_owned()),
-        );
+        let verdict = Verdict::Inconclusive(reason.to_owned());
+        Self::line(claim, "nothing", "", &verdict);
+        self.verdicts.push(verdict);
     }
 
     /// Ends the run with the exit code its verdicts give.
@@ -160,15 +173,18 @@ pub fn band_text(band: (f64, f64)) -> String {
 }
 
 /// A banded figure's verdict: pass when every trial lies inside, differ
-/// when the median lies outside, inconclusive otherwise.
+/// when every trial lies outside, inconclusive otherwise.
 #[must_use]
 pub fn in_band(trials_ms: &[f64], band: (f64, f64)) -> Verdict {
-    let inside = |v: f64| v >= band.0 && v <= band.1;
+    let inside = trials_ms
+        .iter()
+        .filter(|v| **v >= band.0 && **v <= band.1)
+        .count();
     if trials_ms.is_empty() {
         Verdict::Inconclusive("no trial".to_owned())
-    } else if trials_ms.iter().all(|v| inside(*v)) {
+    } else if inside == trials_ms.len() {
         Verdict::Pass
-    } else if !inside(median(trials_ms)) {
+    } else if inside == 0 {
         Verdict::Differ
     } else {
         Verdict::Inconclusive("some trials lie outside the band".to_owned())
@@ -247,6 +263,7 @@ pub fn machine() -> Vec<(&'static str, String)> {
         ("windows", windows),
         ("uiautomationcore", uiautomationcore_version()),
         ("processor", processor),
+        ("client", crate::uia::settings().describe()),
         ("commit", commit),
     ]
 }

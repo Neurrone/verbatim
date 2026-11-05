@@ -10,15 +10,21 @@ Only the explanation in `crates/verbatim-supervisor/src/retire.rs` and `crates/v
 
 ## Method
 
-Every arm runs against the provider program with one UIA window (`WS_OVERLAPPEDWINDOW`, so UIA's window and non-client proxies take part, as with mockapp's window).
+Every case runs against the provider program with one UIA window (`WS_OVERLAPPEDWINDOW`, so UIA's window and non-client proxies take part, as with mockapp's window).
 
-- `ett`: the window's element fetched with the connection timeout at 10,000 ms and the transaction timeout at 1,000 ms; the provider holds the root's `GetPropertyValue`; the connection timeout set to 1,000 ms; then `FindFirstBuildCache` over the descendants for the name `First`, caching the name. 5 trials. The connection timeout is set explicitly, since Verbatim's own is now 2 seconds.
-- `queued-search`: another client object's name read of node 1 held; a `FindFirst` for `First` from the window's element, fetched a second before (a deliberate pause: a search re-reads its start's runtime id when the start was fetched 600 ms or more before, not at 300 ms); both timeouts 1,000 ms. 5 trials.
-- `stall-sweep`: the window's UI thread busy; both timeouts at T set before the window's element is fetched; connection recovery on; `FindFirst` for `Second`. T of 100, 200, 500 and 1,000 ms, 5 trials each. After the release, whether the provider walked the tree for the search's `Find`, watched for 2 s: the walk follows a release within milliseconds when it comes, so its absence over 2 s is the evidence that no `Find` was sent.
-- `e3`: E3's `CurrentHasKeyboardFocus` of node 1, held until it fails, at transaction timeouts of 20,000 and 1,000 ms. 5 trials each.
-- `recovery-edge`: the stall sweep's search at T of 600 to 1,200 ms in 100 ms steps, 3 trials each, toward the edge of recovery's skip (Not known).
+- `ett`: the window's element fetched with the connection timeout at 10,000 ms and the transaction timeout at 1,000 ms; the provider holds the root's `GetPropertyValue`; the connection timeout set to 1,000 ms; then `FindFirstBuildCache` over the descendants for the name `First`, caching the name. The connection timeout is set explicitly, since Verbatim's own is now 2 seconds.
+- `queued-search`: another client object's name read of node 1 held; a `FindFirst` for `First` from the window's element, fetched a second before (a deliberate pause: a search re-reads its start's runtime id when the start was fetched 600 ms or more before, not at 300 ms); both timeouts 1,000 ms.
+- `stall-sweep`: the window's UI thread busy; both timeouts at T set before the window's element is fetched; `FindFirst` for `Second`. T of 100, 200, 500 and 1,000 ms, judged; then 600 to 1,200 ms in 100 ms steps, toward the edge of connection recovery's skip (Not known), printed as new. After the release, whether the provider walked the tree for the search's `Find`, watched for 2 s: the walk follows a release within milliseconds when it comes, so its absence over 2 s is the evidence that no `Find` was sent.
+- `e3`: E3's `CurrentHasKeyboardFocus` of node 1, held until it fails, at transaction timeouts of 20,000 and 1,000 ms.
 
 Judged: the HRESULT (deterministic), each search's total (a band, the sum of its waits' bands), whether the `Find` was sent (deterministic).
+
+## Client settings
+
+Event coalescing changes no outcome, and connection recovery changes the `stall-sweep` case's (checked on 2026-11-05 by running every case by default and once each with `--recovery`, `--coalescing` and both). The documents state the stall sweep with recovery on, so its judged command carries `--recovery`; the program judges each setting against its own record.
+
+- Connection recovery on, as Verbatim's client has it: at 100, 200 and 500 ms the search waits three bounds and fails without sending its `Find`, and from 1,000 ms it waits four and sends it; between, it sent no `Find` up to 900 ms (1,853, 2,193, 2,475 and 2,791 ms at 600 to 900 ms) and sent it from 1,000 ms (4,207, 4,613 and 5,021 ms at 1,000 to 1,200 ms). `target\debug\a-timeout-bounds-each-request-and-window-message-not-an-operation.exe --recovery --case stall-sweep`
+- Connection recovery off, the default: the search waits four bounds and sends its `Find` at every timeout: 435, 823, 2,085 and 4,204 ms at 100, 200, 500 and 1,000 ms, and 2,515 to 5,032 ms at 600 to 1,200 ms. `target\debug\a-timeout-bounds-each-request-and-window-message-not-an-operation.exe --case stall-sweep`
 
 ## Recorded results
 
@@ -30,12 +36,12 @@ Judged: the HRESULT (deterministic), each search's total (a band, the sum of its
 | First uia-facts run, `queued-search`: `UIA_E_TIMEOUT` 5 of 5, 1,087 ms (1,082 to 1,094) | 2026-11-05 | As above | As above | Pass |
 | First uia-facts run, `stall-sweep`: `UIA_E_TIMEOUT` 5 of 5 at each T; 329, 620, 1,545 and 4,208 ms; the `Find` sent only at 1,000 ms, 5 of 5 each | 2026-11-05 | As above | As above | Pass |
 | First uia-facts run, `e3`: `UIA_E_TIMEOUT` 5 of 5 each; 22,139 ms (22,135 to 22,146) at the default, 1,091.7 ms (1,084.1 to 1,093.1) at 1 s | 2026-11-05 | As above | As above | Pass |
-| First uia-facts run, `recovery-edge`: at T of 600, 700, 800 and 900 ms the search failed after 1,847, 2,181, 2,480 and 2,778 ms without sending the `Find`; at 1,000, 1,100 and 1,200 ms after 4,204, 4,614 and 5,032 ms with it; 3 of 3 each | 2026-11-05 | As above | As above | New: the `Find` is skipped when the waits before it end by 2.78 s and sent when they end at about 3.1 s or later, which narrows the recorded edge (not by 2.6 s, sent from 3.1 s) without explaining it |
+| First uia-facts run, `stall-sweep`, 600 to 1,200 ms: at T of 600, 700, 800 and 900 ms the search failed after 1,847, 2,181, 2,480 and 2,778 ms without sending the `Find`; at 1,000, 1,100 and 1,200 ms after 4,204, 4,614 and 5,032 ms with it; 3 of 3 each | 2026-11-05 | As above | As above | New: the `Find` is skipped when the waits before it end by 2.78 s and sent when they end at about 3.1 s or later, which narrows the recorded edge (not by 2.6 s, sent from 3.1 s) without explaining it |
 
 ## How to rerun
 
-`uia-facts/build.ps1`, then `target\debug\a-timeout-bounds-each-request-and-window-message-not-an-operation.exe`, or one arm with `--arm`. No desktop, application or debugger. About 6 minutes.
+`uia-facts/build.ps1`, then `target\debug\a-timeout-bounds-each-request-and-window-message-not-an-operation.exe`, or one case with `--case`. No desktop, application or debugger.
 
 ## Evidence kept
 
-`recorded/e-tt-rerun.txt`: the output of E-TT's rerun at b0a19893 on 2026-11-02 for its arms that connect inside the hold, each failing or returning after the 10-second connection timeout then in force. The original traces and timings of the searches stay in `experiments/parallel-uia-calls/results/search-timeouts.txt` until that folder's last facts move.
+`recorded/e-tt-rerun.txt`: the output of E-TT's rerun at b0a19893 on 2026-11-02 for its cases that connect inside the hold, each failing or returning after the 10-second connection timeout then in force. The original traces and timings of the searches stay in `experiments/parallel-uia-calls/results/search-timeouts.txt` until that folder's last facts move.

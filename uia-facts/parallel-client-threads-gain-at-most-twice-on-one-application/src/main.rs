@@ -30,6 +30,7 @@ use std::time::Instant;
 
 use uia_facts_support::args::Args;
 use uia_facts_support::exit_now;
+use uia_facts_support::note;
 use uia_facts_support::provider::{Entry, Provider};
 use uia_facts_support::report::{Report, Verdict, relation, runs};
 use uia_facts_support::role::{self, Role};
@@ -47,7 +48,8 @@ fn main() {
         bench_role(rest);
     }
     let mut report = Report::start("parallel-client-threads-gain-at-most-twice-on-one-application");
-    if args.wants("cheap") {
+    if args.wants("gains") {
+        report.case("gains", "reading names from 1, 2, 4 and 8 client threads, with cheap and then costly provider calls; comparing each speed-up with the serial-share bound");
         gains(
             &args,
             &mut report,
@@ -56,8 +58,6 @@ fn main() {
             0,
             "about 2 times (1.74 to 1.98 on the synthetic provider)",
         );
-    }
-    if args.wants("costly") {
         gains(
             &args,
             &mut report,
@@ -68,9 +68,11 @@ fn main() {
         );
     }
     if args.wants("processes") {
+        report.case("processes", "reading names from N threads of one process and from N client processes; comparing their times");
         processes(&mut report);
     }
     if args.wants("shared") {
+        report.case("shared", "reading names from 8 threads through one client object's elements, and through a client object each");
         shared(&mut report);
     }
     report.finish();
@@ -168,7 +170,9 @@ impl Drop for Workers {
 /// `TIMED_RUNS` runs after a warm-up, of `run`.
 fn runs_of(run: impl Fn() -> f64) -> Vec<f64> {
     run();
-    (0..TIMED_RUNS).map(|_| run()).collect()
+    let runs: Vec<f64> = (0..TIMED_RUNS).map(|_| run()).collect();
+    note::evidence(&format!("timed runs, ms: {runs:.1?}"));
+    runs
 }
 
 /// The median of `TIMED_RUNS` runs after a warm-up, on threads kept alive

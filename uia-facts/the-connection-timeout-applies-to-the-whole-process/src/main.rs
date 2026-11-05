@@ -3,14 +3,15 @@
 //! the value one client object reads back is the one another client
 //! object's calls wait by.
 //!
-//! Arms, 5 trials each, a new provider program each, its UI thread busy:
+//! Cases, a new provider program each, its UI thread busy:
 //!
 //! - `other-longer`: client object A sets the connection timeout to 500 ms,
 //!   then client object B, on another thread, to 10,000 ms; A's explicit
 //!   read (`ElementFromHandle`, then `CurrentName`) of the busy window.
 //! - `other-shorter`: the reverse, A at 10,000 ms and B at 500 ms.
 
-use uia_facts_support::args::Args;
+use uia_facts_support::args::{Args, trials};
+use uia_facts_support::note;
 use uia_facts_support::provider::Provider;
 use uia_facts_support::report::{Report, band, band_text, deterministic, in_band, runs};
 use uia_facts_support::stats::summary_ms;
@@ -23,17 +24,16 @@ fn main() {
     let args = Args::parse();
     uia::mta();
     let mut report = Report::start("the-connection-timeout-applies-to-the-whole-process");
-    if args.wants("other-longer") {
-        arm(
+    if args.wants("whole-process") {
+        report.case("whole-process", "making the window's UI thread busy; client object A sets one connection timeout and B, on another thread, another; timing A's new connection, in both orders");
+        order(
             &args,
             &mut report,
             500,
             10_000,
             "10,013 ms (h5_main500_other10000)",
         );
-    }
-    if args.wants("other-shorter") {
-        arm(
+        order(
             &args,
             &mut report,
             10_000,
@@ -44,11 +44,11 @@ fn main() {
     report.finish();
 }
 
-fn arm(args: &Args, report: &mut Report, ours: u32, theirs: u32, recorded: &str) {
+fn order(args: &Args, report: &mut Report, ours: u32, theirs: u32, recorded: &str) {
     let a = uia::client();
     let mut waits = Vec::new();
     let mut outcomes = Vec::new();
-    for _ in 0..5 {
+    for _ in 0..trials() {
         let mut provider = Provider::launch(&["--windows", "uia:0"]);
         uia::set_timeouts(&a, ours, TRANSACTION_MS);
         std::thread::spawn(move || {
@@ -60,6 +60,7 @@ fn arm(args: &Args, report: &mut Report, ours: u32, theirs: u32, recorded: &str)
         .expect("the other client object sets its timeout");
         provider.request("busy 0");
         args.pause_for_debugger(&[("provider", provider.pid), ("client", std::process::id())]);
+        note::waiting_ms(theirs, "the connection timeout the other client object set");
         let (result, took) =
             uia::timed(|| uia::element(&a, provider.hwnd(0)).and_then(|e| uia::name(&e)));
         waits.push(uia::ms(took));
