@@ -16,7 +16,7 @@ Then run a fact's program from `target/debug`, for example `target\debug\nothing
 
 - `--case <name>`, repeatable: run only the named cases, which its folder lists.
 - `--trials <n>`: run each claim n times, its verdict then needing all n to agree; each claim runs once by default, and a rate keeps its recorded n.
-- `--pause`: before each case's calls, print each process id and wait for Enter, so a debugger can attach (the debugger guides use it).
+- `--pause`: before a case's calls, print the process ids it names and wait for Enter, so a debugger can attach (the debugger guides use it). A second client process is given the flag too; where it pauses, as the registration program's trials do once their provider is up, it reports its ids through the run, which waits for Enter and lets it go on. The other roles (`read`, `bench`, `send`, `listen` and `registrar`) do not pause; their ids are printed only where the run names them.
 - `--verbose`: print each traced UIA call with its time and result, the provider program's call and message log, and each trial's figures, as they happen.
 - `--recovery` and `--coalescing`: turn the client objects' connection recovery and event coalescing on (`IUIAutomation6`). Both are off by default; Verbatim's own client has both on. Support's `uia::client()` applies them to every client object, and a second client process started through a role is given the same flags. Each folder says whether they change its outcomes, checked once by running every client case by default, with each flag alone and with both; where they do, its README gives the outcome of each combination that changes it and the command for each.
 

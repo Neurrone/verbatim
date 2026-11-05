@@ -30,14 +30,14 @@ fn main() {
             &mut report,
             500,
             2_000,
-            "10,013 ms at 10,000 ms (h5_main500_other10000)",
+            "2,008 ms at 2,000 ms; h5_main500_other10000 10,013 ms at 10,000 ms",
         );
         order(
             &args,
             &mut report,
             2_000,
             500,
-            "508 ms (h5_main10000_other500)",
+            "515 ms; h5_main10000_other500 508 ms",
         );
     }
     report.finish();

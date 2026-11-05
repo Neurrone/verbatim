@@ -766,7 +766,7 @@ fn trial_scope() -> Vec<String> {
                 ));
             }
         }
-        uia::pause(LISTEN, "listening for 2 s after the last event");
+        uia::pause(LISTEN, "listening after the last event");
         let a_lost = lost(&p_raised, &events::drain(&a_reports).0);
         let b_lost = lost(&p_raised, &events::drain(&b_reports).0);
         let c_lost = lost(&q_raised, &events::drain(&c_reports).0);
@@ -988,7 +988,7 @@ fn trial_between() -> Vec<String> {
         };
         provider.request(&format!("rename 0 {NODE} after"));
         provider.request(&format!("raise name 0 {NODE}"));
-        uia::pause(LISTEN, "listening for 2 s after the last event");
+        uia::pause(LISTEN, "listening after the last event");
         let heard = events::drain(&reports).0;
         let names: Vec<String> = heard.iter().map(|h| h.name.clone()).collect();
         vec![
@@ -1041,7 +1041,7 @@ fn registrar(rest: &[String]) -> ! {
 /// made in this process or, with `remote`, by a second client process,
 /// during a stall released `release_after` ms after it returns, or with no
 /// stall; then a focus event at each offset after the stall's end (the
-/// return, with no stall), listened for 2 s after the last. Answers the
+/// return, with no stall), listened for [`LISTEN`] after the last. Answers the
 /// registration's outcome and time, and each event as
 /// `<offset>:<raised after the return, ms>:<delay ms or x>`.
 fn trial_gap(
@@ -1095,7 +1095,7 @@ fn trial_gap(
     }
     let from = Instant::now();
     let raised = raise_at(&mut provider, 0, "ev", from, offsets, 0);
-    uia::pause(LISTEN, "listening for 2 s after the last event");
+    uia::pause(LISTEN, "listening after the last event");
     let heard: Vec<Heard> = match &registrar {
         Some(role) => {
             let mut heard = Vec::new();
@@ -1411,7 +1411,7 @@ fn trial_onset() -> Vec<String> {
     provider.log();
     let stalled = register_stalled(&mut provider, &client, &element, &group);
     let raised = raise_at(&mut provider, 0, "ev", stalled.released, &offsets, 0);
-    uia::pause(LISTEN, "listening for 2 s after the last event");
+    uia::pause(LISTEN, "listening after the last event");
     let log = provider.log();
     let (heard, _) = events::drain(&reports);
     let delays = delays(&raised, &heard);

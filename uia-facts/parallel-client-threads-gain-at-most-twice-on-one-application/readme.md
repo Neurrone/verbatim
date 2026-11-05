@@ -34,7 +34,7 @@ Neither connection recovery nor event coalescing changes these outcomes (checked
 | First uia-facts run, `processes`: medians, threads 250, 263 and 261 ms against processes 240, 248 and 238 ms at 2, 4 and 8; at 8, threads as fast or faster in 2 of 7 runs | 2026-11-05 | As above | As above | For trends |
 | First uia-facts run, `shared`: 252 ms against 240 ms | 2026-11-05 | As above | As above | For trends |
 
-The costly calls' share is 1.00, not about half, because the slow provider call is the whole call. Each 5 ms delay waits while the window pumps, so at 8 threads a call can begin inside another's delay, which fits the speed-up above 1.00 there.
+The costly calls' share is about 1.00, not about half, because the slow provider call is the whole call. The cheap calls' share is far below half because the provider's log sees only the provider's own calls; the half the fact states includes UIA's I/O thread, which the log cannot see.
 
 ## How to rerun
 
