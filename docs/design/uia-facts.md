@@ -137,10 +137,10 @@ There are 34 folders:
 None of the old tools was built or run for this design, so "rerun by command" below means the instructions and code are in the repository, not that they still build on main. Only the committed tests compare their outcome with a recorded result; every other tool's output is compared by hand. The tools named in the folder entries are these:
 
 - The parallel-calls scripts: the PowerShell and Python scripts of `experiments/parallel-uia-calls/`, run after copying its `Cargo.toml.txt` to a scratch folder as `Cargo.toml` with absolute paths and building it with `cargo build --release`. They set `PUIA_SCRATCH`, and the debugger scripts need cdb. The program depends on the current `verbatim-uia-rops` by path, so it may need porting to main.
-- The hung-window focusproto: `experiments/a-hung-window-named-in-a-system-focus-event-holds-a-processs-uia-events/focusproto/`, copied to a `focusproto` crate under `crates` in a scratch worktree, built with mockapp, and driven by the folder's Python scripts with `BIN` set in `proto.py`. It was built at 01254292 and runs on its own desktop. The focus-limitation, elements and desktop-wide folders use the same tool from `experiments/focus-events-cannot-be-limited-to-one-application/focusproto/`.
-- The 2026-11-01 series: the standalone focusproto under `experiments/a-hung-window-named-in-a-system-focus-event-holds-a-processs-uia-events/2026-11-01/`, with its `vbmap.patch` applied. Its scripts need an unlocked desktop, some a Notepad titled `notes.txt`, and the `calls_*` and `threads_*` scripts need cdb.
-- evprobe: `experiments/a-flood-of-uia-events-from-one-application-stops-all-of-a-processs-uia-events/evprobe/`, a standalone build against mockapp at or after cb90020e; `evc.py` has cdb's path written in.
-- The October experiments: `experiments/mockapp-experiments-2026-10-10/experiments.rs`, run in a worktree at b0a1989 with `cargo test -p mockapp --test experiments -- <name> --nocapture`. Their figures depend on that commit's 10-second connection timeout.
+- The hung-window focusproto: experiments/a-hung-window-named-in-a-system-focus-event-holds-a-processs-uia-events/focusproto/, copied to a `focusproto` crate under `crates` in a scratch worktree, built with mockapp, and driven by the folder's Python scripts with `BIN` set in `proto.py`. It was built at 01254292 and runs on its own desktop. The focus-limitation, elements and desktop-wide folders use the same tool from experiments/focus-events-cannot-be-limited-to-one-application/focusproto/. The second build deleted these folders; they are in git at 38acc016.
+- The 2026-11-01 series: the standalone focusproto under experiments/a-hung-window-named-in-a-system-focus-event-holds-a-processs-uia-events/2026-11-01/, with its `vbmap.patch` applied. Its scripts need an unlocked desktop, some a Notepad titled `notes.txt`, and the `calls_*` and `threads_*` scripts need cdb. The second build deleted these folders; they are in git at 38acc016.
+- evprobe: experiments/a-flood-of-uia-events-from-one-application-stops-all-of-a-processs-uia-events/evprobe/, a standalone build against mockapp at or after cb90020e; `evc.py` has cdb's path written in. The second build deleted these folders; they are in git at 38acc016.
+- The October experiments: experiments/mockapp-experiments-2026-10-10/experiments.rs, run in a worktree at b0a1989 with `cargo test -p mockapp --test experiments -- <name> --nocapture`. Their figures depend on that commit's 10-second connection timeout. The second build deleted these folders; they are in git at 38acc016.
 - The collide tool: the patches in `experiments/a-new-connection-fails-while-another-processs-remote-operation-is-queued/`, `collide-tool-e33.patch` applied onto 32948a4d in a scratch worktree and run with `collide run` on a script. The earlier patches' base commits are not recorded.
 - The mockapp tests: the `uia_bugs` binary's tests run with `cargo test -p mockapp --test uia_bugs -- --exact <name>`, and the others with their own binary in place of `uia_bugs`.
 
@@ -449,18 +449,18 @@ Code, scripts and patches move. The recorded outputs that a README cites move to
 - Deleted outright:
   - `experiments/parallel-uia-calls/`
   - `experiments/a-new-connection-fails-while-another-processs-remote-operation-is-queued/`, its launch logs kept in the fact's `recorded/` as the history of Verbatim's exposure
-  - `experiments/a-hung-window-named-in-a-system-focus-event-holds-a-processs-uia-events/`
-  - `experiments/a-flood-of-uia-events-from-one-application-stops-all-of-a-processs-uia-events/`
+  - a-hung-window-named-in-a-system-focus-event-holds-a-processs-uia-events (deleted by the second build)
+  - a-flood-of-uia-events-from-one-application-stops-all-of-a-processs-uia-events (deleted by the second build)
   - the-connection-timeout-applies-to-the-whole-process (deleted by the first build)
-  - `experiments/desktop-wide-focus-handlers-in-a-second-process-deliver-late/`
+  - desktop-wide-focus-handlers-in-a-second-process-deliver-late (deleted by the second build)
   - a-registration-that-times-out-reports-success (deleted by the first build)
-  - `experiments/focus-events-cannot-be-limited-to-one-application/`
-  - `experiments/elements-cannot-be-passed-to-another-process/`
+  - focus-events-cannot-be-limited-to-one-application (deleted by the second build)
+  - elements-cannot-be-passed-to-another-process (deleted by the second build)
   - `experiments/windows-terminal-raises-focus-from-a-second-runtime-identity/`
   - cocancelcall-does-not-end-a-uia-client-call (deleted by the first build)
   - compareelements-makes-no-call (deleted by the first build)
   - `experiments/two-new-connections-beside-a-pending-call/`
-  - `experiments/mockapp-experiments-2026-10-10/`, since every experiment in it is one of the UIA facts above
+  - mockapp-experiments-2026-10-10, since every experiment in it is one of the UIA facts above (deleted by the second build; its code is in git at b0a1989)
 - Trimmed:
   - `experiments/uiahasserversideprovider-says-no-for-a-new-conhost-window-while-another-process-has-an-event-handler/`: only `kept-runs/` and a short readme remain, the evidence of the excluded `conhost_two_windows` inference that `books/dev/src/reference/uia-bugs.md` still cites.
   - `experiments/focus-pipeline-rework-measurements/`: `programs.rs`'s three `UiaHasServerSideProvider` programs and `server-side-provider-under-stall.txt` leave. The rest stays, since `docs/design/focus-pipeline-rework.md`, the parity documents and two mockapp tests cite it.

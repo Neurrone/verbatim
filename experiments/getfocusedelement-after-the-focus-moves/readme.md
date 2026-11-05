@@ -1,6 +1,6 @@
 # Experiment: GetFocusedElement after the focus moves
 
-This experiment serves `docs/design/outpost-focused-element-study.md`, sections "How wide the race is" and "What losing it costs". The study infers from the code that when the system focus moves to another application between the outpost's check of the focus window and its call to `GetFocusedElementBuildCache`, the outpost's call connects into that other application. Experiment E5 (`e5_focus_read_in_held_application`, in `experiments/mockapp-experiments-2026-10-10/experiments.rs`) did not show this, because it injected a read by handle. This experiment checks the inference directly. It makes the race happen every time, by doing the check, the move and the call in that order on one thread.
+This experiment serves `docs/design/outpost-focused-element-study.md`, sections "How wide the race is" and "What losing it costs". The study infers from the code that when the system focus moves to another application between the outpost's check of the focus window and its call to `GetFocusedElementBuildCache`, the outpost's call connects into that other application. Experiment E5 (`e5_focus_read_in_held_application`, in the mockapp experiments of 2026-10-10, in git at commit b0a1989) did not show this, because it injected a read by handle. This experiment checks the inference directly. It makes the race happen every time, by doing the check, the move and the call in that order on one thread.
 
 ## Setup
 

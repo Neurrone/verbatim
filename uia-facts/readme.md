@@ -2,7 +2,7 @@
 
 Each folder here is one fact about UI Automation that Verbatim relies on, from `books/dev/src/reference/uia-bugs.md` (the faults and limitations) or `books/dev/src/explanation/windows/uia.md` (the model of how UIA works), with what reproduces it: a program that runs the fact and judges its outcome against the recorded figures, a guide for watching it under a debugger, or a mockapp test that `cargo xtask ci` already runs. A folder is named after its fact, the heading in `uia-bugs.md` where there is one, so a citation can be read across.
 
-They are run by hand on Dickson's machine, before and after a Windows update, to learn whether a fact Verbatim relies on still holds. Each program takes over no desktop unless its folder says so, but it starts processes and holds them for seconds at a time.
+They are run by hand on Dickson's machine, before and after a Windows update, to learn whether a fact Verbatim relies on still holds. Each program takes over no desktop unless its folder says so, but it starts processes and holds them for seconds at a time. Some cases run their processes on a desktop of their own, as the original experiments ran, through a trampoline in support (`uia_facts_support::desktop`): nothing there reaches the user's screen or input.
 
 ## Building and running
 
@@ -16,7 +16,7 @@ Then run a fact's program from `target/debug`, for example `target\debug\nothing
 
 - `--case <name>`, repeatable: run only the named cases, which its folder lists.
 - `--trials <n>`: run each claim n times, its verdict then needing all n to agree; each claim runs once by default, and a rate keeps its recorded n.
-- `--pause`: before a case's calls, print the process ids it names and wait for Enter, so a debugger can attach (the debugger guides use it). A second client process is given the flag too; where it pauses, as the registration program's trials do once their provider is up, it reports its ids through the run, which waits for Enter and lets it go on. The other roles (`read`, `bench`, `send`, `listen` and `registrar`) do not pause; their ids are printed only where the run names them.
+- `--pause`: before a case's calls, print the process ids it names and wait for Enter, so a debugger can attach (the debugger guides use it). A second client process is given the flag too; where it pauses, as the registration program's trials do once their provider is up, it reports its ids through the run, which waits for Enter and lets it go on. The other roles (`read`, `bench`, `send`, `listen`, `registrar`, `race` and `exiter`) do not pause; their ids are printed only where the run names them.
 - `--verbose`: print each traced UIA call with its time and result, the provider program's call and message log, and each trial's figures, as they happen.
 - `--recovery` and `--coalescing`: turn the client objects' connection recovery and event coalescing on (`IUIAutomation6`). Both are off by default; Verbatim's own client has both on. Support's `uia::client()` applies them to every client object, and a second client process started through a role is given the same flags. Each folder says whether they change its outcomes, checked once by running every client case by default, with each flag alone and with both; where they do, its README gives the outcome of each combination that changes it and the command for each.
 
@@ -44,7 +44,7 @@ It builds into the main `target/` (`uia-facts/.cargo/config.toml`), so third-par
 
 ## The provider program
 
-`uia-facts/provider` is the facts' own UIA and MSAA provider; no fact launches mockapp, whose facts stay mockapp tests. A fact starts it from its own folder, so it always runs against the provider built with it, and drives it with one request a line on its standard input, each answered once the provider has acted on it. Its windows are hidden top-level windows on chosen UI threads: UIA windows serving a fragment tree of set size (24 nodes by default), with or without `UseComThreading`, a window with its own `IAccessible`, and plain Win32 windows. It can hold any provider method, make every call slow while its thread keeps pumping, keep a UI thread busy, wait in `CoWaitForMultipleHandles`, raise events on request or at a rate, move its tree's focus, and log every provider call and the window messages UIA sends. Its module documentation, `uia-facts/provider/src/main.rs`, lists its command line and requests.
+`uia-facts/provider` is the facts' own UIA and MSAA provider; no fact launches mockapp, whose facts stay mockapp tests. A fact starts it from its own folder, so it always runs against the provider built with it, and drives it with one request a line on its standard input, each answered once the provider has acted on it. Its windows are hidden top-level windows on chosen UI threads: UIA windows serving a fragment tree of set size (24 nodes by default), with or without `UseComThreading`, a window with its own `IAccessible`, and plain Win32 windows. It can hold any provider method, make every call slow while its thread keeps pumping, keep a UI thread busy, wait in `CoWaitForMultipleHandles`, raise events on request or at a rate, raise a focus, name-change or foreground `WinEvent` for a window from a thread that is not the window's, move its tree's focus, show and hide its windows, and log every provider call and the window messages UIA sends. Its MSAA window has two children and reports itself and each child focused, as mockapp's MSAA objects did. Its module documentation, `uia-facts/provider/src/main.rs`, lists its command line and requests.
 
 A figure measured on mockapp whose value depends on the provider's tree, such as a count of provider calls, is recorded again on the provider program's first run, with the mockapp figure kept as history.
 
@@ -76,6 +76,18 @@ Each program prints a header (the date, the Windows build with its revision, `UI
 | [requests-per-client-operation](requests-per-client-operation/readme.md) | `uia.md`, "What one request is" | Guide |
 | [uia-answers-some-calls-in-the-client](uia-answers-some-calls-in-the-client/readme.md) | `uia.md`, "Making a connection", what UIA answers in the client; `uia-bugs.md`, "UI Automation's copy of an element's runtime id lapses" | Kept CI test and program |
 | [a-remote-operation-stops-after-exactly-10000-instructions](a-remote-operation-stops-after-exactly-10000-instructions/readme.md) | `uia.md`, "What one request is": the instruction limit | Kept CI test |
+| [a-hung-window-named-in-a-system-focus-event-holds-a-processs-uia-events](a-hung-window-named-in-a-system-focus-event-holds-a-processs-uia-events/readme.md) | `uia-bugs.md`, the fault of that name; `uia.md`, "Events into the client": the worker's focus tracking | Kept CI test and program |
+| [uias-client-threads-and-focus-tracking-calls](uias-client-threads-and-focus-tracking-calls/readme.md) | `uia.md`, "Events into the client": the client's threads and focus tracking's calls | Guide |
+| [a-client-processs-events-run-on-one-worker](a-client-processs-events-run-on-one-worker/readme.md) | `uia.md`, "Events into the client": the worker | Program |
+| [another-clients-stuck-call-holds-an-events-cache-fetch](another-clients-stuck-call-holds-an-events-cache-fetch/readme.md) | `uia.md`, "Events into the client": the worker's cache fetch | Program |
+| [a-flood-of-uia-events-from-one-application-stops-all-of-a-processs-uia-events](a-flood-of-uia-events-from-one-application-stops-all-of-a-processs-uia-events/readme.md) | `uia-bugs.md`, the fault of that name | Program and debugger guide |
+| [desktop-wide-focus-handlers-in-a-second-process-deliver-late](desktop-wide-focus-handlers-in-a-second-process-deliver-late/readme.md) | `uia-bugs.md`, the fault of that name | Program |
+| [a-new-processs-focus-events-reach-the-desktop-wide-handler-late-or-not-at-all](a-new-processs-focus-events-reach-the-desktop-wide-handler-late-or-not-at-all/readme.md) | `uia-bugs.md`, the fault of that name | Program |
+| [focus-events-cannot-be-limited-to-one-application](focus-events-cannot-be-limited-to-one-application/readme.md) | `uia-bugs.md`, the limitation of that name | Kept CI test and program |
+| [elements-cannot-be-passed-to-another-process](elements-cannot-be-passed-to-another-process/readme.md) | `uia-bugs.md`, the limitation of that name | Kept CI test and program |
+| [ancestors-cannot-be-cached-or-listened-to](ancestors-cannot-be-cached-or-listened-to/readme.md) | `uia-bugs.md`, the limitation of that name | Program |
+| [a-cache-request-fails-while-uias-first-time-setup-runs-on-another-thread](a-cache-request-fails-while-uias-first-time-setup-runs-on-another-thread/readme.md) | `uia-bugs.md`, the fault of that name | Kept CI test and program |
+| [a-process-that-used-uia-can-hang-or-crash-as-it-exits](a-process-that-used-uia-can-hang-or-crash-as-it-exits/readme.md) | `uia-bugs.md`, the fault of that name | Program |
 
 ## Cited, not reproduced
 

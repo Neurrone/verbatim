@@ -4,22 +4,14 @@ This folder keeps the experiments behind `books/dev/src/reference/uia-bugs.md`, 
 
 Left out everywhere: screen recordings, ETW traces, symbol caches, binaries and build output. Paths to a session's scratch folder are redacted to `<scratch folder>`.
 
-The UIA facts are moving to `uia-facts/`, a folder per fact with a program that reproduces it and the outputs its figures cite; [`uia-facts/readme.md`](../uia-facts/readme.md) is their index. The connection timeout's scope, the registration that times out, `CoCancelCall` and UIA clients, `CompareElements`, and the October experiments E1, E-TT and E3 are there now; the folders below are the ones not yet moved.
+The UIA facts are moving to `uia-facts/`, a folder per fact with a program that reproduces it and the outputs its figures cite; [`uia-facts/readme.md`](../uia-facts/readme.md) is their index. The connection timeout's scope, the registration that times out, `CoCancelCall` and UIA clients, `CompareElements`, the hung window, the flood, the late desktop-wide focus, the focus and element limitations, and every October experiment are there now; the October experiments' code is in git at commit b0a1989. The folders below are the ones not yet moved.
 
 ## Faults in UI Automation
 
 - [A new connection fails while another process's remote operation is queued](a-new-connection-fails-while-another-processs-remote-operation-is-queued/readme.md): the collide tool's `e1` to `e36`, and the Notepad and Windows Terminal launches that met the fault.
 - [UiaHasServerSideProvider says no for a new conhost window while another process has an event handler](uiahasserversideprovider-says-no-for-a-new-conhost-window-while-another-process-has-an-event-handler/readme.md): `e37` to `e39`, the kept `conhost_two_windows` failures, and the raw-probe proposal.
-- [A hung window named in a system focus event holds a process's UIA events](a-hung-window-named-in-a-system-focus-event-holds-a-processs-uia-events/readme.md): `h1` to `h6`, P4, the October experiments E-delivery, E-hung-proxy, `e_mapping`, `e_hung_cause` and `e_cross`, and the series of 2026-11-01 and 2026-11-02 in `2026-11-01/`: UIA's exact calls and threads, the focus that escapes the hold, the listener held, the hold on a real desktop and with a slow provider.
-- [A flood of UIA events from one application stops all of a process's UIA events](a-flood-of-uia-events-from-one-application-stops-all-of-a-processs-uia-events/readme.md): `q2`, `q2_thr` and `q2long`, the event probe, and the work-item thread's dumps.
-- [Desktop-wide focus handlers in a second process deliver late](desktop-wide-focus-handlers-in-a-second-process-deliver-late/readme.md): P2's delivery timings, `p2b`, `p2c` and `p2d`.
 
 The other faults in `books/dev/src/reference/uia-bugs.md` rest on commits and tests named in their entries, with no separate experiment.
-
-## Limitations
-
-- [Focus events cannot be limited to one application](focus-events-cannot-be-limited-to-one-application/readme.md): E-scope, E-cost, P1, P2's cost figures and P5, and the option (c) prototype that P1 to P5 used.
-- [Elements cannot be passed to another process](elements-cannot-be-passed-to-another-process/readme.md): E-marshal and P3.
 
 ## Applications
 
@@ -52,4 +44,3 @@ The other faults in `books/dev/src/reference/uia-bugs.md` rest on commits and te
 ## Shared code
 
 - [The cross-process calls study's program](cross-process-calls-study-program/readme.md): the one scratch program behind that study's nine experiments, with its patch.
-- [The mockapp experiments of 2026-10-10](mockapp-experiments-2026-10-10/readme.md): `crates/mockapp/tests/experiments.rs` from the unmerged commits f86da7f, 8b491dc and b0a1989, and the rest of that branch as a patch.

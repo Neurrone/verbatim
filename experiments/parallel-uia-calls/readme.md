@@ -28,7 +28,7 @@ Run on 2026-11-02 on Dickson's machine: a QEMU virtual machine (Q35), AMD Ryzen 
 
 ## Already established by earlier experiments
 
-- Calls into two different applications are independent: E-concurrency (`experiments/mockapp-experiments-2026-10-10/`, focus pipeline section 11). This was confirmed here: two File Explorer folder windows that turned out to be in two explorer.exe processes did not delay each other (1 to 10 ms, `results/explorer.txt`).
+- Calls into two different applications are independent: E-concurrency (the mockapp experiments of 2026-10-10, in git at commit b0a1989; focus pipeline section 11). This was confirmed here: two File Explorer folder windows that turned out to be in two explorer.exe processes did not delay each other (1 to 10 ms, `results/explorer.txt`).
 - A remote operation queued behind a busy UI thread delays every client's calls into the process, on any of its UI threads, held elements included (`e28`). With the busy thread and no call queued on it, calls into the process's idle thread answered within 1.1 ms (`e28c`). A pending connection, which is a window message that has not reached UIA's channel yet, holds no other call (`e30`). These are in `experiments/a-new-connection-fails-while-another-processs-remote-operation-is-queued/`. Calls on held elements into the busy thread are delayed to its end (`e10` there).
 - A UIA client call waits in UIA's own channel, not in a COM call (`uia-facts/nothing-cancels-a-uia-call/`). Both timeouts apply to the whole client process (`uia-facts/the-connection-timeout-applies-to-the-whole-process/`).
 

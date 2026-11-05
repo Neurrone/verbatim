@@ -37,7 +37,7 @@ Event coalescing changes no outcome; connection recovery causes the gap (checked
 
 | Figure | Date | Machine | Source | Threshold |
 |---|---|---|---|---|
-| E-TT: success after 1,089 ms, held in `FragmentRoot` | 2026-10-10 | Build 26200 | `experiments/mockapp-experiments-2026-10-10/` at b0a1989 | `ok`; band 984 to 1,200 ms |
+| E-TT: success after 1,089 ms, held in `FragmentRoot` | 2026-10-10 | Build 26200 | the mockapp experiments, in git at b0a1989 | `ok`; band 984 to 1,200 ms |
 | The wait follows the connection timeout: 532 to 551 ms at 500 ms, 2,190 to 2,226 at 2,000, 5,514 to 5,541 at 5,000, and the same at 2,000 with the transaction timeout at 500 and 20,000 ms (e57); 540 to 549 and 5,453 to 5,504 ms (the CI test) | 2026-10-18 | Build 26200 | e57, `recorded/e57/` (`m_*`, `t_*`); the CI test | Bands from the connection timeout |
 | e57: at connection 2,000 ms and transaction 5,000 ms, released 200 ms after the return, events up to 1,750 ms after the stall's end lost and from 1,800 ms heard; none heard late; none lost after the first heard | 2026-10-18 | Build 26200 | `recorded/e57/m_in_cto2000.out`, `m_out_cto2000.out` (10 trials) | All lost up to 1,500 ms, all heard from 2,300 ms |
 | The original e57, built at e04bdd8a against mockapp's `small.json` on a desktop of its own: the same, events up to 1,750 ms lost and from 1,800 ms heard, the registration returning after 2,193 to 2,207 ms; the same with the stall not posting (`E57_POSTED=0`) | 2026-11-05 | Build 26200.9711, `UIAutomationCore.dll` 7.2.26100.9549, AMD Ryzen 7 5700G | `recorded/e57-original-2026-11-05/` (5 and 2 trials) | As above |

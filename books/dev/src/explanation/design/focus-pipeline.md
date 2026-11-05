@@ -1,6 +1,6 @@
 # How events reach Verbatim and are processed: a design aligned with NVDA
 
-Status: built. This document keeps the problem, the options weighed, the reasons for the choices and their limits. The mechanism is described in `books/dev/src/reference/crates/verbatim-outpost.md` ("The hand-over of an application's MSAA events", the intake and the worker), `books/dev/src/reference/crates/verbatim-listener.md` ("How a UIA focus is judged and read"), `books/dev/src/reference/crates/verbatim-supervisor.md` (the spare outposts), `books/dev/src/reference/crates/verbatim-uia.md` (registrations, time limits, the probe) and `books/dev/src/reference/crates/verbatim-core.md` (the duplicate rule and acceptance). The experiments behind it are under `experiments/`, chiefly `mockapp-experiments-2026-10-10/`, `elements-cannot-be-passed-to-another-process/`, `focus-events-cannot-be-limited-to-one-application/`, `a-hung-window-named-in-a-system-focus-event-holds-a-processs-uia-events/` and `windows-terminal-raises-focus-from-a-second-runtime-identity/`; the UIA defects they found are in `books/dev/src/reference/uia-bugs.md`. Section numbers are cited from code and other documents, so they are kept stable.
+Status: built. This document keeps the problem, the options weighed, the reasons for the choices and their limits. The mechanism is described in `books/dev/src/reference/crates/verbatim-outpost.md` ("The hand-over of an application's MSAA events", the intake and the worker), `books/dev/src/reference/crates/verbatim-listener.md` ("How a UIA focus is judged and read"), `books/dev/src/reference/crates/verbatim-supervisor.md` (the spare outposts), `books/dev/src/reference/crates/verbatim-uia.md` (registrations, time limits, the probe) and `books/dev/src/reference/crates/verbatim-core.md` (the duplicate rule and acceptance). The experiments behind it are the mockapp experiments of 2026-10-10, an unmerged branch whose code is in git at commit b0a1989, the folders of `uia-facts/` that reproduce the facts it relies on (`uia-facts/readme.md`), and `experiments/windows-terminal-raises-focus-from-a-second-runtime-identity/`; the UIA defects they found are in `books/dev/src/reference/uia-bugs.md`. Section numbers are cited from code and other documents, so they are kept stable.
 
 ## 1. The problem
 
@@ -104,17 +104,17 @@ One outpost per application (D9), its worker, the watchdog and abandonment, and 
 
 ## 11. Experiments
 
-Run in mockapp on 2026-10-10 (`experiments/mockapp-experiments-2026-10-10/`), each in a process and desktop of its own, against mockapp's server-side provider. On a test's own desktop nothing has the system focus, so `GetFocusedElement` could not be aimed at mockapp, and the client-side proxy case for plain Win32 windows needed the live checks of section 12.3.
+Run in mockapp on 2026-10-10, on an unmerged branch whose code is in git at commit b0a1989 (f86da7f for E-marshal), each in a process and desktop of its own, against mockapp's server-side provider. On a test's own desktop nothing has the system focus, so `GetFocusedElement` could not be aimed at mockapp, and the client-side proxy case for plain Win32 windows needed the live checks of section 12.3.
 
 - E-concurrency: two threads in one process with their own clients call two applications independently; one held application does not stall a read of another.
 - E-delivery: UIA delivers events per providing process; a held server-side provider holds only its own events.
-- E-scope: a focus registration scoped to one window is refused by the direct call and works only through an event handler group, undocumented (`experiments/focus-events-cannot-be-limited-to-one-application/`).
+- E-scope: a focus registration scoped to one window is refused by the direct call and works only through an event handler group, undocumented (`uia-facts/focus-events-cannot-be-limited-to-one-application/`).
 - E-cost: each focus registration adds 47 to 90 provider calls per focus event on the application's UI thread.
 - E1: both UIA timeouts are process-wide (`uia-facts/the-connection-timeout-applies-to-the-whole-process/`).
 - E-TT: the transaction timeout bounds each call, not an operation, and a timed-out registration reports success (`uia-facts/a-timeout-bounds-each-request-and-window-message-not-an-operation/`, `uia-facts/a-registration-that-times-out-reports-success/`).
 - E4: a provider that exits during a held call does not keep the client waiting.
 - E5: an outpost whose `GetFocusedElement` lands in another, held application waits on it, the isolation that call breaks.
-- E-marshal: an `IUIAutomationElement` cannot be unmarshaled in a process other than the one that created it, by any route tried (`experiments/elements-cannot-be-passed-to-another-process/`).
+- E-marshal: an `IUIAutomationElement` cannot be unmarshaled in a process other than the one that created it, by any route tried (`uia-facts/elements-cannot-be-passed-to-another-process/`).
 
 ## 12. Option (b): the listener judges and reads each UIA focus, on a thread per application
 
