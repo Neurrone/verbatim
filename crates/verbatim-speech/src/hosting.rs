@@ -250,12 +250,12 @@ pub fn put_pcm(
         utterance,
         sample_rate: format.sample_rate,
         channels: format.channels,
-        samples: (0, samples.len() * 2),
+        samples: (0, size_of_val(samples)),
     };
     frame.body_and_raw(
         |body| serde_json::to_writer(body, &wire).map_err(io::Error::other),
         |raw| {
-            raw.reserve(samples.len() * 2);
+            raw.reserve(size_of_val(samples));
             for sample in samples {
                 raw.extend_from_slice(&sample.to_le_bytes());
             }

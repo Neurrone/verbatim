@@ -52,9 +52,9 @@ impl Trimmer {
             self.release(&mut out);
         }
         let channels = usize::from(format.channels.max(1));
-        let whole = samples.len() - samples.len() % channels;
         let mut audible = Vec::new();
-        for frame in samples[..whole].chunks_exact(channels) {
+        // Whole frames only: `chunks_exact` leaves out a partial last one.
+        for frame in samples.chunks_exact(channels) {
             let quiet = frame
                 .iter()
                 .all(|sample| sample.unsigned_abs() <= QUIET.unsigned_abs());
@@ -118,13 +118,22 @@ impl Trimmer {
         let mut from = 0;
         for (at, mark) in self.held_marks.drain(..) {
             if at > from {
-                out.push(Piece::Pcm(format, held[from..at].to_vec()));
+                if let Some(piece) = held.get(from..at) {
+                    out.push(Piece::Pcm(format, piece.to_vec()));
+                } else {
+                    tracing::debug!(
+                        from,
+                        at,
+                        held = held.len(),
+                        "a held mark past the held audio"
+                    );
+                }
                 from = at;
             }
             out.push(Piece::Mark(mark));
         }
-        if held.len() > from {
-            out.push(Piece::Pcm(format, held[from..].to_vec()));
+        if let Some(rest) = held.get(from..).filter(|rest| !rest.is_empty()) {
+            out.push(Piece::Pcm(format, rest.to_vec()));
         }
     }
 }

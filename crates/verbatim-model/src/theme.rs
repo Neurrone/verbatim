@@ -202,7 +202,7 @@ impl Indication {
     /// category in the order the theme panel lists it.
     #[must_use]
     pub fn catalogue() -> Vec<Self> {
-        let mut all = Vec::with_capacity(Role::ALL.len() + 40);
+        let mut all = Vec::with_capacity(Role::ALL.len().saturating_add(40));
         all.extend(Role::ALL.iter().map(|role| Self::Role(*role)));
         for state in SPOKEN_STATES {
             all.push(Self::State(state));
@@ -435,7 +435,7 @@ impl<'de> Deserialize<'de> for Indication {
 
 /// `MenuItem` as `menu-item`.
 fn kebab(name: &str) -> String {
-    let mut out = String::with_capacity(name.len() + 4);
+    let mut out = String::with_capacity(name.len().saturating_add(4));
     for (index, character) in name.chars().enumerate() {
         if character.is_uppercase() {
             if index > 0 {

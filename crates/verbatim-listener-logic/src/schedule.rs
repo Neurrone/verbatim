@@ -386,7 +386,8 @@ impl<J> App<J> {
         if self.threaded || self.queue.is_empty() {
             return None;
         }
-        self.limit_reached.map(|reached| reached + deadline)
+        self.limit_reached
+            .map(|reached| reached.saturating_add(deadline))
     }
 }
 
@@ -657,7 +658,7 @@ impl<J> Schedule<J> {
         if replaced {
             self.wake_idle_waiters(effects);
         }
-        self.queued += 1;
+        self.queued = self.queued.saturating_add(1);
         let place = self.queued;
         let after_elsewhere = match kind {
             FocusEvent::Focus | FocusEvent::MenuOpened => self.last_focus.replace(pid) != Some(pid),
@@ -685,7 +686,7 @@ impl<J> Schedule<J> {
             effects.push(ScheduleEffect::Wake(Waking::Thread(pid)));
         } else if app
             .limit_reached
-            .is_some_and(|reached| now >= reached + self.deadline)
+            .is_some_and(|reached| now >= reached.saturating_add(self.deadline))
         {
             // Past the application's bound: dropped at once, behind the
             // events the watchdog has not yet dropped, in order.
@@ -912,7 +913,7 @@ impl<J> Schedule<J> {
         } = abandoned;
         effects.push(ScheduleEffect::Unwatch { pid });
         app.threaded = false;
-        app.abandoned += 1;
+        app.abandoned = app.abandoned.saturating_add(1);
         let count = app.abandoned;
         if count >= ABANDONED_LIMIT && app.limit_reached.is_none() {
             app.limit_reached = Some(now);
@@ -1159,7 +1160,7 @@ impl GraceState {
                 timing,
                 grace,
             } => {
-                self.end = Some((ended_at_us, timing, now + grace));
+                self.end = Some((ended_at_us, timing, now.saturating_add(grace)));
                 vec![GraceEffect::SetTimer(grace)]
             }
             GraceInput::Fired => {
@@ -1169,7 +1170,7 @@ impl GraceState {
                     return if self.closed {
                         Vec::new()
                     } else {
-                        vec![GraceEffect::SetTimer(over - now)]
+                        vec![GraceEffect::SetTimer(over.saturating_sub(now))]
                     };
                 }
                 let mut effects = Vec::new();

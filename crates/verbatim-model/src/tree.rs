@@ -344,8 +344,38 @@ impl State {
         State::Invisible,
     ];
 
+    /// The state's position in declaration order, which is its bit in a
+    /// [`StateSet`]'s serialized mask; spelled out, since a discriminant
+    /// has no `From` conversion.
+    const fn index(self) -> u32 {
+        match self {
+            Self::Focused => 0,
+            Self::Focusable => 1,
+            Self::Selected => 2,
+            Self::Selectable => 3,
+            Self::Checked => 4,
+            Self::Mixed => 5,
+            Self::Disabled => 6,
+            Self::ReadOnly => 7,
+            Self::Expanded => 8,
+            Self::Collapsed => 9,
+            Self::Pressed => 10,
+            Self::HasPopup => 11,
+            Self::Offscreen => 12,
+            Self::Busy => 13,
+            Self::Protected => 14,
+            Self::Required => 15,
+            Self::InvalidEntry => 16,
+            Self::Checkable => 17,
+            Self::Multiline => 18,
+            Self::Visited => 19,
+            Self::Linked => 20,
+            Self::Invisible => 21,
+        }
+    }
+
     const fn bit(self) -> u32 {
-        1 << (self as u32)
+        1 << self.index()
     }
 }
 

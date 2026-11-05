@@ -19,15 +19,10 @@
 
 use crate::{MOVED_ON_GRACE, Window};
 
-/// The moved-on grace, in microseconds.
-const GRACE_US: u64 = {
-    let micros = MOVED_ON_GRACE.as_micros();
-    assert!(micros <= u64::MAX as u128);
-    #[expect(clippy::cast_possible_truncation, reason = "checked just above")]
-    {
-        micros as u64
-    }
-};
+/// The moved-on grace, in microseconds, saturating at `u64::MAX`.
+fn grace_us() -> u64 {
+    u64::try_from(MOVED_ON_GRACE.as_micros()).unwrap_or(u64::MAX)
+}
 
 /// One request of one worker generation: what a worker's results name, so
 /// that a dead generation's and an earlier request's are refused.
@@ -216,7 +211,7 @@ impl<T> InFlight<T> {
             RuleWindow::Unknown => Moved::Unknown,
             RuleWindow::Known(window) => Moved::Known {
                 window,
-                next: now.saturating_add(GRACE_US),
+                next: now.saturating_add(grace_us()),
             },
         };
         self.running = Some(Running {
@@ -235,10 +230,10 @@ impl<T> InFlight<T> {
     pub fn hand_on(&mut self) -> Option<Request> {
         let request = Request {
             generation: self.generation,
-            number: self.requests + 1,
+            number: self.requests.saturating_add(1),
         };
         let running = self.running.as_mut()?;
-        self.requests += 1;
+        self.requests = self.requests.saturating_add(1);
         running.request = request;
         Some(request)
     }
@@ -253,7 +248,7 @@ impl<T> InFlight<T> {
         if running.moved != Moved::Unknown {
             return Decision::Nothing;
         }
-        let grace_end = running.started.saturating_add(GRACE_US);
+        let grace_end = running.started.saturating_add(grace_us());
         running.moved = Moved::Known {
             window,
             next: grace_end.max(now),
@@ -319,7 +314,7 @@ impl<T> InFlight<T> {
                 then_abandon: Some(Reason::MovedOn),
             });
         }
-        Decision::Abandon(self.abandon(Reason::MovedOn))
+        self.abandon(Reason::MovedOn)
     }
 
     /// The answer to [`Ask::Publish`] for `request`, with `got` when the
@@ -366,7 +361,7 @@ impl<T> InFlight<T> {
             running.walk = Walk::Published;
         }
         Some(match then_abandon {
-            Some(reason) => Decision::Abandon(self.abandon(reason)),
+            Some(reason) => self.abandon(reason),
             None => Decision::Nothing,
         })
     }
@@ -386,7 +381,7 @@ impl<T> InFlight<T> {
             self.running.is_none(),
             "a generation succeeded over an item"
         );
-        self.generation += 1;
+        self.generation = self.generation.saturating_add(1);
         self.generation
     }
 
@@ -465,7 +460,7 @@ impl<T> InFlight<T> {
                     then_abandon: Some(Reason::Deadline),
                 });
             }
-            return Decision::Abandon(self.abandon(Reason::Deadline));
+            return self.abandon(Reason::Deadline);
         }
         if let Walk::Armed(bound) = running.walk
             && now >= bound
@@ -479,7 +474,7 @@ impl<T> InFlight<T> {
         if let Moved::Known { window, next } = &mut running.moved
             && now >= *next
         {
-            *next = now.saturating_add(GRACE_US);
+            *next = now.saturating_add(grace_us());
             return Decision::Ask(Ask::MovedOn {
                 request,
                 window: *window,
@@ -489,25 +484,21 @@ impl<T> InFlight<T> {
     }
 
     /// Abandons the item running for `reason`: it leaves, and the next
-    /// generation takes charge.
-    ///
-    /// # Panics
-    ///
-    /// Never: called only with an item running.
-    fn abandon(&mut self, reason: Reason) -> Abandoned<T> {
-        let running = self
-            .running
-            .take()
-            .expect("an abandonment of the item running");
+    /// generation takes charge. Called only with an item running; with
+    /// none, nothing is decided.
+    fn abandon(&mut self, reason: Reason) -> Decision<T> {
+        let Some(running) = self.running.take() else {
+            return Decision::Nothing;
+        };
         let dead = self.generation;
-        self.generation += 1;
-        Abandoned {
+        self.generation = self.generation.saturating_add(1);
+        Decision::Abandon(Abandoned {
             dead,
             replacement: self.generation,
             reason,
             item: running.item,
             published: running.walk == Walk::Published,
-        }
+        })
     }
 
     /// The item running, if it is `request`'s.
@@ -521,7 +512,7 @@ impl<T> InFlight<T> {
     /// does not keep, which nothing is judged of and whose results are
     /// refused: a reader's last drop as it stops.
     pub fn next_request(&mut self) -> Request {
-        self.requests += 1;
+        self.requests = self.requests.saturating_add(1);
         Request {
             generation: self.generation,
             number: self.requests,

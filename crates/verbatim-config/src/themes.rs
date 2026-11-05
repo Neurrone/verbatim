@@ -424,7 +424,7 @@ pub fn theme_id_for_name(themes_dir: &Path, name: &str) -> String {
         if !taken(&id) {
             return id;
         }
-        number += 1;
+        number = number.saturating_add(1);
     }
 }
 
@@ -544,7 +544,7 @@ pub fn add_sound(themes_dir: &Path, id: &str, file: &Path) -> Result<String, The
     let mut number = 2_u32;
     while !free(&chosen) {
         chosen = format!("{stem}-{number}.{extension}");
-        number += 1;
+        number = number.saturating_add(1);
     }
     let target = dir.join(&chosen);
     fs::write(&target, &contents).map_err(|error| ThemeError::Io(target, error))?;

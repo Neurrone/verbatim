@@ -533,8 +533,9 @@ impl SpeechManager {
         earcon: Earcon,
         timeout: Duration,
     ) -> bool {
-        let deadline = Instant::now() + timeout;
-        self.play_earcon_heard(token, earcon).wait_until(deadline)
+        let heard = self.play_earcon_heard(token, earcon);
+        // A timeout past the clock's range never passes.
+        heard.wait(Instant::now().checked_add(timeout))
     }
 
     /// Reports an event as [`play_earcon`](Self::play_earcon) does, and
@@ -665,9 +666,18 @@ impl EarconHeard {
     /// the deadline passed first.
     #[must_use]
     pub fn wait_until(self, deadline: Instant) -> bool {
+        self.wait(Some(deadline))
+    }
+
+    /// [`wait_until`](Self::wait_until), or with no deadline at all.
+    fn wait(self, deadline: Option<Instant>) -> bool {
         let mut heard = true;
         for _ in 0..self.waiting.len() {
-            if self.ended.recv_deadline(deadline).is_err() {
+            let ended = match deadline {
+                Some(deadline) => self.ended.recv_deadline(deadline).is_ok(),
+                None => self.ended.recv().is_ok(),
+            };
+            if !ended {
                 heard = false;
                 break;
             }
@@ -1540,8 +1550,10 @@ fn sounds_as_marks(sequence: &SpeechSequence) -> (SpeechSequence, Vec<SoundCue>)
         .iter()
         .map(|item| match item {
             SpeechItem::Sound(cue) => {
+                // A sound's index within `u64`, as every `usize` is.
+                let index = u64::try_from(sounds.len()).unwrap_or(u64::MAX);
                 sounds.push(cue.clone());
-                SpeechItem::Mark(IndexMark(SOUND_MARK | (sounds.len() as u64 - 1)))
+                SpeechItem::Mark(IndexMark(SOUND_MARK | index))
             }
             other => other.clone(),
         })

@@ -91,7 +91,8 @@ impl std::ops::Add for CallCounts {
 
 impl std::ops::AddAssign for CallCounts {
     fn add_assign(&mut self, other: Self) {
-        *self = *self + other;
+        // The saturating sum, as `Add` defines it.
+        *self = std::ops::Add::add(*self, other);
     }
 }
 

@@ -104,7 +104,7 @@ impl TerminalText {
             let length = u32::try_from(characters(line)).unwrap_or(u32::MAX);
             text.push_str(line.trim_end_matches(' '));
             match lengths.last_mut() {
-                Some((count, last)) if *last == length => *count += 1,
+                Some((count, last)) if *last == length => *count = count.saturating_add(1),
                 _ => lengths.push((1, length)),
             }
         }
@@ -118,7 +118,7 @@ impl TerminalText {
         let total: usize = self
             .lengths
             .iter()
-            .map(|(count, length)| width(*count).saturating_mul(width(*length) + 2))
+            .map(|(count, length)| width(*count).saturating_mul(width(*length).saturating_add(2)))
             .sum();
         let mut padded = String::with_capacity(total.max(self.text.len()));
         let mut lengths = self
@@ -131,19 +131,12 @@ impl TerminalText {
             }
             padded.push_str(line);
             let length = lengths.next().unwrap_or(0);
-            let mut spaces = length.saturating_sub(characters(line));
-            while spaces > 0 {
-                let run = spaces.min(SPACES.len());
-                padded.push_str(&SPACES[..run]);
-                spaces -= run;
-            }
+            let spaces = length.saturating_sub(characters(line));
+            padded.extend(std::iter::repeat_n(' ', spaces));
         }
         padded
     }
 }
-
-/// Spaces to pad a line with, copied a run at a time.
-const SPACES: &str = "                                                                                                                                ";
 
 /// How many characters `line` holds: its bytes when it is ASCII.
 fn characters(line: &str) -> usize {

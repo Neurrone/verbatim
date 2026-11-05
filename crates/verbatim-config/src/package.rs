@@ -79,11 +79,12 @@ pub(crate) fn read(
             .take(MAX_FILE_BYTES + 1)
             .read_to_end(&mut contents)
             .map_err(|error| format!("{name}: {error}"))?;
-        let size = contents.len() as u64;
+        // A length past `u64` saturates, and is refused as too large below.
+        let size = u64::try_from(contents.len()).unwrap_or(u64::MAX);
         if size > MAX_FILE_BYTES {
             return Err(format!("{name} is larger than {MAX_FILE_BYTES} bytes"));
         }
-        total += size;
+        total = total.saturating_add(size);
         if total > MAX_TOTAL_BYTES {
             return Err(format!("more than {MAX_TOTAL_BYTES} bytes"));
         }

@@ -591,13 +591,20 @@ fn progress_frequency(base_hz: u32, percent: u8) -> u32 {
     let frequency = f64::from(base_hz) * (PROGRESS_OCTAVES * percent / 100.0).exp2();
     // Within u32: at most eight times a u32 frequency, and frequencies are
     // validated to at most 20 kHz.
-    #[expect(
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss,
-        reason = "a positive frequency well within u32"
-    )]
-    let frequency = frequency.round() as u32;
-    frequency
+    saturating_u32(frequency.round())
+}
+
+/// `value` as a `u32`, saturating: below 0 and NaN become 0, and past
+/// `u32::MAX` becomes `u32::MAX`. The crate's one conversion from a float
+/// to an integer.
+#[expect(
+    clippy::as_conversions,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "`as` from a float to an integer saturates, as this helper states"
+)]
+fn saturating_u32(value: f64) -> u32 {
+    value as u32
 }
 
 #[cfg(test)]

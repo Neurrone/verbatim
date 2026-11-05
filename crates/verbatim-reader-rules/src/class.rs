@@ -33,7 +33,7 @@ fn windows_forms_class(raw: &str) -> Option<&str> {
     let rest = rest.trim_start_matches(|c: char| c.is_ascii_digit());
     let rest = rest.strip_prefix('.')?;
     let end = rest.rfind(".app.")?;
-    Some(&rest[..end])
+    rest.get(..end)
 }
 
 fn mapped_class(class: &str) -> Option<&'static str> {

@@ -313,7 +313,9 @@ impl TextChunk {
     pub fn language_at(&self, offset: usize) -> Option<&str> {
         self.languages
             .iter()
-            .find(|run| (run.start as usize..run.end as usize).contains(&offset))
+            .find(|run| {
+                u32::try_from(offset).is_ok_and(|offset| (run.start..run.end).contains(&offset))
+            })
             .map(|run| run.language.as_str())
     }
 }
