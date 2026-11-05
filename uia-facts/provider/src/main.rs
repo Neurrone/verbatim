@@ -57,7 +57,9 @@
 //!   is raised while that thread is busy; answered with the time it was
 //!   raised.
 //! - `raise-rate <kind> <w> <n> <per second> <count>`: raises `count` of
-//!   them at that pace on the UI thread; answered once all are raised.
+//!   them at that pace on the UI thread, dispatching the messages and calls
+//!   waiting for it between two events; a pace of 0 raises them back to
+//!   back, dispatching nothing; answered once all are raised.
 //! - `foreground <w>`: shows window w and brings it to the foreground;
 //!   answered with whether it is the foreground window.
 //! - `show <w>` and `hide <w>`: shows or hides window w, without changing
@@ -393,7 +395,7 @@ fn handle(line: &str) -> String {
                 (0, 1)
             } else {
                 match (number(3), number(4)) {
-                    (Some(pace), Some(count)) if pace > 0 => (pace, count),
+                    (Some(pace), Some(count)) => (pace, count),
                     _ => return "err raise-rate takes a pace and a count".to_owned(),
                 }
             };

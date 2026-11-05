@@ -379,7 +379,7 @@ fn backlog(args: &Args, report: &mut Report) {
         note::evidence(&format!("warmed: {}", warm.is_some()));
         let before = cpu(&mut client).unwrap_or(0);
         let raised: u64 = flood
-            .request(&format!("raise-rate name 0 1 10000000 {size}"))
+            .request(&format!("raise-rate name 0 1 0 {size}"))
             .parse()
             .expect("a time");
         uia::pause(Duration::from_secs(3), "the client's work on the burst");

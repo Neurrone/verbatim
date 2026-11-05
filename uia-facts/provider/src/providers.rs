@@ -182,7 +182,14 @@ pub(crate) fn raise(
                 f64::from(u32::try_from(i).expect("a count fits"))
                     / f64::from(u32::try_from(pace).expect("a pace fits")),
             );
-            while start.elapsed() < due {
+            // Between two events the UI thread answers the calls waiting
+            // for it, as mockapp's flood did, so clients' fetches of each
+            // event's cache are served during the flood.
+            loop {
+                dispatch_waiting();
+                if start.elapsed() >= due {
+                    break;
+                }
                 std::hint::spin_loop();
             }
         }
@@ -191,6 +198,22 @@ pub(crate) fn raise(
         }
     }
     format!("ok {first}")
+}
+
+/// Dispatches every message waiting for this thread, the COM calls into its
+/// apartment among them.
+fn dispatch_waiting() {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        DispatchMessageW, MSG, PM_REMOVE, PeekMessageW, TranslateMessage,
+    };
+    let mut msg = MSG::default();
+    // SAFETY: `msg` outlives each call, which writes it.
+    while unsafe { PeekMessageW(&raw mut msg, None, 0, 0, PM_REMOVE) }.as_bool() {
+        // SAFETY: a message PeekMessageW filled.
+        let _ = unsafe { TranslateMessage(&raw const msg) };
+        // SAFETY: as above.
+        unsafe { DispatchMessageW(&raw const msg) };
+    }
 }
 
 fn raise_one(
