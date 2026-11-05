@@ -7,8 +7,7 @@
 //!   connection timeout at 10,000 ms and the transaction timeout at
 //!   1,000 ms; the provider holds the root's `GetPropertyValue`; the
 //!   connection timeout is set to 1,000 ms; then `FindFirstBuildCache` over
-//!   the descendants for the name `First`, caching the name. 5 trials. The
-//!   provider log after the release gives the order of the waits.
+//!   the descendants for the name `First`, caching the name. 5 trials.
 //! - `queued-search`: another client object's name read of node 1 held; a
 //!   `FindFirst` for `First` from the window's element, fetched a second
 //!   before, both timeouts at 1,000 ms. 5 trials.
@@ -26,7 +25,7 @@
 use std::time::Duration;
 
 use uia_facts_support::args::Args;
-use uia_facts_support::provider::{Entry, Provider};
+use uia_facts_support::provider::Provider;
 use uia_facts_support::report::{Report, Verdict, band, band_text, deterministic, in_band, runs};
 use uia_facts_support::stats::summary_ms;
 use uia_facts_support::uia::{self, Timed};
@@ -82,37 +81,11 @@ fn find(root: &IUIAutomationElement, name: &str) -> windows::core::Result<IUIAut
     unsafe { root.FindFirst(TreeScope_Descendants, &condition) }
 }
 
-/// The first log entry of each kind, in order of time: the held test,
-/// `CB_GETCOMBOBOXINFO`, each `WM_GETOBJECT` object id, and the walk's
-/// first `Navigate`.
-fn order(log: &[Entry]) -> Vec<String> {
-    let mut seen: Vec<(u64, String)> = Vec::new();
-    let mut note = |time: u64, what: String| {
-        if !seen.iter().any(|(_, w)| *w == what) {
-            seen.push((time, what));
-        }
-    };
-    for entry in log {
-        if entry.is_call("GetPropertyValue") && entry.node == Some(0) {
-            note(entry.start, "the condition's test".to_owned());
-        } else if entry.kind == "msg" && entry.name == "CB_GETCOMBOBOXINFO" {
-            note(entry.start, "CB_GETCOMBOBOXINFO".to_owned());
-        } else if entry.kind == "msg" && entry.name == "WM_GETOBJECT" {
-            note(entry.start, format!("WM_GETOBJECT {}", entry.extra));
-        } else if entry.is_call("Navigate") {
-            note(entry.start, "the Find's walk".to_owned());
-        }
-    }
-    seen.sort_by_key(|(time, _)| *time);
-    seen.into_iter().map(|(_, what)| what).collect()
-}
-
 fn ett(args: &Args, report: &mut Report) {
     let mut provider = launch();
     let client = uia::client();
     let mut times = Vec::new();
     let mut outcomes = Vec::new();
-    let mut orders = Vec::new();
     for _ in 0..5 {
         uia::set_timeouts(&client, 10_000, 1_000);
         let root = uia::element(&client, provider.hwnd(0)).expect("the window's element");
@@ -128,10 +101,11 @@ fn ett(args: &Args, report: &mut Report) {
         });
         provider.request("release");
         provider.clear_held();
-        let (log, _) = provider.log_until(WALK_BOUND, |e| e.is_call("Navigate"));
+        // The provider runs the search's walk after the release; the next
+        // trial waits for it, so its hold catches only its own search.
+        let _ = provider.log_until(WALK_BOUND, |e| e.is_call("Navigate"));
         times.push(search.ms());
         outcomes.push(search.outcome);
-        orders.push(order(&log));
     }
     report.claim(
         "E-TT's search fails with UIA_E_TIMEOUT",
@@ -145,15 +119,6 @@ fn ett(args: &Args, report: &mut Report) {
         &summary_ms(&times),
         &format!("13,208 ms, {}", band_text(window)),
         in_band(&times, window),
-    );
-    // The window messages that timed out never reach the window procedure
-    // after the hold, so this log shows only what was delivered; the order
-    // of the four waits is the original trace's (readme, "Method").
-    report.claim(
-        "what reaches the provider after the release, in order",
-        &runs(&orders),
-        "",
-        Verdict::Trend,
     );
 }
 

@@ -8,6 +8,9 @@ license.workspace = true
 
 [dependencies]
 toml.workspace = true
+# Unifies toml's features with the full build's, so building check-copies
+# alone first builds the same toml the full build then reuses.
+workspace-hack.workspace = true
 
 [lints]
 workspace = true

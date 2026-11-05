@@ -9,8 +9,8 @@ They are run by hand on Dickson's machine, before and after a Windows update, to
 `uia-facts/build.ps1` builds everything, locally and in `.github/workflows/uia-facts.yml`:
 
 1. It copies the root `Cargo.lock` to `uia-facts/Cargo.lock` (which git ignores) and runs `cargo metadata`, which keeps every locked version and drops the entries this workspace does not use. Every later step is `--locked`, so a re-resolution fails rather than building a second version of a crate. On the first build the derived lock held 196 of the main lock's 276 entries: the 93 this workspace does not use were dropped, the 13 uia-facts members added, and no version changed.
-2. It runs `cargo build --locked` in `uia-facts/`, which builds the provider program, every fact program and `check-copies` into the main `target/debug`.
-3. It runs the built `check-copies` (below).
+2. It builds `check-copies` alone and runs it (below), before the full build, so a drifted copy fails before a second `windows` is built. It depends on the `workspace-hack` crate, so the `toml` it builds is the one the full build reuses.
+3. It runs `cargo build --locked` in `uia-facts/`, which builds the provider program, every fact program and `check-copies` into the main `target/debug`.
 
 Then run a fact's program from `target/debug`, for example `target\debug\nothing-cancels-a-uia-call.exe`. Every program takes:
 

@@ -21,9 +21,7 @@ use std::time::Duration;
 
 use uia_facts_support::args::Args;
 use uia_facts_support::provider::Provider;
-use uia_facts_support::report::{
-    Report, Verdict, band, band_text, deterministic, in_band, relation, runs,
-};
+use uia_facts_support::report::{Report, band, band_text, deterministic, in_band, relation, runs};
 use uia_facts_support::stats::summary_ms;
 use uia_facts_support::uia::{self, Timed};
 use windows::Win32::Media::{timeBeginPeriod, timeEndPeriod};
@@ -97,7 +95,7 @@ fn main() {
             &args,
             &mut report,
             2_000,
-            "",
+            "2,201.2 ms (the first run)",
             " with the system timer at 1 ms",
         );
         // SAFETY: undoes the call above.
@@ -123,22 +121,16 @@ fn waits(args: &Args, report: &mut Report, timeout: u32, recorded: &str, conditi
         TIMEOUT,
         deterministic(&outcomes, &TIMEOUT.to_owned()),
     );
-    if condition.is_empty() {
-        let window = band(&[f64::from(timeout)]);
-        report.claim(
-            &format!("it fails after about 1.1 times {timeout} ms"),
-            &summary_ms(&times),
-            &format!("{recorded}, {}", band_text(window)),
-            in_band(&times, window),
-        );
-    } else {
-        report.claim(
-            &format!("its wait{condition}, against the 100 ms slices inferred"),
-            &summary_ms(&times),
-            "",
-            Verdict::New,
-        );
-    }
+    // The timer arm's first run (2,201.2 ms, 2,199.3 to 2,207.4, on
+    // 2026-11-05) is its record: the same 1.1 times the timeout, so it is
+    // judged by the same band.
+    let window = band(&[f64::from(timeout)]);
+    report.claim(
+        &format!("it fails after about 1.1 times {timeout} ms{condition}"),
+        &summary_ms(&times),
+        &format!("{recorded}, {}", band_text(window)),
+        in_band(&times, window),
+    );
 }
 
 fn single_reads(args: &Args, report: &mut Report) {

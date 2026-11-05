@@ -19,7 +19,7 @@ Every arm runs against the provider program with one UIA window, the elements fe
 - `own-start`: at 2,000 ms, node 1's read held on one thread and, 200 ms later (a deliberate offset), node 2's read on another; the second read's wait from its own start, and, after the release, whether the provider log shows node 2's read served (watched for up to 5 s). 5 trials.
 - `timer`: the 2,000 ms wait with the system timer at 1 ms (`timeBeginPeriod(1)`). 5 trials.
 
-Judged: the HRESULT (deterministic), each wait (a band from its timeout), the late service (a relation); `timer` is new.
+Judged: the HRESULT (deterministic), each wait (a band from its timeout), the late service (a relation). `timer`, an open question whose first run is its record, is judged by the same band as `waits`.
 
 ## Recorded results
 
@@ -30,7 +30,7 @@ Judged: the HRESULT (deterministic), each wait (a band from its timeout), the la
 | First uia-facts run, `single-reads`: `UIA_E_TIMEOUT` 5 of 5 each; `CurrentName` 1,092 ms (1,090 to 1,094), `CurrentHasKeyboardFocus` 1,093 ms (1,088 to 1,095) | 2026-11-05 | Build 26200.9711, `UIAutomationCore.dll` 7.2.26100.9549, AMD Ryzen 7 5700G | 1682f8cb | Pass |
 | First uia-facts run, `own-start`: both reads `UIA_E_TIMEOUT` 5 of 5; the queued read 2,203 ms (2,196 to 2,204) from its own start; node 2's read served after the release 5 of 5 | 2026-11-05 | As above | As above | Pass |
 | First uia-facts run, `waits`: `UIA_E_TIMEOUT` 5 of 5 at each timeout; 2,197.8 ms (2,190.9 to 2,199.6), 5,517.6 ms (5,515.3 to 5,527.6) and 22,133 ms (22,124 to 22,136) | 2026-11-05 | As above | As above | Pass |
-| First uia-facts run, `timer`: `UIA_E_TIMEOUT` 5 of 5, 2,201.2 ms (2,199.3 to 2,207.4) with the system timer at 1 ms | 2026-11-05 | As above | As above | New: the wait is unchanged, so the 1.1 times is not the system timer lengthening 100 ms slices |
+| First uia-facts run, `timer`: `UIA_E_TIMEOUT` 5 of 5, 2,201.2 ms (2,199.3 to 2,207.4) with the system timer at 1 ms | 2026-11-05 | As above | As above | This record: the wait is unchanged, so the 1.1 times is not the system timer |
 
 ## How to rerun
 
