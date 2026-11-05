@@ -1,6 +1,9 @@
 [workspace]
 resolver = "3"
 members = ["crates/*", "xtask"]
+# uia-facts/ is a Cargo workspace of its own (uia-facts/readme.md), so that
+# its programs never join this workspace's build or checks.
+exclude = ["uia-facts"]
 
 [workspace.package]
 version = "0.1.0"

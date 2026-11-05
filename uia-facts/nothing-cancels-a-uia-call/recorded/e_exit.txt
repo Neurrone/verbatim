@@ -1,0 +1,28 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.26s
+     Running tests\cocancel_uia.rs (C:/Users/Dickson/Desktop/projects/verbatim-target-cancel\debug\deps\cocancel_uia-e628a73b9c60149d.exe)
+
+running 1 test
+RESULT exit exit_child_cancelled run=1 exited 0x00000000 after_ms=5753.2
+RESULT exit exit_child_cancelled run=2 exited 0x00000000 after_ms=5685.5
+RESULT exit exit_child_cancelled run=3 exited 0x00000000 after_ms=5593.1
+RESULT exit exit_child_cancelled run=4 exited 0x00000000 after_ms=5695.6
+RESULT exit exit_child_cancelled run=5 exited 0x00000000 after_ms=5661.5
+RESULT exit exit_child_cancelled run=6 exited 0x00000000 after_ms=5724.0
+RESULT exit exit_child_cancelled run=7 exited 0x00000000 after_ms=5732.7
+RESULT exit exit_child_cancelled run=8 exited 0x00000000 after_ms=5755.8
+RESULT exit exit_child_cancelled run=9 exited 0x00000000 after_ms=5663.1
+RESULT exit exit_child_cancelled run=10 exited 0x00000000 after_ms=5683.5
+RESULT exit exit_child_control run=1 exited 0x00000000 after_ms=3303.5
+RESULT exit exit_child_control run=2 exited 0x00000000 after_ms=3284.6
+RESULT exit exit_child_control run=3 exited 0x00000000 after_ms=3292.5
+RESULT exit exit_child_control run=4 exited 0x00000000 after_ms=3292.1
+RESULT exit exit_child_control run=5 exited 0x00000000 after_ms=3297.2
+RESULT exit exit_child_control run=6 exited 0x00000000 after_ms=3291.8
+RESULT exit exit_child_control run=7 exited 0x00000000 after_ms=3276.5
+RESULT exit exit_child_control run=8 exited 0x00000000 after_ms=3296.6
+RESULT exit exit_child_control run=9 exited 0x00000000 after_ms=3288.7
+RESULT exit exit_child_control run=10 exited 0x00000000 after_ms=3304.0
+test e_exit ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 10 filtered out; finished in 89.89s
+

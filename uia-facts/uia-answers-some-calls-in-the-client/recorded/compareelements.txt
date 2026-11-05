@@ -1,0 +1,11 @@
+RESULT exp=compare arm=free n=0 took_ms=0.0 same=Ok(false) a=[none] b=[none]
+RESULT exp=compare arm=free n=1 took_ms=0.0 same=Ok(false) a=[none] b=[none]
+RESULT exp=compare arm=free n=2 took_ms=0.0 same=Ok(false) a=[none] b=[none]
+RESULT exp=compare arm=free n=3 took_ms=0.0 same=Ok(false) a=[none] b=[none]
+RESULT exp=compare arm=free n=4 took_ms=0.0 same=Ok(false) a=[none] b=[none]
+RESULT exp=compare arm=a-stalled n=0 took_ms=0.0 same=Ok(false) a=[none] b=[none]
+RESULT exp=compare arm=a-stalled n=1 took_ms=0.0 same=Ok(false) a=[none] b=[none]
+RESULT exp=compare arm=a-stalled n=2 took_ms=0.0 same=Ok(false) a=[none] b=[none]
+RESULT exp=compare arm=a-stalled n=3 took_ms=0.0 same=Ok(false) a=[none] b=[none]
+RESULT exp=compare arm=a-stalled n=4 took_ms=0.0 same=Ok(false) a=[none] b=[none]
+SUMMARY done

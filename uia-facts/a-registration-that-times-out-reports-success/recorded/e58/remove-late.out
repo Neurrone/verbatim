@@ -1,0 +1,5 @@
+e58 case=remove-late registered ok 2223 released 202 ms after return; removal at +3000 from the stall's end: ok 0; handler released 0 ms after the removal began; B: lost [ev0@1001 ev1@4000] heard [] others [];
+e58 case=remove-late registered ok 2219 released 200 ms after return; removal at +3000 from the stall's end: ok 0; handler released 0 ms after the removal began; B: lost [ev0@1000 ev1@4000] heard [] others [];
+e58 case=remove-late registered ok 2214 released 200 ms after return; removal at +3000 from the stall's end: ok 0; handler released 0 ms after the removal began; B: lost [ev0@1000 ev1@4001] heard [] others [];
+e58 case=remove-late registered ok 2206 released 200 ms after return; removal at +3000 from the stall's end: ok 0; handler released 0 ms after the removal began; B: lost [ev0@1001 ev1@4001] heard [] others [];
+e58 case=remove-late registered ok 2209 released 200 ms after return; removal at +3000 from the stall's end: ok 0; handler released 0 ms after the removal began; B: lost [ev0@1001 ev1@4000] heard [] others [];

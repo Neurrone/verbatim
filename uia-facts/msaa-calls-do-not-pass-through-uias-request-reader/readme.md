@@ -1,0 +1,42 @@
+# MSAA calls do not pass through UIA's request reader
+
+## Fact
+
+An MSAA call does not go through UIA's I/O thread: with a UIA call stuck in a provider off the UI thread, MSAA calls into the same process answered in 1.2 to 2.6 ms, through oleacc's window proxy and through UIA's MSAA bridge alike, while UIA calls waited (`books/dev/src/explanation/windows/uia.md`, "MSAA beside UIA"). For a window with no `IAccessible` of its own, oleacc's proxy reads the name by sending `WM_GETTEXTLENGTH` and `WM_GETTEXT`. Sent messages slow down with more sending threads, to 0.52 to 0.78 times one thread's rate, even when each thread sends to a UI thread of its own; that the contention is in the window manager is inferred. How long an MSAA call into a busy UI thread can wait was not known.
+
+## What Verbatim relies on
+
+The hung-window workaround's claim that MSAA keeps working, and the outposts' MSAA reads of other processes' windows (`books/dev/src/explanation/design/listener-without-connections.md`, sections 4.3 and 4.4). A change would slow those reads behind UIA's.
+
+## Method
+
+- `stuck`: the provider program without `UseComThreading` and with `--bridge`: window 0 a UIA window, window 1 one with its own `IAccessible`, window 2 a plain window, all on UI thread 0, and window 3 a UIA window on UI thread 1. Window 0's node 1 read is held, on UIA's I/O thread, for 1,000 ms (a deliberate length). Meanwhile `accName` on each window's `OBJID_CLIENT` object, got before the hold: UIA's MSAA bridge (window 0), the window's own `IAccessible` (window 1), oleacc's window proxy (window 2); and a UIA read into window 3. 3 trials.
+- `messages`: oleacc's `accName` on a plain window, the window's messages counted by the provider's log. 3 runs.
+- `busy-sweep`: oleacc's `accName` on a plain window while its UI thread is busy for 1, 5, 15 and 60 s. One run each.
+- `sent-rate`: 20,000 `WM_GETTEXT`s sent by 1, 4 and 8 threads of this process, each thread to a plain window on a UI thread of its own. 3 runs.
+- `processes`: the 8-thread case as 8 threads of one process and as two processes of 4 threads. 3 runs.
+
+Judged: whether each MSAA call answered before the release and the UIA read after it (relations); the message counts (deterministic); whether more threads send fewer messages a second than one (a relation). The times and rates are printed for trends; the sweep and the processes are new.
+
+## Recorded results
+
+| Figure | Date | Machine | Source | Threshold |
+|---|---|---|---|---|
+| MSAA during a stuck UIA call: 1.2 to 2.6 ms; UIA waits | 2026-11-02 | Build 26200.9711 | `experiments/parallel-uia-calls/`, "MSAA calls while a UIA call is stuck" (`msaa-while-stuck.ps1`) | Relations; the time for trends |
+| oleacc's `accName` sends `WM_GETTEXTLENGTH` and `WM_GETTEXT` | 2026-11-02 | Build 26200.9711 | The same, "Why MSAA slowed with more threads" (`msaa-path.ps1`) | (1, 1) |
+| Sent messages at 0.52 to 0.78 times one thread's rate | 2026-11-02 | Build 26200.9711 | The same | Slower than one thread; the ratio for trends |
+| First uia-facts run, `stuck`: each of the three `accName`s answered during the hold, 3 of 3 (the bridge 0.9 ms, the window's own `IAccessible` 0.2 ms, oleacc's proxy 0.1 ms); the UIA read waited for the release, 3 of 3 | 2026-11-05 | Build 26200.9711, `UIAutomationCore.dll` 7.2.26100.9549 | The commit that added this folder | Pass |
+| First uia-facts run, `messages`: (1, 1) in 3 of 3 | 2026-11-05 | As above | As above | Pass |
+| First uia-facts run, `busy-sweep`: answered after 1,001, 5,001, 15,000 and 60,000 ms | 2026-11-05 | As above | As above | New: an MSAA call into a busy UI thread waits the whole busy time, with no bound up to 60 s |
+| First uia-facts run, `sent-rate`: slower than one thread 3 of 3 at 4 and at 8 threads; the rate 0.51 at 4 threads (0.49 to 0.53) and 0.51 at 8 (0.50 to 0.51) | 2026-11-05 | As above | As above | Pass; the ratio for trends |
+| First uia-facts run, `processes`: 8 threads of one process 802 to 810 ms, of two processes 810 to 822 ms | 2026-11-05 | As above | As above | New: two processes are no faster than one, which fits contention outside the processes |
+
+The `stuck` times are lower than the original's; they are printed for trends only.
+
+## How to rerun
+
+`uia-facts/build.ps1`, then `target\debug\msaa-calls-do-not-pass-through-uias-request-reader.exe`, or one arm with `--arm`. No desktop, application or debugger. About 2 minutes, most of it the 60 s sweep.
+
+## Evidence kept
+
+None of its own: the original outputs stay in `experiments/parallel-uia-calls/results/` until that folder's last facts move.

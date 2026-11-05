@@ -1,0 +1,5 @@
+e58 case=remove registered ok 2201 released 200 ms after return; removal at +500 from the stall's end: 0x80131505 0; handler not released within 15000 ms of the removal; B: lost [ev0@1001] heard [ev1@4002+0] others [];
+e58 case=remove registered ok 2222 released 200 ms after return; removal at +500 from the stall's end: 0x80131505 0; handler not released within 15008 ms of the removal; B: lost [ev0@1001] heard [ev1@4002+0] others [];
+e58 case=remove registered ok 2223 released 200 ms after return; removal at +500 from the stall's end: 0x80131505 0; handler not released within 15002 ms of the removal; B: lost [ev0@1002] heard [ev1@4000+1] others [];
+e58 case=remove registered ok 2209 released 200 ms after return; removal at +500 from the stall's end: 0x80131505 0; handler not released within 15009 ms of the removal; B: lost [ev0@1001] heard [ev1@4002+0] others [];
+e58 case=remove registered ok 2201 released 200 ms after return; removal at +500 from the stall's end: 0x80131505 0; handler not released within 15012 ms of the removal; B: lost [ev0@1000] heard [ev1@4002+0] others [];

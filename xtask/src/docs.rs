@@ -58,6 +58,7 @@ const REPOSITORY_ROOTS: &[&str] = &[
     "videos/",
     "extensions/",
     ".claude/",
+    "uia-facts/",
 ];
 
 /// The text that, directly after a backticked path's closing backtick,

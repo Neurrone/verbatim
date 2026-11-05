@@ -10,3 +10,6 @@
 
 # Python bytecode from checking the NVDA add-on outside NVDA
 __pycache__/
+
+# Derived from the root Cargo.lock by uia-facts/build.ps1 on every build
+/uia-facts/Cargo.lock

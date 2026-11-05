@@ -1,0 +1,443 @@
+   Compiling mockapp v0.1.0 (C:\Users\Dickson\Desktop\projects\verbatim-wt-cancel\crates\mockapp)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.52s
+     Running tests\cocancel_uia.rs (C:/Users/Dickson/Desktop/projects/verbatim-target-cancel\debug\deps\cocancel_uia-e628a73b9c60149d.exe)
+
+running 1 test
+RESULT stacks Property held=FragmentRoot caller_thread=0x3e8c cancel_answer=0x8001011e
+
+************* Path validation summary **************
+Response                         Time (ms)     Location
+Deferred                                       srv*C:\Users\Dickson\Desktop\projects\cancel-out\symbols*https://msdl.microsoft.com/download/symbols
+
+************* Preparing the environment for Debugger Extensions Gallery repositories **************
+   ExtensionRepository : Implicit
+   UseExperimentalFeatureForNugetShare : true
+   AllowNugetExeUpdate : true
+   NonInteractiveNuget : true
+   AllowNugetMSCredentialProviderInstall : true
+   AllowParallelInitializationOfLocalRepositories : true
+
+   -- Configuring repositories
+      ----> Repository : LocalInstalled, Enabled: true
+      ----> Repository : UserExtensions, Enabled: true
+
+>>>>>>>>>>>>> Preparing the environment for Debugger Extensions Gallery repositories completed, duration 0.000 seconds
+
+************* Waiting for Debugger Extensions Gallery to Initialize **************
+
+>>>>>>>>>>>>> Waiting for Debugger Extensions Gallery to Initialize completed, duration 0.297 seconds
+   ----> Repository : UserExtensions, Enabled: true, Packages count: 0
+   ----> Repository : LocalInstalled, Enabled: true, Packages count: 46
+
+Microsoft (R) Windows Debugger Version 10.0.29661.1004 AMD64
+Copyright (c) Microsoft Corporation. All rights reserved.
+
+*** wait with pending attach
+
+************* Path validation summary **************
+Response                         Time (ms)     Location
+Deferred                                       srv*C:\Users\Dickson\Desktop\projects\cancel-out\symbols*https://msdl.microsoft.com/download/symbols
+Symbol search path is: srv*C:\Users\Dickson\Desktop\projects\cancel-out\symbols*https://msdl.microsoft.com/download/symbols
+Executable search path is: 
+WARNING: Process 7900 is not attached as a debuggee
+         The process can be examined but debug events will not be received
+............................................
+(1edc.528): Wake debugger - code 80000007 (first chance)
+ntdll!NtWaitForMultipleObjects+0x14:
+00007fff`dbc828a4 c3              ret
+0:000> cdb: Reading initial command '~*k 40; qd'
+
+.  0  Id: 1edc.528 Suspend: 1 Teb: 000000db`74d3c000 Unfrozen "main"
+Child-SP          RetAddr               Call Site
+000000db`74efede8 00007fff`d8f52773     ntdll!NtWaitForMultipleObjects+0x14
+000000db`74efedf0 00007fff`d8f52641     KERNELBASE!WaitForMultipleObjectsEx+0x123
+*** WARNING: Unable to verify checksum for C:\Users\Dickson\Desktop\projects\verbatim-target-cancel\debug\deps\cocancel_uia-e628a73b9c60149d.exe
+000000db`74eff0e0 00007ff6`8a46ae74     KERNELBASE!WaitForMultipleObjects+0x11
+000000db`74eff120 00007ff6`8a4602b0     cocancel_uia_e628a73b9c60149d+0xaae74
+000000db`74eff240 00007ff6`8a40c379     cocancel_uia_e628a73b9c60149d+0xa02b0
+000000db`74eff390 00007ff6`8a3ecb86     cocancel_uia_e628a73b9c60149d+0x4c379
+000000db`74eff9f0 00007ff6`8a3ecab9     cocancel_uia_e628a73b9c60149d+0x2cb86
+000000db`74effa20 00007ff6`8a3efe7c     cocancel_uia_e628a73b9c60149d+0x2cab9
+000000db`74effa50 00007ff6`8a3d6043     cocancel_uia_e628a73b9c60149d+0x2fe7c
+000000db`74effa80 00007ff6`8a3cf3c1     cocancel_uia_e628a73b9c60149d+0x16043
+000000db`74effad0 00007ff6`8a3f23cf     cocancel_uia_e628a73b9c60149d+0xf3c1
+000000db`74effb30 00007ff6`8a409775     cocancel_uia_e628a73b9c60149d+0x323cf
+000000db`74effc80 00007ff6`8a3ecb86     cocancel_uia_e628a73b9c60149d+0x49775
+000000db`74effcb0 00007ff6`8a3cf609     cocancel_uia_e628a73b9c60149d+0x2cb86
+000000db`74effce0 00007ff6`8a3f04dc     cocancel_uia_e628a73b9c60149d+0xf609
+000000db`74effd10 00007ff6`8a464c50     cocancel_uia_e628a73b9c60149d+0x304dc
+000000db`74effd40 00007ff6`8a3efa97     cocancel_uia_e628a73b9c60149d+0xa4c50
+000000db`74effdd0 00007ff6`8a40fb09     cocancel_uia_e628a73b9c60149d+0x2fa97
+000000db`74effe10 00007ff6`8a53779f     cocancel_uia_e628a73b9c60149d+0x4fb09
+000000db`74effe40 00007fff`dafcdda7     cocancel_uia_e628a73b9c60149d+0x17779f
+000000db`74effe80 00007fff`dbb9ee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000db`74effeb0 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+   1  Id: 1edc.46f8 Suspend: 1 Teb: 000000db`74d3e000 Unfrozen
+Child-SP          RetAddr               Call Site
+000000db`74fff4f8 00007fff`dbb44d0e     ntdll!NtWaitForWorkViaWorkerFactory+0x14
+000000db`74fff500 00007fff`dafcdda7     ntdll!TppWorkerThread+0x37e
+000000db`74fff860 00007fff`dbb9ee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000db`74fff890 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+   2  Id: 1edc.3a28 Suspend: 1 Teb: 000000db`74d40000 Unfrozen
+Child-SP          RetAddr               Call Site
+000000db`750ff678 00007fff`dbb44d0e     ntdll!NtWaitForWorkViaWorkerFactory+0x14
+000000db`750ff680 00007fff`dafcdda7     ntdll!TppWorkerThread+0x37e
+000000db`750ff9e0 00007fff`dbb9ee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000db`750ffa10 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+   3  Id: 1edc.1df0 Suspend: 1 Teb: 000000db`74d42000 Unfrozen
+Child-SP          RetAddr               Call Site
+000000db`752ff348 00007fff`dbbf0fd4     ntdll!NtDelayExecution+0x14
+000000db`752ff350 00007fff`d8fbb9c1     ntdll!RtlDelayExecution+0x34
+000000db`752ff380 00007ff6`8a455c3c     KERNELBASE!SleepEx+0x91
+000000db`752ff410 00007ff6`8a3f26dc     cocancel_uia_e628a73b9c60149d+0x95c3c
+000000db`752ff4a0 00007ff6`8a3cee1b     cocancel_uia_e628a73b9c60149d+0x326dc
+000000db`752ff4d0 00007ff6`8a3e3fe8     cocancel_uia_e628a73b9c60149d+0xee1b
+000000db`752ff560 00007ff6`8a3cf447     cocancel_uia_e628a73b9c60149d+0x23fe8
+000000db`752ff590 00007ff6`8a3d27de     cocancel_uia_e628a73b9c60149d+0xf447
+000000db`752ff690 00007ff6`8a3efad8     cocancel_uia_e628a73b9c60149d+0x127de
+000000db`752ff6c0 00007ff6`8a3e44e6     cocancel_uia_e628a73b9c60149d+0x2fad8
+000000db`752ff770 00007ff6`8a3dc84e     cocancel_uia_e628a73b9c60149d+0x244e6
+000000db`752ff7a0 00007ff6`8a3df381     cocancel_uia_e628a73b9c60149d+0x1c84e
+000000db`752ff8f0 00007ff6`8a3cf669     cocancel_uia_e628a73b9c60149d+0x1f381
+000000db`752ffa90 00007ff6`8a3d1edc     cocancel_uia_e628a73b9c60149d+0xf669
+000000db`752ffac0 00007ff6`8a3ecb71     cocancel_uia_e628a73b9c60149d+0x11edc
+000000db`752ffb50 00007ff6`8a3eff41     cocancel_uia_e628a73b9c60149d+0x2cb71
+000000db`752ffbc0 00007ff6`8a3d6043     cocancel_uia_e628a73b9c60149d+0x2ff41
+000000db`752ffc20 00007ff6`8a3d18b3     cocancel_uia_e628a73b9c60149d+0x16043
+000000db`752ffc70 00007ff6`8a3e9419     cocancel_uia_e628a73b9c60149d+0x118b3
+000000db`752ffe30 00007ff6`8a46b3f3     cocancel_uia_e628a73b9c60149d+0x29419
+000000db`752ffe60 00007fff`dafcdda7     cocancel_uia_e628a73b9c60149d+0xab3f3
+000000db`752fff10 00007fff`dbb9ee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000db`752fff40 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+   4  Id: 1edc.3e8c Suspend: 1 Teb: 000000db`74d44000 Unfrozen
+Child-SP          RetAddr               Call Site
+000000db`754fd768 00007fff`dbb8ca73     ntdll!NtWaitForAlertByThreadId+0x14
+000000db`754fd770 00007fff`d900e158     ntdll!RtlWaitOnAddress+0x213
+000000db`754fd7e0 00007fff`c00d8106     KERNELBASE!WaitOnAddress+0x38
+000000db`754fd820 00007fff`c00d7a76     uiautomationcore!ChannelBasedClientConnection::WaitForResponse+0xae
+000000db`754fd8a0 00007fff`c01c90fc     uiautomationcore!ChannelBasedClientConnection::DoCallWithReturn+0x276
+000000db`754fd970 00007fff`c00fbac1     uiautomationcore!CUIAutomationBlockingCore::DoCallWithReturn+0x5c
+000000db`754fd9d0 00007fff`c00fa971     uiautomationcore!BlockingCoreDispatcher::Dispatch_DoCallWithReturn+0x14d
+000000db`754fda60 00007fff`c00f77c9     uiautomationcore!DoCallWithReturn+0x27d
+000000db`754fdbb0 00007fff`c00f6c1b     uiautomationcore!LocalUiaNodeProxy::RealCrossProcess_GetPropertyValues+0x29d
+000000db`754fdcd0 00007fff`c00e1769     uiautomationcore!LocalUiaNodeProxy::CrossProcess_GetPropertyValues+0x1b
+000000db`754fdd10 00007fff`c01e76b1     uiautomationcore!CAutomationElement::InternalGetPropertyValueEx+0x21d
+000000db`754fe1d0 00007fff`c01de76d     uiautomationcore!CAutomationElement::GetCurrentPropertyValue+0x121
+000000db`754fe4a0 00007fff`c01de372     uiautomationcore!CAutomationElement::GetPropertyBSTR+0x6d
+000000db`754fe4f0 00007ff6`8a4429d1     uiautomationcore!CAutomationElement::get_CurrentName+0x82
+000000db`754fe6e0 00007ff6`8a40dc8f     cocancel_uia_e628a73b9c60149d+0x829d1
+000000db`754fe750 00007ff6`8a407f5c     cocancel_uia_e628a73b9c60149d+0x4dc8f
+000000db`754ff120 00007ff6`8a3cf659     cocancel_uia_e628a73b9c60149d+0x47f5c
+000000db`754ff4d0 00007ff6`8a3d1d44     cocancel_uia_e628a73b9c60149d+0xf659
+000000db`754ff500 00007ff6`8a3ecb44     cocancel_uia_e628a73b9c60149d+0x11d44
+000000db`754ff5c0 00007ff6`8a3eff14     cocancel_uia_e628a73b9c60149d+0x2cb44
+000000db`754ff660 00007ff6`8a3d6043     cocancel_uia_e628a73b9c60149d+0x2ff14
+000000db`754ff6f0 00007ff6`8a3d1550     cocancel_uia_e628a73b9c60149d+0x16043
+000000db`754ff740 00007ff6`8a3e9409     cocancel_uia_e628a73b9c60149d+0x11550
+000000db`754ffa20 00007ff6`8a46b3f3     cocancel_uia_e628a73b9c60149d+0x29409
+000000db`754ffa50 00007fff`dafcdda7     cocancel_uia_e628a73b9c60149d+0xab3f3
+000000db`754ffb00 00007fff`dbb9ee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000db`754ffb30 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+   5  Id: 1edc.422c Suspend: 1 Teb: 000000db`74d46000 Unfrozen
+Child-SP          RetAddr               Call Site
+000000db`755ff858 00007fff`d8f52773     ntdll!NtWaitForMultipleObjects+0x14
+000000db`755ff860 00007fff`d9f29abe     KERNELBASE!WaitForMultipleObjectsEx+0x123
+(Inline Function) --------`--------     combase!WaitCoalesced+0x79
+000000db`755ffb50 00007fff`d9f2231f     combase!CROIDTable::WorkerThreadLoop+0xae
+000000db`755ffdc0 00007fff`d9f2222f     combase!CRpcThread::WorkerLoop+0x5b
+000000db`755ffe30 00007fff`dafcdda7     combase!CRpcThreadCache::RpcWorkerThreadEntry+0x4f
+000000db`755ffe60 00007fff`dbb9ee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000db`755ffe90 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+   6  Id: 1edc.35fc Suspend: 1 Teb: 000000db`74d48000 Unfrozen
+Child-SP          RetAddr               Call Site
+000000db`756ffa28 00007fff`dbb44d0e     ntdll!NtWaitForWorkViaWorkerFactory+0x14
+000000db`756ffa30 00007fff`dafcdda7     ntdll!TppWorkerThread+0x37e
+000000db`756ffd90 00007fff`dbb9ee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000db`756ffdc0 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+   7  Id: 1edc.8ec Suspend: 1 Teb: 000000db`74d4a000 Unfrozen
+Child-SP          RetAddr               Call Site
+000000db`757ff908 00007fff`dbb44d0e     ntdll!NtWaitForWorkViaWorkerFactory+0x14
+000000db`757ff910 00007fff`dafcdda7     ntdll!TppWorkerThread+0x37e
+000000db`757ffc70 00007fff`dbb9ee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000db`757ffca0 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+   8  Id: 1edc.3e00 Suspend: 1 Teb: 000000db`74d4c000 Unfrozen
+Child-SP          RetAddr               Call Site
+000000db`758fede8 00007fff`d8f52773     ntdll!NtWaitForMultipleObjects+0x14
+000000db`758fedf0 00007fff`d58c3438     KERNELBASE!WaitForMultipleObjectsEx+0x123
+000000db`758ff0e0 00007fff`d58c3113     CoreMessaging!Microsoft::CoreUI::Dispatch::WaitController::Callback_WaitAny+0xc8
+000000db`758ff1d0 00007fff`d58c2d6e     CoreMessaging!Microsoft::CoreUI::Dispatch::Win32EventLoopBridge::Callback_DoWait+0x123
+000000db`758ff2a0 00007fff`d58d0d2c     CoreMessaging!Microsoft::CoreUI::Dispatch::Win32EventLoopBridge::Callback_Wait+0x5e
+000000db`758ff360 00007fff`d58d02b7     CoreMessaging!Microsoft::CoreUI::Dispatch::WaitCollection::Callback_DoGeneralWait+0x1ec
+000000db`758ff430 00007fff`d58c8604     CoreMessaging!Microsoft::CoreUI::Dispatch::WaitController::Callback_OnDispatch+0xf7
+000000db`758ff520 00007fff`d58c819d     CoreMessaging!Microsoft::CoreUI::Dispatch::Dispatcher::Callback_DispatchLoop+0x334
+000000db`758ff620 00007fff`d58c9008     CoreMessaging!Microsoft::CoreUI::Dispatch::EventLoop::Callback_RunCoreLoop+0x11d
+000000db`758ff690 00007fff`d592b406     CoreMessaging!Microsoft::CoreUI::Dispatch::Win32EventLoopBridge::Callback_Run+0xd8
+000000db`758ff770 00007fff`d592455f     CoreMessaging!Microsoft::CoreUI::Dispatch::EventLoop::Callback_Run+0x156
+000000db`758ff800 00007fff`d59007db     CoreMessaging!Microsoft::CoreUI::Messaging::MessageSession::Microsoft_CoreUI_IExportMessageSession_Run$+0x33
+000000db`758ff830 00007fff`c022c5c3     CoreMessaging!Microsoft::CoreUI::IExportMessageSession::ExportAdapter$::Run+0x5b
+000000db`758ff870 00007fff`dafcdda7     uiautomationcore!NavigationHelperProxyOneCore::s_CoreUIThreadProc+0x33
+000000db`758ff8a0 00007fff`dbb9ee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000db`758ff8d0 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+   9  Id: 1edc.1208 Suspend: 1 Teb: 000000db`74d4e000 Unfrozen
+Child-SP          RetAddr               Call Site
+000000db`759ff808 00007fff`dbb44d0e     ntdll!NtWaitForWorkViaWorkerFactory+0x14
+000000db`759ff810 00007fff`dafcdda7     ntdll!TppWorkerThread+0x37e
+000000db`759ffb70 00007fff`dbb9ee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000db`759ffba0 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+  10  Id: 1edc.bdc Suspend: 1 Teb: 000000db`74d50000 Unfrozen
+Child-SP          RetAddr               Call Site
+000000db`75aff9e8 00007fff`d8f52773     ntdll!NtWaitForMultipleObjects+0x14
+000000db`75aff9f0 00007fff`d8f52641     KERNELBASE!WaitForMultipleObjectsEx+0x123
+000000db`75affce0 00007fff`c00ef2f6     KERNELBASE!WaitForMultipleObjects+0x11
+000000db`75affd20 00007fff`c0212f69     uiautomationcore!OverlappedIOManager::IoThreadProc+0xc6
+000000db`75affd80 00007fff`dafcdda7     uiautomationcore!OverlappedIOManager::StaticIoThreadProc+0x9
+000000db`75affdb0 00007fff`dbb9ee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000db`75affde0 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+quit:
+NatVis script unloaded from 'C:\Program Files\WindowsApps\Microsoft.WinDbg_1.2610.1001.0_x64__8wekyb3d8bbwe\amd64\Visualizers\atlmfc.natvis'
+NatVis script unloaded from 'C:\Program Files\WindowsApps\Microsoft.WinDbg_1.2610.1001.0_x64__8wekyb3d8bbwe\amd64\Visualizers\concurrency.natvis'
+NatVis script unloaded from 'C:\Program Files\WindowsApps\Microsoft.WinDbg_1.2610.1001.0_x64__8wekyb3d8bbwe\amd64\Visualizers\cpp_rest.natvis'
+NatVis script unloaded from 'C:\Program Files\WindowsApps\Microsoft.WinDbg_1.2610.1001.0_x64__8wekyb3d8bbwe\amd64\Visualizers\ObjectiveC.natvis'
+NatVis script unloaded from 'C:\Program Files\WindowsApps\Microsoft.WinDbg_1.2610.1001.0_x64__8wekyb3d8bbwe\amd64\Visualizers\stl.natvis'
+NatVis script unloaded from 'C:\Program Files\WindowsApps\Microsoft.WinDbg_1.2610.1001.0_x64__8wekyb3d8bbwe\amd64\Visualizers\Windows.Data.Json.natvis'
+NatVis script unloaded from 'C:\Program Files\WindowsApps\Microsoft.WinDbg_1.2610.1001.0_x64__8wekyb3d8bbwe\amd64\Visualizers\Windows.Devices.Geolocation.natvis'
+NatVis script unloaded from 'C:\Program Files\WindowsApps\Microsoft.WinDbg_1.2610.1001.0_x64__8wekyb3d8bbwe\amd64\Visualizers\Windows.Devices.Sensors.natvis'
+NatVis script unloaded from 'C:\Program Files\WindowsApps\Microsoft.WinDbg_1.2610.1001.0_x64__8wekyb3d8bbwe\amd64\Visualizers\Windows.Media.natvis'
+NatVis script unloaded from 'C:\Program Files\WindowsApps\Microsoft.WinDbg_1.2610.1001.0_x64__8wekyb3d8bbwe\amd64\Visualizers\windows.natvis'
+NatVis script unloaded from 'C:\Program Files\WindowsApps\Microsoft.WinDbg_1.2610.1001.0_x64__8wekyb3d8bbwe\amd64\Visualizers\winrt.natvis'
+
+RESULT stacks Property result=ok Notes
+RESULT stacks FindAll held=GetPropertyValue caller_thread=0x3e8c cancel_answer=0x8001011e
+
+************* Path validation summary **************
+Response                         Time (ms)     Location
+Deferred                                       srv*C:\Users\Dickson\Desktop\projects\cancel-out\symbols*https://msdl.microsoft.com/download/symbols
+
+************* Preparing the environment for Debugger Extensions Gallery repositories **************
+   ExtensionRepository : Implicit
+   UseExperimentalFeatureForNugetShare : true
+   AllowNugetExeUpdate : true
+   NonInteractiveNuget : true
+   AllowNugetMSCredentialProviderInstall : true
+   AllowParallelInitializationOfLocalRepositories : true
+
+   -- Configuring repositories
+      ----> Repository : LocalInstalled, Enabled: true
+      ----> Repository : UserExtensions, Enabled: true
+
+>>>>>>>>>>>>> Preparing the environment for Debugger Extensions Gallery repositories completed, duration 0.000 seconds
+
+************* Waiting for Debugger Extensions Gallery to Initialize **************
+
+>>>>>>>>>>>>> Waiting for Debugger Extensions Gallery to Initialize completed, duration 0.015 seconds
+   ----> Repository : UserExtensions, Enabled: true, Packages count: 0
+   ----> Repository : LocalInstalled, Enabled: true, Packages count: 46
+
+Microsoft (R) Windows Debugger Version 10.0.29661.1004 AMD64
+Copyright (c) Microsoft Corporation. All rights reserved.
+
+*** wait with pending attach
+
+************* Path validation summary **************
+Response                         Time (ms)     Location
+Deferred                                       srv*C:\Users\Dickson\Desktop\projects\cancel-out\symbols*https://msdl.microsoft.com/download/symbols
+Symbol search path is: srv*C:\Users\Dickson\Desktop\projects\cancel-out\symbols*https://msdl.microsoft.com/download/symbols
+Executable search path is: 
+WARNING: Process 7900 is not attached as a debuggee
+         The process can be examined but debug events will not be received
+............................................
+(1edc.528): Wake debugger - code 80000007 (first chance)
+ntdll!NtWaitForMultipleObjects+0x14:
+00007fff`dbc828a4 c3              ret
+0:000> cdb: Reading initial command '~*k 40; qd'
+
+.  0  Id: 1edc.528 Suspend: 1 Teb: 000000db`74d3c000 Unfrozen "main"
+Child-SP          RetAddr               Call Site
+000000db`74efede8 00007fff`d8f52773     ntdll!NtWaitForMultipleObjects+0x14
+000000db`74efedf0 00007fff`d8f52641     KERNELBASE!WaitForMultipleObjectsEx+0x123
+*** WARNING: Unable to verify checksum for C:\Users\Dickson\Desktop\projects\verbatim-target-cancel\debug\deps\cocancel_uia-e628a73b9c60149d.exe
+000000db`74eff0e0 00007ff6`8a46ae74     KERNELBASE!WaitForMultipleObjects+0x11
+000000db`74eff120 00007ff6`8a4602b0     cocancel_uia_e628a73b9c60149d+0xaae74
+000000db`74eff240 00007ff6`8a40c379     cocancel_uia_e628a73b9c60149d+0xa02b0
+000000db`74eff390 00007ff6`8a3ecb86     cocancel_uia_e628a73b9c60149d+0x4c379
+000000db`74eff9f0 00007ff6`8a3ecab9     cocancel_uia_e628a73b9c60149d+0x2cb86
+000000db`74effa20 00007ff6`8a3efe7c     cocancel_uia_e628a73b9c60149d+0x2cab9
+000000db`74effa50 00007ff6`8a3d6043     cocancel_uia_e628a73b9c60149d+0x2fe7c
+000000db`74effa80 00007ff6`8a3cf3c1     cocancel_uia_e628a73b9c60149d+0x16043
+000000db`74effad0 00007ff6`8a3f23cf     cocancel_uia_e628a73b9c60149d+0xf3c1
+000000db`74effb30 00007ff6`8a409775     cocancel_uia_e628a73b9c60149d+0x323cf
+000000db`74effc80 00007ff6`8a3ecb86     cocancel_uia_e628a73b9c60149d+0x49775
+000000db`74effcb0 00007ff6`8a3cf609     cocancel_uia_e628a73b9c60149d+0x2cb86
+000000db`74effce0 00007ff6`8a3f04dc     cocancel_uia_e628a73b9c60149d+0xf609
+000000db`74effd10 00007ff6`8a464c50     cocancel_uia_e628a73b9c60149d+0x304dc
+000000db`74effd40 00007ff6`8a3efa97     cocancel_uia_e628a73b9c60149d+0xa4c50
+000000db`74effdd0 00007ff6`8a40fb09     cocancel_uia_e628a73b9c60149d+0x2fa97
+000000db`74effe10 00007ff6`8a53779f     cocancel_uia_e628a73b9c60149d+0x4fb09
+000000db`74effe40 00007fff`dafcdda7     cocancel_uia_e628a73b9c60149d+0x17779f
+000000db`74effe80 00007fff`dbb9ee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000db`74effeb0 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+   1  Id: 1edc.46f8 Suspend: 1 Teb: 000000db`74d3e000 Unfrozen
+Child-SP          RetAddr               Call Site
+000000db`74fff4f8 00007fff`dbb44d0e     ntdll!NtWaitForWorkViaWorkerFactory+0x14
+000000db`74fff500 00007fff`dafcdda7     ntdll!TppWorkerThread+0x37e
+000000db`74fff860 00007fff`dbb9ee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000db`74fff890 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+   2  Id: 1edc.3a28 Suspend: 1 Teb: 000000db`74d40000 Unfrozen
+Child-SP          RetAddr               Call Site
+000000db`750ff678 00007fff`dbb44d0e     ntdll!NtWaitForWorkViaWorkerFactory+0x14
+000000db`750ff680 00007fff`dafcdda7     ntdll!TppWorkerThread+0x37e
+000000db`750ff9e0 00007fff`dbb9ee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000db`750ffa10 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+   3  Id: 1edc.1df0 Suspend: 1 Teb: 000000db`74d42000 Unfrozen
+Child-SP          RetAddr               Call Site
+000000db`752ff348 00007fff`dbbf0fd4     ntdll!NtDelayExecution+0x14
+000000db`752ff350 00007fff`d8fbb9c1     ntdll!RtlDelayExecution+0x34
+000000db`752ff380 00007ff6`8a455c3c     KERNELBASE!SleepEx+0x91
+000000db`752ff410 00007ff6`8a3f26dc     cocancel_uia_e628a73b9c60149d+0x95c3c
+000000db`752ff4a0 00007ff6`8a3cee1b     cocancel_uia_e628a73b9c60149d+0x326dc
+000000db`752ff4d0 00007ff6`8a3e3fe8     cocancel_uia_e628a73b9c60149d+0xee1b
+000000db`752ff560 00007ff6`8a3cf447     cocancel_uia_e628a73b9c60149d+0x23fe8
+000000db`752ff590 00007ff6`8a3d27de     cocancel_uia_e628a73b9c60149d+0xf447
+000000db`752ff690 00007ff6`8a3efad8     cocancel_uia_e628a73b9c60149d+0x127de
+000000db`752ff6c0 00007ff6`8a3e44e6     cocancel_uia_e628a73b9c60149d+0x2fad8
+000000db`752ff770 00007ff6`8a3dc84e     cocancel_uia_e628a73b9c60149d+0x244e6
+000000db`752ff7a0 00007ff6`8a3df381     cocancel_uia_e628a73b9c60149d+0x1c84e
+000000db`752ff8f0 00007ff6`8a3cf669     cocancel_uia_e628a73b9c60149d+0x1f381
+000000db`752ffa90 00007ff6`8a3d1edc     cocancel_uia_e628a73b9c60149d+0xf669
+000000db`752ffac0 00007ff6`8a3ecb71     cocancel_uia_e628a73b9c60149d+0x11edc
+000000db`752ffb50 00007ff6`8a3eff41     cocancel_uia_e628a73b9c60149d+0x2cb71
+000000db`752ffbc0 00007ff6`8a3d6043     cocancel_uia_e628a73b9c60149d+0x2ff41
+000000db`752ffc20 00007ff6`8a3d18b3     cocancel_uia_e628a73b9c60149d+0x16043
+000000db`752ffc70 00007ff6`8a3e9419     cocancel_uia_e628a73b9c60149d+0x118b3
+000000db`752ffe30 00007ff6`8a46b3f3     cocancel_uia_e628a73b9c60149d+0x29419
+000000db`752ffe60 00007fff`dafcdda7     cocancel_uia_e628a73b9c60149d+0xab3f3
+000000db`752fff10 00007fff`dbb9ee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000db`752fff40 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+   4  Id: 1edc.3e8c Suspend: 1 Teb: 000000db`74d44000 Unfrozen
+Child-SP          RetAddr               Call Site
+000000db`754fd5e8 00007fff`dbb8ca73     ntdll!NtWaitForAlertByThreadId+0x14
+000000db`754fd5f0 00007fff`d900e158     ntdll!RtlWaitOnAddress+0x213
+000000db`754fd660 00007fff`c00d8106     KERNELBASE!WaitOnAddress+0x38
+000000db`754fd6a0 00007fff`c00d7a76     uiautomationcore!ChannelBasedClientConnection::WaitForResponse+0xae
+000000db`754fd720 00007fff`c01c90fc     uiautomationcore!ChannelBasedClientConnection::DoCallWithReturn+0x276
+000000db`754fd7f0 00007fff`c00fbac1     uiautomationcore!CUIAutomationBlockingCore::DoCallWithReturn+0x5c
+000000db`754fd850 00007fff`c00fa971     uiautomationcore!BlockingCoreDispatcher::Dispatch_DoCallWithReturn+0x14d
+000000db`754fd8e0 00007fff`c00f77c9     uiautomationcore!DoCallWithReturn+0x27d
+000000db`754fda30 00007fff`c00f6c1b     uiautomationcore!LocalUiaNodeProxy::RealCrossProcess_GetPropertyValues+0x29d
+000000db`754fdb50 00007fff`c00d001b     uiautomationcore!LocalUiaNodeProxy::CrossProcess_GetPropertyValues+0x1b
+000000db`754fdb90 00007fff`c010a4fc     uiautomationcore!InProcClientAPIStub::UiaNode_GetPropertyValues+0x21b
+000000db`754fdc40 00007fff`c0109ce4     uiautomationcore!InProcClientAPIStub::InvokeInProcAPI+0x44
+000000db`754fdc90 00007fff`c01088fb     uiautomationcore!UiaNode::CrossProcess_GetPropertyValues+0x354
+000000db`754fdd70 00007fff`c016bbdd     uiautomationcore!FindingVisitor::Enter+0x17b
+000000db`754fdea0 00007fff`c016a7fc     uiautomationcore!UiaNodeTraverser::Traverse+0x5cd
+000000db`754fe120 00007fff`c010a4fc     uiautomationcore!InProcClientAPIStub::UiaNode_Find+0xac
+000000db`754fe1e0 00007fff`c016aa63     uiautomationcore!InProcClientAPIStub::InvokeInProcAPI+0x44
+000000db`754fe230 00007fff`c01bdbea     uiautomationcore!ElementFinder::Find+0x1f3
+000000db`754fe3a0 00007fff`c01bbf5a     uiautomationcore!CAutomationElement::Find+0xb2
+000000db`754fe400 00007ff6`8a3de330     uiautomationcore!CAutomationElement::FindAll+0x23a
+000000db`754fe690 00007ff6`8a40e33a     cocancel_uia_e628a73b9c60149d+0x1e330
+000000db`754fe750 00007ff6`8a407f5c     cocancel_uia_e628a73b9c60149d+0x4e33a
+000000db`754ff120 00007ff6`8a3cf659     cocancel_uia_e628a73b9c60149d+0x47f5c
+000000db`754ff4d0 00007ff6`8a3d1d44     cocancel_uia_e628a73b9c60149d+0xf659
+000000db`754ff500 00007ff6`8a3ecb44     cocancel_uia_e628a73b9c60149d+0x11d44
+000000db`754ff5c0 00007ff6`8a3eff14     cocancel_uia_e628a73b9c60149d+0x2cb44
+000000db`754ff660 00007ff6`8a3d6043     cocancel_uia_e628a73b9c60149d+0x2ff14
+000000db`754ff6f0 00007ff6`8a3d1550     cocancel_uia_e628a73b9c60149d+0x16043
+000000db`754ff740 00007ff6`8a3e9409     cocancel_uia_e628a73b9c60149d+0x11550
+000000db`754ffa20 00007ff6`8a46b3f3     cocancel_uia_e628a73b9c60149d+0x29409
+000000db`754ffa50 00007fff`dafcdda7     cocancel_uia_e628a73b9c60149d+0xab3f3
+000000db`754ffb00 00007fff`dbb9ee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000db`754ffb30 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+   5  Id: 1edc.422c Suspend: 1 Teb: 000000db`74d46000 Unfrozen
+Child-SP          RetAddr               Call Site
+000000db`755ff858 00007fff`d8f52773     ntdll!NtWaitForMultipleObjects+0x14
+000000db`755ff860 00007fff`d9f29abe     KERNELBASE!WaitForMultipleObjectsEx+0x123
+(Inline Function) --------`--------     combase!WaitCoalesced+0x79
+000000db`755ffb50 00007fff`d9f2231f     combase!CROIDTable::WorkerThreadLoop+0xae
+000000db`755ffdc0 00007fff`d9f2222f     combase!CRpcThread::WorkerLoop+0x5b
+000000db`755ffe30 00007fff`dafcdda7     combase!CRpcThreadCache::RpcWorkerThreadEntry+0x4f
+000000db`755ffe60 00007fff`dbb9ee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000db`755ffe90 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+   6  Id: 1edc.35fc Suspend: 1 Teb: 000000db`74d48000 Unfrozen
+Child-SP          RetAddr               Call Site
+000000db`756ffa28 00007fff`dbb44d0e     ntdll!NtWaitForWorkViaWorkerFactory+0x14
+000000db`756ffa30 00007fff`dafcdda7     ntdll!TppWorkerThread+0x37e
+000000db`756ffd90 00007fff`dbb9ee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000db`756ffdc0 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+   7  Id: 1edc.8ec Suspend: 1 Teb: 000000db`74d4a000 Unfrozen
+Child-SP          RetAddr               Call Site
+000000db`757ff908 00007fff`dbb44d0e     ntdll!NtWaitForWorkViaWorkerFactory+0x14
+000000db`757ff910 00007fff`dafcdda7     ntdll!TppWorkerThread+0x37e
+000000db`757ffc70 00007fff`dbb9ee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000db`757ffca0 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+   8  Id: 1edc.3e00 Suspend: 1 Teb: 000000db`74d4c000 Unfrozen
+Child-SP          RetAddr               Call Site
+000000db`758fede8 00007fff`d8f52773     ntdll!NtWaitForMultipleObjects+0x14
+000000db`758fedf0 00007fff`d58c3438     KERNELBASE!WaitForMultipleObjectsEx+0x123
+000000db`758ff0e0 00007fff`d58c3113     CoreMessaging!Microsoft::CoreUI::Dispatch::WaitController::Callback_WaitAny+0xc8
+000000db`758ff1d0 00007fff`d58c2d6e     CoreMessaging!Microsoft::CoreUI::Dispatch::Win32EventLoopBridge::Callback_DoWait+0x123
+000000db`758ff2a0 00007fff`d58d0d2c     CoreMessaging!Microsoft::CoreUI::Dispatch::Win32EventLoopBridge::Callback_Wait+0x5e
+000000db`758ff360 00007fff`d58d02b7     CoreMessaging!Microsoft::CoreUI::Dispatch::WaitCollection::Callback_DoGeneralWait+0x1ec
+000000db`758ff430 00007fff`d58c8604     CoreMessaging!Microsoft::CoreUI::Dispatch::WaitController::Callback_OnDispatch+0xf7
+000000db`758ff520 00007fff`d58c819d     CoreMessaging!Microsoft::CoreUI::Dispatch::Dispatcher::Callback_DispatchLoop+0x334
+000000db`758ff620 00007fff`d58c9008     CoreMessaging!Microsoft::CoreUI::Dispatch::EventLoop::Callback_RunCoreLoop+0x11d
+000000db`758ff690 00007fff`d592b406     CoreMessaging!Microsoft::CoreUI::Dispatch::Win32EventLoopBridge::Callback_Run+0xd8
+000000db`758ff770 00007fff`d592455f     CoreMessaging!Microsoft::CoreUI::Dispatch::EventLoop::Callback_Run+0x156
+000000db`758ff800 00007fff`d59007db     CoreMessaging!Microsoft::CoreUI::Messaging::MessageSession::Microsoft_CoreUI_IExportMessageSession_Run$+0x33
+000000db`758ff830 00007fff`c022c5c3     CoreMessaging!Microsoft::CoreUI::IExportMessageSession::ExportAdapter$::Run+0x5b
+000000db`758ff870 00007fff`dafcdda7     uiautomationcore!NavigationHelperProxyOneCore::s_CoreUIThreadProc+0x33
+000000db`758ff8a0 00007fff`dbb9ee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000db`758ff8d0 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+   9  Id: 1edc.1208 Suspend: 1 Teb: 000000db`74d4e000 Unfrozen
+Child-SP          RetAddr               Call Site
+000000db`759ff808 00007fff`dbb44d0e     ntdll!NtWaitForWorkViaWorkerFactory+0x14
+000000db`759ff810 00007fff`dafcdda7     ntdll!TppWorkerThread+0x37e
+000000db`759ffb70 00007fff`dbb9ee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000db`759ffba0 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+  10  Id: 1edc.bdc Suspend: 1 Teb: 000000db`74d50000 Unfrozen
+Child-SP          RetAddr               Call Site
+000000db`75aff9e8 00007fff`d8f52773     ntdll!NtWaitForMultipleObjects+0x14
+000000db`75aff9f0 00007fff`d8f52641     KERNELBASE!WaitForMultipleObjectsEx+0x123
+000000db`75affce0 00007fff`c00ef2f6     KERNELBASE!WaitForMultipleObjects+0x11
+000000db`75affd20 00007fff`c0212f69     uiautomationcore!OverlappedIOManager::IoThreadProc+0xc6
+000000db`75affd80 00007fff`dafcdda7     uiautomationcore!OverlappedIOManager::StaticIoThreadProc+0x9
+000000db`75affdb0 00007fff`dbb9ee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000db`75affde0 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+quit:
+NatVis script unloaded from 'C:\Program Files\WindowsApps\Microsoft.WinDbg_1.2610.1001.0_x64__8wekyb3d8bbwe\amd64\Visualizers\atlmfc.natvis'
+NatVis script unloaded from 'C:\Program Files\WindowsApps\Microsoft.WinDbg_1.2610.1001.0_x64__8wekyb3d8bbwe\amd64\Visualizers\concurrency.natvis'
+NatVis script unloaded from 'C:\Program Files\WindowsApps\Microsoft.WinDbg_1.2610.1001.0_x64__8wekyb3d8bbwe\amd64\Visualizers\cpp_rest.natvis'
+NatVis script unloaded from 'C:\Program Files\WindowsApps\Microsoft.WinDbg_1.2610.1001.0_x64__8wekyb3d8bbwe\amd64\Visualizers\ObjectiveC.natvis'
+NatVis script unloaded from 'C:\Program Files\WindowsApps\Microsoft.WinDbg_1.2610.1001.0_x64__8wekyb3d8bbwe\amd64\Visualizers\stl.natvis'
+NatVis script unloaded from 'C:\Program Files\WindowsApps\Microsoft.WinDbg_1.2610.1001.0_x64__8wekyb3d8bbwe\amd64\Visualizers\Windows.Data.Json.natvis'
+NatVis script unloaded from 'C:\Program Files\WindowsApps\Microsoft.WinDbg_1.2610.1001.0_x64__8wekyb3d8bbwe\amd64\Visualizers\Windows.Devices.Geolocation.natvis'
+NatVis script unloaded from 'C:\Program Files\WindowsApps\Microsoft.WinDbg_1.2610.1001.0_x64__8wekyb3d8bbwe\amd64\Visualizers\Windows.Devices.Sensors.natvis'
+NatVis script unloaded from 'C:\Program Files\WindowsApps\Microsoft.WinDbg_1.2610.1001.0_x64__8wekyb3d8bbwe\amd64\Visualizers\Windows.Media.natvis'
+NatVis script unloaded from 'C:\Program Files\WindowsApps\Microsoft.WinDbg_1.2610.1001.0_x64__8wekyb3d8bbwe\amd64\Visualizers\windows.natvis'
+NatVis script unloaded from 'C:\Program Files\WindowsApps\Microsoft.WinDbg_1.2610.1001.0_x64__8wekyb3d8bbwe\amd64\Visualizers\winrt.natvis'
+
+RESULT stacks FindAll result=ok 7
+test e_stacks ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 11 filtered out; finished in 59.57s
+

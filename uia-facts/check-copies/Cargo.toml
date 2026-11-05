@@ -1,0 +1,13 @@
+[package]
+name = "check-copies"
+description = "Checks that uia-facts' copied manifest tables, lock file and workflow environment match the main workspace's"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+toml.workspace = true
+
+[lints]
+workspace = true

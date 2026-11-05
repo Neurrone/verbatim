@@ -1,0 +1,2 @@
+e57 where=in cto=2000 tto=5000 stall=1 registered ok 2206 (returned 2207 ms after go) sends=0 other_lines=["stall message posted"] released 201 ms after return; ev0 raised +2500 heard +2503 (after 2);
+e57 where=in cto=2000 tto=5000 stall=1 registered ok 2196 (returned 2197 ms after go) sends=0 other_lines=["stall message posted"] released 201 ms after return; ev0 raised +2501 heard +2502 (after 1);

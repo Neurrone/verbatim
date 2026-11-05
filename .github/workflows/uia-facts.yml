@@ -1,0 +1,82 @@
+# Builds and lints the UIA facts workspace (uia-facts/readme.md) on x64 and
+# ARM64. It runs no fact binary: each one takes over the desktop and judges
+# the machine it runs on, so they are run by hand on Dickson's machine,
+# before and after a Windows update.
+#
+# The build cache is the main CI's, read-only: the job ids equal ci.yml's,
+# the top-level env equals ci.yml's (check-copies compares them), no step
+# before rust-cache sets a CARGO*, RUST*, CC*, CFLAGS, CXX* or CMAKE*
+# variable, and rust-cache has no key and the default workspaces, so the
+# key computed here is the one ci.yml's job saves for the same lock, and
+# its restore keys fall back to main's newest entry. save-if: false keeps
+# this workflow from saving a second entry.
+
+name: UIA facts
+
+on:
+  schedule:
+    - cron: "41 4 * * *"
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "uia-facts/**"
+      - "crates/verbatim-uia/**"
+      - "crates/verbatim-uia-rops/**"
+      - "crates/verbatim-model/**"
+      - "crates/verbatim-text/**"
+      - "crates/verbatim-core/**"
+      - "crates/verbatim-reader-rules/**"
+      - "crates/verbatim-win32/**"
+      - "crates/workspace-hack/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".config/hakari.toml"
+      - "rust-toolchain.toml"
+      - ".github/workflows/uia-facts.yml"
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  ci:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: false
+      - name: Build
+        shell: pwsh
+        run: ./uia-facts/build.ps1
+      - name: Format
+        working-directory: uia-facts
+        run: cargo fmt --all --check
+      - name: Clippy
+        working-directory: uia-facts
+        run: cargo clippy --locked --all-targets -- -D warnings
+
+  ci-arm64:
+    runs-on: windows-11-arm
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install rustup if the image lacks it
+        shell: pwsh
+        run: |
+          if (-not (Get-Command rustup -ErrorAction SilentlyContinue)) {
+            Invoke-WebRequest https://static.rust-lang.org/rustup/dist/aarch64-pc-windows-msvc/rustup-init.exe -OutFile rustup-init.exe
+            .\rustup-init.exe -y --default-toolchain none --profile minimal
+            Add-Content -Path $env:GITHUB_PATH -Value "$env:USERPROFILE\.cargo\bin"
+          }
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: false
+      - name: Build
+        shell: pwsh
+        run: ./uia-facts/build.ps1
+      - name: Format
+        working-directory: uia-facts
+        run: cargo fmt --all --check
+      - name: Clippy
+        working-directory: uia-facts
+        run: cargo clippy --locked --all-targets -- -D warnings

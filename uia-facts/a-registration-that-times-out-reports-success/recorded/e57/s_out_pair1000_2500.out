@@ -1,0 +1,5 @@
+e57 where=out cto=2000 tto=5000 stall=1 registered ok 2193 (returned 2194 ms after go) sends=0 other_lines=["stall message posted"] released 201 ms after return; ev0 raised +1000 not heard; ev1 raised +2501 heard +2502 (after 2);
+e57 where=out cto=2000 tto=5000 stall=1 registered ok 2194 (returned 2194 ms after go) sends=0 other_lines=["stall message posted"] released 201 ms after return; ev0 raised +1000 not heard; ev1 raised +2501 heard +2502 (after 2);
+e57 where=out cto=2000 tto=5000 stall=1 registered ok 2217 (returned 2218 ms after go) sends=0 other_lines=[] released 201 ms after return; ev0 raised +1000 not heard; ev1 raised +2501 heard +2502 (after 2);
+e57 where=out cto=2000 tto=5000 stall=1 registered ok 2216 (returned 2217 ms after go) sends=0 other_lines=["stall message posted"] released 200 ms after return; ev0 raised +1001 not heard; ev1 raised +2500 heard +2502 (after 1);
+e57 where=out cto=2000 tto=5000 stall=1 registered ok 2191 (returned 2192 ms after go) sends=0 other_lines=["stall message posted"] released 201 ms after return; ev0 raised +1001 not heard; ev1 raised +2500 heard +2502 (after 2);

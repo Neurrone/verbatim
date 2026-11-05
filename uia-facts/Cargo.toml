@@ -1,0 +1,114 @@
+# The UIA facts workspace (uia-facts/readme.md): a Cargo workspace of its
+# own, never part of the main one. The tables below are copies of the main
+# root's, compared by check-copies, so that both workspaces build the
+# third-party crates alike into the one target directory.
+
+[workspace]
+resolver = "3"
+# Listed one by one: a folder that holds only a guide or a kept CI test has
+# no manifest.
+members = [
+    "support",
+    "provider",
+    "check-copies",
+    "a-new-connection-to-a-stuck-application-times-out",
+    "the-connection-timeout-applies-to-the-whole-process",
+    "a-call-waits-its-timeout-from-its-own-start",
+    "a-timeout-bounds-each-request-and-window-message-not-an-operation",
+    "a-registration-that-times-out-reports-success",
+    "nothing-cancels-a-uia-call",
+    "a-provider-process-serves-one-uia-request-at-a-time",
+    "msaa-calls-do-not-pass-through-uias-request-reader",
+    "parallel-client-threads-gain-at-most-twice-on-one-application",
+    "uia-answers-some-calls-in-the-client",
+]
+
+[workspace.package]
+edition = "2024"
+publish = false
+license = "GPL-3.0-or-later"
+
+[workspace.dependencies]
+uia-facts-support = { path = "support" }
+verbatim-uia = { path = "../crates/verbatim-uia" }
+verbatim-uia-rops = { path = "../crates/verbatim-uia-rops" }
+workspace-hack = { path = "../crates/workspace-hack" }
+# For the copy check alone.
+toml = "1"
+# The windows family, copied exactly from the main root.
+windows-core = { version = "0.62", default-features = false, features = ["std"] }
+windows-collections = { version = "0.3", default-features = false, features = ["std"] }
+windows-future = { version = "0.3", default-features = false, features = ["std"] }
+
+[workspace.dependencies.windows]
+version = "0.62"
+features = [
+    "Foundation",
+    "Foundation_Collections",
+    "Media_Core",
+    "Media_SpeechSynthesis",
+    "Storage_Streams",
+    "UI_UIAutomation",
+    "UI_UIAutomation_Core",
+    "Wdk_Foundation",
+    "Wdk_Storage_FileSystem",
+    "Win32_Foundation",
+    "Win32_Globalization",
+    "Win32_Graphics_Direct3D",
+    "Win32_Graphics_Direct3D11",
+    "Win32_Graphics_Dwm",
+    "Win32_Graphics_Dxgi",
+    "Win32_Graphics_Dxgi_Common",
+    "Win32_Graphics_Gdi",
+    "Win32_Media_Audio",
+    "Win32_Networking_WinHttp",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_System_Console",
+    "Win32_System_DataExchange",
+    "Win32_System_Diagnostics_Debug",
+    "Win32_System_Diagnostics_Etw",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_IO",
+    "Win32_System_Memory",
+    "Win32_System_JobObjects",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Ole",
+    "Win32_System_Performance",
+    "Win32_System_Pipes",
+    "Win32_System_Power",
+    "Win32_System_RemoteDesktop",
+    "Win32_System_StationsAndDesktops",
+    "Win32_System_SystemInformation",
+    "Win32_System_Threading",
+    "Win32_System_Time",
+    "Win32_System_Variant",
+    "Win32_UI_Accessibility",
+    "Win32_UI_Controls",
+    "Win32_UI_Controls_RichEdit",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_TextServices",
+    "Win32_UI_WindowsAndMessaging",
+]
+
+[workspace.lints.rust]
+missing_docs = "warn"
+# cargo-llvm-cov builds the workspace with `--cfg coverage`
+# (`books/dev/src/how-to/coverage.md`).
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(coverage)"] }
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+# Every unsafe block states why it is sound (phase 6's unsafe-code work).
+undocumented_unsafe_blocks = "warn"
+# One unsafe operation per block, so each SAFETY comment argues for exactly
+# one call or dereference.
+multiple_unsafe_ops_per_block = "warn"
+
+# Copied from the main root's [profile.dev]; its per-package overrides name
+# crates outside this workspace's graph.
+[profile.dev]
+debug = "line-tables-only"

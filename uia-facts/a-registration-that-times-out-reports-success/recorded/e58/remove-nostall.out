@@ -1,0 +1,5 @@
+e58 case=remove-nostall registered ok 3 released 200 ms after return; removal at +500 from the stall's end: ok 0; handler released 0 ms after the removal began; B: lost [ev0@1000 ev1@4000] heard [] others [];
+e58 case=remove-nostall registered ok 2 released 200 ms after return; removal at +500 from the stall's end: ok 0; handler released 1 ms after the removal began; B: lost [ev0@1000 ev1@4000] heard [] others [];
+e58 case=remove-nostall registered ok 4 released 200 ms after return; removal at +500 from the stall's end: ok 0; handler released 0 ms after the removal began; B: lost [ev0@1000 ev1@4000] heard [] others [];
+e58 case=remove-nostall registered ok 3 released 200 ms after return; removal at +500 from the stall's end: ok 0; handler released 0 ms after the removal began; B: lost [ev0@1000 ev1@4000] heard [] others [];
+e58 case=remove-nostall registered ok 3 released 200 ms after return; removal at +500 from the stall's end: ok 0; handler released 0 ms after the removal began; B: lost [ev0@1000 ev1@4000] heard [] others [];

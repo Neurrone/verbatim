@@ -1,0 +1,5 @@
+# Builds into the main target directory, so that the third-party crates the
+# main workspace built are reused (uia-facts/readme.md, "Reusing the main
+# build"). Cargo reads a relative path here against the folder holding .cargo.
+[build]
+target-dir = "../target"

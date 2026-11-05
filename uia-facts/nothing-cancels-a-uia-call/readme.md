@@ -1,0 +1,50 @@
+# Nothing cancels a UIA call
+
+## Fact
+
+`CoCancelCall` cancels a COM call outstanding on a thread, and a UIA client call is not one: it waits in UIA's own channel (`ChannelBasedClientConnection::WaitForResponse`, on `WaitOnAddress`, with no COM frame on its stack). Every cancel answers `RPC_E_NO_CONTEXT` and changes nothing, for property reads, text calls, `FindAll`, remote operations and new connections, with cancellation enabled or not: 5,614 of 5,614 over 203 trials. A held call returns at the provider's answer or at one of UIA's own timeouts. Abandoning a call, leaving its thread waiting and making later calls on new threads, only frees the client's wait: every later call into the stuck process waits for the release, and the first answer after it comes within 2 ms (`books/dev/src/explanation/windows/uia.md`, "The parts" and "Timeouts and cancelling").
+
+## What Verbatim relies on
+
+`crates/verbatim-uia/src/bounded.rs` and the outpost watchdog, which bound calls by abandoning their thread. If `CoCancelCall` began to work, nothing breaks; Verbatim is only more conservative than needed.
+
+## Method
+
+The caller is a thread of the multithreaded apartment that has called `CoEnableCallCancellation`, holding one client object and the elements it reads, fetched before each trial; the main thread cancels with `CoCancelCall(caller's thread id, 0)`, as NVDA's watchdog does. Each trial uses a new provider program with one UIA window, connection timeout 2,000 ms, transaction timeout 30,000 ms.
+
+Kinds, each an arm: `property` (`CurrentName` of node 1), `text` (`GetText(-1)` of node 3's document range), `findall` (`FindAll` of the window's descendants), `remote` (a remote operation reading node 3's name, through `verbatim-uia-rops`) and `connection` (`ElementFromHandle` of the new provider's window). For each kind, 3 trials of each of: the call's first provider method held (`hold *`, or for `connection` `hold GetObject` inside the window's `WM_GETOBJECT`), cancelled once at once or every 50 ms, released at 2,500 ms; or the UI thread busy for 2,500 ms, cancelled 300 ms in, once or every 50 ms. The 2,500 ms hold and the 50 ms pace are deliberate, the original's pace.
+
+- `disabled`: the property read, held, with cancellation never enabled on the caller, cancelled once. 3 trials.
+- `abandon`: node 1's name read held; later reads of node 2 at 500, 1,000 and 1,500 ms on new threads (`new`), or after the stuck read on its own thread (`same`); released at 2,000 ms. 3 trials each.
+
+Judged: every cancel's answer (a relation over all the kind's trials), the call's outcome (deterministic), that it returned only at the release or the stall's end (a relation), and for `connection` that it failed at the connection timeout before the release (a band).
+
+## Recorded results
+
+| Figure | Date | Machine | Source | Threshold |
+|---|---|---|---|---|
+| Every cancel `RPC_E_NO_CONTEXT`, 5,614 of 5,614 over 203 trials; held calls returned 0.0 to 2.9 ms after the release; new connections failed `UIA_E_TIMEOUT` after 2,000.5 to 2,015.1 ms | 2026-10-30 | Build 26200 | The experiment `cocancelcall-does-not-end-a-uia-client-call`, run at 5797c075; its outputs are in `recorded/` | Deterministic; band 2,000 to 2,350 ms |
+| Abandoning: every later call waited for the release; the first answer after it within 2 ms either way | 2026-11-02 | Build 26200.9711 | `experiments/parallel-uia-calls/`, "Abandoning a stuck call" | A relation; the 2 ms for trends |
+| First uia-facts run, `property`, `text`, `findall`, `remote`: every cancel `RPC_E_NO_CONTEXT` (294 cancels in 12 trials each), every call `ok`, each returning only at the release or the stall's end | 2026-11-05 | Build 26200.9711, `UIAutomationCore.dll` 7.2.26100.9549 | The commit that added this folder | Pass |
+| First uia-facts run, `connection`: every cancel `RPC_E_NO_CONTEXT`; `UIA_E_TIMEOUT` 12 of 12, each before the release; 2,008.5 ms (1,999.8 to 2,022.2) | 2026-11-05 | As above | As above | The band inconclusive, explained below; the rest pass |
+| First uia-facts run, `disabled`: `RPC_E_NO_CONTEXT` 3 of 3 | 2026-11-05 | As above | As above | Pass |
+| First uia-facts run, `abandon`: every later read `ok` and only after the release, on new threads and on the same thread; the first answer after the release 0.8 ms (new threads) and 0.5 ms (same thread) | 2026-11-05 | As above | As above | Pass; the times for trends |
+
+The band was inconclusive because one trial's failure came at 1,999.8 ms, a fifth of a millisecond before the 2,000 ms timeout, though the median lay inside the band. A new connection's wait is a window message's (`SendMessageTimeoutW`), whose timer is the system's and can end a fraction of a tick before the timeout measured on this program's clock; the original's lowest was 2,000.5 ms. The fact, a failure at the connection timeout and not at a cancel, holds.
+
+## How to rerun
+
+`uia-facts/build.ps1`, then `target\debug\nothing-cancels-a-uia-call.exe`, or one kind or arm with `--arm`. No desktop or application; the guide needs cdb. About 4 minutes.
+
+## Debugger guide
+
+Where a UIA client call waits, the original `e_stacks`:
+
+1. Run `target\debug\nothing-cancels-a-uia-call.exe --arm property --pause`. At each trial's pause it names the provider and client processes and waits for Enter, before the provider method is held.
+2. Press Enter, and within the 2.5 s hold take the client's stacks with a non-invasive attach, as the original did: `cdb -pv -p <client pid> -y srv*C:\symbols*https://msdl.microsoft.com/download/symbols -c "~*k 30; qd"`.
+3. Expect the caller thread's frames, from the top: `ntdll!NtWaitForAlertByThreadId`, `ntdll!RtlWaitOnAddress`, `KERNELBASE!WaitOnAddress`, `UIAutomationCore!ChannelBasedClientConnection::WaitForResponse`, `ChannelBasedClientConnection::DoCallWithReturn`, `CUIAutomationBlockingCore::DoCallWithReturn`, `LocalUiaNodeProxy::RealCrossProcess_GetPropertyValues`, `CAutomationElement::get_CurrentName`. For `--arm findall`, `UiaNodeTraverser::Traverse` and `FindingVisitor::Enter` in place of the last.
+4. It matches when no `combase` or `rpcrt4` frame is on the caller's stack: the wait is UIA's own, so the cancel finds no COM call. An invasive debugger changes how the client waits (`books/dev/src/explanation/windows/uia.md`, "Timeouts and cancelling"), so attach with `-pv`.
+
+## Evidence kept
+
+`recorded/`: the original outputs, one file per kind (`e_property.txt`, `e_text.txt`, `e_findall.txt`, `e_remote_op.txt`, `e_new_connection.txt`), the control (`e_disabled_control.txt`), the cost of cancellation (`e_cost.txt`), the exit check (`e_exit.txt`), the focus read that could not be aimed (`e_focus.txt`) and the stacks (`e_stacks.txt`).
