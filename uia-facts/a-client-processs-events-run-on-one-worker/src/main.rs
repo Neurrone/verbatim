@@ -247,6 +247,10 @@ fn ended(id: u32) -> bool {
     done
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "three sequences of four events, then their claims"
+)]
 fn threads(args: &Args, report: &mut Report) {
     let mut distinct = Vec::new();
     let mut distinct_removed = Vec::new();
