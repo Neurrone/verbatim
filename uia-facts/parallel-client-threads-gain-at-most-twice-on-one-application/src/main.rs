@@ -12,12 +12,14 @@
 //!   then costly calls, K = 16 with every provider call made 5 ms slow, the
 //!   window pumping meanwhile (`slow 5`), at N of 2.
 //!
+//! Each N's speed-up is judged at most 2 times, the fact's own figure.
 //! Each N's bound is computed from that N's own runs: one call's time on
 //! one thread divided by the provider's serial time per call under that
 //! load, the provider calls' time from entry to exit per read, which no
-//! other call can share. Each N's speed-up is judged at or below the
-//! larger of its bound and 1.5, the fact's figure for calls whose cost is
-//! in the provider, where the bound is 1.00.
+//! other call can share. The provider's log cannot see UIA's I/O thread,
+//! so for cheap calls, whose time is mostly that thread's, the bound is
+//! printed for trends; for costly calls, whose time is the provider's, the
+//! speed-up is judged at or below it.
 //!
 //! - `processes`: the cheap bench as 8 threads of this process against 8
 //!   client processes of one thread each.
@@ -55,6 +57,7 @@ fn main() {
             ("cheap", 1_000, 0),
             &[2, 8],
             "about 2 times (1.74 to 1.98 on the synthetic provider)",
+            false,
         );
         gains(
             &args,
@@ -62,6 +65,7 @@ fn main() {
             ("costly", 16, 5),
             &[2],
             "1.0 to 1.5 times (1.01 with a 5 ms provider call)",
+            true,
         );
     }
     if args.wants("processes") {
@@ -193,13 +197,16 @@ fn serial_time(log: &[Entry], reads: usize) -> f64 {
 }
 
 /// One bench: `name`, its K reads, and the provider's added milliseconds a
-/// call (`slow`), at each of `threads`.
+/// call (`slow`), at each of `threads`; with `judge_bound`, each speed-up
+/// is also judged against its bound, which holds only where the provider's
+/// own calls take the time.
 fn gains(
     args: &Args,
     report: &mut Report,
     (name, k, slow): (&str, usize, u64),
     threads: &[usize],
     recorded: &str,
+    judge_bound: bool,
 ) {
     let mut provider = Provider::launch(&["--windows", "uia:0"]);
     let elements = nodes(&provider);
@@ -211,6 +218,7 @@ fn gains(
     // Each N's speed-up against the bound from the same N's runs: the
     // provider's serial time per call under that load.
     let mut rows = Vec::new();
+    let mut at_most_twice = Vec::new();
     let mut below = Vec::new();
     let mut shares = Vec::new();
     for &threads in threads {
@@ -221,7 +229,8 @@ fn gains(
         let serial = serial_time(&provider.log(), k * (TIMED_RUNS + 1));
         let (speedup, bound) = (one / time, call / serial);
         rows.push(format!("{threads} threads {speedup:.2} (bound {bound:.2})"));
-        below.push(speedup <= bound.max(1.5));
+        at_most_twice.push(speedup <= 2.0);
+        below.push(speedup <= bound);
         shares.push(format!("{threads} threads {:.2}", serial / call));
     }
     provider.request("slow 0");
@@ -232,13 +241,19 @@ fn gains(
         Verdict::Trend,
     );
     report.claim(
-        &format!(
-            "{name} calls: each N's speed-up stays at or below the larger of its bound and 1.5"
-        ),
-        &runs(&below),
-        "at or below (the bound predicted 5 to 14 percent high; costly calls 1.0 to 1.5 times)",
-        relation(&below),
+        &format!("{name} calls: each N's speed-up is at most 2 times"),
+        &runs(&at_most_twice),
+        "true (1.74 to 1.98 on the synthetic provider on cheap calls, 1.01 on costly)",
+        relation(&at_most_twice),
     );
+    if judge_bound {
+        report.claim(
+            &format!("{name} calls: each N's speed-up stays at or below its bound"),
+            &runs(&below),
+            "true (the bound 1.00 to 1.01, the speed-up 1.00)",
+            relation(&below),
+        );
+    }
     report.claim(
         &format!("{name} calls: the provider's serial share of one call"),
         &shares.join(", "),
