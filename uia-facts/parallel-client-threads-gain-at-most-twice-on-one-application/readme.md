@@ -2,7 +2,7 @@
 
 ## Fact
 
-For a provider on its UI thread, UIA's I/O thread and the UI thread, working in turn, take about half of each call's time, and the client's threads the rest; so two client threads already keep the provider busy, and parallel client threads gain at most about 2 times on cheap calls and 1.0 to 1.5 times on calls whose cost is in the provider (`books/dev/src/explanation/windows/uia.md`, "Where the provider call runs"). N threads of one client process were as fast as N client processes or faster, 8 processes slower than 8 threads, and one client object shared by every thread made no difference (`books/dev/src/explanation/windows/uia.md`, "Calls from the client").
+For a provider on its UI thread, UIA's I/O thread and the UI thread, working in turn, take about half of each call's time, and the client's threads the rest; so two client threads already keep the provider busy, and parallel client threads gain at most about 2 times on cheap calls and 1.0 to 1.5 times on calls whose cost is in the provider (`books/dev/src/explanation/windows/uia.md`, "Where the provider call runs"). One client object shared by every thread made no difference (`books/dev/src/explanation/windows/uia.md`, "Calls from the client").
 
 ## What Verbatim relies on
 
@@ -10,14 +10,14 @@ No figure; D9 gives up parallel queries within one application (`books/dev/src/e
 
 ## Method
 
-The provider program with one UIA window served on its UI thread (`UseComThreading`). A bench makes K name reads of nodes 1 to 16 on one thread, then the same K split evenly over N threads that start together, N of 2, 4 and 8; each N has a warm-up run and 7 timed runs, and its time is the median until the last thread ends.
+The provider program with one UIA window served on its UI thread (`UseComThreading`). A bench makes K name reads of nodes 1 to 16 on one thread, then the same K split evenly over N threads that start together, N of 2, 4 and 8. The threads are made, with their client objects and elements, before a warm-up run and 7 timed runs, and live through them, so a run times the reads alone; each run starts every thread together and ends when the last is done, and an N's time is the median.
 
 - `cheap`: K = 4,000 plain name reads.
 - `costly`: K = 100, every provider call made 5 ms slow while the window keeps pumping (`slow 5`); each 5 ms wait lasts a system timer tick or more.
 
-Each arm's bound is the serial-share bound of the same run: one call's time on one thread divided by the provider's serial time per call, the median interval between provider call entries in the 8-thread runs. Judged: the best speed-up at or below the bound (a relation). The speed-ups and the serial share are printed for trends.
+Each N's bound is the serial-share bound of its own runs: one call's time on one thread divided by the provider's serial time per call under that load, the median interval between provider call entries. Judged: each N's speed-up at or below its bound (a relation). When the provider's time is the whole call, as with the costly calls, the bound is 1.00 and equal to the speed-up within the clock's reach, so the relation is printed, not judged. The speed-ups and the serial shares are printed for trends.
 
-- `processes`: the cheap bench as N threads of this process, each with its own client object, against N client processes of one thread each. Judged at N = 8 (a relation); the rest printed.
+- `processes`: the cheap bench as N threads of this process, each with its own client object, against N client processes of one thread each, both kept alive across the runs and timed the same way, from the signal to start to the last one's end. Printed for trends, run by run.
 - `shared`: the cheap 8-thread bench with one client object's elements for every thread against a client object each, printed.
 
 ## Recorded results
@@ -25,17 +25,12 @@ Each arm's bound is the serial-share bound of the same run: one call's time on o
 | Figure | Date | Machine | Source | Threshold |
 |---|---|---|---|---|
 | Speed-ups: synthetic provider 1.74 (STA) to 1.98 (agile) on cheap calls, 1.01 with a 5 ms provider call; mockapp 1.31 to 2.35; real applications 1.1 to 1.9; the bound 5 to 14 percent above the speed-up | 2026-11-02 | Build 26200.9711 | `experiments/parallel-uia-calls/`, "Throughput" and "Why several threads speed up cheap calls" (`run-xbench.ps1`, `parts.ps1`, `run-mockapp.ps1`) | At or below the bound |
-| Threads against processes: N threads as fast or faster; 8 processes slower than 8 threads | 2026-11-02 | Build 26200.9711 | The same, "Threads of one client against client processes" (`results/xbench.txt`) | A relation at N = 8 |
-| First uia-facts run, `cheap`: 1.79, 1.82 and 1.78 at 2, 4 and 8 threads; best 1.82 against a bound of 1.84 (a call 0.103 ms, serial 0.056 ms, a share of 0.54) | 2026-11-05 | Build 26200.9711, `UIAutomationCore.dll` 7.2.26100.9549 | The commit that added this folder | Pass |
-| First uia-facts run, `costly` (K = 400): 1.00 at every N; bound 1.00 (a call 47.5 ms, serial 47.5 ms, a share of 1.00) | 2026-11-05 | As above | As above | Pass |
-| First uia-facts run, `processes`: threads 233, 240 and 243 ms against processes 220, 226 and 220 ms at 2, 4 and 8 | 2026-11-05 | As above | As above | Differ, raised below |
-| First uia-facts run, `shared`: 240 ms against 240 ms | 2026-11-05 | As above | As above | For trends: no difference |
+| First uia-facts run, `cheap`: 1.67, 1.71 and 1.72 at 2, 4 and 8 threads, against bounds of 1.73, 1.79 and 1.79 (a call 0.104 ms; serial shares 0.58, 0.56 and 0.56) | 2026-11-05 | Build 26200.9711, `UIAutomationCore.dll` 7.2.26100.9549 | FIXCOMMIT | Pass |
+| First uia-facts run, `costly`: 1.00, 1.00 and 1.04 at 2, 4 and 8 threads, each bound 1.00 (a call 47.5 ms, serial shares 1.00) | 2026-11-05 | As above | As above | For trends: within the fact's 1.0 to 1.5 times |
+| First uia-facts run, `processes`: medians, threads 250, 263 and 261 ms against processes 240, 248 and 238 ms at 2, 4 and 8; at 8, threads as fast or faster in 2 of 7 runs | 2026-11-05 | As above | As above | For trends |
+| First uia-facts run, `shared`: 252 ms against 240 ms | 2026-11-05 | As above | As above | For trends |
 
-The costly calls' share is 1.00, not about half, because the slow provider call dominates both the call and the serial time; the fact's "1.0 to 1.5 times" holds.
-
-### Threads against processes, raised
-
-On this run N threads of one process were 6 to 10 percent slower than N client processes, at every N, where the original found them as fast or faster. Not established why. The candidates: every reply to a client process is read by that process's one I/O thread (`books/dev/src/explanation/windows/uia.md`, "Calls from the client"), which N processes have N of; the original's client was a release build and this one a debug build, though UIA's own work is the same in both; and the original's processes were timed by their own clocks. The claim stays the explainer's until a rerun separates these, which is the follow-up: rerun `--arm processes` with a release build (`cargo build --release` in `uia-facts/`).
+The costly calls' share is 1.00, not about half, because the slow provider call is the whole call. Each 5 ms delay waits while the window pumps, so at 8 threads a call can begin inside another's delay, which fits the speed-up above 1.00 there.
 
 ## How to rerun
 

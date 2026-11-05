@@ -2,7 +2,7 @@
 
 ## Fact
 
-A UIA call on an element already obtained waits the transaction timeout, and each call's wait starts at its own start: a call queued 200 ms behind a stuck one failed 2,198 ms after its own start under a 2-second timeout, not when the first did (`books/dev/src/explanation/windows/uia.md`, "Timeouts and cancelling"). The client waits the timeout less 200 ms as a count of waits that each last about 110 ms, then one of 205 ms, so a 2-second timeout fails after about 2.2 s, 5 seconds after 5.5 and the 20-second default after 22.1; E-TT's single reads at a 1-second timeout failed after 1,082 to 1,095 ms. That each wait is a nominal 100 ms lengthened by the system timer is inferred. The provider side never learns of the timeout: after a hold it still answers the calls that already failed. A remote operation is one transaction, so the timeout bounds it as a whole.
+A UIA call on an element already obtained waits the transaction timeout, and each call's wait starts at its own start: a call queued 200 ms behind a stuck one failed 2,198 ms after its own start under a 2-second timeout, not when the first did (`books/dev/src/explanation/windows/uia.md`, "Timeouts and cancelling"). The client waits the timeout less 200 ms as a count of waits that each last about 110 ms, then one of 205 ms, so a 2-second timeout fails after about 2.2 s, 5 seconds after 5.5 and the 20-second default after 22.1; E-TT's single reads at a 1-second timeout failed after 1,082 to 1,095 ms. With the system timer at 1 ms the wait is the same, so the extra tenth is not the timer's tick. The provider side never learns of the timeout: after a hold it still answers the calls that already failed. A remote operation is one transaction, so the timeout bounds it as a whole.
 
 ## What Verbatim relies on
 
@@ -17,7 +17,7 @@ Every arm runs against the provider program with one UIA window, the elements fe
 - `waits`: `CurrentName` of node 1, held, at transaction timeouts of 2,000, 5,000 and 20,000 ms. 5 trials each.
 - `single-reads`: E-TT's reads with both timeouts at 1,000 ms: `CurrentName` and `CurrentHasKeyboardFocus` of node 1, held. 5 trials each.
 - `own-start`: at 2,000 ms, node 1's read held on one thread and, 200 ms later (a deliberate offset), node 2's read on another; the second read's wait from its own start, and, after the release, whether the provider log shows node 2's read served (watched for up to 5 s). 5 trials.
-- `timer`: the 2,000 ms wait with the system timer at 1 ms (`timeBeginPeriod(1)`), toward the inferred 100 ms slice. 5 trials.
+- `timer`: the 2,000 ms wait with the system timer at 1 ms (`timeBeginPeriod(1)`). 5 trials.
 
 Judged: the HRESULT (deterministic), each wait (a band from its timeout), the late service (a relation); `timer` is new.
 
@@ -31,8 +31,6 @@ Judged: the HRESULT (deterministic), each wait (a band from its timeout), the la
 | First uia-facts run, `own-start`: both reads `UIA_E_TIMEOUT` 5 of 5; the queued read 2,203 ms (2,196 to 2,204) from its own start; node 2's read served after the release 5 of 5 | 2026-11-05 | As above | As above | Pass |
 | First uia-facts run, `waits`: `UIA_E_TIMEOUT` 5 of 5 at each timeout; 2,197.8 ms (2,190.9 to 2,199.6), 5,517.6 ms (5,515.3 to 5,527.6) and 22,133 ms (22,124 to 22,136) | 2026-11-05 | As above | As above | Pass |
 | First uia-facts run, `timer`: `UIA_E_TIMEOUT` 5 of 5, 2,201.2 ms (2,199.3 to 2,207.4) with the system timer at 1 ms | 2026-11-05 | As above | As above | New: the wait is unchanged, so the 1.1 times is not the system timer lengthening 100 ms slices |
-
-The `timer` answer contradicts the inference recorded in `books/dev/src/explanation/windows/uia.md` ("that each wait is a nominal 100 ms lengthened by the system timer is inferred"); the measured waits stand, and where the extra 10 percent comes from stays open.
 
 ## How to rerun
 

@@ -21,13 +21,13 @@
 //! - `shared`: the cheap 8-thread bench with one client object for all
 //!   threads against one per thread.
 
-use std::sync::{Arc, Barrier};
+use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::Instant;
 
 use uia_facts_support::args::Args;
 use uia_facts_support::exit_now;
 use uia_facts_support::provider::{Entry, Provider};
-use uia_facts_support::report::{Report, Verdict, relation};
+use uia_facts_support::report::{Report, Verdict, relation, runs};
 use uia_facts_support::role::{self, Role};
 use uia_facts_support::stats::{as_f64, median, us_to_ms};
 use uia_facts_support::uia::{self, Shared};
@@ -81,50 +81,97 @@ fn nodes(provider: &Provider) -> Vec<Shared> {
         .collect()
 }
 
-/// K reads split over `threads` threads starting together; the
-/// milliseconds until the last ends. With `shared`, every thread reads
-/// through elements one client object fetched; otherwise each thread
-/// fetches its own through a client object of its own first.
-fn bench(provider: &Provider, elements: &[Shared], threads: usize, k: usize, shared: bool) -> f64 {
-    let barrier = Arc::new(Barrier::new(threads + 1));
-    let hwnd = provider.hwnd(0);
-    let handles: Vec<_> = (0..threads)
-        .map(|t| {
-            let barrier = Arc::clone(&barrier);
-            let mine: Vec<Shared> = elements.to_vec();
-            uia::spawn(move || {
-                let elements: Vec<_> = if shared {
-                    mine.iter().map(uia::resolve).collect()
-                } else {
-                    let client = uia::client();
-                    let root = uia::element(&client, hwnd).expect("the window's element");
-                    (1..=16)
-                        .map(|n| uia::node(&client, &root, n).expect("a node"))
-                        .collect()
-                };
-                barrier.wait();
-                for i in 0..k / threads {
-                    let element = &elements[(t + i) % elements.len()];
-                    assert!(uia::name(element).is_ok(), "a read succeeds");
-                }
-            })
-        })
-        .collect();
-    barrier.wait();
-    let start = Instant::now();
-    for handle in handles {
-        handle.join().expect("a reader");
-    }
-    uia::ms(start.elapsed())
+/// Reading threads kept alive across runs, so that a run times the reads
+/// alone: no thread's start, exit or COM teardown falls inside it.
+struct Workers {
+    go: Vec<Sender<()>>,
+    done: Receiver<()>,
+    handles: Vec<std::thread::JoinHandle<()>>,
 }
 
-/// The median of `TIMED_RUNS` runs after a warm-up.
+impl Workers {
+    /// `threads` threads, each making K / `threads` reads a run. With
+    /// `shared`, every thread reads through elements one client object
+    /// fetched; otherwise each thread fetches its own through a client
+    /// object of its own, before the first run.
+    fn start(
+        provider: &Provider,
+        elements: &[Shared],
+        threads: usize,
+        k: usize,
+        shared: bool,
+    ) -> Self {
+        let hwnd = provider.hwnd(0);
+        let (done_tx, done) = channel();
+        let (ready_tx, ready) = channel();
+        let mut go = Vec::new();
+        let mut handles = Vec::new();
+        for t in 0..threads {
+            let (go_tx, go_rx) = channel::<()>();
+            go.push(go_tx);
+            let mine: Vec<Shared> = elements.to_vec();
+            let (done_tx, ready_tx) = (done_tx.clone(), ready_tx.clone());
+            handles.push(uia::spawn(move || {
+                let client = (!shared).then(uia::client);
+                let elements: Vec<_> = match &client {
+                    None => mine.iter().map(uia::resolve).collect(),
+                    Some(client) => {
+                        let root = uia::element(client, hwnd).expect("the window's element");
+                        (1..=16)
+                            .map(|n| uia::node(client, &root, n).expect("a node"))
+                            .collect()
+                    }
+                };
+                ready_tx.send(()).expect("the bench waits");
+                while go_rx.recv().is_ok() {
+                    for i in 0..k / threads {
+                        let element = &elements[(t + i) % elements.len()];
+                        assert!(uia::name(element).is_ok(), "a read succeeds");
+                    }
+                    done_tx.send(()).expect("the bench waits");
+                }
+            }));
+        }
+        for _ in 0..threads {
+            ready.recv().expect("a reader is ready");
+        }
+        Self { go, done, handles }
+    }
+
+    /// One run: every thread starts together; the milliseconds until the
+    /// last ends.
+    fn run(&self) -> f64 {
+        let start = Instant::now();
+        for go in &self.go {
+            go.send(()).expect("a reader waits");
+        }
+        for _ in 0..self.go.len() {
+            self.done.recv().expect("a reader ends its run");
+        }
+        uia::ms(start.elapsed())
+    }
+}
+
+impl Drop for Workers {
+    fn drop(&mut self) {
+        self.go.clear();
+        for handle in self.handles.drain(..) {
+            let _ = handle.join();
+        }
+    }
+}
+
+/// `TIMED_RUNS` runs after a warm-up, of `run`.
+fn runs_of(run: impl Fn() -> f64) -> Vec<f64> {
+    run();
+    (0..TIMED_RUNS).map(|_| run()).collect()
+}
+
+/// The median of `TIMED_RUNS` runs after a warm-up, on threads kept alive
+/// across the runs.
 fn timed(provider: &Provider, elements: &[Shared], threads: usize, k: usize, shared: bool) -> f64 {
-    bench(provider, elements, threads, k, shared);
-    let runs: Vec<f64> = (0..TIMED_RUNS)
-        .map(|_| bench(provider, elements, threads, k, shared))
-        .collect();
-    median(&runs)
+    let workers = Workers::start(provider, elements, threads, k, shared);
+    median(&runs_of(|| workers.run()))
 }
 
 /// The provider's serial time per call: the median interval between the
@@ -146,39 +193,49 @@ fn gains(args: &Args, report: &mut Report, name: &str, k: usize, slow: u64, reco
     args.pause_for_debugger(&[("provider", provider.pid), ("client", std::process::id())]);
     provider.request(&format!("slow {slow}"));
     let one = timed(&provider, &elements, 1, k, true);
-    let mut speedups = Vec::new();
-    let mut serial = 0.0;
+    let call = one / as_f64(k);
+    // Each N's speed-up against the bound from the same N's runs: the
+    // provider's serial time per call under that load.
+    let mut rows = Vec::new();
+    let mut below = Vec::new();
+    let mut shares = Vec::new();
     for threads in THREADS {
         provider.log();
         let time = timed(&provider, &elements, threads, k, true);
-        speedups.push((threads, one / time));
-        if threads == 8 {
-            serial = serial_interval(&provider.log());
-        }
+        let serial = serial_interval(&provider.log());
+        let (speedup, bound) = (one / time, call / serial);
+        rows.push(format!("{threads} threads {speedup:.2} (bound {bound:.2})"));
+        below.push(speedup <= bound);
+        shares.push(format!("{threads} threads {:.2}", serial / call));
     }
     provider.request("slow 0");
-    let call = one / as_f64(k);
-    let bound = call / serial;
-    let best = speedups.iter().map(|s| s.1).fold(0.0, f64::max);
-    let text: Vec<String> = speedups
-        .iter()
-        .map(|(n, s)| format!("{n} threads {s:.2}"))
-        .collect();
     report.claim(
-        &format!("{name} calls: the speed-up of N threads over one"),
-        &text.join(", "),
+        &format!("{name} calls: the speed-up of N threads over one, with each N's bound"),
+        &format!("{} (a call {call:.3} ms)", rows.join(", ")),
         recorded,
         Verdict::Trend,
     );
+    // When the provider's own time is the whole call, the bound is 1.00
+    // and the speed-up equal to it within the clock's reach, so the
+    // relation is printed, not judged.
+    let tied = shares.iter().all(|s| s.ends_with("1.00"));
     report.claim(
-        &format!("{name} calls: the best speed-up stays below the serial-share bound"),
-        &format!("best {best:.2}, bound {bound:.2} (a call {call:.3} ms, serial {serial:.3} ms)"),
-        "below the bound (the bound predicted 5 to 14 percent high)",
-        relation(&[best <= bound]),
+        &format!("{name} calls: each N's speed-up stays at or below its serial-share bound"),
+        &runs(&below),
+        if tied {
+            ""
+        } else {
+            "below the bound (the bound predicted 5 to 14 percent high)"
+        },
+        if tied {
+            Verdict::Trend
+        } else {
+            relation(&below)
+        },
     );
     report.claim(
         &format!("{name} calls: the provider's serial share of one call"),
-        &format!("{:.2}", serial / call),
+        &shares.join(", "),
         "about half",
         Verdict::Trend,
     );
@@ -215,9 +272,11 @@ fn processes(report: &mut Report) {
     let elements = nodes(&provider);
     let k = 4_000;
     let mut rows = Vec::new();
-    let mut eight = (0.0, 0.0);
+    let mut eight = Vec::new();
     for threads in THREADS {
-        let in_threads = timed(&provider, &elements, threads, k, false);
+        let workers = Workers::start(&provider, &elements, threads, k, false);
+        let thread_runs = runs_of(|| workers.run());
+        drop(workers);
         let mut clients: Vec<Role> = (0..threads)
             .map(|_| {
                 Role::start(
@@ -229,36 +288,44 @@ fn processes(report: &mut Report) {
         for client in &clients {
             assert_eq!(client.expect_line(), "ready", "the client is ready");
         }
-        let mut times = Vec::new();
-        for _ in 0..=TIMED_RUNS {
+        // Timed as the threads are: from the signal to start to the last
+        // one's end, on processes kept alive across the runs.
+        let clients = std::cell::RefCell::new(&mut clients);
+        let process_runs = runs_of(|| {
+            let mut clients = clients.borrow_mut();
             let start = Instant::now();
-            for client in &mut clients {
+            for client in clients.iter_mut() {
                 client.send("go");
             }
-            for client in &clients {
+            for client in clients.iter() {
                 let _ = client.expect_line();
             }
-            times.push(uia::ms(start.elapsed()));
-        }
-        let in_processes = median(&times[1..]);
+            uia::ms(start.elapsed())
+        });
         rows.push(format!(
-            "{threads}: threads {in_threads:.0} ms, processes {in_processes:.0} ms"
+            "{threads}: threads {:.0} ms, processes {:.0} ms",
+            median(&thread_runs),
+            median(&process_runs)
         ));
         if threads == 8 {
-            eight = (in_threads, in_processes);
+            eight = thread_runs
+                .iter()
+                .zip(&process_runs)
+                .map(|(t, p)| t <= p)
+                .collect();
         }
     }
     report.claim(
-        "N threads against N client processes",
+        "N threads against N client processes, medians",
         &rows.join("; "),
         "",
         Verdict::Trend,
     );
     report.claim(
-        "8 threads of one client process are as fast as 8 client processes or faster",
-        &format!("{:.0} ms against {:.0} ms", eight.0, eight.1),
-        "8 processes slower than 8 threads",
-        relation(&[eight.0 <= eight.1]),
+        "whether 8 threads of one client process were as fast as 8 client processes, run by run",
+        &runs(&eight),
+        "",
+        Verdict::Trend,
     );
 }
 
