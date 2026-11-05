@@ -90,6 +90,9 @@ fn main() {
     if args.wants("e57") {
         e57(&mut report);
     }
+    if args.wants("e57-no-recovery") {
+        e57_no_recovery(&mut report);
+    }
     if args.wants("e58-silence") {
         e58_silence(&mut report);
     }
@@ -130,7 +133,7 @@ fn trial(rest: &[String]) -> ! {
             u32::try_from(number(1)).expect("a timeout"),
             u32::try_from(number(2)).expect("a timeout"),
         ),
-        "e57" => trial_e57(),
+        "e57" => trial_e57(rest[1] == "recovery"),
         "e58-silence" => trial_silence(),
         "e58-scope" => trial_scope(),
         "removal" => {
@@ -181,8 +184,23 @@ fn setup(
     connection_ms: u32,
     transaction_ms: u32,
 ) -> (Provider, IUIAutomation6, IUIAutomationElement) {
+    setup_with(connection_ms, transaction_ms, true)
+}
+
+/// As [`setup`], with connection recovery on or off.
+fn setup_with(
+    connection_ms: u32,
+    transaction_ms: u32,
+    recovery: bool,
+) -> (Provider, IUIAutomation6, IUIAutomationElement) {
     let provider = Provider::launch(&["--windows", "uia:0"]);
     let client = uia::client();
+    // Made as verbatim_uia's create_client makes Verbatim's client and
+    // e57's: event coalescing and connection recovery on. The gap comes
+    // from connection recovery: without it, as e57-no-recovery shows,
+    // every event is heard from the stall's end.
+    uia::set_coalescing(&client, true);
+    uia::set_recovery(&client, recovery);
     uia::set_timeouts(&client, connection_ms, transaction_ms);
     let element = uia::element(&client, provider.hwnd(0)).expect("the window's element");
     (provider, client, element)
@@ -332,12 +350,12 @@ fn connection(report: &mut Report, connection_ms: u32, transaction_ms: u32, reco
 }
 
 /// One e57 trial: the registration's outcome and time; whether every event
-/// raised from the stall's end was heard, and every one heard within
-/// 100 ms of its raise; and the first heard event's raise after the
-/// return, in ms, or `none`.
-fn trial_e57() -> Vec<String> {
+/// up to 1,500 ms was lost, every one from 2,300 ms heard, every heard one
+/// prompt, and none lost after the first heard; and the last lost and first
+/// heard event's raise after the return, in ms, or `none`.
+fn trial_e57(recovery: bool) -> Vec<String> {
     let offsets: Vec<u64> = (0..=50).map(|i| i * 50).collect();
-    let (mut provider, client, element) = setup(2_000, 5_000);
+    let (mut provider, client, element) = setup_with(2_000, 5_000, recovery);
     let (handler, reports) = Handler::make();
     let group = events::focus_group(&client, &handler).expect("a group");
     let stalled = register_stalled(&mut provider, &client, &element, &group);
@@ -345,9 +363,16 @@ fn trial_e57() -> Vec<String> {
     uia::pause(LISTEN);
     let (heard, _) = events::drain(&reports);
     let delays = delays(&raised, &heard);
-    let all_heard = delays.iter().all(Option::is_some);
+    let at = |i: usize| offsets[i];
+    let early_lost = (0..delays.len())
+        .filter(|i| at(*i) <= 1_500)
+        .all(|i| delays[i].is_none());
+    let late_heard = (0..delays.len())
+        .filter(|i| at(*i) >= 2_300)
+        .all(|i| delays[i].is_some());
     let prompt = delays.iter().flatten().all(|d| *d < 100.0);
     let first = delays.iter().position(Option::is_some);
+    let no_loss_after = first.is_some_and(|f| delays[f..].iter().all(Option::is_some));
     let returned = stalled.registration.end;
     let after = |t: Option<u64>| {
         t.map_or("none".to_owned(), |t| {
@@ -357,25 +382,59 @@ fn trial_e57() -> Vec<String> {
     vec![
         stalled.registration.outcome.clone(),
         stalled.registration.ms().to_string(),
-        all_heard.to_string(),
+        early_lost.to_string(),
+        late_heard.to_string(),
         prompt.to_string(),
+        no_loss_after.to_string(),
+        after(first.and_then(|f| f.checked_sub(1)).map(|i| raised[i].1)),
         after(first.map(|f| raised[f].1)),
+        delays.iter().all(Option::is_some).to_string(),
     ]
+}
+
+/// e57's trial with connection recovery off: the cause of the gap.
+fn e57_no_recovery(report: &mut Report) {
+    let mut all_heard = Vec::new();
+    let mut first = Vec::new();
+    for _ in 0..3 {
+        let words = in_own_process("e57", &["no-recovery"]);
+        all_heard.push(flag(&words[8]));
+        first.push(format!("{} ms", words[7]));
+    }
+    report.claim(
+        "with connection recovery off, every event raised from the stall's end is heard",
+        &runs(&all_heard),
+        "true",
+        relation(&all_heard),
+    );
+    report.claim(
+        "with connection recovery off, the first event heard, raised this long after the return",
+        &first.join("; "),
+        "201 ms, the stall's end",
+        Verdict::Trend,
+    );
 }
 
 fn e57(report: &mut Report) {
     let mut outcomes = Vec::new();
     let mut times = Vec::new();
-    let mut all_heard = Vec::new();
+    let mut early_lost = Vec::new();
+    let mut late_heard = Vec::new();
     let mut prompt = Vec::new();
+    let mut no_loss_after = Vec::new();
     let mut edges = Vec::new();
     for _ in 0..5 {
-        let words = in_own_process("e57", &[]);
+        let words = in_own_process("e57", &["recovery"]);
         outcomes.push(words[0].clone());
         times.push(words[1].parse().expect("a time"));
-        all_heard.push(flag(&words[2]));
-        prompt.push(flag(&words[3]));
-        edges.push(format!("{} ms", words[4]));
+        early_lost.push(flag(&words[2]));
+        late_heard.push(flag(&words[3]));
+        prompt.push(flag(&words[4]));
+        no_loss_after.push(flag(&words[5]));
+        edges.push(format!(
+            "last lost {} ms, first heard {} ms after the return",
+            words[6], words[7]
+        ));
     }
     report.claim(
         "e57's registration during a stall reports success",
@@ -391,21 +450,33 @@ fn e57(report: &mut Report) {
         in_band(&times, window),
     );
     report.claim(
-        "every event raised from the stall's end is heard",
-        &runs(&all_heard),
-        "true",
-        relation(&all_heard),
+        "every event raised up to 1,500 ms after the stall's end is lost",
+        &runs(&early_lost),
+        "true (lost up to 1,750 ms)",
+        relation(&early_lost),
     );
     report.claim(
-        "every event is heard within 100 ms of its raise",
+        "every event raised from 2,300 ms after the stall's end is heard",
+        &runs(&late_heard),
+        "true (heard from 1,800 ms)",
+        relation(&late_heard),
+    );
+    report.claim(
+        "every event heard is heard within 100 ms of its raise: lost, not late",
         &runs(&prompt),
-        "true",
+        "true (1 to 11 ms)",
         relation(&prompt),
     );
     report.claim(
-        "the first event heard, raised this long after the registration returned",
+        "no event is lost after the first one heard",
+        &runs(&no_loss_after),
+        "true",
+        relation(&no_loss_after),
+    );
+    report.claim(
+        "the gap's end after the registration returned",
         &edges.join("; "),
-        "201 ms, the stall's end",
+        "1,981 to 2,001 ms",
         Verdict::Trend,
     );
 }
@@ -482,7 +553,7 @@ fn e58_scope(report: &mut Report) {
         other_process.push(words[2].parse().expect("a count"));
     }
     report.claim(
-        "A, registered before the stall on another client object, and B lose no event",
+        "A, registered before the stall on another client object, loses the same events as B",
         &runs(&same_loss),
         "true",
         relation(&same_loss),
@@ -501,8 +572,8 @@ fn e58_scope(report: &mut Report) {
     );
 }
 
-/// One e58 scope trial: whether A and B lost no event, and how many C and
-/// D lost.
+/// One e58 scope trial: whether A lost exactly B's events, and how many C
+/// and D lost.
 fn trial_scope() -> Vec<String> {
     {
         let (mut p_app, client, p_element) = setup(2_000, 5_000);
@@ -580,7 +651,7 @@ fn trial_scope() -> Vec<String> {
         let _ = end_b.send(());
         let _ = thread_b.join();
         vec![
-            (a_lost.is_empty() && b_lost.is_empty()).to_string(),
+            (!a_lost.is_empty() && a_lost == b_lost).to_string(),
             c_lost.len().to_string(),
             d_lost.len().to_string(),
         ]
@@ -667,12 +738,17 @@ fn duration_ms(d: Duration) -> u64 {
 
 fn e58_remove(report: &mut Report) {
     let cases: [(&str, bool, u64, Removal); 3] = [
-        ("remove", true, 500, ("ok".to_owned(), true, false, false)),
+        (
+            "remove",
+            true,
+            500,
+            ("UIA_E_TIMEOUT".to_owned(), false, false, true),
+        ),
         (
             "remove-late",
             true,
             3_000,
-            ("ok".to_owned(), true, true, false),
+            ("ok".to_owned(), true, false, false),
         ),
         (
             "remove-nostall",

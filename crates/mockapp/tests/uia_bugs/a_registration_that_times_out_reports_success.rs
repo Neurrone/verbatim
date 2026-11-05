@@ -10,6 +10,11 @@
 //! the hold. Both of the process's timeouts are set short: the read is
 //! bounded by the transaction timeout, and the registration, measured
 //! while these tests were written, by the connection timeout.
+//!
+//! A registration that timed out delivers nothing for about 2 seconds
+//! after it returned (e57 and e58), and no test shows it: nothing marks
+//! the end of that gap, so a test could not tell an event lost in it from
+//! one delivered late (`books/dev/src/reference/uia-bugs.md` says why).
 
 use std::sync::mpsc;
 use std::time::Duration;

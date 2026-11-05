@@ -1315,7 +1315,9 @@ impl Follower {
 
     /// Removes from each of `registered` the group added there, once each,
     /// and answers those whose removal failed, which stay live on the
-    /// client: a removal that fails leaves the group live.
+    /// client (a removal made in the gap after a registration that timed
+    /// out fails and leaves the group live; `books/dev/src/reference/uia-bugs.md`, "A
+    /// registration that times out reports success").
     fn remove(&self, client: &Client, registered: Vec<Registered>) -> Vec<Registered> {
         let mut failed = Vec::new();
         for registered in registered {
