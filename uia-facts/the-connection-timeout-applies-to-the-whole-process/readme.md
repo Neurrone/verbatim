@@ -28,7 +28,7 @@ Neither connection recovery nor event coalescing changes these outcomes (checked
 |---|---|---|---|---|
 | E1: a client object made first read 1,000 and 1,000 after another set both | 2026-10-10 | Build 26200 | `experiments/mockapp-experiments-2026-10-10/` at b0a1989, now the CI tests | The tests |
 | `h5_main500_other10000`: 10,013 ms; `h5_main10000_other500`: 508 ms; `h5_default` 2,014 ms; `h5_main500` 514 ms | 2026-10-18 | Build 26200 | `experiments/a-hung-window-named-in-a-system-focus-event-holds-a-processs-uia-events/`, `h5_*.out` | `UIA_E_TIMEOUT`; bands then 10,000 to 11,550 and 500 to 625 ms; the program now sets 2,000 ms, band 1,984 to 2,350 ms, and 484 to 625 ms |
-| First uia-facts run, `whole-process`, B longer: `UIA_E_TIMEOUT` 5 of 5, 10,013 ms (10,010 to 10,019) | 2026-11-05 | Build 26200.9711, `UIAutomationCore.dll` 7.2.26100.9549, AMD Ryzen 7 5700G | 1682f8cb | Pass |
+| First uia-facts run, `whole-process`, B longer: `UIA_E_TIMEOUT` 5 of 5, 10,013 ms (10,010 to 10,019) | 2026-11-05 | Build 26200.9711, `UIAutomationCore.dll` 7.2.26100.9549, AMD Ryzen 7 5700G | c84ab856 | Pass |
 | First uia-facts run, `whole-process`, B shorter: `UIA_E_TIMEOUT` 5 of 5, 506.9 ms (504.1 to 513.8) | 2026-11-05 | As above | As above | Pass |
 
 ## How to rerun
