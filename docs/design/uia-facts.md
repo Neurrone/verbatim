@@ -310,7 +310,7 @@ None of the old tools was built or run for this design, so "rerun by command" be
 ### msaa-calls-do-not-pass-through-uias-request-reader
 
 - Kind: binary.
-- Reproduces: MSAA answers in 1.2 to 2.6 ms while UIA waits. How long an MSAA call into a busy UI thread waits: the whole busy time, with no bound up to 20 s. oleacc's `accName` sends `WM_GETTEXTLENGTH` and `WM_GETTEXT`, counted by the binary's own window. Sent messages run at 0.52 to 0.78 times the single-thread rate with more threads. Contention in the window manager (inferred), compared across threads of one process and of two.
+- Reproduces: MSAA answers in 1.2 to 2.6 ms while UIA waits. How long an MSAA call into a busy UI thread waits: the whole busy time, with no bound up to 20 s. oleacc's `accName` sends `WM_GETTEXTLENGTH` and `WM_GETTEXT`, counted by the binary's own window. Sent messages run at 0.52 to 0.78 times the single-thread rate with more threads. Contention in the window manager (inferred); the times of 8 threads of one process and of two processes are printed for trends.
 - Evidence now: the parallel-calls `msaa-while-stuck.ps1`, `msaa-path.ps1`, `msaa-path-mockapp.ps1`, and the MSAA cases of `run-mockapp.ps1`.
 - Replaces: `msaa-while-stuck.ps1`, `msaa-path*.ps1`, the MSAA cases of `run-mockapp.ps1`.
 - Verbatim relies on: the hung-window workaround's claim that MSAA keeps working, and the outposts' MSAA reads of other processes' windows (`books/dev/src/explanation/design/listener-without-connections.md`, sections 4.3 and 4.4). A change would slow those reads behind UIA's.

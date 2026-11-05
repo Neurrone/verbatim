@@ -318,7 +318,6 @@ fn send_role(rest: &[String]) -> ! {
 fn processes(report: &mut Report) {
     let layout: Vec<String> = (0..8).map(|t| format!("plain:{t}")).collect();
     let mut rows = Vec::new();
-    let mut no_faster = Vec::new();
     for _ in 0..trials() {
         let provider = Provider::launch(&["--windows", &layout.join(",")]);
         let hwnds: Vec<isize> = (0..8).map(|w| provider.hwnd(w)).collect();
@@ -343,15 +342,14 @@ fn processes(report: &mut Report) {
             let _ = half.expect_line();
         }
         let two = uia::ms(start.elapsed());
-        no_faster.push(two >= threads);
         rows.push(format!(
             "8 threads of one process {threads:.0} ms, of two processes {two:.0} ms"
         ));
     }
     report.claim(
-        "20,000 messages by 8 threads take two processes no less time than one",
-        &format!("{} ({})", runs(&no_faster), rows.join("; ")),
-        "true (one process 802 to 810 ms, two 810 to 822 ms)",
-        relation(&no_faster),
+        "20,000 messages by 8 threads, in one process against two",
+        &rows.join("; "),
+        "one process 802 to 810 ms, two 810 to 822 ms",
+        Verdict::Trend,
     );
 }

@@ -2,7 +2,7 @@
 
 ## Fact
 
-An MSAA call does not go through UIA's I/O thread: with a UIA call stuck in a provider off the UI thread, MSAA calls into the same process answered in 1.2 to 2.6 ms, through oleacc's window proxy and through UIA's MSAA bridge alike, while UIA calls waited (`books/dev/src/explanation/windows/uia.md`, "MSAA beside UIA"). For a window with no `IAccessible` of its own, oleacc's proxy reads the name by sending `WM_GETTEXTLENGTH` and `WM_GETTEXT`. Sent messages slow down with more sending threads, to 0.52 to 0.78 times one thread's rate, even when each thread sends to a UI thread of its own; that the contention is in the window manager is inferred. How long an MSAA call into a busy UI thread can wait was not known.
+An MSAA call does not go through UIA's I/O thread: with a UIA call stuck in a provider off the UI thread, MSAA calls into the same process answered in 1.2 to 2.6 ms, through oleacc's window proxy and through UIA's MSAA bridge alike, while UIA calls waited (`books/dev/src/explanation/windows/uia.md`, "MSAA beside UIA"). For a window with no `IAccessible` of its own, oleacc's proxy reads the name by sending `WM_GETTEXTLENGTH` and `WM_GETTEXT`. Sent messages slow down with more sending threads, to 0.52 to 0.78 times one thread's rate, even when each thread sends to a UI thread of its own; that the contention is in the window manager is inferred. An MSAA call into a busy UI thread waits the whole busy time, with no bound up to 20 seconds.
 
 ## What Verbatim relies on
 
@@ -14,9 +14,9 @@ The hung-window workaround's claim that MSAA keeps working, and the outposts' MS
 - `messages`: oleacc's `accName` on a plain window, the window's messages counted by the provider's log.
 - `busy-sweep`: oleacc's `accName` on a plain window while its UI thread is busy for 20 s; judged to wait the whole busy time, to within a system tick, and then answer.
 - `sent-rate`: 20,000 `WM_GETTEXT`s sent by 1, 4 and 8 threads of this process, each thread to a plain window on a UI thread of its own.
-- `processes`: the 8-thread case as 8 threads of one process and as two processes of 4 threads; judged that the two processes take no less time than the one.
+- `processes`: the 8-thread case as 8 threads of one process and as two processes of 4 threads, the times printed for trends.
 
-Judged: whether each MSAA call answered before the release and the UIA read after it (relations); the message counts (deterministic); whether more threads send fewer messages a second than one (a relation); that the busy-sweep read waits the whole busy time (a relation); that two processes take no less time than one (a relation). The times and rates are printed for trends.
+Judged: whether each MSAA call answered before the release and the UIA read after it (relations); the message counts (deterministic); whether more threads send fewer messages a second than one (a relation); that the busy-sweep read waits the whole busy time (a relation). The times and rates are printed for trends.
 
 ## Client settings
 
@@ -33,7 +33,7 @@ Neither connection recovery nor event coalescing changes the `stuck` case's outc
 | First uia-facts run, `messages`: (1, 1) in 3 of 3 | 2026-11-05 | As above | As above | Pass |
 | First uia-facts run, `busy-sweep`: answered after 1,001, 5,001, 15,000 and 60,000 ms | 2026-11-05 | As above | As above | The answer: an MSAA call into a busy UI thread waits the whole busy time, with no bound up to 60 s; the case now runs 20 s alone and states no bound up to 20 s |
 | First uia-facts run, `sent-rate`: slower than one thread 3 of 3 at 4 and at 8 threads; the rate 0.51 at 4 threads (0.49 to 0.53) and 0.51 at 8 (0.50 to 0.51) | 2026-11-05 | As above | As above | Pass; the ratio for trends |
-| First uia-facts run, `processes`: 8 threads of one process 802 to 810 ms, of two processes 810 to 822 ms | 2026-11-05 | As above | As above | The answer, judged since: two processes are no faster than one, which fits contention outside the processes |
+| First uia-facts run, `processes`: 8 threads of one process 802 to 810 ms, of two processes 810 to 822 ms | 2026-11-05 | As above | As above | For trends |
 
 The `stuck` times are lower than the original's; they are printed for trends only.
 

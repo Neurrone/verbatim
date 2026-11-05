@@ -416,8 +416,11 @@ fn read_after(w: &mut Window, element: &IUIAutomationElement, pause: Duration) -
     counted(&mut w.provider, || runtime_id(element)).1.len()
 }
 
-/// The moves of the lapse's sweep, at pauses of 250 to 400 ms in turn.
-const SWEEP_MOVES: usize = 20;
+/// The pauses of the lapse's sweep, in milliseconds, taken in turn.
+const SWEEP_PAUSES: [u64; 4] = [250, 300, 350, 400];
+
+/// The moves of the lapse's sweep at each pause.
+const SWEEP_MOVES_EACH: usize = 3;
 
 #[expect(clippy::too_many_lines, reason = "the lapse's claims, read in turn")]
 fn lapse(args: &Args, report: &mut Report) {
@@ -530,18 +533,20 @@ fn lapse(args: &Args, report: &mut Report) {
         );
     }
 
-    // The lapse is no fixed lifetime: moves after pauses of 250 to 400 ms
-    // find the copy warm in some runs and lapsed in others, so no pause
-    // below about a second can be relied on to stay warm.
+    // The lapse is no fixed lifetime: after pauses of 250 to 400 ms taken
+    // in turn, a longer pause finds the copy warm where a shorter one found
+    // it lapsed, so no pause below about a second can be relied on to stay
+    // warm.
     let registration = follow(&w.client, &w.first);
     let mut mixed = Vec::new();
     let mut rates = Vec::new();
     for _ in 0..trials() {
-        let mut lapsed = 0;
-        for i in 0..SWEEP_MOVES {
+        let mut lapsed = [0_usize; SWEEP_PAUSES.len()];
+        for i in 0..SWEEP_PAUSES.len() * SWEEP_MOVES_EACH {
+            let at = i % SWEEP_PAUSES.len();
             let _ = runtime_id(&w.first);
             uia::pause(
-                Duration::from_millis(250 + 50 * u64::try_from(i % 4).expect("small")),
+                Duration::from_millis(SWEEP_PAUSES[at]),
                 "the pause before the move",
             );
             let again = uia::resolve(&uia::share(&w.first));
@@ -551,23 +556,32 @@ fn lapse(args: &Args, report: &mut Report) {
             .1
             .len();
             if calls > 0 {
-                lapsed += 1;
+                lapsed[at] += 1;
             }
         }
-        mixed.push(lapsed > 0 && lapsed < SWEEP_MOVES);
-        rates.push(format!("{lapsed} of {SWEEP_MOVES}"));
+        // Under a fixed lifetime, a move lapsed after one pause means every
+        // move after a longer pause lapses too; a warm move after a longer
+        // pause than a lapsed one refutes it.
+        mixed.push(lapsed.iter().enumerate().any(|(p, shorter)| {
+            *shorter > 0
+                && lapsed[p + 1..]
+                    .iter()
+                    .any(|longer| *longer < SWEEP_MOVES_EACH)
+        }));
+        rates.push(
+            SWEEP_PAUSES
+                .iter()
+                .zip(lapsed)
+                .map(|(pause, n)| format!("{pause} ms {n} of {SWEEP_MOVES_EACH}"))
+                .collect::<Vec<_>>()
+                .join(", "),
+        );
     }
     report.claim(
-        "moves after pauses of 250, 300, 350 and 400 ms find the copy warm in some runs and lapsed in others",
-        &runs(&mixed),
-        "true (lapsed in 15 of 30)",
+        "the lapse is no fixed lifetime: a move after a longer pause finds the copy warm where one after a shorter pause found it lapsed",
+        &format!("{} ({})", runs(&mixed), rates.join("; ")),
+        "true (250 ms 0 of 5, 300 ms 5 of 5, 350 ms 0 of 5, 400 ms 5 of 5, three runs alike)",
         relation(&mixed),
-    );
-    report.claim(
-        "the moves that found the copy lapsed",
-        &rates.join("; "),
-        "15 of 30",
-        Verdict::Trend,
     );
 
     let pauses = [0_u64, 500, 1_000, 1_500];

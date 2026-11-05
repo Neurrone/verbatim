@@ -33,8 +33,8 @@
 //!   dispatching messages and calls; `slow 0` ends it.
 //! - `busy <w> [ms]`: window w's UI thread runs without taking a message,
 //!   for `ms` or until `release`; answered once it has started. Each
-//!   arrival of a message or sent message meanwhile is logged as a
-//!   `queued` entry.
+//!   arrival of a sent or posted message meanwhile is logged as a `queued`
+//!   entry named `sent` or `posted`.
 //! - `focus <w> <n>`: the tree's keyboard focus moves to node n, with no
 //!   event.
 //! - `rename <w> <n> <name>`: node n's name.

@@ -299,9 +299,17 @@ fn trial(args: &Args, kind: Kind, stall: bool, repeat: bool, enable: bool) -> Tr
     let start = now_us();
     go.send(()).expect("the caller waits");
     if stall {
-        // The busy thread logs the first message that reaches it: the
-        // call has started and waits on it.
-        let (_, reached) = provider.log_until(Duration::from_secs(30), |e| e.kind == "queued");
+        // The busy thread logs each message that reaches it: the call's
+        // own, made after its start, is a sent `WM_GETOBJECT` for a new
+        // connection and a posted COM call for the rest.
+        let message = if kind == Kind::Connection {
+            "sent"
+        } else {
+            "posted"
+        };
+        let (_, reached) = provider.log_until(Duration::from_secs(30), |e| {
+            e.kind == "queued" && e.name == message && e.start >= start
+        });
         assert!(reached, "the call reaches the busy thread");
     } else {
         provider
@@ -382,6 +390,10 @@ fn abandon(report: &mut Report) {
             } else {
                 let thread = uia::spawn(move || {
                     let stuck = Timed::of(|| uia::name(&uia::resolve(&first)));
+                    // The stuck read has failed on its 500 ms timeout; the
+                    // later reads get 30 s, so they wait for the release
+                    // rather than racing it. The timeout is the process's.
+                    uia::set_timeouts(&uia::client(), 2_000, 30_000);
                     let second = uia::resolve(&second);
                     let later: Vec<Timed> =
                         (0..3).map(|_| Timed::of(|| uia::name(&second))).collect();

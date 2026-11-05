@@ -10,9 +10,10 @@
 //!
 //! - `gains`: cheap calls, K = 1,000 plain name reads at N of 2 and 8;
 //!   then costly calls, K = 16 with every provider call made 5 ms slow, the
-//!   window pumping meanwhile (`slow 5`), at N of 2.
+//!   window pumping meanwhile (`slow 5`), at N of 2 and 4.
 //!
-//! Each N's speed-up is judged at most 2 times, the fact's own figure.
+//! Each N's speed-up is judged against the fact's own figures: at most 2
+//! times for cheap calls, at most 1.5 for costly ones.
 //! Each N's bound is computed from that N's own runs: one call's time on
 //! one thread divided by the provider's serial time per call under that
 //! load, the provider calls' time from entry to exit per read, which no
@@ -49,19 +50,19 @@ fn main() {
     }
     let mut report = Report::start("parallel-client-threads-gain-at-most-twice-on-one-application");
     if args.wants("gains") {
-        report.case("gains", "reading names from 1, 2 and 8 client threads with cheap provider calls, then from 1 and 2 with costly ones; comparing each speed-up with the bound from the provider's busy time per call");
+        report.case("gains", "reading names from 1, 2 and 8 client threads with cheap provider calls, then from 1, 2 and 4 with costly ones; judging each speed-up against the fact's figure, at most 2 times for cheap calls and 1.5 for costly");
         gains(
             &args,
             &mut report,
             ("cheap", 1_000, 0),
-            &[2, 8],
-            "about 2 times (1.74 to 1.98 on the synthetic provider)",
+            (&[2, 8], 2.0),
+            "at most 2 times (1.74 to 1.98 on the synthetic provider)",
         );
         gains(
             &args,
             &mut report,
             ("costly", 16, 5),
-            &[2],
+            (&[2, 4], 1.5),
             "1.0 to 1.5 times (1.01 with a 5 ms provider call)",
         );
     }
@@ -194,12 +195,13 @@ fn serial_time(log: &[Entry], reads: usize) -> f64 {
 }
 
 /// One bench: `name`, its K reads, and the provider's added milliseconds a
-/// call (`slow`), at each of `threads`.
+/// call (`slow`), at each of `threads`, each speed-up judged at most
+/// `most` times.
 fn gains(
     args: &Args,
     report: &mut Report,
     (name, k, slow): (&str, usize, u64),
-    threads: &[usize],
+    (threads, most): (&[usize], f64),
     recorded: &str,
 ) {
     let mut provider = Provider::launch(&["--windows", "uia:0"]);
@@ -212,7 +214,7 @@ fn gains(
     // Each N's speed-up against the bound from the same N's runs: the
     // provider's serial time per call under that load.
     let mut rows = Vec::new();
-    let mut at_most_twice = Vec::new();
+    let mut at_most = Vec::new();
     let mut shares = Vec::new();
     for &threads in threads {
         note::progress(&format!("{name} calls, {threads} threads"));
@@ -222,21 +224,21 @@ fn gains(
         let serial = serial_time(&provider.log(), k * (TIMED_RUNS + 1));
         let (speedup, bound) = (one / time, call / serial);
         rows.push(format!("{threads} threads {speedup:.2} (bound {bound:.2})"));
-        at_most_twice.push(speedup <= 2.0);
+        at_most.push(speedup <= most);
         shares.push(format!("{threads} threads {:.2}", serial / call));
     }
     provider.request("slow 0");
     report.claim(
         &format!("{name} calls: the speed-up of N threads over one, with each N's bound"),
         &format!("{} (a call {call:.3} ms)", rows.join(", ")),
-        recorded,
+        "",
         Verdict::Trend,
     );
     report.claim(
-        &format!("{name} calls: each N's speed-up is at most 2 times"),
-        &runs(&at_most_twice),
-        "true (1.74 to 1.98 on the synthetic provider on cheap calls, 1.01 on costly)",
-        relation(&at_most_twice),
+        &format!("{name} calls: each N's speed-up is at most {most} times"),
+        &runs(&at_most),
+        &format!("true ({recorded})"),
+        relation(&at_most),
     );
     report.claim(
         &format!("{name} calls: the provider's serial share of one call"),

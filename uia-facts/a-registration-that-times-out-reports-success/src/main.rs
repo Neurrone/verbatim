@@ -75,9 +75,15 @@ const NODE: usize = 5;
 const NODES: [usize; 4] = [5, 6, 7, 8];
 /// The stall's release after the registration returns, e57's 200 ms.
 const RELEASE_AFTER: Duration = Duration::from_millis(200);
-/// How long events are listened for after the last raise: e57 listened 2
-/// to 4 s; events after the gap arrived within 1 to 11 ms.
+/// How long events are listened for after the last raise, enough to hear
+/// an event that arrives at all, since events after the gap arrived within
+/// 1 to 11 ms. No case that listens this long judges an event lost rather
+/// than late.
 const LISTEN: Duration = Duration::from_millis(500);
+/// How long the `e57` trial listens after the last raise, as e57 listened
+/// 2 to 4 s: its "lost, not late" claim holds that no event lost arrives
+/// later, so it listens past the gap's 2 s.
+const LISTEN_E57: Duration = Duration::from_secs(3);
 
 fn main() {
     let args = Args::parse();
@@ -440,7 +446,10 @@ fn trial_e57() -> Vec<String> {
     let group = events::focus_group(&client, &handler).expect("a group");
     let stalled = register_stalled(&mut provider, &client, &element, &group);
     let raised = raise_at(&mut provider, 0, "ev", stalled.released, &offsets, 0);
-    uia::pause(LISTEN, "listening for 2 s after the last event");
+    uia::pause(
+        LISTEN_E57,
+        "listening after the last event, so an event lost is not one heard late",
+    );
     let (heard, _) = events::drain(&reports);
     let delays = delays(&raised, &heard);
     let at = |i: usize| offsets[i];
@@ -575,21 +584,24 @@ fn trial_silence() -> Vec<String> {
         "watching the provider log for 6 s of silence after the release",
     );
     let log = provider.log();
-    let backlog_end = backlog_end(&log);
+    let backlog_end = backlog_end(&log, stalled.released_us);
+    // Each advise: whether it is the one that ends the stall's backlog.
     let adds: Vec<String> = log
         .iter()
         .filter(|e| is_focus_advise(e))
-        .map(|e| (e.start >= stalled.released_us).to_string())
+        .map(|e| (Some(e.end) == backlog_end).to_string())
         .collect();
     let adds = if adds.is_empty() {
         "-".to_owned()
     } else {
         adds.join(",")
     };
+    // With no backlog found, everything after the release counts.
+    let quiet_from = backlog_end.unwrap_or(stalled.released_us);
     vec![
         adds,
         log.iter()
-            .filter(|e| e.start > backlog_end)
+            .filter(|e| e.start > quiet_from)
             .count()
             .to_string(),
     ]
@@ -601,21 +613,21 @@ fn is_focus_advise(entry: &Entry) -> bool {
 }
 
 /// The end of the stall's backlog: the registration's own request runs as
-/// the stall ends and ends with the provider's advise of the focus event
-/// (`FragmentRoot`, `GetEmbeddedFragmentRoots`, `ProviderOptions`, then
-/// `AdviseEventAdded`, by the provider's log), so the advise's end is its
-/// end.
-///
-/// # Panics
-///
-/// When the log holds no such advise: the registration's request never
-/// ran.
-fn backlog_end(log: &[Entry]) -> u64 {
-    log.iter()
-        .filter(|e| is_focus_advise(e))
-        .map(|e| e.end)
-        .max()
-        .expect("the registration's request reached the provider")
+/// the stall ends, on the window's root, and ends with the provider's
+/// advise of the focus event (`FragmentRoot`, `GetEmbeddedFragmentRoots`,
+/// `ProviderOptions` on node 0, then `AdviseEventAdded`, by the provider's
+/// log). So the end of the first advise after the release, when every
+/// entry from the release up to it is a call on the root: an unbroken run
+/// of the registration's request. `None` when there is no such advise, or
+/// something else came between.
+fn backlog_end(log: &[Entry], released_us: u64) -> Option<u64> {
+    let mut after: Vec<&Entry> = log.iter().filter(|e| e.start >= released_us).collect();
+    after.sort_by_key(|e| e.start);
+    let advise = after.iter().position(|e| is_focus_advise(e))?;
+    let unbroken = after[..advise]
+        .iter()
+        .all(|e| e.kind == "call" && e.window == Some(0) && e.node == Some(0));
+    unbroken.then(|| after[advise].end)
 }
 
 fn e58_silence(report: &mut Report) {
@@ -1182,17 +1194,6 @@ impl Gap {
             }
         })
     }
-
-    /// Lost, not late: every event heard was heard within 100 ms, and none
-    /// was lost after the first heard.
-    fn clean(&self) -> bool {
-        let first = self.events.iter().position(|e| e.delay.is_some());
-        self.events
-            .iter()
-            .filter_map(|e| e.delay)
-            .all(|d| d < 100.0)
-            && first.is_none_or(|f| self.events[f..].iter().all(|e| e.delay.is_some()))
-    }
 }
 
 fn gap_offsets(step: u64, to: u64) -> String {
@@ -1345,7 +1346,6 @@ fn second_process(report: &mut Report) {
     );
     let edges: Vec<(Option<u64>, Option<u64>)> = trials.iter().map(Gap::edge).collect();
     let outcomes: Vec<String> = trials.iter().map(|g| g.outcome.clone()).collect();
-    let clean: Vec<bool> = trials.iter().map(Gap::clean).collect();
     report.claim(
         "registered from a second client process, the registration reports success",
         &runs(&outcomes),
@@ -1366,12 +1366,6 @@ fn second_process(report: &mut Report) {
         ),
         "true",
         relation(&split),
-    );
-    report.claim(
-        "registered from a second client process: lost, not late",
-        &runs(&clean),
-        "true",
-        relation(&clean),
     );
 }
 
@@ -1425,7 +1419,8 @@ fn trial_onset() -> Vec<String> {
         .iter()
         .position(Option::is_some)
         .unwrap_or(raised.len());
-    let backlog_end = backlog_end(&log);
+    let backlog = backlog_end(&log, stalled.released_us);
+    let backlog_end = backlog.unwrap_or(stalled.released_us);
     let gap_end = raised.get(first).map_or(u64::MAX, |r| r.1);
     // Provider work answering each event raised in the gap: entries after
     // its raise and before the next raise's requests began.
@@ -1452,10 +1447,12 @@ fn trial_onset() -> Vec<String> {
         (first > 0 && followed).to_string(),
         in_gap.len().to_string(),
         getobject.to_string(),
+        backlog.is_some().to_string(),
     ]
 }
 
 fn onset(report: &mut Report) {
+    let mut backlogs = Vec::new();
     let mut edges = Vec::new();
     let mut followed = Vec::new();
     let mut counts = Vec::new();
@@ -1464,6 +1461,7 @@ fn onset(report: &mut Report) {
         edges.push((words[0].clone(), words[1].clone()));
         followed.push(flag(&words[2]));
         counts.push(format!("{} entries, {} WM_GETOBJECT", words[3], words[4]));
+        backlogs.push(flag(&words[5]));
     }
     // The events come every 100 ms; the first heard lies clear of the
     // recorded 1,800 ms by 300 ms either way, or is the first event when
@@ -1501,6 +1499,12 @@ fn onset(report: &mut Report) {
             relation(&followed),
         );
     }
+    report.claim(
+        "onset: the stall's backlog is the registration's request alone, ended by its advise",
+        &runs(&backlogs),
+        "true",
+        relation(&backlogs),
+    );
     report.claim(
         "onset: what reached the provider between the backlog and the first delivery",
         &counts.join("; "),

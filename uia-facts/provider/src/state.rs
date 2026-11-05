@@ -347,9 +347,11 @@ pub(crate) fn release() {
 
 /// Keeps this UI thread from taking any message, for `ms` or, when 0,
 /// until `release`. It looks at its message queue every millisecond
-/// without taking anything, and logs a `queued` entry whenever a message
-/// or sent message has arrived since it last looked: the evidence that a
-/// call has reached the busy thread.
+/// without taking anything, and logs a `queued` entry, named `sent` or
+/// `posted`, whenever a sent or posted message has arrived since it last
+/// looked: the evidence that a call has reached the busy thread. Which
+/// message it is cannot be read without taking it, since reading a sent
+/// message delivers it.
 pub(crate) fn busy(ms: u64) {
     let state = state();
     let until = (ms > 0).then(|| std::time::Instant::now() + Duration::from_millis(ms));
@@ -362,18 +364,21 @@ pub(crate) fn busy(ms: u64) {
         {
             // SAFETY: as above.
             let status = unsafe { GetQueueStatus(QS_POSTMESSAGE | QS_SENDMESSAGE) };
-            if status & 0xFFFF != 0 {
-                let now = now_us();
-                lock(&state.log).push(Entry {
-                    start: now,
-                    end: now,
-                    kind: "queued",
-                    name: "message".to_owned(),
-                    window: None,
-                    node: None,
-                    thread: thread_id(),
-                    extra: String::new(),
-                });
+            let arrived = status & 0xFFFF;
+            for (flag, name) in [(QS_SENDMESSAGE.0, "sent"), (QS_POSTMESSAGE.0, "posted")] {
+                if arrived & flag != 0 {
+                    let now = now_us();
+                    lock(&state.log).push(Entry {
+                        start: now,
+                        end: now,
+                        kind: "queued",
+                        name: name.to_owned(),
+                        window: None,
+                        node: None,
+                        thread: thread_id(),
+                        extra: String::new(),
+                    });
+                }
             }
         }
         let ended = match until {

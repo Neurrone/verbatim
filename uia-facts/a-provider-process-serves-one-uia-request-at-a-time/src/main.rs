@@ -398,12 +398,16 @@ fn nocom(judge: &mut Judge) {
         note::waiting_ms(2_000, "the new connection's connection timeout");
         let connection = Timed::of(|| uia::element(&fresh, hwnd));
         provider.log();
+        let invoke_start = now_us();
         let invoked = uia::spawn(move || {
             // SAFETY: a live pattern, resolved on this thread.
             Timed::of(|| unsafe { invoke.resolve().expect("the pattern").Invoke() })
         });
-        // The busy thread logs the Invoke's message reaching it.
-        let (_, reached) = provider.log_until(Duration::from_secs(30), |e| e.kind == "queued");
+        // The busy thread logs the Invoke's message reaching it: the sent
+        // `WM_GETOBJECT` the I/O thread makes for it, after its start.
+        let (_, reached) = provider.log_until(Duration::from_secs(30), |e| {
+            e.kind == "queued" && e.name == "sent" && e.start >= invoke_start
+        });
         assert!(reached, "the Invoke reaches the busy thread");
         let released = now_us();
         provider.request("release");
