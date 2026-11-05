@@ -107,7 +107,8 @@ impl DeviceNotices {
             .retry_at
             .lock()
             .unwrap_or_else(PoisonError::into_inner) =
-            retry_after.map(|after| Instant::now() + after);
+            // A retry past the clock's range is never due.
+            retry_after.and_then(|after| Instant::now().checked_add(after));
         inner.failed.store(true, Ordering::SeqCst);
     }
 

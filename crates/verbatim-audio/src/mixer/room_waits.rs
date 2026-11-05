@@ -17,7 +17,9 @@ pub(crate) struct RoomWaits {
 impl RoomWaits {
     /// Counts a wait a producer begins.
     pub(crate) fn begin(&self) {
-        *self.began.lock().unwrap_or_else(PoisonError::into_inner) += 1;
+        let mut began = self.began.lock().unwrap_or_else(PoisonError::into_inner);
+        *began = began.saturating_add(1);
+        drop(began);
         self.changed.notify_all();
     }
 

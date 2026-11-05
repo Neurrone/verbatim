@@ -8,6 +8,7 @@
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
+use crate::numbers::{count_u64, float_to_u32, u64_to_f64};
 use crate::{AudioDevice, AudioError, DeviceFormat, Waker};
 
 /// The silent device's rate and layout: the usual shared-mode mix format.
@@ -85,21 +86,12 @@ impl AudioDevice for SilentDevice {
 
     fn queued_frames(&mut self) -> Result<u32, AudioError> {
         self.advance();
-        #[expect(
-            clippy::cast_possible_truncation,
-            clippy::cast_sign_loss,
-            reason = "the queue never exceeds BUFFER_FRAMES"
-        )]
-        Ok(self.queued.ceil() as u32)
+        Ok(float_to_u32(self.queued.ceil()))
     }
 
     fn write(&mut self, samples: &[f32]) -> Result<(), AudioError> {
         self.advance();
-        #[expect(
-            clippy::cast_precision_loss,
-            reason = "one write is at most a buffer of frames"
-        )]
-        let frames = (samples.len() / usize::from(CHANNELS)) as f64;
+        let frames = u64_to_f64(count_u64(samples.chunks_exact(usize::from(CHANNELS)).len()));
         self.queued += frames;
         Ok(())
     }

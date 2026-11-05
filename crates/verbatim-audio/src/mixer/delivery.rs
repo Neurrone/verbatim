@@ -26,10 +26,10 @@ pub(crate) fn run(
 ) {
     let capacity = ring.buffer().capacity();
     loop {
-        let mut took = 0;
+        let mut took: usize = 0;
         while let Ok(record) = ring.pop() {
             deliver(record, listeners);
-            took += 1;
+            took = took.saturating_add(1);
         }
         if took >= capacity / 2 {
             audio();

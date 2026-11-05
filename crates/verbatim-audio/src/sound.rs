@@ -8,11 +8,13 @@
 use std::f64::consts::TAU;
 use std::fmt;
 use std::io::Read;
+use std::num::NonZeroU64;
 use std::path::Path;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use crate::convert::Converter;
+use crate::numbers::{self, count_u64};
 use crate::{AudioError, DeviceFormat, PcmFormat};
 
 /// The longest sound accepted: a minute. Theme sounds are short cues; this
@@ -63,9 +65,10 @@ impl Sound {
                 format.sample_rate, format.channels
             )));
         }
-        let limit =
-            u64::from(format.sample_rate) * u64::from(format.channels) * u64::from(MAX_SECONDS);
-        if samples.len() as u64 > limit {
+        let limit = u64::from(format.sample_rate)
+            .saturating_mul(u64::from(format.channels))
+            .saturating_mul(u64::from(MAX_SECONDS));
+        if count_u64(samples.len()) > limit {
             return Err(AudioError::Stream(format!(
                 "a sound may be at most {MAX_SECONDS} seconds long"
             )));
@@ -94,7 +97,9 @@ impl Sound {
             sample_rate: spec.sample_rate,
             channels: spec.channels,
         };
-        let limit = u64::from(spec.sample_rate) * u64::from(spec.channels) * u64::from(MAX_SECONDS);
+        let limit = u64::from(spec.sample_rate)
+            .saturating_mul(u64::from(spec.channels))
+            .saturating_mul(u64::from(MAX_SECONDS));
         if u64::from(wav.len()) > limit {
             return Err(AudioError::Stream(format!(
                 "a sound may be at most {MAX_SECONDS} seconds long"
@@ -107,7 +112,7 @@ impl Sound {
                 .collect::<Result<_, _>>()
                 .map_err(invalid)?,
             (hound::SampleFormat::Int, bits @ 1..=32) => {
-                let shift = i32::from(bits) - 16;
+                let shift = i32::from(bits).saturating_sub(16);
                 wav.samples::<i32>()
                     .map(|sample| sample.map(|sample| int_to_i16(sample, shift)))
                     .collect::<Result<_, _>>()
@@ -150,20 +155,15 @@ impl Sound {
                 "unusable tone: {frequency_hz} Hz for {duration_ms} ms"
             )));
         }
-        let frames = TONE_RATE / 1_000 * duration_ms;
+        let frames = (TONE_RATE / 1_000).saturating_mul(duration_ms);
         let fade = (TONE_RATE / 1_000 * TONE_FADE_MS).min(frames / 2).max(1);
         let step = TAU * f64::from(frequency_hz) / f64::from(TONE_RATE);
         let samples = (0..frames)
             .map(|frame| {
-                let edge = frame.min(frames - 1 - frame);
+                let edge = frame.min(frames.saturating_sub(1).saturating_sub(frame));
                 let envelope = f64::from(edge.min(fade)) / f64::from(fade);
                 let value = (step * f64::from(frame)).sin() * TONE_AMPLITUDE * envelope;
-                #[expect(
-                    clippy::cast_possible_truncation,
-                    reason = "the value is within -1 to 1, scaled to i16"
-                )]
-                let sample = (value * f64::from(i16::MAX)).round() as i16;
-                sample
+                numbers::float_to_i16((value * f64::from(i16::MAX)).round())
             })
             .collect();
         Self::from_pcm(
@@ -190,8 +190,11 @@ impl Sound {
     /// How long the sound plays.
     #[must_use]
     pub fn duration(&self) -> Duration {
-        let frames = self.samples.len() as u64 / u64::from(self.format.channels);
-        Duration::from_micros(frames * 1_000_000 / u64::from(self.format.sample_rate))
+        // A sound has at least one channel and a sample rate (`from_pcm`).
+        let channels = NonZeroU64::new(u64::from(self.format.channels)).unwrap_or(NonZeroU64::MIN);
+        let rate = NonZeroU64::new(u64::from(self.format.sample_rate)).unwrap_or(NonZeroU64::MIN);
+        let frames = count_u64(self.samples.len()) / channels;
+        Duration::from_micros(frames.saturating_mul(1_000_000) / rate)
     }
 
     /// The sound in `device`'s format, converted the first time it is asked
@@ -232,12 +235,9 @@ impl fmt::Debug for Sound {
 
 /// A float sample as 16-bit.
 fn float_to_i16(sample: f32) -> i16 {
-    #[expect(
-        clippy::cast_possible_truncation,
-        reason = "clamped to the i16 range first"
-    )]
-    let sample = (sample.clamp(-1.0, 1.0) * f32::from(i16::MAX)).round() as i16;
-    sample
+    numbers::float_to_i16(f64::from(
+        (sample.clamp(-1.0, 1.0) * f32::from(i16::MAX)).round(),
+    ))
 }
 
 /// An integer sample of `16 + shift` bits as 16-bit.
@@ -245,14 +245,10 @@ fn int_to_i16(sample: i32, shift: i32) -> i16 {
     let scaled = if shift >= 0 {
         sample >> shift
     } else {
-        sample << -shift
+        sample << shift.unsigned_abs()
     };
-    #[expect(
-        clippy::cast_possible_truncation,
-        reason = "clamped to the i16 range first"
-    )]
-    let sample = scaled.clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16;
-    sample
+    // Saturating at the ends of the i16 range.
+    i16::try_from(scaled).unwrap_or(if scaled < 0 { i16::MIN } else { i16::MAX })
 }
 
 #[cfg(test)]

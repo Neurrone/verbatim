@@ -55,6 +55,7 @@ mod room_waits;
 mod run;
 mod store;
 
+use std::num::NonZeroUsize;
 use std::ops::ControlFlow;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, mpsc};
@@ -66,6 +67,7 @@ use verbatim_model::{TraceId, UtteranceEnding, UtteranceId};
 
 use crate::convert::Converter;
 use crate::fallback::Fallback;
+use crate::numbers::count_u64;
 use crate::{AudioDevice, AudioError, DeviceFormat, PcmFormat, Signal, Sound, Waker};
 use records::{NewVoice, Record};
 use run::{AudioLoop, LaneEnd, Pass};
@@ -214,7 +216,9 @@ fn record_generation(generation: u64) -> u64 {
 /// How many frames a source may hold unplayed: the device's queue and
 /// [`AHEAD_MS`] beyond it.
 pub(crate) fn source_capacity(format: DeviceFormat) -> u64 {
-    u64::from(format.buffer_frames) + u64::from(format.sample_rate * AHEAD_MS / 1_000)
+    u64::from(format.buffer_frames).saturating_add(u64::from(
+        format.sample_rate.saturating_mul(AHEAD_MS) / 1_000,
+    ))
 }
 
 impl Shared {
@@ -281,6 +285,7 @@ impl MixerBuilder {
 
     /// Adds a source whose playback events go to `listener`.
     pub fn source(&mut self, listener: PlaybackListener) -> SourceKey {
+        let key = SourceKey(self.sources.len());
         self.sources.push(BuiltSource {
             listener,
             shared: Arc::new(SourceShared {
@@ -293,7 +298,7 @@ impl MixerBuilder {
             }),
             takes_frames: false,
         });
-        SourceKey(self.sources.len() - 1)
+        key
     }
 
     /// The control of `source`'s cancel generation and pause, for the one
@@ -788,7 +793,7 @@ impl SpeechLane {
         format: DeviceFormat,
         frames: &[f32],
     ) -> ControlFlow<()> {
-        let channels = usize::from(format.channels.max(1));
+        let channels = NonZeroUsize::new(usize::from(format.channels)).unwrap_or(NonZeroUsize::MIN);
         let capacity = source_capacity(format);
         let mut offset = 0;
         loop {
@@ -798,22 +803,29 @@ impl SpeechLane {
             if offset >= frames.len() {
                 return ControlFlow::Continue(());
             }
-            let held = self.pushed - self.lane.source.released.load(Ordering::Acquire);
+            let held = self
+                .pushed
+                .saturating_sub(self.lane.source.released.load(Ordering::Acquire));
             let room = capacity.saturating_sub(held);
-            let left = ((frames.len() - offset) / channels) as u64;
+            let left = count_u64(frames.len().saturating_sub(offset) / channels);
             let wanted = left.min(capacity / 2).max(1);
-            let ring = (self.samples.slots() / channels) as u64;
+            let ring = count_u64(self.samples.slots() / channels);
             if room.min(ring) < wanted || self.lane.records.is_full() {
                 self.lane.source.wait_for_room();
                 continue;
             }
             let take = room.min(ring).min(left);
-            let count = usize::try_from(take).unwrap_or(usize::MAX) * channels;
-            if self
-                .samples
-                .push_entire_slice(&frames[offset..offset + count])
-                .is_err()
-            {
+            let count = usize::try_from(take)
+                .unwrap_or(usize::MAX)
+                .saturating_mul(channels.get());
+            let Some(piece) = offset
+                .checked_add(count)
+                .and_then(|end| frames.get(offset..end))
+            else {
+                // `take` is at most the frames left, so this never happens.
+                return ControlFlow::Break(());
+            };
+            if self.samples.push_entire_slice(piece).is_err() {
                 self.lane.source.wait_for_room();
                 continue;
             }
@@ -826,8 +838,8 @@ impl SpeechLane {
             if self.lane.push(record).is_err() {
                 return ControlFlow::Break(());
             }
-            self.pushed += take;
-            offset += count;
+            self.pushed = self.pushed.saturating_add(take);
+            offset = offset.saturating_add(count);
         }
     }
 

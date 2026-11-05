@@ -20,6 +20,7 @@
 //! sources again from there, and nothing they had queued is lost.
 
 use std::collections::VecDeque;
+use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -28,6 +29,7 @@ use verbatim_model::{TraceId, UtteranceEnding, UtteranceId};
 
 use super::records::{NewVoice, Outbound};
 use crate::PlaybackEvent;
+use crate::numbers::{count_u64, u64_to_f64};
 
 /// Utterances a source tracks at once.
 pub(crate) const TRACKED: usize = 64;
@@ -50,11 +52,11 @@ const MAX_RATE: usize = 192_000;
 /// The margin a format must leave in the reserve beyond a source's
 /// capacity: one device period of 10 ms, so a source at its bound still
 /// has room for the frames a pass takes before it lets played ones go.
-pub(crate) const MARGIN_MS: u32 = 10;
+pub(crate) const MARGIN_MS: usize = 10;
 
 /// The samples a source that takes frames reserves: its capacity, a 40 ms
 /// device queue and 40 ms ahead, and the margin, at the largest format.
-pub(crate) const SAMPLES: usize = MAX_RATE * (80 + MARGIN_MS as usize) / 1_000 * MAX_CHANNELS;
+pub(crate) const SAMPLES: usize = MAX_RATE * (80 + MARGIN_MS) / 1_000 * MAX_CHANNELS;
 
 /// One frame of one source's pending events.
 pub(crate) struct Pending {
@@ -195,7 +197,7 @@ impl SourceState {
 
     /// Frames held, written and not yet played.
     pub(crate) fn held(&self) -> u64 {
-        self.write_end - self.data_start
+        self.write_end.saturating_sub(self.data_start)
     }
 
     /// Whether the store has room for what a record of each kind adds.
@@ -206,7 +208,7 @@ impl SourceState {
     /// Whether `samples` more samples fit, with the start event they may
     /// add.
     pub(crate) fn admits_frames(&self, samples: usize) -> bool {
-        self.data.len() + samples <= self.sample_room && self.events.len() < EVENTS
+        self.data.len().saturating_add(samples) <= self.sample_room && self.events.len() < EVENTS
     }
 
     pub(crate) fn admits_event(&self) -> bool {
@@ -292,7 +294,7 @@ impl SourceState {
         }
         self.data.extend(samples.0.iter().copied());
         self.data.extend(samples.1.iter().copied());
-        self.write_end += frames;
+        self.write_end = self.write_end.saturating_add(frames);
     }
 
     /// Records index mark `mark` at the current end of `utterance`'s audio.
@@ -439,23 +441,21 @@ impl SourceState {
             self.release_count(removed);
         }
         // Events: the cancelled utterances' go; the rest move up.
-        let mut index = 0;
-        while index < self.events.len() {
-            let pending = &mut self.events[index];
-            let cancelled = self.tracked.iter().any(|tracked| {
+        let tracked = &self.tracked;
+        self.events.retain_mut(|pending| {
+            let cancelled = tracked.iter().any(|tracked| {
                 tracked.utterance == pending.utterance && tracked.generation < generation
             });
             if cancelled && !matches!(pending.kind, Kind::Ended(_) | Kind::FormatChanged) {
-                let _ = self.events.remove(index);
-                continue;
+                return false;
             }
             if pending.position >= spared
                 && !matches!(pending.kind, Kind::Ended(_) | Kind::FormatChanged)
             {
-                pending.position -= removed;
+                pending.position = pending.position.saturating_sub(removed);
             }
-            index += 1;
-        }
+            true
+        });
         // Voices: the cancelled utterances' and those played at once go.
         let tracked = &self.tracked;
         let cancelled = |voice: &Voice| {
@@ -465,33 +465,31 @@ impl SourceState {
                 })
             })
         };
-        let mut index = 0;
-        while index < self.voices.len() {
-            let voice = &self.voices[index];
+        for voice in &mut self.voices {
             if voice.state != VoiceState::Retired && cancelled(voice) {
-                self.voices[index].state = VoiceState::Retired;
+                voice.state = VoiceState::Retired;
             } else if voice.state == VoiceState::Waiting && voice.trigger >= spared {
-                self.voices[index].trigger -= removed;
+                voice.trigger = voice.trigger.saturating_sub(removed);
             }
-            index += 1;
         }
         // The utterances: ended in the order registered, before every
         // event pending.
-        let mut index = self.tracked.len();
-        while index > 0 {
-            index -= 1;
-            if self.tracked[index].generation < generation {
+        for index in (0..self.tracked.len()).rev() {
+            let Some(tracked) = self.tracked.get_mut(index) else {
+                continue;
+            };
+            if tracked.generation < generation {
                 let tracked = self.tracked.remove(index);
                 self.end_now(
                     tracked.utterance,
                     tracked.trace_id,
                     UtteranceEnding::Cancelled,
                 );
-            } else if self.tracked[index].start >= spared {
-                self.tracked[index].start -= removed;
+            } else if tracked.start >= spared {
+                tracked.start = tracked.start.saturating_sub(removed);
             }
         }
-        self.write_end -= removed;
+        self.write_end = self.write_end.saturating_sub(removed);
         self.mixed_end = self.mixed_end.min(self.write_end);
     }
 
@@ -504,10 +502,7 @@ impl SourceState {
         self.events
             .retain(|pending| matches!(pending.kind, Kind::Ended(_) | Kind::FormatChanged));
         self.retire_voices(|_| true);
-        let mut index = self.tracked.len();
-        while index > 0 {
-            index -= 1;
-            let tracked = self.tracked.remove(index);
+        while let Some(tracked) = self.tracked.pop() {
             self.end_now(tracked.utterance, tracked.trace_id, ending.clone());
         }
     }
@@ -515,12 +510,14 @@ impl SourceState {
     /// The index in `data` of the first sample of source position
     /// `position`.
     fn sample_index(&self, position: u64) -> usize {
-        usize::try_from(position - self.data_start).unwrap_or(usize::MAX) * self.channels
+        usize::try_from(position.saturating_sub(self.data_start))
+            .unwrap_or(usize::MAX)
+            .saturating_mul(self.channels)
     }
 
     /// Counts `frames` more frames let go of.
     fn release_count(&mut self, frames: u64) {
-        self.released += frames;
+        self.released = self.released.saturating_add(frames);
         self.released_now = true;
     }
 
@@ -538,9 +535,9 @@ impl SourceState {
     pub(crate) fn flush_retired(&mut self, out: &mut Producer<Outbound>) -> bool {
         let mut sent = false;
         let mut index = 0;
-        while index < self.voices.len() {
-            if self.voices[index].state != VoiceState::Retired {
-                index += 1;
+        while let Some(voice) = self.voices.get(index) {
+            if voice.state != VoiceState::Retired {
+                index = index.saturating_add(1);
                 continue;
             }
             if out.is_full() {
@@ -571,9 +568,14 @@ impl SourceState {
         self.segments
             .iter()
             .find(|segment| {
-                position >= segment.source_start && position < segment.source_start + segment.len
+                position >= segment.source_start
+                    && position < segment.source_start.saturating_add(segment.len)
             })
-            .map(|segment| segment.mix_start + (position - segment.source_start))
+            .map(|segment| {
+                segment
+                    .mix_start
+                    .saturating_add(position.saturating_sub(segment.source_start))
+            })
     }
 
     /// Whether the frame at `position` has played.
@@ -586,7 +588,7 @@ impl SourceState {
 
     /// Whether every frame before `position` has played.
     fn played_up_to(&self, position: u64, played: u64) -> bool {
-        position <= self.data_start || self.frame_played(position - 1, played)
+        position <= self.data_start || self.frame_played(position.saturating_sub(1), played)
     }
 
     /// Retires the voices that have played to their end, ending the
@@ -668,11 +670,9 @@ impl SourceState {
     /// of one that ends it.
     fn release_voices(&mut self, played: u64) {
         let channels = self.channels;
-        let mut index = 0;
-        while index < self.voices.len() {
-            let voice = &self.voices[index];
+        for voice in &mut self.voices {
             if let VoiceState::Playing { start } = voice.state
-                && start + voice_len(voice, channels) <= played
+                && start.saturating_add(voice_len(voice, channels)) <= played
             {
                 if voice.ends
                     && let Some(utterance) = voice.utterance
@@ -682,11 +682,16 @@ impl SourceState {
                         .position(|tracked| tracked.utterance == utterance)
                 {
                     let tracked = self.tracked.remove(at);
-                    self.end_now(utterance, tracked.trace_id, UtteranceEnding::Completed);
+                    // As `end_now` does.
+                    self.events.push_front(Pending {
+                        position: 0,
+                        utterance,
+                        trace_id: tracked.trace_id,
+                        kind: Kind::Ended(UtteranceEnding::Completed),
+                    });
                 }
-                self.voices[index].state = VoiceState::Retired;
+                voice.state = VoiceState::Retired;
             }
-            index += 1;
         }
     }
 
@@ -698,12 +703,14 @@ impl SourceState {
             if done == 0 {
                 break;
             }
-            let samples = usize::try_from(done).unwrap_or(usize::MAX) * channels;
+            let samples = usize::try_from(done)
+                .unwrap_or(usize::MAX)
+                .saturating_mul(channels);
             self.data.drain(..samples.min(self.data.len()));
-            self.data_start += done;
-            segment.source_start += done;
-            segment.mix_start += done;
-            segment.len -= done;
+            self.data_start = self.data_start.saturating_add(done);
+            segment.source_start = segment.source_start.saturating_add(done);
+            segment.mix_start = segment.mix_start.saturating_add(done);
+            segment.len = segment.len.saturating_sub(done);
             let more = segment.len > 0;
             self.release_count(done);
             if more {
@@ -724,7 +731,7 @@ impl SourceState {
                 if start >= played {
                     voice.state = VoiceState::Waiting;
                 } else {
-                    let heard = (played - start).min(len);
+                    let heard = played.saturating_sub(start).min(len);
                     voice.state = if heard == len {
                         VoiceState::Retired
                     } else {
@@ -735,11 +742,13 @@ impl SourceState {
         }
         while let Some(segment) = self.segments.back_mut() {
             if segment.mix_start >= played {
-                self.mixed_end -= segment.len;
+                self.mixed_end = self.mixed_end.saturating_sub(segment.len);
                 self.segments.pop_back();
             } else {
-                let keep = (played - segment.mix_start).min(segment.len);
-                self.mixed_end -= segment.len - keep;
+                let keep = played.saturating_sub(segment.mix_start).min(segment.len);
+                self.mixed_end = self
+                    .mixed_end
+                    .saturating_sub(segment.len.saturating_sub(keep));
                 segment.len = keep;
                 break;
             }
@@ -750,7 +759,7 @@ impl SourceState {
     fn truncate(&mut self, from: u64) {
         let from = from.max(self.data_start);
         if from < self.write_end {
-            let removed = self.write_end - from;
+            let removed = self.write_end.saturating_sub(from);
             let keep = self.sample_index(from);
             self.data.truncate(keep);
             self.write_end = from;
@@ -767,7 +776,7 @@ impl SourceState {
 
     /// Frames written and not yet mixed.
     fn unmixed(&self) -> u64 {
-        self.write_end - self.mixed_end
+        self.write_end.saturating_sub(self.mixed_end)
     }
 
     /// Whether `voice`'s utterance is still being written. Until it is
@@ -805,11 +814,16 @@ impl SourceState {
                     VoiceState::Waiting
                         if voice.trigger >= self.mixed_end && voice.trigger <= self.write_end =>
                     {
-                        voice.trigger - self.mixed_end + len
+                        voice
+                            .trigger
+                            .saturating_sub(self.mixed_end)
+                            .saturating_add(len)
                     }
                     VoiceState::Waiting => 0,
-                    VoiceState::Resume { heard } => len - heard,
-                    VoiceState::Playing { start } => (start + len).saturating_sub(written),
+                    VoiceState::Resume { heard } => len.saturating_sub(heard),
+                    VoiceState::Playing { start } => {
+                        start.saturating_add(len).saturating_sub(written)
+                    }
                 }
             })
             .fold(self.unmixed(), u64::max)
@@ -828,9 +842,15 @@ impl SourceState {
     /// ([`Self::still_written`]).
     fn start_voices(&mut self, written: u64, data: u64) {
         let (mixed_end, write_end) = (self.mixed_end, self.write_end);
+        let mixed_to = mixed_end.saturating_add(data);
         for index in 0..self.voices.len() {
-            let writing = self.still_written(&self.voices[index]);
-            let voice = &mut self.voices[index];
+            let writing = self
+                .voices
+                .get(index)
+                .is_some_and(|voice| self.still_written(voice));
+            let Some(voice) = self.voices.get_mut(index) else {
+                continue;
+            };
             match voice.state {
                 VoiceState::Resume { heard } => {
                     voice.state = VoiceState::Playing {
@@ -839,13 +859,13 @@ impl SourceState {
                 }
                 VoiceState::Waiting
                     if voice.trigger >= mixed_end
-                        && (voice.trigger < mixed_end + data
+                        && (voice.trigger < mixed_to
                             || (voice.trigger == write_end
-                                && mixed_end + data == write_end
+                                && mixed_to == write_end
                                 && !writing)) =>
                 {
                     voice.state = VoiceState::Playing {
-                        start: written + (voice.trigger - mixed_end),
+                        start: written.saturating_add(voice.trigger.saturating_sub(mixed_end)),
                     };
                 }
                 VoiceState::Waiting | VoiceState::Playing { .. } | VoiceState::Retired => {}
@@ -857,23 +877,34 @@ impl SourceState {
     /// to `mix`.
     fn mix_voices(&self, written: u64, mix: &mut [f32]) {
         let channels = self.channels;
-        let end = written + (mix.len() / channels.max(1)) as u64;
+        let end = written.saturating_add(voice_len_of(mix.len(), channels));
+        // A frame count as an index into interleaved samples.
+        let samples = |frames: u64| {
+            usize::try_from(frames)
+                .unwrap_or(usize::MAX)
+                .saturating_mul(channels)
+        };
         for voice in &self.voices {
             let VoiceState::Playing { start } = voice.state else {
                 continue;
             };
             let from = start.max(written);
-            let to = (start + voice_len(voice, channels)).min(end);
+            let to = start.saturating_add(voice_len(voice, channels)).min(end);
             if from >= to {
                 continue;
             }
-            let out = usize::try_from(from - written).unwrap_or(usize::MAX) * channels;
-            let input = usize::try_from(from - start).unwrap_or(usize::MAX) * channels;
-            let count = usize::try_from(to - from).unwrap_or(usize::MAX) * channels;
-            for (sample, frame) in mix[out..out + count]
-                .iter_mut()
-                .zip(&voice.frames[input..input + count])
-            {
+            let out = samples(from.saturating_sub(written));
+            let input = samples(from.saturating_sub(start));
+            let count = samples(to.saturating_sub(from));
+            // Both runs are `count` long: `to` is within the mix and the
+            // voice.
+            let (Some(mixed), Some(frames)) = (
+                mix.get_mut(out..out.saturating_add(count)),
+                voice.frames.get(input..input.saturating_add(count)),
+            ) else {
+                continue;
+            };
+            for (sample, frame) in mixed.iter_mut().zip(frames) {
                 *sample += frame * voice.gain;
             }
         }
@@ -895,17 +926,22 @@ impl SourceState {
             return;
         }
         let offset = self.sample_index(self.mixed_end);
-        let count = usize::try_from(take).unwrap_or(usize::MAX) * channels;
-        for (out, sample) in mix.iter_mut().zip(self.data.range(offset..offset + count)) {
+        let count = usize::try_from(take)
+            .unwrap_or(usize::MAX)
+            .saturating_mul(channels);
+        // `take` is at most the frames unmixed, all of them in `data`.
+        let end = offset.saturating_add(count).min(self.data.len());
+        let data = self.data.range(offset.min(end)..end);
+        for (out, sample) in mix.iter_mut().zip(data) {
             *out += sample;
         }
         let source_start = self.mixed_end;
         match self.segments.back_mut() {
             Some(last)
-                if last.mix_start + last.len == written
-                    && last.source_start + last.len == source_start =>
+                if last.mix_start.saturating_add(last.len) == written
+                    && last.source_start.saturating_add(last.len) == source_start =>
             {
-                last.len += take;
+                last.len = last.len.saturating_add(take);
             }
             _ => self.segments.push_back(Segment {
                 source_start,
@@ -913,7 +949,7 @@ impl SourceState {
                 len: take,
             }),
         }
-        self.mixed_end += take;
+        self.mixed_end = self.mixed_end.saturating_add(take);
     }
 
     /// Holds the source where it is, or lets it go on.
@@ -954,25 +990,21 @@ impl SourceState {
     ) -> bool {
         let mut sent = false;
         let mut index = 0;
-        while index < self.awaiting_clock.len() {
-            let (utterance, trace_id, mix) = self.awaiting_clock[index];
+        while let Some(&(utterance, trace_id, mix)) = self.awaiting_clock.get(index) {
             if mix >= clock || out.is_full() {
-                index += 1;
+                index = index.saturating_add(1);
                 continue;
             }
             // The clock was at `clock` `age` ago, and passed the frame
             // `clock - mix` frames before that.
-            #[expect(
-                clippy::cast_precision_loss,
-                reason = "a few seconds of frames, far inside f64's exact range"
-            )]
-            let behind = std::time::Duration::from_secs_f64((clock - mix) as f64 / rate);
+            let behind =
+                std::time::Duration::from_secs_f64(u64_to_f64(clock.saturating_sub(mix)) / rate);
             let _ = out.push(Outbound::Event {
                 source,
                 event: PlaybackEvent::Heard {
                     utterance,
                     trace_id,
-                    ago: age + behind,
+                    ago: age.saturating_add(behind),
                 },
                 at,
             });
@@ -991,5 +1023,10 @@ impl SourceState {
 
 /// A voice's length in frames of `channels` channels.
 fn voice_len(voice: &Voice, channels: usize) -> u64 {
-    (voice.frames.len() / channels.max(1)) as u64
+    voice_len_of(voice.frames.len(), channels)
+}
+
+/// The frames in `samples` samples of `channels` channels.
+fn voice_len_of(samples: usize, channels: usize) -> u64 {
+    count_u64(samples / NonZeroUsize::new(channels).unwrap_or(NonZeroUsize::MIN))
 }

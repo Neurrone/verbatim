@@ -21,6 +21,7 @@
 
 use std::fs::File;
 use std::io::{self, Seek, SeekFrom, Write};
+use std::num::NonZeroU64;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -31,6 +32,7 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use rtrb::{Consumer, Producer, RingBuffer};
 use tracing::warn;
 
+use crate::numbers::{count_u64, float_to_i16};
 use crate::{AudioTap, DeviceFormat, Signal};
 
 /// Block headers the rings hold: a block is a device period or so of
@@ -173,8 +175,8 @@ impl Writer {
         played_at: Instant,
     ) -> io::Result<()> {
         let format = *self.format.get_or_insert(format);
-        let channels = u64::from(format.channels.max(1));
-        let block = samples.len() as u64 / channels;
+        let channels = NonZeroU64::new(u64::from(format.channels)).unwrap_or(NonZeroU64::MIN);
+        let block = count_u64(samples.len()) / channels;
         // Where this block belongs: it had just finished playing when the
         // tap received it.
         let now = u64::try_from(
@@ -183,24 +185,22 @@ impl Writer {
                 .as_millis(),
         )
         .unwrap_or(u64::MAX);
-        let ends_at = now * u64::from(format.sample_rate) / 1_000;
+        let ends_at = now.saturating_mul(u64::from(format.sample_rate)) / 1_000;
         let starts_at = ends_at.saturating_sub(block);
-        let slack = SLACK_MS * u64::from(format.sample_rate) / 1_000;
-        let mut bytes = Vec::with_capacity(samples.len() * 2);
-        if starts_at > self.frames + slack {
-            let silence = (starts_at - self.frames) * channels;
-            bytes.resize(usize::try_from(silence).unwrap_or(0) * 2, 0);
+        let slack = SLACK_MS.saturating_mul(u64::from(format.sample_rate)) / 1_000;
+        let mut bytes = Vec::with_capacity(samples.len().saturating_mul(2));
+        if starts_at > self.frames.saturating_add(slack) {
+            let silence = starts_at
+                .saturating_sub(self.frames)
+                .saturating_mul(channels.get());
+            bytes.resize(usize::try_from(silence).unwrap_or(0).saturating_mul(2), 0);
             self.frames = starts_at;
         }
         for sample in samples {
-            #[expect(
-                clippy::cast_possible_truncation,
-                reason = "the sample is clamped to the 16-bit range first"
-            )]
-            let value = (sample.clamp(-1.0, 1.0) * f32::from(i16::MAX)) as i16;
+            let value = float_to_i16(f64::from(sample.clamp(-1.0, 1.0) * f32::from(i16::MAX)));
             bytes.extend_from_slice(&value.to_le_bytes());
         }
-        self.frames += block;
+        self.frames = self.frames.saturating_add(block);
         self.file.seek(SeekFrom::End(0))?;
         self.file.write_all(&bytes)?;
         self.write_header(format)
@@ -211,7 +211,7 @@ impl Writer {
         let data_bytes =
             u32::try_from(self.file.seek(SeekFrom::End(0))?.saturating_sub(44)).unwrap_or(u32::MAX);
         let channels = format.channels.max(1);
-        let block_align = channels * 2;
+        let block_align = channels.saturating_mul(2);
         let mut header = Vec::with_capacity(44);
         header.extend_from_slice(b"RIFF");
         header.extend_from_slice(&(data_bytes.saturating_add(36)).to_le_bytes());
@@ -220,7 +220,12 @@ impl Writer {
         header.extend_from_slice(&1u16.to_le_bytes());
         header.extend_from_slice(&channels.to_le_bytes());
         header.extend_from_slice(&format.sample_rate.to_le_bytes());
-        header.extend_from_slice(&(format.sample_rate * u32::from(block_align)).to_le_bytes());
+        header.extend_from_slice(
+            &format
+                .sample_rate
+                .saturating_mul(u32::from(block_align))
+                .to_le_bytes(),
+        );
         header.extend_from_slice(&block_align.to_le_bytes());
         header.extend_from_slice(&16u16.to_le_bytes());
         header.extend_from_slice(b"data");
@@ -238,8 +243,9 @@ impl AudioTap for WavRecorder {
         let Some(start) = self.start.take() else {
             return;
         };
-        let second = usize::try_from(format.sample_rate).unwrap_or(usize::MAX)
-            * usize::from(format.channels.max(1));
+        let second = usize::try_from(format.sample_rate)
+            .unwrap_or(usize::MAX)
+            .saturating_mul(usize::from(format.channels.max(1)));
         let (sample_tap, samples) = RingBuffer::new(second);
         let (block_tap, blocks) = RingBuffer::new(BLOCKS);
         if start

@@ -111,8 +111,8 @@ impl AudioLoop {
             Ok(queued) => queued,
             Err(error) => return Pass::Recover(Some(error)),
         };
-        let mut queued = u64::from(queued).min(self.written - self.played);
-        self.played = self.written - queued;
+        let mut queued = u64::from(queued).min(self.written.saturating_sub(self.played));
+        self.played = self.written.saturating_sub(queued);
         if reopen {
             return Pass::Recover(None);
         }
@@ -146,7 +146,7 @@ impl AudioLoop {
             if self.tap.is_some() {
                 self.tap_pending.extend(self.mix.iter().copied());
             }
-            self.written += frames;
+            self.written = self.written.saturating_add(frames);
             self.running = true;
         } else if self.running && queued == 0 {
             device.stop();
@@ -175,10 +175,13 @@ impl AudioLoop {
             return;
         };
         if self.played > self.tapped {
-            let count = usize::try_from(self.played - self.tapped).unwrap_or(usize::MAX)
-                * usize::from(self.format.channels);
+            let count = usize::try_from(self.played.saturating_sub(self.tapped))
+                .unwrap_or(usize::MAX)
+                .saturating_mul(usize::from(self.format.channels));
             let count = count.min(self.tap_pending.len());
-            tap.played(&self.tap_pending.make_contiguous()[..count], self.format);
+            if let Some(played) = self.tap_pending.make_contiguous().get(..count) {
+                tap.played(played, self.format);
+            }
             self.tap_pending.drain(..count);
             self.tapped = self.played;
         }
@@ -191,21 +194,32 @@ impl AudioLoop {
     /// first pass that leaves it half free, whenever it filled it.
     fn drain(&mut self, device: &mut dyn AudioDevice, queued: &mut u64) {
         for index in 0..self.lanes.len() {
-            let source = self.lanes[index].source;
-            let capacity = self.lanes[index].records.buffer().capacity();
-            let mut took = 0;
-            while let Ok(record) = self.lanes[index].records.peek() {
+            let Some(lane) = self.lanes.get(index) else {
+                continue;
+            };
+            let source = lane.source;
+            let capacity = lane.records.buffer().capacity();
+            let mut took: usize = 0;
+            while let Some(Ok(record)) = self.lanes.get(index).map(|lane| lane.records.peek()) {
                 if !self.admits(source, record) {
                     break;
                 }
-                let Ok(record) = self.lanes[index].records.pop() else {
+                let Some(Ok(record)) = self.lanes.get_mut(index).map(|lane| lane.records.pop())
+                else {
                     break;
                 };
-                took += 1;
+                took = took.saturating_add(1);
                 self.apply(index, source, record, device, queued);
             }
-            if took > 0 && self.lanes[index].records.slots() <= capacity / 2 {
-                self.controls[source].room.set();
+            let half_free = self
+                .lanes
+                .get(index)
+                .is_some_and(|lane| lane.records.slots() <= capacity / 2);
+            if took > 0
+                && half_free
+                && let Some(control) = self.controls.get(source)
+            {
+                control.room.set();
             }
         }
     }
@@ -213,7 +227,11 @@ impl AudioLoop {
     /// Whether source `source`'s store, and the outbound ring, have room
     /// for what `record` adds.
     fn admits(&self, source: usize, record: &Record) -> bool {
-        let store = &self.sources[source];
+        // Every lane's source is one of the sources the mixer was built
+        // with; a record for none is never admitted.
+        let Some(store) = self.sources.get(source) else {
+            return false;
+        };
         let ring = !self.out.is_full();
         match record {
             Record::Register { .. } => store.admits_register(),
@@ -236,12 +254,17 @@ impl AudioLoop {
     ) {
         let generation = self.generation;
         let current = |format: u64| format == generation;
+        // Every lane's source is one of the sources the mixer was built
+        // with, and `admits` took no record for any other.
+        let Some(store) = self.sources.get_mut(source) else {
+            return;
+        };
         match record {
             Record::Register {
                 utterance,
                 trace_id,
                 generation: registered,
-            } => self.sources[source].register(utterance, trace_id, registered),
+            } => store.register(utterance, trace_id, registered),
             Record::Frames {
                 utterance,
                 format,
@@ -249,10 +272,10 @@ impl AudioLoop {
                 samples,
             } => {
                 let current = current(format);
-                let store = &mut self.sources[source];
-                match self.lanes[lane]
-                    .samples
-                    .as_mut()
+                match self
+                    .lanes
+                    .get_mut(lane)
+                    .and_then(|lane| lane.samples.as_mut())
                     .map(|ring| ring.read_chunk(samples))
                 {
                     Some(Ok(chunk)) => {
@@ -265,15 +288,15 @@ impl AudioLoop {
                     _ => store.frames(utterance, frames, (&[], &[]), false),
                 }
             }
-            Record::Mark { utterance, mark } => self.sources[source].mark(utterance, mark),
+            Record::Mark { utterance, mark } => store.mark(utterance, mark),
             Record::Sound { utterance, voice } => {
                 let current = current(voice.format);
-                self.sources[source].voice(Some(utterance), voice, current, &mut self.out);
+                store.voice(Some(utterance), voice, current, &mut self.out);
                 self.sent = true;
             }
             Record::Play { voice } => {
                 let current = current(voice.format);
-                self.sources[source].voice(None, voice, current, &mut self.out);
+                store.voice(None, voice, current, &mut self.out);
                 self.sent = true;
             }
             Record::PlayToEnd {
@@ -282,21 +305,19 @@ impl AudioLoop {
                 voice,
             } => {
                 let current = current(voice.format);
-                self.sources[source].play_to_end(
-                    utterance,
-                    trace_id,
-                    voice,
-                    current,
-                    &mut self.out,
-                );
+                store.play_to_end(utterance, trace_id, voice, current, &mut self.out);
                 self.sent = true;
             }
-            Record::Finish { utterance } => self.sources[source].finish(utterance),
+            Record::Finish { utterance } => store.finish(utterance),
             Record::Fail { utterance, reason } => {
                 // A failure discards the device's queue, so what of the
                 // utterance had been queued is not heard either.
                 self.discard(device, queued);
-                if let Some(reason) = self.sources[source].fail(utterance, reason) {
+                if let Some(reason) = self
+                    .sources
+                    .get_mut(source)
+                    .and_then(|store| store.fail(utterance, reason))
+                {
                     let _ = self.out.push(Outbound::Reason(reason));
                     self.sent = true;
                 }
@@ -373,7 +394,7 @@ impl AudioLoop {
             return;
         };
         let rate = f64::from(self.format.sample_rate.max(1));
-        let clock = self.clock_base + reading.frames;
+        let clock = self.clock_base.saturating_add(reading.frames);
         for (index, store) in self.sources.iter_mut().enumerate() {
             self.sent |= store.heard_by_clock(index, clock, rate, reading.age, at, &mut self.out);
         }
@@ -418,7 +439,7 @@ impl AudioLoop {
             .max()
             .unwrap_or(0);
         let frames = room.min(available);
-        let start_frames = u64::from(self.format.sample_rate * START_MS / 1_000);
+        let start_frames = u64::from(self.format.sample_rate.saturating_mul(START_MS) / 1_000);
         let still_writing = self
             .sources
             .iter()
@@ -435,7 +456,7 @@ impl AudioLoop {
     /// sends it for the delivery thread to report while the ring has room.
     fn note_underrun(&mut self) {
         if self.ran_dry && self.sources.iter().any(SourceState::mid_utterance) {
-            self.underruns += 1;
+            self.underruns = self.underruns.saturating_add(1);
             self.shared
                 .underruns
                 .store(self.underruns, Ordering::Release);
@@ -451,7 +472,9 @@ impl AudioLoop {
     /// Sums the next `frames` frames of every source into the mix.
     fn mix_sources(&mut self, frames: u64) {
         let channels = usize::from(self.format.channels);
-        let samples = usize::try_from(frames).unwrap_or(usize::MAX) * channels;
+        let samples = usize::try_from(frames)
+            .unwrap_or(usize::MAX)
+            .saturating_mul(channels);
         self.mix.clear();
         self.mix.resize(samples, 0.0);
         let written = self.written;

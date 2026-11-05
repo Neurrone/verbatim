@@ -8,9 +8,12 @@
 //! [`Converter::finish`] flushes the resampler's tail and resets it, so one
 //! utterance's audio never bleeds into the next.
 
+use std::num::NonZeroUsize;
+
 use rubato::audioadapter_buffers::direct::InterleavedSlice;
 use rubato::{Async, FixedAsync, Indexing, Resampler, SincInterpolationParameters, WindowFunction};
 
+use crate::numbers::{count_u64, float_to_u64, u64_to_f64};
 use crate::{AudioError, DeviceFormat, PcmFormat};
 
 /// Input frames per resampler call. Small, because a chunk must fill before
@@ -77,7 +80,12 @@ impl Converter {
                 FixedAsync::Input,
             )
             .map_err(|error| AudioError::Stream(format!("build resampler: {error}")))?;
-            let output = vec![0.0; resampler.output_frames_max() * usize::from(source.channels)];
+            let output = vec![
+                0.0;
+                resampler
+                    .output_frames_max()
+                    .saturating_mul(usize::from(source.channels))
+            ];
             let delay_left = resampler.output_delay();
             Some(Resampling {
                 resampler,
@@ -104,10 +112,13 @@ impl Converter {
     /// Converts `samples` (interleaved, in the source format) and appends
     /// the device frames available so far to `out`.
     pub(crate) fn push(&mut self, samples: &[i16], out: &mut Vec<f32>) {
-        let channels = usize::from(self.source.channels);
-        let whole = samples.len() - samples.len() % channels;
-        let input = samples[..whole]
-            .iter()
+        let channels =
+            NonZeroUsize::new(usize::from(self.source.channels)).unwrap_or(NonZeroUsize::MIN);
+        // Whole frames only: a partial last frame is left out.
+        let frames = samples.len() / channels;
+        let input = samples
+            .chunks_exact(channels.get())
+            .flatten()
             .map(|&sample| f32::from(sample) * I16_SCALE);
         match &mut self.resampling {
             None => {
@@ -116,8 +127,8 @@ impl Converter {
             }
             Some(resampling) => {
                 resampling.pending.extend(input);
-                resampling.frames_in += (whole / channels) as u64;
-                let chunk = CHUNK_FRAMES * channels;
+                resampling.frames_in = resampling.frames_in.saturating_add(count_u64(frames));
+                let chunk = CHUNK_FRAMES.saturating_mul(channels.get());
                 while resampling.pending.len() >= chunk {
                     let frames = resampling.process(channels, CHUNK_FRAMES);
                     resampling.pending.drain(..chunk);
@@ -134,19 +145,16 @@ impl Converter {
         let Some(resampling) = &mut self.resampling else {
             return;
         };
-        let channels = usize::from(self.source.channels);
-        #[expect(
-            clippy::cast_possible_truncation,
-            clippy::cast_sign_loss,
-            clippy::cast_precision_loss,
-            reason = "frame counts of one utterance are far below 2^52"
-        )]
-        let expected = (resampling.frames_in as f64 * resampling.ratio).round() as u64;
+        let channels =
+            NonZeroUsize::new(usize::from(self.source.channels)).unwrap_or(NonZeroUsize::MIN);
+        let expected = float_to_u64((u64_to_f64(resampling.frames_in) * resampling.ratio).round());
         // The partial chunk left over, then silence, until every output
         // frame the input implies has come out of the filter.
         while resampling.frames_out < expected {
             let partial = resampling.pending.len() / channels;
-            resampling.pending.resize(CHUNK_FRAMES * channels, 0.0);
+            resampling
+                .pending
+                .resize(CHUNK_FRAMES.saturating_mul(channels.get()), 0.0);
             let frames = resampling.process(channels, partial);
             resampling.pending.clear();
             resampling.emit(frames, channels, Some(expected), self.device.channels, out);
@@ -163,16 +171,22 @@ impl Resampling {
     /// Runs one resampler call over the first chunk of `pending`, of which
     /// `valid` frames are real input (the rest is padding). Returns the
     /// number of output frames written to `output`.
-    fn process(&mut self, channels: usize, valid: usize) -> usize {
+    fn process(&mut self, channels: NonZeroUsize, valid: usize) -> usize {
         let capacity = self.output.len() / channels;
-        let input = InterleavedSlice::new(
-            &self.pending[..CHUNK_FRAMES * channels],
-            channels,
-            CHUNK_FRAMES,
-        )
-        .expect("the pending chunk holds exactly CHUNK_FRAMES frames");
-        let mut output = InterleavedSlice::new_mut(&mut self.output, channels, capacity)
-            .expect("the output buffer holds output_frames_max frames");
+        let chunk = self
+            .pending
+            .get(..CHUNK_FRAMES.saturating_mul(channels.get()))
+            .unwrap_or_default();
+        // The pending chunk holds exactly CHUNK_FRAMES frames, and the
+        // output buffer `output_frames_max` frames; with either short,
+        // nothing is resampled.
+        let Ok(input) = InterleavedSlice::new(chunk, channels.get(), CHUNK_FRAMES) else {
+            return 0;
+        };
+        let Ok(mut output) = InterleavedSlice::new_mut(&mut self.output, channels.get(), capacity)
+        else {
+            return 0;
+        };
         let indexing = Indexing::new().partial_len(valid);
         match self
             .resampler
@@ -191,27 +205,33 @@ impl Resampling {
     fn emit(
         &mut self,
         frames: usize,
-        channels: usize,
+        channels: NonZeroUsize,
         limit: Option<u64>,
         device_channels: u16,
         out: &mut Vec<f32>,
     ) {
         let skip = self.delay_left.min(frames);
-        self.delay_left -= skip;
-        let mut keep = frames - skip;
+        self.delay_left = self.delay_left.saturating_sub(skip);
+        let mut keep = frames.saturating_sub(skip);
         if let Some(limit) = limit {
             let room = usize::try_from(limit.saturating_sub(self.frames_out)).unwrap_or(usize::MAX);
             keep = keep.min(room);
         }
-        self.frames_out += keep as u64;
-        let start = skip * channels;
-        let source_channels = u16::try_from(channels).unwrap_or(u16::MAX);
-        map_channels(
-            &self.output[start..start + keep * channels],
-            source_channels,
-            device_channels,
-            out,
-        );
+        self.frames_out = self.frames_out.saturating_add(count_u64(keep));
+        let start = skip.saturating_mul(channels.get());
+        let end = keep.saturating_mul(channels.get()).saturating_add(start);
+        let source_channels = u16::try_from(channels.get()).unwrap_or(u16::MAX);
+        // The resampler writes at most the output buffer's frames.
+        let Some(kept) = self.output.get(start..end) else {
+            tracing::debug!(
+                start,
+                end,
+                len = self.output.len(),
+                "resampled frames past the buffer"
+            );
+            return;
+        };
+        map_channels(kept, source_channels, device_channels, out);
     }
 }
 
@@ -220,19 +240,19 @@ impl Resampling {
 /// layout is averaged down to mono, and otherwise output channel `c` takes
 /// input channel `c` modulo `from`.
 fn map_channels(input: &[f32], from: u16, to: u16, out: &mut Vec<f32>) {
+    let scale = 1.0 / f32::from(from);
     let from = usize::from(from);
     let to = usize::from(to);
     if from == to {
         out.extend_from_slice(input);
         return;
     }
-    #[expect(clippy::cast_precision_loss, reason = "channel counts are tiny")]
-    let scale = 1.0 / from as f32;
     for frame in input.chunks_exact(from) {
         if to == 1 {
             out.push(frame.iter().sum::<f32>() * scale);
         } else {
-            out.extend((0..to).map(|channel| frame[channel % from]));
+            // Output channel `c` takes input channel `c` modulo `from`.
+            out.extend(frame.iter().cycle().take(to));
         }
     }
 }

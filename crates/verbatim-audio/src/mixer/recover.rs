@@ -20,8 +20,12 @@ use crate::{AudioDevice, AudioError, DeviceFormat, Signal};
 /// device period's margin, fits the samples each source reserves. A
 /// format that does not is played as silence until the device reopens.
 fn fits(format: DeviceFormat) -> bool {
-    let margin = u64::from(format.sample_rate) * u64::from(MARGIN_MS) / 1_000;
-    (source_capacity(format) + margin) * u64::from(format.channels)
+    let margin = u64::from(format.sample_rate)
+        .saturating_mul(u64::try_from(MARGIN_MS).unwrap_or(u64::MAX))
+        / 1_000;
+    source_capacity(format)
+        .saturating_add(margin)
+        .saturating_mul(u64::from(format.channels))
         <= u64::try_from(SAMPLES).unwrap_or(u64::MAX)
 }
 
@@ -30,8 +34,9 @@ fn fits(format: DeviceFormat) -> bool {
 /// the tap is told, and the format is published.
 pub(crate) fn open(audio: &mut AudioLoop, device: &mut Fallback, tap_signal: &Arc<dyn Signal>) {
     let format = device.open_or_silence(fits);
-    let samples =
-        usize::try_from(format.buffer_frames).unwrap_or(usize::MAX) * usize::from(format.channels);
+    let samples = usize::try_from(format.buffer_frames)
+        .unwrap_or(usize::MAX)
+        .saturating_mul(usize::from(format.channels));
     audio.mix.clear();
     audio.mix.reserve(samples);
     audio.tap_pending.clear();
@@ -49,7 +54,8 @@ pub(crate) fn open(audio: &mut AudioLoop, device: &mut Fallback, tap_signal: &Ar
                 store.end_all(&ending);
             }
         }
-        audio.generation = record_generation(audio.generation + 1);
+        // Modular: records name only the generation's low bits.
+        audio.generation = record_generation(audio.generation.wrapping_add(1));
         for store in &mut audio.sources {
             store.set_channels(usize::from(format.channels));
         }
