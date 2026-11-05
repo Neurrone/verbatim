@@ -31,19 +31,39 @@
 //! - `release`: ends every hold and every busy UI thread waiting for it.
 //! - `slow <ms>`: every provider call waits `ms` while its thread keeps
 //!   dispatching messages and calls; `slow 0` ends it.
-//! - `busy <w> [ms]`: window w's UI thread runs without taking a message,
-//!   for `ms` or until `release`; answered once it has started. Each
-//!   arrival of a sent or posted message meanwhile is logged as a `queued`
-//!   entry named `sent` or `posted`.
+//! - `busy <w> [ms] [focus-at <ms> [child]]`: window w's UI thread runs
+//!   without taking a message, for `ms` or until `release`; answered once
+//!   it has started, with the time it started. Each arrival of a sent or
+//!   posted message meanwhile is logged as a `queued` entry named `sent` or
+//!   `posted`. With `focus-at`, the busy thread itself moves the window's
+//!   focus to `child` (0, the window's own object, when not given) and
+//!   raises a focus `WinEvent` naming it that long into the busy time, as
+//!   an application moving its own focus while it does not answer.
 //! - `focus <w> <n>`: the tree's keyboard focus moves to node n, with no
 //!   event.
 //! - `rename <w> <n> <name>`: node n's name.
 //! - `raise <focus|name|notification|structure|text> <w> <n>`: raises the
 //!   event on window w's UI thread; answered with the time it was raised.
+//!   On an MSAA or plain window, `focus` moves the focus to child n of its
+//!   client object (0 for the object itself) and raises the focus
+//!   `WinEvent` naming it (`OBJID_CLIENT`, child n), from its UI thread.
+//!   The MSAA window's object has two children, `First` (1) and `Second`
+//!   (2); it and each child report themselves focused, as mockapp's MSAA
+//!   objects did, and `accFocus` answers the one with the focus.
+//! - `winevent <focus|name|foreground> <w>`: raises that `WinEvent`
+//!   (`EVENT_OBJECT_FOCUS`, `EVENT_OBJECT_NAMECHANGE` or
+//!   `EVENT_SYSTEM_FOREGROUND`) naming window w (`OBJID_CLIENT`,
+//!   `CHILDID_SELF`) from the control thread, not the window's own, so it
+//!   is raised while that thread is busy; answered with the time it was
+//!   raised.
 //! - `raise-rate <kind> <w> <n> <per second> <count>`: raises `count` of
 //!   them at that pace on the UI thread; answered once all are raised.
 //! - `foreground <w>`: shows window w and brings it to the foreground;
 //!   answered with whether it is the foreground window.
+//! - `show <w>` and `hide <w>`: shows or hides window w, without changing
+//!   the foreground.
+//! - `post-null <w>`: posts `WM_NULL` to window w.
+//! - `hung <w>`: answers `IsHungAppWindow` of window w, `true` or `false`.
 //! - `log`: prints every log entry since the last `log`, one
 //!   `entry <start µs> <end µs> <kind> <name> <w> <n> <thread id> <extra>`
 //!   line each, then `ok <count>`. Kinds are `call` (a provider method),
@@ -67,9 +87,11 @@ use windows::Win32::System::Threading::{
     AttachThreadInput, GetCurrentProcess, GetCurrentProcessId, GetCurrentThreadId, TerminateProcess,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DispatchMessageW, GetForegroundWindow, GetMessageW,
-    GetWindowThreadProcessId, MSG, PostMessageW, RegisterClassW, SW_SHOW, SetForegroundWindow,
-    ShowWindow, TranslateMessage, WINDOW_EX_STYLE, WM_APP, WNDCLASSW, WS_OVERLAPPEDWINDOW,
+    CreateWindowExW, DefWindowProcW, DispatchMessageW, EVENT_OBJECT_FOCUS, EVENT_OBJECT_NAMECHANGE,
+    EVENT_SYSTEM_FOREGROUND, GetForegroundWindow, GetMessageW, GetWindowThreadProcessId,
+    IsHungAppWindow, MSG, PostMessageW, RegisterClassW, SW_HIDE, SW_SHOW, SW_SHOWNOACTIVATE,
+    SetForegroundWindow, ShowWindow, TranslateMessage, WINDOW_EX_STYLE, WM_APP, WM_NULL, WNDCLASSW,
+    WS_OVERLAPPEDWINDOW,
 };
 use windows::core::{PCWSTR, w};
 
@@ -332,9 +354,17 @@ fn handle(line: &str) -> String {
                 return "err busy takes a window".to_owned();
             };
             let ms = number(1).unwrap_or(0) as u64;
+            let focus_at = match (rest.get(2), number(3)) {
+                (Some(&"focus-at"), Some(at)) => Some((at as u64, number(4).unwrap_or(0))),
+                (None, _) => None,
+                _ => {
+                    return "err busy takes a window, milliseconds and focus-at <ms> [child]"
+                        .to_owned();
+                }
+            };
             on_ui_thread(index, move |answer| {
-                let _ = answer.send("ok".to_owned());
-                state::busy(ms);
+                let _ = answer.send(format!("ok {}", state::now_us()));
+                state::busy(ms, focus_at.map(|(at, child)| (at, index, child)));
             })
         }
         "focus" => match (number(0), number(1)) {
@@ -370,6 +400,49 @@ fn handle(line: &str) -> String {
             on_ui_thread(w, move |answer| {
                 let _ = answer.send(providers::raise(event, w, n, pace, count));
             })
+        }
+        "winevent" => {
+            let (Some(kind), Some(index)) = (rest.first().copied(), number(1)) else {
+                return "err winevent takes a kind and a window".to_owned();
+            };
+            let event = match kind {
+                "focus" => EVENT_OBJECT_FOCUS,
+                "name" => EVENT_OBJECT_NAMECHANGE,
+                "foreground" => EVENT_SYSTEM_FOREGROUND,
+                other => return format!("err unknown winevent {other}"),
+            };
+            format!("ok {}", state::win_event(event, index, 0))
+        }
+        "show" | "hide" => {
+            let Some(index) = number(0) else {
+                return format!("err {verb} takes a window");
+            };
+            let hwnd = HWND(state::window(index).hwnd as *mut _);
+            let command = if verb == "show" {
+                SW_SHOWNOACTIVATE
+            } else {
+                SW_HIDE
+            };
+            // SAFETY: a window of this process; ShowWindow may be called
+            // from any thread.
+            let _ = unsafe { ShowWindow(hwnd, command) };
+            "ok".to_owned()
+        }
+        "post-null" | "hung" => {
+            let Some(index) = number(0) else {
+                return format!("err {verb} takes a window");
+            };
+            let hwnd = HWND(state::window(index).hwnd as *mut _);
+            if verb == "hung" {
+                // SAFETY: a window of this process.
+                return format!("ok {}", unsafe { IsHungAppWindow(hwnd) }.as_bool());
+            }
+            // SAFETY: a window of this process; the message waits in its
+            // queue.
+            match unsafe { PostMessageW(Some(hwnd), WM_NULL, WPARAM(0), LPARAM(0)) } {
+                Ok(()) => "ok".to_owned(),
+                Err(error) => format!("err {error}"),
+            }
         }
         "foreground" => {
             let Some(index) = number(0) else {

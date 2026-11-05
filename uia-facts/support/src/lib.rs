@@ -10,16 +10,23 @@
 //! - [`rop`]: the remote operation the facts send.
 //! - [`uia`]: a client object on a thread of the multithreaded apartment,
 //!   and the few calls every fact makes.
-//! - [`precondition`]: an unlocked input desktop and cdb.
-//! - [`events`]: an event handler that reports what it hears.
+//! - [`precondition`]: an unlocked input desktop and cdb; [`apps`] real
+//!   applications, the foreground and keys.
+//! - [`events`]: an event handler that reports what it hears; [`listen`]
+//!   a second client process that registers by a spec and reports it.
 //! - [`args`]: `--case`, `--trials`, `--recovery`, `--coalescing`,
 //!   `--verbose`, `--pause` and `--role`.
+//! - [`winevents`]: an out-of-context `WinEvent` hook; [`desktop`] a
+//!   desktop of its own to run processes on.
 //! - [`note`]: the wait lines, the evidence printed under a claim that
 //!   does not pass, and `--verbose`'s trace.
 
+pub mod apps;
 pub mod args;
+pub mod desktop;
 pub mod events;
 pub mod job;
+pub mod listen;
 pub mod note;
 pub mod precondition;
 pub mod provider;
@@ -28,6 +35,7 @@ pub mod role;
 pub mod rop;
 pub mod stats;
 pub mod uia;
+pub mod winevents;
 
 use windows::Win32::System::Performance::{QueryPerformanceCounter, QueryPerformanceFrequency};
 

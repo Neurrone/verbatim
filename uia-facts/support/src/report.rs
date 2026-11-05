@@ -308,11 +308,15 @@ fn uiautomationcore_version() -> String {
     // SAFETY: a live buffer.
     let length = unsafe { GetSystemDirectoryW(Some(&mut buffer)) } as usize;
     let directory = String::from_utf16_lossy(&buffer[..length.min(buffer.len())]);
-    let path = HSTRING::from(
-        Path::new(&directory)
-            .join("UIAutomationCore.dll")
-            .as_os_str(),
-    );
+    file_version(&Path::new(&directory).join("UIAutomationCore.dll"))
+}
+
+/// A file's numeric file version, `a.b.c.d`, or `unread`: the header's
+/// `UIAutomationCore.dll` and the version of each application a fact
+/// starts.
+#[must_use]
+pub fn file_version(path: &Path) -> String {
+    let path = HSTRING::from(path.as_os_str());
     // SAFETY: a live, terminated path.
     let size = unsafe { GetFileVersionInfoSizeW(&path, None) };
     if size == 0 {

@@ -1,4 +1,0 @@
-.lines -d
-bp user32!RegisterWindowMessageW ".printf \"=== RegisterWindowMessageW tid=%x name=%mu\n\", @$tid, @rcx; kc 6; gc"
-bp user32!SendMessageTimeoutW ".printf \"=== SendMessageTimeoutW tid=%x hwnd=%p msg=%x wp=%p lp=%p flags=%x timeout=%d\n\", @$tid, @rcx, @edx, @r8, @r9, dwo(@rsp+28), dwo(@rsp+30); kc 12; gc"
-g

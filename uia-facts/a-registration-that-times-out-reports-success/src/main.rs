@@ -778,6 +778,7 @@ fn trial_scope() -> Vec<String> {
                     name: (*name).to_owned(),
                     id: 0,
                     at: at.parse().expect("a time"),
+                    thread: 0,
                 });
             }
         }
@@ -1106,6 +1107,7 @@ fn trial_gap(
                         name: (*name).to_owned(),
                         id: 0,
                         at: at.parse().expect("a time"),
+                        thread: 0,
                     });
                 }
             }

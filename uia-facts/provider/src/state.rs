@@ -7,15 +7,17 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Condvar, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::Duration;
 
-use windows::Win32::Foundation::{CloseHandle, LPARAM, RPC_E_CALL_CANCELED};
+use windows::Win32::Foundation::{CloseHandle, HWND, LPARAM, RPC_E_CALL_CANCELED};
 use windows::Win32::System::Com::{
     COWAIT_DISPATCH_CALLS, COWAIT_DISPATCH_WINDOW_MESSAGES, CoWaitForMultipleHandles,
 };
 use windows::Win32::System::DataExchange::GetClipboardFormatNameW;
 use windows::Win32::System::Performance::{QueryPerformanceCounter, QueryPerformanceFrequency};
 use windows::Win32::System::Threading::{CreateEventW, GetCurrentThreadId};
+use windows::Win32::UI::Accessibility::NotifyWinEvent;
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetQueueStatus, QS_POSTMESSAGE, QS_SENDMESSAGE, WM_GETOBJECT, WM_GETTEXT, WM_GETTEXTLENGTH,
+    EVENT_OBJECT_FOCUS, GetQueueStatus, OBJID_CLIENT, QS_POSTMESSAGE, QS_SENDMESSAGE, WM_GETOBJECT,
+    WM_GETTEXT, WM_GETTEXTLENGTH,
 };
 
 /// `CB_GETCOMBOBOXINFO`, which UIA's window proxy sends a window.
@@ -351,10 +353,13 @@ pub(crate) fn release() {
 /// `posted`, whenever a sent or posted message has arrived since it last
 /// looked: the evidence that a call has reached the busy thread. Which
 /// message it is cannot be read without taking it, since reading a sent
-/// message delivers it.
-pub(crate) fn busy(ms: u64) {
+/// message delivers it. With `focus_at`, (offset, window, child), it moves
+/// that window's focus to the child and raises a focus `WinEvent` naming it
+/// once, that long into the busy time.
+pub(crate) fn busy(ms: u64, mut focus_at: Option<(u64, usize, usize)>) {
     let state = state();
-    let until = (ms > 0).then(|| std::time::Instant::now() + Duration::from_millis(ms));
+    let started = std::time::Instant::now();
+    let until = (ms > 0).then(|| started + Duration::from_millis(ms));
     // SAFETY: no precondition; the call reads this thread's queue status
     // and resets only its "new since last look" bits.
     let _ = unsafe { GetQueueStatus(QS_POSTMESSAGE | QS_SENDMESSAGE) };
@@ -381,6 +386,13 @@ pub(crate) fn busy(ms: u64) {
                 }
             }
         }
+        if let Some((at, window, child)) = focus_at
+            && started.elapsed() >= Duration::from_millis(at)
+        {
+            set_focus(window, child);
+            win_event(EVENT_OBJECT_FOCUS, window, child);
+            focus_at = None;
+        }
         let ended = match until {
             Some(until) => std::time::Instant::now() >= until,
             None => holds.generation != generation,
@@ -394,6 +406,30 @@ pub(crate) fn busy(ms: u64) {
             .unwrap_or_else(PoisonError::into_inner)
             .0;
     }
+}
+
+/// Raises `WinEvent` `event` naming child `child` of window `window`'s
+/// client object (`OBJID_CLIENT`; 0 is the window's own object,
+/// `CHILDID_SELF`) from this thread, logs it as a `winevent` entry with the
+/// event's number, and answers the time it was raised.
+pub(crate) fn win_event(event: u32, window: usize, child: usize) -> u64 {
+    let hwnd = HWND(self::window(window).hwnd as *mut _);
+    let at = now_us();
+    let child = i32::try_from(child).expect("a small child id");
+    // SAFETY: no precondition; any thread may raise a WinEvent for any
+    // window.
+    unsafe { NotifyWinEvent(event, hwnd, OBJID_CLIENT.0, child) };
+    lock(&state().log).push(Entry {
+        start: at,
+        end: at,
+        kind: "winevent",
+        name: event.to_string(),
+        window: Some(window),
+        node: None,
+        thread: thread_id(),
+        extra: String::new(),
+    });
+    at
 }
 
 pub(crate) fn set_slow(ms: u64) {

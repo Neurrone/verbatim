@@ -1,5 +1,7 @@
 //! A UIA event handler that reports each event it hears, with the sender's
-//! cached name and the time it was heard, and reports when UIA frees it.
+//! cached name, the time it was heard and the thread it ran on, and reports
+//! when UIA frees it. It handles automation, property-change, focus-change
+//! and notification events.
 
 #![allow(
     clippy::inline_always,
@@ -16,10 +18,13 @@ use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Accessibility::{
     IUIAutomation6, IUIAutomationCacheRequest, IUIAutomationElement, IUIAutomationEventHandler,
     IUIAutomationEventHandler_Impl, IUIAutomationEventHandlerGroup,
+    IUIAutomationFocusChangedEventHandler, IUIAutomationFocusChangedEventHandler_Impl,
+    IUIAutomationNotificationEventHandler, IUIAutomationNotificationEventHandler_Impl,
     IUIAutomationPropertyChangedEventHandler, IUIAutomationPropertyChangedEventHandler_Impl,
-    TreeScope_Subtree, UIA_AutomationFocusChangedEventId, UIA_EVENT_ID, UIA_NamePropertyId,
-    UIA_PROPERTY_ID,
+    NotificationKind, NotificationProcessing, TreeScope_Subtree, UIA_AutomationFocusChangedEventId,
+    UIA_EVENT_ID, UIA_NamePropertyId, UIA_NotificationEventId, UIA_PROPERTY_ID,
 };
+use windows::core::BSTR;
 use windows::core::{Ref, Result, implement};
 
 /// One event heard.
@@ -31,6 +36,8 @@ pub struct Heard {
     pub id: i32,
     /// When the handler ran, on [`crate::now_us`]'s clock.
     pub at: u64,
+    /// The thread it ran on.
+    pub thread: u32,
 }
 
 /// What a [`Handler`] reports: the events it hears, and, once, that UIA
@@ -47,7 +54,12 @@ pub type OnEvent = Box<dyn Fn(&IUIAutomationElement) + Send + Sync>;
 
 /// A handler for automation and property-change events, which reports
 /// each event and its own release on a channel.
-#[implement(IUIAutomationEventHandler, IUIAutomationPropertyChangedEventHandler)]
+#[implement(
+    IUIAutomationEventHandler,
+    IUIAutomationPropertyChangedEventHandler,
+    IUIAutomationFocusChangedEventHandler,
+    IUIAutomationNotificationEventHandler
+)]
 pub struct Handler {
     reports: Sender<Report>,
     on_event: Option<OnEvent>,
@@ -71,6 +83,8 @@ impl Handler {
 
     fn heard(&self, sender: Option<&IUIAutomationElement>, id: i32) {
         let at = crate::now_us();
+        // SAFETY: no precondition.
+        let thread = unsafe { windows::Win32::System::Threading::GetCurrentThreadId() };
         if let (Some(sender), Some(on_event)) = (sender, &self.on_event) {
             on_event(sender);
         }
@@ -79,7 +93,12 @@ impl Handler {
             .and_then(|s| unsafe { s.CachedName() }.ok())
             .map(|n| n.to_string())
             .unwrap_or_default();
-        let _ = self.reports.send(Report::Heard(Heard { name, id, at }));
+        let _ = self.reports.send(Report::Heard(Heard {
+            name,
+            id,
+            at,
+            thread,
+        }));
     }
 }
 
@@ -110,6 +129,51 @@ impl IUIAutomationPropertyChangedEventHandler_Impl for Handler_Impl {
         self.heard(sender.as_ref(), property.0);
         Ok(())
     }
+}
+
+impl IUIAutomationFocusChangedEventHandler_Impl for Handler_Impl {
+    fn HandleFocusChangedEvent(&self, sender: Ref<IUIAutomationElement>) -> Result<()> {
+        self.heard(sender.as_ref(), UIA_AutomationFocusChangedEventId.0);
+        Ok(())
+    }
+}
+
+impl IUIAutomationNotificationEventHandler_Impl for Handler_Impl {
+    fn HandleNotificationEvent(
+        &self,
+        sender: Ref<IUIAutomationElement>,
+        _kind: NotificationKind,
+        _processing: NotificationProcessing,
+        _display: &BSTR,
+        _activity: &BSTR,
+    ) -> Result<()> {
+        self.heard(sender.as_ref(), UIA_NotificationEventId.0);
+        Ok(())
+    }
+}
+
+/// Casts a handler to the focus-change interface it also implements.
+///
+/// # Panics
+///
+/// Never for a [`Handler`].
+#[must_use]
+pub fn as_focus_handler(
+    handler: &IUIAutomationEventHandler,
+) -> IUIAutomationFocusChangedEventHandler {
+    windows::core::Interface::cast(handler).expect("a Handler handles focus changes too")
+}
+
+/// Casts a handler to the notification interface it also implements.
+///
+/// # Panics
+///
+/// Never for a [`Handler`].
+#[must_use]
+pub fn as_notification_handler(
+    handler: &IUIAutomationEventHandler,
+) -> IUIAutomationNotificationEventHandler {
+    windows::core::Interface::cast(handler).expect("a Handler handles notifications too")
 }
 
 /// An event handler group holding UIA's focus event, subtree scope, with

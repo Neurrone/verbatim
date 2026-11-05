@@ -157,6 +157,22 @@ pub(crate) fn raise(
     pace: usize,
     count: usize,
 ) -> String {
+    if state::kind(window) != Kind::Uia {
+        return match event {
+            Event::Focus => {
+                state::set_focus(window, index);
+                format!(
+                    "ok {}",
+                    state::win_event(
+                        windows::Win32::UI::WindowsAndMessaging::EVENT_OBJECT_FOCUS,
+                        window,
+                        index
+                    )
+                )
+            }
+            _ => "err only focus is raised on a window without a UIA provider".to_owned(),
+        };
+    }
     let provider = node(window, index);
     let first = state::now_us();
     let start = std::time::Instant::now();
@@ -746,7 +762,17 @@ impl ITextRangeProvider_Impl for Range_Impl {
     }
 }
 
-/// The MSAA window's own `IAccessible`: a client object with no children.
+/// A child id from an MSAA call's `VARIANT`: 0 for the object itself, 1 or
+/// 2 for its children.
+fn child_id(child: &VARIANT) -> Result<usize> {
+    match i32::try_from(child) {
+        Ok(id @ 0..=2) => Ok(usize::try_from(id).expect("a small id")),
+        _ => Err(Error::from_hresult(E_INVALIDARG)),
+    }
+}
+
+/// The MSAA window's own `IAccessible`: a client object with two simple
+/// children, `First` (1) and `Second` (2).
 #[implement(IAccessible, Agile = false)]
 struct Accessible {
     window: usize,
@@ -797,15 +823,18 @@ impl IAccessible_Impl for Accessible_Impl {
     }
     fn accChildCount(&self) -> Result<i32> {
         let _call = self.call("accChildCount");
-        Ok(0)
+        Ok(2)
     }
     fn get_accChild(&self, _child: &VARIANT) -> Result<IDispatch> {
         let _call = self.call("accChild");
         Err(Error::from_hresult(E_INVALIDARG))
     }
-    fn get_accName(&self, _child: &VARIANT) -> Result<BSTR> {
+    fn get_accName(&self, child: &VARIANT) -> Result<BSTR> {
         let _call = self.call("accName");
-        Ok(BSTR::from(format!("msaa window {}", self.window).as_str()))
+        Ok(match child_id(child)? {
+            0 => BSTR::from(format!("msaa window {}", self.window).as_str()),
+            n => BSTR::from(state::tree(self.window).names[n].as_str()),
+        })
     }
     fn get_accValue(&self, _child: &VARIANT) -> Result<BSTR> {
         let _call = self.call("accValue");
@@ -815,14 +844,25 @@ impl IAccessible_Impl for Accessible_Impl {
         let _call = self.call("accDescription");
         Ok(BSTR::new())
     }
-    fn get_accRole(&self, _child: &VARIANT) -> Result<VARIANT> {
+    fn get_accRole(&self, child: &VARIANT) -> Result<VARIANT> {
         let _call = self.call("accRole");
-        // ROLE_SYSTEM_CLIENT
-        Ok(VARIANT::from(0xa_i32))
+        // ROLE_SYSTEM_CLIENT for the object, ROLE_SYSTEM_LISTITEM for a
+        // child.
+        Ok(VARIANT::from(if child_id(child)? == 0 {
+            0xa_i32
+        } else {
+            0x22
+        }))
     }
-    fn get_accState(&self, _child: &VARIANT) -> Result<VARIANT> {
+    fn get_accState(&self, child: &VARIANT) -> Result<VARIANT> {
         let _call = self.call("accState");
-        Ok(VARIANT::from(0_i32))
+        child_id(child)?;
+        // STATE_SYSTEM_FOCUSABLE | STATE_SYSTEM_FOCUSED for the object and
+        // each child, whichever has the focus, as mockapp's MSAA objects
+        // answered: UIA reports a focus it derives from a focus WinEvent
+        // only for an object that says it is focused, and checks it when it
+        // delivers the event.
+        Ok(VARIANT::from(0x0010_0004_i32))
     }
     fn get_accHelp(&self, _child: &VARIANT) -> Result<BSTR> {
         let _call = self.call("accHelp");
@@ -838,7 +878,10 @@ impl IAccessible_Impl for Accessible_Impl {
     }
     fn accFocus(&self) -> Result<VARIANT> {
         let _call = self.call("accFocus");
-        Ok(VARIANT::default())
+        let focus = state::tree(self.window).focus;
+        Ok(VARIANT::from(
+            i32::try_from(focus).expect("a small child id"),
+        ))
     }
     fn accSelection(&self) -> Result<VARIANT> {
         let _call = self.call("accSelection");

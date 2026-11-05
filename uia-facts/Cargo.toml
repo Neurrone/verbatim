@@ -21,6 +21,17 @@ members = [
     "msaa-calls-do-not-pass-through-uias-request-reader",
     "parallel-client-threads-gain-at-most-twice-on-one-application",
     "uia-answers-some-calls-in-the-client",
+    "a-hung-window-named-in-a-system-focus-event-holds-a-processs-uia-events",
+    "a-client-processs-events-run-on-one-worker",
+    "another-clients-stuck-call-holds-an-events-cache-fetch",
+    "a-flood-of-uia-events-from-one-application-stops-all-of-a-processs-uia-events",
+    "desktop-wide-focus-handlers-in-a-second-process-deliver-late",
+    "focus-events-cannot-be-limited-to-one-application",
+    "elements-cannot-be-passed-to-another-process",
+    "ancestors-cannot-be-cached-or-listened-to",
+    "a-cache-request-fails-while-uias-first-time-setup-runs-on-another-thread",
+    "a-process-that-used-uia-can-hang-or-crash-as-it-exits",
+    "a-new-processs-focus-events-reach-the-desktop-wide-handler-late-or-not-at-all",
 ]
 
 [workspace.package]

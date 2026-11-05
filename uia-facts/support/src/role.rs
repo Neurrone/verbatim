@@ -31,14 +31,33 @@ impl Role {
     /// When it cannot be started.
     #[must_use]
     pub fn start(name: &str, args: &[String]) -> Self {
+        Self::start_on(None, name, args)
+    }
+
+    /// Starts this executable as role `name` with `args`, on desktop
+    /// `desktop` when given ([`crate::desktop`]).
+    ///
+    /// # Panics
+    ///
+    /// When it cannot be started.
+    #[must_use]
+    pub fn start_on(desktop: Option<&str>, name: &str, args: &[String]) -> Self {
         let exe = std::env::current_exe().expect("this executable's path");
+        let mut words: Vec<String> = crate::uia::settings()
+            .flags()
+            .into_iter()
+            .map(str::to_owned)
+            .collect();
+        words.extend(crate::note::verbose().then(|| "--verbose".to_owned()));
+        words.extend(crate::args::pausing().then(|| "--pause".to_owned()));
+        words.push("--role".to_owned());
+        words.push(name.to_owned());
+        words.extend(args.iter().cloned());
+        if let Some(desktop) = desktop {
+            words = crate::desktop::wrap(desktop, &exe, &words);
+        }
         let mut child = Command::new(exe)
-            .args(crate::uia::settings().flags())
-            .args(crate::note::verbose().then_some("--verbose"))
-            .args(crate::args::pausing().then_some("--pause"))
-            .arg("--role")
-            .arg(name)
-            .args(args)
+            .args(words)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .spawn()
@@ -114,6 +133,28 @@ impl Role {
     pub fn expect_line(&self) -> String {
         self.line(Duration::from_secs(60))
             .expect("the second client reports")
+    }
+}
+
+impl Role {
+    /// Waits up to `limit` for the process to end; answers its exit code,
+    /// or `None` when it is still running.
+    ///
+    /// # Panics
+    ///
+    /// When its state cannot be read.
+    #[must_use]
+    pub fn wait(&mut self, limit: Duration) -> Option<i32> {
+        let start = std::time::Instant::now();
+        loop {
+            if let Some(status) = self.child.try_wait().expect("the process's state") {
+                return Some(status.code().unwrap_or(-1));
+            }
+            if start.elapsed() >= limit {
+                return None;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
     }
 }
 

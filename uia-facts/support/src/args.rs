@@ -81,6 +81,7 @@ impl Args {
     /// On an unknown argument or a missing value.
     #[must_use]
     pub fn parse() -> Self {
+        crate::desktop::trampoline_if_asked();
         let mut args = Self::default();
         let mut words = std::env::args().skip(1);
         while let Some(word) = words.next() {

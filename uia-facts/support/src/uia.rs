@@ -111,6 +111,27 @@ pub fn client() -> IUIAutomation6 {
     client
 }
 
+/// A client object of the older `CUIAutomation` coclass, the only client
+/// object made otherwise than by [`client`]: a fact compares it with
+/// `CUIAutomation8`. It has no `IUIAutomation6`, so neither setting
+/// applies to it, and no `IUIAutomation2`, so its timeouts cannot be set.
+///
+/// # Panics
+///
+/// When it cannot be made.
+#[must_use]
+pub fn older_client() -> windows::Win32::UI::Accessibility::IUIAutomation {
+    // SAFETY: the class and interface are UIA's own, made in process.
+    unsafe {
+        CoCreateInstance(
+            &windows::Win32::UI::Accessibility::CUIAutomation,
+            None,
+            CLSCTX_INPROC_SERVER,
+        )
+    }
+    .expect("a CUIAutomation client object")
+}
+
 /// Sets the process's connection and transaction timeouts through `client`.
 ///
 /// # Panics

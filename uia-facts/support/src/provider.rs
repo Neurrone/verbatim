@@ -100,13 +100,29 @@ impl Provider {
     /// When it cannot be started or does not become ready.
     #[must_use]
     pub fn launch(args: &[&str]) -> Self {
+        Self::launch_on(None, args)
+    }
+
+    /// Starts the provider program with `args`, on desktop `desktop` when
+    /// given ([`crate::desktop`]), and waits until it is ready.
+    ///
+    /// # Panics
+    ///
+    /// When it cannot be started or does not become ready.
+    #[must_use]
+    pub fn launch_on(desktop: Option<&str>, args: &[&str]) -> Self {
         let exe = std::env::current_exe().expect("this executable's path");
         let path = exe
             .parent()
             .expect("this executable's folder")
             .join("uia-facts-provider.exe");
-        let mut child = Command::new(&path)
-            .args(args)
+        let args: Vec<String> = args.iter().map(|a| (*a).to_owned()).collect();
+        let (program, words) = match desktop {
+            Some(desktop) => (exe.clone(), crate::desktop::wrap(desktop, &path, &args)),
+            None => (path.clone(), args),
+        };
+        let mut child = Command::new(&program)
+            .args(words)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .spawn()

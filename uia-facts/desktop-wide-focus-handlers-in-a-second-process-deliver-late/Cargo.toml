@@ -1,0 +1,14 @@
+[package]
+name = "desktop-wide-focus-handlers-in-a-second-process-deliver-late"
+description = "Reproduces a UIA fact (see its readme)"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+uia-facts-support.workspace = true
+windows.workspace = true
+
+[lints]
+workspace = true
