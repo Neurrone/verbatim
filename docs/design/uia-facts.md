@@ -42,7 +42,7 @@ Terms used here:
   - No fact binary launches mockapp. The facts kept as mockapp CI tests stay in mockapp, unchanged.
   - The provider implements its UIA and MSAA interfaces with the `windows` crate's `#[implement]`, using the root's feature list. windows-bindgen is not used (Dickson, 2026-11-04).
 - The build command: `uia-facts/build.ps1`, locally and in the workflow, runs three steps in order:
-  1. It copies `../Cargo.lock` to `uia-facts/Cargo.lock` and runs `cargo metadata` there. Every later cargo step runs with `--locked` (the lock-file rule).
+  1. It copies `../Cargo.lock` to uia-facts' own `Cargo.lock` and runs `cargo metadata` there. Every later cargo step runs with `--locked` (the lock-file rule).
   2. It runs `check-copies`.
   3. It runs `cargo build --locked` in `uia-facts/`, which builds the provider, the fact binaries and `check-copies` together.
 
@@ -56,13 +56,13 @@ Terms used here:
 What Cargo shares between two workspaces in one target directory, and why:
 
 - Third-party crates are reused, `windows` above all. A unit's `-C metadata` hash, which also names its file and its fingerprint directory, is computed from the package id (for a registry crate its name, version and registry URL), its features, the profile, the target and rustc version, and its dependencies' hashes. All of these are equal for a registry crate when these inputs match:
-  - Versions: `uia-facts/Cargo.lock` is derived from the main lock (the rule below).
+  - Versions: uia-facts' own `Cargo.lock` is derived from the main lock (the rule below).
   - Features: these come from the union over the packages being built. For the windows-rs family, which `.config/hakari.toml` leaves out of workspace-hack, the features are the one list in the main root. That list arrives through `verbatim-uia`'s inherited `windows.workspace = true`, and uia-facts' copied table is the same list. For every other crate, workspace-hack (the generated crate that unifies third-party features across the main workspace) fixes the features.
   - The profile: copied from the main root.
   - Rustflags: the same config files apply to both workspaces.
 - Eight workspace path crates build once more for uia-facts: `verbatim-model`, `verbatim-text`, `verbatim-core` and `verbatim-reader-rules` (which `verbatim-win32` depends on), `verbatim-win32`, `verbatim-uia`, `verbatim-uia-rops` and `workspace-hack`. The stable hash of a path package's id is its path relative to the workspace root when the package lies inside that root, and its absolute URL otherwise. So these units get hashes and files that differ from the main workspace's. The two builds never overwrite each other's fingerprints, so neither keeps rebuilding the other's units: each keeps its own copy.
 - The lock: `target/debug/.cargo-lock` is the one build lock. A uia-facts build and a main build in the same target wait for each other ("Blocking waiting for file lock") rather than running together. This is acceptable for runs made by hand. A builder subagent working in its own worktree has its own `target`.
-- Lock-file rule: `uia-facts/Cargo.lock` is ignored by git and never committed. Every build of uia-facts, by `build.ps1` locally and in the workflow, first copies the main root's `Cargo.lock` over it. It then runs `cargo metadata --format-version 1` in `uia-facts/`, without `--locked`, which writes the resolved lock. No `cargo update` is run.
+- Lock-file rule: uia-facts' own `Cargo.lock` is ignored by git and never committed. Every build of uia-facts, by `build.ps1` locally and in the workflow, first copies the main root's `Cargo.lock` over it. It then runs `cargo metadata --format-version 1` in `uia-facts/`, without `--locked`, which writes the resolved lock. No `cargo update` is run.
   - Locked versions are kept. Cargo's resolver reference ("Lock file", "Dependency updates") says Cargo "gives the highest priority to versions contained in the `Cargo.lock` file" and keeps dependencies "locked to the versions in `Cargo.lock` if it can". A locked entry is replaced only when it no longer matches a requirement, and uia-facts' requirements are the main root's.
   - New entries are only the uia-facts members, since uia-facts brings no third-party crate the main lock lacks.
   - Pruning is not stated in that reference. Cargo writes the lock from the resolve, so entries the graph does not use are dropped. The first build confirms it by diffing the copy before and after, and records the result in `uia-facts/readme.md`.
