@@ -13,7 +13,7 @@ Ancestors are read by a walk or a remote operation, and Verbatim registers its l
 The program is the client; every registration is for name changes, caching the sender's name and class name.
 
 - `provider`: in the provider program's tree node 5's parent is node 1, whose parent is the root. Registrations on node 5 with each of `TreeScope_Parent`, `TreeScope_Ancestors`, element and parent, and element and ancestors, each made directly (`AddPropertyChangedEventHandlerNativeArray`) and as an event handler group; and the control, element scope on node 1. Node 1 and then the root are renamed, raising their name changes. Once the control has heard node 1's change, the program waits 0.5 s more for any other delivery, since the one worker delivers them in turn.
-- `taskbar`: the taskbar's clock button (class `SystemTray.OmniButton` under `Shell_TrayWnd`), whose name changes each minute. A registration on its first child in the raw view, element and ancestors scope, and the control on the button itself, element scope. The program waits up to 62 s for the minute, then 0.5 s more.
+- `taskbar`: the taskbar's clock button (class `SystemTray.OmniButton` under `Shell_TrayWnd`), whose name changes each minute. A registration on its first child in the raw view, ancestors scope, and the control on the button itself, element scope. The program waits up to 62 s for the minute, then 0.5 s more.
 
 Judged: the count of events each registration heard (deterministic).
 

@@ -209,12 +209,7 @@ fn taskbar(report: &mut Report) {
         );
         return;
     };
-    let on_child = register(
-        &client,
-        &child,
-        TreeScope(TreeScope_Element.0 | TreeScope_Ancestors.0),
-        false,
-    );
+    let on_child = register(&client, &child, TreeScope_Ancestors, false);
     let on_button = register(&client, &clock, TreeScope_Element, false);
     note::waiting("up to 62 s, the clock's next minute");
     let start = now_us();
@@ -246,7 +241,7 @@ fn taskbar(report: &mut Report) {
         deterministic(&[seen], &true),
     );
     report.claim(
-        "the registration on the button's first child, element and ancestors scope: the button's name changes heard",
+        "the registration on the button's first child, ancestors scope: the button's name changes heard",
         &from_button.to_string(),
         "none (docs/parity/backends.md)",
         deterministic(&[from_button], &0),
