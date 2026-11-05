@@ -6,10 +6,11 @@
 //! `GetPropertyValue`, and the connection timeout at 2,000 ms.
 //!
 //! - `waits`: `CurrentName` of node 1, held, at transaction timeouts of
-//!   2,000, 5,000 and 20,000 ms.
-//! - `single-reads`: E-TT's reads at a 1,000 ms transaction timeout, both
-//!   timeouts 1,000 ms: `CurrentName` and `CurrentHasKeyboardFocus` of node
-//!   1, held.
+//!   2,000, 5,000 and 20,000 ms, each trial against a provider of its own;
+//!   then E-TT's reads at a 1,000 ms transaction timeout, both timeouts
+//!   1,000 ms: `CurrentName` and `CurrentHasKeyboardFocus` of node 1, held,
+//!   on one provider, so that with connection recovery on the second fails
+//!   at once.
 //! - `own-start`: at 2,000 ms, node 1's name read held on one thread, and
 //!   200 ms later node 2's name read on another. Each wait is
 //!   timed from its own call's start, and after the release the provider

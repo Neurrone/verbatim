@@ -222,13 +222,14 @@ fn held(args: &Args, judge: &mut Judge) {
             .iter()
             .find(|e| e.is_call("GetPropertyValue") && e.window == Some(0) && e.node == Some(1))
             .map_or(u64::MAX, |e| e.end);
-        behind.push(
-            log.iter()
-                .filter(|e| {
-                    e.is_call("GetPropertyValue") && e.window == Some(0) && e.node == Some(2)
-                })
-                .all(|e| e.start >= held_end),
-        );
+        // Node 2's read must be in the log, starting only after the held
+        // call's end; a missing read fails the claim.
+        let waiting: Vec<u64> = log
+            .iter()
+            .filter(|e| e.is_call("GetPropertyValue") && e.window == Some(0) && e.node == Some(2))
+            .map(|e| e.start)
+            .collect();
+        behind.push(!waiting.is_empty() && waiting.iter().all(|start| *start >= held_end));
     }
     judge.claim(
         "a read of another element of the held window waits for the release",
@@ -396,14 +397,14 @@ fn nocom(judge: &mut Judge) {
         let hwnd = provider.hwnd(0);
         note::waiting_ms(2_000, "the new connection's connection timeout");
         let connection = Timed::of(|| uia::element(&fresh, hwnd));
+        provider.log();
         let invoked = uia::spawn(move || {
             // SAFETY: a live pattern, resolved on this thread.
             Timed::of(|| unsafe { invoke.resolve().expect("the pattern").Invoke() })
         });
-        uia::pause(
-            Duration::from_millis(300),
-            "for the Invoke to reach the busy thread",
-        );
+        // The busy thread logs the Invoke's message reaching it.
+        let (_, reached) = provider.log_until(Duration::from_secs(30), |e| e.kind == "queued");
+        assert!(reached, "the Invoke reaches the busy thread");
         let released = now_us();
         provider.request("release");
         let invoked = invoked.join().expect("the invoke");

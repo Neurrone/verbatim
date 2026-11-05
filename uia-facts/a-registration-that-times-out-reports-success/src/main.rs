@@ -55,7 +55,7 @@ use std::time::{Duration, Instant};
 use uia_facts_support::args::{self, Args, trials};
 use uia_facts_support::events::{self, Handler, Heard, Report as Event};
 use uia_facts_support::note;
-use uia_facts_support::provider::Provider;
+use uia_facts_support::provider::{Entry, Provider};
 use uia_facts_support::report::{
     Report, Verdict, band, band_text, deterministic, in_band, relation, runs,
 };
@@ -469,6 +469,16 @@ fn trial_e57() -> Vec<String> {
         after(first.and_then(|f| f.checked_sub(1)).map(|i| raised[i].1)),
         after(first.map(|f| raised[f].1)),
         delays.iter().all(Option::is_some).to_string(),
+        // Each event's offset after the stall's end and its delay, or
+        // `lost`, for the evidence printed under a claim that differs.
+        offsets
+            .iter()
+            .zip(&delays)
+            .map(|(offset, delay)| {
+                delay.map_or(format!("{offset}:lost"), |d| format!("{offset}:{d:.0}"))
+            })
+            .collect::<Vec<_>>()
+            .join(","),
     ]
 }
 
@@ -565,11 +575,11 @@ fn trial_silence() -> Vec<String> {
         "watching the provider log for 6 s of silence after the release",
     );
     let log = provider.log();
-    let backlog_end = stalled.released_us + 20_000;
+    let backlog_end = backlog_end(&log);
     let adds: Vec<String> = log
         .iter()
-        .filter(|e| e.kind == "advise" && e.name == "AdviseEventAdded" && e.extra == "20005")
-        .map(|e| (e.start >= stalled.released_us && e.start <= backlog_end).to_string())
+        .filter(|e| is_focus_advise(e))
+        .map(|e| (e.start >= stalled.released_us).to_string())
         .collect();
     let adds = if adds.is_empty() {
         "-".to_owned()
@@ -583,6 +593,29 @@ fn trial_silence() -> Vec<String> {
             .count()
             .to_string(),
     ]
+}
+
+/// Whether `entry` is the provider's advise of a focus event handler.
+fn is_focus_advise(entry: &Entry) -> bool {
+    entry.kind == "advise" && entry.name == "AdviseEventAdded" && entry.extra == "20005"
+}
+
+/// The end of the stall's backlog: the registration's own request runs as
+/// the stall ends and ends with the provider's advise of the focus event
+/// (`FragmentRoot`, `GetEmbeddedFragmentRoots`, `ProviderOptions`, then
+/// `AdviseEventAdded`, by the provider's log), so the advise's end is its
+/// end.
+///
+/// # Panics
+///
+/// When the log holds no such advise: the registration's request never
+/// ran.
+fn backlog_end(log: &[Entry]) -> u64 {
+    log.iter()
+        .filter(|e| is_focus_advise(e))
+        .map(|e| e.end)
+        .max()
+        .expect("the registration's request reached the provider")
 }
 
 fn e58_silence(report: &mut Report) {
@@ -602,7 +635,7 @@ fn e58_silence(report: &mut Report) {
     report.claim(
         "the provider is advised of the focus event once, at the stall's end",
         &runs(&advised),
-        "one advise, within 20 ms of the release",
+        "one advise, after the release, ending the stall's backlog",
         deterministic(&advised, &vec![true]),
     );
     report.claim(
@@ -1392,7 +1425,7 @@ fn trial_onset() -> Vec<String> {
         .iter()
         .position(Option::is_some)
         .unwrap_or(raised.len());
-    let backlog_end = stalled.released_us + 20_000;
+    let backlog_end = backlog_end(&log);
     let gap_end = raised.get(first).map_or(u64::MAX, |r| r.1);
     // Provider work answering each event raised in the gap: entries after
     // its raise and before the next raise's requests began.

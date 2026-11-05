@@ -21,7 +21,7 @@ Every trial runs in a client process of its own (the program's `trial` role), as
 - `next-event`: a single event 1,500 ms after the stall's end, and the pair at 1,000 and 2,500 ms.
 - `second-process`: `e57` registered by a second client process (the `registrar` role), given the run's flags.
 - `onset`: a focus event every 100 ms from the stall's end to 3,000 ms after it, and the provider's log: whether provider work follows each event raised in the gap.
-- `e58-silence`: as `e57` with no event; the provider's log 6 s after the release.
+- `e58-silence`: as `e57` with no event; the provider's log 6 s after the release. Here and in `onset`, the stall's backlog is the registration's own request, which ends with the provider's advise of the focus event, so the advise's end marks the backlog's end.
 - `e58-scope`: two provider programs P and Q. Before the stall of P, group A on P and group C on Q from the trial's client object, and group D on P from a second client process; during the stall, group B on P from another client object. Events on P every 100 ms from the stall's end to 3,000 ms, on Q every 100 ms from 50 to 2,950 ms.
 - `e58-remove`: as `e57`, the group removed 500 ms after the release (`remove`), 3,000 ms after it (`remove-late`), or with no stall (`remove-nostall`); events at 1,000 and 4,000 ms.
 - `between`: a focus event and, at once, a name change on the focused node; the client, on hearing the focus, registers for the node's name changes; then a second name change.
@@ -61,7 +61,7 @@ Event coalescing changes no outcome; connection recovery causes the gap (checked
 
 ## How to rerun
 
-`uia-facts/build.ps1`, then `target\debug\a-registration-that-times-out-reports-success.exe`, or one case with `--case`. No desktop, application or debugger; it starts a copy of itself for each trial, and another for D. The tests: `cargo test -p mockapp --test uia_bugs -- --exact a_group_registered_while_its_provider_is_held_reports_success`, and the same for `a_read_while_its_provider_is_held_fails`.
+`uia-facts/build.ps1`, then `target\debug\a-registration-that-times-out-reports-success.exe --recovery` for the gap the documents state, or without `--recovery` for the outcome with connection recovery off; one case with `--case`. Under `--pause`, each trial's process prints its provider's and its own process ids once its provider is up, and waits for Enter here. No desktop, application or debugger; it starts a copy of itself for each trial, and another for D. The tests: `cargo test -p mockapp --test uia_bugs -- --exact a_group_registered_while_its_provider_is_held_reports_success`, and the same for `a_read_while_its_provider_is_held_fails`.
 
 ## Evidence kept
 

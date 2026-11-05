@@ -136,8 +136,8 @@ fn main() {
     report.finish();
 }
 
-/// The property read, held, with cancellation never enabled on the
-/// caller, cancelled once.
+/// The property read, its UI thread stalled, with cancellation never
+/// enabled on the caller, cancelled once.
 fn disabled(args: &Args, report: &mut Report) {
     {
         let trials: Vec<Trial> = (0..trials())

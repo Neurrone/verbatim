@@ -6,7 +6,7 @@ When an application's UI thread is stuck with a UIA call queued on it, a new con
 
 ## What Verbatim relies on
 
-The proxy rule (`books/dev/src/reference/crates/verbatim-uia.md`, `window_element`), which refuses a lookup answered by UIA's proxies alone by reading the cached provider description, and the focus-now answer at an outpost's start (`books/dev/src/explanation/design/listener-without-connections.md`, decision 8). If the description's form changed, a proxy's answer would be taken as the application's own and read as "pane". The program classifies descriptions with that rule, restated in `uia_facts_support::uia::served_only_by_uia_proxies`.
+The proxy rule (`books/dev/src/reference/crates/verbatim-uia.md`, `window_element`), which refuses a lookup answered by UIA's proxies alone by reading the cached provider description, and the focus-now answer at an outpost's start (`books/dev/src/explanation/design/listener-without-connections.md`, decision 8). If the description's form changed, a proxy's answer would be taken as the application's own and read as "pane". The program classifies descriptions with that rule itself, which `uia_facts_support::uia::served_only_by_uia_proxies` re-exports from `verbatim-uia`.
 
 ## Method
 

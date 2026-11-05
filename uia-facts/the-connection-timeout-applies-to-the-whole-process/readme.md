@@ -14,7 +14,7 @@ The kept CI tests, in `crates/mockapp/tests/uia_bugs/the_connection_timeout_appl
 
 Each trial starts a new provider program, its one UIA window's UI thread busy until released. Client object A, on the main thread, sets the connection timeout; client object B, made on another thread, sets another; then A reads the busy window (`ElementFromHandle`, then `CurrentName`), which fails at the connection timeout in force.
 
-- `whole-process`: A sets 500 ms and B then 10,000 ms (`h5_main500_other10000`); then A sets 10,000 ms and B 500 ms (`h5_main10000_other500`).
+- `whole-process`: A sets 500 ms and B then 2,000 ms; then A sets 2,000 ms and B 500 ms. The original pair, `h5_main500_other10000` and `h5_main10000_other500`, set 10,000 ms where this sets 2,000 ms, which shows the same with less waiting.
 
 Judged: the HRESULT (deterministic) and the wait (a band from B's timeout).
 

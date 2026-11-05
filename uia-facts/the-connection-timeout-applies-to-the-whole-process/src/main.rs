@@ -3,12 +3,11 @@
 //! the value one client object reads back is the one another client
 //! object's calls wait by.
 //!
-//! Cases, a new provider program each, its UI thread busy:
-//!
-//! - `other-longer`: client object A sets the connection timeout to 500 ms,
-//!   then client object B, on another thread, to 10,000 ms; A's explicit
-//!   read (`ElementFromHandle`, then `CurrentName`) of the busy window.
-//! - `other-shorter`: the reverse, A at 10,000 ms and B at 500 ms.
+//! `whole-process`, each trial a new provider program, its UI thread busy:
+//! client object A sets the connection timeout to 500 ms, then client
+//! object B, on another thread, to 2,000 ms; A's explicit read
+//! (`ElementFromHandle`, then `CurrentName`) of the busy window. Then the
+//! reverse, A at 2,000 ms and B at 500 ms.
 
 use uia_facts_support::args::{Args, trials};
 use uia_facts_support::note;
@@ -25,18 +24,18 @@ fn main() {
     uia::mta();
     let mut report = Report::start("the-connection-timeout-applies-to-the-whole-process");
     if args.wants("whole-process") {
-        report.case("whole-process", "making the window's UI thread busy; client object A sets one connection timeout and B, on another thread, another; timing A's new connection, in both orders");
+        report.case("whole-process", "making the window's UI thread busy; client object A sets one connection timeout and B, on another thread, another, 500 ms and 2 s; timing A's new connection, in both orders");
         order(
             &args,
             &mut report,
             500,
-            10_000,
-            "10,013 ms (h5_main500_other10000)",
+            2_000,
+            "10,013 ms at 10,000 ms (h5_main500_other10000)",
         );
         order(
             &args,
             &mut report,
-            10_000,
+            2_000,
             500,
             "508 ms (h5_main10000_other500)",
         );

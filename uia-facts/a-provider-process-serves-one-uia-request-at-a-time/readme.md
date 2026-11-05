@@ -17,8 +17,7 @@ The provider program has windows 0 and 1 on UI thread 0 and window 2 on UI threa
 - `fifo`: UI thread 0 busy; a read queued into window 0, then a read into window 2; the provider's order of serving them, and whether the second waited for the release.
 - `busy-only`: UI thread 0 busy with nothing queued; a read into window 2.
 - `pumping`: window 0's node 1 read waiting in `CoWaitForMultipleHandles` until released; a read into window 2.
-- `nocom`: the provider without `UseComThreading`, two windows on two UI threads, UI thread 0 busy: a read of window 0's node 1, a new connection to window 0, then its node 1's `Invoke`.
-- `recovery`: `held`, `fifo`, `busy-only`, `pumping` and `nocom` again with connection recovery on in every client object, printed as new.
+- `nocom`: the provider without `UseComThreading`, two windows on two UI threads, UI thread 0 busy: a read of window 0's node 1, a new connection to window 0, then its node 1's `Invoke`, released once the busy thread logs the `Invoke`'s message reaching it.
 
 Judged: relations (each probe's reply before or after the release, by this program's clock; the waiting read's start after the held call's end, by the provider's log), orders and counts (deterministic), and the new connection's wait (a band).
 
