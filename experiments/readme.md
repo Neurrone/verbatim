@@ -4,7 +4,7 @@ This folder keeps the experiments behind `books/dev/src/reference/uia-bugs.md`, 
 
 Left out everywhere: screen recordings, ETW traces, symbol caches, binaries and build output. Paths to a session's scratch folder are redacted to `<scratch folder>`.
 
-The UIA facts are in `uia-facts/`, a folder per fact with a program that reproduces it and the outputs its figures cite; [`uia-facts/readme.md`](../uia-facts/readme.md) is their index. Every experiment of the two UIA documents has moved there; the October experiments' code is in git at commit b0a1989. Two folders below keep only what lasting documents cite.
+The UIA facts are in `uia-facts/`, a folder per fact with a program that reproduces it and the outputs its figures cite; [`uia-facts/readme.md`](../uia-facts/readme.md) is their index. Every experiment of the two UIA documents has moved there; the October experiments' code is in git at commit b0a1989. Of them, the probe experiment below keeps only the kept runs and the proposal that lasting documents cite, and the parallel calls experiment only the debugging tools `books/dev/src/how-to/debugging.md` uses.
 
 ## Faults in UI Automation
 

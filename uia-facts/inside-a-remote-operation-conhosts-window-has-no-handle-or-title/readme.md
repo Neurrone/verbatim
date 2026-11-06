@@ -2,7 +2,7 @@
 
 ## Fact
 
-Read inside a remote operation, the window element above a focus in conhost's text area has no native window handle and no name; only the client side's window proxy supplies them (`books/dev/src/reference/uia-bugs.md`, the fault of that name). Whether the fault is conhost's provider's or UIA's is not established.
+Read inside a remote operation, the window element above a focus in conhost's text area has no native window handle and no name; only the client side's window proxy supplies them (`books/dev/src/reference/uia-bugs.md`, the fault of that name). No case tells whether the element without its handle and title comes from conhost's provider or from UIA.
 
 ## What Verbatim relies on
 
