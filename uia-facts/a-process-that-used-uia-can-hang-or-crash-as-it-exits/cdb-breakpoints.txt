@@ -1,0 +1,5 @@
+bp UIAutomationCore+dfdd8 ".printf \"start tid %x key %x\\n\", @$tid, poi(@rsp+28); gc"
+bp UIAutomationCore+dff82 ".printf \"start ret tid %x size %x\\n\", @$tid, poi(poi(UIAutomationCore!TelemetryUtility::m_instance)+20); gc"
+bp UIAutomationCore+237858 ".printf \"close key %x\\n\", @r8; gc"
+bp UIAutomationCore+2379a1 ".printf \"close ret size %x\\n\", poi(poi(UIAutomationCore!TelemetryUtility::m_instance)+20); gc"
+bp UIAutomationCore+237828 ".printf \"destructor size %x\\n\", poi(poi(UIAutomationCore!TelemetryUtility::m_instance)+20); gc"

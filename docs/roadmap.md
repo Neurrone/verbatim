@@ -241,7 +241,8 @@ sound.
 The values (Dickson, 2026-11-05), each limit longer than everything
 inside it plus a margin: one UI Automation request 10 s (the transaction
 timeout, today 5 s), so that its own timeout fires first; the outpost's
-task deadline 11 s; and an outpost's clean shutdown up to 12 s, which
+task deadline 11 s; and an outpost's clean shutdown 1 s, after which it
+is killed (Dickson, 2026-11-06), which
 [the guardian](design/guardian.md), section 12, makes fit by stopping a
 program at its next call boundary and cancelling the MSAA call in flight
 through COM. The same build fixes where today's limits nest wrongly:
@@ -884,12 +885,11 @@ inside UIA (`books/dev/src/explanation/design/listener-without-connections.md`).
   one (the reducers' simplification study).
 - A mockapp test that fails an outpost during a held remote operation and
   checks what its replacement reads.
-- The replacement started only once the old process has exited, and the
-  kill's place in that order, weighed against the crash inside Windows
-  Terminal's `UIAutomationCore.dll` that the clean shutdown was added for.
-- `SHUTDOWN_LIMIT`, 21 seconds today, becomes 12 seconds in M4.8
-  ([the guardian](design/guardian.md), section 12), the bound the order
-  above works with.
+- The replacement started only once the old process has exited, the old
+  one killed 1 second after its shutdown message if it has not exited
+  (Dickson, 2026-11-06).
+- `SHUTDOWN_LIMIT`, 21 seconds today, becomes 1 second (Dickson,
+  2026-11-06), the bound the order above works with.
 - The supervisor's owner thread as a pure state machine, with the clock
   and I/O completions as inputs (Dickson, 2026-10-31, revisiting the
   ownership refactor's default of 2026-10-30;

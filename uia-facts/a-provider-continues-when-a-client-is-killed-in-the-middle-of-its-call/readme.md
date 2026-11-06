@@ -6,7 +6,7 @@ A provider process goes on serving UIA when a client process is ended with `Term
 
 ## What Verbatim relies on
 
-The clean shutdown of outposts and the listener, the 21-second `SHUTDOWN_LIMIT` before a child is killed through its job, and M6.2's kill order, which rest on that suspicion (`books/dev/src/explanation/architecture.md`, section 1). If a killed client did crash its provider, the clean shutdown is what keeps Verbatim from crashing applications; that it does not crash the provider program shows only that the suspicion is not a general property of UIA.
+The clean shutdown of outposts and the listener, which now gets 1 second before the child is killed through its job (Dickson, 2026-11-06), and M6.2's kill order, which rest on that suspicion (`books/dev/src/explanation/architecture.md`, section 1). If a killed client did crash its provider, the clean shutdown is what keeps Verbatim from crashing applications; that it does not crash the provider program shows only that the suspicion is not a general property of UIA.
 
 ## Method
 

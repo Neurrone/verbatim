@@ -1,0 +1,6 @@
+sxe ld:UIAutomationCore.dll
+g
+$$><cdb-breakpoints.txt
+bl
+sxd ld
+g

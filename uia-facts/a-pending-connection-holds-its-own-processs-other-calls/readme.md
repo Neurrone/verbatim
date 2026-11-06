@@ -6,7 +6,7 @@ A pending connection, one whose `WM_GETOBJECT` waits in a busy window's message 
 
 ## What Verbatim relies on
 
-D13's listener making no connections, and `crates/verbatim-uia/src/bounded.rs` and the outpost watchdog abandoning threads. If a stuck application held calls from another process, the isolation would fail. The new answer bears on it: an outpost, connected to its own application, that leaves a new connection pending in that application holds the listener's reads of elements in the same application until the connection fails, at most one connection timeout.
+D13's listener making no connections, and `crates/verbatim-uia/src/bounded.rs` and the outpost watchdog abandoning threads. If a stuck application held calls from another process, the isolation would fail. The new answer bears on it: an outpost, connected to its own application, that leaves a new connection pending there while a window's thread is busy holds the listener's reads into that application until the connection fails, for up to one connection timeout. Dickson accepts this as a known cost of D13 (2026-11-06; `books/dev/src/explanation/architecture.md`, D13).
 
 ## Method
 
