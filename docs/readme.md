@@ -82,9 +82,6 @@ harness, NVDA captures and troubleshooting.
   - [focus-pipeline-rework-remaining.md](design/focus-pipeline-rework-remaining.md)
     — its remaining builds and the title rule, after the ownership
     refactor.
-  - [uia-facts.md](design/uia-facts.md) — the design for the UIA facts
-    build: the `uia-facts` workspace, its provider program and a folder
-    per UI Automation fact; deleted once that build is finished.
   - [focus-pipeline-audit.md](design/focus-pipeline-audit.md) — every
     difference from NVDA's focus handling found on 2026-10-29.
   - [cross-process-calls-study.md](design/cross-process-calls-study.md)
