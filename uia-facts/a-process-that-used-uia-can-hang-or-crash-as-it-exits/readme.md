@@ -35,7 +35,7 @@ Each child process (the `exiter` role) makes UIA's first-time setup on its main 
 | `exit` with four providers and threads: 2 of 150, both hangs, in 22 s | 2026-11-06 | As above | cdb6b4d6 | Pass against 8 of 230 |
 | `clean`: the providers ended after the teardown 2 of 90, before it 3 of 90, all hangs | 2026-11-06 | As above | cdb6b4d6 | Pass: no difference from the dirty rate |
 | `clean` at 120 children: the providers ended after the teardown 5 of 120 (4 hung, 1 access violation), before it 5 of 120, all hangs | 2026-11-06 | As above | f0b18b2a | Pass: no difference from the dirty rate |
-| `serial`: 0 of 150 in each of seven runs, by default three times more and once with each client setting; `exit` in the same first run 2 of 150 | 2026-11-06 | As above | 6636322e | Prevents it: apart from 8 of 230 |
+| `serial`: 0 of 150 in each of seven runs; `exit` in the same first run 2 of 150 | 2026-11-06 | As above | 6636322e | Prevents it: apart from 8 of 230 |
 | `providers-alive`: 2, 13, 4, 9, 4 and 4 of 150 in the same six runs, hangs and access violations both | 2026-11-06 | As above | 6636322e | No difference shown; one run of 13 inconclusive |
 | Under cdb with full page heap, 150 children of `exit`'s setup: two or three client threads inside `StartConnection` at once in most children; after it, the forward chain shorter than the size count, or the head's back link not naming the chain's last node, in 6 of them (children 9, 16, 69, 78, 81 and 100); none faulted at exit, since the providers' erases left each list consistent first | 2026-11-06 | As above | 6636322e | The mechanism |
 | `exit`, its children no longer multiplied by `--trials`: 5 of 150, all hangs | 2026-11-06 | As above | 9b2ed29a | Pass against 8 of 230 |
