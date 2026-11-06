@@ -69,7 +69,7 @@ into VS Code failed with `UIA_E_ELEMENTNOTAVAILABLE`, though the same calls
 answered without the debugger. It also changes how UIA's client waits for a
 reply: under it a call waited once for its whole transaction timeout, without
 it in steps of about 110 ms that add a tenth to the timeout
-(`experiments/parallel-uia-calls/`, "Timeouts"). Check a result with and
+(`uia-facts/a-call-waits-its-timeout-from-its-own-start/`, its debugger guide). Check a result with and
 without the debugger, and time timeouts without one.
 
 The attach also delays what comes after it, and the delay alone can change

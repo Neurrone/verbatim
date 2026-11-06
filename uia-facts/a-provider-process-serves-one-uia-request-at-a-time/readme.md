@@ -46,4 +46,4 @@ The 950 ms request is not a separate case: `held`'s probes are sent during a 1,0
 
 ## Evidence kept
 
-None of its own: the original outputs stay in `experiments/parallel-uia-calls/results/` until that folder's last facts move.
+`recorded/`: the parallel-calls experiment's outputs for `serve.rs` (`serve-*.txt`), `iothread-sequence.ps1` (`iothread-sequence.txt`) and AccessKit (`akapp.txt`, `akapp-stacks-busy-invoke.txt`).

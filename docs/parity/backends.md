@@ -63,7 +63,8 @@ after the probe's end, where NVDA times its cache from before the probe. A
 provider probe so stays within the outpost's deadline. The 3 seconds stay,
 though `UiaHasServerSideProvider` waits about 5 seconds on a window that
 does not pump (Dickson, 2026-10-30;
-`experiments/focus-pipeline-rework-measurements/server-side-provider-under-stall.txt`).
+`uia-facts/uiahasserversideprovider-says-no-for-a-new-conhost-window-while-another-process-has-an-event-handler/`,
+its `stall` case).
 
 ### UIA timeouts
 

@@ -51,4 +51,4 @@ The costly calls' share is about 1.00, not about half, because the slow provider
 
 ## Evidence kept
 
-None of its own: the original outputs stay in `experiments/parallel-uia-calls/results/` until that folder's last facts move.
+`recorded/`: the parallel-calls experiment's throughput outputs (`xbench.txt`, `parts.txt`, `parts-traced.txt`, `mockapp-bench.txt` and `mockapp-bench-shared-client.txt`).

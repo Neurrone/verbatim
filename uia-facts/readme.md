@@ -22,6 +22,20 @@ Then run a fact's program from `target/debug`, for example `target\debug\nothing
 
 The workflow builds and lints on x64 and ARM64 and runs no fact program, because each one judges the machine it runs on.
 
+## Writing a fact program
+
+These rules hold for every program here (Dickson, 2026-11-05 and 2026-11-06), each with its reason:
+
+- The most minimal setup that reproduces the fact, in a tree the program controls (the provider program), because a real application brings behaviour of its own that the fact is not about. A real application is started only where the claim is about that application itself, such as the console host's windows; File Explorer is never started. An application's own behaviour, such as File Explorer's reused runtime id or Windows Terminal's second runtime identity, is not a UIA fact and has no folder here; its entry in `uia-bugs.md` stays.
+- Run limits: a default run takes at most 10 s where its facts need no time to pass, and at most 30 s where they use timeouts or stalls, because a fact that takes minutes is not rerun. Setup and timeouts the claim does not need are cut; a claim that is a relation to a timeout uses a short timeout; a figure Verbatim relies on keeps its value. A stall lasts until the program releases it on evidence, not a fixed length with a margin, except where the fact is about a timed stall, as the folder says. A case Verbatim does not rely on may run only when named; its claims stay in the documents, and the folder's README says it is run only when named. A program over its limit says why in its README's method.
+- Cases and trials run one after another, never at once, because two at once share the machine's UIA and its processor and judge each other's noise.
+- One fixed target and one API path per case, and nothing branches on the environment, as `books/dev/src/reference/testing.md` asks. A missing precondition, such as a locked desktop, an application not installed or cdb absent, makes its claims inconclusive with the reason. Waits are for evidence, a provider's signal, an event or a reply, never a sleep, except a deliberate stall or pause the README names.
+- Output: the header, one line per case saying what it sets up and does, a `waiting:` line before a wait of about a second or more, one line per claim with its verdict, and the evidence under any claim that does not pass; `--verbose` prints the raw figures. No README records a run's time, since it depends on the machine.
+- Client settings: every client case runs once by default, with `--recovery` alone, with `--coalescing` alone and with both, when its program is built or changed; the README records a setting only where it changes an outcome, with the command for each combination that does.
+- Programs that need the unlocked desktop run their desktop cases only when named, and a builder lists them for Dickson to run rather than running them, because they take over his desktop.
+- Removal: a claim that fails when it is actually tried is deleted, with the evidence only it cites, once a defect in the case has been ruled out by rerunning the original experiment at its commit; the documents state the new result instead. A claim that no case tries is never removed for that. Code that relied on a removed claim stays unchanged, and the removal is reported with its new result and what relied on it. No document says that a claim "could not be reproduced", "differed" or that a cause was "not found": it states what was found.
+- A new figure is an open question's answer: the program prints it as new, the first run's answer goes into the README as the record, and later runs judge against it.
+
 ## The UI Automation the records were taken with
 
 The current records were taken on 2026-11-05 and 2026-11-06 with this `UIAutomationCore.dll`, on Windows 10.0.26200.9711:
@@ -92,6 +106,14 @@ Each program prints a header (the date, the Windows build with its revision, `UI
 | [ancestors-cannot-be-cached-or-listened-to](ancestors-cannot-be-cached-or-listened-to/readme.md) | `uia-bugs.md`, the limitation of that name | Program |
 | [a-cache-request-fails-while-uias-first-time-setup-runs-on-another-thread](a-cache-request-fails-while-uias-first-time-setup-runs-on-another-thread/readme.md) | `uia-bugs.md`, the fault of that name | Kept CI test and program |
 | [a-process-that-used-uia-can-hang-or-crash-as-it-exits](a-process-that-used-uia-can-hang-or-crash-as-it-exits/readme.md) | `uia-bugs.md`, the fault of that name | Program |
+| [a-new-connection-fails-while-another-processs-remote-operation-is-queued](a-new-connection-fails-while-another-processs-remote-operation-is-queued/readme.md) | `uia-bugs.md`, the fault of that name; `uia.md`, "Predicting outcomes" | Program and debugger guide |
+| [a-pending-connection-holds-its-own-processs-other-calls](a-pending-connection-holds-its-own-processs-other-calls/readme.md) | `uia.md`, "Making a connection": the pending connection | Program and debugger guide |
+| [uiahasserversideprovider-says-no-for-a-new-conhost-window-while-another-process-has-an-event-handler](uiahasserversideprovider-says-no-for-a-new-conhost-window-while-another-process-has-an-event-handler/readme.md) | `uia-bugs.md`, the fault of that name | Program |
+| [the-raw-probe-answers-0x10000-for-a-window-with-a-uia-provider](the-raw-probe-answers-0x10000-for-a-window-with-a-uia-provider/readme.md) | `uia-bugs.md`, the raw probe in the entry above | Kept CI test and program |
+| [a-remote-operations-keyboard-focus-read-can-differ-from-a-plain-read](a-remote-operations-keyboard-focus-read-can-differ-from-a-plain-read/readme.md) | `uia-bugs.md`, the fault of that name | Program |
+| [inside-a-remote-operation-conhosts-window-has-no-handle-or-title](inside-a-remote-operation-conhosts-window-has-no-handle-or-title/readme.md) | `uia-bugs.md`, the fault of that name | Kept CI test and program |
+| [real-applications-serve-uia-calls-one-at-a-time](real-applications-serve-uia-calls-one-at-a-time/readme.md) | `uia.md`, "Where the provider call runs" and "Predicting outcomes": the measured applications | Program |
+| [a-provider-continues-when-a-client-is-killed-in-the-middle-of-its-call](a-provider-continues-when-a-client-is-killed-in-the-middle-of-its-call/readme.md) | `books/dev/src/explanation/architecture.md`, section 1: the killed client the clean shutdown rests on | Program |
 
 ## Cited, not reproduced
 
@@ -103,8 +125,6 @@ These claims link their source instead of a reproduction.
 | Which frameworks declare `UseComThreading`, and where their provider calls run: Windows Forms, Qt, Chromium, WinUI 3, Firefox, JavaFX, Flutter, WPF, Avalonia, the console host, Windows Terminal and AccessKit | `uia.md`, "Where the provider call runs" | The framework source named in `uia.md`'s "References"; WPF's measured hold is a measurement, not cited |
 | An ancestor-scoped cache request is not allowed | `uia-bugs.md`, "Ancestors cannot be cached or listened to" | [IUIAutomationCacheRequest::TreeScope](https://learn.microsoft.com/en-us/windows/win32/api/uiautomationclient/nf-uiautomationclient-iuiautomationcacherequest-get_treescope) |
 | NVDA's issues and their figures: #20654, #20169 and #20170, #6533, #7345 and #8539, #11002, #14888, #15850, #17602, #20608, #20168 | `uia.md`, "Case study: NVDA" | NVDA's issue tracker, linked from the case study |
-| A Qt application's cached keyboard focus can be stale | `uia-bugs.md`, the entry of that name | [NVDA #20764](https://github.com/nvaccess/nvda/issues/20764) |
-| Excel 2016 freezes when asked for its provider in response to its own events | `uia-bugs.md`, the entry of that name | NVDA's source comment the entry cites |
 | `conhost_two_windows`'s inference about `UiaHasServerSideProvider` | `uia-bugs.md`, "UiaHasServerSideProvider says no for a new conhost window while another process has an event handler" | Its kept runs in `experiments/uiahasserversideprovider-says-no-for-a-new-conhost-window-while-another-process-has-an-event-handler/` (excluded by Dickson, 2026-11-04) |
 | NVDA's exposure: #7345 and #8539 fitting the shared worker, #11002's one worker per process, and which way #20169's jam happened | `uia.md`, "Case study: NVDA" | Inferences left as stated (excluded by Dickson, 2026-11-04) |
 | The client-wide event stall before Windows 10 version 1809 | `uia.md`, "Events into the client" | NVDA's record and [IUIAutomation6](https://learn.microsoft.com/en-us/windows/win32/api/uiautomationclient/nn-uiautomationclient-iuiautomation6) (excluded by Dickson, 2026-11-04) |

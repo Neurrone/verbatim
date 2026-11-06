@@ -141,14 +141,14 @@ None of the old tools was built or run for this design, so "rerun by command" be
 - The 2026-11-01 series: the standalone focusproto under experiments/a-hung-window-named-in-a-system-focus-event-holds-a-processs-uia-events/2026-11-01/, with its `vbmap.patch` applied. Its scripts need an unlocked desktop, some a Notepad titled `notes.txt`, and the `calls_*` and `threads_*` scripts need cdb. The second build deleted these folders; they are in git at 38acc016.
 - evprobe: experiments/a-flood-of-uia-events-from-one-application-stops-all-of-a-processs-uia-events/evprobe/, a standalone build against mockapp at or after cb90020e; `evc.py` has cdb's path written in. The second build deleted these folders; they are in git at 38acc016.
 - The October experiments: experiments/mockapp-experiments-2026-10-10/experiments.rs, run in a worktree at b0a1989 with `cargo test -p mockapp --test experiments -- <name> --nocapture`. Their figures depend on that commit's 10-second connection timeout. The second build deleted these folders; they are in git at 38acc016.
-- The collide tool: the patches in `experiments/a-new-connection-fails-while-another-processs-remote-operation-is-queued/`, `collide-tool-e33.patch` applied onto 32948a4d in a scratch worktree and run with `collide run` on a script. The earlier patches' base commits are not recorded.
+- The collide tool: the patches in experiments/a-new-connection-fails-while-another-processs-remote-operation-is-queued/, `collide-tool-e33.patch` applied onto 32948a4d in a scratch worktree and run with `collide run` on a script. The earlier patches' base commits are not recorded.
 - The mockapp tests: the `uia_bugs` binary's tests run with `cargo test -p mockapp --test uia_bugs -- --exact <name>`, and the others with their own binary in place of `uia_bugs`.
 
 ### a-new-connection-fails-while-another-processs-remote-operation-is-queued
 
 - Kind: binary and a debugger guide.
 - Reproduces: the collision (`e1` to `e36`): the proxy answer after 2 s and the "no provider" answer after 3 s; the walk up; the whole process exposed; the spared set (`e10`, `e12`, `e23`, `e25`, `e27`, `e29`, `e34`); the delay to other clients (`e28`, `e28c`). The conhost case (`e35`, the roadmap's "console host and the collision"). The second form, 3 of 42, as a rate. `GetFocusedElement` during a queued operation (Not known). The predicting-outcomes case. Guide: the collision's mechanism under cdb (Not known).
-- Evidence now: the collide tool with its scripts and outputs. The second form is in `experiments/two-new-connections-beside-a-pending-call/`, its program `experiments/cross-process-calls-study-program/xproc.rs` run with `XP_EXP=second_form` after applying `scratch-support.patch` at b15ad7bf; its listener case calls an outpost test API that has changed since. The mockapp-stall test of 20 of 20 at timeouts of 500 to 5,000 ms is prose only. The Notepad and Windows Terminal launch rates (1 in 25, 3 in 100, the 3,008 ms probe) needed a Verbatim build from before Verbatim kept its own calls apart, and stay as history.
+- Evidence now: the collide tool with its scripts and outputs. The second form is in experiments/two-new-connections-beside-a-pending-call/, its program `experiments/cross-process-calls-study-program/xproc.rs` run with `XP_EXP=second_form` after applying `scratch-support.patch` at b15ad7bf; its listener case calls an outpost test API that has changed since. The mockapp-stall test of 20 of 20 at timeouts of 500 to 5,000 ms is prose only. The Notepad and Windows Terminal launch rates (1 in 25, 3 in 100, the 3,008 ms probe) needed a Verbatim build from before Verbatim kept its own calls apart, and stay as history.
 - Replaces: the collide tool's patches and scripts; `two-new-connections-beside-a-pending-call/`; `xproc.rs`'s `second_form` case.
 - Verbatim relies on: the rule that only an application's own outpost connects to it or sends it a remote operation (`books/dev/src/explanation/design/listener-without-connections.md`, section 2; the comment in `crates/verbatim-uia-rops/src/operation.rs`). If the fault went away the rule is merely unneeded; if the spared set shrank, Verbatim breaks, since the outpost makes both remote operations and lookups into its own application (`e12`), and the listener reads held elements while outposts run operations. The second form is accepted in decision 3 of the same design.
 
@@ -172,7 +172,7 @@ None of the old tools was built or run for this design, so "rerun by command" be
 
 - Kind: binary.
 - Reproduces: `e37` to `e39` as rates, conhost started directly. The 5 s wait on a window that does not pump (`docs/parity/backends.md`). The 3 s "no" for a starting Notepad (`docs/nvda/uia.md`). File Explorer's `DirectUIHWND` probes of about 3 s.
-- Evidence now: the collide patches for `e37` to `e39`, built in a scratch worktree of f9fb32f7 and run with `run-e3N.py`, which takes the foreground, with their summaries. The 5 s wait is in `experiments/focus-pipeline-rework-measurements/server-side-provider-under-stall.txt`, from `programs.rs` with `debug.patch` onto 63b62397. The Notepad and File Explorer figures have no record kept.
+- Evidence now: the collide patches for `e37` to `e39`, built in a scratch worktree of f9fb32f7 and run with `run-e3N.py`, which takes the foreground, with their summaries. The 5 s wait is in experiments/focus-pipeline-rework-measurements/server-side-provider-under-stall.txt, from `programs.rs` with `debug.patch` onto 63b62397. The Notepad and File Explorer figures have no record kept.
 - Replaces: the collide patches for `e37` to `e39` and their scripts; the three programs of `experiments/focus-pipeline-rework-measurements/programs.rs`.
 - Verbatim relies on: nothing in its code, since the raw probe replaced the call; Verbatim's workaround is right whether or not the fault remains.
 
@@ -448,7 +448,7 @@ Code, scripts and patches move. The recorded outputs that a README cites move to
 
 - Deleted outright:
   - `experiments/parallel-uia-calls/`
-  - `experiments/a-new-connection-fails-while-another-processs-remote-operation-is-queued/`, its launch logs kept in the fact's `recorded/` as the history of Verbatim's exposure
+  - experiments/a-new-connection-fails-while-another-processs-remote-operation-is-queued/, its launch logs kept in the fact's `recorded/` as the history of Verbatim's exposure
   - a-hung-window-named-in-a-system-focus-event-holds-a-processs-uia-events (deleted by the second build)
   - a-flood-of-uia-events-from-one-application-stops-all-of-a-processs-uia-events (deleted by the second build)
   - the-connection-timeout-applies-to-the-whole-process (deleted by the first build)
@@ -459,7 +459,7 @@ Code, scripts and patches move. The recorded outputs that a README cites move to
   - `experiments/windows-terminal-raises-focus-from-a-second-runtime-identity/`
   - cocancelcall-does-not-end-a-uia-client-call (deleted by the first build)
   - compareelements-makes-no-call (deleted by the first build)
-  - `experiments/two-new-connections-beside-a-pending-call/`
+  - experiments/two-new-connections-beside-a-pending-call/
   - mockapp-experiments-2026-10-10, since every experiment in it is one of the UIA facts above (deleted by the second build; its code is in git at b0a1989)
 - Trimmed:
   - `experiments/uiahasserversideprovider-says-no-for-a-new-conhost-window-while-another-process-has-an-event-handler/`: only `kept-runs/` and a short readme remain, the evidence of the excluded `conhost_two_windows` inference that `books/dev/src/reference/uia-bugs.md` still cites.

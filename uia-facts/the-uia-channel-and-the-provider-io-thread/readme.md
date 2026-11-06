@@ -43,4 +43,4 @@ The result matches when the names and frames above appear; a renamed function is
 
 ## Evidence kept
 
-The original outputs stay in `experiments/parallel-uia-calls/results/` (`transport.txt`, `iothread-count-mockapp.txt`, `iothread-count-serve.txt`, `ops-event-stacks.txt`) until that folder's last facts move.
+The original outputs: `recorded/transport.txt`, `recorded/iothread-count-mockapp.txt` and `recorded/iothread-count-serve.txt`, and the event stacks in [the requests guide's](../requests-per-client-operation/readme.md) `recorded/ops-event-stacks.txt`.

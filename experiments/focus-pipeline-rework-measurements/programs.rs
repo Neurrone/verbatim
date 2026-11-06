@@ -15,10 +15,6 @@
 //! and run `cargo test -p mockapp --test rework_programs -- --test-threads=1
 //! <name>` for each program named in `main`.
 //!
-//! - `server_side_provider_under_stall`: how long `UiaHasServerSideProvider`
-//!   takes on mockapp's UIA window while its window thread is stalled for 3,
-//!   10 and 30 seconds, five times each, beside the raw probe's answer and
-//!   time under a stall of the same length.
 //! - `probes_per_new_window`: the raw probes (`WM_GETOBJECT` window
 //!   messages, which is all the raw probe counts) the listener's reader and
 //!   the outpost make for the first and the second focus in a new window,
@@ -48,7 +44,7 @@ use windows::Win32::UI::Accessibility::{
     CUIAutomation8, IUIAutomation, IUIAutomationElement, IUIAutomationFocusChangedEventHandler,
     IUIAutomationFocusChangedEventHandler_Impl, UIA_ClassNamePropertyId, UIA_ControlTypePropertyId,
     UIA_FrameworkIdPropertyId, UIA_NamePropertyId, UIA_ProcessIdPropertyId,
-    UIA_ProviderDescriptionPropertyId, UiaHasServerSideProvider,
+    UIA_ProviderDescriptionPropertyId,
 };
 use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
 use windows::Win32::UI::Input::KeyboardAndMouse::SetFocus;
@@ -59,45 +55,6 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use windows::core::w;
 
 use common::outpost::OutpostUnderTest;
-
-/// How long `UiaHasServerSideProvider` takes on a stalled UIA window, and
-/// the raw probe's answer under a stall of the same length.
-fn server_side_provider_under_stall() {
-    let title = common::unique_title("rework-uhssp");
-    let mut app = common::spawn("small.json", "uia", &title);
-    let hwnd = common::find_window(&title);
-    // UIA's first-time setup, outside any timing.
-    let _ = verbatim_uia::raw_probe(hwnd.0 as isize);
-    // SAFETY: a live window handle; the call only reads.
-    let unstalled = unsafe { UiaHasServerSideProvider(hwnd) }.as_bool();
-    println!("unstalled: UiaHasServerSideProvider {unstalled}");
-    for ms in [3_000_u64, 10_000, 30_000] {
-        let stall = Duration::from_millis(ms);
-        for run in 1..=5 {
-            app.stall(stall);
-            let started = Instant::now();
-            // SAFETY: as above.
-            let answer = unsafe { UiaHasServerSideProvider(hwnd) }.as_bool();
-            let took = started.elapsed();
-            let returned_at = common::now_us();
-            let ended = app.stall_ended(stall);
-            let returned_before_end = returned_at < ended;
-            app.stall(stall);
-            let started = Instant::now();
-            let probed = verbatim_uia::raw_probe(hwnd.0 as isize);
-            let probe_took = started.elapsed();
-            app.stall_ended(stall);
-            println!(
-                "stall {ms} ms, run {run}: UiaHasServerSideProvider answered {answer} after {} ms \
-                 (returned before the stall ended: {returned_before_end}); raw probe answered \
-                 {probed:?} after {} ms",
-                took.as_millis(),
-                probe_took.as_millis(),
-            );
-        }
-    }
-    app.quit();
-}
 
 /// The raw probes `calls` counts as window messages.
 fn probes(calls: verbatim_model::CallCounts) -> u32 {
@@ -306,10 +263,6 @@ fn provider_description_with_a_focus_event() {
 
 fn main() {
     harness::run_isolated(&[
-        (
-            "server_side_provider_under_stall",
-            server_side_provider_under_stall,
-        ),
         ("probes_per_new_window", probes_per_new_window),
         (
             "provider_description_with_a_focus_event",

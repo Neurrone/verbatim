@@ -44,4 +44,4 @@ Event coalescing changes no outcome, and connection recovery changes the `stall-
 
 ## Evidence kept
 
-`recorded/e-tt-rerun.txt`: the output of E-TT's rerun at b0a19893 on 2026-11-02 for its cases that connect inside the hold, each failing or returning after the 10-second connection timeout then in force. The original traces and timings of the searches stay in `experiments/parallel-uia-calls/results/search-timeouts.txt` until that folder's last facts move.
+`recorded/e-tt-rerun.txt`: the output of E-TT's rerun at b0a19893 on 2026-11-02 for its cases that connect inside the hold, each failing or returning after the 10-second connection timeout then in force. `recorded/search-timeouts.txt`: the original traces and timings of the searches.

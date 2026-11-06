@@ -41,4 +41,4 @@ Neither connection recovery nor event coalescing changes these outcomes (checked
 
 ## Evidence kept
 
-None of its own: the original's stacks stay with `experiments/parallel-uia-calls/` until that folder moves.
+None of its own: the original's stacks are [the requests guide's](../requests-per-client-operation/readme.md) `recorded/ops-event-stacks.txt`.

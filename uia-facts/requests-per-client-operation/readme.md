@@ -36,4 +36,4 @@ The result matches when each count equals the record for the same tree; where th
 
 ## Evidence kept
 
-The original outputs stay in `experiments/parallel-uia-calls/results/` (`ops-requests.txt`, `findall-requests.txt`, `ops-event-stacks.txt`) until that folder's last facts move.
+The original outputs: `recorded/ops-requests.txt`, `recorded/findall-requests.txt` and `recorded/ops-event-stacks.txt`.

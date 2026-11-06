@@ -267,6 +267,11 @@ impl Scene {
     fn new() -> Self {
         let provider = Provider::launch(&["--windows", LAYOUT, "--bridge"]);
         let a = start_client(None, provider.hwnd(0), true, false);
+        uia_facts_support::args::pause_here(&[
+            ("provider", provider.pid),
+            ("A", a.pid),
+            ("B, this program", std::process::id()),
+        ]);
         Self { provider, a }
     }
 

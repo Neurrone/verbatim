@@ -62,4 +62,4 @@ The one whole wait under cdb:
 
 ## Evidence kept
 
-None of its own: the trace and timings stay in `experiments/parallel-uia-calls/results/timeouts.txt` until that folder's last facts move.
+`recorded/timeouts.txt`: the parallel-calls experiment's trace and timings of `timeouts.ps1`.

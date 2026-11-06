@@ -45,4 +45,4 @@ The `stuck` times are lower than the original's; they are printed for trends onl
 
 ## Evidence kept
 
-None of its own: the original outputs stay in `experiments/parallel-uia-calls/results/` until that folder's last facts move.
+`recorded/msaa-path.txt` and `recorded/msaa-while-io-thread-stuck.txt`: the parallel-calls experiment's MSAA outputs.

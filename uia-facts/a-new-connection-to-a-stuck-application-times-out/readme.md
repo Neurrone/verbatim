@@ -38,4 +38,4 @@ So on this machine, for all three stalls, the lookup times out; it does not retu
 
 ## Evidence kept
 
-None of its own: the original figures are in `experiments/parallel-uia-calls/` until that folder's last facts move.
+`recorded/mockapp-hung.txt`: the parallel-calls experiment's suspended cases.
