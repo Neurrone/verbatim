@@ -1,3 +1,5 @@
 # How-to guides
 
-Not written yet.
+## Extensions
+
+- [Installing and managing extensions](extensions.md)

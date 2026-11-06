@@ -1,3 +1,3 @@
 # Tutorials
 
-Not written yet.
+No tutorial is written yet.

@@ -687,11 +687,16 @@ package reader get generated tests of their own.
   A hook's time is a stage in the latency timeline and two rows in the
   performance ledger.
 - Capabilities derived from the component's imports, never declared; the
-  install and Extensions dialogs show only the sentences naming the user's
-  things or code outside the sandbox.
+  install and Extensions dialogs show flows and the lines of the
+  [extensions design](design/extensions.md), section 9.3.
+- The breaker: three failures to respond within a minute disable an
+  extension for the session, spoken with its name, for built-ins and
+  installed extensions alike ([security model](design/security-model.md),
+  A9); resource figures per extension in developer mode (A6).
 - Binding by application identity (executable, console client, hosted app,
   WebView2 parent) resolved by the supervisor, one built-in module
-  instance per outpost and one host process per installed extension
+  instance per outpost and one host process per installed extension, of
+  every kind, with developer-folder modules run the same way
   ([security model](design/security-model.md), X4); hot reload of developer
   and built-in module folders in developer mode
   by validate-then-swap, the folder watch starting from the `notify` crate
@@ -1216,9 +1221,9 @@ After M6 (Dickson, 2026-10-31). Developer mode, and the fixes from [the security
 - Keys injected from a lower integrity level never trigger gestures and are never held or re-sent (C5). Test: a gesture injected from Low integrity does nothing, and one injected at the user's level runs.
 - Theme import's name check refusing reserved device names and names ending in a dot or space, and writing relative to the staging folder's handle (X13). Test: a corpus of packages with `..`, drives, reserved names, trailing dots, alternate streams and a planted junction writes nothing outside the theme's folder.
 - Characters typed into protected fields recorded as stars (L2). Test: after a scenario types known text into a password field and a forced native crash, no log, dump or crash file holds the text.
-- COM unmarshalling hardened with `EOAC_NO_CUSTOM_MARSHAL`, and the write-restricted token for outposts, tested together against UIA, MSAA and a remote operation (X7, section 6.9). Test: `mockapp` and Notepad scenarios pass under both, and an object naming a custom unmarshaler is refused.
+- COM unmarshalling hardened with `EOAC_NO_CUSTOM_MARSHAL`, and the write-restricted token for outposts, which must also stop an outpost writing into the user's other processes, tested together against UIA, MSAA and a remote operation (X7, section 6.9). Test: `mockapp` and Notepad scenarios pass under both, and an object naming a custom unmarshaler is refused.
 - An application named by a handle rather than a process id, a bound on outposts, and the background flood cap (U7 to U9). Test: the hostile `mockapp` mode of M4.9 gains a notification flood and a provider that hangs or crashes mid-call, each asserting the exact speech, that another application keeps speaking within a stated time, and that memory stays under its cap.
-- The per-process mitigations of [the security model](design/security-model.md), section 6.9, applied at each child's start: control-flow guard, strict handle checks, the image load policy, no child processes, the job's limits, and control-flow guard and shadow stacks at link time; never the Microsoft-only image policy for synthesizer hosts or outposts, and no extension-point policy for Core while the GUI is in Core, since NVDA's helper must read Verbatim's GUI for parity captures. Test: each process's mitigations, read back from it, equal its stated list on x64 and ARM64, and the `mockapp` and Notepad scenarios pass under them.
+- The per-process mitigations of [the security model](design/security-model.md), section 6.9, applied at each child's start: control-flow guard, strict handle checks, the image load policy, the extension hosts' job limits, and control-flow guard and shadow stacks at link time; never the Microsoft-only image policy for synthesizer hosts or outposts, and no extension-point policy for Core while the GUI is in Core, since NVDA's helper must read Verbatim's GUI for parity captures. Test: each process's mitigations, read back from it, equal its stated list on x64 and ARM64, and the `mockapp` and Notepad scenarios pass under them.
 - Pinned DLL search (X2), moved in from M8.7: each executable calls `SetDefaultDllDirectories` with the system and application folders before anything else loads. Test: a DLL planted beside a portable copy is not loaded.
 - Synthesizer escapes covering control and NUL characters (J1). Test: text with SSML, NULs and control characters is spoken as text by both built-in drivers.
 - `cargo deny` in `cargo xtask ci` (X10).
@@ -1227,12 +1232,12 @@ Exit: every item above is built with its test passing, and wake-ups and processo
 
 Security work other milestones carry, each with its test:
 
-- M5: the extension surface's rules ([extensions](design/extensions.md), section 4.6), each with a test, every navigation import at every boundary included; installed extensions in hosts of their own, with the round trip measured (X4), and a probe inside the host whose every attempt to write a file, open a socket, start a process or read the clipboard fails; compiled code mapped only from where ordinary processes cannot write (X5); starting with every extension off (A8); the user endpoint taking requests and never commands, one install dialog at a time (C1, C9), tested by a second request refused while the dialog is open; extension installation that writes only inside its own folder (X13), tested by the malicious package corpus; module log caps.
-- M6: the synthesizer container, confirmed before any native code loads, read-only, limited at creation, with the host's messages checked and engines pinned (X6), tested by a probe child asserting every denial on x64 and ARM64 and a host started with the wrong token loading nothing; the synthesizer fallback after repeated crashes and the idle-spin check (A3, A7), tested by an engine that crashes on a string and one that spins; x86 emulation in the container measured.
+- M5: the extension surface's rules ([extensions](design/extensions.md), section 4.6), each with a test, every navigation import at every boundary included; installed extensions in hosts of their own, with the round trip measured (X4), and a probe inside the host whose every attempt to write outside its data folder, follow a planted junction or hard link out of it, open a socket without importing a network interface, start a process or read the clipboard fails; the breaker (A9); compiled code mapped only from where ordinary processes cannot write (X5); starting with every extension off (A8); the user endpoint taking requests and never commands, one install dialog at a time (C1, C9), tested by a second request refused while the dialog is open; extension installation that writes only inside its own folder (X13), tested by the malicious package corpus; module log caps.
+- M6: the synthesizer container, confirmed before any native code loads, read-only, limited at creation, with the host's messages checked (X6), tested by a probe child asserting every denial on x64 and ARM64 and a host started with the wrong token loading nothing; the synthesizer fallback after repeated crashes and the idle-spin check (A3, A7), tested by an engine that crashes on a string and one that spins; x86 emulation in the container measured.
 - M6.3: speech moved to another audio device while the default refuses Verbatim (A5), tested with the default held in exclusive mode; a cut string known to speech (U4).
 - M6.5: typed characters judged against the focus they were typed in (L9), tested by a password field that closes on its last character.
 - M7: the helper loaded narrowly, handed its channel, version-checked and treated as hostile (X8), tested with a mismatched helper and malformed messages; link destinations (S3).
-- M8.7, with the installer (the screen curtain with M8.4, and linear-time dictionaries, direction overrides and clipboard history with M8.2): a machine-wide, signed, administrator-owned installation (X1); signed updates from a process of their own (X9), tested with an unsigned and a wrongly signed download; never running elevated (B2); diagnostics' home and limits (L4); the screen curtain built for a user who cannot see it (L8), tested across a display change, unlocking and a restart; linear-time dictionaries (J2); direction overrides spoken (S2); clipboard history (L7); the outposts' network block (section 6.9).
+- M8.7, with the installer (the screen curtain with M8.4, and linear-time dictionaries, direction overrides and clipboard history with M8.2): a machine-wide, signed, administrator-owned installation (X1); signed updates from a process of their own (X9), tested with an unsigned and a wrongly signed download; never running elevated (B2); diagnostics' home and limits (L4); the screen curtain built for a user who cannot see it (L8), tested across a display change, unlocking and a restart; linear-time dictionaries (J2); direction overrides spoken (S2); clipboard history (L7).
 - M4.7 and M4.8: native crashes dumped by Verbatim, never by Windows Error Reporting (L5); Core restarted by the guardian, with a breaker whose last restart runs without extensions (A1); Core's memory cap (A2); the single instance in a private namespace and the `WM_QUIT` filter removed (C2's startup names, C6).
 - M4.9: walks, lists and strings bounded (U2 to U4), terminal alignment below quadratic time (U5), and fuzzing at the parsers (X12).
 - M8.6: the UIAccess measurement first (B1), then the lock and secure-screen rules (B3 to B8) with the secure instance's menu and dialogs as an allowlist, no file choice, and the toolkit's dialogs routed to the log (G1, G2, G4), tested by a list of every window and command the secure instance can reach equalling the allowlist, and by each of NVDA's secure-screen advisories as a scenario; the administrator's copy for secure screens following no links (X13), tested with a planted junction; developer mode in UIAccess builds turned on only in Verbatim's own window (C1); the secure instance's children started without SYSTEM (B10), tested by reading their tokens; "Secure Desktop" announced on the switch (B11); and the secure instance's own curtain.
@@ -1566,10 +1571,15 @@ extension API growth rule asks.
 - Output: packaged sounds, tone sequences with pan, a capped PCM lane, and
   speaking a node or saying all of its subtree.
 - Module settings shown by Core, a secret store outside the settings file,
-  and a size-capped key-value store per extension.
+  shipped with the network imports, and the data folder each extension
+  reads and writes, with its size cap
+  ([security model](design/security-model.md), X14).
 - The deferred imports: a timer with a minimum interval that fires only
-  while the module's application holds attention; fetch to named hosts;
-  clipboard reads and a clipboard-changed event from Windows' clipboard
+  while the module's application holds attention; the network imports
+  (HTTP with every method and streamed bodies, and WebSockets) to named
+  hosts or a host the user enters, in the extension's own host, with
+  loopback reachability from the container measured (X15), and re-consent
+  on an update that adds an exit, a host or a device; clipboard reads and a clipboard-changed event from Windows' clipboard
   listener, never polled; the mouse; global modules with their read
   boundary; reading speech history, shown at install as receiving all the
   text Verbatim speaks.
@@ -1585,14 +1595,15 @@ extension API growth rule asks.
 - The recogniser provider module kind (Dickson, 2026-11-02): Core captures
   the navigator object, a window or the screen through Windows Graphics
   Capture, which works under the screen curtain, and hands only the image
-  to the module, which returns text, word boxes or a description; local
-  inference runs in a native recogniser host on the synthesizer host's
-  pattern.
+  to the module, which returns text, word boxes or a description. Its
+  design settles how a recogniser that sends images to a service is
+  consented to, and an inference import with which Verbatim runs a local
+  model on the GPU while the module stays Wasm, its runtime chosen as a
+  major dependency.
 
 Out by decision (Dickson, 2026-11-02): a channel from components inside
-applications to extensions. Much later: the synthesizer container's
-further grants (a GPU, network engines, data downloads, licence
-activation).
+applications to extensions. Much later: licence activation for engines
+that need it, under the extension host's mechanisms.
 
 Exit: every item above is used by at least one ported add-on or built-in,
 each boundary rule has its test, and the call ledger shows no cost for a
@@ -1668,11 +1679,11 @@ commands, with no fidelity regression anywhere else.
   displays; braille viewer (on-screen virtual display) so development and
   E2E tests need no hardware; routing keys, cursor tethering, speech-braille
   sync via existing index marks.
-- Drivers reach their devices by model A or B of the
-  [security model](design/security-model.md) (section 6.11). Nearly every
-  driver, NVDA's included, needs only a handle opened outside its host;
-  Bluetooth LE, vendor libraries that open the device themselves, and
-  BRLTTY's pipe are the exceptions.
+- Drivers are extensions in their own hosts, and Core opens the devices
+  their manifests name or the port the user picks
+  ([security model](design/security-model.md), section 6.11). Vendor
+  libraries that open the device themselves, Bluetooth LE and BRLTTY's
+  pipe are made to work under those mechanisms where they can.
 - A braille display's gestures are user inputs that are not keys, so
   they need key numbers ordered against the keyboard's: the keyboard
   hook's thread is the one minter and takes only keys
