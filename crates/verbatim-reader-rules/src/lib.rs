@@ -66,7 +66,8 @@ pub const CONSOLE_WINDOW_CLASS: &str = "ConsoleWindowClass";
 /// after which NVDA cancels a slow call once the foreground has changed.
 /// One application can own windows on several threads (File Explorer's
 /// folder windows, the taskbar, and the Alt+Tab switcher), and those must
-/// not wait behind a slow window the user has left. An outpost's reducer
+/// not wait behind a slow window the user has left. It also sets when work
+/// in flight is judged hung, by the same question. An outpost's reducer
 /// judges its programs by it (`books/dev/src/explanation/design/focus-pipeline.md`, section
 /// 18.3), and the focus listener's reading threads their reads, each
 /// judged by `verbatim_win32::window::front_is_another_thread_of_its_application`.

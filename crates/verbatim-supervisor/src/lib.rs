@@ -18,9 +18,8 @@
 //!   end itself, and delivers every other frame whole and unparsed
 //!   ([`OutpostMessage::Frame`]), which the app parses through [`Frames`];
 //!   and it finishes every child's writes that pended. It never blocks:
-//!   launching a process,
-//!   ending one, and checking whether an application is hung run on threads
-//!   of their own and report back. The owner records the application as
+//!   launching a process and
+//!   ending one run on threads of their own and report back. The owner records the application as
 //!   starting before the launch, so a second fact meanwhile is held, not a
 //!   second launch.
 //! - Each child has a writer with a bounded queue ([`writer`]): whichever
@@ -83,8 +82,8 @@ use verbatim_core::supervisor::{generation, policy};
 use verbatim_process::held::IgnoredProcesses;
 pub use writer::QueueError;
 
-/// How many abandoned workers end an outpost, unless its application's
-/// windows are reported hung.
+/// How many workers parked on windows the outpost did not judge hung end
+/// the outpost ([`policy::Parked`]).
 const ABANDONED_WORKER_LIMIT: usize = 8;
 
 /// How many spare outposts the supervisor keeps waiting

@@ -27,6 +27,10 @@ pub const NOT_IN_TIME: &str = "its read did not return in time";
 /// user moved on from its window, as an outpost's watchdog says it.
 pub const MOVED_ON: &str = "the user moved on from a slow window";
 
+/// Why an event is dropped whose read the watchdog abandoned because its
+/// window was found hung during a call, as an outpost's watchdog says it.
+pub const STOPPED_RESPONDING: &str = "its window stopped responding";
+
 /// Why an event is dropped that waited for a thread while its application's
 /// abandoned threads were at [`ABANDONED_LIMIT`] until the bound
 /// the listener's read deadline (`verbatim_model::BOUNDED_WALK_DEADLINE`) states, or arrived after that bound.

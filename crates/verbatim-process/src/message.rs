@@ -278,6 +278,7 @@ mod tests {
             OutpostToCore::TargetExited => Peeked::TargetExited,
             OutpostToCore::Event { .. }
             | OutpostToCore::Reply { .. }
+            | OutpostToCore::NotResponding { .. }
             | OutpostToCore::IdleAnswer { .. } => Peeked::Other,
         };
         let mut samples = verbatim_model::protocol::samples::outpost_to_core();
@@ -311,6 +312,7 @@ mod tests {
             Urgent::Pong {
                 seq: 1,
                 parked_count: 0,
+                parked_on_hung: 0,
             },
             Urgent::Ready {
                 outpost_pid: Pid(1),
@@ -344,6 +346,7 @@ mod tests {
         let pong = OutpostToCore::Pong {
             seq: 1,
             parked_count: 0,
+            parked_on_hung: 0,
             written_at_us: 0,
         };
         assert_eq!(kind_of(&pong).as_deref(), Some("Pong"));
@@ -368,6 +371,7 @@ mod tests {
         let pong = OutpostToCore::Pong {
             seq: 1,
             parked_count: 0,
+            parked_on_hung: 0,
             written_at_us: 0,
         };
         let ready = OutpostToCore::Ready {
@@ -389,7 +393,8 @@ mod tests {
         assert_eq!(
             OutpostToCore::from(Urgent::Pong {
                 seq: 1,
-                parked_count: 0
+                parked_count: 0,
+                parked_on_hung: 0
             }),
             pong
         );
@@ -514,6 +519,7 @@ mod tests {
         let expected_pong = OutpostToCore::Pong {
             seq: 5,
             parked_count: 3,
+            parked_on_hung: 0,
             written_at_us: 4_500,
         };
         let mut buffer = Vec::new();

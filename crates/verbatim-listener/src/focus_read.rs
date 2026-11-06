@@ -651,7 +651,7 @@ impl FocusReader {
             forced_uia: AtomicBool::new(false),
             window: WatchedRead::default(),
             calls: None,
-            window_readability: Arc::new(verbatim_win32::window::window_unreadable),
+            window_readability: Arc::new(verbatim_win32::window::readability),
         })
     }
 
@@ -907,7 +907,10 @@ impl FocusReader {
                     // A ghost's or a hung application's window that a step
                     // reaches ends the walk, by the system's judgement: local
                     // calls.
-                    plain: Some(&|window| (self.window_readability)(window).is_some()),
+                    plain: Some(&|window| {
+                        (self.window_readability)(window)
+                            != verbatim_win32::window::Readability::Readable
+                    }),
                     // Each fact the walk reads is shared with the watchdog
                     // as it is read.
                     progress: Some(&|read| self.window.advance(|progress| progress.take_in(read))),

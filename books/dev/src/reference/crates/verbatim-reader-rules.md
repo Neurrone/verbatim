@@ -49,18 +49,24 @@ Public API:
   running: its `Request` (generation and number), its start and deadline,
   its `Walk` (`Unarmed`, `Armed(bound)` or `Published`, so a walk armed
   after its publication cannot be represented), its `Moved` rule
-  (`Never`, `Unknown` until the reader learns the window, or
-  `Known { window, next }`) and the reader's own item `T`. The outpost's
+  (`Never`, `Unknown` until the reader learns the window,
+  `Known { window, next }`, or `Named { next }` for a window the reader's
+  worker names, which its shell reads at each judgement) and the reader's
+  own item `T`. The outpost's
   reducer embeds one, and the listener's schedule one per application.
   Times are microseconds on the reader's monotonic clock, passed in.
   - Transitions: `start(item, deadline, window, now)`, the window a
-    `RuleWindow`: `Never` for an item never judged by the moved-on rule,
-    `Unknown` for one still to learn it, or `Known(window)`, which
+    `RuleWindow`: `Never` for an item never judged, `Unknown` for one still
+    to learn its window, `Named` for one whose worker names it, judged on
+    the grace's schedule from its start, or `Known(window)`, which
     `RuleWindow::from_cached` parses from a cache's handle; `hand_on()`, a new request for the running item
     keeping its times, walk and rule (the outpost's finish of a cut caret
     read); `learned(request, window, now)`; `armed(request, bound)`;
     `walk_returned(request, past)`; `tick(now)`; the answers
-    `moved_on(request, answer)` and `published(request, got, then_abandon,
+    `judged(request, verdict)`, the answer to `Ask::Judge` (`None` when
+    the item stays, else `Reason::Hung` or `Reason::MovedOn`, its window
+    found hung, tested first, or the user moved on; an armed walk is
+    published first) and `published(request, got, then_abandon,
     now)`, with `published_judging_nothing` for a reader that has stopped,
     which makes only the abandonment the ask carried; `end(request)`, which
     gives the item once with whether it was published; `succeed()`, a new

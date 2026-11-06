@@ -12,7 +12,11 @@
 //! - [`integrity`]: a process's integrity level.
 //! - [`held_locks`]: the debug-build check that no call into an
 //!   application is made under one of the outpost's locks.
+//! - [`calls`]: the call gate an outpost's worker installs, which refuses
+//!   every counted call once the worker is abandoned and tests a window
+//!   message's window with the outpost's reader.
 
+pub mod calls;
 pub mod held_locks;
 pub mod integrity;
 pub mod provider;

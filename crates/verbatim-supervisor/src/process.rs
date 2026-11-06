@@ -119,17 +119,6 @@ pub(super) fn launch(
     ))
 }
 
-/// Whether any visible top-level window of `pid` is reported hung by the
-/// system (`IsHungAppWindow`, a local call). While it is, abandoned workers in
-/// that application's outpost are expected, and a replacement outpost would
-/// hang the same way.
-pub(super) fn application_is_hung(pid: Pid) -> bool {
-    use verbatim_win32::window::{top_level_windows, window_is_hung, window_is_visible};
-    top_level_windows(pid.0)
-        .into_iter()
-        .any(|window| window_is_visible(window) && window_is_hung(window))
-}
-
 /// `pid`'s executable name without its extension, lower-cased, to name its
 /// outpost's log: `notepad` for Notepad. `None` when it cannot be read.
 fn image_stem(pid: Pid) -> Option<String> {

@@ -593,7 +593,13 @@ Each file's module comment says exactly what it asserts; in outline:
   (`taskbar.json`, a window of `Shell_TrayWnd`'s class) each wait past the
   short limit they once had and answer in full. Each hold ends after
   evidence that the old limit has passed: the outpost's frozen clock moved
-  past a limit that ran on it, or twice a limit that ran in real time.
+  past a limit that ran on it, or twice a limit that ran in real time. A
+  query whose held call's window the outpost's reader then answers hung
+  is abandoned, Core told the window stopped responding and the pong
+  counting the worker parked on a hung window, and the abandoned worker,
+  released, makes no navigation step of its walk; a query on a windowless
+  node of a hung window is refused with no call; and a listener read whose
+  own window is hung is dropped with no call, Core told once.
 - `window_messages.rs` holds a message to a native control inside its
   window procedure (`hold-message`) and watches `verbatim-ia2`'s sends at
   its observation point `WindowMessageSent`, so the binary requires the

@@ -36,7 +36,8 @@ use verbatim_reader_rules::in_flight::{Abandoned, Ask, Decision, InFlight, Reaso
 pub use verbatim_reader_rules::in_flight::Request;
 
 use crate::focus::{
-    ABANDONED_LIMIT, FocusEvent, Judged, MOVED_ON, Meta, NOT_IN_TIME, REPLACED, WAITED_TOO_LONG,
+    ABANDONED_LIMIT, FocusEvent, Judged, MOVED_ON, Meta, NOT_IN_TIME, REPLACED, STOPPED_RESPONDING,
+    WAITED_TOO_LONG,
 };
 use verbatim_model::protocol::{EventTiming, UiaFocusRead};
 
@@ -558,7 +559,9 @@ impl<J> Schedule<J> {
                 moved_on,
             } => {
                 if let Some(app) = self.apps.get_mut(&pid) {
-                    let decision = app.flight.moved_on(request, moved_on);
+                    let decision = app
+                        .flight
+                        .judged(request, moved_on.then_some(Reason::MovedOn));
                     self.decided(&mut effects, now, pid, decision);
                 }
             }
@@ -872,12 +875,20 @@ impl<J> Schedule<J> {
     ) {
         match decision {
             Decision::Nothing => {}
-            Decision::Ask(Ask::MovedOn { request, window }) => {
+            Decision::Ask(Ask::Judge {
+                request,
+                window: Some(window),
+            }) => {
                 effects.push(ScheduleEffect::AskMovedOn {
                     pid,
                     request,
                     window,
                 });
+            }
+            // A read's window is known or learned, never named by its
+            // thread, so it is never judged without one.
+            Decision::Ask(Ask::Judge { window: None, .. }) => {
+                debug_assert!(false, "a read judged with no window");
             }
             Decision::Ask(Ask::Publish {
                 request,
@@ -930,6 +941,10 @@ impl<J> Schedule<J> {
             Reason::Deadline => {
                 tracing::warn!(%pid, abandoned = count, "a UIA focus read did not return in time; its thread is abandoned");
                 NOT_IN_TIME
+            }
+            Reason::Hung => {
+                tracing::warn!(%pid, abandoned = count, "a UIA focus read's window stopped responding; its thread is abandoned");
+                STOPPED_RESPONDING
             }
         };
         let waiting = !app.queue.is_empty();

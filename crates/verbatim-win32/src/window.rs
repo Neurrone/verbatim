@@ -549,20 +549,12 @@ impl WindowQueries for SystemWindows {
 /// (the outpost's and the focus reader's `set_foreground_reader`).
 pub type ForegroundReader = Arc<dyn Fn() -> isize + Send + Sync>;
 
-/// Why a window cannot be read, `None` when it can: it is no window, a
-/// ghost window stands in for it, or its application is hung. An outpost
-/// asks the system ([`event_window_unreadable`]); a test that cannot
-/// wait for Windows to judge an application hung supplies its own
-/// (the outpost's and the focus reader's `set_window_readability_reader`).
-pub type WindowReadabilityReader = Arc<dyn Fn(isize) -> Option<&'static str> + Send + Sync>;
-
-/// Why window `hwnd` cannot be read, by the system's judgement, `None` when
-/// it can: what an outpost's [`WindowReadabilityReader`] answers unless a
-/// test supplies its own. Local calls.
-#[must_use]
-pub fn window_unreadable(hwnd: isize) -> Option<&'static str> {
-    event_window_unreadable(hwnd)
-}
+/// Whether a window can be read: each reader's one judge of it, which it
+/// asks at the moment of each decision. An outpost and the focus listener
+/// ask the system ([`readability`]); a test that cannot wait for Windows to
+/// judge an application hung supplies its own (the outpost's and the focus
+/// reader's `set_window_readability_reader`).
+pub type WindowReadabilityReader = Arc<dyn Fn(isize) -> Readability + Send + Sync>;
 
 #[cfg(test)]
 mod tests {

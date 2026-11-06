@@ -495,9 +495,11 @@ fn continued(state: &mut SrState, trace_id: TraceId, then: Then, ending: Ending)
             Ending::Outcome(QueryOutcome::Done(QueryResult::Activated(action))) => {
                 crate::reduce::activation_completed(trace_id, true, action.as_ref())
             }
-            // The activation started and passed its deadline: whether it
-            // happened is unknown, so nothing is said either way. Whatever
-            // it caused, such as a dialog taking focus, announces itself.
+            // The activation was abandoned, at its deadline or with its
+            // window judged hung, or refused because its window is hung:
+            // whether it happened is unknown, so nothing is said either
+            // way. Whatever it caused, such as a dialog taking focus,
+            // announces itself.
             Ending::Outcome(QueryOutcome::Abandoned) => Vec::new(),
             _ => crate::reduce::activation_completed(trace_id, false, None),
         },

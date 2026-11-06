@@ -902,12 +902,15 @@ pub enum Input {
     },
     /// An error was logged, on any thread.
     ErrorLogged,
-    /// An application stopped responding: its outpost's watchdog abandoned
-    /// a query that passed its deadline, the first in this stall (the shell
-    /// tells of each stall once, until the outpost answers again).
+    /// A window stopped responding: its outpost found it hung, once per
+    /// hang (`OutpostToCore::NotResponding`). Core plays the sound only if
+    /// the window's process holds attention as this arrives.
     ApplicationNotResponding {
-        /// The outpost whose application stopped responding.
+        /// The outpost that found the window hung.
         outpost: OutpostId,
+        /// The process that owns the window, which the outpost watches.
+        #[serde(default = "no_process")]
+        process: Pid,
     },
     /// A lock key's state changed: read once the key had reached Windows
     /// and Windows had changed it.

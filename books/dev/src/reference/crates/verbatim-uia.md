@@ -470,7 +470,9 @@ shapes, are described in `books/dev/src/reference/crates/verbatim-outpost.md`.
   outcome, a pure function: exactly `0x10000` is `RawProbe::Provider`;
   any other answer is `Answered` (no provider); a failure is `TimedOut`
   (or judged hung), `AccessDenied` (a window of higher integrity),
-  `Gone`, or `Failed` with its error. `RawProbe::has_provider` is true
+  `Gone`, or `Failed` with its error; `Abandoned` when an abandoned
+  worker's gate refused it, no fact about the window, which the
+  arbitrator records nothing for. `RawProbe::has_provider` is true
   only for `Provider`. The probe's memory cost in the application is
   risk 7 of `books/dev/src/explanation/design/listener-without-connections.md`.
 - The functions below, from `provider_process` to
@@ -511,7 +513,11 @@ shapes, are described in `books/dev/src/reference/crates/verbatim-outpost.md`.
 ## Counting calls
 
 `calls` counts the cross-process calls this crate makes, per thread:
-`calls::count(kind)` counts one, `calls::take()` returns this thread's
+`calls::count(kind)` counts one, once the thread's call gate lets it
+be made (`verbatim_win32::calls`): an abandoned outpost worker's call
+fails with `CallError::Abandoned`, carried as the error `E_ABORT`, which
+no caller reads as a fact about the application, and is neither made nor
+counted. `calls::take()` returns this thread's
 `CallCounts` since the last take and resets them, and `calls::peek()`
 returns them without resetting, so a step can log its own calls by the
 difference. Every call that reaches the application is counted where it

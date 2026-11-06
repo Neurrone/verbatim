@@ -189,9 +189,13 @@ pub(crate) struct Context {
     /// timer, when a test sets one ([`Outpost::set_gap_timer`]).
     gap_timer: Lock<Option<Arc<dyn GapTimer>>>,
     /// Abandoned workers that have not yet returned, as the reducer last
-    /// counted them: an atomic, so the I/O thread answers a ping without
-    /// waiting on anything.
+    /// counted them, but for those parked on a window judged hung: an
+    /// atomic, so the I/O thread answers a ping without waiting on
+    /// anything.
     abandoned: AtomicUsize,
+    /// Abandoned workers that have not yet returned, parked on a window the
+    /// outpost judged hung.
+    abandoned_on_hung: AtomicUsize,
     /// The reducer's thread, which returns every worker thread started.
     shell: Lock<Option<JoinHandle<Vec<JoinHandle<()>>>>>,
     /// Every application object the outpost keeps, and the identity it
@@ -510,7 +514,9 @@ impl<'a> RequestContext<'a> {
     /// [`reducer::WatchChange::Take`] took out.
     fn commit(&self, effects: Effects) -> (Committed, Option<OpenWatch>) {
         let program = self.program();
-        let effects = self.program_text.borrow_mut().seal(effects);
+        let mut effects = self.program_text.borrow_mut().seal(effects);
+        // Each commit names the program's window and what it found there.
+        effects.found = program.charge.found(program.request);
         if program.charge.is_dead() {
             drop(effects);
             return (Committed::Refused, None);
@@ -616,11 +622,18 @@ impl Context {
         reader()
     }
 
-    /// Why window `hwnd` cannot be read, `None` when it can, by the reader
-    /// the outpost was given ([`Outpost::set_window_readability_reader`]).
-    fn window_unreadable(&self, hwnd: isize) -> Option<&'static str> {
+    /// Whether window `hwnd` can be read, by the reader the outpost was
+    /// given ([`Outpost::set_window_readability_reader`]): the outpost's
+    /// one judge of whether a window is hung, asked at each decision.
+    fn readability(&self, hwnd: isize) -> verbatim_win32::window::Readability {
         let reader = Arc::clone(&self.window_readability.lock());
         reader(hwnd)
+    }
+
+    /// Why window `hwnd` cannot be read, `None` when it can
+    /// ([`readability`](Self::readability)).
+    fn window_unreadable(&self, hwnd: isize) -> Option<&'static str> {
+        self.readability(hwnd).reason()
     }
 
     /// The foreground window's handle, by the reader the outpost was given
@@ -1105,6 +1118,7 @@ impl Outpost {
             epoch: Instant::now(),
             gap_timer: Lock::new(None),
             abandoned: AtomicUsize::new(0),
+            abandoned_on_hung: AtomicUsize::new(0),
             shell: Lock::new(None),
             store: store::Store::new(),
             arbitrator: Lock::new(Arbitrator::new(&[])),
@@ -1117,9 +1131,7 @@ impl Outpost {
             focused_element,
             foreground: Lock::new(Arc::new(verbatim_win32::window::foreground_window_handle)),
             focus_window: Lock::new(Arc::new(verbatim_win32::window::focus_window)),
-            window_readability: Lock::new(Arc::new(
-                verbatim_win32::window::event_window_unreadable,
-            )),
+            window_readability: Lock::new(Arc::new(verbatim_win32::window::readability)),
             requested_events: acceptance::RequestedEvents::default(),
             heard: OnceLock::new(),
             foreground_programs: OnceLock::new(),
@@ -1564,6 +1576,7 @@ impl Outpost {
                 context.outbound.urgent(Urgent::Pong {
                     seq: *seq,
                     parked_count: context.abandoned.load(Ordering::Relaxed),
+                    parked_on_hung: context.abandoned_on_hung.load(Ordering::Relaxed),
                 });
             }
             CoreToOutpost::Fetches(fetches) => {

@@ -206,7 +206,7 @@ focus's walk and the gap's read, `read::walk_left`; `SAME_WINDOW_BOUND`
 for a focus-now answer) or its depth limit of 64 is completed by plain
 windows from its outermost element's nearest window, included. Whether a
 window can be read is the system's judgement
-(`verbatim_win32::window::window_unreadable`), which a
+(`verbatim_win32::window::readability`, a `Readability`), which a
 test that cannot wait five seconds for Windows to judge an application
 hung replaces (`Outpost::set_window_readability_reader` and
 `FocusReader::set_window_readability_reader`, each a
@@ -433,8 +433,8 @@ Inside an outpost (`docs/design/communication.md`, section 6.4;
   message, release, move the subscription, abandon a worker, set a timer.
   It names no Windows type, holds no application object and makes no
   call; what it needs of Windows' own state it asks for by an effect
-  (`Effect::AskMovedOn`, whether the user moved on; `Effect::Publish`, a
-  walk's publication), which the shell's `apply` answers at once, exactly
+  (`Effect::AskJudge`, the judgement of the program's window, answered
+  `Input::Judged`; `Effect::Publish`, a walk's publication), which the shell's `apply` answers at once, exactly
   once, as the reducer's next input, before it takes another message, and
   what the answer asks is carried out before anything asked after the
   question, as a release's answer is. `cargo xtask ci`
@@ -472,6 +472,36 @@ Inside an outpost (`docs/design/communication.md`, section 6.4;
   every agile reference and the drop of the store's `Removed` check. The
   worker's catch around a program (`worker::catching`) and UIA's around
   its event callbacks end the process when the panic is the check's.
+- Hung windows (`outpost::worker`, `outpost::shell`): each program's window is
+  named in its worker's charge, keyed by its request, with no call into
+  the application: the window its entry names, at its start; else a
+  query's node's own window (the window an MSAA node is kept under, or a
+  UIA element's whose runtime id is `[42, hwnd]`), the application's focus
+  window for focus-now, the gap's read and a node of no window of its own
+  (the foreground thread's focus window when that thread is the
+  application's, else the top-level window of the focus the outpost
+  expects Core to hold), the owed work's and the console poll's node's;
+  none for a query of no node. The shell answers the reducer's
+  `AskJudge` by that window, read under the charge's lock: hung or
+  ghosted by the outpost's reader first, then moved on; with no window
+  named, the program stays. An event's check before its first call
+  (`Worker::readable`), a listener read's of its own window, a query's of
+  its named window, and a window message's (through the call gate) all ask
+  the same reader; a window found hung is named in the program's commit as
+  hung, and a query refused so is answered `Abandoned` with no call, so a
+  query on a hung window parks no worker. Focus-now is not refused: it
+  answers a hung focus window with the plain window, from local data. Each
+  commit names the program's window and what it found
+  (`reducer::Found`): hung at a check, or answered once a counted call was
+  made. The worker installs a call gate on its thread
+  (`verbatim_win32::calls`), bound to its charge, in release builds as in
+  debug ones: once its generation is abandoned, every counted call fails
+  with `CallError::Abandoned` and makes no call, which no caller reads as
+  a fact about the application. The shell keeps each parked worker's
+  reason by generation (`Posted::Returned` carries the generation), and
+  the pong reports those parked on a window judged hung
+  (`parked_on_hung`) apart from the rest (`parked_count`), which alone the
+  supervisor's limit counts.
 - Programs (`outpost::worker`): the worker generation in charge takes one
   program at a time from its inbox, an entry's handling, the owed work, a
   release's drop, or the finish of a caret

@@ -1279,8 +1279,6 @@ impl ReducerThread<'_> {
                 // observed. That is `observed_at_us` except for a foreground
                 // change, which is ordered by when its window became the
                 // foreground, later than Windows raised it.
-                // An event read is the outpost's application answering.
-                self.live.answered(outpost);
                 // An event in a console window, reported by the console
                 // host's outpost, belongs to the console's client, and so
                 // does that outpost from now on.
@@ -1366,6 +1364,9 @@ impl ReducerThread<'_> {
                 tracing::warn!(%source, %outpost, detail, "outpost fault");
             }
             OutpostToCore::IdleAnswer { round } => self.barrier.answered(round, outpost),
+            OutpostToCore::NotResponding { window } => {
+                self.apply(not_responding(source, outpost, window));
+            }
             // The relay consumes these, and hands none of them on.
             OutpostToCore::Pong { .. }
             | OutpostToCore::TargetExited
@@ -1555,18 +1556,6 @@ impl ReducerThread<'_> {
         outpost: OutpostId,
         outcome: QueryOutcome,
     ) {
-        // A query the outpost's watchdog abandoned passed its deadline in
-        // a cross-process call: the application is not responding, which
-        // is reported once per stall.
-        match outcome {
-            QueryOutcome::Abandoned => {
-                if self.live.query_abandoned(outpost) {
-                    self.apply(Input::ApplicationNotResponding { outpost });
-                }
-            }
-            QueryOutcome::Done(_) | QueryOutcome::Gone => self.live.answered(outpost),
-            _ => {}
-        }
         match requests::reply_input(trace_id, id, outpost, outcome) {
             requests::Routed::Reducer(input) => self.apply(input),
             requests::Routed::Shell(outcome) => {
@@ -2091,6 +2080,18 @@ fn asks_dump(who: &Asker, ticket: DumpTicket) -> bool {
     matches!(who, Asker::DumpTree { ticket: asked, .. } if *asked == ticket)
 }
 
+/// The reducer input for `outpost`'s report that `window`, in `target`, the
+/// process it watches, stopped responding, which it sends once per hang;
+/// Core decides whether the sound plays, by whether `target` holds
+/// attention.
+fn not_responding(target: Pid, outpost: OutpostId, window: isize) -> Input {
+    tracing::info!(%outpost, %target, window, "a window stopped responding");
+    Input::ApplicationNotResponding {
+        outpost,
+        process: target,
+    }
+}
+
 /// Posts the supervisor's messages to the reducer thread's port, in line
 /// with its keys and commands, so the reducer takes them all in the order
 /// they arrived (`docs/design/communication.md`, section 4.5); and lets the
@@ -2445,6 +2446,77 @@ fn request_dump_tree(command_tx: &Commands, locations: bool) -> DumpTreeResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The focus listener's report that a window of `process` came to the
+    /// foreground, which gives it attention.
+    fn foreground(process: u32, window: u64) -> Input {
+        Input::Foreground(ForegroundWindow {
+            window: WindowHandle(window),
+            root_owner: WindowHandle(window),
+            process: Pid(process),
+            observed_at_us: 0,
+            own: false,
+            thread: 1,
+            console: false,
+            integrity: None,
+            own_integrity: None,
+        })
+    }
+
+    /// An answer to Core's query 7 from `outpost`, abandoned, routed as the
+    /// reducer thread routes it.
+    fn abandoned(outpost: OutpostId) -> Input {
+        let requests::Routed::Reducer(input) = requests::reply_input(
+            TraceId::from_raw(9),
+            RequestId::reducer(7),
+            outpost,
+            QueryOutcome::Abandoned,
+        ) else {
+            panic!("a reply to Core's query goes to the reducer");
+        };
+        input
+    }
+
+    /// An outpost's `NotResponding` plays the sound when its process holds
+    /// attention, and nothing when another does.
+    #[test]
+    fn not_responding_plays_the_sound_only_for_the_application_holding_attention() {
+        let mut state = SrState::new();
+        assert_eq!(reduce(&mut state, &foreground(40, 0x100)), []);
+        assert_eq!(
+            reduce(&mut state, &not_responding(Pid(40), OutpostId(3), 0x100)),
+            [Effect::PlayEarcon(Earcon::AppNotResponding)]
+        );
+        assert_eq!(
+            reduce(&mut state, &not_responding(Pid(41), OutpostId(4), 0x200)),
+            []
+        );
+    }
+
+    /// An abandoned query, in the application holding attention, plays
+    /// nothing: only `NotResponding` does.
+    #[test]
+    fn an_abandoned_query_plays_nothing() {
+        let mut state = SrState::new();
+        assert_eq!(reduce(&mut state, &foreground(40, 0x100)), []);
+        assert_eq!(reduce(&mut state, &abandoned(OutpostId(3))), []);
+    }
+
+    /// A hang met while its application is in the background is never
+    /// sounded: not when it is reported, not when the user returns to the
+    /// application, and not when a key there is answered `Abandoned`, the
+    /// outpost sending no second `NotResponding` in the same hang.
+    #[test]
+    fn a_hang_met_in_the_background_plays_nothing_after_the_user_returns() {
+        let mut state = SrState::new();
+        assert_eq!(reduce(&mut state, &foreground(40, 0x100)), []);
+        assert_eq!(
+            reduce(&mut state, &not_responding(Pid(41), OutpostId(4), 0x200)),
+            []
+        );
+        assert_eq!(reduce(&mut state, &foreground(41, 0x200)), []);
+        assert_eq!(reduce(&mut state, &abandoned(OutpostId(4))), []);
+    }
 
     /// Giving up a tree dump finds the dump with that ticket and no other.
     #[test]

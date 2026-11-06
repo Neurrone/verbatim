@@ -155,6 +155,7 @@ fn stand_in(args: &[String]) -> ! {
             Ok(Some(CoreToOutpost::Ping { seq, .. })) => send(&OutpostToCore::Pong {
                 seq,
                 parked_count: 0,
+                parked_on_hung: 0,
                 written_at_us: 0,
             }),
             Ok(Some(CoreToOutpost::Shutdown) | None) => std::process::exit(0),

@@ -223,6 +223,7 @@ fn stand_in(args: &[String]) -> ! {
                 &OutpostToCore::Pong {
                     seq,
                     parked_count: 0,
+                    parked_on_hung: 0,
                     written_at_us: 0,
                 },
             ),

@@ -15,7 +15,7 @@
 //!   comes back here, where the relay writes what waited behind it, so a
 //!   child that stops reading holds up only its own commands;
 //! - its mailbox ([`Mailbox`]), which carries everything other threads
-//!   report: launches, retirements, hang checks, and the app.
+//!   report: launches, retirements, and the app.
 //!
 //! An operation that completes at once is handled where it was started; only
 //! one that waits comes back through the port. Nothing here blocks, and

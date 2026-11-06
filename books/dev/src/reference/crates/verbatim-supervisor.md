@@ -112,7 +112,7 @@ How it works:
   at each wake and each heartbeat, and the `Inbox`'s drop, however the
   owner thread ends, sets `closed` so a later send gets `OwnerGone`. A
   wake the port refuses leaves the item for the heartbeat's take. It never blocks:
-  launches, retirements, and hang checks run on threads of their own.
+  launches and retirements run on threads of their own.
 - Each application's record keeps what belongs to the application (its
   held facts, held idle round, attention time and backoff) and its
   generation's state (`verbatim_core::supervisor::generation::Generation`): `Launching`,
@@ -160,11 +160,11 @@ How it works:
   on: with its target if the application exited, otherwise by the failure
   path (`crates/verbatim-supervisor/tests/spares.rs`). Every child is pinged
   every three seconds, and nine seconds without a pong ends it
-  (`Timings`); eight
-  abandoned workers end an outpost unless its application's windows are
-  reported hung, judged by the generation's `heartbeat` and
-  `hang_checked` and, for the listener and the spares, by their
-  `Liveness`, all on the run's shared clock. An outpost whose application has not
+  (`Timings`); eight workers parked on windows the outpost did not judge
+  hung end an outpost (the pong's `parked_count`; its `parked_on_hung`
+  never counts, since the outpost is the one judge of a hung window),
+  judged by the generation's `heartbeat` and, for the listener and the
+  spares, by their `Liveness`, all on the run's shared clock. An outpost whose application has not
   held attention for two minutes (`Retirement`), is not Core's own, and holds no nodes of
   the reducer's is retired by the sweep (`policy::retirement_decision`). An
   outpost says `TargetExited` when its application exits, and the heartbeat

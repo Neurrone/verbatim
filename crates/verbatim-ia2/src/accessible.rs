@@ -74,7 +74,7 @@ impl Accessible {
     pub(crate) fn from_event(hwnd: isize, id_object: i32, id_child: i32) -> Option<Self> {
         let mut object: Option<IAccessible> = None;
         let mut child = VARIANT::default();
-        count(CallKind::Msaa);
+        count(CallKind::Msaa).ok()?;
         // SAFETY: both out-parameters are locals this call initializes; a
         // stale or invalid address makes it fail rather than misbehave.
         unsafe {
@@ -98,7 +98,7 @@ impl Accessible {
     /// `CHILDID_SELF`, or `None` if it cannot be acquired.
     pub(crate) fn client_of_window(hwnd: isize) -> Option<Self> {
         let mut object: Option<IAccessible> = None;
-        count(CallKind::Msaa);
+        count(CallKind::Msaa).ok()?;
         // SAFETY: the out-pointer is a local `Option<IAccessible>`, which is
         // null-pointer-optimized, so it has the layout of the interface
         // pointer the call writes for `IAccessible::IID`, or leaves null; an
@@ -146,7 +146,7 @@ impl Accessible {
 
     /// `accName`, or `None` when the read fails.
     pub(crate) fn name(&self) -> Option<String> {
-        count(CallKind::Msaa);
+        count(CallKind::Msaa).ok()?;
         // SAFETY: a live interface and an integer child `VARIANT`.
         unsafe { self.object.get_accName(&child_variant(self.child)) }
             .ok()
@@ -155,7 +155,7 @@ impl Accessible {
 
     /// `accValue`, or `None` when the read fails.
     pub(crate) fn value(&self) -> Option<String> {
-        count(CallKind::Msaa);
+        count(CallKind::Msaa).ok()?;
         // SAFETY: a live interface and an integer child `VARIANT`.
         unsafe { self.object.get_accValue(&child_variant(self.child)) }
             .ok()
@@ -164,7 +164,7 @@ impl Accessible {
 
     /// `accDescription`, or `None` when the read fails.
     pub(crate) fn description(&self) -> Option<String> {
-        count(CallKind::Msaa);
+        count(CallKind::Msaa).ok()?;
         // SAFETY: a live interface and an integer child `VARIANT`.
         unsafe { self.object.get_accDescription(&child_variant(self.child)) }
             .ok()
@@ -173,7 +173,7 @@ impl Accessible {
 
     /// `accKeyboardShortcut`, or `None` when the read fails.
     pub(crate) fn keyboard_shortcut(&self) -> Option<String> {
-        count(CallKind::Msaa);
+        count(CallKind::Msaa).ok()?;
         // SAFETY: a live interface and an integer child `VARIANT`.
         unsafe {
             self.object
@@ -186,7 +186,7 @@ impl Accessible {
     /// `accDefaultAction`, the default action's name, or `None` when the
     /// read fails.
     pub(crate) fn default_action(&self) -> Option<String> {
-        count(CallKind::Msaa);
+        count(CallKind::Msaa).ok()?;
         // SAFETY: a live interface and an integer child `VARIANT`.
         unsafe { self.object.get_accDefaultAction(&child_variant(self.child)) }
             .ok()
@@ -195,7 +195,7 @@ impl Accessible {
 
     /// `accDoDefaultAction`.
     pub(crate) fn do_default_action(&self) -> windows::core::Result<()> {
-        count(CallKind::Msaa);
+        count(CallKind::Msaa)?;
         // SAFETY: a live interface and an integer child `VARIANT`.
         unsafe { self.object.accDoDefaultAction(&child_variant(self.child)) }
     }
@@ -203,7 +203,7 @@ impl Accessible {
     /// `accRole` as the raw MSAA role number, or `None` when the read fails
     /// or answers a string role.
     pub(crate) fn role(&self) -> Option<i32> {
-        count(CallKind::Msaa);
+        count(CallKind::Msaa).ok()?;
         // SAFETY: a live interface and an integer child `VARIANT`.
         let role = unsafe { self.object.get_accRole(&child_variant(self.child)) }.ok()?;
         // A string role does not convert; the `VARIANT`'s own `Drop`
@@ -213,7 +213,7 @@ impl Accessible {
 
     /// `accState` as the raw MSAA state word, or `None` when the read fails.
     pub(crate) fn state(&self) -> Option<i32> {
-        count(CallKind::Msaa);
+        count(CallKind::Msaa).ok()?;
         // SAFETY: a live interface and an integer child `VARIANT`.
         let state = unsafe { self.object.get_accState(&child_variant(self.child)) }.ok()?;
         i32::try_from(&state).ok()
@@ -228,7 +228,7 @@ impl Accessible {
     /// answered, which tells an object gone from one that cannot say.
     pub(crate) fn location_read(&self) -> windows::core::Result<Rect> {
         let (mut left, mut top, mut width, mut height) = (0i32, 0i32, 0i32, 0i32);
-        count(CallKind::Msaa);
+        count(CallKind::Msaa)?;
         // SAFETY: a live interface, an integer child `VARIANT`, and four
         // local out-parameters.
         unsafe {
@@ -253,7 +253,7 @@ impl Accessible {
     /// `IAccessible`. Two calls when `accParent` succeeds, since asking the
     /// parent for `IAccessible` is a counted `QueryInterface`.
     pub(crate) fn parent(&self) -> windows::core::Result<Option<Self>> {
-        count(CallKind::Msaa);
+        count(CallKind::Msaa)?;
         // SAFETY: a live interface; the method takes no other arguments.
         let parent = unsafe { self.object.accParent() }?;
         Ok(cast_remote::<IAccessible>(&parent)
@@ -263,7 +263,7 @@ impl Accessible {
 
     /// `accChildCount`.
     pub(crate) fn child_count(&self) -> windows::core::Result<i32> {
-        count(CallKind::Msaa);
+        count(CallKind::Msaa)?;
         // SAFETY: a live interface; the method takes no other arguments.
         unsafe { self.object.accChildCount() }
     }
@@ -277,7 +277,7 @@ impl Accessible {
         let max = max.min(MAX_CHILDREN);
         let mut buffer: Vec<VARIANT> = (0..max).map(|_| VARIANT::default()).collect();
         let mut obtained = 0i32;
-        count(CallKind::Msaa);
+        count(CallKind::Msaa)?;
         // SAFETY: a live interface; `buffer` is a local slice of `max` empty
         // `VARIANT`s, which the call fills no further than its length, and
         // `obtained` a local it writes the count to.
@@ -288,7 +288,7 @@ impl Accessible {
 
     /// `accNavigate` in the MSAA direction `navdir`, from this child id.
     pub(crate) fn navigate(&self, navdir: i32) -> windows::core::Result<Related> {
-        count(CallKind::Msaa);
+        count(CallKind::Msaa)?;
         // SAFETY: a live interface and an integer child `VARIANT`.
         let result = unsafe { self.object.accNavigate(navdir, &child_variant(self.child)) }?;
         Ok(related(&result))
@@ -296,7 +296,7 @@ impl Accessible {
 
     /// `accFocus`: the child or object within this one that has the focus.
     pub(crate) fn focus(&self) -> windows::core::Result<Related> {
-        count(CallKind::Msaa);
+        count(CallKind::Msaa)?;
         // SAFETY: a live interface; the method takes no other arguments.
         let focus = unsafe { self.object.accFocus() }?;
         Ok(related(&focus))
@@ -304,7 +304,7 @@ impl Accessible {
 
     /// `accSelection`: the selected child or object within this one.
     pub(crate) fn selection(&self) -> windows::core::Result<Related> {
-        count(CallKind::Msaa);
+        count(CallKind::Msaa)?;
         // SAFETY: a live interface; the method takes no other arguments.
         let selection = unsafe { self.object.accSelection() }?;
         Ok(related(&selection))
@@ -315,7 +315,7 @@ impl Accessible {
     /// object none of whose ancestors says which window it is in.
     pub(crate) fn window(&self) -> Option<isize> {
         let mut hwnd = HWND::default();
-        count(CallKind::Msaa);
+        count(CallKind::Msaa).ok()?;
         // SAFETY: a live interface and a local out-parameter, read only on
         // success.
         unsafe { WindowFromAccessibleObject(&self.object, Some(&raw mut hwnd)) }.ok()?;
@@ -330,7 +330,7 @@ impl Accessible {
         let identity = cast_remote::<IAccIdentity>(&self.object).ok()?;
         let mut data: *mut u8 = std::ptr::null_mut();
         let mut length = 0u32;
-        count(CallKind::Msaa);
+        count(CallKind::Msaa).ok()?;
         // SAFETY: a live interface and two local out-parameters.
         unsafe {
             identity.GetIdentityString(self.child.cast_unsigned(), &raw mut data, &raw mut length)
@@ -410,7 +410,7 @@ impl Related {
 /// cross-process call: on an object from another process, COM answers it
 /// locally only when its proxy already holds `T` (see [`crate::calls`]).
 fn cast_remote<T: Interface>(object: &impl Interface) -> windows::core::Result<T> {
-    count(CallKind::Msaa);
+    count(CallKind::Msaa)?;
     object.cast::<T>()
 }
 

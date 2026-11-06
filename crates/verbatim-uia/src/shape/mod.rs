@@ -642,7 +642,7 @@ impl Live {
         walker: &IUIAutomationTreeWalker,
         direction: Direction,
     ) -> windows::core::Result<Self> {
-        crate::calls::count(verbatim_model::CallKind::Uia);
+        crate::calls::count(verbatim_model::CallKind::Uia)?;
         let element = &self.element;
         let found = match direction {
             // SAFETY: the walker and the element are live COM objects.

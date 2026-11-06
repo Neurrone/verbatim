@@ -3928,6 +3928,7 @@ fn a_focus_published_at_its_bound_is_followed_after_its_worker_is_abandoned() {
         OutpostToCore::Pong {
             seq: 1,
             parked_count: 1,
+            parked_on_hung: 0,
             ..
         } => {}
         other => panic!("the outpost said {other:?}, not a pong counting the abandoned worker"),

@@ -208,6 +208,7 @@ fn every_variant_has_its_reviewed_kind() {
             "Event: Report",
             "Reply: Answer",
             "Pong: Lifecycle",
+            "NotResponding: Report",
             "Fault: Report",
             "TargetExited: Lifecycle",
             "IdleAnswer: Answer",
@@ -267,6 +268,7 @@ fn only_an_event_and_a_completed_reply_carry_nodes() {
             ("Event".to_owned(), true),
             ("Reply".to_owned(), false),
             ("Pong".to_owned(), false),
+            ("NotResponding".to_owned(), false),
             ("Fault".to_owned(), false),
             ("TargetExited".to_owned(), false),
             ("IdleAnswer".to_owned(), false),
@@ -483,6 +485,7 @@ fn a_pongs_trip_back_runs_from_its_write_to_verbatim_exes_read() {
     let mut pong = OutpostToCore::Pong {
         seq: 1,
         parked_count: 0,
+        parked_on_hung: 0,
         written_at_us: 0,
     };
     pong.written(7_000);

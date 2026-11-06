@@ -5,10 +5,12 @@
 //! application, so every fact here has one owner.
 //!
 //! It holds which worker generation is in charge, the item's deadline,
-//! the moved-on rule, judged at [`MOVED_ON_GRACE`] after the item's start
-//! and every [`MOVED_ON_GRACE`] after that until the deadline, as NVDA's
-//! watchdog judges (`docs/nvda/main-loop-and-watchdog.md`), the
-//! publication of the item's walk at its bound, and its abandonment.
+//! its judgement, asked at [`MOVED_ON_GRACE`] after the item's start and
+//! every [`MOVED_ON_GRACE`] after that until the deadline, as NVDA's
+//! watchdog judges (`docs/nvda/main-loop-and-watchdog.md`): whether the
+//! item's window is hung, and otherwise whether the user has moved on from
+//! it; the publication of the item's walk at its bound, and its
+//! abandonment.
 //!
 //! Each transition answers with a [`Decision`]: nothing, one [`Ask`] that
 //! the reader's shell answers by the matching transition, or an
@@ -50,32 +52,41 @@ pub enum Walk {
     Published,
 }
 
-/// The moved-on rule of the item in flight.
+/// The judgement of the item in flight: whether its window is hung, and
+/// otherwise whether the user has moved on from it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Moved {
-    /// The item has no window: it is never judged so.
+    /// The item has no window: it is never judged.
     Never,
     /// The item's window is still to be learned.
     Unknown,
-    /// The item's window is known; the rule is next judged at `next`.
+    /// The item's window is known; it is next judged at `next`.
     Known {
         /// The window.
         window: Window,
-        /// When the rule is next judged.
+        /// When it is next judged.
+        next: u64,
+    },
+    /// The item's worker names the window it calls into, which the reader's
+    /// shell reads at each judgement; it is next judged at `next`.
+    Named {
+        /// When it is next judged.
         next: u64,
     },
 }
 
-/// The window an item is started with, which the moved-on rule judges
-/// it by.
+/// The window an item is started with, which it is judged by.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RuleWindow {
-    /// The item is never judged by the rule.
+    /// The item is never judged.
     Never,
     /// Its window is still to be learned.
     Unknown,
     /// Its window.
     Known(Window),
+    /// Its worker names the window it calls into, on the grace's schedule
+    /// from its start.
+    Named,
 }
 
 impl RuleWindow {
@@ -97,7 +108,7 @@ impl RuleWindow {
     pub const fn known(self) -> Option<Window> {
         match self {
             Self::Known(window) => Some(window),
-            Self::Never | Self::Unknown => None,
+            Self::Never | Self::Unknown | Self::Named => None,
         }
     }
 }
@@ -111,20 +122,24 @@ pub enum Reason {
     /// The user moved on from the item's window to another thread of its
     /// application.
     MovedOn,
+    /// The item's window was found hung or ghosted, by Windows' own state.
+    Hung,
 }
 
 /// What the record asks of its reader's shell, answered by the matching
 /// transition before anything else is judged.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Ask {
-    /// Whether the user has left `window`, the window of `request`'s item,
-    /// for another thread of its application; answered by
-    /// [`InFlight::moved_on`].
-    MovedOn {
+    /// Judge `request`'s item by its window: whether the window is hung,
+    /// tested first, and otherwise whether the user has left it for
+    /// another thread of its application; answered by
+    /// [`InFlight::judged`].
+    Judge {
         /// The item asked about.
         request: Request,
-        /// Its window.
-        window: Window,
+        /// Its window; `None` for one its worker names, which the shell
+        /// reads, the item staying while none is named.
+        window: Option<Window>,
     },
     /// Publish the walk of `request`'s item from its progress; answered by
     /// [`InFlight::published`], which carries `then_abandon` back.
@@ -206,13 +221,12 @@ impl<T> InFlight<T> {
     pub fn start(&mut self, item: T, deadline: u64, window: RuleWindow, now: u64) -> Request {
         debug_assert!(self.running.is_none(), "an item started over another");
         let request = self.next_request();
+        let next = now.saturating_add(grace_us());
         let moved = match window {
             RuleWindow::Never => Moved::Never,
             RuleWindow::Unknown => Moved::Unknown,
-            RuleWindow::Known(window) => Moved::Known {
-                window,
-                next: now.saturating_add(grace_us()),
-            },
+            RuleWindow::Known(window) => Moved::Known { window, next },
+            RuleWindow::Named => Moved::Named { next },
         };
         self.running = Some(Running {
             request,
@@ -297,24 +311,25 @@ impl<T> InFlight<T> {
         self.judge(now)
     }
 
-    /// The answer to [`Ask::MovedOn`] for `request`: when the user has
-    /// moved on, an armed walk is published first and the item abandoned
-    /// then, and any other is abandoned at once, published or not.
-    pub fn moved_on(&mut self, request: Request, moved_on: bool) -> Decision<T> {
+    /// The answer to [`Ask::Judge`] for `request`: `None` when the item
+    /// stays, else why it is abandoned, its window hung or the user moved
+    /// on; an armed walk is published first and the item abandoned then,
+    /// and any other is abandoned at once, published or not.
+    pub fn judged(&mut self, request: Request, verdict: Option<Reason>) -> Decision<T> {
         let Some(running) = self.running_of(request) else {
             return Decision::Nothing;
         };
-        if !moved_on {
+        let Some(reason) = verdict else {
             return Decision::Nothing;
-        }
+        };
         if matches!(running.walk, Walk::Armed(_)) {
             running.walk = Walk::Unarmed;
             return Decision::Ask(Ask::Publish {
                 request,
-                then_abandon: Some(Reason::MovedOn),
+                then_abandon: Some(reason),
             });
         }
-        self.abandon(Reason::MovedOn)
+        self.abandon(reason)
     }
 
     /// The answer to [`Ask::Publish`] for `request`, with `got` when the
@@ -425,8 +440,8 @@ impl<T> InFlight<T> {
     }
 
     /// When something is next due: the soonest of the deadline, the bound
-    /// while the walk is armed, and the next judgment of the moved-on rule
-    /// while the window is known.
+    /// while the walk is armed, and the next judgement while the window is
+    /// known or named.
     #[must_use]
     pub fn next_wake(&self) -> Option<u64> {
         let running = self.running.as_ref()?;
@@ -434,7 +449,7 @@ impl<T> InFlight<T> {
         if let Walk::Armed(bound) = running.walk {
             due = due.min(bound);
         }
-        if let Moved::Known { next, .. } = running.moved {
+        if let Moved::Known { next, .. } | Moved::Named { next } = running.moved {
             due = due.min(next);
         }
         Some(due)
@@ -443,8 +458,8 @@ impl<T> InFlight<T> {
     /// The judgments of the item at `now`, in this order, the first that
     /// applies deciding, so a transition makes at most one ask: its
     /// deadline, which abandons it, publishing an armed walk first; its
-    /// walk's bound, which publishes the walk; and the moved-on rule, once
-    /// its next judgment is due, published or not. Judged the other way
+    /// walk's bound, which publishes the walk; and the judgement of its
+    /// window, once due, published or not. Judged the other way
     /// round, a late tick past both the bound and the deadline would
     /// abandon before the publication, losing what was read.
     fn judge(&mut self, now: u64) -> Decision<T> {
@@ -471,16 +486,20 @@ impl<T> InFlight<T> {
                 then_abandon: None,
             });
         }
-        if let Moved::Known { window, next } = &mut running.moved
-            && now >= *next
-        {
-            *next = now.saturating_add(grace_us());
-            return Decision::Ask(Ask::MovedOn {
-                request,
-                window: *window,
-            });
-        }
-        Decision::Nothing
+        let window = match &mut running.moved {
+            Moved::Known { window, next } if now >= *next => {
+                *next = now.saturating_add(grace_us());
+                Some(*window)
+            }
+            Moved::Named { next } if now >= *next => {
+                *next = now.saturating_add(grace_us());
+                None
+            }
+            Moved::Never | Moved::Unknown | Moved::Known { .. } | Moved::Named { .. } => {
+                return Decision::Nothing;
+            }
+        };
+        Decision::Ask(Ask::Judge { request, window })
     }
 
     /// Abandons the item running for `reason`: it leaves, and the next

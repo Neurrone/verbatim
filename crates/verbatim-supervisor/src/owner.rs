@@ -11,9 +11,8 @@
 //! it; finishes every child's writes that pended; and takes everything
 //! other threads report from its mailbox when the port says there is
 //! something. Its heartbeat, which also watches the reducer, and its sweep
-//! run when the wait's deadline passes. It never blocks: launches,
-//! retirements, and the check of whether an application is hung run on
-//! threads of their own and report back.
+//! run when the wait's deadline passes. It never blocks: launches
+//! and retirements run on threads of their own and report back.
 
 #![forbid(unsafe_code)]
 
@@ -41,7 +40,7 @@ use verbatim_process::message::{Peeked, decode_message, peek};
 use super::frames::Frame;
 use super::generation::{Generation, Heartbeat, Next, Notice, Removed, Run};
 use super::policy::{
-    Backoff, HeldFact, HeldFacts, Liveness, Spares, WedgeLimits, WedgeReason, due_starts,
+    Backoff, HeldFact, HeldFacts, Liveness, Parked, Spares, WedgeLimits, WedgeReason, due_starts,
     may_start_outpost, retirement_decision,
 };
 use super::process::{self, Launched, Role};
@@ -104,10 +103,7 @@ pub(super) enum OwnerEvent {
     /// Read from a child's pipe: the child sent `Ready`.
     Ready(OutpostId),
     /// Read from a child's pipe: the child answered a ping.
-    Pong {
-        outpost: OutpostId,
-        abandoned: usize,
-    },
+    Pong { outpost: OutpostId, parked: Parked },
     /// From the app's [`super::Frames`]: a frame `outpost` sent is not a
     /// message, so it is ended as though its pipe had failed.
     Unreadable(OutpostId),
@@ -118,9 +114,6 @@ pub(super) enum OwnerEvent {
     },
     /// From a retirement's thread: a child has ended, this way.
     Retired(Ending),
-    /// From a hang check's thread: whether `outpost`'s application has a
-    /// visible window the system reports hung.
-    HangChecked { outpost: OutpostId, hung: bool },
     /// From the app: run the idle barrier's round through the children.
     IdleRound(u64),
     /// From the app: Verbatim is exiting. Every child is shut down, and the
@@ -589,7 +582,7 @@ impl Owner {
     /// on, and every other frame is handed on to the app whole, unparsed,
     /// with when it was read (`docs/design/communication.md`, section
     /// 6.2). Only the frame's kind is read, from its first bytes; a pong,
-    /// a few dozen bytes, is parsed for its count of abandoned workers. A
+    /// a few dozen bytes, is parsed for its counts of parked workers. A
     /// frame handed on is copied out of the reader's buffer it was lent
     /// from.
     fn outpost_frame(&mut self, outpost: OutpostId, pid: Pid, body: Parts<'_>) -> io::Result<()> {
@@ -609,6 +602,7 @@ impl Owner {
             Peeked::Pong => {
                 let OutpostToCore::Pong {
                     parked_count,
+                    parked_on_hung,
                     written_at_us,
                     ..
                 } = decode_message(body)?
@@ -620,7 +614,10 @@ impl Owner {
                 }
                 self.handle(OwnerEvent::Pong {
                     outpost,
-                    abandoned: parked_count,
+                    parked: Parked {
+                        on_hung: parked_on_hung,
+                        other: parked_count,
+                    },
                 });
             }
             Peeked::TargetExited => {
@@ -740,7 +737,7 @@ impl Owner {
                 }
                 OwnerEvent::Pong {
                     outpost,
-                    abandoned: 0,
+                    parked: Parked::default(),
                 }
             }
             ListenerToCore::MenuOrSwitchEnded {
@@ -838,9 +835,9 @@ impl Owner {
                 self.outbox.send(OutpostMessage::Foreground(report));
             }
             OwnerEvent::Ready(outpost) => self.on_ready(outpost),
-            OwnerEvent::Pong { outpost, abandoned } => {
+            OwnerEvent::Pong { outpost, parked } => {
                 if let Some(record) = self.record_of(outpost) {
-                    record.generation.ponged(now_us(), abandoned);
+                    record.generation.ponged(now_us(), parked);
                 } else if let Some(listener) = self
                     .listener
                     .as_mut()
@@ -855,7 +852,6 @@ impl Owner {
                 self.retiring = self.retiring.saturating_sub(1);
                 self.summary.count(ending);
             }
-            OwnerEvent::HangChecked { outpost, hung } => self.on_hang_checked(outpost, hung),
             OwnerEvent::IdleRound(round) => self.idle_round(round),
         }
     }
@@ -1983,11 +1979,7 @@ impl Owner {
         }
     }
 
-    /// Pings every running child and ends any that is wedged. Whether an
-    /// application with many abandoned workers is hung is checked on a
-    /// thread of its own, since it walks the application's windows, and
-    /// the outpost is judged on its answer ([`OwnerEvent::HangChecked`]);
-    /// until then only its missed pongs count against it.
+    /// Pings every running child and ends any that is wedged.
     fn heartbeat(&mut self) {
         self.relay.commands().forget_finished();
         if self.shutting_down.is_some() {
@@ -2003,7 +1995,6 @@ impl Owner {
         let ping = CoreToOutpost::ping(self.ping_seq);
         let mut wedged = Vec::new();
         let mut exited = Vec::new();
-        let mut hang_checks = Vec::new();
         let at_us = now_us();
         let limits = self.wedge_limits();
         let running: Vec<Pid> = self
@@ -2021,26 +2012,17 @@ impl Owner {
             let Some(record) = self.records.get_mut(&pid) else {
                 continue;
             };
-            let (Some(outpost), Some(beat)) = (
-                record.generation.outpost(),
-                record.generation.heartbeat(at_us, limits),
-            ) else {
+            let Some(beat) = record.generation.heartbeat(at_us, limits) else {
                 continue;
             };
             match beat {
                 Heartbeat::Wedged(reason) => wedged.push((pid, reason)),
-                Heartbeat::Ping | Heartbeat::CheckHang => {
-                    if beat == Heartbeat::CheckHang {
-                        hang_checks.push((pid, outpost));
-                    }
+                Heartbeat::Ping => {
                     if let Some(child) = record.generation.child() {
                         let _ = child.writer.push(Outgoing::Ping(ping.clone()));
                     }
                 }
             }
-        }
-        for (pid, outpost) in hang_checks {
-            self.check_hang(pid, outpost);
         }
         for pid in exited {
             self.target_exited(pid, "target exited, seen by the supervisor");
@@ -2104,48 +2086,6 @@ impl Owner {
             if self.spares.remove(outpost) {
                 self.spare_failed(&format!("spare {outpost} stopped answering pings"), up);
             }
-        }
-    }
-
-    /// Checks on a thread of its own whether `pid`'s application, whose
-    /// outpost `outpost` has many abandoned workers, has a visible window
-    /// the system reports hung ([`process::application_is_hung`], which
-    /// walks its windows), and reports [`OwnerEvent::HangChecked`].
-    fn check_hang(&mut self, pid: Pid, outpost: OutpostId) {
-        let own_tx = self.own_tx.clone();
-        let spawned = thread::Builder::new()
-            .name("verbatim-hang-check".to_owned())
-            .spawn(move || {
-                let hung = process::application_is_hung(pid);
-                let _ = own_tx.send(OwnerEvent::HangChecked { outpost, hung });
-            });
-        // Asked for again on the next heartbeat.
-        if let Err(error) = spawned {
-            tracing::error!(%error, %pid, "no thread to check whether an application is hung");
-            if let Some(record) = self.records.get_mut(&pid) {
-                record.generation.hang_check_ended();
-            }
-        }
-    }
-
-    /// Judges `outpost` by its abandoned workers now that the check of its
-    /// application has answered, as the heartbeat did when it made the
-    /// check itself.
-    fn on_hang_checked(&mut self, outpost: OutpostId, hung: bool) {
-        let limits = self.wedge_limits();
-        let Some(pid) = self.pid_of(outpost) else {
-            return;
-        };
-        let Some(record) = self.records.get_mut(&pid) else {
-            return;
-        };
-        let reason = record.generation.hang_checked(hung, now_us(), limits);
-        if self.shutting_down.is_some() {
-            return;
-        }
-        if let Some(reason) = reason {
-            tracing::warn!(%pid, %reason, "ending a stuck outpost");
-            self.outpost_failed(pid, &format!("ended as stuck: {reason}"), EndReason::Killed);
         }
     }
 

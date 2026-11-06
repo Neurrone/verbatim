@@ -908,6 +908,7 @@ impl Run {
                             armed.is_some() && given == Given::MovedOn { moved_on: true },
                             "{trail}"
                         ),
+                        Some(Reason::Hung) => panic!("a read was judged hung: {trail}"),
                     }
                     answers.push((
                         ScheduleInput::Published {

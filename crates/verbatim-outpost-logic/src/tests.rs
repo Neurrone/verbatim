@@ -28,6 +28,11 @@ mod reducer;
 #[derive(Clone, Default)]
 struct Answers {
     moved_on: bool,
+    /// Whether the window judged is found hung.
+    hung: bool,
+    /// The window the program in flight's worker named, which a judgement
+    /// of a program with no window at dispatch reads.
+    named: Option<Window>,
     publications: VecDeque<Change>,
     published: Vec<Request>,
     /// Whether the gap record's window is found unrelated to the
@@ -44,10 +49,21 @@ impl Answers {
     /// The answer to `effect`, if it asks one, as the shell gives it.
     fn to(&mut self, effect: &Effect) -> Option<Input> {
         match effect {
-            Effect::AskMovedOn { request, .. } => Some(Input::MovedOn {
-                request: *request,
-                moved_on: self.moved_on,
-            }),
+            Effect::AskJudge { request, window } => {
+                let window = window.or(self.named);
+                let verdict = if window.is_none() {
+                    None
+                } else if self.hung {
+                    Some(Reason::Hung)
+                } else {
+                    self.moved_on.then_some(Reason::MovedOn)
+                };
+                Some(Input::Judged {
+                    request: *request,
+                    verdict,
+                    window,
+                })
+            }
             Effect::Publish {
                 request,
                 then_abandon,
@@ -1091,7 +1107,7 @@ fn kinds(effects: &[Effect]) -> Vec<&'static str> {
             Effect::Abandon { .. } => Some("abandon"),
             Effect::Dispatch(_) => Some("dispatch"),
             Effect::Publish { .. } => Some("publish"),
-            Effect::AskMovedOn { .. } => Some("ask moved on"),
+            Effect::AskJudge { .. } => Some("judge"),
             _ => None,
         })
         .collect()
@@ -1179,15 +1195,16 @@ fn moving_on_during_a_walk_publishes_then_abandons_and_a_late_answer_is_dropped(
     assert!(
         matches!(
             &effects[..],
-            [Effect::AskMovedOn { request: asked, window }] if *asked == request && window.get() == 9
+            [Effect::AskJudge { request: asked, window }] if *asked == request && *window == Window::new(9)
         ),
         "{effects:?}"
     );
     let moved = Reason::MovedOn;
     let effects = reducer.input(
-        Input::MovedOn {
+        Input::Judged {
             request,
-            moved_on: true,
+            verdict: (true).then_some(Reason::MovedOn),
+            window: None,
         },
         now(600),
     );
@@ -1211,9 +1228,10 @@ fn moving_on_during_a_walk_publishes_then_abandons_and_a_late_answer_is_dropped(
     // The answers come again, out of turn: nothing is abandoned again.
     let replacement = program(&effects).request;
     for answer in [
-        Input::MovedOn {
+        Input::Judged {
             request,
-            moved_on: true,
+            verdict: (true).then_some(Reason::MovedOn),
+            window: None,
         },
         Input::Published {
             request,
@@ -1440,10 +1458,11 @@ fn the_console_poll_is_dispatched_only_when_nothing_else_is_ready() {
 fn a_program_goes_before_the_next_read() {
     let mut replay = polling();
     let read = reads(&replay.tick(7));
-    // The read runs under the handling deadline, with no moved-on grace.
+    // The read runs under the handling deadline, judged by the window its
+    // worker names from the grace's end.
     assert_eq!(
         replay.reducer.next_timer(now(7)),
-        Some(Duration::from_millis(7 + 11_000))
+        Some(Duration::from_millis(7 + 500))
     );
     // A console update arriving while the read is in flight waits for it.
     assert!(programs(&replay.push(console_caret(), Source::Hook, 8)).is_empty());
@@ -2423,7 +2442,7 @@ fn a_cut_watch_check_is_finished_within_its_reads_deadline_and_query() {
     // and the answer, no, changes nothing.
     assert!(matches!(
         &replay.tick(10 + 10_999)[..],
-        [Effect::AskMovedOn { request, .. }] if *request == finish.request
+        [Effect::AskJudge { request, .. }] if *request == finish.request
     ));
     let effects = replay.tick(10 + 11_000);
     assert!(abandons(&effects));
@@ -3126,7 +3145,7 @@ fn a_title_committed_while_a_program_holds_the_watch_ends_it_at_once() {
         matches!(
             &effects[..],
             [
-                Effect::AskMovedOn { request: asked, .. },
+                Effect::AskJudge { request: asked, .. },
                 Effect::TestGapBound {
                     top_level,
                     stamp_us: 1_000,
@@ -3159,4 +3178,199 @@ fn a_title_committed_while_a_program_holds_the_watch_ends_it_at_once() {
     let effects = replay.finish(front, false, 1_102);
     assert!(effects.is_empty(), "{effects:?}");
     assert_eq!(*watch_of(&replay), Watch::None);
+}
+
+/// A navigation query, request `request_id`.
+fn navigation(request_id: u64) -> Item {
+    Item::Query {
+        request_id: RequestId::shell(request_id),
+        query: Query::Navigate {
+            node_id: NodeId::new(1),
+            kind: verbatim_model::QueryKind::NextSibling,
+        },
+    }
+}
+
+/// The windows `effects` tell Core stopped responding, in order.
+fn not_responding(effects: &[Effect]) -> Vec<isize> {
+    sent(effects)
+        .into_iter()
+        .filter_map(|message| match message {
+            OutpostToCore::NotResponding { window } => Some(*window),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The window the hang tests' queries name.
+const HUNG: Window = match Window::new(0x40) {
+    Some(window) => window,
+    None => panic!("0x40 is not 0"),
+};
+
+/// A commit of what a program found of window `window`, with its query's
+/// reply, if it answers one.
+fn found(window: Window, found: Found, answers: Option<(u64, QueryOutcome)>) -> Change {
+    Change {
+        result: answers.map(|(request_id, outcome)| {
+            reply(
+                RequestId::shell(request_id),
+                TraceId::from_raw(request_id),
+                outcome,
+            )
+        }),
+        found: Some((window, found)),
+        ..Change::default()
+    }
+}
+
+/// A query whose worker named a window the judgement finds hung is
+/// answered abandoned, and the window's hang is told to Core once; a
+/// second query on it, refused by its check before its first call, is
+/// answered abandoned and tells nothing, nor does a third.
+#[test]
+fn a_query_judged_hung_tells_its_windows_hang_once() {
+    let mut replay = Replay::new();
+    let first = program(&replay.push(navigation(1), Source::Other, 1)).request;
+    replay.answers.named = Some(HUNG);
+    replay.answers.hung = true;
+    let effects = replay.tick(1 + 500);
+    assert!(abandons(&effects));
+    assert_eq!(replies(&effects), [(1, "abandoned")]);
+    assert_eq!(not_responding(&effects), [HUNG.get()]);
+    assert!(!replay.reducer.accepts(first));
+    replay.answers.named = None;
+    for request_id in [2, 3] {
+        let refused = program(&replay.push(navigation(request_id), Source::Other, 600)).request;
+        let effects = replay.commit(
+            refused,
+            found(
+                HUNG,
+                Found::Hung,
+                Some((request_id, QueryOutcome::Abandoned)),
+            ),
+            601,
+        );
+        assert_eq!(replies(&effects), [(request_id, "abandoned")]);
+        assert_eq!(
+            not_responding(&effects),
+            Vec::<isize>::new(),
+            "the same hang"
+        );
+        replay.finish(refused, false, 602);
+    }
+}
+
+/// A commit naming the window answered takes it out of the record, so the
+/// next hang is told again; a program that made no call into it, whose
+/// commit names nothing, leaves it in.
+#[test]
+fn only_an_answer_ends_a_windows_hang() {
+    let mut replay = Replay::new();
+    let hang = program(&replay.push(navigation(1), Source::Other, 1)).request;
+    assert_eq!(
+        not_responding(&replay.commit(hang, found(HUNG, Found::Hung, None), 2)),
+        [HUNG.get()]
+    );
+    replay.finish(hang, false, 3);
+    let callless = program(&replay.push(name_change(1), Source::Hook, 4)).request;
+    assert_eq!(
+        not_responding(&replay.commit(callless, Change::default(), 5)),
+        Vec::<isize>::new()
+    );
+    replay.finish(callless, false, 6);
+    let again = program(&replay.push(navigation(2), Source::Other, 7)).request;
+    assert_eq!(
+        not_responding(&replay.commit(again, found(HUNG, Found::Hung, None), 8)),
+        Vec::<isize>::new(),
+        "still the same hang"
+    );
+    assert_eq!(
+        not_responding(&replay.commit(again, found(HUNG, Found::Answered, None), 9)),
+        Vec::<isize>::new()
+    );
+    replay.finish(again, false, 10);
+    let next = program(&replay.push(navigation(3), Source::Other, 11)).request;
+    assert_eq!(
+        not_responding(&replay.commit(next, found(HUNG, Found::Hung, None), 12)),
+        [HUNG.get()],
+        "a new hang"
+    );
+}
+
+/// A window's destroy event takes it out of the record, and a second
+/// window's hang is told for that window.
+#[test]
+fn a_destroy_event_ends_a_windows_hang_and_each_window_has_its_own() {
+    let mut replay = Replay::new();
+    let hang = program(&replay.push(navigation(1), Source::Other, 1)).request;
+    replay.commit(hang, found(HUNG, Found::Hung, None), 2);
+    replay.finish(hang, false, 3);
+    let other = Window::new(0x41).expect("not 0");
+    let second = program(&replay.push(navigation(2), Source::Other, 4)).request;
+    assert_eq!(
+        not_responding(&replay.commit(second, found(other, Found::Hung, None), 5)),
+        [0x41]
+    );
+    replay.finish(second, false, 6);
+    let destroy = replay.push(
+        Item::Msaa {
+            kind: WinKind::Destroy,
+            hwnd: HUNG.get(),
+            id_object: 0,
+            id_child: 0,
+            raiser: 3,
+        },
+        Source::Hook,
+        7,
+    );
+    replay.finish(program(&destroy).request, false, 7);
+    let after = program(&replay.push(navigation(3), Source::Other, 8)).request;
+    assert_eq!(
+        not_responding(&replay.commit(after, found(HUNG, Found::Hung, None), 9)),
+        [HUNG.get()],
+        "a destroyed window's handle hangs anew"
+    );
+}
+
+/// A listener read whose window is hung is dropped by its program with no
+/// call, and its commit, naming the window hung, tells Core of the hang.
+#[test]
+fn a_listener_read_dropped_for_a_hung_window_tells_its_hang() {
+    let mut replay = Replay::new();
+    let read = verbatim_model::protocol::UiaFocusRead {
+        hwnd: HUNG.get(),
+        snapshot: verbatim_model::protocol::UiaSnapshotFact {
+            runtime_id: vec![42, 2],
+            role: Role::Button,
+            name: None,
+            value: None,
+            states: verbatim_model::StateSet::new(),
+            details: verbatim_model::NodeDetails::default(),
+        },
+        ancestors: Vec::new(),
+        ancestors_end: verbatim_model::protocol::AncestorsEnd::Top,
+        selected_child: None,
+        value_from_selection: false,
+        window: Some(HUNG.get()),
+        same_as_last: None,
+        bound_us: 2_000_000,
+    };
+    let effects = replay.push(
+        Item::Fact(
+            DeliveredFact::UiaFocusRead {
+                marker: 1,
+                read: Box::new(read),
+                focus: true,
+            },
+            None,
+        ),
+        Source::Listener,
+        1,
+    );
+    let dropping = program(&effects);
+    assert_eq!(dropping.window, Some(HUNG));
+    let effects = replay.commit(dropping.request, found(HUNG, Found::Hung, None), 2);
+    assert_eq!(not_responding(&effects), [HUNG.get()]);
+    assert_eq!(sent(&effects).len(), 1, "nothing but the hang");
 }

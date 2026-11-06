@@ -120,7 +120,7 @@ pub trait TextPatternExt {
 
 impl TextPatternExt for IUIAutomationTextPattern {
     fn selection(&self) -> windows::core::Result<Vec<IUIAutomationTextRange>> {
-        count(CallKind::Uia);
+        count(CallKind::Uia)?;
         // SAFETY: `self` is a live pattern object; a gone provider fails the
         // call.
         let array = unsafe { self.GetSelection() }?;
@@ -128,13 +128,13 @@ impl TextPatternExt for IUIAutomationTextPattern {
     }
 
     fn document_range(&self) -> windows::core::Result<IUIAutomationTextRange> {
-        count(CallKind::Uia);
+        count(CallKind::Uia)?;
         // SAFETY: as in `selection`.
         unsafe { self.DocumentRange() }
     }
 
     fn visible_ranges(&self) -> windows::core::Result<Vec<IUIAutomationTextRange>> {
-        count(CallKind::Uia);
+        count(CallKind::Uia)?;
         // SAFETY: as in `selection`.
         let array = unsafe { self.GetVisibleRanges() }?;
         Ok(ranges_of(&array))
@@ -149,7 +149,7 @@ impl TextPatternExt for IUIAutomationTextPattern {
 pub fn caret_range(
     pattern: &IUIAutomationTextPattern2,
 ) -> windows::core::Result<IUIAutomationTextRange> {
-    count(CallKind::Uia);
+    count(CallKind::Uia)?;
     let mut active = windows::core::BOOL::default();
     // SAFETY: `pattern` is a live pattern object and `active` a local the
     // call writes whether the text has the keyboard focus.
@@ -304,7 +304,7 @@ pub trait TextRangeExt {
 
 impl TextRangeExt for IUIAutomationTextRange {
     fn clone_range(&self) -> windows::core::Result<IUIAutomationTextRange> {
-        count(CallKind::Uia);
+        count(CallKind::Uia)?;
         // SAFETY: `self` is a live range; a gone provider fails the call.
         unsafe { self.Clone() }
     }
@@ -315,19 +315,19 @@ impl TextRangeExt for IUIAutomationTextRange {
         other: &IUIAutomationTextRange,
         other_endpoint: Endpoint,
     ) -> windows::core::Result<i32> {
-        count(CallKind::Uia);
+        count(CallKind::Uia)?;
         // SAFETY: both ranges are live; the endpoints are plain values.
         unsafe { self.CompareEndpoints(endpoint.uia(), other, other_endpoint.uia()) }
     }
 
     fn expand(&self, unit: TextUnit) -> windows::core::Result<()> {
-        count(CallKind::Uia);
+        count(CallKind::Uia)?;
         // SAFETY: as in `clone_range`; the unit is a plain value.
         unsafe { self.ExpandToEnclosingUnit(unit) }
     }
 
     fn move_by(&self, unit: TextUnit, count_by: i32) -> windows::core::Result<i32> {
-        count(CallKind::Uia);
+        count(CallKind::Uia)?;
         // SAFETY: as in `expand`.
         let moved = unsafe { self.Move(unit, count_by) }?;
         Ok(signed_move(count_by, moved))
@@ -339,7 +339,7 @@ impl TextRangeExt for IUIAutomationTextRange {
         other: &IUIAutomationTextRange,
         other_endpoint: Endpoint,
     ) -> windows::core::Result<()> {
-        count(CallKind::Uia);
+        count(CallKind::Uia)?;
         // SAFETY: as in `compare_endpoints`.
         unsafe { self.MoveEndpointByRange(endpoint.uia(), other, other_endpoint.uia()) }
     }
@@ -350,27 +350,27 @@ impl TextRangeExt for IUIAutomationTextRange {
         unit: TextUnit,
         count_by: i32,
     ) -> windows::core::Result<i32> {
-        count(CallKind::Uia);
+        count(CallKind::Uia)?;
         // SAFETY: as in `expand`.
         let moved = unsafe { self.MoveEndpointByUnit(endpoint.uia(), unit, count_by) }?;
         Ok(signed_move(count_by, moved))
     }
 
     fn text(&self, max: i32) -> windows::core::Result<Vec<u16>> {
-        count(CallKind::Uia);
+        count(CallKind::Uia)?;
         // SAFETY: as in `clone_range`; the returned string is owned here.
         let text = unsafe { self.GetText(max) }?;
         Ok(text.to_vec())
     }
 
     fn select(&self) -> windows::core::Result<()> {
-        count(CallKind::Uia);
+        count(CallKind::Uia)?;
         // SAFETY: as in `clone_range`.
         unsafe { self.Select() }
     }
 
     fn bounding_rectangles(&self) -> windows::core::Result<Vec<f64>> {
-        count(CallKind::Uia);
+        count(CallKind::Uia)?;
         // SAFETY: as in `clone_range`; the returned array of doubles is owned
         // here and taken, destroyed once, by the helper.
         let array = unsafe { self.GetBoundingRectangles() }?;
@@ -380,7 +380,7 @@ impl TextRangeExt for IUIAutomationTextRange {
     }
 
     fn attribute(&self, attribute: UIA_TEXTATTRIBUTE_ID) -> windows::core::Result<VARIANT> {
-        count(CallKind::Uia);
+        count(CallKind::Uia)?;
         // SAFETY: as in `clone_range`; the attribute id is a plain value.
         unsafe { self.GetAttributeValue(attribute) }
     }
@@ -391,7 +391,7 @@ impl TextRangeExt for IUIAutomationTextRange {
     ) -> windows::core::Result<Vec<VARIANT>> {
         // A local query of the client's range object.
         if let Ok(range) = self.cast::<IUIAutomationTextRange3>() {
-            count(CallKind::Uia);
+            count(CallKind::Uia)?;
             // SAFETY: `range` is a live range; the ids are plain values, and
             // the returned SAFEARRAY is owned here.
             match unsafe { range.GetAttributeValues(attributes) } {
@@ -423,7 +423,7 @@ impl TextRangeExt for IUIAutomationTextRange {
         text: &str,
         backward: bool,
     ) -> windows::core::Result<Option<IUIAutomationTextRange>> {
-        count(CallKind::Uia);
+        count(CallKind::Uia)?;
         // SAFETY: as in `clone_range`; the string is owned for the call.
         match unsafe { self.FindText(&BSTR::from(text), backward, false) } {
             Ok(range) => Ok(Some(range)),
@@ -442,7 +442,7 @@ impl TextRangeExt for IUIAutomationTextRange {
     }
 
     fn language(&self) -> windows::core::Result<Language> {
-        count(CallKind::Uia);
+        count(CallKind::Uia)?;
         // SAFETY: as in `clone_range`; the attribute id is a plain value.
         let value = unsafe { self.GetAttributeValue(UIA_CultureAttributeId) }?;
         if crate::is_mixed(&value) {

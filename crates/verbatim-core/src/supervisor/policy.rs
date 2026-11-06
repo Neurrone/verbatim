@@ -18,9 +18,9 @@ pub enum WedgeReason {
     /// No pong for the supervisor's `MISSED_PONG_THRESHOLD`
     /// consecutive ping intervals: the outpost stopped answering.
     MissedHeartbeats,
-    /// The most recent pong reported at least
-    /// the supervisor's `ABANDONED_WORKER_LIMIT` abandoned
-    /// workers.
+    /// The most recent pong reported at least the supervisor's
+    /// `ABANDONED_WORKER_LIMIT` workers parked on windows the outpost did
+    /// not judge hung ([`Parked::other`]).
     AbandonedWorkers,
 }
 
@@ -42,8 +42,25 @@ pub struct WedgeLimits {
     pub ping_interval: Duration,
     /// How many ping intervals may pass with no pong.
     pub missed_pongs: u32,
-    /// How many abandoned workers make an outpost stuck.
+    /// How many workers parked on windows not judged hung make an outpost
+    /// stuck.
     pub abandoned_workers: usize,
+}
+
+/// The workers an outpost's last pong reported parked, abandoned to calls
+/// they have not returned from, by whether the outpost judged the window
+/// each is parked on hung.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Parked {
+    /// Parked on windows the outpost judged hung. They never count against
+    /// the outpost: the outpost is the one judge of a hung window, a
+    /// replacement would park on the same windows, and each later program
+    /// on a hung window is refused before its first call, so these stay
+    /// bounded.
+    pub on_hung: usize,
+    /// Parked for any other reason: a deadline passed, or the user moved
+    /// on. These count against [`WedgeLimits::abandoned_workers`].
+    pub other: usize,
 }
 
 /// Microseconds from `earlier` to `later` on the run's shared clock, none
@@ -58,20 +75,18 @@ fn after_us(at_us: u64, wait: Duration) -> u64 {
 }
 
 /// Whether an outpost should be killed, and why: given its last pong time
-/// and now, in microseconds on the run's shared clock, and its last
-/// reported count of abandoned workers. Abandoned workers are checked
-/// first, as the more specific diagnosis, and do not count while the
-/// application's own windows are reported hung, since a replacement
-/// outpost would hang the same way.
+/// and now, in microseconds on the run's shared clock, and the workers its
+/// last pong reported parked. Only the workers parked on windows the
+/// outpost did not judge hung count ([`Parked`]); they are checked first,
+/// as the more specific diagnosis.
 #[must_use]
 pub fn wedge_decision(
     last_pong_us: u64,
     now_us: u64,
     limits: WedgeLimits,
-    abandoned: usize,
-    application_hung: bool,
+    parked: Parked,
 ) -> Option<WedgeReason> {
-    if abandoned >= limits.abandoned_workers && !application_hung {
+    if parked.other >= limits.abandoned_workers {
         return Some(WedgeReason::AbandonedWorkers);
     }
     if since_us(last_pong_us, now_us) >= limits.ping_interval.saturating_mul(limits.missed_pongs) {
@@ -104,10 +119,10 @@ impl Liveness {
     }
 
     /// Whether it has missed its pings at `now_us`
-    /// ([`wedge_decision`], with no abandoned workers).
+    /// ([`wedge_decision`], with no parked workers).
     #[must_use]
     pub fn wedged(&self, now_us: u64, limits: WedgeLimits) -> Option<WedgeReason> {
-        wedge_decision(self.last_pong_us, now_us, limits, 0, false)
+        wedge_decision(self.last_pong_us, now_us, limits, Parked::default())
     }
 }
 
@@ -423,10 +438,15 @@ mod tests {
     /// One second, in microseconds.
     const SECOND: u64 = 1_000_000;
 
+    /// Parked workers other than those on hung windows.
+    fn others(other: usize) -> Parked {
+        Parked { on_hung: 0, other }
+    }
+
     #[test]
     fn a_recent_pong_with_few_abandoned_workers_is_healthy() {
         assert_eq!(
-            wedge_decision(START, START + SECOND, LIMITS, 7, false),
+            wedge_decision(START, START + SECOND, LIMITS, others(7)),
             None
         );
     }
@@ -434,32 +454,48 @@ mod tests {
     #[test]
     fn nine_seconds_without_a_pong_is_a_wedge() {
         let nine = START + 9 * SECOND;
-        assert_eq!(wedge_decision(START, nine - 1, LIMITS, 0, false), None);
+        assert_eq!(wedge_decision(START, nine - 1, LIMITS, others(0)), None);
         assert_eq!(
-            wedge_decision(START, nine, LIMITS, 0, false),
+            wedge_decision(START, nine, LIMITS, others(0)),
             Some(WedgeReason::MissedHeartbeats)
         );
     }
 
+    /// Only the workers parked on windows the outpost did not judge hung
+    /// count against the limit of eight: eight on hung windows and seven
+    /// others are not a wedge, and one more of the others is.
     #[test]
-    fn eight_abandoned_workers_are_a_wedge_unless_the_application_is_hung() {
+    fn only_workers_parked_on_windows_not_judged_hung_count_toward_the_limit() {
         assert_eq!(
-            wedge_decision(START, START, LIMITS, 8, false),
-            Some(WedgeReason::AbandonedWorkers)
+            wedge_decision(
+                START,
+                START,
+                LIMITS,
+                Parked {
+                    on_hung: 8,
+                    other: 7
+                }
+            ),
+            None
         );
-        assert_eq!(wedge_decision(START, START, LIMITS, 8, true), None);
-        // A hung application does not excuse an outpost that stopped
-        // answering pings altogether.
         assert_eq!(
-            wedge_decision(START, START + 9 * SECOND, LIMITS, 8, true),
-            Some(WedgeReason::MissedHeartbeats)
+            wedge_decision(
+                START,
+                START,
+                LIMITS,
+                Parked {
+                    on_hung: 8,
+                    other: 8
+                }
+            ),
+            Some(WedgeReason::AbandonedWorkers)
         );
     }
 
     #[test]
     fn a_now_before_the_last_pong_never_panics() {
         let earlier = START - 5 * SECOND;
-        assert_eq!(wedge_decision(START, earlier, LIMITS, 0, false), None);
+        assert_eq!(wedge_decision(START, earlier, LIMITS, others(0)), None);
     }
 
     #[test]

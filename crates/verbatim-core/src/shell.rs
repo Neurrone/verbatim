@@ -12,7 +12,7 @@
 //! (`books/dev/src/explanation/design/ownership.md`).
 
 use verbatim_model::{
-    Earcon, Effect, GuiRequest, Input, LockKey, Message, Phrase, Script, SegmentContent,
+    Earcon, Effect, GuiRequest, Input, LockKey, Message, Phrase, Pid, Script, SegmentContent,
     ShellItemKind, SpeechPriority, TraceId, Utterance, UtteranceSegment,
 };
 
@@ -28,7 +28,7 @@ pub(crate) fn reduce(state: &mut SrState, input: &Input) -> Vec<Effect> {
             exiting(*replaced)
         }
         Input::ErrorLogged => error_logged(),
-        Input::ApplicationNotResponding { .. } => not_responding(),
+        Input::ApplicationNotResponding { process, .. } => not_responding(state, *process),
         Input::ToggleKeyPressed {
             toggle,
             pressed_at_ms,
@@ -146,10 +146,21 @@ fn error_logged() -> Vec<Effect> {
     vec![Effect::PlayEarcon(Earcon::Error)]
 }
 
-/// An application stopped responding: reported once per stall, which the
-/// shell has already judged.
-fn not_responding() -> Vec<Effect> {
-    vec![Effect::PlayEarcon(Earcon::AppNotResponding)]
+/// A window of `process` stopped responding, which its outpost reports
+/// once per hang: the sound, only if `process` holds attention now, so a
+/// hang met while its application is in the background is never sounded,
+/// even after the user returns to it (Dickson, 2026-11-06). With no
+/// attention yet, no application holds it.
+fn not_responding(state: &SrState, process: Pid) -> Vec<Effect> {
+    if state
+        .foreground
+        .attention()
+        .is_some_and(|attention| attention.source == process)
+    {
+        vec![Effect::PlayEarcon(Earcon::AppNotResponding)]
+    } else {
+        Vec::new()
+    }
 }
 
 /// A lock key's new state ("caps lock on"), interrupting, as NVDA

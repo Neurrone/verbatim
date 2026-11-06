@@ -6786,8 +6786,8 @@ fn an_activation_says_its_action_activate_or_no_action() {
             vec![message(verbatim_model::Message::NoAction)]
         );
     }
-    // The activation started and passed its deadline: whether it happened
-    // is unknown, so nothing is said either way.
+    // The activation was abandoned, or refused because its window is
+    // hung: whether it happened is unknown, so nothing is said either way.
     assert_eq!(answered(QueryOutcome::Abandoned), []);
 }
 

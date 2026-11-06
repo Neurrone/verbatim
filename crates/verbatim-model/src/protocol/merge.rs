@@ -142,6 +142,7 @@ impl Merge for OutpostToCore {
             | OutpostToCore::Event { .. }
             | OutpostToCore::Pong { .. }
             | OutpostToCore::Fault { .. }
+            | OutpostToCore::NotResponding { .. }
             | OutpostToCore::TargetExited => Barrier::None,
         }
     }

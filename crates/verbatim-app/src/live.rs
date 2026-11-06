@@ -1,8 +1,7 @@
 //! The outpost generations the reducer thread treats as live (outpost
 //! redesign, "The app shell"): started and not yet ended, with the
 //! application each watches, whether it is ready, the bookkeeping for the
-//! nodes held in it and the details it was told to read, and whether its
-//! application has stopped responding.
+//! nodes held in it and the details it was told to read.
 //!
 //! This is the one owner of the rule that a message from an outpost that
 //! has ended never reaches the reducer, even when it arrives after its
@@ -26,9 +25,6 @@ pub(crate) struct Live {
     /// The held nodes and text anchors last left for it, and the position
     /// acknowledged then ([`Live::held_changed`]).
     held_left: (BTreeSet<u64>, BTreeSet<u64>, u64),
-    /// Whether its last query passed its deadline with no answer since:
-    /// the application is not responding.
-    stalled: bool,
     /// The details to read last sent to it, `None` before the first.
     pub(crate) fetches_sent: Option<Fetches>,
 }
@@ -122,28 +118,9 @@ impl LiveOutposts {
                 application: None,
                 position: 0,
                 held_left: (BTreeSet::new(), BTreeSet::new(), 0),
-                stalled: false,
                 fetches_sent: None,
             }),
         );
-    }
-
-    /// Records that a query to `outpost` passed its deadline (the outpost's
-    /// watchdog abandoned it): whether the application has only now stopped
-    /// responding, so "not responding" is reported once per stall rather
-    /// than for every query that times out during it.
-    pub(crate) fn query_abandoned(&mut self, outpost: OutpostId) -> bool {
-        self.outposts
-            .get_mut(&outpost)
-            .map(Generation::live_mut)
-            .is_some_and(|live| !std::mem::replace(&mut live.stalled, true))
-    }
-
-    /// Records that `outpost` answered: its application responds again.
-    pub(crate) fn answered(&mut self, outpost: OutpostId) {
-        if let Some(live) = self.outposts.get_mut(&outpost).map(Generation::live_mut) {
-            live.stalled = false;
-        }
     }
 
     /// Whether a message from `outpost` may reach the reducer: only while
@@ -302,23 +279,6 @@ mod tests {
         assert_eq!(live.application_of(OutpostId(3)), Some(Pid(20)));
         assert_eq!(live.application_of(OutpostId(4)), Some(Pid(20)));
         assert_eq!(live.target_for(Pid(41)), Pid(41), "no outpost serves it");
-    }
-
-    #[test]
-    fn a_stall_is_reported_once_until_the_outpost_answers_again() {
-        let mut live = LiveOutposts::default();
-        live.started(OutpostId(2), Pid(7));
-        assert!(live.query_abandoned(OutpostId(2)), "the stall begins");
-        assert!(
-            !live.query_abandoned(OutpostId(2)),
-            "a second timeout in the same stall"
-        );
-        live.answered(OutpostId(2));
-        assert!(live.query_abandoned(OutpostId(2)), "a new stall");
-        assert!(
-            !live.query_abandoned(OutpostId(9)),
-            "an outpost that is not live"
-        );
     }
 
     #[test]

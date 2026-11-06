@@ -143,7 +143,7 @@ fn found(
 
 impl ElementExt for IUIAutomationElement {
     fn current_control_type(&self) -> windows::core::Result<UIA_CONTROLTYPE_ID> {
-        count(CallKind::Uia);
+        count(CallKind::Uia)?;
         // SAFETY: `self` is a live element (see the module comment).
         unsafe { self.CurrentControlType() }
     }
@@ -152,7 +152,7 @@ impl ElementExt for IUIAutomationElement {
         &self,
         property: UIA_PROPERTY_ID,
     ) -> windows::core::Result<Option<i32>> {
-        count(CallKind::Uia);
+        count(CallKind::Uia)?;
         // SAFETY: `self` is a live element (see the module comment); the
         // property id is a plain value.
         let value = unsafe { self.GetCurrentPropertyValueEx(property, true) }?;
@@ -160,7 +160,7 @@ impl ElementExt for IUIAutomationElement {
     }
 
     fn current_bool(&self, property: UIA_PROPERTY_ID) -> windows::core::Result<bool> {
-        count(CallKind::Uia);
+        count(CallKind::Uia)?;
         // SAFETY: `self` is a live element (see the module comment); the
         // property id is a plain value.
         let value = unsafe { self.GetCurrentPropertyValue(property) }?;
@@ -168,7 +168,7 @@ impl ElementExt for IUIAutomationElement {
     }
 
     fn has_keyboard_focus(&self) -> windows::core::Result<bool> {
-        count(CallKind::Uia);
+        count(CallKind::Uia)?;
         // SAFETY: `self` is a live element (see the module comment).
         unsafe { self.CurrentHasKeyboardFocus() }.map(windows::core::BOOL::as_bool)
     }
@@ -177,21 +177,21 @@ impl ElementExt for IUIAutomationElement {
         &self,
         cache: &IUIAutomationCacheRequest,
     ) -> windows::core::Result<IUIAutomationElement> {
-        count(CallKind::Uia);
+        count(CallKind::Uia)?;
         // SAFETY: `self` and `cache` are live COM objects (see the module
         // comment); a gone element fails the call.
         unsafe { self.BuildUpdatedCache(cache) }
     }
 
     fn current_pattern<T: Interface>(&self, pattern: UIA_PATTERN_ID) -> windows::core::Result<T> {
-        count(CallKind::Uia);
+        count(CallKind::Uia)?;
         // SAFETY: `self` is a live element; the pattern object is queried
         // for `T`'s own interface id, so the returned value is a `T`.
         unsafe { self.GetCurrentPatternAs::<T>(pattern) }
     }
 
     fn controller_for(&self) -> windows::core::Result<Vec<IUIAutomationElement>> {
-        count(CallKind::Uia);
+        count(CallKind::Uia)?;
         // SAFETY: `self` is a live element (see the module comment).
         let array = unsafe { self.CurrentControllerFor() }?;
         Ok(elements_of(&array))
@@ -202,7 +202,7 @@ impl ElementExt for IUIAutomationElement {
         scope: TreeScope,
         condition: &IUIAutomationCondition,
     ) -> windows::core::Result<Option<IUIAutomationElement>> {
-        count(CallKind::Uia);
+        count(CallKind::Uia)?;
         // SAFETY: `self` and `condition` are live COM objects (see the
         // module comment); `scope` is a plain value.
         found(unsafe { self.FindFirst(scope, condition) })
@@ -214,7 +214,7 @@ impl ElementExt for IUIAutomationElement {
         condition: &IUIAutomationCondition,
         cache: &IUIAutomationCacheRequest,
     ) -> windows::core::Result<Option<IUIAutomationElement>> {
-        count(CallKind::Uia);
+        count(CallKind::Uia)?;
         // SAFETY: as in `find_first`.
         found(unsafe { self.FindFirstBuildCache(scope, condition, cache) })
     }
@@ -302,7 +302,7 @@ impl WalkerExt for IUIAutomationTreeWalker {
         element: &IUIAutomationElement,
         cache: &IUIAutomationCacheRequest,
     ) -> windows::core::Result<IUIAutomationElement> {
-        count(CallKind::Uia);
+        count(CallKind::Uia)?;
         // SAFETY: the walker, `element`, and `cache` are live COM objects
         // (see the module comment).
         unsafe { self.GetParentElementBuildCache(element, cache) }
@@ -313,7 +313,7 @@ impl WalkerExt for IUIAutomationTreeWalker {
         element: &IUIAutomationElement,
         cache: &IUIAutomationCacheRequest,
     ) -> windows::core::Result<IUIAutomationElement> {
-        count(CallKind::Uia);
+        count(CallKind::Uia)?;
         // SAFETY: as in `parent`.
         unsafe { self.GetNextSiblingElementBuildCache(element, cache) }
     }
@@ -323,7 +323,7 @@ impl WalkerExt for IUIAutomationTreeWalker {
         element: &IUIAutomationElement,
         cache: &IUIAutomationCacheRequest,
     ) -> windows::core::Result<IUIAutomationElement> {
-        count(CallKind::Uia);
+        count(CallKind::Uia)?;
         // SAFETY: as in `parent`.
         unsafe { self.GetPreviousSiblingElementBuildCache(element, cache) }
     }
@@ -333,7 +333,7 @@ impl WalkerExt for IUIAutomationTreeWalker {
         element: &IUIAutomationElement,
         cache: &IUIAutomationCacheRequest,
     ) -> windows::core::Result<IUIAutomationElement> {
-        count(CallKind::Uia);
+        count(CallKind::Uia)?;
         // SAFETY: as in `parent`.
         unsafe { self.GetFirstChildElementBuildCache(element, cache) }
     }
@@ -343,7 +343,7 @@ impl WalkerExt for IUIAutomationTreeWalker {
         element: &IUIAutomationElement,
         cache: &IUIAutomationCacheRequest,
     ) -> windows::core::Result<IUIAutomationElement> {
-        count(CallKind::Uia);
+        count(CallKind::Uia)?;
         // SAFETY: as in `parent`.
         unsafe { self.NormalizeElementBuildCache(element, cache) }
     }
@@ -354,7 +354,7 @@ impl WalkerExt for IUIAutomationTreeWalker {
 pub(crate) fn current_selection(
     pattern: &IUIAutomationSelectionPattern,
 ) -> windows::core::Result<Vec<IUIAutomationElement>> {
-    count(CallKind::Uia);
+    count(CallKind::Uia)?;
     // SAFETY: `pattern` is a live pattern object (see the module comment).
     let array = unsafe { pattern.GetCurrentSelection() }?;
     Ok(elements_of(&array))
@@ -362,21 +362,21 @@ pub(crate) fn current_selection(
 
 /// Invokes an `Invoke` pattern. Cross-process.
 pub(crate) fn invoke(pattern: &IUIAutomationInvokePattern) -> windows::core::Result<()> {
-    count(CallKind::Uia);
+    count(CallKind::Uia)?;
     // SAFETY: `pattern` is a live pattern object (see the module comment).
     unsafe { pattern.Invoke() }
 }
 
 /// Toggles a `Toggle` pattern. Cross-process.
 pub(crate) fn toggle(pattern: &IUIAutomationTogglePattern) -> windows::core::Result<()> {
-    count(CallKind::Uia);
+    count(CallKind::Uia)?;
     // SAFETY: `pattern` is a live pattern object (see the module comment).
     unsafe { pattern.Toggle() }
 }
 
 /// Selects a `SelectionItem` pattern's element. Cross-process.
 pub(crate) fn select(pattern: &IUIAutomationSelectionItemPattern) -> windows::core::Result<()> {
-    count(CallKind::Uia);
+    count(CallKind::Uia)?;
     // SAFETY: `pattern` is a live pattern object (see the module comment).
     unsafe { pattern.Select() }
 }
@@ -385,7 +385,7 @@ pub(crate) fn select(pattern: &IUIAutomationSelectionItemPattern) -> windows::co
 pub(crate) fn visible_ranges(
     pattern: &IUIAutomationTextPattern,
 ) -> windows::core::Result<Vec<IUIAutomationTextRange>> {
-    count(CallKind::Uia);
+    count(CallKind::Uia)?;
     // SAFETY: `pattern` is a live pattern object (see the module comment).
     let array = unsafe { pattern.GetVisibleRanges() }?;
     Ok(ranges_of(&array))
@@ -407,7 +407,7 @@ pub(crate) fn attribute_value(
     range: &IUIAutomationTextRange,
     attribute: UIA_TEXTATTRIBUTE_ID,
 ) -> windows::core::Result<VARIANT> {
-    count(CallKind::Uia);
+    count(CallKind::Uia)?;
     // SAFETY: `range` is a live text range (see the module comment).
     unsafe { range.GetAttributeValue(attribute) }
 }

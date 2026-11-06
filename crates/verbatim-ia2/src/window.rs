@@ -54,6 +54,9 @@ pub(crate) enum Unanswered {
     NotResponding,
     /// The send failed for another reason.
     Failed,
+    /// The worker sending it was abandoned: nothing was sent
+    /// (`verbatim_win32::calls`).
+    Abandoned,
 }
 
 /// The time limit a message is sent with: the largest that waits, about 24.8
@@ -91,7 +94,7 @@ pub(crate) unsafe fn send_message(
     (wparam, lparam): (usize, isize),
     buffer: Option<(u32, usize)>,
 ) -> Result<isize, Unanswered> {
-    match verbatim_win32::window::readability(hwnd) {
+    match verbatim_win32::calls::message_readability(hwnd) {
         verbatim_win32::window::Readability::Readable => {}
         verbatim_win32::window::Readability::Gone => return Err(Unanswered::Gone),
         verbatim_win32::window::Readability::Ghosted
@@ -111,7 +114,7 @@ pub(crate) unsafe fn send_message(
             return Err(Unanswered::Gone);
         }
     }
-    count(CallKind::WindowMessage);
+    count(CallKind::WindowMessage).map_err(|_| Unanswered::Abandoned)?;
     #[cfg(any(test, feature = "faults"))]
     verbatim_faults::reach(
         verbatim_faults::Fault::WindowMessageSent,

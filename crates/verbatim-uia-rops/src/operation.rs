@@ -382,7 +382,8 @@ impl Operation {
         }
         // One cross-process round trip, counted as one UIA call
         // (`books/dev/src/reference/performance.md`).
-        verbatim_uia::calls::count(verbatim_model::CallKind::Uia);
+        verbatim_uia::calls::count(verbatim_model::CallKind::Uia)
+            .map_err(|refused| Error::Execute(refused.into()))?;
         // From its arrival in the application until UIA begins evaluating
         // it there, a remote operation makes every new UIA connection from
         // another process to the application fail without an error, a

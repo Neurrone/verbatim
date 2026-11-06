@@ -717,6 +717,7 @@ mod tests {
         outbound.urgent(Urgent::Pong {
             seq: 3,
             parked_count: 0,
+            parked_on_hung: 0,
         });
         assert_eq!(summary(&read(&mut reader)), summary(&large()));
         assert!(
@@ -756,6 +757,7 @@ mod tests {
         outbound.urgent(Urgent::Pong {
             seq: 3,
             parked_count: 0,
+            parked_on_hung: 0,
         });
         assert_eq!(summary(&read(&mut reader)), summary(&large()));
         assert!(

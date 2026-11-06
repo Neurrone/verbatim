@@ -480,6 +480,9 @@ pub(crate) fn message_error(unanswered: Unanswered, what: &str, msg: u32) -> Edi
         Unanswered::Gone => EditError::Gone,
         Unanswered::NotResponding => EditError::NotResponding,
         Unanswered::Failed => EditError::Failed(format!("{what} did not answer message {msg:#x}")),
+        Unanswered::Abandoned => {
+            EditError::Failed("the worker was abandoned; nothing was sent".to_owned())
+        }
     }
 }
 

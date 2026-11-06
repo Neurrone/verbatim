@@ -42,6 +42,9 @@ pub enum RawProbe {
     Gone,
     /// The message failed with another error, or with none set.
     Failed(u32),
+    /// The worker making it was abandoned, so nothing was sent
+    /// (`verbatim_win32::calls`): no fact about the window.
+    Abandoned,
 }
 
 impl RawProbe {
@@ -105,7 +108,9 @@ pub fn raw_probe(hwnd: isize) -> RawProbe {
     // UIA's first-time setup happens where it always has, though this
     // probe does not use UIA.
     let _ = crate::client::ensure_ready();
-    crate::calls::count(CallKind::WindowMessage);
+    if crate::calls::count(CallKind::WindowMessage).is_err() {
+        return RawProbe::Abandoned;
+    }
     let mut answer = 0usize;
     // SAFETY: sets this thread's last error, so an error read after a
     // failure is this call's.

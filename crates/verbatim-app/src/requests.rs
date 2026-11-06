@@ -132,7 +132,7 @@ fn describe(outcome: &QueryOutcome) -> String {
         QueryOutcome::Gone => "the node or its outpost is gone".to_owned(),
         QueryOutcome::Failed(reason) => reason.clone(),
         QueryOutcome::NotStarted => "the query was withdrawn before it started".to_owned(),
-        QueryOutcome::Abandoned => "the query passed its deadline".to_owned(),
+        QueryOutcome::Abandoned => "the query was abandoned: it passed its deadline, its window is not responding, or the user moved on".to_owned(),
         QueryOutcome::Done(_) => "the query returned an unexpected answer".to_owned(),
     }
 }

@@ -317,11 +317,11 @@ Milestone M4's themes and earcons are wired here too
   with `play_earcon_heard`, one record to the mixer that never waits, and
   hands its `EarconHeard` back, on which the main thread waits until it
   has been heard, for at most two seconds; and
-  an application not responding (`Input::ApplicationNotResponding`) when
-  the outpost's watchdog abandons a query that passed its deadline
-  (`QueryOutcome::Abandoned`), once per stall: `LiveOutposts` marks the
-  outpost stalled and clears the mark when it answers a query or reports
-  an event.
+  a window not responding: the outpost's `OutpostToCore::NotResponding`,
+  sent once per hang, is applied as `Input::ApplicationNotResponding`
+  with the outpost's target process, and Core plays the sound only if
+  that process holds attention. An abandoned query
+  (`QueryOutcome::Abandoned`) plays nothing.
 - The build script copies the top-level `sounds` folder next to the
   executables in the cargo target directory, so `target\debug` holds
   everything a run needs, and the end-to-end staging and the VM deploy

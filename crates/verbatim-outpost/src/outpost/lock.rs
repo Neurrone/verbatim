@@ -111,7 +111,7 @@ mod tests {
         let guard = lock.lock();
         let called_at = line!() + 2;
         let payload = std::panic::catch_unwind(|| {
-            verbatim_uia::calls::count(verbatim_model::CallKind::Uia);
+            let _ = verbatim_uia::calls::count(verbatim_model::CallKind::Uia);
         })
         .expect_err("the counted call panicked");
         drop(guard);
@@ -133,7 +133,7 @@ mod tests {
         drop(held_a);
         let called_at = line!() + 2;
         let payload = std::panic::catch_unwind(|| {
-            verbatim_uia::calls::count(verbatim_model::CallKind::Uia);
+            let _ = verbatim_uia::calls::count(verbatim_model::CallKind::Uia);
         })
         .expect_err("the counted call panicked");
         drop(held_b);
@@ -166,7 +166,7 @@ mod tests {
     fn child_program() {
         let lock = Lock::new(());
         let _guard = lock.lock();
-        verbatim_uia::calls::count(verbatim_model::CallKind::Uia);
+        let _ = verbatim_uia::calls::count(verbatim_model::CallKind::Uia);
     }
 
     /// The environment variable that makes [`lock_check_child`] run.

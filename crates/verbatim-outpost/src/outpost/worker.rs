@@ -86,8 +86,8 @@ use verbatim_reader_rules::acceptance::{self, EventName};
 use verbatim_win32::window::SystemWindows;
 use verbatim_win32::window::window_class_name;
 use verbatim_win32::window::{
-    event_window_unreadable, foreground_window_handle, top_level_of,
-    window_belongs_to_hidden_frame, window_exists, window_is_hidden_frame,
+    foreground_window_handle, top_level_of, window_belongs_to_hidden_frame, window_exists,
+    window_is_hidden_frame,
 };
 
 pub(super) use super::reducer::is_state_property;
@@ -111,10 +111,29 @@ pub(super) struct Charge {
 #[derive(Default)]
 struct ChargeState {
     /// Whether the generation was abandoned: its walk stops at its next
-    /// step, and its commits are refused.
+    /// step, its commits are refused, and its gate refuses every counted
+    /// call (`verbatim_win32::calls`).
     dead: bool,
     /// The walk armed, if any.
     walk: Option<Slot>,
+    /// The window the program in hand calls into, as its worker named it,
+    /// and what the program found there.
+    named: Option<Named>,
+}
+
+/// The window a program names in its charge before its first call there,
+/// keyed by its request so a judgement never reads an earlier program's,
+/// with what the program found of it: the evidence its commits name for
+/// the reducer's record of hung windows.
+#[derive(Clone, Copy, Debug)]
+struct Named {
+    request: Request,
+    window: verbatim_reader_rules::Window,
+    /// Its check before a call found the window hung or ghosted.
+    hung: bool,
+    /// A counted call was made since the window was named, and returned,
+    /// since the program goes on only once it has.
+    called: bool,
 }
 
 /// A focus walk's slot.
@@ -164,6 +183,58 @@ impl Charge {
     /// The generation is abandoned.
     pub(super) fn abandon(&self) {
         self.lock().dead = true;
+    }
+
+    /// `request`'s program calls into `window` from now on, `None` for
+    /// none: what its judgement reads, and its commits name.
+    pub(super) fn name(&self, request: Request, window: Option<verbatim_reader_rules::Window>) {
+        self.lock().named = window.map(|window| Named {
+            request,
+            window,
+            hung: false,
+            called: false,
+        });
+    }
+
+    /// The window `request`'s program named, if it is the program in hand.
+    pub(super) fn named(&self, request: Request) -> Option<verbatim_reader_rules::Window> {
+        self.lock()
+            .named
+            .filter(|named| named.request == request)
+            .map(|named| named.window)
+    }
+
+    /// What `request`'s program found of its window: hung at a check, or
+    /// answering a call it made.
+    pub(super) fn found(
+        &self,
+        request: Request,
+    ) -> Option<(verbatim_reader_rules::Window, reducer::Found)> {
+        let named = self.lock().named.filter(|named| named.request == request)?;
+        if named.hung {
+            Some((named.window, reducer::Found::Hung))
+        } else {
+            named
+                .called
+                .then_some((named.window, reducer::Found::Answered))
+        }
+    }
+
+    /// A counted call is made by the program in hand.
+    fn calling(&self) {
+        if let Some(named) = self.lock().named.as_mut() {
+            named.called = true;
+        }
+    }
+
+    /// Window `hwnd` was found hung at a check before a call into it: so
+    /// was the program's own, when it is that one.
+    pub(super) fn found_hung(&self, hwnd: isize) {
+        if let Some(named) = self.lock().named.as_mut()
+            && named.window.get() == hwnd
+        {
+            named.hung = true;
+        }
     }
 
     /// Arms the walk of `request` as `progress`, unless the generation was
@@ -261,15 +332,41 @@ pub(super) fn spawn(
     ) {
         return Err(std::io::Error::from_raw_os_error(ERROR_NOT_ENOUGH_MEMORY));
     }
-    #[cfg(not(any(test, feature = "faults")))]
-    let _ = generation;
     thread::Builder::new()
         .name(WORKER_THREAD.to_owned())
-        .spawn(move || run(&context, warm, &jobs, &charge))
+        .spawn(move || run(&context, (generation, warm), &jobs, &charge))
 }
 
 /// A worker's thread name.
 const WORKER_THREAD: &str = "verbatim-worker";
+
+/// The call gate a worker installs on its thread
+/// (`verbatim_win32::calls`), bound to its charge: once its generation is
+/// abandoned it refuses every counted call, and it tests a window message's
+/// window with the outpost's readability reader, telling the charge of a
+/// window found hung.
+struct Gate {
+    context: Arc<Context>,
+    charge: Arc<Charge>,
+}
+
+impl verbatim_win32::calls::Charge for Gate {
+    fn is_dead(&self) -> bool {
+        self.charge.is_dead()
+    }
+
+    fn calling(&self) {
+        self.charge.calling();
+    }
+
+    fn found_hung(&self, hwnd: isize) {
+        self.charge.found_hung(hwnd);
+    }
+
+    fn readability(&self, hwnd: isize) -> verbatim_win32::window::Readability {
+        self.context.readability(hwnd)
+    }
+}
 
 /// The error the system refuses a thread with when it is out of memory,
 /// `ERROR_NOT_ENOUGH_MEMORY`.
@@ -281,10 +378,14 @@ const ERROR_NOT_ENOUGH_MEMORY: i32 = 8;
 /// from its thread-local destructors under the loader lock.
 fn run(
     context: &Arc<Context>,
-    warm: bool,
+    (generation, warm): (u64, bool),
     jobs: &crossbeam_channel::Receiver<Job>,
     charge: &Arc<Charge>,
 ) {
+    verbatim_win32::calls::install(Arc::new(Gate {
+        context: Arc::clone(context),
+        charge: Arc::clone(charge),
+    }));
     // Held objects are agile references, resolved in this apartment.
     let joined = verbatim_uia::init_mta();
     if let Err(error) = &joined {
@@ -304,7 +405,7 @@ fn run(
         run_job(context, &mut client, job, charge);
     }
     if charge.is_dead() {
-        context.mailbox.post(Posted::Returned);
+        context.mailbox.post(Posted::Returned(generation));
     }
     drop(client);
     verbatim_uia::release_thread_state();
@@ -333,15 +434,24 @@ fn run_job(context: &Arc<Context>, client: &mut Client, job: Job, charge: &Arc<C
     drop(garbage);
     let Program {
         request,
+        window,
         facts,
         work,
         waiting,
     } = program;
+    // A program whose entry names its window calls into it; the others
+    // name theirs as they find it.
+    charge.name(request, window);
     let started = Instant::now();
     let description = tracing::enabled!(tracing::Level::DEBUG).then(|| describe(&work));
     let tag = super::shell::tag_of(request);
     let mut request_context =
         RequestContext::for_program(context, tag, (request, facts, waiting), Arc::clone(charge));
+    // A program with no window at dispatch names the one it calls into,
+    // before its first call there, with no call into the application.
+    if window.is_none() {
+        charge.name(request, named_window(&request_context, &work));
+    }
     let mut reported = false;
     let mut cut = None;
     let handled = catching(|| match work {
@@ -415,6 +525,59 @@ fn run_job(context: &Arc<Context>, client: &mut Client, job: Job, charge: &Arc<C
         panicked: handled.is_err(),
         cut,
     });
+}
+
+/// The window a program with none at dispatch calls into, named with no
+/// call into the application: a query's node's own window, or the
+/// application's focus window for focus-now, the gap's read, and a node of
+/// no window of its own; the owed work's and the console poll's node's;
+/// none for a query of no node, or when the application has no focus
+/// window, so the program is judged by its deadline alone.
+fn named_window(context: &RequestContext<'_>, work: &Work) -> Option<Window> {
+    match work {
+        Work::Entry { entry, .. } => match &entry.item {
+            Item::Query { query, .. } => match query {
+                Query::FocusNow => application_focus_window(context),
+                Query::Navigate { node_id, .. }
+                | Query::Activate { node_id }
+                | Query::Ancestors { node_id }
+                | Query::Text { node_id, .. } => node_window(context, *node_id),
+                Query::DumpTree { .. }
+                | Query::ShellItems { .. }
+                | Query::ShellItemPosition { .. } => None,
+            },
+            _ => application_focus_window(context),
+        },
+        Work::Owed(owed) => node_window(context, owed.node),
+        Work::PollRead => context
+            .follow(|follow| follow.watch.open().map(|open| open.node_id))
+            .and_then(|node| node_window(context, node)),
+        Work::Drop | Work::Finish { .. } => None,
+    }
+}
+
+/// Node `node`'s own window, with no call: the window an MSAA node's
+/// object is kept under, or a UIA element's whose runtime id is a window's
+/// (`[42, hwnd]`); else the application's focus window.
+fn node_window(context: &RequestContext<'_>, node: NodeId) -> Option<Window> {
+    if let Some(key) = context.store.key_of(node) {
+        return Window::new(key.0);
+    }
+    if let Some([42, hwnd]) = context.store.runtime_id_of(node).as_deref() {
+        return Window::new(isize::try_from(*hwnd).ok()?);
+    }
+    application_focus_window(context)
+}
+
+/// The application's focus window, with no call into it: the focus window
+/// of the foreground thread when that thread is the application's, else
+/// the top-level window of the focus the outpost expects Core to hold.
+fn application_focus_window(context: &RequestContext<'_>) -> Option<Window> {
+    context
+        .focus_window()
+        .filter(|&hwnd| read::serves(context, hwnd))
+        .and_then(Window::new)
+        .or_else(|| context.held().expected().and_then(|focus| focus.top_level))
 }
 
 /// The observation `entry`'s verdicts are judged at: its event's, for an
@@ -593,13 +756,6 @@ fn event_name_of(kind: WinEventKind) -> Option<EventName> {
         | WinEventKind::ConsoleCaret
         | WinEventKind::ShellForeground => return None,
     })
-}
-
-/// Whether a UIA entry's own window, `hwnd`, belongs to an application the
-/// system reports hung: a local call, never made for 0, which passes, as
-/// NVDA's test passes a sender with no cached window.
-fn hung(hwnd: isize) -> bool {
-    hwnd != 0 && verbatim_win32::window::window_is_hung(hwnd)
 }
 
 /// The name NVDA's acceptance test knows a UIA event of `kind` by, or `None`
@@ -2233,16 +2389,47 @@ impl Worker<'_> {
         accepted
     }
 
-    /// Whether the event's own window, `hwnd`, can be read: NVDA's checks
-    /// after acceptance and before the window's UIA test and the object's
-    /// acquisition (`verbatim_win32::window::event_window_unreadable`). A dropped event is
-    /// logged.
-    fn readable(hwnd: isize) -> bool {
-        let reason = event_window_unreadable(hwnd);
-        if let Some(reason) = reason {
-            tracing::debug!(hwnd, reason, "event dropped: its window cannot be read");
+    /// Whether the event's own window, `hwnd`, can be read, by the
+    /// outpost's reader: NVDA's checks after acceptance and before the
+    /// window's UIA test and the object's acquisition, local calls. A
+    /// dropped event is logged; one whose window is hung or ghosted is the
+    /// evidence of a hang its program's commit names
+    /// ([`hang_found`](Self::hang_found)).
+    fn readable(&self, hwnd: isize) -> bool {
+        let readability = self.context.readability(hwnd);
+        let Some(reason) = readability.reason() else {
+            return true;
+        };
+        tracing::debug!(hwnd, reason, "event dropped: its window cannot be read");
+        if readability.is_hung() {
+            self.hang_found(hwnd);
         }
-        reason.is_none()
+        false
+    }
+
+    /// Whether a UIA entry's own window, `hwnd`, is hung or ghosted, by the
+    /// outpost's reader, local calls never made for 0, which passes, as
+    /// NVDA's test passes a sender with no cached window; a hung window is
+    /// the evidence of a hang its program's commit names.
+    fn hung(&self, hwnd: isize) -> bool {
+        if hwnd == 0 || !self.context.readability(hwnd).is_hung() {
+            return false;
+        }
+        self.hang_found(hwnd);
+        true
+    }
+
+    /// Window `hwnd`, which the program's check found hung before any call
+    /// into it, is named in a commit as hung, for the reducer's record of
+    /// hung windows.
+    fn hang_found(&self, hwnd: isize) {
+        let charge = self.context.charge();
+        let request = self.context.request();
+        if charge.named(request).map(Window::get) != Some(hwnd) {
+            charge.name(request, Window::new(hwnd));
+        }
+        charge.found_hung(hwnd);
+        self.commit(Effects::default());
     }
 
     /// An MSAA event from this outpost's own hooks.
@@ -2306,7 +2493,7 @@ impl Worker<'_> {
         {
             return;
         }
-        if !Self::readable(hwnd) {
+        if !self.readable(hwnd) {
             return;
         }
         // The system caret's event is a caret event on the focus, from
@@ -2760,7 +2947,7 @@ impl Worker<'_> {
         // handlers drop it first, a window of 0 passing untested
         // (`books/dev/src/reference/testing.md`, "The crates on a reducer's path").
         // Its element and range, taken from the store, go with it.
-        if hung(event.hwnd) {
+        if self.hung(event.hwnd) {
             if let UiaKind::ActiveTextPosition(Some(range)) = event.kind {
                 drop(self.context.store.take_parked(range));
             }
@@ -3225,7 +3412,7 @@ impl Worker<'_> {
         // the foreground; the hook that took this one, the outpost's own or
         // the focus listener's, took it only from a tooltip window
         // (`verbatim_ia2::hook`), so it passes.
-        if !Self::readable(hwnd) {
+        if !self.readable(hwnd) {
             return;
         }
         let Some(mut object) = verbatim_ia2::acquire::event_object(hwnd, id_object, id_child)
@@ -3265,7 +3452,7 @@ impl Worker<'_> {
         if super::window::parent_class(hwnd).as_deref() != Some("ToastChildWindowClass") {
             return;
         }
-        if !Self::readable(hwnd) {
+        if !self.readable(hwnd) {
             return;
         }
         let Some(node) = verbatim_ia2::acquire::snapshot_from_event(
@@ -3357,7 +3544,7 @@ impl Worker<'_> {
         // NVDA makes the foreground's object as it makes any MSAA event's
         // (`processForegroundWinEvent` through `winEventToNVDAEvent`): a
         // window gone, ghosted, or hung is dropped before the UIA test.
-        if !Self::readable(hwnd) {
+        if !self.readable(hwnd) {
             return;
         }
         match read::own_window_verdict(self.context, hwnd) {
@@ -3431,7 +3618,7 @@ impl Worker<'_> {
             );
             return;
         }
-        if !Self::readable(hwnd) {
+        if !self.readable(hwnd) {
             return;
         }
         let Some(uia_owns) = read::own_window_verdict(self.context, hwnd) else {
@@ -3641,7 +3828,7 @@ impl Worker<'_> {
         // ([`Self::uia_event`]): one planned before the window became hung
         // is dropped too, rather than published from a walk that met the
         // hang.
-        if hung(read.hwnd) {
+        if self.hung(read.hwnd) {
             tracing::debug!(%trace, hwnd = read.hwnd, "UIA focus dropped: its window is hung");
             return;
         }
@@ -3948,7 +4135,7 @@ impl Worker<'_> {
         if batch == Some(self.batch) && matches!(role, Some(Role::Menu | Role::MenuItem)) {
             return;
         }
-        if !self.accepts(EventName::MenuStart, hwnd) || !Self::readable(hwnd) {
+        if !self.accepts(EventName::MenuStart, hwnd) || !self.readable(hwnd) {
             return;
         }
         // UIA owns this window, or another application does.
@@ -4113,6 +4300,29 @@ impl Worker<'_> {
     /// A query from Core, answered with exactly one reply: at once, or, for
     /// a caret key's watch kept open, when its evidence comes or it ends.
     fn query(&mut self, request_id: RequestId, query: &Query, trace: TraceId) {
+        // The check before the query's first call: a query whose named
+        // window is hung or ghosted is answered abandoned with no call, its
+        // commit naming the window hung, so a query on a hung window parks
+        // no worker. Focus-now answers a hung focus window with the plain
+        // window, from local data, as decided (Dickson, 2026-10-29), so it
+        // is not refused.
+        if !matches!(query, Query::FocusNow)
+            && let Some(window) = self.context.charge().named(self.context.request())
+            && self.context.readability(window.get()).is_hung()
+        {
+            self.context.charge().found_hung(window.get());
+            tracing::debug!(
+                ?query,
+                window = window.get(),
+                "query refused: its window is not responding"
+            );
+            let result = self.reply_message(request_id, trace, QueryOutcome::Abandoned);
+            self.commit(Effects {
+                result: Some(result),
+                ..Effects::default()
+            });
+            return;
+        }
         if let Query::Text {
             node_id,
             op: TextOp::AwaitCaret(watch),

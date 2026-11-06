@@ -83,17 +83,26 @@ pub fn peek_failed_reads() -> u32 {
     FAILED_READS.with(Cell::get)
 }
 
-/// Counts one cross-process call of `kind` on this thread.
+/// Counts one cross-process call of `kind` on this thread, once this
+/// thread's call gate lets it be made (`verbatim_win32::calls`).
+///
+/// # Errors
+///
+/// [`CallError::Abandoned`](verbatim_win32::calls::CallError::Abandoned)
+/// once the outpost worker making it was abandoned: the call is not made,
+/// nor counted.
 #[track_caller]
-pub fn count(kind: CallKind) {
+pub fn count(kind: CallKind) -> Result<(), verbatim_win32::calls::CallError> {
     // No counted call is made under one of the outpost's locks, checked in
     // debug builds.
     verbatim_win32::held_locks::check("a counted call into an application");
+    verbatim_win32::calls::check()?;
     COUNTS.with(|counts| {
         let mut current = counts.get();
         current.record(kind);
         counts.set(current);
     });
+    Ok(())
 }
 
 /// Counts, on this thread, that the call just counted under its kind
@@ -127,8 +136,8 @@ mod tests {
     #[test]
     fn take_returns_and_resets_this_threads_counts() {
         let _ = take();
-        count(CallKind::Uia);
-        count(CallKind::WindowMessage);
+        count(CallKind::Uia).expect("no gate on this thread");
+        count(CallKind::WindowMessage).expect("no gate on this thread");
         count_connection();
         assert_eq!(
             take(),
@@ -140,11 +149,11 @@ mod tests {
             }
         );
         assert!(take().is_empty());
-        count(CallKind::Msaa);
+        count(CallKind::Msaa).expect("no gate on this thread");
         assert_eq!(peek().msaa, 1);
         assert_eq!(take().msaa, 1);
         // Another thread's calls are its own.
-        std::thread::spawn(|| count(CallKind::Uia))
+        std::thread::spawn(|| count(CallKind::Uia).expect("no gate on this thread"))
             .join()
             .expect("the thread ran");
         assert!(take().is_empty());

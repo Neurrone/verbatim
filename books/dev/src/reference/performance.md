@@ -107,6 +107,14 @@ that found nothing and prints them with the caret wait stage. A dialog's
 text is gathered on the worker's own client, its calls counted with the
 rest of its program's.
 
+Every counted call an outpost's worker makes first consults its call gate
+(`verbatim_win32::calls`), which takes the worker's charge's lock, as
+naming the program's window does: uncontended but for the reducer's
+thread, which takes it at each judgement of a program, every half second
+from its grace's end. A window message's window is tested before the
+send, `IsWindow`, the ghost lookup and `IsHungAppWindow`, all local; no
+call into an application and no wake-up is added.
+
 UIA's connection timeout is 2 seconds and its transaction timeout 10 in
 every Verbatim process (`verbatim_uia::UIA_CONNECTION_TIMEOUT` and
 `UIA_TRANSACTION_TIMEOUT`); only an unanswered call is affected.

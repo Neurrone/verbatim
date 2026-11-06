@@ -462,6 +462,11 @@ fn decide(
             None => Verdict::NotUia,
         };
     }
+    if probed == verbatim_uia::RawProbe::Abandoned {
+        // The worker was abandoned: nothing was sent, and nothing is
+        // learned of the window.
+        return Verdict::Unknown;
+    }
     if probed == verbatim_uia::RawProbe::TimedOut {
         // Kept from the probe's end whichever worker probed, so that a busy
         // window is not probed again within half a second of a probe that

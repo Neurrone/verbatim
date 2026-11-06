@@ -53,9 +53,11 @@ fn next(previous: Option<&OutpostToCore>) -> Option<OutpostToCore> {
         OutpostToCore::Reply { .. } => OutpostToCore::Pong {
             seq: 1,
             parked_count: 0,
+            parked_on_hung: 0,
             written_at_us: 0,
         },
-        OutpostToCore::Pong { .. } => OutpostToCore::Fault {
+        OutpostToCore::Pong { .. } => OutpostToCore::NotResponding { window: 0x10 },
+        OutpostToCore::NotResponding { .. } => OutpostToCore::Fault {
             detail: "a fault".to_owned(),
         },
         OutpostToCore::Fault { .. } => OutpostToCore::TargetExited,

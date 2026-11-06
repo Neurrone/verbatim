@@ -1113,14 +1113,33 @@ pub enum OutpostToCore {
     Pong {
         /// The probed sequence number.
         seq: u64,
-        /// How many of this outpost's workers have been abandoned to calls
-        /// that passed their deadline and have not yet returned; the
-        /// supervisor ends an outpost that piles them up.
+        /// How many of this outpost's workers have been abandoned and have
+        /// not yet returned, but for those parked on a window the outpost
+        /// judged hung ([`Self::Pong::parked_on_hung`]): the supervisor
+        /// ends an outpost that piles them up.
         parked_count: usize,
+        /// How many of this outpost's workers were abandoned when the
+        /// outpost judged their window hung and have not yet returned,
+        /// which the supervisor does not count against it: each hung window
+        /// holds at most one, since every later program on it answers at
+        /// its check before its first call.
+        #[serde(default)]
+        parked_on_hung: usize,
         /// When the writer began writing this pong to verbatim.exe's pipe,
         /// in microseconds since the Unix epoch; 0 from an older peer.
         #[serde(default)]
         written_at_us: u64,
+    },
+    /// A window of the outpost's application began a hang: the outpost
+    /// judged it hung during a call, or found it hung at a check before
+    /// one, and holds it in its record of hung windows until a call into it
+    /// returns, it is destroyed, or the outpost ends. Sent once per hang,
+    /// in order with the outpost's events; Core plays the "not responding"
+    /// sound for it only when the window's application holds attention as
+    /// it arrives.
+    NotResponding {
+        /// The window that stopped responding.
+        window: isize,
     },
     /// A backend error worth reporting without dying — a failed event
     /// registration, an arbitration probe that keeps timing out.
@@ -1282,7 +1301,9 @@ impl OutpostToCore {
     pub fn kind(&self) -> Kind {
         match self {
             OutpostToCore::Reply { .. } | OutpostToCore::IdleAnswer { .. } => Kind::Answer,
-            OutpostToCore::Event { .. } | OutpostToCore::Fault { .. } => Kind::Report,
+            OutpostToCore::Event { .. }
+            | OutpostToCore::Fault { .. }
+            | OutpostToCore::NotResponding { .. } => Kind::Report,
             OutpostToCore::Ready { .. }
             | OutpostToCore::SpareReady { .. }
             | OutpostToCore::TargetExited
@@ -1311,6 +1332,7 @@ impl OutpostToCore {
             | OutpostToCore::SpareReady { .. }
             | OutpostToCore::Pong { .. }
             | OutpostToCore::Fault { .. }
+            | OutpostToCore::NotResponding { .. }
             | OutpostToCore::TargetExited
             | OutpostToCore::IdleAnswer { .. } => false,
         }
@@ -1329,6 +1351,7 @@ impl OutpostToCore {
             OutpostToCore::Ready { .. }
             | OutpostToCore::SpareReady { .. }
             | OutpostToCore::Fault { .. }
+            | OutpostToCore::NotResponding { .. }
             | OutpostToCore::TargetExited
             | OutpostToCore::IdleAnswer { .. } => {}
         }
@@ -1384,6 +1407,7 @@ impl OutpostToCore {
             | OutpostToCore::SpareReady { .. }
             | OutpostToCore::Pong { .. }
             | OutpostToCore::Fault { .. }
+            | OutpostToCore::NotResponding { .. }
             | OutpostToCore::TargetExited
             | OutpostToCore::IdleAnswer { .. } => {}
         }
@@ -1567,6 +1591,7 @@ impl OutpostToCore {
             | OutpostToCore::SpareReady { .. }
             | OutpostToCore::Pong { .. }
             | OutpostToCore::Fault { .. }
+            | OutpostToCore::NotResponding { .. }
             | OutpostToCore::TargetExited
             | OutpostToCore::IdleAnswer { .. } => {}
         }
@@ -1673,8 +1698,11 @@ pub enum Urgent {
     Pong {
         /// The probed sequence number.
         seq: u64,
-        /// How many of the outpost's workers are abandoned.
+        /// How many of the outpost's workers are abandoned, but for those
+        /// parked on a window it judged hung.
         parked_count: usize,
+        /// How many are parked on a window it judged hung.
+        parked_on_hung: usize,
     },
     /// [`OutpostToCore::Ready`].
     Ready {
@@ -1695,9 +1723,14 @@ pub enum Urgent {
 impl From<Urgent> for OutpostToCore {
     fn from(urgent: Urgent) -> Self {
         match urgent {
-            Urgent::Pong { seq, parked_count } => OutpostToCore::Pong {
+            Urgent::Pong {
                 seq,
                 parked_count,
+                parked_on_hung,
+            } => OutpostToCore::Pong {
+                seq,
+                parked_count,
+                parked_on_hung,
                 written_at_us: 0,
             },
             Urgent::Ready {

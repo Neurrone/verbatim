@@ -11,6 +11,15 @@ Windows-specific crate and depends on `verbatim-model`,
 
 Public API:
 
+- `calls` — the call gate an outpost's worker installs on its thread,
+  bound to its charge (`calls::install`, the `calls::Charge` trait):
+  `check()`, which every call the backends count makes first, fails with
+  `CallError::Abandoned` once the worker's generation is abandoned, so
+  the call is not made, its error `E_ABORT` (`ABANDONED`, `is_abandoned`)
+  never read as a fact about the application; and
+  `message_readability(hwnd)` tests a window message's window with the
+  outpost's reader, telling the charge of a window found hung. A thread
+  with no gate makes every call and asks the system.
 - `held_locks` — the debug-build lock check: `hold(location)` records in
   the calling thread's eight slots that it holds a lock taken there,
   returning a `Held` whose drop empties that slot, so the record is right
@@ -50,9 +59,10 @@ Public API:
   ghost window stands in for it, which counts as hung (`is_hung`); `Hung`
   when the system reports its application hung; `Readable` otherwise, in
   NVDA's order, all local calls. `event_window_unreadable(hwnd)` is why an
-  event's window cannot be read, if it cannot (`Readability::reason`);
-  `window_unreadable` is the same as the system's judgement, which a
-  `WindowReadabilityReader` replaces in tests, as a `ForegroundReader`
+  event's window cannot be read, if it cannot (`Readability::reason`).
+  `readability` is what an outpost's and the listener's
+  `WindowReadabilityReader` answers, the one judge of a hung window each
+  asks at the moment of its decision, which tests replace, as a `ForegroundReader`
   replaces `GetForegroundWindow`. `served_by(hwnd, pid)` and
   `top_level_windows(pid)` judge a window's application by the process
   that serves its UIA. `front_is_another_thread_of_its_application(hwnd)`

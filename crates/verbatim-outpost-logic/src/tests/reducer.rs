@@ -40,6 +40,10 @@ const EDIT: isize = 9;
 /// The moved-on grace, in microseconds.
 const GRACE_US: u64 = 500_000;
 
+/// The windows the hang cases name: a program's own, judged hung or
+/// answering, and destroyed.
+const HANGING: [isize; 2] = [0x30, 0x31];
+
 /// What an entry is.
 #[derive(Clone, Copy, Debug)]
 enum What {
@@ -80,6 +84,8 @@ enum What {
     Settle,
     /// The nodes Core holds.
     NodesHeld,
+    /// The destroy event of one of the hang cases' windows.
+    Destroy(u8),
 }
 
 /// Where an entry comes from.
@@ -114,6 +120,14 @@ enum Commit {
     NotedCaret,
     /// The owed work done.
     OwedDone,
+    /// What the program found of one of the hang cases' windows: hung at
+    /// its check before a call, with no call made, its query, if any,
+    /// answered abandoned when it is refused; or answering a call.
+    Found {
+        window: u8,
+        hung: bool,
+        refuse: bool,
+    },
     /// What the program's kind commits as its result: a caret key's
     /// program opens its watch, polling or not, a query's program
     /// replies, the owed work is done, a program holding the watch checks
@@ -203,6 +217,11 @@ struct Asks {
     release_node: bool,
     /// Whether a release lets go of objects to drop.
     objects: bool,
+    /// Whether the window judged is found hung.
+    hung: bool,
+    /// The window a program with none at dispatch names in its charge:
+    /// none (0), or one of the hang cases' windows (1, 2).
+    named: u8,
 }
 
 fn what() -> impl Strategy<Value = What> {
@@ -226,6 +245,7 @@ fn what() -> impl Strategy<Value = What> {
         2 => Just(What::Round),
         2 => Just(What::Settle),
         2 => Just(What::NodesHeld),
+        1 => (0..2u8).prop_map(What::Destroy),
     ]
 }
 
@@ -243,6 +263,8 @@ fn commit() -> impl Strategy<Value = Commit> {
         2 => (0..2u8).prop_map(|top| Commit::CopyDropped { top }),
         1 => Just(Commit::NotedCaret),
         2 => Just(Commit::OwedDone),
+        3 => (0..2u8, any::<bool>(), any::<bool>())
+            .prop_map(|(window, hung, refuse)| Commit::Found { window, hung, refuse }),
         8 => any::<bool>().prop_map(Commit::Own),
     ]
 }
@@ -293,21 +315,29 @@ fn action() -> impl Strategy<Value = Action> {
 fn asks() -> impl Strategy<Value = Asks> {
     use proptest::prelude::*;
     (
-        prop::bool::weighted(0.3),
-        0..3u8,
-        prop::bool::weighted(0.8),
-        any::<bool>(),
-        prop::bool::weighted(0.3),
-        any::<bool>(),
+        (
+            prop::bool::weighted(0.3),
+            0..3u8,
+            prop::bool::weighted(0.8),
+            any::<bool>(),
+        ),
+        (
+            prop::bool::weighted(0.3),
+            any::<bool>(),
+            prop::bool::weighted(0.2),
+            0..3u8,
+        ),
     )
         .prop_map(
-            |(moved_on, publish, related, title, release_node, objects)| Asks {
+            |((moved_on, publish, related, title), (release_node, objects, hung, named))| Asks {
                 moved_on,
                 publish,
                 related,
                 title,
                 release_node,
                 objects,
+                hung,
+                named,
             },
         )
 }
@@ -359,7 +389,8 @@ struct Flight {
     started: u64,
     /// Its deadline as dispatched.
     deadline: u64,
-    /// Whether its window is known, so the moved-on rule judges it.
+    /// Whether it is judged by its window, known or named: every program
+    /// but a release's drop.
     window: bool,
     /// Its copy of the facts, with its own commits applied.
     copy: Facts,
@@ -429,6 +460,9 @@ struct Pending {
 )]
 struct Model {
     generation: u64,
+    /// The windows whose hang interval is open, by the reference model of
+    /// hangs ([`Run::hangs`]).
+    hung: BTreeSet<isize>,
     /// Every request number issued.
     numbers: BTreeSet<u64>,
     flight: Option<Flight>,
@@ -554,12 +588,18 @@ enum Call {
 type Reached = BTreeMap<&'static str, u64>;
 
 /// The lifecycle states the gate's cases must each reach.
-const LISTED: [&str; 32] = [
+const LISTED: [&str; 38] = [
     "an entry dispatched",
     "a focus group continued",
     "a focus group continued after an abandonment",
     "abandoned at the deadline",
     "abandoned as moved on",
+    "abandoned as hung",
+    "a hang opened by a judgement",
+    "a hang opened by a commit",
+    "a hang ended by an answer",
+    "a hang ended by a destroy event",
+    "a refusal answered abandoned",
     "a walk published",
     "published, then abandoned",
     "a cut read finished",
@@ -622,6 +662,8 @@ impl Run {
                 title: false,
                 release_node: false,
                 objects: false,
+                hung: false,
+                named: 0,
             },
             next: 0,
             log: Vec::new(),
@@ -791,6 +833,16 @@ impl Run {
                     kind: WinKind::NameChange,
                     hwnd: TOPS[usize::from(window)],
                     id_object: -4,
+                    id_child: 0,
+                    raiser: 3,
+                }
+            }
+            What::Destroy(window) => {
+                source = source_of(from);
+                Item::Msaa {
+                    kind: WinKind::Destroy,
+                    hwnd: HANGING[usize::from(window)],
+                    id_object: 0,
                     id_child: 0,
                     raiser: 3,
                 }
@@ -1168,6 +1220,7 @@ impl Run {
 
     /// The change `commit` is for the program in flight, `flight`, if it
     /// can make it.
+    #[expect(clippy::too_many_lines, reason = "one arm for each kind of commit")]
     fn change(&mut self, commit: Commit, flight: &Flight) -> Option<Change> {
         let commit = match commit {
             Commit::Own(flag) => match flight.kind {
@@ -1240,6 +1293,30 @@ impl Run {
                 )),
                 ..Change::default()
             },
+            Commit::Found {
+                window,
+                hung,
+                refuse,
+            } => {
+                let window =
+                    Window::new(HANGING[usize::from(window)]).expect("a hang case's window");
+                // A refused query is answered abandoned, as its check
+                // before its first call answers it.
+                let result = (hung && refuse)
+                    .then_some(flight.query)
+                    .flatten()
+                    .map(|query| OutpostToCore::Reply {
+                        trace_id: TraceId::from_raw(1),
+                        request_id: RequestId::shell(query),
+                        outcome: QueryOutcome::Abandoned,
+                        timing: EventTiming::default(),
+                    });
+                Change {
+                    result,
+                    found: Some((window, if hung { Found::Hung } else { Found::Answered })),
+                    ..Change::default()
+                }
+            }
             Commit::OwedDone if flight.kind == Kind::Owed => Change {
                 owed_done: Some(NodeId::new(
                     self.reducer.facts.follow.owed.as_ref()?.node.number(),
@@ -1403,9 +1480,10 @@ impl Run {
                 request,
                 past: true,
             },
-            Stale::MovedOn => Input::MovedOn {
+            Stale::MovedOn => Input::Judged {
                 request,
-                moved_on: true,
+                verdict: (true).then_some(Reason::MovedOn),
+                window: None,
             },
             Stale::Published => Input::Published {
                 request,
@@ -1539,10 +1617,26 @@ impl Run {
             })
         ) && self.reducer.intake.gap().is_open()
             && !self.reducer.facts.follow.watch.is_none();
+        let hangs = self.hangs(input.as_ref());
         let effects = match input {
             Some(input) => self.reducer.input(input, now),
             None => self.reducer.tick(now),
         };
+        let told: Vec<isize> = effects
+            .iter()
+            .filter_map(|effect| match effect {
+                Effect::Send(message) => match &**message {
+                    OutpostToCore::NotResponding { window } => Some(*window),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            told, hangs,
+            "Core is told of a hang exactly as it opens: {:?}",
+            self.trail
+        );
         if title_ends {
             assert!(
                 self.reducer.facts.follow.watch.is_none(),
@@ -1608,6 +1702,85 @@ impl Run {
             }
         }
         answered
+    }
+
+    /// The reference model of each window's hang intervals, moved on by
+    /// `input` before the reducer takes it: an interval opens at the first
+    /// evidence of a hang, a judgement of the program in flight finding its
+    /// window hung or an accepted commit naming its window hung, and closes
+    /// only at evidence that the window answers, an accepted commit naming
+    /// it answered, or its destroy event. The windows whose intervals the
+    /// input opens, in order, which are what Core is told.
+    fn hangs(&mut self, input: Option<&Input>) -> Vec<isize> {
+        let mut opened = Vec::new();
+        let mut open = |model: &mut Model, window: Window, reached: &mut Reached, how| {
+            if model.hung.insert(window.get()) {
+                opened.push(window.get());
+                *reached.entry(how).or_default() += 1;
+            }
+        };
+        match input {
+            Some(Input::Judged {
+                request,
+                verdict: Some(Reason::Hung),
+                window: Some(window),
+            }) if !self.reducer.stopping
+                && self
+                    .reducer
+                    .flight
+                    .running()
+                    .is_some_and(|(running, ..)| running == *request) =>
+            {
+                open(
+                    &mut self.model,
+                    *window,
+                    &mut self.reached,
+                    "a hang opened by a judgement",
+                );
+            }
+            Some(Input::Commit { request, change }) if self.reducer.accepts(*request) => {
+                if change.result.as_ref().is_some_and(|result| {
+                    matches!(
+                        result,
+                        OutpostToCore::Reply {
+                            outcome: QueryOutcome::Abandoned,
+                            ..
+                        }
+                    )
+                }) {
+                    self.reach("a refusal answered abandoned");
+                }
+                match change.found {
+                    Some((window, Found::Hung)) => open(
+                        &mut self.model,
+                        window,
+                        &mut self.reached,
+                        "a hang opened by a commit",
+                    ),
+                    Some((window, Found::Answered)) if self.model.hung.remove(&window.get()) => {
+                        self.reach("a hang ended by an answer");
+                    }
+                    Some((_, Found::Answered)) | None => {}
+                }
+            }
+            Some(Input::Entry {
+                entry:
+                    Entry {
+                        item:
+                            Item::Msaa {
+                                kind: WinKind::Destroy,
+                                hwnd,
+                                ..
+                            },
+                        ..
+                    },
+                ..
+            }) if self.model.hung.remove(hwnd) => {
+                self.reach("a hang ended by a destroy event");
+            }
+            _ => {}
+        }
+        opened
     }
 
     /// Checks the gap record's change in one call, from `before`, against
@@ -1768,7 +1941,7 @@ impl Run {
         }
         // At most one ask to the program, and at most one program.
         let asks = positions(effects, |effect| {
-            matches!(effect, Effect::AskMovedOn { .. } | Effect::Publish { .. })
+            matches!(effect, Effect::AskJudge { .. } | Effect::Publish { .. })
         });
         assert!(asks.len() <= 1, "two asks in one transition: {trail:?}");
         let dispatches = positions(effects, |effect| matches!(effect, Effect::Dispatch(_)));
@@ -1815,7 +1988,7 @@ impl Run {
                 !effects.iter().any(|effect| matches!(
                     effect,
                     Effect::Abandon { .. }
-                        | Effect::AskMovedOn { .. }
+                        | Effect::AskJudge { .. }
                         | Effect::Publish { .. }
                         | Effect::TestGapBound { .. }
                 )),
@@ -1831,7 +2004,7 @@ impl Run {
             let decided = effects.iter().position(|effect| {
                 matches!(
                     effect,
-                    Effect::Abandon { .. } | Effect::Publish { .. } | Effect::AskMovedOn { .. }
+                    Effect::Abandon { .. } | Effect::Publish { .. } | Effect::AskJudge { .. }
                 )
             });
             let decision = decided.map(|at| &effects[at]);
@@ -1867,7 +2040,7 @@ impl Run {
                 );
             } else {
                 assert!(
-                    matches!(decision, None | Some(Effect::AskMovedOn { .. })),
+                    matches!(decision, None | Some(Effect::AskJudge { .. })),
                     "a tick before the deadline and the bound neither abandons nor publishes: {trail:?}"
                 );
                 if decision.is_some() {
@@ -1999,7 +2172,10 @@ impl Run {
                 _ => {}
             },
             Effect::Abandon {
-                dead, replacement, ..
+                dead,
+                replacement,
+                on_hung,
+                ..
             } => {
                 let flight = self
                     .model
@@ -2036,7 +2212,11 @@ impl Run {
                         flight.window,
                         "abandoned before its deadline with no window: {trail:?}"
                     );
-                    self.reach("abandoned as moved on");
+                    self.reach(if *on_hung {
+                        "abandoned as hung"
+                    } else {
+                        "abandoned as moved on"
+                    });
                 }
             }
             Effect::Release { live, .. } => {
@@ -2046,7 +2226,7 @@ impl Run {
                 );
                 self.model.releasing = true;
             }
-            Effect::AskMovedOn { request, .. } => {
+            Effect::AskJudge { request, .. } => {
                 let flight = self.model.flight.as_ref().expect("a program asked about");
                 assert_eq!(*request, flight.request, "{trail:?}");
                 assert!(
@@ -2153,7 +2333,9 @@ impl Run {
         );
         self.issued(program.request);
         let mut query = None;
-        let mut window = false;
+        // Every program is judged but a release's drop: by the window its
+        // entry names, or by the one its worker names.
+        let window = !matches!(kind, Kind::Drop);
         let mut group = None;
         match kind {
             Kind::Entry | Kind::Key | Kind::EditCaret => {
@@ -2178,7 +2360,6 @@ impl Run {
                     self.took(number);
                     query = Some(number);
                 }
-                window = intake::window_of(&entry.item).is_some();
                 if let Some(tried) = group_place {
                     assert!(
                         !self.model.ended_groups.contains(&tried.number),
@@ -2205,7 +2386,6 @@ impl Run {
                     );
                     self.model.gap_reads -= 1;
                 }
-                window = true;
                 self.reach("a gap read dispatched");
             }
             Kind::Noted => {
@@ -2261,10 +2441,25 @@ impl Run {
     /// answers.
     fn answer(&mut self, effect: &Effect) -> Option<Input> {
         match effect {
-            Effect::AskMovedOn { request, .. } => Some(Input::MovedOn {
-                request: *request,
-                moved_on: self.asks.moved_on,
-            }),
+            Effect::AskJudge { request, window } => {
+                let named = match self.asks.named {
+                    0 => None,
+                    named => Window::new(HANGING[usize::from(named - 1)]),
+                };
+                let window = window.or(named);
+                let verdict = if window.is_none() {
+                    None
+                } else if self.asks.hung {
+                    Some(Reason::Hung)
+                } else {
+                    self.asks.moved_on.then_some(Reason::MovedOn)
+                };
+                Some(Input::Judged {
+                    request: *request,
+                    verdict,
+                    window,
+                })
+            }
             Effect::Publish {
                 request,
                 then_abandon,
@@ -2568,6 +2763,8 @@ const PLAIN: Asks = Asks {
     title: false,
     release_node: false,
     objects: false,
+    hung: false,
+    named: 0,
 };
 
 /// An entry of `what` from the listener's facts or Core, alone in its

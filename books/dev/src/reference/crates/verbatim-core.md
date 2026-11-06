@@ -109,14 +109,14 @@ guide maps those behaviors onto the crate's types and modules.
   `Lifecycle` (`Started`, `Ended`, `Regenerated`, `NotWatched`), which only
   the supervisor's owner turns into the sealed message the app takes as
   the supervisor's own. A running generation's liveness (`Live`) is
-  private and changed and judged only by its transitions: `ponged`,
-  `heartbeat(now_us, limits)`, which answers `Heartbeat::Ping`,
-  `CheckHang` (ping, and start a check of whether the application is
-  hung) or `Wedged(reason)`, `hang_check_ended` when the check could not
-  start, and `hang_checked`, which judges the abandoned workers by the
-  check's answer. `policy` decides when an outpost is wedged
-  (`wedge_decision` under `WedgeLimits`, and `Liveness` for the listener
-  and the spares, which report no abandoned workers), when an idle one is
+  private and changed and judged only by its transitions: `ponged`, which
+  keeps the pong's time and its `policy::Parked` counts, and
+  `heartbeat(now_us, limits)`, which answers `Heartbeat::Ping` or
+  `Wedged(reason)`. `policy` decides when an outpost is wedged
+  (`wedge_decision` under `WedgeLimits`, which counts only the workers
+  parked on windows the outpost did not judge hung, `Parked::other`, the
+  outpost being the one judge of a hung window; and `Liveness` for the
+  listener and the spares, which report no parked workers), when an idle one is
   retired (`retirement_decision`), how long a failed outpost's
   replacement waits (`Backoff`), in which order the applications whose
   waits ended start (`due_starts`: in the order the waits ended, then by
@@ -167,7 +167,7 @@ what its answer continues (`Then`).
 - The outcome becomes the result the entry's kind takes: a navigation's
   `FetchResult` (`Gone` for a gone node, `Unanswered` for any failure), an
   activation's action, said "No action" for a failure and nothing for an
-  abandoned one, or a `TextReply` (`Gone`, or `Unanswered` for any
+  abandoned one, which includes one refused because its window is hung, or a `TextReply` (`Gone`, or `Unanswered` for any
   failure).
 - A query superseded or cleared is turned to `Then::Nothing`
   (`Queries::forget`): its entry stays until its answer, which runs
@@ -620,7 +620,11 @@ text carries no language.
 
 Only the reducer speaks (`books/dev/src/explanation/architecture.md`, section 2), so what the
 shell's threads learn comes in as inputs (`shell.rs`): `Input::Started`,
-`ErrorLogged` and `ApplicationNotResponding` play their sounds;
+`ErrorLogged` play their sounds; `ApplicationNotResponding`, an
+outpost's report that a window of the process it watches stopped
+responding, sent once per hang, plays the not-responding sound only if
+that process holds attention (the foreground record's `Attention`), so a
+hang met in the background is never sounded, even after the user returns;
 `Exiting` cancels speech, then plays the exit sound, unless a new
 instance replaces this one, and sets `SrState::exiting`, after which
 `reduce` does nothing for any input, so nothing is said after the exit

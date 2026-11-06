@@ -848,9 +848,9 @@ impl OutpostUnderTest {
         let hung = hung.0 as isize;
         let reader: verbatim_win32::window::WindowReadabilityReader = Arc::new(move |hwnd| {
             if hwnd == hung {
-                Some("its application is not responding")
+                verbatim_win32::window::Readability::Hung
             } else {
-                verbatim_win32::window::window_unreadable(hwnd)
+                verbatim_win32::window::readability(hwnd)
             }
         });
         self.outpost

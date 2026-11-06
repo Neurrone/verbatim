@@ -529,6 +529,36 @@ items have no shorter limit of their own. Deliberately different:
   655; `nvda/source/NVDAObjects/window/edit.py`, lines 400 to 420), which
   the application can then write into (Dickson, 2026-11-06).
 
+### A window that stops responding
+
+NVDA's watchdog makes no `IsHungAppWindow` test; its UIA handlers drop an
+event whose sender's cached window is hung as it arrives
+(`_shouldSkipEventForHungWindow`, `nvda/source/UIAHandler/utils.py`,
+lines 438 to 455), its MSAA events are tested as each is turned into an
+NVDA event (`winEventToNVDAEvent`,
+`nvda/source/IAccessibleHandler/__init__.py`, line 570), and it plays no
+sound for a hung application. Verbatim: **different** (Dickson,
+2026-11-04 and 2026-11-06). An outpost judges the window of its work in
+flight hung, by Windows' own state, every half second from the grace's
+end, and abandons it; a query whose window is already hung is answered at
+its check before its first call, an activation silently. Each hang of a
+window is told to Core once, and Core plays the "not responding" sound
+for it only when its application holds attention, so a hang first met in
+the background is never sounded. Captured differences
+(`docs/nvda/main-loop-and-watchdog.md`):
+
+- A key whose answer needs a call, in a window that hangs while it is
+  read: nothing until the first judgement after Windows marks the window
+  hung, then the sound, then nothing, where NVDA says nothing and plays
+  nothing.
+- Verbatim+Tab in a hung application says the focus Core holds, with no
+  call, where NVDA says nothing (Dickson, 2026-11-06).
+- A control with its own window in a hanging application, whose read the
+  outpost finds hung, is silent, where NVDA says it once the application
+  answers: the third focus build is to remove this difference.
+- An application slow past the deadline but never judged hung is silent,
+  with no sound, as NVDA cancels at its watchdog's limit.
+
 ### Recovery after an outpost is replaced
 
 NVDA has no equivalent: it is one process, and after an application

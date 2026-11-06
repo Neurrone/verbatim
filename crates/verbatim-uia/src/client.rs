@@ -224,7 +224,7 @@ impl Uia {
         first: &IUIAutomationElement,
         second: &IUIAutomationElement,
     ) -> windows::core::Result<bool> {
-        count(CallKind::Uia);
+        count(CallKind::Uia)?;
         // SAFETY: `self.client` is a live IUIAutomation, and both elements
         // are live elements.
         unsafe { self.client.CompareElements(first, second) }.map(windows_core::BOOL::as_bool)
@@ -259,7 +259,7 @@ impl Uia {
         &self,
         cache: &IUIAutomationCacheRequest,
     ) -> windows::core::Result<IUIAutomationElement> {
-        count(CallKind::Uia);
+        count(CallKind::Uia)?;
         crate::calls::count_connection();
         // A new connection to the focused application, made only by that
         // application's outpost (`books/dev/src/explanation/design/listener-without-connections.md`,
@@ -363,7 +363,7 @@ impl Uia {
         hwnd: isize,
         cache: &IUIAutomationCacheRequest,
     ) -> windows::core::Result<IUIAutomationElement> {
-        count(CallKind::Uia);
+        count(CallKind::Uia)?;
         crate::calls::count_connection();
         // A new connection to the window by its handle, which returns UIA's
         // client-side window proxy in place of the application's element
@@ -425,7 +425,7 @@ impl Uia {
     ///
     /// Returns the COM error if the handle has no UIA element or the call fails.
     pub fn window_live(&self, hwnd: isize) -> windows::core::Result<Live> {
-        count(CallKind::Uia);
+        count(CallKind::Uia)?;
         crate::calls::count_connection();
         // SAFETY: HWND wraps a caller-supplied handle; ElementFromHandle
         // tolerates an invalid handle by returning an error.

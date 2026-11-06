@@ -324,6 +324,12 @@ that carries them on the pipes, `Message`, is
   holds the foreground, its focused control (`FocusedControl`) with
   ancestors, selected child, window facts and text, and when reading
   began.
+- `OutpostToCore::NotResponding { window }`: a window of the outpost's
+  application began a hang, sent once per hang, in order with its events;
+  Core plays the "not responding" sound for it only when the window's
+  application holds attention. The pong's `parked_count` counts the
+  abandoned workers not yet returned but for those parked on a window the
+  outpost judged hung, which `parked_on_hung` counts.
 - `EventTiming` records each point of an event's way, in microseconds
   (`docs/design/communication.md`, section 10.1); `hop_us` is the time
   between two stamps.

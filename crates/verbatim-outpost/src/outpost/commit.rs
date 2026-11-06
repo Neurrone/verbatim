@@ -21,7 +21,7 @@ use verbatim_uia::{Agile, Kept};
 use verbatim_model::protocol::{EventTiming, OutpostToCore};
 
 use super::reducer::{
-    Change, DialogMemo, FocusPath, GapNote, Group, Object, OwedWork, Report, WatchChange,
+    Change, DialogMemo, FocusPath, Found, GapNote, Group, Object, OwedWork, Report, WatchChange,
 };
 use super::store::TextWrite;
 
@@ -183,6 +183,9 @@ pub(super) struct Effects {
     /// text facts' changes, which it applied to its own copies as it made
     /// them, with the ranges they name, and its patterns and support.
     pub(super) text: Vec<TextWrite>,
+    /// The program's window and what it found there, from its charge, set
+    /// as the commit is posted (`RequestContext::commit`).
+    pub(super) found: Option<(verbatim_reader_rules::Window, Found)>,
 }
 
 impl Effects {
@@ -212,6 +215,7 @@ impl Effects {
             noted_caret: self.noted_caret,
             replaced: self.stale.as_ref().map(|stale| stale.node),
             text: Vec::new(),
+            found: self.found,
         }
     }
 
@@ -238,6 +242,7 @@ impl Effects {
             clear_redirect: self.clear_redirect,
             states: self.states,
             gap: self.gap,
+            found: self.found,
             noted_caret: self.noted_caret,
             replaced: self.stale.as_ref().map(|stale| stale.node),
             text: Vec::new(),

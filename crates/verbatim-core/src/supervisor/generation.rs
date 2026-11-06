@@ -13,7 +13,7 @@
 use verbatim_model::{OutpostId, Pid};
 
 use super::EndReason;
-use super::policy::{WedgeLimits, WedgeReason, wedge_decision};
+use super::policy::{Parked, WedgeLimits, WedgeReason, wedge_decision};
 
 /// A child's process from its launch: still being launched, or running.
 /// The listener and the spares waiting, which have no generations, live
@@ -46,26 +46,21 @@ impl<C> Run<C> {
 
 /// What a running generation's liveness is judged by, changed and judged
 /// only by the generation's own transitions
-/// ([`ponged`](Generation::ponged), [`heartbeat`](Generation::heartbeat),
-/// [`hang_check_ended`](Generation::hang_check_ended) and
-/// [`hang_checked`](Generation::hang_checked)).
+/// ([`ponged`](Generation::ponged) and [`heartbeat`](Generation::heartbeat)).
 #[derive(Clone, Copy, Debug)]
 pub struct Live {
     /// When it last answered a ping, or was launched or given, on the
     /// run's shared clock.
     last_pong_us: u64,
-    /// How many of its workers are abandoned to calls past their deadline.
-    abandoned: usize,
-    /// Whether a check of whether its application is hung is running.
-    hang_check: bool,
+    /// The workers its last pong reported parked.
+    parked: Parked,
 }
 
 impl Live {
     fn new(now_us: u64) -> Self {
         Self {
             last_pong_us: now_us,
-            abandoned: 0,
-            hang_check: false,
+            parked: Parked::default(),
         }
     }
 }
@@ -76,10 +71,6 @@ impl Live {
 pub enum Heartbeat {
     /// Ping it.
     Ping,
-    /// Ping it, and start a check of whether its application is hung: it
-    /// reports at least the limit of abandoned workers, which are judged
-    /// when the check answers ([`Generation::hang_checked`]).
-    CheckHang,
     /// End it as stuck.
     Wedged(WedgeReason),
 }
@@ -334,62 +325,26 @@ impl<C> Generation<C> {
         }
     }
 
-    /// The running generation answered a ping at `at_us`, with `abandoned`
-    /// workers abandoned to calls past their deadline. Any other state
-    /// ignores it.
-    pub fn ponged(&mut self, at_us: u64, abandoned: usize) {
+    /// The running generation answered a ping at `at_us`, reporting
+    /// `parked` workers. Any other state ignores it.
+    pub fn ponged(&mut self, at_us: u64, parked: Parked) {
         if let Some(live) = self.live_mut() {
             live.last_pong_us = at_us;
-            live.abandoned = abandoned;
+            live.parked = parked;
         }
     }
 
-    /// The heartbeat at `now_us`: whether the running generation is pinged,
-    /// pinged with a check of whether its application is hung started, or
-    /// ended as stuck, by [`wedge_decision`] under `limits`. Abandoned
-    /// workers at the limit start a check, unless one runs, and are judged
-    /// only when it answers, so until then only missed pongs count against
-    /// it. `None` in any state but a running one.
+    /// The heartbeat at `now_us`: whether the running generation is pinged
+    /// or ended as stuck, by [`wedge_decision`] under `limits`. `None` in
+    /// any state but a running one.
     pub fn heartbeat(&mut self, now_us: u64, limits: WedgeLimits) -> Option<Heartbeat> {
         let live = self.live_mut()?;
-        let check_hang = live.abandoned >= limits.abandoned_workers;
-        if let Some(reason) = wedge_decision(
-            live.last_pong_us,
-            now_us,
-            limits,
-            live.abandoned,
-            check_hang,
-        ) {
-            return Some(Heartbeat::Wedged(reason));
-        }
-        if check_hang && !live.hang_check {
-            live.hang_check = true;
-            return Some(Heartbeat::CheckHang);
-        }
-        Some(Heartbeat::Ping)
-    }
-
-    /// The check [`heartbeat`](Self::heartbeat) asked for could not be
-    /// started: the next heartbeat asks again.
-    pub fn hang_check_ended(&mut self) {
-        if let Some(live) = self.live_mut() {
-            live.hang_check = false;
-        }
-    }
-
-    /// The check of whether the application is hung answered `hung` at
-    /// `now_us`: it ends, and the running generation is judged by its
-    /// abandoned workers as well as its pongs ([`wedge_decision`] under
-    /// `limits`), returning why it is stuck, if it is.
-    pub fn hang_checked(
-        &mut self,
-        hung: bool,
-        now_us: u64,
-        limits: WedgeLimits,
-    ) -> Option<WedgeReason> {
-        let live = self.live_mut()?;
-        live.hang_check = false;
-        wedge_decision(live.last_pong_us, now_us, limits, live.abandoned, hung)
+        Some(
+            match wedge_decision(live.last_pong_us, now_us, limits, live.parked) {
+                Some(reason) => Heartbeat::Wedged(reason),
+                None => Heartbeat::Ping,
+            },
+        )
     }
 
     /// Whether its hook is in.
@@ -910,7 +865,7 @@ mod tests {
             generation.heartbeat(START + 9 * SECOND - 1, LIMITS),
             Some(Heartbeat::Ping)
         );
-        generation.ponged(START + 2 * SECOND, 0);
+        generation.ponged(START + 2 * SECOND, Parked::default());
         assert_eq!(
             generation.heartbeat(START + 11 * SECOND - 1, LIMITS),
             Some(Heartbeat::Ping)
@@ -920,34 +875,5 @@ mod tests {
             Some(Heartbeat::Wedged(WedgeReason::MissedHeartbeats))
         );
         assert_eq!(Generation::<()>::new().heartbeat(START, LIMITS), None);
-    }
-
-    /// Abandoned workers at the limit start one check of whether the
-    /// application is hung and are judged only by its answer: a hung
-    /// application excuses them, one that answers does not; a check that
-    /// could not start is asked for again.
-    #[test]
-    fn abandoned_workers_are_judged_by_the_hang_check_alone() {
-        let mut generation = ready(4);
-        generation.ponged(START, 8);
-        assert_eq!(
-            generation.heartbeat(START, LIMITS),
-            Some(Heartbeat::CheckHang)
-        );
-        assert_eq!(generation.heartbeat(START, LIMITS), Some(Heartbeat::Ping));
-        generation.hang_check_ended();
-        assert_eq!(
-            generation.heartbeat(START, LIMITS),
-            Some(Heartbeat::CheckHang)
-        );
-        assert_eq!(generation.hang_checked(true, START, LIMITS), None);
-        assert_eq!(
-            generation.heartbeat(START, LIMITS),
-            Some(Heartbeat::CheckHang)
-        );
-        assert_eq!(
-            generation.hang_checked(false, START, LIMITS),
-            Some(WedgeReason::AbandonedWorkers)
-        );
     }
 }

@@ -45,9 +45,12 @@ Public API:
   abandoned still owns the request the text is committed under, without
   the acceptance test, since the text is the shell's own read made in line,
   not a worker's result; no record is tested, or timed, once the outpost
-  stops; `AskMovedOn`,
-  whether the user has left the program's window for another thread of
-  its application, and `Publish`, the publication of a walk armed, with
+  stops; `AskJudge`, the judgement of the program's window, known at
+  dispatch or, for `None`, the one its worker named in its charge: whether
+  it is hung or ghosted, tested first, and otherwise whether the user has
+  left it for another thread of its application, answered `Judged` with
+  the verdict (`Reason::Hung`, `Reason::MovedOn` or none) and the window
+  judged; and `Publish`, the publication of a walk armed, with
   the facts it is judged against and `then_abandon`, the abandonment
   that asked for it (a `Reason`), which comes back in the answer so the
   reducer keeps nothing between the two.
@@ -87,9 +90,25 @@ Public API:
   at most one: a tick judges the deadline first
   (abandoning, by one `Publish` with `then_abandon` when a walk is armed),
   then the walk's bound (`Publish`), then the moved-on rule's next
-  judgment (`AskMovedOn`), the first that applies deciding; a judgment
+  judgment (`AskJudge`), the first that applies deciding; a judgment
   left over is made by the publication's answer against its own `Now`. A
-  true `MovedOn` for a program already published abandons it at once.
+  verdict for a program already published abandons it at once. A program
+  with no window at dispatch that calls into the application, a query, the
+  owed work, the gap's read, the console poll's read, is dispatched with
+  `RuleWindow::Named`, judged on the grace's schedule by the window its
+  worker names; a release's drop is judged by its deadline alone.
+  `Program::window` carries the window the program's entry names, which
+  its worker names in its charge at once.
+- The record of hung windows, kept in the application's own reducer: a
+  window enters it at a hung judgement of the program in flight, or at an
+  accepted commit naming it `Found::Hung` (its check before a call found it
+  hung, and no call was made), and `OutpostToCore::NotResponding` is sent
+  as it enters, once per hang; it leaves only on evidence that it answers,
+  an accepted commit naming it `Found::Answered` (a counted call into it
+  returned), its destroy event, or the outpost's end. A program that made
+  no call into the window is never that evidence. The abandonment's
+  `Effect::Abandon` says whether its window was judged hung (`on_hung`),
+  which the shell counts apart for the pong.
 - `Program` and `Work`: what the worker generation in charge runs, with
   its copies of the facts (`Facts`), whose commits come back as `Change`s
   and are applied while their `Request` is live.

@@ -34,7 +34,7 @@ fn effects_of(input: &Input) -> Vec<Effect> {
 }
 
 #[test]
-fn the_start_and_error_sounds_and_not_responding_play_their_earcons() {
+fn the_start_and_error_sounds_play_their_earcons() {
     assert_eq!(
         effects_of(&Input::Started),
         [Effect::PlayEarcon(Earcon::Start)]
@@ -42,12 +42,6 @@ fn the_start_and_error_sounds_and_not_responding_play_their_earcons() {
     assert_eq!(
         effects_of(&Input::ErrorLogged),
         [Effect::PlayEarcon(Earcon::Error)]
-    );
-    assert_eq!(
-        effects_of(&Input::ApplicationNotResponding {
-            outpost: OutpostId(3)
-        }),
-        [Effect::PlayEarcon(Earcon::AppNotResponding)]
     );
 }
 

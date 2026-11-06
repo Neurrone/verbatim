@@ -94,8 +94,8 @@ pub(super) enum Posted {
         panicked: bool,
         cut: Option<Box<Cut>>,
     },
-    /// An abandoned worker returned from its call.
-    Returned,
+    /// An abandoned worker of this generation returned from its call.
+    Returned(u64),
     /// A test times the gap record's bound with a timer of its own.
     GapTimerGiven,
     /// A test shortens the deadline for handling an entry.
@@ -269,9 +269,11 @@ pub(super) struct Shell {
     /// The generation in charge, and the threads of every worker started.
     generations: HashMap<u64, Generation>,
     threads: Vec<thread::JoinHandle<()>>,
-    /// The abandoned workers that have not returned: one more as the shell
-    /// carries out an abandonment, one fewer as one returns.
-    abandoned: usize,
+    /// The abandoned workers that have not returned, by generation, with
+    /// whether each was abandoned because its window was judged hung: one
+    /// more as the shell carries out an abandonment, one fewer as one
+    /// returns.
+    parked: HashMap<u64, bool>,
     closing: bool,
     /// Whether a worker creates its UIA client at once, as the first one
     /// was started: a worker started at a dispatch, its generation's start
@@ -448,7 +450,7 @@ impl Shell {
             garbage: Garbage::default(),
             generations: HashMap::new(),
             threads: Vec::new(),
-            abandoned: 0,
+            parked: HashMap::new(),
             closing: false,
             warm,
         };
@@ -678,13 +680,12 @@ impl Shell {
                 panicked,
                 cut,
             },
-            Posted::Returned => {
-                self.abandoned = self.abandoned.saturating_sub(1);
-                self.context
-                    .abandoned
-                    .store(self.abandoned, Ordering::Relaxed);
+            Posted::Returned(generation) => {
+                self.parked.remove(&generation);
+                self.count_parked();
                 tracing::info!(
-                    abandoned = self.abandoned,
+                    generation,
+                    abandoned = self.parked.len(),
                     "an abandoned worker returned; its result is discarded"
                 );
                 return;
@@ -761,14 +762,7 @@ impl Shell {
                 acknowledged,
                 live,
             } => return Some(self.release(&nodes, &anchors, acknowledged, &live)),
-            Effect::AskMovedOn { request, window } => {
-                return Some(Input::MovedOn {
-                    request,
-                    moved_on: verbatim_win32::window::front_is_another_thread_of_its_application(
-                        window.get(),
-                    ),
-                });
-            }
+            Effect::AskJudge { request, window } => return Some(self.judge(request, window)),
             Effect::Publish {
                 request,
                 facts,
@@ -819,11 +813,12 @@ impl Shell {
                 dead,
                 replacement,
                 reason,
+                on_hung,
                 in_hand,
             } => {
-                self.abandoned += 1;
+                self.parked.insert(dead, on_hung);
                 tracing::warn!(
-                    abandoned = self.abandoned,
+                    abandoned = self.parked.len(),
                     reason,
                     in_hand = in_hand.work,
                     trace = in_hand.trace.map(|trace| trace.to_string()),
@@ -833,9 +828,7 @@ impl Shell {
                 if let Some(generation) = self.generations.remove(&dead) {
                     generation.charge.abandon();
                 }
-                self.context
-                    .abandoned
-                    .store(self.abandoned, Ordering::Relaxed);
+                self.count_parked();
                 self.spawn_worker(replacement, false);
             }
             Effect::Marks(marks) => self.context.mailbox.set_marks(marks),
@@ -870,6 +863,45 @@ impl Shell {
             }
         }
         None
+    }
+
+    /// The pong's counts of the abandoned workers that have not returned:
+    /// those parked on a window judged hung, and the rest, which the
+    /// supervisor's limit counts.
+    fn count_parked(&self) {
+        let on_hung = self.parked.values().filter(|&&on_hung| on_hung).count();
+        self.context
+            .abandoned_on_hung
+            .store(on_hung, Ordering::Relaxed);
+        self.context
+            .abandoned
+            .store(self.parked.len().saturating_sub(on_hung), Ordering::Relaxed);
+    }
+
+    /// Judges `request`'s program by `window`, or by the window its worker
+    /// named in its charge: hung or ghosted, by the outpost's reader, tested
+    /// first, and otherwise whether the user has left it for another thread
+    /// of its application. Local calls, and the charge's lock. With no
+    /// window, the program stays.
+    fn judge(&self, request: Request, window: Option<verbatim_reader_rules::Window>) -> Input {
+        let window = window.or_else(|| {
+            self.generations
+                .get(&request.generation)
+                .and_then(|generation| generation.charge.named(request))
+        });
+        let verdict = window.and_then(|window| {
+            if self.context.readability(window.get()).is_hung() {
+                Some(super::reducer::Reason::Hung)
+            } else {
+                verbatim_win32::window::front_is_another_thread_of_its_application(window.get())
+                    .then_some(super::reducer::Reason::MovedOn)
+            }
+        });
+        Input::Judged {
+            request,
+            verdict,
+            window,
+        }
     }
 
     /// Checks, in debug builds, that the shell's tables match the
@@ -1195,7 +1227,7 @@ mod tests {
             garbage: Garbage::default(),
             generations: HashMap::new(),
             threads: Vec::new(),
-            abandoned: 0,
+            parked: HashMap::new(),
             closing: false,
             warm: false,
         };

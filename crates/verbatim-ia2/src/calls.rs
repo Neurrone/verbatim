@@ -44,17 +44,26 @@ thread_local! {
     };
 }
 
-/// Counts one cross-process call of `kind` on this thread.
+/// Counts one cross-process call of `kind` on this thread, once this
+/// thread's call gate lets it be made (`verbatim_win32::calls`).
+///
+/// # Errors
+///
+/// [`CallError::Abandoned`](verbatim_win32::calls::CallError::Abandoned)
+/// once the outpost worker making it was abandoned: the call is not made,
+/// nor counted.
 #[track_caller]
-pub fn count(kind: CallKind) {
+pub fn count(kind: CallKind) -> Result<(), verbatim_win32::calls::CallError> {
     // No counted call is made under one of the outpost's locks, checked in
     // debug builds.
     verbatim_win32::held_locks::check("a counted call into an application");
+    verbatim_win32::calls::check()?;
     COUNTS.with(|counts| {
         let mut current = counts.get();
         current.record(kind);
         counts.set(current);
     });
+    Ok(())
 }
 
 /// This thread's calls since the last take, resetting them to zero.
@@ -70,9 +79,9 @@ mod tests {
     #[test]
     fn take_returns_and_resets_this_threads_counts() {
         let _ = take();
-        count(CallKind::Msaa);
-        count(CallKind::Msaa);
-        count(CallKind::WindowMessage);
+        count(CallKind::Msaa).expect("no gate on this thread");
+        count(CallKind::Msaa).expect("no gate on this thread");
+        count(CallKind::WindowMessage).expect("no gate on this thread");
         assert_eq!(
             take(),
             CallCounts {

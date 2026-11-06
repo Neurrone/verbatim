@@ -9,7 +9,7 @@
 //! It holds the intake's order ([`intake`]), the gap record and its timer,
 //! the reports Core may hold ([`held`]), the follow state ([`follow`]),
 //! the hand-over's hold ([`hold`]), the arbitrator's verdicts
-//! ([`verdicts`]), the program in flight with the worker generation in
+//! ([`verdicts`]), the record of hung windows, the program in flight with the worker generation in
 //! charge, its deadline, its moved-on rule and its walk's bound, kept by
 //! the work in flight both readers share
 //! ([`verbatim_reader_rules::in_flight`]), the queries not yet answered,
@@ -22,7 +22,7 @@
 //! What it never does: make a call of any kind, wait, read a clock, or
 //! keep an object. What it needs of Windows' own state it asks for by an
 //! effect, which the shell answers with an input before it takes another
-//! message ([`Effect::AskMovedOn`], [`Effect::Publish`]). Time is the
+//! message ([`Effect::AskJudge`], [`Effect::Publish`]). Time is the
 //! shell's: a [`Now`] given with each input, and [`Reducer::next_timer`]
 //! for the shell's timed wait.
 
@@ -92,8 +92,8 @@ pub use self::entry::{
     Asker, Entry, Front, Item, Source, UiaEvent, UiaKind, WinKind, is_state_property,
 };
 pub use self::follow::{
-    Applied, Change, DialogMemo, Facts, FocusPath, Follow, FollowState, GapNote, Group, Owed,
-    OwedWork, Report, Route, Subscription, Target, WatchChange, apply_local,
+    Applied, Change, DialogMemo, Facts, FocusPath, Follow, FollowState, Found, GapNote, Group,
+    Owed, OwedWork, Report, Route, Subscription, Target, WatchChange, apply_local,
 };
 pub use self::gap_record::{Awaits, CopyDropped, GapRead};
 pub use self::held::{Evidence, Focus, Held, InFront};
@@ -242,6 +242,10 @@ pub enum Finish {
 pub struct Program {
     /// The request it runs as.
     pub request: Request,
+    /// The window its entry names, which its worker names in its charge at
+    /// once; `None` for a program whose worker names the window it calls
+    /// into, or that is never judged by one.
+    pub window: Option<Window>,
     /// Its copies of the reducer's facts.
     pub facts: Facts,
     /// What it does.
@@ -295,7 +299,8 @@ pub enum Effect {
     /// which no text fact names any more, for a worker to drop.
     ForgetRanges(Vec<(u64, RangeKey)>),
     /// Mark the generation dead in its slot and start `replacement`: the
-    /// shell counts the abandoned workers that have not returned.
+    /// shell counts the abandoned workers that have not returned, those
+    /// parked on a window judged hung apart from the rest.
     Abandon {
         /// The generation marked dead.
         dead: u64,
@@ -303,6 +308,8 @@ pub enum Effect {
         replacement: u64,
         /// Why the generation was abandoned, for the log.
         reason: &'static str,
+        /// Whether it was abandoned because its window was judged hung.
+        on_hung: bool,
         /// What the abandoned worker had in hand, for the log.
         in_hand: InHand,
     },
@@ -344,14 +351,17 @@ pub enum Effect {
         /// The facts the window text's report is judged against.
         facts: Box<Facts>,
     },
-    /// Ask whether the user has left `window`, the window of `request`'s
-    /// program, for another thread of its application: answered by
-    /// [`Input::MovedOn`] before the shell takes another message.
-    AskMovedOn {
+    /// Judge `request`'s program by its window, `window`, or, for `None`,
+    /// the window its worker named in its charge for that request, if any:
+    /// whether the window is hung or ghosted, tested first, by the
+    /// outpost's readability reader, and otherwise whether the user has
+    /// left it for another thread of its application. Answered by
+    /// [`Input::Judged`] before the shell takes another message.
+    AskJudge {
         /// The program in flight asked about.
         request: Request,
-        /// Its window.
-        window: Window,
+        /// Its window, `None` for one its worker names.
+        window: Option<Window>,
     },
     /// Publish the walk `request` armed from its progress: claim the
     /// progress from the charge of `request`'s own generation, so its
@@ -479,13 +489,15 @@ pub enum Input {
         /// The window text's whole-window focus, when one is sent.
         title: Option<Box<Change>>,
     },
-    /// The shell's answer to [`Effect::AskMovedOn`].
-    MovedOn {
+    /// The shell's answer to [`Effect::AskJudge`].
+    Judged {
         /// The program asked about.
         request: Request,
-        /// Whether the user has left its window for another thread of its
-        /// application.
-        moved_on: bool,
+        /// Why it is abandoned, its window hung or the user moved on;
+        /// `None` when it stays, as it does while no window is named.
+        verdict: Option<Reason>,
+        /// The window judged, when one was.
+        window: Option<Window>,
     },
     /// The shell's answer to [`Effect::Publish`].
     Published {
@@ -608,6 +620,12 @@ pub struct Reducer {
     /// node it frees.
     releasing: bool,
     stopping: bool,
+    /// The record of hung windows: each window from the first evidence of
+    /// its hang, a hung judgement or a commit naming it hung, until
+    /// evidence that it answers, a commit naming it answered or its destroy
+    /// event; [`OutpostToCore::NotResponding`] is sent as a window enters
+    /// it, once per hang.
+    hung: BTreeSet<Window>,
 }
 
 impl Reducer {
@@ -757,9 +775,20 @@ impl Reducer {
                 related,
                 title,
             } => self.gap_bound_tested(request, related, title, now, &mut effects),
-            Input::MovedOn { request, moved_on } => {
+            Input::Judged {
+                request,
+                verdict,
+                window,
+            } => {
                 if !self.stopping {
-                    let decision = self.flight.moved_on(request, moved_on);
+                    let running = self
+                        .flight
+                        .running()
+                        .is_some_and(|(running, ..)| running == request);
+                    if let (true, Some(Reason::Hung), Some(window)) = (running, verdict, window) {
+                        self.hang_seen(window, &mut effects);
+                    }
+                    let decision = self.flight.judged(request, verdict);
                     self.decided(decision, now, &mut effects);
                 }
             }
@@ -971,6 +1000,17 @@ impl Reducer {
         {
             self.queries.insert(request_id);
         }
+        // A destroyed window answers nothing more: it leaves the record of
+        // hung windows, and a window with its handle later is another.
+        if let Item::Msaa {
+            kind: WinKind::Destroy,
+            hwnd,
+            ..
+        } = entry.item
+            && let Some(window) = Window::new(hwnd)
+        {
+            self.hung.remove(&window);
+        }
         if let (
             Item::Fact(DeliveredFact::Foreground { hwnd }, _),
             Front::Foreground {
@@ -1017,9 +1057,36 @@ impl Reducer {
         effects.push(Effect::Send(Box::new(message)));
     }
 
+    /// `window` was found hung: it enters the record of hung windows, and
+    /// Core is told once, as the hang begins.
+    fn hang_seen(&mut self, window: Window, effects: &mut Vec<Effect>) {
+        if self.hung.insert(window) {
+            self.send(
+                OutpostToCore::NotResponding {
+                    window: window.get(),
+                },
+                effects,
+            );
+        }
+    }
+
+    /// What a program found of its window: a hang enters the record, and
+    /// an answer takes the window out of it.
+    fn found(&mut self, (window, found): (Window, Found), effects: &mut Vec<Effect>) {
+        match found {
+            Found::Hung => self.hang_seen(window, effects),
+            Found::Answered => {
+                self.hung.remove(&window);
+            }
+        }
+    }
+
     /// Applies the commit of `request`'s program: its report recorded for
     /// Core's judgement, then its messages sent, then the rest.
     fn commit(&mut self, request: Request, change: &Change, now: Now, effects: &mut Vec<Effect>) {
+        if let Some(found) = change.found {
+            self.found(found, effects);
+        }
         if let Some(report) = &change.report {
             follow::record(&mut self.facts.held, report);
         }
@@ -1231,8 +1298,8 @@ impl Reducer {
     fn decided(&mut self, decision: Decision<Current>, now: Now, effects: &mut Vec<Effect>) {
         match decision {
             Decision::Nothing => {}
-            Decision::Ask(Ask::MovedOn { request, window }) => {
-                effects.push(Effect::AskMovedOn { request, window });
+            Decision::Ask(Ask::Judge { request, window }) => {
+                effects.push(Effect::AskJudge { request, window });
             }
             Decision::Ask(Ask::Publish {
                 request,
@@ -1306,7 +1373,9 @@ impl Reducer {
             reason: match reason {
                 Reason::Deadline => "a call passed its deadline",
                 Reason::MovedOn => "the user moved on from a slow window",
+                Reason::Hung => "the window stopped responding",
             },
+            on_hung: reason == Reason::Hung,
             in_hand,
         });
         if let Some(answer) = self.facts.follow.watch.abandoned() {
@@ -1424,6 +1493,7 @@ impl Reducer {
     pub fn shutdown_drop(&mut self) -> Program {
         Program {
             request: self.flight.next_request(),
+            window: None,
             facts: Facts::default(),
             work: Work::Drop,
             waiting: Vec::new(),
@@ -1699,14 +1769,23 @@ impl Reducer {
             deferred,
             in_hand: InHand::of(&work, window),
         };
-        let request = self.flight.start(
-            current,
-            micros(deadline),
-            window.map_or(RuleWindow::Never, RuleWindow::Known),
-            micros(now.at),
-        );
+        // A program with no window at dispatch that calls into the
+        // application has its worker name the window it calls into; a
+        // release's drop, which calls into many windows, is judged by its
+        // deadline alone.
+        let rule = match (window, &work) {
+            (Some(window), _) => RuleWindow::Known(window),
+            (None, Work::Drop) => RuleWindow::Never,
+            (None, Work::Entry { .. } | Work::Owed(_) | Work::PollRead | Work::Finish { .. }) => {
+                RuleWindow::Named
+            }
+        };
+        let request = self
+            .flight
+            .start(current, micros(deadline), rule, micros(now.at));
         effects.push(Effect::Dispatch(Box::new(Program {
             request,
+            window,
             facts: self.facts.clone(),
             work,
             waiting,
@@ -1733,6 +1812,7 @@ impl Reducer {
         };
         effects.push(Effect::Dispatch(Box::new(Program {
             request,
+            window: Window::new(cut.edit),
             facts: self.facts.clone(),
             work: Work::Finish { cut, waiting },
             waiting: Vec::new(),

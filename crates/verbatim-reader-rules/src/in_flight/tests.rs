@@ -29,10 +29,15 @@ fn publish(request: Request, then_abandon: Option<Reason>) -> Decision<u32> {
 }
 
 fn moved_on(request: Request) -> Decision<u32> {
-    Decision::Ask(Ask::MovedOn {
+    Decision::Ask(Ask::Judge {
         request,
-        window: WINDOW,
+        window: Some(WINDOW),
     })
+}
+
+/// The answer that the user moved on, or not.
+fn moving(moved_on: bool) -> Option<Reason> {
+    moved_on.then_some(Reason::MovedOn)
 }
 
 fn abandoned(dead: u64, reason: Reason, published: bool) -> Decision<u32> {
@@ -43,6 +48,59 @@ fn abandoned(dead: u64, reason: Reason, published: bool) -> Decision<u32> {
         item: 7,
         published,
     })
+}
+
+/// A judgement that finds the item's window hung abandons it for that
+/// reason, publishing an armed walk first; one that finds it staying
+/// decides nothing.
+#[test]
+fn a_hung_judgement_abandons_publishing_an_armed_walk_first() {
+    let mut in_flight = InFlight::new();
+    let request = in_flight.start(7, 11_000 * MS, RuleWindow::Known(WINDOW), 0);
+    in_flight.armed(request, 2_000 * MS);
+    assert_eq!(in_flight.tick(GRACE), moved_on(request));
+    assert_eq!(
+        in_flight.judged(request, None),
+        Decision::Nothing,
+        "it stays"
+    );
+    assert_eq!(in_flight.tick(2 * GRACE), moved_on(request));
+    assert_eq!(
+        in_flight.judged(request, Some(Reason::Hung)),
+        publish(request, Some(Reason::Hung))
+    );
+    assert_eq!(
+        in_flight.published(request, true, Some(Reason::Hung), 2 * GRACE),
+        abandoned(0, Reason::Hung, true)
+    );
+    let unarmed = in_flight.start(7, 11_000 * MS, RuleWindow::Known(WINDOW), 2 * GRACE);
+    assert_eq!(in_flight.tick(3 * GRACE), moved_on(unarmed));
+    assert_eq!(
+        in_flight.judged(unarmed, Some(Reason::Hung)),
+        abandoned(1, Reason::Hung, false)
+    );
+}
+
+/// An item whose worker names its window is judged on the grace's
+/// schedule from its start, the window left for the shell to read.
+#[test]
+fn a_named_item_is_judged_on_the_graces_schedule() {
+    let mut in_flight = InFlight::new();
+    let request = in_flight.start(7, 11_000 * MS, RuleWindow::Named, 0);
+    let judge = Decision::Ask(Ask::Judge {
+        request,
+        window: None,
+    });
+    assert_eq!(in_flight.next_wake(), Some(GRACE));
+    assert_eq!(in_flight.tick(GRACE - 1), Decision::Nothing);
+    assert_eq!(in_flight.tick(GRACE), judge);
+    assert_eq!(in_flight.judged(request, None), Decision::Nothing);
+    assert_eq!(in_flight.next_wake(), Some(2 * GRACE));
+    assert_eq!(in_flight.tick(2 * GRACE), judge);
+    assert_eq!(
+        in_flight.judged(request, Some(Reason::MovedOn)),
+        abandoned(0, Reason::MovedOn, false)
+    );
 }
 
 /// One late tick past the deadline, the bound and the moved-on rule's
@@ -95,7 +153,7 @@ fn an_armed_walk_is_published_before_each_abandonment() {
     moved.armed(request, 2_000 * MS);
     assert_eq!(moved.tick(GRACE), moved_on(request));
     assert_eq!(
-        moved.moved_on(request, true),
+        moved.judged(request, moving(true)),
         publish(request, Some(Reason::MovedOn))
     );
     assert_eq!(
@@ -116,7 +174,7 @@ fn the_moved_on_rule_is_judged_every_half_second() {
     assert_eq!(known.next_wake(), Some(GRACE));
     assert_eq!(known.tick(GRACE - 1), Decision::Nothing);
     assert_eq!(known.tick(GRACE), moved_on(request));
-    assert_eq!(known.moved_on(request, false), Decision::Nothing);
+    assert_eq!(known.judged(request, moving(false)), Decision::Nothing);
     assert_eq!(known.next_wake(), Some(2 * GRACE));
     assert_eq!(known.tick(2 * GRACE - 1), Decision::Nothing);
     assert_eq!(known.tick(2 * GRACE), moved_on(request));
@@ -149,11 +207,11 @@ fn a_published_item_is_abandoned_at_once_when_the_user_moves_on() {
         in_flight.published(request, true, None, 2_000 * MS),
         moved_on(request)
     );
-    assert_eq!(in_flight.moved_on(request, false), Decision::Nothing);
+    assert_eq!(in_flight.judged(request, moving(false)), Decision::Nothing);
     assert!(!in_flight.accepts(request), "published");
     assert_eq!(in_flight.tick(2_500 * MS), moved_on(request));
     assert_eq!(
-        in_flight.moved_on(request, true),
+        in_flight.judged(request, moving(true)),
         abandoned(0, Reason::MovedOn, true)
     );
 }
@@ -166,7 +224,7 @@ fn an_answer_to_a_dead_request_is_dropped() {
     let request = in_flight.start(7, 8_000 * MS, RuleWindow::Known(WINDOW), 0);
     assert_eq!(in_flight.end(request), Some((7, false)));
     let next = in_flight.start(8, 8_000 * MS, RuleWindow::Known(WINDOW), 0);
-    assert_eq!(in_flight.moved_on(request, true), Decision::Nothing);
+    assert_eq!(in_flight.judged(request, moving(true)), Decision::Nothing);
     assert_eq!(
         in_flight.published(request, true, Some(Reason::Deadline), 0),
         Decision::Nothing
@@ -211,7 +269,7 @@ fn an_item_handed_on_keeps_its_times() {
     assert!(in_flight.accepts(handed));
     assert_eq!(in_flight.next_wake(), Some(GRACE));
     assert_eq!(in_flight.tick(GRACE), moved_on(handed));
-    assert_eq!(in_flight.moved_on(handed, false), Decision::Nothing);
+    assert_eq!(in_flight.judged(handed, moving(false)), Decision::Nothing);
     assert_eq!(in_flight.tick(1_000 * MS), publish(handed, None));
 }
 
@@ -240,8 +298,9 @@ fn a_succeeded_generation_takes_charge() {
 /// newest request no longer running, doing nothing when there is none.
 #[derive(Clone, Copy, Debug)]
 enum Action {
-    /// Starts an item with no window (0), a window to learn (1) or a known
-    /// window (2), and one of the readers' deadlines.
+    /// Starts an item with no window (0), a window to learn (1), a known
+    /// window (2) or one its worker names (3), and one of the readers'
+    /// deadlines.
     Start { window: u8, deadline: u8 },
     /// The item learns its window.
     Learned,
@@ -272,7 +331,7 @@ enum Stale {
     Learned,
     Armed,
     Returned,
-    MovedOn,
+    Judged(Reason),
     Published(Option<Reason>),
     End,
 }
@@ -283,11 +342,12 @@ fn action() -> impl Strategy<Value = Action> {
         Just(Stale::Learned),
         Just(Stale::Armed),
         Just(Stale::Returned),
-        Just(Stale::MovedOn),
+        prop_oneof![Just(Reason::MovedOn), Just(Reason::Hung)].prop_map(Stale::Judged),
         prop_oneof![
             Just(None),
             Just(Some(Reason::Deadline)),
-            Just(Some(Reason::MovedOn))
+            Just(Some(Reason::MovedOn)),
+            Just(Some(Reason::Hung))
         ]
         .prop_map(Stale::Published),
         Just(Stale::End),
@@ -295,7 +355,7 @@ fn action() -> impl Strategy<Value = Action> {
     // Weighted toward the lifecycle: starts, ends, hand-ons, successions
     // and the time that abandons.
     prop_oneof![
-        4 => (0..3u8, 0..4u8).prop_map(|(window, deadline)| Action::Start { window, deadline }),
+        4 => (0..4u8, 0..4u8).prop_map(|(window, deadline)| Action::Start { window, deadline }),
         2 => Just(Action::Learned),
         3 => (0..3_200u16).prop_map(Action::Armed),
         3 => (0..1_200u16).prop_map(Action::Advance),
@@ -311,9 +371,10 @@ fn action() -> impl Strategy<Value = Action> {
     ]
 }
 
-/// The readers' deadlines: an outpost's step, text and handling deadlines,
-/// and the listener's.
-const DEADLINES: [u64; 4] = [400 * MS, 2_000 * MS, 10_000 * MS, 8_000 * MS];
+/// The readers' deadlines: a short one, as a shell item query's left of
+/// its own, an outpost's handling deadline, and the bounded walk's, the
+/// listener's.
+const DEADLINES: [u64; 4] = [400 * MS, 2_000 * MS, 11_000 * MS, 13_000 * MS];
 
 /// The answers a run gives, each drawn by the time it is given at, so the
 /// reference model knows them from the times alone.
@@ -323,6 +384,21 @@ impl Answers {
     /// Whether the user has moved on, asked at `now`.
     fn moved_on(&self, now: u64) -> bool {
         self.at(now, 0)
+    }
+
+    /// Whether the item's window is hung, asked at `now`.
+    fn hung(&self, now: u64) -> bool {
+        self.at(now, 2)
+    }
+
+    /// The judgement asked at `now`: hung, tested first, else moved on,
+    /// else none.
+    fn judgement(&self, now: u64) -> Option<Reason> {
+        if self.hung(now) {
+            Some(Reason::Hung)
+        } else {
+            self.moved_on(now).then_some(Reason::MovedOn)
+        }
     }
 
     /// Whether the walk was published, asked at `now`.
@@ -376,14 +452,17 @@ impl Timeline {
     /// its time. Its walk is published at a judgment past its bound or at
     /// a return past it, or before an abandonment while armed, when the
     /// answer then says so. It is abandoned at the first judgment at or
-    /// past its deadline, or when the user is found to have moved on at a
-    /// judgment of its window: the grace after its start, or after the
-    /// window is learned, and each grace after the last. A judgment is a
-    /// tick, or a window learned past the grace; a stopped reader makes
-    /// neither.
+    /// past its deadline, or when its window is found hung or the user is
+    /// found to have moved on at a judgment of its window, known or named:
+    /// the grace after its start, or after the window is learned, and each
+    /// grace after the last. A judgment is a tick, or a window learned past
+    /// the grace; a stopped reader makes neither.
     fn fate(&self, answers: &Answers) -> Fate {
         let grace_end = self.start + GRACE;
-        let mut next = self.window.known().map(|_| grace_end);
+        let mut next = match self.window {
+            RuleWindow::Known(_) | RuleWindow::Named => Some(grace_end),
+            RuleWindow::Never | RuleWindow::Unknown => None,
+        };
         let mut bound = None;
         let mut published = false;
         for &(now, event) in &self.events {
@@ -430,9 +509,9 @@ impl Timeline {
                 && now >= at
             {
                 next = Some(now + GRACE);
-                if answers.moved_on(now) {
+                if let Some(reason) = answers.judgement(now) {
                     publish(&mut bound);
-                    return Fate::Abandoned(Reason::MovedOn, published);
+                    return Fate::Abandoned(reason, published);
                 }
             }
         }
@@ -444,10 +523,14 @@ impl Timeline {
 type Reached = BTreeMap<&'static str, u64>;
 
 /// The lifecycle states the gate's cases must each reach at least once.
-const LISTED: [&str; 19] = [
+const LISTED: [&str; 23] = [
     "started with no window",
     "started with a window to learn",
     "started with a known window",
+    "started with a window its worker names",
+    "a named window judged",
+    "published, then abandoned as hung",
+    "abandoned as hung",
     "a window learned past the grace judged at once",
     "armed after its publication",
     "published at its bound",
@@ -565,6 +648,7 @@ impl Run {
                     self.reach(match abandoned.reason {
                         Reason::Deadline => "abandoned at the deadline",
                         Reason::MovedOn => "abandoned as moved on",
+                        Reason::Hung => "abandoned as hung",
                     });
                     if abandoned.published {
                         self.reach("abandoned with its walk published");
@@ -575,14 +659,24 @@ impl Run {
                     ));
                     return;
                 }
-                Decision::Ask(Ask::MovedOn {
+                Decision::Ask(Ask::Judge {
                     request: asked,
                     window,
                 }) => {
                     assert!(!self.stopped, "a stopped reader judges nothing");
-                    assert_eq!((asked, window), (request, WINDOW), "{:?}", self.trail);
-                    let answer = self.answers.moved_on(self.now);
-                    decision = self.in_flight.moved_on(request, answer);
+                    let (timeline, _) = self.item.as_ref().expect("an item decided on");
+                    let expected = match timeline.window {
+                        RuleWindow::Named => None,
+                        RuleWindow::Never | RuleWindow::Unknown | RuleWindow::Known(_) => {
+                            Some(WINDOW)
+                        }
+                    };
+                    assert_eq!((asked, window), (request, expected), "{:?}", self.trail);
+                    if window.is_none() {
+                        self.reach("a named window judged");
+                    }
+                    let answer = self.answers.judgement(self.now);
+                    decision = self.in_flight.judged(request, answer);
                 }
                 Decision::Ask(Ask::Publish {
                     request: asked,
@@ -595,6 +689,7 @@ impl Run {
                             None => "published at its bound",
                             Some(Reason::Deadline) => "published, then abandoned at the deadline",
                             Some(Reason::MovedOn) => "published, then abandoned as moved on",
+                            Some(Reason::Hung) => "published, then abandoned as hung",
                         });
                     }
                     decision = if self.stopped {
@@ -653,11 +748,13 @@ impl Run {
                     RuleWindow::Never,
                     RuleWindow::Unknown,
                     RuleWindow::Known(WINDOW),
+                    RuleWindow::Named,
                 ][usize::from(window)];
                 self.reach(match window {
                     RuleWindow::Never => "started with no window",
                     RuleWindow::Unknown => "started with a window to learn",
                     RuleWindow::Known(_) => "started with a known window",
+                    RuleWindow::Named => "started with a window its worker names",
                 });
                 let deadline = DEADLINES[usize::from(deadline)];
                 let request = self.in_flight.start(self.items, deadline, window, self.now);
@@ -777,7 +874,7 @@ impl Run {
                         Decision::Nothing
                     }
                     Stale::Returned => self.in_flight.walk_returned(dead, true),
-                    Stale::MovedOn => self.in_flight.moved_on(dead, true),
+                    Stale::Judged(reason) => self.in_flight.judged(dead, Some(reason)),
                     Stale::Published(then_abandon) if self.stopped => self
                         .in_flight
                         .published_judging_nothing(dead, true, then_abandon),
