@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python -I \"$CLAUDE_PROJECT_DIR/.claude/hooks/background_wait_limit.py\"",
+            "timeout": 10,
+            "statusMessage": "Checking background waits"
+          }
+        ]
+      }
+    ]
+  }
+}
