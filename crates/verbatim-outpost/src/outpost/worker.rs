@@ -4501,9 +4501,9 @@ fn follow_of(context: &Context, made: FocusMade) -> (Follow, Option<NodeId>) {
 /// the outpost does not have, or one read through MSAA, whose changes and
 /// caret events come from the hooks. The element alone, not its
 /// descendants, as the reducer acts on the focus's own changes. NVDA
-/// registers its group with `TreeScope_Ancestors` as well, and UIA
-/// delivers an ancestor's events to such a registration in some
-/// applications (`docs/parity/backends.md`, "UIA event registration"). A focus whose
+/// registers its group with `TreeScope_Ancestors` as well, but UIA
+/// delivers no ancestor's event to such a registration
+/// (`docs/parity/backends.md`, "UIA event registration"). A focus whose
 /// parent is a UIA slider of class `SensitiveSlider` has that parent
 /// followed too, for its value changes alone ([`reducer::Group::Value`]),
 /// since Core speaks them while the focus is in it

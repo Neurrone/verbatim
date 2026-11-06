@@ -35,7 +35,7 @@ Neither connection recovery nor event coalescing changes these outcomes (checked
 | First uia-facts run, `processes`: one process at most 9.6 ms; two, the second's worst 1,405.8 ms; four, the later ones' worst up to 1,427.1 ms, the first on time; every process heard all 6 | 2026-11-06 | Build 26200.9711, `UIAutomationCore.dll` 7.2.26100.9549, AMD Ryzen 7 5700G | 132b6af4 | Pass |
 | First uia-facts run, `one-process`: 4 handlers, 24 deliveries, all within 100 ms; `plain`: none heard; `slow`: the later processes' worst 10.9 to 1,513.7 ms; `threading`: the STA process late | 2026-11-06 | As above | As above | Pass; `slow` for trends; `threading` the answer |
 | Rerun with the late processes judged as rates and the 0.5 s before the first move: `processes` 2 of 2 runs with two and with four; `slow` 0 of 1, two processes on time; `plain` none heard | 2026-11-06 | As above | 93fed1a0 | Pass; `slow` inconclusive in one run |
-| Listening only until each process has heard every event: `processes` 2 of 2 runs with two and with four; `slow` 0 of 2, where three runs just before met it in 2 | 2026-11-06 | As above | This change's commit | Pass; `slow` for trends |
+| Listening only until each process has heard every event: `processes` 2 of 2 runs with two and with four; `slow` 0 of 2, where three runs just before met it in 2 | 2026-11-06 | As above | cdb6b4d6 | Pass; `slow` for trends |
 
 ## How to rerun
 

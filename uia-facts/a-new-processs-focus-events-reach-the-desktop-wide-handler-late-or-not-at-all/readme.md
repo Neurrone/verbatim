@@ -25,7 +25,7 @@ Not checked: the program needs the desktop (see "How to rerun").
 | Figure | Date | Machine | Source | Threshold |
 |---|---|---|---|---|
 | None of a new folder window's items, or none of its first 50 to 130, in some `measure_repeat_explorer` runs; the Settings `CoreWindow`'s focus `WinEvent`s with no UIA focus in 14.5 s in `settings_system_page` | 2026-10 | Build 26200 | End-to-end runs, in prose (`books/dev/src/explanation/design/listener-without-connections.md`, decision 2, risks 2 and 13) | New |
-| First run of `provider`: 0 late and 0 missing of 11 starts, the UIA focus 21 to 36 ms after the focus `WinEvent` | 2026-11-06 | Build 26200.9711, `UIAutomationCore.dll` 7.2.26100.9549, AMD Ryzen 7 5700G | This change's commit | New: the controlled tree does not show the fault |
+| First run of `provider`: 0 late and 0 missing of 11 starts, the UIA focus 21 to 36 ms after the focus `WinEvent` | 2026-11-06 | Build 26200.9711, `UIAutomationCore.dll` 7.2.26100.9549, AMD Ryzen 7 5700G | cdb6b4d6 | New: the controlled tree does not show the fault |
 
 ## How to rerun
 

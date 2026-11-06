@@ -146,7 +146,7 @@ What bounds the hold, and who meets it:
 - A window that answers messages but whose provider is slow holds the same way: 3,800 to 6,817 ms at 2,000 ms (`q3`). An application raising its own focus while its provider was slow held up to 3,827 ms in some runs and nothing in others.
 - Each focus WinEvent naming the hung window pays the full wait again: three held 5,814 ms at 1,000 ms, one held 1,824 ms.
 - Each client object in the process that holds a focus registration runs its own focus tracking on the same thread: two client objects with a desktop handler each made four calls (1,820 ms at 500 ms).
-- With the connection timeout at 10 seconds, a 15-second stall held 14,800 ms, and a name change at a desktop-wide registration was not delivered within 25 s (E-hung-proxy).
+- With the connection timeout at 10 seconds, a 15-second stall held 14,800 ms (E-hung-proxy), and a name change at a desktop-wide registration in the held process was delivered once the hold ended, with both windows shown (uia-facts' `desk-wide`).
 - Verbatim's listener is held like any client. Verbatim sets the connection timeout to UIA's default 2 seconds (`CONNECTION_TIMEOUT`), so its hold is about 4 seconds per focus WinEvent, or 2 once Windows has marked the window hung. A UIA notification from another application reached the running listener 3,804 to 3,827 ms late with a new tree view mockapp stalled (`states`), and 3,815 to 3,829 ms late on the unlocked desktop (`both`); with a tree view mockapp that had run all evening under Verbatim, 7,821 to 7,834 ms late, and why that hold was twice as long is not known (`states`).
 
 The exception: UIA raises focus for a newly opened or shown window, such as a menu's popup, on a thread-pool thread (`ClientEventManager::OpenShowWinEventCallbackThreadProc`, then `EventManager::AssociateWithRecord` and `RaiseLocalEvent`), and that focus is not held. In the same hold that kept another application's notification from the listener for 3.8 seconds, Notepad's File menu focus reached it 26 to 112 ms after Alt+F (`both`); in a stand-in client the menu's focus events arrived on a thread-pool thread while the work-item thread was held, and the next focus within the open menu, after Down, waited for the work-item thread with the name changes (`route1`, `route2`). So focus moving within an existing window, name changes and notifications are held. That route delivered 54 and 64 focus events to the stand-in's handler for one menu opening. An earlier series, which timed only the speech of Alt+F, 126 to 170 ms into the hold, seemed to show the listener unaffected because every focus it timed took that route (`altf`).
@@ -200,7 +200,7 @@ One application raises UIA events at about 10,000 a second, name changes with ev
 
 After the first 83 to 110 events, delivered within about the first 110 ms, the process's UIA work-item thread delivers no further event to any of its handlers, the other application's included, and uses one processor core continuously: 90 seconds after a 3-second flood it had delivered none of the 349 name changes the other application raised meanwhile, and its processor time had grown by about 2 seconds every 2 seconds throughout (`q2long`, coalescing on; with coalescing off the 9 probes made before the run was cut short were not delivered either).
 
-Below that rate the queue drains, at a cost to every other application's events in the process. At 1,000 name changes a second the other application's name changes in the same process were delayed 16 ms at the median (at most 43) with coalescing off and 41 ms (at most 100) with it on, against 1.8 and 3.8 ms for text changes at the same rate; at 2,000 to 5,000 a second, with coalescing on, its median delay was 12 to 42 ms and at most about 100 ms, and the flooding application's last event arrived 2.9 to 10.4 seconds after the flood ended (`q2`, `q2_thr`). At 100 a second nothing was delayed (1.2 to 1.4 ms).
+Below that rate the queue drains, at a cost to every other application's events in the process. At 1,000 name changes a second the other application's name changes in the same process were delayed 16 ms at the median (at most 43) with coalescing off and 41 ms (at most 100) with it on, against 1.8 and 3.8 ms for text changes at the same rate; at 2,000 to 5,000 a second, with coalescing on, every one of its events was delivered, and mockapp's flooding application's last event arrived 2.9 to 10.4 seconds after the flood ended (`q2`, `q2_thr`, the deliveries counted). At 2,000 a second the provider program's flood behaved the same. At 100 a second nothing was delayed (1.2 to 1.4 ms).
 
 A thread dump about 2 seconds after the flood, one with coalescing on and one with it off, caught the work-item thread in `WorkItemQueue::GetDuplicatedEventWorkItemCount`, `SavedEvent::GetWorkItemInfo`, `ProtobufHelper::GetEventArgs`, decoding a saved event's arguments (`q2long`). That this count decodes every queued event at each dequeue, so that the work grows with the square of the backlog, is inferred from the function names and the processor time, not shown.
 
@@ -279,7 +279,7 @@ Two or more processes each hold a desktop-wide `AddFocusChangedEventHandler`, an
 
 #### Symptoms
 
-In most runs one process receives the focus events on time and every other process late, not always the first to register. With one process, at most 9 to 10 ms after the raise; with two, the second process at most 682 and 1,112 ms (two runs of two); with four, 670 to 2,677 ms for processes 2 to 4 (`p2c`, two runs of two). At a 500 ms pace the late processes showed waits of about 1,000, 1,500 and 2,000 ms, and some events had not arrived 0.5 s after the last raise (`p2b`); P2b's script, rerun five times at its commit on 2026-11-06, met that in 4 runs, and in the fifth two processes were on time. The cause is not known.
+In most runs one process receives the focus events on time and every other process late, not always the first to register. With one process, at most 9 to 10 ms after the raise; with two, the second process at most 682 and 1,112 ms (two runs of two); with four, 670 to 2,677 ms for processes 2 to 4 (`p2c`, two runs of two). At a 500 ms pace the late processes showed waits of about 1,000, 1,500 and 2,000 ms, and some events had not arrived 0.5 s after the last raise (`p2b`); P2b's script, rerun five times at its commit on 2026-11-06, met that in 4 runs, and in the fourth (`p2b_rerun4.out`) two processes were on time. The cause is not known.
 
 #### Not affected
 
@@ -299,7 +299,7 @@ Not known. Whether it happens with a real Win32 application is not shown: focus 
 
 #### Reproduction test
 
-No test reproduces it; the fact binary in [`uia-facts/desktop-wide-focus-handlers-in-a-second-process-deliver-late/`](https://github.com/Neurrone/verbatim/blob/main/uia-facts/desktop-wide-focus-handlers-in-a-second-process-deliver-late/readme.md) judges P2c's and P2b's late processes as rates of runs and reproduces P2d.
+No test reproduces it; the fact binary in [`uia-facts/desktop-wide-focus-handlers-in-a-second-process-deliver-late/`](https://github.com/Neurrone/verbatim/blob/main/uia-facts/desktop-wide-focus-handlers-in-a-second-process-deliver-late/readme.md) judges P2c's late processes as rates of runs, prints P2b's for trends, since it met them less often than P2b's script, and reproduces P2d.
 
 #### Evidence
 
@@ -333,7 +333,7 @@ By its source, NVDA loses these focuses: it drops a `WinEvent` focus in a native
 
 #### Reproduction test
 
-None: the fault does not reproduce reliably, and no mockapp simulation is built for such a fault (Dickson, 2026-10-19). The recovery's tests are `focus_reports.rs`'s `a_winevent_focus_` tests. The fact binary in [`uia-facts/a-new-processs-focus-events-reach-the-desktop-wide-handler-late-or-not-at-all/`](https://github.com/Neurrone/verbatim/blob/main/uia-facts/a-new-processs-focus-events-reach-the-desktop-wide-handler-late-or-not-at-all/readme.md) counts late and missing focus over 20 starts each of the provider program, Notepad and Settings, on the unlocked desktop.
+None: the fault does not reproduce reliably, and no mockapp simulation is built for such a fault (Dickson, 2026-10-19). The recovery's tests are `focus_reports.rs`'s `a_winevent_focus_` tests. The fact binary in [`uia-facts/a-new-processs-focus-events-reach-the-desktop-wide-handler-late-or-not-at-all/`](https://github.com/Neurrone/verbatim/blob/main/uia-facts/a-new-processs-focus-events-reach-the-desktop-wide-handler-late-or-not-at-all/readme.md) counts late and missing focus over 11 starts of the provider program, a tree it controls, on the unlocked desktop; it met none.
 
 #### Evidence
 
@@ -506,12 +506,12 @@ A process that never connected to a provider, whose list stays empty (inferred f
 
 #### Workarounds that didn't work
 
-- Releasing every UIA object first.
+- Releasing every UIA object first: in uia-facts' `clean` case, removing every handler, releasing every UIA object and calling `CoUninitialize` on every thread before an ordinary exit left 2 and 3 hangs in 90 children, against 8 in 230 with no teardown.
 - Waiting after every provider had gone: 12 seconds still left 2 hangs in 100 runs.
 - Fixing UIA's first-time setup race: the arbitration test binary hung in 1 run in 40 before and 1 in 100 after.
 - `CoUninitialize`, which does not end UIA's own CoreMessaging thread.
 
-Six threads each connecting to a mockapp of its own hung 1 in 40, against 0 in 40 for one thread, too few runs to tell whether concurrent connections corrupt the list.
+It needs connections from several threads at once to several provider processes: in uia-facts' `candidates`, children connecting from one thread, from two, or from six threads to one provider process faulted in none of 230 each, while three, four, six or twelve threads, each connecting to provider processes of its own, faulted in 1 to 5 percent of children, even when each only read a window's name ([`uia-facts/a-process-that-used-uia-can-hang-or-crash-as-it-exits/`](https://github.com/Neurrone/verbatim/blob/main/uia-facts/a-process-that-used-uia-can-hang-or-crash-as-it-exits/readme.md)).
 
 #### NVDA
 
@@ -541,7 +541,7 @@ On a desktop where no window has the keyboard focus, as in mockapp's tests, desk
 
 ### Ancestors cannot be cached or listened to
 
-An event registration scoped to an element's ancestors alone (`TreeScope_Ancestors` or `TreeScope_Parent`) receives no ancestor's events: on Windows 11's taskbar, a registration on the clock button's child did not hear the clock button's name change each minute, while one on the clock button itself did. With the element itself in the scope it depends on the application: a registration on the clock button's child scoped to the element and its ancestors, NVDA's scope for its local group, heard one of the button's two name changes in each of 4 minutes, while in uia-facts' provider program no scope with the element heard its parent's or root's name change, made as an event handler group and directly ([`uia-facts/ancestors-cannot-be-cached-or-listened-to/`](https://github.com/Neurrone/verbatim/blob/main/uia-facts/ancestors-cannot-be-cached-or-listened-to/readme.md)). Microsoft's documentation of [`IUIAutomationCacheRequest::TreeScope`](https://learn.microsoft.com/en-us/windows/win32/api/uiautomationclient/nf-uiautomationclient-iuiautomationcacherequest-get_treescope) also excludes the parent and ancestors from a cache request, so an element's ancestors are read by a walk or a remote operation; Verbatim has not tested that restriction itself.
+An event registration scoped to an element's ancestors (`TreeScope_Ancestors` or `TreeScope_Parent`, with or without the element itself) receives no ancestor's events. In uia-facts' provider program, registrations on a node with each of those scopes heard neither its parent's nor the root's name change, made as an event handler group and directly; in a tree view of that program whose item had the keyboard focus, registrations on the focused item with element and ancestors scope (NVDA's), element scope alone (Verbatim's) and ancestors scope heard none of the tree view's name changes, while UIA read the item's parent as the tree view. On Windows 11's taskbar, a registration on the clock button's child with ancestors scope alone never heard the button's name change each minute, while one with the element in its scope heard it in every minute but one of 12 with element and ancestors scope and in 2 of 2 with element scope alone: the child's own registration receives it, whichever scope includes the element, so NVDA's scope and Verbatim's hear the same ([`uia-facts/ancestors-cannot-be-cached-or-listened-to/`](https://github.com/Neurrone/verbatim/blob/main/uia-facts/ancestors-cannot-be-cached-or-listened-to/readme.md)). Microsoft's documentation of [`IUIAutomationCacheRequest::TreeScope`](https://learn.microsoft.com/en-us/windows/win32/api/uiautomationclient/nf-uiautomationclient-iuiautomationcacherequest-get_treescope) also excludes the parent and ancestors from a cache request, so an element's ancestors are read by a walk or a remote operation; Verbatim has not tested that restriction itself.
 
 ### A timeout bounds each request and window message, not an operation
 

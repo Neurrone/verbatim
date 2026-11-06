@@ -1236,9 +1236,8 @@ focuses its thumb"). The cost is accepted (Fable, 2026-10-30).
 - Any other parent: no call. The class name is in each UI Automation
   ancestor's snapshot, so the check reads the focus chain the outpost
   last reported.
-- Minimum: the same. A registration on the thumb with its ancestors
-  hears an ancestor's events only in some applications
-  (`docs/parity/backends.md`, "UIA event registration"), and
+- Minimum: the same. UIA delivers no ancestor's event to a registration
+  on the thumb (`docs/parity/backends.md`, "UIA event registration"), and
   the listener cannot hand the outpost the slider's element, since a UI
   Automation element cannot pass to another process.
 
@@ -1825,7 +1824,9 @@ with remote operations on or off.
   it takes 9.9 ms at the median (11.9 at the 95th percentile, 30 runs).
 - The outpost's focus-following property subscription is registered on the
   focus alone (`docs/parity/backends.md`, "UIA event registration"),
-  because the reducer acts only on the focus's own changes. Moving it to a focus inside a group costs 1
+  because the reducer acts only on the focus's own changes, and UIA
+  delivered no ancestor's event under NVDA's scope of the focus with its
+  ancestors either. Moving it to a focus inside a group costs 1
   `HostRawElementProvider` and 2 `FragmentRoot` provider calls, 0.75 ms at
   the median (1.14 at the 95th percentile, 30 runs). Those are the warm
   costs, with UI Automation's copy of the element's runtime id fresh. The

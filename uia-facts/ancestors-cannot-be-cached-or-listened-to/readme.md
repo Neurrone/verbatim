@@ -31,8 +31,8 @@ Neither connection recovery nor event coalescing changes these outcomes (checked
 | First uia-facts run, `taskbar`: the button's registration heard its change at the minute; the child's, ancestors scope, none | 2026-11-06 | As above | As above | Pass |
 | The child's registration with element and ancestors scope heard the button's name change in 1 of 2 runs | 2026-11-06 | As above | 8e3ef116's commit message | A rate |
 | `taskbar --trials 4`: the button's registration heard each minute, twice; the child's with ancestors scope none; with element and ancestors scope the button's change once in each of 4 minutes | 2026-11-06 | As above | 93fed1a0, and again at de138138 | Ancestors none; element and ancestors 4 of 4 each run |
-| `taskbar` with the element scope beside: ancestors scope none; element and ancestors scope 2 of 2 minutes; element scope 2 of 2 | 2026-11-06 | As above | This change's commit | Pass; element scope new |
-| `tree --trials 3`: the focused element node 5, its parent the tree view, 3 of 3; the control heard the rename once each; the item's element and ancestors, element and ancestors scopes none | 2026-11-06 | As above | This change's commit | Pass; the scopes new |
+| `taskbar` with the element scope beside: ancestors scope none; element and ancestors scope 2 of 2 minutes; element scope 2 of 2 | 2026-11-06 | As above | cdb6b4d6 | Pass; element scope new |
+| `tree --trials 3`: the focused element node 5, its parent the tree view, 3 of 3; the control heard the rename once each; the item's element and ancestors, element and ancestors scopes none | 2026-11-06 | As above | cdb6b4d6 | Pass; the scopes new |
 
 ## How to rerun
 

@@ -214,7 +214,7 @@ None of the old tools was built or run for this design, so "rerun by command" be
 ### a-client-processs-events-run-on-one-worker
 
 - Kind: binary.
-- Reproduces: the worker shared by any number of client objects (inferred; 1 to 8 objects, one held). Whether the worker ends when its queue is empty (inferred), from thread ids across idle gaps. Four events on four thread ids. A slow handler delaying later events and a slow query in a handler (inferred). Whether UIA drops events behind a slow handler (Not known). Handlers called on a non-UI thread.
+- Reproduces: the worker shared by any number of client objects (inferred; 1 to 8 objects, one held). Whether the worker ends when its queue is empty (inferred), from thread ids across idle gaps. Four events on four thread ids. A slow handler delaying later events and a slow query in a handler (inferred). Twenty events behind a slow handler all delivered, counted. Handlers called on a non-UI thread.
 - Evidence now: the hung-window focusproto's `h3_variants.py` (two client objects); the events case of the parallel-calls `ops.ps1` (four thread ids). The rest has no record.
 - Replaces: parts of `ops.ps1`'s events case and `h3_variants.py`.
 - Verbatim relies on: D9 as amended on 2026-11-02 (`books/dev/src/explanation/architecture.md`), whose stated reason is the shared worker and the flood, and each outpost holding its own application's registrations. If the worker became per client object, D9's reason would be wrong.
@@ -246,7 +246,7 @@ None of the old tools was built or run for this design, so "rerun by command" be
 ### a-new-processs-focus-events-reach-the-desktop-wide-handler-late-or-not-at-all
 
 - Kind: binary.
-- Reproduces: fresh provider processes, Notepad and Settings, each started 20 times under one desktop-wide handler. The binary counts late and missing focus as a rate.
+- Reproduces: fresh provider processes, a tree the program controls, started 11 times under one desktop-wide handler (Dickson, 2026-11-06: no File Explorer, Notepad or Settings). The binary counts late and missing focus as a rate.
 - Evidence now: none kept. The fault was met in end-to-end scenarios no longer in the suite and in `settings_system_page`, which does not report it. The recovery is tested by the `a_winevent_focus_` tests of `crates/mockapp/tests/focus_reports.rs`.
 - Replaces: none kept (new).
 - Verbatim relies on: the recovery, not a workaround: the application's outpost waits a second from the `WinEvent` focus copy for its UIA focus and otherwise reads the focus itself (`books/dev/src/explanation/design/listener-without-connections.md`, decision 11).
@@ -376,7 +376,7 @@ None of the old tools was built or run for this design, so "rerun by command" be
 ### ancestors-cannot-be-cached-or-listened-to
 
 - Kind: binary.
-- Reproduces: a registration scoped to the ancestors alone hears no ancestor's event, in the provider program and in the taskbar clock case; scoped to the element and its ancestors, it heard the taskbar clock button's change and none in the provider program. The cache part links Learn's `TreeScope`.
+- Reproduces: an ancestor-scoped registration hears no ancestor's event, in the provider program, in its tree view with a focused item, and in the taskbar clock case, where a registration on the button's child hears the button's change with any scope that includes the element. The cache part links Learn's `TreeScope`.
 - Evidence now: prose only; the taskbar clock and mockapp probes were not kept.
 - Replaces: none kept (new).
 - Verbatim relies on: ancestors being read by a walk or a remote operation; a change would only reopen an optimization.
