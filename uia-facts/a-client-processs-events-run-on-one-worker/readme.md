@@ -31,7 +31,7 @@ Neither connection recovery nor event coalescing changes these outcomes (checked
 | First uia-facts run, `shared`: with 2 and 8 client objects, every other object heard B2's event after the slow handler returned | 2026-11-06 | Build 26200.9711, `UIAutomationCore.dll` 7.2.26100.9549, AMD Ryzen 7 5700G | 132b6af4 | Pass for 2; the answer for 8 |
 | First uia-facts run, `threads`: four thread ids for four events to registrations removed after them; one thread for four events to one registration kept, still running 750 ms after each; one thread for four raised at once; every handler on a thread other than the registering one | 2026-11-06 | As above | As above | Pass; the rest the answers |
 | First uia-facts run, `slow-handler` and `slow-query`: the later event waited, true each | 2026-11-06 | As above | As above | The answers |
-| `drops`, counting handler runs: 20 of 20 delivered, one after another | 2026-11-06 | As above | This change's commit; 132b6af4's 4 of 20 read the senders' names and stopped counting while the handler still ran | The answer |
+| `drops`, counting handler runs: 20 of 20 delivered, one after another | 2026-11-06 | As above | d0a8d430; 132b6af4's 4 of 20 read the senders' names and stopped counting while the handler still ran | The answer |
 
 ## How to rerun
 

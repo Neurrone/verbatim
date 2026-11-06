@@ -722,6 +722,10 @@ pub fn run(spec: &[String]) -> ! {
 }
 
 /// This process's processor time, user and kernel, in microseconds.
+///
+/// # Panics
+///
+/// When the times cannot be read.
 #[must_use]
 pub fn processor_time_us() -> u64 {
     let mut times = [FILETIME::default(); 4];
@@ -738,9 +742,7 @@ pub fn processor_time_us() -> u64 {
             &raw mut *user,
         )
     };
-    if read.is_err() {
-        return 0;
-    }
+    read.expect("this process's times");
     let ticks = |t: &FILETIME| (u64::from(t.dwHighDateTime) << 32) | u64::from(t.dwLowDateTime);
     (ticks(&times[2]) + ticks(&times[3])) / 10
 }

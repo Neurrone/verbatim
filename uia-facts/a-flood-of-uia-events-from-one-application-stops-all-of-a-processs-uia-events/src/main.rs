@@ -201,10 +201,10 @@ fn stops(args: &Args, report: &mut Report) {
         }
         name_stopped.push(heard_after(&lines[0], flood_end) == 0);
         counts.push(count(&lines[0], "name", "First"));
-        busy.push(match (before[0], after[0]) {
-            (Some(b), Some(a)) => us_to_ms(a.saturating_sub(b)) / 1_000.0,
-            _ => 0.0,
-        });
+        let (Some(b), Some(a)) = (before[0], after[0]) else {
+            panic!("the name-flooded client reports its processor time");
+        };
+        busy.push(us_to_ms(a.saturating_sub(b)) / 1_000.0);
         text_outcome.push(heard_after(&lines[1], flood_end) == 0);
         notification_stopped.push(heard_after(&lines[2], flood_end) == 0);
         let whole = probes_heard(&lines[3]) == sent.len();
@@ -392,7 +392,7 @@ fn backlog(args: &Args, report: &mut Report) {
         flood.request("raise name 0 1");
         let warm = client.next(Duration::from_secs(5), |l| matches!(l, Line::Heard { .. }));
         note::evidence(&format!("warmed: {}", warm.is_some()));
-        let before = cpu(&mut client).unwrap_or(0);
+        let before = cpu(&mut client).expect("the client reports its processor time");
         let raised: u64 = flood
             .request(&format!("raise-rate name 0 1 0 {size}"))
             .parse()
@@ -401,7 +401,7 @@ fn backlog(args: &Args, report: &mut Report) {
             Duration::from_millis(1_500),
             "the client's work on the burst",
         );
-        let after = cpu(&mut client).unwrap_or(0);
+        let after = cpu(&mut client).expect("the client reports its processor time");
         let lines = client.lines_until(now_us());
         let heard = count(&lines, "name", "First");
         note::evidence(&format!("{size} raised from {raised}: {heard} heard"));

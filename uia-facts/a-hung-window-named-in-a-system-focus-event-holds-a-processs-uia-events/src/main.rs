@@ -930,8 +930,8 @@ fn dropped(args: &Args, report: &mut Report) {
             );
             args.pause_for_debugger(&[("P1 (M)", scene.p1.pid), ("client", client.pid())]);
             // As h6: M moves its focus to its first item while it answers,
-            // then to its second at the start of a 3 s stall, from inside
-            // it.
+            // then to its second at the start of a 1.5 s stall, from inside
+            // it, 1.5 waits at 1 s as h6's 3 s stall was at 2 s.
             let raised = scene
                 .p1
                 .request("raise focus 2 1")
@@ -940,7 +940,7 @@ fn dropped(args: &Args, report: &mut Report) {
             let lines = client.lines_until(raised + 500_000);
             control[i].push(delay(raised, heard_at(&lines, "focus", "First")));
             note::waiting(&format!(
-                "3.0 s, M's stall, then 5 s for its focus, at {t} ms"
+                "3.0 s, M's 1.5 s stall and its focus after, at {t} ms"
             ));
             let stalled: u64 = scene
                 .p1

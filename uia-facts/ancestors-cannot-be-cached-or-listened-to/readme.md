@@ -29,7 +29,7 @@ Neither connection recovery nor event coalescing changes these outcomes (checked
 | First uia-facts run, `provider`: the control heard node 1's change; none of the eight ancestor-scoped registrations heard node 1's or the root's | 2026-11-06 | Build 26200.9711, `UIAutomationCore.dll` 7.2.26100.9549, AMD Ryzen 7 5700G | 132b6af4 | Pass |
 | First uia-facts run, `taskbar`: the button's registration heard its change at the minute; the child's, ancestors scope, none | 2026-11-06 | As above | As above | Pass |
 | The child's registration with element and ancestors scope heard the button's name change in 1 of 2 runs | 2026-11-06 | As above | 8e3ef116's commit message | A rate |
-| `taskbar --trials 4`: the button's registration heard each minute, twice; the child's with ancestors scope none; with element and ancestors scope the button's change once in each of 4 minutes | 2026-11-06 | As above | This change's commit | Ancestors none; element and ancestors 4 of 4, inconclusive against 1 of 2 |
+| `taskbar --trials 4`: the button's registration heard each minute, twice; the child's with ancestors scope none; with element and ancestors scope the button's change once in each of 4 minutes | 2026-11-06 | As above | d0a8d430 | Ancestors none; element and ancestors 4 of 4, inconclusive against 1 of 2 |
 
 ## How to rerun
 

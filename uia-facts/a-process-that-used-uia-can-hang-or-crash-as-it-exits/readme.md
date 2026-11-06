@@ -22,7 +22,7 @@ Neither connection recovery nor event coalescing changes these outcomes (checked
 |---|---|---|---|---|
 | About 1 to 3 percent of the arbitration tests' runs; 2 hangs in 100 runs after waiting 12 s for the providers to go; 1 in 40 before the first-time setup fix and 1 in 100 after; six threads each with a mockapp of its own 1 in 40, one thread 0 in 40 | 2026-10-03 | Build 26200 | Commits 1f69859e and fed532be | A rate, 1 of 100 |
 | First uia-facts run, `exit`: 0 of 150 by default and with both settings; 1 of 150, a crash, with `--recovery` and with `--coalescing` | 2026-11-06 | Build 26200.9711, `UIAutomationCore.dll` 7.2.26100.9549, AMD Ryzen 7 5700G | 132b6af4 | Inconclusive with none, pass with one, against 1 in 100 |
-| `exit`, the children one after another, only access violations and hangs counted: 2 of 150, both hangs | 2026-11-06 | As above | This change's commit | Pass |
+| `exit`, the children one after another, only access violations and hangs counted: 2 of 150, both hangs | 2026-11-06 | As above | d0a8d430 | Pass |
 
 ## How to rerun
 
