@@ -108,6 +108,7 @@ fn main() {
     let mut com = true;
     let mut nodes = 24usize;
     let mut bridge = false;
+    let mut tree_view = false;
     let mut i = 0;
     while i < args.len() {
         let value = args.get(i + 1).cloned().unwrap_or_default();
@@ -133,6 +134,7 @@ fn main() {
                 i += 1;
             }
             "--bridge" => bridge = true,
+            "--tree-view" => tree_view = true,
             other => panic!("unknown argument {other}"),
         }
         i += 1;
@@ -150,7 +152,7 @@ fn main() {
             (kind, thread.parse().expect("a thread number"))
         })
         .collect();
-    state::configure(com, nodes, bridge, &specs);
+    state::configure(com, nodes, bridge, tree_view, &specs);
 
     // SAFETY: a null module name asks for this executable's own module.
     let instance = unsafe { GetModuleHandleW(None) }.expect("this module's handle");
@@ -480,6 +482,30 @@ fn foreground(index: usize) -> String {
     let ours = unsafe { GetCurrentThreadId() };
     // SAFETY: two thread ids; attaching shares their input state.
     let attached = theirs != 0 && unsafe { AttachThreadInput(ours, theirs, true) }.as_bool();
+    // Windows lets the process that sent the last input take the
+    // foreground: F24, bound to nothing, pressed and released first.
+    {
+        use windows::Win32::UI::Input::KeyboardAndMouse::{
+            INPUT, INPUT_0, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_KEYUP,
+            SendInput, VK_F24,
+        };
+        let key = |flags| INPUT {
+            r#type: INPUT_KEYBOARD,
+            Anonymous: INPUT_0 {
+                ki: KEYBDINPUT {
+                    wVk: VK_F24,
+                    wScan: 0,
+                    dwFlags: flags,
+                    time: 0,
+                    dwExtraInfo: 0,
+                },
+            },
+        };
+        let inputs = [key(KEYBD_EVENT_FLAGS(0)), key(KEYEVENTF_KEYUP)];
+        let size = i32::try_from(std::mem::size_of::<INPUT>()).expect("a small structure");
+        // SAFETY: a live array of keyboard inputs of the size given.
+        let _ = unsafe { SendInput(&inputs, size) };
+    }
     // SAFETY: a window of this thread.
     let _ = unsafe { SetForegroundWindow(hwnd) };
     if attached {

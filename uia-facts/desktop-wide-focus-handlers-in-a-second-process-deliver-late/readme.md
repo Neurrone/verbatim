@@ -10,15 +10,15 @@ Nothing: Verbatim holds one desktop-wide focus handler, in the listener.
 
 ## Method
 
-Every process runs on a desktop of its own (`uia_facts_support::desktop`), as P2 ran, where no window has the keyboard focus, so a desktop-wide focus handler receives only the focus events UIA derives from a focus `WinEvent`. M is the provider program's MSAA window: its object has two children, `First` and `Second`, and reports itself and each child focused, as mockapp's MSAA objects did. M's UI thread moves its focus from one child to the other and raises the focus `WinEvent` naming it, 6 times where P2 raised 10. Each client is a listening process holding desktop-wide focus handlers, each caching the sender's name, started in turn; the first move comes 0.5 s after the last client is ready, as in P2, without which the late processes at a 500 ms pace were not met. A delivery's lateness is the time from the latest raise before it to its arrival; the program listens 3 s after the last raise.
+Every process runs on a desktop of its own (`uia_facts_support::desktop`), as P2 ran, where no window has the keyboard focus, so a desktop-wide focus handler receives only the focus events UIA derives from a focus `WinEvent`. M is the provider program's MSAA window: its object has two children, `First` and `Second`, and reports itself and each child focused, as mockapp's MSAA objects did. M's UI thread moves its focus from one child to the other and raises the focus `WinEvent` naming it, 6 times where P2 raised 10. Each client is a listening process holding desktop-wide focus handlers, each caching the sender's name, started in turn; the first move comes 0.5 s after the last client is ready, as in P2, without which the late processes at a 500 ms pace were not met. A delivery's lateness is the time from the latest raise before it to its arrival; the program listens to each process up to 3 s after the last raise, and no longer once it has heard every event its handlers can.
 
 - `processes`: 1, 2 and 4 processes, one handler each, focus every 150 ms (P2c); one run of one process, and two runs each of two and four, as P2c ran.
 - `one-process`: 4 handlers in one process (P2c's `one` layout, which also ran 2).
-- `slow`: 4 processes, focus every 500 ms (P2b), one run as P2b's.
+- `slow`: 4 processes, focus every 500 ms (P2b), two runs whatever `--trials` says, printed for trends: the program met the late processes in 2 of 6 runs where P2b's script, rerun at its commit, met them in 4 of 5, a difference of the case not found.
 - `plain`: the provider program's plain Win32 window, which has no `IAccessible` of its own and no keyboard focus, named by the 10 focus `WinEvent`s, with 4 processes and a process with 4 handlers (P2d, which used charmap's dialog).
 - `threading`: 2 processes, the second registering on a thread of a single-threaded apartment, toward the cause (new).
 
-Judged: one process's deliveries within 100 ms (a relation; P2 measured 9 to 15 ms); with two or four processes, the runs in which one process is on time and every other's worst delivery comes at least 300 ms after its, a rate against P2c's 2 of 2, and at a 500 ms pace against 5 of 6, P2b's run and four of five reruns of its script at its commit (P2's late processes were 670 ms or more later); the events each process hears in the end (deterministic with 1 and 2 processes; for trends with 4, where one run of nine had a process hear 2 of the 6).
+Judged: one process's deliveries within 100 ms (a relation; P2 measured 9 to 15 ms); with two or four processes, the runs in which one process is on time and every other's worst delivery comes at least 300 ms after its, a rate against P2c's 2 of 2 (P2's late processes were 670 ms or more later); the events each process hears in the end (deterministic with 1 and 2 processes; for trends with 4, where one run of nine had a process hear 2 of the 6).
 
 ## Client settings
 
@@ -34,7 +34,8 @@ Neither connection recovery nor event coalescing changes these outcomes (checked
 | P2d: charmap's dialog without the keyboard focus, 1, 2 and 4 processes and 4 handlers in one: no handler heard any | 2026-10-18 | Build 26200 | `recorded/p2d_*.out` | Deterministic, none |
 | First uia-facts run, `processes`: one process at most 9.6 ms; two, the second's worst 1,405.8 ms; four, the later ones' worst up to 1,427.1 ms, the first on time; every process heard all 6 | 2026-11-06 | Build 26200.9711, `UIAutomationCore.dll` 7.2.26100.9549, AMD Ryzen 7 5700G | 132b6af4 | Pass |
 | First uia-facts run, `one-process`: 4 handlers, 24 deliveries, all within 100 ms; `plain`: none heard; `slow`: the later processes' worst 10.9 to 1,513.7 ms; `threading`: the STA process late | 2026-11-06 | As above | As above | Pass; `slow` for trends; `threading` the answer |
-| Rerun with the late processes judged as rates and the 0.5 s before the first move: `processes` 2 of 2 runs with two and with four; `slow` 0 of 1, two processes on time; `plain` none heard | 2026-11-06 | As above | d0a8d430 | Pass; `slow` inconclusive in one run |
+| Rerun with the late processes judged as rates and the 0.5 s before the first move: `processes` 2 of 2 runs with two and with four; `slow` 0 of 1, two processes on time; `plain` none heard | 2026-11-06 | As above | 93fed1a0 | Pass; `slow` inconclusive in one run |
+| Listening only until each process has heard every event: `processes` 2 of 2 runs with two and with four; `slow` 0 of 2, where three runs just before met it in 2 | 2026-11-06 | As above | This change's commit | Pass; `slow` for trends |
 
 ## How to rerun
 

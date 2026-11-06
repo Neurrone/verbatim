@@ -158,8 +158,10 @@ impl Role {
         let ms = u32::try_from(limit.as_millis()).unwrap_or(u32::MAX);
         // SAFETY: the child's live process handle, which `self` owns.
         let waited = unsafe { windows::Win32::System::Threading::WaitForSingleObject(handle, ms) };
-        if waited != windows::Win32::Foundation::WAIT_OBJECT_0 {
-            return None;
+        match waited {
+            windows::Win32::Foundation::WAIT_OBJECT_0 => {}
+            windows::Win32::Foundation::WAIT_TIMEOUT => return None,
+            other => panic!("waiting on the process failed: {other:?}"),
         }
         let status = self
             .child

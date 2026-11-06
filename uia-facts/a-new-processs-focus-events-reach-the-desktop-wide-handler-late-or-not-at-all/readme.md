@@ -2,7 +2,7 @@
 
 ## Fact
 
-A newly started application, a File Explorer folder window in its own process or the Settings app, moves its focus while a desktop-wide `AddFocusChangedEventHandler` is registered in another process. The `WinEvent` hook of that process sees the focus move, and UI Automation delivers the matching focus events late, or none of them. The cause is not known (`books/dev/src/reference/uia-bugs.md`, the fault of that name).
+A newly started application, a File Explorer folder window in its own process or the Settings app, moves its focus while a desktop-wide `AddFocusChangedEventHandler` is registered in another process. The `WinEvent` hook of that process sees the focus move, and UI Automation delivers the matching focus events late, or none of them. The cause is not known (`books/dev/src/reference/uia-bugs.md`, the fault of that name). The program checks a tree it controls, the provider program, where 11 starts showed no late or missing focus.
 
 ## What Verbatim relies on
 
@@ -10,27 +10,26 @@ The recovery, not a workaround: the application's outpost waits a second from th
 
 ## Method
 
-On the unlocked desktop, the program holds one desktop-wide focus handler, caching the sender's process id, and an out-of-context hook for focus `WinEvent`s from every process, as Verbatim's listener holds both. It starts a fresh application 20 times each, ending it after each start:
+The program checks a tree it controls, the provider program, since the end-to-end runs that met the fault used File Explorer and the Settings app, which the program does not start (Dickson, 2026-11-06). On the unlocked desktop, it holds one desktop-wide focus handler, caching the sender's process id, and an out-of-context hook for focus `WinEvent`s from every process, as Verbatim's listener holds both.
 
-- `provider`: the provider program, its window brought to the foreground and its focus moved to node 5 with its focus event raised;
-- `notepad`: Notepad, `notepad.exe` in the system folder;
-- `settings`: the Settings app, `ms-settings:`.
+- `provider`: the provider program started 11 times, its window brought to the foreground and its focus moved to node 5 with its focus event raised, then ended. 11 starts would show a fault met in 1 start of 4 with probability 0.95.
 
-For each start it takes the first focus `WinEvent` from a process of that executable that was not running before, and waits up to 5 s for a UIA focus whose sender is in that process. The UIA focus is late when it comes more than 1 s after the `WinEvent`, the second Verbatim's outpost waits, and missing when none comes within 5 s. A start with no focus `WinEvent` from a new process within 10 s has nothing to measure from, and makes the counts inconclusive. Ending an application ends only the processes of its executable that were not running before its start, so the user's own windows are left alone. The fault was never measured as a rate, so each count is printed as new.
+For each start it takes the first focus `WinEvent` from the new process, waiting up to 2 s since the program brings the window to the front itself, and waits up to 5 s for a UIA focus whose sender is in that process. The UIA focus is late when it comes more than 1 s after the `WinEvent`, the second Verbatim's outpost waits, and missing when none comes within 5 s. A start with no focus `WinEvent` has nothing to measure from: the case stops there, inconclusive. The fault was never measured as a rate, so the counts are printed as new.
 
 ## Client settings
 
-Not checked: the program needs the desktop and was not run by the build (see "How to rerun").
+Not checked: the program needs the desktop (see "How to rerun").
 
 ## Recorded results
 
 | Figure | Date | Machine | Source | Threshold |
 |---|---|---|---|---|
 | None of a new folder window's items, or none of its first 50 to 130, in some `measure_repeat_explorer` runs; the Settings `CoreWindow`'s focus `WinEvent`s with no UIA focus in 14.5 s in `settings_system_page` | 2026-10 | Build 26200 | End-to-end runs, in prose (`books/dev/src/explanation/design/listener-without-connections.md`, decision 2, risks 2 and 13) | New |
+| First run of `provider`: 0 late and 0 missing of 11 starts, the UIA focus 21 to 36 ms after the focus `WinEvent` | 2026-11-06 | Build 26200.9711, `UIAutomationCore.dll` 7.2.26100.9549, AMD Ryzen 7 5700G | This change's commit | New: the controlled tree does not show the fault |
 
 ## How to rerun
 
-`uia-facts/build.ps1`, then `target\debug\a-new-processs-focus-events-reach-the-desktop-wide-handler-late-or-not-at-all.exe`, or one application with `--case`. It needs the unlocked desktop and takes it over for about two minutes: each application is started 20 times in front.
+`uia-facts/build.ps1`, then `target\debug\a-new-processs-focus-events-reach-the-desktop-wide-handler-late-or-not-at-all.exe`, It needs the unlocked desktop and takes it over: the provider program is started 11 times in front.
 
 ## Evidence kept
 

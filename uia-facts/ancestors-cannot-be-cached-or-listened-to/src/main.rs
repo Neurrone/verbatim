@@ -17,12 +17,12 @@ use std::time::Duration;
 use uia_facts_support::args::{Args, trials};
 use uia_facts_support::events::{self, Handler, OnEvent};
 use uia_facts_support::provider::Provider;
-use uia_facts_support::report::{Report, deterministic, rate, relation, runs};
-use uia_facts_support::{note, now_us, uia};
+use uia_facts_support::report::{Report, Verdict, deterministic, rate, relation, runs};
+use uia_facts_support::{note, now_us, precondition, uia};
 use windows::Win32::UI::Accessibility::{
     IUIAutomation6, IUIAutomationCacheRequest, IUIAutomationElement, TreeScope,
     TreeScope_Ancestors, TreeScope_Children, TreeScope_Element, TreeScope_Parent,
-    UIA_ClassNamePropertyId, UIA_NamePropertyId,
+    UIA_ClassNamePropertyId, UIA_NamePropertyId, UIA_TreeControlTypeId,
 };
 use windows::core::BSTR;
 
@@ -34,9 +34,15 @@ fn main() {
         report.case("provider", "name changes registered on node 5 with parent and ancestor scopes, directly and as a group, and on node 1 as a control; node 1 and then the root renamed");
         provider(&args, &mut report);
     }
+    // The item takes the keyboard focus, so the case needs the desktop and
+    // runs only when named.
+    if args.names("tree") {
+        report.case("tree", "a tree view whose item has the keyboard focus, in front on the unlocked desktop; name changes registered on the focused item with element and ancestors scope, element scope and ancestors scope, and on the tree view as a control; the tree view renamed");
+        tree(&args, &mut report);
+    }
     // The clock changes once a minute: the case runs only when named.
     if args.names("taskbar") {
-        report.case("taskbar", "name changes registered on the taskbar clock button's first child, ancestors scope and element and ancestors scope, and on the button itself; waiting for the clock's next minute, once a trial");
+        report.case("taskbar", "name changes registered on the taskbar clock button's first child, ancestors scope, element and ancestors scope, and element scope, and on the button itself; waiting for the clock's next minute, once a trial");
         taskbar(&mut report);
     }
     report.finish();
@@ -180,6 +186,118 @@ fn provider(args: &Args, report: &mut Report) {
     }
 }
 
+/// Dickson's design: a tree view (node 1, of control type `TreeView`)
+/// whose item, node 5, has the keyboard focus; registrations on the
+/// focused item with NVDA's scope, Verbatim's and the ancestors alone; the
+/// tree view's name change raised through
+/// `UiaRaiseAutomationPropertyChangedEvent`.
+fn tree(args: &Args, report: &mut Report) {
+    if let Err(reason) = precondition::unlocked_desktop() {
+        report.unmet("tree: the focused item's registrations", &reason);
+        return;
+    }
+    let scopes = [
+        (
+            "element and ancestors",
+            TreeScope(TreeScope_Element.0 | TreeScope_Ancestors.0),
+        ),
+        ("element", TreeScope_Element),
+        ("ancestors", TreeScope_Ancestors),
+    ];
+    let mut heard_by: Vec<Vec<usize>> = vec![Vec::new(); scopes.len()];
+    let mut control = Vec::new();
+    let mut paths = Vec::new();
+    for _ in 0..trials() {
+        let mut provider = Provider::launch(&["--windows", "uia:0", "--tree-view"]);
+        args.pause_for_debugger(&[("provider", provider.pid), ("client", std::process::id())]);
+        let front = provider.request("foreground 0");
+        provider.request("focus 0 5");
+        provider.request("raise focus 0 5");
+        let client = uia::client();
+        let root = uia::element(&client, provider.hwnd(0)).expect("the window's element");
+        let view = uia::node(&client, &root, 1).expect("the tree view");
+        // SAFETY: a live client.
+        let focused = unsafe { client.GetFocusedElement() }.expect("the focused element");
+        let id = |e: &IUIAutomationElement| {
+            // SAFETY: a live element.
+            unsafe { e.CurrentAutomationId() }
+                .map_or_else(|e| uia::hresult(e.code()), |b| b.to_string())
+        };
+        let kind = |e: &IUIAutomationElement| {
+            // SAFETY: a live element.
+            unsafe { e.CurrentControlType() }.map_or(0, |t| t.0)
+        };
+        // SAFETY: a live client.
+        let walker = unsafe { client.ControlViewWalker() }.expect("the control view walker");
+        // SAFETY: live walker and element.
+        let parent = unsafe { walker.GetParentElement(&focused) }.expect("the item's parent");
+        let path = format!(
+            "in front {front}; focused element {} of control type {}; its parent {} of control type {}",
+            id(&focused),
+            kind(&focused),
+            id(&parent),
+            kind(&parent)
+        );
+        note::evidence(&path);
+        paths.push(
+            id(&focused) == "n5" && id(&parent) == "n1" && kind(&parent) == UIA_TreeControlTypeId.0,
+        );
+        let registrations: Vec<Heard> = scopes
+            .iter()
+            .map(|(_, scope)| register(&client, &focused, *scope, false))
+            .collect();
+        let own = register(&client, &view, TreeScope_Element, false);
+        provider.request("rename 0 1 renamed");
+        provider.request("raise name 0 1");
+        let start = now_us();
+        while own.lock().expect("a lock no one poisons").is_empty() && now_us() < start + 3_000_000
+        {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        uia::pause(
+            Duration::from_millis(500),
+            "for any event behind the control's",
+        );
+        let from_view =
+            |h: &[(String, String)]| h.iter().filter(|(_, name)| name == "renamed").count();
+        control.push(from_view(&own.lock().expect("a lock no one poisons")));
+        for (i, heard) in registrations.iter().enumerate() {
+            let heard = heard.lock().expect("a lock no one poisons").clone();
+            note::evidence(&format!("{} scope on the item: {heard:?}", scopes[i].0));
+            heard_by[i].push(from_view(&heard));
+        }
+        // SAFETY: a live client.
+        unsafe { client.RemoveAllEventHandlers() }.expect("the registrations removed");
+    }
+    report.claim(
+        "the focused element is the tree view's item, and UIA reads its parent as the tree view",
+        &runs(&paths),
+        "a scope over ancestors needs that path",
+        relation(&paths),
+    );
+    report.claim(
+        "the control, element scope on the tree view: its name changes heard",
+        &runs(&control),
+        "1",
+        deterministic(&control, &1),
+    );
+    for (i, (scope, _)) in scopes.iter().enumerate() {
+        report.claim(
+            &format!("the focused item, {scope} scope: the tree view's name changes heard"),
+            &runs(&heard_by[i]),
+            "",
+            Verdict::New,
+        );
+    }
+}
+
+/// The minutes `taskbar` watches.
+const MINUTES: usize = 2;
+
+#[expect(
+    clippy::too_many_lines,
+    reason = "a minute a trial with four registrations, then their claims"
+)]
 fn taskbar(report: &mut Report) {
     let client = uia::client();
     // SAFETY: a live client.
@@ -213,7 +331,10 @@ fn taskbar(report: &mut Report) {
     let mut seen = Vec::new();
     let mut ancestors_only = Vec::new();
     let mut with_element = 0;
-    for _ in 0..trials() {
+    let mut element_only = 0;
+    // Two minutes, whatever --trials says: at the recorded 11 of 12, two
+    // minutes with none would differ ((1/12) squared is below 0.05).
+    for _ in 0..MINUTES {
         let on_child = register(&client, &child, TreeScope_Ancestors, false);
         let on_both = register(
             &client,
@@ -221,6 +342,8 @@ fn taskbar(report: &mut Report) {
             TreeScope(TreeScope_Element.0 | TreeScope_Ancestors.0),
             false,
         );
+        // Verbatim's scope, beside NVDA's, in the same minutes.
+        let on_element = register(&client, &child, TreeScope_Element, false);
         let on_button = register(&client, &clock, TreeScope_Element, false);
         note::waiting("up to 62 s, the clock's next minute");
         let start = now_us();
@@ -241,8 +364,9 @@ fn taskbar(report: &mut Report) {
         let button = on_button.lock().expect("a lock no one poisons").clone();
         let heard = on_child.lock().expect("a lock no one poisons").clone();
         let both = on_both.lock().expect("a lock no one poisons").clone();
+        let element = on_element.lock().expect("a lock no one poisons").clone();
         note::evidence(&format!(
-            "the button's registration heard {button:?}; the child's, ancestors {heard:?}; element and ancestors {both:?}"
+            "the button's registration heard {button:?}; the child's, ancestors {heard:?}; element and ancestors {both:?}; element {element:?}"
         ));
         let from_button = |h: &[(String, String)]| {
             h.iter()
@@ -253,6 +377,9 @@ fn taskbar(report: &mut Report) {
         ancestors_only.push(from_button(&heard));
         if from_button(&both) > 0 {
             with_element += 1;
+        }
+        if from_button(&element) > 0 {
+            element_only += 1;
         }
     }
     report.claim(
@@ -273,8 +400,14 @@ fn taskbar(report: &mut Report) {
         report.claim(
             "the registration on the button's first child, element and ancestors scope: minutes in which it heard the button's name change",
             &format!("{with_element} of {n}"),
-            "1 of 2 (8e3ef116's message)",
-            rate(with_element, n, 1, 2),
+            "11 of 12: 1 of 2 (8e3ef116's message), 4 of 4 (93fed1a0's first run), 4 of 4 (de138138's run) and 2 of 2 (the element-scope run)",
+            rate(with_element, n, 11, 12),
+        );
+        report.claim(
+            "the registration on the button's first child, element scope alone: minutes in which it heard the button's name change",
+            &format!("{element_only} of {n}"),
+            "",
+            Verdict::New,
         );
     } else {
         report.unmet(

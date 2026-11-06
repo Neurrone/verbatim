@@ -45,8 +45,8 @@ use windows::Win32::UI::Accessibility::{
     UIA_Invoke_InvokedEventId, UIA_InvokePatternId, UIA_IsKeyboardFocusablePropertyId,
     UIA_LegacyIAccessiblePatternId, UIA_NamePropertyId, UIA_PATTERN_ID, UIA_PROPERTY_ID,
     UIA_PaneControlTypeId, UIA_TEXTATTRIBUTE_ID, UIA_Text_TextChangedEventId, UIA_TextPatternId,
-    UIA_TogglePatternId, UiaAppendRuntimeId, UiaGetReservedNotSupportedValue,
-    UiaHostProviderFromHwnd, UiaPoint, UiaRaiseAutomationEvent,
+    UIA_TogglePatternId, UIA_TreeControlTypeId, UIA_TreeItemControlTypeId, UiaAppendRuntimeId,
+    UiaGetReservedNotSupportedValue, UiaHostProviderFromHwnd, UiaPoint, UiaRaiseAutomationEvent,
     UiaRaiseAutomationPropertyChangedEvent, UiaRaiseNotificationEvent,
     UiaRaiseStructureChangedEvent, UiaRect, UiaReturnRawElementProvider, UiaRootObjectId,
 };
@@ -294,6 +294,10 @@ fn property(window: usize, index: usize, id: UIA_PROPERTY_ID) -> VARIANT {
         UIA_NamePropertyId => VARIANT::from(BSTR::from(tree.names[index].as_str())),
         UIA_AutomationIdPropertyId => VARIANT::from(BSTR::from(format!("n{index}").as_str())),
         UIA_ControlTypePropertyId => VARIANT::from(match index {
+            1 if state::state().tree_view => UIA_TreeControlTypeId.0,
+            _ if state::state().tree_view && parent(index) == Some(1) => {
+                UIA_TreeItemControlTypeId.0
+            }
             0 => UIA_PaneControlTypeId.0,
             2 => UIA_CheckBoxControlTypeId.0,
             3 => UIA_DocumentControlTypeId.0,

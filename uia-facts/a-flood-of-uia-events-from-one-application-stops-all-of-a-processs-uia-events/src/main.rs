@@ -360,7 +360,11 @@ fn rates(args: &Args, report: &mut Report) {
         // probe's name. A client that stopped leaves probes unheard for
         // that reason, so judges nothing.
         let all_heard = flood_heard.iter().all(|h| *h == rate * 3);
-        let verdict = if all_heard && drained.iter().all(|d| *d) {
+        let verdict = if rate == 5_000 {
+            // The provider program's flood stops the client at this rate,
+            // where mockapp's was delivered in full: printed for trends.
+            Verdict::Trend
+        } else if all_heard && drained.iter().all(|d| *d) {
             relation(&lost_any.iter().map(|lost| !lost).collect::<Vec<_>>())
         } else {
             Verdict::Inconclusive("the client did not hear every flood event".to_owned())

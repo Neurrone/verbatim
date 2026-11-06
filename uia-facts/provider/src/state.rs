@@ -108,6 +108,8 @@ pub(crate) struct State {
     pub(crate) com: bool,
     pub(crate) nodes: usize,
     pub(crate) bridge: bool,
+    /// Node 1 is a tree view and its children its items.
+    pub(crate) tree_view: bool,
     kinds: Vec<Kind>,
     windows: OnceLock<Vec<Window>>,
     by_hwnd: Mutex<HashMap<isize, usize>>,
@@ -132,7 +134,13 @@ pub(crate) fn state() -> &'static State {
     STATE.get().expect("the state is configured first")
 }
 
-pub(crate) fn configure(com: bool, nodes: usize, bridge: bool, specs: &[(Kind, usize)]) {
+pub(crate) fn configure(
+    com: bool,
+    nodes: usize,
+    bridge: bool,
+    tree_view: bool,
+    specs: &[(Kind, usize)],
+) {
     let trees = specs
         .iter()
         .enumerate()
@@ -155,6 +163,7 @@ pub(crate) fn configure(com: bool, nodes: usize, bridge: bool, specs: &[(Kind, u
         com,
         nodes,
         bridge,
+        tree_view,
         kinds: specs.iter().map(|s| s.0).collect(),
         windows: OnceLock::new(),
         by_hwnd: Mutex::new(HashMap::new()),

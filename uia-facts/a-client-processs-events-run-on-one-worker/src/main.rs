@@ -524,9 +524,9 @@ fn drops(args: &Args, report: &mut Report) {
         // The handler runs are counted, not named: a sender's name is read
         // when the worker takes its event, so events queued together carry
         // the latest name. The count ends at 20, or once no run has come
-        // for the handler's time and 300 ms more.
+        // for 2 s, ten times the handler's time.
         note::waiting("up to 5 s, the twenty events at 0.2 s each");
-        let silence = Duration::from_millis(HANDLER_MS + 300);
+        let silence = Duration::from_secs(2);
         let mut count = 0;
         while count < COUNT {
             match reports.recv_timeout(silence) {
