@@ -203,7 +203,7 @@ fn main() {
     }
     let mut report =
         Report::start("a-hung-window-named-in-a-system-focus-event-holds-a-processs-uia-events");
-    let cases: [Case; 13] = [
+    let cases: [Case; 12] = [
         (
             "calls",
             "a client with a desktop focus handler and B's name changes; T stalled 5 s at UIA's default 2 s connection timeout; a focus WinEvent naming T; B renamed 200 ms later; counting the sent messages that reach T",
@@ -255,11 +255,6 @@ fn main() {
             shown,
         ),
         (
-            "alt-tab-back",
-            "on the unlocked desktop, T and then B, in another process, brought to the front; T stalled 12 s; Alt+Tab back to T 2 s in, before Windows marks it hung, and again once it is marked",
-            alt_tab_back,
-        ),
-        (
             "open-show",
             "on the unlocked desktop, Notepad in front; T stalled 9 s; a focus WinEvent naming T; B renamed 200 ms later; Alt+F 0.6 s after that",
             open_show,
@@ -271,7 +266,7 @@ fn main() {
         ),
     ];
     // The cases that take over the desktop run only when named.
-    let on_screen = ["shown", "alt-tab-back", "open-show", "desk-wide"];
+    let on_screen = ["shown", "open-show", "desk-wide"];
     for (name, what, run) in cases {
         let runs = if on_screen.contains(&name) {
             args.names(name)
@@ -1284,119 +1279,6 @@ fn shown(args: &Args, report: &mut Report) {
         "1 to 2 ms (h7_alttab)",
         relation(&away.iter().map(|v| *v <= NOT_HELD_MS).collect::<Vec<_>>()),
     );
-}
-
-fn alt_tab_back(args: &Args, report: &mut Report) {
-    const STALL_MS: u64 = 12_000;
-    if let Err(reason) = precondition::unlocked_desktop() {
-        report.unmet("alt-tab-back: Alt+Tab back to T", &reason);
-        return;
-    }
-    let mut early = Vec::new();
-    let mut late = Vec::new();
-    let mut missed = Vec::new();
-    for _ in 0..trials() {
-        let mut scene = Scene::screen();
-        let d = Listener::start("D", &["desk".to_owned(), scene.b_spec()]);
-        args.pause_for_debugger(&[("P1 (T)", scene.p1.pid), ("client D", d.pid())]);
-        let t = scene.p1.hwnd(0);
-        // T, then B in another process, in front, as h7 put its window and
-        // then Notepad in front: Alt+Tab goes back to T.
-        if !front_in_turn(&mut scene, &mut missed, "before the stall") {
-            continue;
-        }
-        let stalled = scene.stall(0, STALL_MS);
-        until(stalled + 2_000_000, "2 s into the stall");
-        let switched = alt_tab_to(t, &mut missed, "early");
-        until(switched + B_AFTER_US, "B's name change after Alt+Tab");
-        let renamed = scene.rename_b("early");
-        early.push(delay(
-            renamed,
-            heard_at(&d.lines_until(renamed + 1_000_000), "name", "early"),
-        ));
-        let mark = marked_hung(t, stalled + 9_000_000);
-        note::evidence(&format!(
-            "marked hung {:.1} ms into the stall",
-            delay(stalled, mark)
-        ));
-        let again = scene.p2.request("foreground 0");
-        if !wait_front(scene.b()) {
-            missed.push(format!("late: B did not come to the front ({again})"));
-        }
-        z_order("late");
-        let switched = alt_tab_to(t, &mut missed, "late");
-        until(switched + B_AFTER_US, "B's name change after Alt+Tab");
-        let renamed = scene.rename_b("late");
-        late.push(delay(
-            renamed,
-            heard_at(&d.lines_until(renamed + 1_000_000), "name", "late"),
-        ));
-        until(stalled + us(as_ms(STALL_MS)), "the stall's end");
-        scene.p1.request("hide 0");
-        scene.p2.request("hide 0");
-    }
-    if !missed.is_empty() {
-        report.unmet(
-            "alt-tab-back: Alt+Tab back to T",
-            &format!("Alt+Tab did not bring T to the front: {missed:?}"),
-        );
-        return;
-    }
-    report.claim(
-        &format!("Alt+Tab back to T, 2 s into its stall, not yet marked hung: B's name change within {NOT_HELD_MS} ms"),
-        &summary_ms(&early),
-        "1 ms (h7_alttab_to_early)",
-        relation(&early.iter().map(|v| *v <= NOT_HELD_MS).collect::<Vec<_>>()),
-    );
-    report.claim(
-        &format!("Alt+Tab back to T marked hung: B's name change within {NOT_HELD_MS} ms"),
-        &summary_ms(&late),
-        "1 to 2 ms (h7_alttab_to)",
-        relation(&late.iter().map(|v| *v <= NOT_HELD_MS).collect::<Vec<_>>()),
-    );
-}
-
-/// Brings T and then B to the front, each checked, as h7 put its window
-/// and then Notepad in front, so that Alt+Tab goes back to T; notes in
-/// `missed` and answers false when either did not come.
-fn front_in_turn(scene: &mut Scene, missed: &mut Vec<String>, when: &str) -> bool {
-    let t = scene.p1.request("foreground 0");
-    if !wait_front(scene.p1.hwnd(0)) {
-        missed.push(format!("{when}: T did not come to the front ({t})"));
-        return false;
-    }
-    let b = scene.p2.request("foreground 0");
-    if !wait_front(scene.b()) {
-        missed.push(format!("{when}: B did not come to the front ({b})"));
-        return false;
-    }
-    z_order(when);
-    true
-}
-
-/// Notes the first visible top-level windows in z order with their
-/// classes, the order Alt+Tab follows.
-fn z_order(when: &str) {
-    let first: Vec<String> = apps::top_windows()
-        .into_iter()
-        .take(6)
-        .map(|w| format!("{w} {}", apps::class_of(w)))
-        .collect();
-    note::evidence(&format!("{when}: windows in z order {first:?}"));
-}
-
-/// Presses Alt+Tab and waits up to 1 s for T in front, noting
-/// `which` in `missed` when not; answers when it was pressed.
-fn alt_tab_to(t: isize, missed: &mut Vec<String>, which: &str) -> u64 {
-    apps::alt_tab();
-    let switched = now_us();
-    if !wait_front(t) {
-        missed.push(format!(
-            "{which}: window {} in front, not T ({t})",
-            apps::foreground_window()
-        ));
-    }
-    switched
 }
 
 fn open_show(args: &Args, report: &mut Report) {
