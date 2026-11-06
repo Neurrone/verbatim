@@ -34,6 +34,7 @@ Neither connection recovery nor event coalescing changes these outcomes (checked
 | `taskbar` with the element scope beside: ancestors scope none; element and ancestors scope 2 of 2 minutes; element scope 2 of 2 | 2026-11-06 | As above | cdb6b4d6 | Pass; element scope new |
 | `tree --trials 3`: the focused element node 5, its parent the tree view, 3 of 3; the control heard the rename once each; the item's element and ancestors, element and ancestors scopes none | 2026-11-06 | As above | cdb6b4d6 | Pass; the scopes new |
 | Desktop runs at 8e4c9d50 by default and with each client setting: `tree` the path, the control 1, every scope on the item none; `taskbar` the button's own registration each minute, ancestors scope none, element and ancestors 2 of 2, element 2 of 2 | 2026-11-06 | As above | Dickson's desktop runs | Pass; 19 of 20 element and ancestors minutes in all |
+| First desktop runs of `tree` as judged now, programs of 14e569c9 (built from f0b18b2a), by default and with each client setting: the path, the control 1, and none in every scope on the item, in each | 2026-11-06 | As above | Dickson's desktop runs | Pass |
 
 ## How to rerun
 
