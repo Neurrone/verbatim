@@ -2,7 +2,7 @@
 
 ## Fact
 
-A process that has connected to UIA providers as a client sometimes hangs at full processor use, or crashes with an access violation, as it exits normally and runs its DLLs' process-detach code: `UIAutomationCore.dll`'s detach code destroys its telemetry object and walks a corrupt list of per-provider connection records. It happened in about 1 to 3 percent of runs of the arbitration tests. It needs connections from several threads at once to several provider processes: from one thread, from two, or from six threads to one provider process, no child of 230 faulted, while three or more threads, each connecting to provider processes of its own, faulted in 1 to 5 percent of children, even when each only read a window's name. A proper teardown before the exit, every handler removed, every UIA object released and COM left on every thread, does not prevent it (`books/dev/src/reference/uia-bugs.md`, the fault of that name).
+A process that has connected to UIA providers as a client sometimes hangs at full processor use, or crashes with an access violation, as it exits normally and runs its DLLs' process-detach code: `UIAutomationCore.dll`'s detach code destroys its telemetry object and walks a corrupt list of per-provider connection records. It happened in about 1 to 3 percent of runs of the arbitration tests. With connections from one thread, from two threads to two provider processes, or from six threads to one provider process, none of 230 children faulted; with three or more threads, each connecting to provider processes of its own, 1 to 5 percent of children faulted, even when each only read a window's name. A proper teardown before the exit, every handler removed, every UIA object released and COM left on every thread, does not prevent it (`books/dev/src/reference/uia-bugs.md`, the fault of that name).
 
 ## What Verbatim relies on
 
@@ -14,7 +14,7 @@ Each child process (the `exiter` role) makes UIA's first-time setup on its main 
 
 - `exit`: 150 children (Dickson, 2026-11-06) of the setup with the most faults a minute among the candidates: four provider programs with a UIA window each, a thread each, connecting and reading the name, the clients, elements and cache requests left in place. Judged as a rate against that setup's 8 of 230; 90 children would already make none differ.
 - `candidates`, run only when named, 230 children of each setup: the first build's, six provider programs of three windows each (a UIA window, one with its own `IAccessible`, a plain one), a thread each, every connection reading, searching its subtree and registering a name-change handler; then that setup with one step removed or changed at a time, and smaller and larger ones. 230 children show a setup with none below the first build's rate of about 1 in 75. The rate and the faults a minute are printed as new.
-- `clean`, run only when named: `exit`'s setup torn down before the exit: each thread removes its handlers, releases every element, cache request, handler and client and leaves COM, and the main thread does the same, the providers ended after the teardown in one run and before it in another, 90 children each, the fewest at which none separates the clean rate from 8 of 230. Judged against the dirty rate: differ when apart from it, pass when no difference shows.
+- `clean`, run only when named: `exit`'s setup torn down before the exit: each thread removes its handlers, releases every element, cache request, handler and client and leaves COM, and the main thread does the same, the providers ended after the teardown in one run and before it in another, 120 children each, at which none separates the clean rate from 8 of 230 with a margin (0.965 to the 120th power is about 0.014). Judged against the dirty rate: differ when apart from it, pass when no difference shows.
 
 ## Client settings
 
@@ -30,6 +30,7 @@ Neither connection recovery nor event coalescing changes these outcomes (checked
 | `candidates`, 230 children each, a 10 s hang limit: the first build's setup 6 (3.4 faults a minute); no search 6; no registration 8; connect and read only 6; one thread 0; the UIA window alone 11; one provider and one thread 0; connect and read the UIA window alone 8 (5.9 a minute); the same with two providers and threads 0; one provider with six UIA windows and six threads 0; one provider's window with six threads each to it 0; four providers and threads 8 (6.6 a minute); six providers and three threads 3; twelve providers and threads 5 | 2026-11-06 | As above | cdb6b4d6 | New; four providers and threads chosen |
 | `exit` with four providers and threads: 2 of 150, both hangs, in 22 s | 2026-11-06 | As above | cdb6b4d6 | Pass against 8 of 230 |
 | `clean`: the providers ended after the teardown 2 of 90, before it 3 of 90, all hangs | 2026-11-06 | As above | cdb6b4d6 | Pass: no difference from the dirty rate |
+| `clean` at 120 children: the providers ended after the teardown 5 of 120 (4 hung, 1 access violation), before it 5 of 120, all hangs | 2026-11-06 | As above | This change's commit | Pass: no difference from the dirty rate |
 
 ## How to rerun
 

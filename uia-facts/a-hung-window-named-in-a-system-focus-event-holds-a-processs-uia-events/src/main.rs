@@ -1047,30 +1047,37 @@ fn wait_front(hwnd: isize) -> bool {
     }
 }
 
-/// One `shown` trial: a scene on the user's desktop with clients D and
-/// Verbatim's stand-in, and the windows `front` brought to the front in
-/// turn, T last; answers `None`, noting why in `unmet`, when T did not
-/// come to the front.
+/// One `shown` trial: a scene on the user's desktop with client D and,
+/// with `stand_in`, Verbatim's stand-in, and B, with `b_first`, then T
+/// brought to the front; answers `None`, noting why in `unmet`, when a
+/// window did not come to the front.
 fn shown_scene(
     args: &Args,
     b_first: bool,
+    stand_in: bool,
     unmet: &mut Vec<String>,
-) -> Option<(Scene, Listener, Listener)> {
+) -> Option<(Scene, Listener, Option<Listener>)> {
     let mut scene = Scene::screen();
     let d = Listener::start("D", &["desk".to_owned(), scene.b_spec()]);
-    let vb = Listener::start(
-        "Verbatim's stand-in",
-        &[
-            "desk".to_owned(),
-            "vbmap".to_owned(),
-            "tto=5000".to_owned(),
-            scene.b_spec(),
-        ],
-    );
+    let vb = stand_in.then(|| {
+        Listener::start(
+            "Verbatim's stand-in",
+            &[
+                "desk".to_owned(),
+                "vbmap".to_owned(),
+                "tto=5000".to_owned(),
+                scene.b_spec(),
+            ],
+        )
+    });
     args.pause_for_debugger(&[("P1 (T)", scene.p1.pid), ("client D", d.pid())]);
     if b_first {
         let b = scene.p2.request("foreground 0");
         note::evidence(&format!("B in front: {b}"));
+        if !wait_front(scene.b()) {
+            unmet.push(format!("B did not come to the front ({b})"));
+            return None;
+        }
     }
     let front = scene.p1.request("foreground 0");
     note::evidence(&format!("T in front: {front}"));
@@ -1081,7 +1088,7 @@ fn shown_scene(
     // As h7 did: a baseline change of B, heard by both clients, so the
     // focus events of bringing T to the front are behind them.
     let base = scene.rename_b("base");
-    for client in [&d, &vb] {
+    for client in std::iter::once(&d).chain(vb.as_ref()) {
         if heard_at(
             &until_heard(client, "base", base + 5_000_000),
             "name",
@@ -1111,7 +1118,7 @@ fn shown(args: &Args, report: &mut Report) {
     let mut fresh = Vec::new();
     let mut fresh_vb = Vec::new();
     let mut marking = Vec::new();
-    let mut after_mark = Vec::new();
+    let mut after_mark = vec![Vec::new(); 3];
     let mut away = Vec::new();
     let mut unmet = Vec::new();
     let two = band(&[CTO_MS, CTO_MS]);
@@ -1123,7 +1130,7 @@ fn shown(args: &Args, report: &mut Report) {
         // together would all carry the latest name.
         // A WinEvent naming T in front, not yet marked hung, and when
         // Windows marks it.
-        if let Some((mut scene, d, vb)) = shown_scene(args, false, &mut unmet) {
+        if let Some((mut scene, d, Some(vb))) = shown_scene(args, false, true, &mut unmet) {
             let t = scene.p1.hwnd(0);
             let stalled = scene.stall(0, 7_000);
             let raised = scene.winevent("focus", 0);
@@ -1143,34 +1150,43 @@ fn shown(args: &Args, report: &mut Report) {
             until(stalled + 7_000_000, "the stall's end");
             scene.p1.request("hide 0");
         }
-        // A WinEvent naming T once marked hung.
-        if let Some((mut scene, d, _vb)) = shown_scene(args, false, &mut unmet) {
+        // A WinEvent naming T once marked hung, D alone, as in h7_hung: as
+        // soon as Windows marks it, at 6.5 s as h7_hung raised it, and at
+        // 8.5 s, each in a trial of its own.
+        for (k, at) in [None, Some(6_500_000u64), Some(8_500_000)]
+            .into_iter()
+            .enumerate()
+        {
+            let Some((mut scene, d, _)) = shown_scene(args, false, false, &mut unmet) else {
+                continue;
+            };
             let t = scene.p1.hwnd(0);
-            let stalled = scene.stall(0, 10_000);
-            let mark = marked_hung(t, stalled + 6_500_000);
+            let stalled = scene.stall(0, 12_000);
+            let Some(mark) = marked_hung(t, stalled + 6_500_000) else {
+                unmet.push("T was not marked hung within 6.5 s".to_owned());
+                continue;
+            };
             note::evidence(&format!(
                 "marked hung {:.1} ms into the stall",
-                delay(stalled, mark)
+                us_to_ms(mark - stalled)
             ));
-            until(stalled + 6_500_000, "6.5 s into the stall, as h7_hung");
+            if let Some(at) = at {
+                until(stalled + at, "the WinEvent's time into the stall");
+            }
             let again = scene.winevent("focus", 0);
             until(again + B_AFTER_US, "B's name change after the WinEvent");
             scene.rename_b("marked");
-            // Until heard, or past the top of two waits' band, so a hold of
-            // two waits shows as out of band.
+            // Until heard, or past the top of two waits' band: a hold longer
+            // than one wait's band is then read and judged out of band
+            // rather than missed.
             let lines = until_heard(&d, "marked", again + us(two.1) + PAST_TOP_US);
-            after_mark.push(if mark.is_some() {
-                delay(again, heard_at(&lines, "name", "marked"))
-            } else {
-                unmet.push("T was not marked hung within 6.5 s".to_owned());
-                f64::NAN
-            });
-            until(stalled + 10_000_000, "the stall's end");
+            after_mark[k].push(delay(again, heard_at(&lines, "name", "marked")));
+            until(stalled + 12_000_000, "the stall's end");
             scene.p1.request("hide 0");
         }
         // Alt+Tab away from T marked hung, with B in front before it, as
         // h7_alttab put Notepad.
-        if let Some((mut scene, d, _vb)) = shown_scene(args, true, &mut unmet) {
+        if let Some((mut scene, d, _)) = shown_scene(args, true, false, &mut unmet) {
             let t = scene.p1.hwnd(0);
             let stalled = scene.stall(0, 8_000);
             let mark = marked_hung(t, stalled + 6_500_000);
@@ -1181,18 +1197,18 @@ fn shown(args: &Args, report: &mut Report) {
                 unmet.push("T was not marked hung within 6.5 s".to_owned());
             }
             until(switched + B_AFTER_US, "B's name change after Alt+Tab");
-            // Alt+Tab from a hung window lands on B, on T or on T's ghost,
-            // as h7_alttab's rerun at 40aba4e4 landed on each: any of
-            // those; another application's window would put its own
-            // focus tracking on D's worker.
+            // Away is B or T's ghost window. Landing on T is not away, and
+            // another application's window would put its own focus
+            // tracking on D's worker: either makes the case inconclusive.
             let front = apps::foreground_window();
             let class = apps::class_of(front);
             note::evidence(&format!(
                 "after Alt+Tab, window {front} of class {class} in front"
             ));
-            if front != scene.b() && front != t && class != "Ghost" {
+            if front != scene.b() && class != "Ghost" {
                 unmet.push(format!(
-                    "Alt+Tab away from T brought window {front} of class {class} to the front, not B, T or T's ghost"
+                    "Alt+Tab away from T brought window {front} of class {class} to the front, not B or T's ghost{}",
+                    if front == t { " but T itself" } else { "" }
                 ));
             }
             let renamed = scene.rename_b("away");
@@ -1242,13 +1258,25 @@ fn shown(args: &Args, report: &mut Report) {
         ),
     );
     report.claim(
-        "T marked hung: B's name change held from a new WinEvent",
-        &summary_ms(&after_mark),
+        "T marked hung: B's name change held from a focus WinEvent raised as soon as Windows marks T",
+        &summary_ms(&after_mark[0]),
+        "",
+        Verdict::New,
+    );
+    report.claim(
+        "T marked hung: B's name change held from a focus WinEvent 6.5 s into the stall",
+        &summary_ms(&after_mark[1]),
         &format!(
             "1,803 to 1,981 ms after B's raise (h7_hung); {}",
             band_text(one)
         ),
-        in_band(&after_mark, one),
+        in_band(&after_mark[1], one),
+    );
+    report.claim(
+        "T marked hung: B's name change held from a focus WinEvent 8.5 s into the stall",
+        &summary_ms(&after_mark[2]),
+        "",
+        Verdict::New,
     );
     report.claim(
         &format!("Alt+Tab away from the hung T: B's name change within {NOT_HELD_MS} ms"),
@@ -1274,11 +1302,9 @@ fn alt_tab_back(args: &Args, report: &mut Report) {
         let t = scene.p1.hwnd(0);
         // T, then B in another process, in front, as h7 put its window and
         // then Notepad in front: Alt+Tab goes back to T.
-        let order = [
-            scene.p1.request("foreground 0"),
-            scene.p2.request("foreground 0"),
-        ];
-        note::evidence(&format!("T and then B in front: {order:?}"));
+        if !front_in_turn(&mut scene, &mut missed, "before the stall") {
+            continue;
+        }
         let stalled = scene.stall(0, STALL_MS);
         until(stalled + 2_000_000, "2 s into the stall");
         let switched = alt_tab_to(t, &mut missed, "early");
@@ -1294,7 +1320,10 @@ fn alt_tab_back(args: &Args, report: &mut Report) {
             delay(stalled, mark)
         ));
         let again = scene.p2.request("foreground 0");
-        note::evidence(&format!("B in front: {again}"));
+        if !wait_front(scene.b()) {
+            missed.push(format!("late: B did not come to the front ({again})"));
+        }
+        z_order("late");
         let switched = alt_tab_to(t, &mut missed, "late");
         until(switched + B_AFTER_US, "B's name change after Alt+Tab");
         let renamed = scene.rename_b("late");
@@ -1325,6 +1354,35 @@ fn alt_tab_back(args: &Args, report: &mut Report) {
         "1 to 2 ms (h7_alttab_to)",
         relation(&late.iter().map(|v| *v <= NOT_HELD_MS).collect::<Vec<_>>()),
     );
+}
+
+/// Brings T and then B to the front, each checked, as h7 put its window
+/// and then Notepad in front, so that Alt+Tab goes back to T; notes in
+/// `missed` and answers false when either did not come.
+fn front_in_turn(scene: &mut Scene, missed: &mut Vec<String>, when: &str) -> bool {
+    let t = scene.p1.request("foreground 0");
+    if !wait_front(scene.p1.hwnd(0)) {
+        missed.push(format!("{when}: T did not come to the front ({t})"));
+        return false;
+    }
+    let b = scene.p2.request("foreground 0");
+    if !wait_front(scene.b()) {
+        missed.push(format!("{when}: B did not come to the front ({b})"));
+        return false;
+    }
+    z_order(when);
+    true
+}
+
+/// Notes the first visible top-level windows in z order with their
+/// classes, the order Alt+Tab follows.
+fn z_order(when: &str) {
+    let first: Vec<String> = apps::top_windows()
+        .into_iter()
+        .take(6)
+        .map(|w| format!("{w} {}", apps::class_of(w)))
+        .collect();
+    note::evidence(&format!("{when}: windows in z order {first:?}"));
 }
 
 /// Presses Alt+Tab and waits up to 1 s for T in front, noting
@@ -1468,7 +1526,10 @@ fn desk_wide(args: &Args, report: &mut Report) {
         let second = scene.rename_b("named");
         let p_lines = p.lines_until(name_event + 1_000_000);
         note::waiting("25 s from the focus WinEvent, as E-hung-proxy watched");
-        held.push(heard_at(&d.lines_until(raised + 25_000_000), "name", "held").is_some());
+        held.push(delay(
+            raised,
+            heard_at(&d.lines_until(raised + 25_000_000), "name", "held"),
+        ));
         prop.push(delay(second, heard_at(&p_lines, "name", "named")));
         scene.p1.request("hide 0");
         scene.p2.request("hide 0");
@@ -1480,10 +1541,10 @@ fn desk_wide(args: &Args, report: &mut Report) {
         relation(&control.iter().map(|v| *v <= NOT_HELD_MS).collect::<Vec<_>>()),
     );
     report.claim(
-        "the desktop-wide name registration, in a client with a desktop focus handler at a 10 s connection timeout, hears B's name change raised during a 15 s hold within 25 s of the WinEvent",
-        &runs(&held),
+        "the desktop-wide name registration, in a client with a desktop focus handler at a 10 s connection timeout: B's name change raised during a 15 s stall held at least one connection timeout from the WinEvent, and heard within 25 s",
+        &summary_ms(&held),
         "delivered once the hold ended, T and B shown (de138138's run); E-hung-proxy's not within 25 s had hidden windows, whose name changes its registration did not hear even unheld (recorded/e_hung_proxy_rerun.out)",
-        deterministic(&held, &true),
+        relation(&held.iter().map(|v| *v >= 10_000.0 - TICK_MS && *v <= 25_000.0).collect::<Vec<_>>()),
     );
     report.claim(
         &format!("a client with a desktop-wide name registration and no focus registration, after a name-change WinEvent naming the stalled T: B's name change within {NOT_HELD_MS} ms"),

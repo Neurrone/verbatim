@@ -211,9 +211,9 @@ fn candidates(report: &mut Report) {
 }
 
 /// Children of each clean run: at the dirty rate, 8 in 230, none in this
-/// many separates clean from dirty (0.965 to the 90th power is below
-/// 0.05).
-const CLEAN_CHILDREN: usize = 90;
+/// many separates clean from dirty with a margin (0.965 to the 120th power
+/// is about 0.014).
+const CLEAN_CHILDREN: usize = 120;
 
 fn clean(report: &mut Report) {
     for (label, end) in [

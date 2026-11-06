@@ -3,16 +3,18 @@ running 1 test
 RESULT e_hung_proxy: focus mapping cleared false; this client maps focus true
 RESULT e_hung_proxy timeouts None focus mapping cleared false: baseline, tree view WinEvents: desktop focus None, desktop name None
 RESULT e_hung_proxy timeouts None focus mapping cleared false: control, P1 answering: P2 focus Some((Some("First"), 1))
-RESULT e_hung_proxy timeouts None focus mapping cleared false: control, P1 hung, no WinEvent for it: P2 focus Some((Some("Second"), 0))
-RESULT e_hung_proxy timeouts None focus mapping cleared false: with P1 hung (40014 ms into the stall): P2 focus Some(14801) ms after raised; P2 name change None; other-thread read of P2 (1, "Ok(\"Mockapp Events Fixture\")")
-RESULT e_hung_proxy timeouts None focus mapping cleared false: after the stall ended (at 1793928622865298 us): desktop focus events []
+RESULT e_hung_proxy timeouts None focus mapping cleared false: control, P1 answering: P2 name change None
+RESULT e_hung_proxy timeouts None focus mapping cleared false: control, P1 hung, no WinEvent for it: P2 focus Some((Some("Second"), 1))
+RESULT e_hung_proxy timeouts None focus mapping cleared false: with P1 hung (40014 ms into the stall): P2 focus Some(14797) ms after raised; P2 name change None; other-thread read of P2 (1, "Ok(\"Mockapp Events Fixture\")")
+RESULT e_hung_proxy timeouts None focus mapping cleared false: after the stall ended (at 1793932849082341 us): desktop focus events []
 RESULT e_hung_proxy: focus mapping cleared true; this client maps focus false
 RESULT e_hung_proxy timeouts None focus mapping cleared true: baseline, tree view WinEvents: desktop focus None, desktop name None
 RESULT e_hung_proxy timeouts None focus mapping cleared true: control, P1 answering: P2 focus Some((Some("First"), 1))
-RESULT e_hung_proxy timeouts None focus mapping cleared true: control, P1 hung, no WinEvent for it: P2 focus Some((Some("Second"), 0))
-RESULT e_hung_proxy timeouts None focus mapping cleared true: with P1 hung (40022 ms into the stall): P2 focus Some(14800) ms after raised; P2 name change None; other-thread read of P2 (1, "Ok(\"Mockapp Events Fixture\")")
-RESULT e_hung_proxy timeouts None focus mapping cleared true: after the stall ended (at 1793928668973507 us): desktop focus events []
+RESULT e_hung_proxy timeouts None focus mapping cleared true: control, P1 answering: P2 name change None
+RESULT e_hung_proxy timeouts None focus mapping cleared true: control, P1 hung, no WinEvent for it: P2 focus Some((Some("Second"), 1))
+RESULT e_hung_proxy timeouts None focus mapping cleared true: with P1 hung (40011 ms into the stall): P2 focus Some(14798) ms after raised; P2 name change None; other-thread read of P2 (1, "Ok(\"Mockapp Events Fixture\")")
+RESULT e_hung_proxy timeouts None focus mapping cleared true: after the stall ended (at 1793932900188603 us): desktop focus events []
 test e_hung_proxy ... ok
 
-test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 16 filtered out; finished in 92.53s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 16 filtered out; finished in 102.55s
 

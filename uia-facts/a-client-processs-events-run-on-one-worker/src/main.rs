@@ -525,7 +525,7 @@ fn drops(args: &Args, report: &mut Report) {
         // when the worker takes its event, so events queued together carry
         // the latest name. The count ends at 20, or once no run has come
         // for 2 s, ten times the handler's time.
-        note::waiting("up to 5 s, the twenty events at 0.2 s each");
+        note::waiting("up to 6 s, the twenty events at 0.2 s each and 2 s with none");
         let silence = Duration::from_secs(2);
         let mut count = 0;
         while count < COUNT {

@@ -285,8 +285,8 @@ fn tree(args: &Args, report: &mut Report) {
         report.claim(
             &format!("the focused item, {scope} scope: the tree view's name changes heard"),
             &runs(&heard_by[i]),
-            "",
-            Verdict::New,
+            "none (cdb6b4d6's run, 3 of 3, and 8e4c9d50's in each client setting)",
+            deterministic(&heard_by[i], &0),
         );
     }
 }
@@ -332,8 +332,9 @@ fn taskbar(report: &mut Report) {
     let mut ancestors_only = Vec::new();
     let mut with_element = 0;
     let mut element_only = 0;
-    // Two minutes, whatever --trials says: at the recorded 11 of 12, two
-    // minutes with none would differ ((1/12) squared is below 0.05).
+    let mut same = Vec::new();
+    // Two minutes, whatever --trials says: at the recorded 19 of 20, two
+    // minutes with none would differ ((1/20) squared is below 0.05).
     for _ in 0..MINUTES {
         let on_child = register(&client, &child, TreeScope_Ancestors, false);
         let on_both = register(
@@ -381,6 +382,9 @@ fn taskbar(report: &mut Report) {
         if from_button(&element) > 0 {
             element_only += 1;
         }
+        // Adding the ancestors to the element hears nothing beyond what the
+        // element alone hears.
+        same.push(from_button(&both) == from_button(&element));
     }
     report.claim(
         "the clock button's own registration hears its name change at the minute",
@@ -400,14 +404,20 @@ fn taskbar(report: &mut Report) {
         report.claim(
             "the registration on the button's first child, element and ancestors scope: minutes in which it heard the button's name change",
             &format!("{with_element} of {n}"),
-            "11 of 12: 1 of 2 (8e3ef116's message), 4 of 4 (93fed1a0's first run), 4 of 4 (de138138's run) and 2 of 2 (the element-scope run)",
-            rate(with_element, n, 11, 12),
+            "19 of 20: 1 of 2 (8e3ef116's message), 4 of 4 (93fed1a0), 4 of 4 (de138138), 2 of 2 (cdb6b4d6) and 8 of 8 (8e4c9d50, each client setting)",
+            rate(with_element, n, 19, 20),
         );
         report.claim(
             "the registration on the button's first child, element scope alone: minutes in which it heard the button's name change",
             &format!("{element_only} of {n}"),
             "",
-            Verdict::New,
+            Verdict::Trend,
+        );
+        report.claim(
+            "in each minute, the child's element and ancestors registration heard the button's changes exactly as often as its element registration",
+            &runs(&same),
+            "both heard it in each of 10 minutes (cdb6b4d6, 8e4c9d50)",
+            relation(&same),
         );
     } else {
         report.unmet(

@@ -28,9 +28,10 @@ use windows::Win32::UI::Accessibility::{
 };
 use windows::Win32::UI::WindowsAndMessaging::EVENT_OBJECT_FOCUS;
 
-/// Starts of the provider program: a fault met in 1 start of 4 would show
-/// in at least one of 11 with probability 0.95 ((3/4) to the 11th power is
-/// below 0.05).
+/// Starts of the provider program. The end-to-end runs that met the fault
+/// recorded no rate; 11 starts would show one met in 1 start of 4, an
+/// assumed rate, with probability 0.95 ((3/4) to the 11th power is below
+/// 0.05).
 const STARTS: usize = 11;
 /// A UIA focus later than this after the focus `WinEvent` is late.
 const LATE_MS: f64 = 1_000.0;

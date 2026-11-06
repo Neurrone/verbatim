@@ -98,8 +98,9 @@ fn trial(args: &Args, specs: &[&[&str]], pace_ms: u64, plain: bool) -> Vec<Vec<f
         uia::pause(Duration::from_millis(pace_ms), "between focus moves");
     }
     // Late deliveries came up to 2.7 s after their raise: each client is
-    // listened to until it has heard every event a handler of it can, or
-    // for 3 s.
+    // listened to for 3 s, or until it has heard every event of M its
+    // handlers can and then nothing more for 0.5 s, more than the 150 ms
+    // between moves, so that an extra delivery is still caught.
     let listen_ms: u64 = 3_000;
     note::waiting("up to 3.0 s, for late deliveries");
     let end = now_us() + listen_ms * 1_000;
@@ -118,13 +119,17 @@ fn trial(args: &Args, specs: &[&[&str]], pace_ms: u64, plain: bool) -> Vec<Vec<f
                 .map_or(1, |n| n.parse::<usize>().expect("a handler count") + 1);
             let all = if plain { usize::MAX } else { EVENTS * handlers };
             let mut lines = Vec::new();
+            let mut last = (0, now_us());
             loop {
                 lines.extend(client.lines_until((now_us() + 50_000).min(end)));
                 let heard = lines
                     .iter()
-                    .filter(|l| matches!(l, Line::Heard { kind, .. } if kind == "focus"))
+                    .filter(|l| matches!(l, Line::Heard { kind, name, .. } if kind == "focus" && names.contains(&name.as_str())))
                     .count();
-                if heard >= all || now_us() >= end {
+                if heard != last.0 {
+                    last = (heard, now_us());
+                }
+                if (heard >= all && now_us() >= last.1 + 500_000) || now_us() >= end {
                     break;
                 }
             }
@@ -250,7 +255,7 @@ fn slow(args: &Args, report: &mut Report) {
         &format!("{k} of {RUNS} (worst per process {})", summary_ms(&waits)),
         "5 of 6: waits of about 1,000, 1,500 and 2,000 ms (p2b_four-slow), and 4 of 5 reruns (p2b_rerun1 to 5)",
         // The program's runs met it 2 times in 6 where P2b's script met it 5
-        // in 6, a difference of the case not found: printed for trends.
+        // in 6, so the program's rate and the script's differ: printed for trends.
         Verdict::Trend,
     );
 }
