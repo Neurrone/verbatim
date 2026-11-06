@@ -23,6 +23,9 @@ impl From<EditError> for TextError {
     fn from(error: EditError) -> Self {
         match error {
             EditError::Gone => TextError::Gone,
+            EditError::NotResponding => {
+                TextError::Failed("the edit control's window is not responding".to_owned())
+            }
             EditError::Failed(reason) => TextError::Failed(reason),
         }
     }

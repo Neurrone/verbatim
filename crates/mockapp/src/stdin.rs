@@ -378,7 +378,14 @@ pub(crate) enum Command {
     /// no message and Windows comes to judge it hung while no client has
     /// called into it.
     Freeze,
-    /// `release`: lets the call `hold`, `hold-acc-parent` or `freeze` held go on.
+    /// `hold-message <message>`: the window thread blocks inside the window
+    /// procedure of the native control that answers `message`, on the next
+    /// such message sent to it, printing `held <message>`, until `release`
+    /// (`crate::held_message`): `EM_GETSEL` for the edit control,
+    /// `LVM_GETITEMTEXTW` for the list view. MSAA-only.
+    HoldMessage(u32),
+    /// `release`: lets the call `hold`, `hold-acc-parent`, `hold-message`
+    /// or `freeze` held go on.
     /// Applied and acknowledged on the stdin thread, since the window
     /// thread is the one held.
     Release,
@@ -553,6 +560,7 @@ pub(crate) fn parse_command(line: &str) -> Option<Command> {
         "quit" => Some(Command::Quit),
         "hold" => Some(Command::Hold),
         "freeze" => Some(Command::Freeze),
+        "hold-message" => crate::held_message::message_named(rest).map(Command::HoldMessage),
         "release" => Some(Command::Release),
         "await-advised" => {
             let (event, count) = rest.split_once(' ')?;
@@ -922,6 +930,20 @@ mod tests {
         ));
         assert!(parse_command("fail-acc-parent").is_none());
         assert!(parse_command("fail-acc-parent item other").is_none());
+    }
+
+    #[test]
+    fn parses_the_messages_hold_message_holds_by_name() {
+        assert!(matches!(
+            parse_command("hold-message EM_GETSEL"),
+            Some(Command::HoldMessage(0x00B0))
+        ));
+        assert!(matches!(
+            parse_command("hold-message LVM_GETITEMTEXTW"),
+            Some(Command::HoldMessage(0x1073))
+        ));
+        assert!(parse_command("hold-message WM_GETTEXT").is_none());
+        assert!(parse_command("hold-message").is_none());
     }
 
     #[test]

@@ -414,6 +414,7 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
         | Command::RefuseText(_)
         | Command::AnswerProperty(..)
         | Command::Hold
+        | Command::HoldMessage(_)
         | Command::Freeze
         | Command::Release
         | Command::AwaitAdvised(..)

@@ -127,6 +127,7 @@ Each row is a gesture or feature with a gap still open. Its tests today are list
 | File Explorer folder window | Opening, items, subfolder | verbatim-core reducer tests | n/a | `explorer_folder_window` |
 | Settings app | Pages, lists, search | verbatim-core reducer tests | n/a | `settings_system_page`, `settings_combo_box_expanded`, `settings_search_suggestions` |
 | Native controls | Tree items, report views, group boxes | verbatim-ia2 tests | native_controls | `text_box_editing`, `system_information_tree` |
+| Native controls' window messages | A message has no time limit of its own; its buffer in the application lives until it is answered, one per message, and is sent only to a window still in its process | verbatim-ia2 `freeing_a_buffer_in_a_process_that_has_exited_is_not_an_error`, `a_buffers_text_starts_16_byte_aligned_after_its_structure`; verbatim-win32 `the_reader_answers_gone_not_hung_for_a_destroyed_window` | window_messages `a_slow_edit_control_answers_its_selection`, `a_buffer_lives_until_its_message_is_answered`, `a_second_read_during_a_held_message_sends_its_own`, `the_target_process_ending_during_a_message_is_gone`, `a_send_to_a_window_of_another_process_is_gone_unsent` | `text_box_editing`, `text_box_review_cursor` |
 
 ## Settings
 

@@ -57,7 +57,7 @@ pub mod equality;
 pub mod event_thread;
 mod fact;
 mod hook;
-mod list_view;
+pub mod list_view;
 pub mod map;
 mod registry;
 mod window;

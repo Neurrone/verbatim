@@ -18,16 +18,25 @@
 //! does, with pointer fields sized for that process, which can be a 32-bit
 //! one.
 //!
-//! Every message is sent with `SendMessageTimeoutW`, aborting if the
-//! application is hung and waiting at most half a second, and counts as one
-//! window message (`books/dev/src/reference/performance.md`); allocating and copying the
-//! target's memory are calls into the kernel, not into the application,
-//! and are not counted. A password field's text reads as stars, as NVDA
-//! reads it.
+//! Each message that needs memory in the target gets a buffer of its own
+//! ([`RemoteBuffer`]): one allocation holding the message's structure at
+//! its start and its text 16-byte aligned after it, allocated before the
+//! send and freed whole by the thread that sent the message, after the send
+//! returns and never before, so the application never writes into memory
+//! freed or reused while its message waited. Before each send that carries
+//! such a buffer, the window's process is checked to be the buffer's.
+//!
+//! Every message goes through `crate::window::send_message`: a hung or
+//! ghosted window fails at once ([`EditError::NotResponding`]), and the
+//! message is sent with no time limit of its own. Each counts as one window
+//! message (`books/dev/src/reference/performance.md`); allocating and
+//! copying the target's memory are calls into the kernel, not into the
+//! application, and are not counted. A password field's text reads as
+//! stars, as NVDA reads it.
 
 use std::ffi::c_void;
 
-use windows::Win32::Foundation::{CloseHandle, HANDLE, HWND, LPARAM, POINT, WPARAM};
+use windows::Win32::Foundation::{CloseHandle, HANDLE, HWND, POINT, STILL_ACTIVE};
 use windows::Win32::Globalization::{CP_ACP, MULTI_BYTE_TO_WIDE_CHAR_FLAGS, MultiByteToWideChar};
 use windows::Win32::Graphics::Gdi::ClientToScreen;
 use windows::Win32::System::Diagnostics::Debug::{ReadProcessMemory, WriteProcessMemory};
@@ -39,8 +48,8 @@ use windows::Win32::System::SystemInformation::{
     IMAGE_FILE_MACHINE_UNKNOWN,
 };
 use windows::Win32::System::Threading::{
-    IsWow64Process2, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_VM_OPERATION,
-    PROCESS_VM_READ, PROCESS_VM_WRITE,
+    GetExitCodeProcess, GetProcessId, IsWow64Process2, OpenProcess,
+    PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_VM_OPERATION, PROCESS_VM_READ, PROCESS_VM_WRITE,
 };
 use windows::Win32::UI::Controls::RichEdit::{
     EM_EXGETSEL, EM_EXLINEFROMCHAR, EM_EXSETSEL, EM_FINDWORDBREAK, EM_GETTEXTLENGTHEX,
@@ -51,16 +60,11 @@ use windows::Win32::UI::Controls::{
     EM_POSFROMCHAR, EM_SCROLLCARET, EM_SETSEL, WB_MOVEWORDLEFT, WB_MOVEWORDRIGHT,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    ES_PASSWORD, GWL_STYLE, GetWindowLongPtrW, GetWindowThreadProcessId, IsWindow, IsWindowUnicode,
-    SMTO_ABORTIFHUNG, SMTO_BLOCK, SendMessageTimeoutW, WM_GETTEXT, WM_GETTEXTLENGTH,
+    ES_PASSWORD, GWL_STYLE, GetWindowLongPtrW, GetWindowThreadProcessId, IsWindowUnicode,
+    WM_GETTEXT, WM_GETTEXTLENGTH,
 };
 
-use verbatim_model::CallKind;
-
-use crate::calls::count;
-
-/// How long one message waits for the control's answer.
-const MESSAGE_TIMEOUT_MS: u32 = 500;
+use crate::window::{Unanswered, send_message};
 
 /// The most UTF-16 code units `EM_GETLINE` can return: its buffer's size
 /// travels in the buffer's first word.
@@ -69,10 +73,12 @@ const MAX_LINE_UNITS: usize = 0xFFFF;
 /// Why a read of an edit control failed.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum EditError {
-    /// The window no longer exists.
+    /// The window no longer exists, or its handle now names another
+    /// process's window.
     Gone,
-    /// The control did not answer in time, or its process could not be
-    /// read.
+    /// The window is hung or ghosted, so nothing was sent to it.
+    NotResponding,
+    /// The control did not answer, or its process could not be read.
     Failed(String),
 }
 
@@ -99,6 +105,9 @@ pub struct EditControl {
     hwnd: isize,
     version: u8,
     process: Option<TargetProcess>,
+    /// The process to open in place of the window's own, for a test
+    /// ([`EditControl::with_process`]).
+    process_id: Option<u32>,
 }
 
 impl EditControl {
@@ -110,6 +119,20 @@ impl EditControl {
             hwnd,
             version,
             process: None,
+            process_id: None,
+        }
+    }
+
+    /// [`EditControl::new`], its buffers allocated in process `pid` rather
+    /// than the window's own: for a test standing for a window handle
+    /// reused by another process's window after the control's process was
+    /// opened, whose sends the process check refuses. Verbatim never calls
+    /// it.
+    #[must_use]
+    pub fn with_process(hwnd: isize, version: u8, pid: u32) -> Self {
+        Self {
+            process_id: Some(pid),
+            ..Self::new(hwnd, version)
         }
     }
 
@@ -135,40 +158,39 @@ impl EditControl {
         style & ES_PASSWORD as isize != 0
     }
 
-    /// Sends `msg` with plain integer parameters, or pointers into the
-    /// target process or ones Windows marshals.
+    /// Sends `msg` with plain integer parameters, or pointers to locals
+    /// Windows marshals.
     fn send(&self, msg: u32, wparam: usize, lparam: isize) -> EditResult<isize> {
-        count(CallKind::WindowMessage);
-        let mut result = 0usize;
-        // SAFETY: the parameters are integers, addresses in the target's own
-        // memory, or pointers to locals Windows marshals for this message,
-        // which outlive the call; any window handle is tolerated.
-        let sent = unsafe {
-            SendMessageTimeoutW(
-                window(self.hwnd),
-                msg,
-                WPARAM(wparam),
-                LPARAM(lparam),
-                SMTO_ABORTIFHUNG | SMTO_BLOCK,
-                MESSAGE_TIMEOUT_MS,
-                Some(&raw mut result),
-            )
-        };
-        if sent.0 == 0 {
-            // SAFETY: IsWindow tolerates any handle.
-            return Err(if unsafe { IsWindow(Some(window(self.hwnd))) }.as_bool() {
-                EditError::Failed(format!("the edit control did not answer message {msg:#x}"))
-            } else {
-                EditError::Gone
-            });
-        }
-        Ok(result.cast_signed())
+        // SAFETY: the parameters are integers or pointers to locals Windows
+        // marshals for this message, which outlive the call.
+        unsafe { send_message(self.hwnd, msg, (wparam, lparam), None) }
+            .map_err(|unanswered| message_error(unanswered, "the edit control", msg))
+    }
+
+    /// Sends `msg` carrying `buffer`, whose address is one of its
+    /// parameters, after checking that the window is still in the buffer's
+    /// process.
+    fn send_with(
+        &self,
+        msg: u32,
+        (wparam, lparam): (usize, isize),
+        buffer: &RemoteBuffer<'_>,
+    ) -> EditResult<isize> {
+        // SAFETY: the parameters are integers or the address of `buffer`,
+        // memory allocated in the target for this message, which lives until
+        // after the send returns.
+        unsafe { send_message(self.hwnd, msg, (wparam, lparam), Some(buffer.sent())) }
+            .map_err(|unanswered| message_error(unanswered, "the edit control", msg))
     }
 
     /// Opens the target process, on first use.
     fn open_process(&mut self) -> EditResult<()> {
         if self.process.is_none() {
-            self.process = Some(TargetProcess::open(self.hwnd)?);
+            let pid = match self.process_id {
+                Some(pid) => pid,
+                None => window_process(self.hwnd)?,
+            };
+            self.process = Some(TargetProcess::open(pid)?);
         }
         Ok(())
     }
@@ -191,8 +213,8 @@ impl EditControl {
         if self.version >= 1 {
             self.open_process()?;
             let buffer = self.process()?.allocate(8)?;
-            self.send(EM_EXGETSEL, 0, buffer.address())?;
-            let bytes = buffer.read(8)?;
+            self.send_with(EM_EXGETSEL, (0, buffer.address()), &buffer)?;
+            let bytes = buffer.read(0, 8)?;
             return Ok((le_u32(&bytes[0..4]), le_u32(&bytes[4..8])));
         }
         let (mut start, mut end) = (0u32, 0u32);
@@ -218,8 +240,8 @@ impl EditControl {
             bytes.extend_from_slice(&end.to_le_bytes());
             self.open_process()?;
             let buffer = self.process()?.allocate(8)?;
-            buffer.write(&bytes)?;
-            self.send(EM_EXSETSEL, 0, buffer.address())?;
+            buffer.write(0, &bytes)?;
+            self.send_with(EM_EXSETSEL, (0, buffer.address()), &buffer)?;
         } else {
             self.send(EM_SETSEL, start as usize, param(end))?;
         }
@@ -285,8 +307,12 @@ impl EditControl {
             bytes.extend_from_slice(&1200u32.to_le_bytes());
             self.open_process()?;
             let buffer = self.process()?.allocate(8)?;
-            buffer.write(&bytes)?;
-            self.send(EM_GETTEXTLENGTHEX, buffer.address().cast_unsigned(), 0)?
+            buffer.write(0, &bytes)?;
+            self.send_with(
+                EM_GETTEXTLENGTHEX,
+                (buffer.address().cast_unsigned(), 0),
+                &buffer,
+            )?
         } else {
             self.send(WM_GETTEXTLENGTH, 0, 0)?
         };
@@ -333,7 +359,8 @@ impl EditControl {
         Ok(self.masked(buffer[start..end].to_vec()))
     }
 
-    /// `EM_GETTEXTRANGE`, with its structure and buffer in the target.
+    /// `EM_GETTEXTRANGE`, with its structure and its text in one buffer in
+    /// the target.
     fn rich_text_range(&mut self, start: u32, end: u32) -> EditResult<Vec<u16>> {
         let unicode = {
             // SAFETY: IsWindowUnicode tolerates any handle.
@@ -345,24 +372,26 @@ impl EditControl {
         self.open_process()?;
         let process = self.process()?;
         let pointer_size = process.pointer_size;
-        let text = process.allocate(text_bytes)?;
-        let mut range = Vec::with_capacity(16);
+        // `TEXTRANGEW`: the range's two ends and the text's pointer.
+        let structure_bytes = 8 + pointer_size;
+        let text_at = text_offset(structure_bytes);
+        let buffer = process.allocate(text_at + text_bytes)?;
+        let mut range = Vec::with_capacity(structure_bytes);
         range.extend_from_slice(&start.to_le_bytes());
         range.extend_from_slice(&end.to_le_bytes());
-        let address = text.address().cast_unsigned() as u64;
+        let address = buffer.address_at(text_at).cast_unsigned() as u64;
         if pointer_size == 4 {
             range.extend_from_slice(&u32::try_from(address).unwrap_or(0).to_le_bytes());
         } else {
             range.extend_from_slice(&address.to_le_bytes());
         }
-        let structure = process.allocate(range.len())?;
-        structure.write(&range)?;
-        let copied = self.send(EM_GETTEXTRANGE, 0, structure.address())?;
+        buffer.write(0, &range)?;
+        let copied = self.send_with(EM_GETTEXTRANGE, (0, buffer.address()), &buffer)?;
         let copied = usize::try_from(copied).unwrap_or(0).min(units);
-        // The whole buffer, which was zeroed when it was committed: a window
+        // The whole text, which was zeroed when it was committed: a window
         // that is not Unicode may still copy UTF-16, which only the bytes
         // past the first `copied` show.
-        let units = decode_text_range(&text.read(text_bytes)?, copied, unicode);
+        let units = decode_text_range(&buffer.read(text_at, text_bytes)?, copied, unicode);
         Ok(self.masked(units))
     }
 
@@ -397,13 +426,13 @@ impl EditControl {
         let (x, y) = if self.version == 1 || self.version >= 3 {
             self.open_process()?;
             let buffer = self.process()?.allocate(8)?;
-            buffer.write(&[0; 8])?;
-            self.send(
+            buffer.write(0, &[0; 8])?;
+            self.send_with(
                 EM_POSFROMCHAR,
-                buffer.address().cast_unsigned(),
-                param(offset),
+                (buffer.address().cast_unsigned(), param(offset)),
+                &buffer,
             )?;
-            let bytes = buffer.read(8)?;
+            let bytes = buffer.read(0, 8)?;
             (
                 le_u32(&bytes[0..4]).cast_signed(),
                 le_u32(&bytes[4..8]).cast_signed(),
@@ -443,6 +472,32 @@ impl EditControl {
 /// The `HWND` for a handle value.
 fn window(hwnd: isize) -> HWND {
     HWND(hwnd as *mut c_void)
+}
+
+/// What a window message to `what` that was not answered fails with.
+pub(crate) fn message_error(unanswered: Unanswered, what: &str, msg: u32) -> EditError {
+    match unanswered {
+        Unanswered::Gone => EditError::Gone,
+        Unanswered::NotResponding => EditError::NotResponding,
+        Unanswered::Failed => EditError::Failed(format!("{what} did not answer message {msg:#x}")),
+    }
+}
+
+/// The process of window `hwnd`; gone when it has none.
+pub(crate) fn window_process(hwnd: isize) -> EditResult<u32> {
+    let mut pid = 0u32;
+    // SAFETY: a local read into a local; any handle is tolerated.
+    unsafe { GetWindowThreadProcessId(window(hwnd), Some(&raw mut pid)) };
+    if pid == 0 {
+        return Err(EditError::Gone);
+    }
+    Ok(pid)
+}
+
+/// Where a buffer's text starts after a structure of `structure_bytes`:
+/// 16-byte aligned.
+pub(crate) fn text_offset(structure_bytes: usize) -> usize {
+    structure_bytes.next_multiple_of(16)
 }
 
 /// The `int` a line message (`EM_LINEINDEX`, `EM_LINEFROMCHAR`,
@@ -518,22 +573,20 @@ fn ansi_to_utf16(bytes: &[u8]) -> Vec<u16> {
     units
 }
 
-/// The process that owns an edit control, opened to allocate, read, and
-/// write its memory.
+/// The process that owns a control, opened to allocate, read, and write
+/// its memory.
 pub(crate) struct TargetProcess {
     handle: HANDLE,
+    /// The process's id, which its open handle keeps from being reused
+    /// (`GetProcessId`).
+    pid: u32,
     /// The size of a pointer in that process: 4 for a 32-bit process.
     pub(crate) pointer_size: usize,
 }
 
 impl TargetProcess {
-    pub(crate) fn open(hwnd: isize) -> EditResult<Self> {
-        let mut pid = 0u32;
-        // SAFETY: a local read into a local; any handle is tolerated.
-        unsafe { GetWindowThreadProcessId(window(hwnd), Some(&raw mut pid)) };
-        if pid == 0 {
-            return Err(EditError::Gone);
-        }
+    /// Opens process `pid`.
+    pub(crate) fn open(pid: u32) -> EditResult<Self> {
         // SAFETY: opening a process by id with the rights needed; the handle
         // is closed when this value drops.
         let handle = unsafe {
@@ -551,13 +604,26 @@ impl TargetProcess {
         // SAFETY: a query of the handle just opened into a local.
         let wow = unsafe { IsWow64Process2(handle, &raw mut machine, None) }.is_ok();
         let pointer_size = if wow && is_32_bit(machine) { 4 } else { 8 };
+        // SAFETY: a query of the handle just opened.
+        let pid = unsafe { GetProcessId(handle) };
         Ok(Self {
             handle,
+            pid,
             pointer_size,
         })
     }
 
-    /// Allocates `size` bytes in the process, freed when the buffer drops.
+    /// Whether the process has exited. A local call.
+    fn exited(&self) -> bool {
+        let mut code = 0u32;
+        // SAFETY: a query of the open handle into a local.
+        unsafe { GetExitCodeProcess(self.handle, &raw mut code) }
+            .is_ok_and(|()| code != STILL_ACTIVE.0.cast_unsigned())
+    }
+
+    /// Allocates `size` bytes in the process, at least a page committed and
+    /// one region of the process's address space reserved, freed whole
+    /// when the buffer drops.
     pub(crate) fn allocate(&self, size: usize) -> EditResult<RemoteBuffer<'_>> {
         // SAFETY: allocating in the process the handle opened with
         // `PROCESS_VM_OPERATION`; a null result is checked.
@@ -597,11 +663,23 @@ fn is_32_bit(machine: IMAGE_FILE_MACHINE) -> bool {
     machine == IMAGE_FILE_MACHINE_I386 || machine == IMAGE_FILE_MACHINE_ARMNT
 }
 
-/// Memory allocated in another process.
+/// Memory allocated in another process for one message, owned by the
+/// thread that sends it: freed whole when it drops, after the send has
+/// returned ([`RemoteBuffer::free`]).
 pub(crate) struct RemoteBuffer<'a> {
     process: &'a TargetProcess,
     address: *mut c_void,
     size: usize,
+}
+
+/// How a buffer's free ended, when it did not fail.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Freed {
+    /// The memory was released.
+    Released,
+    /// The process has exited, and its memory went with it; the free
+    /// itself failed, which is no error.
+    WithItsProcess,
 }
 
 impl RemoteBuffer<'_> {
@@ -610,15 +688,26 @@ impl RemoteBuffer<'_> {
         self.address as isize
     }
 
-    /// Writes `bytes` at the buffer's start.
-    pub(crate) fn write(&self, bytes: &[u8]) -> EditResult<()> {
-        let length = bytes.len().min(self.size);
-        // SAFETY: writing at most the buffer's size from a local slice into
-        // memory allocated in the target for it.
+    /// The address `offset` bytes into the buffer, in the target.
+    pub(crate) fn address_at(&self, offset: usize) -> isize {
+        self.address().saturating_add_unsigned(offset)
+    }
+
+    /// The process the buffer is in and its address, for the send that
+    /// carries it, which checks the window is still in that process.
+    pub(crate) fn sent(&self) -> (u32, usize) {
+        (self.process.pid, self.address as usize)
+    }
+
+    /// Writes `bytes` at `offset` into the buffer.
+    pub(crate) fn write(&self, offset: usize, bytes: &[u8]) -> EditResult<()> {
+        let length = bytes.len().min(self.size.saturating_sub(offset));
+        // SAFETY: writing at most what is left of the buffer from `offset`,
+        // from a local slice into memory allocated in the target for it.
         unsafe {
             WriteProcessMemory(
                 self.process.handle,
-                self.address,
+                self.address.wrapping_byte_add(offset),
                 bytes.as_ptr().cast(),
                 length,
                 None,
@@ -627,16 +716,16 @@ impl RemoteBuffer<'_> {
         .map_err(|error| EditError::Failed(format!("could not write the process: {error}")))
     }
 
-    /// Reads `length` bytes from the buffer's start.
-    pub(crate) fn read(&self, length: usize) -> EditResult<Vec<u8>> {
-        let length = length.min(self.size);
+    /// Reads `length` bytes from `offset` into the buffer.
+    pub(crate) fn read(&self, offset: usize, length: usize) -> EditResult<Vec<u8>> {
+        let length = length.min(self.size.saturating_sub(offset));
         let mut bytes = vec![0u8; length];
-        // SAFETY: reading at most the buffer's size from memory allocated in
-        // the target into a local of that length.
+        // SAFETY: reading at most what is left of the buffer from `offset`,
+        // from memory allocated in the target into a local of that length.
         unsafe {
             ReadProcessMemory(
                 self.process.handle,
-                self.address,
+                self.address.wrapping_byte_add(offset),
                 bytes.as_mut_ptr().cast(),
                 length,
                 None,
@@ -645,14 +734,33 @@ impl RemoteBuffer<'_> {
         .map_err(|error| EditError::Failed(format!("could not read the process: {error}")))?;
         Ok(bytes)
     }
+
+    /// Frees the buffer, once. A free that fails because the process has
+    /// exited is no error: the process's exit freed the memory with it.
+    fn free(&mut self) -> windows::core::Result<Freed> {
+        // SAFETY: the memory was allocated by `allocate` in this process and
+        // is released once, from the drop.
+        match unsafe { VirtualFreeEx(self.process.handle, self.address, 0, MEM_RELEASE) } {
+            Ok(()) => Ok(Freed::Released),
+            Err(_) if self.process.exited() => Ok(Freed::WithItsProcess),
+            Err(error) => Err(error),
+        }
+    }
 }
 
 impl Drop for RemoteBuffer<'_> {
     fn drop(&mut self) {
-        // SAFETY: the memory was allocated by `allocate` in this process and
-        // is released once.
-        unsafe {
-            let _ = VirtualFreeEx(self.process.handle, self.address, 0, MEM_RELEASE);
+        match self.free() {
+            Ok(Freed::Released) => {}
+            Ok(Freed::WithItsProcess) => tracing::debug!(
+                address = self.address as usize,
+                "a buffer's process exited before it was freed; its memory went with it"
+            ),
+            Err(error) => tracing::warn!(
+                %error,
+                address = self.address as usize,
+                "a buffer in another process could not be freed"
+            ),
         }
     }
 }
@@ -660,6 +768,33 @@ impl Drop for RemoteBuffer<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A buffer in a process that has exited is freed with no error: the
+    /// process's exit took its memory, against a child process the test
+    /// starts and ends.
+    #[test]
+    fn freeing_a_buffer_in_a_process_that_has_exited_is_not_an_error() {
+        let mut child = std::process::Command::new("cmd.exe")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .expect("a child process");
+        let process = TargetProcess::open(child.id()).expect("the child, opened");
+        let mut buffer = process.allocate(64).expect("a buffer in the child");
+        child.kill().expect("the child, ended");
+        child.wait().expect("the child's exit");
+        assert!(process.exited());
+        assert_eq!(buffer.free().expect("no error"), Freed::WithItsProcess);
+        std::mem::forget(buffer);
+    }
+
+    #[test]
+    fn a_buffers_text_starts_16_byte_aligned_after_its_structure() {
+        assert_eq!(text_offset(12), 16);
+        assert_eq!(text_offset(16), 16);
+        assert_eq!(text_offset(96), 96);
+        assert_eq!(text_offset(97), 112);
+    }
 
     #[test]
     fn classes_map_to_nvdas_edit_api_versions() {

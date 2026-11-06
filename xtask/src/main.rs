@@ -461,6 +461,7 @@ const FAULT_CRATES: &[&str] = &[
     "verbatim-audio",
     "verbatim-process",
     "verbatim-uia",
+    "verbatim-ia2",
     "verbatim-outpost",
     "verbatim-supervisor",
     "mockapp",
@@ -478,6 +479,7 @@ const FAULT_TESTS: &[(&str, &str)] = &[
     ("mockapp", "shutdown"),
     ("mockapp", "terminal_reading"),
     ("mockapp", "time_limits"),
+    ("mockapp", "window_messages"),
 ];
 
 /// The fault step's cargo invocations: clippy of each of [`FAULT_CRATES`]

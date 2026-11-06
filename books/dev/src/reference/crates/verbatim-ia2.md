@@ -130,7 +130,11 @@ Public API:
   `line_start`, `line_length`, `line_count`, `text_length`, `line_text`,
   `text_range`, `find_word_break`, `position_of` (screen coordinates), and
   `is_password`, each an `EditResult` whose `EditError` is `Gone` when the
-  window no longer exists and `Failed` otherwise. Offsets are the
+  window no longer exists or its handle now names another process's
+  window, `NotResponding` when it is hung or ghosted, and `Failed`
+  otherwise. `EditControl::with_process(hwnd, version, pid)` allocates its
+  buffers in process `pid`, for a test standing for a window handle reused
+  by another process's window. Offsets are the
   control's UTF-16 code units. The line messages' answers are read as
   the 32-bit `int` they are, the low half of the message's result: the
   classic edit control sign-extends `EM_LINEINDEX`'s -1 for a line past
@@ -148,15 +152,23 @@ Public API:
   Windows does not marshal those structures (`CHARRANGE`, `TEXTRANGEW`,
   `GETTEXTLENGTHEX`, `POINTL`), so they are written into memory allocated
   in the control's process (`VirtualAllocEx`, `WriteProcessMemory`,
-  `ReadProcessMemory`, freed on drop), with the text range's pointer field
-  sized for that process: four bytes for a 32-bit (WOW64) process, by
-  `IsWow64Process2`. A rich edit window that is not Unicode may still
+  `ReadProcessMemory`), with the text range's pointer field sized for that
+  process: four bytes for a 32-bit (WOW64) process, by `IsWow64Process2`.
+  Each such message has a buffer of its own (`RemoteBuffer`), one
+  allocation with the structure at its start and the text 16-byte aligned
+  after it, freed whole by the thread that sent the message once the send
+  has returned, never before, so the application never writes into memory
+  freed or reused while the message waited. A free that fails because the
+  process has exited is no error, logged at debug: the exit took the
+  memory. The process is opened once per edit control from the window's
+  process, and its id kept (`GetProcessId` on the open handle, which keeps
+  the id from being reused). A rich edit window that is not Unicode may still
   answer in UTF-16, so its whole text buffer is read back and decoded as
   NVDA decodes it (`decode_text_range`): UTF-16 when more than one
   character was copied and a byte past the copied count is not zero, and
-  otherwise ANSI text converted from the system code page. Every message goes through `SendMessageTimeoutW` with
-  `SMTO_ABORTIFHUNG` and half a second's wait, and counts as one window
-  message; the memory calls are the kernel's and are not counted. A
+  otherwise ANSI text converted from the system code page. Every message
+  goes through the window messages' one send, below, and counts as one
+  window message; the memory calls are the kernel's and are not counted. A
   password field (`ES_PASSWORD`) reads as stars, as NVDA reads it.
 - `acquire` — the query-pool side: `snapshot_from_event` (from
   `AccessibleObjectFromEvent` through name, role, value, state,
@@ -415,9 +427,33 @@ by Core on entering the window: one acquisition; `progress`, an
   header's item count, `LVM_GETCOLUMNORDERARRAY`, `LVM_GETSUBITEMRECT`,
   `LVM_GETITEMTEXTW`, and `LVM_GETCOLUMNW`, their structures written into
   the list view's process through `edit`'s target process, with pointer
-  fields sized for it). Every name, value, and description read loses its
+  fields sized for it, one buffer per message as for `edit`).
+  `list_view::column_name(hwnd, child_id, description)` is public, for the
+  mockapp tests of its messages. Every name, value, and description read loses its
   bidirectional formatting characters (`verbatim_text::strip_bidi_controls`),
   as NVDA strips the direction marks from list view items and the clock.
+- Window messages (`window::send_message`): every message this crate sends
+  to an application, the list view's, tree view's and edit control's.
+  The window's readability is tested first, by local calls
+  (`verbatim_win32::window::readability`): a hung or ghosted window fails
+  at once, unsent, and a destroyed one is gone. A message carrying the
+  address of a buffer in the target's memory is sent only once the
+  window's current process (`GetWindowThreadProcessId`) is checked to be
+  the buffer's, and is gone otherwise, so a window handle reused by
+  another process's window is never sent an address valid only in the
+  first; the gap left is the two local calls between the check and the
+  send. The message is then sent with `SMTO_BLOCK | SMTO_ERRORONEXIT` and
+  no time limit of its own, the largest that `SendMessageTimeoutW` waits,
+  `i32::MAX` milliseconds (it takes a larger one as passed at once),
+  without `SMTO_ABORTIFHUNG`: only a send with no time limit tells when its
+  message was answered, so its program's deadline and the judgement that
+  its window is hung are its bounds
+  (`books/dev/src/reference/crates/verbatim-model.md`, "Time limits"). A
+  failed send is gone when the window no longer exists, as it does once
+  its thread ends, which `SMTO_ERRORONEXIT` fails the send for. Under the
+  `faults` feature each send reaches the observation point
+  `WindowMessageSent` with its window, message, time limit and buffer
+  ([verbatim-faults](verbatim-faults.md)).
 - `calls` — the count of the cross-process calls `acquire` makes, kept per
   thread like `verbatim-uia`'s: `calls::count(kind)` and `calls::take()`.
   `count`, and the making of an object's agile reference, call the

@@ -63,6 +63,13 @@ pub enum Fault {
     /// reducer's `WatchEnded`). Subject: why it ended, the reducer's
     /// `&'static str`.
     CaretWatchEnded,
+    /// An observation point ([`reach`]): `verbatim-ia2` is about to send a
+    /// window message to an application, once its checks have passed.
+    /// Subject: `(window, message, timeout, buffer)`, an
+    /// `(isize, u32, Option<u32>, Option<usize>)`: the message's time limit
+    /// in milliseconds, `None` for none, and the address in the target's
+    /// memory of the buffer it carries, `None` for none.
+    WindowMessageSent,
 }
 
 /// Whether a subject is the one a test names: false for a subject of

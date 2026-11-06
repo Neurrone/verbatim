@@ -125,6 +125,9 @@ reviewable surface.
   loop; dispatches `WM_GETOBJECT` to whichever backend is active and drains
   stdin commands posted from the reader thread.
 - `stdin`: command parsing and the reader thread.
+- `held_message`: `hold-message`, which puts a window procedure of its
+  own in front of the native control's and holds the next message of the
+  kind named inside it (`hits::held`), passing every message on.
 - `uia`: the UIA provider. Every node gets its own COM object on demand:
   the root is a `RootProvider` (also the fragment root), every other node
   a `ChildProvider`; only the root implements
@@ -591,6 +594,18 @@ Each file's module comment says exactly what it asserts; in outline:
   short limit they once had and answer in full. Each hold ends after
   evidence that the old limit has passed: the outpost's frozen clock moved
   past a limit that ran on it, or twice a limit that ran in real time.
+- `window_messages.rs` holds a message to a native control inside its
+  window procedure (`hold-message`) and watches `verbatim-ia2`'s sends at
+  its observation point `WindowMessageSent`, so the binary requires the
+  `faults` feature: a text query whose `EM_GETSEL` is held past twice the
+  old half-second limit answers the caret and selection the focus read,
+  its send made with no time limit; a list view column read's buffer is
+  still allocated in mockapp while its `LVM_GETITEMTEXTW` is held and free
+  once the read answers; a second read on another thread during the hold
+  sends its own messages, each with a buffer of its own, every one free
+  after both answer; a read whose message is held is gone once mockapp is
+  ended; and an edit control whose buffers are in the test's own process,
+  standing for a reused window handle, is gone with no message sent.
 - `time_limits.rs` holds mockapp's next provider call (`hold`) and shows
   each of UIA's time limits ending the wait while the call is still held,
   each test in a process of its own since the timeouts belong to the

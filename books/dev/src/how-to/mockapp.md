@@ -283,7 +283,13 @@ parses them.
 - `freeze` makes the window thread acknowledge, print `held freeze` and
   wait until `release` outside any call, so the window takes no message
   and Windows comes to judge it hung before any client calls into it.
-- `release` lets the call `hold`, `hold-acc-parent` or `freeze` held go on; it is
+- `hold-message <message>` (MSAA only) makes the window thread block
+  inside the window procedure of the native control that answers
+  `message`, on the next such message sent to it, printing
+  `held <message>`, until `release`: `EM_GETSEL` for the edit control and
+  `LVM_GETITEMTEXTW` for the list view, so a test decides when a client's
+  message is answered.
+- `release` lets the call `hold`, `hold-acc-parent`, `hold-message` or `freeze` held go on; it is
   applied and acknowledged by the stdin thread, since the window thread
   is the one held.
 - `quit` exits the process.

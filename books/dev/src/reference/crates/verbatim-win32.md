@@ -44,9 +44,13 @@ Public API:
   ([verbatim-reader-rules](verbatim-reader-rules.md)).
   `window_is_hidden_frame` and `window_belongs_to_hidden_frame` recognize
   Core's hidden frame by its marker property and its owner, Core being
-  the calling process's parent. `event_window_unreadable(hwnd)` is why an
-  event's window cannot be read, if it cannot: no window, a ghost window
-  standing in for it, or a hung application, in NVDA's order;
+  the calling process's parent. `readability(hwnd)` is whether a window
+  can be read, by Windows' own state, a `Readability`: `Gone` for no
+  window, or one no longer, which is never judged hung; `Ghosted` when a
+  ghost window stands in for it, which counts as hung (`is_hung`); `Hung`
+  when the system reports its application hung; `Readable` otherwise, in
+  NVDA's order, all local calls. `event_window_unreadable(hwnd)` is why an
+  event's window cannot be read, if it cannot (`Readability::reason`);
   `window_unreadable` is the same as the system's judgement, which a
   `WindowReadabilityReader` replaces in tests, as a `ForegroundReader`
   replaces `GetForegroundWindow`. `served_by(hwnd, pid)` and

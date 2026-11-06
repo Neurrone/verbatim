@@ -13,6 +13,7 @@ serde_json.workspace = true
 # Normal and optional only so that the `faults` feature can turn their
 # fault points on: a feature cannot name a dev-dependency.
 verbatim-faults = { workspace = true, optional = true }
+verbatim-ia2 = { workspace = true, optional = true }
 verbatim-model.workspace = true
 verbatim-outpost = { workspace = true, optional = true }
 verbatim-process.workspace = true
@@ -32,11 +33,16 @@ verbatim-uia-rops.workspace = true
 verbatim-win32.workspace = true
 
 [features]
-# The fault points of the outpost's worker, shutdown and caret watches and
-# of UIA subscription, for the `failure_paths`, `shutdown`,
-# `terminal_reading` and `time_limits` tests; only `cargo xtask faults`
-# turns it on.
-faults = ["dep:verbatim-faults", "verbatim-outpost/faults", "verbatim-uia/faults"]
+# The fault points of the outpost's worker, shutdown and caret watches, of
+# UIA subscription and of the window messages sent, for the
+# `failure_paths`, `shutdown`, `terminal_reading`, `time_limits` and
+# `window_messages` tests; only `cargo xtask faults` turns it on.
+faults = [
+    "dep:verbatim-faults",
+    "verbatim-ia2/faults",
+    "verbatim-outpost/faults",
+    "verbatim-uia/faults",
+]
 
 # The test binaries that use UIA as a client run through their own runner,
 # which ends the process without running DLL detach code; the reason is in
@@ -132,6 +138,13 @@ harness = false
 # verbatim-uia's observation point, so only `cargo xtask faults` builds it.
 [[test]]
 name = "time_limits"
+harness = false
+required-features = ["faults"]
+
+# Watches the window messages verbatim-ia2 sends at its observation point,
+# so only `cargo xtask faults` builds it.
+[[test]]
+name = "window_messages"
 harness = false
 required-features = ["faults"]
 

@@ -278,31 +278,74 @@ pub fn window_is_hung(handle: isize) -> bool {
     unsafe { IsHungAppWindow(hwnd(handle)) }.as_bool()
 }
 
-/// Why an event's own window, `handle`, cannot be read, or `None` when it
-/// can: it is no window, or no longer one; a ghost window stands in for it;
-/// or the system reports its application hung. NVDA drops such an event
-/// after accepting it and before it creates its object, in that order
-/// (`winEventToNVDAEvent`, `source/IAccessibleHandler/__init__.py`), since
-/// creating it would call into an application that does not answer. Every
-/// check is a local call.
+/// Whether a window can be read, by Windows' own state: the one answer
+/// both readers judge a window by, read at the moment of each decision
+/// ([`readability`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Readability {
+    /// It can be read.
+    Readable,
+    /// It is no window, or no longer one: a call into it fails by itself,
+    /// so it is never judged hung.
+    Gone,
+    /// A ghost window stands in for it, which Windows shows only for a
+    /// hung window: it counts as hung.
+    Ghosted,
+    /// The system reports its application hung (`IsHungAppWindow`).
+    Hung,
+}
+
+impl Readability {
+    /// Why a window of this answer cannot be read, `None` when it can.
+    #[must_use]
+    pub const fn reason(self) -> Option<&'static str> {
+        match self {
+            Self::Readable => None,
+            Self::Gone => Some("no window"),
+            Self::Ghosted => Some("a ghost window stands in for it"),
+            Self::Hung => Some("its application is not responding"),
+        }
+    }
+
+    /// Whether the window counts as hung: hung or ghosted.
+    #[must_use]
+    pub const fn is_hung(self) -> bool {
+        matches!(self, Self::Ghosted | Self::Hung)
+    }
+}
+
+/// Whether window `handle` can be read, by the system's judgement: it is no
+/// window, or no longer one; a ghost window stands in for it; or the system
+/// reports its application hung, tested in that order. Every check is a
+/// local call.
 #[must_use]
-pub fn event_window_unreadable(handle: isize) -> Option<&'static str> {
+pub fn readability(handle: isize) -> Readability {
     // SAFETY: IsWindow tolerates any handle.
     if handle == 0 || !unsafe { IsWindow(Some(hwnd(handle))) }.as_bool() {
-        return Some("no window");
+        return Readability::Gone;
     }
     if ghost_window_from_hung_window().is_some_and(|ghost| {
         // SAFETY: the function takes any window handle and returns null
         // when no ghost window stands in for it.
         !unsafe { ghost(hwnd(handle)) }.0.is_null()
     }) {
-        return Some("a ghost window stands in for it");
+        return Readability::Ghosted;
     }
     // SAFETY: IsHungAppWindow tolerates any handle.
     if unsafe { IsHungAppWindow(hwnd(handle)) }.as_bool() {
-        return Some("its application is not responding");
+        return Readability::Hung;
     }
-    None
+    Readability::Readable
+}
+
+/// Why an event's own window, `handle`, cannot be read, or `None` when it
+/// can ([`readability`]). NVDA drops such an event after accepting it and
+/// before it creates its object, in that order (`winEventToNVDAEvent`,
+/// `source/IAccessibleHandler/__init__.py`), since creating it would call
+/// into an application that does not answer. Local calls.
+#[must_use]
+pub fn event_window_unreadable(handle: isize) -> Option<&'static str> {
+    readability(handle).reason()
 }
 
 /// `GhostWindowFromHungWindow`, an undocumented export of user32 that NVDA
@@ -564,6 +607,16 @@ mod tests {
     fn destroy_window(handle: isize) {
         // SAFETY: called on the thread that created `handle`.
         unsafe { DestroyWindow(hwnd(handle)) }.expect("destroy a window");
+    }
+
+    /// A destroyed window is gone, never hung: its call fails by itself.
+    #[test]
+    fn the_reader_answers_gone_not_hung_for_a_destroyed_window() {
+        let window = create_window();
+        assert_eq!(readability(window), Readability::Readable);
+        destroy_window(window);
+        assert_eq!(readability(window), Readability::Gone);
+        assert!(!readability(window).is_hung());
     }
 
     #[test]

@@ -3,12 +3,14 @@
 //! functions it shares with the other roles (`verbatim_win32::window`),
 //! re-exported here.
 //!
-//! The list view and tree view messages are sent with
-//! `SendMessageTimeoutW`, giving up after [`MESSAGE_TIMEOUT_MS`] or at once
-//! when the owning application is hung, as the list view's and the edit
-//! control's own messages are (`books/dev/src/explanation/design/focus-pipeline.md`, section
-//! 6.3); each answers zero when it fails, and counts as one window message.
-//! Only messages
+//! Every window message this crate sends, the list view's, tree view's and
+//! edit control's, goes through [`send_message`]: the window's readability
+//! is tested first, so a hung or ghosted window fails at once and a
+//! destroyed one is gone, and the message is then sent with no time limit
+//! of its own, its program's deadline and the judgement that its window is
+//! hung its only bounds (`books/dev/src/reference/crates/verbatim-model.md`,
+//! "Time limits"). Each counts as one window message. The integer messages
+//! here answer zero when they fail. Only messages
 //! whose parameters are plain integers are offered, never one that carries a
 //! pointer, so sending them cannot make a window procedure in this process
 //! read memory it does not own. A tree view's `HTREEITEM` is such an
@@ -23,7 +25,9 @@ use windows::Win32::UI::Controls::{
     CCM_GETVERSION, LVM_GETITEMCOUNT, TVIS_STATEIMAGEMASK, TVM_GETITEMSTATE, TVM_GETNEXTITEM,
     TVM_MAPACCIDTOHTREEITEM, TVM_MAPHTREEITEMTOACCID,
 };
-use windows::Win32::UI::WindowsAndMessaging::{SMTO_ABORTIFHUNG, SMTO_BLOCK, SendMessageTimeoutW};
+use windows::Win32::UI::WindowsAndMessaging::{
+    GetWindowThreadProcessId, IsWindow, SMTO_BLOCK, SMTO_ERRORONEXIT, SendMessageTimeoutW,
+};
 
 use verbatim_model::CallKind;
 
@@ -39,38 +43,115 @@ fn handle(hwnd: isize) -> HWND {
     HWND(hwnd as *mut c_void)
 }
 
-/// How long a message waits for the window to answer: the list view's and
-/// the edit control's bound.
-const MESSAGE_TIMEOUT_MS: u32 = 500;
+/// Why a window message was not answered.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Unanswered {
+    /// The window is gone, or its handle now names a window of another
+    /// process than the one a buffer it carries is in; nothing was sent
+    /// in that case.
+    Gone,
+    /// The window is hung or ghosted: nothing was sent.
+    NotResponding,
+    /// The send failed for another reason.
+    Failed,
+}
 
-/// Sends `msg` with integer parameters, counted as one window message,
-/// answering zero when the window does not answer within
-/// [`MESSAGE_TIMEOUT_MS`], is hung, or is gone.
+/// The time limit a message is sent with: the largest that waits, about 24.8
+/// days, so the send returns only once the window procedure has answered
+/// or, with `SMTO_ERRORONEXIT`, once the window's thread has ended, the
+/// one way to tell when a message was answered, and so when a buffer it
+/// carries may be freed. `SendMessageTimeoutW` takes a limit above
+/// `i32::MAX` milliseconds as passed at once: with `u32::MAX` and one less
+/// it failed with `ERROR_TIMEOUT` before a held message was answered
+/// (mockapp's `window_messages`, 2026-11-06).
+const NO_TIME_LIMIT: u32 = 0x7FFF_FFFF;
+
+/// Sends `msg` to window `hwnd`, counted as one window message, and
+/// answers its result. The window's readability is tested first, by local
+/// calls, and a hung or ghosted window fails at once, unsent, as a
+/// destroyed one is gone. When the message carries the address of a buffer
+/// in another process's memory, `buffer`, that process's id and the
+/// address, the window's process is checked to be the buffer's before the
+/// send, so a handle reused by another process's window is never sent an
+/// address valid only in the first: the gap left is the two local calls
+/// between the check and the send. The message is sent with
+/// `SMTO_BLOCK | SMTO_ERRORONEXIT` and no time limit
+/// ([`NO_TIME_LIMIT`]), without `SMTO_ABORTIFHUNG`, so nothing relies on
+/// when that flag returns; a failure is read through `IsWindow` as gone,
+/// since `SMTO_ERRORONEXIT` fails a send whose window's thread ended.
 ///
 /// # Safety
 ///
-/// `msg` must take plain integers in both parameters, never a pointer.
-unsafe fn send(hwnd: isize, msg: u32, wparam: usize, lparam: isize) -> isize {
+/// `wparam` and `lparam` must be what `msg` takes: integers, addresses in
+/// the target's own memory, or pointers to memory of this process that
+/// Windows marshals for `msg` and that outlives the call.
+pub(crate) unsafe fn send_message(
+    hwnd: isize,
+    msg: u32,
+    (wparam, lparam): (usize, isize),
+    buffer: Option<(u32, usize)>,
+) -> Result<isize, Unanswered> {
+    match verbatim_win32::window::readability(hwnd) {
+        verbatim_win32::window::Readability::Readable => {}
+        verbatim_win32::window::Readability::Gone => return Err(Unanswered::Gone),
+        verbatim_win32::window::Readability::Ghosted
+        | verbatim_win32::window::Readability::Hung => return Err(Unanswered::NotResponding),
+    }
+    if let Some((pid, _)) = buffer {
+        let mut window_pid = 0u32;
+        // SAFETY: a local read into a local; any handle is tolerated.
+        unsafe { GetWindowThreadProcessId(handle(hwnd), Some(&raw mut window_pid)) };
+        if window_pid != pid {
+            tracing::debug!(
+                hwnd,
+                window_pid,
+                buffer_pid = pid,
+                "a window's handle names another process's window than its buffer's; nothing is sent"
+            );
+            return Err(Unanswered::Gone);
+        }
+    }
     count(CallKind::WindowMessage);
+    #[cfg(any(test, feature = "faults"))]
+    verbatim_faults::reach(
+        verbatim_faults::Fault::WindowMessageSent,
+        &(hwnd, msg, None::<u32>, buffer.map(|(_, address)| address)),
+    );
     let mut result = 0usize;
     // SAFETY: SendMessageTimeoutW tolerates any handle, failing for an
-    // invalid one; the caller's contract rules out pointer parameters, and
-    // the result is a local.
+    // invalid one; the caller's contract covers the parameters, and the
+    // result is a local.
     let sent = unsafe {
         SendMessageTimeoutW(
             handle(hwnd),
             msg,
             WPARAM(wparam),
             LPARAM(lparam),
-            SMTO_ABORTIFHUNG | SMTO_BLOCK,
-            MESSAGE_TIMEOUT_MS,
+            SMTO_BLOCK | SMTO_ERRORONEXIT,
+            NO_TIME_LIMIT,
             Some(&raw mut result),
         )
     };
     if sent.0 == 0 {
-        return 0;
+        // SAFETY: IsWindow tolerates any handle.
+        return Err(if unsafe { IsWindow(Some(handle(hwnd))) }.as_bool() {
+            Unanswered::Failed
+        } else {
+            Unanswered::Gone
+        });
     }
-    result.cast_signed()
+    Ok(result.cast_signed())
+}
+
+/// Sends `msg` with integer parameters ([`send_message`]), answering zero
+/// when it is not answered.
+///
+/// # Safety
+///
+/// `msg` must take plain integers in both parameters, never a pointer.
+unsafe fn send(hwnd: isize, msg: u32, wparam: usize, lparam: isize) -> isize {
+    // SAFETY: the caller's contract rules out pointer parameters.
+    unsafe { send_message(hwnd, msg, (wparam, lparam), None) }.unwrap_or(0)
 }
 
 /// A list view's item count (`LVM_GETITEMCOUNT`), zero on failure.

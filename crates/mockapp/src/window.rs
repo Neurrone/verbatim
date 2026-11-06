@@ -501,6 +501,13 @@ fn apply(hwnd: HWND, context: &'static WindowContext, command: Command) -> bool 
         acknowledge("applied");
         return true;
     }
+    if let Command::HoldMessage(message) = command {
+        match crate::held_message::hold(hwnd, message) {
+            Ok(()) => acknowledge("applied"),
+            Err(reason) => acknowledge(&format!("rejected: {reason}")),
+        }
+        return true;
+    }
     if let Command::Freeze = command {
         hits::arm_hold();
         acknowledge("applied");

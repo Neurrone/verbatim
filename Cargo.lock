@@ -2055,6 +2055,7 @@ version = "0.1.0"
 dependencies = [
  "crossbeam-channel",
  "tracing",
+ "verbatim-faults",
  "verbatim-model",
  "verbatim-process",
  "verbatim-reader-rules",

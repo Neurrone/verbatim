@@ -519,6 +519,15 @@ items have no shorter limit of their own. Deliberately different:
 - An activation whose provider runs its action synchronously holds that
   outpost's later entries until it returns, up to 11 seconds, as NVDA's
   `doAction` blocks its core.
+- A window message has no time limit of its own, where NVDA's is 10
+  seconds in 400 ms slices: the window's readability is tested before it,
+  so a hung or ghosted window fails at once, as NVDA's `SMTO_ABORTIFHUNG`
+  aborts for a window already hung (`nvdaHelperLocal.cpp`, line 89). A
+  buffer it carries in the application's memory is freed only once the
+  message is answered, where NVDA frees it after a cancelled message
+  (`nvda/source/NVDAObjects/IAccessible/sysListView32.py`, lines 600 to
+  655; `nvda/source/NVDAObjects/window/edit.py`, lines 400 to 420), which
+  the application can then write into (Dickson, 2026-11-06).
 
 ### Recovery after an outpost is replaced
 

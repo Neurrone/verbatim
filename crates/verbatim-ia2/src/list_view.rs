@@ -7,25 +7,16 @@
 //!
 //! The item, column, and rectangle structures these messages take are not
 //! marshalled by Windows, so they are written into memory allocated in the
-//! list view's process ([`crate::edit::TargetProcess`]), with pointer fields
-//! sized for it. Every message goes through `SendMessageTimeoutW`, aborting
-//! if the window is hung, and counts as one window message.
+//! list view's process (`crate::edit::TargetProcess`), with pointer fields
+//! sized for it: one buffer per message, its structure at its start and
+//! its text 16-byte aligned after it, freed by the thread that sent the
+//! message once the send has returned (`crate::edit::RemoteBuffer`). Every
+//! message goes through `crate::window::send_message`, so a hung window
+//! fails at once and the message has no time limit of its own, and counts
+//! as one window message.
 
-use std::ffi::c_void;
-
-use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
-use windows::Win32::UI::WindowsAndMessaging::{
-    IsWindow, SMTO_ABORTIFHUNG, SMTO_BLOCK, SendMessageTimeoutW,
-};
-
-use verbatim_model::CallKind;
-
-use crate::calls::count;
-use crate::edit::{EditError, TargetProcess};
+use crate::edit::{EditError, RemoteBuffer, TargetProcess, message_error, text_offset};
 use crate::window;
-
-/// How long a message waits for the list view to answer.
-const MESSAGE_TIMEOUT_MS: u32 = 500;
 
 const LVM_FIRST: u32 = 0x1000;
 const LVM_GETHEADER: u32 = LVM_FIRST + 31;
@@ -53,35 +44,27 @@ const MAX_TEXT: usize = 260;
 /// their texts, which NVDA removes.
 const DIRECTION_MARKS: [char; 2] = ['\u{200e}', '\u{200f}'];
 
-/// Sends `msg` to the list view, its parameters integers or addresses in
-/// the list view's own process.
+/// Sends `msg` to the list view, its parameters integers.
 fn send(hwnd: isize, msg: u32, wparam: usize, lparam: isize) -> Result<isize, EditError> {
-    count(CallKind::WindowMessage);
-    let mut result = 0usize;
-    // SAFETY: the parameters are integers or addresses in the target's own
-    // memory; any window handle is tolerated.
-    let sent = unsafe {
-        SendMessageTimeoutW(
-            HWND(hwnd as *mut c_void),
-            msg,
-            WPARAM(wparam),
-            LPARAM(lparam),
-            SMTO_ABORTIFHUNG | SMTO_BLOCK,
-            MESSAGE_TIMEOUT_MS,
-            Some(&raw mut result),
-        )
-    };
-    if sent.0 == 0 {
-        // SAFETY: IsWindow tolerates any handle.
-        return Err(
-            if unsafe { IsWindow(Some(HWND(hwnd as *mut c_void))) }.as_bool() {
-                EditError::Failed(format!("the list view did not answer message {msg:#x}"))
-            } else {
-                EditError::Gone
-            },
-        );
-    }
-    Ok(result.cast_signed())
+    // SAFETY: the parameters are integers.
+    unsafe { window::send_message(hwnd, msg, (wparam, lparam), None) }
+        .map_err(|unanswered| message_error(unanswered, "the list view", msg))
+}
+
+/// Sends `msg` to the list view carrying `buffer`, whose address is
+/// `lparam`, after checking that the window is still in the buffer's
+/// process.
+fn send_with(
+    hwnd: isize,
+    msg: u32,
+    wparam: usize,
+    buffer: &RemoteBuffer<'_>,
+) -> Result<isize, EditError> {
+    // SAFETY: the parameters are an integer and the address of `buffer`,
+    // memory allocated in the target for this message, which lives until
+    // after the send returns.
+    unsafe { window::send_message(hwnd, msg, (wparam, buffer.address()), Some(buffer.sent())) }
+        .map_err(|unanswered| message_error(unanswered, "the list view", msg))
 }
 
 /// Whether the list view `hwnd` shows its items in columns, as NVDA's
@@ -104,8 +87,9 @@ fn is_multi_column(hwnd: isize) -> Result<bool, EditError> {
 ///
 /// # Errors
 ///
-/// The list view's error when it is gone or does not answer.
-pub(crate) fn column_name(
+/// The list view's error when it is gone, is not responding, or does not
+/// answer.
+pub fn column_name(
     hwnd: isize,
     child_id: i32,
     description: impl FnOnce() -> Option<String>,
@@ -127,7 +111,7 @@ pub(crate) fn column_name(
         count if count > 0 => usize::try_from(count).unwrap_or(1),
         _ => 1,
     };
-    let process = TargetProcess::open(hwnd)?;
+    let process = TargetProcess::open(crate::edit::window_process(hwnd)?)?;
     let order = column_order(hwnd, &process, columns)?;
     let mut texts = Vec::new();
     for (position, &column) in order.iter().enumerate() {
@@ -161,10 +145,10 @@ fn column_order(
         return Ok(vec![0]);
     }
     let buffer = process.allocate(columns * 4)?;
-    if send(hwnd, LVM_GETCOLUMNORDERARRAY, columns, buffer.address())? == 0 {
+    if send_with(hwnd, LVM_GETCOLUMNORDERARRAY, columns, &buffer)? == 0 {
         return Err(EditError::Failed("no column order".to_owned()));
     }
-    let bytes = buffer.read(columns * 4)?;
+    let bytes = buffer.read(0, columns * 4)?;
     Ok(bytes
         .as_chunks::<4>()
         .0
@@ -185,11 +169,11 @@ fn column_width(
     rect[..4].copy_from_slice(&LVIR_LABEL.to_le_bytes());
     rect[4..8].copy_from_slice(&i32::try_from(column).unwrap_or(0).to_le_bytes());
     let buffer = process.allocate(rect.len())?;
-    buffer.write(&rect)?;
-    if send(hwnd, LVM_GETSUBITEMRECT, item, buffer.address())? == 0 {
+    buffer.write(0, &rect)?;
+    if send_with(hwnd, LVM_GETSUBITEMRECT, item, &buffer)? == 0 {
         return Ok(None);
     }
-    let bytes = buffer.read(16)?;
+    let bytes = buffer.read(0, 16)?;
     let field =
         |at: usize| i32::from_le_bytes([bytes[at], bytes[at + 1], bytes[at + 2], bytes[at + 3]]);
     Ok(Some(field(8) - field(0)))
@@ -203,27 +187,28 @@ fn item_text(
     item: usize,
     column: usize,
 ) -> Result<Option<String>, EditError> {
-    let text = process.allocate(MAX_TEXT * 2)?;
     // `LVITEMW`: mask, item, subitem, state, state mask, then the text
-    // pointer, aligned for the process, and the text's capacity.
-    let pointer_at = if process.pointer_size == 8 { 24 } else { 20 };
+    // pointer, aligned for the process, and the text's capacity; the text
+    // after it.
     let mut structure = vec![0u8; 96];
+    let text_at = text_offset(structure.len());
+    let buffer = process.allocate(text_at + MAX_TEXT * 2)?;
+    let pointer_at = if process.pointer_size == 8 { 24 } else { 20 };
     structure[..4].copy_from_slice(&LVIF_TEXT.to_le_bytes());
     structure[8..12].copy_from_slice(&i32::try_from(column).unwrap_or(0).to_le_bytes());
     write_pointer(
         &mut structure,
         pointer_at,
-        text.address(),
+        buffer.address_at(text_at),
         process.pointer_size,
     );
     let capacity = i32::try_from(MAX_TEXT).unwrap_or(0);
     let capacity_at = pointer_at + process.pointer_size;
     structure[capacity_at..capacity_at + 4].copy_from_slice(&capacity.to_le_bytes());
-    let buffer = process.allocate(structure.len())?;
-    buffer.write(&structure)?;
-    let length = send(hwnd, LVM_GETITEMTEXTW, item, buffer.address())?;
+    buffer.write(0, &structure)?;
+    let length = send_with(hwnd, LVM_GETITEMTEXTW, item, &buffer)?;
     let length = usize::try_from(length).unwrap_or(0).min(MAX_TEXT);
-    read_text(&text, length)
+    read_text(&buffer, text_at, length)
 }
 
 /// The header text of `column` (`LVM_GETCOLUMNW`), `None` when it has none.
@@ -232,27 +217,27 @@ fn header_text(
     process: &TargetProcess,
     column: usize,
 ) -> Result<Option<String>, EditError> {
-    let text = process.allocate(MAX_TEXT * 2)?;
     // `LVCOLUMNW`: mask, format, width, then the text pointer, aligned for
-    // the process, and the text's capacity.
-    let pointer_at = if process.pointer_size == 8 { 16 } else { 12 };
+    // the process, and the text's capacity; the text after it.
     let mut structure = vec![0u8; 64];
+    let text_at = text_offset(structure.len());
+    let buffer = process.allocate(text_at + MAX_TEXT * 2)?;
+    let pointer_at = if process.pointer_size == 8 { 16 } else { 12 };
     structure[..4].copy_from_slice(&LVCF_TEXT.to_le_bytes());
     write_pointer(
         &mut structure,
         pointer_at,
-        text.address(),
+        buffer.address_at(text_at),
         process.pointer_size,
     );
     let capacity = i32::try_from(MAX_TEXT).unwrap_or(0);
     let capacity_at = pointer_at + process.pointer_size;
     structure[capacity_at..capacity_at + 4].copy_from_slice(&capacity.to_le_bytes());
-    let buffer = process.allocate(structure.len())?;
-    buffer.write(&structure)?;
-    if send(hwnd, LVM_GETCOLUMNW, column, buffer.address())? == 0 {
+    buffer.write(0, &structure)?;
+    if send_with(hwnd, LVM_GETCOLUMNW, column, &buffer)? == 0 {
         return Ok(None);
     }
-    read_text(&text, MAX_TEXT)
+    read_text(&buffer, text_at, MAX_TEXT)
 }
 
 /// Writes `address` as a pointer of `size` bytes at `at`.
@@ -261,13 +246,14 @@ fn write_pointer(structure: &mut [u8], at: usize, address: isize, size: usize) {
     structure[at..at + size].copy_from_slice(&bytes[..size]);
 }
 
-/// The text of up to `length` UTF-16 units in `buffer`, up to its first
-/// null, `None` when empty.
+/// The text of up to `length` UTF-16 units at `offset` in `buffer`, up to
+/// its first null, `None` when empty.
 fn read_text(
-    buffer: &crate::edit::RemoteBuffer<'_>,
+    buffer: &RemoteBuffer<'_>,
+    offset: usize,
     length: usize,
 ) -> Result<Option<String>, EditError> {
-    let bytes = buffer.read(length * 2)?;
+    let bytes = buffer.read(offset, length * 2)?;
     let units: Vec<u16> = bytes
         .as_chunks::<2>()
         .0

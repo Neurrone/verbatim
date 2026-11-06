@@ -16,14 +16,18 @@ Public API:
   `ThreadStart` (a reading thread's `(name, pid, generation)`, a worker's
   `(name, generation)`), `RemoveGroup` (`(registration, runtime id)`),
   `AddFocusHandler` and `RemoveFocusHandler` (`(registration, handler
-  index)`), and three observation points: `ShutdownWaitsForCalls` (an
+  index)`), and four observation points: `ShutdownWaitsForCalls` (an
   outpost's target process id), where an outpost's shutdown begins to
   wait for the calls in progress; `RegistrationCallPassedTimeout` (the
   registration's id), each of `verbatim-uia`'s registration calls whose
   time passed UIA's connection timeout, since such a call reports
   success; and `CaretWatchEnded` (the reducer's reason, a `&'static
   str`), where an outpost's shell carries out a caret key's watch ending
-  without evidence.
+  without evidence; and `WindowMessageSent` (`(window, message, timeout,
+  buffer)`, an `(isize, u32, Option<u32>, Option<usize>)`), where
+  `verbatim-ia2` is about to send a window message, with the time limit it
+  is sent with, `None` for none, and the address of the buffer it carries
+  in the target's memory.
 - `arm(fault, selects, times)` — arms a point to fire `times` times, each
   at a call whose subject, of the type `selects` takes, `selects` picks,
   so a test names the one call that fails. Returns a `Guard`, whose drop
