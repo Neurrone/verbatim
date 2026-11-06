@@ -295,7 +295,7 @@ fn clean(report: &mut Report) {
     ] {
         let outcome = run_children(Setup { end, ..SETUP }, CLEAN_CHILDREN);
         // Against the dirty rate: differ is a clean rate apart from it,
-        // none in 90 included; pass, no difference shown.
+        // none in 120 included; pass, no difference shown.
         let verdict = if outcome.other.is_empty() {
             rate(outcome.faults(), outcome.done, RECORDED.0, RECORDED.1)
         } else {
