@@ -48,7 +48,7 @@ These rules hold for every program here (Dickson, 2026-11-05 and 2026-11-06), ea
 
 ## The UI Automation the records were taken with
 
-The current records were taken on 2026-11-05 and 2026-11-06 with this `UIAutomationCore.dll`, on Windows 10.0.26200.9711:
+The current records were taken on 2026-11-05 and 2026-11-06 on Windows 11 25H2 (10.0.26200.9711), and every program was run again, every case named, on 2026-11-06 at 266fa88b on Windows 11 26H2 (10.0.26300.9711). The records hold on both; a row that names a build records a figure that differed between the runs. Both had this `UIAutomationCore.dll`:
 
 - Path: `C:\Windows\System32\UIAutomationCore.dll`
 - File version: 7.2.26100.9549
