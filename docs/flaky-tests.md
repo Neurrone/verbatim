@@ -38,7 +38,7 @@ Recorded by Claude, 2026-11-04, pending Dickson's acceptance.
 - `text_box_review_cursor`
   - How: Verbatim+Alt+Home (review the selection's start) was answered "unanswered" by the outpost's text read, so nothing was said within 15 s.
   - Cause: the harness's Windows Forms text box (a Windows PowerShell window) did not answer `EM_GETSEL` within the outpost's fixed 500 ms message limit (`MESSAGE_TIMEOUT_MS`, `crates/verbatim-ia2/src/edit.rs`); its interface thread had stalled twice at the scenario's start too. The menu guard changed nothing in the text box. NVDA waits for the same message until its watchdog judges the application hung, so a slow but live application is still read.
-  - Fix: a question for Dickson, since how long silence is tolerated while an application is busy is a performance budget: wait until the application answers or is judged hung, as NVDA does, with [M6.1 hung and flooding applications](roadmap.md#m61--hung-and-flooding-applications).
+  - Fix: built with the slow applications build (d13eaef2 to d7b2962d, 2026-11-07): a window message has no time limit of its own and is waited for until the application answers or Windows judges its window hung, as NVDA does. Ten local runs passed, none slow; the entry is deleted once a run's log shows the slow read waited for and the speech heard.
 - `alt_tab_switcher` (coverage run 41708393940, an instrumented build)
   - How: "Task Switching" was heard before the switcher's item "… row 1 column 2 2 of 4".
   - Cause: the listener's read of the item's first focus passed its bound (its nearest-window lookup took 697 ms) and was published with no ancestors read, so the Alt+Tab rule, which needs the item's parent's automation id, did not apply, and the plain window "Task Switching" filled in from window handles was spoken; the full read 23 ms later spoke the item.
@@ -46,7 +46,7 @@ Recorded by Claude, 2026-11-04, pending Dickson's acceptance.
 - `windows_terminal_control_flood`'s command marks steps (run 41697089785, when they were `windows_terminal_command_marks`)
   - How: 2.0 s after the second Verbatim+Alt+Up (the previous command mark), Verbatim played its "application not responding" sound where the mark's line "ready> .\long.ps1" was expected.
   - Cause: the mark lay above the rows Core keeps, so Core asked the outpost to search the terminal (`TerminalFind`); the search, a remote operation in Windows Terminal (`crates/verbatim-uia-rops/src/terminal_find.rs`), took 3.2 s, past the outpost's 2 s text deadline (`TEXT_DEADLINE`), so the worker was abandoned, and `finish` (`crates/verbatim-app/src/main.rs`) plays the sound for any abandoned query, without asking whether Windows judges the window hung. Windows Terminal was answering throughout. NVDA has no such sound.
-  - Fix: whether the sound plays only when Windows judges the window hung is a question for Dickson (what users hear); the search's cost in a real Windows Terminal, never measured, is to be measured and fixed with [M6.4 terminal residuals](roadmap.md#m64--terminal-residuals)' measurements.
+  - Fix: built with the slow applications build (2026-11-07): the 2 s text deadline is gone, a query waits up to the 11 s handling deadline, and the sound plays only when Windows judges the window hung and its application holds attention (Dickson, 2026-11-06). Ten local runs passed, none slow; the entry is deleted once a run's log shows a search past 2 s answered and spoken. The search's cost in a real Windows Terminal, never measured, is to be measured and fixed with [M6.4 terminal residuals](roadmap.md#m64--terminal-residuals)' measurements.
 
 ## Windows Terminal busy opening its tab switcher
 
@@ -55,7 +55,7 @@ Recorded by Claude, 2026-11-04, pending Dickson's acceptance.
 - `windows_terminal_tabs` (run 41859263092)
   - How: at Control+Shift+Tab, "sound: app-not-responding" was heard where "Tab switcher grouping", "list" and the first tab were expected.
   - Cause: the key, a caret key in the terminal, opened a caret watch; Windows Terminal did not answer the watch's read for 2 s while it opened its tab switcher, so the outpost abandoned its worker ("a call passed its deadline", 15:43:34.285), and Core plays the sound for any abandoned query, without asking whether Windows judges the window hung.
-  - Fix: whether Control+Shift+Tab opens a caret watch in a terminal at all is settled with [M6.4 terminal residuals](roadmap.md#m64--terminal-residuals) (Dickson, 2026-11-04); whether the sound plays only when Windows judges the window hung is the same open question for Dickson as the command marks entry above.
+  - Fix: whether Control+Shift+Tab opens a caret watch in a terminal at all is settled with [M6.4 terminal residuals](roadmap.md#m64--terminal-residuals) (Dickson, 2026-11-04); the watch now waits the 11 s handling deadline and the sound plays only for a window Windows judges hung, built with the slow applications build (2026-11-07). Ten local runs passed, none slow; the entry is deleted once a run's log shows the slow watch answered.
 
 ## The caret watch's baseline anchor released while it waits
 

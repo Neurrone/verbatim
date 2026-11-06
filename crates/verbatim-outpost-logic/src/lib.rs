@@ -1968,7 +1968,8 @@ fn micros(duration: Duration) -> u64 {
 
 /// Whether `item`'s program never names a window it calls into: a tree
 /// dump, which walks every window, and a shell item query, which reads the
-/// shell's own surfaces.
+/// shell's own surfaces. Kept in step with `named_window` in
+/// `verbatim-outpost`'s worker, which answers no window for exactly these.
 fn names_no_window(item: &Item) -> bool {
     matches!(
         item,

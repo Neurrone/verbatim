@@ -16,19 +16,19 @@ M4.1". M4.5 (logic foundations) and M4.6 (generated tests) are complete. The pro
 layout was weighed again and kept: an outpost process per application
 and a separate focus listener (D9, D13; Dickson, 2026-11-02). The focus
 pipeline rework's second build is built (2026-11-02). The owner endings build is
-built (2026-11-03). The UIA facts build is built (2026-11-06). Next, in
-this order (Dickson, 2026-11-05):
+built (2026-11-03). The UIA facts build is built (2026-11-06). The slow
+applications build is built (2026-11-07). Next, in this order (Dickson,
+2026-11-05):
 
-1. "Slow applications: Verbatim's short limits";
-2. the focus pipeline rework's third build;
-3. the caret and selection rework, which ends M4;
-4. M4.2;
-5. M5;
-6. M6;
-7. M4.3;
-8. M4.8 (Guardian) and M4.7 (Containment);
-9. M4.9 (Lints and unsafe);
-10. M6.2, with the rest after.
+1. the focus pipeline rework's third build;
+2. the caret and selection rework, which ends M4;
+3. M4.2;
+4. M5;
+5. M6;
+6. M4.3;
+7. M4.8 (Guardian) and M4.7 (Containment);
+8. M4.9 (Lints and unsafe);
+9. M6.2, with the rest after.
 
 The published site's homepage, `books/index.html`, carries one line of
 this status per milestone, and changes with it.
@@ -175,52 +175,19 @@ needs the parent's automation id, did not apply and the plain window
 "Task Switching" filled in from window handles was spoken before the
 full read's item.
 
-### Slow applications: Verbatim's short limits
+From the slow applications build (Dickson, 2026-11-06), the third build
+decides two things it left as they were: whether to speak a control
+with its own window in a hanging application once the application
+answers, as NVDA does, which needs the re-publication of a read
+completed after its bound (today the outpost drops a listener read
+whose window is hung, recorded in `docs/parity/focus-events.md` as a
+difference); and whether the listener's hung judgement during a blocked
+call stays, since abandoning the read leaves no late result to speak.
+Its walk bounds, 500 ms in a new window and 2 s in the same one
+(`SAME_WINDOW_BOUND`), and their publication at the bound are also
+its to decide.
 
-Decided by Dickson on 2026-11-04, from the timeout audit of that day, to
-be built after the UIA facts build and before the focus pipeline
-rework's third build (Dickson, 2026-11-05), as one build with its own
-design and adversarial review (Dickson, 2026-11-04): a slow
-application is waited for, as NVDA waits, rather than cut off. The
-ancestor walk's bound in a new window (500 ms), the window-message limit
-(`MESSAGE_TIMEOUT_MS`, 500 ms), the text deadline (`TEXT_DEADLINE`, 2 s)
-and the navigation step's deadline (400 ms) become the outer handling
-deadline, `HANDLING_DEADLINE`, the outpost's task deadline for each
-handled entry; when Windows judges the window hung during a call
-(`IsHungAppWindow`), the outpost abandons the worker at once. Reason: every
-failure the audit traced to these limits was an application that answered
-within 0.5 to 4.5 s; they account for five entries in [the known
-failures](flaky-tests.md) and part of three more. The key-holding bounds,
-the multi-press window and the terminal key window are unchanged. The
-"application not responding" sound plays when Windows judges the window
-hung, not for every abandoned query (Dickson, 2026-11-04); NVDA has no such
-sound.
-
-The values (Dickson, 2026-11-05), each limit longer than everything
-inside it plus a margin: one UI Automation request 10 s (the transaction
-timeout, today 5 s), so that its own timeout fires first; the outpost's
-task deadline 11 s. The same build fixes where today's limits nest wrongly:
-
-- a budget checked between calls (enrichment, the path, a walk, a read)
-  leaves room for one more call within the deadline, at most the task
-  deadline less one request, or has its own deadline;
-- the held window's title constant is separated from the listener's
-  failed-fast bound (`NEAREST_FAILED_FAST_BOUND`), which shares
-  `UIA_FOCUS_WAIT` today and stays under the 2 s connection timeout;
-- the shell items' call margin (`SHELL_ITEMS_CALL_MARGIN`, 500 ms) is
-  raised above one UI Automation call;
-- the tree dump's timeout (`DUMP_TREE_TIMEOUT`, 5 s, equal to the walk's
-  deadline) is made longer than the walk it waits for, so Core does not
-  give up first.
-
-It also fixes the remote buffers in `verbatim-ia2`'s edit-control and
-list-view reads (`crates/verbatim-ia2/src/edit.rs`,
-`crates/verbatim-ia2/src/list_view.rs`), which are freed when
-`SendMessageTimeoutW` times out while the message is still queued in the
-application, which later writes into freed or reused pages: a buffer is
-kept until its message is answered or the process ends, with one buffer
-reused per target process, so a slow application never makes it an
-unbounded leak.
+### Follow-ups from the focus and ownership builds
 
 Follow-up, not established from the code alone: Core refuses a foreground
 report of the window holding its focus (`crates/verbatim-core/src/reduce.rs`,
@@ -247,7 +214,7 @@ Follow-ups from the one judge build:
   line, so the uncounted UIA costs in the performance ledger can be
   measured.
 
-Further follow-ups from the focus work and the ownership builds:
+More follow-ups:
 
 - The end-to-end harness's `set_foreground` minimizes a folder window left
   behind (`crates/verbatim-agent/src/desktop.rs`, lines 262 to 300), which
@@ -798,7 +765,7 @@ abandoned but changes nothing spoken.
 `CoCancelCall` ends no UIA client call, because UIA waits on its own
 channel rather than in a COM call
 (`uia-facts/nothing-cancels-a-uia-call/`, 2026-10-30),
-so the UIA readers keep abandonment, the bound and `READ_DEADLINE`.
+so the UIA readers keep abandonment, the bound and `BOUNDED_WALK_DEADLINE`.
 Cancelling the outpost worker's stuck MSAA calls through COM is built in
 M4.8 ([the guardian](design/guardian.md), section 12).
 
@@ -1027,10 +994,9 @@ remains, in order:
   (`conhost_typing`, run 41859263092; Dickson, 2026-11-04).
 - Whether a key such as Control+Shift+Tab, which Windows Terminal takes
   for its own tab switcher, opens a caret watch in the terminal: the
-  watch's read waited 2 s on Windows Terminal opening the switcher, and
-  the abandoned worker played the not-responding sound in place of the
-  switcher's speech (`windows_terminal_tabs`, run 41859263092; Dickson,
-  2026-11-04).
+  watch's read waits on Windows Terminal opening the switcher, up to the
+  11 s handling deadline (`windows_terminal_tabs`, run 41859263092;
+  Dickson, 2026-11-04).
 - End-to-end scenarios: the existing terminal scenarios brought back to
   passing; then cargo's build bar below its output; the landing rule's
   keys; Control+W, Control+U and Control+K; tab completion; suggestions; a

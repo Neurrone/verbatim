@@ -883,8 +883,8 @@ impl Shell {
     /// first, and otherwise whether the user has left it for another thread
     /// of its application, the window with the keyboard focus by the
     /// outpost's reader ([`Outpost::set_focus_window_reader`](super::Outpost::set_focus_window_reader)).
-    /// Local calls, and the charge's lock. With no window, the program
-    /// stays.
+    /// Local calls, the charge's lock and the focus window reader's lock.
+    /// With no window, the program stays.
     fn judge(&self, request: Request, window: Option<verbatim_reader_rules::Window>) -> Input {
         let window = window.or_else(|| {
             self.generations

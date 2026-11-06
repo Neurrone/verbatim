@@ -534,7 +534,9 @@ fn run_job(context: &Arc<Context>, client: &mut Client, job: Job, charge: &Arc<C
 /// application's focus window for focus-now, the gap's read, and a node of
 /// no window of its own; the owed work's and the console poll's node's;
 /// none for a query of no node, or when the application has no focus
-/// window, so the program is judged by its deadline alone.
+/// window, so the program is judged by its deadline alone. The queries it
+/// answers no window for are those `names_no_window` in
+/// `verbatim-outpost-logic` dispatches with `RuleWindow::Never`.
 fn named_window(context: &RequestContext<'_>, work: &Work) -> Option<Window> {
     match work {
         Work::Entry { entry, .. } => match &entry.item {

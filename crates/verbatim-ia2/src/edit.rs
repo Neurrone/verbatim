@@ -29,10 +29,10 @@
 //! Every message goes through `crate::window::send_message`: a hung or
 //! ghosted window fails at once ([`EditError::NotResponding`]), a message
 //! an abandoned worker would send is refused ([`EditError::Abandoned`]),
-//! and the message is sent with no time limit of its own. Each counts as one window
-//! message (`books/dev/src/reference/performance.md`); allocating and
-//! copying the target's memory are calls into the kernel, not into the
-//! application, and are not counted. A password field's text reads as
+//! and the message is sent with no time limit of its own. Each counts as
+//! one window message (`books/dev/src/reference/performance.md`);
+//! allocating and copying the target's memory are calls into the kernel,
+//! not into the application, and are not counted. A password field's text reads as
 //! stars, as NVDA reads it.
 
 use std::ffi::c_void;
