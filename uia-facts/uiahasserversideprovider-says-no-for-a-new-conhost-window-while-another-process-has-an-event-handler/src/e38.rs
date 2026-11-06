@@ -3,8 +3,8 @@
 //! process, its orchestrator's `fgright` and `console` steps, and its trial
 //! loop. The script it runs:
 //!
-//! 1. T, a client: `init` (a `CUIAutomation8` client object as
-//!    `IUIAutomation`, no setting changed), `root`, `events` (one
+//! 1. T, a client: `init` (the usual client object, `uia::client()`, so
+//!    `--recovery` and `--coalescing` reach it), `root`, `events` (one
 //!    `ToolTipOpened` handler over the desktop root's subtree, with no
 //!    cache request), from its main thread in the multithreaded apartment.
 //! 2. U and R, clients: `init`.
@@ -25,9 +25,8 @@ use std::io::BufRead;
 use std::time::Duration;
 
 use uia_facts_support::role::{self, Role};
-use uia_facts_support::{exit_now, now_us};
+use uia_facts_support::{exit_now, now_us, uia};
 use windows::Win32::Foundation::{CloseHandle, HANDLE, HWND, LPARAM, WPARAM};
-use windows::Win32::System::Com::{CLSCTX_INPROC_SERVER, CoCreateInstance};
 use windows::Win32::System::JobObjects::{
     AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
     JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
@@ -38,10 +37,9 @@ use windows::Win32::System::Threading::{
     WaitForSingleObject,
 };
 use windows::Win32::UI::Accessibility::{
-    CUIAutomation8, IUIAutomation, IUIAutomationElement, IUIAutomationEventHandler,
-    TreeScope_Subtree, UIA_NamePropertyId, UIA_ProcessIdPropertyId,
-    UIA_ProviderDescriptionPropertyId, UIA_ToolTipOpenedEventId, UiaHasServerSideProvider,
-    UiaRootObjectId,
+    IUIAutomation6, IUIAutomationElement, IUIAutomationEventHandler, TreeScope_Subtree,
+    UIA_NamePropertyId, UIA_ProcessIdPropertyId, UIA_ProviderDescriptionPropertyId,
+    UIA_ToolTipOpenedEventId, UiaHasServerSideProvider, UiaRootObjectId,
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     INPUT, INPUT_0, INPUT_MOUSE, MOUSEEVENTF_MOVE, MOUSEINPUT, SendInput,
@@ -57,12 +55,8 @@ pub const ROLE: &str = "e38-client";
 
 /// The ported client: commands on its standard input, each answered with
 /// `done <command> <detail>`, as the collide client answered them.
-#[expect(
-    clippy::too_many_lines,
-    reason = "one arm per command, as the collide client had"
-)]
 pub fn client_role() -> ! {
-    let mut uia: Option<IUIAutomation> = None;
+    let mut uia: Option<IUIAutomation6> = None;
     let mut element: Option<IUIAutomationElement> = None;
     let mut hwnd = HWND(std::ptr::null_mut());
     let mut handlers: Vec<IUIAutomationEventHandler> = Vec::new();
@@ -78,16 +72,10 @@ pub fn client_role() -> ! {
         }
         let start = now_us();
         let detail = match line.as_str() {
-            // SAFETY: an in-process class.
-            "init" => match unsafe {
-                CoCreateInstance::<_, IUIAutomation>(&CUIAutomation8, None, CLSCTX_INPROC_SERVER)
-            } {
-                Ok(made) => {
-                    uia = Some(made);
-                    "ok".to_owned()
-                }
-                Err(e) => format!("err {e:?}"),
-            },
+            "init" => {
+                uia = Some(uia::client());
+                "ok".to_owned()
+            }
             "root" => {
                 let client = uia.as_ref().expect("init first");
                 // SAFETY: a live client.
