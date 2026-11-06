@@ -11,8 +11,8 @@
 //! - A navigation step, a walk down a focus's path, a dialog's text and the
 //!   shell's items each wait past the short limit they once had, and answer
 //!   in full. Each hold ends after evidence that the old limit has passed:
-//!   the outpost's frozen clock moved past a limit that ran on it, or twice
-//!   a limit that ran in real time, so each test fails with its old limit
+//!   the outpost's frozen clock moved past a limit that ran on it, or the
+//!   end of a stall of twice a limit that ran in real time, so each test fails with its old limit
 //!   restored.
 //! - The focus listener's own tests for a hung window end its read: before
 //!   a call, whether the read is in NVDA's checks or its walk, and while a
@@ -144,13 +144,6 @@ fn a_focus_read_that_waits_on_a_busy_application_is_still_reported() {
 /// description.
 const QUESTION: &str = "Remove the theme Mine? This cannot be undone. Its sounds go with it.";
 
-/// Waits until `deadline` has come in real time: the evidence a test waits
-/// for when the limit it shows gone ran in real time, twice that limit
-/// after the work began, so the test fails with the limit restored.
-fn wait_until(deadline: Instant) {
-    std::thread::sleep(deadline.saturating_duration_since(Instant::now()));
-}
-
 /// The outcome of query `request_id`, the outpost's next message.
 fn reply_to(outpost: &OutpostUnderTest, request_id: RequestId) -> QueryOutcome {
     match outpost.next() {
@@ -163,10 +156,11 @@ fn reply_to(outpost: &OutpostUnderTest, request_id: RequestId) -> QueryOutcome {
     }
 }
 
-/// A navigation step whose call mockapp holds past twice the step's old
-/// limit of 400 milliseconds, which ran on the outpost's reducer's clock in
-/// real time, answers its neighbor once mockapp answers: the step has the
-/// handling deadline.
+/// A navigation step asked while mockapp's window thread is stalled for
+/// twice the step's old limit of 400 milliseconds, which ran on the
+/// outpost's reducer's clock in real time, answers its neighbor once
+/// mockapp answers: the step has the handling deadline. The stall's end,
+/// which mockapp prints, is the evidence that the old limit passed.
 fn a_slow_navigation_step_answers_its_neighbor() {
     common::init_com();
     let title = common::unique_title("mockapp-slow-step");
@@ -183,21 +177,19 @@ fn a_slow_navigation_step_answers_its_neighbor() {
         .expect("the focus's chain has the inner group")
         .id;
 
-    app.hold();
-    let asked = Instant::now();
+    let stall = Duration::from_millis(800);
+    app.stall(stall);
     let request_id = outpost.ask(Query::Navigate {
         node_id: group,
         kind: QueryKind::FirstChild,
     });
-    app.held();
-    wait_until(asked + Duration::from_millis(800));
-    app.release();
     match reply_to(&outpost, request_id) {
         QueryOutcome::Done(QueryResult::Navigated(Some(neighbor))) => {
             assert_eq!(neighbor.name.as_deref(), Some("Deep button"));
         }
         other => panic!("the step answered {other:?}, not its neighbor"),
     }
+    app.stall_ended(stall);
     outpost.settled();
     drop(outpost);
     app.quit();
@@ -239,9 +231,9 @@ fn a_slow_path_walk_answers_its_node() {
 }
 
 /// A UIA dialog the focus enters, a top-level window of a dialog's class,
-/// whose text gathering mockapp holds past
-/// twice the bounded client's old wait of a second, real time, is reported
-/// with its text once mockapp answers: the text is gathered inside the
+/// whose text gathering waits on mockapp's window thread stalled for twice
+/// the bounded client's old wait of a second, real time, is reported with
+/// its text once mockapp answers: the text is gathered inside the
 /// focus's program, on the worker's own client, whose calls the report
 /// counts.
 fn a_slow_dialog_text_is_reported_with_the_focus() {
@@ -262,13 +254,11 @@ fn a_slow_dialog_text_is_reported_with_the_focus() {
     app.send("set-focus no");
     let fact = outpost.listener_fact(&common::listener_focus(&uia, hwnd.0 as isize));
 
-    app.hold();
-    let delivered = Instant::now();
+    let stall = Duration::from_secs(2);
+    app.stall(stall);
     outpost.deliver(fact);
-    app.held();
-    wait_until(delivered + Duration::from_secs(2));
-    app.release();
     let reported = outpost.reported_focus();
+    app.stall_ended(stall);
     assert_eq!(reported.node.name.as_deref(), Some("No"));
     let dialog = reported
         .ancestors

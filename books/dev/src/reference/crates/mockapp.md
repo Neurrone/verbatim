@@ -593,7 +593,8 @@ Each file's module comment says exactly what it asserts; in outline:
   (`taskbar.json`, a window of `Shell_TrayWnd`'s class) each wait past the
   short limit they once had and answer in full. Each hold ends after
   evidence that the old limit has passed: the outpost's frozen clock moved
-  past a limit that ran on it, or twice a limit that ran in real time. A
+  past a limit that ran on it, or mockapp's window thread stalled for twice
+  a limit that ran in real time, the stall's printed end the evidence. A
   query whose held call's window the outpost's reader then answers hung
   is abandoned, Core told the window stopped responding and the pong
   counting the worker parked on a hung window, and the abandoned worker,
@@ -603,7 +604,7 @@ Each file's module comment says exactly what it asserts; in outline:
 - `window_messages.rs` holds a message to a native control inside its
   window procedure (`hold-message`) and watches `verbatim-ia2`'s sends at
   its observation point `WindowMessageSent`, so the binary requires the
-  `faults` feature: a text query whose `EM_GETSEL` is held past twice the
+  `faults` feature: a text query whose `EM_GETSEL` waits behind a stall of twice the
   old half-second limit answers the caret and selection the focus read,
   its send made with no time limit; a list view column read's buffer is
   still allocated in mockapp while its `LVM_GETITEMTEXTW` is held and free

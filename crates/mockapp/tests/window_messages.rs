@@ -12,7 +12,7 @@ mod common;
 mod harness;
 
 use std::sync::{Arc, Mutex, PoisonError};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use verbatim_faults::{Fault, Guard};
 use verbatim_ia2::edit::{EditControl, EditError};
@@ -111,15 +111,8 @@ fn child(host: HWND, class: PCWSTR) -> isize {
         .0 as isize
 }
 
-/// Waits until `deadline` has come in real time: the evidence a test waits
-/// for when the limit it shows gone ran in real time, twice that limit
-/// after the work began, so the test fails with the limit restored.
-fn wait_until(deadline: Instant) {
-    std::thread::sleep(deadline.saturating_duration_since(Instant::now()));
-}
-
-/// A text query on an edit control whose `EM_GETSEL` mockapp holds past
-/// twice the old half-second message limit, real time, answers its caret
+/// A text query on an edit control whose `EM_GETSEL` waits past twice the
+/// old half-second message limit, real time, answers its caret
 /// and selection exactly as the focus read them, and its send was made
 /// with no time limit.
 fn a_slow_edit_control_answers_its_selection() {
@@ -156,15 +149,15 @@ fn a_slow_edit_control_answers_its_selection() {
     assert!(expected.selection.is_some(), "the focus read the selection");
 
     let (sends, guard) = watch_sends(edit, EM_GETSEL, 1);
-    app.send("hold-message EM_GETSEL");
-    let asked = Instant::now();
+    // The window thread stalled for twice the old half-second limit: the
+    // query's `EM_GETSEL` waits in its queue, and the stall's end, which
+    // mockapp prints, is the evidence that the old limit passed.
+    let stall = Duration::from_secs(1);
+    app.stall(stall);
     let request_id = outpost.ask(Query::Text {
         node_id: focus.node.id,
         op: TextOp::ReadCaret,
     });
-    assert_eq!(app.held(), "EM_GETSEL");
-    wait_until(asked + Duration::from_secs(1));
-    app.release();
     match outpost.next() {
         OutpostToCore::Reply {
             request_id: answered,
@@ -173,6 +166,7 @@ fn a_slow_edit_control_answers_its_selection() {
         } if answered == request_id => assert_eq!(unanchored(&reply.caret), expected),
         other => panic!("the outpost said {other:?}, not the caret"),
     }
+    app.stall_ended(stall);
     assert_eq!(sent(&sends), [(None, None)], "sent with no time limit");
     drop(guard);
     outpost.settled();
