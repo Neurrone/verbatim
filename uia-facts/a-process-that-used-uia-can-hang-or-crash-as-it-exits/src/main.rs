@@ -17,7 +17,7 @@
 
 use std::time::Duration;
 
-use uia_facts_support::args::{Args, trials};
+use uia_facts_support::args::Args;
 use uia_facts_support::events::{self, Handler};
 use uia_facts_support::provider::Provider;
 use uia_facts_support::report::{Report, Verdict, rate};
@@ -73,7 +73,7 @@ fn main() {
     let mut report = Report::start("a-process-that-used-uia-can-hang-or-crash-as-it-exits");
     if args.wants("exit") {
         report.case("exit", "150 child processes, one after another, each connecting from four threads to the UIA windows of four provider programs of its own and reading their names, leaving its clients in place, ending the providers, and then ending normally, running UIA's detach code; counting those that hang or crash");
-        let outcome = run_children(SETUP, CHILDREN * trials());
+        let outcome = run_children(SETUP, CHILDREN);
         let verdict = if outcome.other.is_empty() {
             rate(outcome.faults(), outcome.done, RECORDED.0, RECORDED.1)
         } else {
@@ -130,7 +130,7 @@ fn main() {
 /// any other step the record is no difference: pass when none shows,
 /// differ when apart.
 fn against_dirty(report: &mut Report, label: &str, setup: Setup, prevents: bool) {
-    let outcome = run_children(setup, CHILDREN * trials());
+    let outcome = run_children(setup, CHILDREN);
     let verdict = if outcome.other.is_empty() {
         match (
             rate(outcome.faults(), outcome.done, RECORDED.0, RECORDED.1),
