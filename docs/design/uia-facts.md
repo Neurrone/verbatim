@@ -531,8 +531,7 @@ A figure measured on mockapp whose value depends on the provider's tree is re-re
 
 `.github/workflows/uia-facts.yml`:
 
-- Triggers:
-  - `schedule` daily (`cron: "41 4 * * *"`), as `explore.yml` runs;
+- Triggers, with no schedule, since nothing changes the build but a change to these paths (Dickson, 2026-11-06):
   - `workflow_dispatch`;
   - `push` to `main` with `paths`: `uia-facts/**`, `crates/verbatim-uia/**`, `crates/verbatim-uia-rops/**`, `crates/verbatim-model/**`, `crates/verbatim-text/**`, `crates/verbatim-core/**`, `crates/verbatim-reader-rules/**`, `crates/verbatim-win32/**`, `crates/workspace-hack/**` (the eight path crates), `Cargo.toml`, `Cargo.lock`, `.config/hakari.toml`, `rust-toolchain.toml` and the workflow file.
 

@@ -14,8 +14,6 @@
 name: UIA facts
 
 on:
-  schedule:
-    - cron: "41 4 * * *"
   workflow_dispatch:
   push:
     branches: [main]
