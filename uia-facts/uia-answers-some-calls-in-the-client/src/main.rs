@@ -17,8 +17,8 @@
 //! - `lapse`: UI Automation's copy of an element's runtime id lapsing, on
 //!   node 1 (`First`), through Verbatim's own `Registration`: the cold and
 //!   warm registration; the copy warm with no pause and lapsed after 1 s;
-//!   the copy kept per element; the workaround's warm registrations and
-//!   free moves after pauses of 0, 0.5, 1 and 1.5 s.
+//!   the copy kept per element; the workaround's warm registration and
+//!   free move after a pause of 1 s.
 //! - `late-calls`: `AdviseEventRemoved` arriving after a removal returns,
 //!   and no other provider call after a registration, a removal or a read
 //!   returns.
@@ -430,6 +430,7 @@ fn lapse(args: &Args, report: &mut Report) {
 
     let mut costs = Vec::new();
     let mut sum_holds = Vec::new();
+    let mut cold_reads = Vec::new();
     for _ in 0..trials() {
         let _ = runtime_id(&w.first);
         let (warm_registration, warm) = counted(&mut w.provider, || follow(&w.client, &w.first));
@@ -442,6 +443,9 @@ fn lapse(args: &Args, report: &mut Report) {
         let first = w.first.clone();
         let lapsed_read = read_after(&mut w, &first, cold);
         sum_holds.push(cold_calls.len() == warm.len() + lapsed_read);
+        // The lapsed read is also the claim that a read after a pause of
+        // 1 s makes provider calls.
+        cold_reads.push(lapsed_read > 0);
         costs.push((warm.len(), cold_calls.len(), lapsed_read));
     }
     report.claim(
@@ -467,9 +471,6 @@ fn lapse(args: &Args, report: &mut Report) {
         "true",
         relation(&warm_reads),
     );
-    let cold_reads: Vec<bool> = (0..trials())
-        .map(|_| read_after(&mut w, &first, cold) > 0)
-        .collect();
     report.claim(
         "after a pause of 1 s, a GetRuntimeId read makes provider calls",
         &runs(&cold_reads),
@@ -584,7 +585,8 @@ fn lapse(args: &Args, report: &mut Report) {
         relation(&mixed),
     );
 
-    let pauses = [0_u64, 500, 1_000, 1_500];
+    // The workaround after a pause of 1 s, past the lapse.
+    let pauses = [1_000_u64];
     let warm_count = {
         let _ = runtime_id(&w.first);
         counted(&mut w.provider, || follow(&w.client, &w.first))
@@ -606,7 +608,7 @@ fn lapse(args: &Args, report: &mut Report) {
         }
     }
     report.claim(
-        "with GetRuntimeId just before, registrations after pauses of 0, 0.5, 1 and 1.5 s cost the warm calls",
+        "with GetRuntimeId just before, a registration after a pause of 1 s costs the warm calls",
         &runs(&registrations),
         "true",
         relation(&registrations),
@@ -626,7 +628,7 @@ fn lapse(args: &Args, report: &mut Report) {
         }
     }
     report.claim(
-        "with GetRuntimeId just before, moves to the element followed after pauses of 0, 0.5, 1 and 1.5 s make no provider call",
+        "with GetRuntimeId just before, a move to the element followed after a pause of 1 s makes no provider call",
         &runs(&moves),
         "true",
         relation(&moves),

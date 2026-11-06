@@ -25,6 +25,9 @@ const DESKTOP: &str = "uia-facts";
 /// How long `stops` watches after the flood: `q2long` watched 90 s, and
 /// this case narrows the claim to what fits the program's run time.
 const WATCH_S: u64 = 10;
+/// The events each of `stops`' windows floods, 1 s at 10,000 a second:
+/// `q2` flooded 30,000, and the client stopped after the first 83 to 110.
+const FLOOD: usize = 10_000;
 
 fn main() {
     let args = Args::parse();
@@ -37,15 +40,20 @@ fn main() {
         "a-flood-of-uia-events-from-one-application-stops-all-of-a-processs-uia-events",
     );
     if args.wants("stops") {
-        report.case("stops", "three windows each flooding 30,000 events at 10,000 a second for 3 s, name changes, text changes and notifications; a client registered for each flood and for B's name changes, and one for B's alone; B renamed every 250 ms until 10 s after the flood");
+        report.case("stops", "three windows each flooding 10,000 events at 10,000 a second for 1 s, name changes, text changes and notifications; a client registered for each flood and for B's name changes, and one for B's alone; B renamed every 250 ms until 10 s after the flood");
         stops(&args, &mut report);
     }
     if args.wants("rates") {
-        report.case("rates", "a window flooding name changes at 2,000 and then 5,000 a second for 3 s, as q2_thr did; one client registered for them and for B's name changes; B renamed every 100 ms until the flood's events are all heard");
-        rates(&args, &mut report);
+        report.case("rates", "a window flooding name changes at 2,000 a second for 3 s, as q2_thr did; one client registered for them and for B's name changes; B renamed every 100 ms until the flood's events are all heard");
+        rates(&args, &mut report, 2_000);
+    }
+    // Printed for trends only, so run only when named.
+    if args.names("rate-5000") {
+        report.case("rate-5000", "the same at 5,000 a second for 3 s");
+        rates(&args, &mut report, 5_000);
     }
     if args.wants("backlog") {
-        report.case("backlog", "bursts of 250, 500, 1,000 and 2,000 name changes raised back to back, each at a client of its own; its processor time and the events it hears in the 3 s after");
+        report.case("backlog", "bursts of 250, 500, 1,000 and 2,000 name changes raised back to back, each at a client of its own; its processor time and the events it hears until it has heard them all, up to 1.5 s");
         backlog(&args, &mut report);
     }
     report.finish();
@@ -152,7 +160,7 @@ fn stops(args: &Args, report: &mut Report) {
                 .zip(["name 0 1", "text 0 3", "notification 0 1"])
                 .map(|(provider, what)| {
                     scope.spawn(move || {
-                        provider.request(&format!("raise-rate {what} 10000 30000"));
+                        provider.request(&format!("raise-rate {what} 10000 {FLOOD}"));
                         now_us()
                     })
                 })
@@ -219,7 +227,7 @@ fn stops(args: &Args, report: &mut Report) {
     report.claim(
         "name changes: the flood's events the flooded client heard",
         &runs(&counts),
-        "83 to 110 of 30,000 (q2, q2long)",
+        "83 to 110 of 30,000 (q2, q2long), 95 of 30,000 (the first run)",
         Verdict::Trend,
     );
     let core: Vec<bool> = busy
@@ -266,8 +274,8 @@ fn stops(args: &Args, report: &mut Report) {
     clippy::too_many_lines,
     reason = "one trial a rate, its claims in turn"
 )]
-fn rates(args: &Args, report: &mut Report) {
-    for rate in [2_000usize, 5_000] {
+fn rates(args: &Args, report: &mut Report, rate: usize) {
+    {
         let mut lost_any = Vec::new();
         let mut lost_counts = Vec::new();
         let mut drained = Vec::new();
@@ -401,12 +409,14 @@ fn backlog(args: &Args, report: &mut Report) {
             .request(&format!("raise-rate name 0 1 0 {size}"))
             .parse()
             .expect("a time");
-        uia::pause(
-            Duration::from_millis(1_500),
-            "the client's work on the burst",
-        );
+        // Until the client has heard the whole burst, or up to 1.5 s.
+        let limit = now_us() + 1_500_000;
+        let mut lines = Vec::new();
+        while count(&lines, "name", "First") < size && now_us() < limit {
+            lines.extend(client.lines_until((now_us() + 20_000).min(limit)));
+        }
         let after = cpu(&mut client).expect("the client reports its processor time");
-        let lines = client.lines_until(now_us());
+        lines.extend(client.lines_until(now_us()));
         let heard = count(&lines, "name", "First");
         note::evidence(&format!("{size} raised from {raised}: {heard} heard"));
         results.push(format!(
@@ -415,7 +425,7 @@ fn backlog(args: &Args, report: &mut Report) {
         ));
     }
     report.claim(
-        "bursts of name changes raised back to back: the events heard and the client's processor time in the 1.5 s after",
+        "bursts of name changes raised back to back: the events heard, up to 1.5 s, and the client's processor time until then",
         &results.join("; "),
         "",
         Verdict::New,

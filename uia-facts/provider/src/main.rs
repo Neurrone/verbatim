@@ -29,8 +29,9 @@
 //!   without pumping, or with `pump` in `CoWaitForMultipleHandles`. Each
 //!   call that starts to wait prints `held <method> <w> <n> <thread id>`.
 //! - `release`: ends every hold and every busy UI thread waiting for it.
-//! - `slow <ms>`: every provider call waits `ms` while its thread keeps
-//!   dispatching messages and calls; `slow 0` ends it.
+//! - `slow <ms> [method]`: every provider call, or only those of that
+//!   method, waits `ms` while its thread keeps dispatching messages and
+//!   calls; `slow 0` ends it.
 //! - `busy <w> [ms] [focus-at <ms> [child]]`: window w's UI thread runs
 //!   without taking a message, for `ms` or until `release`; answered once
 //!   it has started, with the time it started. Each arrival of a sent or
@@ -348,7 +349,7 @@ fn handle(line: &str) -> String {
         }
         "slow" => match number(0) {
             Some(ms) => {
-                state::set_slow(ms as u64);
+                state::set_slow(ms as u64, rest.get(1).map(|m| (*m).to_owned()));
                 "ok".to_owned()
             }
             None => "err slow takes milliseconds".to_owned(),

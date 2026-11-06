@@ -5,7 +5,7 @@
 //! trial against a provider and client object of its own.
 //!
 //! - `ett`: E-TT's search. The window's element is fetched with the
-//!   connection timeout at 3,000 ms and the transaction timeout at
+//!   connection timeout at 2,000 ms and the transaction timeout at
 //!   1,000 ms; the provider holds the root's `GetPropertyValue`; the
 //!   connection timeout is set to 1,000 ms; then `FindFirstBuildCache` over
 //!   the descendants for the name `First`, caching the name.
@@ -43,7 +43,7 @@ fn main() {
     let mut report =
         Report::start("a-timeout-bounds-each-request-and-window-message-not-an-operation");
     if args.wants("ett") {
-        report.case("ett", "holding the root's property read; fetching the root under a 3 s connection timeout, then searching with both timeouts at 1 s");
+        report.case("ett", "holding the root's property read; fetching the root under a 2 s connection timeout, then searching with both timeouts at 1 s");
         ett(&args, &mut report);
     }
     if args.wants("queued-search") {
@@ -90,7 +90,7 @@ fn find(root: &IUIAutomationElement, name: &str) -> windows::core::Result<IUIAut
 }
 
 /// The connection timeout in force when `ett` fetches the window's element.
-const ETT_FETCH_MS: u32 = 3_000;
+const ETT_FETCH_MS: u32 = 2_000;
 
 fn ett(args: &Args, report: &mut Report) {
     let mut times = Vec::new();
@@ -108,7 +108,7 @@ fn ett(args: &Args, report: &mut Report) {
         provider.log();
         provider.request("hold GetPropertyValue w=0 n=0");
         uia::set_timeouts(&client, 1_000, 1_000);
-        note::waiting("about 6 s, the search's four waits, one on the 3 s connection timeout");
+        note::waiting("about 5.5 s, the search's four waits, one on the 2 s connection timeout");
         // SAFETY: live element, condition and cache request.
         let search = Timed::of(|| unsafe {
             root.FindFirstBuildCache(TreeScope_Descendants, &condition, &request)

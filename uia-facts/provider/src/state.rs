@@ -117,6 +117,8 @@ pub(crate) struct State {
     holds: Mutex<Holds>,
     released: Condvar,
     slow: AtomicU64,
+    /// The one method `slow` applies to, or every method when `None`.
+    slow_only: Mutex<Option<String>>,
     log: Mutex<Vec<Entry>>,
     requests: Mutex<HashMap<u64, Box<dyn FnOnce() + Send>>>,
     next_request: AtomicU64,
@@ -174,6 +176,7 @@ pub(crate) fn configure(
         }),
         released: Condvar::new(),
         slow: AtomicU64::new(0),
+        slow_only: Mutex::new(None),
         log: Mutex::new(Vec::with_capacity(1 << 16)),
         requests: Mutex::new(HashMap::new()),
         next_request: AtomicU64::new(1),
@@ -242,7 +245,13 @@ impl Call {
         let now = state.current.fetch_add(1, Ordering::SeqCst) + 1;
         state.peak.fetch_max(now, Ordering::SeqCst);
         let slow = state.slow.load(Ordering::SeqCst);
-        if slow > 0 {
+        let applies = state
+            .slow_only
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_deref()
+            .is_none_or(|only| only == name);
+        if slow > 0 && applies {
             pumping_wait(Duration::from_millis(slow), || false);
         }
         hold_if_armed(name, window, node);
@@ -441,7 +450,11 @@ pub(crate) fn win_event(event: u32, window: usize, child: usize) -> u64 {
     at
 }
 
-pub(crate) fn set_slow(ms: u64) {
+pub(crate) fn set_slow(ms: u64, only: Option<String>) {
+    *state()
+        .slow_only
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner) = only;
     state().slow.store(ms, Ordering::SeqCst);
 }
 

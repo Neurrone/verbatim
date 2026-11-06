@@ -17,12 +17,14 @@
 //!
 //! Four conditions of each kind, each judged on its own: the call's first
 //! provider method held, cancelled once at once or every 50 ms, released
-//! after 500 ms; or the UI thread busy for 500 ms, cancelled once the call
+//! after 200 ms; or the UI thread busy for 200 ms, cancelled once the call
 //! has reached it (the provider's `queued` entry), once or every 50 ms.
 //! `connection` holds or stalls 800 ms against a 500 ms connection
 //! timeout, so the timeout comes first. `--case <kind>` runs one kind;
 //! `property` then makes the stalled read once more on a caller that never
-//! enabled cancellation, cancelled once.
+//! enabled cancellation, cancelled once. Each kind's trials share one
+//! provider program, except `connection`'s, which each need a window not
+//! yet connected to, and so a provider of their own.
 //!
 //! Also `abandon`: a name read held for 1,000 ms while later reads run on
 //! new threads (`new`), or on the stuck read's own thread once it has
@@ -52,7 +54,7 @@ fn hold_and_timeout(kind: Kind) -> (Duration, u32) {
     if kind == Kind::Connection {
         (Duration::from_millis(800), 500)
     } else {
-        (Duration::from_millis(500), 2_000)
+        (Duration::from_millis(200), 2_000)
     }
 }
 
@@ -140,8 +142,9 @@ fn main() {
 /// enabled on the caller, cancelled once.
 fn disabled(args: &Args, report: &mut Report) {
     {
+        let mut provider = Provider::launch(&["--windows", "uia:0"]);
         let trials: Vec<Trial> = (0..trials())
-            .map(|_| trial(args, Kind::Property, true, false, false))
+            .map(|_| trial(args, &mut provider, Kind::Property, true, false, false))
             .collect();
         let answers: Vec<Vec<String>> = trials.iter().map(|t| t.answers.clone()).collect();
         report.claim(
@@ -155,6 +158,9 @@ fn disabled(args: &Args, report: &mut Report) {
 
 fn judge(args: &Args, report: &mut Report, kind: Kind) {
     let name = kind.name();
+    // One provider for the kind's trials; a new connection needs a window
+    // not yet connected to, so each `connection` trial launches its own.
+    let mut shared = (kind != Kind::Connection).then(|| Provider::launch(&["--windows", "uia:0"]));
     for (stall, repeat) in [(false, false), (false, true), (true, false), (true, true)] {
         let condition = format!(
             "{name}, {}, cancelled {}",
@@ -167,7 +173,14 @@ fn judge(args: &Args, report: &mut Report, kind: Kind) {
         let mut outcomes = Vec::new();
         let mut times = Vec::new();
         for _ in 0..trials() {
-            let trial = trial(args, kind, stall, repeat, true);
+            let mut own;
+            let provider = if let Some(provider) = shared.as_mut() {
+                provider
+            } else {
+                own = Provider::launch(&["--windows", "uia:0"]);
+                &mut own
+            };
+            let trial = trial(args, provider, kind, stall, repeat, true);
             count += trial.answers.len();
             answers.push(
                 trial.answers.iter().all(|a| a == "RPC_E_NO_CONTEXT") && !trial.answers.is_empty(),
@@ -232,9 +245,15 @@ fn judge(args: &Args, report: &mut Report, kind: Kind) {
 
 /// One trial of `kind`: the call made on a caller thread, cancelled from
 /// this thread.
-fn trial(args: &Args, kind: Kind, stall: bool, repeat: bool, enable: bool) -> Trial {
+fn trial(
+    args: &Args,
+    provider: &mut Provider,
+    kind: Kind,
+    stall: bool,
+    repeat: bool,
+    enable: bool,
+) -> Trial {
     let (hold, connection_ms) = hold_and_timeout(kind);
-    let mut provider = Provider::launch(&["--windows", "uia:0"]);
     let hwnd = provider.hwnd(0);
     let (ready, is_ready) = mpsc::channel();
     let (go, gone) = mpsc::channel::<()>();
@@ -334,6 +353,9 @@ fn trial(args: &Args, kind: Kind, stall: bool, repeat: bool, enable: bool) -> Tr
         at
     };
     let call = caller.join().expect("the call returns");
+    // A held call returns at the release and a stalled one once the busy
+    // thread takes it, so the provider is idle for the next trial.
+    provider.clear_held();
     Trial {
         answers,
         call,

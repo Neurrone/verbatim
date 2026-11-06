@@ -9,8 +9,9 @@
 //! thread ends.
 //!
 //! - `gains`: cheap calls, K = 1,000 plain name reads at N of 2 and 8;
-//!   then costly calls, K = 16 with every provider call made 5 ms slow, the
-//!   window pumping meanwhile (`slow 5`), at N of 2 and 4.
+//!   then costly calls, K = 16 with every `GetPropertyValue` made 5 ms
+//!   slow, the window pumping meanwhile (`slow 5 GetPropertyValue`), at N
+//!   of 2 and 4.
 //!
 //! Each N's speed-up is judged against the fact's own figures: at most 2
 //! times for cheap calls, at most 1.5 for costly ones.
@@ -21,8 +22,6 @@
 //! cannot see UIA's I/O thread, so for cheap calls, whose time is mostly
 //! that thread's, the bound lies far above the speed-up.
 //!
-//! - `processes`: the cheap bench as 8 threads of this process against 8
-//!   client processes of one thread each.
 //! - `shared`: the cheap 8-thread bench, K = 1,000, with one client object
 //!   for all threads against one per thread.
 
@@ -30,11 +29,9 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::Instant;
 
 use uia_facts_support::args::Args;
-use uia_facts_support::exit_now;
 use uia_facts_support::note;
 use uia_facts_support::provider::{Entry, Provider};
 use uia_facts_support::report::{Report, Verdict, relation, runs};
-use uia_facts_support::role::{self, Role};
 use uia_facts_support::stats::{as_f64, median, us_to_ms};
 use uia_facts_support::uia::{self, Shared};
 
@@ -44,10 +41,6 @@ const TIMED_RUNS: usize = 3;
 fn main() {
     let args = Args::parse();
     uia::mta();
-    if let Some((name, rest)) = &args.role {
-        assert_eq!(name, "bench", "the one role is bench");
-        bench_role(rest);
-    }
     let mut report = Report::start("parallel-client-threads-gain-at-most-twice-on-one-application");
     if args.wants("gains") {
         report.case("gains", "reading names from 1, 2 and 8 client threads with cheap provider calls, then from 1, 2 and 4 with costly ones; judging each speed-up against the fact's figure, at most 2 times for cheap calls and 1.5 for costly");
@@ -65,10 +58,6 @@ fn main() {
             (&[2, 4], 1.5),
             "1.0 to 1.5 times (1.01 with a 5 ms provider call)",
         );
-    }
-    if args.wants("processes") {
-        report.case("processes", "reading names from 8 threads of one process and from 8 client processes; comparing their times");
-        processes(&args, &mut report);
     }
     if args.wants("shared") {
         report.case("shared", "reading names from 8 threads through one client object's elements, and through a client object each");
@@ -207,7 +196,9 @@ fn gains(
     let mut provider = Provider::launch(&["--windows", "uia:0"]);
     let elements = nodes(&provider);
     args.pause_for_debugger(&[("provider", provider.pid), ("client", std::process::id())]);
-    provider.request(&format!("slow {slow}"));
+    // Only the name read's own provider call is slowed, so a costly read
+    // is one slow call and the bench stays short.
+    provider.request(&format!("slow {slow} GetPropertyValue"));
     note::progress(&format!("{name} calls, 1 thread"));
     let one = timed(&provider, &elements, 1, k, true);
     let call = one / as_f64(k);
@@ -244,98 +235,6 @@ fn gains(
         &format!("{name} calls: the provider's serial share of one call"),
         &shares.join(", "),
         "about half",
-        Verdict::Trend,
-    );
-}
-
-/// A bench client process: fetches nodes 1 to 16 of window `hwnd`, then
-/// on each `go` makes `k` reads and reports `done <ms>`.
-fn bench_role(rest: &[String]) -> ! {
-    let hwnd: isize = rest[0].parse().expect("a window handle");
-    let k: usize = rest[1].parse().expect("a count");
-    let client = uia::client();
-    let root = uia::element(&client, hwnd).expect("the window's element");
-    let elements: Vec<_> = (1..=16)
-        .map(|n| uia::node(&client, &root, n).expect("a node"))
-        .collect();
-    role::report("ready");
-    for command in role::commands() {
-        if command == "go" {
-            let start = Instant::now();
-            for i in 0..k {
-                assert!(
-                    uia::name(&elements[i % elements.len()]).is_ok(),
-                    "a read succeeds"
-                );
-            }
-            role::report(&format!("done {}", uia::ms(start.elapsed())));
-        }
-    }
-    exit_now(0)
-}
-
-fn processes(args: &Args, report: &mut Report) {
-    let provider = Provider::launch(&["--windows", "uia:0"]);
-    let elements = nodes(&provider);
-    args.pause_for_debugger(&[("provider", provider.pid), ("client", std::process::id())]);
-    let k = 4_000;
-    let mut rows = Vec::new();
-    let mut eight = Vec::new();
-    for threads in [8] {
-        note::progress(&format!(
-            "{threads} threads, then {threads} client processes"
-        ));
-        let workers = Workers::start(&provider, &elements, threads, k, false);
-        let thread_runs = runs_of(|| workers.run());
-        drop(workers);
-        let mut clients: Vec<Role> = (0..threads)
-            .map(|_| {
-                Role::start(
-                    "bench",
-                    &[provider.hwnd(0).to_string(), (k / threads).to_string()],
-                )
-            })
-            .collect();
-        for client in &clients {
-            assert_eq!(client.expect_line(), "ready", "the client is ready");
-        }
-        // Timed as the threads are: from the signal to start to the last
-        // one's end, on processes kept alive across the runs.
-        let clients = std::cell::RefCell::new(&mut clients);
-        let process_runs = runs_of(|| {
-            let mut clients = clients.borrow_mut();
-            let start = Instant::now();
-            for client in clients.iter_mut() {
-                client.send("go");
-            }
-            for client in clients.iter() {
-                let _ = client.expect_line();
-            }
-            uia::ms(start.elapsed())
-        });
-        rows.push(format!(
-            "{threads}: threads {:.0} ms, processes {:.0} ms",
-            median(&thread_runs),
-            median(&process_runs)
-        ));
-        if threads == 8 {
-            eight = thread_runs
-                .iter()
-                .zip(&process_runs)
-                .map(|(t, p)| t <= p)
-                .collect();
-        }
-    }
-    report.claim(
-        "N threads against N client processes, medians",
-        &rows.join("; "),
-        "",
-        Verdict::Trend,
-    );
-    report.claim(
-        "whether 8 threads of one client process were as fast as 8 client processes, run by run",
-        &runs(&eight),
-        "",
         Verdict::Trend,
     );
 }

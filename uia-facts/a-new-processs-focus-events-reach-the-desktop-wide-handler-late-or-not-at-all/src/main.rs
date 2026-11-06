@@ -131,8 +131,9 @@ fn provider(
             }
             None => missing += 1,
         }
+        // Dropping it waits for its process to end, so the next start
+        // follows at once.
         drop(provider);
-        uia::pause(Duration::from_millis(500), "before the next start");
     }
     report.claim(
         "provider: starts whose UIA focus came more than 1 s after its focus WinEvent, or not within 5 s",

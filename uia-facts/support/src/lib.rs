@@ -18,6 +18,8 @@
 //!   `--verbose`, `--pause` and `--role`.
 //! - [`winevents`]: an out-of-context `WinEvent` hook; [`desktop`] a
 //!   desktop of its own to run processes on.
+//! - [`hung`]: the hung-window programs' scene of provider programs and
+//!   listening clients.
 //! - [`note`]: the wait lines, the evidence printed under a claim that
 //!   does not pass, and `--verbose`'s trace.
 
@@ -25,6 +27,7 @@ pub mod apps;
 pub mod args;
 pub mod desktop;
 pub mod events;
+pub mod hung;
 pub mod job;
 pub mod listen;
 pub mod note;

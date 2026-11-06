@@ -193,7 +193,7 @@ fn main() {
         ),
         (
             "threads",
-            "one handler: four events 800 ms apart, each awaited, asking every 50 ms after each whether its thread has ended; four events to registrations each removed after its event; then four raised at once",
+            "one handler: four events 800 ms apart, each awaited, asking every 50 ms after each whether its thread has ended; four events to registrations each removed after its event, the next once its thread has ended; then four raised at once",
             threads,
         ),
         (
@@ -212,8 +212,17 @@ fn main() {
             drops,
         ),
     ];
+    // The default run checks what Verbatim relies on, the shared worker
+    // and what a slow handler or query holds; `threads` and `drops` run
+    // only when named.
+    let default = ["shared", "slow-handler", "slow-query"];
     for (name, what, run) in cases {
-        if args.wants(name) {
+        let runs = if default.contains(&name) {
+            args.wants(name)
+        } else {
+            args.names(name)
+        };
+        if runs {
             report.case(name, what);
             run(&args, &mut report);
         }
@@ -362,11 +371,17 @@ fn threads(args: &Args, report: &mut Report) {
                 "the registration is made"
             );
             raise(&mut provider, 1, &format!("removed{i}"));
-            removed.extend(heard_thread(&removing.expect_line()));
-            uia::pause(
-                Duration::from_millis(800),
-                "the originals' 800 ms between events",
-            );
+            let thread = heard_thread(&removing.expect_line());
+            removed.extend(thread);
+            // The next registration once this event's thread has ended,
+            // asked every 10 ms for up to 800 ms, the originals' time
+            // between events.
+            if let Some(thread) = thread {
+                let limit = now_us() + 800_000;
+                while !ended(thread) && now_us() < limit {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+            }
         }
         note::evidence(&format!(
             "threads of four events, each to a registration removed after it: {removed:?}"

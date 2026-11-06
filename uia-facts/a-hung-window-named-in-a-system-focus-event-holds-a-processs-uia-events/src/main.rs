@@ -2,22 +2,22 @@
 //! events
 //! (`uia-facts/a-hung-window-named-in-a-system-focus-event-holds-a-processs-uia-events/readme.md`).
 //!
-//! The scene: provider program P1 holds T, a plain Win32 window on UI
-//! thread 0, the window made to hang; A, a UIA window on thread 1; and M, a
-//! window with its own `IAccessible` on thread 2. Provider program P2 holds
-//! B, the UIA window whose name changes are listened for. A stall is a UI
-//! thread busy, taking no message. The focus `WinEvent` naming T is raised
-//! from P1's control thread. Each client is a listening process of its own
-//! (`uia_facts_support::listen`), so its UIA has seen nothing before the
-//! trial, and each trial has new providers and new clients. A hold is the
-//! time from the focus `WinEvent` to a client hearing B's name change,
-//! raised 200 ms after the `WinEvent`.
+//! The scene is support's `uia_facts_support::hung`. The outpost stand-in,
+//! with no focus registration, is
+//! `uia-facts/a-process-with-no-uia-focus-registration-is-not-held-by-a-hung-window/`'s;
+//! the dropped focus
+//! `uia-facts/a-focus-change-in-a-window-busy-past-both-of-uias-waits-is-dropped/`'s;
+//! the open-and-show route
+//! `uia-facts/focus-for-a-newly-opened-or-shown-window-is-not-held/`'s.
 
 use std::time::Duration;
 
 use uia_facts_support::args::{Args, trials};
+use uia_facts_support::hung::{
+    B_AFTER_US, CTO_MS, LOW_MS, NOT_HELD_MS, PAST_TOP_US, Scene, WHO_B_AFTER_US, as_ms, delay,
+    hooked, listener, not_held, read_end, spec, stand_in, until, until_heard, us,
+};
 use uia_facts_support::listen::{self, Line, Listener, heard_at};
-use uia_facts_support::provider::Provider;
 use uia_facts_support::report::{
     Report, TICK_MS, Verdict, band, band_text, deterministic, in_band, rate, relation, runs,
 };
@@ -31,166 +31,6 @@ use windows::Win32::UI::WindowsAndMessaging::{
     EVENT_OBJECT_FOCUS, EVENT_SYSTEM_FOREGROUND, IsHungAppWindow,
 };
 
-/// B's name change follows the focus `WinEvent` by this much, as in every
-/// original experiment.
-const B_AFTER_US: u64 = 200_000;
-/// A delivery counts as not held when it comes within this long of its
-/// raise: the originals measured 0 to 3 ms, and a hold is at least one
-/// connection timeout, 250 ms or more here.
-const NOT_HELD_MS: f64 = 100.0;
-/// The desktop of its own the cases that ran on one run on.
-const DESKTOP: &str = "uia-facts";
-/// The connection timeout every client has unless its spec says otherwise,
-/// UIA's default.
-const CTO_MS: f64 = 2_000.0;
-/// The connection timeout the cases set where their claim is the hold's
-/// relation to the timeout rather than its length at the default, so that
-/// their stalls stay short.
-const LOW_MS: f64 = 250.0;
-
-/// The windows of one trial.
-struct Scene {
-    p1: Provider,
-    p2: Provider,
-}
-
-impl Scene {
-    fn new() -> Self {
-        Self::with(&["--windows", "plain:0,uia:1,msaa:2"])
-    }
-
-    /// The scene on the program's desktop of its own, as the originals
-    /// ran on one: no input or real focus there reaches its clients.
-    fn with(p1: &[&str]) -> Self {
-        Self::on(Some(DESKTOP), p1)
-    }
-
-    /// The scene on the user's desktop, for the cases that need it.
-    fn screen() -> Self {
-        Self::on(None, &["--windows", "plain:0,uia:1,msaa:2"])
-    }
-
-    /// The scene on desktop `desktop`, when given.
-    fn on(desktop: Option<&str>, p1: &[&str]) -> Self {
-        Self {
-            p1: Provider::launch_on(desktop, p1),
-            p2: Provider::launch_on(desktop, &["--windows", "uia:0"]),
-        }
-    }
-
-    fn b(&self) -> isize {
-        self.p2.hwnd(0)
-    }
-
-    fn b_spec(&self) -> String {
-        format!("name={}", self.b())
-    }
-
-    /// Makes P1's window `w` UI thread busy for `ms`; answers when it
-    /// started.
-    fn stall(&mut self, w: usize, ms: u64) -> u64 {
-        note::waiting(&format!(
-            "{:.1} s, the stall of P1's window {w}",
-            as_ms(ms) / 1_000.0
-        ));
-        self.p1
-            .request(&format!("busy {w} {ms}"))
-            .parse()
-            .expect("the time the stall started")
-    }
-
-    /// Makes P1's window `w` UI thread busy until [`Scene::release`];
-    /// answers when it started.
-    fn hold(&mut self, w: usize) -> u64 {
-        self.p1
-            .request(&format!("busy {w} 0"))
-            .parse()
-            .expect("the time the stall started")
-    }
-
-    /// Ends the stall [`Scene::hold`] began.
-    fn release(&mut self) {
-        self.p1.request("release");
-    }
-
-    /// Raises `WinEvent` `kind` naming P1's window `w`; answers when.
-    fn winevent(&mut self, kind: &str, w: usize) -> u64 {
-        self.p1
-            .request(&format!("winevent {kind} {w}"))
-            .parse()
-            .expect("the time it was raised")
-    }
-
-    /// Renames B's node 1 `name` and raises its name change; answers when.
-    fn rename_b(&mut self, name: &str) -> u64 {
-        self.p2.request(&format!("rename 0 1 {name}"));
-        self.p2
-            .request("raise name 0 1")
-            .parse()
-            .expect("the time it was raised")
-    }
-
-    /// Raises a text change on B's node 3; answers when.
-    fn text_b(&mut self) -> u64 {
-        self.p2
-            .request("raise text 0 3")
-            .parse()
-            .expect("the time it was raised")
-    }
-}
-
-#[expect(
-    clippy::cast_precision_loss,
-    reason = "the facts' durations are far below 2 to the 52nd"
-)]
-fn as_ms(ms: u64) -> f64 {
-    ms as f64
-}
-
-/// The lines `client` sends until it has heard a name change of a sender
-/// named `name` or until `limit` on [`now_us`]'s clock.
-fn until_heard(client: &Listener, name: &str, limit: u64) -> Vec<Line> {
-    let mut lines = Vec::new();
-    loop {
-        lines.extend(client.lines_until((now_us() + 20_000).min(limit)));
-        if heard_at(&lines, "name", name).is_some() || now_us() >= limit {
-            return lines;
-        }
-    }
-}
-
-/// How far past a band's top a held stall lasts when the client has not
-/// heard B's change, so that a hold to T's answer shows as out of band.
-const PAST_TOP_US: u64 = 300_000;
-
-/// A listening client on the program's desktop of its own.
-fn listener(label: &str, spec: &[String]) -> Listener {
-    Listener::start_on(Some(DESKTOP), label, spec)
-}
-
-/// Waits until `at` on [`now_us`]'s clock: an offset in the scene's
-/// timeline, a deliberate wait.
-fn until(at: u64, why: &str) {
-    uia::pause(Duration::from_micros(at.saturating_sub(now_us())), why);
-}
-
-/// Milliseconds from `from` to `to`; infinite when `to` never came.
-fn delay(from: u64, to: Option<u64>) -> f64 {
-    to.map_or(f64::INFINITY, |to| us_to_ms(to.saturating_sub(from)))
-}
-
-/// Milliseconds as a duration on [`now_us`]'s clock.
-fn us(ms: f64) -> u64 {
-    Duration::from_secs_f64(ms / 1_000.0)
-        .as_micros()
-        .try_into()
-        .expect("a short time")
-}
-
-fn spec(words: &[&str]) -> Vec<String> {
-    words.iter().map(|w| (*w).to_owned()).collect()
-}
-
 /// A case: its name, what it does, and its function.
 type Case = (&'static str, &'static str, fn(&Args, &mut Report));
 
@@ -203,16 +43,16 @@ fn main() {
     }
     let mut report =
         Report::start("a-hung-window-named-in-a-system-focus-event-holds-a-processs-uia-events");
-    let cases: [Case; 13] = [
+    let cases: [Case; 11] = [
         (
             "calls",
             "a client with a desktop focus handler and B's name changes; T held until the client hears B's change, at UIA's default 2 s connection timeout; a focus WinEvent naming T; B renamed 200 ms later; counting the sent messages that reach T",
             calls,
         ),
         (
-            "stand-ins",
-            "a client with Verbatim's mapping at a 250 ms connection timeout, T held until it hears B's change; then the outpost stand-in, with no focus registration, B's name and text changed, a name WinEvent naming M and a name read of B",
-            stand_ins,
+            "listener-mapping",
+            "a client with Verbatim's mapping at a 250 ms connection timeout, T held until it hears B's change",
+            listener_mapping,
         ),
         (
             "who",
@@ -250,19 +90,9 @@ fn main() {
             own_focus,
         ),
         (
-            "dropped",
-            "on a desktop of its own, M moving its focus while it answers, then again at the start of a 1.5 s stall of its UI thread; a client with a desktop focus handler at a connection timeout of 10 s, then 1 s, then 0.25 s, each in a trial of its own",
-            dropped,
-        ),
-        (
             "shown",
             "on the unlocked desktop, three trials, T in front and stalled in each: a focus WinEvent naming T at once, asking each 0.1 s whether T is hung; a focus WinEvent 6.5 s in, once marked; and B then T brought to the front, and Alt+Tab away from T 6.5 s in, to B; B renamed once in each",
             shown,
-        ),
-        (
-            "open-show",
-            "on the unlocked desktop, Notepad in front; T stalled 9 s; a focus WinEvent naming T; B renamed 200 ms later; Alt+F 0.6 s after that",
-            open_show,
         ),
         (
             "desk-wide",
@@ -272,7 +102,7 @@ fn main() {
     ];
     // The default run checks what Verbatim relies on; the other cases,
     // and those that take over the desktop, run only when named.
-    let default = ["calls", "stand-ins", "dropped"];
+    let default = ["calls", "listener-mapping"];
     for (name, what, run) in cases {
         let runs = if default.contains(&name) {
             args.wants(name)
@@ -456,10 +286,6 @@ const WHO: [(&str, &[&str], &[f64], &str); 14] = [
     ),
 ];
 
-/// B's events follow the focus `WinEvent` by this much in `who`, inside
-/// its shortest hold, one wait of 250 ms.
-const WHO_B_AFTER_US: u64 = 100_000;
-
 /// One `who` trial of client `words`: T stalled past the hold's band, the
 /// focus `WinEvent`, and B's name change 100 ms later; answers the hold
 /// from the `WinEvent`.
@@ -496,48 +322,6 @@ fn who_hold(args: &Args, label: &str, words: &[&str], waits: &[f64]) -> f64 {
     hold
 }
 
-/// One `who` trial of a stand-in: T stalled 0.9 s past two 250 ms waits,
-/// the focus `WinEvent`, B's name and text changes 100 ms later, a name and
-/// a foreground `WinEvent` naming M 50 ms after those, and a name read of
-/// B; answers the stand-in's lines and the times of those.
-fn stand_in(args: &Args, label: &str, outpost: bool) -> (Vec<Line>, [u64; 6], isize, isize) {
-    let mut scene = Scene::new();
-    let (window_b, window_m, window_t) = (scene.b(), scene.p1.hwnd(2), scene.p1.hwnd(0));
-    let words = if outpost {
-        vec![
-            scene.b_spec(),
-            format!("text={window_b}"),
-            format!("hook={}", scene.p1.pid),
-        ]
-    } else {
-        vec![
-            "desk".to_owned(),
-            "cto=250".to_owned(),
-            scene.b_spec(),
-            "hook=0".to_owned(),
-        ]
-    };
-    let mut client = listener(label, &words);
-    args.pause_for_debugger(&[("P1 (T)", scene.p1.pid), (label, client.pid())]);
-    let stalled = scene.stall(0, 900);
-    let raised = scene.winevent("focus", 0);
-    until(raised + WHO_B_AFTER_US, "B's events after the WinEvent");
-    let renamed = scene.rename_b("held");
-    let texted = scene.text_b();
-    until(raised + 150_000, "the WinEvents naming M");
-    let m_name = scene.winevent("name", 2);
-    let m_foreground = scene.winevent("foreground", 2);
-    let read_at = now_us();
-    client.send(&format!("read {window_b}"));
-    let lines = client.lines_until(stalled + 1_200_000);
-    (
-        lines,
-        [raised, renamed, texted, m_name, m_foreground, read_at],
-        window_m,
-        window_t,
-    )
-}
-
 /// The label of the `WHO` row Verbatim relies on.
 const VERBATIM_MAPPING: &str = "Verbatim's mapping, against a hidden T";
 
@@ -557,64 +341,10 @@ fn who_rows(args: &Args, report: &mut Report, keep: impl Fn(&str) -> bool) {
     }
 }
 
-/// The time of a stand-in's first successful read in `lines`.
-fn read_end(lines: &[Line]) -> Option<u64> {
-    lines.iter().find_map(|l| match l {
-        Line::Read { outcome, end, .. } if outcome == "ok" => Some(*end),
-        _ => None,
-    })
-}
-
-/// The time a stand-in's hook heard `WinEvent` `event` naming `hwnd`.
-fn hooked(lines: &[Line], event: u32, hwnd: isize) -> Option<u64> {
-    lines.iter().find_map(|l| match l {
-        Line::Hook {
-            event: e,
-            hwnd: h,
-            at,
-        } if *e == event && *h == hwnd => Some(*at),
-        _ => None,
-    })
-}
-
-fn not_held(values: &[f64]) -> bool {
-    values.iter().all(|v| *v <= NOT_HELD_MS)
-}
-
 /// What Verbatim relies on among the clients: its own mapping held as any
-/// client is, and the outpost stand-in, with no focus registration, not
-/// held.
-fn stand_ins(args: &Args, report: &mut Report) {
+/// client is.
+fn listener_mapping(args: &Args, report: &mut Report) {
     who_rows(args, report, |label| label == VERBATIM_MAPPING);
-    let mut outpost: Vec<[f64; 4]> = Vec::new();
-    for _ in 0..trials() {
-        let (lines, [_, renamed, texted, m_name, _, read_at], window_m, _) =
-            stand_in(args, "outpost stand-in", true);
-        let o = [
-            delay(renamed, heard_at(&lines, "name", "held")),
-            delay(texted, heard_at(&lines, "text", "Notes")),
-            delay(read_at, read_end(&lines)),
-            delay(m_name, hooked(&lines, 0x800C, window_m)),
-        ];
-        note::evidence(&format!(
-            "outpost stand-in: name, text, read, hook {o:?} ms"
-        ));
-        outpost.push(o);
-    }
-    for (i, what, recorded) in [
-        (0, "B's name change", "1 ms (e_cross; P4's N_B)"),
-        (1, "B's text change", "0 ms (e_cross)"),
-        (2, "a name read of B on another thread", "0 ms (e_cross)"),
-        (3, "its MSAA hook's name change of M", "0 ms (e_cross)"),
-    ] {
-        let values: Vec<f64> = outpost.iter().map(|o| o[i]).collect();
-        report.claim(
-            &format!("a client with no focus registration, the outpost stand-in: {what} within {NOT_HELD_MS} ms, not held"),
-            &summary_ms(&values),
-            recorded,
-            relation(&[not_held(&values)]),
-        );
-    }
 }
 
 /// The other clients: every `WHO` row but Verbatim's mapping, the older
@@ -976,72 +706,6 @@ fn own_focus(args: &Args, report: &mut Report) {
     }
 }
 
-fn dropped(args: &Args, report: &mut Report) {
-    const STALL_MS: u64 = 1_500;
-    let timeouts = [10_000u32, 1_000, 250];
-    let mut control = vec![Vec::new(); 3];
-    let mut heard = vec![Vec::new(); 3];
-    for _ in 0..trials() {
-        // Each timeout in a trial of its own, as h6 ran each in a run of
-        // its own.
-        for (i, t) in timeouts.iter().enumerate() {
-            let mut scene = Scene::on(Some(DESKTOP), &["--windows", "plain:0,uia:1,msaa:2"]);
-            let client = Listener::start_on(
-                Some(DESKTOP),
-                &format!("{t} ms"),
-                &spec(&["desk", "cache=min", &format!("cto={t}")]),
-            );
-            args.pause_for_debugger(&[("P1 (M)", scene.p1.pid), ("client", client.pid())]);
-            // As h6: M moves its focus to its first item while it answers,
-            // then to its second at the start of a 1.5 s stall, from inside
-            // it, 1.5 waits at 1 s as h6's 3 s stall was at 2 s.
-            let raised = scene
-                .p1
-                .request("raise focus 2 1")
-                .parse::<u64>()
-                .expect("a time");
-            let lines = client.lines_until(raised + 500_000);
-            control[i].push(delay(raised, heard_at(&lines, "focus", "First")));
-            note::waiting(&format!(
-                "3.0 s, M's 1.5 s stall and its focus after, at {t} ms"
-            ));
-            let stalled: u64 = scene
-                .p1
-                .request(&format!("busy 2 {STALL_MS} focus-at 0 2"))
-                .parse()
-                .expect("a time");
-            let lines = client.lines_until(stalled + 3_000_000);
-            heard[i].push(delay(stalled, heard_at(&lines, "focus", "Second")));
-        }
-    }
-    for (i, t) in timeouts.iter().enumerate() {
-        report.claim(
-            &format!("connection timeout {t} ms: M's focus raised while it answers is heard within {NOT_HELD_MS} ms"),
-            &summary_ms(&control[i]),
-            "10 to 12 ms (h6)",
-            relation(&control[i].iter().map(|v| *v <= NOT_HELD_MS).collect::<Vec<_>>()),
-        );
-    }
-    report.claim(
-        "connection timeout 10,000 ms: M's focus from inside its 1.5 s stall is heard once the stall ends",
-        &summary_ms(&heard[0]),
-        "3,003 ms into a 3 s stall (h6_cto10000)",
-        relation(&heard[0].iter().map(|v| v.is_finite() && *v >= as_ms(STALL_MS) - TICK_MS).collect::<Vec<_>>()),
-    );
-    report.claim(
-        "connection timeout 1,000 ms, the 1.5 s stall 1.5 waits long, as h6 stalled 3 s at 2,000 ms, shorter than both: M's focus from inside it is heard once the stall ends",
-        &summary_ms(&heard[1]),
-        "mockapp's MSAA window: never within 8 s (h6_default); the provider program's: at the stall's end",
-        relation(&heard[1].iter().map(|v| v.is_finite() && *v >= as_ms(STALL_MS) - TICK_MS).collect::<Vec<_>>()),
-    );
-    report.claim(
-        "connection timeout 250 ms, the 1.5 s stall longer than both waits: M's focus from inside it is not heard within 3 s of the stall's start",
-        &summary_ms(&heard[2]),
-        "never delivered within 8 s at 500 ms in a 3 s stall (h6_cto500)",
-        relation(&heard[2].iter().map(|v| v.is_infinite()).collect::<Vec<_>>()),
-    );
-}
-
 /// Asks Windows each 0.1 s whether `hwnd` is hung, until it is or until
 /// `limit` on [`now_us`]'s clock; answers when it first was.
 fn marked_hung(hwnd: isize, limit: u64) -> Option<u64> {
@@ -1321,94 +985,6 @@ fn shown(args: &Args, report: &mut Report) {
         "1 to 2 ms (h7_alttab)",
         relation(&away.iter().map(|v| *v <= NOT_HELD_MS).collect::<Vec<_>>()),
     );
-}
-
-fn open_show(args: &Args, report: &mut Report) {
-    const STALL_MS: u64 = 9_000;
-    if let Err(reason) = precondition::unlocked_desktop() {
-        report.unmet("open-show: Notepad's menu focus during a hold", &reason);
-        return;
-    }
-    let notepad = apps::system_program("notepad.exe");
-    println!(
-        "notepad: {}",
-        uia_facts_support::report::file_version(&notepad)
-    );
-    let mut escaped = Vec::new();
-    let mut holds = Vec::new();
-    for _ in 0..trials() {
-        let before = apps::top_windows();
-        let _ = std::process::Command::new(&notepad).spawn();
-        note::waiting("up to 10 s, Notepad's window");
-        let Some(window) =
-            apps::wait_window("Notepad", "Notepad.exe", &before, Duration::from_secs(10))
-        else {
-            report.unmet(
-                "open-show: Notepad's menu focus during a hold",
-                "Notepad's window did not appear",
-            );
-            return;
-        };
-        let mut scene = Scene::screen();
-        let d = Listener::start(
-            "Verbatim's stand-in",
-            &[
-                "desk".to_owned(),
-                "vbmap".to_owned(),
-                "tto=5000".to_owned(),
-                scene.b_spec(),
-            ],
-        );
-        args.pause_for_debugger(&[("P1 (T)", scene.p1.pid), ("client", d.pid())]);
-        let front = apps::foreground(window);
-        note::evidence(&format!("Notepad in front: {front}"));
-        let stalled = scene.stall(0, STALL_MS);
-        let raised = scene.winevent("focus", 0);
-        until(raised + B_AFTER_US, "B's name change after the WinEvent");
-        scene.rename_b("held");
-        until(raised + 800_000, "Alt+F, 0.6 s after B's name change");
-        let pressed = now_us();
-        apps::alt_f();
-        let lines = d.lines_until(stalled + us(as_ms(STALL_MS)));
-        apps::escape();
-        apps::kill(apps::window_pid(window));
-        let b_at = heard_at(&lines, "name", "held");
-        holds.push(delay(raised, b_at));
-        let focus: Vec<(String, u64)> = lines
-            .iter()
-            .filter_map(|l| match l {
-                Line::Heard { kind, name, at, .. } if kind == "focus" && *at >= pressed => {
-                    Some((name.clone(), *at))
-                }
-                _ => None,
-            })
-            .collect();
-        note::evidence(&format!(
-            "focus heard after Alt+F, ms after it: {:?}",
-            focus
-                .iter()
-                .map(|(n, at)| (n.clone(), us_to_ms(at - pressed)))
-                .collect::<Vec<_>>()
-        ));
-        escaped.push(focus.iter().any(|(_, at)| b_at.is_none_or(|b| *at < b)));
-    }
-    report.claim(
-        "Notepad's menu focus after Alt+F reaches the stand-in while B's name change is still held",
-        &runs(&escaped),
-        "the menu's focus 26 to 112 ms after the key, the notification held 3,815 to 3,829 ms (both; route1, route2)",
-        relation(&escaped),
-    );
-    let two = band(&[CTO_MS, CTO_MS]);
-    report.claim(
-        "B's name change in the same hold",
-        &summary_ms(&holds),
-        &format!(
-            "3,815 to 3,829 ms after B's raise (both); {}",
-            band_text(two)
-        ),
-        in_band(&holds, two),
-    );
-    let _ = Verdict::Trend;
 }
 
 /// E-hung-proxy's desktop-wide name registration and q1's name-change

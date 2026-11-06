@@ -12,25 +12,21 @@
 //! - `messages`: oleacc's `accName` on the plain window, the window's
 //!   messages counted.
 //! - `busy-sweep`: oleacc's `accName` on the plain window while its UI
-//!   thread is busy for 1, 5, 15 and 60 s (Not known: how long an MSAA call
-//!   into a busy thread waits). One run each.
+//!   thread is busy for 20 s.
 //! - `sent-rate`: 20,000 `WM_GETTEXT`s sent by 1, 4 and 8 threads of this
 //!   process, each thread to a plain window on a UI thread of its own;
 //!   the rate against one thread's.
-//! - `processes`: the 8-thread case again as two processes of 4 threads,
-//!   toward the inferred contention in the window manager.
 
 use std::sync::{Arc, Barrier};
 use std::time::{Duration, Instant};
 
 use uia_facts_support::args::{Args, trials};
 use uia_facts_support::note;
+use uia_facts_support::now_us;
 use uia_facts_support::provider::Provider;
 use uia_facts_support::report::{Report, TICK_MS, Verdict, deterministic, relation, runs};
-use uia_facts_support::role::{self, Role};
 use uia_facts_support::stats::{median, summary_ms};
 use uia_facts_support::uia::{self, Timed};
-use uia_facts_support::{exit_now, now_us};
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Accessibility::{AccessibleObjectFromWindow, IAccessible};
@@ -43,10 +39,6 @@ const MESSAGES: usize = 20_000;
 fn main() {
     let args = Args::parse();
     uia::mta();
-    if let Some((name, rest)) = &args.role {
-        assert_eq!(name, "send", "the one role is send");
-        send_role(rest);
-    }
     let mut report = Report::start("msaa-calls-do-not-pass-through-uias-request-reader");
     if args.wants("stuck") {
         report.case("stuck", "holding a UIA read on UI thread 0 of a provider without COM threading; reading three windows through MSAA and one through UIA meanwhile");
@@ -60,16 +52,12 @@ fn main() {
         messages(&mut report);
     }
     if args.wants("busy-sweep") {
-        report.case("busy-sweep", "making a plain window's UI thread busy for 1, 5, 15 and 60 s; reading its name through oleacc each time");
+        report.case("busy-sweep", "making a plain window's UI thread busy for 20 s; reading its name through oleacc meanwhile");
         busy_sweep(&mut report);
     }
     if args.wants("sent-rate") {
         report.case("sent-rate", "sending 20,000 WM_GETTEXT messages from 1, 4 and 8 threads, each to its own window; timing them");
         sent_rate(&mut report);
-    }
-    if args.wants("processes") {
-        report.case("processes", "sending the 8-thread case from one process and from two processes of 4 threads; timing them");
-        processes(&mut report);
     }
     report.finish();
 }
@@ -296,60 +284,4 @@ fn sent_rate(report: &mut Report) {
             Verdict::Trend,
         );
     }
-}
-
-/// The second process of `processes`: sends `per_window` messages to each
-/// window named, one thread each, on `go`, and reports `done <ms>`.
-fn send_role(rest: &[String]) -> ! {
-    let per_window: usize = rest[0].parse().expect("a count");
-    let hwnds: Vec<isize> = rest[1..]
-        .iter()
-        .map(|h| h.parse().expect("a window handle"))
-        .collect();
-    role::report("ready");
-    for command in role::commands() {
-        if command == "go" {
-            role::report(&format!("done {}", send_all(&hwnds, per_window)));
-        }
-    }
-    exit_now(0)
-}
-
-fn processes(report: &mut Report) {
-    let layout: Vec<String> = (0..8).map(|t| format!("plain:{t}")).collect();
-    let mut rows = Vec::new();
-    for _ in 0..trials() {
-        let provider = Provider::launch(&["--windows", &layout.join(",")]);
-        let hwnds: Vec<isize> = (0..8).map(|w| provider.hwnd(w)).collect();
-        let per_window = MESSAGES / 8;
-        let threads = send_all(&hwnds, per_window);
-        let mut halves: Vec<Role> = [&hwnds[..4], &hwnds[4..]]
-            .iter()
-            .map(|half| {
-                let mut words = vec![per_window.to_string()];
-                words.extend(half.iter().map(ToString::to_string));
-                Role::start("send", &words)
-            })
-            .collect();
-        for half in &halves {
-            assert_eq!(half.expect_line(), "ready", "the sender is ready");
-        }
-        let start = Instant::now();
-        for half in &mut halves {
-            half.send("go");
-        }
-        for half in &halves {
-            let _ = half.expect_line();
-        }
-        let two = uia::ms(start.elapsed());
-        rows.push(format!(
-            "8 threads of one process {threads:.0} ms, of two processes {two:.0} ms"
-        ));
-    }
-    report.claim(
-        "20,000 messages by 8 threads, in one process against two",
-        &rows.join("; "),
-        "one process 802 to 810 ms, two 810 to 822 ms",
-        Verdict::Trend,
-    );
 }

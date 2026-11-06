@@ -5,9 +5,9 @@
 //!
 //! `whole-process`, each trial a new provider program, its UI thread busy:
 //! client object A sets the connection timeout to 500 ms, then client
-//! object B, on another thread, to 2,000 ms; A's explicit read
+//! object B, on another thread, to 1,000 ms; A's explicit read
 //! (`ElementFromHandle`, then `CurrentName`) of the busy window. Then the
-//! reverse, A at 2,000 ms and B at 500 ms.
+//! reverse, A at 1,000 ms and B at 500 ms.
 
 use uia_facts_support::args::{Args, trials};
 use uia_facts_support::note;
@@ -24,18 +24,18 @@ fn main() {
     uia::mta();
     let mut report = Report::start("the-connection-timeout-applies-to-the-whole-process");
     if args.wants("whole-process") {
-        report.case("whole-process", "making the window's UI thread busy; client object A sets one connection timeout and B, on another thread, another, 500 ms and 2 s; timing A's new connection, in both orders");
+        report.case("whole-process", "making the window's UI thread busy; client object A sets one connection timeout and B, on another thread, another, 500 ms and 1 s; timing A's new connection, in both orders");
         order(
             &args,
             &mut report,
             500,
-            2_000,
+            1_000,
             "2,008 ms at 2,000 ms; h5_main500_other10000 10,013 ms at 10,000 ms",
         );
         order(
             &args,
             &mut report,
-            2_000,
+            1_000,
             500,
             "515 ms; h5_main10000_other500 508 ms",
         );
