@@ -18,7 +18,7 @@ Judged: failed runs as a rate against 50 of 50; the failure's HRESULT and the re
 
 ## Client settings
 
-Neither connection recovery nor event coalescing changes these outcomes (checked on 2026-11-06 by running every case by default and once each with `--recovery`, `--coalescing` and both).
+Neither connection recovery nor event coalescing changes these outcomes (checked on 2026-11-06 by running every case by default and once each with `--recovery`, `--coalescing` and both). With `--recovery` one run of 50 met no failure, 49 of 50, which the rate's intervals do not separate from 50 of 50.
 
 ## Recorded results
 
@@ -26,6 +26,7 @@ Neither connection recovery nor event coalescing changes these outcomes (checked
 |---|---|---|---|---|
 | Six threads at once in a fresh process: five failed nearly every time; a call 50 ms later succeeded | 2026-10-03 | Build 26200 | Commit 7c402534 | Trend; deterministic |
 | The CI test with the workaround removed: failed 50 of 50 runs with `E_FAIL` (0x80004005) | 2026-10-18 | Build 26200 | `books/dev/src/reference/uia-bugs.md` | A rate, 50 of 50 |
+| First uia-facts run, `race`: 50 of 50 runs failed, `E_FAIL`; at most 5 of 6 threads in a process; every retry 50 ms later `ok` | 2026-11-06 | Build 26200.9711, `UIAutomationCore.dll` 7.2.26100.9549, AMD Ryzen 7 5700G | 132b6af4 | Pass |
 
 ## How to rerun
 

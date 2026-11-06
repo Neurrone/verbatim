@@ -22,9 +22,10 @@ use uia_facts_support::role::{self, Role};
 use uia_facts_support::{note, uia};
 use windows::Win32::UI::Accessibility::{TreeScope_Descendants, UIA_NamePropertyId};
 
-/// Children a run: the fewest whose outcome separates a rate of 2 in 100
-/// from none, since 0.98 to the 150th power is below 0.05. `--trials n`
-/// runs n times as many.
+/// Children a run, kept short: one hang among them passes against the
+/// recorded 1 in 100, and none is inconclusive. `--trials 2` runs 300, the
+/// fewest at which none differs, since 0.99 to the 300th power is below
+/// 0.05.
 const CHILDREN: usize = 150;
 /// Threads in each child, each with a provider program of its own, as six
 /// threads each connecting to a mockapp of their own hung 1 in 40.
@@ -155,7 +156,7 @@ fn judge(report: &mut Report) {
             "{faults} of {children} ({hangs} hung, {} crashed)",
             crashes.len()
         ),
-        "about 1 to 3 percent; 2 hangs in 100 runs after waiting 12 s for the providers to go",
-        rate(faults, children, 2, 100),
+        "about 1 to 3 percent of runs; the arbitration tests 1 run in 100 after the first-time setup fix",
+        rate(faults, children, 1, 100),
     );
 }

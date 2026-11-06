@@ -26,6 +26,8 @@ Neither connection recovery nor event coalescing changes these outcomes (checked
 | Figure | Date | Machine | Source | Threshold |
 |---|---|---|---|---|
 | The worker fetches the event's cache with 8 requests for one selection event | 2026-11-02 | Build 26200.9711 | `experiments/parallel-uia-calls/`, "Events and releases" | Cited by `uia.md`; reproduced by the requests guide |
+| First uia-facts run, `holds`: both changes heard only after X's release | 2026-11-06 | Build 26200.9711, `UIAutomationCore.dll` 7.2.26100.9549, AMD Ryzen 7 5700G | 132b6af4 | The answer |
+| First uia-facts run, `timeout`: at 1 s and 5 s, P's change never heard; Q's heard 2,199 and 2,203 ms after P's raise, before X's release at 6 s | 2026-11-06 | As above | As above | The answer: the transaction timeout does not bound the hold |
 
 ## How to rerun
 

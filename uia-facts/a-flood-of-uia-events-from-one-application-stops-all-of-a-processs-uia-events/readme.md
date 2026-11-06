@@ -12,13 +12,18 @@ D9 as amended on 2026-11-02 (`books/dev/src/explanation/architecture.md`) and ea
 
 Flooding windows are UIA windows of the provider program raising events on their UI thread at a set pace. B is a UIA window whose node 1 is renamed `P<k>` as a probe. Each client is a listening process of its own, its registrations on one client object, warmed with one event of each flood before it starts, as `q2` warmed its handlers. A client's sender names are read by its worker when it takes the event from its queue, so probes are counted, not told apart.
 
-- `stops`: on a desktop of its own, where the notification flood's window can be shown, since a desktop-wide registration hears only shown windows' events. Three windows each flood 30,000 events at 10,000 a second for 3 s: name changes, text changes and notifications. Four clients: one registered for the name flood and B, one for the text flood and B, one for desktop-wide notifications and B, and one for B alone. B is renamed every 250 ms until 90 s after the flood. Judged: the name-flooded client hears nothing from the flood's end to 90 s after (a relation) and uses at least 0.8 of a core over those 90 s (a relation); the text-flooded client the same with coalescing off, and keeps hearing with it on; B's own client hears every probe. The flood events heard, for trends; the notification-flooded client, new.
-- `rates`: one client registered for a window's name changes and B's, flooded at 2,000 and then 5,000 a second for 3 s; B renamed every 100 ms until the flood has drained, every flood event heard or none for 2 s, or 30 s after the flood. Judged: some probes never heard (a relation, inconclusive while the flood is still arriving). The `q2_thr` record was taken with coalescing on.
-- `backlog`: bursts of 250, 500, 1,000 and 2,000 name changes raised back to back, each at a client of its own: the events it hears and its processor time in the 3 s after. New.
+- `stops`: on a desktop of its own, where the notification flood's window can be shown, since a desktop-wide registration hears only shown windows' events. Three windows each flood 30,000 events at 10,000 a second for 3 s: name changes, text changes and notifications. Four clients: one registered for the name flood and B, one for the text flood and B, one for desktop-wide notifications and B, and one for B alone. B is renamed every 250 ms until 10 s after the flood. Judged: the name-flooded client hears nothing from the flood's end to 10 s after (a relation) and uses at least 0.8 of a core over those 10 s (a relation); `q2long` watched 90 s, and the program watches 10 s to keep its run short, which narrows the claim it checks to 10 s; the text-flooded client the same with coalescing off, and keeps hearing with it on; B's own client hears every probe. The flood events heard, for trends; the notification-flooded client, new.
+- `rates`: one client registered for a window's name changes and B's, flooded at 2,000 and then 5,000 a second for 1 s, where `q2_thr` flooded 3 s; B renamed every 100 ms until the flood has drained, every flood event heard or none for 2 s, or 15 s after the flood. Judged with event coalescing on, as `q2_thr` was taken: some probes never heard (a relation, inconclusive while the flood is still arriving); with it off the outcome is printed as new.
+- `backlog`: bursts of 250, 500, 1,000 and 2,000 name changes raised back to back, each at a client of its own: the events it hears and its processor time in the 1.5 s after. New.
 
 ## Client settings
 
-To be filled from the settings check.
+Event coalescing changes one outcome, and connection recovery none (checked on 2026-11-06 by running every case by default and once each with `--recovery`, `--coalescing` and both).
+
+- Event coalescing off, the default: a flood of text changes at 10,000 a second stops the client, as a flood of name changes does. `target\debug\a-flood-of-uia-events-from-one-application-stops-all-of-a-processs-uia-events.exe --case stops`
+- Event coalescing on, as Verbatim's client and `q2` had it: the text-flooded client keeps hearing events. `target\debug\a-flood-of-uia-events-from-one-application-stops-all-of-a-processs-uia-events.exe --coalescing --case stops`
+
+The probes lost at 2,000 and 5,000 a second were recorded with coalescing on, so `rates` is judged with `--coalescing`; with 1 s floods no probe was lost at 2,000 a second either way.
 
 ## Recorded results
 
@@ -28,6 +33,10 @@ To be filled from the settings check.
 | `q2_thr`: with coalescing on, at 2,000, 3,000 and 5,000 a second every flood event delivered, the last 2.9, 5.2 and 10.4 s after; 28, 50 and 103 probes never delivered | 2026-11-01 | Build 26200 | `recorded/q2_thr_one_c1.out` and `.log` | Some probes never heard |
 | `q2long`: 95 and 96 delivered; none of 349 probes in 90 s; processor time 3.2 s at the flood's end and 90.1 s 88.7 s later | 2026-11-01 | Build 26200 | `recorded/q2long_*.out` and `.log` | None heard for 90 s; at least 0.8 of a core |
 | The work-item thread about 2 s after the flood in `WorkItemQueue::GetDuplicatedEventWorkItemCount`, `SavedEvent::GetWorkItemInfo`, `ProtobufHelper::GetEventArgs` | 2026-11-01 | Build 26200 | `recorded/stacks/` | The frames, by the guide below |
+| First uia-facts run, `stops`, coalescing off: the name-flooded client heard 95 flood events, then nothing for 10 s, 10.0 s of processor time; the text-flooded client nothing; B's own client every probe; the notification-flooded client kept hearing events | 2026-11-06 | Build 26200.9711, `UIAutomationCore.dll` 7.2.26100.9549, AMD Ryzen 7 5700G | 132b6af4 | Pass; the notifications the answer |
+| First uia-facts run, `stops`, coalescing on: the text-flooded client kept hearing events, the name-flooded client heard 98 and stopped | 2026-11-06 | As above | As above | Pass |
+| First uia-facts run, `rates`: 2,000 a second for 1 s, every flood event heard and no probe lost, with coalescing off and on; 5,000 a second, 263 to 293 of 5,000 heard and 29 probes lost, the client stopping, with coalescing off and on | 2026-11-06 | As above | As above | 2,000 for trends; 5,000 pass with coalescing on, the answer with it off |
+| First uia-facts run, `backlog`: every burst heard in 1.5 s, 250 to 2,000 events | 2026-11-06 | As above | As above | The answer |
 
 ## How to rerun
 

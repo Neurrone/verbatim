@@ -26,6 +26,7 @@ Neither connection recovery nor event coalescing changes these outcomes (checked
 |---|---|---|---|---|
 | E-cost: 90 calls for one focus event with one scoped registration, 185 with three | 2026-10-10 | Build 26200 | the mockapp experiments, in git at b0a1989 | History |
 | P2 on mockapp: per focus event 1, 70, 117, 210 and 397 calls with 0, 1, 2, 4 and 8 processes and no cache; 1, 71, 119, 214 and 405 with the process id; 1, 86, 149, 274 and 525 with the base cache: about 47 to 49 a process, and about 16 more `GetPropertyValue` with the base cache | 2026-10-18 | Build 26200 | `recorded/p2_cost.out`, `recorded/p2_cost.summary.txt` | 40 to 60 |
+| First uia-facts run, `cost`: 54.5 provider calls a registered process with no cache, 56.5 with the process id, 71.5 with NVDA's base cache | 2026-11-06 | Build 26200.9711, `UIAutomationCore.dll` 7.2.26100.9549, AMD Ryzen 7 5700G | 132b6af4 | Pass; the base cache for trends |
 
 ## How to rerun
 

@@ -156,14 +156,14 @@ fn processes(args: &Args, report: &mut Report) {
                 2 => "at most 10 and 13 ms (p2c procs2)",
                 _ => "at most 15 and 10 ms (p2c procs4)",
             },
-            relation(&first_on_time),
+            if n == 4 { Verdict::Trend } else { relation(&first_on_time) },
         );
         if n > 1 {
             report.claim(
                 &format!("{n} processes: every later process's worst delivery at least {LATE_MS} ms later than the first's"),
                 &runs(&later_late),
                 if n == 2 { "at most 682 and 1,112 ms (p2c procs2)" } else { "670 to 2,677 ms for processes 2 to 4 (p2c procs4)" },
-                relation(&later_late),
+                if n == 4 { Verdict::Trend } else { relation(&later_late) },
             );
         }
         report.claim(

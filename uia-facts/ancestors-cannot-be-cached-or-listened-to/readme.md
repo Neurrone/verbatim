@@ -26,6 +26,8 @@ Neither connection recovery nor event coalescing changes these outcomes (checked
 | Figure | Date | Machine | Source | Threshold |
 |---|---|---|---|---|
 | The clock button's child, ancestors scope, did not hear the button's name change; a registration on the button did; mockapp the same, as a group and directly | Before 2026-11-04 | Build 26200 | `docs/parity/backends.md`, the local group; the probes were not kept | Deterministic |
+| First uia-facts run, `provider`: the control heard node 1's change; none of the eight ancestor-scoped registrations heard node 1's or the root's | 2026-11-06 | Build 26200.9711, `UIAutomationCore.dll` 7.2.26100.9549, AMD Ryzen 7 5700G | 132b6af4 | Pass |
+| First uia-facts run, `taskbar`: the button's registration heard its change at the minute; the child's, ancestors scope, none | 2026-11-06 | As above | As above | Pass |
 
 ## How to rerun
 

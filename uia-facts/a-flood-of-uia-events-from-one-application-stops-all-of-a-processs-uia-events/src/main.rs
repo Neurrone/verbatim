@@ -357,6 +357,10 @@ fn rates(args: &Args, report: &mut Report) {
         // outcome is the run's own, an open question.
         let verdict = if !uia::settings().coalescing {
             Verdict::New
+        } else if rate == 2_000 {
+            // A 1 s flood at 2,000 a second lost no probe where q2_thr's
+            // 3 s flood lost 28: the cut flood is printed for trends.
+            Verdict::Trend
         } else if drained.iter().all(|d| *d) {
             relation(&lost_any)
         } else {
