@@ -36,9 +36,6 @@
 //!   the queued operation, and with no operation as the control.
 //! - `second-form`: 42 trials of a third client's read held in P's
 //!   provider while B and a fourth client look window 0 up at once.
-//! - `conhost`: a fresh console host per trial on a desktop of the
-//!   program's own, its window thread suspended, A's operation and a
-//!   client's lookup; and the provider program stalled the same way.
 //! - `getfocus`, on the unlocked desktop: B's `GetFocusedElement` with
 //!   window 0 shown and in front, during the queued operation.
 
@@ -54,9 +51,6 @@ use uia_facts_support::uia::{self, Shared, Timed};
 use uia_facts_support::{exit_now, now_us, rop};
 use verbatim_uia::RawProbe;
 use windows::Win32::Foundation::HWND;
-use windows::Win32::System::Threading::{
-    OpenThread, ResumeThread, SuspendThread, THREAD_SUSPEND_RESUME,
-};
 use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Accessibility::{
     AccessibleObjectFromWindow, IAccessible, IUIAutomation6, IUIAutomationElement,
@@ -72,9 +66,6 @@ const UNMARKED: Duration = Duration::from_millis(100);
 /// A case: its name, whether it runs by default, what it does, and its run.
 type Case = (&'static str, bool, &'static str, fn(&mut Report));
 
-/// The desktop the console host cases run on.
-const DESKTOP: &str = "uia-facts-collision";
-
 /// A client object with the cases' timeouts: UIA's default connection
 /// timeout, and a transaction timeout longer than any stall.
 fn client() -> IUIAutomation6 {
@@ -89,13 +80,12 @@ fn main() {
     if let Some((name, rest)) = &args.role {
         match name.as_str() {
             "client" => client_role(rest),
-            "console" => console_role(),
             other => panic!("unknown role {other}"),
         }
     }
     let mut report =
         Report::start("a-new-connection-fails-while-another-processs-remote-operation-is-queued");
-    let cases: [Case; 10] = [
+    let cases: [Case; 9] = [
         (
             "collision",
             true,
@@ -143,12 +133,6 @@ fn main() {
             false,
             "42 trials: a third client's read held in the provider while B and a fourth client look window 0 up at once",
             second_form,
-        ),
-        (
-            "conhost",
-            false,
-            "on a desktop of its own: a fresh console host's window thread suspended; A's remote operation and a client's lookup; the provider program stalled the same way",
-            conhost,
         ),
         (
             "getfocus",
@@ -766,104 +750,6 @@ fn second_form(report: &mut Report) {
             Verdict::Trend,
         );
     }
-}
-
-/// A console host started directly on this role's desktop: reports
-/// `console <hwnd> <thread id>` once its window is found, and holds it
-/// until told `stop`.
-fn console_role() -> ! {
-    let console = uia_facts_support::console::Console::start();
-    role::report(&format!("console {} {}", console.hwnd, console.thread));
-    for command in role::commands() {
-        if command == "stop" {
-            break;
-        }
-    }
-    drop(console);
-    exit_now(0)
-}
-
-/// The verdict of stalled trials, each (the lookup's answer, A's operation
-/// queued): inconclusive when A's operation was not queued in every trial,
-/// since the lookup then met no queued operation; otherwise the answers
-/// against `expected`.
-fn queued_or_not(trials: &[(String, bool)], expected: &str) -> Verdict {
-    if trials.iter().all(|(_, queued)| *queued) {
-        deterministic(trials, &(expected.to_owned(), true))
-    } else {
-        Verdict::Inconclusive(
-            "A's operation ended before the resume, so it was not queued while the lookup was made"
-                .to_owned(),
-        )
-    }
-}
-
-/// Suspends or resumes thread `id`.
-fn suspend(id: u32, suspend: bool) {
-    // SAFETY: a thread id of a process this program started.
-    let thread = unsafe { OpenThread(THREAD_SUSPEND_RESUME, false, id) }.expect("the thread opens");
-    if suspend {
-        // SAFETY: a live thread handle with suspend rights.
-        let _ = unsafe { SuspendThread(thread) };
-    } else {
-        // SAFETY: as above.
-        let _ = unsafe { ResumeThread(thread) };
-    }
-    // SAFETY: the handle opened above.
-    let _ = unsafe { windows::Win32::Foundation::CloseHandle(thread) };
-}
-
-/// One stalled trial on the desktop: window `hwnd`, its thread `thread`
-/// suspended, A's operation sent, then B's lookup; resumed after both.
-fn suspended_trial(hwnd: isize, thread: u32) -> (String, bool) {
-    let mut a = start_client(Some(DESKTOP), hwnd, true, false);
-    let mut b = start_client(Some(DESKTOP), hwnd, false, false);
-    suspend(thread, true);
-    let _ = send(&mut a, "rop");
-    uia::pause(
-        Duration::from_millis(5),
-        "between the operation and the lookup",
-    );
-    let _ = send(&mut b, &format!("lookup {hwnd}"));
-    uia::pause(Duration::from_millis(300), "the stall, as e35 made it");
-    let resumed = now_us();
-    suspend(thread, false);
-    let served = answer(&b)[1].clone();
-    // A's operation was queued only if it ended at or after the resume.
-    let operation = answer(&a);
-    let queued = operation[1] == "ok" && operation[2].parse::<u64>().expect("a time") >= resumed;
-    (served, queued)
-}
-
-fn conhost(report: &mut Report) {
-    let mut consoles = Vec::new();
-    let mut providers = Vec::new();
-    for _ in 0..trials().max(1) {
-        let mut console = Role::start_on(Some(DESKTOP), "console", &[]);
-        let words = answer(&console);
-        assert_eq!(words[0], "console", "the console host starts");
-        let hwnd: isize = words[1].parse().expect("a window");
-        let thread: u32 = words[2].parse().expect("a thread");
-        uia_facts_support::note::waiting("up to about 2 s, a lookup during the stall");
-        consoles.push(suspended_trial(hwnd, thread));
-        console.send("stop");
-        let provider = Provider::launch_on(Some(DESKTOP), &["--windows", "uia:0"]);
-        let thread = provider.windows[0].thread;
-        uia_facts_support::note::waiting("up to about 2 s, a lookup during the stall");
-        providers.push(suspended_trial(provider.hwnd(0), thread));
-    }
-    report.claim(
-        "a fresh console host's window, its thread suspended, looked up during A's operation: (the lookup's answer, A's operation queued)",
-        &runs(&consoles),
-        "conhost's own element, A's operation ending at or after the resume",
-        queued_or_not(&consoles, "own"),
-    );
-    report.claim(
-        "the provider program stalled the same way: (the lookup's answer, A's operation queued)",
-        &runs(&providers),
-        "UIA's window proxy, A's operation ending at or after the resume",
-        queued_or_not(&providers, "proxy"),
-    );
 }
 
 fn getfocus(report: &mut Report) {

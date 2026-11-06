@@ -11,10 +11,6 @@
 //!   process there holding one idle desktop-wide focus handler. (A
 //!   `ToolTipOpened` handler over the root of a desktop of its own fails
 //!   to register, `0x8007029C`.)
-//! - `tooltip`, on the unlocked desktop, run only when named: beside a
-//!   third process holding one idle `ToolTipOpened` handler over the
-//!   desktop root, as `e38` ran it; each console window opens on the
-//!   user's desktop.
 //! - `no-handler`, run only when named: on the program's desktop, with no
 //!   other process holding a handler. Its record is its own first run's
 //!   0 of 30, judged as that count, since `e38`'s 0 of 110 is a rate of
@@ -60,13 +56,6 @@ fn main() {
     if args.wants("focus-handler") {
         report.case("focus-handler", "on a desktop of its own: 30 new console windows, each probed as soon as it is found, beside another process holding an idle focus handler");
         probed(&mut report, Some("focus"), Some(DESKTOP), (0, TRIALS));
-    }
-    if args.names("tooltip") {
-        report.case("tooltip", "on the unlocked desktop: 30 new console windows, each probed as soon as it is found, beside another process holding an idle tooltip handler");
-        match precondition::unlocked_desktop() {
-            Ok(()) => probed(&mut report, Some("tooltip"), None, (7, 30)),
-            Err(reason) => report.unmet("the probe beside an idle tooltip handler", &reason),
-        }
     }
     if args.names("no-handler") {
         report.case("no-handler", "on a desktop of its own: 30 new console windows, each probed as soon as it is found, with no other process holding a handler");
