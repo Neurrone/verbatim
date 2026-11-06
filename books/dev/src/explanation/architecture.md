@@ -42,15 +42,18 @@ screen reader in both rendered and source form.
   `AudioDevice` trait, and WASAPI implements it. Why: backends can change
   without touching the speech pipeline. Decided 2026-07-13. Amended
   2026-10-04.
-- **D6, extensions are Wasm components.** Their WIT-defined API is
+- **D6, extensions are Wasm components or contained native code.** Their WIT-defined API is
   deny-by-default, with capabilities derived from a component's imports,
-  never declared; wasmtime is the runtime, named only by `verbatim-ext`,
-  and built-in modules run in the outposts and Core, each installed
-  extension in a sandboxed host process of its own, never in the listener
-  (section 7; [design](https://github.com/Neurrone/verbatim/blob/main/docs/design/extensions.md)). Why: unlike NVDA's Python
-  add-ons, the surface is enumerable from the binary, and an installed
-  extension's escape from the runtime reaches only its own sandbox.
-  Decided 2026-07-13. Amended 2026-10-24 and 2026-10-31 (Dickson).
+  never declared; wasmtime is the runtime, named only by `verbatim-ext`.
+  Every installed extension, of every kind and native code included, runs
+  in a contained host process of its own; built-in modules run in the
+  outposts and Core unless they hold native code or import the network,
+  and never in the listener (section 7;
+  [design](https://github.com/Neurrone/verbatim/blob/main/docs/design/extensions.md)).
+  Why: unlike NVDA's Python add-ons, the surface is enumerable from the
+  binary, and an extension's crash, hang or escape from the runtime
+  reaches only its own container. Decided 2026-07-13. Amended 2026-10-24,
+  2026-10-31 and 2026-11-06 (Dickson).
 - **D7, braille last.** Braille is implemented last, with its traits and
   pipeline seams present from the start. Why: no hardware is available
   for development. Decided 2026-07-13.
@@ -140,12 +143,16 @@ screen reader in both rendered and source form.
   (`books/dev/src/reference/crates/verbatim-speech.md`). Why: say-all and cancellation need
   endings true for every synthesizer. Decided 2026-10-04.
 - **D18, native synthesizers run in a synthesizer host process.** Each
-  `verbatim-synth-host.exe` runs one synthesizer, OneCore and eSpeak NG
-  included, behind the `SynthDriver` trait over a pipe, and loads native
-  engines through C-ABI adapter DLLs in an AppContainer (section 6).
-  Verbatim is GPL version 3 or later, and eSpeak NG is linked into the
-  host only. Why: an engine's crash or hang costs one restartable process,
-  never Core. Decided 2026-10-04. Amended 2026-10-22 (Dickson).
+  built-in engine, OneCore and eSpeak NG, runs in a
+  `verbatim-synth-host.exe` of its own, and an installed synthesizer runs
+  in its extension's own host (D6), which serves it over the same
+  protocol: the `SynthDriver` trait over a pipe, with native engines
+  loaded through C-ABI adapter DLLs in an AppContainer (section 6). The
+  x86 host for 32-bit engines carries no Wasm runtime, so an extension
+  whose native code is built only for x86 holds nothing else. Verbatim is
+  GPL version 3 or later, and eSpeak NG is linked into the host only. Why:
+  an engine's crash or hang costs one restartable process, never Core.
+  Decided 2026-10-04. Amended 2026-10-22 and 2026-11-06 (Dickson).
 
 ## 1. Process and thread model
 
@@ -179,9 +186,10 @@ Verbatim runs as four kinds of process:
    - the relay thread, which reads every child's pipe on one completion
      port and finishes the writes to them that pended;
    - the global modules' threads (wasmtime with epoch preemption), planned
-     for M5; built-in app modules run in outposts and each installed
-     extension in a sandboxed host process of its own (D6); `verbatim-ext`
-     is a skeleton today.
+     for M5, where built-in global modules and speech-text stages run;
+     built-in app modules run in outposts and each installed extension in
+     a contained host process of its own (D6); `verbatim-ext` is a
+     skeleton today.
 2. **Outpost processes (`verbatim-outpost.exe`), one per target application**
    (D9), each containing an event thread (WinEvent message loop and UIA
    callbacks), one worker, the only thread that calls into the
@@ -195,9 +203,11 @@ Verbatim runs as four kinds of process:
    reads, with their watchdog, and an I/O thread that reads Core's
    commands; like an outpost's, every other thread writes its own
    messages.
-4. **Synthesizer host processes** (D18) — one per synthesizer in use, in
-   a kill-on-close job, streaming PCM to Core over a pipe; the AppContainer
-   sandbox arrives with Eloquence in M6.
+4. **Extension host processes** (D6, D18), one per installed extension in
+   use, one per built-in engine and one per built-in that imports the
+   network, each in a kill-on-close job; a synthesizer's host streams PCM
+   to Core over a pipe. Every installed extension's host is contained in
+   an AppContainer from M5, and native synthesizers' from M6.
 
 A supervisor in Core spawns outposts, tracks their health, and kills and
 respawns any that stop responding. Because Windows has no parent-child
@@ -847,9 +857,10 @@ language tagging, synth driver, PCM, the mixer (D17), and the
     synthesizer host process (D18).
   - **Wasm synths**: components implementing the `verbatim:synth` WIT world,
     receiving the typed speech sequence and returning PCM. Path for
-    source-available synths. Whether they run in Core's extension host or
-    in a synth host is decided in M5.
-  - **Native synth host** (D18): one process per synthesizer, matching the
+    source-available synths. An installed one runs in its extension's own
+    host (D6), as every installed extension does.
+  - **Native synth host** (D18): one process per built-in synthesizer,
+    and an installed one in its extension's own host (D6), matching the
     DLL's architecture (x86 under emulation if needed, M6), streaming PCM
     over a pipe. Eloquence adds the AppContainer sandbox in M6. Latency
     budget applies equally (the pipe hop is tens of microseconds). A host
@@ -897,15 +908,19 @@ language tagging, synth driver, PCM, the mixer (D17), and the
 ## 7. Extensions (Wasm)
 
 - Runtime: wasmtime with the component model (per D6, replaceable); host API
-  defined in WIT (`verbatim:ext`). Epoch-based preemption means a runaway
+  defined in WIT (`verbatim:ext`). Epoch-based preemption means a runaway Wasm
   extension is interrupted, never hangs its host. Built-in app modules run
-  on outpost workers and global modules on Core threads of their own; each
-  installed extension runs in a sandboxed host process of its own (D6;
+  on outpost workers and built-in global modules on Core threads of their
+  own; each installed extension runs in a contained host process of its
+  own (D6;
   [security model](https://github.com/Neurrone/verbatim/blob/main/docs/design/security-model.md), X4).
 - Capability-gated, deny-by-default: a component's capabilities are
-  derived from the interfaces it imports, never declared (tree-query,
-  event subscription, speech/braille output, gesture binding, config,
-  namespaced storage, OCR; each is a separate grant surfaced to the user).
+  derived from the interfaces it imports, never declared; a native
+  module, which has no import list, states its network use in its
+  manifest. The install dialog shows where the user's content can flow,
+  not each grant
+  ([security model](https://github.com/Neurrone/verbatim/blob/main/docs/design/security-model.md),
+  section 2.1).
 - Extension kinds: **app modules** (activated per application, mirroring
   outpost lifecycle — this is where Office- and browser-specific behavior
   lives; terminal behavior is not here but generic, in the core, keyed by
@@ -1007,11 +1022,11 @@ The threat model and its mitigations are in
 
 - No injection unless and until the D2 helper ships (M7), and then only via
   it.
-- Native synth DLLs and installed Wasm extensions run in sandboxed processes
-  of their own. Core still loads some third-party native code in-process:
+- Every installed extension, native synthesizer DLLs included, runs in a
+  contained process of its own. Core still loads some third-party native code in-process:
   the shell extensions a file dialog brings, the input methods of its text
   fields, and other programs' global hook DLLs on its message-pumping
-  threads. The GUI stays in Core by decision. Amended 2026-11-05 (Dickson).
+  threads. The GUI stays in Core by decision. Amended 2026-11-05 and 2026-11-06 (Dickson).
 - **UIAccess**: reading elevated apps' UI from a non-elevated Verbatim
   requires `uiAccess=true`, which requires signed binaries in a trusted path —
   an installer/signing prerequisite tracked from the start (R5).

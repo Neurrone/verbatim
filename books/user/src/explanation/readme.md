@@ -1,3 +1,5 @@
 # Explanation
 
-Not written yet.
+## Extensions
+
+- [Extensions and your privacy](extensions-and-privacy.md)
