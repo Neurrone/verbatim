@@ -32,7 +32,7 @@ Neither connection recovery nor event coalescing changes these outcomes (checked
 
 | Figure | Date | Machine | Source | Threshold |
 |---|---|---|---|---|
-| No request for cached reads, a second `GetRuntimeId`, the desktop parent and the proxies' parts; `GetFocusedElement` 6 requests into mockapp in front, none otherwise | 2026-11-02 | Build 26200.9711 | `experiments/parallel-uia-calls/`, "Requests per client operation" (`ops.ps1`) | 0 calls |
+| No request for cached reads, a second `GetRuntimeId`, the desktop parent and the proxies' parts; `GetFocusedElement` 6 requests into mockapp in front, none otherwise | 2026-11-02 | Build 26200.9711 | the parallel-calls experiment's readme, in git at fdfb63ae, "Requests per client operation" (`ops.ps1`) | 0 calls |
 | `CompareElements`: 10 of 10 "different" in under 0.1 ms, no call in either application, one stalled | 2026-10-29 | Build 26200 | The `CompareElements` experiment of `docs/design/cross-process-calls-study.md`, `recorded/compareelements.txt` | (false, 0 calls) |
 | The lapse: 9 against 3; per element; warm with the workaround; `AdviseEventRemoved` late | 2026-11-03 | Build 26200 | `books/dev/src/reference/uia-bugs.md`, from experiments whose code was not kept | As each claim |
 | First uia-facts run, `no-call`: 0 provider calls in 3 of 3 for the cached read, the second `GetRuntimeId`, the sender's `GetRuntimeId` in its callback, `CompareElements` (answered "different" within 100 ms with one application busy), the desktop parent and the title bar with its 5 parts | 2026-11-05 | Build 26200.9711, `UIAutomationCore.dll` 7.2.26100.9549, AMD Ryzen 7 5700G | 5ad6b886 | Pass |

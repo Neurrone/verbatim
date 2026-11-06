@@ -30,7 +30,7 @@ Event coalescing changes no outcome, and connection recovery changes one, `aband
 | Figure | Date | Machine | Source | Threshold |
 |---|---|---|---|---|
 | Every cancel `RPC_E_NO_CONTEXT`, 5,614 of 5,614 over 203 trials; held calls returned 0.0 to 2.9 ms after the release; new connections failed `UIA_E_TIMEOUT` before the release | 2026-10-30 | Build 26200 | The `CoCancelCall` experiment of 2026-10-30, run at 5797c075; its outputs are in `recorded/` | Deterministic; band 1,984 to 2,350 ms at a 2,000 ms timeout; 484 to 625 ms at the 500 ms the case now sets |
-| Abandoning: every later call waited for the release; the first answer after it within 2 ms either way | 2026-11-02 | Build 26200.9711 | `experiments/parallel-uia-calls/`, "Abandoning a stuck call" | A relation; the 2 ms for trends |
+| Abandoning: every later call waited for the release; the first answer after it within 2 ms either way | 2026-11-02 | Build 26200.9711 | the parallel-calls experiment's readme, in git at fdfb63ae, "Abandoning a stuck call" | A relation; the 2 ms for trends |
 | First uia-facts run, `property`, `text`, `findall`, `remote`: every cancel `RPC_E_NO_CONTEXT` (294 cancels in 12 trials each), every call `ok`, each returning only at the release or the stall's end | 2026-11-05 | Build 26200.9711, `UIAutomationCore.dll` 7.2.26100.9549, AMD Ryzen 7 5700G | c84ab856 | Pass |
 | First uia-facts run, `connection`: every cancel `RPC_E_NO_CONTEXT`; `UIA_E_TIMEOUT` 12 of 12, each before the release; 2,008.5 ms (1,999.8 to 2,022.2) | 2026-11-05 | As above | As above | The band inconclusive; the rest pass |
 | First uia-facts run, `property`, cancellation never enabled: `RPC_E_NO_CONTEXT` 3 of 3 | 2026-11-05 | As above | As above | Pass |

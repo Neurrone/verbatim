@@ -24,7 +24,7 @@ Neither connection recovery nor event coalescing changes these outcomes (checked
 
 | Figure | Date | Machine | Source | Threshold |
 |---|---|---|---|---|
-| The raw probe agreed with `UiaHasServerSideProvider` on every one of 88 windows that answered 0 or `0x10000`; 3 File Explorer child windows answered `0xffffffff80040201` | 2026-10-18 | Build 26200 | `e39-classify.ps1` in the probe's experiments, in git before the commit that moved them here | History |
+| The raw probe agreed with `UiaHasServerSideProvider` on every one of 88 windows that answered 0 or `0x10000`; 3 File Explorer child windows answered `0xffffffff80040201` | 2026-10-18 | Build 26200 | `e39-classify.ps1` in the probe's experiments, in git at fdfb63ae | History |
 | First uia-facts run: the UIA window `0x10000` and true; the `IAccessible` window and the plain window 0 and false; the console host `0x10000` and true | 2026-11-06 | Build 26200.9711, `UIAutomationCore.dll` 7.2.26100.9549, AMD Ryzen 7 5700G | fdfb63ae | Pass |
 
 ## How to rerun

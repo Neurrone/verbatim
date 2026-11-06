@@ -27,7 +27,7 @@ Neither connection recovery nor event coalescing changes the `stuck` case's outc
 
 | Figure | Date | Machine | Source | Threshold |
 |---|---|---|---|---|
-| MSAA during a stuck UIA call: 1.2 to 2.6 ms; UIA waits | 2026-11-02 | Build 26200.9711 | `experiments/parallel-uia-calls/`, "MSAA calls while a UIA call is stuck" (`msaa-while-stuck.ps1`) | Relations; the time for trends |
+| MSAA during a stuck UIA call: 1.2 to 2.6 ms; UIA waits | 2026-11-02 | Build 26200.9711 | the parallel-calls experiment's readme, in git at fdfb63ae, "MSAA calls while a UIA call is stuck" (`msaa-while-stuck.ps1`) | Relations; the time for trends |
 | oleacc's `accName` sends `WM_GETTEXTLENGTH` and `WM_GETTEXT` | 2026-11-02 | Build 26200.9711 | The same, "Why MSAA slowed with more threads" (`msaa-path.ps1`) | (1, 1) |
 | Sent messages at 0.52 to 0.78 times one thread's rate | 2026-11-02 | Build 26200.9711 | The same | Slower than one thread; the ratio for trends |
 | First uia-facts run, `stuck`: each of the three `accName`s answered during the hold, 3 of 3 (the bridge 0.9 ms, the window's own `IAccessible` 0.2 ms, oleacc's proxy 0.1 ms); the UIA read waited for the release, 3 of 3 | 2026-11-05 | Build 26200.9711, `UIAutomationCore.dll` 7.2.26100.9549, AMD Ryzen 7 5700G | c84ab856 | Pass |

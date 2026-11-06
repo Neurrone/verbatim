@@ -16,8 +16,8 @@ A guide only: the internals are function names in `UIAutomationCore.dll`, which 
 
 | Figure | Date | Machine | Source | Threshold |
 |---|---|---|---|---|
-| The pipe `UIA_PIPE_6268_dcaa6add` made by the client's calling thread in `ChannelBasedClientConnectionManager::CreatePipeToProvider`, after `UIA_CONNECT_EVENT_6268_dcaa6add` and `UIA_NOBODY_THERE_EVENT_6268_dcaa6add`; opened by mockapp's I/O thread with `CreateFileW` | 2026-11-02 | Build 26200.9711 | `experiments/parallel-uia-calls/`, "The transport", `results/transport.txt` | The names' form and the functions |
-| The I/O thread created from `UiaReturnRawElementProvider` on the first connection, starting in `OverlappedIOManager::StaticIoThreadProc`; one after 30 connections from 5 client processes | 2026-11-02 | Build 26200.9711 | The same, "UIA's I/O thread", `results/iothread-count-*.txt` | Exactly one thread |
+| The pipe `UIA_PIPE_6268_dcaa6add` made by the client's calling thread in `ChannelBasedClientConnectionManager::CreatePipeToProvider`, after `UIA_CONNECT_EVENT_6268_dcaa6add` and `UIA_NOBODY_THERE_EVENT_6268_dcaa6add`; opened by mockapp's I/O thread with `CreateFileW` | 2026-11-02 | Build 26200.9711 | the parallel-calls experiment's readme, in git at fdfb63ae, "The transport", `recorded/transport.txt` | The names' form and the functions |
+| The I/O thread created from `UiaReturnRawElementProvider` on the first connection, starting in `OverlappedIOManager::StaticIoThreadProc`; one after 30 connections from 5 client processes | 2026-11-02 | Build 26200.9711 | The same, "UIA's I/O thread", `recorded/iothread-count-*.txt` | Exactly one thread |
 | Releases delivered by the I/O thread in batches, `ReleaseCollection::DispatchReleases`: 23 requests for 30 elements, in 11 batches | 2026-11-02 | Build 26200.9711 | The same, "Events and releases" | The frame present |
 | An event written to the pipe by the raising thread (`ChannelBasedServerConnection::SendEventData`), not the I/O thread | 2026-11-02 | Build 26200.9711 | The same | The writing thread |
 

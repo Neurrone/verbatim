@@ -29,7 +29,7 @@ Event coalescing changes no outcome, and connection recovery changes the `stall-
 
 | Figure | Date | Machine | Source | Threshold |
 |---|---|---|---|---|
-| E-TT's search 13,208 ms (13,195 to 13,211 later); the queued search 1,083 to 1,106 ms; the stall sweep 332, 618, 1,545 and 4,207 to 4,209 ms, the `Find` sent only at 1,000 ms | 2026-10-10 and 2026-11-02 | Build 26200 and 26200.9711 | E-TT in the mockapp experiments, in git at b0a1989, `recorded/e-tt-rerun.txt`; `experiments/parallel-uia-calls/`, "A search's timeouts" (`search-timeouts.ps1`) | `UIA_E_TIMEOUT`; bands of the waits' sums |
+| E-TT's search 13,208 ms (13,195 to 13,211 later); the queued search 1,083 to 1,106 ms; the stall sweep 332, 618, 1,545 and 4,207 to 4,209 ms, the `Find` sent only at 1,000 ms | 2026-10-10 and 2026-11-02 | Build 26200 and 26200.9711 | E-TT in the mockapp experiments, in git at b0a1989, `recorded/e-tt-rerun.txt`; the parallel-calls experiment's readme, in git at fdfb63ae, "A search's timeouts" (`search-timeouts.ps1`) | `UIA_E_TIMEOUT`; bands of the waits' sums |
 | E3: 22,111 ms at the default, 1,092 ms at 1 s | 2026-10-10 | Build 26200 | E3 in the mockapp experiments, in git at b0a1989 | Checked now by [a call waits its timeout from its own start](../a-call-waits-its-timeout-from-its-own-start/readme.md) (`waits`), which holds a read at the same timeouts |
 | First uia-facts run, `ett`: `UIA_E_TIMEOUT` 5 of 5, 13,206 ms (13,196 to 13,220) | 2026-11-05 | Build 26200.9711, `UIAutomationCore.dll` 7.2.26100.9549, AMD Ryzen 7 5700G | c84ab856 | Pass |
 | First uia-facts run, `queued-search`: `UIA_E_TIMEOUT` 5 of 5, 1,087 ms (1,082 to 1,094) | 2026-11-05 | As above | As above | Pass |

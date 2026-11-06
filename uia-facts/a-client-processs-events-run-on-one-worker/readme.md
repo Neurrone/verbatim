@@ -27,7 +27,7 @@ Neither connection recovery nor event coalescing changes these outcomes (checked
 | Figure | Date | Machine | Source | Threshold |
 |---|---|---|---|---|
 | Two client objects shared the worker: an event on one waited behind the other's focus tracking | 2026-10-18 | Build 26200 | `h3`'s client variants, kept with [the hung-window fact](../a-hung-window-named-in-a-system-focus-event-holds-a-processs-uia-events/readme.md) | A relation |
-| Four events on four thread ids, the handler on `WorkItemQueue::StaticThreadProc` | 2026-11-02 | Build 26200.9711 | `experiments/parallel-uia-calls/`, "Events and releases", `results/ops-event-stacks.txt` | Deterministic, 4 |
+| Four events on four thread ids, the handler on `WorkItemQueue::StaticThreadProc` | 2026-11-02 | Build 26200.9711 | the parallel-calls experiment's readme, in git at fdfb63ae, "Events and releases", the requests guide's `recorded/ops-event-stacks.txt` | Deterministic, 4 |
 | First uia-facts run, `shared`: with 2 and 8 client objects, every other object heard B2's event after the slow handler returned | 2026-11-06 | Build 26200.9711, `UIAutomationCore.dll` 7.2.26100.9549, AMD Ryzen 7 5700G | 132b6af4 | Pass for 2; the answer for 8 |
 | First uia-facts run, `threads`: four thread ids for four events to registrations removed after them; one thread for four events to one registration kept, still running 750 ms after each; one thread for four raised at once; every handler on a thread other than the registering one | 2026-11-06 | As above | As above | Pass; the rest the answers |
 | First uia-facts run, `slow-handler` and `slow-query`: the later event waited, true each | 2026-11-06 | As above | As above | The answers |

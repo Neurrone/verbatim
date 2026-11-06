@@ -42,7 +42,7 @@ Neither connection recovery nor event coalescing changes these outcomes (checked
 | `serial`: 0 of 150 in each of seven runs, by default three times more and once with each client setting; `exit` in the same first run 2 of 150 | 2026-11-06 | As above | 6636322e | Prevents it: apart from 8 of 230 |
 | `providers-alive`: 2, 13, 4, 9, 4 and 4 of 150 in the same six runs, hangs and access violations both | 2026-11-06 | As above | 6636322e | No difference shown; one run of 13 inconclusive |
 | Under cdb with full page heap, 150 children of `exit`'s setup: two or three client threads inside `StartConnection` at once in most children; after it, the forward chain shorter than the size count, or the head's back link not naming the chain's last node, in 6 of them (children 9, 16, 69, 78, 81 and 100); none faulted at exit, since the providers' erases left each list consistent first | 2026-11-06 | As above | 6636322e | The mechanism |
-| `exit`, its children no longer multiplied by `--trials`: 5 of 150, all hangs | 2026-11-06 | As above | 69f2730a | Pass against 8 of 230 |
+| `exit`, its children no longer multiplied by `--trials`: 5 of 150, all hangs | 2026-11-06 | As above | 9b2ed29a | Pass against 8 of 230 |
 | Under cdb with full page heap, 152 children of `providers-alive`'s setup: child 48 ended with an access violation freeing the telemetry list's head node as a record, after three client threads inside `StartConnection` at once and a later insert that left the head's back link off the forward chain; children 10, 13 and 33 ended with fewer nodes than the size count and did not fault | 2026-11-06 | As above | `recorded/providers-alive-fault.txt` | The fault's stack |
 
 ## How to rerun

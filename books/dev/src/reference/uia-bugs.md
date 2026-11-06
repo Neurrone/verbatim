@@ -73,7 +73,7 @@ No test in `crates/mockapp/tests/uia_bugs/` reproduces it; the fact program in [
 
 #### Evidence
 
-[`uia-facts/a-new-connection-fails-while-another-processs-remote-operation-is-queued/`](https://github.com/Neurrone/verbatim/blob/main/uia-facts/a-new-connection-fails-while-another-processs-remote-operation-is-queued/readme.md): the collide tool's experiments `e1` to `e36` and the second form's frequency, as its recorded results, the Notepad and Windows Terminal launches that met the fault, kept in its `recorded/`, and the fact program that reproduces the collision, the spared calls, the console host's exemption and the second form against uia-facts' provider program. The collide tool's patches, scripts and outputs are in git, in the commit before the one that moved them.
+[`uia-facts/a-new-connection-fails-while-another-processs-remote-operation-is-queued/`](https://github.com/Neurrone/verbatim/blob/main/uia-facts/a-new-connection-fails-while-another-processs-remote-operation-is-queued/readme.md): the collide tool's experiments `e1` to `e36` and the second form's frequency, as its recorded results, the Notepad and Windows Terminal launches that met the fault, kept in its `recorded/`, and the fact program that reproduces the collision, the spared calls, the console host's exemption and the second form against uia-facts' provider program. The collide tool's patches, scripts and outputs are in git at fdfb63ae.
 
 ### UiaHasServerSideProvider says no for a new conhost window while another process has an event handler
 
@@ -409,7 +409,7 @@ NVDA reads the sender's keyboard focus plainly in `shouldAllowUIAFocusEvent` (li
 
 #### Reproduction test
 
-No test reproduces it yet; mockapp has no second identity. `crates/mockapp/tests/focus_reports.rs` and `call_counts.rs` pin the plain read and its cost. The fact program in [`uia-facts/a-remote-operations-keyboard-focus-read-can-differ-from-a-plain-read/`](https://github.com/Neurrone/verbatim/blob/main/uia-facts/a-remote-operations-keyboard-focus-read-can-differ-from-a-plain-read/readme.md) shows that on uia-facts' provider program, which answers for itself, the two reads agree; the second identity is Windows Terminal's own behaviour, and no fact program tries it.
+No test reproduces it yet; mockapp has no second identity. `crates/mockapp/tests/focus_reports.rs` and `call_counts.rs` pin the plain read and its cost.
 
 #### Evidence
 

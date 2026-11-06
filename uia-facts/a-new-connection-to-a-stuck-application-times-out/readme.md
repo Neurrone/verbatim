@@ -26,7 +26,7 @@ Event coalescing changes no outcome, and connection recovery changes one, the bu
 
 | Figure | Date | Machine | Source | Threshold |
 |---|---|---|---|---|
-| `UIA_E_TIMEOUT` after 2.0 to 2.2 s, to any window, an idle UI thread's included | 2026-11-02 | Build 26200.9711 | `experiments/parallel-uia-calls/`, "A UI thread suspended, or a provider held, for 4 seconds" (`run-mockapp.ps1`'s suspended cases) | `UIA_E_TIMEOUT`; band 1,984 to 2,350 ms |
+| `UIA_E_TIMEOUT` after 2.0 to 2.2 s, to any window, an idle UI thread's included | 2026-11-02 | Build 26200.9711 | the parallel-calls experiment's readme, in git at fdfb63ae, "A UI thread suspended, or a provider held, for 4 seconds" (`run-mockapp.ps1`'s suspended cases) | `UIA_E_TIMEOUT`; band 1,984 to 2,350 ms |
 | First uia-facts run, `connection`: `UIA_E_TIMEOUT` 5 of 5 to each window; idle thread's window 2,195.9 ms (2,184.0 to 2,199.4), busy thread's 2,199.1 ms (2,195.7 to 2,201.9) | 2026-11-05 | Build 26200.9711, `UIAutomationCore.dll` 7.2.26100.9549, AMD Ryzen 7 5700G | c84ab856 | Pass |
 | First uia-facts run, `description`: `queued` timeout 3 of 3 (pass); `busy` timeout 3 of 3 (new); `held` timeout 3 of 3 (new) | 2026-11-05 | As above | As above | `queued` pass; the others recorded as the answer |
 

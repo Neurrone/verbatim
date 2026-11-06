@@ -16,7 +16,7 @@ A guide: requests are counted with cdb on both sides, which no program can judge
 
 | Figure | Date | Machine | Source | Threshold |
 |---|---|---|---|---|
-| Every count in the fact, on mockapp | 2026-11-02 | Build 26200.9711 | `experiments/parallel-uia-calls/`, "Requests per client operation" and "One call's requests", `results/ops-requests.txt` and `results/findall-requests.txt` | History: the provider program's tree differs |
+| Every count in the fact, on mockapp | 2026-11-02 | Build 26200.9711 | the parallel-calls experiment's readme, in git at fdfb63ae, "Requests per client operation" and "One call's requests", `recorded/ops-requests.txt` and `recorded/findall-requests.txt` | History: the provider program's tree differs |
 | The provider calls of each operation against the provider program | 2026-11-05 | Build 26200.9711, `UIAutomationCore.dll` 7.2.26100.9549, AMD Ryzen 7 5700G | The operations case's first run, below | Recorded for trends |
 
 ## How to rerun
