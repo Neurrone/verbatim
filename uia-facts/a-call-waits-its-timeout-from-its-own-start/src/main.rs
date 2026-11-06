@@ -32,9 +32,7 @@ use std::time::{Duration, Instant};
 use uia_facts_support::args::{Args, trials};
 use uia_facts_support::note;
 use uia_facts_support::provider::Provider;
-use uia_facts_support::report::{
-    Report, Verdict, band, band_text, deterministic, in_band, relation, runs,
-};
+use uia_facts_support::report::{Report, band, band_text, deterministic, in_band, relation, runs};
 use uia_facts_support::stats::summary_ms;
 use uia_facts_support::uia::{self, Timed};
 use windows::Win32::Media::{timeBeginPeriod, timeEndPeriod};
@@ -379,6 +377,10 @@ fn mark(args: &Args, report: &mut Report) {
             &t.other_client
         }),
     ];
+    // The first runs' answers (2026-11-06): with connection recovery on,
+    // both fail at once, in 0.1 to 0.2 ms; with it off, each waits its
+    // own timeout.
+    let recovery = uia::settings().recovery;
     for (what, pick) in picks {
         let reads: Vec<&Timed> = trials.iter().map(pick).collect();
         let fast: Vec<bool> = reads.iter().map(|r| at_once(r)).collect();
@@ -394,8 +396,12 @@ fn mark(args: &Args, report: &mut Report) {
                 runs(&outcomes),
                 summary_ms(&times)
             ),
-            "",
-            Verdict::New,
+            if recovery {
+                "true, UIA_E_TIMEOUT in 0.1 to 0.2 ms (the first runs)"
+            } else {
+                "false, UIA_E_TIMEOUT after one timeout (the first run)"
+            },
+            deterministic(&fast, &recovery),
         );
     }
     let after: Vec<String> = trials
@@ -407,10 +413,28 @@ fn mark(args: &Args, report: &mut Report) {
             )
         })
         .collect();
-    report.claim(
-        "after the release, reading every 10 ms, the first read that succeeds",
-        &after.join("; "),
-        "",
-        Verdict::New,
-    );
+    if recovery {
+        // The first runs' 2,002 to 2,005 ms, judged by the band rule from
+        // the 2,004 ms of the first: the length looks set by UIA, not by
+        // the machine.
+        let lengths: Vec<f64> = trials
+            .iter()
+            .map(|t| t.succeeded_after.unwrap_or(f64::INFINITY))
+            .collect();
+        let window = band(&[2_004.0]);
+        report.claim(
+            "with connection recovery on, after the release, reading every 10 ms: the first read that succeeds",
+            &after.join("; "),
+            &format!("2,002 to 2,005 ms (the first runs), {}", band_text(window)),
+            in_band(&lengths, window),
+        );
+    } else {
+        let at_once: Vec<bool> = trials.iter().map(|t| t.failed_first == 0).collect();
+        report.claim(
+            "with connection recovery off, after the release, the first read succeeds",
+            &format!("{} ({})", runs(&at_once), after.join("; ")),
+            "true (the first run)",
+            relation(&at_once),
+        );
+    }
 }

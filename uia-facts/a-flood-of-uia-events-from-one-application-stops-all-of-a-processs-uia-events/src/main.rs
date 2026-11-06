@@ -25,9 +25,10 @@ const DESKTOP: &str = "uia-facts";
 /// How long `stops` watches after the flood: `q2long` watched 90 s, and
 /// this case narrows the claim to what fits the program's run time.
 const WATCH_S: u64 = 10;
-/// The events each of `stops`' windows floods, 1 s at 10,000 a second:
-/// `q2` flooded 30,000, and the client stopped after the first 83 to 110.
-const FLOOD: usize = 10_000;
+/// The events each of `stops`' windows floods, 3 s at 10,000 a second,
+/// as `q2` flooded: with 10,000 the text-flooded client kept hearing in 3
+/// of 13 runs.
+const FLOOD: usize = 30_000;
 
 fn main() {
     let args = Args::parse();
@@ -40,7 +41,7 @@ fn main() {
         "a-flood-of-uia-events-from-one-application-stops-all-of-a-processs-uia-events",
     );
     if args.wants("stops") {
-        report.case("stops", "three windows each flooding 10,000 events at 10,000 a second for 1 s, name changes, text changes and notifications; a client registered for each flood and for B's name changes, and one for B's alone; B renamed every 250 ms until 10 s after the flood");
+        report.case("stops", "three windows each flooding 30,000 events at 10,000 a second for 3 s, name changes, text changes and notifications; a client registered for each flood and for B's name changes, and one for B's alone; B renamed every 250 ms until 10 s after the flood");
         stops(&args, &mut report);
     }
     if args.wants("rates") {

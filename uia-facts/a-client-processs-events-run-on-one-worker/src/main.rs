@@ -407,7 +407,7 @@ fn threads(args: &Args, report: &mut Report) {
         burst.push(ids.len());
     }
     report.claim(
-        "distinct thread ids of four events 800 ms apart, each to a registration removed after its event",
+        "distinct thread ids of four events, each to a registration removed after its event, the next made once its thread had ended",
         &runs(&distinct_removed),
         "4 (four events on four thread ids, ops.ps1's run 2, which removed each handler after its event)",
         deterministic(&distinct_removed, &4),
