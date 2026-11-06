@@ -192,7 +192,11 @@ fn case(report: &mut Report, threading: &str, window: usize, connected: bool) {
         provider.request("release");
         let their_end: u64 = theirs[2].parse().expect("a time");
         if let Some(answer) = read {
-            let read = early.unwrap_or_else(|| answer.recv().expect("B's read answers"));
+            let read = early.unwrap_or_else(|| {
+                answer
+                    .recv_timeout(Duration::from_secs(30))
+                    .expect("B's read answers after the release")
+            });
             note::evidence(&format!(
                 "this process's read {} {:.1} ms after the connection's start",
                 read.outcome,

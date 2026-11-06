@@ -29,7 +29,7 @@ use std::time::Duration;
 use uia_facts_support::args::Args;
 use uia_facts_support::events::{self, Handler};
 use uia_facts_support::provider::Provider;
-use uia_facts_support::report::{Report, rate};
+use uia_facts_support::report::{Report, Verdict};
 use uia_facts_support::role::{self, Role};
 use uia_facts_support::{apps, exit_now, now_us, rop, uia};
 use windows::Win32::UI::Accessibility::{
@@ -174,18 +174,31 @@ fn after(provider: &mut Provider) -> String {
     }
 }
 
-/// The verdict of `outcomes`: how many trials P continued in, against
-/// the first run's 20 of 20.
+/// The verdict of `outcomes`: P continued in every trial, judged
+/// deterministically.
 fn judge(report: &mut Report, what: &str, outcomes: &[String]) {
     let continued = outcomes.iter().filter(|o| *o == "continues").count();
     for other in outcomes.iter().filter(|o| *o != "continues") {
         uia_facts_support::note::evidence(&format!("a trial's provider: {other}"));
     }
+    // A trial whose kill missed the events or whose held call did not
+    // return is an unmet precondition, not a provider's failure.
+    let failed = outcomes
+        .iter()
+        .any(|o| o != "continues" && !o.starts_with("unmet: "));
+    let unmet = outcomes.iter().any(|o| o.starts_with("unmet: "));
+    let verdict = if failed {
+        Verdict::Differ
+    } else if unmet {
+        Verdict::Inconclusive("some trials missed their precondition".to_owned())
+    } else {
+        Verdict::Pass
+    };
     report.claim(
-        &format!("trials in which the provider continued after a client ended in {what}"),
+        &format!("the provider continued after a client ended in {what}, in every trial"),
         &format!("{continued} of {}", outcomes.len()),
-        "20 of 20 (the first run)",
-        rate(continued, outcomes.len(), 20, 20),
+        "every trial",
+        verdict,
     );
     if continued < outcomes.len() {
         uia_facts_support::note::print_evidence();
@@ -209,9 +222,8 @@ fn kill_among(provider: &mut Provider, pid: u32, request: &str) -> bool {
     let (when, kill_time) = std::sync::mpsc::channel();
     let killer = std::thread::spawn(move || {
         std::thread::sleep(Duration::from_millis(20));
-        let at = now_us();
         apps::kill(pid);
-        let _ = when.send(at);
+        let _ = when.send(now_us());
     });
     provider.request(request);
     let raised = now_us();
@@ -246,7 +258,7 @@ fn held(report: &mut Report, threading: &str, name: &str, hold: &str) {
         outcomes.push(if back {
             outcome
         } else {
-            format!("the held call not returned ({outcome})")
+            format!("unmet: the held call not returned ({outcome})")
         });
     }
     judge(
@@ -275,7 +287,7 @@ fn flood(report: &mut Report, threading: &str) {
         outcomes.push(if among {
             outcome
         } else {
-            format!("ended after the events were raised ({outcome})")
+            format!("unmet: ended after the events were raised ({outcome})")
         });
     }
     judge(
@@ -316,8 +328,8 @@ fn text_and_events(report: &mut Report) {
         let outcome = after(&mut provider);
         outcomes.push(match (among, back) {
             (true, true) => outcome,
-            (false, _) => format!("ended after the events were raised ({outcome})"),
-            (true, false) => format!("the held call not returned ({outcome})"),
+            (false, _) => format!("unmet: ended after the events were raised ({outcome})"),
+            (true, false) => format!("unmet: the held call not returned ({outcome})"),
         });
     }
     judge(

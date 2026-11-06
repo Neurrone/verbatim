@@ -18,6 +18,8 @@
 //! - `stall`, run only when named: the provider program's window, its UI
 //!   thread busy until the probe returns.
 
+mod e38;
+
 use std::time::Duration;
 
 use uia_facts_support::args::{Args, trials};
@@ -47,6 +49,7 @@ fn main() {
             "raw" => raw_role(),
             "starter" => starter_role(),
             "handler" => handler_role(&rest[0]),
+            e38::ROLE => e38::client_role(),
             other => panic!("unknown role {other}"),
         }
     }
@@ -57,6 +60,10 @@ fn main() {
         report.case("focus-handler", "on a desktop of its own: 30 new console windows, each probed as soon as it is found, beside another process holding an idle focus handler");
         probed(&mut report, Some("focus"), Some(DESKTOP), (0, TRIALS));
     }
+    if args.names("tooltip") {
+        report.case("tooltip", "on the unlocked desktop: e38-tooltip ported step for step, 60 trials: an idle tooltip handler in T; U probes and R sends the raw probe as soon as a new console window is found");
+        tooltip(&mut report);
+    }
     if args.names("no-handler") {
         report.case("no-handler", "on a desktop of its own: 30 new console windows, each probed as soon as it is found, with no other process holding a handler");
         probed(&mut report, None, Some(DESKTOP), (0, TRIALS));
@@ -66,6 +73,69 @@ fn main() {
         stall(&mut report);
     }
     report.finish();
+}
+
+/// Trials of the ported `e38-tooltip`: enough that its rate is told from
+/// none, at the records' 3 to 7 in 30.
+const PORT_TRIALS: usize = 60;
+
+fn tooltip(report: &mut Report) {
+    let claim = "trials in which UiaHasServerSideProvider answered no beside an idle tooltip handler (e38-tooltip ported)";
+    if let Err(reason) = precondition::unlocked_desktop() {
+        report.unmet(claim, &reason);
+        return;
+    }
+    note::waiting("about 2 minutes, 60 trials of new processes and a new console");
+    let trials = e38::run(PORT_TRIALS);
+    let no: Vec<f64> = trials
+        .iter()
+        .filter(|(probe, _)| probe.ends_with("result=false"))
+        .map(|(probe, _)| {
+            probe
+                .split(' ')
+                .find_map(|w| w.strip_prefix("ms="))
+                .and_then(|ms| ms.parse().ok())
+                .expect("the probe's time")
+        })
+        .collect();
+    let raw = trials
+        .iter()
+        .filter(|(_, raw)| raw.ends_with("lresult=0x10000"))
+        .count();
+    for (probe, raw) in &trials {
+        note::evidence(&format!("U: {probe}; R: {raw}"));
+    }
+    let observed = format!("{} of {PORT_TRIALS}", no.len());
+    report.claim(
+        claim,
+        &observed,
+        "7 of 30 (e38)",
+        rate(no.len(), PORT_TRIALS, 7, 30),
+    );
+    report.claim(
+        "the same against the rerun of e38-tooltip with its own tool",
+        &observed,
+        "3 of 30 (2026-11-06)",
+        rate(no.len(), PORT_TRIALS, 3, 30),
+    );
+    if !no.is_empty() {
+        report.claim(
+            "those answers' times",
+            &summary_ms(&no),
+            "3,022 to 3,058 ms",
+            Verdict::Trend,
+        );
+    }
+    report.claim(
+        "R's raw probe at the same moment answered 0x10000",
+        &format!("{raw} of {PORT_TRIALS}"),
+        "every one",
+        if raw == PORT_TRIALS {
+            Verdict::Pass
+        } else {
+            Verdict::Differ
+        },
+    );
 }
 
 /// `e38`'s U: a client object made at start, connected to nothing; told
@@ -87,23 +157,13 @@ fn prober_role() -> ! {
     exit_now(0)
 }
 
-/// Whether this process's desktop is the unlocked input desktop, where a
-/// window can be brought to the foreground.
-fn crate_desktop_has_input() -> bool {
-    precondition::unlocked_desktop().is_ok()
-}
-
 /// `e38`'s orchestrator's console step: starts a console host, reports
 /// `window <hwnd>` as soon as it finds it, and holds it until its input
 /// closes, so that neither client is the console host's parent.
 fn starter_role() -> ! {
     let console = Console::start();
     role::report(&format!("window {}", console.hwnd));
-    // As the orchestrator's console step did once it found the window:
-    // the console brought to the foreground.
-    if crate_desktop_has_input() {
-        let _ = uia_facts_support::apps::foreground(console.hwnd);
-    }
+
     for _ in role::commands() {}
     drop(console);
     exit_now(0)

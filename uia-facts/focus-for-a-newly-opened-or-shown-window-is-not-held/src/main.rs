@@ -7,9 +7,10 @@
 //! released and a focus `WinEvent` names it; B is renamed 200 ms later;
 //! 0.6 s after that P3 brings O to the front and opens a popup menu of its
 //! own over it, as Alt+F opens a menu. The stall ends once Verbatim's
-//! stand-in has heard B's change, or past its band's top: judged, the
-//! menu's first item's focus reaches the stand-in while B's change is
-//! still held.
+//! stand-in has heard B's change, or past its band's top: judged, whether
+//! the menu's first item's focus reaches the stand-in while B's change is
+//! still held, against the first run's answer: a Win32 popup menu's focus
+//! is held with B's change, where Notepad's menu's was not.
 
 use uia_facts_support::args::{Args, trials};
 use uia_facts_support::hung::{
@@ -17,12 +18,13 @@ use uia_facts_support::hung::{
 };
 use uia_facts_support::listen::{self, Line, Listener, heard_at};
 use uia_facts_support::provider::Provider;
-use uia_facts_support::report::{Report, band, band_text, in_band, relation, runs};
+use uia_facts_support::report::{Report, band, band_text, deterministic, in_band, runs};
 use uia_facts_support::stats::{summary_ms, us_to_ms};
 use uia_facts_support::{note, now_us, precondition, uia};
 
-/// The name of the menu's first item, which its focus names.
-const FIRST_ITEM: &str = "Menu first item";
+/// The name of the menu's first item, `Menu first item`, as a listening
+/// process reports a name: its spaces written as underscores.
+const FIRST_ITEM: &str = "Menu_first_item";
 
 fn main() {
     let args = Args::parse();
@@ -41,8 +43,7 @@ fn main() {
 }
 
 fn open_show(args: &Args, report: &mut Report) {
-    let claim =
-        "the newly opened menu's focus reaches the stand-in while B's name change is still held";
+    let claim = "a Win32 popup menu opened during the hold: its focus reaches the stand-in while B's name change is still held";
     if let Err(reason) = precondition::unlocked_desktop() {
         report.unmet(claim, &reason);
         return;
@@ -74,7 +75,15 @@ fn open_show(args: &Args, report: &mut Report) {
         until(raised + 800_000, "the menu, 0.6 s after B's name change");
         let opened_at = now_us();
         let front = opened.request("menu 0");
-        note::evidence(&format!("O in front as its menu opened: {front}"));
+        if front != "true" {
+            scene.release();
+            opened.request("menu-close 0");
+            report.unmet(
+                claim,
+                "the provider program's window did not come to the front",
+            );
+            return;
+        }
         let top = raised + us(two.1) + PAST_TOP_US;
         note::waiting("until B's name change is heard, at most past its band's top");
         let lines = until_heard(&d, "held", top);
@@ -102,7 +111,12 @@ fn open_show(args: &Args, report: &mut Report) {
         ));
         escaped.push(focus.iter().any(|at| b_at.is_none_or(|b| *at < b)));
     }
-    report.claim(claim, &runs(&escaped), "true", relation(&escaped));
+    report.claim(
+        claim,
+        &runs(&escaped),
+        "false: held with B's change (the first run, 4 of 4)",
+        deterministic(&escaped, &false),
+    );
     report.claim(
         "B's name change in the same hold",
         &summary_ms(&holds),

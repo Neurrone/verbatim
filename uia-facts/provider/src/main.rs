@@ -68,7 +68,8 @@
 //! - `post-null <w>`: posts `WM_NULL` to window w.
 //! - `menu <w>`: shows window w, brings it to the foreground and opens a
 //!   popup menu of its own over it (`TrackPopupMenuEx`), with the items
-//!   `Menu first item` and `Menu second item`; answered with whether the
+//!   `Menu first item` and `Menu second item`, the first selected by a Down
+//!   arrow posted before it opens; answered with whether the
 //!   window is in front, as the menu opens. The menu's modal loop keeps the
 //!   thread dispatching. `menu-close <w>` ends it.
 //! - `parent <w> <hwnd>`: makes window w a visible child window of window
@@ -529,6 +530,20 @@ fn open_menu(index: usize) {
         // SAFETY: a live menu and a static, terminated string.
         let _ = unsafe { AppendMenuW(menu, MF_STRING, id, text) };
     }
+    // The menu's modal loop takes this thread's keyboard messages, so a
+    // Down arrow posted before it opens selects the first item, as a menu
+    // opened from the keyboard has one selected.
+    // SAFETY: a window of this thread; the message waits in its queue.
+    let _ = unsafe {
+        PostMessageW(
+            Some(hwnd),
+            windows::Win32::UI::WindowsAndMessaging::WM_KEYDOWN,
+            WPARAM(usize::from(
+                windows::Win32::UI::Input::KeyboardAndMouse::VK_DOWN.0,
+            )),
+            LPARAM(1),
+        )
+    };
     // SAFETY: a live menu and a window of this thread; the call runs the
     // menu's modal loop until it ends.
     let _ = unsafe { TrackPopupMenuEx(menu, TPM_RETURNCMD.0, 50, 50, hwnd, None) };
