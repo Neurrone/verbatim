@@ -94,7 +94,7 @@ fn main() {
     if args.wants("waits") {
         report.case("waits", "holding node 1's name read in the provider at transaction timeouts of 2 and 5 s, then E-TT's name and keyboard-focus reads at 1 s; timing each read until it fails");
         for (timeout, recorded) in [(2_000, "2.2 s"), (5_000, "5.5 s")] {
-            waits(&args, &mut report, timeout, recorded, "");
+            waits(&args, &mut report, timeout, recorded, "", Factor::Tenth);
         }
         single_reads(&args, &mut report);
     }
@@ -111,8 +111,9 @@ fn main() {
             &args,
             &mut report,
             1_000,
-            "2,201.2 ms at 2,000 ms (the first run)",
+            "1,001.5 to 1,028.5 ms in 7 runs",
             " with the system timer at 1 ms",
+            Factor::Whole,
         );
         // SAFETY: undoes the call above.
         let _ = unsafe { timeEndPeriod(1) };
@@ -124,7 +125,43 @@ fn main() {
     report.finish();
 }
 
-fn waits(args: &Args, report: &mut Report, timeout: u32, recorded: &str, condition: &str) {
+/// How long a held read waits against its timeout T: the timeout and a
+/// tenth with the system timer left alone, the timeout itself with the
+/// timer at 1 ms. The two bands meet at 1.05 T, so a wait lies in one or
+/// the other.
+#[derive(Clone, Copy)]
+enum Factor {
+    /// From 1.05 T to the band rule's top, 1.15 T plus 50 ms.
+    Tenth,
+    /// From T less a tick to 1.05 T.
+    Whole,
+}
+
+impl Factor {
+    fn band(self, timeout: f64) -> (f64, f64) {
+        let (low, high) = band(&[timeout]);
+        match self {
+            Factor::Tenth => (timeout * 1.05, high),
+            Factor::Whole => (low, timeout * 1.05),
+        }
+    }
+
+    fn words(self) -> &'static str {
+        match self {
+            Factor::Tenth => "about 1.1 times",
+            Factor::Whole => "about",
+        }
+    }
+}
+
+fn waits(
+    args: &Args,
+    report: &mut Report,
+    timeout: u32,
+    recorded: &str,
+    condition: &str,
+    factor: Factor,
+) {
     // Each trial has its own provider and client object, so under
     // connection recovery no trial's timed-out read fails the next at once.
     let trials: Vec<Timed> = (0..trials())
@@ -145,12 +182,9 @@ fn waits(args: &Args, report: &mut Report, timeout: u32, recorded: &str, conditi
         TIMEOUT,
         deterministic(&outcomes, &TIMEOUT.to_owned()),
     );
-    // The timer case's first run (2,201.2 ms, 2,199.3 to 2,207.4, at
-    // 2,000 ms on 2026-11-05) is its record: the same 1.1 times the
-    // timeout, so it is judged by the same band.
-    let window = band(&[f64::from(timeout)]);
+    let window = factor.band(f64::from(timeout));
     report.claim(
-        &format!("it fails after about 1.1 times {timeout} ms{condition}"),
+        &format!("it fails after {} {timeout} ms{condition}", factor.words()),
         &summary_ms(&times),
         &format!("{recorded}, {}", band_text(window)),
         in_band(&times, window),

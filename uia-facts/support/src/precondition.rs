@@ -49,21 +49,36 @@ pub fn unlocked_desktop() -> Result<(), String> {
     }
 }
 
-/// cdb's path: `CDB` when set, otherwise the Windows SDK's x64 debugger.
+/// cdb's path: `CDB` when set, otherwise the app execution alias of `WinDbg` for
+/// this machine's architecture in `%LOCALAPPDATA%\Microsoft\WindowsApps`
+/// (`cdbX64.exe` or `cdbARM64.exe`), where winget's `Microsoft.WinDbg`
+/// puts it (`books/dev/src/how-to/debugging.md`, "Where cdb is").
 ///
 /// # Errors
 ///
-/// The reason, when no cdb is there.
+/// The reason, naming `CDB`, when no cdb is there.
 pub fn cdb() -> Result<PathBuf, String> {
-    let path = std::env::var_os("CDB").map_or_else(
-        || PathBuf::from(r"C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\cdb.exe"),
-        PathBuf::from,
-    );
-    if path.is_file() {
+    let alias = if cfg!(target_arch = "aarch64") {
+        "cdbARM64.exe"
+    } else {
+        "cdbX64.exe"
+    };
+    let path = if let Some(path) = std::env::var_os("CDB") {
+        PathBuf::from(path)
+    } else {
+        let local = std::env::var_os("LOCALAPPDATA")
+            .ok_or("LOCALAPPDATA is not set; set CDB to cdb's path")?;
+        PathBuf::from(local)
+            .join(r"Microsoft\WindowsApps")
+            .join(alias)
+    };
+    // An app execution alias is a reparse point that ordinary metadata
+    // cannot follow, so its presence is read without following it.
+    if std::fs::symlink_metadata(&path).is_ok() {
         Ok(path)
     } else {
         Err(format!(
-            "cdb is not at {}; set CDB to its path",
+            "cdb is not at {}; install WinDbg (winget's Microsoft.WinDbg) or set CDB to cdb's path",
             path.display()
         ))
     }
