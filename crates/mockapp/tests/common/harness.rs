@@ -7,11 +7,12 @@
 //! Why the process is not allowed to exit normally: a process that has
 //! connected to UIA providers sometimes hangs at full CPU, or crashes, in
 //! `UIAutomationCore.dll`'s own process-detach code as it exits normally,
-//! after all its tests have passed. The cause is a data race in UIA: its
-//! telemetry's map of provider connections is written without a lock by
-//! client threads that connect at once, which corrupts the list its detach
-//! code walks; making one connection at a time prevented it in 0 of 1,050
-//! runs, and releasing everything first does not (`books/dev/src/reference/uia-bugs.md`,
+//! after all its tests have passed. The detach code walks a corrupt list in
+//! UIA's telemetry of provider connections; the corruption followed three
+//! client threads connecting at once, the records show faults only with
+//! three or more, and it is inferred to be a race on that map, which nothing
+//! is seen to lock. Making one connection at a time prevented it in 0 of
+//! 1,050 runs, and releasing everything first does not (`books/dev/src/reference/uia-bugs.md`,
 //! "A process that used UIA can hang or crash as it exits"). Verbatim's own processes are not affected, because outposts and
 //! the listener end themselves with `TerminateProcess` once they have shut
 //! down, and never run that code (`books/dev/src/explanation/architecture.md`, section 1,

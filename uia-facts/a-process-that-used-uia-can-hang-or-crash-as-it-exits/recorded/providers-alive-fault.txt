@@ -1,0 +1,130 @@
+cdb transcript of child 48 of 152 children of the providers-alive setup under full page heap, 2026-11-06, Build 26200.9711, UIAutomationCore.dll 7.2.26100.9549.
+Trimmed: the debugger's start-up, module loads, the breakpoints' command text, and the second copy of thread 0's stack are removed; nothing else is edited.
+Breakpoints, at the offsets in the README's debugger guide: StartConnection's entry prints START with a count of threads inside it, its ret prints START_RET and walks the list (LIST, then BADLINK and BADSIZE where the walk disagrees with the head's back link or the size count), the destructor's entry prints DTOR_ENTER, the list and its walk, and an access violation prints the registers, the stack, the list and the page heap's record for each register's address.
+The third START line repeats thread 29b0 and key f54, though the third START_RET is on thread 18c0, so its thread and key are not used; only its count of threads inside, 3, is.
+
+CommandLine: "target\debug\a-process-that-used-uia-can-hang-or-crash-as-it-exits.exe" --role exiter 4 1 0 4 0 0 0 0 providers-alive
+Page heap: pid 0x2C84: page heap enabled with flags 0x3.
+ 0 e 00007ffe`dd55fdd8     0001 (0001)  0:**** uiautomationcore!TelemetryUtility::StartConnection
+ 1 e 00007ffe`dd55ff82     0001 (0001)  0:**** uiautomationcore!TelemetryUtility::StartConnection+0x1aa
+ 2 e 00007ffe`dd6b7858     0001 (0001)  0:**** uiautomationcore!TelemetryUtility::CloseConnection
+ 3 e 00007ffe`dd6b79a1     0001 (0001)  0:**** uiautomationcore!TelemetryUtility::CloseConnection+0x149
+ 4 e 00007ffe`dd6b7828     0001 (0001)  0:**** uiautomationcore!TelemetryUtility::`scalar deleting destructor'
+START tid=29b0 key=f54 inside=1
+START tid=ac8 key=3b3c inside=2
+OVERLAP_START
+START tid=29b0 key=f54 inside=3
+OVERLAP_START
+START_RET tid=ac8
+LIST walked=2 size=2
+START_RET tid=29b0
+LIST walked=2 size=2
+START_RET tid=18c0
+LIST walked=2 size=2
+START tid=ca4 key=ff0 inside=1
+START_RET tid=ca4
+BADLINK head.prev=0000015a33983fa0 expected=0000015a33a28fa0
+LIST walked=2 size=3
+BADSIZE
+DTOR_ENTER
+DUMP this=0000015a33961fb0 head=0000015a33878fa0 head.next=0000015a33a6dfa0 head.prev=0000015a33983fa0 size=3
+ node 0000015a33a6dfa0 next=0000015a33a28fa0 prev=0000015a33878fa0 key=ff0
+ node 0000015a33a28fa0 next=0000015a33878fa0 prev=0000015a33a6dfa0 key=3b3c
+BADLINK head.prev=0000015a33983fa0 expected=0000015a33a28fa0
+LIST walked=2 size=3
+BADSIZE
+(2c84.1a68): Access violation - code c0000005 (first chance)
+FAULT_AV
+Last event: 2c84.1a68: Access violation - code c0000005 (first chance)
+  debugger time: Fri Nov  6 13:29:59.891 2026 (UTC + 8:00)
+rax=0000000000000001 rbx=0000015a33878fd8 rcx=c0c0c0c0c0c0c0c0
+rdx=8181818181818182 rsi=0000015a2b88cdd0 rdi=00000000ffffffff
+rip=00007ffedd4a53f4 rsp=000000025defe860 rbp=00006c6cbae5a11c
+ r8=7ffffffffffffffc  r9=00000000ffffffff r10=00000000ffffffef
+r11=000000025defe770 r12=000000007ffe0385 r13=0000000000000001
+r14=000000025defeae8 r15=0000015a2b88c000
+iopl=0         nv up ei ng nz na pe nc
+cs=0033  ss=002b  ds=002b  es=002b  fs=0053  gs=002b             efl=00010286
+uiautomationcore!std::basic_string<unsigned short,std::char_traits<unsigned short>,std::allocator<unsigned short> >::~basic_string<unsigned short,std::char_traits<unsigned short>,std::allocator<unsigned short> >+0x44:
+00007ffe`dd4a53f4 4c8b41f8        mov     r8,qword ptr [rcx-8] ds:c0c0c0c0`c0c0c0b8=????????????????
+Child-SP          RetAddr               Call Site
+00000002`5defe860 00007ffe`dd4ef0c6     uiautomationcore!std::basic_string<unsigned short,std::char_traits<unsigned short>,std::allocator<unsigned short> >::~basic_string<unsigned short,std::char_traits<unsigned short>,std::allocator<unsigned short> >+0x44
+00000002`5defe890 00007ffe`dd6b747a     uiautomationcore!AppContainerInfo::~AppContainerInfo+0x12
+00000002`5defe8c0 00007ffe`dd6b7452     uiautomationcore!std::_List_node<std::pair<unsigned __int64 const ,TelemetryUtility::ProviderInfo>,void * __ptr64>::_Freenode<std::allocator<std::_List_node<std::pair<unsigned __int64 const ,TelemetryUtility::ProviderInfo>,void * __ptr64> > >+0x12
+00000002`5defe8f0 00007ffe`dd6b770a     uiautomationcore!std::_List_node<std::pair<unsigned __int64 const ,TelemetryUtility::ProviderInfo>,void * __ptr64>::_Free_non_head<std::allocator<std::_List_node<std::pair<unsigned __int64 const ,TelemetryUtility::ProviderInfo>,void * __ptr64> > >+0x1e
+00000002`5defe920 00007ffe`dd6b783a     uiautomationcore!std::_Hash<std::_Umap_traits<unsigned __int64,TelemetryUtility::ProviderInfo,std::_Uhash_compare<unsigned __int64,std::hash<unsigned __int64>,std::equal_to<unsigned __int64> >,std::allocator<std::pair<unsigned __int64 const ,TelemetryUtility::ProviderInfo> >,0> >::~_Hash<std::_Umap_traits<unsigned __int64,TelemetryUtility::ProviderInfo,std::_Uhash_compare<unsigned __int64,std::hash<unsigned __int64>,std::equal_to<unsigned __int64> >,std::allocator<std::pair<unsigned __int64 const ,TelemetryUtility::ProviderInfo> >,0> >+0x3a
+00000002`5defe950 00007ffe`dd6b7b02     uiautomationcore!TelemetryUtility::`scalar deleting destructor'+0x12
+00000002`5defe980 00007ffe`dd4a8929     uiautomationcore!std::_Ref_count<TelemetryUtility>::_Destroy+0x12
+00000002`5defe9b0 00007ffe`dd5ec295     uiautomationcore!std::_Ref_count_base::_Decref+0x29
+00000002`5defe9e0 00007ffe`fe439c85     uiautomationcore!`dynamic atexit destructor for 'TelemetryUtility::m_instance''+0x15
+00000002`5defea10 00007ffe`fe4398a7     ucrtbase!<lambda_f03950bc5685219e0bcd2087efbe011e>::operator()+0xa5
+00000002`5defea60 00007ffe`fe43985d     ucrtbase!__crt_seh_guarded_call<int>::operator()<<lambda_7777bce6b2f8c936911f934f8298dc43>,<lambda_f03950bc5685219e0bcd2087efbe011e> &,<lambda_3883c3dff614d5e0c5f61bb1ac94921c> >+0x3b
+00000002`5defea90 00007ffe`fe46494c     ucrtbase!execute_onexit_table+0x3d
+00000002`5defead0 00007ffe`dd60ab75     ucrtbase!__crt_state_management::wrapped_invoke<int (__cdecl*)(int * __ptr64),int * __ptr64,int>+0x2c
+00000002`5defeb00 00007ffe`dd60ac9e     uiautomationcore!dllmain_crt_process_detach+0x45
+00000002`5defeb40 00007fff`0103ef6a     uiautomationcore!dllmain_dispatch+0xe6
+00000002`5defeba0 00007fff`00f3b2e3     ntdll!LdrpCallInitRoutineInternal+0x22
+00000002`5defebd0 00007fff`00fa027f     ntdll!LdrpCallInitRoutine+0x93
+00000002`5defeea0 00007fff`00f9ef8e     ntdll!LdrShutdownProcess+0x17f
+00000002`5defefb0 00007ffe`ff9417ab     ntdll!RtlExitUserProcess+0x9e
+*** WARNING: Unable to verify checksum for a_process_that_used_uia_can_hang_or_crash_as_it_exits.exe
+00000002`5defefe0 00007ff6`0daf6870     KERNEL32!ExitProcessImplementation+0xb
+00000002`5deff010 00007ff6`0daf5be9     a_process_that_used_uia_can_hang_or_crash_as_it_exits!std::sys::exit::exit+0x10
+00000002`5deff040 00007ff6`0da85d77     a_process_that_used_uia_can_hang_or_crash_as_it_exits!std::process::exit+0x19
+00000002`5deff080 00007ff6`0da846d9     a_process_that_used_uia_can_hang_or_crash_as_it_exits!a_process_that_used_uia_can_hang_or_crash_as_it_exits::exiter+0xa07
+00000002`5deff5f0 00007ff6`0da8e006     a_process_that_used_uia_can_hang_or_crash_as_it_exits!a_process_that_used_uia_can_hang_or_crash_as_it_exits::main+0x159
+00000002`5deff920 00007ff6`0da81489     a_process_that_used_uia_can_hang_or_crash_as_it_exits!core::ops::function::FnOnce::call_once<void (*)(),tuple$<> >+0x6
+00000002`5deff950 00007ff6`0da81b6c     a_process_that_used_uia_can_hang_or_crash_as_it_exits!std::sys::backtrace::__rust_begin_short_backtrace<void (*)(),tuple$<> >+0x9
+00000002`5deff980 00007ff6`0daf4a10     a_process_that_used_uia_can_hang_or_crash_as_it_exits!std::rt::lang_start::closure$0<tuple$<> >+0xc
+(Inline Function) --------`--------     a_process_that_used_uia_can_hang_or_crash_as_it_exits!std::rt::lang_start_internal::closure$0+0x96
+(Inline Function) --------`--------     a_process_that_used_uia_can_hang_or_crash_as_it_exits!std::panicking::catch_unwind::do_call+0x96
+(Inline Function) --------`--------     a_process_that_used_uia_can_hang_or_crash_as_it_exits!std::panicking::catch_unwind+0x96
+(Inline Function) --------`--------     a_process_that_used_uia_can_hang_or_crash_as_it_exits!std::panic::catch_unwind+0x96
+00000002`5deff9b0 00007ff6`0da81477     a_process_that_used_uia_can_hang_or_crash_as_it_exits!std::rt::lang_start_internal+0xb0
+00000002`5deffa40 00007ff6`0da898b9     a_process_that_used_uia_can_hang_or_crash_as_it_exits!std::rt::lang_start<tuple$<> >+0x27
+00000002`5deffa80 00007ff6`0dbc621f     a_process_that_used_uia_can_hang_or_crash_as_it_exits!main+0x19
+(Inline Function) --------`--------     a_process_that_used_uia_can_hang_or_crash_as_it_exits!invoke_main+0x22
+00000002`5deffab0 00007ffe`ff92dda7     a_process_that_used_uia_can_hang_or_crash_as_it_exits!__scrt_common_main_seh+0x10f
+00000002`5deffaf0 00007fff`00f9ee4c     KERNEL32!BaseThreadInitThunk+0x17
+00000002`5deffb20 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+DUMP this=0000015a33961fb0 head=0000015a33878fa0 head.next=0000015a33a6dfa0 head.prev=0000015a33983fa0 size=3
+ node 0000015a33a6dfa0 next=Memory access error at '), poi(@$t7+8), poi(@$t7+10); r $t7 = poi(@$t7); r $t8 = @$t8 + 1 '
+
+
+    address 0000015a33878fd8 found in
+    _DPH_HEAP_ROOT @ 15a2b171000
+    in busy allocation (  DPH_HEAP_BLOCK:         UserAddr         UserSize -         VirtAddr         VirtSize)
+                             15a331178f0:      15a33878fa0               60 -      15a33878000             2000
+    00007fff00f86d0f ntdll!RtlDebugAllocateHeap+0x0000000000000387
+    00007fff00f75036 ntdll!RtlpAllocateHeap+0x000000000000109a
+    00007fff00f52431 ntdll!RtlpAllocateNTHeapInternal+0x00000000000003d1
+    00007fff00f5200b ntdll!RtlAllocateHeap+0x0000000000000abb
+    00007ffefe3f50d9 ucrtbase!malloc_base+0x0000000000000039
+    00007ffefe3fac35 ucrtbase!__crt_state_management::wrapped_invoke<void * __ptr64 (__cdecl*)(unsigned __int64),unsigned __int64,void * __ptr64>+0x0000000000000035
+    00007ffedd60b067 uiautomationcore!operator new+0x000000000000001f
+    00007ffedd6b7659 uiautomationcore!TelemetryUtility::TelemetryUtility+0x0000000000000049
+    00007ffedd6b79d1 uiautomationcore!TelemetryUtility::CreateInstance+0x0000000000000021
+    00007ffedd560054 uiautomationcore!std::call_once<void (__cdecl*)(void)>+0x0000000000000064
+    00007ffedd55ffaf uiautomationcore!TelemetryUtility::GetInstance+0x0000000000000023
+    00007ffedd55e9c6 uiautomationcore!ChannelBasedClientConnectionManager::CreatePipeToProvider+0x00000000000002aa
+    00007ffedd55df79 uiautomationcore!ChannelBasedClientConnectionManager::CreateLowBoxChannelBasedClientConnection+0x00000000000000e1
+    00007ffedd55ddbf uiautomationcore!ChannelBasedClientConnectionManager::CreateChannelBasedConnection+0x000000000000007b
+    00007ffedd4baccd uiautomationcore!ProviderEntryPoint::GetUiaNode+0x0000000000001d15
+    00007ffedd4b8f7d uiautomationcore!ProviderEntryPoint::GetNativeUiaNode+0x000000000000005d
+    00007ffedd49a59d uiautomationcore!UiaNodeFactory::CompleteNodeInfo+0x000000000000091d
+    00007ffedd499b15 uiautomationcore!UiaNodeFactory::FromPartialNodeInfo+0x0000000000000055
+    00007ffedd518e9e uiautomationcore!UiaNodeFactory::FromProviderEntryPoint+0x000000000000009a
+    00007ffedd58c6de uiautomationcore!CUIAutomation::GetNodeFromFactory+0x000000000000004a
+    00007ffedd58c2e4 uiautomationcore!CUIAutomation::ElementFromHandle+0x00000000000000e4
+    00007ff60dad4c58 a_process_that_used_uia_can_hang_or_crash_as_it_exits!windows::Win32::UI::Accessibility::IUIAutomation::ElementFromHandle+0x0000000000000138
+    00007ff60da9630a a_process_that_used_uia_can_hang_or_crash_as_it_exits!uia_facts_support::uia::element::closure$0+0x000000000000005a
+    00007ff60da95325 a_process_that_used_uia_can_hang_or_crash_as_it_exits!uia_facts_support::uia::traced<windows::Win32::UI::Accessibility::IUIAutomationElement,uia_facts_support::uia::element::closure_env$0>+0x0000000000000075
+    00007ff60da96cf0 a_process_that_used_uia_can_hang_or_crash_as_it_exits!uia_facts_support::uia::element+0x0000000000000030
+    00007ff60da860db a_process_that_used_uia_can_hang_or_crash_as_it_exits!a_process_that_used_uia_can_hang_or_crash_as_it_exits::use_uia+0x000000000000003b
+    00007ff60da81e0d a_process_that_used_uia_can_hang_or_crash_as_it_exits!a_process_that_used_uia_can_hang_or_crash_as_it_exits::exiter::closure$4::closure$0::closure$0+0x000000000000006d
+    00007ff60da88fce a_process_that_used_uia_can_hang_or_crash_as_it_exits!core::ops::function::impls::impl$3::call_mut<tuple$<ref$<isize> >,a_process_that_used_uia_can_hang_or_crash_as_it_exits::exiter::closure$4::closure$0::closure_env$0>+0x000000000000001e
+    00007ff60da8b448 +0x0000000000000058
+    00007ff60da88cf8 +0x0000000000000018
+    00007ff60da8c957 +0x0000000000000037
+    00007ff60da8c8b1 +0x0000000000000011
