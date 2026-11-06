@@ -16,10 +16,6 @@ The kept CI test, `clients_created_at_once_in_a_fresh_process_all_build_cache_re
 
 Judged: failed runs as a rate against 50 of 50; the failure's HRESULT and the retries' outcome (deterministic); the most threads of six that failed in one process, for trends.
 
-## Client settings
-
-Neither connection recovery nor event coalescing changes these outcomes (checked on 2026-11-06 by running every case by default and once each with `--recovery`, `--coalescing` and both). With `--recovery` one run of 50 met no failure, 49 of 50, which the rate's intervals do not separate from 50 of 50.
-
 ## Recorded results
 
 | Figure | Date | Machine | Source | Threshold |

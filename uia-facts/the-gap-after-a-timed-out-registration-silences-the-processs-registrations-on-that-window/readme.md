@@ -20,10 +20,7 @@ Judged: the advise and the silence (deterministic); A's loss against B's (a rela
 
 ## Client settings
 
-Event coalescing changes no outcome; connection recovery causes the gap (checked on 2026-11-06 by running every case by default and once each with `--recovery`, `--coalescing` and both). The documents state the gap, so the gap's cases are judged with `--recovery`; the program judges each setting against its own record. `e58-silence`, and C and D of `e58-scope`, do not change.
-
-- Connection recovery on, as Verbatim's and NVDA's clients have it: A loses exactly B's events; `remove` fails with `UIA_E_TIMEOUT`, its handler kept and an event after it heard. `target\debug\the-gap-after-a-timed-out-registration-silences-the-processs-registrations-on-that-window.exe --recovery`
-- Connection recovery off, the default: no gap. A and B lose no event, and `remove` succeeds, its handler freed and no event after it heard. `target\debug\the-gap-after-a-timed-out-registration-silences-the-processs-registrations-on-that-window.exe`
+Connection recovery, which Verbatim's and NVDA's clients turn on, causes the gap and the failed removal; without it no event is lost and the removal succeeds. The cases are judged with it: `target\debug\the-gap-after-a-timed-out-registration-silences-the-processs-registrations-on-that-window.exe --recovery`.
 
 ## Recorded results
 

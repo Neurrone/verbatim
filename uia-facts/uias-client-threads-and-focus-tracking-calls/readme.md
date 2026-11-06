@@ -19,10 +19,6 @@ No code; the observable outcomes are checked by the hung-window and flood folder
 
 A guide, with no program of its own: each trace is taken on a run of the hung-window program paused under `--pause`, which prints each process id and waits for Enter.
 
-## Client settings
-
-Not applicable: no program.
-
 ## Recorded results
 
 | Figure | Date | Machine | Source | Threshold |

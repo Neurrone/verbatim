@@ -20,10 +20,6 @@ Each N's bound is the serial-share bound of its own runs: one call's time on one
 
 The `processes` case, threads of one process against client processes, printed only for trends, is no longer run; its first run stays in the records below.
 
-## Client settings
-
-Neither connection recovery nor event coalescing changes these outcomes (checked on 2026-11-05 by running every case by default and once each with `--recovery`, `--coalescing` and both).
-
 ## Recorded results
 
 | Figure | Date | Machine | Source | Threshold |
@@ -34,7 +30,7 @@ Neither connection recovery nor event coalescing changes these outcomes (checked
 | uia-facts run with the bound from the provider's busy time, `gains`: cheap calls 1.78 and 1.75 at 2 and 8 threads (bounds 23.4 and 21.2, serial shares 0.04 and 0.05; a call 0.101 ms); costly calls 1.00 at 2 and 4 threads (bounds 1.01, serial shares 0.99; a call 47.5 ms) | 2026-11-06 | As above | The commit that adds this row | At most 2 and 1.5: pass; the bounds for trends |
 | First uia-facts run, `processes`: medians, threads 250, 263 and 261 ms against processes 240, 248 and 238 ms at 2, 4 and 8; at 8, threads as fast or faster in 2 of 7 runs | 2026-11-05 | As above | As above | For trends |
 | First uia-facts run, `shared`: 252 ms against 240 ms | 2026-11-05 | As above | As above | For trends |
-| uia-facts run of the cut program, every setting: cheap calls 1.72 and 1.78 at 2 and 8 threads (a call 0.108 ms), costly calls 1.00 at 2 and 4 threads (a call 15.8 ms, `GetPropertyValue` alone slowed); `shared` 60 ms against 63 ms | 2026-11-06 | Build 26200.9711, `UIAutomationCore.dll` 7.2.26100.9549, AMD Ryzen 7 5700G | ff23f81a | At most 2 and 1.5: pass; the rest for trends |
+| uia-facts run of the cut program: cheap calls 1.72 and 1.78 at 2 and 8 threads (a call 0.108 ms), costly calls 1.00 at 2 and 4 threads (a call 15.8 ms, `GetPropertyValue` alone slowed); `shared` 60 ms against 63 ms | 2026-11-06 | Build 26200.9711, `UIAutomationCore.dll` 7.2.26100.9549, AMD Ryzen 7 5700G | ff23f81a | At most 2 and 1.5: pass; the rest for trends |
 
 The costly calls' share is about 1.00, not about half, because the slow provider call is the whole call. The cheap calls' share is far below half because the provider's log sees only the provider's own calls; the half the fact states includes UIA's I/O thread, which the log cannot see.
 

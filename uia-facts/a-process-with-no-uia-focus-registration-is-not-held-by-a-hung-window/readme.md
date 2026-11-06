@@ -16,10 +16,6 @@ The hung-window scene of support's `uia_facts_support::hung`, on a desktop of th
 
 The hold of a client with a focus registration, Verbatim's listener's included, is [the hold's own program](../a-hung-window-named-in-a-system-focus-event-holds-a-processs-uia-events/readme.md)'s.
 
-## Client settings
-
-Neither connection recovery nor event coalescing changes these outcomes (checked on 2026-11-06 by running the case by default and once each with `--recovery`, `--coalescing` and both).
-
 ## Recorded results
 
 | Figure | Date | Machine | Source | Threshold |
@@ -28,7 +24,7 @@ Neither connection recovery nor event coalescing changes these outcomes (checked
 | `e_cross`: the outpost stand-in 0 to 1 ms | 2026-10-10 | Build 26200 | The mockapp experiments, in git at b0a1989 | Within 100 ms |
 | First uia-facts run, in the hold's program's `who`: the outpost stand-in's name, text, read and hook 0.1 to 2.7 ms | 2026-11-06 | Build 26200.9711, `UIAutomationCore.dll` 7.2.26100.9549, AMD Ryzen 7 5700G | 132b6af4 | Pass |
 | The hold's program's `stand-ins`: the outpost stand-in 0.1 to 2.4 ms | 2026-11-06 | As above | e7394449 | Pass |
-| This program's first run, every setting: the outpost stand-in's name, text, read and hook 0.0 to 2.1 ms | 2026-11-06 | As above | ff23f81a | Pass |
+| This program's first run: the outpost stand-in's name, text, read and hook 0.0 to 2.1 ms | 2026-11-06 | As above | ff23f81a | Pass |
 
 ## How to rerun
 

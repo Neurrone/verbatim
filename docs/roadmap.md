@@ -241,11 +241,7 @@ sound.
 The values (Dickson, 2026-11-05), each limit longer than everything
 inside it plus a margin: one UI Automation request 10 s (the transaction
 timeout, today 5 s), so that its own timeout fires first; the outpost's
-task deadline 11 s; and an outpost's clean shutdown 1 s, after which it
-is killed (Dickson, 2026-11-06), which
-[the guardian](design/guardian.md), section 12, makes fit by stopping a
-program at its next call boundary and cancelling the MSAA call in flight
-through COM. The same build fixes where today's limits nest wrongly:
+task deadline 11 s. The same build fixes where today's limits nest wrongly:
 
 - a budget checked between calls (enrichment, the path, a walk, a read)
   leaves room for one more call within the deadline, at most the task

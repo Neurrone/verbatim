@@ -1,6 +1,13 @@
+ed @$peb+bc 02000000
+sxe ld:verifier.dll
+g
+.reload /f verifier.dll
+ed verifier!AVrfDphGlobalFlags 3
+sxd ld:verifier.dll
 sxe ld:UIAutomationCore.dll
 g
 $$><cdb-breakpoints.txt
 bl
-sxd ld
+sxd ld:UIAutomationCore.dll
+sxe -c "k 30; r; !ext.heap -p -a @rbx" av
 g

@@ -20,10 +20,7 @@ Judged: the HRESULT (deterministic), each search's total (a band, the sum of its
 
 ## Client settings
 
-Event coalescing changes no outcome, and connection recovery changes the `stall-sweep` case's (checked on 2026-11-05 by running every case by default and once each with `--recovery`, `--coalescing` and both). The documents state the stall sweep with recovery on, so its judged command carries `--recovery`; the program judges each setting against its own record.
-
-- Connection recovery on, as Verbatim's client has it: at 100, 200 and 500 ms the search waits three bounds and fails without sending its `Find`, and from 1,000 ms it waits four and sends it; between, it sent no `Find` up to 900 ms (1,853, 2,193, 2,475 and 2,791 ms at 600 to 900 ms) and sent it from 1,000 ms (4,207, 4,613 and 5,021 ms at 1,000 to 1,200 ms); 900 ms is judged. `target\debug\a-timeout-bounds-each-request-and-window-message-not-an-operation.exe --recovery --case stall-sweep`
-- Connection recovery off, the default: the search waits four bounds and sends its `Find` at every timeout: 435, 823, 2,085 and 4,204 ms at 100, 200, 500 and 1,000 ms, and 2,515 to 5,032 ms at 600 to 1,200 ms. `target\debug\a-timeout-bounds-each-request-and-window-message-not-an-operation.exe --case stall-sweep`
+With connection recovery on, as Verbatim's client has it, the stall sweep's search skips its `Find` at timeouts up to 900 ms, where without it the search sends it at every timeout; the sweep is judged with it: `target\debug\a-timeout-bounds-each-request-and-window-message-not-an-operation.exe --recovery --case stall-sweep`.
 
 ## Recorded results
 
@@ -36,7 +33,7 @@ Event coalescing changes no outcome, and connection recovery changes the `stall-
 | First uia-facts run, `stall-sweep`: `UIA_E_TIMEOUT` 5 of 5 at each T; 329, 620, 1,545 and 4,208 ms; the `Find` sent only at 1,000 ms, 5 of 5 each | 2026-11-05 | As above | As above | Pass |
 | First uia-facts run, `e3`: `UIA_E_TIMEOUT` 5 of 5 each; 22,139 ms (22,135 to 22,146) at the default, 1,091.7 ms (1,084.1 to 1,093.1) at 1 s | 2026-11-05 | As above | As above | Pass; the case is removed, since call-waits' `waits` checks the same |
 | First uia-facts run, `stall-sweep`, 600 to 1,200 ms: at T of 600, 700, 800 and 900 ms the search failed after 1,847, 2,181, 2,480 and 2,778 ms without sending the `Find`; at 1,000, 1,100 and 1,200 ms after 4,204, 4,614 and 5,032 ms with it; 3 of 3 each | 2026-11-05 | As above | As above | The answer: the `Find` is skipped when the waits before it end by 2.78 s and sent when they end at about 3.1 s or later. That narrows the edge recorded before, skipped by 2.6 s and sent from 3.1 s, without explaining it. 900 ms is judged since, with `--recovery` |
-| uia-facts run of the cut program, every setting: `ett` at a 2,000 ms fetch `UIA_E_TIMEOUT` after 5,211.3 ms; `queued-search` 1,084.3 ms; `stall-sweep` 436.5, 822.0, 2,101.6 and 4,196.5 ms with recovery off, the `Find` sent at every timeout | 2026-11-06 | Build 26200.9711, `UIAutomationCore.dll` 7.2.26100.9549, AMD Ryzen 7 5700G | ff23f81a | Pass |
+| uia-facts run of the cut program: `ett` at a 2,000 ms fetch `UIA_E_TIMEOUT` after 5,211.3 ms; `queued-search` 1,084.3 ms; `stall-sweep` 436.5, 822.0, 2,101.6 and 4,196.5 ms with recovery off, the `Find` sent at every timeout | 2026-11-06 | Build 26200.9711, `UIAutomationCore.dll` 7.2.26100.9549, AMD Ryzen 7 5700G | ff23f81a | Pass |
 
 ## How to rerun
 

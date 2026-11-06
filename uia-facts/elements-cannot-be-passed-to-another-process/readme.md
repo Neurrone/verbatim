@@ -16,10 +16,6 @@ The kept CI tests, in `crates/mockapp/tests/uia_bugs/elements_cannot_be_passed_t
 
 Judged: each read's outcome (deterministic).
 
-## Client settings
-
-Neither connection recovery nor event coalescing changes these outcomes (checked on 2026-11-06 by running every case by default and once each with `--recovery`, `--coalescing` and both).
-
 ## Recorded results
 
 | Figure | Date | Machine | Source | Threshold |

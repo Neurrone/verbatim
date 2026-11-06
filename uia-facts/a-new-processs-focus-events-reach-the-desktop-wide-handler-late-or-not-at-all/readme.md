@@ -2,7 +2,7 @@
 
 ## Fact
 
-A newly started application, a File Explorer folder window in its own process or the Settings app, moves its focus while a desktop-wide `AddFocusChangedEventHandler` is registered in another process. The `WinEvent` hook of that process sees the focus move, and UI Automation delivers the matching focus events late, or none of them. No run has traced what delays them (`books/dev/src/reference/uia-bugs.md`, the fault of that name). The program checks a tree it controls, the provider program, where none of 11 starts had a late or missing focus.
+A newly started application, a File Explorer folder window in its own process or the Settings app, moves its focus while a desktop-wide `AddFocusChangedEventHandler` is registered in another process. The `WinEvent` hook of that process sees the focus move, and UI Automation delivers the matching focus events late, or none of them. (`books/dev/src/reference/uia-bugs.md`, the fault of that name.) The program checks a tree it controls, the provider program, where none of 11 starts had a late or missing focus.
 
 ## What Verbatim relies on
 
@@ -16,9 +16,7 @@ The program checks a tree it controls, the provider program, since the end-to-en
 
 For each start it takes the first focus `WinEvent` from the new process, waiting up to 2 s since the program brings the window to the front itself, and waits up to 5 s for a UIA focus whose sender is in that process. The UIA focus is late when it comes more than 1 s after the `WinEvent`, the second Verbatim's outpost waits, and missing when none comes within 5 s. A start with no focus `WinEvent` has nothing to measure from: the case stops there, inconclusive. The fault was never measured as a rate, so the counts are printed as new.
 
-## Client settings
-
-The count of late and missing focus is judged against the first desktop runs' 0 and 0 of 11. Neither connection recovery nor event coalescing changes the outcome (Dickson's desktop runs at 28b23338, by default and with each setting, 2026-11-06).
+The count of late and missing focus is judged against the first desktop runs' 0 and 0 of 11.
 
 ## Recorded results
 
@@ -26,8 +24,9 @@ The count of late and missing focus is judged against the first desktop runs' 0 
 |---|---|---|---|---|
 | None of a new folder window's items, or none of its first 50 to 130, in some `measure_repeat_explorer` runs; the Settings `CoreWindow`'s focus `WinEvent`s with no UIA focus in 14.5 s in `settings_system_page` | 2026-10 | Build 26200 | End-to-end runs, in prose (`books/dev/src/explanation/design/listener-without-connections.md`, decision 2, risks 2 and 13) | New |
 | First run of `provider`: 0 late and 0 missing of 11 starts, the UIA focus 21 to 36 ms after the focus `WinEvent` | 2026-11-06 | Build 26200.9711, `UIAutomationCore.dll` 7.2.26100.9549, AMD Ryzen 7 5700G | cdb6b4d6 | New: none in 11 starts |
-| Dickson's desktop runs at 8e4c9d50, by default and with each client setting: 0 late and 0 missing of 11 in each, the UIA focus 11 to 41 ms after the focus `WinEvent` | 2026-11-06 | As above | Dickson's desktop runs | New: none in 44 starts |
-| Dickson's desktop runs, by default and with each client setting: 0 late and 0 missing of 11 starts each time, the UIA focus 12 to 59 ms after the `WinEvent` | 2026-11-06 | Build 26200.9711, `UIAutomationCore.dll` 7.2.26100.9549, AMD Ryzen 7 5700G | 28b23338 | The record: 0 of 11, judged as that count |
+| Dickson's desktop runs at 8e4c9d50: 0 late and 0 missing of 11 in each, the UIA focus 11 to 41 ms after the focus `WinEvent` | 2026-11-06 | As above | Dickson's desktop runs | New: none in 44 starts |
+| Dickson's desktop runs: 0 late and 0 missing of 11 starts each time, the UIA focus 12 to 59 ms after the `WinEvent` | 2026-11-06 | Build 26200.9711, `UIAutomationCore.dll` 7.2.26100.9549, AMD Ryzen 7 5700G | 28b23338 | The record: 0 of 11, judged as that count |
+| Dickson's desktop runs: 0 late and 0 missing of 11 | 2026-11-06 | Build 26200.9711, `UIAutomationCore.dll` 7.2.26100.9549, AMD Ryzen 7 5700G | e21eeccc | Pass |
 
 ## How to rerun
 

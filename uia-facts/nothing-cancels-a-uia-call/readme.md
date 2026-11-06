@@ -20,10 +20,7 @@ Judged for each kind and condition on its own: every cancel's answer (a relation
 
 ## Client settings
 
-Event coalescing changes no outcome, and connection recovery changes one, `abandon`'s `same` (checked on 2026-11-05 by running every case by default and once each with `--recovery`, `--coalescing` and both; `abandon` again on 2026-11-06 after its stuck read was given a timeout shorter than the hold). The program judges each setting against its own record.
-
-- Connection recovery off, the default: the later reads on the stuck read's thread wait for the release and then succeed. `target\debug\nothing-cancels-a-uia-call.exe --case abandon`
-- Connection recovery on, as Verbatim's client has it: once the stuck read has timed out, each later read made on its thread into the same application fails at once, in 0.1 ms, with `UIA_E_TIMEOUT`, before the release. `target\debug\nothing-cancels-a-uia-call.exe --recovery --case abandon`
+With connection recovery on, as Verbatim's client has it, the later reads on an abandoned read's thread fail at once once it has timed out, where without it they wait for the release: `target\debug\nothing-cancels-a-uia-call.exe --recovery --case abandon`.
 
 ## Recorded results
 
@@ -35,7 +32,7 @@ Event coalescing changes no outcome, and connection recovery changes one, `aband
 | First uia-facts run, `connection`: every cancel `RPC_E_NO_CONTEXT`; `UIA_E_TIMEOUT` 12 of 12, each before the release; 2,008.5 ms (1,999.8 to 2,022.2) | 2026-11-05 | As above | As above | The band inconclusive; the rest pass |
 | First uia-facts run, `property`, cancellation never enabled: `RPC_E_NO_CONTEXT` 3 of 3 | 2026-11-05 | As above | As above | Pass |
 | First uia-facts run, `abandon`: every later read `ok` and only after the release, on new threads and on the same thread; the first answer after the release 0.8 ms (new threads) and 0.5 ms (same thread) | 2026-11-05 | As above | As above | Pass; the times for trends |
-| uia-facts run of the cut program, a 200 ms hold and one provider per kind, every setting: every cancel `RPC_E_NO_CONTEXT`; every held or stalled call but `connection` succeeded at the release or the stall's end; `connection` `UIA_E_TIMEOUT` before the release, 507.0 to 517.1 ms; `abandon` as before, with recovery on the later reads on the stuck read's thread failing at once | 2026-11-06 | Build 26200.9711, `UIAutomationCore.dll` 7.2.26100.9549, AMD Ryzen 7 5700G | ff23f81a | Pass |
+| uia-facts run of the cut program, a 200 ms hold and one provider per kind: every cancel `RPC_E_NO_CONTEXT`; every held or stalled call but `connection` succeeded at the release or the stall's end; `connection` `UIA_E_TIMEOUT` before the release, 507.0 to 517.1 ms; `abandon` as before, with recovery on the later reads on the stuck read's thread failing at once | 2026-11-06 | Build 26200.9711, `UIAutomationCore.dll` 7.2.26100.9549, AMD Ryzen 7 5700G | ff23f81a | Pass |
 
 One trial's failure came at 1,999.8 ms, a fifth of a millisecond before the 2,000 ms timeout, with the median inside the band. A new connection's wait is a window message's (`SendMessageTimeoutW`), whose timer is the system's, not this program's clock.
 

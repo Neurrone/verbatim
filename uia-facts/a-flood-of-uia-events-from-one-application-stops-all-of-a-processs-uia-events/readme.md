@@ -18,12 +18,7 @@ Flooding windows are UIA windows of the provider program raising events on their
 
 ## Client settings
 
-Event coalescing changes one outcome, and connection recovery none (checked on 2026-11-06 by running every case by default and once each with `--recovery`, `--coalescing` and both).
-
-- Event coalescing off, the default: a flood of text changes at 10,000 a second stops the client, as a flood of name changes does. `target\debug\a-flood-of-uia-events-from-one-application-stops-all-of-a-processs-uia-events.exe --case stops`
-- Event coalescing on, as Verbatim's client and `q2` had it: the text-flooded client keeps hearing events. `target\debug\a-flood-of-uia-events-from-one-application-stops-all-of-a-processs-uia-events.exe --coalescing --case stops`
-
-`rates` gives the same outcome with coalescing off and on: every probe heard at 2,000 a second; and `rate-5000` the client stopped, for trends.
+With event coalescing on, as Verbatim's client has it, a client flooded with text changes keeps hearing events: `target\debug\a-flood-of-uia-events-from-one-application-stops-all-of-a-processs-uia-events.exe --coalescing --case stops`.
 
 ## Recorded results
 
@@ -39,7 +34,7 @@ Event coalescing changes one outcome, and connection recovery none (checked on 2
 | `rates` with 3 s floods, probes counted: at 2,000 a second every flood event and every probe heard, the last flood event 2.3 s after, with coalescing off and on; at 5,000 a second 272 to 279 of 15,000 heard, the client stopping | 2026-11-06 | As above | 93fed1a0 | 2,000 pass; 5,000 for trends |
 | `q2_thr`'s probes counted rather than named: 304 deliveries for 304 probes | 2026-11-06 | Build 26200.9711 | `recorded/q2_thr_one_c1.log` | Every probe delivered |
 | First uia-facts run, `backlog`: every burst heard in 1.5 s, 250 to 2,000 events | 2026-11-06 | As above | As above | The answer |
-| uia-facts run of the cut program, every setting: `stops` the name-flooded client heard 93 to 98 flood events, then nothing for 10 s, 9.9 to 10.0 s of processor time; the text-flooded client nothing with coalescing off, and kept hearing with it on; B's own client every probe; the notification-flooded client kept hearing; `rates` at 2,000 a second every flood event and probe heard; `backlog` every burst heard; named, `rate-5000` 276 of 15,000 heard and 49 probes unheard | 2026-11-06 | Build 26200.9711, `UIAutomationCore.dll` 7.2.26100.9549, AMD Ryzen 7 5700G | 3bda30b6 | Pass; the rest the answers or for trends |
+| uia-facts run of the cut program: `stops` the name-flooded client heard 93 to 98 flood events, then nothing for 10 s, 9.9 to 10.0 s of processor time; the text-flooded client nothing with coalescing off, and kept hearing with it on; B's own client every probe; the notification-flooded client kept hearing; `rates` at 2,000 a second every flood event and probe heard; `backlog` every burst heard; named, `rate-5000` 276 of 15,000 heard and 49 probes unheard | 2026-11-06 | Build 26200.9711, `UIAutomationCore.dll` 7.2.26100.9549, AMD Ryzen 7 5700G | 3bda30b6 | Pass; the rest the answers or for trends |
 | `stops` flooding 10,000 events for 1 s: the text-flooded client, coalescing off, kept hearing after the flood's end in 3 of 13 runs, so the case floods 30,000 as `q2` did | 2026-11-06 | As above | ff23f81a | Not used |
 
 ## How to rerun

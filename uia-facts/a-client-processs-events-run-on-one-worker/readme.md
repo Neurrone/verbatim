@@ -18,10 +18,6 @@ The client is the program itself, its client objects from support's `uia::client
 - `slow-query`: one client object; a handler that reads node 1's name of C, whose provider holds the read until released 1 s later, and B2's event raised 100 ms after the read reached C. New: whether B2's event waits for the release.
 - `drops`, run only when named: a handler that takes 0.2 s on every event, and 20 name changes of one node raised at once. The handler's runs are counted, not named, since a sender's name is read when the worker takes its event, until 20 or until none comes for 2 s, ten times the handler's time. New: whether some are never delivered, with the count delivered.
 
-## Client settings
-
-Neither connection recovery nor event coalescing changes these outcomes (checked on 2026-11-06 by running every case by default and once each with `--recovery`, `--coalescing` and both).
-
 ## Recorded results
 
 | Figure | Date | Machine | Source | Threshold |
@@ -33,7 +29,7 @@ Neither connection recovery nor event coalescing changes these outcomes (checked
 | First uia-facts run, `slow-handler` and `slow-query`: the later event waited, true each | 2026-11-06 | As above | As above | The answers |
 | `drops`, counting handler runs: 20 of 20 delivered, one after another | 2026-11-06 | As above | 93fed1a0; 132b6af4's 4 of 20 read the senders' names and stopped counting while the handler still ran | The answer |
 | `threads` with each sequence in a client process of its own: four thread ids for four events to registrations removed after them; one for four events to one registration kept, still running 750 ms after each; one for four raised at once; every handler on a thread other than the registering one | 2026-11-06 | As above | 93fed1a0 | Pass; the rest the answers |
-| uia-facts run of the cut program, every setting: `shared` with 2 and 8 client objects, `slow-handler` and `slow-query` true; named, `threads` four thread ids for the removed registrations, one for the kept, still running 750 ms after each, one for four at once, every handler off the registering thread; `drops` 20 of 20 delivered | 2026-11-06 | Build 26200.9711, `UIAutomationCore.dll` 7.2.26100.9549, AMD Ryzen 7 5700G | ff23f81a | Pass; the rest the answers |
+| uia-facts run of the cut program: `shared` with 2 and 8 client objects, `slow-handler` and `slow-query` true; named, `threads` four thread ids for the removed registrations, one for the kept, still running 750 ms after each, one for four at once, every handler off the registering thread; `drops` 20 of 20 delivered | 2026-11-06 | Build 26200.9711, `UIAutomationCore.dll` 7.2.26100.9549, AMD Ryzen 7 5700G | ff23f81a | Pass; the rest the answers |
 
 ## How to rerun
 

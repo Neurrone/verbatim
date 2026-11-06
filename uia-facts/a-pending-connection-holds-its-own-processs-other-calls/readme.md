@@ -18,15 +18,11 @@ The provider program has window 0 on UI thread 0 and window 1 on UI thread 1. Th
 
 Judged: the connection's failure (deterministic, `UIA_E_TIMEOUT`) and its time (a band from the 500 ms timeout); B's read held (a relation); C's read beside F's first connection answered, and beside B's connection held, each deterministic, the second against its first run's answer.
 
-## Client settings
-
-Neither connection recovery nor event coalescing changes these outcomes (checked on 2026-11-06 by running the default run once each by default and with `--recovery`, `--coalescing` and both).
-
 ## Recorded results
 
 | Figure | Date | Machine | Source | Threshold |
 |---|---|---|---|---|
-| A pending connection held the other calls of its own process until its 2-second timeout (`sta-pending-connection-only`); the I/O thread delivering element releases into the busy thread meanwhile | 2026-11-02 | Build 26200 | the parallel-calls experiment, in git at fdfb63ae (`run-abandon.ps1`), in git at fdfb63ae | A relation |
+| A pending connection held the other calls of its own process until its 2-second timeout (`sta-pending-connection-only`); the I/O thread delivering element releases into the busy thread meanwhile | 2026-11-02 | Build 26200 | the parallel-calls experiment, in git at fdfb63ae (`run-abandon.ps1`) | A relation |
 | `e30`: a pending first connection beside a third client's remote operation and name read, which answered in about 1 ms and 0.3 ms, 12 of 12 | 2026-10-17 | Build 26200 | The collision experiments, in git at fdfb63ae | Answered |
 | First uia-facts run, 3 trials each: the connection `UIA_E_TIMEOUT` after 507.1 to 516.6 ms; B's read held until it failed, 3 of 3; beside F's first connection, C answered, 3 of 3; beside B's connection, C held until it failed, 3 of 3, with and without `UseComThreading` | 2026-11-06 | Build 26200.9711, `UIAutomationCore.dll` 7.2.26100.9549, AMD Ryzen 7 5700G | fdfb63ae | Pass; C beside B's connection new: held |
 | Rerun with C's read beside B's connection judged against the first run: held, 1 of 1; beside F's first connection answered | 2026-11-06 | Build 26200.9711, `UIAutomationCore.dll` 7.2.26100.9549, AMD Ryzen 7 5700G | 7319ed67 | Pass |

@@ -22,10 +22,7 @@ Every trial runs in a client process of its own (the program's `trial` role), as
 
 ## Client settings
 
-Event coalescing changes no outcome; connection recovery causes the gap (checked on 2026-11-06 by running every case by default and once each with `--recovery`, `--coalescing` and both). The documents state the gap, so the gap's cases are judged with `--recovery`; the program judges each setting against its own record. The registration's success and its wait on the connection timeout (`ett`, `connection`, and `e57`'s first two claims), the control with no stall, the backlog, and `between` do not change.
-
-- Connection recovery on, as Verbatim's and NVDA's clients have it: the gap, as the Fact says and the records below show. `target\debug\a-registration-that-times-out-reports-success.exe --recovery`, or one case, such as `--recovery --case e57`.
-- Connection recovery off, the default: no gap. In `e57` every event raised from the stall's end is heard; released at any time, at both timeouts 500 ms, and from a second client process, the first event heard is the one at the stall's end and none is lost; both of `next-event`'s events are heard. `target\debug\a-registration-that-times-out-reports-success.exe`, or `--case e57`.
+Connection recovery, which Verbatim's and NVDA's clients turn on, causes the gap; without it every event from the stall's end is heard. The gap's cases are judged with it: `target\debug\a-registration-that-times-out-reports-success.exe --recovery`.
 
 ## Recorded results
 

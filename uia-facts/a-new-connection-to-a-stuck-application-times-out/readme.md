@@ -17,10 +17,7 @@ The provider program with two UIA windows on two UI threads, `UseComThreading`; 
 
 ## Client settings
 
-Event coalescing changes no outcome, and connection recovery changes one, the busy thread's connection (checked on 2026-11-05 by running every case by default and once each with `--recovery`, `--coalescing` and both). The documents state the default's outcome, which the default command judges.
-
-- Connection recovery off, the default: both new connections fail after the connection timeout, the busy thread's 2,199.1 ms (the first run). `target\debug\a-new-connection-to-a-stuck-application-times-out.exe --case connection`
-- Connection recovery on, as Verbatim's client has it: the idle thread's connection still fails after the connection timeout, but the busy thread's, made right after it failed, fails at once, in 0.2 ms. `target\debug\a-new-connection-to-a-stuck-application-times-out.exe --recovery --case connection`
+With connection recovery on, as Verbatim's client has it, a new connection made right after one into the same application failed fails at once, in 0.2 ms: `target\debug\a-new-connection-to-a-stuck-application-times-out.exe --recovery --case connection`.
 
 ## Recorded results
 

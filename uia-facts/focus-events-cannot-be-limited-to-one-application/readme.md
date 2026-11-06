@@ -16,10 +16,6 @@ The kept CI tests, in `crates/mockapp/tests/uia_bugs/focus_events_cannot_be_limi
 
 Judged: the cost per registered process against 40 to 60 for no cache and the process id (a count that varies by event); the base cache's, which adds its own property reads, for trends. The provider program's tree is not mockapp's, so its count is recorded again, with mockapp's figures kept as history.
 
-## Client settings
-
-Neither connection recovery nor event coalescing changes these outcomes (checked on 2026-11-06 by running every case by default and once each with `--recovery`, `--coalescing` and both).
-
 ## Recorded results
 
 | Figure | Date | Machine | Source | Threshold |

@@ -17,10 +17,6 @@ Provider program P holds two UIA windows on UI threads of their own, and provide
 
 Every claim is an open question, printed as new: whether D hears each change only after X's release, whether it hears P's change at all, and whether it hears Q's before the release, with the time.
 
-## Client settings
-
-Neither connection recovery nor event coalescing changes these outcomes (checked on 2026-11-06 by running every case by default and once each with `--recovery`, `--coalescing` and both).
-
 ## Recorded results
 
 | Figure | Date | Machine | Source | Threshold |

@@ -2,7 +2,7 @@
 
 ## Fact
 
-Read inside a remote operation, the window element above a focus in conhost's text area has no native window handle and no name; only the client side's window proxy supplies them (`books/dev/src/reference/uia-bugs.md`, the fault of that name). No case tells whether the element without its handle and title comes from conhost's provider or from UIA.
+Read inside a remote operation, the window element above a focus in conhost's text area has no native window handle and no name; only the client side's window proxy supplies them (`books/dev/src/reference/uia-bugs.md`, the fault of that name).
 
 ## What Verbatim relies on
 
@@ -13,10 +13,6 @@ The outpost reading again through the window's proxy any ancestor that is a wind
 - `parent`: on a desktop of the program's own, a client there starts a console host directly (`conhost.exe cmd.exe`), finds its text area (the window element's descendant of the document control type), and reads the text area's raw-view parent's native window handle and name inside a remote operation that navigates to the parent there, and through the client side's raw view walker. Judged: inside, the handle 0 and the name empty; through the walker, the console window's handle and a name (deterministic).
 
 The console host is the target because the claim is about its windows.
-
-## Client settings
-
-Neither connection recovery nor event coalescing changes these outcomes (checked on 2026-11-06 by running the default run once each by default and with `--recovery`, `--coalescing` and both).
 
 ## Recorded results
 

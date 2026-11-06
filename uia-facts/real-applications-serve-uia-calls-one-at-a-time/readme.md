@@ -14,15 +14,11 @@ D9's per-application outposts (`books/dev/src/explanation/architecture.md`, sect
 
 The claim is about how a provider serves calls, and the provider program's cases stand for it here and in [a provider process serves one UIA request at a time](../a-provider-process-serves-one-uia-request-at-a-time/readme.md). No case starts a real application: the per-application figures, the suspended UI thread in Notepad, Edge, VS Code, Firefox, Windows Forms and WPF, Chromium's page and browser on one thread, the operation holds of Firefox and WPF, Edge's `GetText` and Windows Terminal's XAML thread, stay in the documents as their records, untried.
 
-## Client settings
-
-Neither connection recovery nor event coalescing changes these outcomes (checked on 2026-11-06 by running the default run once each by default and with `--recovery`, `--coalescing` and both).
-
 ## Recorded results
 
 | Figure | Date | Machine | Source | Threshold |
 |---|---|---|---|---|
-| A suspended UI thread held every call in Notepad, Edge, VS Code, Firefox, Windows Forms and WPF; Chromium's page and browser on one thread; Firefox 2.6 ms and WPF 228 ms; Edge 222 ms and 220 ms; `FindAll` 0.4 ms median and 696 ms; Windows Terminal 1.24.12741.0's text calls waited | 2026-11-02 | Build 26200 | the parallel-calls experiment, in git at fdfb63ae (`run-real.ps1`, `wpf-window.ps1`, `winforms-window.ps1`, `wt-serving-thread.ps1`), in git at fdfb63ae | Relations; times for trends |
+| A suspended UI thread held every call in Notepad, Edge, VS Code, Firefox, Windows Forms and WPF; Chromium's page and browser on one thread; Firefox 2.6 ms and WPF 228 ms; Edge 222 ms and 220 ms; `FindAll` 0.4 ms median and 696 ms; Windows Terminal 1.24.12741.0's text calls waited | 2026-11-02 | Build 26200 | the parallel-calls experiment, in git at fdfb63ae (`run-real.ps1`, `wpf-window.ps1`, `winforms-window.ps1`, `wt-serving-thread.ps1`) | Relations; times for trends |
 | First uia-facts run, `findall`, 3 trials: reads answered during the search 3 of 3; median 0.1 ms, longest 402.1 to 408.9 ms; the search 3,496.2 to 3,564.8 ms | 2026-11-06 | Build 26200.9711, `UIAutomationCore.dll` 7.2.26100.9549, AMD Ryzen 7 5700G | fdfb63ae | Pass; the times for trends |
 
 The provider program's figures are recorded for it afresh, since its tree is not Edge's page.

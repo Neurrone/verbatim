@@ -67,7 +67,7 @@ The guardian owns a **hidden top-level window** of class `VerbatimGuardian`, bec
   - **mutex held, neither `ready` nor `restarting` set**: the instance is still starting, so the launch exits doing nothing;
   - **mutex held, `ready` set**: a replacement. It sets the replace event; the old guardian sets `stop_replaced`, and Core stops at once with no exit sound, shuts its children down cleanly, saves and exits with 0; the old guardian waits until every process of its generation has exited (section 5), clears the flag, releases the mutex and exits;
   - **mutex held, `restarting` set**: it sets the replace event, which stops the old guardian starting another Core, waits for the old guardian to exit, and starts afresh with its crash count at zero;
-  - **an unresponsive old guardian**: in each waiting case, if the mutex is not released within about 15 seconds (the exit save, the 12-second clean shutdown, a margin), the new guardian ends the old one, whose kill-on-close job ends everything left, and takes the abandoned mutex.
+  - **an unresponsive old guardian**: in each waiting case, if the mutex is not released within about 15 seconds (the exit save, the clean shutdown, 1 second, decided by Dickson on 2026-11-06 and built in M6.2; 21 seconds until then, a margin), the new guardian ends the old one, whose kill-on-close job ends everything left, and takes the abandoned mutex.
 
 So every old process is gone before the new Core starts.
 
@@ -100,7 +100,7 @@ The guardian's wait is deadline-driven (Dickson), so it never times a wake it wi
 - **When it sleeps until**: each field's deadline is its first-seen time plus its limit; a `reducer_busy` of 0 has none, since an idle reducer cannot be stuck. The guardian sleeps until the earliest deadline, with its other handles in the same wait. On waking it reads every field; a changed field is first seen now.
 - **Limits**: the reducer's is the longest legitimate step this build measures, expected 2 to 5 seconds; the relay's is three missed beats, about 9 seconds, matching the ping cadence; startup's about 14 seconds without progress.
 - **Stuck** only after three observations of one value: at the deadline wake, then at two confirming wakes 1 second apart, so a hang is judged about 12 seconds after it begins. A resume (`PBT_APMRESUMEAUTOMATIC`) discards confirmations under way and makes every field first seen now. Reason: the guardian judges only what it saw while awake, so a sleep, a paused virtual machine or Modern Standby's throttling gives a thread the confirmations' two seconds and a fresh limit.
-- **Starting** is judged by progress, never by a fixed deadline: before each stage of startup, and before each bounded wait inside one (each synthesizer tried, the device's opening, wxWidgets), Core increments `startup_progress`. About 14 seconds is the longest single bounded step (one synthesizer attempt of 10 seconds, or the 12-second clean shutdown it may wait behind) plus a margin, so a slow sign-in whose stages each end is never judged hung. The listener's registration and the waits for old children come after `running`.
+- **Starting** is judged by progress, never by a fixed deadline: before each stage of startup, and before each bounded wait inside one (each synthesizer tried, the device's opening, wxWidgets), Core increments `startup_progress`. About 14 seconds is the longest single bounded step (one synthesizer attempt of 10 seconds, or the clean shutdown it may wait behind, 1 second, decided by Dickson on 2026-11-06 and built in M6.2; 21 seconds until then) plus a margin, so a slow sign-in whose stages each end is never judged hung. The listener's registration and the waits for old children come after `running`.
 - **Exiting**: Core not exited within about 15 seconds of `exiting` is hung.
 - **A debugger** attached to Core (`CheckRemoteDebuggerPresent`) suspends judging.
 
@@ -116,7 +116,7 @@ An application's new outpost starts only after the old outpost serving it has ex
 - **The old listener**: the relay starts the new listener on `old_listener_gone`, through a second threadpool wait; until then the listener's `Ready`, which gates readiness for input, is not given.
 - The new Core knows the old children only through the two events, so no table about them is kept anywhere.
 
-**The cost**: a clean shutdown takes up to 12 seconds (section 12), so when Core dies while any application, even a background one, is hung with a call inside it, every application waits up to the 13-second grace. In the common case old children exit in the measured 4 to 443 ms (median 15), overlapped with the new Core's start. A child not exited 13 seconds after Core's death is ended with its generation job.
+**The cost**: a clean shutdown takes up to 1 second, decided by Dickson on 2026-11-06 and built in M6.2; 21 seconds until then (section 12), so when Core dies while any application, even a background one, is hung with a call inside it, every application waits up to the 13-second grace. In the common case old children exit in the measured 4 to 443 ms (median 15), overlapped with the new Core's start. A child not exited 13 seconds after Core's death is ended with its generation job.
 
 ## 8. Restarting Core, and the restart breaker
 
@@ -161,7 +161,7 @@ Decided by Dickson on 2026-11-05. The rule: every limit is longer than everythin
 
 - **One UIA request**: 10 seconds (`verbatim_uia::TRANSACTION_TIMEOUT`); the connection timeout stays 2 seconds.
 - **An outpost's task deadline**: 11 seconds per handled entry, so the request's own timeout fires first.
-- **An outpost's clean shutdown**: up to 12 seconds (`SHUTDOWN_LIMIT`, today 21). To fit, a program stops at its next call boundary; the MSAA call in flight is cancelled through COM (`CoCancelCall`, with cancellation enabled on each worker), as is the call of a worker abandoned at its deadline, so fewer threads stay inside a hung application; and abandoned workers are still joined, each now waiting on at most one 10-second request. The listener's clean shutdown has the same bound: its reads stop at their next call boundary and its abandoned reading threads are joined.
+- **An outpost's clean shutdown**: up to 1 second, decided by Dickson on 2026-11-06 and built in M6.2; 21 seconds until then (`SHUTDOWN_LIMIT`). To fit, a program stops at its next call boundary; the MSAA call in flight is cancelled through COM (`CoCancelCall`, with cancellation enabled on each worker), as is the call of a worker abandoned at its deadline, so fewer threads stay inside a hung application; and abandoned workers are still joined, each now waiting on at most one 10-second request. The listener's clean shutdown has the same bound: its reads stop at their next call boundary and its abandoned reading threads are joined.
 - **The guardian's grace for an old generation**: 13 seconds, after which it ends the job.
 - **Replacing a running instance**: about 15 seconds before the old instance is ended, where today it is 5.
 - **Startup judged hung**: about 14 seconds without progress. **Exiting judged hung**: about 15 seconds.

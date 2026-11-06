@@ -20,9 +20,7 @@ Every process runs on a desktop of its own (`uia_facts_support::desktop`), as P2
 
 Judged: one process's deliveries within 100 ms (a relation; P2 measured 9 to 15 ms); with two or four processes, the runs in which one process is on time and every other's worst delivery comes at least 300 ms after its, a rate against P2c's 2 of 2 (P2's late processes were 670 ms or more later); the events each process hears in the end (deterministic with 1 and 2 processes; for trends with 4, where one run of nine had a process hear 2 of the 6).
 
-## Client settings
-
-Neither connection recovery nor event coalescing changes these outcomes (checked on 2026-11-06 by running every case three times by default and three times each with `--recovery`, `--coalescing` and both). With four processes at a 150 ms pace one run of thirteen had a process other than the first on time, so the rate counts a run whichever process is on time; one had a process hear 2 of the 6 events in the end, with no setting in common, so the count heard with four processes is printed for trends.
+With four processes at a 150 ms pace one run of thirteen had a process other than the first on time, so the rate counts a run whichever process is on time; one had a process hear 2 of the 6 events in the end, so the count heard with four processes is printed for trends.
 
 ## Recorded results
 

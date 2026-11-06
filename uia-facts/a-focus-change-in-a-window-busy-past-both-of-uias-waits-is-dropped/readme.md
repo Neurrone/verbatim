@@ -14,10 +14,6 @@ On a desktop of the program's own (`uia_facts_support::desktop`), as `h6` ran, w
 
 - `dropped`: judged: the focus raised while M answers heard within 100 ms at each timeout (a relation); at 10 s and at 1 s the focus from inside the stall heard once the stall ends; at 250 ms not heard within 3 s of the stall's start (relations).
 
-## Client settings
-
-Neither connection recovery nor event coalescing changes these outcomes (checked on 2026-11-06 by running the case by default and once each with `--recovery`, `--coalescing` and both).
-
 ## Recorded results
 
 | Figure | Date | Machine | Source | Threshold |
@@ -25,7 +21,7 @@ Neither connection recovery nor event coalescing changes these outcomes (checked
 | `h6`: at 10,000 ms the focus arrived 3,003 ms into the stall; at 500 and 2,000 ms never within 8 s; the control 10 to 12 ms. Rerun at 01254292 against mockapp on 2026-11-06: the same at 2,000 ms | 2026-10-18 | Build 26200 | `recorded/h6_*.out` | Heard at the stall's end; not heard within 8 s; the 2,000 ms outcome is the provider program's |
 | First uia-facts run, `dropped`: the control 7.5 to 9.0 ms; at 10 s heard 1,012.1 ms into the 1 s stall, at 1 s 1,015.2 ms, at 250 ms never within 2 s | 2026-11-06 | Build 26200.9711, `UIAutomationCore.dll` 7.2.26100.9549, AMD Ryzen 7 5700G | 132b6af4 | Pass |
 | `dropped` with its 1.5 s stall: at 1 s heard 1,504.7 ms into the stall, at 250 ms never within 3 s | 2026-11-06 | As above | 93fed1a0 | Pass |
-| This program's first run, every setting: the control 7.9 to 9.3 ms, and once with `--coalescing` 101.5 ms at 1 s; at 10 s heard 1,509.0 ms into the 1.5 s stall, at 1 s 1,503.4 ms, at 250 ms never within 3 s | 2026-11-06 | As above | ff23f81a | Pass but the one control, 1.5 ms past the 100 ms bound |
+| This program's first run: the control 7.9 to 9.3 ms, and once with `--coalescing` 101.5 ms at 1 s; at 10 s heard 1,509.0 ms into the 1.5 s stall, at 1 s 1,503.4 ms, at 250 ms never within 3 s | 2026-11-06 | As above | ff23f81a | Pass but the one control, 1.5 ms past the 100 ms bound |
 
 ## How to rerun
 

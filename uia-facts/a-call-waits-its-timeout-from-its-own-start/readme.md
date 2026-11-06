@@ -23,10 +23,7 @@ Judged: the HRESULT (deterministic), each wait (a band from its timeout), the la
 
 ## Client settings
 
-Event coalescing changes no outcome, and connection recovery changes E-TT's second read and `mark` (checked on 2026-11-05, and for `mark` on 2026-11-06, by running every case by default and once each with `--recovery`, `--coalescing` and both). The documents state the default's outcome, which the default command judges.
-
-- Connection recovery off, the default: each of E-TT's held reads fails after one timeout, `CurrentName` and `CurrentHasKeyboardFocus` alike; in `mark` each read waits its own timeout, and the first read after the release succeeds. `target\debug\a-call-waits-its-timeout-from-its-own-start.exe --case waits --case mark`
-- Connection recovery on, as Verbatim's client has it: the first held read still fails after one timeout, but a read made right after one into the same application timed out fails at once, `CurrentHasKeyboardFocus` in 0.1 ms; in `mark` the reads from another thread and through another client object fail at once too, and reads fail at once until about 2 seconds after the release. `target\debug\a-call-waits-its-timeout-from-its-own-start.exe --recovery --case waits --case mark`
+With connection recovery on, as Verbatim's client has it, a read made right after one into the same application timed out fails at once, from another thread and through another client object too, until about 2 seconds after the application answers again: `target\debug\a-call-waits-its-timeout-from-its-own-start.exe --recovery --case waits --case mark`.
 
 ## Recorded results
 
@@ -41,7 +38,7 @@ Event coalescing changes no outcome, and connection recovery changes E-TT's seco
 | uia-facts runs of `timer`: at 1,000 ms 1,001.5 to 1,028.5 ms in 7 runs, where the same read with the timer left alone waited 1,091.0 to 1,092.2 ms; the program before this cut, at 2,000 ms, 2,009.6 ms (2,008.2 to 2,016.4) where its first run waited 2,201.2 ms and an earlier run that day 2,188.4 ms | 2026-11-06 | As above | ff23f81a and 5ee36a07 | The record of `timer`: about the timeout itself, judged by its band |
 | The two bands apart: `waits` 2,190.1 ms at 2,000 ms and 5,515.7 ms at 5,000 ms, in the band of the timeout and a tenth; `timer` 1,012.0 and 1,004.8 ms at 1,000 ms, in the band of the timeout itself | 2026-11-06 | Build 26200.9711, `UIAutomationCore.dll` 7.2.26100.9549, AMD Ryzen 7 5700G | ac4e3f44 | Pass |
 | First runs of `mark`: recovery on, the reads from another thread and through another client object `UIA_E_TIMEOUT` at once, 0.1 to 0.2 ms, 4 of 4; the first read to succeed 2,002 to 2,005 ms after the release, 192 to 193 failing first, 4 of 4; recovery off, each read `UIA_E_TIMEOUT` after one timeout and the first read after the release succeeding | 2026-11-06 | As above | ff23f81a | The answers, now the record |
-| `mark` judged against that record, every setting: recovery on, the first read to succeed 1,999 and 2,003 ms after the release; recovery off, at once | 2026-11-06 | As above | 3bda30b6 | Pass |
+| `mark` judged against that record: recovery on, the first read to succeed 1,999 and 2,003 ms after the release; recovery off, at once | 2026-11-06 | As above | 3bda30b6 | Pass |
 | `timer` with the resolution read: 1.0000 ms in effect, the held read 1,002.8 to 1,005.4 ms at 1,000 ms in 4 runs, inside the band of the timeout itself; `waits` at the default 15.625 ms 2,187.8 to 2,199.1 ms at 2 s; `own-start` with `--recovery --trials 2`, a provider per trial, 1,093.1 to 1,094.6 ms | 2026-11-06 | Build 26200.9711, `UIAutomationCore.dll` 7.2.26100.9549, AMD Ryzen 7 5700G | 7319ed67 | Pass: at a confirmed 1 ms the wait is the timeout itself, so the removal of the claim that the tenth is not the timer's tick stands |
 
 ## How to rerun

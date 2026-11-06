@@ -21,10 +21,6 @@ The provider program has windows 0 and 1 on UI thread 0 and window 2 on UI threa
 
 Judged: relations (each probe's reply before or after the release, by this program's clock; the waiting read's start after the held call's end, by the provider's log), orders and counts (deterministic), and the new connection's wait (a band).
 
-## Client settings
-
-Neither connection recovery nor event coalescing changes these outcomes (checked on 2026-11-05 by running every case by default and once each with `--recovery`, `--coalescing` and both).
-
 ## Recorded results
 
 | Figure | Date | Machine | Source | Threshold |
@@ -36,7 +32,6 @@ Neither connection recovery nor event coalescing changes these outcomes (checked
 | First uia-facts run, `busy-only`: answered 3 of 3, 0.2 ms | 2026-11-05 | As above | As above | Pass; the time for trends |
 | First uia-facts run, `pumping`: the read into window 2 waited for the release, 3 of 3 | 2026-11-05 | As above | As above | Pass |
 | First uia-facts run, `nocom`: the read answered, the new connection failed `UIA_E_TIMEOUT` after 2,014 ms (2,012 to 2,017), the `Invoke` waited for the UI thread, 3 of 3 | 2026-11-05 | As above | As above | Pass |
-| First uia-facts run with connection recovery on in every client object: every outcome as without it; the new connection 2,013 ms (2,011 to 2,014) | 2026-11-05 | As above | As above | Answered: connection recovery changes none of these outcomes, which the client settings check confirms |
 
 The 950 ms request is not a separate case: `held`'s probes are sent during a 1,000 ms hold and answered only after it, by the log after the held call's end.
 

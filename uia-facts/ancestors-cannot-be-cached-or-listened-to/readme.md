@@ -18,10 +18,6 @@ The program is the client; every registration is for name changes, caching the s
 
 Judged: the count of events each registration in `provider` heard, and the ancestors-scoped registration's in `taskbar` (deterministic); in `tree`, the path, the control, and each scope's count against none; in `taskbar`, the minutes in which the element-and-ancestors registration heard the button, a rate against 19 of 20, that in each minute it heard the button exactly as often as the element registration (a relation), and the element scope's minutes, for trends.
 
-## Client settings
-
-Neither connection recovery nor event coalescing changes these outcomes (checked on 2026-11-06 by running every case by default and once each with `--recovery`, `--coalescing` and both).
-
 ## Recorded results
 
 | Figure | Date | Machine | Source | Threshold |
@@ -33,8 +29,8 @@ Neither connection recovery nor event coalescing changes these outcomes (checked
 | `taskbar --trials 4`: the button's registration heard each minute, twice; the child's with ancestors scope none; with element and ancestors scope the button's change once in each of 4 minutes | 2026-11-06 | As above | 93fed1a0, and again at de138138 | Ancestors none; element and ancestors 4 of 4 each run |
 | `taskbar` with the element scope beside: ancestors scope none; element and ancestors scope 2 of 2 minutes; element scope 2 of 2 | 2026-11-06 | As above | cdb6b4d6 | Pass; element scope new |
 | `tree --trials 3`: the focused element node 5, its parent the tree view, 3 of 3; the control heard the rename once each; the item's element and ancestors, element and ancestors scopes none | 2026-11-06 | As above | cdb6b4d6 | Pass; the scopes new |
-| Desktop runs at 8e4c9d50 by default and with each client setting: `tree` the path, the control 1, every scope on the item none; `taskbar` the button's own registration each minute, ancestors scope none, element and ancestors 2 of 2, element 2 of 2 | 2026-11-06 | As above | Dickson's desktop runs | Pass; 19 of 20 element and ancestors minutes in all |
-| First desktop runs of `tree` as judged now, programs of 14e569c9 (built from f0b18b2a), by default and with each client setting: the path, the control 1, and none in every scope on the item, in each | 2026-11-06 | As above | Dickson's desktop runs | Pass |
+| Desktop runs at 8e4c9d50: `tree` the path, the control 1, every scope on the item none; `taskbar` the button's own registration each minute, ancestors scope none, element and ancestors 2 of 2, element 2 of 2 | 2026-11-06 | As above | Dickson's desktop runs | Pass; 19 of 20 element and ancestors minutes in all |
+| First desktop runs of `tree` as judged now, programs of 14e569c9 (built from f0b18b2a): the path, the control 1, and none in every scope on the item, in each | 2026-11-06 | As above | Dickson's desktop runs | Pass |
 
 ## How to rerun
 

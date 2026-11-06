@@ -16,10 +16,6 @@ The kept CI tests, `crates/mockapp/tests/arbitration.rs`, check the probe agains
 
 The 88-window sweep, which compared the two probes on the applications open at the time, stays the recorded history of an unnamed sweep; File Explorer's child windows, which answered `0xffffffff80040201`, are not run, since no fact program starts File Explorer.
 
-## Client settings
-
-Neither connection recovery nor event coalescing changes these outcomes (checked on 2026-11-06 by running the default run once each by default and with `--recovery`, `--coalescing` and both).
-
 ## Recorded results
 
 | Figure | Date | Machine | Source | Threshold |

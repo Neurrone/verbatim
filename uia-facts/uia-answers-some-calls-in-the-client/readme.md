@@ -24,10 +24,6 @@ Every count is of the provider program's own calls (its log's `call` entries) th
 - `search-reread`: a `FindFirst` for node 6 from node 1, a fragment with a runtime id of its own, fetched 0, 300, 600, 700 and 1,000 ms before; the provider `GetRuntimeId` calls of node 1 itself during the search.
 - `operations`: each operation of "What one request is" once, its provider calls printed for trends; it drives [the requests guide](../requests-per-client-operation/readme.md) and [the channel guide](../the-uia-channel-and-the-provider-io-thread/readme.md).
 
-## Client settings
-
-Neither connection recovery nor event coalescing changes these outcomes (checked on 2026-11-05 by running every case by default and once each with `--recovery`, `--coalescing` and both; `focus-here` on the unlocked desktop, passing under each).
-
 ## Recorded results
 
 | Figure | Date | Machine | Source | Threshold |
@@ -44,7 +40,7 @@ Neither connection recovery nor event coalescing changes these outcomes (checked
 | First uia-facts run, `late-calls`: `AdviseEventRemoved` after the removal returned, 3 of 3; no other provider call after any of the three calls returned, 3 of 3 | 2026-11-05 | As above | As above | Pass |
 | First uia-facts run, `search-reread`: reads of the start's own runtime id during the search: 0 after 0 and 300 ms, 1 after 600, 700 and 1,000 ms, 3 of 3 each | 2026-11-05 | As above | 5ad6b886 | 0 and 1,000 ms this record; 300, 600 and 700 ms for trends |
 | First uia-facts run, `operations`: provider calls per operation, each including any lookup of its node: `CurrentName` 3; a walker's first child 0, next sibling 16, step to the root 18; `FindFirst` 47 and with a cache request 62; `FindAll` 503 and with a cache request 848; `BuildUpdatedCache` 15; `ElementFromHandle` 13; a remote operation 6; adding and removing a handler 9 | 2026-11-05 | As above | c84ab856 | For trends |
-| uia-facts run of the cut `lapse`, every setting: costs (8, 14, 6), cold equal to warm plus the lapsed read, the lapsed read making provider calls; with the runtime id read just before, the registration after 1 s at the warm cost and the move with no provider call | 2026-11-06 | Build 26200.9711, `UIAutomationCore.dll` 7.2.26100.9549, AMD Ryzen 7 5700G | ff23f81a | Pass |
+| uia-facts run of the cut `lapse`: costs (8, 14, 6), cold equal to warm plus the lapsed read, the lapsed read making provider calls; with the runtime id read just before, the registration after 1 s at the warm cost and the move with no provider call | 2026-11-06 | Build 26200.9711, `UIAutomationCore.dll` 7.2.26100.9549, AMD Ryzen 7 5700G | ff23f81a | Pass |
 
 ## How to rerun
 

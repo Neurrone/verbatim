@@ -6,7 +6,7 @@ A provider process goes on serving UIA when a client process is ended with `Term
 
 ## What Verbatim relies on
 
-The clean shutdown of outposts and the listener, which now gets 1 second before the child is killed through its job (Dickson, 2026-11-06), and M6.2's kill order, which rest on that suspicion (`books/dev/src/explanation/architecture.md`, section 1). If a killed client did crash its provider, the clean shutdown is what keeps Verbatim from crashing applications; that it does not crash the provider program shows only that the suspicion is not a general property of UIA.
+The clean shutdown of outposts and the listener, which gets 1 second, decided by Dickson on 2026-11-06 and built in M6.2; 21 seconds until then, before the child is killed through its job, and M6.2's kill order, which rest on that suspicion (`books/dev/src/explanation/architecture.md`, section 1). If a killed client did crash its provider, the clean shutdown is what keeps Verbatim from crashing applications; that it does not crash the provider program shows only that the suspicion is not a general property of UIA.
 
 ## Method
 
@@ -21,10 +21,6 @@ The provider program P serves window 0. A client process K, a second copy of thi
 Windows Terminal's source (microsoft/terminal, `src/types/ScreenInfoUiaProviderBase.cpp`, `src/types/UiaTextRangeBase.cpp`, `src/cascadia/TerminalControl/TermControlAutomationPeer.cpp`) differs from the provider program in ways a Win32 provider cannot reproduce: its calls arrive through system XAML's automation peer, which wraps each text range in a second COM object (`XamlUiaTextRange`); its range methods take the terminal's lock, which its output thread also takes; and its events are queued to the XAML UI thread with `Dispatcher().RunAsync` from the output side. The program reproduces the threading and the events beside a held call; the XAML layer and the lock it does not.
 
 Judged: each case's count of trials in which P continued, as a rate against the first run's 20 of 20; every other outcome is printed as evidence.
-
-## Client settings
-
-Neither connection recovery nor event coalescing changes these outcomes (checked on 2026-11-06 by running the default run once each by default and with `--recovery`, `--coalescing` and both).
 
 ## Recorded results
 

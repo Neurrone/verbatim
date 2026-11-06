@@ -216,24 +216,26 @@ exiting, a child replaced or restarted, an outpost retired or ended
 because its application exited. The supervisor sends a shutdown message;
 the child takes no new work, removes every UIA event handler and
 `WinEvent` hook, releases every object it holds, leaves COM, and exits
-with code 0. A child gets 1 second to shut down this way and is then
-killed through its job, and the kill is logged with the reason
+with code 0. A child gets 1 second, decided by Dickson on 2026-11-06 and built in M6.2; 21 seconds until then,
+to shut down this way, and is then killed through its job, and the kill is logged with the reason
 (`books/dev/src/reference/crates/verbatim-outpost.md`, "Shutting down").
 The clean attempt exists because killing a UIA client in the middle of a
 call was the leading suspect in a crash of a Windows Terminal it was
-reading, inside `UIAutomationCore.dll`, on 2026-10-08, which killed-client
-trials against a provider of uia-facts' own did not reproduce
+reading, inside `UIAutomationCore.dll`, on 2026-10-08; in killed-client
+trials against a provider of uia-facts' own, the provider went on serving
+after every kill
 (`uia-facts/a-provider-continues-when-a-client-is-killed-in-the-middle-of-its-call/`).
 The job's kill-on-close stays the guarantee for a Core that dies.
 Amended on 2026-11-06 (Dickson): 1 second before the kill, in place of
-the 21-second limit.
+the 21-second limit, built in M6.2.
 
 A child ends itself with `TerminateProcess` once its shutdown is done,
 never by returning from `main`. Keep it that way unless the following is
 solved: a process that has used UIA as a client sometimes hangs at full
 CPU or crashes as it exits normally, inside `UIAutomationCore.dll`'s own
 shutdown code, which walks a corrupt list in its telemetry of provider
-connections; a captured crash freed the list's head as a record. The
+connections; a captured crash faulted destroying the list's head as if
+it were a record, before anything was freed. The
 corruption followed three client threads connecting at once, and the
 records show faults only with three or more; it is inferred to be a race
 on UIA's map of provider connections, which nothing is seen to lock.
