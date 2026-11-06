@@ -68,6 +68,37 @@ pub fn image_of(pid: u32) -> Option<PathBuf> {
     )))
 }
 
+/// Every process id now running.
+///
+/// # Panics
+///
+/// When the process list cannot be read.
+#[must_use]
+pub fn process_ids() -> std::collections::BTreeSet<u32> {
+    use windows::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW,
+        TH32CS_SNAPPROCESS,
+    };
+    // SAFETY: no precondition; the snapshot is closed below.
+    let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) }
+        .expect("a snapshot of the processes");
+    let mut entry = PROCESSENTRY32W {
+        dwSize: u32::try_from(std::mem::size_of::<PROCESSENTRY32W>()).expect("a small structure"),
+        ..Default::default()
+    };
+    let mut ids = std::collections::BTreeSet::new();
+    // SAFETY: the snapshot above and a live entry of the size given.
+    let mut more = unsafe { Process32FirstW(snapshot, &raw mut entry) }.is_ok();
+    while more {
+        ids.insert(entry.th32ProcessID);
+        // SAFETY: as above.
+        more = unsafe { Process32NextW(snapshot, &raw mut entry) }.is_ok();
+    }
+    // SAFETY: the snapshot above, closed once.
+    let _ = unsafe { CloseHandle(snapshot) };
+    ids
+}
+
 /// Ends process `pid` at once.
 pub fn kill(pid: u32) {
     // SAFETY: no precondition; the handle is closed below.

@@ -17,7 +17,7 @@ use std::time::Duration;
 use uia_facts_support::args::{Args, trials};
 use uia_facts_support::listen::{self, Line, Listener};
 use uia_facts_support::provider::Provider;
-use uia_facts_support::report::{Report, Verdict, deterministic, relation, runs};
+use uia_facts_support::report::{Report, Verdict, deterministic, rate, relation, runs};
 use uia_facts_support::stats::{summary_ms, us_to_ms};
 use uia_facts_support::{note, now_us, uia};
 
@@ -85,6 +85,8 @@ fn trial(args: &Args, specs: &[&[&str]], pace_ms: u64, plain: bool) -> Vec<Vec<f
     let mut pids = vec![("M", m.pid)];
     pids.extend(clients.iter().map(|c| (c.label.as_str(), c.pid())));
     args.pause_for_debugger(&pids);
+    // As P2 did, 0.5 s between the clients' start and the first move.
+    uia::pause(Duration::from_millis(500), "before the first focus move");
     let mut raised = Vec::new();
     for i in 0..EVENTS {
         let child = if plain { 0 } else { 1 + i % 2 };
@@ -95,12 +97,9 @@ fn trial(args: &Args, specs: &[&[&str]], pace_ms: u64, plain: bool) -> Vec<Vec<f
         );
         uia::pause(Duration::from_millis(pace_ms), "between focus moves");
     }
-    // Late deliveries came up to 2.7 s after their raise; a plain window
-    // is heard by no one, and is listened to 1.5 s.
-    let listen_ms: u64 = if plain { 1_500 } else { 3_000 };
-    if !plain {
-        note::waiting("3.0 s, for late deliveries");
-    }
+    // Late deliveries came up to 2.7 s after their raise.
+    let listen_ms: u64 = 3_000;
+    note::waiting("3.0 s, for late deliveries");
     let end = now_us() + listen_ms * 1_000;
     let names: &[&str] = if plain {
         &["msaa_window_0", "-"]
@@ -133,37 +132,49 @@ fn worst(late: &[f64]) -> f64 {
     late.iter().copied().fold(f64::NEG_INFINITY, f64::max)
 }
 
+/// Whether one process, whichever, had every delivery on time and every
+/// other process's worst delivery came at least [`LATE_MS`] after its.
+fn others_late(late: &[Vec<f64>]) -> bool {
+    let worsts: Vec<f64> = late.iter().map(|l| worst(l)).collect();
+    let earliest = worsts.iter().copied().fold(f64::INFINITY, f64::min);
+    earliest <= ON_TIME_MS
+        && worsts.iter().filter(|w| **w >= earliest + LATE_MS).count() == worsts.len() - 1
+}
+
 fn processes(args: &Args, report: &mut Report) {
-    for n in [1usize, 2, 4] {
+    // One process, judged once; two and four as rates over P2c's two runs.
+    for (n, runs_recorded) in [(1usize, 1usize), (2, 2), (4, 2)] {
         let specs: Vec<&[&str]> = vec![&["desk"]; n];
-        let mut first_on_time = Vec::new();
-        let mut later_late = Vec::new();
+        let mut late_runs = 0;
+        let mut on_time = Vec::new();
         let mut all_heard = Vec::new();
         let mut worsts = Vec::new();
-        for _ in 0..trials() {
+        for _ in 0..runs_recorded {
             let late = trial(args, &specs, 150, false);
-            let first = worst(&late[0]);
-            first_on_time.push(first <= ON_TIME_MS);
-            later_late.push(late[1..].iter().all(|l| worst(l) >= first + LATE_MS));
+            if others_late(&late) {
+                late_runs += 1;
+            }
+            on_time.push(worst(&late[0]) <= ON_TIME_MS);
             all_heard.push(late.iter().map(Vec::len).collect::<Vec<_>>());
             worsts.extend(late.iter().map(|l| worst(l)));
         }
-        report.claim(
-            &format!("{n} processes, focus every 150 ms: the first process's deliveries all within {ON_TIME_MS} ms"),
-            &format!("{} (worst per process {})", runs(&first_on_time), summary_ms(&worsts)),
-            match n {
-                1 => "at most 9 and 10 ms (p2c procs1)",
-                2 => "at most 10 and 13 ms (p2c procs2)",
-                _ => "at most 15 and 10 ms (p2c procs4)",
-            },
-            if n == 4 { Verdict::Trend } else { relation(&first_on_time) },
-        );
-        if n > 1 {
+        if n == 1 {
             report.claim(
-                &format!("{n} processes: every later process's worst delivery at least {LATE_MS} ms later than the first's"),
-                &runs(&later_late),
-                if n == 2 { "at most 682 and 1,112 ms (p2c procs2)" } else { "670 to 2,677 ms for processes 2 to 4 (p2c procs4)" },
-                if n == 4 { Verdict::Trend } else { relation(&later_late) },
+                "1 process, focus every 150 ms: its deliveries all within 100 ms",
+                &format!("{} (worst {})", runs(&on_time), summary_ms(&worsts)),
+                "at most 9 and 10 ms (p2c procs1)",
+                relation(&on_time),
+            );
+        } else {
+            report.claim(
+                &format!("{n} processes, focus every 150 ms: runs in which one process is on time and every other's worst delivery comes at least {LATE_MS} ms after its"),
+                &format!("{late_runs} of {runs_recorded} (worst per process {})", summary_ms(&worsts)),
+                if n == 2 {
+                    "2 of 2: the first at most 10 and 13 ms, the second at most 682 and 1,112 ms (p2c procs2)"
+                } else {
+                    "2 of 2: the first at most 15 and 10 ms, processes 2 to 4 670 to 2,677 ms (p2c procs4)"
+                },
+                rate(late_runs, runs_recorded, runs_recorded, runs_recorded),
             );
         }
         report.claim(
@@ -204,20 +215,17 @@ fn one_process(args: &Args, report: &mut Report) {
 }
 
 fn slow(args: &Args, report: &mut Report) {
+    // A rate over P2b's run of four processes and five reruns of it at its
+    // commit, a405b362, on 2026-11-06.
     let specs: Vec<&[&str]> = vec![&["desk"]; 4];
-    let mut late = Vec::new();
-    let mut waits = Vec::new();
-    for _ in 0..trials() {
-        let trial = trial(args, &specs, 500, false);
-        let first = worst(&trial[0]);
-        late.push(trial[1..].iter().all(|l| worst(l) >= first + LATE_MS));
-        waits.extend(trial[1..].iter().map(|l| worst(l)));
-    }
+    let late = trial(args, &specs, 500, false);
+    let waits: Vec<f64> = late.iter().map(|l| worst(l)).collect();
+    let k = usize::from(others_late(&late));
     report.claim(
-        &format!("4 processes, focus every 500 ms: every later process's worst delivery at least {LATE_MS} ms later than the first's"),
-        &format!("{} (worst of processes 2 to 4 {})", runs(&late), summary_ms(&waits)),
-        "waits of about 1,000, 1,500 and 2,000 ms (p2b_four-slow)",
-        Verdict::Trend,
+        &format!("4 processes, focus every 500 ms: runs in which one process is on time and every other's worst delivery comes at least {LATE_MS} ms after its"),
+        &format!("{k} of 1 (worst per process {})", summary_ms(&waits)),
+        "5 of 6: waits of about 1,000, 1,500 and 2,000 ms (p2b_four-slow), and 4 of 5 reruns (p2b_rerun1 to 5)",
+        rate(k, 1, 5, 6),
     );
 }
 

@@ -230,7 +230,7 @@ None of the old tools was built or run for this design, so "rerun by command" be
 ### a-flood-of-uia-events-from-one-application-stops-all-of-a-processs-uia-events
 
 - Kind: binary and a debugger guide.
-- Reproduces: `q2`, `q2_thr`, `q2long`, judged by relation with the counts printed for trends: delivery stops (83 to 110 events, then none for 90 s); the other client process unaffected; text with coalescing on delivered (2,529, 2,641 of 30,000); losses at 2,000 to 5,000 a second. Whether coalescing dropped those (Not known). The worker's work grows with the backlog (Not known), timed as the worker's processor time at 4 backlog sizes. Selective registration under a flood (inferred). Guide: the work-item thread's dumps.
+- Reproduces: `q2`, `q2_thr`, `q2long`, judged by relation with the counts printed for trends: delivery stops (83 to 110 events, then none for 90 s); the other client process unaffected; text with coalescing on delivered (2,529, 2,641 of 30,000); every probe delivered at 2,000 a second, counted rather than named. The worker's work grows with the backlog (Not known), timed as the worker's processor time at 4 backlog sizes. Selective registration under a flood (inferred). Guide: the work-item thread's dumps.
 - Evidence now: evprobe with `q2.py`, `q2long.py` and `evc.py` and their outputs. mockapp's flood command is tested by `uia_flood_raises_each_name_change` in mockapp's `events` tests, which checks the command, not the fault.
 - Replaces: `evprobe`, `q2.py`, `q2long.py`, `evc.py`.
 - Verbatim relies on: D9 as amended on 2026-11-02 (`books/dev/src/explanation/architecture.md`) and each outpost holding its own application's registrations. If the flood stopped, D9's reason would be wrong; if a flood began stopping other processes, the per-application isolation would fail.
@@ -376,7 +376,7 @@ None of the old tools was built or run for this design, so "rerun by command" be
 ### ancestors-cannot-be-cached-or-listened-to
 
 - Kind: binary.
-- Reproduces: an ancestor-scoped registration hears no ancestor's event, in the provider program and in the taskbar clock case. The cache part links Learn's `TreeScope`.
+- Reproduces: a registration scoped to the ancestors alone hears no ancestor's event, in the provider program and in the taskbar clock case; scoped to the element and its ancestors, it heard the taskbar clock button's change and none in the provider program. The cache part links Learn's `TreeScope`.
 - Evidence now: prose only; the taskbar clock and mockapp probes were not kept.
 - Replaces: none kept (new).
 - Verbatim relies on: ancestors being read by a walk or a remote operation; a change would only reopen an optimization.

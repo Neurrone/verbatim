@@ -41,7 +41,7 @@ fn main() {
         stops(&args, &mut report);
     }
     if args.wants("rates") {
-        report.case("rates", "a window flooding name changes at 2,000 and then 5,000 a second for 1 s; one client registered for them and for B's name changes; B renamed every 100 ms until the flood's events are all heard");
+        report.case("rates", "a window flooding name changes at 2,000 and then 5,000 a second for 3 s, as q2_thr did; one client registered for them and for B's name changes; B renamed every 100 ms until the flood's events are all heard");
         rates(&args, &mut report);
     }
     if args.wants("backlog") {
@@ -290,7 +290,7 @@ fn rates(args: &Args, report: &mut Report) {
             flood.request("raise name 0 1");
             let warm = client.next(Duration::from_secs(5), |l| matches!(l, Line::Heard { .. }));
             note::evidence(&format!("warmed: {}", warm.is_some()));
-            let total = rate;
+            let total = rate * 3;
             let mut sent = Vec::new();
             let mut lines = Vec::new();
             let flood_end = std::thread::scope(|scope| {
@@ -353,31 +353,30 @@ fn rates(args: &Args, report: &mut Report) {
         }
         // A probe is lost only once the flood has drained: before then it
         // may still be queued.
-        // The record was taken with event coalescing on; with it off the
-        // outcome is the run's own, an open question.
-        let verdict = if !uia::settings().coalescing {
-            Verdict::New
-        } else if rate == 2_000 {
-            // A 1 s flood at 2,000 a second lost no probe where q2_thr's
-            // 3 s flood lost 28: the cut flood is printed for trends.
-            Verdict::Trend
-        } else if drained.iter().all(|d| *d) {
-            relation(&lost_any)
+        // Every probe is heard beside a client that heard every flood
+        // event: q2_thr's log holds a delivery for each of its 304 probes,
+        // its "never delivered" counted by name, which the worker reads
+        // when it takes each event, so queued probes carried a later
+        // probe's name. A client that stopped leaves probes unheard for
+        // that reason, so judges nothing.
+        let all_heard = flood_heard.iter().all(|h| *h == rate * 3);
+        let verdict = if all_heard && drained.iter().all(|d| *d) {
+            relation(&lost_any.iter().map(|lost| !lost).collect::<Vec<_>>())
         } else {
-            Verdict::Inconclusive("the flood's events were still arriving 15 s after it".to_owned())
+            Verdict::Inconclusive("the client did not hear every flood event".to_owned())
         };
         report.claim(
+            &format!("{rate} a second for 3 s: every one of B's probes is heard"),
             &format!(
-                "{rate} a second for 1 s, event coalescing {}: some of B's probes are never heard",
-                if uia::settings().coalescing { "on" } else { "off" }
+                "{} ({lost_counts:?} never heard)",
+                runs(&lost_any.iter().map(|lost| !lost).collect::<Vec<_>>())
             ),
-            &format!("{} ({:?} lost)", runs(&lost_any), lost_counts),
-            "28 and 103 of B's probes never delivered at 2,000 and 5,000 a second, event coalescing on (q2_thr_one_c1)",
+            "a delivery for each of 304 probes, counted (q2_thr_one_c1.log)",
             verdict,
         );
         report.claim(
-            &format!("{rate} a second for 1 s: the flood's events heard"),
-            &format!("{flood_heard:?} of {rate}"),
+            &format!("{rate} a second for 3 s: the flood's events heard"),
+            &format!("{flood_heard:?} of {}", rate * 3),
             "every one, the last 2.9 and 10.4 s after the flood (q2_thr_one_c1)",
             Verdict::Trend,
         );

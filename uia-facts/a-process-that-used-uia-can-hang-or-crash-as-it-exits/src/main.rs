@@ -1,7 +1,7 @@
 //! A process that used UIA can hang or crash as it exits
 //! (`uia-facts/a-process-that-used-uia-can-hang-or-crash-as-it-exits/readme.md`).
 //!
-//! 150 child processes (the `exiter` role), 12 at a time, each start six
+//! 150 child processes (the `exiter` role), one after another, each start six
 //! provider programs of their own and, from a thread each, connect as UIA
 //! clients to each of a provider's three windows (one with a UIA provider,
 //! one with its own `IAccessible`, one plain), read names, search a subtree
@@ -10,14 +10,15 @@
 //! `std::process::exit`, which runs every DLL's process-detach code, rather
 //! than with `TerminateProcess` as support's processes end. This program
 //! leaves that out on purpose. A child that has not ended 10 s after its
-//! work is a hang, and one that ends with a code other than 0 a crash.
+//! work is a hang, and one that ends with an access violation a crash; a
+//! child that fails otherwise makes the claim inconclusive.
 
 use std::time::Duration;
 
 use uia_facts_support::args::{Args, trials};
 use uia_facts_support::events::{self, Handler};
 use uia_facts_support::provider::Provider;
-use uia_facts_support::report::{Report, rate};
+use uia_facts_support::report::{Report, Verdict, rate};
 use uia_facts_support::role::{self, Role};
 use uia_facts_support::{note, uia};
 use windows::Win32::UI::Accessibility::{TreeScope_Descendants, UIA_NamePropertyId};
@@ -30,8 +31,6 @@ const CHILDREN: usize = 150;
 /// Threads in each child, each with a provider program of its own, as six
 /// threads each connecting to a mockapp of their own hung 1 in 40.
 const THREADS: usize = 6;
-/// Children running at once.
-const AT_ONCE: usize = 12;
 /// How long a child may take to end after its work.
 const HANG_LIMIT: Duration = Duration::from_secs(10);
 
@@ -43,7 +42,7 @@ fn main() {
     }
     let mut report = Report::start("a-process-that-used-uia-can-hang-or-crash-as-it-exits");
     if args.wants("exit") {
-        report.case("exit", "150 child processes, 12 at a time, each using UIA from six threads against six provider programs of its own, ending them, and then ending normally, running UIA's detach code; counting those that hang or crash");
+        report.case("exit", "150 child processes, one after another, each using UIA from six threads against six provider programs of its own, ending them, and then ending normally, running UIA's detach code; counting those that hang or crash");
         judge(&mut report);
     }
     report.finish();
@@ -116,47 +115,61 @@ fn use_uia(hwnd: isize) {
     std::mem::forget(client);
 }
 
+/// `STATUS_ACCESS_VIOLATION`, the crash the fault ends a process with.
+const ACCESS_VIOLATION: u32 = 0xC000_0005;
+
 fn judge(report: &mut Report) {
     let mut hangs = 0;
-    let mut crashes = Vec::new();
-    let mut started = 0;
+    let mut crashes = 0;
+    let mut done = 0;
+    let mut other = Vec::new();
     let children = CHILDREN * trials();
-    note::progress(&format!("{children} children, up to 10 s each to end"));
-    while started < children {
-        let batch = AT_ONCE.min(children - started);
-        let mut batch_children: Vec<Role> =
-            (0..batch).map(|_| Role::start("exiter", &[])).collect();
-        started += batch;
-        for child in &mut batch_children {
-            let done = child.line(Duration::from_secs(30));
-            if done.as_deref() != Some("done") {
-                note::evidence(&format!("a child reported {done:?}"));
+    note::progress(&format!(
+        "{children} children, one after another, up to 10 s each to end"
+    ));
+    for _ in 0..children {
+        let mut child = Role::start("exiter", &[]);
+        // Only a child that has done its UIA work counts: anything else is
+        // another failure, kept as evidence.
+        let line = child.line(Duration::from_secs(30));
+        if line.as_deref() != Some("done") {
+            other.push(format!("process {} reported {line:?}", child.pid));
+            continue;
+        }
+        done += 1;
+        match child.wait(HANG_LIMIT) {
+            None => {
+                hangs += 1;
+                note::evidence(&format!("process {} did not end within 10 s", child.pid));
             }
-            match child.wait(HANG_LIMIT) {
-                None => {
-                    hangs += 1;
-                    note::evidence(&format!("process {} did not end within 10 s", child.pid));
-                }
-                Some(0) => {}
-                Some(code) => {
-                    note::evidence(&format!(
-                        "process {} ended with code 0x{:08X}",
-                        child.pid,
-                        code.cast_unsigned()
-                    ));
-                    crashes.push(code);
-                }
+            Some(0) => {}
+            Some(code) if code.cast_unsigned() == ACCESS_VIOLATION => {
+                crashes += 1;
+                note::evidence(&format!(
+                    "process {} ended with an access violation",
+                    child.pid
+                ));
             }
+            Some(code) => other.push(format!(
+                "process {} ended with code 0x{:08X}",
+                child.pid,
+                code.cast_unsigned()
+            )),
         }
     }
-    let faults = hangs + crashes.len();
+    for line in &other {
+        note::evidence(line);
+    }
+    let faults = hangs + crashes;
+    let verdict = if other.is_empty() {
+        rate(faults, done, 1, 100)
+    } else {
+        Verdict::Inconclusive(format!("{} children failed otherwise", other.len()))
+    };
     report.claim(
-        "children that hung or crashed as they ended",
-        &format!(
-            "{faults} of {children} ({hangs} hung, {} crashed)",
-            crashes.len()
-        ),
+        "children that hung or ended with an access violation",
+        &format!("{faults} of {done} ({hangs} hung, {crashes} access violations)"),
         "about 1 to 3 percent of runs; the arbitration tests 1 run in 100 after the first-time setup fix",
-        rate(faults, children, 1, 100),
+        verdict,
     );
 }

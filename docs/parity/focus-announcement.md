@@ -244,10 +244,11 @@ which is M17.
   description changes (`HelpText`), UIA live region changes and system
   alerts, and UIA elements added to or removed from a selection.
   Verbatim does not read `IAccessible2` unique ids, by which NVDA keys
-  an `IAccessible2` object's address. UIA delivers no ancestor's events
-  to the focus-following registration ("UIA event registration" in
-  [backends.md](backends.md)), so a UIA ancestor's state change is not
-  spoken.
+  an `IAccessible2` object's address. Verbatim's focus-following
+  registration is scoped to the focus alone, so a UIA ancestor's state
+  change is not spoken; NVDA's, scoped to the focus and its ancestors,
+  receives an ancestor's events in some applications, such as the
+  taskbar's clock ("UIA event registration" in [backends.md](backends.md)).
 
 ### Table cell coordinates
 

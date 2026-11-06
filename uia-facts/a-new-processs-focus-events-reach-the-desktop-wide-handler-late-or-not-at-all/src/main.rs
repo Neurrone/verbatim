@@ -76,12 +76,10 @@ fn main() {
         report.case(name, what);
         let mut late = 0;
         let mut missing = 0;
+        let mut unmeasured = 0;
         let mut delays = Vec::new();
         for _ in 0..STARTS {
-            let before: BTreeSet<u32> = apps::top_windows()
-                .iter()
-                .map(|w| apps::window_pid(*w))
-                .collect();
+            let before: BTreeSet<u32> = apps::process_ids();
             while winevents.try_recv().is_ok() {}
             focus.lock().expect("a lock no one poisons").clear();
             let started = start(name);
@@ -116,19 +114,26 @@ fn main() {
                     }
                 }
                 Some((_, None)) => missing += 1,
-                None => note::evidence(&format!(
-                    "{name}: no focus WinEvent from the new process within 10 s"
-                )),
+                None => {
+                    unmeasured += 1;
+                    note::evidence(&format!(
+                        "{name}: no focus WinEvent from the new process within 10 s"
+                    ));
+                }
             }
             note::evidence(&format!("{name}: {outcome:?}"));
-            started.end();
+            started.end(&before);
             uia::pause(Duration::from_millis(500), "before the next start");
         }
         report.claim(
             &format!("{name}: starts whose UIA focus came more than 1 s after its focus WinEvent, or not within 5 s"),
-            &format!("{late} late and {missing} missing of {STARTS} (UIA focus {delays:.0?} ms after the WinEvent)"),
+            &format!("{late} late and {missing} missing of {STARTS}, {unmeasured} with no focus WinEvent to measure from (UIA focus {delays:.0?} ms after the WinEvent)"),
             "",
-            Verdict::New,
+            if unmeasured == 0 {
+                Verdict::New
+            } else {
+                Verdict::Inconclusive(format!("{unmeasured} starts had no focus WinEvent to measure from"))
+            },
         );
     }
     report.finish();
@@ -142,13 +147,15 @@ struct Started {
 }
 
 impl Started {
-    fn end(self) {
+    /// Ends the application: the processes of its executable that were
+    /// not running before it started, in `before`.
+    fn end(self, before: &BTreeSet<u32>) {
         if let Some(provider) = self.provider {
             drop(provider);
             return;
         }
-        for hwnd in apps::top_windows() {
-            let pid = apps::window_pid(hwnd);
+        for pid in apps::process_ids().difference(before) {
+            let pid = *pid;
             if apps::image_of(pid)
                 .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
                 .is_some_and(|n| n.eq_ignore_ascii_case(self.exe))

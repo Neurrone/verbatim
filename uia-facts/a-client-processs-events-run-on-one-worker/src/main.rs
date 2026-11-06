@@ -112,34 +112,77 @@ fn sleeping(name: &'static str, ms: u64, returned: Arc<Mutex<Option<u64>>>) -> O
 /// A case: its name, what it does, and its function.
 type Case = (&'static str, &'static str, fn(&Args, &mut Report));
 
-/// The `removing` role: for each `register` command, registers name
-/// changes on the window it names, reports `registered`, and once it hears
-/// an event reports `heard <thread id>` and removes the registration.
-fn removing(hwnd: isize) -> ! {
+/// The `events` role, a client process with no other registration:
+/// `events <hwnd> keep` registers name changes on the window once, reports
+/// `registered <registering thread id>`, then `heard <thread id>` for each
+/// event; `events <hwnd> remove`, for each `register` command, registers,
+/// reports `registered <thread id>`, and once it hears an event reports
+/// `heard <thread id>` and removes the registration.
+fn events_role(hwnd: isize, keep: bool) -> ! {
     let client = uia::client();
+    // SAFETY: no precondition.
+    let me = unsafe { GetCurrentThreadId() };
+    let forward = |reports: &Reports, once: bool| loop {
+        match reports.recv_timeout(Duration::from_secs(5)) {
+            Ok(events::Report::Heard(h)) => {
+                role::report(&format!("heard {}", h.thread));
+                if once {
+                    return;
+                }
+            }
+            Ok(events::Report::Freed) => {}
+            Err(_) => {
+                if once {
+                    role::report("none");
+                    return;
+                }
+            }
+        }
+    };
+    if keep {
+        let reports = register(&client, hwnd, None);
+        role::report(&format!("registered {me}"));
+        // The parent ends this process when its trial is over.
+        loop {
+            forward(&reports, true);
+        }
+    }
     for _ in role::commands() {
         let reports = register(&client, hwnd, None);
-        role::report("registered");
-        let heard = loop {
-            match reports.recv_timeout(Duration::from_secs(3)) {
-                Ok(events::Report::Heard(h)) => break Some(h),
-                Ok(events::Report::Freed) => {}
-                Err(_) => break None,
-            }
-        };
+        role::report(&format!("registered {me}"));
+        forward(&reports, true);
         // SAFETY: a live client object.
         unsafe { client.RemoveAllEventHandlers() }.expect("the registration removed");
-        role::report(&heard.map_or_else(|| "none".to_owned(), |h| format!("heard {}", h.thread)));
     }
     uia_facts_support::exit_now(0)
+}
+
+/// The thread id a `heard` line of the `events` role names, or `None` for
+/// a line that heard nothing.
+fn heard_thread(line: &str) -> Option<u32> {
+    line.strip_prefix("heard ")
+        .map(|t| t.parse().expect("a thread id"))
+}
+
+/// The thread ids of the `heard` lines `role` reports until it has
+/// reported `count` or none comes for `silence`.
+fn heard_threads(role: &Role, count: usize, silence: Duration) -> Vec<u32> {
+    let mut ids = Vec::new();
+    while ids.len() < count {
+        match role.line(silence) {
+            Some(line) => ids.extend(heard_thread(&line)),
+            None => break,
+        }
+    }
+    ids
 }
 
 fn main() {
     let args = Args::parse();
     uia::mta();
     if let Some((name, rest)) = &args.role {
-        assert_eq!(name, "removing", "unknown role {name}");
-        removing(rest[0].parse().expect("a window handle"));
+        assert_eq!(name, "events", "unknown role {name}");
+        events_role(rest[0].parse().expect("a window handle"), rest[1] == "keep");
     }
     let mut report = Report::start("a-client-processs-events-run-on-one-worker");
     let cases: [Case; 5] = [
@@ -258,28 +301,36 @@ fn threads(args: &Args, report: &mut Report) {
     let mut ends = Vec::new();
     let mut burst = Vec::new();
     for _ in 0..trials() {
-        let mut provider = Provider::launch(&["--windows", "uia:0,uia:1"]);
-        args.pause_for_debugger(&[("provider", provider.pid), ("client", std::process::id())]);
-        let client = uia::client();
-        // SAFETY: no precondition.
-        let me = unsafe { GetCurrentThreadId() };
-        let reports = register(&client, provider.hwnd(0), None);
-        let mut heard = Vec::new();
+        let mut provider = Provider::launch(&["--windows", "uia:0,uia:1,uia:2"]);
+        // Each sequence runs in a client process of its own with no other
+        // registration, which would keep its worker.
+        let keeping = Role::start("events", &[provider.hwnd(0).to_string(), "keep".to_owned()]);
+        args.pause_for_debugger(&[("provider", provider.pid), ("client", keeping.pid)]);
+        let registering: u32 = keeping
+            .expect_line()
+            .strip_prefix("registered ")
+            .expect("the registration is made")
+            .parse()
+            .expect("a thread id");
         let mut ids = Vec::new();
         let mut gone = Vec::new();
         for i in 0..4 {
-            let name = format!("apart{i}");
-            let raised = raise(&mut provider, 0, &name);
-            let h = wait_for(&reports, &mut heard, &name, Duration::from_secs(3))
-                .expect("the event is heard");
-            ids.push(h.thread);
+            let raised = raise(&mut provider, 0, &format!("apart{i}"));
+            let Some(thread) = heard_threads(&keeping, 1, Duration::from_secs(3))
+                .first()
+                .copied()
+            else {
+                gone.push("not heard".to_owned());
+                continue;
+            };
+            ids.push(thread);
             // The originals' events came 800 ms apart; ask every 50 ms
             // until then whether the event's thread has ended.
             let mut end = None;
             while now_us() < raised + 750_000 && end.is_none() {
                 std::thread::sleep(Duration::from_millis(50));
-                if end.is_none() && ended(h.thread) {
-                    end = Some(us_to_ms(now_us() - h.at));
+                if ended(thread) {
+                    end = Some(us_to_ms(now_us() - raised));
                 }
             }
             gone.push(end.map_or_else(
@@ -289,33 +340,29 @@ fn threads(args: &Args, report: &mut Report) {
             until(raised + 800_000);
         }
         note::evidence(&format!(
-            "threads of four events 800 ms apart: {ids:?}; ended (ms after the event, to 50 ms): {gone:?}"
+            "threads of four events 800 ms apart to one registration: {ids:?}; ended (ms after the raise, to 50 ms): {gone:?}"
         ));
+        not_registering.push(!ids.is_empty() && ids.iter().all(|id| *id != registering));
+        ends.push(gone);
         let mut unique = ids.clone();
         unique.sort_unstable();
         unique.dedup();
         distinct.push(unique.len());
-        not_registering.push(ids.iter().all(|id| *id != me));
-        ends.push(gone);
         // As the original ran them: each event to a registration of its
         // own, removed once its event is heard, 800 ms apart.
-        // This process already holds registrations, which keep its worker,
-        // so the events go to a client process of its own (`removing`).
+        let mut removing = Role::start(
+            "events",
+            &[provider.hwnd(1).to_string(), "remove".to_owned()],
+        );
         let mut removed = Vec::new();
-        let mut removing = Role::start("removing", &[provider.hwnd(1).to_string()]);
         for i in 0..4 {
             removing.send("register");
-            assert_eq!(
-                removing.expect_line(),
-                "registered",
+            assert!(
+                removing.expect_line().starts_with("registered "),
                 "the registration is made"
             );
-            let name = format!("removed{i}");
-            raise(&mut provider, 1, &name);
-            let line = removing.expect_line();
-            if let Some(thread) = line.strip_prefix("heard ") {
-                removed.push(thread.parse::<u32>().expect("a thread id"));
-            }
+            raise(&mut provider, 1, &format!("removed{i}"));
+            removed.extend(heard_thread(&removing.expect_line()));
             uia::pause(
                 Duration::from_millis(800),
                 "the originals' 800 ms between events",
@@ -327,16 +374,18 @@ fn threads(args: &Args, report: &mut Report) {
         removed.sort_unstable();
         removed.dedup();
         distinct_removed.push(removed.len());
-        let names: Vec<String> = (0..4).map(|i| format!("burst{i}")).collect();
-        for name in &names {
-            raise(&mut provider, 0, name);
+        // Four events at once, to a registration of their own; the handler
+        // runs are counted, since the senders' names are read when the
+        // worker takes each event.
+        let bursting = Role::start("events", &[provider.hwnd(2).to_string(), "keep".to_owned()]);
+        assert!(
+            bursting.expect_line().starts_with("registered "),
+            "the registration is made"
+        );
+        for i in 0..4 {
+            raise(&mut provider, 2, &format!("burst{i}"));
         }
-        let mut ids = Vec::new();
-        for name in &names {
-            if let Some(h) = wait_for(&reports, &mut heard, name, Duration::from_secs(3)) {
-                ids.push(h.thread);
-            }
-        }
+        let mut ids = heard_threads(&bursting, 4, Duration::from_millis(1_000));
         note::evidence(&format!("threads of four events raised at once: {ids:?}"));
         ids.sort_unstable();
         ids.dedup();
@@ -361,7 +410,7 @@ fn threads(args: &Args, report: &mut Report) {
         deterministic(&not_registering, &true),
     );
     report.claim(
-        "when each of the four events' threads had ended after its event, to 50 ms",
+        "when each of the four events' threads had ended after its raise, to 50 ms",
         &runs(&ends),
         "",
         Verdict::New,
@@ -459,34 +508,34 @@ fn slow_query(args: &Args, report: &mut Report) {
 
 fn drops(args: &Args, report: &mut Report) {
     const COUNT: usize = 20;
+    /// The handler's time for each event.
+    const HANDLER_MS: u64 = 200;
     let mut counts = Vec::new();
     let mut fewer = Vec::new();
     for _ in 0..trials() {
         let mut provider = Provider::launch(&["--windows", "uia:0"]);
         args.pause_for_debugger(&[("provider", provider.pid), ("client", std::process::id())]);
         let client = uia::client();
-        let slow: OnEvent = Box::new(|_| std::thread::sleep(Duration::from_millis(200)));
+        let slow: OnEvent = Box::new(|_| std::thread::sleep(Duration::from_millis(HANDLER_MS)));
         let reports = register(&client, provider.hwnd(0), Some(slow));
-        let names: Vec<String> = (0..COUNT).map(|i| format!("e{i}")).collect();
-        for name in &names {
-            raise(&mut provider, 0, name);
+        for i in 0..COUNT {
+            raise(&mut provider, 0, &format!("e{i}"));
         }
-        note::waiting("up to 6 s, the twenty events at 0.2 s each");
-        let mut heard = Vec::new();
-        let _ = wait_for(
-            &reports,
-            &mut heard,
-            &names[COUNT - 1],
-            Duration::from_secs(6),
-        );
-        uia::pause(Duration::from_millis(500), "for any event behind the last");
-        let (more, _) = events::drain(&reports);
-        heard.extend(more);
-        let count = heard.len();
-        note::evidence(&format!(
-            "the handler ran {count} times, its senders named {:?}",
-            heard.iter().map(|h| h.name.clone()).collect::<Vec<_>>()
-        ));
+        // The handler runs are counted, not named: a sender's name is read
+        // when the worker takes its event, so events queued together carry
+        // the latest name. The count ends at 20, or once no run has come
+        // for the handler's time and 300 ms more.
+        note::waiting("up to 5 s, the twenty events at 0.2 s each");
+        let silence = Duration::from_millis(HANDLER_MS + 300);
+        let mut count = 0;
+        while count < COUNT {
+            match reports.recv_timeout(silence) {
+                Ok(events::Report::Heard(_)) => count += 1,
+                Ok(events::Report::Freed) => {}
+                Err(_) => break,
+            }
+        }
+        note::evidence(&format!("the handler ran {count} times"));
         counts.push(count);
         fewer.push(count < COUNT);
     }

@@ -76,7 +76,15 @@ impl Role {
                 }
             }
         });
-        let pid = child.id();
+        // The role's first line is its own process id: under a desktop of
+        // its own, `child` is the trampoline that started it.
+        let first = lines
+            .recv_timeout(Duration::from_secs(60))
+            .expect("the second client starts");
+        let pid = first
+            .strip_prefix("pid ")
+            .and_then(|p| p.parse().ok())
+            .unwrap_or_else(|| panic!("the second client's first line names its process: {first}"));
         Self {
             child,
             stdin: Mutex::new(stdin),
@@ -145,16 +153,20 @@ impl Role {
     /// When its state cannot be read.
     #[must_use]
     pub fn wait(&mut self, limit: Duration) -> Option<i32> {
-        let start = std::time::Instant::now();
-        loop {
-            if let Some(status) = self.child.try_wait().expect("the process's state") {
-                return Some(status.code().unwrap_or(-1));
-            }
-            if start.elapsed() >= limit {
-                return None;
-            }
-            std::thread::sleep(Duration::from_millis(20));
+        use std::os::windows::io::AsRawHandle;
+        let handle = windows::Win32::Foundation::HANDLE(self.child.as_raw_handle());
+        let ms = u32::try_from(limit.as_millis()).unwrap_or(u32::MAX);
+        // SAFETY: the child's live process handle, which `self` owns.
+        let waited = unsafe { windows::Win32::System::Threading::WaitForSingleObject(handle, ms) };
+        if waited != windows::Win32::Foundation::WAIT_OBJECT_0 {
+            return None;
         }
+        let status = self
+            .child
+            .try_wait()
+            .expect("the process's state")
+            .expect("an ended process has a status");
+        Some(status.code().expect("a Windows process has an exit code"))
     }
 }
 

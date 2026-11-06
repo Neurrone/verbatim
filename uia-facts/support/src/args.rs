@@ -117,6 +117,9 @@ impl Args {
                 "--role" => {
                     let name = words.next().expect("--role takes a name");
                     crate::note::set_role();
+                    // The parent reads the role's process id first
+                    // ([`crate::role::Role::start`]).
+                    crate::role::report(&format!("pid {}", std::process::id()));
                     args.role = Some((name, words.by_ref().collect()));
                 }
                 other => panic!("unknown argument {other}"),

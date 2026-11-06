@@ -16,7 +16,7 @@ On the unlocked desktop, the program holds one desktop-wide focus handler, cachi
 - `notepad`: Notepad, `notepad.exe` in the system folder;
 - `settings`: the Settings app, `ms-settings:`.
 
-For each start it takes the first focus `WinEvent` from a process of that executable that had no window before, and waits up to 5 s for a UIA focus whose sender is in that process. The UIA focus is late when it comes more than 1 s after the `WinEvent`, the second Verbatim's outpost waits, and missing when none comes within 5 s. The fault was never measured as a rate, so each count is printed as new.
+For each start it takes the first focus `WinEvent` from a process of that executable that was not running before, and waits up to 5 s for a UIA focus whose sender is in that process. The UIA focus is late when it comes more than 1 s after the `WinEvent`, the second Verbatim's outpost waits, and missing when none comes within 5 s. A start with no focus `WinEvent` from a new process within 10 s has nothing to measure from, and makes the counts inconclusive. Ending an application ends only the processes of its executable that were not running before its start, so the user's own windows are left alone. The fault was never measured as a rate, so each count is printed as new.
 
 ## Client settings
 
