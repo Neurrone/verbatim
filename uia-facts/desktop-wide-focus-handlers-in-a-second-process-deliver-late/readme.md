@@ -36,7 +36,7 @@ Neither connection recovery nor event coalescing changes these outcomes (checked
 | First uia-facts run, `one-process`: 4 handlers, 24 deliveries, all within 100 ms; `plain`: none heard; `slow`: the later processes' worst 10.9 to 1,513.7 ms; `threading`: the STA process late | 2026-11-06 | As above | As above | Pass; `slow` for trends; `threading` the answer |
 | Rerun with the late processes judged as rates and the 0.5 s before the first move: `processes` 2 of 2 runs with two and with four; `slow` 0 of 1, two processes on time; `plain` none heard | 2026-11-06 | As above | 93fed1a0 | Pass; `slow` inconclusive in one run |
 | Listening only until each process has heard every event: `processes` 2 of 2 runs with two and with four; `slow` 0 of 2, where three runs just before met it in 2 | 2026-11-06 | As above | cdb6b4d6 | Pass; `slow` for trends |
-| Listening until every event of M is heard and 0.5 s more: `processes` 1 of 2 runs with two processes, inconclusive against 2 of 2, and 2 of 2 with four; `slow` 0 of 2; every process heard all 6 | 2026-11-06 | As above | This change's commit | Two processes inconclusive; the rest pass; `slow` for trends |
+| Listening until every event of M is heard and 0.5 s more: `processes` 1 of 2 runs with two processes, inconclusive against 2 of 2, and 2 of 2 with four; `slow` 0 of 2; every process heard all 6 | 2026-11-06 | As above | f0b18b2a | Two processes inconclusive; the rest pass; `slow` for trends |
 
 ## How to rerun
 

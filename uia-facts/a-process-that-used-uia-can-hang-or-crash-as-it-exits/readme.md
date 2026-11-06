@@ -30,7 +30,7 @@ Neither connection recovery nor event coalescing changes these outcomes (checked
 | `candidates`, 230 children each, a 10 s hang limit: the first build's setup 6 (3.4 faults a minute); no search 6; no registration 8; connect and read only 6; one thread 0; the UIA window alone 11; one provider and one thread 0; connect and read the UIA window alone 8 (5.9 a minute); the same with two providers and threads 0; one provider with six UIA windows and six threads 0; one provider's window with six threads each to it 0; four providers and threads 8 (6.6 a minute); six providers and three threads 3; twelve providers and threads 5 | 2026-11-06 | As above | cdb6b4d6 | New; four providers and threads chosen |
 | `exit` with four providers and threads: 2 of 150, both hangs, in 22 s | 2026-11-06 | As above | cdb6b4d6 | Pass against 8 of 230 |
 | `clean`: the providers ended after the teardown 2 of 90, before it 3 of 90, all hangs | 2026-11-06 | As above | cdb6b4d6 | Pass: no difference from the dirty rate |
-| `clean` at 120 children: the providers ended after the teardown 5 of 120 (4 hung, 1 access violation), before it 5 of 120, all hangs | 2026-11-06 | As above | This change's commit | Pass: no difference from the dirty rate |
+| `clean` at 120 children: the providers ended after the teardown 5 of 120 (4 hung, 1 access violation), before it 5 of 120, all hangs | 2026-11-06 | As above | f0b18b2a | Pass: no difference from the dirty rate |
 
 ## How to rerun
 

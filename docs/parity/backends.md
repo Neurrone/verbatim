@@ -206,15 +206,16 @@ clients asks
   on, and caret events) on the focused element with
   `TreeScope_Element | TreeScope_Ancestors`, when it handles a UIA
   focus. Verbatim registers on the focus with `TreeScope_Element`
-  alone, and the outcome is the same, because UIA delivers no
-  ancestor's event to an ancestors-scoped registration, checked on
-  Windows 11 build 26200: in a provider's tree view, a registration on
-  the focused item with NVDA's scope, Verbatim's or the ancestors alone
-  heard none of the tree view's name changes, raised through
-  `UiaRaiseAutomationPropertyChangedEvent`; on the taskbar, the clock
-  button's name change reached a registration on the button's child in
-  every minute watched with either scope that includes the element,
-  NVDA's or Verbatim's, and never with the ancestors alone
+  alone, and the outcome is the same, because a registration scoped
+  to the ancestors alone receives no ancestor's event and adding the
+  ancestors to the element's scope hears nothing beyond the element's
+  scope alone, checked on Windows 11 build 26200: in a provider's tree
+  view, a registration on the focused item with NVDA's scope,
+  Verbatim's or the ancestors alone heard none of the tree view's name
+  changes, raised through `UiaRaiseAutomationPropertyChangedEvent`; on
+  the taskbar, a registration on the clock button's child heard the
+  button's name change with NVDA's scope and with Verbatim's in the
+  same minutes, and never with the ancestors alone
   (`books/dev/src/reference/uia-bugs.md`, "Ancestors cannot be cached or listened to").
   NVDA's `event_stateChange` speaks a state change on a focus ancestor
   (its issue 10890), but under selective registration UIA never hands
