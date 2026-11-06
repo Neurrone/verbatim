@@ -29,9 +29,9 @@ use std::time::Duration;
 use uia_facts_support::args::Args;
 use uia_facts_support::events::{self, Handler};
 use uia_facts_support::provider::Provider;
-use uia_facts_support::report::{Report, Verdict};
+use uia_facts_support::report::{Report, rate};
 use uia_facts_support::role::{self, Role};
-use uia_facts_support::{apps, exit_now, rop, uia};
+use uia_facts_support::{apps, exit_now, now_us, rop, uia};
 use windows::Win32::UI::Accessibility::{
     IUIAutomationTextPattern, TreeScope_Subtree, UIA_NamePropertyId, UIA_TextPatternId,
 };
@@ -148,24 +148,23 @@ fn killed_role(rest: &[String]) -> ! {
 /// or `hung`.
 fn after(provider: &mut Provider) -> String {
     let hwnd = provider.hwnd(0);
-    let read = uia::spawn(move || {
+    let (answered, answer) = std::sync::mpsc::channel();
+    let _read = uia::spawn(move || {
         let client = uia::client();
         uia::set_timeouts(&client, 2_000, 4_000);
-        uia::element(&client, hwnd)
+        let read = uia::element(&client, hwnd)
             .and_then(|root| uia::node(&client, &root, 2))
-            .and_then(|second| uia::name(&second))
+            .and_then(|second| uia::name(&second));
+        let _ = answered.send(read);
     });
-    let start = std::time::Instant::now();
-    while !read.is_finished() && start.elapsed() < ANSWER {
-        std::thread::sleep(Duration::from_millis(5));
-    }
+    let read = answer.recv_timeout(ANSWER);
     if let Some(code) = provider.exit_code() {
         return format!("ended 0x{code:08X}");
     }
-    if !read.is_finished() {
+    let Ok(read) = read else {
         return "hung".to_owned();
-    }
-    match read.join().expect("the read") {
+    };
+    match read {
         Ok(name) if name == "Second" && provider.answers(ANSWER) => "continues".to_owned(),
         Ok(name) => format!("answered {name}"),
         Err(error) => match provider.exit_code() {
@@ -175,8 +174,8 @@ fn after(provider: &mut Provider) -> String {
     }
 }
 
-/// The verdict of `outcomes`: how many trials P continued in; a new
-/// answer, since nothing recorded it.
+/// The verdict of `outcomes`: how many trials P continued in, against
+/// the first run's 20 of 20.
 fn judge(report: &mut Report, what: &str, outcomes: &[String]) {
     let continued = outcomes.iter().filter(|o| *o == "continues").count();
     for other in outcomes.iter().filter(|o| *o != "continues") {
@@ -185,16 +184,49 @@ fn judge(report: &mut Report, what: &str, outcomes: &[String]) {
     report.claim(
         &format!("trials in which the provider continued after a client ended in {what}"),
         &format!("{continued} of {}", outcomes.len()),
-        "",
-        Verdict::New,
+        "20 of 20 (the first run)",
+        rate(continued, outcomes.len(), 20, 20),
     );
     if continued < outcomes.len() {
         uia_facts_support::note::print_evidence();
     }
 }
 
+/// Whether P's log holds the end of the held call of `method`, on node
+/// `node` when given, at or after `released`: the call returned into a
+/// client that was gone.
+fn returned(provider: &mut Provider, method: &str, node: Option<usize>, released: u64) -> bool {
+    let (_, found) = provider.log_until(ANSWER, |e| {
+        e.is_call(method) && e.end >= released && node.is_none_or(|n| e.node == Some(n))
+    });
+    found
+}
+
+/// Ends process `pid` 20 ms after it starts, a deliberate offset, while
+/// P runs `request`, which raises events back to back; answers whether
+/// the kill came before the raise had answered, so among the events.
+fn kill_among(provider: &mut Provider, pid: u32, request: &str) -> bool {
+    let (when, kill_time) = std::sync::mpsc::channel();
+    let killer = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(20));
+        let at = now_us();
+        apps::kill(pid);
+        let _ = when.send(at);
+    });
+    provider.request(request);
+    let raised = now_us();
+    killer.join().expect("the killer");
+    let at = kill_time.recv().expect("the kill's time");
+    at < raised
+}
+
 fn held(report: &mut Report, threading: &str, name: &str, hold: &str) {
     let mut outcomes = Vec::new();
+    let method = hold.split(' ').next().expect("a method");
+    let node = hold
+        .split(' ')
+        .find_map(|w| w.strip_prefix("n="))
+        .map(|n| n.parse().expect("a node"));
     for _ in 0..TRIALS {
         let mut provider = Provider::launch(&["--windows", "uia:0", "--threading", threading]);
         let mut client = Role::start("killed", &[provider.hwnd(0).to_string()]);
@@ -206,10 +238,22 @@ fn held(report: &mut Report, threading: &str, name: &str, hold: &str) {
             .expect("the client's call is held");
         apps::kill(client.pid);
         let _ = client.wait(Duration::from_secs(5));
+        provider.log();
+        let released = now_us();
         provider.request("release");
-        outcomes.push(after(&mut provider));
+        let back = returned(&mut provider, method, node, released);
+        let outcome = after(&mut provider);
+        outcomes.push(if back {
+            outcome
+        } else {
+            format!("the held call not returned ({outcome})")
+        });
     }
-    judge(report, &format!("its {name} call ({threading})"), &outcomes);
+    judge(
+        report,
+        &format!("its {name} call ({threading}), the held call returning into it"),
+        &outcomes,
+    );
 }
 
 fn flood(report: &mut Report, threading: &str) {
@@ -225,22 +269,18 @@ fn flood(report: &mut Report, threading: &str) {
             "returned",
             "the registration returned"
         );
-        // P raises 2,000 name changes back to back on its UI thread, and K
-        // is ended 20 ms after they are asked for, a deliberate offset,
-        // since nothing marks K's handler running.
-        let pid = client.pid;
-        let killer = std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(20));
-            apps::kill(pid);
-        });
-        provider.request("raise-rate name 0 1 0 2000");
-        killer.join().expect("the killer");
+        let among = kill_among(&mut provider, client.pid, "raise-rate name 0 1 0 2000");
         let _ = client.wait(Duration::from_secs(5));
-        outcomes.push(after(&mut provider));
+        let outcome = after(&mut provider);
+        outcomes.push(if among {
+            outcome
+        } else {
+            format!("ended after the events were raised ({outcome})")
+        });
     }
     judge(
         report,
-        &format!("its handler's events ({threading})"),
+        &format!("the provider's raising of its handler's events ({threading})"),
         &outcomes,
     );
 }
@@ -263,22 +303,26 @@ fn text_and_events(report: &mut Report) {
         provider
             .held(Duration::from_secs(10))
             .expect("the client's GetText is held");
-        // K is ended 20 ms after the notifications are asked for, a
-        // deliberate offset, since nothing marks K's handler running.
-        let pid = client.pid;
-        let killer = std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(20));
-            apps::kill(pid);
-        });
-        provider.request("raise-rate notification 0 3 0 2000");
-        killer.join().expect("the killer");
+        let among = kill_among(
+            &mut provider,
+            client.pid,
+            "raise-rate notification 0 3 0 2000",
+        );
         let _ = client.wait(Duration::from_secs(5));
+        provider.log();
+        let released = now_us();
         provider.request("release");
-        outcomes.push(after(&mut provider));
+        let back = returned(&mut provider, "GetText", None, released);
+        let outcome = after(&mut provider);
+        outcomes.push(match (among, back) {
+            (true, true) => outcome,
+            (false, _) => format!("ended after the events were raised ({outcome})"),
+            (true, false) => format!("the held call not returned ({outcome})"),
+        });
     }
     judge(
         report,
-        "its held GetText beside its handlers' events (nocom)",
+        "the provider's raising of its handlers' events, its GetText held and returning into it (nocom)",
         &outcomes,
     );
 }

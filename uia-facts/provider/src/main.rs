@@ -66,6 +66,11 @@
 //! - `show <w>` and `hide <w>`: shows or hides window w, without changing
 //!   the foreground.
 //! - `post-null <w>`: posts `WM_NULL` to window w.
+//! - `menu <w>`: shows window w, brings it to the foreground and opens a
+//!   popup menu of its own over it (`TrackPopupMenuEx`), with the items
+//!   `Menu first item` and `Menu second item`; answered with whether the
+//!   window is in front, as the menu opens. The menu's modal loop keeps the
+//!   thread dispatching. `menu-close <w>` ends it.
 //! - `parent <w> <hwnd>`: makes window w a visible child window of window
 //!   `hwnd`, of this process or another, on window w's UI thread.
 //! - `hung <w>`: answers `IsHungAppWindow` of window w, `true` or `false`.
@@ -469,6 +474,34 @@ fn handle(line: &str) -> String {
                 let _ = answer.send(foreground(index));
             })
         }
+        "menu" => {
+            let Some(index) = number(0) else {
+                return "err menu takes a window".to_owned();
+            };
+            on_ui_thread(index, move |answer| {
+                let front = foreground(index);
+                let _ = answer.send(front);
+                open_menu(index);
+            })
+        }
+        "menu-close" => {
+            let Some(index) = number(0) else {
+                return "err menu-close takes a window".to_owned();
+            };
+            let hwnd = HWND(state::window(index).hwnd as *mut _);
+            // SAFETY: a window of this process; its menu loop ends on it.
+            match unsafe {
+                PostMessageW(
+                    Some(hwnd),
+                    windows::Win32::UI::WindowsAndMessaging::WM_CANCELMODE,
+                    WPARAM(0),
+                    LPARAM(0),
+                )
+            } {
+                Ok(()) => "ok".to_owned(),
+                Err(error) => format!("err {error}"),
+            }
+        }
         "log" => {
             let entries = state::take_log();
             for entry in &entries {
@@ -479,6 +512,28 @@ fn handle(line: &str) -> String {
         "peak" => format!("ok {}", state::take_peak()),
         other => format!("err unknown request {other}"),
     }
+}
+
+/// Opens a popup menu of two items over window `index`, on its thread,
+/// and returns once the menu ends.
+fn open_menu(index: usize) {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        AppendMenuW, CreatePopupMenu, DestroyMenu, MF_STRING, TPM_RETURNCMD, TrackPopupMenuEx,
+    };
+    let hwnd = HWND(state::window(index).hwnd as *mut _);
+    // SAFETY: no precondition; the menu is destroyed below.
+    let Ok(menu) = (unsafe { CreatePopupMenu() }) else {
+        return;
+    };
+    for (id, text) in [(1usize, w!("Menu first item")), (2, w!("Menu second item"))] {
+        // SAFETY: a live menu and a static, terminated string.
+        let _ = unsafe { AppendMenuW(menu, MF_STRING, id, text) };
+    }
+    // SAFETY: a live menu and a window of this thread; the call runs the
+    // menu's modal loop until it ends.
+    let _ = unsafe { TrackPopupMenuEx(menu, TPM_RETURNCMD.0, 50, 50, hwnd, None) };
+    // SAFETY: the menu made above.
+    let _ = unsafe { DestroyMenu(menu) };
 }
 
 /// Makes window `index` a visible child window of `parent`.

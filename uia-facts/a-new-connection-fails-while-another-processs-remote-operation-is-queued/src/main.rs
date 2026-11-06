@@ -249,18 +249,28 @@ fn answer(role: &Role) -> Vec<String> {
     role.expect_line().split(' ').map(str::to_owned).collect()
 }
 
-/// Waits for P's busy thread to log a message arriving after `after`.
-fn reached(provider: &mut Provider, after: u64) {
-    let (_, found) = provider.log_until(Duration::from_secs(10), |e| {
-        e.kind == "queued" && e.start >= after
-    });
+/// Waits for P's busy thread to log a message arriving after `after`, a
+/// sent message only when `sent`; answers the entry's time.
+fn reached(provider: &mut Provider, after: u64, sent: bool) -> u64 {
+    let wanted = |e: &uia_facts_support::provider::Entry| {
+        e.kind == "queued" && e.start >= after && (!sent || e.name == "sent")
+    };
+    let (entries, found) = provider.log_until(Duration::from_secs(10), wanted);
     assert!(found, "the message reaches the busy thread");
+    entries
+        .iter()
+        .find(|e| wanted(e))
+        .map(|e| e.start)
+        .expect("the entry found")
 }
 
 /// A scene: P with its layout, and A set up in P.
 struct Scene {
     provider: Provider,
     a: Role,
+    /// When P logged A's queued operation reaching the busy thread, 0
+    /// before it is queued.
+    marked: u64,
 }
 
 impl Scene {
@@ -272,7 +282,11 @@ impl Scene {
             ("A", a.pid),
             ("B, this program", std::process::id()),
         ]);
-        Self { provider, a }
+        Self {
+            provider,
+            a,
+            marked: 0,
+        }
     }
 
     /// Makes UI thread 0 busy and, when `operation`, queues A's remote
@@ -282,7 +296,7 @@ impl Scene {
         self.provider.request("busy 0");
         if operation {
             let sent = send(&mut self.a, "rop");
-            reached(&mut self.provider, sent);
+            self.marked = reached(&mut self.provider, sent, false);
         }
     }
 
@@ -317,7 +331,8 @@ fn during<T: Send + 'static>(
         (value, uia::ms(took))
     });
     if marked {
-        reached(&mut scene.provider, start);
+        // B's own message, sent after A's operation reached the thread.
+        reached(&mut scene.provider, start.max(scene.marked), true);
     } else {
         uia::pause(UNMARKED, "before the release");
     }
@@ -618,9 +633,9 @@ fn order(report: &mut Report) {
         let start = now_us();
         about(2);
         let lookup = uia::spawn(move || uia::lookup(&client(), hwnd));
-        reached(&mut scene.provider, start);
+        let looked = reached(&mut scene.provider, start, true);
         let sent = send(&mut scene.a, "rop");
-        reached(&mut scene.provider, sent);
+        reached(&mut scene.provider, sent.max(looked), false);
         scene.release();
         outcomes.push(lookup.join().expect("B's lookup"));
         scene.operation_done();
@@ -768,6 +783,21 @@ fn console_role() -> ! {
     exit_now(0)
 }
 
+/// The verdict of stalled trials, each (the lookup's answer, A's operation
+/// queued): inconclusive when A's operation was not queued in every trial,
+/// since the lookup then met no queued operation; otherwise the answers
+/// against `expected`.
+fn queued_or_not(trials: &[(String, bool)], expected: &str) -> Verdict {
+    if trials.iter().all(|(_, queued)| *queued) {
+        deterministic(trials, &(expected.to_owned(), true))
+    } else {
+        Verdict::Inconclusive(
+            "A's operation ended before the resume, so it was not queued while the lookup was made"
+                .to_owned(),
+        )
+    }
+}
+
 /// Suspends or resumes thread `id`.
 fn suspend(id: u32, suspend: bool) {
     // SAFETY: a thread id of a process this program started.
@@ -785,7 +815,7 @@ fn suspend(id: u32, suspend: bool) {
 
 /// One stalled trial on the desktop: window `hwnd`, its thread `thread`
 /// suspended, A's operation sent, then B's lookup; resumed after both.
-fn suspended_trial(hwnd: isize, thread: u32) -> String {
+fn suspended_trial(hwnd: isize, thread: u32) -> (String, bool) {
     let mut a = start_client(Some(DESKTOP), hwnd, true, false);
     let mut b = start_client(Some(DESKTOP), hwnd, false, false);
     suspend(thread, true);
@@ -796,10 +826,13 @@ fn suspended_trial(hwnd: isize, thread: u32) -> String {
     );
     let _ = send(&mut b, &format!("lookup {hwnd}"));
     uia::pause(Duration::from_millis(300), "the stall, as e35 made it");
+    let resumed = now_us();
     suspend(thread, false);
     let served = answer(&b)[1].clone();
-    let _ = answer(&a);
-    served
+    // A's operation was queued only if it ended at or after the resume.
+    let operation = answer(&a);
+    let queued = operation[1] == "ok" && operation[2].parse::<u64>().expect("a time") >= resumed;
+    (served, queued)
 }
 
 fn conhost(report: &mut Report) {
@@ -820,16 +853,16 @@ fn conhost(report: &mut Report) {
         providers.push(suspended_trial(provider.hwnd(0), thread));
     }
     report.claim(
-        "a fresh console host's window, its thread suspended, looked up during A's operation",
+        "a fresh console host's window, its thread suspended, looked up during A's operation: (the lookup's answer, A's operation queued)",
         &runs(&consoles),
-        "conhost's own element",
-        deterministic(&consoles, &"own".to_owned()),
+        "conhost's own element, A's operation ending at or after the resume",
+        queued_or_not(&consoles, "own"),
     );
     report.claim(
-        "the provider program stalled the same way",
+        "the provider program stalled the same way: (the lookup's answer, A's operation queued)",
         &runs(&providers),
-        "UIA's window proxy",
-        deterministic(&providers, &"proxy".to_owned()),
+        "UIA's window proxy, A's operation ending at or after the resume",
+        queued_or_not(&providers, "proxy"),
     );
 }
 

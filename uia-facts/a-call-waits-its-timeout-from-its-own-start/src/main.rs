@@ -93,6 +93,10 @@ fn main() {
     let mut report = Report::start("a-call-waits-its-timeout-from-its-own-start");
     if args.wants("waits") {
         report.case("waits", "holding node 1's name read in the provider at transaction timeouts of 2 and 5 s, then E-TT's name and keyboard-focus reads at 1 s; timing each read until it fails");
+        println!(
+            "system timer resolution in effect: {:.4} ms",
+            timer_resolution_ms()
+        );
         for (timeout, recorded) in [(2_000, "2.2 s"), (5_000, "5.5 s")] {
             waits(&args, &mut report, timeout, recorded, "", Factor::Tenth);
         }
@@ -107,14 +111,25 @@ fn main() {
         // SAFETY: no precondition; undone below.
         let set = unsafe { timeBeginPeriod(1) };
         assert_eq!(set, 0, "the timer resolution is set");
-        waits(
-            &args,
-            &mut report,
-            1_000,
-            "1,001.5 to 1,028.5 ms in 7 runs",
-            " with the system timer at 1 ms",
-            Factor::Whole,
-        );
+        // The resolution in effect, read rather than assumed: another
+        // process, or Windows, may hold it elsewhere.
+        let resolution = timer_resolution_ms();
+        println!("system timer resolution in effect: {resolution:.4} ms");
+        if resolution <= 1.0 {
+            waits(
+                &args,
+                &mut report,
+                1_000,
+                "1,001.5 to 1,028.5 ms in 7 runs",
+                " with the system timer at 1 ms",
+                Factor::Whole,
+            );
+        } else {
+            report.unmet(
+                "a held read at a 1000 ms timeout with the system timer at 1 ms",
+                &format!("the resolution in effect is {resolution:.4} ms, not 1 ms or finer"),
+            );
+        }
         // SAFETY: undoes the call above.
         let _ = unsafe { timeEndPeriod(1) };
     }
@@ -127,13 +142,13 @@ fn main() {
 
 /// How long a held read waits against its timeout T: the timeout and a
 /// tenth with the system timer left alone, the timeout itself with the
-/// timer at 1 ms. The two bands meet at 1.05 T, so a wait lies in one or
+/// timer at 1 ms. The two bands meet at 1.055 T, so a wait lies in one or
 /// the other.
 #[derive(Clone, Copy)]
 enum Factor {
-    /// From 1.05 T to the band rule's top, 1.15 T plus 50 ms.
+    /// From 1.055 T to the band rule's top, 1.15 T plus 50 ms.
     Tenth,
-    /// From T less a tick to 1.05 T.
+    /// From T less a tick to 1.055 T.
     Whole,
 }
 
@@ -141,8 +156,8 @@ impl Factor {
     fn band(self, timeout: f64) -> (f64, f64) {
         let (low, high) = band(&[timeout]);
         match self {
-            Factor::Tenth => (timeout * 1.05, high),
-            Factor::Whole => (low, timeout * 1.05),
+            Factor::Tenth => (timeout * 1.055, high),
+            Factor::Whole => (low, timeout * 1.055),
         }
     }
 
@@ -152,6 +167,21 @@ impl Factor {
             Factor::Whole => "about",
         }
     }
+}
+
+/// The system timer's resolution in effect, in milliseconds, from
+/// `NtQueryTimerResolution`, whose figures are in 100-nanosecond units.
+fn timer_resolution_ms() -> f64 {
+    #[link(name = "ntdll")]
+    unsafe extern "system" {
+        fn NtQueryTimerResolution(coarsest: *mut u32, finest: *mut u32, current: *mut u32) -> i32;
+    }
+    let (mut coarsest, mut finest, mut current) = (0u32, 0u32, 0u32);
+    // SAFETY: three live values to fill.
+    let status =
+        unsafe { NtQueryTimerResolution(&raw mut coarsest, &raw mut finest, &raw mut current) };
+    assert_eq!(status, 0, "NtQueryTimerResolution answers");
+    f64::from(current) / 10_000.0
 }
 
 fn waits(
@@ -255,15 +285,18 @@ fn single_reads(args: &Args, report: &mut Report) {
 }
 
 fn own_start(args: &Args, report: &mut Report) {
-    let mut setup = Setup::new(1_000, 1_000);
-    args.pause_for_debugger(&[
-        ("provider", setup.provider.pid),
-        ("client", std::process::id()),
-    ]);
     let mut seconds = Vec::new();
     let mut outcomes = Vec::new();
     let mut served = Vec::new();
     for _ in 0..trials() {
+        // A provider and client object of its own each trial, so that
+        // under connection recovery no trial's timed-out reads fail the
+        // next at once.
+        let mut setup = Setup::new(1_000, 1_000);
+        args.pause_for_debugger(&[
+            ("provider", setup.provider.pid),
+            ("client", std::process::id()),
+        ]);
         setup.provider.log();
         setup.provider.request("hold GetPropertyValue w=0 n=1");
         let first = uia::share(&setup.first);
@@ -282,9 +315,8 @@ fn own_start(args: &Args, report: &mut Report) {
         seconds.push(b.ms());
         outcomes.push((a.outcome.clone(), b.outcome.clone()));
         served.push(served_after(&mut setup.provider, released));
-        setup.provider.clear_held();
+        let _ = &setup.client;
     }
-    let _ = &setup.client;
     let pair = (TIMEOUT.to_owned(), TIMEOUT.to_owned());
     report.claim(
         "both reads, the second queued behind the first, fail with UIA_E_TIMEOUT",

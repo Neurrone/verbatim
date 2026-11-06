@@ -16,7 +16,9 @@
 //!   desktop root, as `e38` ran it; each console window opens on the
 //!   user's desktop.
 //! - `no-handler`, run only when named: on the program's desktop, with no
-//!   other process holding a handler.
+//!   other process holding a handler. Its record is its own first run's
+//!   0 of 30, judged as that count, since `e38`'s 0 of 110 is a rate of
+//!   zero no run can pass.
 //! - `stall`, run only when named: the provider program's window, its UI
 //!   thread busy until the probe returns.
 
@@ -46,6 +48,8 @@ fn main() {
     if let Some((name, rest)) = &args.role {
         match name.as_str() {
             "prober" => prober_role(),
+            "raw" => raw_role(),
+            "starter" => starter_role(),
             "handler" => handler_role(&rest[0]),
             other => panic!("unknown role {other}"),
         }
@@ -55,18 +59,18 @@ fn main() {
     );
     if args.wants("focus-handler") {
         report.case("focus-handler", "on a desktop of its own: 30 new console windows, each probed as soon as it is found, beside another process holding an idle focus handler");
-        probed(&mut report, Some("focus"), Some(DESKTOP), None);
+        probed(&mut report, Some("focus"), Some(DESKTOP), (0, TRIALS));
     }
     if args.names("tooltip") {
         report.case("tooltip", "on the unlocked desktop: 30 new console windows, each probed as soon as it is found, beside another process holding an idle tooltip handler");
         match precondition::unlocked_desktop() {
-            Ok(()) => probed(&mut report, Some("tooltip"), None, Some((7, 30))),
+            Ok(()) => probed(&mut report, Some("tooltip"), None, (7, 30)),
             Err(reason) => report.unmet("the probe beside an idle tooltip handler", &reason),
         }
     }
     if args.names("no-handler") {
         report.case("no-handler", "on a desktop of its own: 30 new console windows, each probed as soon as it is found, with no other process holding a handler");
-        probed(&mut report, None, Some(DESKTOP), Some((0, 110)));
+        probed(&mut report, None, Some(DESKTOP), (0, TRIALS));
     }
     if args.names("stall") {
         report.case("stall", "the provider program's UI thread busy; UiaHasServerSideProvider on its window, released once it returns");
@@ -75,15 +79,60 @@ fn main() {
     report.finish();
 }
 
-/// Starts a console host, probes its window at once with
-/// `UiaHasServerSideProvider` and then the raw probe, and reports
-/// `probe <answer> <ms> <raw probe answered 0x10000>`.
+/// `e38`'s U: a client object made at start, connected to nothing; told
+/// `probe <hwnd>`, calls `UiaHasServerSideProvider` on the window and
+/// reports `probe <answer> <ms>`.
 fn prober_role() -> ! {
+    // The client object first, as `e38`'s U made it before the console
+    // started; it has connected to nothing.
+    let _client = uia::client();
+    role::report("ready");
+    for command in role::commands() {
+        if let Some(hwnd) = command.strip_prefix("probe ") {
+            let hwnd: isize = hwnd.parse().expect("a window");
+            let (yes, took) = uia::timed(|| uia::has_server_side_provider(hwnd));
+            role::report(&format!("probe {yes} {:.1}", uia::ms(took)));
+            break;
+        }
+    }
+    exit_now(0)
+}
+
+/// Whether this process's desktop is the unlocked input desktop, where a
+/// window can be brought to the foreground.
+fn crate_desktop_has_input() -> bool {
+    precondition::unlocked_desktop().is_ok()
+}
+
+/// `e38`'s orchestrator's console step: starts a console host, reports
+/// `window <hwnd>` as soon as it finds it, and holds it until its input
+/// closes, so that neither client is the console host's parent.
+fn starter_role() -> ! {
     let console = Console::start();
-    let (yes, took) = uia::timed(|| uia::has_server_side_provider(console.hwnd));
-    let raw = verbatim_uia::raw_probe(console.hwnd) == verbatim_uia::RawProbe::Provider;
-    role::report(&format!("probe {yes} {:.1} {raw}", uia::ms(took)));
+    role::report(&format!("window {}", console.hwnd));
+    // As the orchestrator's console step did once it found the window:
+    // the console brought to the foreground.
+    if crate_desktop_has_input() {
+        let _ = uia_facts_support::apps::foreground(console.hwnd);
+    }
+    for _ in role::commands() {}
     drop(console);
+    exit_now(0)
+}
+
+/// `e38`'s R: a client object made at start; told `target <hwnd>`, sends
+/// the raw probe to the window at once and reports `raw <answered 0x10000>`.
+fn raw_role() -> ! {
+    let _client = uia::client();
+    role::report("ready");
+    for command in role::commands() {
+        if let Some(hwnd) = command.strip_prefix("target ") {
+            let hwnd: isize = hwnd.parse().expect("a window");
+            let raw = verbatim_uia::raw_probe(hwnd) == verbatim_uia::RawProbe::Provider;
+            role::report(&format!("raw {raw}"));
+            break;
+        }
+    }
     exit_now(0)
 }
 
@@ -120,13 +169,8 @@ fn handler_role(kind: &str) -> ! {
 
 /// 30 trials on `desktop` (the user's when `None`), beside a handler of
 /// `kind` on the same desktop when given; judged against `record`, a
-/// recorded k of n, or new.
-fn probed(
-    report: &mut Report,
-    kind: Option<&str>,
-    desktop: Option<&str>,
-    record: Option<(usize, usize)>,
-) {
+/// recorded k of n: a rate, or for a recorded absence the count itself.
+fn probed(report: &mut Report, kind: Option<&str>, desktop: Option<&str>, record: (usize, usize)) {
     let handler = kind.map(|kind| {
         let handler = Role::start_on(desktop, "handler", &[kind.to_owned()]);
         assert_eq!(handler.expect_line(), "ready", "the handler is registered");
@@ -136,7 +180,17 @@ fn probed(
     let mut no_ms = Vec::new();
     let mut raw = Vec::new();
     for _ in 0..TRIALS {
-        let prober = Role::start_on(desktop, "prober", &[]);
+        // As `e38` ran it: U probes and R sends the raw probe at the same
+        // moment, each told the window as soon as it is found.
+        let mut prober = Role::start_on(desktop, "prober", &[]);
+        let mut r = Role::start_on(desktop, "raw", &[]);
+        assert_eq!(prober.expect_line(), "ready", "the prober is ready");
+        assert_eq!(r.expect_line(), "ready", "R is ready");
+        let starter = Role::start_on(desktop, "starter", &[]);
+        let found = starter.expect_line();
+        let hwnd = found.strip_prefix("window ").expect("the console's window");
+        r.send(&format!("target {hwnd}"));
+        prober.send(&format!("probe {hwnd}"));
         let line = prober
             .line(Duration::from_secs(30))
             .expect("the prober reports");
@@ -145,7 +199,7 @@ fn probed(
             no += 1;
             no_ms.push(words[2].parse::<f64>().expect("a time"));
         }
-        raw.push(words[3] == "true");
+        raw.push(r.expect_line() == "raw true");
     }
     drop(handler);
     let beside = kind.map_or_else(
@@ -154,15 +208,15 @@ fn probed(
     );
     let claim = format!("trials in which UiaHasServerSideProvider answered no {beside}");
     let observed = format!("{no} of {TRIALS}");
-    match record {
-        Some((k, n)) => report.claim(
-            &claim,
-            &observed,
-            &format!("{k} of {n}"),
-            rate(no, TRIALS, k, n),
-        ),
-        None => report.claim(&claim, &observed, "", Verdict::New),
-    }
+    // A recorded absence is judged over the program's own 30 trials, as
+    // its first run counted it: a rate of zero cannot pass.
+    let (k, n) = record;
+    let verdict = if k == 0 {
+        deterministic(&[no], &0)
+    } else {
+        rate(no, TRIALS, k, n)
+    };
+    report.claim(&claim, &observed, &format!("{k} of {n}"), verdict);
     if !no_ms.is_empty() {
         report.claim(
             "those answers' times",
@@ -173,7 +227,7 @@ fn probed(
     }
     let raw_all = raw.iter().all(|r| *r);
     report.claim(
-        "the raw probe made after each answered 0x10000",
+        "the raw probe sent by R at the same moment answered 0x10000",
         &format!("{} of {}", raw.iter().filter(|r| **r).count(), raw.len()),
         "every one",
         if raw_all {

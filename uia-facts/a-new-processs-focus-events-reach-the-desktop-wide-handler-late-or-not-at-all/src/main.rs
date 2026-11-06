@@ -19,7 +19,7 @@ use std::time::Duration;
 use uia_facts_support::args::Args;
 use uia_facts_support::events::{self, Handler, OnEvent};
 use uia_facts_support::provider::Provider;
-use uia_facts_support::report::{Report, Verdict};
+use uia_facts_support::report::{Report, deterministic};
 use uia_facts_support::stats::us_to_ms;
 use uia_facts_support::winevents::{Hook, WinEvent};
 use uia_facts_support::{apps, note, now_us, precondition, uia};
@@ -138,8 +138,8 @@ fn provider(
     report.claim(
         "provider: starts whose UIA focus came more than 1 s after its focus WinEvent, or not within 5 s",
         &format!("{late} late and {missing} missing of {STARTS} (UIA focus {delays:.0?} ms after the WinEvent)"),
-        "",
-        Verdict::New,
+        "0 late and 0 missing of 11 (the first desktop runs, each client setting)",
+        deterministic(&[(late, missing)], &(0, 0)),
     );
 }
 

@@ -3,18 +3,26 @@
 //!
 //! On the unlocked desktop, run only when named: the hung-window scene of
 //! support's `uia_facts_support::hung` on the user's desktop and a third
-//! provider program, P3, with a hidden UIA window O; T stalled 9 s and a
-//! focus `WinEvent` naming it, B renamed 200 ms later, and O shown and
-//! brought to the front 0.6 s after that: O's focus reaches Verbatim's
-//! stand-in while B's name change is still held.
+//! provider program, P3, with a hidden plain window O. T is held until
+//! released and a focus `WinEvent` names it; B is renamed 200 ms later;
+//! 0.6 s after that P3 brings O to the front and opens a popup menu of its
+//! own over it, as Alt+F opens a menu. The stall ends once Verbatim's
+//! stand-in has heard B's change, or past its band's top: judged, the
+//! menu's first item's focus reaches the stand-in while B's change is
+//! still held.
 
 use uia_facts_support::args::{Args, trials};
-use uia_facts_support::hung::{B_AFTER_US, CTO_MS, Scene, as_ms, delay, until, us};
+use uia_facts_support::hung::{
+    B_AFTER_US, CTO_MS, PAST_TOP_US, Scene, delay, until, until_heard, us,
+};
 use uia_facts_support::listen::{self, Line, Listener, heard_at};
 use uia_facts_support::provider::Provider;
 use uia_facts_support::report::{Report, band, band_text, in_band, relation, runs};
 use uia_facts_support::stats::{summary_ms, us_to_ms};
 use uia_facts_support::{note, now_us, precondition, uia};
+
+/// The name of the menu's first item, which its focus names.
+const FIRST_ITEM: &str = "Menu first item";
 
 fn main() {
     let args = Args::parse();
@@ -26,25 +34,24 @@ fn main() {
     let mut report = Report::start("focus-for-a-newly-opened-or-shown-window-is-not-held");
     // It takes over the desktop, so it runs only when named.
     if args.names("open-show") {
-        report.case("open-show", "on the unlocked desktop: T stalled 9 s; a focus WinEvent naming T; B renamed 200 ms later; a third provider's hidden window shown and brought to the front 0.6 s after that");
+        report.case("open-show", "on the unlocked desktop: T held; a focus WinEvent naming T; B renamed 200 ms later; a third provider's window brought to the front with a popup menu of its own opened over it 0.6 s after that; the stall released once B's change is heard or past its band");
         open_show(&args, &mut report);
     }
     report.finish();
 }
 
 fn open_show(args: &Args, report: &mut Report) {
-    const STALL_MS: u64 = 9_000;
+    let claim =
+        "the newly opened menu's focus reaches the stand-in while B's name change is still held";
     if let Err(reason) = precondition::unlocked_desktop() {
-        report.unmet(
-            "open-show: a newly shown window's focus during a hold",
-            &reason,
-        );
+        report.unmet(claim, &reason);
         return;
     }
+    let two = band(&[CTO_MS, CTO_MS]);
     let mut escaped = Vec::new();
     let mut holds = Vec::new();
     for _ in 0..trials() {
-        let mut opened = Provider::launch(&["--windows", "uia:0"]);
+        let mut opened = Provider::launch(&["--windows", "plain:0"]);
         let mut scene = Scene::screen();
         let d = Listener::start(
             "Verbatim's stand-in",
@@ -60,49 +67,46 @@ fn open_show(args: &Args, report: &mut Report) {
             ("P3 (O)", opened.pid),
             ("client", d.pid()),
         ]);
-        let stalled = scene.stall(0, STALL_MS);
+        scene.hold(0);
         let raised = scene.winevent("focus", 0);
         until(raised + B_AFTER_US, "B's name change after the WinEvent");
         scene.rename_b("held");
-        until(raised + 800_000, "O shown, 0.6 s after B's name change");
-        let pressed = now_us();
-        let front = opened.request("foreground 0");
-        note::evidence(&format!("O in front: {front}"));
-        let lines = d.lines_until(stalled + us(as_ms(STALL_MS)));
+        until(raised + 800_000, "the menu, 0.6 s after B's name change");
+        let opened_at = now_us();
+        let front = opened.request("menu 0");
+        note::evidence(&format!("O in front as its menu opened: {front}"));
+        let top = raised + us(two.1) + PAST_TOP_US;
+        note::waiting("until B's name change is heard, at most past its band's top");
+        let lines = until_heard(&d, "held", top);
+        scene.release();
+        opened.request("menu-close 0");
         let b_at = heard_at(&lines, "name", "held");
         holds.push(delay(raised, b_at));
-        let focus: Vec<(String, u64)> = lines
+        let focus: Vec<u64> = lines
             .iter()
             .filter_map(|l| match l {
-                Line::Heard { kind, name, at, .. } if kind == "focus" && *at >= pressed => {
-                    Some((name.clone(), *at))
+                Line::Heard { kind, name, at, .. }
+                    if kind == "focus" && name == FIRST_ITEM && *at >= opened_at =>
+                {
+                    Some(*at)
                 }
                 _ => None,
             })
             .collect();
         note::evidence(&format!(
-            "focus heard after O was shown, ms after it: {:?}",
+            "the menu's focus heard, ms after it opened: {:?}",
             focus
                 .iter()
-                .map(|(n, at)| (n.clone(), us_to_ms(at - pressed)))
+                .map(|at| us_to_ms(at - opened_at))
                 .collect::<Vec<_>>()
         ));
-        escaped.push(focus.iter().any(|(_, at)| b_at.is_none_or(|b| *at < b)));
+        escaped.push(focus.iter().any(|at| b_at.is_none_or(|b| *at < b)));
     }
-    report.claim(
-        "a newly shown window's focus reaches the stand-in while B's name change is still held",
-        &runs(&escaped),
-        "Notepad's menu focus 26 to 112 ms after Alt+F, the notification held 3,815 to 3,829 ms (both; route1, route2)",
-        relation(&escaped),
-    );
-    let two = band(&[CTO_MS, CTO_MS]);
+    report.claim(claim, &runs(&escaped), "true", relation(&escaped));
     report.claim(
         "B's name change in the same hold",
         &summary_ms(&holds),
-        &format!(
-            "3,815 to 3,829 ms after B's raise (both); {}",
-            band_text(two)
-        ),
+        &band_text(two),
         in_band(&holds, two),
     );
 }

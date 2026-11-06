@@ -19,7 +19,7 @@ use uia_facts_support::hung::{
 };
 use uia_facts_support::listen::{self, Line, Listener, heard_at};
 use uia_facts_support::report::{
-    Report, TICK_MS, Verdict, band, band_text, deterministic, in_band, rate, relation, runs,
+    Report, TICK_MS, band, band_text, deterministic, in_band, rate, relation, runs,
 };
 use uia_facts_support::stats::{summary_ms, us_to_ms};
 use uia_facts_support::{apps, note, now_us, precondition, uia};
@@ -976,8 +976,11 @@ fn shown(args: &Args, report: &mut Report) {
     report.claim(
         "T marked hung: B's name change held from a focus WinEvent 8.5 s into the stall",
         &summary_ms(&after_mark[2]),
-        "",
-        Verdict::New,
+        &format!(
+            "one wait, 2,002.3 to 2,012.7 ms in the desktop runs of 28b23338 and 2,006.2 to 2,013.6 ms in those of 14e569c9; {}",
+            band_text(band(&[CTO_MS]))
+        ),
+        in_band(&after_mark[2], band(&[CTO_MS])),
     );
     report.claim(
         &format!("Alt+Tab away from the hung T: B's name change within {NOT_HELD_MS} ms"),

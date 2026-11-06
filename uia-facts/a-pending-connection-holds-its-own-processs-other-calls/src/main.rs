@@ -25,7 +25,7 @@ use std::time::Duration;
 use uia_facts_support::args::{Args, trials};
 use uia_facts_support::provider::Provider;
 use uia_facts_support::report::{
-    Report, TICK_MS, Verdict, band, band_text, deterministic, in_band, relation, runs,
+    Report, TICK_MS, band, band_text, deterministic, in_band, relation, runs,
 };
 use uia_facts_support::role::{self, Role};
 use uia_facts_support::stats::summary_ms;
@@ -168,8 +168,13 @@ fn case(report: &mut Report, threading: &str, window: usize, connected: bool) {
             e.kind == "queued" && e.name == "sent" && e.start >= start
         });
         assert!(reached, "the connection's message reaches the busy thread");
-        let read =
-            connected.then(|| uia::spawn(move || Timed::of(|| uia::name(&uia::resolve(&first)))));
+        let read = connected.then(|| {
+            let (done, answer) = std::sync::mpsc::channel();
+            uia::spawn(move || {
+                let _ = done.send(Timed::of(|| uia::name(&uia::resolve(&first))));
+            });
+            answer
+        });
         c.send("go");
         let theirs = words(&c);
         let (outcome, end) = if let Some(thread) = connection {
@@ -179,16 +184,15 @@ fn case(report: &mut Report, threading: &str, window: usize, connected: bool) {
             let done = words(f.as_ref().expect("the third client connects"));
             (done[1].clone(), done[2].parse().expect("a time"))
         };
-        if let Some(read) = &read {
-            let limit = std::time::Instant::now() + Duration::from_secs(5);
-            while !read.is_finished() && std::time::Instant::now() < limit {
-                std::thread::sleep(Duration::from_millis(5));
-            }
-        }
+        // B's read answers by itself once the connection has failed, or is
+        // released 5 s after.
+        let early = read
+            .as_ref()
+            .and_then(|r| r.recv_timeout(Duration::from_secs(5)).ok());
         provider.request("release");
         let their_end: u64 = theirs[2].parse().expect("a time");
-        if let Some(read) = read {
-            let read = read.join().expect("B's read");
+        if let Some(answer) = read {
+            let read = early.unwrap_or_else(|| answer.recv().expect("B's read answers"));
             note::evidence(&format!(
                 "this process's read {} {:.1} ms after the connection's start",
                 read.outcome,
@@ -237,8 +241,8 @@ fn case(report: &mut Report, threading: &str, window: usize, connected: bool) {
         report.claim(
             "another process's read, beside a pending connection from a connected process",
             &runs(&other),
-            "",
-            Verdict::New,
+            "held (the first run, 3 of 3)",
+            deterministic(&other, &"held"),
         );
     } else {
         report.claim(

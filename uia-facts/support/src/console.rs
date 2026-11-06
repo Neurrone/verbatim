@@ -18,8 +18,11 @@ use windows::Win32::System::Diagnostics::ToolHelp::{
 use windows::Win32::System::Threading::{
     CREATE_NEW_CONSOLE, CreateProcessW, PROCESS_INFORMATION, STARTUPINFOW, TerminateProcess,
 };
-use windows::Win32::UI::WindowsAndMessaging::EnumThreadWindows;
-use windows::core::{BOOL, PCWSTR, PWSTR};
+use windows::Win32::UI::WindowsAndMessaging::{EnumThreadWindows, FindWindowW};
+use windows::core::{BOOL, PCWSTR, PWSTR, w};
+
+/// Console hosts started by this process, so that each title is its own.
+static STARTED: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
 /// A console host and its window.
 pub struct Console {
@@ -33,8 +36,11 @@ pub struct Console {
 }
 
 impl Console {
-    /// Starts `conhost.exe cmd.exe` and waits up to 10 seconds for its
-    /// window.
+    /// Starts `conhost.exe cmd.exe` with a title of its own and waits up
+    /// to 10 seconds for its window, found by class and title with
+    /// `FindWindowW` in a spin, visible or not, as `e37` and `e38` found
+    /// it: a call made at once can reach the window before its thread
+    /// first pumps.
     ///
     /// # Panics
     ///
@@ -42,13 +48,18 @@ impl Console {
     #[must_use]
     pub fn start() -> Self {
         let path = crate::apps::system_program("conhost.exe");
-        let before = crate::apps::top_windows();
+        let n = STARTED.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let mut title: Vec<u16> = format!("uia-facts console {} {n}", std::process::id())
+            .encode_utf16()
+            .chain([0])
+            .collect();
         let mut line: Vec<u16> = format!("\"{}\" cmd.exe", path.display())
             .encode_utf16()
             .chain([0])
             .collect();
         let startup = STARTUPINFOW {
             cb: u32::try_from(std::mem::size_of::<STARTUPINFOW>()).expect("a small structure"),
+            lpTitle: PWSTR(title.as_mut_ptr()),
             ..Default::default()
         };
         let mut process = PROCESS_INFORMATION::default();
@@ -69,13 +80,19 @@ impl Console {
             )
         }
         .expect("conhost starts");
-        let hwnd = crate::apps::wait_window(
-            "ConsoleWindowClass",
-            "cmd.exe",
-            &before,
-            Duration::from_secs(10),
-        )
-        .expect("the console window appears");
+        let start = std::time::Instant::now();
+        let hwnd = loop {
+            // SAFETY: a registered class name and a live, terminated title.
+            let found = unsafe { FindWindowW(w!("ConsoleWindowClass"), PCWSTR(title.as_ptr())) };
+            if let Ok(hwnd) = found {
+                break hwnd.0 as isize;
+            }
+            assert!(
+                start.elapsed() < Duration::from_secs(10),
+                "the console window appears"
+            );
+            std::thread::yield_now();
+        };
         let thread = window_thread(process.dwProcessId, hwnd)
             .expect("one of the console host's threads owns the window");
         Self {

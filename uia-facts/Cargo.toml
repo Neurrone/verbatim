@@ -36,7 +36,6 @@ members = [
     "a-cache-request-fails-while-uias-first-time-setup-runs-on-another-thread",
     "a-process-that-used-uia-can-hang-or-crash-as-it-exits",
     "a-new-processs-focus-events-reach-the-desktop-wide-handler-late-or-not-at-all",
-    "a-remote-operations-keyboard-focus-read-can-differ-from-a-plain-read",
     "a-new-connection-fails-while-another-processs-remote-operation-is-queued",
     "a-provider-continues-when-a-client-is-killed-in-the-middle-of-its-call",
     "a-pending-connection-holds-its-own-processs-other-calls",
