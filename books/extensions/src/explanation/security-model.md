@@ -40,7 +40,9 @@ The install dialog shows a warning wherever a source of the user's content meets
 
 ## Native code
 
-Native code is allowed only in synthesizers and braille drivers whose engine or protocol exists only as a binary; compile to WebAssembly whenever source exists. Native code runs in the same container and reaches the same folders, network and devices, but it has no import list for Verbatim to read, so it carries the strongest warning in the install dialog, and you state in its manifest whether it uses the network.
+Any kind of module may contain native code instead of a WebAssembly component, for an engine or a vendor library that exists only as a binary, or for work that must call Windows directly. A WebAssembly component cannot call a DLL, so a native module implements its kind's interface as a C ABI, as a synthesizer's adapter does; each kind's C ABI is defined once a native module of that kind needs it.
+
+Native code runs in the same container as the rest of your extension and reaches the same folders, network and devices, and a crash in it costs only your extension. But it has no import list for Verbatim to read, so what it can do is bounded only by the container, it carries the strongest warning in the install dialog, and you state in its manifest whether it uses the network. Prefer WebAssembly whenever you have the source: a component runs on x64 and ARM64 unchanged, and its imports tell the user exactly what it can do.
 
 ## Handling the user's content
 

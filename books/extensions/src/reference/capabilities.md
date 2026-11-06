@@ -14,10 +14,10 @@ A capability is a group of host functions a component imports. Verbatim derives 
 | Log | Writing to Verbatim's log under the module's id | No |
 | Data folder | Reading and writing the extension's own folder, up to its size cap | No |
 | Network | HTTP with every method, headers and streamed bodies, and WebSockets, to the hosts the manifest names or a host the user enters | Yes, as a flow with each source (below) |
-| Speech text | Every utterance, for a speech-text stage | "Changes what Verbatim says before it is spoken", and a flow if the extension can connect |
+| Speech text | Every utterance, for a speech-text stage and a synthesizer | "Changes what Verbatim says before it is spoken", and a flow if the extension can connect |
 | Captured images | The images Verbatim captures for a recogniser | Settled with the recognition interfaces |
 | Devices | Handles for the braille displays the manifest names, opened by Verbatim | "Drives" the named display |
-| Native code | A DLL, for a synthesizer or braille driver only | "Runs native code in a restricted process of its own, and receives all the text Verbatim speaks", shown first |
+| Native code | A DLL in place of a component, in a module of any kind, implementing its kind's C ABI | "Runs native code in a restricted process of its own", shown first, with the module's other lines |
 
 Exported hooks also produce a line: "Runs its own code when something happens in" the named applications. A module made only of rules is shown as "Changes how Verbatim reads" the named applications "with N rules, with no code of its own".
 

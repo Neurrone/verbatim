@@ -142,7 +142,7 @@ Deferred past M5 (M13): timer, the network imports to named hosts or a host the 
 
 ### 4.5 Refused
 
-Raw UIA or COM, in-process helper calls, the display model, cross-process memory, threads, the registry, the file system outside the extension's own data folder (M13), process creation, any read from Core-side hooks, every WASI interface outside the file and network imports M13 designs (the extension world imports none today: guests build for `wasm32-unknown-unknown` and are wrapped into components with no adapter, so a Rust guest carries no WASI import; the synthesizer world's permitted set is settled in M6). A module may claim Verbatim's own executables, layered over Verbatim's built-in as section 7 orders any other, as NVDA lets an add-on replace its own app module (Dickson, 2026-11-06). Modules of other kinds that need native code, such as NVDA's modules that read another process's memory, are not supported by design.
+Raw UIA or COM, in-process helper calls, the display model, cross-process memory, threads, the registry, the file system outside the extension's own data folder (M13), process creation, any read from Core-side hooks, every WASI interface outside the file and network imports M13 designs (the extension world imports none today: guests build for `wasm32-unknown-unknown` and are wrapped into components with no adapter, so a Rust guest carries no WASI import; the synthesizer world's permitted set is settled in M6). A module may claim Verbatim's own executables, layered over Verbatim's built-in as section 7 orders any other, as NVDA lets an add-on replace its own app module (Dickson, 2026-11-06). A module of any kind may carry native code instead of a component, in its extension's own host, where the container rather than the import list bounds what it reaches (section 13); reading another process's memory, as some NVDA modules do, stays out of reach, since the container cannot open other processes.
 
 ### 4.6 Security rules of the surface
 
@@ -303,14 +303,14 @@ Capabilities are derived from the component's imports for built-ins and installe
 
 The install dialog and the Extensions dialog show flows: a source of the user's content together with an exit that can send data out, since a source with no exit cannot leak and an exit with no source has nothing to send (Dickson, 2026-11-06). The two are shown together because together they mean the content can leave, not because Verbatim knows it does. Beside them, lines that name code outside Verbatim's control or something the user must act on:
 
-- Runs native code in a restricted process of its own, and receives all the text Verbatim speaks. Shown first.
+- Runs native code in a restricted process of its own. Shown first; the module's sources and exits are shown as for any other module, from its kind and its manifest.
 - Receives <source>, and can connect to <hosts>: for example "Receives all the text Verbatim speaks, and can connect to api.example.com", or "Reads the controls and text of Notepad, and can connect to api.example.com". One warning line for each source the extension has together with its exits, naming the hosts, or "the address you enter" for an endpoint the user chooses. The line states what the extension can do, never what it does: Verbatim does not analyse which code sends what, since data can pass between any of a component's functions.
 - Reads the controls and text of the named applications. Always shown for an app module.
 - Runs its own code when something happens in the named applications. Derived from exported hooks.
 - Changes how Verbatim reads the named applications with N rules, with no code of its own. For a rules-only module.
 - Adds keyboard commands in the named applications, one command and its default binding per line.
 - Changes what Verbatim says before it is spoken. For a speech-text stage, beside the warning for its source.
-- Provides a speech synthesizer, named.
+- Provides a speech synthesizer, named, which receives all the text Verbatim speaks.
 - Drives <display>, for a braille driver.
 - Needs files you add yourself, named.
 - Later: reads and changes the clipboard; moves the mouse pointer; reads every application.
@@ -355,7 +355,7 @@ The `verbatim:synth` world is the `SynthDriver` trait of `verbatim-speech` in WI
 
 ### 13.2 Native synthesizers
 
-Wasm modules never call DLLs: a component has no foreign-function interface, by design. Native code is a property of one kind, the native synthesizer, and later the native braille driver. Three facts force it for Eloquence: the IBM engine is a proprietary 32-bit `ECI.DLL` with no source, so it cannot be compiled to Wasm; no 64-bit process can load a 32-bit DLL, and a native ARM64 process cannot load an x64 one; and its files cannot be distributed. The existing `eloquence_64` NVDA add-on confirms the shape: it ships no 64-bit engine and runs the 32-bit DLL in a 32-bit helper over a named pipe.
+Wasm modules never call DLLs: a component has no foreign-function interface, by design. So native code may be part of a module of any kind (Dickson, 2026-11-06), and a native module implements its kind's interface as a C ABI beside the kind's WIT world; a kind's C ABI is defined when the first native module of that kind needs it. The synthesizer's comes first. Three facts force native code for Eloquence: the IBM engine is a proprietary 32-bit `ECI.DLL` with no source, so it cannot be compiled to Wasm; no 64-bit process can load a 32-bit DLL, and a native ARM64 process cannot load an x64 one; and its files cannot be distributed. The existing `eloquence_64` NVDA add-on confirms the shape: it ships no 64-bit engine and runs the 32-bit DLL in a 32-bit helper over a named pipe.
 
 The mechanism is general and the host has no engine-specific code:
 
@@ -364,7 +364,7 @@ The mechanism is general and the host has no engine-specific code:
 - The host for the declared architecture loads only the adapter, which loads the engine, and speaks the D18 protocol to Core unchanged; Core's mixer plays and resamples the PCM, so the host renders nothing. The x86 host is a cross-compile for `i686-pc-windows-msvc` shipped with every install, a reduced build carrying only the adapter loader and the protocol, not eSpeak NG or OneCore (Dickson, 2026-10-22), so no 32-bit C build is needed; it exists for as long as Windows 11 emulates x86 on x64 and ARM64. An x64 adapter on an ARM64 machine is unsupported until an x64 cross-build is added, which Eloquence does not need.
 - Eloquence's adapter is first-party by location only: a Rust `cdylib` written from IBM's documented SDK, since the add-on has no licence to port from, mapping the engine's parameters to settings descriptors, inserting an index per mark, delivering 16-bit mono 11025 Hz buffers to the PCM callback and stopping on cancellation at the next callback. Its bundle in this repository holds an empty engine folder for `ECI.DLL`, `ECI.INI` and the voice files. OpenEVV, the MIT x64 reimplementation, is US English only and could be bundled with an x64 adapter later.
 
-Guidance to engine authors: compile to Wasm when source exists; the native adapter is for engines that exist only as binaries.
+Guidance to authors: compile to Wasm when source exists, since a component runs on x64 and ARM64 unchanged and its imports state its capabilities; native code is for what has no source, or must call Windows or a vendor library directly.
 
 ### 13.3 The container
 
@@ -372,7 +372,7 @@ An extension's host runs in an AppContainer (M6 for synthesizers, M5 for the res
 
 The sandbox level is per hosted engine, since D18 runs one per process, and each engine declares the strictest level it is known to work under: eSpeak NG, which only reads files, can take the less privileged container or a restricted token at Untrusted integrity; OneCore needs WinRT activation and so the ordinary AppContainer at most, since Store apps call it from one and the less privileged container blocks COM activation without a capability; native adapters start at the less privileged container (Dickson, 2026-10-22: LPAC first, and a fall-back to the ordinary container only with the failing call named and recorded as a workaround). M6 establishes the levels by running the three.
 
-Low integrity does not hinder the host at the sign-in screen or beside an elevated application: the host writes only to the inherited pipe and needs no window, desktop, clipboard, registry or UIA access, and a system-account parent can create container children. What changes at sign-in is the missing user profile, which section 2.4's machine-wide copy answers. Outposts cannot run in an AppContainer, because Windows denies a container process UIA and MSAA client access to other processes; they get restricted tokens, the job object and mitigations, and an app module works in a secure context wherever its outpost does. Braille drivers reuse the whole pattern with a `verbatim_braille_v1` ABI, in the extension's host, with devices Core opens ([security model](security-model.md), section 6.11); no other kind gets native code.
+Low integrity does not hinder the host at the sign-in screen or beside an elevated application: the host writes only to the inherited pipe and needs no window, desktop, clipboard, registry or UIA access, and a system-account parent can create container children. What changes at sign-in is the missing user profile, which section 2.4's machine-wide copy answers. Outposts cannot run in an AppContainer, because Windows denies a container process UIA and MSAA client access to other processes; they get restricted tokens, the job object and mitigations, and an app module works in a secure context wherever its outpost does. Braille drivers reuse the whole pattern with a `verbatim_braille_v1` ABI, in the extension's host, with devices Core opens ([security model](security-model.md), section 6.11).
 
 ## 14. Porting NVDA's app modules
 

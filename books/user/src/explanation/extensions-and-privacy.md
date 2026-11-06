@@ -27,7 +27,7 @@ Verbatim can tell you what an extension is able to do, not what it does. A trans
 
 An extension that reads an application but cannot connect anywhere can change how Verbatim speaks that application, but has nowhere to send what it reads.
 
-An extension marked "Runs native code" contains ordinary Windows code, usually a voice whose engine exists only in that form. Verbatim still runs it restricted, in a process of its own, but such code is harder to contain, so install it only from authors you trust.
+An extension marked "Runs native code" contains ordinary Windows code, such as a voice whose engine exists only in that form. Verbatim still runs it restricted, in a process of its own, but such code is harder to contain, so install it only from authors you trust.
 
 ## When an extension asks for more
 
