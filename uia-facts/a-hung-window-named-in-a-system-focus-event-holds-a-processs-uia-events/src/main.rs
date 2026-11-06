@@ -203,15 +203,20 @@ fn main() {
     }
     let mut report =
         Report::start("a-hung-window-named-in-a-system-focus-event-holds-a-processs-uia-events");
-    let cases: [Case; 12] = [
+    let cases: [Case; 13] = [
         (
             "calls",
-            "a client with a desktop focus handler and B's name changes; T stalled 5 s at UIA's default 2 s connection timeout; a focus WinEvent naming T; B renamed 200 ms later; counting the sent messages that reach T",
+            "a client with a desktop focus handler and B's name changes; T held until the client hears B's change, at UIA's default 2 s connection timeout; a focus WinEvent naming T; B renamed 200 ms later; counting the sent messages that reach T",
             calls,
         ),
         (
+            "stand-ins",
+            "a client with Verbatim's mapping at a 250 ms connection timeout, T held until it hears B's change; then the outpost stand-in, with no focus registration, B's name and text changed, a name WinEvent naming M and a name read of B",
+            stand_ins,
+        ),
+        (
             "who",
-            "fourteen clients that differ in one thing each, from timeouts and apartments to client objects, mappings and registrations, at connection timeouts of 250 and 500 ms, each in a trial of its own with T stalled past its hold; a focus WinEvent naming T; B renamed 100 ms later; then an outpost and a listener stand-in, each in a trial of its own, B's text changed with its name; then a name and a foreground WinEvent naming M, and a name read of B from each of two clients",
+            "thirteen clients that differ in one thing each, from timeouts and apartments to client objects, mappings and registrations, at connection timeouts of 250 and 500 ms, each in a trial of its own with T stalled past its hold; a focus WinEvent naming T; B renamed 100 ms later; then an outpost and a listener stand-in, each in a trial of its own, B's text changed with its name; then a name and a foreground WinEvent naming M, and a name read of B from each of two clients",
             who,
         ),
         (
@@ -221,12 +226,12 @@ fn main() {
         ),
         (
             "repeat",
-            "a client at a 250 ms connection timeout; T stalled 2.2 s; three focus WinEvents naming T at once; B renamed 200 ms later",
+            "a client at a 250 ms connection timeout; T held; three focus WinEvents naming T at once; B renamed 200 ms later",
             repeat,
         ),
         (
             "quiet",
-            "a client with a desktop focus handler; T stalled 1.2 s; B renamed with no WinEvent; then a name-change WinEvent naming T and B renamed again",
+            "a client with a desktop focus handler; T held; B renamed with no WinEvent; then a name-change WinEvent naming T and B renamed again",
             quiet,
         ),
         (
@@ -265,13 +270,14 @@ fn main() {
             desk_wide,
         ),
     ];
-    // The cases that take over the desktop run only when named.
-    let on_screen = ["shown", "open-show", "desk-wide"];
+    // The default run checks what Verbatim relies on; the other cases,
+    // and those that take over the desktop, run only when named.
+    let default = ["calls", "stand-ins", "dropped"];
     for (name, what, run) in cases {
-        let runs = if on_screen.contains(&name) {
-            args.names(name)
-        } else {
+        let runs = if default.contains(&name) {
             args.wants(name)
+        } else {
+            args.names(name)
         };
         if runs {
             report.case(name, what);
@@ -443,7 +449,7 @@ const WHO: [(&str, &[&str], &[f64], &str); 14] = [
         "14,789 against 14,801 ms at 10 s (e_mapping)",
     ),
     (
-        "Verbatim's mapping, against a hidden T",
+        VERBATIM_MAPPING,
         &["desk", "vbmap", "cto=250", "tto=5000"],
         &[LOW_MS, LOW_MS],
         "3,806 to 3,821 ms at 2,000 ms (states' stand-in)",
@@ -532,12 +538,12 @@ fn stand_in(args: &Args, label: &str, outpost: bool) -> (Vec<Line>, [u64; 6], is
     )
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "a trial a client, then the stand-ins' claims in turn"
-)]
-fn who(args: &Args, report: &mut Report) {
-    for (label, words, waits, recorded) in &WHO {
+/// The label of the `WHO` row Verbatim relies on.
+const VERBATIM_MAPPING: &str = "Verbatim's mapping, against a hidden T";
+
+/// The holds of the `WHO` rows `keep` selects, each judged on its own.
+fn who_rows(args: &Args, report: &mut Report, keep: impl Fn(&str) -> bool) {
+    for (label, words, waits, recorded) in WHO.iter().filter(|row| keep(row.0)) {
         let holds: Vec<f64> = (0..trials())
             .map(|_| who_hold(args, label, words, waits))
             .collect();
@@ -549,67 +555,52 @@ fn who(args: &Args, report: &mut Report) {
             in_band(&holds, range),
         );
     }
-    let older_cast: Vec<String> = (0..trials())
-        .map(|_| {
-            let older: Result<windows::Win32::UI::Accessibility::IUIAutomation2, _> =
-                windows::core::Interface::cast(&uia::older_client());
-            older.map_or_else(|e| uia::hresult(e.code()), |_| "ok".to_owned())
-        })
-        .collect();
-    report.claim(
-        "the older CUIAutomation coclass's client object has no IUIAutomation2, so its timeouts cannot be set",
-        &runs(&older_cast),
-        "E_NOINTERFACE (h3 cui_cto500)",
-        deterministic(&older_cast, &"0x80004002".to_owned()),
-    );
-    let read = |lines: &[Line]| {
-        lines.iter().find_map(|l| match l {
-            Line::Read { outcome, end, .. } if outcome == "ok" => Some(*end),
-            _ => None,
-        })
-    };
-    let hooked = |lines: &[Line], event: u32, hwnd: isize| {
-        lines.iter().find_map(|l| match l {
-            Line::Hook {
-                event: e,
-                hwnd: h,
-                at,
-            } if *e == event && *h == hwnd => Some(*at),
-            _ => None,
-        })
-    };
+}
+
+/// The time of a stand-in's first successful read in `lines`.
+fn read_end(lines: &[Line]) -> Option<u64> {
+    lines.iter().find_map(|l| match l {
+        Line::Read { outcome, end, .. } if outcome == "ok" => Some(*end),
+        _ => None,
+    })
+}
+
+/// The time a stand-in's hook heard `WinEvent` `event` naming `hwnd`.
+fn hooked(lines: &[Line], event: u32, hwnd: isize) -> Option<u64> {
+    lines.iter().find_map(|l| match l {
+        Line::Hook {
+            event: e,
+            hwnd: h,
+            at,
+        } if *e == event && *h == hwnd => Some(*at),
+        _ => None,
+    })
+}
+
+fn not_held(values: &[f64]) -> bool {
+    values.iter().all(|v| *v <= NOT_HELD_MS)
+}
+
+/// What Verbatim relies on among the clients: its own mapping held as any
+/// client is, and the outpost stand-in, with no focus registration, not
+/// held.
+fn stand_ins(args: &Args, report: &mut Report) {
+    who_rows(args, report, |label| label == VERBATIM_MAPPING);
     let mut outpost: Vec<[f64; 4]> = Vec::new();
-    let mut listener_stand_in: Vec<[f64; 4]> = Vec::new();
     for _ in 0..trials() {
         let (lines, [_, renamed, texted, m_name, _, read_at], window_m, _) =
             stand_in(args, "outpost stand-in", true);
         let o = [
             delay(renamed, heard_at(&lines, "name", "held")),
             delay(texted, heard_at(&lines, "text", "Notes")),
-            delay(read_at, read(&lines)),
+            delay(read_at, read_end(&lines)),
             delay(m_name, hooked(&lines, 0x800C, window_m)),
         ];
         note::evidence(&format!(
             "outpost stand-in: name, text, read, hook {o:?} ms"
         ));
         outpost.push(o);
-        let (lines, [raised, _, _, _, m_foreground, read_at], window_m, window_t) =
-            stand_in(args, "listener stand-in", false);
-        let l = [
-            delay(raised, heard_at(&lines, "name", "held")),
-            delay(raised, hooked(&lines, EVENT_OBJECT_FOCUS, window_t)),
-            delay(
-                m_foreground,
-                hooked(&lines, EVENT_SYSTEM_FOREGROUND, window_m),
-            ),
-            delay(read_at, read(&lines)),
-        ];
-        note::evidence(&format!(
-            "listener stand-in: name from the WinEvent, focus hook, foreground hook, read {l:?} ms"
-        ));
-        listener_stand_in.push(l);
     }
-    let not_held = |values: &[f64]| values.iter().all(|v| *v <= NOT_HELD_MS);
     for (i, what, recorded) in [
         (0, "B's name change", "1 ms (e_cross; P4's N_B)"),
         (1, "B's text change", "0 ms (e_cross)"),
@@ -623,6 +614,43 @@ fn who(args: &Args, report: &mut Report) {
             recorded,
             relation(&[not_held(&values)]),
         );
+    }
+}
+
+/// The other clients: every `WHO` row but Verbatim's mapping, the older
+/// coclass, and the listener stand-in.
+fn who(args: &Args, report: &mut Report) {
+    who_rows(args, report, |label| label != VERBATIM_MAPPING);
+    let older_cast: Vec<String> = (0..trials())
+        .map(|_| {
+            let older: Result<windows::Win32::UI::Accessibility::IUIAutomation2, _> =
+                windows::core::Interface::cast(&uia::older_client());
+            older.map_or_else(|e| uia::hresult(e.code()), |_| "ok".to_owned())
+        })
+        .collect();
+    report.claim(
+        "the older CUIAutomation coclass's client object has no IUIAutomation2, so its timeouts cannot be set",
+        &runs(&older_cast),
+        "E_NOINTERFACE (h3 cui_cto500)",
+        deterministic(&older_cast, &"0x80004002".to_owned()),
+    );
+    let mut listener_stand_in: Vec<[f64; 4]> = Vec::new();
+    for _ in 0..trials() {
+        let (lines, [raised, _, _, _, m_foreground, read_at], window_m, window_t) =
+            stand_in(args, "listener stand-in", false);
+        let l = [
+            delay(raised, heard_at(&lines, "name", "held")),
+            delay(raised, hooked(&lines, EVENT_OBJECT_FOCUS, window_t)),
+            delay(
+                m_foreground,
+                hooked(&lines, EVENT_SYSTEM_FOREGROUND, window_m),
+            ),
+            delay(read_at, read_end(&lines)),
+        ];
+        note::evidence(&format!(
+            "listener stand-in: name from the WinEvent, focus hook, foreground hook, read {l:?} ms"
+        ));
+        listener_stand_in.push(l);
     }
     let first: Vec<f64> = listener_stand_in.iter().map(|l| l[0]).collect();
     report.claim(
@@ -1042,6 +1070,12 @@ fn wait_front(hwnd: isize) -> bool {
     }
 }
 
+/// The band of the provider program's recorded hold from a focus
+/// `WinEvent` 6.5 s into the stall of a marked T, 2,541 to 2,589 ms, by
+/// [`band`]'s rule: a tick below the least, 15 percent and 50 ms above the
+/// most.
+const MARKED_RECORD: (f64, f64) = (2_541.0 - TICK_MS, 2_589.0 * 1.15 + 50.0);
+
 /// One `shown` trial: a scene on the user's desktop with client D and,
 /// with `stand_in`, Verbatim's stand-in, and B, with `b_first`, then T
 /// brought to the front; answers `None`, noting why in `unmet`, when a
@@ -1117,7 +1151,7 @@ fn shown(args: &Args, report: &mut Report) {
     let mut away = Vec::new();
     let mut unmet = Vec::new();
     let two = band(&[CTO_MS, CTO_MS]);
-    let one = band(&[CTO_MS]);
+
     for _ in 0..trials() {
         // Each measurement in a trial of its own, with one name change of
         // B, as h7 ran h7_fresh, h7_hung and h7_alttab: a sender's name is
@@ -1253,19 +1287,27 @@ fn shown(args: &Args, report: &mut Report) {
         ),
     );
     report.claim(
-        "T marked hung: B's name change held from a focus WinEvent raised as soon as Windows marks T",
+        "T marked hung: B's name change held from a focus WinEvent raised as soon as Windows marks T, at least one wait and at most two",
         &summary_ms(&after_mark[0]),
-        "",
-        Verdict::New,
+        &format!(
+            "one wait in 7 of 12 runs, two in 5 (the desktop runs of cdb6b4d6 and of f0b18b2a's programs); from one wait's low to two waits' high, {}",
+            band_text((band(&[CTO_MS]).0, band(&[CTO_MS, CTO_MS]).1))
+        ),
+        relation(
+            &after_mark[0]
+                .iter()
+                .map(|v| *v >= band(&[CTO_MS]).0 && *v <= band(&[CTO_MS, CTO_MS]).1)
+                .collect::<Vec<_>>(),
+        ),
     );
     report.claim(
         "T marked hung: B's name change held from a focus WinEvent 6.5 s into the stall",
         &summary_ms(&after_mark[1]),
         &format!(
-            "1,803 to 1,981 ms after B's raise (h7_hung); {}",
-            band_text(one)
+            "2,541 to 2,589 ms, the provider program's first desktop runs (cdb6b4d6, 14e569c9), where mockapp's tree view held 1,803 to 1,981 ms after B's raise (h7_hung); {}",
+            band_text(MARKED_RECORD)
         ),
-        in_band(&after_mark[1], one),
+        in_band(&after_mark[1], MARKED_RECORD),
     );
     report.claim(
         "T marked hung: B's name change held from a focus WinEvent 8.5 s into the stall",
