@@ -492,20 +492,24 @@ A process that has connected to UIA providers as a client exits normally, runnin
 
 #### Symptoms
 
-The process sometimes hangs at full processor use, or crashes with an access violation, after its work is done. Resolved with Microsoft's public symbols, the fault is in `UIAutomationCore.dll`'s own detach code: destroying its global telemetry object (`TelemetryUtility::m_instance`) walks a linked list of per-provider connection records that is corrupt by then, and the walk never ends or reads freed memory. It happened in about 1 to 3 percent of runs of the arbitration tests, and failed CI on GitHub's runner. What corrupts the list is not known.
+The process sometimes hangs at full processor use, or crashes with an access violation, after its work is done. Resolved with Microsoft's public symbols, the fault is in `UIAutomationCore.dll`'s own detach code: destroying its global telemetry object (`TelemetryUtility::m_instance`) walks a linked list of per-provider connection records that is corrupt by then, and the walk never ends or reads freed memory. It happened in about 1 to 3 percent of runs of the arbitration tests, and failed CI on GitHub's runner.
+
+The list is corrupted while the process runs, when two client threads connect to different provider processes at once. The telemetry object's map from a provider's process id to its record has no lock: the thread that makes a new connection inserts a record (`TelemetryUtility::StartConnection`), and UIA's I/O thread erases it when the provider's end of the pipe closes (`TelemetryUtility::CloseConnection`). Two inserts at once both read the list's last node before either links its own, so one record is reachable from the head's back link but not from the forward chain, and the size count can lose an update; under cdb with full page heap, 6 of 150 children were left that way. The destructor clears the next link of the node the head's back link names and frees forward until it meets a null, so when that node is not the chain's last, the walk runs past the head into freed memory. Erasing records as providers go can repair the links or not, which is why the fault shows in a few percent of exits and not in every corrupted one.
 
 #### Not affected
 
-A process that never connected to a provider, whose list stays empty (inferred from the mechanism).
+A process that never connected to a provider, whose list stays empty, and one that never makes two connections at once (inferred from the mechanism; the second measured below).
 
 #### Workarounds that worked
 
 - Verbatim's choice: its processes end themselves with `TerminateProcess` once they have shut down, so the detach code never runs: outposts and the listener (`books/dev/src/explanation/architecture.md`, section 1), and the mockapp test runner after printing its results (`crates/mockapp/tests/common/harness.rs`).
+- Making connections one at a time: in uia-facts' `serial` case, each thread holding one lock of the process's while it connected and read, none of 1,050 children faulted, against 8 in 230 with connections made at once. Verbatim does not use it, since it would put one lock across every thread that connects.
 
 #### Workarounds that didn't work
 
 - Releasing every UIA object first: in uia-facts' `clean` case, removing every handler, releasing every UIA object and calling `CoUninitialize` on every thread before an ordinary exit left 5 faults in 120 children in each order of ending the providers, against 8 in 230 with no teardown.
 - Waiting after every provider had gone: 12 seconds still left 2 hangs in 100 runs.
+- Leaving the providers running through the exit, so no record is erased first: uia-facts' `providers-alive` case left 36 faults in 900 children.
 - Fixing UIA's first-time setup race: the arbitration test binary hung in 1 run in 40 before and 1 in 100 after.
 - `CoUninitialize`, which does not end UIA's own CoreMessaging thread.
 
@@ -521,7 +525,7 @@ No test reproduces it reliably; at 1 to 3 percent of runs it is not a test.
 
 #### Evidence
 
-Commits 1f69859e and fed532be (2026-10-03), which recorded the fault and made the mockapp test runner end its process without detach code.
+Commits 1f69859e and fed532be (2026-10-03), which recorded the fault and made the mockapp test runner end its process without detach code; the debugger guide and records in [`uia-facts/a-process-that-used-uia-can-hang-or-crash-as-it-exits/`](https://github.com/Neurrone/verbatim/blob/main/uia-facts/a-process-that-used-uia-can-hang-or-crash-as-it-exits/readme.md) (2026-11-06), which found what corrupts the list.
 
 ## Limitations
 

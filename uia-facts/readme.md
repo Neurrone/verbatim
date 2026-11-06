@@ -105,7 +105,7 @@ Each program prints a header (the date, the Windows build with its revision, `UI
 | [elements-cannot-be-passed-to-another-process](elements-cannot-be-passed-to-another-process/readme.md) | `uia-bugs.md`, the limitation of that name | Kept CI test and program |
 | [ancestors-cannot-be-cached-or-listened-to](ancestors-cannot-be-cached-or-listened-to/readme.md) | `uia-bugs.md`, the limitation of that name | Program |
 | [a-cache-request-fails-while-uias-first-time-setup-runs-on-another-thread](a-cache-request-fails-while-uias-first-time-setup-runs-on-another-thread/readme.md) | `uia-bugs.md`, the fault of that name | Kept CI test and program |
-| [a-process-that-used-uia-can-hang-or-crash-as-it-exits](a-process-that-used-uia-can-hang-or-crash-as-it-exits/readme.md) | `uia-bugs.md`, the fault of that name | Program |
+| [a-process-that-used-uia-can-hang-or-crash-as-it-exits](a-process-that-used-uia-can-hang-or-crash-as-it-exits/readme.md) | `uia-bugs.md`, the fault of that name | Program and debugger guide |
 | [a-new-connection-fails-while-another-processs-remote-operation-is-queued](a-new-connection-fails-while-another-processs-remote-operation-is-queued/readme.md) | `uia-bugs.md`, the fault of that name; `uia.md`, "Predicting outcomes" | Program and debugger guide |
 | [a-pending-connection-holds-its-own-processs-other-calls](a-pending-connection-holds-its-own-processs-other-calls/readme.md) | `uia.md`, "Making a connection": the pending connection | Program and debugger guide |
 | [uiahasserversideprovider-says-no-for-a-new-conhost-window-while-another-process-has-an-event-handler](uiahasserversideprovider-says-no-for-a-new-conhost-window-while-another-process-has-an-event-handler/readme.md) | `uia-bugs.md`, the fault of that name | Program |

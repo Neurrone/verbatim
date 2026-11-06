@@ -11,7 +11,9 @@
 //! that has not ended 3 s after its work is a hang, and one that ends with
 //! an access violation a crash; a child that fails otherwise makes the
 //! claim inconclusive. `candidates` measures smaller and larger setups,
-//! and `clean` the same setup torn down before the exit.
+//! `clean` the same setup torn down before the exit, `serial` it with
+//! the threads connecting one at a time, and `providers-alive` it with the
+//! providers running through the exit.
 
 use std::time::Duration;
 
@@ -46,6 +48,7 @@ const FIRST: Setup = Setup {
     every: false,
     search: true,
     register: true,
+    serial: false,
     end: End::Dirty,
 };
 
@@ -92,7 +95,71 @@ fn main() {
         report.case("clean", "the exit setup, each child tearing UIA down before it ends: every handler removed, every element, cache request, handler and client released, and COM left on each thread; the providers ended after the teardown, and in a second run before it");
         clean(&mut report);
     }
+    if args.names("serial") {
+        report.case("serial", "the exit setup, its threads connecting and reading one at a time, each holding a lock the others wait on, so that no two connections are made at once");
+        against_dirty(
+            &mut report,
+            "connections made one at a time",
+            Setup {
+                serial: true,
+                ..SETUP
+            },
+            true,
+        );
+    }
+    if args.names("providers-alive") {
+        report.case("providers-alive", "the exit setup, its providers left running through the exit and ended once the child has ended");
+        against_dirty(
+            &mut report,
+            "the providers alive through the exit",
+            Setup {
+                end: End::ProvidersAlive,
+                ..SETUP
+            },
+            false,
+        );
+    }
     report.finish();
+}
+
+/// Runs [`CHILDREN`] children of `setup`, a step changed from the exit
+/// setup, and judges their faults against the exit setup's rate. For a
+/// step that `prevents` the fault, the record is that its rate lies apart
+/// from the exit setup's, none in 150 included (0.965 to the 150th power
+/// is below 0.005): pass when apart, differ when no difference shows. For
+/// any other step the record is no difference: pass when none shows,
+/// differ when apart.
+fn against_dirty(report: &mut Report, label: &str, setup: Setup, prevents: bool) {
+    let outcome = run_children(setup, CHILDREN * trials());
+    let verdict = if outcome.other.is_empty() {
+        match (
+            rate(outcome.faults(), outcome.done, RECORDED.0, RECORDED.1),
+            prevents,
+        ) {
+            (Verdict::Differ, true) => Verdict::Pass,
+            (Verdict::Pass, true) => Verdict::Differ,
+            (verdict, _) => verdict,
+        }
+    } else {
+        Verdict::Inconclusive(format!("{} children failed otherwise", outcome.other.len()))
+    };
+    let (claim, record) = if prevents {
+        (
+            "apart from the exit setup's rate",
+            "0 of 150 (2026-11-06), apart from 8 of 230 with connections made at once (the candidates case, 2026-11-06)",
+        )
+    } else {
+        (
+            "against the exit setup's rate",
+            "no difference from 8 of 230 with the providers ended first (the candidates case, 2026-11-06)",
+        )
+    };
+    report.claim(
+        &format!("{label}: children that hung or ended with an access violation, {claim}"),
+        &outcome.text(),
+        record,
+        verdict,
+    );
 }
 
 /// Children of each candidate: at the exit setup's rate of about 1 in 75,
@@ -271,6 +338,9 @@ struct Setup {
     search: bool,
     /// Whether each connection registers a name-change handler.
     register: bool,
+    /// Whether the threads connect one at a time, each holding a lock
+    /// the others wait on while it connects and reads.
+    serial: bool,
     /// How the child ends.
     end: End,
 }
@@ -287,6 +357,18 @@ enum End {
     /// Ends the providers, then tears UIA down as `CleanThenProviders`
     /// does.
     ProvidersThenClean,
+    /// Leaves its clients in place as `Dirty` does, but its providers
+    /// alive through the exit: their jobs end them once the child has
+    /// ended.
+    ProvidersAlive,
+}
+
+impl End {
+    /// Whether the child leaves its clients, elements and handlers in
+    /// place as it exits.
+    fn leaves_clients(self) -> bool {
+        matches!(self, Self::Dirty | Self::ProvidersAlive)
+    }
 }
 
 impl Setup {
@@ -299,10 +381,12 @@ impl Setup {
             u8::from(self.every).to_string(),
             u8::from(self.search).to_string(),
             u8::from(self.register).to_string(),
+            u8::from(self.serial).to_string(),
             match self.end {
                 End::Dirty => "dirty",
                 End::CleanThenProviders => "clean-after",
                 End::ProvidersThenClean => "clean-before",
+                End::ProvidersAlive => "providers-alive",
             }
             .to_owned(),
         ]
@@ -318,10 +402,12 @@ impl Setup {
             every: n(4) == 1,
             search: n(5) == 1,
             register: n(6) == 1,
-            end: match words[7].as_str() {
+            serial: n(7) == 1,
+            end: match words[8].as_str() {
                 "dirty" => End::Dirty,
                 "clean-after" => End::CleanThenProviders,
                 "clean-before" => End::ProvidersThenClean,
+                "providers-alive" => End::ProvidersAlive,
                 other => panic!("unknown end {other}"),
             },
         }
@@ -378,9 +464,14 @@ fn exiter(setup: Setup) -> ! {
                 let client = uia::client();
                 let kept: Vec<Kept> = windows
                     .iter()
-                    .filter_map(|hwnd| use_uia(&client, *hwnd, setup))
+                    .filter_map(|hwnd| {
+                        let _turn = setup
+                            .serial
+                            .then(|| CONNECTING.lock().expect("no thread panicked connecting"));
+                        use_uia(&client, *hwnd, setup)
+                    })
                     .collect();
-                if setup.end == End::Dirty {
+                if setup.end.leaves_clients() {
                     // The process ends with its connections in place, as
                     // a test process did.
                     std::mem::forget(kept);
@@ -401,7 +492,7 @@ fn exiter(setup: Setup) -> ! {
         .collect();
     drop(ready_tx);
     let mut providers = Some(providers);
-    if setup.end != End::Dirty {
+    if !setup.end.leaves_clients() {
         for _ in 0..setup.threads {
             ready.recv().expect("each thread is ready");
         }
@@ -415,8 +506,13 @@ fn exiter(setup: Setup) -> ! {
     for thread in threads {
         thread.join().expect("a UIA thread");
     }
+    if setup.end == End::ProvidersAlive {
+        // Their jobs close, and end them, only once this process has
+        // ended, after the detach code.
+        std::mem::forget(providers.take());
+    }
     drop(providers.take());
-    if setup.end == End::Dirty {
+    if setup.end.leaves_clients() {
         std::mem::forget(first_cache);
         std::mem::forget(first);
     } else {
@@ -430,6 +526,10 @@ fn exiter(setup: Setup) -> ! {
     // An ordinary exit, running every DLL's detach code.
     std::process::exit(0)
 }
+
+/// Held by the thread connecting, in a setup whose threads connect one at
+/// a time.
+static CONNECTING: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// What one connection keeps until the child tears UIA down.
 struct Kept {
