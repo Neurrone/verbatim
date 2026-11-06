@@ -13,9 +13,8 @@ The listener reading the sender's keyboard focus with a plain property read afte
 Each read is of `HasKeyboardFocus`, plainly (`CurrentHasKeyboardFocus`) and inside a remote operation built with Verbatim's `verbatim-uia-rops` (`uia_facts_support::rop::property`).
 
 - `provider`: the provider program's hidden window 0, its tree's focus moved to node 3 with no event; node 3, node 4 and the window's own element read both ways. New: the pairs.
-- `windows-terminal`, on the unlocked desktop, run only when named: Windows Terminal from the folder `UIA_FACTS_WT` names (the portable 1.24.12741.0 copy), a second window opened in its running process with `wt.exe -w new`, and every focus a desktop-wide focus handler in this program hears from Windows Terminal's process from the second window's request until 5 s after it appeared, a deliberate listening time; each sender read both ways after the 5 s. Three launches, as the end-to-end runs met it in each of three. Judged: launches in which a sender answered true inside the operation and false plainly, a rate against 3 of 3.
 
-The provider program cannot stand for Windows Terminal's second identity, whose cause is not known, so the fault itself is tried only against Windows Terminal, the application its claim is about.
+The fault itself was met only in Windows Terminal, whose second identity is that application's own behaviour, so no case tries it: its claim stays as `books/dev/src/reference/uia-bugs.md` states it, with its record below. What the program shows is that a provider answering for itself is read the same both ways, so the two read paths do not differ by themselves.
 
 ## Client settings
 
@@ -25,12 +24,12 @@ Neither connection recovery nor event coalescing changes these outcomes (checked
 
 | Figure | Date | Machine | Source | Threshold |
 |---|---|---|---|---|
-| `windows_terminal_two_windows` in each of three runs and `windows_terminal_leave_flood` in one: the second identity true inside the operation, false plainly; the usual identity the same both ways | 2026-10-12 | Build 26200 | `books/dev/src/explanation/design/focus-pipeline.md`, sections 16.8 and 16.9; commit ab18245e | A rate |
+| `windows_terminal_two_windows` in each of three runs and `windows_terminal_leave_flood` in one: the second identity true inside the operation, false plainly; the usual identity the same both ways | 2026-10-12 | Build 26200 | `books/dev/src/explanation/design/focus-pipeline.md`, sections 16.8 and 16.9; commit ab18245e | History, no case |
 | First uia-facts run, `provider`: node 3 true both ways, node 4 false both ways, the window false both ways | 2026-11-06 | Build 26200.9711, `UIAutomationCore.dll` 7.2.26100.9549, AMD Ryzen 7 5700G | fdfb63ae | New: the reads agree |
 
 ## How to rerun
 
-`uia-facts/build.ps1`, then `target\debug\a-remote-operations-keyboard-focus-read-can-differ-from-a-plain-read.exe`, which runs `provider` and takes over nothing. `--case windows-terminal` needs the unlocked desktop, `UIA_FACTS_WT` set to the portable Windows Terminal's folder, and no other Windows Terminal running; it opens and closes Windows Terminal three times.
+`uia-facts/build.ps1`, then `target\debug\a-remote-operations-keyboard-focus-read-can-differ-from-a-plain-read.exe`, which runs `provider` and takes over nothing.
 
 ## Evidence kept
 

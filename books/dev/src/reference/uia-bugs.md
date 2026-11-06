@@ -409,7 +409,7 @@ NVDA reads the sender's keyboard focus plainly in `shouldAllowUIAFocusEvent` (li
 
 #### Reproduction test
 
-No test reproduces it yet; mockapp has no second identity. `crates/mockapp/tests/focus_reports.rs` and `call_counts.rs` pin the plain read and its cost. The fact program in [`uia-facts/a-remote-operations-keyboard-focus-read-can-differ-from-a-plain-read/`](https://github.com/Neurrone/verbatim/blob/main/uia-facts/a-remote-operations-keyboard-focus-read-can-differ-from-a-plain-read/readme.md) reads a sender both ways in Windows Terminal itself, on the unlocked desktop, and shows that on uia-facts' provider program, which answers for itself, the two reads agree.
+No test reproduces it yet; mockapp has no second identity. `crates/mockapp/tests/focus_reports.rs` and `call_counts.rs` pin the plain read and its cost. The fact program in [`uia-facts/a-remote-operations-keyboard-focus-read-can-differ-from-a-plain-read/`](https://github.com/Neurrone/verbatim/blob/main/uia-facts/a-remote-operations-keyboard-focus-read-can-differ-from-a-plain-read/readme.md) shows that on uia-facts' provider program, which answers for itself, the two reads agree; the second identity is Windows Terminal's own behaviour, and no fact program tries it.
 
 #### Evidence
 

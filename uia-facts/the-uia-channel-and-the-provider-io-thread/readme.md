@@ -25,7 +25,7 @@ The folder has no program, so nothing here has a first uia-facts run; a run by h
 
 ## How to rerun
 
-Needs cdb (the Windows SDK's, `C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\cdb.exe`, or `CDB` set to it) and Microsoft's symbol server. Build with `uia-facts/build.ps1`, then follow the guide.
+Needs cdb (WinDbg's `cdbX64.exe`, `books/dev/src/how-to/debugging.md`, "Where cdb is", or `CDB` set to another) and Microsoft's symbol server. Build with `uia-facts/build.ps1`, then follow the guide.
 
 ## Debugger guide
 

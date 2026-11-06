@@ -36,7 +36,7 @@ Not applicable: no program.
 
 ## How to rerun
 
-`uia-facts/build.ps1`. The debugger is cdb: the Windows SDK's `C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\cdb.exe`, or the WinDbg app's `cdbX64.exe`. Symbols: `-y srv*C:\symbols*https://msdl.microsoft.com/download/symbols`.
+`uia-facts/build.ps1`. The debugger is cdb, the WinDbg app's `cdbX64.exe` (`books/dev/src/how-to/debugging.md`, "Where cdb is"). Symbols: `-y srv*C:\symbols*https://msdl.microsoft.com/download/symbols`.
 
 ## Debugger guide
 
@@ -59,7 +59,7 @@ The older `CUIAutomation` coclass's calls (`h2_cui`), which no case of the hung-
 3. In T's provider type `busy 0 8000`, then `winevent focus 0`; in B's, `rename 0 1 During`, then `raise name 0 1`.
 4. Expect on the client's `WorkItemQueue` thread `WM_GETOBJECT` (0x3d) with lParam `UiaRootObjectId`, flags 0 and timeout 5,000, under `HwndUtils::SendWmGetObject` and `FocusTracker::HandleFocusChange`; 5 s later the registered message with flags 0 and timeout 0, under `PerformOperationOnHwndThread` and `ProviderEntryPoint::GetProxyUiaNode`; and B's name change delivered only once T's 8 s stall ends.
 
-The open-and-show route (`route1`, `route2`): run `--case open-show --pause`, which needs the unlocked desktop and Notepad; attach to the client with breakpoints on `UIAutomationCore!FocusTracker::HandleFocusChange` and on the program's `HandleFocusChangedEvent` with `k 20`, and expect the menu's focus events under `ClientEventManager::OpenShowWinEventCallbackThreadProc` on a thread-pool thread while the work-item thread is in `HandleFocusChange`.
+The open-and-show route (`route1`, `route2`): run `target\debug\focus-for-a-newly-opened-or-shown-window-is-not-held.exe --case open-show --pause`, which needs the unlocked desktop; attach to the client with breakpoints on `UIAutomationCore!FocusTracker::HandleFocusChange` and on the program's `HandleFocusChangedEvent` with `k 20`, and expect the shown window's focus events under `ClientEventManager::OpenShowWinEventCallbackThreadProc` on a thread-pool thread while the work-item thread is in `HandleFocusChange`.
 
 It matches when the frames and arguments are as listed. An invasive attach changes timing; the dumps of a hold are taken with `-pv`.
 

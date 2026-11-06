@@ -10,15 +10,13 @@ Nothing is built on it: it explains why a menu's focus is announced during a hol
 
 ## Method
 
-On the unlocked desktop, run only when named: Notepad started and brought to the front; the hung-window scene of support's `uia_facts_support::hung` on the user's desktop, P1's T a plain Win32 window and P2's B a UIA window; Verbatim's stand-in, a listening process with a desktop focus handler, Verbatim's proxy factory mapping and B's name changes. T's UI thread is stalled 9 s, a deliberate length; a focus `WinEvent` naming T; B renamed 200 ms later; Alt+F 0.6 s after that, then Escape, and Notepad ended.
+On the unlocked desktop, run only when named: the hung-window scene of support's `uia_facts_support::hung` on the user's desktop, P1's T a plain Win32 window and P2's B a UIA window, and a third provider program P3 with a hidden UIA window O; Verbatim's stand-in, a listening process with a desktop focus handler, Verbatim's proxy factory mapping and B's name changes. T's UI thread is stalled 9 s, a deliberate length; a focus `WinEvent` naming T; B renamed 200 ms later; O shown and brought to the front 0.6 s after that, a window newly shown during the hold, as a menu's popup is.
 
-- `open-show`: judged: a focus heard after Alt+F reaches the stand-in while B's name change is still held (a relation), and B's change held two connection timeouts from the `WinEvent` (a band).
-
-The case starts Notepad, a real application, where Dickson's rule for these programs (2026-11-06) is the provider program alone; a window of the provider program that opens a menu would replace it.
+- `open-show`: judged: a focus heard after O is shown reaches the stand-in while B's name change is still held (a relation), and B's change held two connection timeouts from the `WinEvent` (a band).
 
 ## Client settings
 
-Checked on Dickson's desktop runs of the programs of 14e569c9, by default and with each setting: neither connection recovery nor event coalescing changes the outcome.
+Checked on Dickson's desktop runs of the programs of 14e569c9, with Notepad's menu as the newly opened window, by default and with each setting: neither connection recovery nor event coalescing changes the outcome. The provider program's window has not been run yet.
 
 ## Recorded results
 
@@ -29,7 +27,7 @@ Checked on Dickson's desktop runs of the programs of 14e569c9, by default and wi
 
 ## How to rerun
 
-`uia-facts/build.ps1`, then `target\debug\focus-for-a-newly-opened-or-shown-window-is-not-held.exe --case open-show`. It needs the unlocked desktop and takes it over: it starts Notepad and presses Alt+F. The debugger guide for the route is in [the threads guide](../uias-client-threads-and-focus-tracking-calls/readme.md) (`route1`, `route2`).
+`uia-facts/build.ps1`, then `target\debug\focus-for-a-newly-opened-or-shown-window-is-not-held.exe --case open-show`. It needs the unlocked desktop and takes it over: it shows the provider program's windows and brings one to the front. The debugger guide for the route is in [the threads guide](../uias-client-threads-and-focus-tracking-calls/readme.md) (`route1`, `route2`).
 
 ## Evidence kept
 

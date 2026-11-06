@@ -225,11 +225,14 @@ never by returning from `main`. Keep it that way unless the following is
 solved: a process that has used UIA as a client sometimes hangs at full
 CPU or crashes as it exits normally, inside `UIAutomationCore.dll`'s own
 shutdown code, which walks a corrupt list in its telemetry of provider
-connections. Releasing every UIA object first does not prevent it. A
+connections. The list is corrupted while the process runs: UIA writes its
+map of provider connections without a lock, and client threads that
+connect at once race on it; making one connection at a time prevented it
+in 0 of 1,050 runs, while releasing every UIA object first does not. A
 process that ends itself with `TerminateProcess` never runs that code,
-and by then nothing is left for it to do. The evidence and what is still
-unknown are recorded in `books/dev/src/reference/crates/mockapp.md` beside the harness's exit
-and in the comment of `crates/mockapp/tests/common/harness.rs`.
+and by then nothing is left for it to do. The evidence is in
+`uia-facts/a-process-that-used-uia-can-hang-or-crash-as-it-exits/` and
+`books/dev/src/reference/uia-bugs.md`.
 
 Core and each outpost (and the synth host) communicate over private
 parent-child channels created at spawn via handle inheritance — no named

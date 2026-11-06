@@ -6,14 +6,13 @@ Real applications serve UIA calls as the model predicts (`books/dev/src/explanat
 
 ## What Verbatim relies on
 
-D9's per-application outposts (`books/dev/src/explanation/architecture.md`, section 1), which hold that a slow call holds its own application only. That claim is checked against the provider program in [a provider process serves one UIA request at a time](../a-provider-process-serves-one-uia-request-at-a-time/readme.md); this folder checks the applications themselves.
+D9's per-application outposts (`books/dev/src/explanation/architecture.md`, section 1), which hold that a slow call holds its own application only. That claim is checked against the provider program in [a provider process serves one UIA request at a time](../a-provider-process-serves-one-uia-request-at-a-time/readme.md); this folder holds the applications' records and the search beside a cheap call.
 
 ## Method
 
-- `findall`: the claim that is not about one application, against the provider program: its window with a tree of 20,000 nodes, a `FindAllBuildCache` of the descendants with the name cached on one thread while another thread reads node 1's name back to back. Judged: some read answers while the search runs (a relation); the reads' median and longest wait and the search's time are printed for trends.
-- `suspended`, on the unlocked desktop, run only when named: Notepad, Edge, Firefox and VS Code, each started at its installed path when it is not already running, so that closing it closes nothing of the user's; its top-level window's element fetched and its name read once, then the window's UI thread suspended, a name read of the window from another thread, and the thread resumed after 1 s, a deliberate stall. Judged per application: the read answers only after the resume (a relation).
+- `findall`, against the provider program: its window with a tree of 20,000 nodes, a `FindAllBuildCache` of the descendants with the name cached on one thread while another thread reads node 1's name back to back. Judged: some read answers while the search runs (a relation); the reads' median and longest wait and the search's time are printed for trends.
 
-Not tried by any case: Windows Forms and WPF, Chromium's page and browser on one thread, the operation holds of Firefox and WPF, Edge's `GetText`, and Windows Terminal's XAML thread; File Explorer is never started. Their claims stay as the documents state them.
+The claim is about how a provider serves calls, and the provider program's cases stand for it here and in [a provider process serves one UIA request at a time](../a-provider-process-serves-one-uia-request-at-a-time/readme.md). No case starts a real application: the per-application figures, the suspended UI thread in Notepad, Edge, VS Code, Firefox, Windows Forms and WPF, Chromium's page and browser on one thread, the operation holds of Firefox and WPF, Edge's `GetText` and Windows Terminal's XAML thread, stay in the documents as their records, untried.
 
 ## Client settings
 
@@ -30,7 +29,7 @@ The provider program's figures are recorded for it afresh, since its tree is not
 
 ## How to rerun
 
-`uia-facts/build.ps1`, then `target\debug\real-applications-serve-uia-calls-one-at-a-time.exe`, which runs `findall`. `--case suspended` needs the unlocked desktop and Notepad, Edge, Firefox and VS Code closed; it opens and closes each.
+`uia-facts/build.ps1`, then `target\debug\real-applications-serve-uia-calls-one-at-a-time.exe`, which runs `findall` and takes over nothing.
 
 ## Evidence kept
 

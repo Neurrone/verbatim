@@ -7,9 +7,12 @@
 //! Why the process is not allowed to exit normally: a process that has
 //! connected to UIA providers sometimes hangs at full CPU, or crashes, in
 //! `UIAutomationCore.dll`'s own process-detach code as it exits normally,
-//! after all its tests have passed, and nothing tried on our side avoids it
-//! (`books/dev/src/reference/uia-bugs.md`, "A process that used UIA can hang or crash as it
-//! exits"). Verbatim's own processes are not affected, because outposts and
+//! after all its tests have passed. The cause is a data race in UIA: its
+//! telemetry's map of provider connections is written without a lock by
+//! client threads that connect at once, which corrupts the list its detach
+//! code walks; making one connection at a time prevented it in 0 of 1,050
+//! runs, and releasing everything first does not (`books/dev/src/reference/uia-bugs.md`,
+//! "A process that used UIA can hang or crash as it exits"). Verbatim's own processes are not affected, because outposts and
 //! the listener end themselves with `TerminateProcess` once they have shut
 //! down, and never run that code (`books/dev/src/explanation/architecture.md`, section 1,
 //! "Process and thread model"); these test binaries are the only processes
@@ -20,7 +23,7 @@
 //! themselves, without process-detach code. This is a workaround for that UIA
 //! fault, not cleanup: it skips every DLL's detach code, which these tests
 //! do not need, since nothing they leave behind is flushed at exit. Remove
-//! it if the fault is fixed or found to be ours.
+//! it if UIA's fault is fixed.
 //!
 //! Each test runs on a desktop it has to itself so that nothing it does reaches
 //! the desktop the run was started from, which may be in use: no mockapp
