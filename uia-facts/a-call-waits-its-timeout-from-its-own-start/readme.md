@@ -2,7 +2,7 @@
 
 ## Fact
 
-A UIA call on an element already obtained waits the transaction timeout, and each call's wait starts at its own start: a call queued 200 ms behind a stuck one failed 2,198 ms after its own start under a 2-second timeout, not when the first did (`books/dev/src/explanation/windows/uia.md`, "Timeouts and cancelling"). The client waits the timeout less 200 ms as a count of waits that each last about 110 ms, then one of 205 ms, so a 2-second timeout fails after about 2.2 s, 5 seconds after 5.5 and the 20-second default after 22.1; E-TT's single reads at a 1-second timeout failed after 1,082 to 1,095 ms. With the system timer at 1 ms the wait is the same, so the extra tenth is not the timer's tick. The provider side never learns of the timeout: after a hold it still answers the calls that already failed. A remote operation is one transaction, so the timeout bounds it as a whole.
+A UIA call on an element already obtained waits the transaction timeout, and each call's wait starts at its own start: a call queued 200 ms behind a stuck one failed 2,198 ms after its own start under a 2-second timeout, not when the first did (`books/dev/src/explanation/windows/uia.md`, "Timeouts and cancelling"). The client waits the timeout less 200 ms as a count of waits that each last about 110 ms, then one of 205 ms, so a 2-second timeout fails after about 2.2 s, 5 seconds after 5.5 and the 20-second default after 22.1; E-TT's single reads at a 1-second timeout failed after 1,082 to 1,095 ms. With the system timer at 1 ms the wait is the same, so the extra tenth is not the timer's tick. The provider side never learns of the timeout: after a hold it still answers the calls that already failed. A remote operation is one transaction, so the timeout bounds it as a whole. With the client's connection recovery on, a read made right after one into the same application timed out fails at once, from another thread and through another client object of the process alike, and reads go on failing at once until about 2 seconds after the application answers again.
 
 ## What Verbatim relies on
 
@@ -14,18 +14,19 @@ The kept CI test `a_stalled_provider_holds_execute_until_the_transaction_timeout
 
 Every case runs against the provider program with one UIA window, the elements fetched before the provider holds node 1's `GetPropertyValue`, the connection timeout 2,000 ms unless named.
 
-- `waits`: `CurrentName` of node 1, held, at transaction timeouts of 2,000, 5,000 and 20,000 ms. Then E-TT's reads with both timeouts at 1,000 ms: `CurrentName` and `CurrentHasKeyboardFocus` of node 1, held.
-- `own-start`: at 2,000 ms, node 1's read held on one thread and, 200 ms later (a deliberate offset), node 2's read on another; the second read's wait from its own start, and, after the release, whether the provider log shows node 2's read served (watched for up to 5 s).
-- `timer`: the 2,000 ms wait with the system timer at 1 ms (`timeBeginPeriod(1)`).
+- `waits`: `CurrentName` of node 1, held, at transaction timeouts of 2,000 and 5,000 ms. Then E-TT's reads with both timeouts at 1,000 ms: `CurrentName` and `CurrentHasKeyboardFocus` of node 1, held. The 20-second default's 22.1 s is not run, since a 22-second wait is past the program's limit; its claim stays in the documents, from the original's record, and is not tried.
+- `own-start`: both timeouts 1,000 ms, node 1's read held on one thread and, 200 ms later (a deliberate offset), node 2's read on another; the second read's wait from its own start, and, after the release, whether the provider log shows node 2's read served (watched for up to 5 s).
+- `timer`: the 1,000 ms wait with the system timer at 1 ms (`timeBeginPeriod(1)`).
+- `mark`: both timeouts 1,000 ms; node 1's read held until it times out; then, the provider still held, node 1 read from another thread through the same element, and through an element another client object of this process fetched before the hold, in turn; then the provider released, and node 1 read every 10 ms until a read succeeds, watched up to 10 s. Connection recovery's mark, by which a read made right after one into the same application timed out fails at once: whether it reaches another thread and another client object, and how long it lasts after the application answers again.
 
-Judged: the HRESULT (deterministic), each wait (a band from its timeout), the late service (a relation). `timer`, an open question whose first run is its record, is judged by the same band as `waits`.
+Judged: the HRESULT (deterministic), each wait (a band from its timeout), the late service (a relation). `timer`, an open question whose first run is its record, is judged by the same band as `waits`. `mark`'s answers were new on their first runs and are its record: each of the two reads failing at once or not (deterministic, for the setting in use), and, with recovery on, the mark's length after the release (a band by the same rule from the first run's 2,004 ms, since it looks set by UIA rather than by the machine); with recovery off, the first read after the release succeeding.
 
 ## Client settings
 
-Event coalescing changes no outcome, and connection recovery changes one, E-TT's second read (checked on 2026-11-05 by running every case by default and once each with `--recovery`, `--coalescing` and both). The documents state the default's outcome, which the default command judges.
+Event coalescing changes no outcome, and connection recovery changes E-TT's second read and `mark` (checked on 2026-11-05, and for `mark` on 2026-11-06, by running every case by default and once each with `--recovery`, `--coalescing` and both). The documents state the default's outcome, which the default command judges.
 
-- Connection recovery off, the default: each of E-TT's held reads fails after one timeout, `CurrentName` and `CurrentHasKeyboardFocus` alike. `target\debug\a-call-waits-its-timeout-from-its-own-start.exe --case waits`
-- Connection recovery on, as Verbatim's client has it: the first held read still fails after one timeout, but a read made right after one into the same application timed out fails at once, `CurrentHasKeyboardFocus` in 0.1 ms. `target\debug\a-call-waits-its-timeout-from-its-own-start.exe --recovery --case waits`
+- Connection recovery off, the default: each of E-TT's held reads fails after one timeout, `CurrentName` and `CurrentHasKeyboardFocus` alike; in `mark` each read waits its own timeout, and the first read after the release succeeds. `target\debug\a-call-waits-its-timeout-from-its-own-start.exe --case waits --case mark`
+- Connection recovery on, as Verbatim's client has it: the first held read still fails after one timeout, but a read made right after one into the same application timed out fails at once, `CurrentHasKeyboardFocus` in 0.1 ms; in `mark` the reads from another thread and through another client object fail at once too, and reads fail at once until about 2 seconds after the release. `target\debug\a-call-waits-its-timeout-from-its-own-start.exe --recovery --case waits --case mark`
 
 ## Recorded results
 
@@ -37,6 +38,10 @@ Event coalescing changes no outcome, and connection recovery changes one, E-TT's
 | First uia-facts run, `own-start`: both reads `UIA_E_TIMEOUT` 5 of 5; the queued read 2,203 ms (2,196 to 2,204) from its own start; node 2's read served after the release 5 of 5 | 2026-11-05 | As above | As above | Pass |
 | First uia-facts run, `waits`: `UIA_E_TIMEOUT` 5 of 5 at each timeout; 2,197.8 ms (2,190.9 to 2,199.6), 5,517.6 ms (5,515.3 to 5,527.6) and 22,133 ms (22,124 to 22,136) | 2026-11-05 | As above | As above | Pass |
 | First uia-facts run, `timer`: `UIA_E_TIMEOUT` 5 of 5, 2,201.2 ms (2,199.3 to 2,207.4) with the system timer at 1 ms | 2026-11-05 | As above | As above | This record: the wait is unchanged, so the 1.1 times is not the system timer |
+| uia-facts run at the cut setups, recovery off: `waits` `UIA_E_TIMEOUT` at 2,000 and 5,000 ms, E-TT's reads after one timeout; `own-start` at 1,000 ms both `UIA_E_TIMEOUT`, the queued read one timeout from its own start, served after the release | 2026-11-06 | Build 26200.9711, `UIAutomationCore.dll` 7.2.26100.9549, AMD Ryzen 7 5700G | ff23f81a | Pass |
+| uia-facts runs of `timer`: at 1,000 ms 1,001.5 to 1,028.5 ms in 7 runs, where the same read with the timer left alone waited 1,091.0 to 1,092.2 ms; the program before this cut, at 2,000 ms, 2,009.6 ms (2,008.2 to 2,016.4) where its first run waited 2,201.2 ms and an earlier run that day 2,188.4 ms | 2026-11-06 | As above | ff23f81a and 5ee36a07 | Inside the band, which takes both 1.0 and 1.1 times the timeout; these runs waited about the timeout itself with the timer at 1 ms |
+| First runs of `mark`: recovery on, the reads from another thread and through another client object `UIA_E_TIMEOUT` at once, 0.1 to 0.2 ms, 4 of 4; the first read to succeed 2,002 to 2,005 ms after the release, 192 to 193 failing first, 4 of 4; recovery off, each read `UIA_E_TIMEOUT` after one timeout and the first read after the release succeeding | 2026-11-06 | As above | ff23f81a | The answers, now the record |
+| `mark` judged against that record, every setting: recovery on, the first read to succeed 1,999 and 2,003 ms after the release; recovery off, at once | 2026-11-06 | As above | 3bda30b6 | Pass |
 
 ## How to rerun
 

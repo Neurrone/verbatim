@@ -14,7 +14,8 @@ The hung-window workaround's claim that MSAA keeps working, and the outposts' MS
 - `messages`: oleacc's `accName` on a plain window, the window's messages counted by the provider's log.
 - `busy-sweep`: oleacc's `accName` on a plain window while its UI thread is busy for 20 s; judged to wait the whole busy time, to within a system tick, and then answer.
 - `sent-rate`: 20,000 `WM_GETTEXT`s sent by 1, 4 and 8 threads of this process, each thread to a plain window on a UI thread of its own.
-- `processes`: the 8-thread case as 8 threads of one process and as two processes of 4 threads, the times printed for trends.
+
+The `processes` case, threads of one process against client processes, printed only for trends, is no longer run; its first run stays in the records below.
 
 Judged: whether each MSAA call answered before the release and the UIA read after it (relations); the message counts (deterministic); whether more threads send fewer messages a second than one (a relation); that the busy-sweep read waits the whole busy time (a relation). The times and rates are printed for trends.
 
@@ -34,6 +35,7 @@ Neither connection recovery nor event coalescing changes the `stuck` case's outc
 | First uia-facts run, `busy-sweep`: answered after 1,001, 5,001, 15,000 and 60,000 ms | 2026-11-05 | As above | As above | The answer: an MSAA call into a busy UI thread waits the whole busy time, with no bound up to 60 s; the case now runs 20 s alone and states no bound up to 20 s |
 | First uia-facts run, `sent-rate`: slower than one thread 3 of 3 at 4 and at 8 threads; the rate 0.51 at 4 threads (0.49 to 0.53) and 0.51 at 8 (0.50 to 0.51) | 2026-11-05 | As above | As above | Pass; the ratio for trends |
 | First uia-facts run, `processes`: 8 threads of one process 802 to 810 ms, of two processes 810 to 822 ms | 2026-11-05 | As above | As above | For trends |
+| uia-facts run of the cut program, every setting: `stuck` each `accName` answered during the hold (0.2 to 1.1 ms) and the UIA read waited; `messages` (1, 1); `busy-sweep` answered after 20,003 ms; `sent-rate` slower than one thread at 4 and 8, 0.45 and 0.48 | 2026-11-06 | Build 26200.9711, `UIAutomationCore.dll` 7.2.26100.9549, AMD Ryzen 7 5700G | ff23f81a | Pass; the times and rates for trends |
 
 The `stuck` times are lower than the original's; they are printed for trends only.
 

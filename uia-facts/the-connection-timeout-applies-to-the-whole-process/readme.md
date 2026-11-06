@@ -2,7 +2,7 @@
 
 ## Fact
 
-Both UIA timeouts are settings of the client process, not of a client object: the value any client object in the process set last applies to every client object's calls, and a client object made later that sets nothing does not reset it (`books/dev/src/reference/uia-bugs.md`, the fault of that name). A read on a client object that set 500 ms waited 2,008 ms after another client object set 2,000 ms, and 515 ms the other way round (10,013 and 508 ms in the original `h5` pair, which set 10,000 ms).
+Both UIA timeouts are settings of the client process, not of a client object: the value any client object in the process set last applies to every client object's calls, and a client object made later that sets nothing does not reset it (`books/dev/src/reference/uia-bugs.md`, the fault of that name). A read on a client object that set 500 ms waits the 1,000 ms another client object set after it, and the reverse waits 500 ms (10,013 and 508 ms in the original `h5` pair, which set 10,000 ms).
 
 ## What Verbatim relies on
 
@@ -14,7 +14,7 @@ The kept CI tests, in `crates/mockapp/tests/uia_bugs/the_connection_timeout_appl
 
 Each trial starts a new provider program, its one UIA window's UI thread busy until released. Client object A, on the main thread, sets the connection timeout; client object B, made on another thread, sets another; then A reads the busy window (`ElementFromHandle`, then `CurrentName`), which fails at the connection timeout in force.
 
-- `whole-process`: A sets 500 ms and B then 2,000 ms; then A sets 2,000 ms and B 500 ms. The original pair, `h5_main500_other10000` and `h5_main10000_other500`, set 10,000 ms where this sets 2,000 ms, which shows the same with less waiting.
+- `whole-process`: A sets 500 ms and B then 1,000 ms; then A sets 1,000 ms and B 500 ms. The original pair, `h5_main500_other10000` and `h5_main10000_other500`, set 10,000 ms where this sets 1,000 ms, which shows the same with less waiting.
 
 Judged: the HRESULT (deterministic) and the wait (a band from B's timeout).
 
@@ -30,6 +30,7 @@ Neither connection recovery nor event coalescing changes these outcomes (checked
 | `h5_main500_other10000`: 10,013 ms; `h5_main10000_other500`: 508 ms; `h5_default` 2,014 ms; `h5_main500` 514 ms | 2026-10-18 | Build 26200 | `recorded/h5_*.out` | `UIA_E_TIMEOUT`; bands then 10,000 to 11,550 and 500 to 625 ms; the program now sets 2,000 ms, band 1,984 to 2,350 ms, and 484 to 625 ms |
 | First uia-facts run, `whole-process`, B longer: `UIA_E_TIMEOUT` 5 of 5, 10,013 ms (10,010 to 10,019) | 2026-11-05 | Build 26200.9711, `UIAutomationCore.dll` 7.2.26100.9549, AMD Ryzen 7 5700G | c84ab856 | Pass |
 | First uia-facts run, `whole-process`, B shorter: `UIA_E_TIMEOUT` 5 of 5, 506.9 ms (504.1 to 513.8) | 2026-11-05 | As above | As above | Pass |
+| uia-facts run at 500 and 1,000 ms, every setting: `UIA_E_TIMEOUT`; B longer 1,015.8 ms, B shorter 500.8 ms | 2026-11-06 | Build 26200.9711, `UIAutomationCore.dll` 7.2.26100.9549, AMD Ryzen 7 5700G | ff23f81a | Pass |
 
 ## How to rerun
 
