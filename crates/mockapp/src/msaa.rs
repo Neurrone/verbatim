@@ -241,7 +241,7 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
                 child_window_of(hwnd).ok_or("there is no child window")?,
             );
         }
-        Command::ChildWindow | Command::WindowFocus => {
+        Command::ChildWindow | Command::ThreadWindow | Command::WindowFocus => {
             return Err("applied by the window".into());
         }
         Command::AccFocusWindow(window) => {

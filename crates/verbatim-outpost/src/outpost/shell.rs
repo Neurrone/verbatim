@@ -881,8 +881,10 @@ impl Shell {
     /// Judges `request`'s program by `window`, or by the window its worker
     /// named in its charge: hung or ghosted, by the outpost's reader, tested
     /// first, and otherwise whether the user has left it for another thread
-    /// of its application. Local calls, and the charge's lock. With no
-    /// window, the program stays.
+    /// of its application, the window with the keyboard focus by the
+    /// outpost's reader ([`Outpost::set_focus_window_reader`](super::Outpost::set_focus_window_reader)).
+    /// Local calls, and the charge's lock. With no window, the program
+    /// stays.
     fn judge(&self, request: Request, window: Option<verbatim_reader_rules::Window>) -> Input {
         let window = window.or_else(|| {
             self.generations
@@ -893,7 +895,14 @@ impl Shell {
             if self.context.readability(window.get()).is_hung() {
                 Some(super::reducer::Reason::Hung)
             } else {
-                verbatim_win32::window::front_is_another_thread_of_its_application(window.get())
+                self.context
+                    .focus_window()
+                    .is_some_and(|front| {
+                        verbatim_win32::window::is_another_thread_of_its_application(
+                            window.get(),
+                            front,
+                        )
+                    })
                     .then_some(super::reducer::Reason::MovedOn)
             }
         });

@@ -355,6 +355,12 @@ pub(crate) enum Command {
     /// objects are the node's own in that window, and `accParent` names
     /// the node's parent in it.
     ChildWindow,
+    /// `thread-window`: makes a hidden top-level window on a UI thread of
+    /// its own, which runs its message loop for as long as mockapp runs,
+    /// and answers `thread-window <hwnd>`, the window's decimal handle: a
+    /// window of the application on another thread than the host's, which
+    /// the user can move on to while the host's thread is slow.
+    ThreadWindow,
     /// `child-client-identity`: the client area of the child window
     /// `child-window` made answers as `client-identity` makes the host's
     /// answer, `IAccIdentity` with its address and `accParent` with the
@@ -647,6 +653,7 @@ pub(crate) fn parse_command(line: &str) -> Option<Command> {
         "disable-client" => Some(Command::DisableClient),
         "acc-focus-window" => Some(Command::AccFocusWindow(rest.trim().parse().ok()?)),
         "child-window" => Some(Command::ChildWindow),
+        "thread-window" => Some(Command::ThreadWindow),
         "child-client-identity" => Some(Command::ChildClientIdentity),
         "window-focus" => Some(Command::WindowFocus),
         "focus-child" => {

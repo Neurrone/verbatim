@@ -70,5 +70,6 @@ pub const CONSOLE_WINDOW_CLASS: &str = "ConsoleWindowClass";
 /// in flight is judged hung, by the same question. An outpost's reducer
 /// judges its programs by it (`books/dev/src/explanation/design/focus-pipeline.md`, section
 /// 18.3), and the focus listener's reading threads their reads, each
-/// judged by `verbatim_win32::window::front_is_another_thread_of_its_application`.
+/// judged by `verbatim_win32::window::is_another_thread_of_its_application`
+/// against the window with the keyboard focus.
 pub const MOVED_ON_GRACE: Duration = Duration::from_millis(500);

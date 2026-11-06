@@ -67,10 +67,14 @@ Public API:
   asks at the moment of its decision, which tests replace, as a `ForegroundReader`
   replaces `GetForegroundWindow`. `served_by(hwnd, pid)` and
   `top_level_windows(pid)` judge a window's application by the process
-  that serves its UIA. `front_is_another_thread_of_its_application(hwnd)`
-  is whether the user has moved on from `hwnd` to a window of the same
-  application on another UI thread, the test both readers'
-  `MOVED_ON_GRACE` is judged by. `SystemWindows` answers the acceptance
+  that serves its UIA. `is_another_thread_of_its_application(hwnd, other)`
+  is whether `other` is a window of the same application as `hwnd` on
+  another UI thread, so, with `other` the window with the keyboard focus,
+  whether the user has moved on from `hwnd`: the test both readers'
+  `MOVED_ON_GRACE` is judged by, the outpost passing the window its focus
+  window reader gives and the listener calling
+  `front_is_another_thread_of_its_application(hwnd)`, which reads the
+  system's. `SystemWindows` answers the acceptance
   test's `WindowQueries` with local calls, with the foreground window its
   caller read.
 - `provider` — the process that serves a window's UI Automation

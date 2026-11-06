@@ -376,8 +376,8 @@ the same tables and code, which the arbitrator's own lists are built from.
   `observe_foreground_programs` (a `ForegroundProgramObserver`, told on the
   worker the window of each foreground change a program is about to
   handle, so a test can hold the worker there);
-  `set_focus_window_reader` (a `FocusWindowReader` for focus-now and the
-  gap's read); `set_observation_clock` (a `verbatim_process::clock::ObservationClock`
+  `set_focus_window_reader` (a `FocusWindowReader` for focus-now, the
+  gap's read and the moved-on judgement); `set_observation_clock` (a `verbatim_process::clock::ObservationClock`
   for the outpost's own events' stamps and its verdicts' keeps); and
   `set_gap_timer` (a `GapTimer` for the gap record's bound, which
   `gap_bound_reacher` reaches); `set_handling_deadline` (a deadline in
@@ -626,7 +626,9 @@ Inside an outpost (`docs/design/communication.md`, section 6.4;
   when the half-second grace ends and every half second after until the
   deadline, as NVDA's watchdog judges, published or not, by an ask the
   shell answers with
-  `verbatim_win32::window::front_is_another_thread_of_its_application`;
+  `verbatim_win32::window::is_another_thread_of_its_application` against
+  the window with the keyboard focus, by the outpost's focus window
+  reader;
   a foreground fact judges nothing. It publishes an
   armed walk first, marks the generation dead in the worker's charge
   (`worker::Charge`), answers the query the program was running

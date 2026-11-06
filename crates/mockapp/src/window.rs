@@ -526,6 +526,13 @@ fn apply(hwnd: HWND, context: &'static WindowContext, command: Command) -> bool 
         }
         return true;
     }
+    if let Command::ThreadWindow = command {
+        match thread_window() {
+            Ok(window) => acknowledge(&format!("thread-window {window}")),
+            Err(error) => acknowledge(&format!("rejected: {error}")),
+        }
+        return true;
+    }
     if let Command::ChildWindow = command {
         match child_window(hwnd, context) {
             Ok(()) => acknowledge("applied"),
@@ -588,6 +595,49 @@ fn child_window(hwnd: HWND, context: &'static WindowContext) -> windows::core::R
         SetWindowLongPtrW(child, GWLP_USERDATA, std::ptr::from_ref(context) as isize);
     }
     Ok(())
+}
+
+/// `thread-window`: a hidden top-level window of the system's `STATIC`
+/// class on a new thread, which runs its message loop until mockapp exits;
+/// the window's handle once it exists.
+fn thread_window() -> Result<isize, String> {
+    let (created, window) = mpsc::channel();
+    thread::Builder::new()
+        .name("mockapp-thread-window".to_owned())
+        .spawn(move || {
+            // SAFETY: a system class, no parent, and no creation data.
+            let made = unsafe {
+                CreateWindowExW(
+                    WINDOW_EX_STYLE(0),
+                    w!("STATIC"),
+                    PCWSTR::null(),
+                    WS_OVERLAPPEDWINDOW,
+                    0,
+                    0,
+                    10,
+                    10,
+                    None,
+                    None::<HMENU>,
+                    None,
+                    None,
+                )
+            };
+            let failed = made.is_err();
+            let _ = created.send(made.map(|hwnd| hwnd.0 as isize).map_err(|e| e.to_string()));
+            if failed {
+                return;
+            }
+            let mut msg = MSG::default();
+            // SAFETY: `msg` is a local the call writes; no window filter.
+            while unsafe { GetMessageW(&raw mut msg, None, 0, 0) }.as_bool() {
+                // SAFETY: `msg` is the message just retrieved.
+                unsafe { DispatchMessageW(&raw const msg) };
+            }
+        })
+        .map_err(|error| error.to_string())?;
+    window
+        .recv()
+        .map_err(|_| "the window's thread ended before it made the window".to_owned())?
 }
 
 /// Writes one acknowledgement line to stdout, where `ready` went, and

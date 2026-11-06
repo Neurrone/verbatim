@@ -299,6 +299,18 @@ impl MockApp {
         )
     }
 
+    /// A hidden top-level window of mockapp's on a UI thread of its own
+    /// (mockapp's `thread-window` command), apart from the host window's.
+    pub fn thread_window(&mut self) -> HWND {
+        self.write_line("thread-window");
+        let line = self.next_line("the thread window", WAIT_TIMEOUT);
+        let handle: isize = line
+            .strip_prefix("thread-window ")
+            .and_then(|handle| handle.parse().ok())
+            .unwrap_or_else(|| panic!("mockapp said {line:?}, not its thread window"));
+        HWND(handle as *mut std::ffi::c_void)
+    }
+
     /// Lets the call [`hold`](Self::hold) held go on, and returns once
     /// mockapp has taken the command.
     pub fn release(&mut self) {

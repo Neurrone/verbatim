@@ -260,6 +260,9 @@ parses them.
   on, acquired with `AccessibleObjectFromWindow` as it is asked, as an
   application whose own `accFocus` names an object another process serves
   would.
+- `thread-window` makes a hidden top-level window on a UI thread of its
+  own and answers `thread-window <hwnd>`: a window of the application on
+  another thread than the host's, for a test of the moved-on judgement.
 - `child-window` makes a hidden child window of the host window, of the
   host's class, which answers `WM_GETOBJECT` as the host does, so an event
   can name a node at its object id in a window of its own inside the

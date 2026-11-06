@@ -437,6 +437,59 @@ fn a_query_whose_window_hangs_during_its_call_is_abandoned() {
     app.quit();
 }
 
+/// A query whose call mockapp holds is abandoned once the user has moved
+/// on to a window of the same application on another UI thread, which the
+/// outpost reads as the window with the keyboard focus: the query is
+/// answered abandoned, Core is told of no hang, and the pong counts the
+/// worker parked apart from those on hung windows. Released, the worker
+/// returns.
+fn a_query_whose_user_moved_on_is_abandoned() {
+    common::init_com();
+    let title = common::unique_title("mockapp-moved-on-query");
+    let mut app = common::spawn("ancestry.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let other = app.thread_window();
+    let uia = Uia::new().expect("a UIA client");
+    let outpost = OutpostUnderTest::with_options(
+        &app,
+        OutpostOptions {
+            remote_operations: false,
+        },
+    );
+    let group = inner_group(&mut app, &uia, hwnd, &outpost);
+    let mut outpost = outpost;
+
+    app.hold();
+    let request_id = outpost.ask(Query::Navigate {
+        node_id: group,
+        kind: QueryKind::FirstChild,
+    });
+    // The worker named the host window, the focus window then, before the
+    // call held.
+    assert_eq!(app.held(), "GetObject", "the window's lookup was held");
+    outpost.set_focus_window(other);
+    assert_eq!(reply_to(&outpost, request_id), QueryOutcome::Abandoned);
+    assert_eq!(
+        parked(&outpost, 1),
+        (1, 0),
+        "one worker parked, not on a hung window"
+    );
+    app.release();
+    // The evidence that the abandoned worker returned: its pong counts
+    // none parked.
+    let returned_by = std::time::Instant::now() + common::WAIT_TIMEOUT;
+    let mut seq = 2;
+    while parked(&outpost, seq) != (0, 0) {
+        assert!(
+            std::time::Instant::now() < returned_by,
+            "the abandoned worker did not return"
+        );
+        seq += 1;
+    }
+    drop(outpost);
+    app.quit();
+}
+
 /// A query on a node with no window of its own, reached by navigation off
 /// the followed focus's chain, whose application's focus window the
 /// outpost's reader answers hung, is refused at its check before its first
@@ -764,6 +817,10 @@ fn main() {
         (
             "a_query_whose_window_hangs_during_its_call_is_abandoned",
             a_query_whose_window_hangs_during_its_call_is_abandoned,
+        ),
+        (
+            "a_query_whose_user_moved_on_is_abandoned",
+            a_query_whose_user_moved_on_is_abandoned,
         ),
         (
             "a_query_on_a_windowless_node_of_a_hung_window_is_refused_with_no_call",

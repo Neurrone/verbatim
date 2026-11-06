@@ -1466,9 +1466,10 @@ impl Outpost {
 
     /// Reads the window with the keyboard focus with `reader` from now on,
     /// in place of the system's, when answering a focus-now query, whose
-    /// focused element is read only in a window the application serves: a
-    /// test whose application runs on a desktop where no window can take
-    /// the keyboard focus says which window has it.
+    /// focused element is read only in a window the application serves,
+    /// and when judging whether the user has moved on from a program's
+    /// window: a test whose application runs on a desktop where no window
+    /// can take the keyboard focus says which window has it.
     pub fn set_focus_window_reader(&self, reader: FocusWindowReader) {
         *self.context.focus_window.lock() = reader;
     }
