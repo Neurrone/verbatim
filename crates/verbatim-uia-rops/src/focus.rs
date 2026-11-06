@@ -60,6 +60,14 @@ pub struct FocusQuery<'a> {
     /// short ([`Ancestry::out_of_time`]). The remote program is one call
     /// and does not check it.
     pub out_of_time: Option<&'a dyn Fn() -> bool>,
+    /// Whether the classic walk is to make no more calls at all, checked
+    /// before each of its calls into the application, the element's own
+    /// focus read included: the focus listener's test of its read's window
+    /// for a hung application. Once it answers true, the walk ends as when
+    /// its time is up ([`Ancestry::out_of_time`]), and a focus read it
+    /// skipped lets the focus through. `None` never stops it. The remote
+    /// program is one call and does not check it.
+    pub stopped: Option<&'a dyn Fn() -> bool>,
     /// Whether the element must have the keyboard focus, read live, for
     /// anything else to be read ([`FocusAncestry::NotFocused`]), as NVDA's
     /// `shouldAllowUIAFocusEvent` judges a focus event's sender. False
@@ -149,8 +157,9 @@ pub struct Ancestry {
     pub met_known: Option<usize>,
     /// Whether the walk stopped at the depth limit with ancestors left.
     pub depth_limited: bool,
-    /// Whether the classic walk stopped when the query's time was up, with
-    /// ancestors left. Never set by the remote program.
+    /// Whether the classic walk stopped when the query's time was up, or
+    /// when it was stopped ([`FocusQuery::stopped`]), with ancestors left.
+    /// Never set by the remote program.
     pub out_of_time: bool,
     /// How the walk's step to a parent failed below the top, which ends
     /// the walk with the ancestors unknown, as an out-of-time walk does
@@ -355,12 +364,13 @@ fn wants_selected_child(element: &FocusInput) -> bool {
 /// pattern, whose value is otherwise its own, as the caller's cache says
 /// when it holds it (`cached`, [`FocusQuery::value_available`]), as the
 /// element read afresh, `fresh`, says when there is one, and as `live`
-/// answers otherwise, one call, where the remote program asks it inside
-/// the provider.
+/// answers otherwise, one call, unless the walk is `stopped`
+/// ([`FocusQuery::stopped`]), where the remote program asks it inside the
+/// provider.
 fn reads_selected_child(
     element: &FocusInput,
     (live, fresh, cached): (&verbatim_uia::Live, Option<&Cached<Ancestor>>, Option<bool>),
-    before_call: &dyn Fn(&'static str),
+    (before_call, stopped): (&dyn Fn(&'static str), &dyn Fn() -> bool),
 ) -> windows::core::Result<bool> {
     if element.control_type != Some(UIA_ComboBoxControlTypeId.0) {
         return Ok(wants_selected_child(element));
@@ -370,6 +380,9 @@ fn reads_selected_child(
     }
     if let Some(fresh) = fresh {
         return Ok(!fresh.read().node.states.value_available);
+    }
+    if stopped() {
+        return Ok(false);
     }
     before_call("the combo box's Value pattern");
     Ok(!live
@@ -906,7 +919,8 @@ fn tell(before_call: Option<&dyn Fn(&'static str)>, call: &'static str) {
 /// window that reads as a plain window ([`FocusQuery::plain`]), and when the
 /// query's time is up, which is asked before every call but the element's
 /// own focus read, so that at most the call under way runs past it, or the
-/// two focus reads.
+/// two focus reads; and when it is stopped ([`FocusQuery::stopped`]),
+/// which is asked before every call.
 ///
 /// The boundary is judged with local calls only, twice. Before each step,
 /// an element whose window has a parent window, or a visible owner for a
@@ -944,7 +958,9 @@ pub fn focus_ancestry_classic(uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
     // The query's time is asked before every call into the application,
     // so at most the call under way runs past it; what the calls skipped
     // would have read is unknown, and the walk then reads no ancestor.
-    let out_of_time = || query.out_of_time.is_some_and(|out_of_time| out_of_time());
+    // A walk that is stopped makes no more calls, as one out of time.
+    let stopped = || query.stopped.is_some_and(|stopped| stopped());
+    let out_of_time = || stopped() || query.out_of_time.is_some_and(|out_of_time| out_of_time());
     let before_call = |call| tell(query.before_call, call);
     // The earlier element's keyboard focus first, then the element's, as
     // NVDA reads its last queued focus's before the sender's. A failed read
@@ -960,7 +976,7 @@ pub fn focus_ancestry_classic(uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
         Some(Err(error)) if timed_out(&error) => return Err(Error::Uia(error)),
         Some(Err(_)) => Some(EarlierElement::Gone),
     };
-    if query.require_focus && {
+    if query.require_focus && !stopped() && {
         before_call("the focus's keyboard focus");
         !live.element().has_keyboard_focus()?
     } {
@@ -992,7 +1008,7 @@ pub fn focus_ancestry_classic(uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
     let selected_child = match reads_selected_child(
         &input,
         (live, element.as_ref(), query.value_available),
-        &before_call,
+        (&before_call, &stopped),
     ) {
         Ok(true) if !out_of_time() => {
             before_call("the selected child");

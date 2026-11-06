@@ -172,7 +172,10 @@ element's raw-view ancestors and what a focus report needs besides. A
   same round trip, so the focus listener reports its value, states, and
   details without a second call;
 - for the classic walk only, `out_of_time`, checked before each call but
-  the element's own focus read; `before_call`, told each call's name as it begins so
+  the element's own focus read; `stopped`, checked before every call, the
+  element's own focus read included, which ends the walk as `out_of_time`
+  does, the focus listener's test of its read's window for a hung
+  application, a skipped focus read letting the focus through; `before_call`, told each call's name as it begins so
   the caller can time it; `nearest_window` and `value_available`,
   answers the caller already has, each saving a call; and `plain`, which
   says, by local calls, whether a window is a ghost's or a hung
@@ -199,7 +202,7 @@ the element does not have the focus, and otherwise an `Ancestry`:
 - `met_known`: which known runtime id the last ancestor has, when the
   walk stopped there; `depth_limited`: the walk stopped at the depth limit
   with ancestors left; `out_of_time`: the classic walk stopped when the
-  query's time was up.
+  query's time was up or it was stopped.
 - `failed_hop`: how a step to a parent failed below the top, a
   `FailedHop` (`verbatim_uia::FailedHop`, re-exported): `Error` with the
   failing code, or `NoParent`. `Ancestry::ancestors_unknown` is true for a

@@ -6,8 +6,9 @@
 //! A UIA element cannot be handed from the process that received its event
 //! to another (experiment E-marshal), so the listener, which receives every
 //! focus event, is the one process that can judge a focus by its sender, as
-//! NVDA does, and read it. Its callback only queues the sender for the
-//! thread of the sender's application and returns; the thread, one per
+//! NVDA does, and read it. Its callback drops a sender whose cached window
+//! is hung, and otherwise only queues the sender for the thread of the
+//! sender's application and returns; the thread, one per
 //! application, created when the application's first focus event arrives,
 //! does NVDA's flusher-thread work for each of its application's events in
 //! arrival order ([`FocusReader::read`]):
@@ -52,6 +53,20 @@
 //! the event arrived, and holds the application's later events until the
 //! result or the drop takes the marker's place (section 12.4).
 //!
+//! A hung window, by the listener's one window readability reader, which
+//! its UIA callbacks, its reading threads' readers and the watchdog are
+//! given (Dickson, 2026-11-06; NVDA tests a UIA event's sender's cached
+//! window as it arrives, `_shouldSkipEventForHungWindow`,
+//! `UIAHandler/utils.py` 438): a sender's cached window found hung or
+//! ghosted as the event arrives drops it in the callback, with no marker
+//! sent and nothing queued; the read's window, the sender's cached window
+//! or its nearest window once looked up, is tested again before each of
+//! the read's calls ([`FocusReader::window_hung`]), and found hung ends the
+//! read with no further call, a read in NVDA's checks dropped and one whose
+//! walk is armed reported from its progress ([`read_at_bound`]), its thread
+//! reading on; and a read blocked in a call is judged by the watchdog
+//! below. None of the three reports a hang: only the outpost tells Core.
+//!
 //! Time limits: a read is several calls, each on an element the listener
 //! holds, which UIA's transaction timeout, set once for the process, ends
 //! (`verbatim_uia::UIA_TRANSACTION_TIMEOUT`); a call that fails ends the read.
@@ -78,11 +93,12 @@
 //! schedule (`verbatim_reader_rules::in_flight`,
 //! `books/dev/src/reference/crates/verbatim-reader-rules.md`), which abandons a thread whose read runs past
 //! [`BOUNDED_WALK_DEADLINE`], the budget, the one call that can be under way
-//! when the budget passes and a second's margin, and, as NVDA's watchdog cancels a slow call
-//! once the user has moved on (`docs/nvda/main-loop-and-watchdog.md`,
-//! "The watchdog: detection"), a thread whose read of a focus is still
-//! under way while the window in front belongs to the read's application
-//! on another UI thread than the window being read. That is judged at
+//! when the budget passes and a second's margin, and a thread whose read of
+//! a focus is still under way while its window is hung or ghosted, tested
+//! first, or, as NVDA's watchdog cancels a slow call once the user has moved
+//! on (`docs/nvda/main-loop-and-watchdog.md`, "The watchdog: detection"),
+//! while the window in front belongs to the read's application on another
+//! UI thread than the window being read. That is judged at
 //! [`MOVED_ON_GRACE`] after the read's start and every [`MOVED_ON_GRACE`]
 //! after, with no foreground event as evidence, once the read's window is
 //! known, from the event's cached window handle or from the sender's
@@ -162,13 +178,13 @@ use verbatim_reader_rules::MOVED_ON_GRACE;
 use verbatim_reader_rules::Window;
 use verbatim_reader_rules::acceptance::{EventName, RequestedEvents, accepts_event};
 use verbatim_reader_rules::class::{ClassVerdict, WindowClasses, class_verdict};
-use verbatim_reader_rules::in_flight::RuleWindow;
+use verbatim_reader_rules::in_flight::{Reason, RuleWindow};
 use verbatim_win32::window::ForegroundReader;
 use verbatim_win32::window::SystemWindows;
 use verbatim_win32::window::window_class_name;
+use verbatim_win32::window::{Readability, WindowReadabilityReader};
 use verbatim_win32::window::{
     front_is_another_thread_of_its_application, top_level_of, window_belongs_to_hidden_frame,
-    window_is_hung,
 };
 
 /// The most ancestors read for a focus, as many as the outpost walks.
@@ -186,6 +202,12 @@ const MAX_ANCESTORS: u32 = 64;
 /// [`BOUNDED_WALK_DEADLINE`] can be seen (Dickson, 2026-10-20). Each call costs one
 /// clock reading, at its start, which is also the end of the call before
 /// it; the last ends when the budget is dropped, at the read's end.
+///
+/// And it keeps the test of the read's window for a hung application
+/// ([`FocusReader::window_hung`]), made once before each of the read's
+/// calls: a window found readable is tested again once another call
+/// begins, and one found hung or ghosted ends the read, with no further
+/// call.
 struct Budget {
     clock: Clock,
     /// When the read began, on the reader's clock.
@@ -195,20 +217,69 @@ struct Budget {
     /// The call under way, by name, and when it began, by the system's
     /// clock.
     call: Cell<Option<(&'static str, Instant)>>,
+    /// The read's window: the sender's own from the event's cache, or its
+    /// nearest window once the read has looked it up; 0 while not known.
+    read_window: Cell<isize>,
+    /// The test of the read's window since its last call began.
+    window: Cell<WindowTest>,
+}
+
+/// The test of a read's window for a hung application since the read's
+/// last call began ([`Budget`]).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum WindowTest {
+    /// Not tested since the last call began, or the window is not known.
+    Due,
+    /// Found readable since the last call began.
+    Readable,
+    /// Found hung or ghosted: the read makes no further call.
+    Hung,
 }
 
 /// How long one call of a focus read may take before it is logged at info.
 const SLOW_CALL: Duration = Duration::from_secs(1);
 
 impl Budget {
-    /// A budget from now, by `clock`.
-    fn new(clock: Clock) -> Self {
+    /// A budget from now, by `clock`, of a read whose sender's own window
+    /// is `window`, 0 for none.
+    fn new(clock: Clock, window: isize) -> Self {
         let start = clock();
         Self {
             clock,
             start,
             end: Cell::new(start + SAME_WINDOW_BOUND),
             call: Cell::new(None),
+            read_window: Cell::new(window),
+            window: Cell::new(WindowTest::Due),
+        }
+    }
+
+    /// The read has looked up its sender's nearest window, `window`.
+    fn learned(&self, window: isize) {
+        self.read_window.set(window);
+    }
+
+    /// Whether the read's window is hung, by `test`, which answers whether
+    /// a window is hung or ghosted, asked only when no test has been made
+    /// since the read's last call began and the read's window is known.
+    /// Once found hung, always.
+    fn window_hung(&self, test: impl FnOnce(isize) -> bool) -> bool {
+        match self.window.get() {
+            WindowTest::Hung => true,
+            WindowTest::Readable => false,
+            WindowTest::Due => {
+                let window = self.read_window.get();
+                if window == 0 {
+                    return false;
+                }
+                let hung = test(window);
+                self.window.set(if hung {
+                    WindowTest::Hung
+                } else {
+                    WindowTest::Readable
+                });
+                hung
+            }
         }
     }
 
@@ -223,11 +294,14 @@ impl Budget {
     }
 
     /// The call named `name` begins, and the one before it, if any, has
-    /// ended.
+    /// ended: the read's window is to be tested again before the next.
     fn call(&self, name: &'static str) {
         let now = Instant::now();
         self.call_ended(now);
         self.call.set(Some((name, now)));
+        if self.window.get() == WindowTest::Readable {
+            self.window.set(WindowTest::Due);
+        }
     }
 
     /// The call under way, if any, ended at `now`: logged if it was slow.
@@ -524,9 +598,10 @@ fn focus_of(progress: &ReadProgress) -> (UiaSnapshotFact, Option<UiaSnapshotFact
 
 /// The read a focus read's progress publishes at its bound, whoever
 /// publishes it: the watchdog, for a read whose call is still under way at
-/// the bound, or the reading thread, for a walk that reached the bound
-/// between its calls. The one function both use, so that both publish the
-/// same read. The read as it stood once its walk ended, if it has; else
+/// the bound or as it is abandoned, or the reading thread, for a walk that
+/// reached the bound between its calls or found its window hung before a
+/// call ([`FocusReader::window_hung`]). The one function both use, so that
+/// both publish the same read. The read as it stood once its walk ended, if it has; else
 /// the focus as read so far ([`focus_of`]) with the ancestors read, and
 /// the chain completed by plain windows from the outermost ancestor's
 /// nearest window, included, or from its parent window when that ancestor
@@ -620,11 +695,13 @@ pub struct FocusReader {
     /// Told the name of each call of the classic walk before it is made,
     /// when a test asks ([`observe_calls`](Self::observe_calls)).
     calls: Option<CallObserver>,
-    /// Judges whether a window a step of the classic walk reaches can be
-    /// read, or is a ghost's or a hung application's: the system's
-    /// judgement, unless a test supplies its own
+    /// Judges whether a window can be read, or is a ghost's or a hung
+    /// application's: the read's own window before each of its calls
+    /// ([`window_hung`](Self::window_hung)), and each window a step of the
+    /// classic walk reaches. The system's judgement, unless the listener
+    /// gives its own
     /// ([`set_window_readability_reader`](Self::set_window_readability_reader)).
-    window_readability: verbatim_win32::window::WindowReadabilityReader,
+    window_readability: WindowReadabilityReader,
 }
 
 /// Told the name of each call a focus read's classic walk is about to make
@@ -671,15 +748,13 @@ impl FocusReader {
         self.calls = Some(observer);
     }
 
-    /// Judges with `reader` from now on, in place of the system, whether a
-    /// window a step of its reads' classic walk reaches cannot be read, as
-    /// an outpost does (`Outpost::set_window_readability_reader`): a test
-    /// that cannot wait for Windows to judge an application hung says
-    /// which window is.
-    pub fn set_window_readability_reader(
-        &mut self,
-        reader: verbatim_win32::window::WindowReadabilityReader,
-    ) {
+    /// Judges with `reader` from now on, in place of the system, whether
+    /// its read's own window and each window a step of its reads' classic
+    /// walk reaches cannot be read, as an outpost does
+    /// (`Outpost::set_window_readability_reader`): the listener gives each
+    /// reading thread its own one reader, and a test that cannot wait for
+    /// Windows to judge an application hung says which window is.
+    pub fn set_window_readability_reader(&mut self, reader: WindowReadabilityReader) {
         self.window_readability = reader;
     }
 
@@ -771,16 +846,27 @@ impl FocusReader {
         // The read's time budget, from here, for its checks; its walk's is
         // its bound, measured from the event's observation, so the time
         // the event waited before its read began counts against it.
-        let budget = Budget::new(self.clock());
+        let budget = Budget::new(self.clock(), hwnd);
         let waited =
             Duration::from_micros((self.observed)().saturating_sub(arrival.observed_at_us));
         let out_of_time = || budget.out_of_time();
-        let judged = self.judge_before_reading(
-            sender,
-            (&fields, &event.runtime_id),
-            (kind, arrival.queue()),
-            &budget,
-        );
+        // The read's window is tested once more before the walk's first
+        // call, while the read is still in NVDA's checks, so a window found
+        // hung there drops the event.
+        let judged = self
+            .judge_before_reading(
+                sender,
+                (&fields, &event.runtime_id),
+                (kind, arrival.queue()),
+                &budget,
+            )
+            .and_then(|judged| {
+                if self.window_hung(&budget) {
+                    Err(HUNG)
+                } else {
+                    Ok(judged)
+                }
+            });
         // The focus's top-level window, once its window is known, placed in
         // the order this application's focuses arrive: the walk's bound is
         // the short one when it is not the top-level window of the focus
@@ -893,6 +979,11 @@ impl FocusReader {
                     fill: &fill,
                     element_fill: &element_fill,
                     out_of_time: Some(&out_of_time),
+                    // The read's window, tested before each call: found
+                    // hung or ghosted, the walk makes no further call, and
+                    // the read is reported from its progress, as at its
+                    // bound.
+                    stopped: Some(&|| self.window_hung(&budget)),
                     require_focus,
                     refresh: true,
                     nearest_window: Some(nearest),
@@ -1045,9 +1136,9 @@ impl FocusReader {
     /// them from the event's element, and its value, states, and details
     /// afresh ([`focus_of`]); its ancestors as read, followed by those of
     /// the focus before above the one the read stopped at. A walk that
-    /// reached its bound between its calls is read as the watchdog
-    /// publishes one at the bound ([`read_at_bound`]). `arrival` is the
-    /// event it came in.
+    /// reached its bound between its calls, or found its window hung before
+    /// a call ([`Self::window_hung`]), is read as the watchdog publishes one
+    /// at the bound ([`read_at_bound`]). `arrival` is the event it came in.
     fn focused(
         &mut self,
         element: &IUIAutomationElement,
@@ -1140,6 +1231,7 @@ impl FocusReader {
         log_ancestor_facts(path, &read.ancestors);
         if wants_legacy_checked_state(read.snapshot.role, read.snapshot.states)
             && !budget.out_of_time()
+            && !self.window_hung(budget)
         {
             // A menu item without the Toggle pattern: its checked state may
             // be only in its legacy MSAA state, which the classic walk
@@ -1226,8 +1318,9 @@ impl FocusReader {
         // 1. A sender whose own window, from the event's cache, the system
         // reports hung (`_shouldSkipEventForHungWindow`, `utils.py` 438):
         // its cached handle only, so a windowless sender is not tested
-        // here, and nothing is read live from a hung application.
-        if hwnd != 0 && window_is_hung(hwnd) {
+        // here, and nothing is read live from a hung application. Made
+        // again before each later call ([`Self::window_hung`]).
+        if self.window_hung(budget) {
             return Err(HUNG);
         }
         // The window the focus is judged with, and the element whose
@@ -1356,11 +1449,26 @@ impl FocusReader {
         if sender_is_subject {
             return Ok((window, true));
         }
+        if self.window_hung(budget) {
+            return Err(HUNG);
+        }
         budget.call("the keyboard focus");
         if let Ok(false) = subject.has_keyboard_focus() {
             return Err(NOT_FOCUSED);
         }
         Ok((window, false))
+    }
+
+    /// Whether the read's window is hung or ghosted, by the reader's
+    /// readability reader, tested once before each of the read's calls
+    /// ([`Budget`]): the sender's own window from the event's cache, or,
+    /// for a sender with none, its nearest window once the read has looked
+    /// it up; a read whose window is not known yet is not tested. A window
+    /// found so ends the read with no further call: a read still in NVDA's
+    /// checks is dropped ([`HUNG`]), and one whose walk is armed is
+    /// reported from its progress ([`read_at_bound`]). Local calls only.
+    fn window_hung(&self, budget: &Budget) -> bool {
+        budget.window_hung(|window| (self.window_readability)(window).is_hung())
     }
 
     /// Step 2: whether the sender, `held`, whose cache reads as `sender`, is
@@ -1414,6 +1522,7 @@ impl FocusReader {
             );
             let nearest = nearest.map_err(|_| NEAREST_TIMED_OUT)?.ok_or(NO_WINDOW)?;
             self.window.learn(nearest);
+            budget.learned(nearest);
             nearest
         } else {
             hwnd
@@ -1544,6 +1653,14 @@ pub(crate) trait Reading: Send + Sync + 'static {
     /// the default).
     fn moved_on(&self, window: isize) -> bool {
         front_is_another_thread_of_its_application(window)
+    }
+    /// Whether `window`, which a slow read is of, can be read, by the
+    /// listener's window readability reader, the one its reading threads
+    /// and its UIA callbacks are given: the system's judgement
+    /// ([`verbatim_win32::window::readability`], local calls only), the
+    /// default.
+    fn readability(&self, window: isize) -> Readability {
+        verbatim_win32::window::readability(window)
     }
     /// The kind of event `job` is, for the test of whether a focus is
     /// pending ([`Readers::focus_pending`]).
@@ -1749,7 +1866,7 @@ fn step<R: Reading>(
                 state.apps.entry(pid).or_default().watched = Some(watched.clone());
                 next = Some((job.meta, job.work, watched, job.queue));
             }
-            ask @ (ScheduleEffect::AskMovedOn { .. } | ScheduleEffect::Publish { .. }) => {
+            ask @ (ScheduleEffect::Judge { .. } | ScheduleEffect::Publish { .. }) => {
                 asks.push(ask);
             }
         }
@@ -1787,23 +1904,32 @@ fn check_tables<J, O>(state: &ReadersState<J, O>) {
 }
 
 /// The answer to the schedule's ask `ask`, made under the readers' lock
-/// with local calls only: whether the user has moved on from a read's
-/// window ([`Reading::moved_on`]), or the read published from its
-/// progress, found by its request, not by its application's current entry.
+/// with local calls only: the judgement of a read's window, hung or
+/// ghosted ([`Reading::readability`]), tested first, so a window both hung
+/// and left is judged hung, else whether the user has moved on from it
+/// ([`Reading::moved_on`]); or the read published from its progress, found
+/// by its request, not by its application's current entry.
 fn answer<R: Reading>(
     shared: &Shared<R>,
     state: &ReadersState<R::Job, R::Owed>,
     ask: &ScheduleEffect<R::Job>,
 ) -> ScheduleInput<R::Job> {
     match *ask {
-        ScheduleEffect::AskMovedOn {
+        ScheduleEffect::Judge {
             pid,
             request,
             window,
-        } => ScheduleInput::MovedOn {
+        } => ScheduleInput::Judged {
             pid,
             request,
-            moved_on: shared.reading.moved_on(window.get()),
+            verdict: if shared.reading.readability(window.get()).is_hung() {
+                Some(Reason::Hung)
+            } else {
+                shared
+                    .reading
+                    .moved_on(window.get())
+                    .then_some(Reason::MovedOn)
+            },
         },
         ScheduleEffect::Publish {
             pid,
@@ -1835,8 +1961,9 @@ pub(crate) struct Readers<R: Reading> {
 
 impl<R: Reading> Readers<R> {
     /// Readers doing `reading`, each read abandoned past `deadline`, or
-    /// once the user has moved on from its window ([`Reading::moved_on`]),
-    /// judged at [`MOVED_ON_GRACE`] and every [`MOVED_ON_GRACE`] after.
+    /// once its window is judged hung ([`Reading::readability`]) or the user
+    /// has moved on from it ([`Reading::moved_on`]), judged at
+    /// [`MOVED_ON_GRACE`] and every [`MOVED_ON_GRACE`] after.
     ///
     /// # Panics
     ///
@@ -1993,6 +2120,15 @@ impl<R: Reading> Readers<R> {
             ScheduleInput::MsaaFocus { pid },
             None,
         );
+    }
+
+    /// Whether `window`, an event's sender's cached window, is hung or
+    /// ghosted, by the reading's readability reader
+    /// ([`Reading::readability`]), for the UIA callbacks' test as an event
+    /// arrives; a sender with no window, 0, is not tested. Local calls,
+    /// and no lock.
+    pub(crate) fn window_hung(&self, window: isize) -> bool {
+        window != 0 && self.shared.reading.readability(window).is_hung()
     }
 
     /// The failed cached reads the reading threads have made so far.
@@ -2250,6 +2386,9 @@ pub struct ReadingThreads {
 /// The reading threads' work in [`ReadingThreads`].
 struct ThreadReading {
     set_up: SetUpReader,
+    /// The listener's window readability reader, which each thread's
+    /// reader and the watchdog's judgement are given.
+    readability: WindowReadabilityReader,
     outcomes: Mutex<std::sync::mpsc::Sender<(u64, Judged)>>,
 }
 
@@ -2261,6 +2400,7 @@ impl Reading for ThreadReading {
 
     fn reader(&self, _: Pid) -> Option<FocusReader> {
         let mut reader = FocusReader::new().ok()?;
+        reader.set_window_readability_reader(Arc::clone(&self.readability));
         (self.set_up)(&mut reader);
         Some(reader)
     }
@@ -2293,6 +2433,10 @@ impl Reading for ThreadReading {
         reader.forget_last();
     }
 
+    fn readability(&self, window: isize) -> Readability {
+        (self.readability)(window)
+    }
+
     fn kind(&self, _: &Self::Job) -> FocusEvent {
         FocusEvent::Focus
     }
@@ -2321,14 +2465,20 @@ impl Reading for ThreadReading {
 
 impl ReadingThreads {
     /// Reading threads whose readers `set_up` sets up as each is made, as a
-    /// test sets up its own reader's clocks and foreground window, and the
-    /// receiver of what became of each event, with its marker.
+    /// test sets up its own reader's clocks and foreground window, each
+    /// reader and the watchdog judging whether a window is hung by
+    /// `readability`, as the listener's are by the listener's one reader,
+    /// and the receiver of what became of each event, with its marker.
     #[must_use]
-    pub fn new(set_up: SetUpReader) -> (Self, std::sync::mpsc::Receiver<(u64, Judged)>) {
+    pub fn new(
+        set_up: SetUpReader,
+        readability: WindowReadabilityReader,
+    ) -> (Self, std::sync::mpsc::Receiver<(u64, Judged)>) {
         let (outcomes, received) = std::sync::mpsc::channel();
         let readers = Readers::new(
             ThreadReading {
                 set_up,
+                readability,
                 outcomes: Mutex::new(outcomes),
             },
             BOUNDED_WALK_DEADLINE,
@@ -2517,6 +2667,11 @@ mod tests {
 
         fn window(&self, _: &Self::Job) -> Option<isize> {
             Some(self.hwnd)
+        }
+
+        /// Its windows stand for no real one, and none is hung.
+        fn readability(&self, _: isize) -> Readability {
+            Readability::Readable
         }
 
         fn moved_on(&self, window: isize) -> bool {

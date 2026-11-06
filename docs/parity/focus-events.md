@@ -544,7 +544,12 @@ end, and abandons it; a query whose window is already hung is answered at
 its check before its first call, an activation silently. Each hang of a
 window is told to Core once, and Core plays the "not responding" sound
 for it only when its application holds attention, so a hang first met in
-the background is never sounded. Captured differences
+the background is never sounded. The focus listener drops a UIA event
+whose sender's cached window is hung as it arrives, as NVDA does, and
+beyond NVDA tests its read's window again before each of the read's
+calls and judges a read blocked in a call every half second, ending the
+read with no further call; it reports no hang, which only the outpost
+tells Core. Captured differences
 (`docs/nvda/main-loop-and-watchdog.md`):
 
 - A key whose answer needs a call, in a window that hangs while it is

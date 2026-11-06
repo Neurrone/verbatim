@@ -1010,6 +1010,7 @@ fn uia_remote_enrichment(
         fill: &fill,
         element_fill: &element_fill,
         out_of_time: Some(&out_of_time),
+        stopped: None,
         require_focus: true,
         refresh: false,
         nearest_window: None,

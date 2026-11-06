@@ -38,7 +38,10 @@
 //! element with no window of its own, `GetGUIThreadInfo`, which names the
 //! keyboard focus window; and, for the window in front, its class and its
 //! process's integrity level (`OpenProcess`, `OpenProcessToken`,
-//! `GetTokenInformation`, kernel calls that wait on no process). A foreground
+//! `GetTokenInformation`, kernel calls that wait on no process); and, for a
+//! UIA event's sender, whether its cached window is hung or ghosted
+//! (`IsWindow`, `GhostWindowFromHungWindow`, `IsHungAppWindow`), which
+//! drops the event as it arrives, with no marker. A foreground
 //! event's fact is forwarded unchecked; the outpost's reducer thread tests
 //! that its window is the foreground as it takes it in, as NVDA's
 //! `processForegroundWinEvent` does. Core is told every foreground event
@@ -53,8 +56,10 @@
 //! sends the application's outpost a marker at once and queues the element
 //! for its application's thread; the thread's read, or its drop, follows
 //! the marker by the same route. Each read is a few calls on elements the
-//! listener holds, each of which UIA's call timeout ends, and a watchdog abandons a thread whose read
-//! runs past its deadline, or past half a second once the user has moved
+//! listener holds, each of which UIA's call timeout ends, before each of
+//! which its window is tested for a hung application, and a watchdog
+//! abandons a thread whose read runs past its deadline, or past half a
+//! second once its window is hung or the user has moved
 //! on to a window of the same application on another UI thread, which the
 //! listener's foreground events wake it to judge, so a slow or hung
 //! application holds only its own thread. One exposure is UIA's own and cannot be contained here: a
@@ -161,7 +166,7 @@ use verbatim_process::clock::now_us;
 use verbatim_process::held::IgnoredProcesses;
 use verbatim_process::message::{decode_message, put_message};
 use verbatim_reader_rules::CONSOLE_WINDOW_CLASS;
-use verbatim_win32::window::window_class_name;
+use verbatim_win32::window::{Readability, WindowReadabilityReader, window_class_name};
 
 /// How long after a menu or the Alt+Tab switcher closes the listener waits
 /// before telling Core, so a focus event the end causes can arrive first:
@@ -842,7 +847,24 @@ struct Listener {
 /// and read from its own element ([`FocusReader`]), and what became of it
 /// sent to its application's outpost behind its marker, through the
 /// answer owed for it ([`MarkerOwed`]).
-struct UiaFocusReading;
+struct UiaFocusReading {
+    /// The listener's window readability reader: the one judge of whether
+    /// a window is hung, by Windows' own state, which each reading thread's
+    /// reader, the watchdog's judgement and the UIA callbacks' test on
+    /// arrival are given ([`Readers::window_hung`]). The system's
+    /// ([`verbatim_win32::window::readability`]), unless a test gives its
+    /// own.
+    readability: WindowReadabilityReader,
+}
+
+impl UiaFocusReading {
+    /// The listener's reading, judging windows by the system's state.
+    fn new() -> Self {
+        Self {
+            readability: Arc::new(verbatim_win32::window::readability),
+        }
+    }
+}
 
 impl Reading for UiaFocusReading {
     /// The event's element, its own window handle from the event's cache
@@ -860,7 +882,10 @@ impl Reading for UiaFocusReading {
 
     fn reader(&self, _pid: Pid) -> Option<FocusReader> {
         match FocusReader::new() {
-            Ok(reader) => Some(reader),
+            Ok(mut reader) => {
+                reader.set_window_readability_reader(Arc::clone(&self.readability));
+                Some(reader)
+            }
             Err(error) => {
                 tracing::warn!(%error, "a reading thread could not create a UIA client");
                 None
@@ -904,6 +929,10 @@ impl Reading for UiaFocusReading {
 
     fn forget_last(&self, reader: &mut FocusReader) {
         reader.forget_last();
+    }
+
+    fn readability(&self, window: isize) -> Readability {
+        (self.readability)(window)
     }
 
     fn kind(&self, (_, _, _, kind, _): &Self::Job) -> FocusEvent {
@@ -1033,7 +1062,7 @@ impl Listener {
             outgoing.hook_installed(pid, outpost, before_the_hook);
         }
         let readers = Arc::new(Readers::new(
-            UiaFocusReading,
+            UiaFocusReading::new(),
             verbatim_model::BOUNDED_WALK_DEADLINE,
         ));
         let msaa_outgoing = Arc::clone(&outgoing);
@@ -1328,10 +1357,12 @@ fn snapshot_fact(parts: CachedUiaParts) -> UiaSnapshotFact {
     }
 }
 
-/// The desktop-wide UIA focus subscription. Its callback makes no call: it
-/// sends the application's outpost a marker for the event at once and
-/// queues the event's element for the application's reading thread
-/// ([`Readers`]), whose read or drop follows the marker.
+/// The desktop-wide UIA focus subscription. Its callback makes no
+/// cross-process call: it drops an event whose sender's cached window is
+/// hung ([`queue_for_reading`]), and otherwise sends the application's
+/// outpost a marker for the event at once and queues the event's element
+/// for the application's reading thread ([`Readers`]), whose read or drop
+/// follows the marker.
 fn focus_subscription(
     outgoing: &Arc<Outgoing>,
     readers: &Arc<Readers<UiaFocusReading>>,
@@ -1386,8 +1417,13 @@ fn menu_subscription(
 
 /// Queues the UIA event `kind` whose sender is `sender`, read as `fields`,
 /// for its application's reading thread, after sending its marker; `fact`,
-/// for a selection or a notification, is what was captured from it. Makes
-/// no cross-process call.
+/// for a selection or a notification, is what was captured from it. An
+/// event whose sender's cached window the listener's readability reader
+/// answers hung or ghosted is dropped here, as it arrives, with no marker
+/// sent and nothing queued, as NVDA's UIA handlers drop it
+/// (`_shouldSkipEventForHungWindow`, `UIAHandler/utils.py` 438 to 455); a
+/// sender with no cached window is not tested. Makes no cross-process
+/// call: the test is local calls.
 fn queue_for_reading(
     outgoing: &Arc<Outgoing>,
     readers: &Readers<UiaFocusReading>,
@@ -1399,6 +1435,10 @@ fn queue_for_reading(
     let Some(pid) = outgoing.uia_event_process(fields.process_id) else {
         return;
     };
+    if readers.window_hung(fields.role.hwnd) {
+        tracing::debug!(%pid, ?kind, hwnd = fields.role.hwnd, "UIA event dropped as it arrived: its window is hung");
+        return;
+    }
     let meta = outgoing.received(kind);
     let runtime_id = sender.runtime_id();
     // Every event's arrival, by its marker, whatever its read makes of it,
@@ -1454,13 +1494,43 @@ fn install_desktop_subscriptions(
     focus: Subscription<Cached<ListenerEvent>>,
     menu: Subscription<Cached<ListenerEvent>>,
 ) -> Option<Registration> {
-    // A selection and a notification go through their application's
-    // reading thread, behind a marker, for NVDA's checks of their sender's
-    // nearest window (`FocusReader::check_fact`), in the order they came
-    // with the focus events.
-    let selection_outgoing = Arc::clone(outgoing);
-    let selection_readers = Arc::clone(readers);
-    let selection = Subscription::Event {
+    let selection = selection_subscription(outgoing, readers);
+    let notifications = notification_subscription(outgoing, readers);
+    // NVDA's base cache request, as its global group carries, with what
+    // refines a role (`ListenerEvent`): UIA fills only these in the
+    // application for each event, and for an element selected also what
+    // Core speaks of it (`ListenerSelection`), so the outpost reports the
+    // item with no call.
+    let parts = vec![
+        Part::shaped(focus),
+        Part::shaped::<ListenerSelection>(selection),
+        Part::shaped(menu),
+        Part::shaped(notifications),
+    ];
+    match Registration::with_parts(parts, Scope::Desktop) {
+        Ok(registration) => Some(registration),
+        Err(error) => {
+            outgoing.fault(format!(
+                "listener desktop-wide UIA subscriptions failed: {error}"
+            ));
+            None
+        }
+    }
+}
+
+/// The desktop-wide subscription to UIA element selected events. A
+/// selection goes through its application's reading thread, behind a
+/// marker, for NVDA's checks of its sender's nearest window
+/// (`FocusReader::check_fact`), in the order it came with the focus
+/// events, unless its sender's cached window is hung as it arrives
+/// ([`queue_for_reading`]).
+fn selection_subscription(
+    outgoing: &Arc<Outgoing>,
+    readers: &Arc<Readers<UiaFocusReading>>,
+) -> Subscription<Cached<ListenerSelection>> {
+    let outgoing = Arc::clone(outgoing);
+    let readers = Arc::clone(readers);
+    Subscription::Event {
         event: UIA_SelectionItem_ElementSelectedEventId,
         callback: Arc::new(move |sender: &Cached<ListenerSelection>| {
             let fields = sender.read();
@@ -1471,8 +1541,8 @@ fn install_desktop_subscriptions(
                     snapshot,
                 };
                 queue_for_reading(
-                    &selection_outgoing,
-                    &selection_readers,
+                    &outgoing,
+                    &readers,
                     &sender.narrow(),
                     &fields.event,
                     FocusEvent::Selection,
@@ -1480,11 +1550,19 @@ fn install_desktop_subscriptions(
                 );
             }
         }),
-    };
+    }
+}
 
-    let notification_outgoing = Arc::clone(outgoing);
-    let notification_readers = Arc::clone(readers);
-    let notifications = Subscription::Notifications {
+/// The desktop-wide subscription to UIA notifications, which go through
+/// their application's reading thread as a selection does
+/// ([`selection_subscription`]).
+fn notification_subscription(
+    outgoing: &Arc<Outgoing>,
+    readers: &Arc<Readers<UiaFocusReading>>,
+) -> Subscription<Cached<ListenerEvent>> {
+    let outgoing = Arc::clone(outgoing);
+    let readers = Arc::clone(readers);
+    Subscription::Notifications {
         callback: Arc::new(
             move |sender: &Cached<ListenerEvent>,
                   kind: NotificationKind,
@@ -1506,8 +1584,8 @@ fn install_desktop_subscriptions(
                         activity_id,
                     };
                     queue_for_reading(
-                        &notification_outgoing,
-                        &notification_readers,
+                        &outgoing,
+                        &readers,
                         sender,
                         &fields,
                         FocusEvent::Notification,
@@ -1520,27 +1598,6 @@ fn install_desktop_subscriptions(
                 }
             },
         ),
-    };
-
-    // NVDA's base cache request, as its global group carries, with what
-    // refines a role (`ListenerEvent`): UIA fills only these in the
-    // application for each event, and for an element selected also what
-    // Core speaks of it (`ListenerSelection`), so the outpost reports the
-    // item with no call.
-    let parts = vec![
-        Part::shaped(focus),
-        Part::shaped::<ListenerSelection>(selection),
-        Part::shaped(menu),
-        Part::shaped(notifications),
-    ];
-    match Registration::with_parts(parts, Scope::Desktop) {
-        Ok(registration) => Some(registration),
-        Err(error) => {
-            outgoing.fault(format!(
-                "listener desktop-wide UIA subscriptions failed: {error}"
-            ));
-            None
-        }
     }
 }
 
@@ -2174,6 +2231,192 @@ mod tests {
             panic!("one fact is sent, the other process's: {sent:?}");
         };
         assert_eq!(fact.pid, Pid(5));
+    }
+
+    /// The desktop window, which the desktop's root element has as its
+    /// own window.
+    fn desktop_window() -> isize {
+        // SAFETY: GetDesktopWindow has no preconditions.
+        unsafe { windows::Win32::UI::WindowsAndMessaging::GetDesktopWindow() }.0 as isize
+    }
+
+    /// The desktop's root element as the listener's registration delivers
+    /// an event's sender of shape `S`: with its own window, the desktop
+    /// window, and its process cached.
+    fn desktop_sender<S: verbatim_uia::Shape + verbatim_uia::Ungated>(
+        uia: &verbatim_uia::Uia,
+    ) -> Cached<S> {
+        let request = uia
+            .request_fixed::<S>()
+            .expect("the listener's cache request");
+        uia.any_window_element::<S>(desktop_window(), &request)
+            .expect("the desktop's root element")
+    }
+
+    /// The listener's sending side, taking UIA events, its pipe read on a
+    /// thread of its own, and its readers, whose readability reader
+    /// answers the `n`th window it is asked, counted from 0, as `answer`
+    /// says, each window asked kept in `asked`.
+    fn listening(
+        answer: fn(usize) -> Readability,
+        asked: &Arc<Mutex<Vec<isize>>>,
+    ) -> (
+        Arc<Outgoing>,
+        Arc<Readers<UiaFocusReading>>,
+        mpsc::Receiver<ListenerToCore>,
+    ) {
+        let (outgoing, reader) = outgoing();
+        outgoing.uia_installation_ended();
+        let asked = Arc::clone(asked);
+        let readability: WindowReadabilityReader = Arc::new(move |window| {
+            let mut asked = asked.lock().unwrap_or_else(PoisonError::into_inner);
+            asked.push(window);
+            answer(asked.len() - 1)
+        });
+        let readers = Arc::new(Readers::new(
+            UiaFocusReading { readability },
+            verbatim_model::BOUNDED_WALK_DEADLINE,
+        ));
+        (Arc::new(outgoing), readers, drain(reader))
+    }
+
+    /// The facts the listener sent once its readers are stopped and let go,
+    /// each event still queued then answering its marker, and its sending
+    /// side closed: every fact it sent, in order.
+    fn facts_once_stopped(
+        outgoing: &Outgoing,
+        readers: Arc<Readers<UiaFocusReading>>,
+        sent: &mpsc::Receiver<ListenerToCore>,
+    ) -> Vec<DeliveredFact> {
+        readers.stop();
+        drop(readers);
+        outgoing.close();
+        sent.iter()
+            .filter_map(|message| match message {
+                ListenerToCore::FocusFact { fact, .. } => Some(fact.fact),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// A UIA focus whose sender's cached window the listener's reader
+    /// answers hung as it arrives is dropped in the callback: no marker is
+    /// sent and nothing is queued, so nothing is sent once the readers stop,
+    /// and the reader was asked of the sender's window once.
+    #[test]
+    fn a_focus_whose_window_is_hung_as_it_arrives_is_dropped_in_the_callback() {
+        let uia = verbatim_uia::Uia::new().expect("a UIA client");
+        let sender = desktop_sender::<ListenerEvent>(&uia);
+        assert!(
+            sender.read().process_id.is_some_and(|pid| pid != 0),
+            "the sender has a process, so only its window can drop it"
+        );
+        let asked = Arc::new(Mutex::new(Vec::new()));
+        let (outgoing, readers, sent) = listening(|_| Readability::Hung, &asked);
+        let Subscription::Focus { callback } = focus_subscription(&outgoing, &readers) else {
+            unreachable!("the focus subscription");
+        };
+        callback(&sender);
+        drop(callback);
+        assert_eq!(facts_once_stopped(&outgoing, readers, &sent), []);
+        assert_eq!(
+            *asked.lock().unwrap_or_else(PoisonError::into_inner),
+            [desktop_window()]
+        );
+    }
+
+    /// A UIA focus whose sender's window hangs after it arrives is queued
+    /// behind its marker and read: its reading thread's test of the window
+    /// before its first call, the reader's second answer, finds it hung,
+    /// and its drop takes the marker's place.
+    #[test]
+    fn a_focus_whose_window_hangs_after_it_arrives_is_read() {
+        let uia = verbatim_uia::Uia::new().expect("a UIA client");
+        let sender = desktop_sender::<ListenerEvent>(&uia);
+        let asked = Arc::new(Mutex::new(Vec::new()));
+        let (outgoing, readers, sent) = listening(
+            |nth| {
+                if nth == 0 {
+                    Readability::Readable
+                } else {
+                    Readability::Hung
+                }
+            },
+            &asked,
+        );
+        let Subscription::Focus { callback } = focus_subscription(&outgoing, &readers) else {
+            unreachable!("the focus subscription");
+        };
+        callback(&sender);
+        drop(callback);
+        let fact = |message: ListenerToCore| match message {
+            ListenerToCore::FocusFact { fact, .. } => fact.fact,
+            other => panic!("the listener sent {other:?}, not a fact"),
+        };
+        let timeout = Duration::from_secs(10);
+        let marker = sent.recv_timeout(timeout).map(fact).expect("the marker");
+        let outcome = sent
+            .recv_timeout(timeout)
+            .map(fact)
+            .expect("the read's outcome");
+        assert_eq!(
+            [marker, outcome],
+            [
+                DeliveredFact::UiaFocusMarker { marker: 1 },
+                DeliveredFact::UiaFocusDropped {
+                    marker: 1,
+                    focus: true,
+                    no_window: false,
+                },
+            ]
+        );
+        assert_eq!(facts_once_stopped(&outgoing, readers, &sent), []);
+        assert_eq!(
+            *asked.lock().unwrap_or_else(PoisonError::into_inner),
+            [desktop_window(), desktop_window()],
+            "asked as it arrived, then by its read"
+        );
+    }
+
+    /// A selection and a notification whose sender's cached window the
+    /// listener's reader answers hung as they arrive are dropped in their
+    /// callbacks: no marker is sent and nothing is queued.
+    #[test]
+    fn a_selection_and_a_notification_whose_window_is_hung_are_dropped_in_their_callbacks() {
+        let uia = verbatim_uia::Uia::new().expect("a UIA client");
+        let selected = desktop_sender::<ListenerSelection>(&uia);
+        let notifying = desktop_sender::<ListenerEvent>(&uia);
+        assert!(
+            capture_selection(&selected, &selected.read()).is_some()
+                && capture(&notifying, &notifying.read()).is_some(),
+            "both are captured, so only their window can drop them"
+        );
+        let asked = Arc::new(Mutex::new(Vec::new()));
+        let (outgoing, readers, sent) = listening(|_| Readability::Hung, &asked);
+        let Subscription::Event { callback, .. } = selection_subscription(&outgoing, &readers)
+        else {
+            unreachable!("the selection subscription");
+        };
+        callback(&selected);
+        drop(callback);
+        let Subscription::Notifications { callback } =
+            notification_subscription(&outgoing, &readers)
+        else {
+            unreachable!("the notification subscription");
+        };
+        callback(
+            &notifying,
+            windows::Win32::UI::Accessibility::NotificationKind_Other,
+            windows::Win32::UI::Accessibility::NotificationProcessing_All,
+            Some("saved".to_owned()),
+            None,
+        );
+        drop(callback);
+        assert_eq!(facts_once_stopped(&outgoing, readers, &sent), []);
+        assert_eq!(
+            *asked.lock().unwrap_or_else(PoisonError::into_inner),
+            [desktop_window(), desktop_window()]
+        );
     }
 
     #[test]

@@ -14,17 +14,23 @@
 //!   the outpost's frozen clock moved past a limit that ran on it, or twice
 //!   a limit that ran in real time, so each test fails with its old limit
 //!   restored.
+//! - The focus listener's own tests for a hung window end its read: before
+//!   a call, whether the read is in NVDA's checks or its walk, and while a
+//!   call is blocked, by its watchdog's judgement.
 
 mod common;
 #[path = "common/harness.rs"]
 mod harness;
 
 use std::io::BufReader;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use verbatim_ia2::{WinEvent, WinEventHook, WinEventKind};
+use verbatim_listener_logic::focus::{FocusEvent, HUNG, Judged};
+use verbatim_model::protocol::AncestorsEnd;
 use verbatim_model::protocol::{
     CoreToOutpost, DeliveredFact, OutpostToCore, Query, QueryOutcome, QueryResult, RequestId,
 };
@@ -34,6 +40,7 @@ use verbatim_model::{
 use verbatim_outpost::Outpost;
 use verbatim_process::arguments::OutpostOptions;
 use verbatim_uia::{Shape as _, Uia};
+use verbatim_win32::window::Readability;
 
 use common::outpost::OutpostUnderTest;
 use verbatim_process::message::read_message;
@@ -525,9 +532,245 @@ fn the_outpost_drops_a_listener_read_whose_window_is_hung() {
     app.quit();
 }
 
+/// mockapp's window's own element, the one element of mockapp's with a
+/// window of its own, focused, as the listener's registration delivers it
+/// in a focus event.
+fn window_focus(
+    app: &mut common::MockApp,
+    uia: &Uia,
+    window: isize,
+) -> verbatim_uia::Cached<verbatim_uia::ListenerEvent> {
+    app.send("set-focus root");
+    let request = uia
+        .request_fixed::<verbatim_uia::ListenerEvent>()
+        .expect("the listener's cache request");
+    uia.window_live(window)
+        .expect("mockapp's window element")
+        .refresh(&request)
+        .expect("the window's element as a focus event delivers it")
+}
+
+/// A window readability reader that answers `window` hung once `hung` is
+/// set, and every other window, and `window` before, by the system's
+/// judgement.
+fn hung_once_set(
+    window: isize,
+    hung: &Arc<AtomicBool>,
+) -> verbatim_win32::window::WindowReadabilityReader {
+    let hung = Arc::clone(hung);
+    Arc::new(move |hwnd| {
+        if hwnd == window && hung.load(Ordering::SeqCst) {
+            Readability::Hung
+        } else {
+            verbatim_win32::window::readability(hwnd)
+        }
+    })
+}
+
+/// The read mockapp's window's own element is published as from its
+/// progress before any of its walk's steps: as the event's cache gives it,
+/// no ancestor read, and its chain completed by plain windows above its
+/// own window.
+fn assert_published_before_its_steps(judged: Judged, window: isize) {
+    let Judged::Read(read) = judged else {
+        panic!("the read was not published from its progress: {judged:?}");
+    };
+    assert_eq!(
+        (
+            read.hwnd,
+            read.ancestors.len(),
+            read.ancestors_end,
+            read.window
+        ),
+        (
+            window,
+            0,
+            AncestorsEnd::PlainFrom(verbatim_uia::plain_windows_start(window, [window])),
+            Some(window)
+        ),
+        "the focus as read before its walk's first step"
+    );
+}
+
+/// The listener's read of a focus with a window of its own, on the frozen
+/// clocks, so its walk never reaches its bound: its walk's first call, the
+/// focus's keyboard focus, is held, and while it is held the listener's
+/// reader comes to answer the window hung, as Windows judges a window whose
+/// thread has taken no message for five seconds. Once mockapp answers, the
+/// read tests its window before its next call, makes no further call, and
+/// returns the focus published from its progress, in its marker's place;
+/// its reading thread, here the test's, is not abandoned, but returns.
+fn the_listeners_read_ends_before_a_call_into_a_window_that_hangs() {
+    common::init_com();
+    let title = common::unique_title("mockapp-hangs-in-read");
+    let mut app = common::spawn("small.json", "uia", &title);
+    let window = common::find_window(&title).0 as isize;
+    let uia = Uia::new().expect("a UIA client");
+    let outpost = OutpostUnderTest::on_frozen_time(&app);
+    let focus = window_focus(&mut app, &uia, window);
+    let hung = Arc::new(AtomicBool::new(false));
+    outpost.listener_judges_readability(hung_once_set(window, &hung));
+
+    app.hold();
+    let ((judged, calls), held) = std::thread::scope(|scope| {
+        let releasing = scope.spawn(|| {
+            let held = app.held();
+            hung.store(true, Ordering::SeqCst);
+            app.release();
+            held
+        });
+        let read = outpost.listener_read(&focus);
+        (read, releasing.join().expect("the held call released"))
+    });
+    assert_eq!(
+        held, "GetPropertyValue",
+        "the focus's keyboard focus was held"
+    );
+    assert_eq!(
+        calls,
+        CallCounts {
+            uia: 1,
+            msaa: 0,
+            window_messages: 0,
+            connections: 0,
+        },
+        "the held call was the read's last"
+    );
+    assert_published_before_its_steps(judged, window);
+    drop(outpost);
+    app.quit();
+}
+
+/// The listener's read of a focus with no window of its own, on the frozen
+/// clocks: its first call looks up its nearest window, mockapp's, which the
+/// listener's reader answers hung, so its test before the next call, made
+/// while the read is still in NVDA's checks, drops the event, for that
+/// reason, with that lookup its only call. The drop takes its marker's
+/// place at the outpost, which releases the focus read waiting behind it.
+fn the_listeners_read_in_its_checks_ends_before_a_later_call() {
+    common::init_com();
+    let title = common::unique_title("mockapp-hangs-in-checks");
+    let mut app = common::spawn("small.json", "uia", &title);
+    let window = common::find_window(&title).0 as isize;
+    let uia = Uia::new().expect("a UIA client");
+    let outpost = OutpostUnderTest::on_frozen_time(&app);
+    app.send("set-focus btn1");
+    let button = common::listener_focus(&uia, window);
+    assert_eq!(button.read().role.hwnd, 0, "the button has no window");
+    // Read before the window hangs: the focus the outpost holds behind the
+    // hung read's marker.
+    let (earlier, _) = outpost.listener_read(&button);
+
+    let hung = Arc::new(AtomicBool::new(true));
+    outpost.listener_judges_readability(hung_once_set(window, &hung));
+    let (judged, calls) = outpost.listener_read(&button);
+    assert_eq!(
+        (judged.dropped_reason(), calls),
+        (
+            Some(HUNG),
+            CallCounts {
+                uia: 1,
+                msaa: 0,
+                window_messages: 0,
+                connections: 0,
+            }
+        ),
+        "dropped once its window was looked up, with no other call"
+    );
+
+    outpost.deliver(DeliveredFact::UiaFocusMarker { marker: 1 });
+    outpost.deliver(DeliveredFact::UiaFocusMarker { marker: 2 });
+    outpost.deliver(earlier.into_fact(2, FocusEvent::Focus));
+    outpost.deliver(judged.into_fact(1, FocusEvent::Focus));
+    assert_eq!(
+        outpost.reported_focus().node.name.as_deref(),
+        Some("Original Name"),
+        "the focus behind the drop is released"
+    );
+    outpost.settled();
+    drop(outpost);
+    app.quit();
+}
+
+/// The listener's reading threads, run here (`ReadingThreads`), their
+/// readers on the frozen clocks and the schedule on the system's: a focus
+/// with a window of its own whose walk's first call is held, and whose
+/// window the listener's reader then answers hung. The watchdog's judgement
+/// at the grace's end, or half a second later, finds it hung and abandons
+/// the read, which it publishes from its progress first; a new thread
+/// takes the application's next focus while the abandoned one is still
+/// held, and drops it at its first test of the window, with no call. The
+/// listener sends nothing but each event's outcome: no hang is reported.
+fn the_listeners_blocked_read_is_abandoned_when_judged_hung() {
+    use verbatim_listener::focus_read::ReadingThreads;
+    common::init_com();
+    let title = common::unique_title("mockapp-hangs-blocked");
+    let mut app = common::spawn("small.json", "uia", &title);
+    let window = common::find_window(&title).0 as isize;
+    let uia = Uia::new().expect("a UIA client");
+    let focus = window_focus(&mut app, &uia, window);
+    let frozen = Instant::now();
+    let frozen_us = common::now_us();
+    let hung = Arc::new(AtomicBool::new(false));
+    let (threads, outcomes) = ReadingThreads::new(
+        Box::new(move |reader| {
+            reader.set_clock(Arc::new(move || frozen));
+            reader.set_observation_clock(Arc::new(move || frozen_us));
+            // No window takes the foreground where the test runs.
+            reader.set_foreground_reader(Arc::new(move || window));
+        }),
+        hung_once_set(window, &hung),
+    );
+    let pid = verbatim_model::Pid(app.pid());
+
+    app.hold();
+    let first = threads
+        .push(pid, &focus, frozen_us)
+        .expect("the focus's element kept for its read");
+    assert_eq!(
+        app.held(),
+        "GetPropertyValue",
+        "the focus's keyboard focus is held"
+    );
+    hung.store(true, Ordering::SeqCst);
+    let (published, judged) = outcomes
+        .recv_timeout(common::WAIT_TIMEOUT)
+        .expect("the held read published");
+    assert_eq!(published, first);
+    assert_published_before_its_steps(judged, window);
+
+    let next = threads
+        .push(pid, &focus, frozen_us)
+        .expect("the next focus's element kept for its read");
+    let (dropped, judged) = outcomes
+        .recv_timeout(common::WAIT_TIMEOUT)
+        .expect("the next focus read by a new thread while the first is held");
+    assert_eq!((dropped, judged.dropped_reason()), (next, Some(HUNG)));
+
+    app.release();
+    drop(threads);
+    assert!(
+        outcomes.try_recv().is_err(),
+        "nothing more is said of either focus"
+    );
+    app.quit();
+}
+
 /// Runs each test on a desktop of its own (`common/harness.rs`).
 fn main() {
     harness::run_isolated(&[
+        (
+            "the_listeners_read_ends_before_a_call_into_a_window_that_hangs",
+            the_listeners_read_ends_before_a_call_into_a_window_that_hangs,
+        ),
+        (
+            "the_listeners_read_in_its_checks_ends_before_a_later_call",
+            the_listeners_read_in_its_checks_ends_before_a_later_call,
+        ),
+        (
+            "the_listeners_blocked_read_is_abandoned_when_judged_hung",
+            the_listeners_blocked_read_is_abandoned_when_judged_hung,
+        ),
         (
             "a_query_whose_window_hangs_during_its_call_is_abandoned",
             a_query_whose_window_hangs_during_its_call_is_abandoned,

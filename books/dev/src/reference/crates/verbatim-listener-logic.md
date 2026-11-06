@@ -19,7 +19,8 @@ Public API:
   kind (`FocusEvent`), what the callback knew of it (`Meta`) and where it
   was queued (`Arrival`, `arrival_of`), and what became of it (`Judged`,
   with `into_fact`). Every reason an event is dropped is a constant here
-  (`NOT_IN_TIME`, `MOVED_ON`, `WAITED_TOO_LONG`, `REPLACED`, `NO_WINDOW`,
+  (`NOT_IN_TIME`, `MOVED_ON`, `STOPPED_RESPONDING`, `HUNG`,
+  `WAITED_TOO_LONG`, `REPLACED`, `NO_WINDOW`,
   `NOT_FOCUSED`, `MSAA_CLASS`, `NEAREST_TIMED_OUT` and the rest); a
   focus's drop carries one fact for its application's gap record, whether
   its sender had no window above it (`no_window`), which `into_fact` sets
@@ -39,10 +40,18 @@ Public API:
   flight (`InFlight`, re-exported `Request`): the schedule starts it at a
   thread's `Next`, steps it with what the read learns (`Learned`), its
   bound (`Armed`), the watchdog's `Tick` and the answers to its asks
-  (`MovedOn`, `Published`), and ends it at the thread's `Returned`. Its
-  two asks are effects (`AskMovedOn`, `Publish` with `then_abandon`), at
+  (`Judged`, `Published`), and ends it at the thread's `Returned`. Its
+  two asks are effects (`Judge`, `Publish` with `then_abandon`), at
   most one per application in a step, which the shell answers once the
-  step's other effects are applied. An application's `threaded` says a
+  step's other effects are applied. `Judged` carries the judgement's
+  verdict, `Reason::Hung` when the read's window is hung or ghosted,
+  tested first, `Reason::MovedOn` when the user has left it, or none; a
+  read abandoned for either publishes an armed walk first, and is
+  otherwise dropped, for `STOPPED_RESPONDING` or `MOVED_ON`. A read that
+  its thread ends before a call, its window found hung, is a `Returned`
+  like any other, its outcome the read published from its progress or the
+  drop for `HUNG`; should the judgement abandon it first, its return is an
+  abandoned thread's, counted once. An application's `threaded` says a
   thread is in charge, as the generation its work in flight has in
   charge; every start of a thread, new or reused, takes a new generation
   (`InFlight::succeed`). An abandonment has the shell stop watching the
@@ -87,10 +96,14 @@ against the model (an application's thread waiting or reading, its
 oldest abandoned thread, its read under way or the request before it).
 The actions are events of every kind from three applications, keyed or
 not, with a window known, unknown or never judged; the threads' asks and
-returns; abandoned threads' returns; windows learned and walks armed;
+returns; abandoned threads' returns; reads ended by their thread before
+a call, their window found hung, published once armed and dropped
+otherwise, by the thread in charge or by one already abandoned; windows
+learned and walks armed;
 time; foreground events with each read's top-level window; MSAA focuses;
 outposts' ends; idle waiters; and the stop. Each carries the answers to
-what it may cause: whether the user moved on, whether a read's progress
+what it may cause: whether a read's window is hung, whether the user
+moved on, whether a read's progress
 was there to publish, and whether a new thread fails to start. They are
 given as the listener's shell gives them: effects in order, then each
 failed start, then each ask's answer, each a step of its own. The model
@@ -106,8 +119,9 @@ allows; jobs in push order to the thread in charge; each spawn's generation abov
 every earlier one in the application's life, with nothing waiting
 unthreaded below the abandoned limit; no new thread while two are
 abandoned; at most one ask per application, each of its read under way;
-a deadline abandonment at or past its deadline and a moved-on one after
-an answer of true; one forget-last per abandoned thread's return; an
+a deadline abandonment at or past its deadline, and a hung or moved-on
+one, published first when armed, after that verdict; each read ended
+exactly once, published or dropped, sending nothing else; one forget-last per abandoned thread's return; an
 alarm set only when it changes; and after the stop no spawn, job, ask or
 alarm and every push dropped), and after every action compares the
 schedule's open markers, queues, reads under way, applications held,

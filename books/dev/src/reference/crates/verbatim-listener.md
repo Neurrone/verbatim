@@ -33,15 +33,34 @@ receives the event's own element, judges and reads a UIA focus
   and every detail but its rectangle, what Core speaks of an item selected
   in a focused list, so the selection is reported with no call (Dickson,
   2026-10-29).
-- The callback makes no call. It sends the application a marker
-  (`DeliveredFact::UiaFocusMarker`) and queues the element as an
+- The callback makes no cross-process call. A sender whose cached window
+  the listener's window readability reader answers hung or ghosted is
+  dropped there, with no marker sent and nothing queued
+  (`Readers::window_hung`), as NVDA's UIA handlers drop it
+  (`_shouldSkipEventForHungWindow`); the menu opening, element-selected
+  and notification callbacks make the same test, and a sender with no
+  cached window is not tested. The reader is the listener's one
+  (`UiaFocusReading::readability`, the system's
+  `verbatim_win32::window::readability` unless a test gives its own),
+  which its callbacks, each reading thread's reader
+  (`FocusReader::set_window_readability_reader`) and the watchdog's
+  judgement are given. Otherwise the callback sends the application a
+  marker (`DeliveredFact::UiaFocusMarker`) and queues the element as an
   `Agile<ListenerEvent>` for the application's reading thread
   (`focus_read::Readers`): one per application, created on its first event,
   ended once its queue is read after `HookRemoved`
   (`Readers::outpost_ended`) or at shutdown.
 - The thread judges and reads each event in order
   (`focus_read::FocusReader::read`; `check_fact` for a selection or
-  notification). A hung window or the console window's own element is
+  notification). The read's window, the sender's cached window or its
+  nearest window once looked up, is tested before each of the read's
+  calls (`FocusReader::window_hung`, once per call, kept in its `Budget`;
+  in the walk through `FocusQuery::stopped`): found hung or ghosted while
+  the read is in NVDA's checks, the event is dropped
+  (`verbatim_listener_logic::focus::HUNG`), and once its walk is armed the
+  read makes no further call and is reported from its progress by
+  `read_at_bound`; either goes in the marker's place, and the thread reads
+  on. The console window's own element is
   dropped before any call; so is a focus whose nearest window's class is on
   NVDA's MSAA class list (`focus_read::MSAA_CLASS`), by the class verdict
   every outpost's arbitrator gives (`verbatim_reader_rules::class::class_verdict`), unless a
@@ -153,7 +172,7 @@ receives the event's own element, judges and reads a UIA focus
   sends it as the event's outcome, and its work in flight refuses the
   thread's late result when it returns. The thread is not abandoned for
   this: it reads its application's next event when its call returns, is
-  abandoned only at `BOUNDED_WALK_DEADLINE` or by the moved-on rule, and so
+  abandoned only at `BOUNDED_WALK_DEADLINE` or by the watchdog's judgement, and so
   counts against `ABANDONED_LIMIT` only then, when no second outcome is
   sent. A read still in its checks at the bound is left to those rules.
   A menu item's legacy MSAA state, read after the walk, is published as
@@ -161,16 +180,21 @@ receives the event's own element, judges and reads a UIA focus
   (`ReadProgress::finished`). A published read is no longer a pending
   focus for menu openings, nor in progress for the idle barrier.
   `ReadingThreads` runs the reading threads and their watchdog in a
-  test's process, outcomes sent to a channel, so a mockapp test can watch
-  the watchdog meet the bound.
+  test's process, with the window readability reader it is given,
+  outcomes sent to a channel, so a mockapp test can watch the watchdog
+  meet the bound or judge a window hung.
 - Watchdog. A read past `BOUNDED_WALK_DEADLINE` (`verbatim-model`'s, 13
   seconds: the budget, the 10-second transaction timeout, and a second),
   is abandoned;
   a timeout bounds each request and window message, not an operation
   (`books/dev/src/reference/uia-bugs.md`). A focus's or menu opening's read is also abandoned
-  once the window in front belongs to its application on another UI
+  once its window is hung or ghosted, by the listener's reader
+  (`Reading::readability`), tested first, so a window both hung and left is
+  judged hung, with the reason "its window stopped responding"
+  (`STOPPED_RESPONDING`); or once the window in front belongs to its
+  application on another UI
   thread (`verbatim_win32::window::front_is_another_thread_of_its_application`,
-  by provider process, `verbatim_win32::provider::provider_process`),
+  by provider process, `verbatim_win32::provider::provider_process`). Both are
   judged at `MOVED_ON_GRACE` (half a second) after the read's start and
   every half second after until its deadline, as NVDA's watchdog judges,
   with no foreground event as evidence: so a move to the taskbar or the
@@ -178,7 +202,12 @@ receives the event's own element, judges and reads a UIA focus
   judged is the cached handle or the nearest window once found
   (`WatchedRead::learn`, the schedule's `Learned`, judged at once when
   the grace has passed). An armed walk is published before its read is
-  abandoned, for either reason. An abandoned read is no longer watched
+  abandoned, for any reason. A read that its thread's test ends before a
+  call and that the watchdog judges hung at once ends once: the schedule
+  takes whichever comes first (`InFlight::accepts`), and a thread already
+  abandoned returns at once, counted abandoned. The listener reports no
+  hang and plays no sound: only the outpost tells Core
+  (`OutpostToCore::NotResponding`). An abandoned read is no longer watched
   (`Unwatch`), the event is reported dropped unless it was published, and
   a new thread takes later events; when its thread returns, the schedule
   answers `ForgetLast` and the thread forgets its last read
@@ -193,21 +222,21 @@ receives the event's own element, judges and reads a UIA focus
   next half second, its bound or its deadline, and an application's end
   of its wait at the limit. A read's end moves the alarm back to whatever
   else is due, or cancels it, so a read that returns within its grace
-  wakes the watchdog not at all and makes no moved-on call; a read still
-  under way past its grace costs one wake and one moved-on call every half
-  second.
+  wakes the watchdog not at all and makes no judgement; a read still
+  under way past its grace costs one wake and one judgement, its local
+  calls, every half second.
 - The schedule (`read_schedule`). Every decision above of which thread
   reads which event, when a read is abandoned or published, which waiting
   events are dropped, which idle waiters run, and where each application
   was last moved away from, is the pure `Schedule::step`, an input in
   (`ScheduleInput`: `Push`, `Next`, `Returned`, `Tick`, `Learned`,
-  `Armed`, `MovedOn`, `Published`, `Foreground`, `MsaaFocus`,
+  `Armed`, `Judged`, `Published`, `Foreground`, `MsaaFocus`,
   `OutpostEnded`, `WhenIdle`, `SpawnFailed`, the reading thread's start
   having failed, which a unit test causes through the `ThreadStart` fault
   point ([verbatim-faults](verbatim-faults.md)), `Stop`) and its effects out,
   in order (`ScheduleEffect`: `Outcome`, `Spawn`, `Wake`, `Unwatch`,
   `ForgetLast`, `Forget`, `Alarm`, `RunIdle`, `Job`, and the asks
-  `AskMovedOn` and `Publish`), with time as microseconds from the shell's
+  `Judge` and `Publish`), with time as microseconds from the shell's
   start and no clock, lock or call of its own; each application's read
   under way is its work in flight (`verbatim_reader_rules::in_flight`).
   `focus_read::Readers` is its shell: it keeps the readers' lock, the

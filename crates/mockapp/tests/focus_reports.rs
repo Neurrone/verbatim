@@ -3665,12 +3665,15 @@ fn a_stuck_parent_step_is_published_at_the_bound_and_its_late_result_discarded()
     let client = Client::new(hwnd);
     let frozen = std::time::Instant::now();
     let frozen_us = common::now_us();
-    let (threads, outcomes) = ReadingThreads::new(Box::new(move |reader| {
-        reader.set_clock(Arc::new(move || frozen));
-        reader.set_observation_clock(Arc::new(move || frozen_us));
-        // No window takes the foreground where the test runs.
-        reader.set_foreground_reader(Arc::new(move || window));
-    }));
+    let (threads, outcomes) = ReadingThreads::new(
+        Box::new(move |reader| {
+            reader.set_clock(Arc::new(move || frozen));
+            reader.set_observation_clock(Arc::new(move || frozen_us));
+            // No window takes the foreground where the test runs.
+            reader.set_foreground_reader(Arc::new(move || window));
+        }),
+        Arc::new(verbatim_win32::window::readability),
+    );
     let pid = Pid(app.pid());
     app.send("set-focus item1");
     let first = client.focused();
@@ -4331,17 +4334,19 @@ fn a_hung_window_above_a_focus_now_is_a_plain_window_classic() {
 /// window's element named by its fixture, the child window's root
 /// "Embedded", and the button. Without the rule, the outpost takes
 /// "Embedded" to the child window and puts that window, as a plain window
-/// with no name, in its place.
+/// with no name, in its place. The listener reads the focus before the
+/// window is judged hung, since its own test of its read's window would
+/// drop it after.
 fn a_focus_in_a_hung_nearest_window_keeps_the_listeners_ancestors() {
     let (app, _host, island) = uia_island("mockapp-hung-nearest-listener");
     let outpost = OutpostUnderTest::new(&app);
-    outpost.judge_hung(island);
     let uia = Uia::new().expect("a UIA client");
     let ok = common::listener_focus(&uia, island.0 as isize);
     let (judged, _) = outpost.listener_read(&ok);
     let Judged::Read(read) = judged else {
         panic!("the listener dropped the focus: {judged:?}");
     };
+    outpost.judge_hung(island);
     let reported = outpost.focus(DeliveredFact::UiaFocusRead {
         marker: 0,
         read,

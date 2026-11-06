@@ -176,6 +176,7 @@ fn query<'a>(
         fill,
         element_fill: fill,
         out_of_time: None,
+        stopped: None,
         require_focus: true,
         refresh: false,
         nearest_window: None,

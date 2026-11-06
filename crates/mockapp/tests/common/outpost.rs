@@ -860,6 +860,19 @@ impl OutpostUnderTest {
             .set_window_readability_reader(reader);
     }
 
+    /// Has the listener's reader alone judge whether a window can be read
+    /// by `reader`, as the listener's one window readability reader judges
+    /// its reads' windows, the outpost judging by the system's: a test of
+    /// the listener's own tests for a hung window.
+    pub fn listener_judges_readability(
+        &self,
+        reader: verbatim_win32::window::WindowReadabilityReader,
+    ) {
+        self.reader
+            .borrow_mut()
+            .set_window_readability_reader(reader);
+    }
+
     /// Now on the outpost's observation clock ([`TestClock`]), which a fact
     /// the test hands over is stamped by.
     pub fn observed_now(&self) -> u64 {

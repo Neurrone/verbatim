@@ -10,9 +10,10 @@
 //! [`ScheduleEffect`]s, in the order the shell applies them under its lock.
 //! Each application's read under way is its work in flight
 //! ([`InFlight`], `books/dev/src/reference/crates/verbatim-reader-rules.md`), which decides its abandonment, its
-//! publication at its bound and the half-second judgment of whether the
-//! user has moved on; what it needs of Windows it asks by an effect
-//! ([`ScheduleEffect::AskMovedOn`], [`ScheduleEffect::Publish`]), which
+//! publication at its bound and the half-second judgement of whether its
+//! window is hung and otherwise whether the user has moved on; what it
+//! needs of Windows it asks by an effect
+//! ([`ScheduleEffect::Judge`], [`ScheduleEffect::Publish`]), which
 //! the shell answers by an input once the step's other effects are
 //! applied, before it lets its lock go. The schedule also owns the
 //! watchdog's alarm: after every step it sets it to the soonest time
@@ -113,15 +114,17 @@ pub enum ScheduleInput<J> {
         /// Its bound.
         bound: u64,
     },
-    /// The shell's answer to [`ScheduleEffect::AskMovedOn`].
-    MovedOn {
+    /// The shell's answer to [`ScheduleEffect::Judge`]: why the read is
+    /// abandoned, [`Reason::Hung`] when its window is hung or ghosted,
+    /// tested first, else [`Reason::MovedOn`] when the user has left its
+    /// window for another thread of its application; `None` when it stays.
+    Judged {
         /// The read's application.
         pid: Pid,
         /// The read asked about.
         request: Request,
-        /// Whether the user has left its window for another thread of its
-        /// application.
-        moved_on: bool,
+        /// The verdict.
+        verdict: Option<Reason>,
     },
     /// The shell's answer to [`ScheduleEffect::Publish`]: the read as
     /// published from its progress, none when its walk had ended, and its
@@ -240,11 +243,11 @@ pub enum ScheduleEffect<J> {
     RunIdle(u64),
     /// The event the asking thread reads next.
     Job(Job<J>),
-    /// Ask whether the user has left `window`, the window of `pid`'s read
-    /// `request`, for another thread of its application: answered by
-    /// [`ScheduleInput::MovedOn`] once the step's other effects are
-    /// applied.
-    AskMovedOn {
+    /// Judge `window`, the window of `pid`'s read `request`: whether it is
+    /// hung or ghosted, tested first, and otherwise whether the user has
+    /// left it for another thread of its application; answered by
+    /// [`ScheduleInput::Judged`] once the step's other effects are applied.
+    Judge {
         /// The read's application.
         pid: Pid,
         /// The read.
@@ -422,7 +425,8 @@ fn micros(duration: Duration) -> u64 {
 
 impl<J> Schedule<J> {
     /// A schedule abandoning a read past `deadline`, or past the moved-on
-    /// grace once the user has moved on from its window.
+    /// grace once its window is judged hung or the user has moved on from
+    /// it.
     #[must_use]
     pub fn new(deadline: Duration) -> Self {
         Self {
@@ -553,15 +557,13 @@ impl<J> Schedule<J> {
                     app.flight.armed(request, bound);
                 }
             }
-            ScheduleInput::MovedOn {
+            ScheduleInput::Judged {
                 pid,
                 request,
-                moved_on,
+                verdict,
             } => {
                 if let Some(app) = self.apps.get_mut(&pid) {
-                    let decision = app
-                        .flight
-                        .judged(request, moved_on.then_some(Reason::MovedOn));
+                    let decision = app.flight.judged(request, verdict);
                     self.decided(&mut effects, now, pid, decision);
                 }
             }
@@ -879,7 +881,7 @@ impl<J> Schedule<J> {
                 request,
                 window: Some(window),
             }) => {
-                effects.push(ScheduleEffect::AskMovedOn {
+                effects.push(ScheduleEffect::Judge {
                     pid,
                     request,
                     window,
@@ -1288,7 +1290,7 @@ mod tests {
         Alarm(AlarmChange),
         RunIdle(u64),
         Job(u32, u64, QueuePlace),
-        AskMovedOn(u32, Request),
+        Judge(u32, Request),
         Publish(u32, Request, Option<Reason>),
     }
 
@@ -1319,13 +1321,13 @@ mod tests {
                 ScheduleEffect::Alarm(change) => Seen::Alarm(change),
                 ScheduleEffect::RunIdle(waiter) => Seen::RunIdle(waiter),
                 ScheduleEffect::Job(job) => Seen::Job(job.pid.0, job.meta.marker, job.queue),
-                ScheduleEffect::AskMovedOn {
+                ScheduleEffect::Judge {
                     pid,
                     request,
                     window,
                 } => {
                     assert_eq!(window, WINDOW);
-                    Seen::AskMovedOn(pid.0, request)
+                    Seen::Judge(pid.0, request)
                 }
                 ScheduleEffect::Publish {
                     pid,
@@ -1572,20 +1574,20 @@ mod tests {
         let asked = request(1, 1);
         assert_eq!(
             step(&mut schedule, ScheduleInput::Tick, GRACE),
-            [Seen::AskMovedOn(1, asked), set(2 * GRACE)]
+            [Seen::Judge(1, asked), set(2 * GRACE)]
         );
-        let moved_on = |moved_on| ScheduleInput::MovedOn {
+        let judged = |verdict| ScheduleInput::Judged {
             pid: Pid(1),
             request: asked,
-            moved_on,
+            verdict,
         };
-        assert_eq!(step(&mut schedule, moved_on(false), GRACE), []);
+        assert_eq!(step(&mut schedule, judged(None), GRACE), []);
         assert_eq!(
             step(&mut schedule, ScheduleInput::Tick, 2 * GRACE),
-            [Seen::AskMovedOn(1, asked), set(3 * GRACE)]
+            [Seen::Judge(1, asked), set(3 * GRACE)]
         );
         assert_eq!(
-            step(&mut schedule, moved_on(true), 2 * GRACE),
+            step(&mut schedule, judged(Some(Reason::MovedOn)), 2 * GRACE),
             [
                 Seen::Unwatch(1),
                 Seen::Outcome(1, 1, MOVED_ON),
@@ -1620,10 +1622,10 @@ mod tests {
         assert_eq!(
             step(
                 &mut schedule,
-                ScheduleInput::MovedOn {
+                ScheduleInput::Judged {
                     pid: Pid(1),
                     request: asked,
-                    moved_on: true,
+                    verdict: Some(Reason::MovedOn),
                 },
                 GRACE,
             ),
@@ -1646,6 +1648,82 @@ mod tests {
         assert_eq!(schedule.markers(), Vec::<u64>::new());
         assert_eq!(
             step(&mut schedule, returned(1, asked, 1), 3_000_000),
+            [Seen::ForgetLast]
+        );
+    }
+
+    /// A read judged hung is abandoned for that reason as a moved-on one
+    /// is: one whose walk is armed is published first, its outcome the
+    /// read and no drop after it; one still in NVDA's checks is dropped
+    /// because its window stopped responding. Each time a new thread takes
+    /// the application's next event, and the abandoned thread counts
+    /// toward the abandoned limit, its late return sending nothing.
+    #[test]
+    fn a_read_judged_hung_is_abandoned_published_first_when_armed() {
+        let mut schedule = schedule();
+        let _ = step(&mut schedule, focus(1, 1), 0);
+        let _ = step(&mut schedule, next(1, 1), 0);
+        let armed = request(1, 1);
+        let _ = step(
+            &mut schedule,
+            ScheduleInput::Armed {
+                pid: Pid(1),
+                request: armed,
+                bound: 2_000_000,
+            },
+            10,
+        );
+        let _ = step(&mut schedule, focus(1, 2), 20);
+        assert_eq!(
+            step(&mut schedule, ScheduleInput::Tick, GRACE),
+            [Seen::Judge(1, armed), set(2 * GRACE)]
+        );
+        let hung = |request| ScheduleInput::Judged {
+            pid: Pid(1),
+            request,
+            verdict: Some(Reason::Hung),
+        };
+        assert_eq!(
+            step(&mut schedule, hung(armed), GRACE),
+            [Seen::Publish(1, armed, Some(Reason::Hung))]
+        );
+        assert_eq!(
+            step(
+                &mut schedule,
+                ScheduleInput::Published {
+                    pid: Pid(1),
+                    request: armed,
+                    read: Some(a_read()),
+                    then_abandon: Some(Reason::Hung),
+                },
+                GRACE,
+            ),
+            [
+                Seen::Outcome(1, 1, "read"),
+                Seen::Unwatch(1),
+                Seen::Spawn(1, 3, false),
+                CANCEL,
+            ]
+        );
+
+        let _ = step(&mut schedule, next(1, 3), GRACE);
+        let unarmed = request(3, 2);
+        assert_eq!(
+            step(&mut schedule, ScheduleInput::Tick, 2 * GRACE),
+            [Seen::Judge(1, unarmed), set(3 * GRACE)]
+        );
+        assert_eq!(
+            step(&mut schedule, hung(unarmed), 2 * GRACE),
+            [
+                Seen::Unwatch(1),
+                Seen::Outcome(1, 2, STOPPED_RESPONDING),
+                CANCEL,
+            ],
+            "nothing waits, so no thread is started"
+        );
+        assert_eq!(schedule.apps[&Pid(1)].abandoned, 2, "both threads count");
+        assert_eq!(
+            step(&mut schedule, returned(1, armed, 1), 3 * GRACE),
             [Seen::ForgetLast]
         );
     }
