@@ -280,7 +280,10 @@ parses them.
 - `hold` makes the next provider call, whichever client makes it, print
   `held <method>` as it begins and wait until `release`, so a test knows a
   client's call is in progress and decides when it ends.
-- `release` lets the call `hold` or `hold-acc-parent` held go on; it is
+- `freeze` makes the window thread acknowledge, print `held freeze` and
+  wait until `release` outside any call, so the window takes no message
+  and Windows comes to judge it hung before any client calls into it.
+- `release` lets the call `hold`, `hold-acc-parent` or `freeze` held go on; it is
   applied and acknowledged by the stdin thread, since the window thread
   is the one held.
 - `quit` exits the process.

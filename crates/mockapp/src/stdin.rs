@@ -373,7 +373,12 @@ pub(crate) enum Command {
     /// finishes. Applied on the window thread, so the calls before it are
     /// not held.
     Hold,
-    /// `release`: lets the call `hold` or `hold-acc-parent` held go on.
+    /// `freeze`: the window thread acknowledges, prints `held freeze` and
+    /// then waits until `release`, outside any call, so its window takes
+    /// no message and Windows comes to judge it hung while no client has
+    /// called into it.
+    Freeze,
+    /// `release`: lets the call `hold`, `hold-acc-parent` or `freeze` held go on.
     /// Applied and acknowledged on the stdin thread, since the window
     /// thread is the one held.
     Release,
@@ -547,6 +552,7 @@ pub(crate) fn parse_command(line: &str) -> Option<Command> {
     match verb {
         "quit" => Some(Command::Quit),
         "hold" => Some(Command::Hold),
+        "freeze" => Some(Command::Freeze),
         "release" => Some(Command::Release),
         "await-advised" => {
             let (event, count) = rest.split_once(' ')?;
