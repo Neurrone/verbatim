@@ -66,6 +66,8 @@
 //! - `show <w>` and `hide <w>`: shows or hides window w, without changing
 //!   the foreground.
 //! - `post-null <w>`: posts `WM_NULL` to window w.
+//! - `parent <w> <hwnd>`: makes window w a visible child window of window
+//!   `hwnd`, of this process or another, on window w's UI thread.
 //! - `hung <w>`: answers `IsHungAppWindow` of window w, `true` or `false`.
 //! - `log`: prints every log entry since the last `log`, one
 //!   `entry <start µs> <end µs> <kind> <name> <w> <n> <thread id> <extra>`
@@ -449,6 +451,16 @@ fn handle(line: &str) -> String {
                 Err(error) => format!("err {error}"),
             }
         }
+        "parent" => {
+            let (Some(index), Some(parent)) =
+                (number(0), rest.get(1).and_then(|s| s.parse::<isize>().ok()))
+            else {
+                return "err parent takes a window and a parent window handle".to_owned();
+            };
+            on_ui_thread(index, move |answer| {
+                let _ = answer.send(make_child(index, parent));
+            })
+        }
         "foreground" => {
             let Some(index) = number(0) else {
                 return "err foreground takes a window".to_owned();
@@ -466,6 +478,23 @@ fn handle(line: &str) -> String {
         }
         "peak" => format!("ok {}", state::take_peak()),
         other => format!("err unknown request {other}"),
+    }
+}
+
+/// Makes window `index` a visible child window of `parent`.
+fn make_child(index: usize, parent: isize) -> String {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GWL_STYLE, SetParent, SetWindowLongPtrW, WS_CHILD, WS_VISIBLE,
+    };
+    let hwnd = HWND(state::window(index).hwnd as *mut _);
+    let style = isize::try_from(WS_CHILD.0 | WS_VISIBLE.0).expect("a style fits");
+    // SAFETY: a window of this thread; the style is a plain child's.
+    let _ = unsafe { SetWindowLongPtrW(hwnd, GWL_STYLE, style) };
+    // SAFETY: a window of this thread and a window handle the fact binary
+    // gave; Windows checks it.
+    match unsafe { SetParent(hwnd, Some(HWND(parent as *mut _))) } {
+        Ok(_) => "ok".to_owned(),
+        Err(error) => format!("err {error}"),
     }
 }
 

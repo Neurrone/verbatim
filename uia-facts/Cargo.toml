@@ -36,6 +36,14 @@ members = [
     "a-cache-request-fails-while-uias-first-time-setup-runs-on-another-thread",
     "a-process-that-used-uia-can-hang-or-crash-as-it-exits",
     "a-new-processs-focus-events-reach-the-desktop-wide-handler-late-or-not-at-all",
+    "a-remote-operations-keyboard-focus-read-can-differ-from-a-plain-read",
+    "a-new-connection-fails-while-another-processs-remote-operation-is-queued",
+    "a-provider-continues-when-a-client-is-killed-in-the-middle-of-its-call",
+    "a-pending-connection-holds-its-own-processs-other-calls",
+    "the-raw-probe-answers-0x10000-for-a-window-with-a-uia-provider",
+    "inside-a-remote-operation-conhosts-window-has-no-handle-or-title",
+    "uiahasserversideprovider-says-no-for-a-new-conhost-window-while-another-process-has-an-event-handler",
+    "real-applications-serve-uia-calls-one-at-a-time",
 ]
 
 [workspace.package]

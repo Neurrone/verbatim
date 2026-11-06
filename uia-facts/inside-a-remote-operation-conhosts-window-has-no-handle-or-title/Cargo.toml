@@ -1,0 +1,14 @@
+[package]
+name = "inside-a-remote-operation-conhosts-window-has-no-handle-or-title"
+description = "Reproduces a UIA fact (see its readme)"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+uia-facts-support.workspace = true
+windows.workspace = true
+
+[lints]
+workspace = true

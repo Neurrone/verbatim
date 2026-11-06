@@ -410,6 +410,55 @@ pub fn description(element: &IUIAutomationElement) -> Result<String> {
 /// Verbatim's own proxy rule.
 pub use verbatim_uia::served_only_by_uia_proxies;
 
+/// What an element fetched with its provider description cached is
+/// served by: `own` when the description names a provider outside UIA's
+/// own proxies, `proxy` when UIA's proxies alone serve it (by Verbatim's
+/// proxy rule), or the error.
+#[must_use]
+pub fn served_by(result: &Result<IUIAutomationElement>) -> String {
+    match result {
+        Err(error) => hresult(error.code()),
+        Ok(element) => match description(element) {
+            Ok(text) if served_only_by_uia_proxies(&text) => "proxy".to_owned(),
+            Ok(_) => "own".to_owned(),
+            Err(error) => format!("no description ({})", hresult(error.code())),
+        },
+    }
+}
+
+/// `ElementFromHandleBuildCache` of window `hwnd` with its provider
+/// description cached, classified by [`served_by`].
+///
+/// # Panics
+///
+/// When UIA cannot make a cache request.
+#[must_use]
+pub fn lookup(client: &IUIAutomation6, hwnd: isize) -> String {
+    let request = cache_request(
+        client,
+        &[windows::Win32::UI::Accessibility::UIA_ProviderDescriptionPropertyId],
+    )
+    .expect("a cache request");
+    served_by(&element_cached(client, hwnd, &request))
+}
+
+/// `UiaHasServerSideProvider` of window `hwnd`: whether UIA judges that
+/// it has a provider of its own.
+#[must_use]
+pub fn has_server_side_provider(hwnd: isize) -> bool {
+    let start = Instant::now();
+    // SAFETY: any window handle is accepted.
+    let answer = unsafe {
+        windows::Win32::UI::Accessibility::UiaHasServerSideProvider(HWND(hwnd as *mut _))
+    }
+    .as_bool();
+    crate::note::trace(&format!(
+        "uia UiaHasServerSideProvider: {answer} in {:.1} ms",
+        ms(start.elapsed())
+    ));
+    answer
+}
+
 /// Casts a client object to an older interface.
 ///
 /// # Panics

@@ -1,0 +1,15 @@
+[package]
+name = "uiahasserversideprovider-says-no-for-a-new-conhost-window-while-another-process-has-an-event-handler"
+description = "Reproduces a UIA fact (see its readme)"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+uia-facts-support.workspace = true
+verbatim-uia.workspace = true
+windows.workspace = true
+
+[lints]
+workspace = true

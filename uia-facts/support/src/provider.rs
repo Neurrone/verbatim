@@ -235,6 +235,32 @@ impl Provider {
         while self.notices.try_recv().is_ok() {}
     }
 
+    /// The provider program's exit code once it has ended, `None` while it
+    /// runs.
+    ///
+    /// # Panics
+    ///
+    /// When its state cannot be read.
+    pub fn exit_code(&mut self) -> Option<u32> {
+        self.child
+            .try_wait()
+            .expect("the provider program's state")
+            .map(|status| status.code().map_or(u32::MAX, i32::cast_unsigned))
+    }
+
+    /// Whether the provider program answers a request within `limit`,
+    /// without failing when it does not: `peak`, which changes nothing a
+    /// fact reads afterwards.
+    pub fn answers(&mut self, limit: Duration) -> bool {
+        if writeln!(self.stdin, "peak")
+            .and_then(|()| self.stdin.flush())
+            .is_err()
+        {
+            return false;
+        }
+        matches!(self.answers.recv_timeout(limit), Ok(line) if line.starts_with("ok"))
+    }
+
     /// The log entries since the last read.
     pub fn log(&mut self) -> Vec<Entry> {
         let (lines, _) = self.request_lines("log");

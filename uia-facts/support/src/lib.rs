@@ -14,6 +14,7 @@
 //!   applications, the foreground and keys.
 //! - [`events`]: an event handler that reports what it hears; [`listen`]
 //!   a second client process that registers by a spec and reports it.
+//! - [`console`]: a console host started directly, and its window.
 //! - [`args`]: `--case`, `--trials`, `--recovery`, `--coalescing`,
 //!   `--verbose`, `--pause` and `--role`.
 //! - [`winevents`]: an out-of-context `WinEvent` hook; [`desktop`] a
@@ -25,6 +26,7 @@
 
 pub mod apps;
 pub mod args;
+pub mod console;
 pub mod desktop;
 pub mod events;
 pub mod hung;

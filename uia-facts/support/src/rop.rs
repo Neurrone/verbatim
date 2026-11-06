@@ -20,6 +20,31 @@ pub fn name(element: &IUIAutomationElement) -> windows::core::Result<String> {
     outcome.get(name).map_err(as_windows)
 }
 
+/// Runs a remote operation reading `element`'s `property`, or, with
+/// `up` set, the property of its raw-view parent, navigated to inside the
+/// operation; the value stringified, as the operation's stringify writes
+/// it.
+///
+/// # Errors
+///
+/// The operation's error, as an HRESULT.
+pub fn property(
+    element: &IUIAutomationElement,
+    property: i32,
+    up: bool,
+) -> windows::core::Result<String> {
+    let mut builder = Builder::new();
+    let mut target = builder.import_element(element);
+    if up {
+        target = builder.navigate(target, verbatim_uia_rops::NavigationDirection::Parent);
+    }
+    let value = builder.property(target, property);
+    let value = builder.stringify(value);
+    builder.add_to_results(value);
+    let outcome = builder.finish().execute().map_err(as_windows)?;
+    outcome.get(value).map_err(as_windows)
+}
+
 fn as_windows(error: Error) -> windows::core::Error {
     match error {
         Error::Unavailable(e) | Error::Import(e) | Error::Execute(e) | Error::Uia(e) => e,
