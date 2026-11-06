@@ -41,11 +41,11 @@ A module may claim Verbatim's own executables, to change how Verbatim's own wind
 
 Every installed extension runs in a process of its own, inside a Windows container, and all of its modules share that process. Your reads of an application are requests that the process reading that application answers, within that application. A crash or hang in your code costs only your extension; [The security model](security-model.md) explains what the container allows.
 
-Built-ins run inside Verbatim's own processes instead, since they are part of Verbatim and run on the busiest paths. The API is the same either way.
+Built-ins run inside Verbatim's own processes instead, since they are part of Verbatim and run on the busiest paths, unless they contain native code or use the network, which gives them a process of their own too. Modules you are developing, loaded from the developer folder, run as installed extensions do. The API is the same everywhere.
 
 ## Layers and who wins
 
-Verbatim applies three layers, in order: installed extensions, built-ins, then Verbatim's core behaviour. An installed extension's module overrides a built-in for the same application by design, and installed extensions are ordered among themselves, newest highest.
+Verbatim applies its layers in order: modules in the developer folder, installed extensions, built-ins, then Verbatim's core behaviour. An installed extension's module overrides a built-in for the same application by design, and installed extensions are ordered among themselves, newest highest.
 
 Within one event, every layer's rules apply first, lowest layer first, so the highest layer's rule wins a property two layers set; then hooks run from the highest layer down, each seeing the control as the layers above left it, until one ends the chain. For commands, the highest layer that binds a gesture gets it.
 

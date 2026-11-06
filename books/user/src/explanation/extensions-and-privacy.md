@@ -8,7 +8,7 @@ Extensions add to what Verbatim can do: support for an application, a voice, a b
 
 Whatever it asks for, an extension cannot:
 
-- read, change or delete your documents or any other file of yours; it has one folder of its own and nothing else;
+- read, change or delete your documents or any other file of yours, or another extension's; it has one folder of its own to keep files in;
 - install programs, start programs, or run when Verbatim is not running;
 - change Verbatim itself, or its own code after you installed it;
 - act with administrator rights, or run on sign-in and administrator screens unless you allow it there;
@@ -20,7 +20,7 @@ Verbatim enforces these limits itself, with the help of Windows, so they hold ev
 
 Everything else is listed when you install it, in plain sentences; [What an extension's install dialog says](../reference/extension-install-dialog.md) explains each one. Read carefully the lines that say an extension receives something and can connect somewhere:
 
-- "Receives all the text Verbatim speaks, and can connect to api.example.com" means that anything Verbatim reads to you, from any application, could be sent to that site. That includes your email, your documents and what you type, but not what you type into password fields, which Verbatim speaks only as "star".
+- "Receives all the text Verbatim speaks, and can connect to api.example.com" means that anything Verbatim reads to you, from any application, could be sent to that site. That includes your email, your documents and what you type, but not what you type into password fields, which Verbatim speaks only as "star", unless an extension changes how that application's password fields are read; Verbatim's focus report then names the extension.
 - "Reads the controls and text of Notepad, and can connect to api.example.com" means the same for what you have open in Notepad.
 
 Verbatim can tell you what an extension is able to do, not what it does. A translation extension has to send text to its service to translate it; whether you are comfortable with that depends on who runs the service. Treat it like pasting the text into that website yourself.
@@ -31,11 +31,11 @@ An extension marked "Runs native code" contains ordinary Windows code, such as a
 
 ## When an extension asks for more
 
-If an update would let an extension connect to a new site, receive more of your content or use a new device, Verbatim asks you before updating, and you can keep the version you have.
+If an update would let an extension send your content out in a new way, connect to a new site or use a new device, Verbatim asks you before updating, and you can keep the version you have.
 
 ## Sign-in and administrator screens
 
-Extensions do not run on the sign-in screen, the lock screen or the screens that ask for administrator permission, unless you allow them there. If you allow an extension that can connect to the internet, what Verbatim reads on those screens could be sent too. Passwords are still spoken only as "star".
+Extensions do not run on the sign-in screen, the lock screen or the screens that ask for administrator permission, unless you allow them there. If you allow an extension that can connect to the internet, what Verbatim reads on those screens could be sent too.
 
 ## When something goes wrong
 

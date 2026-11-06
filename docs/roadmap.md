@@ -1243,7 +1243,7 @@ Security work other milestones carry, each with its test:
 - M8.6: the UIAccess measurement first (B1), then the lock and secure-screen rules (B3 to B8) with the secure instance's menu and dialogs as an allowlist, no file choice, and the toolkit's dialogs routed to the log (G1, G2, G4), tested by a list of every window and command the secure instance can reach equalling the allowlist, and by each of NVDA's secure-screen advisories as a scenario; the administrator's copy for secure screens following no links (X13), tested with a planted junction; developer mode in UIAccess builds turned on only in Verbatim's own window (C1); the secure instance's children started without SYSTEM (B10), tested by reading their tokens; "Secure Desktop" announced on the switch (B11); and the secure instance's own curtain.
 - M9: no content in logs at default levels (L3), tested by scanning a full suite run's logs for the planted text.
 - M12: Remote's end-to-end encryption, announcements and lock behaviour (C8, B9), tested with a relay that tries to read and alter traffic and a session that locks.
-- M18: braille drivers in model A or B (section 6.11), tested with a device sending malformed reports.
+- M18: braille drivers in their extensions' hosts, given only the devices Core opens for them (section 6.11), tested with a device sending malformed reports.
 
 ## M7 — Browse mode, browsers, and the injection helper
 
@@ -1584,7 +1584,7 @@ extension API growth rule asks.
   boundary; reading speech history, shown at install as receiving all the
   text Verbatim speaks.
 - The speech-text stage module kind (Dickson, 2026-11-02): an ordered chain
-  in Core's speech queue, each stage a Wasm module in its extension's host
+  in Core's speech queue, each stage a module in its extension's host, or for a built-in on a Core thread,
   that takes an utterance's text segments and language tags and returns new
   ones, for translation, untagged-language detection and text rewrites.
   The original text is never spoken: a stage that fails or misses its

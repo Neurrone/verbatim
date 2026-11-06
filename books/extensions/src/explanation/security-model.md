@@ -8,7 +8,7 @@ The mechanisms on this page serve three goals:
 
 - **Recovery.** The user can always get speech back, and knows which extension was at fault. An extension that stops responding is turned off ([Reliability](reliability.md)), and Verbatim can start with every extension off.
 - **Containment.** Your extension never gains Verbatim's own reach. It runs in none of Verbatim's own processes, never has the rights Verbatim needs to read administrator windows and sign-in screens, and reaches only its own folders, the network through its network imports, and the devices Verbatim opens for it.
-- **Honest consent.** The install dialog tells the user what your extension can do with their content, derived from the extension itself rather than claimed by it, and an update that can do more is approved again.
+- **Honest consent.** The install dialog tells the user what your extension can do with their content, derived from the extension itself rather than claimed by it, and an update that adds a way to send data out, a network host or a device is approved again.
 
 Two things are not goals. Verbatim does not keep content from an extension the user gave it to: once a user installs a translator, its author and its service can see everything Verbatim speaks. And Verbatim does not defend the install dialog against other programs the user runs, which could install an extension themselves.
 
@@ -21,18 +21,18 @@ Every installed extension runs in a process of its own, inside a Windows contain
 There are no permissions to request. A WebAssembly component's import list is a complete statement of every host function it can ever call, written by the compiler, so Verbatim reads your capabilities from it, and the install dialog's lines come from the same list. Two consequences:
 
 - **Import only what you use.** A dependency that pulls in a network interface puts a network warning in your install dialog. The packaging tool prints the capabilities it derived before it builds a `.vext`; read that list on every release.
-- **The import list is a ceiling.** Your code can change what it does after install, for example by following instructions it downloads, but it can never call an import it was not built with. An update that adds an import, a network host or a device is installed only after the user approves it again.
+- **The import list is a ceiling.** Your code can change what it does after install, for example by following instructions it downloads, but it can never call an import it was not built with. An update that adds a way to send data out, such as a network import, or a new network host or device, is installed only after the user approves it again.
 
 The manifest carries only what an import cannot say: the hosts you connect to, the devices a braille driver drives, and, for native code, whether it uses the network.
 
 ## What you can reach
 
-- **Your data folder.** You read and write it freely, up to its size cap. It is the only part of the file system you can reach: every path is resolved inside it, no import creates a link, and Windows itself refuses anything outside it, so a link someone else planted in your folder leads nowhere. Your module folders are read-only, so you cannot change your own code. On sign-in and administrator screens you get a scratch folder instead, deleted when Verbatim exits.
-- **The network,** if you import a network interface: HTTP with every method, headers and streamed bodies, and WebSockets, to the hosts your manifest names, or to the host the user enters for an endpoint they choose. Raw sockets are added when an extension needs them.
+- **Your folders.** You read and write your data folder freely, up to its size cap, and read your module folders, which are read-only, so you cannot change your own code. Your file imports reach nothing else: every path is resolved inside your data folder, no import creates a link, and Windows grants your process your own folders and no other extension's or user's files, so a link someone else planted in your folder leads nowhere. On sign-in and administrator screens you get a scratch folder instead, deleted when Verbatim exits.
+- **The network,** if you import a network interface: HTTP with every method, headers and streamed bodies, and WebSockets, to the hosts your manifest names, or to the host the user enters for an endpoint they choose. The import checks every host, so a WebAssembly module reaches only those; Windows can grant native code the network only as a whole, so a native module's install line says it can connect to any site. Raw sockets are added when an extension needs them.
 - **The applications you claim,** for an app module. Navigation stops at your application's boundary: a parent, sibling or child that belongs to another application's window comes back as none, and so do the focus and foreground when another application has them.
 - **What your kind is given.** A speech-text stage receives every utterance; a recogniser receives the images Verbatim captures for it; a synthesizer receives the text to speak; a braille driver receives handles for the devices it names, which Verbatim, not your code, finds and opens.
 
-You cannot start processes, read the registry, call Windows directly from WebAssembly, write Verbatim's settings, read another extension's data, or bind the gestures that let the user recover: cancelling speech, sleep mode, the Verbatim menu, quitting, and the screen curtain.
+From WebAssembly you cannot start processes, read the registry, call Windows directly or write Verbatim's settings; native code can call Windows, within what the container allows, which excludes starting processes, other processes and the user's files. No module can read another extension's data or bind the gestures that let the user recover: cancelling speech, sleep mode, the Verbatim menu, quitting, and the screen curtain.
 
 ## What the user sees
 

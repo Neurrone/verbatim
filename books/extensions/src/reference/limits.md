@@ -32,6 +32,6 @@ The rules behind these limits are explained in [Reliability](../explanation/reli
 | Limit | Value |
 |---|---|
 | Files in a `.vext` | 256 |
-| Size of one file | 16 MiB, raised for speech-text stages that carry a language model |
+| Size of one file | 16 MiB; a raised limit for speech-text stages that carry a language model is not set |
 | Size unpacked | 64 MiB |
 | File names | Plain names only: no `..`, drive, absolute path, link, colon, reserved Windows device name, or trailing dot or space |

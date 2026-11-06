@@ -9,6 +9,7 @@ Verbatim works out what an extension can do from the extension itself, not from 
 | Runs native code in a restricted process of its own | The extension contains ordinary Windows code, such as a voice whose engine exists only in that form. It still runs restricted, but such code is harder to contain. |
 | Receives all the text Verbatim speaks, and can connect to *sites* | Anything Verbatim reads to you, from any application, could be sent to those sites. |
 | Reads the controls and text of *applications*, and can connect to *sites* | What you have open in those applications could be sent to those sites. |
+| … can connect to any site | As above, to any site. Shown for native code, which Verbatim cannot limit to particular sites. |
 | … can connect to the address you enter | As above, to the address you type into the extension's settings, such as your own server. |
 | Changes what Verbatim says before it is spoken | The extension rewrites speech, for example translating it. |
 | Reads the controls and text of *applications* | The extension reads those applications to change how Verbatim speaks them. |
@@ -19,4 +20,4 @@ Verbatim works out what an extension can do from the extension itself, not from 
 | Drives *display* | The extension supports that braille display, and can use only that device. |
 | Needs files you add yourself | The extension needs files you must supply, such as a voice's engine files, which the Extensions dialog asks for. |
 
-A line that says an extension "can connect" describes what it is able to do, not what it does. Every extension can also keep files in a folder of its own, which is not listed, and nothing else on your computer.
+A line that says an extension "can connect" describes what it is able to do, not what it does. Every extension can also keep files in a folder of its own, which is not listed; it cannot reach your other files or another extension's.

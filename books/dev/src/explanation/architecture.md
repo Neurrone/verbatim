@@ -42,7 +42,7 @@ screen reader in both rendered and source form.
   `AudioDevice` trait, and WASAPI implements it. Why: backends can change
   without touching the speech pipeline. Decided 2026-07-13. Amended
   2026-10-04.
-- **D6, extensions are Wasm components.** Their WIT-defined API is
+- **D6, extensions are Wasm components or contained native code.** Their WIT-defined API is
   deny-by-default, with capabilities derived from a component's imports,
   never declared; wasmtime is the runtime, named only by `verbatim-ext`.
   Every installed extension, of every kind and native code included, runs
@@ -194,10 +194,10 @@ Verbatim runs as four kinds of process:
    commands; like an outpost's, every other thread writes its own
    messages.
 4. **Extension host processes** (D6, D18), one per installed extension in
-   use and one per built-in engine, in a kill-on-close job; a
-   synthesizer's host streams PCM to Core over a pipe. The AppContainer
-   arrives with Eloquence in M6 and covers every installed extension from
-   M5.
+   use, one per built-in engine and one per built-in that imports the
+   network, each in a kill-on-close job; a synthesizer's host streams PCM
+   to Core over a pipe. Every installed extension's host is contained in
+   an AppContainer from M5, and native synthesizers' from M6.
 
 A supervisor in Core spawns outposts, tracks their health, and kills and
 respawns any that stop responding. Because Windows has no parent-child
@@ -840,7 +840,8 @@ language tagging, synth driver, PCM, the mixer (D17), and the
     receiving the typed speech sequence and returning PCM. Path for
     source-available synths. An installed one runs in its extension's own
     host (D6), as every installed extension does.
-  - **Native synth host** (D18): one process per synthesizer, matching the
+  - **Native synth host** (D18): one process per built-in synthesizer,
+    and an installed one in its extension's own host (D6), matching the
     DLL's architecture (x86 under emulation if needed, M6), streaming PCM
     over a pipe. Eloquence adds the AppContainer sandbox in M6. Latency
     budget applies equally (the pipe hop is tens of microseconds). A host
@@ -888,16 +889,19 @@ language tagging, synth driver, PCM, the mixer (D17), and the
 ## 7. Extensions (Wasm)
 
 - Runtime: wasmtime with the component model (per D6, replaceable); host API
-  defined in WIT (`verbatim:ext`). Epoch-based preemption means a runaway
+  defined in WIT (`verbatim:ext`). Epoch-based preemption means a runaway Wasm
   extension is interrupted, never hangs its host. Built-in app modules run
   on outpost workers and built-in global modules on Core threads of their
   own; each installed extension runs in a contained host process of its
   own (D6;
   [security model](https://github.com/Neurrone/verbatim/blob/main/docs/design/security-model.md), X4).
 - Capability-gated, deny-by-default: a component's capabilities are
-  derived from the interfaces it imports, never declared (tree-query,
-  event subscription, speech/braille output, gesture binding, config,
-  namespaced storage, OCR; each is a separate grant surfaced to the user).
+  derived from the interfaces it imports, never declared; a native
+  module, which has no import list, states its network use in its
+  manifest. The install dialog shows where the user's content can flow,
+  not each grant
+  ([security model](https://github.com/Neurrone/verbatim/blob/main/docs/design/security-model.md),
+  section 2.1).
 - Extension kinds: **app modules** (activated per application, mirroring
   outpost lifecycle — this is where Office- and browser-specific behavior
   lives; terminal behavior is not here but generic, in the core, keyed by

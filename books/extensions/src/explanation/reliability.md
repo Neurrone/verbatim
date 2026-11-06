@@ -13,11 +13,11 @@ When your hook overruns or traps, Verbatim carries on as if you had not been cal
 
 ## Answer in time, even with a failure
 
-If your extension depends on something slow or unreliable, such as a network service, answer before your deadline with your own failure rather than waiting. A speech-text stage that cannot reach its service returns its failure indication, such as "Translation failed". The user then hears that something went wrong and which extension it was, and an answer in time is never counted as a failure to respond.
+If your extension depends on something slow or unreliable, such as a network service, answer before your deadline with your own failure rather than waiting. A speech-text stage that cannot reach its service returns its failure indication, such as "Translation failed". The user then hears that something went wrong instead of silence, and an answer in time is never counted as a failure to respond.
 
 ## The breaker
 
-An extension that fails to respond three times within one minute is turned off until the user's next session, and Verbatim says once, naming it, "<extension> disabled after repeated failures". The user can turn it back on in the Extensions dialog, and the dialog shows why it was turned off.
+An extension that fails to respond three times within one minute is turned off until Verbatim restarts, and Verbatim says once, naming it, "<extension> disabled after repeated failures". The user can turn it back on in the Extensions dialog, and the dialog shows why it was turned off.
 
 A failure to respond is one of:
 

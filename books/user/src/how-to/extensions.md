@@ -13,7 +13,7 @@ Before you install an extension, read [Extensions and your privacy](../explanati
 
 ## Update an extension
 
-Open the newer version's `.vext` file. If the new version can do more than the one you have, such as connect to a new site, Verbatim lists only what is new and asks you first. Choose Update, or Keep the current version.
+Open the newer version's `.vext` file. If the new version can send your content out in a new way, connect to a new site or use a new device, Verbatim lists only what is new and asks you first. Choose Update, or Keep the current version.
 
 ## See what your extensions can do
 
