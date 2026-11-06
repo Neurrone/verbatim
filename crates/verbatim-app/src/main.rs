@@ -84,6 +84,13 @@ const DUMP_TREE_TIMEOUT: Duration = verbatim_model::BOUNDED_WALK_DEADLINE
     .saturating_add(verbatim_model::HANDLING_DEADLINE)
     .saturating_add(Duration::from_secs(1));
 
+// The dump's wait holds the longest program ahead of it and the dump's own.
+const _: () = assert!(
+    DUMP_TREE_TIMEOUT.as_micros()
+        > verbatim_model::BOUNDED_WALK_DEADLINE.as_micros()
+            + verbatim_model::HANDLING_DEADLINE.as_micros()
+);
+
 /// The reducer's flight recorder, shared between the reducer thread (which
 /// records each input as it processes it) and both dump triggers: a
 /// `DumpRecorder` control-plane request and the panic hook installed at
@@ -1365,7 +1372,8 @@ impl ReducerThread<'_> {
             }
             OutpostToCore::IdleAnswer { round } => self.barrier.answered(round, outpost),
             OutpostToCore::NotResponding { window } => {
-                self.apply(not_responding(source, outpost, window));
+                let input = not_responding(&self.live, source, outpost, window);
+                self.apply(input);
             }
             // The relay consumes these, and hands none of them on.
             OutpostToCore::Pong { .. }
@@ -2081,15 +2089,15 @@ fn asks_dump(who: &Asker, ticket: DumpTicket) -> bool {
 }
 
 /// The reducer input for `outpost`'s report that `window`, in `target`, the
-/// process it watches, stopped responding, which it sends once per hang;
-/// Core decides whether the sound plays, by whether `target` holds
-/// attention.
-fn not_responding(target: Pid, outpost: OutpostId, window: isize) -> Input {
-    tracing::info!(%outpost, %target, window, "a window stopped responding");
-    Input::ApplicationNotResponding {
-        outpost,
-        process: target,
-    }
+/// process it watches, stopped responding, which it sends once per hang:
+/// named for the application the outpost reports for, which for a console
+/// host's outpost is the console's client, as attention names it; Core
+/// decides whether the sound plays, by whether that application is
+/// attended.
+fn not_responding(live: &LiveOutposts, target: Pid, outpost: OutpostId, window: isize) -> Input {
+    let process = live.application_of(outpost).unwrap_or(target);
+    tracing::info!(%outpost, %target, %process, window, "a window stopped responding");
+    Input::ApplicationNotResponding { outpost, process }
 }
 
 /// Posts the supervisor's messages to the reducer thread's port, in line
@@ -2481,15 +2489,41 @@ mod tests {
     /// attention, and nothing when another does.
     #[test]
     fn not_responding_plays_the_sound_only_for_the_application_holding_attention() {
+        let live = LiveOutposts::default();
         let mut state = SrState::new();
         assert_eq!(reduce(&mut state, &foreground(40, 0x100)), []);
         assert_eq!(
-            reduce(&mut state, &not_responding(Pid(40), OutpostId(3), 0x100)),
+            reduce(
+                &mut state,
+                &not_responding(&live, Pid(40), OutpostId(3), 0x100)
+            ),
             [Effect::PlayEarcon(Earcon::AppNotResponding)]
         );
         assert_eq!(
-            reduce(&mut state, &not_responding(Pid(41), OutpostId(4), 0x200)),
+            reduce(
+                &mut state,
+                &not_responding(&live, Pid(41), OutpostId(4), 0x200)
+            ),
             []
+        );
+    }
+
+    /// A console host's outpost reports a hang for the console's client,
+    /// which attention names, so the sound plays though the outpost
+    /// watches the console host.
+    #[test]
+    fn a_console_hosts_hang_plays_the_sound_for_the_attended_client() {
+        let mut live = LiveOutposts::default();
+        live.started(OutpostId(3), Pid(50));
+        live.reports_for(OutpostId(3), Pid(40));
+        let mut state = SrState::new();
+        assert_eq!(reduce(&mut state, &foreground(40, 0x100)), []);
+        assert_eq!(
+            reduce(
+                &mut state,
+                &not_responding(&live, Pid(50), OutpostId(3), 0x100)
+            ),
+            [Effect::PlayEarcon(Earcon::AppNotResponding)]
         );
     }
 
@@ -2508,10 +2542,14 @@ mod tests {
     /// outpost sending no second `NotResponding` in the same hang.
     #[test]
     fn a_hang_met_in_the_background_plays_nothing_after_the_user_returns() {
+        let live = LiveOutposts::default();
         let mut state = SrState::new();
         assert_eq!(reduce(&mut state, &foreground(40, 0x100)), []);
         assert_eq!(
-            reduce(&mut state, &not_responding(Pid(41), OutpostId(4), 0x200)),
+            reduce(
+                &mut state,
+                &not_responding(&live, Pid(41), OutpostId(4), 0x200)
+            ),
             []
         );
         assert_eq!(reduce(&mut state, &foreground(41, 0x200)), []);

@@ -27,8 +27,9 @@
 //! such a buffer, the window's process is checked to be the buffer's.
 //!
 //! Every message goes through `crate::window::send_message`: a hung or
-//! ghosted window fails at once ([`EditError::NotResponding`]), and the
-//! message is sent with no time limit of its own. Each counts as one window
+//! ghosted window fails at once ([`EditError::NotResponding`]), a message
+//! an abandoned worker would send is refused ([`EditError::Abandoned`]),
+//! and the message is sent with no time limit of its own. Each counts as one window
 //! message (`books/dev/src/reference/performance.md`); allocating and
 //! copying the target's memory are calls into the kernel, not into the
 //! application, and are not counted. A password field's text reads as
@@ -80,6 +81,10 @@ pub enum EditError {
     NotResponding,
     /// The control did not answer, or its process could not be read.
     Failed(String),
+    /// The worker sending the message was abandoned, so its call gate
+    /// refused the message and nothing was sent (`verbatim_win32::calls`):
+    /// never a fact about the control.
+    Abandoned,
 }
 
 /// What an edit control read can fail with.
@@ -480,9 +485,7 @@ pub(crate) fn message_error(unanswered: Unanswered, what: &str, msg: u32) -> Edi
         Unanswered::Gone => EditError::Gone,
         Unanswered::NotResponding => EditError::NotResponding,
         Unanswered::Failed => EditError::Failed(format!("{what} did not answer message {msg:#x}")),
-        Unanswered::Abandoned => {
-            EditError::Failed("the worker was abandoned; nothing was sent".to_owned())
-        }
+        Unanswered::Abandoned => EditError::Abandoned,
     }
 }
 
@@ -771,6 +774,16 @@ impl Drop for RemoteBuffer<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The call gate's refusal is its own error, not a failure of the
+    /// control.
+    #[test]
+    fn a_message_the_gate_refused_is_abandoned() {
+        assert_eq!(
+            message_error(Unanswered::Abandoned, "the edit control", WM_GETTEXT),
+            EditError::Abandoned
+        );
+    }
 
     /// A buffer in a process that has exited is freed with no error: the
     /// process's exit took its memory, against a child process the test

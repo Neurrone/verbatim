@@ -319,8 +319,10 @@ Milestone M4's themes and earcons are wired here too
   has been heard, for at most two seconds; and
   a window not responding: the outpost's `OutpostToCore::NotResponding`,
   sent once per hang, is applied as `Input::ApplicationNotResponding`
-  with the outpost's target process, and Core plays the sound only if
-  that process holds attention. An abandoned query
+  with the application the outpost reports for
+  (`LiveOutposts::application_of`, the console's client for a console
+  host's outpost), and Core plays the sound only if that application is
+  attended. An abandoned query
   (`QueryOutcome::Abandoned`) plays nothing.
 - The build script copies the top-level `sounds` folder next to the
   executables in the cargo target directory, so `target\debug` holds

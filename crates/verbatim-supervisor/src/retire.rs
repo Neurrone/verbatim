@@ -42,6 +42,10 @@ use super::writer::{Outgoing, ToChild};
 /// one is killed.
 pub(super) const SHUTDOWN_LIMIT: Duration = Duration::from_secs(21);
 
+// The shutdown's wait holds one UIA request, which ends by its own timeout.
+const _: () =
+    assert!(SHUTDOWN_LIMIT.as_micros() > verbatim_model::UIA_TRANSACTION_TIMEOUT.as_micros());
+
 /// How a child ended.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Ending {

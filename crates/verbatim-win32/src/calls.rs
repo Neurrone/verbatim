@@ -73,10 +73,18 @@ pub fn is_abandoned(error: &windows::core::Error) -> bool {
     error.code() == ABANDONED
 }
 
-/// Installs `charge`'s gate on this thread, for as long as the thread
-/// lives: an outpost's worker, one per generation.
+/// Installs `charge`'s gate on this thread until [`uninstall`]: an
+/// outpost's worker, one per generation.
 pub fn install(charge: Arc<dyn Charge>) {
     GATE.with_borrow_mut(|gate| *gate = Some(charge));
+}
+
+/// Removes this thread's gate, dropping what it is bound to now rather
+/// than in the thread's thread-local destructors: a worker uninstalls it as
+/// its thread ends. Every call made after it passes, as on a thread with no
+/// gate.
+pub fn uninstall() {
+    GATE.with_borrow_mut(Option::take);
 }
 
 /// Consults this thread's gate before a counted call: refused once its
@@ -168,6 +176,23 @@ mod tests {
             std::thread::spawn(|| assert_eq!(check(), Ok(())))
                 .join()
                 .expect("a thread with no gate");
+        })
+        .join()
+        .expect("the gated thread");
+    }
+
+    /// Uninstalling a thread's gate drops its hold on the charge at once,
+    /// and the thread's calls then pass as on a thread with none.
+    #[test]
+    fn uninstalling_a_gate_lets_go_of_its_charge() {
+        std::thread::spawn(|| {
+            let charge = Arc::new(Recorded::default());
+            charge.dead.store(true, Ordering::Relaxed);
+            install(Arc::clone(&charge) as Arc<dyn Charge>);
+            assert_eq!(Arc::strong_count(&charge), 2);
+            uninstall();
+            assert_eq!(Arc::strong_count(&charge), 1);
+            assert_eq!(check(), Ok(()));
         })
         .join()
         .expect("the gated thread");

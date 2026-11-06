@@ -27,6 +27,9 @@ impl From<EditError> for TextError {
                 TextError::Failed("the edit control's window is not responding".to_owned())
             }
             EditError::Failed(reason) => TextError::Failed(reason),
+            EditError::Abandoned => {
+                TextError::Failed("the worker was abandoned; nothing was sent".to_owned())
+            }
         }
     }
 }

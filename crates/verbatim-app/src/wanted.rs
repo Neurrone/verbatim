@@ -36,6 +36,9 @@ use verbatim_model::Pid;
 pub(crate) const SHELL_ITEMS_WAIT: Duration =
     verbatim_model::HANDLING_DEADLINE.saturating_add(SHELL_ITEMS_REPLY_MARGIN);
 
+// The dialog's wait holds the outpost's program for the query.
+const _: () = assert!(SHELL_ITEMS_WAIT.as_micros() > verbatim_model::HANDLING_DEADLINE.as_micros());
+
 /// The time left between the outpost's deadline for a shell items query and
 /// Core's, for the answer's way through the pipes and the reducer thread.
 const SHELL_ITEMS_REPLY_MARGIN: Duration = Duration::from_millis(500);

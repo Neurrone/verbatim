@@ -574,6 +574,10 @@ struct Current {
     deferred: bool,
     /// What the program has in hand, for the log of its abandonment.
     in_hand: InHand,
+    /// The windows whose destroy event was pushed while it ran: a hang it
+    /// names in one of them is of a window gone, and never enters the
+    /// record of hung windows.
+    destroyed: BTreeSet<Window>,
 }
 
 /// One try of a focus group, and what is left of it.
@@ -624,7 +628,9 @@ pub struct Reducer {
     /// its hang, a hung judgement or a commit naming it hung, until
     /// evidence that it answers, a commit naming it answered or its destroy
     /// event; [`OutpostToCore::NotResponding`] is sent as a window enters
-    /// it, once per hang.
+    /// it, once per hang. A destroy wins over a hang the program in flight
+    /// names after it ([`Current::destroyed`]), so a destroyed handle is
+    /// never recorded again by evidence gathered before its destroy.
     hung: BTreeSet<Window>,
 }
 
@@ -786,7 +792,7 @@ impl Reducer {
                         .running()
                         .is_some_and(|(running, ..)| running == request);
                     if let (true, Some(Reason::Hung), Some(window)) = (running, verdict, window) {
-                        self.hang_seen(window, &mut effects);
+                        self.hang_seen(request, window, &mut effects);
                     }
                     let decision = self.flight.judged(request, verdict);
                     self.decided(decision, now, &mut effects);
@@ -1001,7 +1007,9 @@ impl Reducer {
             self.queries.insert(request_id);
         }
         // A destroyed window answers nothing more: it leaves the record of
-        // hung windows, and a window with its handle later is another.
+        // hung windows, and a window with its handle later is another, so
+        // the program in flight, begun before the destroy, cannot put it
+        // back.
         if let Item::Msaa {
             kind: WinKind::Destroy,
             hwnd,
@@ -1010,6 +1018,9 @@ impl Reducer {
             && let Some(window) = Window::new(hwnd)
         {
             self.hung.remove(&window);
+            if let Some(current) = self.flight.item_mut() {
+                current.destroyed.insert(window);
+            }
         }
         if let (
             Item::Fact(DeliveredFact::Foreground { hwnd }, _),
@@ -1057,9 +1068,16 @@ impl Reducer {
         effects.push(Effect::Send(Box::new(message)));
     }
 
-    /// `window` was found hung: it enters the record of hung windows, and
-    /// Core is told once, as the hang begins.
-    fn hang_seen(&mut self, window: Window, effects: &mut Vec<Effect>) {
+    /// `window` was found hung by `request`'s program: it enters the
+    /// record of hung windows, and Core is told once, as the hang begins;
+    /// unless the window was destroyed while the program ran.
+    fn hang_seen(&mut self, request: Request, window: Window, effects: &mut Vec<Effect>) {
+        if self
+            .current_of(request)
+            .is_some_and(|current| current.destroyed.contains(&window))
+        {
+            return;
+        }
         if self.hung.insert(window) {
             self.send(
                 OutpostToCore::NotResponding {
@@ -1070,11 +1088,16 @@ impl Reducer {
         }
     }
 
-    /// What a program found of its window: a hang enters the record, and
-    /// an answer takes the window out of it.
-    fn found(&mut self, (window, found): (Window, Found), effects: &mut Vec<Effect>) {
+    /// What `request`'s program found of its window: a hang enters the
+    /// record, and an answer takes the window out of it.
+    fn found(
+        &mut self,
+        request: Request,
+        (window, found): (Window, Found),
+        effects: &mut Vec<Effect>,
+    ) {
         match found {
-            Found::Hung => self.hang_seen(window, effects),
+            Found::Hung => self.hang_seen(request, window, effects),
             Found::Answered => {
                 self.hung.remove(&window);
             }
@@ -1085,7 +1108,7 @@ impl Reducer {
     /// Core's judgement, then its messages sent, then the rest.
     fn commit(&mut self, request: Request, change: &Change, now: Now, effects: &mut Vec<Effect>) {
         if let Some(found) = change.found {
-            self.found(found, effects);
+            self.found(request, found, effects);
         }
         if let Some(report) = &change.report {
             follow::record(&mut self.facts.held, report);
@@ -1768,14 +1791,17 @@ impl Reducer {
             group,
             deferred,
             in_hand: InHand::of(&work, window),
+            destroyed: BTreeSet::new(),
         };
         // A program with no window at dispatch that calls into the
         // application has its worker name the window it calls into; a
-        // release's drop, which calls into many windows, is judged by its
-        // deadline alone.
+        // release's drop, which calls into many windows, and a tree dump or
+        // shell item query, whose worker names no window, are judged by
+        // their deadline alone, so no wake judges a window never named.
         let rule = match (window, &work) {
             (Some(window), _) => RuleWindow::Known(window),
             (None, Work::Drop) => RuleWindow::Never,
+            (None, Work::Entry { entry, .. }) if names_no_window(&entry.item) => RuleWindow::Never,
             (None, Work::Entry { .. } | Work::Owed(_) | Work::PollRead | Work::Finish { .. }) => {
                 RuleWindow::Named
             }
@@ -1938,6 +1964,21 @@ fn owed_clears_absorb(owed: &Owed) -> bool {
 /// `duration` in microseconds, the work in flight's times.
 fn micros(duration: Duration) -> u64 {
     u64::try_from(duration.as_micros()).unwrap_or(u64::MAX)
+}
+
+/// Whether `item`'s program never names a window it calls into: a tree
+/// dump, which walks every window, and a shell item query, which reads the
+/// shell's own surfaces.
+fn names_no_window(item: &Item) -> bool {
+    matches!(
+        item,
+        Item::Query {
+            query: Query::DumpTree { .. }
+                | Query::ShellItems { .. }
+                | Query::ShellItemPosition { .. },
+            ..
+        }
+    )
 }
 
 /// The deadline for an entry begun at `now`, and the query it answers, if

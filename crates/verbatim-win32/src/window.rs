@@ -265,19 +265,6 @@ pub fn root_owner_of(handle: isize) -> isize {
     unsafe { GetAncestor(hwnd(handle), GA_ROOTOWNER) }.0 as isize
 }
 
-/// Whether window `handle` itself is reported hung by the system
-/// (`IsHungAppWindow`): the window an event names, not its top-level
-/// window, as NVDA tests it, for a UIA event its sender's cached window
-/// (`_shouldSkipEventForHungWindow`, `UIAHandler/utils.py` 438) and for an
-/// MSAA event its window (`winEventToNVDAEvent`,
-/// `IAccessibleHandler/__init__.py` 570). A child window whose own thread
-/// answers is not hung though its top-level window's thread is not.
-#[must_use]
-pub fn window_is_hung(handle: isize) -> bool {
-    // SAFETY: IsHungAppWindow tolerates any handle.
-    unsafe { IsHungAppWindow(hwnd(handle)) }.as_bool()
-}
-
 /// Whether a window can be read, by Windows' own state: the one answer
 /// both readers judge a window by, read at the moment of each decision
 /// ([`readability`]).
@@ -316,8 +303,11 @@ impl Readability {
 
 /// Whether window `handle` can be read, by the system's judgement: it is no
 /// window, or no longer one; a ghost window stands in for it; or the system
-/// reports its application hung, tested in that order. Every check is a
-/// local call.
+/// reports its application hung, tested in that order. The window itself is
+/// tested, not its top-level window, as NVDA tests the window an event
+/// names (`_shouldSkipEventForHungWindow`, `UIAHandler/utils.py` 438, and
+/// `winEventToNVDAEvent`, `IAccessibleHandler/__init__.py` 570). Every
+/// check is a local call.
 #[must_use]
 pub fn readability(handle: isize) -> Readability {
     // SAFETY: IsWindow tolerates any handle.

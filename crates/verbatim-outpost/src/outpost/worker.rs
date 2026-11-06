@@ -374,8 +374,9 @@ impl verbatim_win32::calls::Charge for Gate {
 const ERROR_NOT_ENOUGH_MEMORY: i32 = 8;
 
 /// The worker's thread: its loop, then the release of the UIA objects
-/// `verbatim-uia` kept for this thread, before the thread exits rather than
-/// from its thread-local destructors under the loader lock.
+/// `verbatim-uia` kept for this thread and of its call gate, which holds
+/// the outpost's context, before the thread exits rather than from its
+/// thread-local destructors under the loader lock.
 fn run(
     context: &Arc<Context>,
     (generation, warm): (u64, bool),
@@ -412,6 +413,7 @@ fn run(
     if joined.is_ok() {
         verbatim_uia::leave_mta();
     }
+    verbatim_win32::calls::uninstall();
 }
 
 /// Runs one program, after dropping what the shell let go of, and posts its

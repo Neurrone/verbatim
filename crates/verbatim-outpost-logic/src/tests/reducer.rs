@@ -400,6 +400,9 @@ struct Flight {
     /// title's foreground fact ended the watch while it was in flight, its
     /// copy still shows the watch the reducer no longer has
     uncompared: bool,
+    /// The windows destroyed while it ran, whose hang it names afterwards
+    /// opens nothing.
+    destroyed: BTreeSet<isize>,
 }
 
 /// The open gap record as the reducer holds it, seen from outside: its
@@ -588,7 +591,7 @@ enum Call {
 type Reached = BTreeMap<&'static str, u64>;
 
 /// The lifecycle states the gate's cases must each reach.
-const LISTED: [&str; 38] = [
+const LISTED: [&str; 39] = [
     "an entry dispatched",
     "a focus group continued",
     "a focus group continued after an abandonment",
@@ -599,6 +602,7 @@ const LISTED: [&str; 38] = [
     "a hang opened by a commit",
     "a hang ended by an answer",
     "a hang ended by a destroy event",
+    "a hang after its window's destroy ignored",
     "a refusal answered abandoned",
     "a walk published",
     "published, then abandoned",
@@ -1709,12 +1713,22 @@ impl Run {
     /// evidence of a hang, a judgement of the program in flight finding its
     /// window hung or an accepted commit naming its window hung, and closes
     /// only at evidence that the window answers, an accepted commit naming
-    /// it answered, or its destroy event. The windows whose intervals the
-    /// input opens, in order, which are what Core is told.
+    /// it answered, or its destroy event; evidence of a hang from the
+    /// program in flight in a window destroyed since it started opens
+    /// nothing. The windows whose intervals the input opens, in order,
+    /// which are what Core is told.
     fn hangs(&mut self, input: Option<&Input>) -> Vec<isize> {
         let mut opened = Vec::new();
         let mut open = |model: &mut Model, window: Window, reached: &mut Reached, how| {
-            if model.hung.insert(window.get()) {
+            if model
+                .flight
+                .as_ref()
+                .is_some_and(|flight| flight.destroyed.contains(&window.get()))
+            {
+                *reached
+                    .entry("a hang after its window's destroy ignored")
+                    .or_default() += 1;
+            } else if model.hung.insert(window.get()) {
                 opened.push(window.get());
                 *reached.entry(how).or_default() += 1;
             }
@@ -1775,8 +1789,13 @@ impl Run {
                         ..
                     },
                 ..
-            }) if self.model.hung.remove(hwnd) => {
-                self.reach("a hang ended by a destroy event");
+            }) => {
+                if let Some(flight) = self.model.flight.as_mut() {
+                    flight.destroyed.insert(*hwnd);
+                }
+                if self.model.hung.remove(hwnd) {
+                    self.reach("a hang ended by a destroy event");
+                }
             }
             _ => {}
         }
@@ -2434,6 +2453,7 @@ impl Run {
             window,
             copy: program.facts.clone(),
             uncompared: false,
+            destroyed: BTreeSet::new(),
         });
     }
 

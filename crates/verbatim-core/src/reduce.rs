@@ -555,17 +555,24 @@ fn window_is_attended(
                 || event.under_active_window == Some(true)
                 || event.in_foreground
         }
-        _ => {
-            source == attention.source
-                || state.focus.as_ref().is_some_and(|focus| {
-                    focus.source == source
-                        && matches!(
-                            (focus.window.as_ref(), attention.window.as_ref()),
-                            (Some(focus), Some(attended)) if focus.top_level == attended.top_level
-                        )
-                })
-        }
+        _ => process_is_attended(state, attention, source),
     }
+}
+
+/// Whether `process` is the application attention covers: attention's own
+/// process, or that of Core's focus while that focus is in the attention
+/// window, as a Settings page's content (`SystemSettings`) is in
+/// `ApplicationFrameHost`'s frame, which attention names
+/// (`docs/parity/focus-events.md`, "Event acceptance").
+pub(crate) fn process_is_attended(state: &SrState, attention: &Attention, process: Pid) -> bool {
+    process == attention.source
+        || state.focus.as_ref().is_some_and(|focus| {
+            focus.source == process
+                && matches!(
+                    (focus.window.as_ref(), attention.window.as_ref()),
+                    (Some(focus), Some(attended)) if focus.top_level == attended.top_level
+                )
+        })
 }
 
 /// The focus listener's report that a window came to the foreground, the

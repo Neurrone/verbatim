@@ -16,6 +16,7 @@ use verbatim_model::{
     ShellItemKind, SpeechPriority, TraceId, Utterance, UtteranceSegment,
 };
 
+use crate::reduce::process_is_attended;
 use crate::state::SrState;
 
 /// Handles one input the shell's threads produce; any other input does
@@ -147,15 +148,16 @@ fn error_logged() -> Vec<Effect> {
 }
 
 /// A window of `process` stopped responding, which its outpost reports
-/// once per hang: the sound, only if `process` holds attention now, so a
-/// hang met while its application is in the background is never sounded,
-/// even after the user returns to it (Dickson, 2026-11-06). With no
-/// attention yet, no application holds it.
+/// once per hang: the sound, only if `process` is attended now, judged as
+/// [`process_is_attended`] judges it, so a hang met while its application
+/// is in the background is never sounded, even after the user returns to
+/// it (Dickson, 2026-11-06). With no attention yet, no application holds
+/// it.
 fn not_responding(state: &SrState, process: Pid) -> Vec<Effect> {
     if state
         .foreground
         .attention()
-        .is_some_and(|attention| attention.source == process)
+        .is_some_and(|attention| process_is_attended(state, attention, process))
     {
         vec![Effect::PlayEarcon(Earcon::AppNotResponding)]
     } else {

@@ -96,7 +96,9 @@ Public API:
   with no window at dispatch that calls into the application, a query, the
   owed work, the gap's read, the console poll's read, is dispatched with
   `RuleWindow::Named`, judged on the grace's schedule by the window its
-  worker names; a release's drop is judged by its deadline alone.
+  worker names; a release's drop, a tree dump and a shell item query,
+  whose workers name no window, are dispatched with `RuleWindow::Never`
+  and judged by their deadline alone.
   `Program::window` carries the window the program's entry names, which
   its worker names in its charge at once.
 - The record of hung windows, kept in the application's own reducer: a
@@ -106,7 +108,10 @@ Public API:
   as it enters, once per hang; it leaves only on evidence that it answers,
   an accepted commit naming it `Found::Answered` (a counted call into it
   returned), its destroy event, or the outpost's end. A program that made
-  no call into the window is never that evidence. The abandonment's
+  no call into the window is never that evidence. A destroy wins over the
+  program in flight: a hang it names, by judgement or commit, in a window
+  whose destroy event was pushed while it ran (`Current::destroyed`)
+  enters nothing. The abandonment's
   `Effect::Abandon` says whether its window was judged hung (`on_hung`),
   which the shell counts apart for the pong.
 - `Program` and `Work`: what the worker generation in charge runs, with

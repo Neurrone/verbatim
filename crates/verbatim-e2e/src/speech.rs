@@ -73,6 +73,10 @@ use crate::timeline::Timeline;
 /// and then for each to end: a bound on a hang, not a latency expectation.
 pub const STEP_TIMEOUT: Duration = Duration::from_secs(15);
 
+// A step's wait holds the longest program an outpost or the focus listener
+// runs before speech can follow, a bounded walk.
+const _: () = assert!(STEP_TIMEOUT.as_micros() > verbatim_model::BOUNDED_WALK_DEADLINE.as_micros());
+
 /// How long [`SpeechCollector::expect_nothing_more`] lets Verbatim take to
 /// become idle: a bound on a hang.
 const IDLE_TIMEOUT: Duration = Duration::from_secs(15);

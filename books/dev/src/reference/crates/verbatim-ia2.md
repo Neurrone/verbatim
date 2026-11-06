@@ -131,8 +131,9 @@ Public API:
   `text_range`, `find_word_break`, `position_of` (screen coordinates), and
   `is_password`, each an `EditResult` whose `EditError` is `Gone` when the
   window no longer exists or its handle now names another process's
-  window, `NotResponding` when it is hung or ghosted, and `Failed`
-  otherwise. `EditControl::with_process(hwnd, version, pid)` allocates its
+  window, `NotResponding` when it is hung or ghosted, `Abandoned` when
+  the thread's call gate refused the message (`verbatim_win32::calls`),
+  never a fact about the control, and `Failed` otherwise. `EditControl::with_process(hwnd, version, pid)` allocates its
   buffers in process `pid`, for a test standing for a window handle reused
   by another process's window. Offsets are the
   control's UTF-16 code units. The line messages' answers are read as

@@ -2093,6 +2093,49 @@ fn the_moved_on_rule_is_judged_again_every_half_second() {
     assert!(abandons(&replay.tick(1_001)));
 }
 
+/// A tree dump and the shell item queries name no window, so the moved-on
+/// rule is never judged for them: the reducer's only wake is the deadline.
+#[test]
+fn a_query_naming_no_window_wakes_only_at_its_deadline() {
+    let item = verbatim_model::ShellItem {
+        name: "Mail".to_owned(),
+        runtime_id: vec![42, 1],
+    };
+    for (query, deadline) in [
+        (Query::DumpTree { locations: false }, HANDLING_DEADLINE),
+        (
+            Query::ShellItems {
+                kind: verbatim_model::ShellItemKind::Taskbar,
+                answer_by_us: 3_001_000,
+            },
+            Duration::from_secs(3),
+        ),
+        (
+            Query::ShellItemPosition {
+                kind: verbatim_model::ShellItemKind::Taskbar,
+                item,
+                answer_by_us: 3_001_000,
+            },
+            Duration::from_secs(3),
+        ),
+    ] {
+        let mut replay = Replay::new();
+        replay.push(
+            Item::Query {
+                request_id: RequestId::shell(4),
+                query: query.clone(),
+            },
+            Source::Other,
+            1,
+        );
+        assert_eq!(
+            replay.reducer.next_timer(now(1)),
+            Some(Duration::from_millis(1) + deadline),
+            "{query:?}"
+        );
+    }
+}
+
 /// The probe of window 0x20, owned by thread 5, judging from 1 ms, that
 /// found `probed`.
 fn probe(probed: Probed) -> VerdictChange {
@@ -3330,6 +3373,39 @@ fn a_destroy_event_ends_a_windows_hang_and_each_window_has_its_own() {
         not_responding(&replay.commit(after, found(HUNG, Found::Hung, None), 9)),
         [HUNG.get()],
         "a destroyed window's handle hangs anew"
+    );
+}
+
+/// A destroy pushed while a program runs wins over the hang that program
+/// names in the destroyed window afterwards: Core is told nothing, and a
+/// later program's hang in a window with the handle is a new one.
+#[test]
+fn a_hang_committed_after_its_windows_destroy_is_not_recorded() {
+    let mut replay = Replay::new();
+    let stale = program(&replay.push(navigation(1), Source::Other, 1)).request;
+    replay.push(
+        Item::Msaa {
+            kind: WinKind::Destroy,
+            hwnd: HUNG.get(),
+            id_object: 0,
+            id_child: 0,
+            raiser: 3,
+        },
+        Source::Hook,
+        2,
+    );
+    assert_eq!(
+        not_responding(&replay.commit(stale, found(HUNG, Found::Hung, None), 3)),
+        Vec::<isize>::new(),
+        "the window is gone"
+    );
+    let effects = replay.finish(stale, false, 4);
+    replay.finish(program(&effects).request, false, 5);
+    let after = program(&replay.push(navigation(2), Source::Other, 6)).request;
+    assert_eq!(
+        not_responding(&replay.commit(after, found(HUNG, Found::Hung, None), 7)),
+        [HUNG.get()],
+        "a window with the handle, hung anew"
     );
 }
 

@@ -60,9 +60,9 @@
 //! which its window is tested for a hung application, and a watchdog
 //! abandons a thread whose read runs past its deadline, or past half a
 //! second once its window is hung or the user has moved
-//! on to a window of the same application on another UI thread, which the
-//! listener's foreground events wake it to judge, so a slow or hung
-//! application holds only its own thread. One exposure is UIA's own and cannot be contained here: a
+//! on to a window of the same application on another UI thread, which it
+//! judges at the half second and every half second after, so a slow or
+//! hung application holds only its own thread. One exposure is UIA's own and cannot be contained here: a
 //! hung window named in a focus `WinEvent` holds UIA's delivery of every
 //! focus event to the listener until it answers, as it holds NVDA's
 //! (`books/dev/src/reference/uia-bugs.md`, "A hung window named in a system focus event holds a
@@ -1118,10 +1118,9 @@ impl Listener {
                         };
                         let step = watch.borrow_mut().foreground(front, in_front(window));
                         foreground_step(&outgoing, step);
-                        // A foreground change is the evidence that the
-                        // user may have moved on from a slow read's window
-                        // (`focus_read`'s watchdog), and moves away from a
-                        // reading thread's last read of another window.
+                        // A foreground change moves away from a reading
+                        // thread's last read of another window, for menu
+                        // currentness; it judges no read in flight.
                         foreground_readers.foreground_changed(window);
                     } else if kind == WinEventKind::Focus && watch.borrow().has_pending() {
                         // A window not in front at its foreground event is

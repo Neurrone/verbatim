@@ -12,7 +12,9 @@ Windows-specific crate and depends on `verbatim-model`,
 Public API:
 
 - `calls` — the call gate an outpost's worker installs on its thread,
-  bound to its charge (`calls::install`, the `calls::Charge` trait):
+  bound to its charge (`calls::install`, the `calls::Charge` trait), and
+  uninstalls as its thread ends (`calls::uninstall`), so the charge is
+  dropped then and not by the thread-local destructors:
   `check()`, which every call the backends count makes first, fails with
   `CallError::Abandoned` once the worker's generation is abandoned, so
   the call is not made, its error `E_ABORT` (`ABANDONED`, `is_abandoned`)
@@ -48,7 +50,7 @@ Public API:
   `root_owner_of` (the top of the owner chain, `GA_ROOTOWNER`),
   `window_owner` (thread and process), `foreground_window_handle`,
   `focus_window` (the window with the keyboard focus, else the active
-  window) and `window_is_hung`. `window_classes(hwnd)` reads the
+  window). `window_classes(hwnd)` reads the
   `WindowClasses` the class verdict judges
   ([verbatim-reader-rules](verbatim-reader-rules.md)).
   `window_is_hidden_frame` and `window_belongs_to_hidden_frame` recognize

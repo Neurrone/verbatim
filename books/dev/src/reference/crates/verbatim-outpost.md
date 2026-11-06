@@ -495,7 +495,7 @@ Inside an outpost (`docs/design/communication.md`, section 6.4;
   (`reducer::Found`): hung at a check, or answered once a counted call was
   made. The worker installs a call gate on its thread
   (`verbatim_win32::calls`), bound to its charge, in release builds as in
-  debug ones: once its generation is abandoned, every counted call fails
+  debug ones, and uninstalls it as its thread ends: once its generation is abandoned, every counted call fails
   with `CallError::Abandoned` and makes no call, which no caller reads as
   a fact about the application. The shell keeps each parked worker's
   reason by generation (`Posted::Returned` carries the generation), and

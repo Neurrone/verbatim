@@ -623,8 +623,12 @@ shell's threads learn comes in as inputs (`shell.rs`): `Input::Started`,
 `ErrorLogged` play their sounds; `ApplicationNotResponding`, an
 outpost's report that a window of the process it watches stopped
 responding, sent once per hang, plays the not-responding sound only if
-that process holds attention (the foreground record's `Attention`), so a
-hang met in the background is never sounded, even after the user returns;
+that process is attended as `window_is_attended` judges a process with no
+window facts (`process_is_attended`): attention's own process (the
+foreground record's `Attention`), or that of Core's focus while the focus
+is in the attention window, as a Settings page's process is in
+`ApplicationFrameHost`'s frame; so a hang met in the background is never
+sounded, even after the user returns;
 `Exiting` cancels speech, then plays the exit sound, unless a new
 instance replaces this one, and sets `SrState::exiting`, after which
 `reduce` does nothing for any input, so nothing is said after the exit

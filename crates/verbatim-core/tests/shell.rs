@@ -498,3 +498,45 @@ fn a_lock_keys_announcement_is_heard_after_a_key_pressed_within_its_30_ms() {
     );
     assert!(!state.announces_toggle_key());
 }
+
+/// A hang reported for a process whose focus is in the attention window
+/// plays the sound, as a Settings page (`SystemSettings`) hangs inside
+/// `ApplicationFrameHost`'s frame, which attention names; a hang in a
+/// process with no focus there plays nothing.
+#[test]
+fn a_hang_in_the_process_focused_inside_the_attention_window_plays_the_sound() {
+    let mut state = SrState::new();
+    let frame = Input::Foreground(ForegroundWindow {
+        window: WindowHandle(10),
+        root_owner: WindowHandle(10),
+        process: Pid(70),
+        observed_at_us: 1,
+        own: false,
+        thread: 40,
+        console: false,
+        integrity: None,
+        own_integrity: None,
+    });
+    assert_eq!(reduce(&mut state, &frame), []);
+    let _ = reduce(&mut state, &focus_in_window(5, false, 1_000));
+    assert_eq!(
+        reduce(
+            &mut state,
+            &Input::ApplicationNotResponding {
+                outpost: OutpostId(1),
+                process: Pid(1),
+            }
+        ),
+        [Effect::PlayEarcon(Earcon::AppNotResponding)]
+    );
+    assert_eq!(
+        reduce(
+            &mut state,
+            &Input::ApplicationNotResponding {
+                outpost: OutpostId(2),
+                process: Pid(2),
+            }
+        ),
+        []
+    );
+}
