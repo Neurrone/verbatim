@@ -137,12 +137,16 @@ screen reader in both rendered and source form.
   (`books/dev/src/reference/crates/verbatim-speech.md`). Why: say-all and cancellation need
   endings true for every synthesizer. Decided 2026-10-04.
 - **D18, native synthesizers run in a synthesizer host process.** Each
-  `verbatim-synth-host.exe` runs one synthesizer, OneCore and eSpeak NG
-  included, behind the `SynthDriver` trait over a pipe, and loads native
-  engines through C-ABI adapter DLLs in an AppContainer (section 6).
-  Verbatim is GPL version 3 or later, and eSpeak NG is linked into the
-  host only. Why: an engine's crash or hang costs one restartable process,
-  never Core. Decided 2026-10-04. Amended 2026-10-22 (Dickson).
+  built-in engine, OneCore and eSpeak NG, runs in a
+  `verbatim-synth-host.exe` of its own, and an installed synthesizer runs
+  in its extension's own host (D6), which serves it over the same
+  protocol: the `SynthDriver` trait over a pipe, with native engines
+  loaded through C-ABI adapter DLLs in an AppContainer (section 6). The
+  x86 host for 32-bit engines carries no Wasm runtime, so an extension
+  whose native code is built only for x86 holds nothing else. Verbatim is
+  GPL version 3 or later, and eSpeak NG is linked into the host only. Why:
+  an engine's crash or hang costs one restartable process, never Core.
+  Decided 2026-10-04. Amended 2026-10-22 and 2026-11-06 (Dickson).
 
 ## 1. Process and thread model
 

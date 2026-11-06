@@ -41,11 +41,11 @@ Only what an import cannot carry:
 
 ## Updates
 
-An update that adds a way to send data out, a network host or a device is installed only after the user approves the new lines, which the update dialog lists on their own.
+An update that adds a flow, a new way to send data out, network host or device, or a new source of the user's content in an extension that can already send data out, is installed only after the user approves it again. The update dialog lists only the new lines. A new source in an extension with no way to send data out cannot leak and is not asked about.
 
 ## Refused
 
-These are never available, and a component that imports one is refused at install, with the import named: raw UI Automation or COM, calls inside other processes, other processes' memory, threads, the registry, files outside the extension's own folders, starting processes, and every WASI interface outside the file and network imports. A module may not bind cancelling speech, sleep mode, the Verbatim menu, quitting, or the screen curtain and its status.
+These are never available, and a component that imports one is refused at install, with the import named: raw UI Automation or COM, calls inside other processes, other processes' memory, threads, the registry, files outside the extension's own folders, starting processes, and every WASI interface outside the file and network imports. An extension whose native code is built only for x86 may contain no other module, since the host that runs 32-bit code under emulation has no WebAssembly runtime; ship any other module as a second extension. A module may not bind cancelling speech, sleep mode, the Verbatim menu, quitting, or the screen curtain and its status.
 
 ## Not settled yet
 

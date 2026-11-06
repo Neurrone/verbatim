@@ -1579,7 +1579,9 @@ extension API growth rule asks.
   (HTTP with every method and streamed bodies, and WebSockets) to named
   hosts or a host the user enters, in the extension's own host, with
   loopback reachability from the container measured (X15), and re-consent
-  on an update that adds an exit, a host or a device; clipboard reads and a clipboard-changed event from Windows' clipboard
+  on an update that adds a flow (a new exit, host or device, or a new
+  source in an extension that has an exit); clipboard reads and a
+  clipboard-changed event from Windows' clipboard
   listener, never polled; the mouse; global modules with their read
   boundary; reading speech history, shown at install as receiving all the
   text Verbatim speaks.

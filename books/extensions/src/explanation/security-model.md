@@ -8,7 +8,7 @@ The mechanisms on this page serve three goals:
 
 - **Recovery.** The user can always get speech back, and knows which extension was at fault. An extension that stops responding is turned off ([Reliability](reliability.md)), and Verbatim can start with every extension off.
 - **Containment.** Your extension never gains Verbatim's own reach. It runs in none of Verbatim's own processes, never has the rights Verbatim needs to read administrator windows and sign-in screens, and reaches only its own folders, the network through its network imports, and the devices Verbatim opens for it.
-- **Honest consent.** The install dialog tells the user what your extension can do with their content, derived from the extension itself rather than claimed by it, and an update that adds a way to send data out, a network host or a device is approved again.
+- **Honest consent.** The install dialog tells the user what your extension can do with their content, derived from the extension itself rather than claimed by it, and an update that adds a flow is approved again.
 
 Two things are not goals. Verbatim does not keep content from an extension the user gave it to: once a user installs a translator, its author and its service can see everything Verbatim speaks. And Verbatim does not defend the install dialog against other programs the user runs, which could install an extension themselves.
 
@@ -21,7 +21,7 @@ Every installed extension runs in a process of its own, inside a Windows contain
 There are no permissions to request. A WebAssembly component's import list is a complete statement of every host function it can ever call, written by the compiler, so Verbatim reads your capabilities from it, and the install dialog's lines come from the same list. Two consequences:
 
 - **Import only what you use.** A dependency that pulls in a network interface puts a network warning in your install dialog. The packaging tool prints the capabilities it derived before it builds a `.vext`; read that list on every release.
-- **The import list is a ceiling.** Your code can change what it does after install, for example by following instructions it downloads, but it can never call an import it was not built with. An update that adds a way to send data out, such as a network import, or a new network host or device, is installed only after the user approves it again.
+- **The import list is a ceiling.** Your code can change what it does after install, for example by following instructions it downloads, but it can never call an import it was not built with. An update that adds a flow, a new way to send data out, network host or device, or a new source of the user's content in an extension that can already send data out, is installed only after the user approves it again. A source is content your extension receives, such as an application's controls and text, all the text Verbatim speaks, or captured images.
 
 The manifest carries only what an import cannot say: the hosts you connect to, the devices a braille driver drives, and, for native code, whether it uses the network.
 

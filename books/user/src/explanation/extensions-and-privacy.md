@@ -31,7 +31,7 @@ An extension marked "Runs native code" contains ordinary Windows code, such as a
 
 ## When an extension asks for more
 
-If an update would let an extension send your content out in a new way, connect to a new site or use a new device, Verbatim asks you before updating, and you can keep the version you have.
+If an update would let an extension send your content out in a new way, connect to a new site, use a new device, or receive more of your content when it can already send content out, Verbatim asks you before updating, and you can keep the version you have.
 
 ## Sign-in and administrator screens
 
