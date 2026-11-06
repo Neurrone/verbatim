@@ -16,7 +16,7 @@ use std::time::Duration;
 use verbatim_model::protocol::{DeliveredFact, OutpostToCore};
 use verbatim_model::{CallCounts, NormalizedEvent};
 use verbatim_outpost::arbitration::{Arbitrator, Verdicts};
-use verbatim_uia::{RAW_PROBE_TIMEOUT_MS, RawProbe, raw_probe};
+use verbatim_uia::{RawProbe, UIA_RAW_PROBE_TIMEOUT_MS, raw_probe};
 use verbatim_win32::window::window_classes;
 
 fn uia_backend_has_a_server_side_provider_and_arbitrates_to_uia() {
@@ -53,9 +53,9 @@ fn a_busy_uia_window_is_asked_once_and_its_no_taken() {
     let hwnd = common::find_window(&title).0 as isize;
 
     // Blocked past the point where the raw probe gives up
-    // (`RAW_PROBE_TIMEOUT_MS`) and reports no provider: that "no" is the
+    // (`UIA_RAW_PROBE_TIMEOUT_MS`) and reports no provider: that "no" is the
     // answer, from one message, as NVDA takes it.
-    let stall = Duration::from_millis(u64::from(RAW_PROBE_TIMEOUT_MS) * 2);
+    let stall = Duration::from_millis(u64::from(UIA_RAW_PROBE_TIMEOUT_MS) * 2);
     app.stall(stall);
     let _ = verbatim_uia::calls::take();
     let probed = raw_probe(hwnd);
@@ -103,7 +103,7 @@ fn a_probe_that_timed_out_is_made_once_in_its_entry() {
     let hwnd = common::find_window(&title).0 as isize;
     let outpost = common::outpost::OutpostUnderTest::new(&app);
 
-    let stall = Duration::from_millis(u64::from(RAW_PROBE_TIMEOUT_MS) + 1_500);
+    let stall = Duration::from_millis(u64::from(UIA_RAW_PROBE_TIMEOUT_MS) + 1_500);
     app.stall(stall);
     outpost.deliver(DeliveredFact::Foreground { hwnd });
     let message = outpost
@@ -152,7 +152,7 @@ fn a_busy_uia_window_is_read_once_it_answers() {
 
     // Within the connection timeout, which ends a lookup of a window busy
     // for longer (`books/dev/src/explanation/design/listener-without-connections.md`, section 5).
-    let stall = verbatim_uia::CONNECTION_TIMEOUT / 2;
+    let stall = verbatim_uia::UIA_CONNECTION_TIMEOUT / 2;
     app.stall(stall);
     let read = name(&uia);
     let returned_at = common::now_us();

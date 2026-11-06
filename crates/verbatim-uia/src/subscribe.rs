@@ -48,7 +48,7 @@
 //! the same registration queued behind it makes it unneeded, that it was
 //! skipped and for which move; and each call a move or a close makes with
 //! its result and the time it took, at warn level when that passed UIA's
-//! connection timeout ([`crate::CONNECTION_TIMEOUT`]) or when a removal
+//! connection timeout ([`crate::UIA_CONNECTION_TIMEOUT`]) or when a removal
 //! failed, whatever its time, since what it leaves live goes on
 //! delivering.
 //! [`Registration::settle`] waits for every move asked for so far to be
@@ -533,7 +533,7 @@ impl Registration {
     /// every move and close asked for before it, and this waits for it
     /// however long it takes, with no deadline of its own: UIA ends a
     /// registration on an application that does not answer at its
-    /// connection timeout ([`crate::CONNECTION_TIMEOUT`]; `books/dev/src/reference/uia-bugs.md`,
+    /// connection timeout ([`crate::UIA_CONNECTION_TIMEOUT`]; `books/dev/src/reference/uia-bugs.md`,
     /// "A registration that times out reports success"), so a desktop-wide
     /// registration that advises several such applications waits that
     /// long for each. The time it took is logged at debug level, and at
@@ -566,7 +566,7 @@ impl Registration {
         let result = ready.recv().unwrap_or_else(|_| Err(ended()));
         let elapsed = started.elapsed();
         let elapsed_ms = elapsed.as_millis();
-        if elapsed > crate::CONNECTION_TIMEOUT {
+        if elapsed > crate::UIA_CONNECTION_TIMEOUT {
             tracing::warn!(
                 registration = id,
                 to,
@@ -1045,7 +1045,7 @@ fn serve(ready: &mpsc::Sender<windows::core::Result<()>>, received: &mpsc::Recei
 /// success"), so its time past the timeout is the only sign. Each one is
 /// an observation point for a test that counts them.
 fn timed_out(registration: u64, elapsed: Duration) -> bool {
-    let timed_out = elapsed > crate::CONNECTION_TIMEOUT;
+    let timed_out = elapsed > crate::UIA_CONNECTION_TIMEOUT;
     #[cfg(any(test, feature = "faults"))]
     if timed_out {
         verbatim_faults::reach(

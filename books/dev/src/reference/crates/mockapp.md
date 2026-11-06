@@ -581,16 +581,21 @@ Each file's module comment says exactly what it asserts; in outline:
   `popup.json`, with the list in a `popup`, the item's report closes the
   gap record its copy opened in the popup, placed by its own top-level
   window, not its owner's.
-- `slow_application.rs`: a real outpost reports a focus on an
-  `msaa`-backend mockapp whose window thread is stalled with `stall`, the
-  read having started before the stall ended.
+- `slow_application.rs`: a real outpost waits for a slow application
+  rather than cutting it off. It reports a focus on an `msaa`-backend
+  mockapp whose window thread is stalled with `stall`, the read having
+  started before the stall ended; and a navigation step, a walk down a
+  focus's path, a UIA dialog's text (`dialog_class_window.json`, a
+  top-level window of a dialog's class) and the taskbar's items
+  (`taskbar.json`, a window of `Shell_TrayWnd`'s class) each wait past the
+  short limit they once had and answer in full. Each hold ends after
+  evidence that the old limit has passed: the outpost's frozen clock moved
+  past a limit that ran on it, or twice a limit that ran in real time.
 - `time_limits.rs` holds mockapp's next provider call (`hold`) and shows
   each of UIA's time limits ending the wait while the call is still held,
   each test in a process of its own since the timeouts belong to the
   process: a property read fails with `UIA_E_TIMEOUT` after one
-  `TRANSACTION_TIMEOUT` (five seconds); a `FindFirst` search on a
-  `BoundedClient` is given up at its own one-second deadline, its thread
-  abandoned and waited for once the call is released; and a subscription
+  `UIA_TRANSACTION_TIMEOUT` (ten seconds); and a subscription
   moved onto a held window's subtree has its registration end at the
   two-second connection timeout, its next move made after it, exactly
   one registration call having taken past the timeout, as

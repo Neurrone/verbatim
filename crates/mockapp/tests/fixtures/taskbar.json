@@ -1,0 +1,18 @@
+{
+  "id": "root",
+  "role": "window",
+  "name": "Mockapp Taskbar Fixture",
+  "window_class": "Shell_TrayWnd",
+  "children": [
+    {
+      "id": "apps",
+      "role": "tool_bar",
+      "name": "Running applications",
+      "children": [
+        { "id": "mail", "role": "button", "name": "Mail" },
+        { "id": "files", "role": "button", "name": "Files" },
+        { "id": "music", "role": "button", "name": "Music" }
+      ]
+    }
+  ]
+}

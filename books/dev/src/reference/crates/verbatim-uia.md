@@ -8,29 +8,20 @@ listener make. Its remote operations are in `verbatim-uia-rops`
 
 ## Clients and timeouts
 
-- `CONNECTION_TIMEOUT` and `TRANSACTION_TIMEOUT`: two seconds, UIA's
-  connection timeout (a lookup by handle, the focused element's lookup,
-  and the waits of UIA's own focus tracking), and five seconds, its
-  transaction timeout (each call on a held element). Both are settings of
-  the process, not of a client (experiment E1 in
-  `books/dev/src/explanation/design/focus-pipeline.md`), so UIA's first-time setup sets them
-  once. Each bounds one call into a provider, not an operation, which is
-  why `BoundedClient` exists. Why these values is in
-  `books/dev/src/explanation/design/listener-without-connections.md`, section 5; five seconds
-  is under the outpost worker's ten-second deadline and over the time a
-  starting application takes to answer a call.
-- `BoundedClient`: a client on a thread of its own for an operation made
-  of many provider calls that needs a deadline of its own (a `FindFirst`
-  search, a dialog's text). `run(deadline, operation)` queues the
-  operation, which captures and answers only `Send` values (UIA objects as
-  agile references), and waits for its answer; past the deadline it
-  answers `Unanswered::DeadlinePassed` and abandons the thread, which
-  finishes its call unheard and ends, and the next `run` starts a new
-  thread and client. A UIA call cannot be cancelled, so abandonment is the
-  bound. The operation's calls and failed cached reads are added to the
-  waiting thread's counts (`calls::add`, `calls::add_failed_reads`).
-  `close()` waits for every thread, abandoned ones included; `abandoned()`
-  counts them.
+- `UIA_CONNECTION_TIMEOUT` and `UIA_TRANSACTION_TIMEOUT`: two seconds,
+  UIA's connection timeout (a lookup by handle, the focused element's
+  lookup, the first call on an element, a new connection, the
+  window-message wait inside a search, and the waits of UIA's own focus
+  tracking), and ten seconds, its transaction timeout (each request on a
+  held element), re-exported from `verbatim-model`, where the limits that
+  nest around it are (`books/dev/src/reference/crates/verbatim-model.md`,
+  "Time limits"). Both are settings of the process, not of a client
+  (experiment E1 in `books/dev/src/explanation/design/focus-pipeline.md`),
+  so UIA's first-time setup sets them once. Each bounds one request into a
+  provider, not an operation: an operation of many requests is bounded by
+  the deadline of the outpost's program it runs in. The connection timeout
+  stays UIA's default and NVDA's, since a hung window named in a focus
+  `WinEvent` holds every UIA event of the listener for twice it.
 - `Uia`: a per-thread client (one COM apartment, one `IUIAutomation`;
   nothing COM crosses threads). The coclass is `CUIAutomation8`, as NVDA
   creates, because only its objects implement the newer client
@@ -65,8 +56,8 @@ listener make. Its remote operations are in `verbatim-uia-rops`
 
 Every fetch takes a shape's `Request` and returns its `Cached` (the
 shapes, below), or a `Live` when nothing of the element is read. Each
-call waits up to `CONNECTION_TIMEOUT` to connect and
-`TRANSACTION_TIMEOUT` for its answer, and every one is safe to call.
+call waits up to `UIA_CONNECTION_TIMEOUT` to connect and
+`UIA_TRANSACTION_TIMEOUT` for its answer, and every one is safe to call.
 
 - `window_element(hwnd, request)`: a window's element
   (`ElementFromHandleBuildCache`), for an outpost's own application's
@@ -414,7 +405,7 @@ The design is `books/dev/src/explanation/design/focus-pipeline.md`, section 17.
   newer move of the same registration is skipped, unless a settle or close
   comes between. Every move and each call it or a close makes is logged at
   debug level with its result and elapsed milliseconds, at warn level when
-  the call took longer than `CONNECTION_TIMEOUT` or was a failed removal,
+  the call took longer than `UIA_CONNECTION_TIMEOUT` or was a failed removal,
   naming the element by runtime id. `settle()` waits until every move
   asked for before it has been made, for tests.
 - `close()` ends a registration for good and returns once done: every
@@ -428,10 +419,9 @@ The design is `books/dev/src/explanation/design/focus-pipeline.md`, section 17.
   fails at the close stays live, calling the closed registration's
   callbacks, until the thread ends and `RemoveAllEventHandlers` removes
   it. A `close()` made on the registering thread itself is queued and
-  does not wait. `calls::count`, `Cached::agile` and `BoundedClient::run`
-  call the debug-build lock check (`verbatim_win32::held_locks::check`),
-  and the catches around event callbacks and bounded operations end the
-  process on its panic. The removals and the focus handler's add carry fault
+  does not wait. `calls::count` and `Cached::agile` call the debug-build
+  lock check (`verbatim_win32::held_locks::check`), and the catches around
+  event callbacks end the process on its panic. The removals and the focus handler's add carry fault
   points, `RemoveGroup`, `AddFocusHandler` and `RemoveFocusHandler`,
   compiled into this crate's tests and under its `faults` feature, which
   also gives `kept_for_tests()`, how many closed or failed registrations
@@ -468,7 +458,7 @@ shapes, are described in `books/dev/src/reference/crates/verbatim-outpost.md`.
   `SendMessageTimeoutW` of `WM_GETOBJECT` with wParam 0 and
   `UiaRootObjectId` sign-extended, with
   `SMTO_ABORTIFHUNG | SMTO_BLOCK | SMTO_ERRORONEXIT` and
-  `RAW_PROBE_TIMEOUT_MS` (3,000 ms), counted as one window message, so it
+  `UIA_RAW_PROBE_TIMEOUT_MS` (3,000 ms), counted as one window message, so it
   is called only from deadline-guarded threads. It asks once, as NVDA
   does, and its answer is kept for 500 ms (`books/dev/src/explanation/design/focus-pipeline.md`,
   section 8). Unlike `UiaHasServerSideProvider`, which NVDA calls, it

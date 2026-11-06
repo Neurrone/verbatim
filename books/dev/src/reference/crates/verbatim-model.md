@@ -245,6 +245,28 @@ recorder unchanged. What the reducer does with each type is in
   [verbatim-uia](verbatim-uia.md) and [verbatim-ia2](verbatim-ia2.md)
   count them.
 
+## Time limits
+
+The limits a slow application is waited for by, in one place for the
+outposts, their logic crate, the focus listener and Core, which all
+depend on this crate under the tier rules: a slow application is waited
+for, as NVDA's watchdog waits (`docs/nvda/main-loop-and-watchdog.md`),
+rather than cut off. Each limit is longer than everything inside it plus a
+margin of a second, and a compile-time assertion states each nesting.
+
+- `UIA_TRANSACTION_TIMEOUT`, 10 seconds: one UIA request, set once per
+  process (re-exported by `verbatim-uia`).
+- `HANDLING_DEADLINE`, 11 seconds: one task, an outpost's program, the
+  request and the margin. It bounds MSAA calls and window messages too,
+  which have no limit of their own. A task of several slow calls can still
+  pass it; only one request is promised to end by its own timeout.
+- `SAME_WINDOW_BOUND`, 2 seconds: the bound of a walk in the window of the
+  focus before it, both readers', and of the focus listener's NVDA checks.
+- `BOUNDED_WALK_DEADLINE`, 13 seconds: `HANDLING_DEADLINE` and
+  `SAME_WINDOW_BOUND`, the deadline of work whose walk or checks are a
+  budget checked between calls: an outpost's focus-now, its report of a
+  listener read, and the listener's read.
+
 ## The wire protocol
 
 `protocol` holds the messages between verbatim.exe and its children, the
@@ -295,11 +317,9 @@ that carries them on the pipes, `Message`, is
   an outpost sends ahead of its queue (`Pong`, `Ready`, `TargetExited`,
   `SpareReady`), none of which carries a node.
 - `Query` is `FocusNow`, `Navigate`, `Activate`, `Ancestors`, `DumpTree`,
-  `Text`, `ShellItems` or `ShellItemPosition`; `WALK_DEADLINE` (5
-  seconds) bounds an outpost's walk of the ancestors or the tree, from
-  when its worker begins it. A shell items or position query carries its
-  own times on the run's shared clock: `walk_until_us`, the walk's last
-  call, and `answer_by_us`, the outpost's deadline for it. A
+  `Text`, `ShellItems` or `ShellItemPosition`. A shell items or position
+  query carries its deadline on the run's shared clock, `answer_by_us`;
+  one dispatched past it is answered with no items. A
   `FocusNow` answer carries the foreground window when the application
   holds the foreground, its focused control (`FocusedControl`) with
   ancestors, selected child, window facts and text, and when reading

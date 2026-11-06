@@ -51,15 +51,19 @@ Public API:
   the facts it is judged against and `then_abandon`, the abandonment
   that asked for it (a `Reason`), which comes back in the answer so the
   reducer keeps nothing between the two.
-- A program's deadline is its entry's (`budget`): its kind's from when
-  the program begins, or, for a shell items or position query, the
-  `answer_by_us` the query carries, on the run's shared clock, so a query
-  that waited behind other work has only what is left of it. One reached
-  at or after the `walk_until_us` it carries is too late to walk: the
-  reducer answers it at once with nothing read, an empty list or no
-  candidates and incomplete, as a walk out of time answers, and dispatches
-  no program, since a walk makes its first call regardless and could
-  outlive the deadline, abandoning the worker. A query's `RequestId` is
+- A program's deadline is its entry's (`budget`): `HANDLING_DEADLINE`
+  (11 seconds, `verbatim-model`'s) from when the program begins for every
+  program but two, focus-now and a listener read's report, which have
+  `BOUNDED_WALK_DEADLINE` (13 seconds), their walk being a budget checked
+  between calls with no publication of its own beyond it; or, for a shell
+  items or position query, the `answer_by_us` the query carries, on the
+  run's shared clock, so a query that waited behind other work has only
+  what is left of it. One reached at or after its `answer_by_us` is too
+  late: the reducer answers it at once with nothing read, an empty list or
+  no candidates and incomplete, and dispatches no program, which would
+  only be abandoned at once. A test's handling deadline
+  (`Input::HandlingDeadline`) takes `HANDLING_DEADLINE`'s place, and
+  `SAME_WINDOW_BOUND` more for the two. A query's `RequestId` is
   stored and echoed in its reply, and decides nothing.
 - The program in flight is the reducer's work in flight
   (`InFlight<Current>`): its request, deadline, walk and moved-on rule

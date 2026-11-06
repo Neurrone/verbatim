@@ -922,8 +922,7 @@ impl Run {
                     request_id: RequestId::shell(number),
                     query: Query::ShellItems {
                         kind: verbatim_model::ShellItemKind::Taskbar,
-                        walk_until_us: self.wall,
-                        answer_by_us: self.wall + 2_000_000,
+                        answer_by_us: self.wall,
                     },
                 }
             }

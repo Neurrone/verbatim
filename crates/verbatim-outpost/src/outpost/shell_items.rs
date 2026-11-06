@@ -26,15 +26,11 @@
 //! the rule (`Uia::window_element`), and a lookup refused, as one of a
 //! shell busy past the connection timeout is, reads none of its items.
 //!
-//! The walk has a time limit, asked before each of its calls after the
-//! first, a candidate's position read included: [`WALK_BUDGET`] from when
-//! it begins, or its query's `walk_until_us` on the run's shared clock,
-//! whichever ends first. Once it has passed, the walk makes no more calls
-//! and the answer holds the items read by then, rather than the query's
-//! deadline abandoning the walk with none.
+//! The walk has no time limit of its own: its program's deadline bounds
+//! it, so a slow taskbar's whole list is shown once it answers, and one
+//! that does not finish by the deadline gives none.
 
 use std::cell::Cell;
-use std::time::Duration;
 
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Accessibility::{IUIAutomationTreeWalker, UIA_ButtonControlTypeId};
@@ -46,8 +42,6 @@ use verbatim_uia::{Cached, Direction, Place, Request, ShellButton, Uia, element_
 
 use super::Context;
 use super::read::{Client, ReadError, serves};
-use crate::arbitration::time_limit;
-use verbatim_process::clock::{Clock, now_us};
 
 /// Depth cap for the control-view walk; the shell trees of interest are
 /// shallow, so anything deeper is runaway recursion, not real items.
@@ -57,39 +51,16 @@ const MAX_DEPTH: u32 = 16;
 /// adversarially deep or wide provider.
 const MAX_NODES: usize = 1024;
 
-/// How long the walk may take from when it begins before it makes no more
-/// calls and answers the items read by then, at most: the query's
-/// `walk_until_us`, which Core sets half a second before the query's
-/// deadline to leave time for one call under way, ends it sooner when the
-/// query began late.
-const WALK_BUDGET: Duration = Duration::from_secs(2);
-
-/// Whether the walk is out of time: [`WALK_BUDGET`] on `clock` from now
-/// has passed, or `shared`, the run's shared clock, has reached
-/// `walk_until_us`.
-fn walk_limit<'a>(
-    clock: &'a Clock,
-    shared: impl Fn() -> u64 + 'a,
-    walk_until_us: u64,
-) -> impl Fn() -> bool + 'a {
-    let budget = time_limit(clock, WALK_BUDGET);
-    move || budget() || shared() >= walk_until_us
-}
-
-/// The items of `kind`, read in the outpost's application, the walk making
-/// no call from `walk_until_us` on the run's shared clock.
+/// The items of `kind`, read in the outpost's application.
 pub(super) fn shell_items(
     context: &Context,
     client: &mut Client,
     kind: ShellItemKind,
-    walk_until_us: u64,
 ) -> Result<Vec<ShellItem>, ReadError> {
     let uia = client
         .uia()
         .ok_or_else(|| ReadError::Failed("could not create a UIA client".to_owned()))?;
-    let clock = context.clock();
-    let out_of_time = walk_limit(&clock, now_us, walk_until_us);
-    Ok(walk_surface(context, uia, kind, &out_of_time)?
+    Ok(walk_surface(context, uia, kind)?
         .found
         .into_iter()
         .map(|found| found.item)
@@ -100,15 +71,11 @@ pub(super) fn shell_items(
 /// from an earlier list, now: the surface walked again, and every button
 /// whose runtime id or name is `chosen`'s ([`is_candidate`]) read for its
 /// place, one read each. A candidate gone before its read is left out; one
-/// whose read fails otherwise is left out and makes the answer incomplete;
-/// the time limit passing before a read, at `walk_until_us` on the run's
-/// shared clock at the latest, leaves that candidate and the rest out and
-/// the answer incomplete.
+/// whose read fails otherwise is left out and makes the answer incomplete.
 pub(super) fn shell_item_position(
     context: &Context,
     client: &mut Client,
     (kind, chosen): (ShellItemKind, &ShellItem),
-    walk_until_us: u64,
 ) -> Result<ShellCandidates, ReadError> {
     let uia = client
         .uia()
@@ -116,9 +83,7 @@ pub(super) fn shell_item_position(
     let place = uia
         .request_fixed::<Place>()
         .map_err(|error| ReadError::Failed(format!("could not build a cache request: {error}")))?;
-    let clock = context.clock();
-    let out_of_time = walk_limit(&clock, now_us, walk_until_us);
-    let walked = walk_surface(context, uia, kind, &out_of_time)?;
+    let walked = walk_surface(context, uia, kind)?;
     let mut complete = walked.complete;
     let mut candidates = Vec::new();
     for found in walked
@@ -126,14 +91,6 @@ pub(super) fn shell_item_position(
         .iter()
         .filter(|found| is_candidate(chosen, &found.item))
     {
-        if out_of_time() {
-            tracing::debug!(
-                name = chosen.name,
-                "the shell walk ran out of time before a candidate's position was read"
-            );
-            complete = false;
-            break;
-        }
         match found.element.live().refresh(&place) {
             Ok(element) => {
                 let place = element.read();
@@ -181,19 +138,13 @@ struct Found {
 struct Walked {
     /// The buttons listed, in the shell's order.
     found: Vec<Found>,
-    /// Whether every button was read: false when the time budget or the
-    /// node cap cut the walk short, or a step or a window's lookup failed.
+    /// Whether every button was read: false when the node cap cut the walk
+    /// short, or a step or a window's lookup failed.
     complete: bool,
 }
 
-/// The buttons of `kind`, walked in the outpost's application under the
-/// budget `out_of_time` keeps.
-fn walk_surface(
-    context: &Context,
-    uia: &Uia,
-    kind: ShellItemKind,
-    out_of_time: &dyn Fn() -> bool,
-) -> Result<Walked, ReadError> {
+/// The buttons of `kind`, walked in the outpost's application.
+fn walk_surface(context: &Context, uia: &Uia, kind: ShellItemKind) -> Result<Walked, ReadError> {
     let request = uia
         .request_fixed::<ShellButton>()
         .map_err(|error| ReadError::Failed(format!("could not build a cache request: {error}")))?;
@@ -212,7 +163,6 @@ fn walk_surface(
         uia,
         walker: &walker,
         request: &request,
-        out_of_time,
         cut_short: Cell::new(false),
     };
     let mut items = Vec::new();
@@ -309,12 +259,8 @@ struct Walk<'a> {
     uia: &'a Uia,
     walker: &'a IUIAutomationTreeWalker,
     request: &'a Request<ShellButton>,
-    /// Whether the walk's time limit has passed ([`walk_limit`]), asked
-    /// before each call after the first.
-    out_of_time: &'a dyn Fn() -> bool,
-    /// Whether a button may have been left unread: set when the budget or
-    /// the node cap stopped the walk, or a step or a window's lookup
-    /// failed. The depth cap and the excluded subtree do not set it.
+    /// Whether a button may have been left unread: set when the node cap
+    /// stopped the walk, or a step or a window's lookup failed. The depth cap and the excluded subtree do not set it.
     cut_short: Cell<bool>,
 }
 
@@ -333,9 +279,6 @@ impl Walk<'_> {
         let window = hwnd.0 as isize;
         if !serves(self.context, window) {
             tracing::debug!(window, "a shell window of another application is not read");
-            return;
-        }
-        if self.out_of_time_now() {
             return;
         }
         let root = match lookup {
@@ -386,7 +329,7 @@ impl Walk<'_> {
             // Tray and taskbar buttons carry no nested items worth walking.
             return;
         }
-        if depth >= MAX_DEPTH || self.out_of_time_now() {
+        if depth >= MAX_DEPTH {
             return;
         }
         let mut next = self.step(element.live().walk(
@@ -402,24 +345,12 @@ impl Walk<'_> {
                 return;
             }
             self.collect_recursive(&current, exclude, depth + 1, visited, items);
-            if self.out_of_time_now() {
-                return;
-            }
             next = self.step(current.live().walk(
                 self.walker,
                 Direction::NextSibling,
                 self.request,
             ));
         }
-    }
-
-    /// Whether the budget has passed, recording that the walk stops short.
-    fn out_of_time_now(&self) -> bool {
-        let out = (self.out_of_time)();
-        if out {
-            self.cut_short.set(true);
-        }
-        out
     }
 
     /// One step of the walk: the element reached, or none at the end of an
@@ -485,33 +416,6 @@ mod tests {
     #[test]
     fn offscreen_buttons_are_not_listed() {
         assert_eq!(listed_name(Some("Clock".into()), true), None);
-    }
-
-    /// The walk stops its calls at its query's `walk_until_us` on the
-    /// shared clock when that comes before its budget, and at its budget
-    /// when that comes first.
-    #[test]
-    fn the_walk_is_out_of_time_at_its_last_call_time_or_its_budget() {
-        let start = std::time::Instant::now();
-        let elapsed = std::sync::Arc::new(crate::outpost::lock::Lock::new(Duration::ZERO));
-        let read = std::sync::Arc::clone(&elapsed);
-        let clock: Clock = std::sync::Arc::new(move || start + *read.lock());
-        let shared = Cell::new(1_000_000_u64);
-        let set = |at: Duration| {
-            *elapsed.lock() = at;
-            shared.set(1_000_000 + u64::try_from(at.as_micros()).expect("small"));
-        };
-        let early = walk_limit(&clock, || shared.get(), 1_800_000);
-        set(Duration::from_millis(799));
-        assert!(!early(), "before its last call time");
-        set(Duration::from_millis(800));
-        assert!(early(), "at its last call time");
-        set(Duration::ZERO);
-        let late = walk_limit(&clock, || shared.get(), 9_000_000);
-        set(Duration::from_millis(1_999));
-        assert!(!late());
-        set(WALK_BUDGET);
-        assert!(late(), "at the budget, before its last call time");
     }
 
     #[test]

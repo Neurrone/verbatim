@@ -73,8 +73,16 @@ use requests::{Asker, DumpTicket, DumpTreeResult, RequestTable};
 pub(crate) const SHOW_MENU_GESTURE: &str = "kb:verbatim+v";
 
 /// How long a `DumpTree` control-plane request waits for the outpost's
-/// answer before giving up.
-const DUMP_TREE_TIMEOUT: Duration = Duration::from_secs(5);
+/// answer before giving up: the longest program that can be in flight
+/// ahead of the dump
+/// ([`BOUNDED_WALK_DEADLINE`](verbatim_model::BOUNDED_WALK_DEADLINE)), the
+/// dump itself ([`HANDLING_DEADLINE`](verbatim_model::HANDLING_DEADLINE))
+/// and a second for the answer's way back, 25 seconds. The dump can also
+/// wait behind entries already queued, which no limit covers: it is a
+/// developer's tool.
+const DUMP_TREE_TIMEOUT: Duration = verbatim_model::BOUNDED_WALK_DEADLINE
+    .saturating_add(verbatim_model::HANDLING_DEADLINE)
+    .saturating_add(Duration::from_secs(1));
 
 /// The reducer's flight recorder, shared between the reducer thread (which
 /// records each input as it processes it) and both dump triggers: a
@@ -1884,7 +1892,8 @@ impl ReducerThread<'_> {
     /// outcome goes to `ask`'s callback, exactly once, within
     /// [`wanted::SHELL_ITEMS_WAIT`] of now; `None` when there is no
     /// taskbar, when its process gets no outpost or none is ready before
-    /// the walk's last call, or when no answer has come by then.
+    /// the outpost's deadline for the query, or when no answer has come by
+    /// then.
     fn shell_items(&mut self, kind: ShellItemKind, ask: verbatim_gui::ShellAsk) {
         let Some(pid) = taskbar_process() else {
             // Dropped, the request is answered "nothing".
@@ -1902,8 +1911,7 @@ impl ReducerThread<'_> {
     }
 
     /// Sends `outpost` the shell items query or the position query `ask`
-    /// says, with the walk's last call and the outpost's deadline from
-    /// `times`, answered with nothing by Core, and withdrawn, if no outcome
+    /// says, with the outpost's deadline from `times`, answered with nothing by Core, and withdrawn, if no outcome
     /// has come by Core's deadline ([`wanted::ShellTimes::answer_by_us`]).
     fn ask_shell_items(
         &mut self,
@@ -1912,23 +1920,17 @@ impl ReducerThread<'_> {
         ask: verbatim_gui::ShellAsk,
         times: wanted::ShellTimes,
     ) {
-        let walk_until_us = times.walk_until_us();
         let answer_by_us = times.outpost_answer_by_us();
         let (asker, query) = match ask {
             verbatim_gui::ShellAsk::Items(deliver) => (
                 Asker::ShellItems { deliver },
-                Query::ShellItems {
-                    kind,
-                    walk_until_us,
-                    answer_by_us,
-                },
+                Query::ShellItems { kind, answer_by_us },
             ),
             verbatim_gui::ShellAsk::Position(item, deliver) => (
                 Asker::ShellItemPosition { deliver },
                 Query::ShellItemPosition {
                     kind,
                     item,
-                    walk_until_us,
                     answer_by_us,
                 },
             ),
@@ -2027,7 +2029,7 @@ impl ReducerThread<'_> {
     }
 
     /// Answers every shell items request still waiting for its outpost at
-    /// its walk's last call with nothing, ends every request whose deadline
+    /// the outpost's deadline for it with nothing, ends every request whose deadline
     /// is past and withdraws it from its outpost, and tells Core once the
     /// held key's one deadline is past.
     fn expire(&mut self, now: Instant) {

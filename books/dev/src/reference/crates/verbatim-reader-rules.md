@@ -93,11 +93,6 @@ Public API:
   same application on another UI thread: NVDA's `MIN_CORE_ALIVE_TIMEOUT`,
   500 ms. The work in flight judges by it, at the grace's end and every
   grace after.
-- `UIA_FOCUS_WAIT` — how long an outpost waits for a UIA focus after a
-  focus `WinEvent`, a second: the bound of the outpost reducer's gap
-  record (`gap_record::BOUND_US`), and, by definition, the bound under
-  which the listener counts a nearest window's lookup that timed out as
-  failing fast (`verbatim_listener_logic::focus::NEAREST_FAILED_FAST_BOUND`).
 
 Tests: the class normalization, the class lists pinned to their NVDA
 sources so an NVDA sync is a diff, the acceptance test rule by rule

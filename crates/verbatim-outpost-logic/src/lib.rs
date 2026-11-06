@@ -81,7 +81,6 @@ use std::time::Duration;
 
 use verbatim_model::protocol::{
     DeliveredFact, EventTiming, OutpostToCore, Query, QueryOutcome, QueryResult, RequestId,
-    WALK_DEADLINE,
 };
 use verbatim_model::{CallCounts, FocusGroup, NodeId, TextOp, TraceId};
 use verbatim_reader_rules::Window;
@@ -108,22 +107,16 @@ pub use self::watch::{
     Answer, CARET_WATCH_BOUND, Checked, OpenWatch, POLL_BOUND, POLL_INTERVAL, Resume, Watch,
 };
 
-/// The deadline for handling an event, a focus, or a focus-now query: NVDA's
-/// `NORMAL_CORE_ALIVE_TIMEOUT` (`watchdog.py`), the time NVDA waits for an
-/// application that is slow to answer before cancelling the call. An
-/// application that is starting up, or the Start menu's search window as it
-/// opens, can take two or three seconds to answer a read that then succeeds
-/// (found live in the end-to-end suite); NVDA announces the focus late, and
-/// a shorter deadline here dropped it for good.
-pub const HANDLING_DEADLINE: Duration = Duration::from_secs(10);
+/// The deadline of every program but focus-now and a listener read's
+/// report: one UIA request and a margin
+/// ([`verbatim_model::HANDLING_DEADLINE`]), one constant for the outpost
+/// and Core.
+pub use verbatim_model::HANDLING_DEADLINE;
 
-/// The deadline for one navigation step or an activation.
-const STEP_DEADLINE: Duration = Duration::from_millis(400);
-
-/// The deadline for a text request: one read, or a few, of the node's text;
-/// a caret key's watch is checked once within it and then kept open
-/// outside it.
-const TEXT_DEADLINE: Duration = Duration::from_secs(2);
+/// The deadline of focus-now and of a listener read's report, whose walk is
+/// a budget checked between calls with no publication of its own beyond it
+/// ([`verbatim_model::BOUNDED_WALK_DEADLINE`]).
+pub use verbatim_model::BOUNDED_WALK_DEADLINE;
 
 /// One request of one worker generation: what a program's commits, the
 /// store's mint tags and the walk's slot name it by.
@@ -1470,7 +1463,8 @@ impl Reducer {
                 continue;
             }
             if std::mem::take(&mut self.to_drop) {
-                self.dispatch(Work::Drop, (WALK_DEADLINE, None, None), None, now, effects);
+                let deadline = self.handling_deadline();
+                self.dispatch(Work::Drop, (deadline, None, None), None, now, effects);
                 continue;
             }
             let Some((planned, batch)) = self.intake.next(&self.facts.marks) else {
@@ -1479,12 +1473,11 @@ impl Reducer {
                     Reached::Nothing => return,
                     Reached::Ended(answer) => self.answer_watch(*answer, now, effects),
                     Reached::Read => {
-                        // Under the text deadline, waited for by the idle
-                        // answer: after its answer it reads the terminal
-                        // under the key's trace.
+                        // Waited for by the idle answer: after its answer
+                        // it reads the terminal under the key's trace.
                         self.dispatch(
                             Work::PollRead,
-                            (TEXT_DEADLINE, None, None),
+                            (self.handling_deadline(), None, None),
                             None,
                             now,
                             effects,
@@ -1602,22 +1595,19 @@ impl Reducer {
                     self.dispatch_entry(read, Handling::Run, batch, None, now, effects);
                 }
             }
-            // A shell query reached at its walk's last call time is too
-            // late to walk: a walk begun now would make its first call
-            // regardless and could outlive the query's deadline, so it is
-            // answered at once as a walk out of time answers it, with
-            // nothing read.
+            // A shell query reached at its deadline is answered at once with
+            // no items, as one abandoned there would have nothing to say.
             Item::Query {
                 request_id,
-                query: Query::ShellItems { walk_until_us, .. },
-            } if now.wall_us >= walk_until_us => {
+                query: Query::ShellItems { answer_by_us, .. },
+            } if now.wall_us >= answer_by_us => {
                 let outcome = QueryOutcome::Done(QueryResult::ShellItems(Vec::new()));
                 self.send(reply(request_id, entry.trace, outcome), effects);
             }
             Item::Query {
                 request_id,
-                query: Query::ShellItemPosition { walk_until_us, .. },
-            } if now.wall_us >= walk_until_us => {
+                query: Query::ShellItemPosition { answer_by_us, .. },
+            } if now.wall_us >= answer_by_us => {
                 let none = verbatim_model::ShellCandidates {
                     candidates: Vec::new(),
                     complete: false,
@@ -1872,33 +1862,35 @@ fn micros(duration: Duration) -> u64 {
 
 /// The deadline for an entry begun at `now`, and the query it answers, if
 /// it is one, `handling` being [`HANDLING_DEADLINE`] or a test's in its
-/// place. A shell item query's deadline is the one it carries, a due
-/// time on the shared clock fixed when the dialog asked, so a query that
-/// waited behind other work has only what is left of it.
+/// place: `handling` for every entry but focus-now and a listener read's
+/// report, which have [`SAME_WINDOW_BOUND`](verbatim_model::SAME_WINDOW_BOUND)
+/// more, their walk's budget ([`BOUNDED_WALK_DEADLINE`] when `handling` is
+/// [`HANDLING_DEADLINE`]). A shell item query's deadline is the one it
+/// carries, a due time on the shared clock fixed when the dialog asked, so
+/// a query that waited behind other work has only what is left of it.
 fn budget(entry: &Entry, now: Now, handling: Duration) -> (Duration, Option<(RequestId, TraceId)>) {
+    let bounded_walk = handling.saturating_add(verbatim_model::SAME_WINDOW_BOUND);
     match &entry.item {
         Item::Query { request_id, query } => {
             let deadline = match query {
-                Query::FocusNow => handling,
-                Query::Ancestors { .. } | Query::DumpTree { .. } => WALK_DEADLINE,
+                Query::FocusNow => bounded_walk,
                 Query::ShellItems { answer_by_us, .. }
                 | Query::ShellItemPosition { answer_by_us, .. } => {
                     Duration::from_micros(answer_by_us.saturating_sub(now.wall_us))
                 }
-                Query::Text { .. } => TEXT_DEADLINE,
-                _ => STEP_DEADLINE,
+                _ => handling,
             };
             (deadline, Some((*request_id, entry.trace)))
         }
+        Item::Fact(DeliveredFact::UiaFocusRead { .. }, _) => (bounded_walk, None),
         Item::Fact(..)
         | Item::Msaa { .. }
         | Item::Uia(_)
         | Item::NotedCaret { .. }
         | Item::Barrier { .. }
         | Item::GapBound { .. }
-        | Item::GapRead { .. } => (handling, None),
-        // Releasing thousands of objects after a tree dump takes a while.
-        Item::NodesHeld { .. } => (WALK_DEADLINE, None),
+        | Item::GapRead { .. }
+        | Item::NodesHeld { .. } => (handling, None),
     }
 }
 

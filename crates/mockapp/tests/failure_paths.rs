@@ -97,7 +97,7 @@ fn a_first_worker_that_cannot_start_answers_its_program_and_starts_with_the_next
 }
 
 /// A replacement worker that cannot start: generation 0 is abandoned at its
-/// deadline, shortened from 10 seconds to 2, while mockapp holds its call,
+/// deadline, shortened from 11 seconds to 2, while mockapp holds its call,
 /// and generation 1's start fails;
 /// once the call is let go, the next program's dispatch starts generation
 /// 1's worker, which answers it with its read.

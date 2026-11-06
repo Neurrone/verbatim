@@ -15,11 +15,6 @@
 //!   round trip per hop; M4's remote-ops work replaces the per-hop walk with
 //!   a single batched round trip), and activates a node through the
 //!   `Invoke`/`Toggle`/legacy-`DoDefaultAction` pattern ladder.
-//! - [`BoundedClient`] — a client on a thread of its own, for an operation
-//!   made of many provider calls (a search, a dialog's text) that needs a
-//!   deadline of its own: UIA's timeouts ([`TRANSACTION_TIMEOUT`]) bound each call,
-//!   not the operation, and a call cannot be cancelled, so an operation
-//!   that passes its deadline is abandoned with its thread.
 //! - [`Registration`] — a property-change, automation-event, or notification
 //!   subscription over a [`Scope`] (given windows, the whole desktop, or
 //!   given elements) that can be moved without waiting, as two event
@@ -61,7 +56,6 @@
 
 mod answered;
 pub use answered::served_only_by_uia_proxies;
-mod bounded;
 mod cache;
 pub mod calls;
 mod checks;
@@ -78,11 +72,10 @@ mod shape;
 mod subscribe;
 pub mod text;
 
-pub use bounded::{BoundedClient, Unanswered};
 pub use checks::{CONSOLE_TEXT_AREA, console_reports_formatting, held_console_reports_formatting};
 pub use client::{
-    AncestorParts, AncestorStops, AncestorWalk, CONNECTION_TIMEOUT, FailedHop, TRANSACTION_TIMEOUT,
-    Uia, release_mta_usage,
+    AncestorParts, AncestorStops, AncestorWalk, FailedHop, UIA_CONNECTION_TIMEOUT, Uia,
+    release_mta_usage,
 };
 pub use com::{
     element_is_gone, init_mta, is_mixed, is_not_supported, leave_mta, runtime_id, timed_out,
@@ -92,7 +85,7 @@ pub use com::{
 pub use element::{ElementExt, WalkerExt, elements_of};
 pub use focus::FocusCallback;
 pub use nearest::{nearest_window_handle, nearest_window_lookup};
-pub use probe::{RAW_PROBE_TIMEOUT_MS, RawProbe, raw_probe, raw_probe_verdict};
+pub use probe::{RawProbe, UIA_RAW_PROBE_TIMEOUT_MS, raw_probe, raw_probe_verdict};
 pub use registry::{Interning, NodeIdRegistry, Released};
 pub use shape::{
     Absent, Agile, Ancestor, AncestorGates, Cached, Cell, Covers, Description, DialogText,
@@ -108,6 +101,7 @@ pub use subscribe::{
     NotificationCallback, Part, PropertyCallback, Registration, Scope, Subscription,
     registering_thread_runs,
 };
+pub use verbatim_model::UIA_TRANSACTION_TIMEOUT;
 pub use verbatim_win32::provider::{
     console_host_of, is_top_level_window, outermost_nearest_window, parent_across_process_boundary,
     parent_window, plain_windows_start, provider_process, raw_view_parent_window, served_by,

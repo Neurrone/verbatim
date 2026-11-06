@@ -71,13 +71,3 @@ pub const CONSOLE_WINDOW_CLASS: &str = "ConsoleWindowClass";
 /// 18.3), and the focus listener's reading threads their reads, each
 /// judged by `verbatim_win32::window::front_is_another_thread_of_its_application`.
 pub const MOVED_ON_GRACE: Duration = Duration::from_millis(500);
-
-/// How long an outpost waits for a UIA focus after a focus `WinEvent`
-/// before it reads the focus itself: the bound of its reducer's gap record.
-/// The focus listener counts a nearest window's lookup that timed out in
-/// less than this as failing fast, by definition: a lookup that took this
-/// long has held its application's later events as long as the record
-/// waits for a UIA focus, and is taken as the application not answering
-/// in time. The reasons for a second are given with the gap record's bound
-/// (the outpost reducer's `gap_record::BOUND_US`).
-pub const UIA_FOCUS_WAIT: Duration = Duration::from_secs(1);

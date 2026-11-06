@@ -114,14 +114,14 @@ receives the event's own element, judges and reads a UIA focus
   outpost closes the record by its own reports, and the listener places
   nothing. A focus whose nearest
   window's lookup failed with `UIA_E_TIMEOUT` is dropped with no other
-  call, its reason chosen by `focus_read::nearest_timeout_reason`: after
-  `focus_read::NEAREST_FAILED_FAST_BOUND` (a second) or more,
-  as timed out (`focus_read::NEAREST_TIMED_OUT`); sooner, as failing fast
-  (`focus_read::NEAREST_FAILED_FAST`). Either leaves the record to its
-  bound, so the outpost's gap read there reads the focus. An application
-  whose lookups keep failing fast has every focus spoken through the gap,
-  up to a second late, and the focuses between two gap reads not spoken.
-- Budget and bound. NVDA's checks have `READ_BUDGET` (2 seconds) from
+  call, however long the lookup took, for
+  `verbatim_listener_logic::focus::NEAREST_TIMED_OUT`. That leaves the
+  record to its bound, so the outpost's gap read there reads the focus.
+  An application whose lookups keep failing has every focus spoken
+  through the gap, up to a second late, and the focuses between two gap
+  reads not spoken.
+- Budget and bound. NVDA's checks have `SAME_WINDOW_BOUND` (2 seconds,
+  `verbatim-model`'s, the bound both readers share in the same window) from
   the read's start, asked before each call after the first (`Budget`).
   Past it the read makes no calls but still makes every check that needs
   none, the class-list skip among them, taking the keyboard focus from the
@@ -134,8 +134,8 @@ receives the event's own element, judges and reads a UIA focus
   the focus's top-level window is not that of the previous focus the
   listener observed, which the reading thread places in order
   (`FocusReader::last_top`) and which is always elsewhere after another
-  application's focus (the schedule's `last_focus`), and `READ_BUDGET`
-  otherwise. A walk past its bound is reported by `read_at_bound`: the
+  application's focus (the schedule's `last_focus`), and
+  `SAME_WINDOW_BOUND` otherwise. A walk past its bound is reported by `read_at_bound`: the
   focus as read so far, the ancestors read, and `PlainFrom` the outermost
   one's nearest window. A call over a second is logged at info
   (`FocusQuery::before_call`).
@@ -153,7 +153,7 @@ receives the event's own element, judges and reads a UIA focus
   sends it as the event's outcome, and its work in flight refuses the
   thread's late result when it returns. The thread is not abandoned for
   this: it reads its application's next event when its call returns, is
-  abandoned only at `READ_DEADLINE` or by the moved-on rule, and so
+  abandoned only at `BOUNDED_WALK_DEADLINE` or by the moved-on rule, and so
   counts against `ABANDONED_LIMIT` only then, when no second outcome is
   sent. A read still in its checks at the bound is left to those rules.
   A menu item's legacy MSAA state, read after the walk, is published as
@@ -163,8 +163,9 @@ receives the event's own element, judges and reads a UIA focus
   `ReadingThreads` runs the reading threads and their watchdog in a
   test's process, outcomes sent to a channel, so a mockapp test can watch
   the watchdog meet the bound.
-- Watchdog. A read past `READ_DEADLINE`, 8 seconds (the budget, the
-  5-second transaction timeout, and a second), is abandoned;
+- Watchdog. A read past `BOUNDED_WALK_DEADLINE` (`verbatim-model`'s, 13
+  seconds: the budget, the 10-second transaction timeout, and a second),
+  is abandoned;
   a timeout bounds each request and window message, not an operation
   (`books/dev/src/reference/uia-bugs.md`). A focus's or menu opening's read is also abandoned
   once the window in front belongs to its application on another UI
@@ -184,7 +185,7 @@ receives the event's own element, judges and reads a UIA focus
   (`Reading::forget_last`, `FocusReader::forget_last`), a focus Core never
   got, which no later read compares with or reuses. With `ABANDONED_LIMIT`
   (two) threads still in calls the application gets no new thread and its
-  events wait, and the first that returns reads them; `READ_DEADLINE` after
+  events wait, and the first that returns reads them; `BOUNDED_WALK_DEADLINE` after
   that every waiting and later event is dropped until a thread returns.
   The watchdog sleeps on an alarm (`verbatim_process::alarm::Alarm`, as an
   outpost's reducer does), which the schedule sets after every step to

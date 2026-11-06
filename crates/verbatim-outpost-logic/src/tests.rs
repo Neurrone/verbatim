@@ -879,7 +879,7 @@ fn a_walk_whose_worker_is_abandoned_is_published_first_and_its_sends_after_refus
     // The deadline comes before the bound: the walk is published, then its
     // worker abandoned, in one step of the shell's: the tick asks for the
     // publication, and its answer commits it then abandons (c47d57ae).
-    let effects = replay.tick(10_001);
+    let effects = replay.tick(11_001);
     let order: Vec<&str> = effects
         .iter()
         .filter_map(|effect| match effect {
@@ -917,7 +917,7 @@ fn an_adopted_focus_gives_its_marks_ahead_of_the_dispatch() {
     replay.answers.publications.push_back(focus_change(1, true));
     // The deadline publishes the walk; the publication's answer adopts the
     // terminal's focus, abandons the worker and dispatches its owed read.
-    let effects = replay.tick(10_001);
+    let effects = replay.tick(11_001);
     let order: Vec<&str> = effects
         .iter()
         .filter_map(|effect| match effect {
@@ -944,27 +944,52 @@ fn an_adopted_focus_gives_its_marks_ahead_of_the_dispatch() {
     );
 }
 
-/// Each kind of entry is given its own deadline: the handling deadline for
-/// a focus-now query and every fact, the text deadline for a text query,
-/// what is left until its answer is due for a shell query, the walk's for
-/// ancestors and the nodes Core holds, and a step's for anything else
-/// asked.
+/// Every entry is given the handling deadline but two, focus-now and a
+/// listener read's report, which are given the bounded walk's: what is
+/// left until its answer is due for a shell query.
 #[test]
-fn each_kind_of_entry_is_given_its_own_deadline() {
-    let handling = Duration::from_secs(7);
+fn every_entry_is_given_the_handling_deadline_but_focus_now_and_a_listener_reads_report() {
     let query = |query: Query| Item::Query {
         request_id: RequestId::shell(4),
         query,
     };
-    let deadline = |item: Item| budget(&entry(item, 1), now(1_000), handling).0;
-    assert_eq!(deadline(focus_now(4)), handling);
-    assert_eq!(deadline(msaa_focus(1, 5)), handling);
-    assert_eq!(deadline(name_change(1)), handling);
-    assert_eq!(deadline(caret_key(4)), TEXT_DEADLINE);
+    let deadline = |item: Item| budget(&entry(item, 1), now(1_000), HANDLING_DEADLINE).0;
+    assert_eq!(deadline(focus_now(4)), BOUNDED_WALK_DEADLINE);
+    let read = verbatim_model::protocol::UiaFocusRead {
+        hwnd: 0x10,
+        snapshot: verbatim_model::protocol::UiaSnapshotFact {
+            runtime_id: vec![42, 2],
+            role: Role::ListItem,
+            name: None,
+            value: None,
+            states: verbatim_model::StateSet::new(),
+            details: verbatim_model::NodeDetails::default(),
+        },
+        ancestors: Vec::new(),
+        ancestors_end: verbatim_model::protocol::AncestorsEnd::Top,
+        selected_child: None,
+        value_from_selection: false,
+        window: Some(0x10),
+        same_as_last: None,
+        bound_us: 2_000_000,
+    };
+    assert_eq!(
+        deadline(Item::Fact(
+            DeliveredFact::UiaFocusRead {
+                marker: 1,
+                read: Box::new(read),
+                focus: true,
+            },
+            None,
+        )),
+        BOUNDED_WALK_DEADLINE
+    );
+    assert_eq!(deadline(msaa_focus(1, 5)), HANDLING_DEADLINE);
+    assert_eq!(deadline(name_change(1)), HANDLING_DEADLINE);
+    assert_eq!(deadline(caret_key(4)), HANDLING_DEADLINE);
     assert_eq!(
         deadline(query(Query::ShellItems {
             kind: verbatim_model::ShellItemKind::Taskbar,
-            walk_until_us: 1_200_000,
             answer_by_us: 1_300_000,
         })),
         Duration::from_millis(300),
@@ -973,7 +998,6 @@ fn each_kind_of_entry_is_given_its_own_deadline() {
     assert_eq!(
         deadline(query(Query::ShellItems {
             kind: verbatim_model::ShellItemKind::Taskbar,
-            walk_until_us: 0,
             answer_by_us: 900_000,
         })),
         Duration::ZERO,
@@ -983,7 +1007,11 @@ fn each_kind_of_entry_is_given_its_own_deadline() {
         deadline(query(Query::Ancestors {
             node_id: NodeId::new(1),
         })),
-        WALK_DEADLINE
+        HANDLING_DEADLINE
+    );
+    assert_eq!(
+        deadline(query(Query::DumpTree { locations: false })),
+        HANDLING_DEADLINE
     );
     assert_eq!(
         deadline(Item::NodesHeld {
@@ -991,21 +1019,27 @@ fn each_kind_of_entry_is_given_its_own_deadline() {
             anchors: Vec::new(),
             acknowledged: 1,
         }),
-        WALK_DEADLINE
+        HANDLING_DEADLINE
     );
     assert_eq!(
         deadline(query(Query::Activate {
             node_id: NodeId::new(1),
         })),
-        STEP_DEADLINE
+        HANDLING_DEADLINE
+    );
+    assert_eq!(
+        deadline(query(Query::Navigate {
+            node_id: NodeId::new(1),
+            kind: verbatim_model::QueryKind::NextSibling,
+        })),
+        HANDLING_DEADLINE
     );
 }
 
-/// The work a followed focus owes is dispatched under the handling
-/// deadline, and a release's drop under the walk's, each from its
-/// dispatch.
+/// The work a followed focus owes and a release's drop are dispatched
+/// under the handling deadline, each from its dispatch.
 #[test]
-fn owed_work_and_a_drop_are_dispatched_under_their_kinds_deadlines() {
+fn owed_work_and_a_drop_are_dispatched_under_the_handling_deadline() {
     let mut replay = Replay::new();
     let effects = replay.push(msaa_focus(1, 1), Source::Hook, 1);
     let request = program(&effects).request;
@@ -1014,7 +1048,7 @@ fn owed_work_and_a_drop_are_dispatched_under_their_kinds_deadlines() {
     let owed = program(&effects);
     assert!(matches!(owed.work, Work::Owed(_)));
     let owed = owed.request;
-    assert_eq!(replay.reducer.flight.deadline(), Some(3_000 + 10_000_000));
+    assert_eq!(replay.reducer.flight.deadline(), Some(3_000 + 11_000_000));
     assert!(programs(&replay.finish(owed, false, 4)).is_empty());
     let effects = replay.push(
         Item::NodesHeld {
@@ -1040,7 +1074,7 @@ fn owed_work_and_a_drop_are_dispatched_under_their_kinds_deadlines() {
         6,
     );
     assert!(matches!(program(&effects).work, Work::Drop));
-    assert_eq!(replay.reducer.flight.deadline(), Some(6_000 + 5_000_000));
+    assert_eq!(replay.reducer.flight.deadline(), Some(6_000 + 11_000_000));
 }
 
 /// The deadline of the program dispatched at 1 ms, at which the tests
@@ -1098,7 +1132,7 @@ fn a_late_tick_past_the_bound_and_the_deadline_publishes_once_then_abandons() {
         },
         now(2),
     );
-    let effects = reducer.tick(now(10_001));
+    let effects = reducer.tick(now(11_001));
     assert!(
         matches!(
             &effects[..],
@@ -1113,7 +1147,7 @@ fn a_late_tick_past_the_bound_and_the_deadline_publishes_once_then_abandons() {
             change: Some(Box::new(focus_change(1, false))),
             then_abandon: Some(DEADLINE),
         },
-        now(10_001),
+        now(11_001),
     );
     assert_eq!(kinds(&effects), ["send", "abandon"]);
     assert_eq!(reducer.facts().follow.tracking.focus, Some(NodeId::new(1)));
@@ -1204,7 +1238,7 @@ fn an_owed_read_abandoned_is_not_attempted_again() {
     // The terminal's read hangs past its deadline (6dbcca25): the worker is
     // abandoned, and the owed work, which it was attempting, is no longer
     // owed.
-    let effects = replay.tick(3 + 10_000);
+    let effects = replay.tick(3 + 11_000);
     assert!(abandons(&effects));
     assert!(programs(&effects).is_empty());
     assert!(replay.reducer.facts().follow.owed.is_none());
@@ -1233,7 +1267,7 @@ fn a_release_waits_for_the_program_in_flight_and_names_no_dead_request_live() {
     );
     // The program hangs in its terminal's read (8a087fe7): once its worker
     // is abandoned, the release is made, its request no longer live.
-    let effects = replay.tick(1 + 10_000);
+    let effects = replay.tick(1 + 11_000);
     assert!(abandons(&effects));
     let live: Vec<&Vec<Request>> = effects
         .iter()
@@ -1252,7 +1286,7 @@ fn a_release_waits_for_the_program_in_flight_and_names_no_dead_request_live() {
             anchors: BTreeSet::new(),
             objects: true,
         },
-        10_002,
+        11_002,
     );
     assert!(matches!(program(&effects).work, Work::Drop));
 }
@@ -1406,10 +1440,10 @@ fn the_console_poll_is_dispatched_only_when_nothing_else_is_ready() {
 fn a_program_goes_before_the_next_read() {
     let mut replay = polling();
     let read = reads(&replay.tick(7));
-    // The read runs under the text deadline, with no moved-on grace.
+    // The read runs under the handling deadline, with no moved-on grace.
     assert_eq!(
         replay.reducer.next_timer(now(7)),
-        Some(Duration::from_millis(7 + 2_000))
+        Some(Duration::from_millis(7 + 11_000))
     );
     // A console update arriving while the read is in flight waits for it.
     assert!(programs(&replay.push(console_caret(), Source::Hook, 8)).is_empty());
@@ -1513,16 +1547,16 @@ fn a_poll_read_that_found_nothing_is_followed_by_the_next_at_its_interval() {
 fn an_abandoned_poll_answers_its_watchs_query_once() {
     let mut replay = polling();
     let read = reads(&replay.tick(7));
-    // The read hangs past the text deadline.
-    let effects = replay.tick(7 + 2_000);
+    // The read hangs past the handling deadline.
+    let effects = replay.tick(7 + 11_000);
     assert!(abandons(&effects));
     assert_eq!(replies(&effects), [(7, "abandoned")]);
     assert_eq!(*watch_of(&replay), Watch::None);
-    assert_eq!(replay.reducer.next_timer(now(7 + 2_000)), None);
+    assert_eq!(replay.reducer.next_timer(now(7 + 11_000)), None);
     // Its late result is refused, and its end answers nothing more.
     assert!(!replay.reducer.accepts(read));
-    assert_eq!(replies(&replay.commit(read, watching(1), 2_008)), []);
-    assert_eq!(replies(&replay.finish(read, false, 2_009)), []);
+    assert_eq!(replies(&replay.commit(read, watching(1), 11_008)), []);
+    assert_eq!(replies(&replay.finish(read, false, 11_009)), []);
     assert!(replay.reducer.queries().is_empty());
 }
 
@@ -1553,14 +1587,14 @@ fn a_watch_without_a_poll_ends_at_its_bound_with_no_program() {
     replay.finish(key, false, 3);
     assert_eq!(
         replay.reducer.next_timer(now(3)),
-        Some(Duration::from_millis(10_002))
+        Some(Duration::from_millis(11_002))
     );
-    assert!(replay.tick(10_001).is_empty());
-    let effects = replay.tick(10_002);
+    assert!(replay.tick(11_001).is_empty());
+    let effects = replay.tick(11_002);
     assert_eq!(replies(&effects), [(7, "watch ended")]);
     assert!(programs(&effects).is_empty());
     assert_eq!(*watch_of(&replay), Watch::None);
-    assert_eq!(replay.reducer.next_timer(now(10_002)), None);
+    assert_eq!(replay.reducer.next_timer(now(11_002)), None);
 }
 
 #[test]
@@ -1571,17 +1605,17 @@ fn an_entry_ready_at_the_bound_is_dispatched_first_and_its_answer_is_sent() {
     replay.finish(key, false, 3);
     // A program in flight past the bound; a caret event of the watch's
     // node waits behind it.
-    let busy = program(&replay.push(name_change(1), Source::Hook, 10_000)).request;
-    assert!(programs(&replay.push(edit_caret(), Source::Hook, 10_001)).is_empty());
-    let effects = replay.finish(busy, false, 10_003);
+    let busy = program(&replay.push(name_change(1), Source::Hook, 11_000)).request;
+    assert!(programs(&replay.push(edit_caret(), Source::Hook, 11_001)).is_empty());
+    let effects = replay.finish(busy, false, 11_003);
     assert_eq!(replies(&effects), []);
     let check = program(&effects).request;
-    replay.commit(check, takes(), 10_004);
+    replay.commit(check, takes(), 11_004);
     assert_eq!(
-        replies(&replay.commit(check, answered(), 10_005)),
+        replies(&replay.commit(check, answered(), 11_005)),
         [(7, "done")]
     );
-    assert_eq!(replies(&replay.finish(check, false, 10_006)), []);
+    assert_eq!(replies(&replay.finish(check, false, 11_006)), []);
     assert!(replay.reducer.queries().is_empty());
 }
 
@@ -1718,9 +1752,9 @@ fn the_bound_is_reached_by_the_shared_clock_with_the_observation_clock_frozen() 
     );
     assert_eq!(
         replay.reducer.next_timer(frozen(3)),
-        Some(Duration::from_millis(10_002))
+        Some(Duration::from_millis(11_002))
     );
-    let effects = replay.reducer.tick(frozen(10_002));
+    let effects = replay.reducer.tick(frozen(11_002));
     assert_eq!(replies(&effects), [(7, "watch ended")]);
 }
 
@@ -1752,7 +1786,7 @@ fn a_caret_read_after_an_abandoned_text_call_waits_for_nothing() {
     );
     // The text call hangs past its deadline: it is answered "abandoned",
     // and the caret event's read goes to the replacement at once.
-    let effects = replay.tick(1 + 2_000);
+    let effects = replay.tick(1 + 11_000);
     assert_eq!(replies(&effects), [(4, "abandoned")]);
     let read = program(&effects);
     assert_eq!(read.request.generation, 1);
@@ -1772,7 +1806,6 @@ fn a_shell_items_query_is_abandoned_at_its_answer_by_time() {
             request_id: RequestId::shell(4),
             query: Query::ShellItems {
                 kind: verbatim_model::ShellItemKind::Taskbar,
-                walk_until_us: 2_000_000,
                 answer_by_us: 2_500_000,
             },
         },
@@ -1788,12 +1821,11 @@ fn a_shell_items_query_is_abandoned_at_its_answer_by_time() {
     assert!(abandons(&effects));
 }
 
-/// A shell item position query reached at its walk's last call time is
-/// too late to walk: it is answered at once with no candidates and
-/// incomplete, the answer a walk out of time gives, and no program is
-/// dispatched for it, so no deadline abandons a worker.
+/// A shell item position query reached at its deadline is too late to
+/// walk: it is answered at once with no candidates and incomplete, and no
+/// program is dispatched for it, so no deadline abandons a worker.
 #[test]
-fn a_shell_query_reached_at_its_walk_until_time_is_answered_without_a_walk() {
+fn a_shell_query_reached_at_its_deadline_is_answered_without_a_walk() {
     let mut replay = Replay::new();
     let busy = program(&replay.push(name_change(5), Source::Hook, 1)).request;
     replay.push(
@@ -1805,8 +1837,7 @@ fn a_shell_query_reached_at_its_walk_until_time_is_answered_without_a_walk() {
                     name: "Mail".to_owned(),
                     runtime_id: Vec::new(),
                 },
-                walk_until_us: 2_000_000,
-                answer_by_us: 2_500_000,
+                answer_by_us: 2_000_000,
             },
         },
         Source::Other,
@@ -1855,7 +1886,7 @@ fn a_focus_groups_older_entries_are_tried_after_an_abandoned_try() {
     assert_eq!(handles(newest), (3, Some(0)));
     // The newest try hangs and its worker is abandoned: the older entry is
     // tried by the replacement.
-    let effects = replay.tick(4 + 10_000);
+    let effects = replay.tick(4 + 11_000);
     assert!(abandons(&effects));
     let older = program(&effects);
     assert_eq!(handles(older), (2, Some(1)));
@@ -1926,7 +1957,7 @@ fn a_query_is_answered_once_whatever_ends_it() {
     // At its deadline, its late result refused.
     let effects = replay.push(focus_now(2), Source::Other, 4);
     let request = program(&effects).request;
-    let effects = replay.tick(4 + 10_000);
+    let effects = replay.tick(4 + 13_000);
     assert_eq!(replies(&effects), [(2, "abandoned")]);
     assert!(!replay.reducer.accepts(request));
     assert!(replay.reducer.queries().is_empty());
@@ -2123,8 +2154,8 @@ fn a_dead_generations_probe_is_not_recorded() {
     let mut replay = Replay::new();
     let effects = replay.push(msaa_focus(1, 1), Source::Hook, 1);
     let dead = program(&effects).request;
-    assert!(abandons(&replay.tick(1 + 10_000)));
-    let effects = replay.verdict(dead, probe(Probed::Uia), 10_002);
+    assert!(abandons(&replay.tick(1 + 11_000)));
+    let effects = replay.verdict(dead, probe(Probed::Uia), 11_002);
     assert_eq!(verdict_of(&replay.reducer.facts().verdicts, 1_000), None);
     assert!(effects.is_empty());
 }
@@ -2134,11 +2165,11 @@ fn a_dead_generations_timed_out_probe_is_recorded() {
     let mut replay = Replay::new();
     let effects = replay.push(msaa_focus(1, 1), Source::Hook, 1);
     let dead = program(&effects).request;
-    assert!(abandons(&replay.tick(1 + 10_000)));
-    let effects = replay.verdict(dead, probe(Probed::TimedOut(10_502_000)), 10_002);
+    assert!(abandons(&replay.tick(1 + 11_000)));
+    let effects = replay.verdict(dead, probe(Probed::TimedOut(11_502_000)), 11_002);
     assert_eq!(
         verdict_of(&replay.reducer.facts().verdicts, 1_000),
-        Some(Probed::TimedOut(10_502_000))
+        Some(Probed::TimedOut(11_502_000))
     );
     assert_eq!(verdict_copies(&effects).len(), 1);
 }
@@ -2151,7 +2182,7 @@ fn a_timed_out_probe_committed_before_its_worker_is_abandoned_stays_recorded() {
     // The probe returns at 3 s, timed out, and is committed at once; the
     // program then hangs in its next call until its deadline.
     replay.verdict(request, probe(Probed::TimedOut(3_501_000)), 3_001);
-    let effects = replay.tick(1 + 10_000);
+    let effects = replay.tick(1 + 11_000);
     assert!(abandons(&effects));
     assert_eq!(
         verdict_of(&replay.reducer.facts().verdicts, 1_000),
@@ -2391,10 +2422,10 @@ fn a_cut_watch_check_is_finished_within_its_reads_deadline_and_query() {
     // Its grace has ended: the shell is asked whether the user moved on,
     // and the answer, no, changes nothing.
     assert!(matches!(
-        &replay.tick(10 + 9_999)[..],
+        &replay.tick(10 + 10_999)[..],
         [Effect::AskMovedOn { request, .. }] if *request == finish.request
     ));
-    let effects = replay.tick(10 + 10_000);
+    let effects = replay.tick(10 + 11_000);
     assert!(abandons(&effects));
     assert_eq!(replies(&effects), [(7, "abandoned")]);
 }
@@ -2801,12 +2832,12 @@ fn a_check_abandoned_with_the_polling_watch_leaves_no_due_time() {
     // A console update's check takes the watch, then hangs.
     let update = program(&replay.push(console_caret(), Source::Hook, 4)).request;
     replay.commit(update, takes(), 5);
-    let effects = replay.tick(4 + 10_000);
+    let effects = replay.tick(4 + 11_000);
     assert!(abandons(&effects));
     assert_eq!(replies(&effects), [(7, "abandoned")]);
     // No due time is left for a watch that is gone.
-    assert_eq!(replay.reducer.next_timer(now(4 + 10_000)), None);
-    assert!(programs(&replay.tick(4 + 10_001)).is_empty());
+    assert_eq!(replay.reducer.next_timer(now(4 + 11_000)), None);
+    assert!(programs(&replay.tick(4 + 11_001)).is_empty());
 }
 
 /// While the outpost stops nothing is judged: a walk that returns past its

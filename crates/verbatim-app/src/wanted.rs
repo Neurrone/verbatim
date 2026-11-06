@@ -7,12 +7,13 @@
 //!
 //! - at its outpost's `Ready` ([`Wanted::ready`]), where it is sent and the
 //!   request table owns its outcome from then on, or, for a shell items
-//!   request whose walk could make no call by then, answered with nothing;
+//!   request whose outpost deadline has passed by then, answered with
+//!   nothing;
 //! - at the application's `NotWatched` ([`Wanted::not_watched`]), where it
 //!   is answered "gone";
-//! - for a shell items request only, at its walk's last call
-//!   ([`ShellTimes::walk_until_us`]), where it is answered with nothing
-//!   ([`Wanted::expire`]).
+//! - for a shell items request only, at the outpost's deadline for it
+//!   ([`ShellTimes::outpost_answer_by_us`]), where it is answered with
+//!   nothing ([`Wanted::expire`]).
 //!
 //! A request waiting through a failure's backoff keeps waiting, so the
 //! replacement answers it: an `Ended` with a generation following ends
@@ -24,22 +25,20 @@ use std::time::Duration;
 use verbatim_gui::{ShellAsk, ShellItemKind};
 use verbatim_model::Pid;
 
-/// The list dialog's whole wait for its list or a clicked item's position,
-/// 3 seconds from its request, whether the taskbar's outpost is starting,
-/// the query waits behind other work in the outpost, or the walk is slow
-/// (`books/dev/src/explanation/design/listener-without-connections.md`, section 10, step 11).
-/// Core does not cut the walk off: it gives the outpost the shorter times
-/// below, so the walk answers with what it read in time.
-pub(crate) const SHELL_ITEMS_WAIT: Duration = Duration::from_secs(3);
+/// The list dialog's whole wait for its list or a clicked item's position
+/// from its request, whether the taskbar's outpost is starting, the query
+/// waits behind other work in the outpost, or the walk is slow
+/// (`books/dev/src/explanation/design/listener-without-connections.md`, section 10, step 11):
+/// the handling deadline of the outpost's program
+/// ([`HANDLING_DEADLINE`](verbatim_model::HANDLING_DEADLINE)) and
+/// [`SHELL_ITEMS_REPLY_MARGIN`], 11.5 seconds. Core does not cut the walk
+/// off: the outpost's deadline for the query is the margin before Core's.
+pub(crate) const SHELL_ITEMS_WAIT: Duration =
+    verbatim_model::HANDLING_DEADLINE.saturating_add(SHELL_ITEMS_REPLY_MARGIN);
 
 /// The time left between the outpost's deadline for a shell items query and
 /// Core's, for the answer's way through the pipes and the reducer thread.
 const SHELL_ITEMS_REPLY_MARGIN: Duration = Duration::from_millis(500);
-
-/// The time left between the walk's last call and the outpost's deadline,
-/// for one call under way then to return; a call that takes longer loses
-/// the walk to the deadline.
-const SHELL_ITEMS_CALL_MARGIN: Duration = Duration::from_millis(500);
 
 /// The times of one shell items request, all on the run's shared clock and
 /// fixed when the dialog asks.
@@ -57,18 +56,11 @@ impl ShellTimes {
     }
 
     /// The outpost's deadline for the query, past which it is abandoned:
-    /// [`SHELL_ITEMS_REPLY_MARGIN`] before Core's.
+    /// [`SHELL_ITEMS_REPLY_MARGIN`] before Core's. A request not sent by
+    /// then is answered with nothing.
     pub(crate) fn outpost_answer_by_us(self) -> u64 {
         self.answer_by_us()
             .saturating_sub(micros(SHELL_ITEMS_REPLY_MARGIN))
-    }
-
-    /// The walk's last call: [`SHELL_ITEMS_CALL_MARGIN`] before the
-    /// outpost's deadline. A request not sent by then is answered with
-    /// nothing, since its walk could make no call.
-    pub(crate) fn walk_until_us(self) -> u64 {
-        self.outpost_answer_by_us()
-            .saturating_sub(micros(SHELL_ITEMS_CALL_MARGIN))
     }
 }
 
@@ -120,8 +112,8 @@ impl Wanted {
     }
 
     /// Wants `ask` of `kind`'s surface from the outpost of `process`, once
-    /// it is ready, answered with nothing at its walk's last call if it
-    /// still waits.
+    /// it is ready, answered with nothing at the outpost's deadline for it
+    /// if it still waits.
     pub(crate) fn want_shell_items(
         &mut self,
         process: Pid,
@@ -138,19 +130,19 @@ impl Wanted {
 
     /// The outpost of `process` is ready at `now_us`, on the run's shared
     /// clock: what waits for it, taken, to be sent to it. A shell items
-    /// request whose walk's last call is `now_us` or earlier is answered
-    /// with nothing instead, since its walk could make no call.
+    /// request whose outpost deadline is `now_us` or earlier is answered
+    /// with nothing instead.
     pub(crate) fn ready(&mut self, process: Pid, now_us: u64) -> Asked {
         let waiting = self.waiting.remove(&process).unwrap_or_default();
         let (late, shell): (Vec<ShellWanted>, Vec<ShellWanted>) = waiting
             .shell
             .into_iter()
-            .partition(|wanted| wanted.times.walk_until_us() <= now_us);
+            .partition(|wanted| wanted.times.outpost_answer_by_us() <= now_us);
         for wanted in late {
             tracing::warn!(
                 kind = ?wanted.kind,
                 %process,
-                "the taskbar's outpost was ready too late for a walk; the shell's items are not read"
+                "the taskbar's outpost was ready too late for its query; the shell's items are not read"
             );
             drop(wanted.ask);
         }
@@ -180,20 +172,20 @@ impl Wanted {
         }
     }
 
-    /// Answers every shell items request whose walk's last call is
+    /// Answers every shell items request whose outpost deadline is
     /// `now_us`, on the run's shared clock, or earlier with nothing.
     pub(crate) fn expire(&mut self, now_us: u64) {
         for (process, waiting) in &mut self.waiting {
             let (expired, kept): (Vec<ShellWanted>, Vec<ShellWanted>) =
                 std::mem::take(&mut waiting.shell)
                     .into_iter()
-                    .partition(|wanted| wanted.times.walk_until_us() <= now_us);
+                    .partition(|wanted| wanted.times.outpost_answer_by_us() <= now_us);
             waiting.shell = kept;
             for wanted in expired {
                 tracing::warn!(
                     kind = ?wanted.kind,
                     %process,
-                    "the taskbar's outpost was not ready in time for a walk; the shell's items are not read"
+                    "the taskbar's outpost was not ready in time for its query; the shell's items are not read"
                 );
                 drop(wanted.ask);
             }
@@ -202,7 +194,7 @@ impl Wanted {
             .retain(|_, waiting| waiting.focus_now.is_some() || !waiting.shell.is_empty());
     }
 
-    /// The earliest walk's last call of a waiting shell items request, on
+    /// The earliest outpost deadline of a waiting shell items request, on
     /// the run's shared clock.
     pub(crate) fn next_deadline(&self) -> Option<u64> {
         self.waiting
@@ -211,7 +203,7 @@ impl Wanted {
                 waiting
                     .shell
                     .iter()
-                    .map(|wanted| wanted.times.walk_until_us())
+                    .map(|wanted| wanted.times.outpost_answer_by_us())
             })
             .min()
     }
@@ -256,12 +248,8 @@ mod tests {
     #[test]
     fn a_shell_items_requests_times_are_fixed_from_the_dialogs_request() {
         assert_eq!(
-            (
-                ASKED.walk_until_us(),
-                ASKED.outpost_answer_by_us(),
-                ASKED.answer_by_us()
-            ),
-            (12_000_000, 12_500_000, 13_000_000)
+            (ASKED.outpost_answer_by_us(), ASKED.answer_by_us()),
+            (21_000_000, 21_500_000)
         );
     }
 
@@ -300,19 +288,21 @@ mod tests {
         wanted.not_watched(Pid(9));
         assert_eq!(*outcomes.lock().expect("outcomes"), Vec::new(), "another's");
         wanted.not_watched(PROCESS);
-        wanted.expire(ASKED.walk_until_us());
+        wanted.expire(ASKED.outpost_answer_by_us());
         assert!(wanted.ready(PROCESS, ASKED.asked_us).shell.is_empty());
         assert_eq!(*outcomes.lock().expect("outcomes"), vec![None]);
     }
 
-    /// A request whose outpost is ready before its walk's last call is
-    /// taken to be sent, with its times, and not answered here.
+    /// A request whose outpost is ready before the outpost's deadline for
+    /// it is taken to be sent, with its times, and not answered here.
     #[test]
-    fn a_shell_items_request_ready_before_its_last_call_is_taken_and_not_answered_here() {
+    fn a_shell_items_request_ready_before_its_deadline_is_taken_and_not_answered_here() {
         let mut wanted = Wanted::default();
         let (outcomes, ask) = recorder();
         wanted.want_shell_items(PROCESS, ShellItemKind::Taskbar, ask, ASKED);
-        let taken = wanted.ready(PROCESS, ASKED.walk_until_us() - 1).shell;
+        let taken = wanted
+            .ready(PROCESS, ASKED.outpost_answer_by_us() - 1)
+            .shell;
         assert_eq!(
             taken
                 .iter()
@@ -320,23 +310,23 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![(ShellItemKind::Taskbar, ASKED)]
         );
-        wanted.expire(ASKED.walk_until_us());
+        wanted.expire(ASKED.outpost_answer_by_us());
         wanted.not_watched(PROCESS);
         assert_eq!(wanted.next_deadline(), None);
         assert_eq!(*outcomes.lock().expect("outcomes"), Vec::new());
         drop(taken);
     }
 
-    /// A request whose outpost is ready at its walk's last call is answered
-    /// with nothing once and not sent, since its walk could make no call.
+    /// A request whose outpost is ready at the outpost's deadline for it is
+    /// answered with nothing once and not sent.
     #[test]
-    fn a_shell_items_request_ready_at_its_last_call_is_answered_nothing_and_not_sent() {
+    fn a_shell_items_request_ready_at_its_deadline_is_answered_nothing_and_not_sent() {
         let mut wanted = Wanted::default();
         let (outcomes, ask) = recorder();
         wanted.want_shell_items(PROCESS, ShellItemKind::Taskbar, ask, ASKED);
         assert!(
             wanted
-                .ready(PROCESS, ASKED.walk_until_us())
+                .ready(PROCESS, ASKED.outpost_answer_by_us())
                 .shell
                 .is_empty()
         );
@@ -345,14 +335,14 @@ mod tests {
     }
 
     #[test]
-    fn a_shell_items_request_still_waiting_at_its_last_call_is_answered_nothing_once() {
+    fn a_shell_items_request_still_waiting_at_its_deadline_is_answered_nothing_once() {
         let mut wanted = Wanted::default();
         let (outcomes, ask) = recorder();
         wanted.want_shell_items(PROCESS, ShellItemKind::SystemTray, ask, ASKED);
-        assert_eq!(wanted.next_deadline(), Some(ASKED.walk_until_us()));
-        wanted.expire(ASKED.walk_until_us() - 1);
+        assert_eq!(wanted.next_deadline(), Some(ASKED.outpost_answer_by_us()));
+        wanted.expire(ASKED.outpost_answer_by_us() - 1);
         assert_eq!(*outcomes.lock().expect("outcomes"), Vec::new());
-        wanted.expire(ASKED.walk_until_us());
+        wanted.expire(ASKED.outpost_answer_by_us());
         wanted.not_watched(PROCESS);
         assert!(wanted.ready(PROCESS, 0).shell.is_empty());
         assert_eq!(*outcomes.lock().expect("outcomes"), vec![None]);

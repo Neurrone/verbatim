@@ -638,16 +638,16 @@ knowing for review:
   query once it is ready, and hands the outcome to the dialog's delivery
   callback, exactly once, through its responder: the items or the
   candidates, or `None` for any failure, within
-  `wanted::SHELL_ITEMS_WAIT` (3 seconds) of the request. Its times are
-  fixed on the run's shared clock when the dialog asks
-  (`wanted::ShellTimes`): Core's deadline for the answer 3 seconds later,
-  the outpost's deadline for the query half a second before that, and the
-  walk's last call half a second before the outpost's, both carried in
-  the query (`walk_until_us`, `answer_by_us`), so the walk answers what
-  it read in time rather than Core cutting it off. The answer is `None`
-  when the process gets no outpost (`NotWatched`), when its outpost is not
-  ready before the walk's last call (`Wanted::ready` and
-  `Wanted::expire`), when no answer has come by Core's deadline, or when
+  `wanted::SHELL_ITEMS_WAIT` (11.5 seconds, the outpost's handling
+  deadline and a reply margin of half a second) of the request. Its times
+  are fixed on the run's shared clock when the dialog asks
+  (`wanted::ShellTimes`): Core's deadline for the answer 11.5 seconds
+  later, and the outpost's deadline for the query half a second before
+  that, carried in the query (`answer_by_us`), so a slow taskbar's whole
+  list is shown once it answers rather than Core cutting it off. The
+  answer is `None` when the process gets no outpost (`NotWatched`), when
+  its outpost is not ready before the outpost's deadline for the query
+  (`Wanted::ready` and `Wanted::expire`), when no answer has come by Core's deadline, or when
   the request is dropped anywhere on its way. The requests still waiting
   for an outpost are `wanted::Wanted`'s; a request sent is the request
   table's, recorded with Core's deadline in microseconds on the run's

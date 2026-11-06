@@ -42,7 +42,6 @@ The outpost:
 
 - **Worker**: catches each program's panic, answers it "panicked" and keeps running, as today. A Rust panic is raised between calls, never inside a COM call, so the UIA client holds no state for one call and stays usable, and unwinding releases the program's objects on the worker, a thread allowed to block. The worker is therefore not retired as an abandoned one is. The exception: a panic that unwound while the object store's lock was held leaves the store poisoned; the worker checks it after catching and, if poisoned, starts the clean shutdown, because the store is state the whole process depends on.
 - **UIA callback threads**: the callback is contained and its event dropped.
-- **The `BoundedClient`'s threads** (`crates/verbatim-uia/src/bounded.rs`): the operation is answered as abandoned and the thread ends; the next operation starts a new one, as after an abandonment. Today a caught panic leaves the thread serving.
 - **The target watch**: `Continue`; its wait on the application's process handle starts again.
 - **`win_event_proc`**: contained per event, the event dropped. Its closure takes `try_borrow_mut`, and a nested event, possible only if handling dispatched sent messages, is dropped with an error log, because the intake makes no such call and queuing nested events would add a second ordering path that hides that defect.
 - **Threads owning process-wide state**, which start the clean shutdown: the shell (reducer) thread, the WinEvent event thread, the I/O thread and the writer, which owns the one queue to Core.

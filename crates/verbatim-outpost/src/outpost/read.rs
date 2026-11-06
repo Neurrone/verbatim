@@ -52,16 +52,6 @@ const MAX_DUMP_NODES: usize = 4096;
 /// Cap on the ancestors read for a node.
 pub(super) const MAX_ANCESTOR_HOPS: u32 = 64;
 
-/// How long reading a focus's containers may take before the focus is
-/// reported with them unknown: a focus is spoken late at worst, never lost
-/// because its containers took too long to read. Checked between the
-/// walk's calls, each of which UIA ends after its connection or
-/// transaction timeout ([`verbatim_uia::CONNECTION_TIMEOUT`],
-/// [`verbatim_uia::TRANSACTION_TIMEOUT`]), so a walk ends within this budget and
-/// one call; the worker's deadline for the entry, enforced by abandonment,
-/// bounds the rest.
-pub(super) const ENRICHMENT_BUDGET: std::time::Duration = std::time::Duration::from_secs(2);
-
 /// What a focus's walk has read so far, told as it reads it, so the
 /// worker can keep it in its charge, from which the reducer publishes the
 /// focus should a call of the walk still be under way at the walk's bound
@@ -103,7 +93,7 @@ pub(super) type WalkProgress<'a> = Option<WalkTold<'a>>;
 /// bound of the design's Terms, [`MOVED_ON_GRACE`](verbatim_reader_rules::MOVED_ON_GRACE)
 /// when the focus's top-level window is not that of the focus this outpost
 /// expects Core to hold, the one before it (`held::Held::expected`), and
-/// [`ENRICHMENT_BUDGET`] otherwise, less the time since the observation.
+/// [`SAME_WINDOW_BOUND`](verbatim_model::SAME_WINDOW_BOUND) otherwise, less the time since the observation.
 /// Local calls.
 pub(super) fn walk_left(
     context: &RequestContext<'_>,
@@ -113,7 +103,7 @@ pub(super) fn walk_left(
     let top_level = verbatim_reader_rules::Window::new(top_level_of(window));
     let previous = context.held().expected().map(|focus| focus.top_level);
     let bound = if top_level.is_some() && previous == Some(top_level) {
-        ENRICHMENT_BUDGET
+        verbatim_model::SAME_WINDOW_BOUND
     } else {
         verbatim_reader_rules::MOVED_ON_GRACE
     };
@@ -1358,13 +1348,6 @@ pub(super) fn msaa_candidates(context: &RequestContext<'_>) -> Candidates {
     Candidates::new(lines)
 }
 
-/// How long gathering a dialog's own text through UI Automation may take,
-/// all its calls together: the text is worth a short wait, but the focus it
-/// is announced with must not be held back long. Gathering reads the
-/// dialog's descendants, many calls, so it has this deadline of its own,
-/// enforced by abandonment ([`verbatim_uia::BoundedClient`]).
-const DIALOG_TEXT_WAIT: std::time::Duration = std::time::Duration::from_secs(1);
-
 /// How many of `nodes`, a new focus line outermost first ending with its
 /// focus, the focus had already entered from any report's line: those above
 /// or at where the line meets one of theirs
@@ -1403,9 +1386,12 @@ pub(super) type DialogMemo = Option<(NodeId, Option<String>)>;
 /// `memo` is taken: a dialog it names is given its text without reading it
 /// again. With `remember`, the last text read is kept in it for the next
 /// report, which is how a foreground report hands its dialog to the focus
-/// inside it.
+/// inside it. A UIA dialog's text is gathered on the worker's own client,
+/// `client`, inside the program, as NVDA gathers a dialog's text inside its
+/// focus event: the program's deadline bounds it.
 pub(super) fn describe_dialogs<'a>(
     context: &RequestContext<'_>,
+    client: &mut Client,
     nodes: impl IntoIterator<Item = &'a mut NodeSnapshot>,
     (memo, remember): (&mut DialogMemo, bool),
 ) {
@@ -1451,7 +1437,7 @@ pub(super) fn describe_dialogs<'a>(
             Some((id, text)) if *id == node.id => text.clone(),
             _ => {
                 let started = std::time::Instant::now();
-                let text = dialog_text_of(context, node);
+                let text = dialog_text_of(context, client, node);
                 tracing::debug!(
                     found = text.is_some(),
                     elapsed_us = started.elapsed().as_micros(),
@@ -1470,9 +1456,13 @@ pub(super) fn describe_dialogs<'a>(
     }
 }
 
-/// The own text of the dialog `node`, through the backend that reported it;
-/// `None` when it has none or cannot be read.
-fn dialog_text_of(context: &RequestContext<'_>, node: &NodeSnapshot) -> Option<String> {
+/// The own text of the dialog `node`, through the backend that reported it,
+/// a UIA dialog's on `client`; `None` when it has none or cannot be read.
+fn dialog_text_of(
+    context: &RequestContext<'_>,
+    client: &mut Client,
+    node: &NodeSnapshot,
+) -> Option<String> {
     use crate::dialog_text::{UiaDialog, dialog_text};
     match node.backend {
         Backend::Msaa => verbatim_ia2::dialog::DialogObject::of_node(node.id, context.nodes())
@@ -1491,31 +1481,24 @@ fn dialog_text_of(context: &RequestContext<'_>, node: &NodeSnapshot) -> Option<S
                 .as_ref()
                 .is_some_and(|route| context.tries_remote(Some(route.window.get())));
             let gates = crate::gates::node_gates(&context.fetches());
-            let clock = context.clock();
-            let gathered = context.bounded.run(DIALOG_TEXT_WAIT, move |uia| {
-                // Nothing of the dialog's own element is read: its text is
-                // gathered from its children. A kept element is resolved
-                // here, on the bounded client's thread, as `Kept`.
-                let dialog = match (element, route) {
-                    (Some(element), _) => element.resolve().ok()?.live().clone(),
-                    (None, Some(route)) => {
-                        let nodes = uia.request::<Node>(gates).ok()?;
-                        let found = super::focus_path::find(uia, &route, &nodes, remote, &clock)
-                            .0
-                            .ok()??;
-                        found.live().clone()
-                    }
-                    (None, None) => return None,
-                };
-                // Each child's description whatever the theme, as NVDA's
-                // dialog text includes it.
-                let children = uia.request_fixed::<DialogText>().ok()?;
-                dialog_text(&UiaDialog::new(uia, &children, dialog))
-            });
-            gathered.unwrap_or_else(|unanswered| {
-                tracing::debug!(?unanswered, "a dialog's text was not gathered");
-                None
-            })
+            let uia = client.uia()?;
+            // Nothing of the dialog's own element is read: its text is
+            // gathered from its children.
+            let dialog = match (element, route) {
+                (Some(element), _) => element.resolve().ok()?.live().clone(),
+                (None, Some(route)) => {
+                    let nodes = uia.request::<Node>(gates).ok()?;
+                    let found = super::focus_path::find(uia, &route, &nodes, remote)
+                        .0
+                        .ok()??;
+                    found.live().clone()
+                }
+                (None, None) => return None,
+            };
+            // Each child's description whatever the theme, as NVDA's
+            // dialog text includes it.
+            let children = uia.request_fixed::<DialogText>().ok()?;
+            dialog_text(&UiaDialog::new(uia, &children, dialog))
         }
     }
 }
@@ -1582,7 +1565,7 @@ pub(super) fn focused_control_in(
             client,
             hwnd,
             (trigger, false),
-            (ENRICHMENT_BUDGET, None),
+            (verbatim_model::SAME_WINDOW_BOUND, None),
         )
     } else {
         // A focus-now answer has no chain to splice from, so it walks to
@@ -1600,7 +1583,7 @@ pub(super) fn focused_control_in(
             context,
             client,
             (&node, &[], Some(&candidates)),
-            (ENRICHMENT_BUDGET, None),
+            (verbatim_model::SAME_WINDOW_BOUND, None),
         );
         Ok((
             hwnd,
@@ -1939,8 +1922,8 @@ pub(super) fn focus_now(
 /// (`docs/design/cross-process-calls-study.md`, instance 3). A kept element
 /// that fails for another reason, such as a busy provider timing out, is
 /// kept and the read fails: it may well still be alive. So does a route's
-/// walk that fails rather than finishing without the element, one past its
-/// time budget above all ([`super::focus_path::find`]).
+/// walk that fails rather than finishing without the element
+/// ([`super::focus_path::find`]).
 fn resolve_uia_element(
     context: &RequestContext<'_>,
     uia: &Uia,
@@ -1967,8 +1950,7 @@ fn resolve_uia_element(
     // found by its path.
     let route = context.focus_route(&runtime_id).ok_or(ReadError::Gone)?;
     let remote = context.tries_remote(Some(route.window.get()));
-    let (found, import_failed) =
-        super::focus_path::find(uia, &route, nodes, remote, &context.clock());
+    let (found, import_failed) = super::focus_path::find(uia, &route, nodes, remote);
     if import_failed {
         context.read_classically(route.window.get());
     }

@@ -202,7 +202,7 @@ above its own (`read::plain_window_above`, local calls by
 walk instead. A walk cut by its time
 (its bound, for the continuation of a listener's read that read's bound
 from the event's observation, `UiaFocusRead::bound_us`; for an MSAA
-focus's walk and the gap's read, `read::walk_left`; `ENRICHMENT_BUDGET`
+focus's walk and the gap's read, `read::walk_left`; `SAME_WINDOW_BOUND`
 for a focus-now answer) or its depth limit of 64 is completed by plain
 windows from its outermost element's nearest window, included. Whether a
 window can be read is the system's judgement
@@ -257,11 +257,10 @@ so no lock is needed around them. No node is searched for by runtime id:
 a UIA node whose kept element is gone, or that has none, and whose focus
 route's walk finishes without it is answered gone
 (`read::resolve_uia_element`), while a walk that fails, a window lookup
-timed out or refused or a classic walk past its budget among them, fails
-the query (`focus_path::find`), since a slow application has not shown
-the element gone. The limit: a slow classic walk that truly finds nothing,
-but whose last call returned after `PATH_BUDGET`, fails the query rather
-than answering the node gone. A
+timed out or refused among them, fails the query (`focus_path::find`),
+since a slow application has not shown the element gone. The walk has no
+time budget of its own: the program's deadline bounds it, and a walk
+still under way at the deadline is abandoned with its program. A
 listener's selection is reported with what its event's cache holds
 (`verbatim_uia::ListenerSelection`), since a search of a subtree enters
 any child window another process serves (the study's instance 3). The supervisor's `App` table holds each application's
@@ -341,8 +340,7 @@ the same tables and code, which the arbitrator's own lists are built from.
   lifetime.
 - `Clock` (`verbatim_process::clock`), `Arbitrator::set_clock`, and
   `Arbitrator::now` time the classic
-  walk budgets (`PATH_BUDGET`, `ENRICHMENT_BUDGET`, through
-  `arbitration::time_limit`); `Outpost::set_clock` and
+  walk budgets (`SAME_WINDOW_BOUND`, through `arbitration::time_limit`); `Outpost::set_clock` and
   `FocusReader::set_clock` set it for tests that count calls. The keeps'
   ends and an entry with no event are stamped by the `ObservationClock`
   (`Arbitrator::set_observation_clock`), the run's shared clock, which
@@ -383,7 +381,7 @@ the same tables and code, which the arbitrator's own lists are built from.
   for the outpost's own events' stamps and its verdicts' keeps); and
   `set_gap_timer` (a `GapTimer` for the gap record's bound, which
   `gap_bound_reacher` reaches); `set_handling_deadline` (a deadline in
-  place of the reducer's `HANDLING_DEADLINE`, 10 seconds, for the
+  place of the reducer's `HANDLING_DEADLINE`, 11 seconds, for the
   programs dispatched after it, so a test that waits out a worker's
   abandonment waits less; Verbatim never calls it); and `without_listener`, for an outpost
   no focus listener forwards to, whose hook's copies are never held.
@@ -471,11 +469,9 @@ Inside an outpost (`docs/design/communication.md`, section 6.4;
   dropped. The crate's `clippy.toml` disallows `std::sync::Mutex`, so no
   lock escapes the record. A call into an application made while a slot
   is filled fails the debug-build check: every call the backends count,
-  every agile reference, a bounded client's wait and the drop of the
-  store's `Removed` check. The worker's catch around a program
-  (`worker::catching`), UIA's around its event callbacks and the bounded
-  client's around its operations end the process when the panic is the
-  check's.
+  every agile reference and the drop of the store's `Removed` check. The
+  worker's catch around a program (`worker::catching`) and UIA's around
+  its event callbacks end the process when the panic is the check's.
 - Programs (`outpost::worker`): the worker generation in charge takes one
   program at a time from its inbox, an entry's handling, the owed work, a
   release's drop, or the finish of a caret
@@ -623,7 +619,7 @@ Inside an outpost (`docs/design/communication.md`, section 6.4;
   (`Charge::arm`, a `bound::FocusProgress`) and tell the reducer its bound,
   by the design's Terms (`read::walk_left`): `MOVED_ON_GRACE` when the
   focus's top-level window is not that of the focus the outpost expects
-  Core to hold (`Held::expected`), `ENRICHMENT_BUDGET` otherwise, measured
+  Core to hold (`Held::expected`), `SAME_WINDOW_BOUND` otherwise, measured
   from the event's observation for an MSAA focus and from the read's start
   for the gap's read. The walk tells what it reads as it reads it
   (`read::WalkStep`), each step taken into the charge under its lock: the
@@ -666,12 +662,13 @@ Inside an outpost (`docs/design/communication.md`, section 6.4;
   the shell asserts after each transition that its tokens are the queries
   the reducer records.
 - Time limits in an entry (`books/dev/src/explanation/design/focus-pipeline.md`, section 6): UIA
-  calls end at `verbatim_uia::CONNECTION_TIMEOUT` (2 s) or
-  `TRANSACTION_TIMEOUT` (5 s); the listener's read's bound bounds the
+  calls end at `verbatim_uia::UIA_CONNECTION_TIMEOUT` (2 s) or
+  `UIA_TRANSACTION_TIMEOUT` (10 s); the listener's read's bound bounds the
   continuation of its chain, the walk's bound an MSAA focus's or the gap's
-  read's ancestor walk between calls, and `ENRICHMENT_BUDGET` (2 s) a
-  focus-now answer's; a UIA dialog's text runs on a
-  `verbatim_uia::BoundedClient` within `DIALOG_TEXT_WAIT` (1 s); tree view,
+  read's ancestor walk between calls, and `SAME_WINDOW_BOUND` (2 s) a
+  focus-now answer's; a dialog's text, UIA's as MSAA's, is gathered in
+  its program on the worker's own client, bounded by the program's
+  deadline, as NVDA gathers it inside its focus event; tree view,
   list view, and edit messages use `SendMessageTimeoutW`; an `IAccessible`
   call is bounded by the entry's deadline.
 - The I/O thread, the main thread (`verbatim_process::transport::ChildIo`,
@@ -927,7 +924,7 @@ and the inherited pipe handles.
   focused selection container (`focus_rules::is_selection_container`).
 - Ancestors (`read::uia_remote_enrichment`, `read::uia_enrichment`,
   `read::msaa_enrichment`) stop at the previous chain and splice it, within
-  `ENRICHMENT_BUDGET`. A walk that finds no parent, or whose step fails,
+  `SAME_WINDOW_BOUND`. A walk that finds no parent, or whose step fails,
   below the root (or below a top-level window, for the remote program and
   `Uia::ancestors`) goes on from the parent window of its outermost
   element's nearest window (`Ancestry::failed_hop`, `AncestorWalk::Failed`,
@@ -1139,7 +1136,9 @@ scripts wait for, without waiting:
   key's dispatch replaces it, a focus on another node or a replaced node is
   reported, its node is released, its holder panics, returns without a
   result or is claimed by its walk's publication, or at
-  `CARET_WATCH_BOUND` (10 s after it opened, for a watch that does not
+  `CARET_WATCH_BOUND` (`HANDLING_DEADLINE`, 11 s, after it opened, so a
+  key whose application shows its effect within the time a task allows it
+  is still spoken, for a watch that does not
   poll), acted on by the reducer with no program. The reducer gives the
   shell why each watch ended without evidence (`Effect::WatchEnded`),
   which the shell logs and, under the `faults` feature, passes to the
@@ -1160,7 +1159,7 @@ scripts wait for, without waiting:
   `Worker::poll_read`), which the reducer dispatches when its next read is
   due, no program is in flight, no release is pending and nothing else is
   ready, so a program that arrives during the poll waits for at most the
-  one read in flight. The read runs under `TEXT_DEADLINE` and the watch's
+  one read in flight. The read runs under `HANDLING_DEADLINE` and the watch's
   trace, holds the watch, and commits the evidence, then reads the
   terminal, or that it found nothing, after which the reducer sets the
   next read 5 ms on, or at the last, or ends the watch past its last read.
@@ -1320,14 +1319,13 @@ Caret and text events:
   `ShellCandidates` with each matching button's `Place` and whether every
   button was read; Core picks (`verbatim-gui`'s `refind`). Both read only
   their application's windows, look the shell windows up without the proxy
-  rule (`any_window_element`), stop their calls at `WALK_BUDGET` (2 s)
-  from when they begin or at the query's `walk_until_us` on the run's
-  shared clock, whichever comes first (`walk_limit`), answering what they
-  read, and read a failed step as no more items, logged as a warning. The
-  reducer abandons either query at the `answer_by_us` it carries, Core's
-  times for the list dialog's wait, fixed when the dialog asked, and
-  answers one it reaches at or after its `walk_until_us` with nothing,
-  never giving it to the worker.
+  rule (`any_window_element`), have no time budget of their own, and read
+  a failed step as no more items, logged as a warning. The reducer
+  abandons either query at the `answer_by_us` it carries, Core's deadline
+  for the list dialog's wait less its reply margin, fixed when the dialog
+  asked, and answers one it reaches at or after its `answer_by_us` with
+  nothing, never giving it to the worker: a slow taskbar's whole list is
+  shown once it answers, and one that does not finish in time gives none.
 - `DumpTree { locations }` walks the foreground window (or the first
   visible top-level window): UIA with `verbatim_uia_rops::tree_dump`, MSAA
   with `verbatim_ia2::acquire::walk_tree`, capped at depth 64 and 4096
@@ -1457,8 +1455,8 @@ The outpost's side (`Outpost::shutdown`), in order:
 The outpost logs each step's time (`the outpost shut down`). The listener
 removes its hooks and handlers, writes what waits, and leaves COM. Both
 then end with `TerminateProcess` and exit code 0 (`books/dev/src/explanation/architecture.md`,
-section 1). The limit outlasts any UIA call (`TRANSACTION_TIMEOUT`, five
-seconds, `CONNECTION_TIMEOUT`, two, for classic calls and `Execute` alike)
+section 1). The limit outlasts any UIA call (`UIA_TRANSACTION_TIMEOUT`, ten
+seconds, `UIA_CONNECTION_TIMEOUT`, two, for classic calls and `Execute` alike)
 and a search of several; only an MSAA call into a hung application can
 outlast it. A clean shutdown takes milliseconds: over one end-to-end run, 4
 to 443 ms from the message to the exit, median 15.

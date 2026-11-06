@@ -717,8 +717,8 @@ classically, as an independent reference for the program's colours.
 
 `Execute` blocks while the provider is stalled, as a classic call does.
 UIA's connection timeout does not bound it; its transaction timeout
-(`IUIAutomation2`'s `TransactionTimeout`, process-wide, five seconds in
-every Verbatim process, `verbatim_uia::TRANSACTION_TIMEOUT`) does, with
+(`IUIAutomation2`'s `TransactionTimeout`, process-wide, ten seconds in
+every Verbatim process, `verbatim_uia::UIA_TRANSACTION_TIMEOUT`) does, with
 `ExecutionFailure` and extended error `UIA_E_TIMEOUT`, as a classic call
 fails in the same time. So the outpost's worker calls `Execute` directly,
 and its watchdog covers both the same way; a program is one wait where a

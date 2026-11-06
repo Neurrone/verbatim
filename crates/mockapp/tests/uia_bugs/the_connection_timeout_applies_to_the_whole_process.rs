@@ -3,13 +3,13 @@
 //! transaction timeouts a client sets belong to its process, and the last
 //! setting by any client is what every client reads; and Verbatim's
 //! workaround, that `verbatim_uia` sets both once per process, to
-//! `CONNECTION_TIMEOUT` and `TRANSACTION_TIMEOUT`, during UIA's first-time
+//! `UIA_CONNECTION_TIMEOUT` and `UIA_TRANSACTION_TIMEOUT`, during UIA's first-time
 //! setup, and nothing else sets
 //! them.
 
 use std::sync::mpsc;
 
-use verbatim_uia::{CONNECTION_TIMEOUT, TRANSACTION_TIMEOUT};
+use verbatim_uia::{UIA_CONNECTION_TIMEOUT, UIA_TRANSACTION_TIMEOUT};
 use windows::Win32::UI::Accessibility::{IUIAutomation, IUIAutomation2};
 use windows::core::Interface;
 
@@ -65,7 +65,7 @@ pub fn timeouts_set_through_one_client_are_read_by_another() {
 }
 
 /// The first client `verbatim_uia` makes in a process reads the timeouts
-/// as `CONNECTION_TIMEOUT` and `TRANSACTION_TIMEOUT`, which UIA's
+/// as `UIA_CONNECTION_TIMEOUT` and `UIA_TRANSACTION_TIMEOUT`, which UIA's
 /// first-time setup set, in place of UIA's defaults of 2 and 20 seconds.
 pub fn the_first_client_in_a_process_has_verbatims_timeouts() {
     let uia = support::client();
@@ -75,8 +75,8 @@ pub fn the_first_client_in_a_process_has_verbatims_timeouts() {
     assert_eq!(
         timeouts(uia.client()),
         (
-            milliseconds(CONNECTION_TIMEOUT),
-            milliseconds(TRANSACTION_TIMEOUT)
+            milliseconds(UIA_CONNECTION_TIMEOUT),
+            milliseconds(UIA_TRANSACTION_TIMEOUT)
         )
     );
 }

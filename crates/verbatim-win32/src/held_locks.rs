@@ -7,9 +7,8 @@
 //! slot as it takes a lock ([`hold`]), and its guard empties that slot as
 //! it is dropped, so the record is right whatever order guards drop in. The
 //! places the outpost's code reaches an application call [`check`]: every
-//! call the backends count, the making of an agile reference, the entry of
-//! a bounded wait on another thread's call, and the release of the store's
-//! removed objects. A check that finds a slot filled writes a message
+//! call the backends count, the making of an agile reference, and the
+//! release of the store's removed objects. A check that finds a slot filled writes a message
 //! naming what was made and every lock held to standard error and the log,
 //! then panics with a payload of its own type ([`LockHeldAcrossCall`]); the
 //! places that catch a panic around application calls abort the process in

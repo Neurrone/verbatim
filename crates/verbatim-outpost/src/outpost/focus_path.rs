@@ -14,32 +14,23 @@
 
 #![forbid(unsafe_code)]
 
-use std::time::Duration;
-
 use verbatim_uia::{Cached, Fill, Node, Request, Uia};
 use verbatim_uia_rops::{Path, PathQuery, element_by_path};
 
-use crate::arbitration::time_limit;
-use verbatim_process::clock::Clock;
-
 use verbatim_win32::window::window_exists;
-
-/// How long the classic walk down a path, used where a remote operation
-/// cannot import the window's element, may take: checked between its
-/// calls, each of which UIA ends after its call timeout.
-const PATH_BUDGET: Duration = Duration::from_secs(1);
 
 pub(super) use super::reducer::{FocusPath, Route};
 
 /// The element `route` leads to, filled by `nodes`: the route's
 /// window's element, read with one connection call, then the walk down the
 /// route's runtime ids, one remote operation where `remote` allows it, else
-/// the classic walk within [`PATH_BUDGET`] by `clock`. `Ok(None)` when the
-/// walk finished and the path does not lead to the element, or a call said
-/// the window or an element on the way is gone; an error when the walk
-/// failed, a lookup of the window that timed out or was refused, a classic
-/// walk past its budget, or any other failed call, since an application
-/// that is only slow has not shown the element gone. With it, whether a
+/// the classic walk, with no time budget of its own: the program's deadline
+/// bounds it, as NVDA's watchdog bounds its walk. `Ok(None)` when the walk
+/// finished and the path does not lead to the element, or a call said the
+/// window or an element on the way is gone; an error when the walk failed,
+/// a lookup of the window that timed out or was refused, or any other
+/// failed call, since an application that is only slow has not shown the
+/// element gone. With it, whether a
 /// remote operation could not import the window's element (a client-side
 /// proxy), so the caller reads that window the classic way from then on.
 pub(crate) fn find(
@@ -47,7 +38,6 @@ pub(crate) fn find(
     route: &Route,
     nodes: &Request<Node>,
     remote: bool,
-    clock: &Clock,
 ) -> (Result<Option<Cached<Node>>, String>, bool) {
     let root = match uia.window_element(route.window.get(), nodes) {
         Ok(root) => root,
@@ -67,12 +57,11 @@ pub(crate) fn find(
         return (Ok(same.then_some(root)), false);
     }
     let fill = Fill::new(nodes);
-    let out_of_time = time_limit(clock, PATH_BUDGET);
     let query = PathQuery {
         root: root.live(),
         path: &route.path,
         fill: &fill,
-        out_of_time: Some(&out_of_time),
+        out_of_time: None,
     };
     match element_by_path(uia, &query, remote) {
         Ok((found, path)) => {
@@ -80,18 +69,6 @@ pub(crate) fn find(
                 matches!(&path, Path::Fallback(verbatim_uia_rops::Error::Import(_)));
             if let Path::Fallback(error) = &path {
                 tracing::warn!(window = route.window.get(), %error, "a remote operation failed; read the classic way");
-            }
-            // A classic walk stops with nothing found once its budget is
-            // spent, whether or not the path leads on.
-            if found.is_none() && !matches!(path, Path::Remote) && out_of_time() {
-                tracing::debug!(
-                    window = route.window.get(),
-                    "a path's walk ran past its budget"
-                );
-                return (
-                    Err("the walk ran past its time budget".to_owned()),
-                    import_failed,
-                );
             }
             (Ok(found), import_failed)
         }

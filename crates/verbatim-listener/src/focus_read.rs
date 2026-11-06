@@ -54,13 +54,14 @@
 //!
 //! Time limits: a read is several calls, each on an element the listener
 //! holds, which UIA's transaction timeout, set once for the process, ends
-//! (`verbatim_uia::TRANSACTION_TIMEOUT`); a call that fails ends the read.
-//! NVDA's checks have the time budget [`READ_BUDGET`] from the read's
+//! (`verbatim_uia::UIA_TRANSACTION_TIMEOUT`); a call that fails ends the read.
+//! NVDA's checks have the time budget [`SAME_WINDOW_BOUND`] from the read's
 //! start, and the walk after them has its bound, measured from the event's
 //! observation (`docs/design/focus-pipeline-rework.md`, the Terms):
 //! [`MOVED_ON_GRACE`] when the focus's top-level window is not that of the
 //! previous focus the listener observed, another application's focus
-//! before it always counting as elsewhere, and [`READ_BUDGET`] otherwise.
+//! before it always counting as elsewhere, and [`SAME_WINDOW_BOUND`]
+//! otherwise, the bound both readers share in the same window.
 //! Each is asked before each of the read's calls after the first
 //! ([`Budget`]): once the bound has passed, the walk makes no more calls,
 //! and the focus is reported with what it has read, as the event's cache
@@ -76,8 +77,8 @@
 //! Each application's read under way is its work in flight in the
 //! schedule (`verbatim_reader_rules::in_flight`,
 //! `books/dev/src/reference/crates/verbatim-reader-rules.md`), which abandons a thread whose read runs past
-//! [`READ_DEADLINE`], the budget and the one call that can be under way
-//! when the budget passes, and, as NVDA's watchdog cancels a slow call
+//! [`BOUNDED_WALK_DEADLINE`], the budget, the one call that can be under way
+//! when the budget passes and a second's margin, and, as NVDA's watchdog cancels a slow call
 //! once the user has moved on (`docs/nvda/main-loop-and-watchdog.md`,
 //! "The watchdog: detection"), a thread whose read of a focus is still
 //! under way while the window in front belongs to the read's application
@@ -98,12 +99,23 @@
 //! [`ABANDONED_LIMIT`](verbatim_listener_logic::focus::ABANDONED_LIMIT) gets no new thread until one returns: its events
 //! wait, a newer event of an element replacing its waiting one, and the
 //! first abandoned thread whose call returns reads them, unless
-//! [`READ_DEADLINE`] has passed since the application reached the limit,
+//! [`BOUNDED_WALK_DEADLINE`] has passed since the application reached the limit,
 //! when the watchdog drops every event waiting and each later one is
 //! dropped as it arrives, until a thread returns (one bound per
-//! application, which [`READ_DEADLINE`] states); an event waiting so is a
-//! pending focus for its own application's menu openings only
-//! ([`Readers::focus_pending`]).
+//! application, which [`BOUNDED_WALK_DEADLINE`] states); an event waiting so
+//! is a pending focus for its own application's menu openings only
+//! ([`Readers::focus_pending`]). So the application's outpost, whose later
+//! events wait behind each marker, runs at most that long behind the hung
+//! reads, once, however many events the application raises meanwhile.
+//!
+//! The deadline does not bound the call under way: the transaction timeout
+//! bounds each provider call, not a UIA operation
+//! (`books/dev/src/reference/uia-bugs.md`, "A timeout bounds each request and
+//! window message, not an operation"), so one operation that makes several
+//! provider calls, as the nearest-window lookup's
+//! `NormalizeElementBuildCache` does, can run past the deadline with each
+//! of its provider calls answered within the timeout, and its read is then
+//! abandoned though the application still answers.
 //!
 //! A thread keeps its focus before, NVDA's duplicate evidence, for as long
 //! as its application has an outpost: it ends, once it has read every event
@@ -123,7 +135,7 @@ use windows::Win32::UI::Accessibility::{
     IUIAutomationElement, UIA_LegacyIAccessibleStatePropertyId,
 };
 
-use verbatim_model::{NodeDetails, Pid, State, TraceId};
+use verbatim_model::{BOUNDED_WALK_DEADLINE, NodeDetails, Pid, SAME_WINDOW_BOUND, State, TraceId};
 use verbatim_uia::map::{CachedUiaParts, add_legacy_checked_state, wants_legacy_checked_state};
 use verbatim_uia::{
     Ancestor, AncestorGates, Cached, ElementExt as _, Fill, FocusInput, ListenerEvent, Node,
@@ -133,8 +145,8 @@ use verbatim_uia_rops::{Ancestry, FocusAncestry, FocusQuery, Progress, focus_anc
 
 use verbatim_listener_logic::focus::{
     Arrival, COMPARISON_FAILED, CONSOLE_OWN, FocusEvent, HIDDEN_FRAME, HUNG, Judged, MSAA_CLASS,
-    Meta, NO_WINDOW, NOT_FOCUSED, NOT_RELATED, NOTIFICATION_NO_WINDOW, OUT_OF_TIME_BEFORE_LOOKUP,
-    UNFOCUSED_OUT_OF_TIME, arrival_of, nearest_timeout_reason,
+    Meta, NEAREST_TIMED_OUT, NO_WINDOW, NOT_FOCUSED, NOT_RELATED, NOTIFICATION_NO_WINDOW,
+    OUT_OF_TIME_BEFORE_LOOKUP, UNFOCUSED_OUT_OF_TIME, arrival_of,
 };
 use verbatim_listener_logic::schedule::{
     AlarmChange, QueuePlace, Request, Schedule, ScheduleEffect, ScheduleInput, Waking,
@@ -162,54 +174,8 @@ use verbatim_win32::window::{
 /// The most ancestors read for a focus, as many as the outpost walks.
 const MAX_ANCESTORS: u32 = 64;
 
-/// How long NVDA's checks of one focus event may take from the read's
-/// start, and the bound of the walk after them, from the event's
-/// observation, for a focus in the top-level window of the focus before
-/// it, before the read makes no more calls into the application: asked
-/// before each call after the first, each of which UIA ends after its
-/// transaction timeout (`books/dev/src/explanation/design/listener-without-connections.md`,
-/// section 5). A read of an application that answers takes milliseconds
-/// (section 10, step 6), so only a slow application meets it, and its
-/// focus is then reported with what was read by then, the windows not
-/// reached as plain windows, rather than held (section 9, risk 4).
-const READ_BUDGET: Duration = Duration::from_secs(2);
-
-/// How long a reading thread may take over one focus event before the
-/// watchdog abandons it, and the bound on an application at
-/// [`ABANDONED_LIMIT`], 8 seconds: the [`READ_BUDGET`] of 2 seconds,
-/// UIA's transaction timeout of 5 seconds for the call that can be under
-/// way when the budget passes, and a second to spare. The listener makes
-/// no probe of its own, so no probe's wait is added
-/// (`docs/design/focus-pipeline-rework.md`, the verdicts). It bounds
-/// how long the application's later events wait behind the read's marker,
-/// whatever the read's calls do.
-///
-/// The bound at the limit is one per application, not one per event: once
-/// its second abandoned thread is still in its call, its events wait for a
-/// thread until this long after that moment; then every event waiting is
-/// dropped ([`WAITED_TOO_LONG`]), and each later one is dropped as it
-/// arrives, until an abandoned thread's call returns, which ends the limit
-/// and the bound with it. So the application's outpost, whose later events
-/// wait behind each marker, runs at most this long behind the hung reads,
-/// once, however many events the application raises meanwhile.
-///
-/// It does
-/// not bound the call under way: the transaction timeout bounds each
-/// provider call, not a UIA operation (`books/dev/src/reference/uia-bugs.md`, "A timeout
-/// bounds each request and window message, not an operation"), so one
-/// operation that
-/// makes several provider calls, as the nearest-window lookup's
-/// `NormalizeElementBuildCache` does, can run past the deadline with each
-/// of its provider calls answered within the timeout, and its read is then
-/// abandoned though the application still answers. Only a read whose last
-/// call is one provider call, or one remote operation, a single
-/// transaction, is sure to end within it.
-pub(crate) const READ_DEADLINE: Duration = READ_BUDGET
-    .saturating_add(verbatim_uia::TRANSACTION_TIMEOUT)
-    .saturating_add(Duration::from_secs(1));
-
 /// One focus read's time budget, on the reader's clock, asked before each
-/// of the read's calls after the first: [`READ_BUDGET`] from the read's
+/// of the read's calls after the first: [`SAME_WINDOW_BOUND`] from the read's
 /// start for NVDA's checks, and, once the read has passed them, the walk's
 /// bound, measured from the event's observation
 /// ([`bound_walk`](Self::bound_walk)).
@@ -217,7 +183,7 @@ pub(crate) const READ_DEADLINE: Duration = READ_BUDGET
 /// It also times each of the read's calls, by the system's clock whatever
 /// the reader's: a call that takes longer than [`SLOW_CALL`] is logged at
 /// info with its name and how long it took, so the slowest calls behind
-/// [`READ_DEADLINE`] can be seen (Dickson, 2026-10-20). Each call costs one
+/// [`BOUNDED_WALK_DEADLINE`] can be seen (Dickson, 2026-10-20). Each call costs one
 /// clock reading, at its start, which is also the end of the call before
 /// it; the last ends when the budget is dropped, at the read's end.
 struct Budget {
@@ -241,7 +207,7 @@ impl Budget {
         Self {
             clock,
             start,
-            end: Cell::new(start + READ_BUDGET),
+            end: Cell::new(start + SAME_WINDOW_BOUND),
             call: Cell::new(None),
         }
     }
@@ -460,7 +426,7 @@ impl WatchedRead {
 pub(crate) struct ReadProgress {
     /// The read's bound, by the system's clock: [`MOVED_ON_GRACE`] after the
     /// event's observation when the focus's top-level window is not that of
-    /// the previous focus the listener observed, and [`READ_BUDGET`] after
+    /// the previous focus the listener observed, and [`SAME_WINDOW_BOUND`] after
     /// it otherwise.
     bound_at: Instant,
     /// The bound's length from the event's observation, which the outpost
@@ -870,7 +836,11 @@ impl FocusReader {
         // publishes it at the walk's bound should a call still be under
         // way then (`docs/design/focus-pipeline-rework.md`, "A window's
         // name, and the one fallback").
-        let bound = if moved { MOVED_ON_GRACE } else { READ_BUDGET };
+        let bound = if moved {
+            MOVED_ON_GRACE
+        } else {
+            SAME_WINDOW_BOUND
+        };
         let left = budget.bound_walk(bound.saturating_sub(waited));
         self.window.arm(ReadProgress {
             bound_at: Instant::now() + left,
@@ -1439,9 +1409,7 @@ impl FocusReader {
                 window = ?nearest,
                 "UIA focus sender's nearest window looked up"
             );
-            let nearest = nearest
-                .map_err(|_| nearest_timeout_reason(started.elapsed()))?
-                .ok_or(NO_WINDOW)?;
+            let nearest = nearest.map_err(|_| NEAREST_TIMED_OUT)?.ok_or(NO_WINDOW)?;
             self.window.learn(nearest);
             nearest
         } else {
@@ -1911,7 +1879,7 @@ impl<R: Reading> Readers<R> {
     /// calls: the event then waits for the first of them to return, or for
     /// the watchdog to drop it at the application's bound, and once that
     /// bound has passed it is dropped at once, behind every event still
-    /// waiting ([`READ_DEADLINE`]). `owed` answers its marker: kept until
+    /// waiting ([`BOUNDED_WALK_DEADLINE`]). `owed` answers its marker: kept until
     /// its outcome. Never waits on a read.
     pub(crate) fn push(&self, pid: Pid, meta: Meta, job: R::Job, owed: R::Owed) {
         let shared = &self.shared;
@@ -2360,7 +2328,7 @@ impl ReadingThreads {
                 set_up,
                 outcomes: Mutex::new(outcomes),
             },
-            READ_DEADLINE,
+            BOUNDED_WALK_DEADLINE,
         );
         (
             Self {

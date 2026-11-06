@@ -2045,6 +2045,7 @@ impl Worker<'_> {
         let mut memo = self.context.follow(|follow| follow.tracking.dialog.clone());
         read::describe_dialogs(
             self.context,
+            self.client,
             ancestors.iter_mut().chain(std::iter::once(&mut node)),
             (&mut memo, foreground),
         );
@@ -3850,8 +3851,7 @@ impl Worker<'_> {
         let uia = self.client.uia()?;
         let nodes = context.node_request(uia).ok()?;
         let remote = context.tries_remote(Some(route.window.get()));
-        let (found, import_failed) =
-            focus_path::find(uia, &route, &nodes, remote, &context.clock());
+        let (found, import_failed) = focus_path::find(uia, &route, &nodes, remote);
         if import_failed {
             context.read_classically(route.window.get());
         }
@@ -4153,24 +4153,13 @@ impl Worker<'_> {
             Query::Text { node_id, op } => {
                 Ok(QueryResult::Text(text_reads::answer(context, *node_id, op)))
             }
-            Query::ShellItems {
-                kind,
-                walk_until_us,
-                ..
-            } => super::shell_items::shell_items(context, client, *kind, *walk_until_us)
-                .map(QueryResult::ShellItems),
-            Query::ShellItemPosition {
-                kind,
-                item,
-                walk_until_us,
-                ..
-            } => super::shell_items::shell_item_position(
-                context,
-                client,
-                (*kind, item),
-                *walk_until_us,
-            )
-            .map(QueryResult::ShellItemPosition),
+            Query::ShellItems { kind, .. } => {
+                super::shell_items::shell_items(context, client, *kind).map(QueryResult::ShellItems)
+            }
+            Query::ShellItemPosition { kind, item, .. } => {
+                super::shell_items::shell_item_position(context, client, (*kind, item))
+                    .map(QueryResult::ShellItemPosition)
+            }
         };
         let outcome = match result {
             Ok(result) => QueryOutcome::Done(result),
@@ -4210,7 +4199,12 @@ impl Worker<'_> {
             } = focus;
             ancestors.iter_mut().chain(std::iter::once(node))
         });
-        read::describe_dialogs(context, windows.chain(focus), (&mut None, false));
+        read::describe_dialogs(
+            context,
+            self.client,
+            windows.chain(focus),
+            (&mut None, false),
+        );
         let answered = answer.focus.as_mut().map(|control| {
             let node = &control.node;
             let (text, read_at) = self.read_focus_text(node.id, node.role);

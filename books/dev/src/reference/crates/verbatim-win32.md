@@ -24,10 +24,9 @@ Public API:
   takes the slot; the backends check at every counted call and agile reference
   ([verbatim-outpost](verbatim-outpost.md)). The check panics, and in
   debug builds aborts where a panic around application calls would be
-  caught (the worker, UIA's event callbacks and the bounded client's
-  thread), after writing its message (Dickson, 2026-10-31). It covers the
-  outpost's own locks and the calls, agile references, bounded waits and
-  store releases the backends count; an object released under another
+  caught (the worker and UIA's event callbacks), after writing its message
+  (Dickson, 2026-10-31). It covers the outpost's own locks and the calls,
+  agile references and store releases the backends count; an object released under another
   crate's lock is not checked. Measured by `measure_lock_check` on
   2026-11-01, it costs about 60 ns per acquisition in debug builds, about
   3.9 ms over `measure_keys_notepad`'s 64,800 acquisitions, and nothing in

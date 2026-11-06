@@ -12,9 +12,10 @@ use verbatim_model::{CallCounts, CaretWatch, NodeId, TextReply, TraceId};
 /// The longest a caret key's watch stays open without evidence. It only
 /// frees the watch: ending it this way says nothing, as ending it any other
 /// way does. A key whose application raises its evidence later than this
-/// is not spoken. Ten seconds, the time a program allows an application
-/// that is busy, or starting up, to answer one event's reads.
-pub const CARET_WATCH_BOUND: Duration = Duration::from_secs(10);
+/// is not spoken. It is [`HANDLING_DEADLINE`](verbatim_model::HANDLING_DEADLINE),
+/// so a key whose application shows its effect within the time a task
+/// allows it is still spoken. It waits on no call.
+pub const CARET_WATCH_BOUND: Duration = verbatim_model::HANDLING_DEADLINE;
 
 /// How long after one of the console poll's reads the next is made.
 pub const POLL_INTERVAL: Duration = Duration::from_millis(5);
@@ -439,11 +440,11 @@ mod tests {
             watch,
             Watch::Waiting {
                 open: open(0),
-                bound: 10_001_000,
+                bound: 11_001_000,
             }
         );
         assert!(!watch.opened(open(5), true, Some(2_000)));
-        assert_eq!(watch.due(), Some(10_001_000));
+        assert_eq!(watch.due(), Some(11_001_000));
     }
 
     #[test]
@@ -514,7 +515,7 @@ mod tests {
     fn a_take_of_another_node_leaves_a_waiting_watch_as_it_is() {
         let waiting = Watch::Waiting {
             open: open(0),
-            bound: 10_001_000,
+            bound: 11_001_000,
         };
         let mut watch = waiting.clone();
         assert_eq!(watch.take(NodeId::new(2)), None);

@@ -6,7 +6,7 @@
 
 ## What Verbatim relies on
 
-`crates/verbatim-uia/src/bounded.rs` and the outpost watchdog, which bound calls by abandoning their thread. If `CoCancelCall` began to work, nothing breaks; Verbatim is only more conservative than needed.
+The outpost watchdog (`crates/verbatim-outpost/src/outpost/shell.rs`), which bounds calls by abandoning their thread. If `CoCancelCall` began to work, nothing breaks; Verbatim is only more conservative than needed.
 
 ## Method
 

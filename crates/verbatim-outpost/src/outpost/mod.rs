@@ -207,9 +207,6 @@ pub(crate) struct Context {
     /// [`IGNORE_PIDS_ENV`](verbatim_process::held::IGNORE_PIDS_ENV): a focus in
     /// one's window is not reported.
     ignored: verbatim_process::held::IgnoredProcesses,
-    /// The client on a thread of its own for the worker's operations with a
-    /// deadline of their own: a dialog's text.
-    bounded: verbatim_uia::BoundedClient,
     /// The focus-following UIA subscription, one event handler group in
     /// two forms, which the worker moves with the focus
     /// ([`register_focus_events`]).
@@ -1113,7 +1110,6 @@ impl Outpost {
             arbitrator: Lock::new(Arbitrator::new(&[])),
             observation: OnceLock::new(),
             ignored: verbatim_process::held::IgnoredProcesses::from_env(),
-            bounded: verbatim_uia::BoundedClient::default(),
             focus_events: OnceLock::new(),
             remote_operations: options.remote_operations,
             classic_windows: Lock::new(HashMap::new()),
@@ -1350,7 +1346,6 @@ impl Outpost {
             &context.target_pid(),
         );
         let workers = stop(&context);
-        let bounded = context.bounded.close();
         let calls_finished = started.elapsed();
         let objects = context.release_everything();
         let failed_reads = context.failed_reads();
@@ -1374,7 +1369,6 @@ impl Outpost {
             calls_finished_ms = calls_finished.as_millis(),
             elapsed_ms = started.elapsed().as_millis(),
             workers,
-            bounded,
             objects,
             failed_reads,
             "the outpost shut down"
@@ -1410,8 +1404,8 @@ impl Outpost {
     }
 
     /// Gives the programs dispatched from now on `deadline` in place of
-    /// the deadline for handling an event, a focus or a focus-now query
-    /// (`verbatim_outpost_logic::HANDLING_DEADLINE`, 10 seconds), for a
+    /// the deadline for handling an event, a focus or a query
+    /// (`verbatim_outpost_logic::HANDLING_DEADLINE`, 11 seconds), for a
     /// test that waits out a worker's abandonment at it. Verbatim never
     /// calls it.
     pub fn set_handling_deadline(&self, deadline: Duration) {

@@ -8,8 +8,6 @@
 //! (`docs/design/focus-pipeline-rework-remaining.md`, "The gap, closed by
 //! the outpost's own reports").
 
-use std::time::Duration;
-
 use verbatim_model::TraceId;
 use verbatim_model::protocol::{DeliveredFact, EventTiming, UiaFocusRead};
 
@@ -18,7 +16,7 @@ use crate::schedule::QueuePlace;
 /// How many of an application's reading threads may be abandoned and still
 /// in their calls before it gets no new thread: its focus events then wait
 /// for the first of those threads whose call returns, within the bound
-/// the listener's `READ_DEADLINE` states.
+/// the listener's read deadline (`verbatim_model::BOUNDED_WALK_DEADLINE`) states.
 pub const ABANDONED_LIMIT: usize = 2;
 
 /// Why an event is dropped whose read the watchdog abandoned at the
@@ -31,7 +29,7 @@ pub const MOVED_ON: &str = "the user moved on from a slow window";
 
 /// Why an event is dropped that waited for a thread while its application's
 /// abandoned threads were at [`ABANDONED_LIMIT`] until the bound
-/// the listener's `READ_DEADLINE` states, or arrived after that bound.
+/// the listener's read deadline (`verbatim_model::BOUNDED_WALK_DEADLINE`) states, or arrived after that bound.
 pub const WAITED_TOO_LONG: &str = "it waited too long behind its application's abandoned reads";
 
 /// Why a focus is dropped whose event said it lacked the keyboard focus
@@ -68,51 +66,13 @@ pub enum FocusEvent {
 pub const NO_WINDOW: &str = "it has no window above it, so NVDA makes no object for it";
 
 /// The reason a focus is dropped when the lookup of its sender's nearest
-/// window failed with `UIA_E_TIMEOUT` (`verbatim_uia::nearest_window_lookup`)
-/// after [`NEAREST_FAILED_FAST_BOUND`] or more: NVDA's lookup answers no
-/// window and NVDA drops the focus, and the listener reads nothing more
-/// into an application that has just failed to answer; the outpost's gap
-/// record, left to its bound, reads the application's focus anew
+/// window failed with `UIA_E_TIMEOUT` (`verbatim_uia::nearest_window_lookup`),
+/// however long it took: NVDA's lookup answers no window and NVDA drops the
+/// focus, and the listener reads nothing more into an application that has
+/// just failed to answer; the drop leaves the outpost's gap record to its
+/// bound, whose read reads the application's focus anew
 /// (`docs/design/focus-pipeline-rework.md`, the audit's difference 14).
 pub const NEAREST_TIMED_OUT: &str = "its nearest window's lookup timed out, so NVDA drops it";
-
-/// The reason a focus is dropped when the lookup of its sender's nearest
-/// window failed with `UIA_E_TIMEOUT` in under [`NEAREST_FAILED_FAST_BOUND`]:
-/// NVDA drops the focus as for [`NEAREST_TIMED_OUT`], but the application
-/// did not keep the lookup waiting, as Settings' lookup failed after 1.1 ms
-/// (`settings_combo_box_expanded`, 2026-10-30); as every drop, it leaves the
-/// gap record to its bound, whose read reads the focus (Dickson,
-/// 2026-10-30). A limit: in an application
-/// whose lookups keep failing fast, every focus is spoken through the gap,
-/// up to a second late, and the focuses between two gap reads are not
-/// spoken.
-pub const NEAREST_FAILED_FAST: &str =
-    "its nearest window's lookup failed with a timeout at once, so NVDA drops it";
-
-/// How long a nearest window's lookup that fails with `UIA_E_TIMEOUT` may
-/// take and still count as failing fast ([`NEAREST_FAILED_FAST`]) rather
-/// than as timed out ([`NEAREST_TIMED_OUT`]): a second. It is below UIA's
-/// 2-second connection timeout (`verbatim_uia::CONNECTION_TIMEOUT`), the
-/// shortest wait after which UIA ends a call to an application that does
-/// not answer, so a lookup that fails sooner was not kept waiting by its
-/// application. It is the UIA focus wait both readers share
-/// ([`verbatim_reader_rules::UIA_FOCUS_WAIT`]), the gap record's bound: a
-/// lookup that took that long has held its application's later events as
-/// long as the record waits for a UIA focus, and is taken as the
-/// application not answering in time.
-pub const NEAREST_FAILED_FAST_BOUND: Duration = verbatim_reader_rules::UIA_FOCUS_WAIT;
-
-/// The reason a focus is dropped whose nearest window's lookup failed with
-/// `UIA_E_TIMEOUT` after `elapsed`: [`NEAREST_FAILED_FAST`] under
-/// [`NEAREST_FAILED_FAST_BOUND`], [`NEAREST_TIMED_OUT`] otherwise.
-#[must_use]
-pub fn nearest_timeout_reason(elapsed: Duration) -> &'static str {
-    if elapsed < NEAREST_FAILED_FAST_BOUND {
-        NEAREST_FAILED_FAST
-    } else {
-        NEAREST_TIMED_OUT
-    }
-}
 
 /// The reason a notification is dropped when its sender has no window
 /// above it.
@@ -340,39 +300,18 @@ mod tests {
         ));
     }
 
-    /// A focus whose nearest window's lookup failed with `UIA_E_TIMEOUT`
-    /// in under a second, as Settings' did after 1.1 ms, is dropped for
-    /// failing fast, and its drop leaves the gap record to its bound.
+    /// A focus whose nearest window's lookup failed with `UIA_E_TIMEOUT`,
+    /// however long it took, is dropped for the lookup's timeout, and its
+    /// drop, as every drop but one for no window, leaves the gap record to
+    /// its bound, whose read reads the application's focus anew.
     #[test]
-    fn a_nearest_window_lookup_that_times_out_fast_leaves_the_record_to_its_bound() {
-        let reason = nearest_timeout_reason(Duration::from_micros(999_999));
+    fn a_nearest_window_lookup_that_times_out_leaves_the_record_to_its_bound() {
         assert_eq!(
-            reason,
-            "its nearest window's lookup failed with a timeout at once, so NVDA drops it"
-        );
-        assert_eq!(
-            Judged::Dropped(reason).into_fact(9, FocusEvent::Focus),
-            DeliveredFact::UiaFocusDropped {
-                marker: 9,
-                focus: true,
-                no_window: false,
-            }
-        );
-    }
-
-    /// A focus whose nearest window's lookup failed with `UIA_E_TIMEOUT`
-    /// after a second or more is dropped for timing out, and its drop, as
-    /// every drop but one for no window, leaves the gap record to its
-    /// bound, whose read reads the application's focus anew.
-    #[test]
-    fn a_nearest_window_lookup_that_times_out_slowly_leaves_the_record_to_its_bound() {
-        let reason = nearest_timeout_reason(Duration::from_secs(1));
-        assert_eq!(
-            reason,
+            NEAREST_TIMED_OUT,
             "its nearest window's lookup timed out, so NVDA drops it"
         );
         assert_eq!(
-            Judged::Dropped(reason).into_fact(9, FocusEvent::Focus),
+            Judged::Dropped(NEAREST_TIMED_OUT).into_fact(9, FocusEvent::Focus),
             DeliveredFact::UiaFocusDropped {
                 marker: 9,
                 focus: true,

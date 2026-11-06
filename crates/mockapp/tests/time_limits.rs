@@ -5,9 +5,7 @@
 //!
 //! - A property read, one provider call on a held element, ends at UIA's
 //!   transaction timeout, which the process's first client set
-//!   ([`verbatim_uia::TRANSACTION_TIMEOUT`]).
-//! - A search, many provider calls, ends at its own deadline on a
-//!   [`BoundedClient`], before any transaction timeout, its thread abandoned.
+//!   ([`verbatim_uia::UIA_TRANSACTION_TIMEOUT`]).
 //! - A subscription's move onto a held window ends at UIA's connection
 //!   timeout, and the registration's next move is made after it, as is
 //!   another registration's move, since every registration of a process
@@ -28,12 +26,12 @@ mod harness;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 use std::sync::mpsc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use verbatim_faults::Fault;
 use verbatim_uia::{
-    BoundedClient, ElementExt as _, Fill, Node, NodeIdRegistry, Part, PropertyEvent, Registration,
-    Scope, Shape, Subscription, TRANSACTION_TIMEOUT, Uia, Unanswered,
+    ElementExt as _, Fill, Node, NodeIdRegistry, Part, PropertyEvent, Registration, Scope, Shape,
+    Subscription, UIA_TRANSACTION_TIMEOUT, Uia,
 };
 use verbatim_uia_rops::{TreeQuery, tree_dump_classic};
 use windows::Win32::System::Variant::VARIANT;
@@ -41,10 +39,6 @@ use windows::Win32::UI::Accessibility::{
     TreeScope_Children, UIA_AutomationPropertyChangedEventId, UIA_E_TIMEOUT, UIA_NamePropertyId,
 };
 use windows::core::BSTR;
-
-/// How long a search may take in the test: well under UIA's transaction timeout,
-/// so the search's end is its deadline's, not UIA's.
-const SEARCH_DEADLINE: Duration = Duration::from_secs(1);
 
 /// A property read held in the provider fails with `UIA_E_TIMEOUT` once
 /// UIA's transaction timeout has passed, while the call is still held: one
@@ -85,61 +79,9 @@ fn a_held_property_read_ends_at_the_transaction_timeout() {
         "the read ended by UIA's timeout: {error}"
     );
     assert!(
-        elapsed >= TRANSACTION_TIMEOUT && elapsed < TRANSACTION_TIMEOUT * 2,
+        elapsed >= UIA_TRANSACTION_TIMEOUT && elapsed < UIA_TRANSACTION_TIMEOUT * 2,
         "the read ended after one transaction timeout: {elapsed:?}"
     );
-    app.quit();
-}
-
-/// A search held in the provider is given up at its own deadline, before
-/// UIA's transaction timeout would end any of its calls, and its thread is
-/// abandoned; the abandoned thread ends once the call is released.
-fn a_held_search_ends_at_its_deadline() {
-    common::init_com();
-    let title = common::unique_title("mockapp-held-search");
-    let mut app = common::spawn("small.json", "uia", &title);
-    let hwnd = common::find_window(&title).0 as isize;
-    let uia = Uia::new().expect("a UIA client");
-    let nodes = uia
-        .request::<Node>(Node::all_on())
-        .expect("a cache request");
-    let window = uia
-        .window_element(hwnd, &nodes)
-        .expect("mockapp's window element")
-        .agile()
-        .expect("an agile reference");
-    let bounded = BoundedClient::default();
-    // The thread and its client are made before the hold, by a search that
-    // answers.
-    let warm = window.clone();
-    let found = bounded.run(common::WAIT_TIMEOUT, move |uia| {
-        let nodes = uia.request::<Node>(Node::all_on())?;
-        uia.find_child_by_runtime_id(warm.resolve()?.live(), &[42, 42], &nodes)
-            .map(|found| found.is_some())
-    });
-    assert!(matches!(found, Ok(Ok(false))), "{found:?}");
-
-    app.hold();
-    let started = Instant::now();
-    let found = bounded.run(SEARCH_DEADLINE, move |uia| {
-        let nodes = uia.request::<Node>(Node::all_on())?;
-        uia.find_child_by_runtime_id(window.resolve()?.live(), &[42, 42], &nodes)
-            .map(|found| found.is_some())
-    });
-    let elapsed = started.elapsed();
-    let held = app.held();
-    assert!(
-        matches!(found, Err(Unanswered::DeadlinePassed)),
-        "{found:?}"
-    );
-    assert!(
-        elapsed >= SEARCH_DEADLINE && elapsed < TRANSACTION_TIMEOUT,
-        "the search ended at its deadline: {elapsed:?}"
-    );
-    assert!(!held.is_empty(), "a call of the search was held");
-    assert_eq!(bounded.abandoned(), 1);
-    app.release();
-    assert_eq!(bounded.close(), 1, "the abandoned thread ended");
     app.quit();
 }
 
@@ -336,10 +278,6 @@ fn main() {
         (
             "a_held_property_read_ends_at_the_transaction_timeout",
             a_held_property_read_ends_at_the_transaction_timeout,
-        ),
-        (
-            "a_held_search_ends_at_its_deadline",
-            a_held_search_ends_at_its_deadline,
         ),
         (
             "a_held_subscription_move_returns_at_the_connection_timeout",

@@ -20,14 +20,12 @@ Public API:
   was queued (`Arrival`, `arrival_of`), and what became of it (`Judged`,
   with `into_fact`). Every reason an event is dropped is a constant here
   (`NOT_IN_TIME`, `MOVED_ON`, `WAITED_TOO_LONG`, `REPLACED`, `NO_WINDOW`,
-  `NOT_FOCUSED`, `MSAA_CLASS`, `NEAREST_TIMED_OUT`, `NEAREST_FAILED_FAST`
-  and the rest); a focus's drop carries one fact for its application's
-  gap record, whether its sender had no window above it (`no_window`),
-  which `into_fact` sets for `NO_WINDOW`.
-  `NEAREST_FAILED_FAST_BOUND` is the UIA focus wait
-  (`verbatim_reader_rules::UIA_FOCUS_WAIT`), so a nearest window's lookup
-  that took as long as the outpost's gap record waits counts as timed out
-  (`nearest_timeout_reason`). `ABANDONED_LIMIT` is how many of an
+  `NOT_FOCUSED`, `MSAA_CLASS`, `NEAREST_TIMED_OUT` and the rest); a
+  focus's drop carries one fact for its application's gap record, whether
+  its sender had no window above it (`no_window`), which `into_fact` sets
+  for `NO_WINDOW`. A nearest window's lookup that fails with UIA's timeout
+  is dropped for `NEAREST_TIMED_OUT`, however long it took.
+  `ABANDONED_LIMIT` is how many of an
   application's threads may be abandoned in their calls before it gets no
   new one.
 - `schedule` — the read scheduler: `Schedule::step` takes one

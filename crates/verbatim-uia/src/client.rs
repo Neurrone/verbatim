@@ -7,6 +7,7 @@
 //! independent object, so nothing is shared across threads and there is no COM
 //! marshaling hazard.
 
+use verbatim_model::UIA_TRANSACTION_TIMEOUT;
 use windows::Win32::Foundation::{E_INVALIDARG, HWND};
 use windows::Win32::System::Com::{CLSCTX_INPROC_SERVER, CoCreateInstance};
 use windows::Win32::System::Variant::{InitVariantFromInt32Array, VARIANT};
@@ -120,34 +121,22 @@ pub struct AncestorParts {
 /// How long UIA waits to connect to an application's provider before it
 /// ends the call with `UIA_E_TIMEOUT`: UIA's connection timeout, which
 /// bounds a lookup by handle (`ElementFromHandle`), the focused element's
-/// lookup, and a first call on an element, and which UIA's own focus
-/// tracking waits on twice for a hung window named in a focus `WinEvent`.
-/// Two seconds, UIA's own default and NVDA's
-/// (`books/dev/src/explanation/design/listener-without-connections.md`, section 5). Like
-/// [`TRANSACTION_TIMEOUT`] it is a setting of the process, not of a
-/// client, so it is set once per process, by UIA's first-time setup
-/// ([`ensure_ready`]), and creating a client leaves it as it is (measured
-/// 2026-10-11).
-pub const CONNECTION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
-
-/// How long one call into a provider already connected waits before UIA
-/// ends it with `UIA_E_TIMEOUT`: UIA's transaction timeout, which bounds a
-/// property read, a cache build, or a remote operation on a held element.
-/// Set once per process with [`CONNECTION_TIMEOUT`]. Five seconds is under
-/// the outpost worker's ten-second deadline, so a slow call fails and the
-/// worker carries on rather than being abandoned, and over the two to
-/// three seconds an application that is starting up can take to answer
-/// (`books/dev/src/explanation/design/focus-pipeline.md`, section 6.1; Dickson, 2026-10-10). It
-/// bounds each provider call, not an operation: a search such as
-/// `FindFirst` waits a full timeout for each call it makes that the
-/// application does not answer, so the outpost gives such operations a
-/// deadline of their own.
-pub const TRANSACTION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+/// lookup, the first call on an element, a new connection, and the
+/// window-message wait inside a search, and which UIA's own focus tracking
+/// waits on twice for a hung window named in a focus `WinEvent`. Two
+/// seconds, UIA's own default and NVDA's
+/// (`books/dev/src/explanation/design/listener-without-connections.md`, section 5): a hung
+/// window named in a focus `WinEvent` holds every UIA event of the
+/// listener for twice it. Like [`UIA_TRANSACTION_TIMEOUT`] it is a setting
+/// of the process, not of a client, so it is set once per process, by
+/// UIA's first-time setup ([`ensure_ready`]), and creating a client leaves
+/// it as it is (measured 2026-10-11).
+pub const UIA_CONNECTION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
 
 impl Uia {
     /// Joins the multithreaded apartment and creates a UIA client on the
-    /// current thread. Each of its calls waits up to [`CONNECTION_TIMEOUT`]
-    /// to connect to an application's provider and [`TRANSACTION_TIMEOUT`]
+    /// current thread. Each of its calls waits up to [`UIA_CONNECTION_TIMEOUT`]
+    /// to connect to an application's provider and [`UIA_TRANSACTION_TIMEOUT`]
     /// for it to answer.
     ///
     /// # Errors
@@ -1268,7 +1257,7 @@ pub(crate) fn ensure_ready() -> windows::core::Result<()> {
 
 /// Creates a UIA client on this thread, in the multithreaded apartment,
 /// once UIA's first-time setup has finished ([`ensure_ready`]), which set
-/// the process's timeouts ([`CONNECTION_TIMEOUT`], [`TRANSACTION_TIMEOUT`]),
+/// the process's timeouts ([`UIA_CONNECTION_TIMEOUT`], [`UIA_TRANSACTION_TIMEOUT`]),
 /// with its proxies told not to
 /// raise the events Verbatim handles from `WinEvent`s
 /// ([`crate::proxy::ignore_win_events`]). Nothing here changes the
@@ -1313,7 +1302,7 @@ fn enable_recovery_and_coalescing(client: &IUIAutomation6) -> windows::core::Res
 }
 
 /// Sets the process's connection and transaction timeouts to
-/// [`CONNECTION_TIMEOUT`] and [`TRANSACTION_TIMEOUT`] through `client`:
+/// [`UIA_CONNECTION_TIMEOUT`] and [`UIA_TRANSACTION_TIMEOUT`] through `client`:
 /// process-wide settings, though made
 /// through a client (`books/dev/src/reference/uia-bugs.md`, "The connection timeout applies
 /// to the whole process").
@@ -1322,9 +1311,9 @@ fn set_process_timeouts(client: &IUIAutomation2) -> windows::core::Result<()> {
         |timeout: std::time::Duration| u32::try_from(timeout.as_millis()).unwrap_or(u32::MAX);
     // SAFETY: `client` is a live IUIAutomation2; each timeout is a plain
     // integer.
-    unsafe { client.SetConnectionTimeout(milliseconds(CONNECTION_TIMEOUT)) }?;
+    unsafe { client.SetConnectionTimeout(milliseconds(UIA_CONNECTION_TIMEOUT)) }?;
     // SAFETY: as above.
-    unsafe { client.SetTransactionTimeout(milliseconds(TRANSACTION_TIMEOUT)) }
+    unsafe { client.SetTransactionTimeout(milliseconds(UIA_TRANSACTION_TIMEOUT)) }
 }
 
 /// NVDA's layout judgment (`presentationType`), ported from
@@ -1601,6 +1590,6 @@ mod client_tests {
         let connection = unsafe { client.ConnectionTimeout() }.expect("the connection timeout");
         // SAFETY: as above.
         let transaction = unsafe { client.TransactionTimeout() }.expect("the transaction timeout");
-        assert_eq!((connection, transaction), (2000, 5000));
+        assert_eq!((connection, transaction), (2000, 10_000));
     }
 }

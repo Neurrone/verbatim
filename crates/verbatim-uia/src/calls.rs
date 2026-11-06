@@ -83,12 +83,6 @@ pub fn peek_failed_reads() -> u32 {
     FAILED_READS.with(Cell::get)
 }
 
-/// Adds `failed`, failed cached reads made for this thread by another, to
-/// this thread's count, as [`add`] adds calls.
-pub fn add_failed_reads(failed: u32) {
-    FAILED_READS.with(|current| current.set(current.get().saturating_add(failed)));
-}
-
 /// Counts one cross-process call of `kind` on this thread.
 #[track_caller]
 pub fn count(kind: CallKind) {
@@ -116,14 +110,6 @@ pub(crate) fn count_connection() {
 #[must_use]
 pub fn take() -> CallCounts {
     COUNTS.with(Cell::take)
-}
-
-/// Adds `counts`, calls made for this thread by another, to this thread's
-/// count: an operation run with a deadline of its own on a
-/// [`BoundedClient`](crate::BoundedClient)'s thread is counted for the
-/// thread that waited for its answer.
-pub fn add(counts: CallCounts) {
-    COUNTS.with(|current| current.set(current.get() + counts));
 }
 
 /// This thread's calls since the last take, leaving them counted: for
@@ -168,9 +154,9 @@ mod tests {
     fn take_failed_reads_returns_and_resets_this_threads_count() {
         let _ = take_failed_reads();
         count_failed_read();
-        add_failed_reads(2);
-        assert_eq!(peek_failed_reads(), 3);
-        assert_eq!(take_failed_reads(), 3);
+        count_failed_read();
+        assert_eq!(peek_failed_reads(), 2);
+        assert_eq!(take_failed_reads(), 2);
         assert_eq!(take_failed_reads(), 0);
         // Another thread's failed reads are its own, and are not calls.
         std::thread::spawn(count_failed_read)

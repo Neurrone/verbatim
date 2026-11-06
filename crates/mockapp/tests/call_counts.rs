@@ -77,7 +77,7 @@ use verbatim_outpost::text::{
 };
 use verbatim_process::arguments::OutpostOptions;
 use verbatim_uia::{
-    Ancestor, BoundedClient, Cached, DialogText, FOCUS_PROPERTIES, Fill, FocusInput, ListenerEvent,
+    Ancestor, Cached, DialogText, FOCUS_PROPERTIES, Fill, FocusInput, ListenerEvent,
     ListenerSelection, Live, Node, NodeIdRegistry, Part, PropertyEvent, Registration, Scope, Shape,
     Subscription, TextEvent, Uia,
 };
@@ -879,7 +879,7 @@ fn msaa_list_view_costs_exactly() {
 /// for a dialog the focus newly entered (`describe_dialogs` in
 /// `verbatim-outpost`'s `read.rs`): the dialog's element is the one the
 /// node registry keeps, here kept from a property event, whose cache holds
-/// no detail, and is resolved on the bounded client's thread as `Kept`;
+/// no detail, and is resolved on the worker's own thread as `Kept`;
 /// one call reads the dialog's children with their properties cached,
 /// scoped to the children alone as NVDA fetches them, so the dialog's own
 /// element is filled with nothing and nothing of it is read, and no cached
@@ -906,17 +906,12 @@ fn uia_dialog_text_costs_exactly() {
     let kept = registry
         .element_of(node)
         .expect("the dialog's kept element");
-    let bounded = BoundedClient::default();
-    let (text, cost) = under_test.measure(hwnd, |_| {
-        bounded
-            .run(common::WAIT_TIMEOUT, move |uia| {
-                let dialog = kept.resolve().ok()?.live().clone();
-                let children = uia.request_fixed::<DialogText>().ok()?;
-                dialog_text(&UiaDialog::new(uia, &children, dialog))
-            })
-            .expect("the bounded client answers")
+    let (text, cost) = under_test.measure(hwnd, |under_test| {
+        let uia = &under_test.uia;
+        let dialog = kept.resolve().ok()?.live().clone();
+        let children = uia.request_fixed::<DialogText>().ok()?;
+        dialog_text(&UiaDialog::new(uia, &children, dialog))
     });
-    bounded.close();
     assert_eq!(text.as_deref(), Some(QUESTION));
     ratchet.check(
         "UIA message box text",
@@ -955,18 +950,11 @@ fn uia_dialog_window_text_reads_nothing_of_its_title_bar() {
         .uia
         .window_live(hwnd.0 as isize)
         .expect("the dialog's window element");
-    let bounded = BoundedClient::default();
-    let dialog = AgileReference::new(dialog.element()).expect("the dialog, agile");
-    let (text, cost) = under_test.measure(hwnd, |_| {
-        bounded
-            .run(common::WAIT_TIMEOUT, move |uia| {
-                let dialog = Live::new(dialog.resolve().ok()?);
-                let children = uia.request_fixed::<DialogText>().ok()?;
-                dialog_text(&UiaDialog::new(uia, &children, dialog))
-            })
-            .expect("the bounded client answers")
+    let (text, cost) = under_test.measure(hwnd, |under_test| {
+        let uia = &under_test.uia;
+        let children = uia.request_fixed::<DialogText>().ok()?;
+        dialog_text(&UiaDialog::new(uia, &children, dialog))
     });
-    bounded.close();
     assert_eq!(text.as_deref(), Some(QUESTION));
     ratchet.check(
         "UIA message box window text",

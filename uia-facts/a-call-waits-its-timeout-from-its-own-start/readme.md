@@ -6,7 +6,7 @@ A UIA call on an element already obtained waits the transaction timeout, and eac
 
 ## What Verbatim relies on
 
-The listener's read deadline, which adds `TRANSACTION_TIMEOUT` (`crates/verbatim-listener/src/focus_read.rs`), the outpost's walk budget (`crates/verbatim-outpost/src/outpost/read.rs`), the supervisor's 20-second retirement bound (`crates/verbatim-supervisor/src/retire.rs`), and `crates/verbatim-uia/src/bounded.rs`'s abandonable thread for operations of several calls. If waits lengthened, or a remote operation's bound changed, those deadlines would fire early or late.
+The time limits nested around the transaction timeout (`crates/verbatim-model/src/limits.rs`), the outpost's walk budget (`crates/verbatim-outpost/src/outpost/read.rs`), and the supervisor's 20-second retirement bound (`crates/verbatim-supervisor/src/retire.rs`). If waits lengthened, or a remote operation's bound changed, those deadlines would fire early or late.
 
 ## Method
 

@@ -67,18 +67,8 @@ use verbatim_model::TraceId;
 /// A read made before a late UIA focus costs one read and nothing heard
 /// twice, since Core takes the late focus as a duplicate of the read's; a
 /// read made late leaves the user in silence. So the bound is a second
-/// rather than above every late delivery measured: the silence budget. It
-/// is the UIA focus wait both readers share
-/// ([`verbatim_reader_rules::UIA_FOCUS_WAIT`]).
-#[expect(
-    clippy::cast_possible_truncation,
-    reason = "a second in microseconds fits a u64"
-)]
-#[expect(
-    clippy::as_conversions,
-    reason = "rewritten by the focus pipeline's third build"
-)]
-pub const BOUND_US: u64 = verbatim_reader_rules::UIA_FOCUS_WAIT.as_micros() as u64;
+/// rather than above every late delivery measured: the silence budget.
+pub const BOUND_US: u64 = 1_000_000;
 
 /// How long before a record's stamp a report in its top-level window may
 /// have been observed and still close it: a UIA focus can reach the

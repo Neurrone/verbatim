@@ -44,7 +44,7 @@ Limitations. A chain with no entry for the window, or a nameless one, adds nothi
 
 Choice (Dickson, 2026-11-02). At the gap record's bound, a second after a foreground change or copy with no focus of that window reported, the outpost's shell tests the record's window against the foreground and, when that window is in front, sends its text from Windows' state as a whole-window focus, whatever is in flight, and keeps the gap's read beside it. The text has the words of the switch without a stall: a window the outpost judges UIA by a kept verdict or the class lists is the plain window, "held-application window", as its window element is said; any other is its MSAA client pane, its title alone, as its whole-window focus is said, so File Explorer's frame says "<folder> - File Explorer" when its list is slow (GitHub run 41455960383, where the plain window said "… window"). A window read through MSAA whose own report the worker still owes says its text the same way. Reason: a second is the silence budget, and tests of whether the application was answering missed cases. NVDA says nothing until the focus comes, a deliberate difference.
 
-Limitations. A UIA window with no kept verdict and on no class list says its title alone, as an MSAA window does, since telling it needs a probe, a call into the application. An outpost replaced while its application is held loses the record, so no title is said. A marker that reaches the outpost before the hook's copy delays the record by up to `READ_DEADLINE`. A window whose probe waits on the held application opens no record until the probe ends.
+Limitations. A UIA window with no kept verdict and on no class list says its title alone, as an MSAA window does, since telling it needs a probe, a call into the application. An outpost replaced while its application is held loses the record, so no title is said. A marker that reaches the outpost before the hook's copy delays the record by up to `BOUNDED_WALK_DEADLINE`. A window whose probe waits on the held application opens no record until the probe ends.
 
 ### The gap, closed by the outpost's own reports
 
@@ -148,15 +148,7 @@ Limitations. An application hung past the owed work's deadline has no line read 
 
 ### A UIA dialog's own text (difference 9)
 
-Where it runs: the outpost's reader, `dialog_text_of`, on the bounded client's thread.
-
-The rule: gathering a UIA dialog's own text is bounded by the read's budget, `READ_BUDGET` (2 s), from the gathering's start, in place of `DIALOG_TEXT_WAIT` (1 s). Beyond it the dialog is reported without its text, a deliberate difference, since NVDA waits. Reason: the design's decision of 2026-10-29. It is counted from the gathering's start, not the observation, so a slow walk does not shorten the question's read (question below). MSAA dialogs are unchanged, bounded by the handling deadline.
-
-Speech. A message box whose children answer within 2 s is said with its question, as `menu_and_settings_dialog` expects. No capture exists of NVDA on a slow dialog; the source says NVDA waits.
-
-Cost: a slow dialog holds its focus report up to 2 s, where it held it 1 s. A dialog that answers costs the same calls (the ledger's "A dialog's text, UIA", whose bound line changes).
-
-Tests. Added: mockapp's command `slow-children <id> <ms>` (UIA only: that node's provider answers its first-child navigation late), with its integration test beside `slow-parent`'s; and `a_uia_dialogs_text_answered_after_one_and_a_half_seconds_is_its_description`, with `dialog.json`. Scenarios: `menu_and_settings_dialog`.
+Built by the slow applications build (Dickson, 2026-11-06): a UIA dialog's text is gathered inside its focus's program, on the worker's own client, bounded only by the program's deadline, as NVDA gathers it inside its focus event, and the bounded client is gone. A dialog whose gathering passes its program's deadline loses the focus with its program, unless its walk was published at its bound. Tested by mockapp's `a_slow_dialog_text_is_reported_with_the_focus`.
 
 ### The desktop switch and the virtual desktop's name (differences 22, 23, 17)
 
@@ -168,7 +160,7 @@ The rules:
 
 - The listener adds two hooks. One is global and takes only `EVENT_SYSTEM_DESKTOPSWITCH`. The other takes only `EVENT_OBJECT_NAMECHANGE` and is scoped to csrss.exe's process, the one that raises the desktop window's name change (`captures/desktop-name-hook.txt`; the process id comes from `GetWindowThreadProcessId` of `GetDesktopWindow()`, a local call). Each takes one event kind, so that no other event wakes the thread. Reason: a range widened to include them would deliver every event between.
 - On a desktop switch, the callback makes NVDA's test, `OpenInputDesktop` then `CloseDesktop`, local calls, and on a return to the user's desktop sends `DesktopReturned` 200 ms later, as `_handleUserDesktop` is called later (`IAccessibleHandler/__init__.py` 786 to 813). It waits on the timer the menu end's grace uses. Core then asks for the foreground application's focus with `Again`. Reason: one delay mechanism of its kind is kept, with no Core timer added. Entering the secure desktop is left to M8.6.
-- On a name change whose window is `GetDesktopWindow()`, the callback hands the event to the reading thread of csrss's process. That thread reads the desktop window's MSAA name, `AccessibleObjectFromEvent` on the event's address and `accName`, and sends `DesktopName { name }`, followed 250 ms after the event by `DesktopNameDue`. Reason: D13's callbacks make no cross-process call, and the read took about a millisecond, through an unidentified process. A reading thread is abandoned at `READ_DEADLINE`, as for any read.
+- On a name change whose window is `GetDesktopWindow()`, the callback hands the event to the reading thread of csrss's process. That thread reads the desktop window's MSAA name, `AccessibleObjectFromEvent` on the event's address and `accName`, and sends `DesktopName { name }`, followed 250 ms after the event by `DesktopNameDue`. Reason: D13's callbacks make no cross-process call, and the read took about a millisecond, through an unidentified process. A reading thread is abandoned at `BOUNDED_WALK_DEADLINE`, as for any read.
 - Core keeps the newest name pending. The next focus it takes speaks the name after the foreground's cancel and before the entered containers, and clears it, as `doPreGainFocus` calls `handlePossibleDesktopNameChange` (`eventHandler.py` 338 to 375, 414). At `DesktopNameDue`, a name still pending is spoken as a message, at NVDA's `ui.message` priority, and cleared.
 
 Speech. "Desktop 3", "Desktop list", "Recycle Bin 1 of 13" after Windows+Control+D; "Desktop 2" alone after Windows+Control+Right with a window shown on all desktops in front; "Rework Desk" before the list item at a rename's Enter (`captures/virtual-desktop-name.txt`). After a UAC prompt, the focus again, from the source alone.

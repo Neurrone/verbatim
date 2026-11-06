@@ -148,7 +148,7 @@ use verbatim_uia::{
     Agile, Cached, ListenerEvent, ListenerSelection, Part, Registration, Scope, Subscription,
 };
 
-use crate::focus_read::{FocusReader, READ_DEADLINE, Readers, Reading, WatchedRead};
+use crate::focus_read::{FocusReader, Readers, Reading, WatchedRead};
 use verbatim_ia2::event_thread::{EventHandlers, EventThread, MakeHandlers, Nudger};
 use verbatim_listener_logic::focus::{FocusEvent, Judged, Meta, arrival_of};
 use verbatim_listener_logic::foreground::{ForegroundWatch, Front, Step};
@@ -1032,7 +1032,10 @@ impl Listener {
         for &(pid, outpost) in hooks_in {
             outgoing.hook_installed(pid, outpost, before_the_hook);
         }
-        let readers = Arc::new(Readers::new(UiaFocusReading, READ_DEADLINE));
+        let readers = Arc::new(Readers::new(
+            UiaFocusReading,
+            verbatim_model::BOUNDED_WALK_DEADLINE,
+        ));
         let msaa_outgoing = Arc::clone(&outgoing);
         let idle_readers = Arc::clone(&readers);
         let make_handlers: MakeHandlers = Arc::new(move || {

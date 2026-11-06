@@ -33,7 +33,7 @@
 //! that finds none is kept for [`NEGATIVE_VERDICT_LIFETIME`], NVDA's cache
 //! period, from the probe's end, and then the window is probed again. The
 //! probe asks once, as NVDA does, and a window too busy to answer it in time
-//! ([`verbatim_uia::RAW_PROBE_TIMEOUT_MS`]) has an unknown verdict
+//! ([`verbatim_uia::UIA_RAW_PROBE_TIMEOUT_MS`]) has an unknown verdict
 //! ([`Verdict::Unknown`]), which the outpost reads through MSAA, as NVDA
 //! takes a cancelled probe as no provider, and keeps as "no" for the same
 //! half second from the probe's end, a deliberate difference from NVDA,

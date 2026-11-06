@@ -164,7 +164,10 @@ reads no rectangles, and is not clicked, and Verbatim says "cannot be
 clicked" after its name (Dickson, 2026-10-25) (`verbatim-gui`'s
 `tray_list` and `shell_items`). The items are read by the outpost of File Explorer's
 taskbar process within its own application, where the add-on reads them
-from NVDA's process (`verbatim-outpost`'s `shell_items`).
+from NVDA's process (`verbatim-outpost`'s `shell_items`). The dialog
+waits up to 11.5 seconds for a slow taskbar and shows its whole list once
+it answers; a taskbar that does not finish in time gives no list
+(Dickson, 2026-11-06).
 
 ### Logging and the log viewer
 

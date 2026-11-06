@@ -17,7 +17,7 @@ use verbatim_model::CallKind;
 /// How long the raw probe waits for the window to answer: the "no" UIA's
 /// own probe gives a busy window comes after about as long
 /// (`design-raw-probe.md`, decision 2).
-pub const RAW_PROBE_TIMEOUT_MS: u32 = 3000;
+pub const UIA_RAW_PROBE_TIMEOUT_MS: u32 = 3000;
 
 /// The one answer that means a window has a server-side provider: what
 /// `UiaReturnRawElementProvider` returns for `UiaRootObjectId`. Other
@@ -32,7 +32,7 @@ pub enum RawProbe {
     Provider,
     /// The window answered something else; 0 is `DefWindowProc`'s answer.
     Answered(isize),
-    /// The window did not answer within [`RAW_PROBE_TIMEOUT_MS`], or
+    /// The window did not answer within [`UIA_RAW_PROBE_TIMEOUT_MS`], or
     /// Windows judged its thread hung and did not wait.
     TimedOut,
     /// The window is of a higher integrity level, which Windows does not
@@ -96,7 +96,7 @@ pub fn raw_probe_verdict(sent: bool, answer: isize, last_error: u32) -> RawProbe
 /// while it waits; `SMTO_ABORTIFHUNG`, so a thread that has pumped nothing
 /// for five seconds is not waited for; and `SMTO_ERRORONEXIT`, so it
 /// returns at once when the window's thread ends. It waits at most
-/// [`RAW_PROBE_TIMEOUT_MS`], and MUST be called only from a
+/// [`UIA_RAW_PROBE_TIMEOUT_MS`], and MUST be called only from a
 /// deadline-guarded worker, never from an event thread. Nothing is done
 /// with the window's answer but compare it: it holds no reference
 /// (`design-raw-probe.md`, "The LRESULT").
@@ -120,7 +120,7 @@ pub fn raw_probe(hwnd: isize) -> RawProbe {
             WPARAM(0),
             LPARAM(UiaRootObjectId as isize),
             SMTO_ABORTIFHUNG | SMTO_BLOCK | SMTO_ERRORONEXIT,
-            RAW_PROBE_TIMEOUT_MS,
+            UIA_RAW_PROBE_TIMEOUT_MS,
             Some(&raw mut answer),
         )
     };

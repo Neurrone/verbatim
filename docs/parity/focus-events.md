@@ -410,8 +410,8 @@ an application each abandon a call that has taken half a second
 (`MOVED_ON_GRACE`) once the window in front belongs to the same
 application on another UI thread than the window being handled or read,
 the application being each window's provider process, until their own
-deadlines (10 seconds for the worker, `READ_DEADLINE`, 8 seconds, for a
-reading thread); the event is dropped and a new worker or reading thread
+deadlines (11 seconds for the worker, `HANDLING_DEADLINE`, and 13
+seconds, `BOUNDED_WALK_DEADLINE`, for a reading thread); the event is dropped and a new worker or reading thread
 takes the application's later events
 (`books/dev/src/reference/crates/verbatim-listener.md`, "How a UIA focus is judged and
 read", owns when each judges). Console host's own Find, Properties
@@ -473,17 +473,52 @@ opening.
 
 Verbatim: **different** (Dickson, 2026-10-21). An application with two
 abandoned reading threads still in their calls gets no new thread until
-one returns: its events wait, until `READ_DEADLINE` after its second
+one returns: its events wait, until `BOUNDED_WALK_DEADLINE` after its second
 thread was abandoned. Then every event waiting is dropped, and each later
 one as it arrives, until an abandoned thread's call returns and takes
 the queue. The bound is one per application, not one per event, so the
-application's outpost runs at most `READ_DEADLINE` behind the hung reads,
+application's outpost runs at most `BOUNDED_WALK_DEADLINE` behind the hung reads,
 once, and a stream of events from the application cannot keep it
 behind. A focus waiting so is a pending focus only for its own
 application's menu openings, so that a hung window cannot silence every
 other application's menus while its reads stay stuck; a focus being
 read, or waiting for a live thread, still counts for every application,
 as in NVDA.
+
+### An application slow to answer
+
+NVDA waits for a frozen core up to its watchdog's
+`NORMAL_CORE_ALIVE_TIMEOUT` of 10 seconds (`nvda/source/watchdog.py`,
+line 50), unless the user has moved on (above); it sends a window message
+in 400 ms slices, up to 10 seconds, with `SMTO_ABORTIFHUNG` on each slice
+(`cancellableSendMessageTimeoutTemplate`,
+`nvda/nvdaHelper/local/nvdaHelperLocal.cpp`, lines 61 to 108), sets no
+UIA timeout, so UIA's transaction timeout is its default of 20 seconds,
+and gathers a dialog's text inside the focus event, under its watchdog
+(`getDialogText`). Verbatim: **matched (unverified)** (Dickson,
+2026-11-06): a slow application is waited for rather than cut off by a
+short limit of Verbatim's own. One UIA request may take 10 seconds
+(`UIA_TRANSACTION_TIMEOUT`), and an outpost's program 11
+(`HANDLING_DEADLINE`), or 13 for focus-now and the report of a listener
+read (`BOUNDED_WALK_DEADLINE`); a navigation step, an activation, a text
+request, a walk down a focus's path, a dialog's text and the shell's
+items have no shorter limit of their own. Deliberately different:
+
+- The focus pipeline rework's walk bounds stay, so a focus's chain may
+  be published partial at its bound, 500 ms in a new window and 2
+  seconds in the same one, where NVDA speaks it whole once the
+  application answers; the third focus build decides them.
+- A call bounded by UIA's connection timeout, 2 seconds as in NVDA,
+  still fails against an application busy for longer.
+- A walk with no publication, a query's path walk or the shell items'
+  walk, that does not finish by its program's deadline answers with
+  nothing, as NVDA's cancelled call does; a text focus whose element only
+  a slow classic walk finds waits for it, and is lost if its program
+  passes 13 seconds, as NVDA's caret read is cut only by its watchdog
+  (Dickson, 2026-11-06).
+- An activation whose provider runs its action synchronously holds that
+  outpost's later entries until it returns, up to 11 seconds, as NVDA's
+  `doAction` blocks its core.
 
 ### Recovery after an outpost is replaced
 

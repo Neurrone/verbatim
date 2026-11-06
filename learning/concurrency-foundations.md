@@ -457,7 +457,7 @@ Try: uncomment the last block and read the error. Then rewrite the program so th
 
 ### Exercise 6: a deadline and an abandoned thread (`src/bin/ex6_abandon.rs`)
 
-What it shows: how a screen reader bounds a call it cannot cancel. The call runs on a thread of its own; the caller waits only until its deadline, then gives up and abandons the thread. This is NVDA's `cancellableExecute` and Verbatim's `crates/verbatim-uia/src/bounded.rs` in miniature.
+What it shows: how a screen reader bounds a call it cannot cancel. The call runs on a thread of its own; the caller waits only until its deadline, then gives up and abandons the thread. This is NVDA's `cancellableExecute` and the abandonment of Verbatim's outpost worker (`crates/verbatim-outpost/src/outpost/shell.rs`) in miniature.
 
 ```rust
 use std::sync::mpsc;

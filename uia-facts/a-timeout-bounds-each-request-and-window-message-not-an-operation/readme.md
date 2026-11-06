@@ -6,7 +6,7 @@ An operation made of several requests and window messages waits for each of them
 
 ## What Verbatim relies on
 
-Only the explanation in `crates/verbatim-supervisor/src/retire.rs` and `crates/verbatim-uia/src/bounded.rs`, which run operations of many calls with a deadline of their own on a thread that can be abandoned; the general rule is checked by [a call waits its timeout from its own start](../a-call-waits-its-timeout-from-its-own-start/readme.md).
+Only the explanation in `crates/verbatim-supervisor/src/retire.rs` and `crates/verbatim-model/src/limits.rs`, which promise only one request to end by its own timeout, an operation of many being bounded by its program's deadline, whose thread is abandoned; the general rule is checked by [a call waits its timeout from its own start](../a-call-waits-its-timeout-from-its-own-start/readme.md).
 
 ## Method
 
