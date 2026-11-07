@@ -561,12 +561,65 @@ fn each_live_re_read_is_counted_and_logged() {
     assert_eq!(logged.len(), 3);
 }
 
+/// The return to F2 spoken once, its whole entered ancestry with it.
+fn two_spoken() -> [Heard; 5] {
+    [
+        Heard::Expire(4),
+        Heard::Stop,
+        said("Notes", Role::Window),
+        said("Tools", Role::Group),
+        said("Two", Role::Button),
+    ]
+}
+
 #[test]
-fn a_repeat_while_a_live_re_read_waits_is_a_duplicate() {
+fn a_cached_repeat_while_a_live_re_read_waits_asks_a_new_one() {
+    // The application raised two focus events for F2, both read from the
+    // reader's cache: the repeat asks again under its own trace, the read
+    // its reader holds last, and the first request's answer of gone says
+    // nothing.
     let mut state = pending();
-    let before = state.clone();
     let repeat = Report::new(A, button(4, "Two"), chain_of_a(), 410).cached(1);
-    assert_eq!(heard(&crate::reduce(&mut state, &repeat.input())), []);
-    assert_eq!(state.live_re_reads(), 1);
-    assert_eq!(state.live_rereads, before.live_rereads);
+    assert_eq!(
+        heard(&crate::reduce(&mut state, &repeat.input())),
+        [reread(
+            1,
+            (4, 410),
+            (id(A, 4), Some("Two")),
+            None,
+            LiveRereadReason::Entered
+        )]
+    );
+    assert_eq!(state.live_re_reads(), 2);
+    let gone = Input::LiveRereadGone {
+        outpost: OutpostId(A),
+        request: 0,
+    };
+    assert_eq!(heard(&crate::reduce(&mut state, &gone)), []);
+    assert_eq!(state.live_rereads.pending().len(), 1);
+    let mut answer = Report::new(A, button(4, "Two"), chain_of_a(), 410);
+    answer.answers = Some(1);
+    assert_eq!(
+        heard(&crate::reduce(&mut state, &answer.input())),
+        two_spoken()
+    );
+    assert!(state.live_rereads.pending().is_empty());
+}
+
+#[test]
+fn a_live_repeat_while_a_live_re_read_waits_is_spoken() {
+    // The repeat was read live: it is taken and spoken, which ends the
+    // pending live re-read, whose answer then says nothing.
+    let mut state = pending();
+    let repeat = Report::new(A, button(4, "Two"), chain_of_a(), 410);
+    assert_eq!(
+        heard(&crate::reduce(&mut state, &repeat.input())),
+        two_spoken()
+    );
+    assert!(state.live_rereads.pending().is_empty());
+    let before = state.clone();
+    let mut late = Report::new(A, button(4, "Two"), chain_of_a(), 400);
+    late.answers = Some(0);
+    assert_eq!(heard(&crate::reduce(&mut state, &late.input())), []);
+    assert_eq!(state, before);
 }

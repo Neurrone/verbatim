@@ -16,8 +16,10 @@
 //! titles change at any step, the user in the window or not. A case steps
 //! through renames, focuses from either reader in any order, a foreground
 //! change before a focus in another top-level window, and the pending live
-//! re-read answered, answered gone, replaced by a newer one, or ended by a
-//! newer focus or the listener's replacement.
+//! re-read answered by its reader, replaced by a newer one, or ended by a
+//! newer focus or the listener's replacement. A reader answers a live
+//! re-read as the listener and the outpost do: live when its last read is
+//! the report's, by trace, and gone otherwise.
 //!
 //! The reference model is NVDA's focus ancestry: the live chain of the
 //! focus NVDA last took, with no cache, emptied at a foreground change, as
@@ -31,7 +33,10 @@
 //!   answer asks for nothing, and is applied, its focus becoming Core's,
 //!   while its window is still in front; once the user has gone to another
 //!   window, it is refused by the foreground test as any report of the
-//!   window left is.
+//!   window left is;
+//! - a pending live re-read is answered gone only when its reader's last
+//!   read is of another element, so a repeat of the element a live re-read
+//!   waits for never leaves it unspoken.
 
 use std::collections::BTreeMap;
 
@@ -66,8 +71,8 @@ enum Action {
         control: u8,
         outpost: bool,
     },
-    /// The pending live re-read is answered (0), answered gone (1), or the
-    /// listener is replaced (2).
+    /// The pending live re-read is answered by its reader (0), answered
+    /// gone as its element died (1), or the listener is replaced (2).
     Settle { how: u8 },
 }
 
@@ -114,6 +119,9 @@ struct World {
     /// The pending live re-read of each focus reader, by application and
     /// kind.
     pending: BTreeMap<(u64, FocusReaderKind), Asked>,
+    /// Each focus reader's last read, by application and kind: its trace
+    /// and its element, by which it answers a live re-read.
+    last_read: BTreeMap<(u64, FocusReaderKind), (u64, Element)>,
     front: Option<usize>,
     now: u64,
     log: Vec<String>,
@@ -144,6 +152,7 @@ impl World {
             state: SrState::new(),
             nvda: Vec::new(),
             pending: BTreeMap::new(),
+            last_read: BTreeMap::new(),
             front: None,
             now: 100,
             log: Vec::new(),
@@ -362,6 +371,8 @@ impl World {
                 }
                 let element = (window, control);
                 let chain = self.read(kind, element, false);
+                self.last_read
+                    .insert((WINDOWS[window].0, kind), (self.now, element));
                 let input = Self::report(
                     kind,
                     (element, self.name(element)),
@@ -371,24 +382,7 @@ impl World {
                 self.reduce_report(kind, element, &chain, &input, None);
             }
             Action::Settle { how } => match how {
-                0 => {
-                    if let Some(&asked) = self.pending.values().next() {
-                        let chain = self.read(asked.reader, asked.control, true);
-                        let input = Self::report(
-                            asked.reader,
-                            (asked.control, self.name(asked.control)),
-                            &chain,
-                            (asked.at_us, Some(asked.request)),
-                        );
-                        self.reduce_report(
-                            asked.reader,
-                            asked.control,
-                            &chain,
-                            &input,
-                            Some(asked),
-                        );
-                    }
-                }
+                0 => self.answer(),
                 1 => {
                     if let Some(key) = self.pending.keys().next().copied() {
                         let asked = self.pending.remove(&key).unwrap();
@@ -407,10 +401,53 @@ impl World {
                     assert_eq!(effects, [], "{:?}", self.log);
                     self.pending
                         .retain(|(_, reader), _| *reader != FocusReaderKind::Listener);
+                    self.last_read
+                        .retain(|(_, reader), _| *reader != FocusReaderKind::Listener);
                 }
             },
         }
         self.log.push(format!("{action:?}"));
+        self.check_pending();
+    }
+
+    /// The pending live re-read's reader answers it, as the listener and
+    /// the outpost do: live when its last read is the report's, by trace,
+    /// and gone otherwise, which it may only for another element.
+    fn answer(&mut self) {
+        let Some((&key, &asked)) = self.pending.iter().next() else {
+            return;
+        };
+        let last = self.last_read.get(&key).copied();
+        if last.map(|(trace, _)| trace) != Some(asked.at_us) {
+            assert_ne!(
+                last.map(|(_, element)| element),
+                Some(asked.control),
+                "a live re-read of {asked:?} answered gone for a repeat of its element: {:?}",
+                self.log
+            );
+            self.pending.remove(&key);
+            let effects = crate::reduce(
+                &mut self.state,
+                &Input::LiveRereadGone {
+                    outpost: OutpostId(key.0),
+                    request: asked.request,
+                },
+            );
+            assert_eq!(effects, [], "{:?}", self.log);
+            return;
+        }
+        let chain = self.read(asked.reader, asked.control, true);
+        let input = Self::report(
+            asked.reader,
+            (asked.control, self.name(asked.control)),
+            &chain,
+            (asked.at_us, Some(asked.request)),
+        );
+        self.reduce_report(asked.reader, asked.control, &chain, &input, Some(asked));
+    }
+
+    /// Core's pending live re-reads are the world's.
+    fn check_pending(&self) {
         assert_eq!(
             self.state.live_rereads.pending().len(),
             self.pending.len(),

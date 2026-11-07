@@ -14,11 +14,18 @@
 //! An answer to a live re-read that is no longer pending is ignored, so a
 //! late answer is set aside by Core's own record, whichever ending came
 //! first.
+//!
+//! A repeat of a pending live re-read's element is no duplicate of the
+//! report set aside: it is judged as any new report, so it either asks a
+//! newer live re-read under its own trace, replacing the pending one, or is
+//! taken, ending it. The reader answers a live re-read only for the read
+//! it holds last, which the repeat replaced, so the older request would be
+//! answered gone and the focus never spoken.
 
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
-use verbatim_model::{FocusReaderKind, NodeId, OutpostId};
+use verbatim_model::{FocusReaderKind, OutpostId};
 
 /// A live re-read's answer of gone, or the listener's replacement: the
 /// pending live re-reads they name end, and nothing is said. Any other
@@ -42,8 +49,6 @@ pub(crate) fn ended(
 pub(crate) struct Pending {
     /// Its request number.
     pub(crate) request: u64,
-    /// The focus of the report set aside.
-    pub(crate) node: NodeId,
     /// When that report was observed, on the run's shared clock, 0 when
     /// not known.
     pub(crate) observed_at_us: u64,
@@ -62,14 +67,13 @@ pub(crate) struct LiveRereads {
 }
 
 impl LiveRereads {
-    /// Records a live re-read of the report of `node`, observed at
-    /// `observed_at_us`, asked of the focus reader `reader` of outpost
+    /// Records a live re-read of a report observed at `observed_at_us`,
+    /// asked of the focus reader `reader` of outpost
     /// generation `outpost`, replacing the one pending there, and counts
     /// it; returns its request number.
     pub(crate) fn ask(
         &mut self,
         (outpost, reader): (OutpostId, FocusReaderKind),
-        node: NodeId,
         observed_at_us: u64,
     ) -> u64 {
         let request = self.next;
@@ -79,7 +83,6 @@ impl LiveRereads {
             (outpost, reader),
             Pending {
                 request,
-                node,
                 observed_at_us,
             },
         );
@@ -130,12 +133,6 @@ impl LiveRereads {
             .values()
             .map(|pending| pending.observed_at_us)
             .max()
-    }
-
-    /// Whether a pending live re-read's report set aside is of `node`:
-    /// Core's duplicate rule counts it as its last queued focus.
-    pub(crate) fn is_pending_for(&self, node: NodeId) -> bool {
-        self.pending.values().any(|pending| pending.node == node)
     }
 
     /// How many live re-reads Core has asked for.

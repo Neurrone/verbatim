@@ -626,8 +626,11 @@ newer focus applied; a newer live re-read for the same focus reader,
 which replaces it; its outpost generation's end; or, for the listener's,
 `Input::ListenerReplaced`. An answer to one no longer pending says
 nothing. A pending live re-read counts as work in flight for the idle
-barrier and as an applied focus for the fake focus's skip rule, and a
-repeat of its report while it waits is a duplicate. An answer whose window
+barrier and as an applied focus for the fake focus's skip rule. A repeat
+of its element while it waits is no duplicate: it is judged as a new
+report, so it asks a newer live re-read under its own trace or is taken,
+because a focus reader answers a live re-read only for the read it holds
+last, and the repeat replaced it. An answer whose window
 the user has left by the time it arrives is refused by the foreground test,
 as any report of the window left is. The shell routes the live re-read to
 the listener through the supervisor (`CoreToListener::LiveReread`) or to
@@ -635,7 +638,9 @@ the outpost (`CoreToOutpost::LiveReread`), and answers it gone at once
 when it cannot be sent. Tests: `live_reread/tests.rs`, and the generated
 test `live_reread/generated.rs`, which compares Core with a reference
 model of NVDA's focus ancestry over a world whose names and titles change
-while the user is away.
+while the user is away, its focus readers answering as the real ones do,
+and checks that no live re-read is answered gone for a repeat of its
+element.
 
 ## Object navigation and review
 

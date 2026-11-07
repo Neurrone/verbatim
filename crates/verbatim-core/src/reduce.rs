@@ -456,8 +456,11 @@ fn is_stale_focus(
 /// window since it was taken, is no duplicate: the return is spoken as the
 /// same switch with no stall is (`FocusContext::left`).
 ///
-/// A report set aside for a pending live re-read counts as the last focus
-/// Core queued too ([`is_duplicate_of_pending`]).
+/// A report set aside for a pending live re-read is not a focus Core
+/// queued: a repeat of its element is judged as a new report, which
+/// replaces the pending live re-read with its own or is taken
+/// (`crate::live_reread`), because the reader answers a live re-read only
+/// for the read it holds last, which the repeat replaced.
 fn is_duplicate_focus(
     state: &SrState,
     node: &NodeSnapshot,
@@ -471,20 +474,6 @@ fn is_duplicate_focus(
                     .map_or(focus.alive, |earlier| earlier == EarlierElement::Focused),
             })
     })
-}
-
-/// Whether a focus of `node` repeats the report set aside for a pending
-/// live re-read, its element still focused by `earlier`'s evidence, or the
-/// reader holding no element for it: it is dropped as a duplicate of the
-/// report the live re-read answers, which is spoken once, from its answer
-/// (`crate::live_reread`).
-fn is_duplicate_of_pending(
-    state: &SrState,
-    node: &NodeSnapshot,
-    earlier: Option<EarlierElement>,
-) -> bool {
-    state.live_rereads.is_pending_for(node.id)
-        && earlier.is_none_or(|earlier| earlier == EarlierElement::Focused)
 }
 
 /// Forgets what Core keeps of the text of `node`, whose reader read that
@@ -790,11 +779,7 @@ fn focus_is_a_duplicate(
         return false;
     }
     if !is_duplicate_focus(state, node, *earlier) {
-        let duplicate = is_duplicate_of_pending(state, node, *earlier);
-        if duplicate {
-            stamp_observed(state, observed_at_us, node, window);
-        }
-        return duplicate;
+        return false;
     }
     stamp_observed(state, observed_at_us, node, window);
     let ancestors = focus_ancestors(window, node, ancestors);
@@ -1476,7 +1461,7 @@ fn set_aside(
     let reader = cached.0.reader;
     let request = state
         .live_rereads
-        .ask((outpost, reader), report.node.id, report.observed_at_us);
+        .ask((outpost, reader), report.observed_at_us);
     let join = report
         .ancestors
         .get(cached.index_usize().saturating_add(1))

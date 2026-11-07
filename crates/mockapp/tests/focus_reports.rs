@@ -4050,6 +4050,121 @@ fn a_uia_window_with_an_msaa_menu_re_reads_live_once_per_return() {
     app.quit();
 }
 
+/// A return to mockapp's UIA window whose application raises two focus
+/// events for the same element is spoken once
+/// (`books/dev/src/reference/crates/verbatim-core.md`, "The ancestry
+/// cache"): both reads take the window entry from the listener's ancestry
+/// cache, so Core asks a live re-read for each, the second replacing the
+/// first; the listener answers the first gone, since the read it holds
+/// last is the second's, and Core says nothing for it; it reads the second
+/// live, and Core speaks the window, the list and the item. The user goes
+/// to a second mockapp's MSAA button and back, each window made the
+/// foreground as the outposts read it, with no keystroke.
+fn a_return_with_two_focus_events_of_one_element_is_spoken_once() {
+    let title = common::unique_title("mockapp-return-twice");
+    let mut app = common::spawn("reuse.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let client = Client::new(hwnd);
+    let outpost = OutpostUnderTest::new(&app);
+    let other_title = common::unique_title("mockapp-return-twice-other");
+    let mut other = common::spawn("small.json", "msaa", &other_title);
+    let other_hwnd = common::find_window(&other_title);
+    let other_outpost = OutpostUnderTest::new(&other);
+    let mut state = SrState::new();
+    let from = (OutpostId(1), Pid(app.pid()));
+
+    app.send("set-focus inner");
+    outpost.deliver(outpost.listener_fact(&client.focused()));
+    let first = outpost.next();
+    outpost.settled();
+    let _ = core_takes(&mut state, first, from);
+
+    outpost.set_foreground(other_hwnd);
+    common::apply(&mut other, other_hwnd, "set-focus btn1");
+    // The button is node 1, after the root, so its object id is 2.
+    other_outpost.deliver(DeliveredFact::MsaaFocus {
+        hwnd: other_hwnd.0 as isize,
+        id_object: 2,
+        id_child: 0,
+    });
+    let away = other_outpost.next();
+    other_outpost.settled();
+    let _ = core_takes(&mut state, away, (OutpostId(2), Pid(other.pid())));
+
+    outpost.set_foreground(hwnd);
+    let mut requests = Vec::new();
+    for event in ["first", "second"] {
+        outpost.deliver(outpost.listener_fact(&client.focused()));
+        let back = outpost.next();
+        outpost.settled();
+        let (effects, spoken) = core_takes(&mut state, back, from);
+        assert_eq!(
+            spoken,
+            Vec::<Vec<SegmentContent>>::new(),
+            "nothing said for the {event} event"
+        );
+        let asked = live_rereads(&effects);
+        let [reread] = asked.as_slice() else {
+            panic!("one live re-read asked for the {event} event: {effects:?}");
+        };
+        requests.push((reread.request, reread.trace_id));
+    }
+    assert_eq!(state.live_re_reads(), 2, "one for each event");
+
+    let [(first_request, first_trace), (second_request, second_trace)] = requests[..] else {
+        panic!("two requests: {requests:?}");
+    };
+    let (judged, calls) = outpost.listener_live_reread_traced(first_request, first_trace);
+    assert!(
+        matches!(judged, Judged::Dropped(NOT_THE_LAST_READ)),
+        "the first request: {judged:?}"
+    );
+    assert_eq!(calls.uia, 0, "no call for the first request");
+    outpost.deliver(judged.into_reread_fact(98, first_request));
+    let gone = outpost.next();
+    match gone {
+        OutpostToCore::LiveRereadGone { request } if request == first_request => {}
+        ref other => panic!("the outpost said {other:?}, not the answer of gone"),
+    }
+    assert_eq!(
+        core_takes(&mut state, gone, from).0,
+        Vec::<Effect>::new(),
+        "the first request's answer of gone does nothing"
+    );
+
+    let (judged, _) = outpost.listener_live_reread_traced(second_request, second_trace);
+    outpost.deliver(judged.into_reread_fact(99, second_request));
+    let answer = outpost.next();
+    outpost.settled();
+    assert_eq!(
+        core_takes(&mut state, answer, from).1,
+        [
+            vec![
+                SegmentContent::Label("Mockapp Reuse Fixture".to_owned()),
+                SegmentContent::Role(Role::Window),
+            ],
+            vec![
+                SegmentContent::Label("Items View".to_owned()),
+                SegmentContent::Role(Role::List),
+            ],
+            vec![
+                SegmentContent::Label("Inner".to_owned()),
+                SegmentContent::NegatedState(State::Selected),
+                SegmentContent::Position {
+                    position: 1,
+                    set_size: Some(2),
+                },
+            ],
+        ],
+        "the second request's live read is spoken"
+    );
+    assert_eq!(state.live_re_reads(), 2, "its answer asks for no other");
+    drop(other_outpost);
+    other.quit();
+    drop(outpost);
+    app.quit();
+}
+
 #[expect(clippy::too_many_lines, reason = "one entry per test")]
 fn main() {
     harness::run_isolated(&[
@@ -4080,6 +4195,10 @@ fn main() {
         (
             "a_uia_window_with_an_msaa_menu_re_reads_live_once_per_return",
             a_uia_window_with_an_msaa_menu_re_reads_live_once_per_return,
+        ),
+        (
+            "a_return_with_two_focus_events_of_one_element_is_spoken_once",
+            a_return_with_two_focus_events_of_one_element_is_spoken_once,
         ),
         (
             "a_changed_title_walks_to_the_top",
