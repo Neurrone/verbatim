@@ -1372,8 +1372,15 @@ impl ReducerThread<'_> {
             }
             OutpostToCore::IdleAnswer { round } => self.barrier.answered(round, outpost),
             OutpostToCore::NotResponding { window } => {
-                let input = not_responding(&self.live, source, outpost, window);
-                self.apply(input);
+                if let Some(input) = not_responding(&self.live, source, outpost, window) {
+                    self.apply(input);
+                } else {
+                    tracing::error!(
+                        %outpost,
+                        window,
+                        "an accepted outpost's hang report names no live generation, a logic bug; dropped"
+                    );
+                }
             }
             // The relay consumes these, and hands none of them on.
             OutpostToCore::Pong { .. }
@@ -1972,15 +1979,26 @@ impl ReducerThread<'_> {
         // console host's outpost reports for the console's client. A
         // given spare that failed before its `Ready` loses nothing: its
         // application's held facts went to the next generation, which
-        // reports them, so nothing is asked.
+        // reports them, so nothing is asked. The supervisor sends a
+        // generation's end only after its start, in order on one port, so
+        // a generation ending is always live here; a miss is a logic bug,
+        // logged as an error.
         let regenerated = self.regenerated.remove(&outpost);
         let replaced = follows && !regenerated;
-        let application = self.live.application_of(outpost).unwrap_or(target_pid);
-        if replaced
-            && (self.state.attention() == Some(application)
-                || self.state.focus_source() == Some(application))
-        {
-            self.wanted.want_focus_now(target_pid, application);
+        match self.live.application_of(outpost) {
+            Some(application)
+                if replaced
+                    && (self.state.attention() == Some(application)
+                        || self.state.focus_source() == Some(application)) =>
+            {
+                self.wanted.want_focus_now(target_pid, application);
+            }
+            Some(_) => {}
+            None => tracing::error!(
+                %outpost,
+                %target_pid,
+                "an outpost's end names no live generation, a logic bug"
+            ),
         }
         if self.live.ended(outpost) {
             self.context
@@ -2093,11 +2111,19 @@ fn asks_dump(who: &Asker, ticket: DumpTicket) -> bool {
 /// named for the application the outpost reports for, which for a console
 /// host's outpost is the console's client, as attention names it; Core
 /// decides whether the sound plays, by whether that application is
-/// attended.
-fn not_responding(live: &LiveOutposts, target: Pid, outpost: OutpostId, window: isize) -> Input {
-    let process = live.application_of(outpost).unwrap_or(target);
+/// attended. `None` when `outpost` is not a live generation, which no
+/// message `LiveOutposts::accept` let through can be, since nothing
+/// between the two ends a generation: a logic bug, which the caller logs
+/// as an error.
+fn not_responding(
+    live: &LiveOutposts,
+    target: Pid,
+    outpost: OutpostId,
+    window: isize,
+) -> Option<Input> {
+    let process = live.application_of(outpost)?;
     tracing::info!(%outpost, %target, %process, window, "a window stopped responding");
-    Input::ApplicationNotResponding { outpost, process }
+    Some(Input::ApplicationNotResponding { outpost, process })
 }
 
 /// Posts the supervisor's messages to the reducer thread's port, in line
@@ -2489,23 +2515,33 @@ mod tests {
     /// attention, and nothing when another does.
     #[test]
     fn not_responding_plays_the_sound_only_for_the_application_holding_attention() {
-        let live = LiveOutposts::default();
+        let mut live = LiveOutposts::default();
+        live.started(OutpostId(3), Pid(40));
+        live.started(OutpostId(4), Pid(41));
         let mut state = SrState::new();
         assert_eq!(reduce(&mut state, &foreground(40, 0x100)), []);
         assert_eq!(
             reduce(
                 &mut state,
-                &not_responding(&live, Pid(40), OutpostId(3), 0x100)
+                &not_responding(&live, Pid(40), OutpostId(3), 0x100).expect("live")
             ),
             [Effect::PlayEarcon(Earcon::AppNotResponding)]
         );
         assert_eq!(
             reduce(
                 &mut state,
-                &not_responding(&live, Pid(41), OutpostId(4), 0x200)
+                &not_responding(&live, Pid(41), OutpostId(4), 0x200).expect("live")
             ),
             []
         );
+    }
+
+    /// A generation that is not live has no hang report: the miss is passed
+    /// up, not defaulted to the watched process.
+    #[test]
+    fn a_hang_report_from_a_generation_not_live_is_passed_up() {
+        let live = LiveOutposts::default();
+        assert_eq!(not_responding(&live, Pid(40), OutpostId(3), 0x100), None);
     }
 
     /// A console host's outpost reports a hang for the console's client,
@@ -2521,7 +2557,7 @@ mod tests {
         assert_eq!(
             reduce(
                 &mut state,
-                &not_responding(&live, Pid(50), OutpostId(3), 0x100)
+                &not_responding(&live, Pid(50), OutpostId(3), 0x100).expect("live")
             ),
             [Effect::PlayEarcon(Earcon::AppNotResponding)]
         );
@@ -2542,13 +2578,14 @@ mod tests {
     /// outpost sending no second `NotResponding` in the same hang.
     #[test]
     fn a_hang_met_in_the_background_plays_nothing_after_the_user_returns() {
-        let live = LiveOutposts::default();
+        let mut live = LiveOutposts::default();
+        live.started(OutpostId(4), Pid(41));
         let mut state = SrState::new();
         assert_eq!(reduce(&mut state, &foreground(40, 0x100)), []);
         assert_eq!(
             reduce(
                 &mut state,
-                &not_responding(&live, Pid(41), OutpostId(4), 0x200)
+                &not_responding(&live, Pid(41), OutpostId(4), 0x200).expect("live")
             ),
             []
         );

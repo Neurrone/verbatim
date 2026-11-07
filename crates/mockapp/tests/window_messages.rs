@@ -15,7 +15,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use verbatim_faults::{Fault, Guard};
-use verbatim_ia2::edit::{EditControl, EditError};
+use verbatim_ia2::edit::EditError;
 use verbatim_model::protocol::{DeliveredFact, OutpostToCore, Query, QueryOutcome, QueryResult};
 use verbatim_model::{FocusText, TextAnchor, TextOp, TextReply};
 use windows::Win32::Foundation::{CloseHandle, HANDLE, HWND};
@@ -260,25 +260,6 @@ fn the_target_process_ending_during_a_message_is_gone() {
     drop(guard);
 }
 
-/// An edit control whose buffers are in this process, standing for a
-/// window handle reused by another process's window, and whose window is
-/// mockapp's: a rich edit read, which carries a buffer, is gone with no
-/// window message sent or counted.
-fn a_send_to_a_window_of_another_process_is_gone_unsent() {
-    common::init_com();
-    let title = common::unique_title("mockapp-reused-window");
-    let app = common::spawn("text.json", "msaa", &title);
-    let edit = child(common::find_window(&title), w!("EDIT"));
-    let mut control = EditControl::with_process(edit, 2, std::process::id());
-    let _ = verbatim_ia2::calls::take();
-    assert_eq!(control.selection(), Err(EditError::Gone));
-    assert!(
-        verbatim_ia2::calls::take().is_empty(),
-        "no window message was sent"
-    );
-    app.quit();
-}
-
 /// Runs each test on a desktop of its own (`common/harness.rs`).
 fn main() {
     harness::run_isolated(&[
@@ -297,10 +278,6 @@ fn main() {
         (
             "the_target_process_ending_during_a_message_is_gone",
             the_target_process_ending_during_a_message_is_gone,
-        ),
-        (
-            "a_send_to_a_window_of_another_process_is_gone_unsent",
-            a_send_to_a_window_of_another_process_is_gone_unsent,
         ),
     ]);
 }

@@ -23,8 +23,7 @@
 //! its start and its text 16-byte aligned after it, allocated before the
 //! send and freed whole by the thread that sent the message, after the send
 //! returns and never before, so the application never writes into memory
-//! freed or reused while its message waited. Before each send that carries
-//! such a buffer, the window's process is checked to be the buffer's.
+//! freed or reused while its message waited.
 //!
 //! Every message goes through `crate::window::send_message`: a hung or
 //! ghosted window fails at once ([`EditError::NotResponding`]), a message
@@ -49,8 +48,8 @@ use windows::Win32::System::SystemInformation::{
     IMAGE_FILE_MACHINE_UNKNOWN,
 };
 use windows::Win32::System::Threading::{
-    GetExitCodeProcess, GetProcessId, IsWow64Process2, OpenProcess,
-    PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_VM_OPERATION, PROCESS_VM_READ, PROCESS_VM_WRITE,
+    GetExitCodeProcess, IsWow64Process2, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+    PROCESS_VM_OPERATION, PROCESS_VM_READ, PROCESS_VM_WRITE,
 };
 use windows::Win32::UI::Controls::RichEdit::{
     EM_EXGETSEL, EM_EXLINEFROMCHAR, EM_EXSETSEL, EM_FINDWORDBREAK, EM_GETTEXTLENGTHEX,
@@ -74,8 +73,7 @@ const MAX_LINE_UNITS: usize = 0xFFFF;
 /// Why a read of an edit control failed.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum EditError {
-    /// The window no longer exists, or its handle now names another
-    /// process's window.
+    /// The window no longer exists.
     Gone,
     /// The window is hung or ghosted, so nothing was sent to it.
     NotResponding,
@@ -110,9 +108,6 @@ pub struct EditControl {
     hwnd: isize,
     version: u8,
     process: Option<TargetProcess>,
-    /// The process to open in place of the window's own, for a test
-    /// ([`EditControl::with_process`]).
-    process_id: Option<u32>,
 }
 
 impl EditControl {
@@ -124,20 +119,6 @@ impl EditControl {
             hwnd,
             version,
             process: None,
-            process_id: None,
-        }
-    }
-
-    /// [`EditControl::new`], its buffers allocated in process `pid` rather
-    /// than the window's own: for a test standing for a window handle
-    /// reused by another process's window after the control's process was
-    /// opened, whose sends the process check refuses. Verbatim never calls
-    /// it.
-    #[must_use]
-    pub fn with_process(hwnd: isize, version: u8, pid: u32) -> Self {
-        Self {
-            process_id: Some(pid),
-            ..Self::new(hwnd, version)
         }
     }
 
@@ -173,8 +154,7 @@ impl EditControl {
     }
 
     /// Sends `msg` carrying `buffer`, whose address is one of its
-    /// parameters, after checking that the window is still in the buffer's
-    /// process.
+    /// parameters.
     fn send_with(
         &self,
         msg: u32,
@@ -191,11 +171,7 @@ impl EditControl {
     /// Opens the target process, on first use.
     fn open_process(&mut self) -> EditResult<()> {
         if self.process.is_none() {
-            let pid = match self.process_id {
-                Some(pid) => pid,
-                None => window_process(self.hwnd)?,
-            };
-            self.process = Some(TargetProcess::open(pid)?);
+            self.process = Some(TargetProcess::open(window_process(self.hwnd)?)?);
         }
         Ok(())
     }
@@ -583,9 +559,6 @@ fn ansi_to_utf16(bytes: &[u8]) -> Vec<u16> {
 /// its memory.
 pub(crate) struct TargetProcess {
     handle: HANDLE,
-    /// The process's id, which its open handle keeps from being reused
-    /// (`GetProcessId`).
-    pid: u32,
     /// The size of a pointer in that process: 4 for a 32-bit process.
     pub(crate) pointer_size: usize,
 }
@@ -610,11 +583,8 @@ impl TargetProcess {
         // SAFETY: a query of the handle just opened into a local.
         let wow = unsafe { IsWow64Process2(handle, &raw mut machine, None) }.is_ok();
         let pointer_size = if wow && is_32_bit(machine) { 4 } else { 8 };
-        // SAFETY: a query of the handle just opened.
-        let pid = unsafe { GetProcessId(handle) };
         Ok(Self {
             handle,
-            pid,
             pointer_size,
         })
     }
@@ -699,10 +669,9 @@ impl RemoteBuffer<'_> {
         self.address().saturating_add_unsigned(offset)
     }
 
-    /// The process the buffer is in and its address, for the send that
-    /// carries it, which checks the window is still in that process.
-    pub(crate) fn sent(&self) -> (u32, usize) {
-        (self.process.pid, self.address as usize)
+    /// The buffer's address, for the send that carries it.
+    pub(crate) fn sent(&self) -> usize {
+        self.address as usize
     }
 
     /// Writes `bytes` at `offset` into the buffer.

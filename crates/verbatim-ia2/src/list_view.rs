@@ -52,8 +52,7 @@ fn send(hwnd: isize, msg: u32, wparam: usize, lparam: isize) -> Result<isize, Ed
 }
 
 /// Sends `msg` to the list view carrying `buffer`, whose address is
-/// `lparam`, after checking that the window is still in the buffer's
-/// process.
+/// `lparam`.
 fn send_with(
     hwnd: isize,
     msg: u32,

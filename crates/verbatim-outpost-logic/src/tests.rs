@@ -3341,19 +3341,25 @@ fn only_an_answer_ends_a_windows_hang() {
     );
 }
 
-/// A window's destroy event takes it out of the record, and a second
-/// window's hang is told for that window.
+/// A second window met hung while one is recorded tells Core nothing, so
+/// the application sounds once per hang; a destroy event takes its window
+/// out of the record, and once an answer has emptied it, the next hang is
+/// told.
 #[test]
-fn a_destroy_event_ends_a_windows_hang_and_each_window_has_its_own() {
+fn a_second_hung_window_tells_nothing_and_a_destroy_ends_its_windows_hang() {
     let mut replay = Replay::new();
     let hang = program(&replay.push(navigation(1), Source::Other, 1)).request;
-    replay.commit(hang, found(HUNG, Found::Hung, None), 2);
+    assert_eq!(
+        not_responding(&replay.commit(hang, found(HUNG, Found::Hung, None), 2)),
+        [HUNG.get()]
+    );
     replay.finish(hang, false, 3);
     let other = Window::new(0x41).expect("not 0");
     let second = program(&replay.push(navigation(2), Source::Other, 4)).request;
     assert_eq!(
         not_responding(&replay.commit(second, found(other, Found::Hung, None), 5)),
-        [0x41]
+        Vec::<isize>::new(),
+        "the same hang of the application"
     );
     replay.finish(second, false, 6);
     let destroy = replay.push(
@@ -3368,12 +3374,47 @@ fn a_destroy_event_ends_a_windows_hang_and_each_window_has_its_own() {
         7,
     );
     replay.finish(program(&destroy).request, false, 7);
-    let after = program(&replay.push(navigation(3), Source::Other, 8)).request;
+    let answer = program(&replay.push(navigation(3), Source::Other, 8)).request;
     assert_eq!(
-        not_responding(&replay.commit(after, found(HUNG, Found::Hung, None), 9)),
-        [HUNG.get()],
-        "a destroyed window's handle hangs anew"
+        not_responding(&replay.commit(answer, found(other, Found::Answered, None), 9)),
+        Vec::<isize>::new()
     );
+    replay.finish(answer, false, 10);
+    let after = program(&replay.push(navigation(4), Source::Other, 11)).request;
+    assert_eq!(
+        not_responding(&replay.commit(after, found(HUNG, Found::Hung, None), 12)),
+        [HUNG.get()],
+        "the destroy and the answer emptied the record: a new hang"
+    );
+}
+
+/// A destroy the hand-over's hold keeps back still takes effect as it
+/// arrives: the program running meanwhile, committing the destroyed
+/// window hung, records nothing and tells Core nothing.
+#[test]
+fn a_held_destroy_wins_over_the_running_programs_hang() {
+    let mut replay = Replay::new();
+    let running = program(&replay.push(navigation(1), Source::Other, 1)).request;
+    replay.input(Input::Hooked, 2);
+    let held = replay.push(
+        Item::Msaa {
+            kind: WinKind::Destroy,
+            hwnd: HUNG.get(),
+            id_object: 0,
+            id_child: 0,
+            raiser: 3,
+        },
+        Source::Hook,
+        3,
+    );
+    assert!(programs(&held).is_empty(), "{held:?}");
+    assert!(replay.reducer.hold.holding());
+    assert_eq!(
+        not_responding(&replay.commit(running, found(HUNG, Found::Hung, None), 4)),
+        Vec::<isize>::new(),
+        "the window is gone"
+    );
+    assert!(replay.reducer.hung.is_empty());
 }
 
 /// A destroy pushed while a program runs wins over the hang that program

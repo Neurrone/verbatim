@@ -26,7 +26,7 @@ use windows::Win32::UI::Controls::{
     TVM_MAPACCIDTOHTREEITEM, TVM_MAPHTREEITEMTOACCID,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetWindowThreadProcessId, IsWindow, SMTO_BLOCK, SMTO_ERRORONEXIT, SendMessageTimeoutW,
+    IsWindow, SMTO_BLOCK, SMTO_ERRORONEXIT, SendMessageTimeoutW,
 };
 
 use verbatim_model::CallKind;
@@ -46,9 +46,7 @@ fn handle(hwnd: isize) -> HWND {
 /// Why a window message was not answered.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Unanswered {
-    /// The window is gone, or its handle now names a window of another
-    /// process than the one a buffer it carries is in; nothing was sent
-    /// in that case.
+    /// The window is gone.
     Gone,
     /// The window is hung or ghosted: nothing was sent.
     NotResponding,
@@ -72,12 +70,12 @@ const NO_TIME_LIMIT: u32 = 0x7FFF_FFFF;
 /// Sends `msg` to window `hwnd`, counted as one window message, and
 /// answers its result. The window's readability is tested first, by local
 /// calls, and a hung or ghosted window fails at once, unsent, as a
-/// destroyed one is gone. When the message carries the address of a buffer
-/// in another process's memory, `buffer`, that process's id and the
-/// address, the window's process is checked to be the buffer's before the
-/// send, so a handle reused by another process's window is never sent an
-/// address valid only in the first: the gap left is the two local calls
-/// between the check and the send. The message is sent with
+/// destroyed one is gone. `buffer` is the address of a buffer in the
+/// target's memory the message carries, if any, which the fault points
+/// see. The window's process is not checked against the buffer's: a
+/// window handle carries a 16-bit reuse counter, so a handle's value
+/// recurs only after about 65,536 reuses of its slot, no practical risk
+/// (Dickson, 2026-11-07). The message is sent with
 /// `SMTO_BLOCK | SMTO_ERRORONEXIT` and no time limit
 /// ([`NO_TIME_LIMIT`]), without `SMTO_ABORTIFHUNG`, so nothing relies on
 /// when that flag returns; a failure is read through `IsWindow` as gone,
@@ -92,7 +90,7 @@ pub(crate) unsafe fn send_message(
     hwnd: isize,
     msg: u32,
     (wparam, lparam): (usize, isize),
-    buffer: Option<(u32, usize)>,
+    #[cfg_attr(not(any(test, feature = "faults")), expect(unused_variables))] buffer: Option<usize>,
 ) -> Result<isize, Unanswered> {
     match verbatim_win32::calls::message_readability(hwnd) {
         verbatim_win32::window::Readability::Readable => {}
@@ -100,25 +98,11 @@ pub(crate) unsafe fn send_message(
         verbatim_win32::window::Readability::Ghosted
         | verbatim_win32::window::Readability::Hung => return Err(Unanswered::NotResponding),
     }
-    if let Some((pid, _)) = buffer {
-        let mut window_pid = 0u32;
-        // SAFETY: a local read into a local; any handle is tolerated.
-        unsafe { GetWindowThreadProcessId(handle(hwnd), Some(&raw mut window_pid)) };
-        if window_pid != pid {
-            tracing::debug!(
-                hwnd,
-                window_pid,
-                buffer_pid = pid,
-                "a window's handle names another process's window than its buffer's; nothing is sent"
-            );
-            return Err(Unanswered::Gone);
-        }
-    }
     count(CallKind::WindowMessage).map_err(|_| Unanswered::Abandoned)?;
     #[cfg(any(test, feature = "faults"))]
     verbatim_faults::reach(
         verbatim_faults::Fault::WindowMessageSent,
-        &(hwnd, msg, None::<u32>, buffer.map(|(_, address)| address)),
+        &(hwnd, msg, None::<u32>, buffer),
     );
     let mut result = 0usize;
     // SAFETY: SendMessageTimeoutW tolerates any handle, failing for an

@@ -105,13 +105,17 @@ Public API:
   window enters it at a hung judgement of the program in flight, or at an
   accepted commit naming it `Found::Hung` (its check before a call found it
   hung, and no call was made), and `OutpostToCore::NotResponding` is sent
-  as it enters, once per hang; it leaves only on evidence that it answers,
+  only as the record goes from empty to holding a window, once per hang of
+  the application: a window entering while another is recorded sends
+  nothing. A window leaves only on evidence that it answers,
   an accepted commit naming it `Found::Answered` (a counted call into it
   returned), its destroy event, or the outpost's end. A program that made
   no call into the window is never that evidence. A destroy wins over the
   program in flight: a hang it names, by judgement or commit, in a window
-  whose destroy event was pushed while it ran (`Current::destroyed`)
-  enters nothing. The abandonment's
+  whose destroy event reached the reducer while it ran
+  (`Current::destroyed`) enters nothing. The destroy takes effect as it
+  first reaches the reducer, from the hook or the listener, even as a hook
+  copy the hand-over's hold keeps back. The abandonment's
   `Effect::Abandon` says whether its window was judged hung (`on_hung`),
   which the shell counts apart for the pong.
 - `Program` and `Work`: what the worker generation in charge runs, with

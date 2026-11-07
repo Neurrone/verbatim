@@ -1133,8 +1133,10 @@ pub enum OutpostToCore {
     /// A window of the outpost's application began a hang: the outpost
     /// judged it hung during a call, or found it hung at a check before
     /// one, and holds it in its record of hung windows until a call into it
-    /// returns, it is destroyed, or the outpost ends. Sent once per hang,
-    /// in order with the outpost's events; Core plays the "not responding"
+    /// returns, it is destroyed, or the outpost ends. Sent once per hang of
+    /// the application, as the record goes from empty to holding a window:
+    /// a window met hung while another is recorded sends nothing. Sent in
+    /// order with the outpost's events; Core plays the "not responding"
     /// sound for it only when the window's application holds attention as
     /// it arrives.
     NotResponding {

@@ -189,11 +189,6 @@ its to decide.
 
 ### Follow-ups from the focus and ownership builds
 
-Follow-up, not established from the code alone: Core refuses a foreground
-report of the window holding its focus (`crates/verbatim-core/src/reduce.rs`,
-`reduce_focus_changed`) with no check that the focus is alive, so a window
-handle Windows reused could have a new window refused as the dead focus's.
-
 Follow-ups from the one judge build:
 
 - A window whose client area has the role "window" has its client filed

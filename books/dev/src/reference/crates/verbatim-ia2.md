@@ -130,12 +130,10 @@ Public API:
   `line_start`, `line_length`, `line_count`, `text_length`, `line_text`,
   `text_range`, `find_word_break`, `position_of` (screen coordinates), and
   `is_password`, each an `EditResult` whose `EditError` is `Gone` when the
-  window no longer exists or its handle now names another process's
-  window, `NotResponding` when it is hung or ghosted, `Abandoned` when
-  the thread's call gate refused the message (`verbatim_win32::calls`),
-  never a fact about the control, and `Failed` otherwise. `EditControl::with_process(hwnd, version, pid)` allocates its
-  buffers in process `pid`, for a test standing for a window handle reused
-  by another process's window. Offsets are the
+  window no longer exists, `NotResponding` when it is hung or ghosted,
+  `Abandoned` when the thread's call gate refused the message
+  (`verbatim_win32::calls`), never a fact about the control, and `Failed`
+  otherwise. Offsets are the
   control's UTF-16 code units. The line messages' answers are read as
   the 32-bit `int` they are, the low half of the message's result: the
   classic edit control sign-extends `EM_LINEINDEX`'s -1 for a line past
@@ -438,12 +436,11 @@ by Core on entering the window: one acquisition; `progress`, an
   The window's readability is tested first, by local calls
   (`verbatim_win32::window::readability`): a hung or ghosted window fails
   at once, unsent, and a destroyed one is gone. A message carrying the
-  address of a buffer in the target's memory is sent only once the
-  window's current process (`GetWindowThreadProcessId`) is checked to be
-  the buffer's, and is gone otherwise, so a window handle reused by
-  another process's window is never sent an address valid only in the
-  first; the gap left is the two local calls between the check and the
-  send. The message is then sent with `SMTO_BLOCK | SMTO_ERRORONEXIT` and
+  address of a buffer in the target's memory is sent with no check that
+  the window is still in the buffer's process: a window handle carries a
+  16-bit reuse counter, so a handle's value recurs only after about
+  65,536 reuses of its slot, no practical risk (Dickson, 2026-11-07). The
+  message is then sent with `SMTO_BLOCK | SMTO_ERRORONEXIT` and
   no time limit of its own, the largest that `SendMessageTimeoutW` waits,
   `i32::MAX` milliseconds (it takes a larger one as passed at once),
   without `SMTO_ABORTIFHUNG`: only a send with no time limit tells when its

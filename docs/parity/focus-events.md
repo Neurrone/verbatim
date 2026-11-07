@@ -541,8 +541,9 @@ sound for a hung application. Verbatim: **different** (Dickson,
 2026-11-04 and 2026-11-06). An outpost judges the window of its work in
 flight hung, by Windows' own state, every half second from the grace's
 end, and abandons it; a query whose window is already hung is answered at
-its check before its first call, an activation silently. Each hang of a
-window is told to Core once, and Core plays the "not responding" sound
+its check before its first call, an activation silently. Each hang of the
+application is told to Core once, as its first hung window is met, however
+many of its windows the hang is then met in (Dickson, 2026-11-07), and Core plays the "not responding" sound
 for it only when its application holds attention, so a hang first met in
 the background is never sounded. The focus listener drops a UIA event
 whose sender's cached window is hung as it arrives, as NVDA does, and

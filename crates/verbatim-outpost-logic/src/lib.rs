@@ -627,10 +627,12 @@ pub struct Reducer {
     /// The record of hung windows: each window from the first evidence of
     /// its hang, a hung judgement or a commit naming it hung, until
     /// evidence that it answers, a commit naming it answered or its destroy
-    /// event; [`OutpostToCore::NotResponding`] is sent as a window enters
-    /// it, once per hang. A destroy wins over a hang the program in flight
-    /// names after it ([`Current::destroyed`]), so a destroyed handle is
-    /// never recorded again by evidence gathered before its destroy.
+    /// event; [`OutpostToCore::NotResponding`] is sent as the record goes
+    /// from empty to holding a window, once per hang of the application,
+    /// and further windows recorded meanwhile send nothing. A destroy wins
+    /// over a hang the program in flight names after it
+    /// ([`Current::destroyed`]), so a destroyed handle is never recorded
+    /// again by evidence gathered before its destroy.
     hung: BTreeSet<Window>,
 }
 
@@ -959,6 +961,7 @@ impl Reducer {
     /// lasts if it came from the hook, and pushed into the intake
     /// otherwise.
     fn entry(&mut self, entry: Entry, source: Source, effects: &mut Vec<Effect>) {
+        self.destroy_seen(&entry.item);
         match source {
             Source::Hook => {
                 if let Some(entry) = self.hold.hooked_copy(entry) {
@@ -985,6 +988,28 @@ impl Reducer {
         }
     }
 
+    /// A destroyed window answers nothing more: it leaves the record of
+    /// hung windows, and a window with its handle later is another, so the
+    /// program in flight, begun before the destroy, cannot put it back.
+    /// Applied as the destroy first reaches the reducer, from either
+    /// source, even as a hook copy the hand-over's hold keeps back, so the
+    /// program running meanwhile cannot record the window hung; a second
+    /// copy changes nothing.
+    fn destroy_seen(&mut self, item: &Item) {
+        if let Item::Msaa {
+            kind: WinKind::Destroy,
+            hwnd,
+            ..
+        } = *item
+            && let Some(window) = Window::new(hwnd)
+        {
+            self.hung.remove(&window);
+            if let Some(current) = self.flight.item_mut() {
+                current.destroyed.insert(window);
+            }
+        }
+    }
+
     /// Pushes `entries` into the intake in order, as one batch.
     fn push_all(&mut self, entries: Vec<Entry>, effects: &mut Vec<Effect>) {
         for entry in entries {
@@ -1005,22 +1030,6 @@ impl Reducer {
             && !self.stopping
         {
             self.queries.insert(request_id);
-        }
-        // A destroyed window answers nothing more: it leaves the record of
-        // hung windows, and a window with its handle later is another, so
-        // the program in flight, begun before the destroy, cannot put it
-        // back.
-        if let Item::Msaa {
-            kind: WinKind::Destroy,
-            hwnd,
-            ..
-        } = entry.item
-            && let Some(window) = Window::new(hwnd)
-        {
-            self.hung.remove(&window);
-            if let Some(current) = self.flight.item_mut() {
-                current.destroyed.insert(window);
-            }
         }
         if let (
             Item::Fact(DeliveredFact::Foreground { hwnd }, _),
@@ -1069,8 +1078,10 @@ impl Reducer {
     }
 
     /// `window` was found hung by `request`'s program: it enters the
-    /// record of hung windows, and Core is told once, as the hang begins;
-    /// unless the window was destroyed while the program ran.
+    /// record of hung windows, unless the window was destroyed while the
+    /// program ran, and Core is told only as the record goes from empty to
+    /// holding a window, so the application sounds once per hang however
+    /// many of its windows the hang is met in (Dickson, 2026-11-07).
     fn hang_seen(&mut self, request: Request, window: Window, effects: &mut Vec<Effect>) {
         if self
             .current_of(request)
@@ -1078,7 +1089,8 @@ impl Reducer {
         {
             return;
         }
-        if self.hung.insert(window) {
+        let first = self.hung.is_empty();
+        if self.hung.insert(window) && first {
             self.send(
                 OutpostToCore::NotResponding {
                     window: window.get(),

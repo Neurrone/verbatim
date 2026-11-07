@@ -325,7 +325,9 @@ that carries them on the pipes, `Message`, is
   ancestors, selected child, window facts and text, and when reading
   began.
 - `OutpostToCore::NotResponding { window }`: a window of the outpost's
-  application began a hang, sent once per hang, in order with its events;
+  application began a hang, sent once per hang of the application (a
+  window met hung while another is still recorded hung sends nothing), in
+  order with its events;
   Core plays the "not responding" sound for it only when the window's
   application holds attention. The pong's `parked_count` counts the
   abandoned workers not yet returned but for those parked on a window the
