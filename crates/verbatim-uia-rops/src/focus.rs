@@ -460,8 +460,8 @@ fn ends_at_the_top(runtime_id: &[i32], hwnd: isize) -> bool {
 /// reads the previous element's `HasKeyboardFocus` live
 /// (`FocusQuery::previous`), then the element's, and stops if that is
 /// false, in NVDA's order, so a focus only being lost cannot read as a new
-/// element under its runtime id (`docs/design/focus-pipeline-rework-remaining.md`,
-/// "The keep-id evidence, read in NVDA's order"), then, with
+/// element under its runtime id (`books/dev/src/reference/adr/0001-focus.md`, "The listener's
+/// checks, ported from NVDA's focus handler"), then, with
 /// [`FocusQuery::refresh`], fills the element's own cache afresh, then,
 /// for a menu item, reads its legacy MSAA state
 /// ([`Ancestry::legacy_state`]), then reads a list's or tab control's
@@ -600,8 +600,8 @@ pub fn focus_ancestry_remote(_uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
         };
         // The selected item is optional: a read of it that fails, as on an
         // item gone, leaves it out, and the focus and its ancestors are
-        // read without it (`docs/design/focus-pipeline-rework.md`, the
-        // audit's difference 4). Its registers are set only once it is
+        // read without it (`books/dev/src/reference/crates/verbatim-uia-rops.md`, "Layer 3: the
+        // focus ancestry"). Its registers are set only once it is
         // filled.
         let is_combo_box = input.control_type == Some(UIA_ComboBoxControlTypeId.0);
         b.try_catch(
@@ -882,8 +882,8 @@ fn tell(before_call: Option<&dyn Fn(&'static str)>, call: &'static str) {
 /// read, then the element's with [`FocusQuery::require_focus`], which stops
 /// the walk when false and lets it go on when the read fails, in NVDA's
 /// order
-/// (`docs/design/focus-pipeline-rework-remaining.md`, "The keep-id
-/// evidence, read in NVDA's order"); the element's
+/// (`books/dev/src/reference/adr/0001-focus.md`, "The listener's checks, ported from NVDA's focus
+/// handler"); the element's
 /// own cache filled afresh with [`FocusQuery::refresh`]
 /// (`BuildUpdatedCache`), the selected child through the `Selection`
 /// pattern ([`Uia::selected`], as `Uia::selected_node` reads it), then one
@@ -977,8 +977,8 @@ pub fn focus_ancestry_classic(uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
     }
     // The selected child is optional: one whose read timed out, or whose
     // container or item is gone, is left out, and the focus and its
-    // ancestors are read without it (`docs/design/focus-pipeline-rework.md`,
-    // the audit's difference 4), as NVDA's walk reads no selection.
+    // ancestors are read without it (`books/dev/src/reference/crates/verbatim-uia-rops.md`, "Layer
+    // 3: the focus ancestry"), as NVDA's walk reads no selection.
     let selected_child = match reads_selected_child(
         &input,
         (live, element.as_ref(), query.value_available),

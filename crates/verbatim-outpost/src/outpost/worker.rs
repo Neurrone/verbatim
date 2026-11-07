@@ -205,7 +205,7 @@ pub(super) fn take_calls() -> CallCounts {
 /// Starts a worker generation, which takes its programs from
 /// `jobs`. With `warm`, it creates its UIA client at once instead of on its
 /// first read: a spare's worker makes it while the spare waits for its
-/// application (`books/dev/src/explanation/design/focus-pipeline.md`, section 19.2).
+/// application (`books/dev/src/reference/adr/0001-focus.md`, "Spare outposts").
 pub(super) fn spawn(
     context: Arc<Context>,
     (generation, warm): (u64, bool),
@@ -357,8 +357,7 @@ fn run_job(context: &Arc<Context>, client: &mut Client, job: Job, charge: &Arc<C
             };
             // Every verdict the entry asks for is judged at its event's
             // observation, or, for an entry with no event, at its start
-            // (`docs/design/focus-pipeline-rework.md`, "Who owns each
-            // duplicated fact", the verdicts).
+            // (`books/dev/src/reference/adr/0001-focus.md`, "One judge per fact").
             request_context.judge_at(judged_at(context, &entry));
             let mut worker = Worker::new(&request_context, client, batch, timing);
             worker.group = group;
@@ -3321,8 +3320,7 @@ impl Worker<'_> {
     /// be the system's foreground window, or the window is read through UI
     /// Automation. The test is not made here, since this worker can wait
     /// behind a call into a held application
-    /// (`docs/design/focus-pipeline-rework-remaining.md`, "The outpost's
-    /// foreground tests, on its reducer's thread").
+    /// (`books/dev/src/reference/adr/0001-focus.md`, "The foreground and the window title").
     ///
     /// It is stamped with the time that test found its window in front,
     /// never before the event was observed, so the old foreground window's
@@ -3346,7 +3344,8 @@ impl Worker<'_> {
     /// announced as the focus enters it, from the focus's ancestry, where the
     /// top-level window is an ancestor like any other: the reducer speaks
     /// the entered ancestors when the focus's top-level window changes
-    /// (`books/dev/src/explanation/design/focus-pipeline.md`, section 16.4). A console window's
+    /// (`books/dev/src/reference/adr/0001-focus.md`, "The foreground and the window title"). A
+    /// console window's
     /// foreground event comes before the window is in front, and the window
     /// is read through UI Automation besides, so its title is the console
     /// window element's, the text area's parent.
@@ -3530,8 +3529,7 @@ impl Worker<'_> {
         }
         // The focus and the ancestors its walk reads are compared with the
         // focus line Core holds and the newest focus Core has not judged, by
-        // NVDA's equality (`docs/design/focus-pipeline-rework.md`, "MSAA
-        // object equality").
+        // NVDA's equality (`books/dev/src/reference/adr/0001-focus.md`, "Object identity").
         let candidates = read::msaa_candidates(self.context);
         let node = candidate.read(self.context.nodes(), Some(&candidates));
         self.report_msaa_focus(
@@ -3591,7 +3589,8 @@ impl Worker<'_> {
     }
 
     /// A UIA focus as the focus listener judged and read it from the
-    /// event's own element (`books/dev/src/explanation/design/focus-pipeline.md`, section 12):
+    /// event's own element (`books/dev/src/explanation/design/focus.md`, "One UI Automation focus,
+    /// end to end"):
     /// it was no repeat of the focus Core holds, its nearest window
     /// passed NVDA's acceptance test against the foreground window, the
     /// element had the keyboard focus when the listener read it, as
@@ -3616,13 +3615,14 @@ impl Worker<'_> {
             // NVDA's acceptance test against the foreground window was
             // made by the listener, before it read the focus, as NVDA
             // makes it before it queues one
-            // (`books/dev/src/explanation/design/focus-pipeline.md`, section 16.2).
+            // (`books/dev/src/reference/adr/0001-focus.md`, "The listener's checks, ported from
+            // NVDA's focus handler").
             let reported = Self::uia_focus_window(context, read.hwnd, read.window)?;
             // The listener makes no backend verdict; the outpost's one
             // verdict per window decides which backend's focus counts in
             // each of its windows, judged at the read's observation
-            // (`docs/design/focus-pipeline-rework.md`, "Who owns each
-            // duplicated fact", the verdicts): in a window it judges not
+            // (`books/dev/src/reference/adr/0001-focus.md`, "One judge per fact"):
+            // in a window it judges not
             // UIA, its MSAA focus speaks, and the listener's read is
             // dropped.
             // A live re-read's answer keeps the verdict its report was
@@ -3743,12 +3743,12 @@ impl Worker<'_> {
 
     /// Notes what the listener read of the element it held before under
     /// the UIA focus `read` names, which its report carries
-    /// (`docs/design/focus-pipeline-rework.md`, "One object, one identity").
+    /// (`books/dev/src/reference/adr/0001-focus.md`, "Object identity").
     fn note_earlier(&mut self, read: &UiaFocusRead) {
         let runtime_id = &read.snapshot.runtime_id;
         // A runtime id keeps its node when its application gives it to a
-        // new element (`docs/design/focus-pipeline-rework.md`, "One object,
-        // one identity"): on the listener's evidence that the element it
+        // new element (`books/dev/src/reference/adr/0001-focus.md`, "Object identity"): on the
+        // listener's evidence that the element it
         // stood for lost the focus or is gone, the element kept for it is
         // evicted by the report's commit, if still kept then, and its
         // terminal entry goes in the commit; its text is forgotten now, in
@@ -3799,8 +3799,8 @@ impl Worker<'_> {
     /// found, as Windows Terminal's tab focus elements,
     /// which are in no tree, are not, nothing is kept, its text cannot be
     /// read, and nothing is followed, as NVDA hears nothing local before
-    /// its group is added to a focus (`books/dev/src/explanation/design/focus-pipeline.md`,
-    /// sections 12.5 and 17).
+    /// its group is added to a focus (`books/dev/src/reference/adr/0001-focus.md`, "The outpost's
+    /// own element").
     fn find_focus_element(&mut self, runtime_id: &[i32], text: bool) -> Option<NodeId> {
         let finding = Instant::now();
         let found = self
@@ -3845,8 +3845,8 @@ impl Worker<'_> {
     /// ([`FocusPath::is_cut_at`]): the application's focused element, read
     /// with the focus read's checks, its process-id check among them
     /// ([`read::focused_element_in`]), and taken when its runtime id is the
-    /// focus's (`docs/design/focus-pipeline-rework.md`, the audit's
-    /// difference 5), since a walk down from the nearest window would find
+    /// focus's (`books/dev/src/reference/adr/0001-focus.md`, "The outpost's own element"), since a
+    /// walk down from the nearest window would find
     /// it only as that window's direct child, and a search below the window
     /// costs a round of provider calls per element. Found only while the
     /// element still has the keyboard focus, a limit.
@@ -4553,7 +4553,8 @@ fn follow_of(context: &Context, made: FocusMade) -> (Follow, Option<NodeId>) {
 /// `node_id` of `role`, with `chain`, its ancestors and itself, as NVDA
 /// moves its local group with the focus (`UIAHandler/__init__.py` 642 to
 /// 756; `NVDAObjects/UIA/__init__.py` 1623 to 1630;
-/// `books/dev/src/explanation/design/focus-pipeline.md`, section 17): to the node's own element
+/// `books/dev/src/reference/adr/0001-focus.md`, "Focus-following subscriptions"): to the node's
+/// own element
 /// when the outpost has it, with the extended group when the node may have
 /// text, and the base group otherwise; the console host's text area
 /// (`console`) takes the extended group without its text and caret

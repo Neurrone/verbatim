@@ -51,7 +51,7 @@ impl Target {
 /// The element kept for a UIA focus's node that the focus listener's
 /// evidence says is no longer the node's element: the runtime id names a
 /// new element, the one it named having lost the focus or gone
-/// (`docs/design/focus-pipeline-rework.md`, "One object, one identity").
+/// (`books/dev/src/reference/adr/0001-focus.md`, "Object identity").
 /// The node's terminal entry goes with it, and the caret key's watch on the
 /// node ends (`Change::replaced`).
 pub(super) struct Stale {

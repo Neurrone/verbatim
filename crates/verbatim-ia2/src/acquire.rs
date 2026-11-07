@@ -884,8 +884,8 @@ pub enum Walked {
     MetKnown(NodeId),
     /// It ran out of time or reached its hop limit with ancestors left: the
     /// chain is completed by plain windows from this window, the outermost
-    /// ancestor's own, included (`docs/design/focus-pipeline-rework.md`,
-    /// "A window's name, and the one fallback").
+    /// ancestor's own, included (`books/dev/src/reference/adr/0001-focus.md`, "When an
+    /// application's call fails").
     Cut(isize),
     /// The chain goes on from this window's own object, chosen by the
     /// caller as NVDA chooses it (`Window._get_parent`), the chain ending

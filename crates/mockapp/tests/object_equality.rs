@@ -1,6 +1,6 @@
 //! NVDA's equality of MSAA objects (`IAccessible._isEqual`) as the outpost
 //! applies it to the ancestors its focus walks read
-//! (`docs/design/focus-pipeline-rework.md`, "MSAA object equality"), heard
+//! (`books/dev/src/reference/adr/0001-focus.md`, "Object identity"), heard
 //! through Core: mockapp's MSAA mode over `object_equality.json`, two
 //! focuses reported one after the other, the first waiting for Core's
 //! judgement when the second is read, so its line is the one compared

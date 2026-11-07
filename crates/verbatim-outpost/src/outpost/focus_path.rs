@@ -1,5 +1,6 @@
 //! How the outpost finds its own copy of a UIA element the focus listener
-//! read (`books/dev/src/explanation/design/focus-pipeline.md`, section 12.5). The listener reads
+//! read (`books/dev/src/reference/adr/0001-focus.md`, "The outpost's own element"). The listener
+//! reads
 //! each UIA focus from the event's own element, which no other process can
 //! be handed (experiment E-marshal), and sends the focus's raw-view chain:
 //! the focus and its ancestors, each with its runtime id and its own window

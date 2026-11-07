@@ -18,7 +18,8 @@
 //!   the same thread (`DeliveredFact::key`); if there is none, the oldest waiting fact is dropped to make
 //!   room, so the newest facts survive;
 //! - a message of the MSAA hand-over between the listener and an outpost
-//!   (`books/dev/src/explanation/design/focus-pipeline.md`, section 12.4) always gets through,
+//!   (`books/dev/src/reference/adr/0001-focus.md`, "One route per application, and the marker")
+//!   always gets through,
 //!   past the bound, and keeps its place behind everything queued before
 //!   it: the listener's "forwarding ended" must reach the outpost after
 //!   every fact the listener sent before it, and is never lost; so does

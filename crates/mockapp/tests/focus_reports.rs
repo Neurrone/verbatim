@@ -1,6 +1,7 @@
 //! How a UIA focus from mockapp's provider is judged and read by the focus
 //! listener's reader and reported by a real outpost
-//! (`books/dev/src/explanation/design/focus-pipeline.md`, section 12): under which node, when
+//! (`books/dev/src/explanation/design/focus.md`, "One UI Automation focus, end to end"): under
+//! which node, when
 //! the provider reuses a dead element's runtime id; with which states,
 //! when they changed after the focus event; dropped when its element lost
 //! the keyboard focus before it was read, and reported when it had it
@@ -600,8 +601,8 @@ fn a_focus_carries_its_parents_automation_id() {
 /// listener read it is reported, whatever has happened since: Windows
 /// Terminal's Control+Tab gives the focus to the tab it leaves, then to
 /// the tab it selects, and NVDA queues both, culling the first once the
-/// second is applied (`books/dev/src/explanation/design/focus-pipeline.md`, section 10.1, item
-/// 2). The focus is reported with its states as the listener read them,
+/// second is applied (`docs/nvda/editable-text-and-terminals.md`, "Terminals"). The focus is
+/// reported with its states as the listener read them,
 /// still selected, and the item moved to after it.
 fn a_focus_read_while_it_had_the_keyboard_focus_is_reported_though_the_focus_moved_on() {
     let title = common::unique_title("mockapp-left-selection");
@@ -824,7 +825,7 @@ fn a_focus_without_a_path_is_followed_from_its_next_focus_event() {
 /// the outpost as its application's focused element, read with the focus
 /// read's process-id check and taken because its runtime id is the
 /// field's, before the focus is reported
-/// (`docs/design/focus-pipeline-rework.md`, the audit's difference 5). The
+/// (`books/dev/src/reference/adr/0001-focus.md`, "The outpost's own element"). The
 /// field, "Notes", is four levels below its window, where the walk down
 /// from its nearest window by the chain's runtime ids does not reach it.
 /// The read's first step to the field's parent, after the nearest window's
@@ -1207,7 +1208,8 @@ fn focus_in_caret_fixture(
 
 /// The focus-following subscription moves with the focus as NVDA's local
 /// group does, added to the new focus and removed from the old one alone
-/// (`books/dev/src/explanation/design/focus-pipeline.md`, section 17): after the focus leaves
+/// (`books/dev/src/reference/adr/0001-focus.md`, "Focus-following subscriptions"): after the focus
+/// leaves
 /// the document for a button and returns, a text change the document
 /// raises is heard and reported.
 fn a_text_change_after_the_focus_returns_to_a_document_is_heard() {
@@ -1286,7 +1288,8 @@ fn a_change_of_an_unreleased_older_focus_is_heard_for_its_node() {
 /// keeps its place behind the focus, though the outpost's subscription
 /// queues it between the focus's marker and its read: only the old
 /// focus's state changes are planned ahead of a focus inside it
-/// (`books/dev/src/explanation/design/focus-pipeline.md`, section 12.4), since NVDA speaks a
+/// (`books/dev/src/reference/adr/0001-focus.md`, "One route per application, and the marker"),
+/// since NVDA speaks a
 /// value change only for the focus itself and so says nothing for this
 /// one. mockapp moves the focus from the combo box to its item and then
 /// changes the combo box's value; the test delivers the item's marker
@@ -1353,7 +1356,8 @@ fn a_value_change_of_the_old_focus_queued_behind_a_focus_inside_it_keeps_its_pla
 /// A windowless UIA focus is tested by NVDA's acceptance test against its
 /// nearest window, in the listener, after the repeat check and before the
 /// focus is read, as NVDA tests it before it queues a focus
-/// (`books/dev/src/explanation/design/focus-pipeline.md`, sections 16.2 and 16.3): with another
+/// (`books/dev/src/reference/adr/0001-focus.md`, "The listener's checks, ported from NVDA's focus
+/// handler"): with another
 /// application's window in front, mockapp's button's focus is dropped
 /// after one call, the nearest window's, and the outpost, handed the drop,
 /// says nothing. A dropped focus never becomes the last focus accepted, so
@@ -1391,7 +1395,8 @@ fn a_focus_dropped_before_its_window_is_in_front_is_reported_once_it_is() {
 
 /// A foreground event for a window read through UI Automation is dropped,
 /// even with the window in front, as NVDA drops every MSAA event for such
-/// a window (`books/dev/src/explanation/design/focus-pipeline.md`, section 16.4): the outpost
+/// a window (`books/dev/src/reference/adr/0001-focus.md`, "The foreground and the window title"):
+/// the outpost
 /// says nothing for it, and the focus inside the window that follows is
 /// reported alone, the window first among its ancestors, with no
 /// foreground report before it.
@@ -1635,7 +1640,7 @@ fn a_listener_report_in_a_window_the_outpost_judges_msaa_is_dropped() {
 
 /// An event and its UIA focus, observed 10 ms apart, are judged by the one
 /// verdict that stood at their observations, however late the second is
-/// handled (`docs/design/focus-pipeline-rework.md`, the verdicts): the
+/// handled (`books/dev/src/reference/adr/0001-focus.md`, "One judge per fact"): the
 /// foreground change's probe of mockapp's busy window times out, so the
 /// window is unknown, read through MSAA, and kept so for half a second
 /// from the probe's end; the listener's read, handled after the stall and
@@ -1758,8 +1763,8 @@ fn a_repeated_focus_on_the_still_focused_element_is_read_in_full() {
 /// after it, in its walk: here the focus leaves between the two reads, so
 /// the earlier element reads focused and the sender not, and the repeat is
 /// dropped, the focus announced once
-/// (`docs/design/focus-pipeline-rework-remaining.md`, "The keep-id
-/// evidence, read in NVDA's order").
+/// (`books/dev/src/reference/adr/0001-focus.md`, "The listener's checks, ported from NVDA's focus
+/// handler").
 fn a_focus_that_leaves_between_the_two_keyboard_focus_reads_is_announced_once() {
     let title = common::unique_title("mockapp-focus-leaves-between");
     let mut app = common::spawn("small.json", "uia", &title);
@@ -1855,8 +1860,9 @@ fn a_menu_opening_is_judged_as_a_focus_on_the_menu() {
 /// A UIA menu opening whose sender UI Automation counts as the current
 /// focus, the last focus the listener accepted with no newer focus queued
 /// since, is judged as that focus, as NVDA's automation event handler
-/// redirects it to its focus object (`books/dev/src/explanation/design/focus-pipeline.md`,
-/// section 18): with the focus's window and without NVDA's native check,
+/// redirects it to its focus object (`books/dev/src/reference/adr/0001-focus.md`, "The listener's
+/// checks, ported from NVDA's focus handler"): with the focus's window and without NVDA's native
+/// check,
 /// so the windowless sender's nearest window is not read. Five calls: the
 /// comparison (`CompareElements`), the focus's keyboard focus, and the
 /// read, which is the focus's own element again: its keyboard focus as the
@@ -2234,7 +2240,7 @@ fn a_menu_items_legacy_state_is_read_with_its_focus() {
 /// focus is the one reported. The refusal is the console window's class,
 /// read locally, so no call into the console is made at all: the native
 /// check is its class alone, the check of the console's provider being its
-/// outpost's (`docs/design/focus-pipeline-rework.md`, the verdicts), and
+/// outpost's (`books/dev/src/reference/adr/0001-focus.md`, "One judge per fact"), and
 /// nothing of the element is read.
 fn a_console_windows_own_focus_is_never_reported() {
     let title = common::unique_title("mockapp-console-window");
@@ -2270,8 +2276,8 @@ fn a_console_windows_own_focus_is_never_reported() {
 }
 
 /// A console's text area's focus is read with no check of the console's
-/// provider, which is its outpost's (`docs/design/focus-pipeline-rework.md`,
-/// the verdicts): five calls, the sender's nearest window, the keyboard
+/// provider, which is its outpost's (`books/dev/src/reference/adr/0001-focus.md`, "One judge per
+/// fact"): five calls, the sender's nearest window, the keyboard
 /// focus, and the read's three (the text area's cache, and steps up to the
 /// console window and to the desktop's root), and no window message. The
 /// outpost, which checks the console's provider by the window's handle,
@@ -2329,7 +2335,7 @@ fn a_console_text_areas_focus_is_checked_from_the_text_area() {
 /// which the proxy makes fourteen calls into the application's
 /// `IAccessible`, and the outpost, whose verdict on the window is
 /// MSAA, drops the read, the window's MSAA focus speaking for it
-/// (`docs/design/focus-pipeline-rework.md`, the verdicts: the listener's
+/// (`books/dev/src/reference/adr/0001-focus.md`, "One judge per fact": the listener's
 /// reads in MSAA windows off the class lists are an accepted cost).
 fn a_focus_in_a_window_with_no_uia_provider_is_read_and_dropped_by_its_outpost() {
     let title = common::unique_title("mockapp-msaa-window-focus");
@@ -2994,7 +3000,8 @@ fn thread_focus_window(hwnd: HWND) -> Option<HWND> {
 /// A walk cut at the depth limit of 64 is completed by plain windows from
 /// its outermost element's nearest window, included, never read, a
 /// deliberate difference from NVDA's fallback
-/// (`docs/design/focus-pipeline-rework.md`, "Decisions"): the button "Far",
+/// (`books/dev/src/reference/crates/verbatim-outpost.md`, "Console windows and frames of another
+/// process"): the button "Far",
 /// under 66 groups of its own in mockapp's window (`nested.json`), is read
 /// by the listener up to its 64th ancestor, which names the window to
 /// complete from, and reported with the window, a plain window named by its

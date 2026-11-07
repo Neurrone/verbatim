@@ -402,7 +402,7 @@ fn a_list_and_a_tab_control_report_their_selected_child() {
 /// A list whose selected item is gone, the list still naming it
 /// (`disconnect`), is read both ways with its ancestors and without the
 /// item, never failing for it: the selected item is optional
-/// (`docs/design/focus-pipeline-rework.md`, the audit's difference 4), as
+/// (`books/dev/src/reference/crates/verbatim-uia-rops.md`, "Layer 3: the focus ancestry"), as
 /// NVDA's walk reads no selection.
 fn a_focus_whose_selected_item_is_gone_is_reported_without_it() {
     let mut fixture = Fixture::start("mockapp-rops-selection-gone");
@@ -713,7 +713,8 @@ fn a_focus_walk_that_times_out_fails() {
 /// window and no read of the focus, into an application that has just
 /// failed to answer. NVDA's lookup answers no window when it fails, and NVDA
 /// drops a focus with none (`UIAHandler/__init__.py` 1437 to 1444;
-/// `docs/design/focus-pipeline-rework.md`, the audit's difference 14). The
+/// `books/dev/src/reference/crates/verbatim-listener.md`, "How a UIA focus is judged and read").
+/// The
 /// lookup's first step to the parent waits past the timeout
 /// (`slow-parent`), and returns before mockapp's wait ends.
 fn a_timed_out_nearest_window_lookup_reads_nothing_into_the_application() {

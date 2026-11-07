@@ -2,7 +2,7 @@
 //! decision D9). One outpost watches one application for its whole life:
 //! the application is set once, when the outpost starts, or, for a spare
 //! started before it had one, when the supervisor assigns it
-//! (`books/dev/src/explanation/design/focus-pipeline.md`, section 19), and never changes after.
+//! (`books/dev/src/reference/adr/0001-focus.md`, "Spare outposts"), and never changes after.
 //! Its parts:
 //!
 //! 1. The mailbox ([`shell`]): the MSAA hook callbacks, the UIA
@@ -323,8 +323,7 @@ struct RequestContext<'a> {
     joined_cache: RefCell<Vec<NodeId>>,
     /// The observation its verdicts are judged at: its entry's event's, or,
     /// when `None`, now on the arbitrator's observation clock at each
-    /// judgement (`docs/design/focus-pipeline-rework.md`, "Who owns each
-    /// duplicated fact", the verdicts).
+    /// judgement (`books/dev/src/reference/adr/0001-focus.md`, "One judge per fact").
     judged_at: Option<u64>,
 }
 
@@ -617,8 +616,8 @@ impl Context {
     /// the foreground window, the ancestors, the classes and the threads
     /// are local), and of a foreground change whether its window is the
     /// foreground window, and when that was found, on the observation clock
-    /// (`docs/design/focus-pipeline-rework-remaining.md`, "The outpost's
-    /// foreground tests, on its reducer's thread"). Nothing else is tested.
+    /// (`books/dev/src/reference/adr/0001-focus.md`, "The foreground and the window title").
+    /// Nothing else is tested.
     fn front_test(&self, item: &Item) -> reducer::Front {
         use verbatim_reader_rules::acceptance::{self, EventName};
         let fact = match item {
@@ -908,8 +907,8 @@ impl Context {
 /// window (`NodeDetails::window`): a chain goes on after a failure from the
 /// parent window of its outermost entry's nearest window, never from that
 /// window itself, so no window's own object is followed by another entry
-/// for its handle (`docs/design/focus-pipeline-rework.md`, "A window's
-/// name, and the one fallback"). A message failing it is logged in debug
+/// for its handle (`books/dev/src/reference/adr/0001-focus.md`, "Object identity"). A message
+/// failing it is logged in debug
 /// builds, never asserted, since a provider can name one window twice.
 fn one_entry_per_window(message: &OutpostToCore) -> bool {
     use verbatim_model::NormalizedEvent;
@@ -1033,7 +1032,7 @@ impl Outpost {
     }
 
     /// A spare outpost, with no application, in a test's own process
-    /// (`books/dev/src/explanation/design/focus-pipeline.md`, section 19.2): it does everything
+    /// (`books/dev/src/reference/adr/0001-focus.md`, "Spare outposts"): it does everything
     /// of an outpost's start that needs no application, its worker's UIA
     /// client included, writes [`OutpostToCore::SpareReady`] to
     /// `pipe`, and watches the application [`Outpost::assign`] gives it
@@ -1074,7 +1073,7 @@ impl Outpost {
     /// When `warm` is set, its worker creates its UIA client at once
     /// rather than on its first read: a spare does, so the client is
     /// ready before its application's first focus
-    /// (`books/dev/src/explanation/design/focus-pipeline.md`, section 19.2).
+    /// (`books/dev/src/reference/adr/0001-focus.md`, "Spare outposts").
     fn build(
         outbound: Outbound,
         finisher: Finisher,
@@ -1118,8 +1117,8 @@ impl Outpost {
         // The MSAA hooks, process-scoped (decision D13), installed once the
         // outpost has its application: focus, foreground, menu opening,
         // alert, and tooltip events, which the listener forwards only until
-        // it hears this hook is in (`books/dev/src/explanation/design/focus-pipeline.md`,
-        // section 12.4), and value, state, name, selection, and destroy
+        // it hears this hook is in (`books/dev/src/reference/adr/0001-focus.md`, "One route per
+        // application, and the marker"), and value, state, name, selection, and destroy
         // events. A destroy is queued only for a window, the one kind of
         // object whose end the outpost tracks.
         let hook_context = Arc::clone(&context);
@@ -1191,7 +1190,7 @@ impl Outpost {
     /// reported to Core ([`OutpostToCore::Fault`]), and no `Ready` is
     /// sent: the caller ends the outpost, since an application no hook
     /// watches would have its `WinEvent`s handed over to nothing
-    /// (`books/dev/src/explanation/design/focus-pipeline.md`, section 19.8, item 5).
+    /// (`books/dev/src/reference/adr/0001-focus.md`, "Spare outposts", item 5).
     pub fn assign(&self, target_pid: u32) -> Result<(), String> {
         let context = &self.context;
         if context
@@ -1707,7 +1706,8 @@ fn capture_text(context: &Context, event: &Cached<TextEvent>, kind: UiaKind) -> 
 }
 
 /// Starts the focus-following UIA subscription
-/// (`books/dev/src/explanation/design/focus-pipeline.md`, section 17): one registration, on one thread and client, listening
+/// (`books/dev/src/reference/adr/0001-focus.md`, "Focus-following subscriptions"): one
+/// registration, on one thread and client, listening
 /// nowhere until the worker reports a focus whose element it has. Its two
 /// groups are NVDA's two local groups (`UIAHandler/__init__.py`,
 /// `_createLocalEventHandlerGroup`): the base group, given every UIA focus,
@@ -1840,8 +1840,8 @@ fn fault(context: &Context, detail: String) {
 }
 
 /// Runs an outpost driven by the Core pipes, watching `target_pid` for its
-/// whole life, or, for `None`, as a spare (`books/dev/src/explanation/design/focus-pipeline.md`,
-/// section 19.2): it sends [`OutpostToCore::SpareReady`] and watches
+/// whole life, or, for `None`, as a spare (`books/dev/src/reference/adr/0001-focus.md`, "Spare
+/// outposts"): it sends [`OutpostToCore::SpareReady`] and watches
 /// the application Core's [`CoreToOutpost::Assign`] gives it from
 /// then on. It runs on the transport's child side
 /// (`docs/design/communication.md`, sections 4.6 and 6.4): the calling

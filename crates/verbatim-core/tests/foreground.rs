@@ -1,5 +1,5 @@
-//! Core's foreground record (`docs/design/focus-pipeline-rework-remaining.md`,
-//! "The second build"): the focus listener's foreground change, the only
+//! Core's foreground record (`books/dev/src/reference/adr/0001-focus.md`, "The foreground and the
+//! window title"): the focus listener's foreground change, the only
 //! report that a window came to the foreground, which moves attention, sets
 //! the record's front and marks Core's focus left; the front a focus is
 //! judged against; the whole-window focus; and the title rule. Each test

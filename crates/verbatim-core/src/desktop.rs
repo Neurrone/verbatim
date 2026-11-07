@@ -1,6 +1,6 @@
 //! The desktop's news from the focus listener
-//! (`docs/design/focus-pipeline-rework-remaining.md`, "The desktop switch and
-//! the virtual desktop's name"): the user's desktop returned, when the
+//! (`books/dev/src/reference/adr/0001-focus.md`, "The desktop's return and name"): the user's
+//! desktop returned, when the
 //! application in front is asked for its focus again, as NVDA queues it
 //! again; and the virtual desktop's name, kept until the next focus Core
 //! takes speaks it, as NVDA speaks it before any focus, or spoken as a

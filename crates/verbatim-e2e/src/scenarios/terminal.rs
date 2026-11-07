@@ -661,8 +661,8 @@ pub(crate) fn expect_prompt_read(
 /// focus raised twice under the usual runtime id keeps its node, and its
 /// repeat is Core's duplicate, or, when the focus is being lost as it is
 /// read, dropped, the earlier element's keyboard focus read before the
-/// sender's (`docs/design/focus-pipeline-rework-remaining.md`, "The keep-id
-/// evidence, read in NVDA's order"). In the runs kept, opening a window,
+/// sender's (`books/dev/src/reference/adr/0001-focus.md`, "The listener's checks, ported from
+/// NVDA's focus handler"). In the runs kept, opening a window,
 /// it was said twice at most, in 10 runs of 9 scenarios.
 pub(crate) const LAUNCH_REPEATS: usize = 1;
 

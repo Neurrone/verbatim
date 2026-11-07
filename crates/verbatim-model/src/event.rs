@@ -124,8 +124,7 @@ pub struct WindowFacts {
 /// only report that a window came to the foreground, from which Core
 /// decides how the keyboard hook treats the keys that go to it
 /// ([`HookForeground`]), where the user's attention is, and its foreground
-/// record (`docs/design/focus-pipeline-rework-remaining.md`, "One
-/// foreground change, from the listener").
+/// record (`books/dev/src/reference/adr/0001-focus.md`, "The foreground and the window title").
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ForegroundWindow {
     /// The window.
@@ -228,7 +227,7 @@ pub enum PropertyChange {
 /// What a reader read live, with a focus, of the element it held before
 /// under the focus's identity, a UI Automation runtime id an application
 /// may give to a new element once the one it named dies
-/// (`docs/design/focus-pipeline-rework.md`, "One object, one identity").
+/// (`books/dev/src/reference/adr/0001-focus.md`, "Object identity").
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EarlierElement {
     /// It still has the keyboard focus: the focus is that element.
@@ -282,16 +281,15 @@ pub enum NormalizedEvent {
         /// window's client object reads as the same node; it judges it by
         /// its foreground record, never moves attention for it, and
         /// refuses it when its focus is in that window and not left
-        /// (`docs/design/focus-pipeline-rework-remaining.md`, "The
-        /// whole-window focus").
+        /// (`books/dev/src/reference/adr/0001-focus.md`, "The foreground and the window title").
         #[serde(default)]
         whole_window: bool,
         /// The focused node's ancestors, outermost first, complete to the
         /// desktop, which is not one of them: walked by the outpost before
         /// emitting, and where a walk was cut by its bound, failed or met a
         /// window it does not call into, completed by plain windows read
-        /// from Windows' own state (`docs/design/focus-pipeline-rework.md`,
-        /// "A window's name, and the one fallback"). The readers leave out
+        /// from Windows' own state (`books/dev/src/reference/adr/0001-focus.md`, "Object
+        /// identity"). The readers leave out
         /// the ancestors that are not presentable, layout containers among
         /// them, so it is empty for a top-level window's own focus and can
         /// be for any focus whose ancestors are all such; the focus's
@@ -1118,8 +1116,7 @@ pub enum Input {
 }
 
 /// News of the desktop the focus listener tells Core
-/// (`docs/design/focus-pipeline-rework-remaining.md`, "The desktop switch
-/// and the virtual desktop's name").
+/// (`books/dev/src/reference/adr/0001-focus.md`, "The desktop's return and name").
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DesktopNews {
     /// The user's desktop returned, 200 ms after the desktop switch, as

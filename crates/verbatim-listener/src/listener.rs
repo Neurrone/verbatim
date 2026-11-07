@@ -52,7 +52,8 @@
 //! The one place the listener calls into applications is the reading
 //! threads, one per application, which judge and read each UIA focus from
 //! the event's own element, as NVDA does, since no other process can hold
-//! that element (`books/dev/src/explanation/design/focus-pipeline.md`, section 12). The callback
+//! that element (`books/dev/src/explanation/design/focus.md`, "One UI Automation focus, end to
+//! end"). The callback
 //! sends the application's outpost a marker at once and queues the element
 //! for its application's thread; the thread's read, or its drop, follows
 //! the marker by the same route. Each read is a few calls on elements the
@@ -68,8 +69,8 @@
 //! (`books/dev/src/reference/uia-bugs.md`, "A hung window named in a system focus event holds a
 //! process's UIA events").
 //!
-//! The hand-over of MSAA events (`books/dev/src/explanation/design/focus-pipeline.md`, section
-//! 12.4, "The MSAA hand-over, exactly"): every application's outpost takes
+//! The hand-over of MSAA events (`books/dev/src/reference/crates/verbatim-outpost.md`, "The
+//! hand-over of an application's MSAA events"): every application's outpost takes
 //! its focus, foreground, menu, alert, and tooltip events from its own
 //! process-scoped hook, so they reach it by one route, in the order Windows
 //! raised them, with its other MSAA events. The listener forwards them only
@@ -679,8 +680,8 @@ impl Outgoing {
     /// window whose thread its event named, and the token's integrity).
     /// Sent for every process, ignored ones included, since Core takes from
     /// it the keyboard hook's view, attention and its foreground record;
-    /// none replaces another (`docs/design/focus-pipeline-rework-remaining.md`,
-    /// "One foreground change, from the listener").
+    /// none replaces another (`books/dev/src/reference/adr/0001-focus.md`, "The foreground and the
+    /// window title").
     fn foreground(&self, front: Front) {
         let owner = window_pid(front.window);
         let process = if front.console && front.thread != 0 {
@@ -711,7 +712,8 @@ impl Outgoing {
     /// desktop-wide subscriptions were all installed, as NVDA's UIA
     /// handlers ignore every event received before the handler's
     /// initialization has finished, after its global handlers are
-    /// registered (`books/dev/src/explanation/design/focus-pipeline.md`, section 18). Such an
+    /// registered (`books/dev/src/reference/adr/0001-focus.md`, "The listener's checks, ported
+    /// from NVDA's focus handler"). Such an
     /// event is the focus UI Automation reports to a new focus
     /// registration, which can be an element that only holds its own
     /// framework's focus, such as the taskbar's Start button while the
@@ -1578,7 +1580,8 @@ fn focus_subscription(
 /// The desktop-wide subscription to UIA menu openings: each is judged and
 /// read as a focus on the menu by its application's reading thread, as
 /// NVDA's automation event handler maps it to a focus and judges it
-/// (`books/dev/src/explanation/design/focus-pipeline.md`, section 18), unless a focus is
+/// (`books/dev/src/reference/adr/0001-focus.md`, "The listener's checks, ported from NVDA's focus
+/// handler"), unless a focus is
 /// pending as it arrives, when NVDA drops it.
 fn menu_subscription(
     outgoing: &Arc<Outgoing>,
@@ -2004,7 +2007,8 @@ fn window_pid(hwnd: isize) -> u32 {
 /// 266 to 273; `UIA._get_processID`, `NVDAObjects/UIA/__init__.py` 2336 to
 /// 2346). Every event for a console window then reaches the outpost that
 /// receives its UIA events, which reports the client as the application
-/// (`books/dev/src/explanation/design/focus-pipeline.md`, section 5.4). `None` when the host
+/// (`books/dev/src/reference/crates/verbatim-outpost.md`, "Console windows and frames of another
+/// process"). `None` when the host
 /// cannot be read: the event is dropped rather than sent to the client,
 /// whose outpost would otherwise take the console host's window as its
 /// application's (Dickson, 2026-10-19;

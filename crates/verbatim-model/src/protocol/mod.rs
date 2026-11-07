@@ -190,7 +190,7 @@ pub struct UiaSnapshotFact {
 /// (0 for an element that is not a window), and whether UIA counts it both
 /// a control and content. The outpost filters what it reports from these
 /// and finds its own elements by the runtime ids below a window
-/// (`books/dev/src/explanation/design/focus-pipeline.md`, section 12.5).
+/// (`books/dev/src/reference/adr/0001-focus.md`, "The outpost's own element").
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct UiaAncestorFact {
     /// The ancestor's cached parts.
@@ -202,8 +202,8 @@ pub struct UiaAncestorFact {
 }
 
 /// Where the chain above a UIA focus read's ancestors goes on, as the
-/// listener's walk ended (`docs/design/focus-pipeline-rework.md`, "A
-/// window's name, and the one fallback"). The listener connects to no
+/// listener's walk ended (`books/dev/src/reference/adr/0001-focus.md`, "Object identity"). The
+/// listener connects to no
 /// window, so it names the window and the outpost of the focus's
 /// application goes on from it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -231,7 +231,8 @@ pub enum AncestorsEnd {
 
 /// A UIA focus as the focus listener judged and read it from the event's
 /// own element, on the thread for the element's application
-/// (`books/dev/src/explanation/design/focus-pipeline.md`, section 12.1): the element had the
+/// (`books/dev/src/reference/adr/0001-focus.md`, "Who reads a UI Automation focus"): the element
+/// had the
 /// keyboard focus, read live, when it was read.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct UiaFocusRead {
@@ -274,7 +275,7 @@ pub struct UiaFocusRead {
     /// caches and terminal entry too when it is gone; focused lets the
     /// outpost keep the element it found for the node, as it does for a
     /// repeat read while the focus before it waited for Core's judgement
-    /// (`docs/design/focus-pipeline-rework.md`, "One object, one identity").
+    /// (`books/dev/src/reference/adr/0001-focus.md`, "Object identity").
     pub same_as_last: Option<crate::EarlierElement>,
     /// Where the ancestors taken from the reading thread's ancestry cache
     /// begin: the index, in [`Self::ancestors`] nearest first, of the
@@ -295,8 +296,8 @@ pub struct UiaFocusRead {
 /// receives the event is told (`idEventThread` and `dwmsEventTime`): with
 /// the event's kind and address, what tells the listener's copy of an event
 /// and the outpost's own hook's copy apart from other events
-/// (`books/dev/src/explanation/design/focus-pipeline.md`, section 12.4, "The MSAA hand-over,
-/// exactly"). The thread is also the one NVDA's limiter counts the event
+/// (`books/dev/src/reference/crates/verbatim-outpost.md`, "The hand-over of an application's MSAA
+/// events"). The thread is also the one NVDA's limiter counts the event
 /// by.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct WinEventStamp {
@@ -372,8 +373,8 @@ pub enum DeliveredFact {
     /// The focus listener received a UIA focus event in this application
     /// and is reading it: entries the outpost takes in after this wait
     /// until the read arrives or is dropped, and the focus is handled in
-    /// this place (`books/dev/src/explanation/design/focus-pipeline.md`, section 12.4, decision
-    /// 1 of section 15), as NVDA's UIA events pass in order through the
+    /// this place (`books/dev/src/reference/adr/0001-focus.md`, "One route per application, and
+    /// the marker"), as NVDA's UIA events pass in order through the
     /// one thread that judges them.
     UiaFocusMarker {
         /// The listener's number for this focus event, which its read or
@@ -503,7 +504,8 @@ pub enum DeliveredFact {
 impl DeliveredFact {
     /// Whether this fact is an MSAA `WinEvent`'s, which an outpost's own
     /// hook takes in once it is installed, and the listener forwards only
-    /// until then (`books/dev/src/explanation/design/focus-pipeline.md`, section 12.4).
+    /// until then (`books/dev/src/reference/adr/0001-focus.md`, "One route per application, and
+    /// the marker").
     #[must_use]
     pub fn is_win_event(&self) -> bool {
         matches!(
@@ -662,8 +664,8 @@ pub enum CoreToOutpost {
     /// raised after `through`, and every one it forwarded before is ahead
     /// of this message, so the listener's copies and the outpost's hook's
     /// are matched from now on only for events raised while the hook went
-    /// in (`books/dev/src/explanation/design/focus-pipeline.md`, section 12.4, "The overlap's
-    /// ends"). Relayed in order behind every fact the listener sent before
+    /// in (`books/dev/src/reference/crates/verbatim-outpost.md`, "The hand-over of an
+    /// application's MSAA events"). Relayed in order behind every fact the listener sent before
     /// it ([`ListenerToCore::ForwardingEnded`]).
     ForwardingEnded {
         /// The listener's clock when it stopped, on the `WinEvent` clock.
@@ -757,7 +759,7 @@ pub enum CoreToOutpost {
         /// The report's trace.
         trace_id: TraceId,
     },
-    /// To a spare outpost (`books/dev/src/explanation/design/focus-pipeline.md`, section 19): the
+    /// To a spare outpost (`books/dev/src/reference/adr/0001-focus.md`, "Spare outposts"): the
     /// application it watches from now on, for the rest of its life. It
     /// installs its process-scoped `WinEvent` hook for that application,
     /// starts waiting for its exit, and sends [`OutpostToCore::Ready`]; or,
@@ -815,8 +817,8 @@ pub enum CoreToListener {
     /// The outpost `outpost` watching `pid` has its own `WinEvent` hook in,
     /// so the listener forwards none of `pid`'s `WinEvent` facts raised
     /// from now on, and answers [`ListenerToCore::ForwardingEnded`] behind
-    /// every fact it has forwarded (`books/dev/src/explanation/design/focus-pipeline.md`,
-    /// section 12.4).
+    /// every fact it has forwarded (`books/dev/src/reference/adr/0001-focus.md`, "One route per
+    /// application, and the marker").
     HookInstalled {
         /// The application.
         pid: Pid,
@@ -1007,8 +1009,7 @@ pub enum Query {
 /// Why a [`Query::ReadFocus`] reads the focus, which the app keeps with its
 /// asker and marks the answer's input with (`Input::Event`'s `purpose`),
 /// since each has its own tests in NVDA
-/// (`docs/design/focus-pipeline-rework-remaining.md`, "The fake focus's
-/// tests").
+/// (`books/dev/src/reference/adr/0001-focus.md`, "A focus UI Automation does not deliver").
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum FocusPurpose {
     /// At the start, and after an outpost or the listener was replaced:
@@ -1103,8 +1104,7 @@ pub struct FocusedControl {
     pub node: NodeSnapshot,
     /// Its ancestors, outermost first, complete to the desktop: a read cut
     /// short, by its time or a failed step, is completed by plain windows
-    /// (`docs/design/focus-pipeline-rework.md`, "A window's name, and the
-    /// one fallback").
+    /// (`books/dev/src/reference/adr/0001-focus.md`, "Object identity").
     pub ancestors: Vec<NodeSnapshot>,
     /// The selected child, for a selection container.
     pub selected_child: Option<NodeSnapshot>,
@@ -1159,7 +1159,8 @@ pub enum OutpostToCore {
         /// console host's outpost reports, the console's client, the
         /// window's owner by `GetWindowThreadProcessId`, as NVDA gives a
         /// console window and its text area the client's app module
-        /// (`books/dev/src/explanation/design/focus-pipeline.md`, section 5.4). `None` for the
+        /// (`books/dev/src/reference/crates/verbatim-outpost.md`, "Console windows and frames of
+        /// another process"). `None` for the
         /// target itself.
         #[serde(default)]
         application: Option<Pid>,
@@ -1232,7 +1233,7 @@ pub enum OutpostToCore {
     TargetExited,
     /// A spare outpost has done everything of its start that needs no
     /// application, and waits for [`CoreToOutpost::Assign`]
-    /// (`books/dev/src/explanation/design/focus-pipeline.md`, section 19.2). Its first message.
+    /// (`books/dev/src/reference/adr/0001-focus.md`, "Spare outposts"). Its first message.
     SpareReady {
         /// The outpost's own process id.
         outpost_pid: Pid,
@@ -1318,8 +1319,8 @@ pub enum ListenerToCore {
         timing: EventTiming,
     },
     /// News of the desktop, for Core
-    /// (`docs/design/focus-pipeline-rework-remaining.md`, "The desktop
-    /// switch and the virtual desktop's name"): the user's desktop returned,
+    /// (`books/dev/src/reference/adr/0001-focus.md`, "The desktop's return and name"): the user's
+    /// desktop returned,
     /// 200 ms after the switch; the virtual desktop's name, read on csrss's
     /// reading thread; or that name's due time, 250 ms after its event and
     /// after the name. Sent only by the listener; the supervisor passes it
@@ -1344,8 +1345,7 @@ pub enum ListenerToCore {
     /// front whose thread no event had named, once one of its events names
     /// it. None replaces another. The supervisor passes it to the app,
     /// which gives it to Core
-    /// (`docs/design/focus-pipeline-rework-remaining.md`, "One foreground
-    /// change, from the listener").
+    /// (`books/dev/src/reference/adr/0001-focus.md`, "The foreground and the window title").
     Foreground {
         /// The window.
         window: isize,

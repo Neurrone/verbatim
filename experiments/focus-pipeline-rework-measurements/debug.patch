@@ -714,7 +714,7 @@ index 00000000..2a0b36eb
 +//! Scratch measurement for the focus pipeline rework's step 1 (never
 +//! merged): the listener's record of the focus and foreground events its
 +//! callbacks observed, by top-level window, for the Terms' currency rule
-+//! of a kept read (`docs/design/focus-pipeline-rework.md`, "Terms"). Every
++//! of a kept read (`books/dev/src/explanation/design/focus.md`, "Terms"). Every
 +//! line it feeds is logged under the target [`TARGET`].
 +
 +use std::collections::VecDeque;

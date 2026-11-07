@@ -39,8 +39,7 @@
 //! half second from the probe's end, a deliberate difference from NVDA,
 //! which times its cache from before the probe, so a busy window is not
 //! probed again within half a second of a probe that waited three seconds
-//! (`docs/design/focus-pipeline-rework.md`, "Who owns each duplicated
-//! fact", the verdicts).
+//! (`books/dev/src/reference/adr/0001-focus.md`, "One judge per fact").
 //!
 //! A kept verdict is compared with the observation of the event being
 //! judged, never with when the worker handles it: each worker entry is
@@ -239,8 +238,8 @@ impl Arbitrator {
     /// judging from `from_us`, the probe having returned now: no provider
     /// for [`NEGATIVE_VERDICT_LIFETIME`] from now, recorded whichever
     /// worker probed, so that a window is not probed again more often than
-    /// NVDA probes it (`docs/design/focus-pipeline-rework.md`, the
-    /// verdicts). A verdict kept for the window's lifetime stays, since a
+    /// NVDA probes it (`books/dev/src/reference/adr/0001-focus.md`, "One judge per fact"). A
+    /// verdict kept for the window's lifetime stays, since a
     /// provider does not go away ([`Verdicts`]).
     fn timed_out(&self, hwnd: isize, from_us: u64) -> VerdictChange {
         let until = self

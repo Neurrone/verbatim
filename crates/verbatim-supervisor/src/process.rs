@@ -27,7 +27,7 @@ pub(super) enum Role {
     /// An outpost watching one application for its whole life (decision D9).
     Outpost(Pid),
     /// A spare outpost, started with no application and given one later
-    /// (`books/dev/src/explanation/design/focus-pipeline.md`, section 19), by its launch's id.
+    /// (`books/dev/src/reference/adr/0001-focus.md`, "Spare outposts"), by its launch's id.
     Spare(verbatim_model::OutpostId),
     /// The focus listener (decision D13).
     Listener,

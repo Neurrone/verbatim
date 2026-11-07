@@ -1,6 +1,5 @@
 # Scratch out-of-context WinEvent hook for the focus pipeline rework's
-# capture of a classic Win32 context menu (docs/design/focus-pipeline-rework.md,
-# difference 17), never merged. One thread holds two hooks, one for
+# capture of a classic Win32 context menu (books/dev/src/reference/crates/verbatim-outpost.md, "The outpost"), never merged. One thread holds two hooks, one for
 # EVENT_SYSTEM_FOREGROUND to EVENT_SYSTEM_MENUPOPUPEND (0x0003 to 0x0007) and
 # one for EVENT_OBJECT_FOCUS (0x8005), scoped to -ProcessId (0 for every
 # process), so their callbacks arrive in the order the events were queued.

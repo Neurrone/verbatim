@@ -159,7 +159,8 @@ impl LiveOutposts {
 
     /// Records that `outpost`'s events belong to `application`, which is not
     /// its target: the console's client, for a console host's outpost
-    /// (`books/dev/src/explanation/design/focus-pipeline.md`, section 5.4).
+    /// (`books/dev/src/reference/crates/verbatim-outpost.md`, "Console windows and frames of
+    /// another process").
     pub(crate) fn reports_for(&mut self, outpost: OutpostId, application: Pid) {
         if let Some(live) = self.outposts.get_mut(&outpost).map(Generation::live_mut) {
             live.application = Some(application);

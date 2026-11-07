@@ -10,8 +10,8 @@
 //! Two callers install these, with two scopes (decision D13). A per-application
 //! outpost installs its subscriptions with `idProcess` set to the target pid,
 //! so it sees only that application's events, its focus, foreground, menu,
-//! alert, and tooltip events included (`books/dev/src/explanation/design/focus-pipeline.md`,
-//! section 12.4). The focus listener installs its subscriptions with
+//! alert, and tooltip events included (`books/dev/src/reference/adr/0001-focus.md`, "One route per
+//! application, and the marker"). The focus listener installs its subscriptions with
 //! `idProcess` zero, so it sees those events across the whole desktop, reads
 //! the owning pid from each with a hang-safe local call, and forwards a fact
 //! to the target's outpost only while that outpost's own hook is not yet in;
@@ -141,8 +141,8 @@ pub enum WinEventKind {
     /// desktop's name changed. An install that asks for this kind hooks the
     /// name change scoped to csrss's process alone, the process that owns
     /// the desktop window, so that no other application's name change
-    /// wakes the thread (`docs/design/focus-pipeline-rework-remaining.md`,
-    /// "The desktop switch and the virtual desktop's name"); every other
+    /// wakes the thread (`books/dev/src/reference/adr/0001-focus.md`, "The desktop's return and
+    /// name"); every other
     /// window's is dropped at the hook. It is never [`WinEventKind::NameChange`].
     DesktopName,
 }
@@ -194,8 +194,8 @@ const SUBSCRIPTIONS: [(u32, WinEventKind); 25] = [
 /// The per-application outpost's subscription set (decision D13): the
 /// process-scoped focus, foreground, menu opening, alert, and tooltip
 /// events, so every MSAA event of the application reaches its outpost by
-/// one route in the order Windows raised it (`books/dev/src/explanation/design/focus-pipeline.md`,
-/// section 12.4); the name, description, value, state, and selection
+/// one route in the order Windows raised it (`books/dev/src/reference/adr/0001-focus.md`, "One
+/// route per application, and the marker"); the name, description, value, state, and selection
 /// events; the caret and text selection (milestone M4); object destruction
 /// (for windows going away). The end
 /// of a menu and of the Alt+Tab switcher are not here: the focus listener
@@ -252,8 +252,8 @@ pub const LISTENER_SUBSCRIPTIONS: &[WinEventKind] = &[
 /// `thread`, and `time`, so two hooks' copies of one event are told apart
 /// from other events by these alone, except from an identical event raised
 /// by the same thread within the same tick of the clock
-/// (`books/dev/src/explanation/design/focus-pipeline.md`, section 12.4, "The MSAA hand-over,
-/// exactly").
+/// (`books/dev/src/reference/crates/verbatim-outpost.md`, "The hand-over of an application's MSAA
+/// events").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct WinEvent {
     /// What it reports.

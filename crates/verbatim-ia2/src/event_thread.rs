@@ -3,8 +3,8 @@
 //! the focus listener (decision D13) use it, differing only in their pid and
 //! subscription set. The thread starts with no hook, and installs its one
 //! set when its owner asks ([`EventThread::hook`]): a spare outpost starts
-//! it before it has an application (`books/dev/src/explanation/design/focus-pipeline.md`,
-//! section 19). Its owner can also nudge it ([`Nudger`]): a message the
+//! it before it has an application (`books/dev/src/reference/adr/0001-focus.md`, "Spare
+//! outposts"). Its owner can also nudge it ([`Nudger`]): a message the
 //! thread hands to the owner's nudge handler between events, on the thread
 //! that owns the hooks, which is how an outpost unhooks some of its kinds
 //! and hooks them again while it runs. And it can wait for the thread to

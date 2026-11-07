@@ -4,7 +4,8 @@
 //! (`UIAHandler/__init__.py` 874 to 958), and for a menu opening its
 //! automation event handler, `IUIAutomationEventHandler_HandleAutomationEvent`
 //! (757 to 868), each step in its order
-//! (`books/dev/src/explanation/design/focus-pipeline.md`, section 18).
+//! (`books/dev/src/reference/adr/0001-focus.md`, "The listener's checks, ported from NVDA's focus
+//! handler").
 //!
 //! The listener's reading thread loops: [`next`] names the one call to make
 //! ([`Step::Call`]), the thread makes it and records its answer in

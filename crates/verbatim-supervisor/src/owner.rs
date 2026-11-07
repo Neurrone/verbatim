@@ -332,7 +332,7 @@ struct Owner {
     /// The watch over the reducer, read at each heartbeat.
     reducer: ReducerWatch,
     /// The spare outposts kept waiting, and the replacements owed
-    /// (`books/dev/src/explanation/design/focus-pipeline.md`, section 19).
+    /// (`books/dev/src/reference/adr/0001-focus.md`, "Spare outposts").
     spares: Spares,
     /// Every spare's process, by outpost id, from its launch until it is
     /// given or ends: `None` while its launch is at work.
@@ -1382,7 +1382,8 @@ impl Owner {
     }
 
     /// Sends the listener a message of the MSAA hand-over
-    /// (`books/dev/src/explanation/design/focus-pipeline.md`, section 12.4), or Core's live
+    /// (`books/dev/src/reference/adr/0001-focus.md`, "One route per application, and the marker"),
+    /// or Core's live
     /// re-read, never dropped, or holds it, in order, while the listener's
     /// launch is at work. With no listener, it is not needed: the next one
     /// is told the applications whose outposts have their hooks in on its
@@ -1688,8 +1689,8 @@ impl Owner {
         };
         if let Some(held_us) = record.held.first_held_us() {
             // The time the supervisor held the application's first fact
-            // for its outpost's start (`books/dev/src/explanation/design/focus-pipeline.md`,
-            // section 19.6).
+            // for its outpost's start (`books/dev/src/reference/adr/0001-focus.md`, "Spare
+            // outposts").
             tracing::info!(
                 %outpost,
                 %pid,

@@ -47,7 +47,7 @@
 //! stood for. The node keeps its id, the report carries that evidence to
 //! Core, and the outpost evicts the element kept for it
 //! ([`NodeIdRegistry::evict_element_if`];
-//! `docs/design/focus-pipeline-rework.md`, "One object, one identity").
+//! `books/dev/src/reference/adr/0001-focus.md`, "Object identity").
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};

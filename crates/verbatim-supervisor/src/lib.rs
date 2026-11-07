@@ -36,7 +36,7 @@
 //! - The supervisor therefore runs on one thread, the relay; the app parses
 //!   every frame on its reducer thread ([`Frames`]).
 //! - It keeps two spare outposts started and waiting, with no application
-//!   (`books/dev/src/explanation/design/focus-pipeline.md`, section 19), from the moment Core's
+//!   (`books/dev/src/reference/adr/0001-focus.md`, "Spare outposts"), from the moment Core's
 //!   own outpost is ready: a start for an application takes the oldest,
 //!   sends it `Assign`, and tells the app the generation `Started`; a
 //!   spare given never returns, and its replacement starts at once.
@@ -87,7 +87,7 @@ pub use writer::QueueError;
 const ABANDONED_WORKER_LIMIT: usize = 8;
 
 /// How many spare outposts the supervisor keeps waiting
-/// (`books/dev/src/explanation/design/focus-pipeline.md`, section 19).
+/// (`books/dev/src/reference/adr/0001-focus.md`, "Spare outposts").
 pub const SPARES: usize = 2;
 
 /// The supervisor's periods and limits. Verbatim runs with
@@ -107,7 +107,7 @@ pub struct Timings {
     /// How long the replacement of an outpost's second failure in a row
     /// waits: a second. Each failure after it waits twice as long as the
     /// one before, up to [`backoff_limit`](Self::backoff_limit)
-    /// (`books/dev/src/explanation/design/focus-pipeline.md`, section 19.5). The first failure
+    /// (`books/dev/src/reference/adr/0001-focus.md`, "Spare outposts"). The first failure
     /// is replaced at once.
     pub backoff_first: Duration,
     /// The longest a failed outpost's replacement waits: 30 seconds.
@@ -426,7 +426,7 @@ pub enum OutpostMessage {
         message: Box<OutpostToCore>,
     },
     /// A spare outpost said it is ready, and `waiting` spares are ready and
-    /// waiting now (`books/dev/src/explanation/design/focus-pipeline.md`, section 19). Verbatim
+    /// waiting now (`books/dev/src/reference/adr/0001-focus.md`, "Spare outposts"). Verbatim
     /// is ready for the end-to-end harness once [`SPARES`] are, so every
     /// scenario's applications take a spare.
     SpareReady {
@@ -482,7 +482,7 @@ pub enum OutpostMessage {
         sealed: Sealed,
     },
     /// The generation `outpost` given to `target_pid` failed before its
-    /// `Ready` (`books/dev/src/explanation/design/focus-pipeline.md`, section 19.5), and the
+    /// `Ready` (`books/dev/src/reference/adr/0001-focus.md`, "Spare outposts"), and the
     /// application's held facts, and the idle query held for it, go to the
     /// generation `next`: the next spare, or an outpost launched for the
     /// application. Sent when `next` is given, at once or when the

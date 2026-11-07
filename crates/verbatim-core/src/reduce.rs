@@ -425,8 +425,8 @@ fn is_stale_focus(
         })
 }
 
-/// Core's duplicate-focus rule (`books/dev/src/explanation/design/focus-pipeline.md`, section
-/// 4.2; `docs/parity/focus-events.md`, "Duplicate focus suppression"): a focus whose
+/// Core's duplicate-focus rule (`books/dev/src/explanation/design/focus.md`, "One UI Automation
+/// focus, end to end"; `docs/parity/focus-events.md`, "Duplicate focus suppression"): a focus whose
 /// element is the same as the last focus Core queued, while that element
 /// still has the keyboard focus, is dropped before anything else judges
 /// it, so it neither moves attention nor orders later focus events. NVDA
@@ -444,8 +444,8 @@ fn is_stale_focus(
 /// The evidence of "same element" is the node id, which names one object
 /// in one outpost generation; a UI Automation runtime id keeps its node
 /// even when its application gave it to a new element after the one it
-/// named died (`docs/design/focus-pipeline-rework.md`, "One object, one
-/// identity"). So "still focused" is `earlier`, what the reader read live
+/// named died (`books/dev/src/reference/adr/0001-focus.md`, "Object identity"). So "still focused"
+/// is `earlier`, what the reader read live
 /// with the focus of the element it held under that node: a duplicate only
 /// when that element still has the keyboard focus. With no such read, the
 /// reader holding no element for the node or its read cut before it, the
@@ -530,7 +530,8 @@ fn keep_newer_reading(state: &mut SrState, node: &NodeSnapshot, ancestors: &[Nod
 /// Whether an event from elsewhere, observed at `observed_at_us`, was
 /// observed before the newest foreground change Core applied: its speech
 /// would have been queued before that change, which cancels it in NVDA
-/// (`books/dev/src/explanation/design/focus-pipeline.md`, section 7). An event with no
+/// (`books/dev/src/reference/adr/0001-focus.md`, "One input to Core, in arrival order"). An event
+/// with no
 /// observation time (0) is never judged so.
 fn observed_before_foreground_change(state: &SrState, observed_at_us: u64) -> bool {
     observed_at_us != 0
@@ -593,8 +594,8 @@ pub(crate) fn process_is_attended(state: &SrState, attention: &Attention, proces
 }
 
 /// The focus listener's report that a window came to the foreground, the
-/// only report of one (`docs/design/focus-pipeline-rework-remaining.md`,
-/// "One foreground change, from the listener"): it gives the keyboard
+/// only report of one (`books/dev/src/reference/adr/0001-focus.md`, "The foreground and the window
+/// title"): it gives the keyboard
 /// hook's view of the foreground and, unless the window is one of
 /// Verbatim's own, attention and the record's front. When its window is
 /// neither the top-level window of Core's focus nor the entered window,
@@ -745,8 +746,7 @@ fn record_group(state: &mut SrState, report: &FocusReport<'_>) {
 /// focus's answer only when it was read through MSAA, as NVDA tests a
 /// fake focus for duplicates only for MSAA objects; the desktop's return
 /// never, as NVDA queues that focus with no test
-/// (`docs/design/focus-pipeline-rework-remaining.md`, "The fake focus's
-/// tests").
+/// (`books/dev/src/reference/adr/0001-focus.md`, "A focus UI Automation does not deliver").
 fn duplicate_rule_applies(purpose: Option<FocusPurpose>, node: &NodeSnapshot) -> bool {
     match purpose {
         None | Some(FocusPurpose::Plain | FocusPurpose::Report) => true,
@@ -1632,8 +1632,7 @@ fn focus_speech(
     }
     // The virtual desktop's name, after the foreground's title and before
     // the entered containers, in NVDA's order
-    // (`docs/design/focus-pipeline-rework-remaining.md`, "The desktop
-    // switch and the virtual desktop's name").
+    // (`books/dev/src/reference/adr/0001-focus.md`, "The desktop's return and name").
     effects.extend(desktop_name);
     for container in entered {
         // Entering a menu bar, menu, or menu item cuts speech and says

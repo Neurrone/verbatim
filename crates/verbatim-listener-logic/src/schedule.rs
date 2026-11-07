@@ -979,8 +979,8 @@ impl<J> Schedule<J> {
 /// NVDA calls `_handleUserDesktop` later, and the virtual desktop's name's
 /// due time, 250 ms after its event, as NVDA calls
 /// `handlePossibleDesktopNameChange` later
-/// (`docs/design/focus-pipeline-rework-remaining.md`, "The desktop switch
-/// and the virtual desktop's name"). Each is sent when its time is over,
+/// (`books/dev/src/reference/adr/0001-focus.md`, "The desktop's return and name"). Each is sent
+/// when its time is over,
 /// soonest first, and the idle barrier's answers wait for all of them.
 #[derive(Clone, Debug, Default)]
 pub struct GraceState {

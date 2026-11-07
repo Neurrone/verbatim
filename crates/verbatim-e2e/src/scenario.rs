@@ -193,7 +193,8 @@ pub const RUST_LOG_ENV: &str = "VERBATIM_E2E_RUST_LOG";
 /// what each outpost read and when, what it released, and what the listener
 /// reported, not only what the flight recorder kept; every move of a UIA
 /// subscription, with each call it made and its result
-/// (`books/dev/src/explanation/design/focus-pipeline.md`, section 17); and the arrival of every
+/// (`books/dev/src/reference/adr/0001-focus.md`, "Focus-following subscriptions"); and the arrival
+/// of every
 /// UIA event and `WinEvent` in each process, a `WinEvent` with how long
 /// ago it was raised, so a delay before an event reached Verbatim shows.
 pub const DEFAULT_RUST_LOG: &str = "info,verbatim_outpost=debug,verbatim_listener=debug,verbatim_supervisor=debug,verbatim_uia::subscribe=debug,verbatim_uia::com=debug,verbatim_ia2::hook=debug";

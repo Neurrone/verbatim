@@ -6,8 +6,8 @@
 //! ([`verbatim_model::protocol::ListenerToCore::Foreground`]). It is the
 //! only report that a window came to the foreground: Core takes from it the
 //! keyboard hook's view of the foreground, attention and its foreground
-//! record (`docs/design/focus-pipeline-rework-remaining.md`, "One
-//! foreground change, from the listener"); the hook itself hooks no event.
+//! record (`books/dev/src/reference/adr/0001-focus.md`, "The foreground and the window title");
+//! the hook itself hooks no event.
 //!
 //! The listener sends a foreground event only for a window
 //! `GetForegroundWindow` names when the event is handled, a local call: an

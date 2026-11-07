@@ -226,8 +226,8 @@ impl Item {
 /// The outpost's one test of an entry against the system's foreground,
 /// made from Windows' state on the reducer's thread as the entry is taken
 /// from the mailbox, and carried on the entry to the worker, which makes
-/// none (`docs/design/focus-pipeline-rework-remaining.md`, "The outpost's
-/// foreground tests, on its reducer's thread"): the worker can wait behind
+/// none (`books/dev/src/reference/adr/0001-focus.md`, "The foreground and the window title"): the
+/// worker can wait behind
 /// a call into a held application, so a test made there can be made
 /// seconds after the event.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

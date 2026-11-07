@@ -689,8 +689,8 @@ index bab5611d..4e4ac784 100644
              let elapsed_us = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
 @@ -1111,6 +1120,14 @@ impl FocusReader {
  /// Logs, at debug, each of a focus's ancestor facts, nearest first, with
- /// the read that produced them (`docs/design/focus-pipeline.md`, section
- /// 16.4: where a console window element is lost).
+ /// the read that produced them (`books/dev/src/reference/adr/0001-focus.md`,
+ /// "The foreground and the window title": where a console window element is lost).
 +thread_local! {
 +    static SCRATCH_FOCUS_WINDOW: std::cell::Cell<isize> = const { std::cell::Cell::new(0) };
 +}

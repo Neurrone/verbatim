@@ -1,6 +1,7 @@
 //! The focus listener's judging and reading of each UIA focus event, from
 //! the event's own element, on a thread for the element's application
-//! (`books/dev/src/explanation/design/focus-pipeline.md`, section 12; decision D13 as amended
+//! (`books/dev/src/reference/adr/0001-focus.md`, "Who reads a UI Automation focus"; decision D13
+//! as amended
 //! on 2026-10-11).
 //!
 //! A UIA element cannot be handed from the process that received its event
@@ -17,12 +18,13 @@
 //!   sender is read, as the pure step function
 //!   `verbatim_listener_logic::checks::next` names them, each call made
 //!   here and its answer recorded (`FocusReader::judge_before_reading`;
-//!   `books/dev/src/explanation/design/focus-pipeline.md`, section 18):
+//!   `books/dev/src/reference/adr/0001-focus.md`, "The listener's checks, ported from NVDA's focus
+//!   handler"):
 //!   one whose nearest window's
 //!   class is on NVDA's MSAA class list, or that has none, is not native
 //!   and is dropped, the window's verdict otherwise being its outpost's
-//!   (`docs/design/focus-pipeline-rework.md`, "Who owns each duplicated
-//!   fact", the verdicts); one whose nearest window fails NVDA's
+//!   (`books/dev/src/reference/adr/0001-focus.md`, "One judge per fact"); one whose
+//!   nearest window fails NVDA's
 //!   acceptance test is dropped; the console window's own element, which
 //!   NVDA's `consoleUIAWindow` refuses, and a focus in Core's hidden frame
 //!   are dropped; and a sender without the keyboard focus, read with a
@@ -125,7 +127,8 @@
 //! as its application has an outpost: it ends, once it has read every event
 //! waiting, when the listener learns that the application's outpost has
 //! ended ([`Readers::outpost_ended`]), and at the listener's shutdown
-//! (`books/dev/src/explanation/design/focus-pipeline.md`, section 16.6). An event that arrives
+//! (`books/dev/src/reference/crates/verbatim-listener.md`, "How a UIA focus is judged and read").
+//! An event that arrives
 //! after that, for an application still running, starts a new thread.
 
 use std::cell::{Cell, RefCell};
@@ -1164,8 +1167,8 @@ impl FocusReader {
         }
     }
 
-    /// Logs, at debug, what section 16.3 of `books/dev/src/explanation/design/focus-pipeline.md`
-    /// asks to see of each read: the sender's runtime id, class name,
+    /// Logs, at debug, what the "How a UIA focus is judged and read" section of
+    /// `books/dev/src/reference/crates/verbatim-listener.md` records of each read: the sender's runtime id, class name,
     /// framework, and own native window handle, `hwnd`, and, for a menu
     /// opening compared with the thread's current last read, whether UI
     /// Automation counts it as the same element (`same_as_current`, `Err`
@@ -1195,8 +1198,8 @@ impl FocusReader {
 }
 
 /// Logs, at debug, each of a focus's ancestor facts, nearest first, with
-/// the read that produced them (`books/dev/src/explanation/design/focus-pipeline.md`, section
-/// 16.4: where a console window element is lost).
+/// the read that produced them (`books/dev/src/reference/crates/verbatim-outpost.md`, "Console
+/// windows and frames of another process": where a console window element is lost).
 fn log_ancestor_facts(path: &str, facts: &[UiaAncestorFact]) {
     for fact in facts {
         log_ancestor_fact(path, fact);

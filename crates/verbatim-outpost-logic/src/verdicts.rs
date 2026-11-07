@@ -10,8 +10,7 @@
 //! generation in charge, but a probe that timed out, and a destroyed
 //! window's forgetting, from any generation, so a window is not probed
 //! again more often than NVDA probes it
-//! (`docs/design/focus-pipeline-rework.md`, "Who owns each duplicated
-//! fact", the verdicts).
+//! (`books/dev/src/reference/adr/0001-focus.md`, "One judge per fact").
 //!
 //! What a verdict is, how its keep is judged by the observation of the
 //! event it judges, and why each window keeps its previous verdict are the

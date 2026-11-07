@@ -64,8 +64,7 @@ pub enum AncestorWalk {
     /// the outermost element's nearest window, or its parent window when
     /// that element is the window's own
     /// ([`plain_windows_start`](crate::plain_windows_start)), 0 when not
-    /// known (`docs/design/focus-pipeline-rework.md`, "A window's name, and
-    /// the one fallback").
+    /// known (`books/dev/src/reference/adr/0001-focus.md`, "When an application's call fails").
     Cut(isize),
     /// A step to a parent failed this way from an element below the root,
     /// UIA's transaction timeout among the ways: in the raw view a
@@ -796,7 +795,8 @@ impl Uia {
     /// another process read and sent as their parts ([`AncestorParts`]),
     /// nearest first: the focus listener reads a focus's ancestors from the
     /// event's own element, and the outpost, which cannot receive that
-    /// element (`books/dev/src/explanation/design/focus-pipeline.md`, section 12), reports them
+    /// element (`books/dev/src/reference/adr/0001-focus.md`, "Who reads a UI Automation focus"),
+    /// reports them
     /// from this. Each node is minted from its runtime id with no element
     /// kept; the same stops and the same filtering apply.
     #[must_use]

@@ -82,8 +82,7 @@ pub(crate) struct FocusContext {
     /// and reported again is taken as a focus from another top-level window
     /// is, so the return from an application that never answered says what
     /// the same switch with no stall says
-    /// (`docs/design/focus-pipeline-rework-remaining.md`, "One foreground
-    /// change, from the listener").
+    /// (`books/dev/src/reference/adr/0001-focus.md`, "The foreground and the window title").
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub(crate) left: bool,
     /// The window the latest foreground change that left the focus brought
@@ -98,8 +97,8 @@ pub(crate) struct FocusContext {
 /// What Core last spoke of the focus, against which a change of its name,
 /// value, description or states is compared, as NVDA compares a change with
 /// the properties it last spoke of the object ("When values and
-/// descriptions are spoken" in `docs/nvda/speech.md`; "Repeats, stamps and
-/// the hold" in `docs/design/focus-pipeline-rework.md`). A repeat of the
+/// descriptions are spoken" in `docs/nvda/speech.md`; "One judge per fact" in
+/// `books/dev/src/reference/adr/0001-focus.md`). A repeat of the
 /// focus updates the reading Core holds, never this, so a change it carried
 /// in is still spoken when its own event comes.
 ///

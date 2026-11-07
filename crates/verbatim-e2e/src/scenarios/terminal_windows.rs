@@ -66,7 +66,7 @@
 //! Control held then Tab, the same for the second tab ("<title> two 2 of
 //! 2"). Verbatim is expected to say the same: the focus listener reads
 //! each tab's focus from the event's own element, so the tab's ancestors
-//! are its own (`books/dev/src/explanation/design/focus-pipeline.md`, section 12;
+//! are its own (`books/dev/src/reference/adr/0001-focus.md`, "Who reads a UI Automation focus";
 //! `docs/parity/terminals.md`, "New terminal output").
 //! Typing after a switch is echoed and its output spoken as in any
 //! terminal.

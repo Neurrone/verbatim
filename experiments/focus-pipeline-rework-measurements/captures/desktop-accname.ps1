@@ -1,5 +1,5 @@
 # Scratch timer for the focus pipeline rework's check of the desktop
-# window's name (docs/design/focus-pipeline-rework.md, difference 23),
+# window's name (books/dev/src/reference/adr/0001-focus.md, "The desktop's return and name"),
 # never merged. -Count times, -IntervalMs apart, it reads the MSAA accName
 # of GetDesktopWindow()'s client object (AccessibleObjectFromWindow with
 # OBJID_CLIENT, then accName), each read on a fresh object, and writes one

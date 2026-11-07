@@ -1,6 +1,6 @@
 //! The return from an application whose reads are held
-//! (`docs/design/focus-pipeline-rework-remaining.md`, "One foreground
-//! change"): the user leaves the Windows Forms text box
+//! (`books/dev/src/reference/adr/0001-focus.md`, "The foreground and the window title"): the user
+//! leaves the Windows Forms text box
 //! ([`super::text_box`]) for a `mockapp` UIA window whose window thread
 //! holds the first call any client makes into it (mockapp's `hold`), as a
 //! hung application's does, and comes back. Nothing is said for the held

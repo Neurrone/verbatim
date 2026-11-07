@@ -1,6 +1,6 @@
 //! NVDA's equality of two MSAA objects (`IAccessible._isEqual`), by which a
 //! focus walk gives a new sighting the node id of a kept node it is equal
-//! to (`docs/design/focus-pipeline-rework.md`, "MSAA object equality").
+//! to (`books/dev/src/reference/adr/0001-focus.md`, "Object identity").
 //!
 //! The kept nodes compared with are the [`Candidates`] the outpost gives a
 //! walk: the nodes of the focus line Core holds and of the newest focus the

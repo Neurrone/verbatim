@@ -10,7 +10,8 @@
 //!
 //! A foreground event whose window is not yet in front is dropped and
 //! never kept, as NVDA drops it: the window is announced from the focus's
-//! ancestry instead (`books/dev/src/explanation/design/focus-pipeline.md`, section 16.4). One
+//! ancestry instead (`books/dev/src/reference/adr/0001-focus.md`, "The foreground and the window
+//! title"). One
 //! whose window is in front is reported at once, whether or not the window
 //! has been shown yet.
 //!
@@ -846,7 +847,7 @@ fn a_focus_raised_before_the_outposts_hook_is_reported_from_the_listener() {
     app.quit();
 }
 
-/// A spare given to mockapp (`books/dev/src/explanation/design/focus-pipeline.md`, section 19)
+/// A spare given to mockapp (`books/dev/src/reference/adr/0001-focus.md`, "Spare outposts")
 /// reports the focus raised before it was given from the listener's copy,
 /// which the supervisor held for it; while the listener still forwards, a
 /// focus its own hook took in is held, reported from the listener's copy,

@@ -5395,8 +5395,8 @@ fn a_focus_entering_another_top_level_window_speaks_its_entered_ancestors_outerm
     // No foreground report came for the Settings window, as none comes for
     // a window read through UI Automation: the focus entering it cuts off
     // the speech of the window left, then speaks its entered ancestors, the
-    // window first, then the focus (`books/dev/src/explanation/design/focus-pipeline.md`,
-    // section 16.4).
+    // window first, then the focus (`books/dev/src/reference/adr/0001-focus.md`, "The foreground
+    // and the window title").
     let state = switch_to(&SrState::new(), Pid(1));
     let window_node = node(1, Role::Window, Some("Settings"), None, StateSet::new());
     let group = node(2, Role::Group, Some("Display"), None, StateSet::new());
@@ -7188,7 +7188,7 @@ fn explorer_item(
 /// Explorer selects it, then reports the same focus again. Inner keeps the
 /// node of delta.txt, whose runtime id Explorer gave it, and its report says
 /// delta.txt, the element the reader read before under it, is gone
-/// (`docs/design/focus-pipeline-rework.md`, "One object, one identity"), so
+/// (`books/dev/src/reference/adr/0001-focus.md`, "Object identity"), so
 /// it is no duplicate: Inner is announced after its list, a new element, as
 /// NVDA says it; the selection that follows says only "selected"; the
 /// repeated focus, whose report says Inner still has the focus, is silent.

@@ -1,6 +1,6 @@
 # Races between Verbatim's processes: an architecture study
 
-Status: read-only study, 2026-10-30, for Dickson's decision. Nothing here is built. Written from `docs/architecture.md`, `docs/design/focus-pipeline-rework.md`, the crate guides, `docs/performance.md`, the history from b9c02139 to 5797c075, the unbuilt designs `core-flow-design.md`, `core-flow-review.md` and `rest-design.md` in this scratchpad, the worktree `verbatim-wt-fix2`, and the two `explorer_folder_window` defects the coordinator relayed.
+Status: read-only study, 2026-10-30, for Dickson's decision. Nothing here is built. Written from `docs/architecture.md`, `books/dev/src/reference/adr/0001-focus.md`, the crate guides, `docs/performance.md`, the history from b9c02139 to 5797c075, the unbuilt designs `core-flow-design.md`, `core-flow-review.md` and `rest-design.md` in this scratchpad, the worktree `verbatim-wt-fix2`, and the two `explorer_folder_window` defects the coordinator relayed.
 
 ## In short
 

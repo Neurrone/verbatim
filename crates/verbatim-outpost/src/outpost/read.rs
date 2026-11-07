@@ -428,8 +428,7 @@ fn uia_walk_leaves(context: &RequestContext<'_>, nearest: isize, hwnd: isize) ->
 }
 
 /// How a chain goes on above its outermost entry
-/// (`docs/design/focus-pipeline-rework.md`, "A window's name, and the one
-/// fallback").
+/// (`books/dev/src/reference/adr/0001-focus.md`, "When an application's call fails").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Above {
     /// It does not: the walk reached the desktop.
@@ -496,8 +495,8 @@ fn complete(
 }
 
 /// Whether window `hwnd` is read as a plain window, with no call
-/// (`docs/design/focus-pipeline-rework.md`, "A window's name, and the one
-/// fallback"): a window another process serves, the parent or visible
+/// (`books/dev/src/reference/adr/0001-focus.md`, "Object identity"): a window another process
+/// serves, the parent or visible
 /// owner above the process boundary and the windows above it, by the
 /// decision of 2026-10-29, and a window of this application that cannot be
 /// read, a ghost's or a hung one, by NVDA's rule
@@ -523,7 +522,7 @@ pub(super) fn plain_window(context: &RequestContext<'_>, hwnd: isize) -> NodeSna
 
 /// Window `hwnd`, neither a ghost's nor a hung application's, read with no
 /// call into its process, as NVDA's MSAA client object for it
-/// (`docs/design/focus-pipeline-rework.md`, "The foreground wait"): a
+/// (`books/dev/src/reference/adr/0001-focus.md`, "The foreground and the window title"): a
 /// pane, marked `top_level_client` when its style has a system menu, as
 /// `verbatim_ia2`'s reader marks an MSAA client, so a top-level window is
 /// spoken by its title and a child window is structure, and in all else a
@@ -648,8 +647,8 @@ pub(super) fn plain_windows_from(context: &RequestContext<'_>, hwnd: isize) -> V
 
 /// The chain from window `hwnd` up, outermost first, `hwnd`'s own entry
 /// included: where a walk that ended below `hwnd` goes on
-/// (`docs/design/focus-pipeline-rework.md`, "A window's name, and the one
-/// fallback"). A window another process serves, and every window above it,
+/// (`books/dev/src/reference/adr/0001-focus.md`, "Object identity"). A window another process
+/// serves, and every window above it,
 /// is read with no call into that process ([`plain_windows_from`]); a ghost's or
 /// a hung application's window is a plain window, and the chain goes on
 /// from its parent window. Any other window is read by its own object
@@ -1427,8 +1426,8 @@ pub(super) fn focused_control_in(
     } else {
         // A focus-now answer has no chain to splice from, so it walks to
         // the desktop, comparing what it reads with Core's line and the
-        // newest focus it waits for (`docs/design/focus-pipeline-rework.md`,
-        // "MSAA object equality").
+        // newest focus it waits for (`books/dev/src/reference/adr/0001-focus.md`, "Object
+        // identity").
         let candidates = msaa_candidates(context);
         let mut object =
             verbatim_ia2::acquire::focused_object(hwnd, &|window| serves(context, window))
@@ -1530,8 +1529,8 @@ fn uia_focused_control(
 /// The UIA element of this application's focus, as [`focused_control_in`]
 /// reads it, with its checks and its process-id check, filled as a node and
 /// nothing more read: for the windowless text focus whose element the
-/// focus's route cannot find (`docs/design/focus-pipeline-rework.md`, the
-/// audit's difference 5). `Refused` also when the outpost judges the focus
+/// focus's route cannot find (`books/dev/src/reference/adr/0001-focus.md`, "The outpost's own
+/// element"). `Refused` also when the outpost judges the focus
 /// window MSAA.
 pub(super) fn focused_element_in(
     context: &RequestContext<'_>,
@@ -1665,8 +1664,8 @@ fn console_text_area_in(node: &mut NodeSnapshot, window_class: impl FnOnce() -> 
 /// it read, the control's own window. For a fake focus (`fake`), an MSAA
 /// control with no focused state, nor any ancestor, makes the whole answer
 /// empty, no window and no control, as NVDA refuses the object before it
-/// is queued (`docs/design/focus-pipeline-rework-remaining.md`, "The fake
-/// focus's tests"); a fake focus with no control is no input, whatever its
+/// is queued (`books/dev/src/reference/adr/0001-focus.md`, "A focus UI Automation does not
+/// deliver"); a fake focus with no control is no input, whatever its
 /// window, so the window is not tested.
 pub(super) fn focus_now(
     context: &RequestContext<'_>,

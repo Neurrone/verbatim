@@ -2206,8 +2206,8 @@ impl ReducerThread<'_> {
         // barrier's round, its end is its answer.
         self.barrier.ended(outpost);
         // When the supervisor gives the application a next generation,
-        // at once or after its backoff (`books/dev/src/explanation/design/focus-pipeline.md`,
-        // section 19.5), and it is the attention application, or the
+        // at once or after its backoff (`books/dev/src/reference/adr/0001-focus.md`, "Spare
+        // outposts"), and it is the attention application, or the
         // focus's when that is another (a Settings page's content,
         // inside ApplicationFrameHost's window), the replacement is
         // asked for the focus once it is ready, which is taken

@@ -27,8 +27,8 @@
 //! forwarded kinds would let a caret or value change pass a focus raised
 //! before it. The cost is paid only at an outpost's start: the hook's
 //! stream waits a median of 20.6 ms, at most 591.3 ms over 126 starts
-//! (`docs/design/focus-pipeline-rework-remaining.md`, "The hand-over's
-//! hold").
+//! (`books/dev/src/reference/crates/verbatim-outpost.md`, "The hand-over of an application's MSAA
+//! events").
 
 use verbatim_model::protocol::{DeliveredFact, WinEventStamp, tick_is_after};
 

@@ -243,7 +243,7 @@ pub enum Subscription<E = IUIAutomationElement> {
     /// control (runtime ids starting 14, not 42), and UIA delivers those to
     /// a client whose focus handler is alone, or registered after its
     /// group, but not to one whose focus handler came first (measured
-    /// 2026-10-12, `books/dev/src/explanation/design/focus-pipeline.md`, section 16.8).
+    /// 2026-10-12, `books/dev/src/reference/crates/verbatim-uia.md`, "Event registrations").
     Focus {
         /// Called for each focus change.
         callback: FocusCallback<E>,
@@ -1157,7 +1157,7 @@ impl Follower {
         // focus handler registered after the group receives the second
         // identity Windows Terminal raises focus from (NVDA itself does,
         // its handler registered again after its group: 55 times in 40
-        // openings; `books/dev/src/explanation/design/focus-pipeline.md`, section 16.8).
+        // openings; `books/dev/src/reference/crates/verbatim-uia.md`, "Event registrations").
         let has_focus = built
             .iter()
             .any(|built| matches!(built.handler, Handler::Focus(_)));

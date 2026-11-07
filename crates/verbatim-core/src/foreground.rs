@@ -1,8 +1,7 @@
 //! The foreground record: where the user's attention is, which window and
 //! object are in front, the window the user's focus line was last in, and
 //! the stamps that order focuses (`books/dev/src/explanation/design/ownership.md`;
-//! `docs/design/focus-pipeline-rework-remaining.md`, "One foreground change,
-//! from the listener").
+//! `books/dev/src/reference/adr/0001-focus.md`, "The foreground and the window title").
 //!
 //! Every fact of the record has one writer, a variant of
 //! [`ForegroundFact`], applied through [`Foreground::apply`]; the reducer
@@ -257,8 +256,8 @@ impl Foreground {
     /// observation time that brought a new foreground window and cut
     /// speech off. Speech from elsewhere observed before it, but reaching
     /// the reducer after it, is dropped, as NVDA's foreground change
-    /// cancels speech queued before it (`books/dev/src/explanation/design/focus-pipeline.md`,
-    /// section 7).
+    /// cancels speech queued before it (`books/dev/src/reference/adr/0001-focus.md`, "One input to
+    /// Core, in arrival order").
     pub(crate) fn changed_at(&self) -> Option<u64> {
         self.changed_at
     }

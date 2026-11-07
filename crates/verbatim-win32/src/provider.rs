@@ -205,8 +205,8 @@ pub fn parent_window(hwnd: isize) -> isize {
 }
 
 /// The nearest window of the outermost element of a walk up the raw view,
-/// by local calls (`docs/design/focus-pipeline-rework.md`, "A window's name,
-/// and the one fallback"): a walk whose step to a parent failed goes on
+/// by local calls (`books/dev/src/reference/adr/0001-focus.md`, "When an application's call
+/// fails"): a walk whose step to a parent failed goes on
 /// from its parent window, as NVDA's parent read falls back to the window
 /// hierarchy (`NVDAObjects/UIA/__init__.py` 2142 to 2145,
 /// `Window._get_parent`). `nearest` is the first element's nearest window,
@@ -222,8 +222,8 @@ pub fn outermost_nearest_window(nearest: isize, hwnds: impl IntoIterator<Item = 
 
 /// The window plain windows, it included, complete a walk up the raw view
 /// from when the walk is cut short, by its bound or its depth limit, by
-/// local calls (`docs/design/focus-pipeline-rework.md`, "A window's name,
-/// and the one fallback"): the outermost element's nearest window
+/// local calls (`books/dev/src/reference/adr/0001-focus.md`, "When an application's call fails"):
+/// the outermost element's nearest window
 /// ([`outermost_nearest_window`]), or that window's parent window when the
 /// outermost element is the window's own element, which the walk has
 /// already read, so that the window is not in the chain twice. `nearest`

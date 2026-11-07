@@ -98,8 +98,8 @@ pub fn nearest_window_handle(element: &IUIAutomationElement) -> Option<isize> {
 /// within UIA's transaction timeout told from no window: NVDA's lookup
 /// answers no window for either, and so drops the focus, but a timed-out
 /// lookup says only that the application is busy, so a caller can decide
-/// not to read into it (`docs/design/focus-pipeline-rework.md`, the audit's
-/// difference 14). One cross-process call, as [`nearest_window_handle`].
+/// not to read into it (`books/dev/src/reference/crates/verbatim-listener.md`, "How a UIA focus is
+/// judged and read"). One cross-process call, as [`nearest_window_handle`].
 ///
 /// # Errors
 ///

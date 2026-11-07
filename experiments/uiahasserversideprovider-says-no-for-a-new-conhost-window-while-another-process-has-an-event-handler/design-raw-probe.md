@@ -84,7 +84,7 @@ The scope shrinks by exactly one call. At an application's first sight, the outp
 Documents to update:
 
 - `docs/parity/backends.md`, "Dual-stack MSAA+UIA with per-window arbitration": add a "Different" sentence naming the raw message and e38.
-- `docs/design/focus-pipeline.md`: replace section 8, "The UIA probe asks once", and remove the probe from 20.3's "Connections by window handle", 20.5 and 20.6.
+- `books/dev/src/reference/adr/0001-focus.md`, "One judge per fact": replace section 8, "The UIA probe asks once", and remove the probe from 20.3's "Connections by window handle", 20.5 and 20.6.
 - The module doc of `crates/verbatim-uia/src/lock.rs`.
 - `docs/performance.md`, "What counts as a call".
 - `docs/crates/verbatim-uia.md` (429, 470, 511).

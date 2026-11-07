@@ -107,8 +107,8 @@ pub enum ClassVerdict {
 /// The verdict NVDA's class lists give a window of classes `classes`, by
 /// the tables every outpost's arbitrator is built from and with the same
 /// code, which the focus listener skips a read by
-/// (`docs/design/focus-pipeline-rework.md`, "Who owns each duplicated
-/// fact", the verdicts): a function of the class names alone, with no
+/// (`books/dev/src/reference/adr/0001-focus.md`, "One judge per fact"): a function
+/// of the class names alone, with no
 /// call and nothing kept, so the listener and the outposts always agree
 /// on it.
 #[must_use]

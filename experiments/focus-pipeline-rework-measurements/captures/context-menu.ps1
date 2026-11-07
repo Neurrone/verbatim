@@ -1,6 +1,5 @@
 # Scratch Windows Forms window for the focus pipeline rework's capture of
-# a classic Win32 context menu (docs/design/focus-pipeline-rework.md,
-# difference 17, the delayed pump), never merged. In the form of the
+# a classic Win32 context menu (books/dev/src/reference/crates/verbatim-outpost.md, "The outpost", the delayed pump), never merged. In the form of the
 # text_box_password scenario's script: a form titled by -Title holding a
 # "Notes" text box with the text "hello", whose ContextMenu (the classic
 # Win32 menu, not a ContextMenuStrip) holds "First item", "Second item"

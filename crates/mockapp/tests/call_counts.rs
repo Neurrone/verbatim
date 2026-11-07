@@ -1337,7 +1337,8 @@ fn uia_focus_changes(remote: bool, expected: &FocusCosts<'_>) {
 /// costs 4 calls by both of the outpost's paths.
 ///
 /// Since the listener tests acceptance before it reads a focus
-/// (`books/dev/src/explanation/design/focus-pipeline.md`, section 16.2), each focus costs,
+/// (`books/dev/src/reference/adr/0001-focus.md`, "The listener's checks, ported from NVDA's focus
+/// handler"), each focus costs,
 /// before its read, the nearest window of the windowless element
 /// (`NormalizeElementBuildCache`, one call). The nearest window cost
 /// mockapp, for a button or the list, 1 `WM_GETOBJECT`, 14
@@ -1349,8 +1350,7 @@ fn uia_focus_changes(remote: bool, expected: &FocusCosts<'_>) {
 /// one call, which mockapp answers nothing for) out of every focus after
 /// the first.
 ///
-/// The listener makes no probe (`docs/design/focus-pipeline-rework.md`,
-/// "Who owns each duplicated fact", the verdicts): the outpost alone
+/// The listener makes no probe (`books/dev/src/reference/adr/0001-focus.md`, "One judge per fact"): the outpost alone
 /// judges the window, and probes it at the cold focus only, before it
 /// reports the listener's read, with the raw probe
 /// (`books/dev/src/explanation/design/listener-without-connections.md`, section 3, step 4): one
@@ -1616,8 +1616,8 @@ fn the_listener_makes_no_connection() {
 /// and takes no step into the other process. The outpost then completes
 /// the chain above it with the parent or owner as a plain window, named by
 /// its text, with no call into the other process
-/// (`docs/design/focus-pipeline-rework.md`, "A window's name, and the one
-/// fallback"). With the walk's boundary check removed, or the owner left
+/// (`books/dev/src/reference/adr/0001-focus.md`, "Object identity"). With the walk's boundary
+/// check removed, or the owner left
 /// out of it, the walk's step up into the other window shows in that
 /// window's calls, and without the owner the outpost's chain ends at the
 /// child's window. A focus-now query's read (`uia_remote_enrichment` by the
@@ -1881,8 +1881,8 @@ const FOCUS_NOW_PARENT_HITS: [&[(&str, u32)]; 2] = [&[("WM_GETOBJECT", 1)], &[]]
 /// host of web content can have, the outpost names the parent as a plain
 /// window, by its text, and makes no call into it: no probe, no lookup by
 /// its handle, no UIA step into it and no MSAA read of it
-/// (`docs/design/focus-pipeline-rework.md`, "A window's name, and the one
-/// fallback"). UIA's client side still connects to the parent as the
+/// (`books/dev/src/reference/adr/0001-focus.md`, "Object identity"). UIA's client side still
+/// connects to the parent as the
 /// outpost's read returns the child window's element (decision 13 of
 /// `books/dev/src/explanation/design/listener-without-connections.md`), which the parent's
 /// `WM_GETOBJECT`s, split by kind, show, and nothing else reaches it. Both
@@ -2052,7 +2052,7 @@ fn an_outposts_probe_that_finds_a_provider_makes_no_connection() {
 
 /// A window above the process boundary is read with no call into its
 /// process, as NVDA's MSAA client object for it
-/// (`docs/design/focus-pipeline-rework.md`, "The foreground wait"; the
+/// (`books/dev/src/reference/adr/0001-focus.md`, "The foreground and the window title"; the
 /// decision of 2026-10-29 in "Calls that reach another application"; the
 /// setup of `experiments/the-msaa-continuation-waits-on-the-parent-windows-application/`):
 /// a mockapp UIA window made the child of a child window of another
@@ -2213,8 +2213,8 @@ fn the_focused_state_walk_makes_no_call_above_the_process_boundary() {
 /// is made, so a window reparented under another process's window between
 /// the walk's boundary check and its step has the step go into that
 /// process; the parent it returns is not read further, and the chain is
-/// completed by plain windows (`docs/design/focus-pipeline-rework.md`, "A
-/// window's name, and the one fallback"; the setup of
+/// completed by plain windows (`books/dev/src/reference/adr/0001-focus.md`, "Object identity"; the
+/// setup of
 /// `experiments/a-walk-up-whose-window-changes-after-its-check/`): the
 /// listener's walk up from `First` in one mockapp's top-level window, which
 /// is made another mockapp's window's child just before its third step,
@@ -2700,7 +2700,8 @@ fn uia_event_registrations_cost_exactly() {
 
     // A move to the element already followed, by another reference to it,
     // makes no call: the registration compares the elements and keeps the
-    // group where it is (`books/dev/src/explanation/design/focus-pipeline.md`, section 17).
+    // group where it is (`books/dev/src/reference/adr/0001-focus.md`, "Focus-following
+    // subscriptions").
     warm_runtime_id(under_test.element("First"));
     let again = AgileReference::new(under_test.element("First")).expect("an agile reference");
     let ((), cost) = under_test.measure(hwnd, |_| {

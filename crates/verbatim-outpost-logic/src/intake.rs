@@ -2,7 +2,7 @@
 //! queue for the application, holding both events and Core's queries,
 //! handled in the order they arrived, with NVDA's limiter rules for MSAA
 //! events (`orderedWinEventLimiter.py`, and `pumpAll` in NVDA's
-//! `IAccessibleHandler`; `books/dev/src/explanation/design/focus-pipeline.md` section 5).
+//! `IAccessibleHandler`; `books/dev/src/explanation/design/focus.md`, "One MSAA focus").
 //!
 //! - One waiting entry per object and event kind, and, for an MSAA focus,
 //!   foreground change or other MSAA event but a menu opening, per thread
@@ -103,8 +103,8 @@
 //!   marker the moment the event arrives and reads the focus from the
 //!   event's own element, and nothing taken in after the marker is planned
 //!   until the read takes the marker's place, or a drop removes it
-//!   (`books/dev/src/explanation/design/focus-pipeline.md`, section 12.4, decision 1 of section
-//!   15). NVDA's UIA events likewise pass in order through the one thread
+//!   (`books/dev/src/reference/adr/0001-focus.md`, "One route per application, and the marker").
+//!   NVDA's UIA events likewise pass in order through the one thread
 //!   that judges them, so an event raised after a focus is never handled
 //!   before it. A read whose marker the intake never saw, as when the
 //!   outpost started after it, is taken in where it arrives.
@@ -123,8 +123,8 @@
 //!   read, and go unsaid. The intake cannot tell a state change raised
 //!   before the focus from one raised after it, and moves both, so either
 //!   is spoken, as NVDA speaks a state change of the focus or of any of
-//!   its ancestors in either order (`books/dev/src/explanation/design/focus-pipeline.md`,
-//!   section 12.4). A state change is a change of any property the worker
+//!   its ancestors in either order (`books/dev/src/reference/adr/0001-focus.md`, "One route per
+//!   application, and the marker"). A state change is a change of any property the worker
 //!   reports as the element's states ([`super::entry::is_state_property`]), such
 //!   as the expand and toggle states. The old focus's name and value
 //!   changes keep their places, since NVDA speaks those only for the

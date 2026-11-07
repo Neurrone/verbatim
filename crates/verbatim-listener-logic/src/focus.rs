@@ -65,8 +65,8 @@ pub const NO_WINDOW: &str = "it has no window above it, so NVDA makes no object 
 /// window failed with `UIA_E_TIMEOUT` (`verbatim_uia::nearest_window_lookup`),
 /// however long it took: NVDA's lookup answers no window and NVDA drops the
 /// focus, and the listener reads nothing more into an application that has
-/// just failed to answer (`docs/design/focus-pipeline-rework.md`, the
-/// audit's difference 14).
+/// just failed to answer (`books/dev/src/reference/crates/verbatim-listener.md`, "How a UIA focus
+/// is judged and read").
 pub const NEAREST_TIMED_OUT: &str = "its nearest window's lookup timed out, so NVDA drops it";
 
 /// The reason a notification is dropped when its sender has no window
