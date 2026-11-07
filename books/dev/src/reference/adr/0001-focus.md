@@ -149,7 +149,7 @@ Two outposts are kept started and waiting, and one is given to an application wh
 - A walk whose application is slow past one UI Automation timeout, but not reported hung, loses its focus at the outpost's deadline, where NVDA waits for every call.
 - A focus UI Automation never delivers is lost, as in NVDA.
 - A focus whose element is gone and whose window cannot be read is lost, as in NVDA.
-- UI Automation can end a navigation call that passes its 2-second connection timeout with no sibling and no error (observed with a mockapp provider slowed so that one step took 2.37 seconds), so a walk can come back short without any sign of it.
+- UI Automation's title-bar proxy answers a navigation that passes its 2-second connection timeout as no element and no error (observed under parallel test load, when reading the title-bar buttons' state waited on the Desktop Window Manager), so a walk over a window with a title bar can miss its title-bar buttons without any sign of it.
 - After a return between top-level windows, a focus whose report would speak a cached ancestor costs a live re-read: the reader's partial walk, one round trip and a full walk, where NVDA pays only the full walk. While one live re-read waits, every further focus event of the returned element asks its own, so a window that raises two focus events for its control on a return costs two.
 - A report set aside for a live re-read whose element is gone by the re-read is not spoken, and an answer from a window the user has left by then is refused.
 - A container renamed while the focus was elsewhere is caught only by Core's check, at the cost of a live re-read.
