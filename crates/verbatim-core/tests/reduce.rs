@@ -4375,6 +4375,55 @@ fn a_uia_owner_window_above_another_process_meets_its_stand_in() {
     );
 }
 
+/// [`a_uia_owner_window_above_another_process_meets_its_stand_in`] as it
+/// comes live: the dialog's foreground change reaches Core first, and the
+/// dialog, owned but not a pop-up window, is its own root owner, so Core's
+/// focus is marked left. NVDA makes the dialog its focus object at the
+/// foreground change, and the dialog's ancestry holds the owner, so the
+/// owner is not said again: the left line meets the new one above the new
+/// foreground window's own entry (capture of 2026-11-08,
+/// `owned_dialog_across_processes`).
+#[test]
+fn a_dialog_left_for_still_meets_its_owner_above_it() {
+    let owner = window_node(1, Backend::Uia, Role::Window, "Owner", 10);
+    let open = node(2, Role::Button, Some("Open"), None, StateSet::new());
+    let dialog_in_front = Input::Foreground(verbatim_model::ForegroundWindow {
+        window: WindowHandle(20),
+        root_owner: WindowHandle(20),
+        process: Pid(2),
+        observed_at_us: 600,
+        own: false,
+        thread: 0,
+        console: false,
+        integrity: None,
+        own_integrity: None,
+    });
+    let mut stand_in = window_node(3, Backend::Msaa, Role::Pane, "Owner", 10);
+    stand_in.details.top_level_client = true;
+    stand_in.details.above_boundary = true;
+    let dialog = window_node(4, Backend::Uia, Role::Window, "Owned", 20);
+    let ok = node(5, Role::Button, Some("OK"), None, StateSet::new());
+    assert_eq!(
+        spoken_by(&[
+            observed(
+                focus_in(Pid(1), foreground_window(10), open, vec![owner]),
+                500
+            ),
+            dialog_in_front,
+            observed(
+                focus_in(Pid(2), foreground_window(20), ok, vec![stand_in, dialog]),
+                700
+            ),
+        ]),
+        vec![
+            vec![UtteranceSegment::label("Owner"), role(Role::Window)],
+            vec![UtteranceSegment::label("Open"), role(Role::Button)],
+            vec![UtteranceSegment::label("Owned"), role(Role::Window)],
+            vec![UtteranceSegment::label("OK"), role(Role::Button)],
+        ]
+    );
+}
+
 /// The Settings frame's own focus, its MSAA client in window 10 as the
 /// frame host's outpost reports it on a return by Alt+Tab, keeps its
 /// speech when the page's outpost then reports the content's focus with its

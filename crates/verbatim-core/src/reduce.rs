@@ -2750,12 +2750,47 @@ fn focus_line<'a>(
             cut: false,
         };
     };
-    // A left focus is followed as a focus from another top-level window is:
-    // the lines meet only at the desktop, and speech is cut.
+    // A left focus is followed as a focus from another top-level window is,
+    // and speech is cut. NVDA makes the window it was left for its focus
+    // object first, so the lines meet only above that window's own entry, in
+    // what NVDA's foreground object has for ancestors: at the desktop for
+    // another application's window, at the owner for a window owned across
+    // processes, whose owner is that window's ancestor.
     if previous.left {
+        let front = window.and_then(|facts| {
+            report
+                .ancestors
+                .iter()
+                .position(|entry| entry.details.window == Some(facts.top_level))
+        });
+        let met = front
+            .and_then(|front| report.ancestors.get(..front))
+            .and_then(<[NodeSnapshot]>::split_last)
+            .and_then(|(last, above)| {
+                meeting((&previous.ancestors, &previous.snapshot), (above, last))
+            });
+        let Some((at_old, at_new)) = met else {
+            return FocusLine {
+                ancestors: Arc::from(report.ancestors),
+                entered: report.ancestors,
+                cut: true,
+            };
+        };
+        let entered = report
+            .ancestors
+            .get(at_new.saturating_add(1)..)
+            .unwrap_or_default();
+        let old_line = previous
+            .ancestors
+            .iter()
+            .chain(std::iter::once(&previous.snapshot));
         return FocusLine {
-            ancestors: Arc::from(report.ancestors),
-            entered: report.ancestors,
+            ancestors: old_line
+                .take(at_old.saturating_add(1))
+                .chain(entered)
+                .cloned()
+                .collect(),
+            entered,
             cut: true,
         };
     }
