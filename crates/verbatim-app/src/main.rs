@@ -320,6 +320,7 @@ fn run(
         Arc::clone(&outposts),
     ));
     let idle_line = Arc::new(harness::IdleLine::default());
+    let live_re_reads = Arc::new(std::sync::atomic::AtomicU64::new(0));
 
     warm_own_outpost(&supervisor, &outposts, own_pid);
 
@@ -348,6 +349,7 @@ fn run(
             },
             readiness: Arc::clone(&readiness),
             idle_line: Arc::clone(&idle_line),
+            live_re_reads: Arc::clone(&live_re_reads),
             gui_handle: Arc::clone(&gui_handle),
         };
         // The only thread that speaks: it holds the speaking token, which
@@ -402,6 +404,7 @@ fn run(
         dumps_dir: dumps_dir.clone(),
         readiness: Arc::clone(&readiness),
         idle_line: Arc::clone(&idle_line),
+        live_re_reads: Arc::clone(&live_re_reads),
     }))?;
     server_slot
         .set(server)
@@ -909,6 +912,10 @@ struct ReducerContext {
     readiness: Arc<harness::Readiness>,
     /// The control plane's `AwaitIdle` waiters.
     idle_line: Arc<harness::IdleLine>,
+    /// How many live re-reads Core has asked for, as the control plane's
+    /// status reply reports it (`SrState::live_re_reads`), written after
+    /// each input.
+    live_re_reads: Arc<std::sync::atomic::AtomicU64>,
     /// The GUI's handle, once the GUI thread is up, which the menu and the
     /// shell's lists are shown through (`Effect::Show`).
     gui_handle: Arc<OnceLock<GuiHandle>>,
@@ -1108,6 +1115,11 @@ impl ReducerThread<'_> {
             }
             OutpostMessage::ListenerReady { replacement, .. } => {
                 self.context.readiness.listener_ready();
+                // The live re-reads asked of the listener replaced end with
+                // no answer.
+                if replacement {
+                    self.apply(Input::ListenerReplaced);
+                }
                 // Facts were lost while there was no listener: read the
                 // foreground afresh and ask its application for the focus.
                 if replacement && let Some(pid) = foreground_pid() {
@@ -1271,6 +1283,10 @@ impl ReducerThread<'_> {
     /// Turns one message from a live outpost into reducer input, or routes a
     /// reply to whoever asked.
     #[deny(clippy::wildcard_enum_match_arm)]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one arm per message an outpost sends, with no wildcard"
+    )]
     fn on_outpost_input(&mut self, source: Pid, outpost: OutpostId, message: OutpostToCore) {
         match message {
             OutpostToCore::Event {
@@ -1371,6 +1387,9 @@ impl ReducerThread<'_> {
                 tracing::warn!(%source, %outpost, detail, "outpost fault");
             }
             OutpostToCore::IdleAnswer { round } => self.barrier.answered(round, outpost),
+            OutpostToCore::LiveRereadGone { request } => {
+                self.apply(Input::LiveRereadGone { outpost, request });
+            }
             OutpostToCore::NotResponding { window } => {
                 if let Some(input) = not_responding(&self.live, source, outpost, window) {
                     self.apply(input);
@@ -1614,6 +1633,10 @@ impl ReducerThread<'_> {
             self.context.readiness.focus_known();
         }
         self.context.ledger.reduced(trace_id);
+        self.context.live_re_reads.store(
+            self.state.live_re_reads(),
+            std::sync::atomic::Ordering::Relaxed,
+        );
         self.context.foreground.set(self.state.hook_foreground());
         {
             let mut recorder = self
@@ -1808,6 +1831,7 @@ impl ReducerThread<'_> {
                 }
             }
             Effect::ForKey(key, effect) => self.execute(key, *effect),
+            Effect::LiveReread(reread) => self.live_reread(&reread),
             Effect::ReadClock { repeat } => {
                 self.follow_ups.push(read_clock(trace_id, repeat));
             }
@@ -1819,6 +1843,61 @@ impl ReducerThread<'_> {
                 },
             ),
             _ => {}
+        }
+    }
+
+    /// Logs Core's live re-read `reread` and sends it to its focus reader:
+    /// the listener's reading thread of the outpost's application, or the
+    /// outpost itself. One that cannot reach its outpost is answered gone
+    /// at once, so the pending live re-read ends.
+    fn live_reread(&mut self, reread: &verbatim_model::LiveReread) {
+        let logged = &reread.logged;
+        tracing::info!(
+            request = reread.request,
+            outpost = %reread.outpost,
+            reader = ?reread.reader,
+            trace = %reread.trace_id,
+            focus = ?logged.focus,
+            cache_join = ?logged.cache_join,
+            lowest_common_ancestor = ?logged.lowest_common_ancestor,
+            reason = ?logged.reason,
+            "a focus report would speak a cached ancestor; it is read again live"
+        );
+        let sent = match reread.reader {
+            verbatim_model::FocusReaderKind::Listener => {
+                match self.live.target_of(reread.outpost) {
+                    Some(target) => {
+                        self.context.supervisor.live_reread(
+                            reread.request,
+                            target,
+                            reread.trace_id,
+                        );
+                        true
+                    }
+                    None => false,
+                }
+            }
+            verbatim_model::FocusReaderKind::Outpost => self
+                .context
+                .supervisor
+                .send_to_outpost(
+                    reread.outpost,
+                    CoreToOutpost::LiveReread {
+                        request: reread.request,
+                        trace_id: reread.trace_id,
+                    },
+                )
+                .is_ok(),
+        };
+        if !sent {
+            tracing::debug!(
+                request = reread.request,
+                "a live re-read could not be sent; answered gone"
+            );
+            self.follow_ups.push(Input::LiveRereadGone {
+                outpost: reread.outpost,
+                request: reread.request,
+            });
         }
     }
 
@@ -2367,6 +2446,7 @@ struct ControlHandlersConfig {
     dumps_dir: PathBuf,
     readiness: Arc<harness::Readiness>,
     idle_line: Arc<harness::IdleLine>,
+    live_re_reads: Arc<std::sync::atomic::AtomicU64>,
 }
 
 /// Builds the control-plane handlers over the app's live pieces.
@@ -2382,6 +2462,7 @@ fn control_handlers(config: ControlHandlersConfig) -> ServerHandlers {
         dumps_dir,
         readiness,
         idle_line,
+        live_re_reads,
     } = config;
     let focus_tx = command_tx.clone();
     let idle_tx = command_tx.clone();
@@ -2401,6 +2482,7 @@ fn control_handlers(config: ControlHandlersConfig) -> ServerHandlers {
                 active_synth: Some(settings_host.active_synthesizer().id.0),
                 outposts,
                 ready,
+                live_re_reads: live_re_reads.load(std::sync::atomic::Ordering::Relaxed),
             }
         }),
         latency: Box::new(move |last_n| ledger.recent(last_n)),

@@ -145,7 +145,8 @@ impl Merge for OutpostToCore {
             | OutpostToCore::Pong { .. }
             | OutpostToCore::Fault { .. }
             | OutpostToCore::NotResponding { .. }
-            | OutpostToCore::TargetExited => Barrier::None,
+            | OutpostToCore::TargetExited
+            | OutpostToCore::LiveRereadGone { .. } => Barrier::None,
         }
     }
 

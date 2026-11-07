@@ -97,8 +97,8 @@ pub use self::entry::{
     Asker, Entry, Front, Item, Source, UiaEvent, UiaKind, WinKind, is_state_property,
 };
 pub use self::follow::{
-    Applied, Change, DialogMemo, Facts, FocusPath, Follow, FollowState, Found, Group, Owed,
-    OwedWork, Report, Route, Subscription, Target, WatchChange, apply_local,
+    Applied, Change, DialogMemo, Facts, FocusPath, Follow, FollowState, Found, Group, MsaaReport,
+    Owed, OwedWork, Report, Route, Subscription, Target, WatchChange, apply_local,
 };
 pub use self::held::{Evidence, Focus, Held, InFront};
 pub use self::intake::{Handling, Marks, Object, Planned, TerminalMark};

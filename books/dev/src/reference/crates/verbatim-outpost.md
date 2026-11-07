@@ -1390,6 +1390,26 @@ notifications. A waiting notification is replaced by a newer one from the
 same element with the same kind, processing, and activity id, as NVDA's
 UIA limiter keys it.
 
+The ancestry cache ([verbatim-core](verbatim-core.md), "The ancestry
+cache"). The followed chain is the outpost's ancestry cache, saved with the
+window text of each window entry (`Tracking::titles`); `Worker::focus_chain`
+gives a walk nothing to stop at when a saved title reads otherwise now, or
+when the read answers a live re-read. Every join to the cache,
+`read::join_cache`, notes the entries it took
+(`RequestContext::note_cached`), and so do the listener's cached facts;
+`emit_focus` computes the report's `first_cached_ancestor` from the
+entries it emits, after its filters, by its `FocusSource`. A listener read
+carrying `answers` keeps its report's verdict and joins no cache; an MSAA
+live re-read (`CoreToOutpost::LiveReread`, planned as
+`DeliveredFact::MsaaLiveReread`) reacquires the object at the last MSAA
+report's event address (`Tracking::msaa_report`). A live re-read that no
+report answers, its object gone or its report dropped by a rule, is
+answered `OutpostToCore::LiveRereadGone`, as is the listener's
+`UiaLiveRereadGone`. A foreground change makes its window the window every
+older report in it entered in front (`Held::reported`), and the
+selection-as-value mark is each held report's own
+(`Held::value_from_selection`).
+
 ## Messages to Core
 
 The thread that sends a message writes it itself (`outpost::outbound`,

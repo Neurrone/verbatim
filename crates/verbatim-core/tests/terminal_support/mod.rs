@@ -62,6 +62,8 @@ pub fn focus_after(earlier: Option<verbatim_model::EarlierElement>) -> Input {
         text: None,
         earlier,
         group: None,
+        answers: None,
+        first_cached_ancestor: None,
     })
 }
 

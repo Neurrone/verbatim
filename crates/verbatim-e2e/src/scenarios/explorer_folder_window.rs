@@ -68,6 +68,9 @@ pub(crate) fn body(scenario: &mut Scenario, state: &mut ScenarioState) {
     expect_after_load(scenario, &["Items View list"], "delta not selected 1 of 1");
     scenario.send_keys(&["backspace"]).expect("sends the key");
     expect_after_load(scenario, &["Items View list"], "Inner 1 of 4");
+    // Every move was within the folder window: no report would have spoken
+    // a cached ancestor.
+    scenario.expect_live_re_reads(0);
 }
 
 /// The speech of a folder load: `context`, the window's title on the

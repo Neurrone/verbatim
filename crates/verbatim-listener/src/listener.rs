@@ -861,18 +861,31 @@ impl UiaFocusReading {
     }
 }
 
-impl Reading for UiaFocusReading {
+/// One job of a reading thread in the listener: a UIA event, or Core's
+/// live re-read of the thread's last read.
+#[expect(
+    clippy::large_enum_variant,
+    reason = "a job is made once per event and moved into the schedule's queue"
+)]
+pub(crate) enum UiaJob {
     /// The event's element, its own window handle from the event's cache
     /// (0 for an element that is not a window), its runtime id from the
     /// event's cache, the kind of event, and, for a selection or a
     /// notification, the fact captured from it.
-    type Job = (
+    Event(
         Agile<ListenerEvent>,
         isize,
         Vec<i32>,
         FocusEvent,
         Option<DeliveredFact>,
-    );
+    ),
+    /// Core's live re-read `request`, of the read traced by the job's
+    /// trace ([`FocusReader::live_reread`]).
+    LiveReread(u64),
+}
+
+impl Reading for UiaFocusReading {
+    type Job = UiaJob;
     type Reader = FocusReader;
 
     fn reader(&self, _pid: Pid) -> Option<FocusReader> {
@@ -892,11 +905,15 @@ impl Reading for UiaFocusReading {
         &self,
         reader: Option<&mut FocusReader>,
         meta: Meta,
-        (element, _, _, kind, fact): Self::Job,
+        job: Self::Job,
         (watched, queue): (&WatchedRead, QueuePlace),
     ) -> Judged {
         let Some(reader) = reader else {
             return Judged::Dropped("its reading thread has no UIA client");
+        };
+        let (element, kind, fact) = match job {
+            UiaJob::Event(element, _, _, kind, fact) => (element, kind, fact),
+            UiaJob::LiveReread(request) => return reader.live_reread(request, meta.trace),
         };
         match element.resolve() {
             Ok(sender) => reader.judge_watched(
@@ -915,10 +932,10 @@ impl Reading for UiaFocusReading {
     /// callback thread, whose calls its watchdog never cancels
     /// (`docs/parity/focus-events.md`, "A slow read the user has moved on
     /// from").
-    fn window(&self, (_, hwnd, _, kind, _): &Self::Job) -> Option<isize> {
-        match kind {
-            FocusEvent::Focus | FocusEvent::MenuOpened => Some(*hwnd),
-            FocusEvent::Selection | FocusEvent::Notification => None,
+    fn window(&self, job: &Self::Job) -> Option<isize> {
+        match job {
+            UiaJob::Event(_, hwnd, _, FocusEvent::Focus | FocusEvent::MenuOpened, _) => Some(*hwnd),
+            UiaJob::Event(..) | UiaJob::LiveReread(_) => None,
         }
     }
 
@@ -930,17 +947,23 @@ impl Reading for UiaFocusReading {
         (self.readability)(window)
     }
 
-    fn kind(&self, (_, _, _, kind, _): &Self::Job) -> FocusEvent {
-        *kind
+    fn kind(&self, job: &Self::Job) -> FocusEvent {
+        match job {
+            UiaJob::Event(_, _, _, kind, _) => *kind,
+            UiaJob::LiveReread(_) => FocusEvent::LiveReread,
+        }
     }
 
-    fn key<'a>(
-        &self,
-        (_, _, runtime_id, kind, _): &'a Self::Job,
-    ) -> Option<(FocusEvent, &'a [i32])> {
+    fn key<'a>(&self, job: &'a Self::Job) -> Option<(FocusEvent, &'a [i32])> {
         // A notification is replaced only by one of the same kind,
-        // processing, and activity, as the intake replaces it.
-        (*kind != FocusEvent::Notification).then_some((*kind, runtime_id.as_slice()))
+        // processing, and activity, as the intake replaces it; a live
+        // re-read never.
+        match job {
+            UiaJob::Event(_, _, runtime_id, kind, _) => {
+                (*kind != FocusEvent::Notification).then_some((*kind, runtime_id.as_slice()))
+            }
+            UiaJob::LiveReread(_) => None,
+        }
     }
 
     fn finish(&self, reader: Option<FocusReader>) {
@@ -959,7 +982,11 @@ impl Reading for UiaFocusReading {
         if let Some(reason) = judged.dropped_reason() {
             tracing::debug!(%pid, marker = meta.marker, reason, "UIA focus dropped");
         }
-        owed.0.answer(judged.into_fact(meta.marker, meta.kind));
+        let fact = match owed.reread {
+            Some(request) => judged.into_reread_fact(meta.marker, request),
+            None => judged.into_fact(meta.marker, meta.kind),
+        };
+        owed.answer.answer(fact);
     }
 }
 
@@ -971,19 +998,34 @@ impl Reading for UiaFocusReading {
 /// still waiting, it sends the marker's drop, as the drop of an element
 /// that could not be kept for its read does, so the outpost never waits on
 /// the marker.
-pub(crate) struct MarkerOwed(Responder<DeliveredFact>);
+///
+/// For Core's live re-read `reread`, which has no marker the outpost waits
+/// on, it is the re-read's answer: the read, or gone, which it sends
+/// dropped unanswered too, as when the read was abandoned, so Core's
+/// pending live re-read always ends.
+pub(crate) struct MarkerOwed {
+    answer: Responder<DeliveredFact>,
+    reread: Option<u64>,
+}
 
 impl MarkerOwed {
-    /// The answer owed for `pid`'s event `meta`, sent through `outgoing`.
-    fn new(outgoing: &Arc<Outgoing>, pid: Pid, meta: Meta) -> Self {
+    /// The answer owed for `pid`'s event `meta`, or for Core's live re-read
+    /// `reread`, sent through `outgoing`.
+    fn new(outgoing: &Arc<Outgoing>, pid: Pid, meta: Meta, reread: Option<u64>) -> Self {
         let outgoing = Arc::clone(outgoing);
-        Self(Responder::new(move |fact: Option<DeliveredFact>| {
-            let fact = fact.unwrap_or_else(|| {
-                Judged::Dropped("the listener ended before it was read")
-                    .into_fact(meta.marker, meta.kind)
-            });
-            outgoing.focus_read(pid, fact, meta);
-        }))
+        Self {
+            answer: Responder::new(move |fact: Option<DeliveredFact>| {
+                let fact = fact.unwrap_or_else(|| {
+                    let ended = Judged::Dropped("the listener ended before it was read");
+                    match reread {
+                        Some(request) => ended.into_reread_fact(meta.marker, request),
+                        None => ended.into_fact(meta.marker, meta.kind),
+                    }
+                });
+                outgoing.focus_read(pid, fact, meta);
+            }),
+            reread,
+        }
     }
 }
 
@@ -1238,9 +1280,44 @@ impl Listener {
                 self.readers.outpost_ended(*pid);
             }
             CoreToListener::IdleQuery { round } => self.idle_query(*round),
+            CoreToListener::LiveReread {
+                request,
+                application,
+                trace_id,
+            } => self.live_reread(*request, *application, *trace_id),
             // The serving loop ends on `Shutdown`, before it is handled here.
             CoreToListener::Shutdown => {}
         }
+    }
+
+    /// Core's live re-read `request` of the last read, traced `trace`, of
+    /// `application`'s reading thread: queued for that thread behind the
+    /// events waiting for it, as a job with a marker of its own that no
+    /// outpost waits on, the report's trace and its observation; answered
+    /// gone at once when the application has no reading thread, the thread
+    /// answering it gone when it no longer holds that read. Its answer
+    /// goes to the application's outpost, in order with its facts.
+    fn live_reread(&self, request: u64, application: Pid, trace: TraceId) {
+        let meta = Meta {
+            trace,
+            ..self.outgoing.received(FocusEvent::LiveReread)
+        };
+        tracing::debug!(%application, request, %trace, marker = meta.marker, "live re-read asked");
+        if !self.readers.has_reading_thread(application) {
+            self.outgoing.focus_read(
+                application,
+                Judged::Dropped(verbatim_listener_logic::focus::NO_READING_THREAD)
+                    .into_reread_fact(meta.marker, request),
+                meta,
+            );
+            return;
+        }
+        self.readers.push(
+            application,
+            meta,
+            UiaJob::LiveReread(request),
+            MarkerOwed::new(&self.outgoing, application, meta, Some(request)),
+        );
     }
 
     /// The idle barrier's query for `round` (`docs/design/communication.md`,
@@ -1450,8 +1527,8 @@ fn queue_for_reading(
         Ok(agile) => readers.push(
             pid,
             meta,
-            (agile, fields.role.hwnd, runtime_id, kind, fact),
-            MarkerOwed::new(outgoing, pid, meta),
+            UiaJob::Event(agile, fields.role.hwnd, runtime_id, kind, fact),
+            MarkerOwed::new(outgoing, pid, meta, None),
         ),
         Err(error) => {
             tracing::warn!(%error, "a UIA focus's element could not be kept for its read");

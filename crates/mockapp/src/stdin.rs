@@ -1,7 +1,7 @@
 //! Stdin command parsing and the reader thread.
 //!
 //! Commands are one per line: `focus <id>`, `set-focus <id>`,
-//! `set-name <id> <text>`, `set-value <id> <text>`,
+//! `set-name <id> <text>`, `set-title <text>`, `set-value <id> <text>`,
 //! `set-description <id> <text>`, `set-controller-for <id> [<controlled>]`,
 //! `set-states <id> <state>...`, `select <id>`,
 //! `caret <id> <start> [<end> [end]]`, `caret-event <id>`,
@@ -335,6 +335,11 @@ pub(crate) enum Command {
     /// thread, as a Win32 tree view taking the focus does within its one
     /// `SetFocus` call. MSAA-only.
     FocusChild(String, String),
+    /// `set-title <text>`: the window's text becomes `text`, by
+    /// `SetWindowTextW`, as a terminal's command renames its window, and so
+    /// does the name of the root node, the window's own element, as a UIA
+    /// window's name follows its window text; no event is raised.
+    SetTitle(String),
     /// `client-name <text>`: names the window's client area, the root
     /// node, `text`, leaving the window's text as it is, and raises
     /// `EVENT_OBJECT_NAMECHANGE` on the client area, as Windows 11 Notepad
@@ -664,6 +669,7 @@ pub(crate) fn parse_command(line: &str) -> Option<Command> {
             (!id.is_empty()).then(|| Command::SetText(id.to_owned(), unescape(text)))
         }
         "client-name" => Some(Command::ClientName(rest.to_owned())),
+        "set-title" => Some(Command::SetTitle(rest.to_owned())),
         "client-identity" => Some(Command::ClientIdentity),
         "form-client" => Some(Command::FormClient),
         "disable-client" => Some(Command::DisableClient),

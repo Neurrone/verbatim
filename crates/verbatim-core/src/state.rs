@@ -656,6 +656,10 @@ pub struct SrState {
     /// stale rule drops it instead.
     #[serde(default)]
     pub(crate) group_taken: Option<(OutpostId, verbatim_model::FocusGroup)>,
+    /// The live re-reads Core waits for, one per focus reader, and how
+    /// many it has asked for (`crate::live_reread`).
+    #[serde(default)]
+    pub(crate) live_rereads: crate::live_reread::LiveRereads,
     /// Core's queries not yet ended, each from its request to its one
     /// ending (`crate::queries`).
     #[serde(default)]
@@ -785,12 +789,23 @@ impl SrState {
     }
 
     /// How many of Core's queries an outpost has yet to answer that the
-    /// idle barrier waits for: a caret key's watch, which waits for the
-    /// application, and a request Core answers from a terminal's memory are
-    /// not counted.
+    /// idle barrier waits for, with each pending live re-read: a caret
+    /// key's watch, which waits for the application, and a request Core
+    /// answers from a terminal's memory are not counted.
     #[must_use]
     pub fn outstanding_queries(&self) -> usize {
-        self.queries.outstanding()
+        self.queries
+            .outstanding()
+            .saturating_add(self.live_rereads.pending_count())
+    }
+
+    /// How many live re-reads Core has asked for since it started: each a
+    /// focus report set aside because it would have spoken an ancestor its
+    /// focus reader took from its ancestry cache (`crate::live_reread`).
+    /// The control protocol's status reply carries it.
+    #[must_use]
+    pub fn live_re_reads(&self) -> u64 {
+        self.live_rereads.count()
     }
 
     /// Whether a lock key's new state is still to be announced: Verbatim is

@@ -41,6 +41,11 @@ pub enum FocusEvent {
     /// An element selected, judged by its sender's nearest window
     /// (the listener's `FocusReader::check_fact`).
     Selection,
+    /// Core's live re-read of the thread's last read: its held element read
+    /// again with no ancestry cache (the listener's
+    /// `FocusReader::live_reread`). It has no marker the outpost waits on,
+    /// moves away from no application, and is no pending focus.
+    LiveReread,
     /// A notification, judged by its sender's nearest window
     /// (the listener's `FocusReader::check_fact`).
     Notification,
@@ -74,6 +79,14 @@ pub const REPLACED: &str = "a newer focus event of its element replaced it";
 /// The reason a menu opening is dropped whose comparison with the current
 /// focus failed.
 pub const COMPARISON_FAILED: &str = "its comparison with the current focus failed";
+
+/// The reason a live re-read is answered gone: the reading thread no longer
+/// holds the read it names, by trace, as after a later read or none.
+pub const NOT_THE_LAST_READ: &str = "its reading thread no longer holds the read it names";
+
+/// The reason a live re-read is answered gone when its application has no
+/// reading thread.
+pub const NO_READING_THREAD: &str = "its application has no reading thread";
 
 /// The reason a focus is dropped that fails NVDA's acceptance test.
 pub const NOT_RELATED: &str = "its window is not related to the foreground window";
@@ -117,6 +130,26 @@ impl Judged {
             },
             Judged::Dropped(_) => DeliveredFact::UiaFocusDropped { marker, focus },
             Judged::Passed(fact) => DeliveredFact::UiaMarked { marker, fact },
+        }
+    }
+
+    /// The fact that answers Core's live re-read `request`, with this
+    /// outcome: the read, carrying `request` and the marker `marker`, which
+    /// no outpost waits on, so it is taken in where it arrives; or, for
+    /// any other outcome, its answer of gone.
+    #[must_use]
+    pub fn into_reread_fact(self, marker: u64, request: u64) -> DeliveredFact {
+        match self {
+            Judged::Read(mut read) => {
+                read.answers = Some(request);
+                read.cached_from = None;
+                DeliveredFact::UiaFocusRead {
+                    marker,
+                    read,
+                    focus: true,
+                }
+            }
+            Judged::Dropped(_) | Judged::Passed(_) => DeliveredFact::UiaLiveRereadGone { request },
         }
     }
 

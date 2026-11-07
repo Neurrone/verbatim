@@ -19,8 +19,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
     ES_MULTILINE, EnumWindows, GA_PARENT, GA_ROOT, GA_ROOTOWNER, GET_ANCESTOR_FLAGS,
     GET_WINDOW_CMD, GUITHREADINFO, GWL_EXSTYLE, GWL_STYLE, GetAncestor, GetClassNameW,
     GetDesktopWindow, GetForegroundWindow, GetGUIThreadInfo, GetPropW, GetTopWindow, GetWindow,
-    GetWindowLongPtrW, GetWindowLongW, GetWindowRect, GetWindowThreadProcessId, IsChild,
-    IsHungAppWindow, IsWindow, IsWindowVisible, WS_EX_TOPMOST,
+    GetWindowLongPtrW, GetWindowLongW, GetWindowRect, GetWindowThreadProcessId,
+    InternalGetWindowText, IsChild, IsHungAppWindow, IsWindow, IsWindowVisible, WS_EX_TOPMOST,
 };
 use windows::core::{BOOL, HSTRING, s, w};
 
@@ -41,6 +41,32 @@ fn hwnd(handle: isize) -> HWND {
 pub fn window_exists(handle: isize) -> bool {
     // SAFETY: IsWindow tolerates any handle.
     unsafe { IsWindow(Some(hwnd(handle))) }.as_bool()
+}
+
+/// `handle`'s window text, read with `InternalGetWindowText`, which never
+/// sends the window a message. `None` when the window has no text.
+#[must_use]
+pub fn window_text(handle: isize) -> Option<String> {
+    let mut buffer = [0u16; 512];
+    // SAFETY: the buffer outlives the call, which writes at most its length.
+    let length = unsafe { InternalGetWindowText(hwnd(handle), &mut buffer) };
+    let length = usize::try_from(length).ok()?;
+    let text = String::from_utf16_lossy(buffer.get(..length.min(buffer.len()))?);
+    (!text.trim().is_empty()).then_some(text)
+}
+
+/// `handle`'s window text as the ancestry cache's title check reads it
+/// ([`verbatim_reader_rules::ancestry_cache::title_check`]): gone for a
+/// window that no longer exists, else its text ([`window_text`]). Local
+/// calls.
+#[must_use]
+pub fn live_title(handle: isize) -> verbatim_reader_rules::ancestry_cache::LiveTitle {
+    use verbatim_reader_rules::ancestry_cache::LiveTitle;
+    if window_exists(handle) {
+        LiveTitle::Text(window_text(handle))
+    } else {
+        LiveTitle::Gone
+    }
 }
 
 /// Whether `handle` is a visible window; false for one that names no

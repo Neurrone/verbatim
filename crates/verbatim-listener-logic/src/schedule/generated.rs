@@ -367,6 +367,8 @@ fn a_read() -> Box<UiaFocusRead> {
         value_from_selection: false,
         window: None,
         same_as_last: None,
+        answers: None,
+        cached_from: None,
     })
 }
 

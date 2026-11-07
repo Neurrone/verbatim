@@ -21,13 +21,13 @@ use verbatim_model::{
     WindowFacts,
 };
 use verbatim_model::{
-    Backend, FocusGroup, FocusNow, FocusText, FocusValidity, ObjectKey, WindowHandle,
-    WindowIdentity,
+    Backend, FirstCachedAncestor, FocusGroup, FocusNow, FocusText, FocusValidity, LiveReread,
+    LiveRereadLog, LiveRereadReason, ObjectKey, WindowHandle, WindowIdentity,
 };
 
 use crate::focus_rules::{
     ChangeKind, ChangeTarget, RepeatEvidence, SelectionTarget, change_target, is_sensitive_slider,
-    meeting, repeats_focus, selection_target,
+    lowest_common_ancestor, needs_live_ancestry, repeats_focus, selection_target,
 };
 use crate::foreground::{Attention, ForegroundFact, LatestFocus};
 use crate::queries::Then;
@@ -183,6 +183,9 @@ fn reduce_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
             Vec::new()
         }
         Input::Foreground(change) => foreground_changed(state, *change),
+        Input::LiveRereadGone { .. } | Input::ListenerReplaced => {
+            crate::live_reread::ended(state, input)
+        }
         // Playback will reach none of a cut utterance's marks it had not
         // reached: say-all stops, as on any cut, and terminal output drops
         // what waits, as anything that cuts speech off does.
@@ -449,6 +452,9 @@ fn is_stale_focus(
 /// A focus Core marked left, the user having gone to another top-level
 /// window since it was taken, is no duplicate: the return is spoken as the
 /// same switch with no stall is (`FocusContext::left`).
+///
+/// A report set aside for a pending live re-read counts as the last focus
+/// Core queued too ([`is_duplicate_of_pending`]).
 fn is_duplicate_focus(
     state: &SrState,
     node: &NodeSnapshot,
@@ -462,6 +468,20 @@ fn is_duplicate_focus(
                     .map_or(focus.alive, |earlier| earlier == EarlierElement::Focused),
             })
     })
+}
+
+/// Whether a focus of `node` repeats the report set aside for a pending
+/// live re-read, its element still focused by `earlier`'s evidence, or the
+/// reader holding no element for it: it is dropped as a duplicate of the
+/// report the live re-read answers, which is spoken once, from its answer
+/// (`crate::live_reread`).
+fn is_duplicate_of_pending(
+    state: &SrState,
+    node: &NodeSnapshot,
+    earlier: Option<EarlierElement>,
+) -> bool {
+    state.live_rereads.is_pending_for(node.id)
+        && earlier.is_none_or(|earlier| earlier == EarlierElement::Focused)
 }
 
 /// Forgets what Core keeps of the text of `node`, whose reader read that
@@ -481,7 +501,10 @@ fn forget_text_of(state: &mut SrState, node: NodeId) {
 
 /// Keeps a duplicate focus's newer reading, unspoken: its states and name,
 /// which an earlier report can have read mid-change, and those of the
-/// entries of its chain, `ancestors`, that are nodes of the focus line.
+/// entries of its chain, `ancestors`, that are nodes of the focus ancestry,
+/// but for its cached ancestors, which the caller leaves out: an entry its
+/// focus reader took from its ancestry cache never overwrites one of
+/// Core's own.
 /// Its chain does not replace the focus line, as NVDA keeps its line when
 /// the focus matches itself (`docs/parity/focus-context.md`,
 /// "Focus-ancestry context"), so a duplicate whose chain was cut at its
@@ -699,13 +722,22 @@ fn older_than_taken(state: &SrState, outpost: OutpostId, group: FocusGroup) -> b
 }
 
 /// Records that the focus of `report` was taken: the applied stamp, and
-/// its focus group, which ends the group for its older entries.
+/// its focus group, which ends the group for its older entries. A newer
+/// focus applied ends every pending live re-read (`crate::live_reread`).
 fn record_taken(state: &mut SrState, report: &FocusReport<'_>) {
     if report.observed_at_us != 0 {
         state
             .foreground
             .apply(ForegroundFact::Applied(report.observed_at_us));
     }
+    record_group(state, report);
+    state.live_rereads.end_all();
+}
+
+/// Records `report`'s focus group as taken, which ends the group for its
+/// older entries: for a report taken, and for one set aside for a live
+/// re-read, whose answer stands for it.
+fn record_group(state: &mut SrState, report: &FocusReport<'_>) {
     if let Some(group) = report.group {
         state.group_taken = Some((report.node.id.outpost(), group));
     }
@@ -726,14 +758,44 @@ fn focus_is_a_duplicate(
         ancestors,
         text,
         earlier,
+        first_cached_ancestor,
         ..
     } = event
     else {
         return false;
     };
-    // The ordering stamp: every attended focus observation, taken, a
-    // duplicate, or a foreground report the reducer then refuses, as NVDA's
-    // one queue holds each in the order it was observed.
+    if !is_duplicate_focus(state, node, *earlier) {
+        let duplicate = is_duplicate_of_pending(state, node, *earlier);
+        if duplicate {
+            stamp_observed(state, observed_at_us, node, window);
+        }
+        return duplicate;
+    }
+    stamp_observed(state, observed_at_us, node, window);
+    let ancestors = focus_ancestors(window, node, ancestors);
+    let live = match cached_ancestors(*first_cached_ancestor, ancestors) {
+        Some(cached) => ancestors
+            .get(cached.index_usize().saturating_add(1)..)
+            .unwrap_or_default(),
+        None => ancestors,
+    };
+    keep_newer_reading(state, node, live);
+    sync_navigator_with_focus(state);
+    editing::keep_focus_caret(state, node.id, text.as_deref(), whole_ms(observed_at_us));
+    true
+}
+
+/// The ordering stamp: every attended focus observation, taken, a
+/// duplicate, or a foreground report the reducer then refuses, as NVDA's
+/// one queue holds each in the order it was observed. A report set aside
+/// for a live re-read stamps nothing: its answer, observed when it was,
+/// stamps it ([`set_aside`]).
+fn stamp_observed(
+    state: &mut SrState,
+    observed_at_us: u64,
+    node: &NodeSnapshot,
+    window: Option<&WindowFacts>,
+) {
     if observed_at_us != 0 {
         state
             .foreground
@@ -743,13 +805,30 @@ fn focus_is_a_duplicate(
                 top_level: window.map(|window| window.top_level),
             }));
     }
-    if !is_duplicate_focus(state, node, *earlier) {
-        return false;
+}
+
+/// A report's [`FirstCachedAncestor`], when it names one of `ancestors`,
+/// the ancestors Core takes ([`focus_ancestors`]): void when nothing was
+/// cached, or when an application's rule dropped the chain.
+fn cached_ancestors(
+    first_cached: Option<FirstCachedAncestor>,
+    ancestors: &[NodeSnapshot],
+) -> Option<CachedFrom> {
+    first_cached
+        .map(CachedFrom)
+        .filter(|cached| cached.index_usize() < ancestors.len())
+}
+
+/// A report's cached ancestors as Core judges them: up to and including
+/// its innermost cached ancestor, by its index in the ancestors Core takes.
+#[derive(Clone, Copy, Debug)]
+struct CachedFrom(FirstCachedAncestor);
+
+impl CachedFrom {
+    /// The index of the innermost cached ancestor.
+    fn index_usize(self) -> usize {
+        usize::try_from(self.0.index).unwrap_or(usize::MAX)
     }
-    keep_newer_reading(state, node, focus_ancestors(window, node, ancestors));
-    sync_navigator_with_focus(state);
-    editing::keep_focus_caret(state, node.id, text.as_deref(), whole_ms(observed_at_us));
-    true
 }
 
 /// A focus's ancestors as Core takes them: as the event reports them, but
@@ -810,6 +889,18 @@ fn reduce_event(
     window: Option<&WindowFacts>,
     event: &NormalizedEvent,
 ) -> Vec<Effect> {
+    // A live re-read's answer is taken only while its live re-read is
+    // pending, which it ends; any other is late, and says nothing
+    // (`crate::live_reread`).
+    if let NormalizedEvent::FocusChanged {
+        node,
+        answers: Some(request),
+        ..
+    } = event
+        && !state.live_rereads.answered(node.id.outpost(), *request)
+    {
+        return Vec::new();
+    }
     if focus_dropped_first(state, observed_at_us, window, event) {
         return Vec::new();
     }
@@ -831,8 +922,13 @@ fn reduce_event(
             text,
             earlier,
             group,
+            first_cached_ancestor,
+            answers,
         } => {
             let ancestors = focus_ancestors(window, node, ancestors);
+            // A live re-read's answer never needs another.
+            let cached =
+                cached_ancestors(*first_cached_ancestor, ancestors).filter(|_| answers.is_none());
             reduce_focus_changed(
                 state,
                 trace_id,
@@ -847,6 +943,7 @@ fn reduce_event(
                     text: text.as_deref(),
                     earlier: *earlier,
                     group: *group,
+                    cached,
                 },
             )
         }
@@ -976,6 +1073,9 @@ struct FocusReport<'a> {
     earlier: Option<EarlierElement>,
     /// Its place in its outpost's focus group.
     group: Option<FocusGroup>,
+    /// Where its cached ancestors begin, when it has any and is no live
+    /// re-read's answer ([`cached_ancestors`]).
+    cached: Option<CachedFrom>,
 }
 
 impl FocusReport<'_> {
@@ -1012,7 +1112,7 @@ impl FocusReport<'_> {
 /// - A focus the same as the one already announced has been dropped before
 ///   this, by NVDA's duplicate rule ([`is_duplicate_focus`]).
 /// - Otherwise the new chain is joined to the previous focus line where
-///   they meet ([`focus_line`]), and the containers below the meeting
+///   they meet ([`focus_ancestry`]), and the containers below the meeting
 ///   point, the newly entered ones, the node, and a selection container's
 ///   selected item are spoken, queued behind current speech (which the key
 ///   press that moved focus has already cut off), and the navigator
@@ -1027,6 +1127,11 @@ impl FocusReport<'_> {
 ///   ([`window_title`]).
 /// - A left focus reported again is taken as a focus from another
 ///   top-level window is ([`FocusContext::left`]).
+/// - Before anything is written, the plan ([`plan_focus`]): a report that
+///   would speak an ancestor its focus reader took from its ancestry
+///   cache, as entered or as the title, is set aside, and its focus reader
+///   asked for a live re-read ([`set_aside`]), writing nothing but its
+///   focus group's rank.
 fn reduce_focus_changed(
     state: &mut SrState,
     trace_id: TraceId,
@@ -1034,13 +1139,17 @@ fn reduce_focus_changed(
     window: Option<&WindowFacts>,
     report: &FocusReport<'_>,
 ) -> Vec<Effect> {
+    let plan = plan_focus(state, window, report);
+    if let (Some(reason), Some(cached)) = (plan.live_reread, report.cached) {
+        return set_aside(state, trace_id, report, (&plan, reason, cached));
+    }
+    stamp_observed(state, report.observed_at_us, report.node, window);
     // A report from the window Core's focus was left for is the next focus,
     // with nothing between: the two lines are compared as they are, as NVDA
     // compares its focus line with the one before, so a window owned across
-    // processes meets its owner both ways.
+    // processes meets its owner both ways ([`left_mark_ends`]).
     if let Some(focus) = state.focus.as_mut()
-        && focus.left
-        && window.is_some_and(|window| focus.left_for == Some(window.top_level))
+        && left_mark_ends(focus, window)
     {
         focus.left = false;
         focus.left_for = None;
@@ -1063,7 +1172,7 @@ fn reduce_focus_changed(
     let previous_left = state.focus.as_ref().is_some_and(|focus| focus.left);
     let title = enter_window(state, window, report, previous_left);
 
-    let line = focus_line(state.focus.as_ref(), window, report);
+    let line = plan.ancestry;
     let ancestors = Arc::clone(&line.ancestors);
     let focus_window = window.cloned();
     // A left focus is followed as a focus from another top-level window is:
@@ -1114,7 +1223,7 @@ fn reduce_focus_changed(
     // since left is dropped by the speech manager, which is told where the
     // focus now is.
     let foreground_changed = line.cut;
-    let line_met = line.met;
+    let line_met = line.met.is_some();
     if foreground_changed && report.observed_at_us != 0 {
         state
             .foreground
@@ -1193,11 +1302,7 @@ fn enter_window(
             .apply(ForegroundFact::Entered(window.top_level));
         return None;
     }
-    let enters = window.top_level == window.foreground_window
-        && (state.foreground.entered() != Some(window.top_level) || previous_left);
-    if !enters {
-        return None;
-    }
+    entered_window(state, Some(window), report, previous_left)?;
     state.foreground.apply(ForegroundFact::EnteredBy(
         window.top_level,
         report.ancestors.first().map(ObjectKey::of),
@@ -1205,6 +1310,155 @@ fn enter_window(
     // Program Manager and the taskbar are entered with no title, as NVDA
     // takes no foreground event for them.
     (!window.foreground_is_shell).then_some(window.top_level)
+}
+
+/// The top-level window a focus that is not a whole-window focus enters,
+/// with no write: its own, when it is the window in front at its
+/// publication and is not the entered window or Core's focus was left
+/// ([`enter_window`]).
+fn entered_window(
+    state: &SrState,
+    window: Option<&WindowFacts>,
+    report: &FocusReport<'_>,
+    previous_left: bool,
+) -> Option<WindowHandle> {
+    let window = window?;
+    let enters = !report.whole_window
+        && window.top_level == window.foreground_window
+        && (state.foreground.entered() != Some(window.top_level) || previous_left);
+    enters.then_some(window.top_level)
+}
+
+/// Whether `focus`, Core's focus, left for another window, is a report in
+/// `window` from the window it was left for: the next focus with nothing
+/// between, whose line is compared with the focus's as it is, as NVDA
+/// compares its focus line with the one before.
+fn left_mark_ends(focus: &FocusContext, window: Option<&WindowFacts>) -> bool {
+    focus.left && window.is_some_and(|window| focus.left_for == Some(window.top_level))
+}
+
+/// What Core does with a focus report, computed once, purely, before
+/// anything is written ([`plan_focus`]).
+struct FocusPlan<'a> {
+    /// The report joined to Core's focus ancestry ([`focus_ancestry`]).
+    ancestry: JoinedAncestry<'a>,
+    /// Why the report is set aside for a live re-read, when a cached
+    /// ancestor would be spoken (`focus_rules::needs_live_ancestry`).
+    live_reread: Option<LiveRereadReason>,
+}
+
+/// The plan for `report`, in `window` (`books/dev/src/reference/crates/verbatim-core.md`,
+/// "The ancestry cache"): its ancestry joined to Core's focus ancestry,
+/// the entry the title rule would speak, and whether a cached ancestor
+/// would be spoken, as entered or as that title. A report that says
+/// nothing, refused or taken silently, speaks no cached ancestor. Writes
+/// nothing.
+fn plan_focus<'a>(
+    state: &SrState,
+    window: Option<&WindowFacts>,
+    report: &FocusReport<'a>,
+) -> FocusPlan<'a> {
+    // The focus as the report will find it: its left mark ended when the
+    // report is from the window it was left for ([`left_mark_ends`]),
+    // which the caller writes only once the report is not set aside.
+    let unmarked;
+    let previous = match state.focus.as_ref() {
+        Some(focus) if left_mark_ends(focus, window) => {
+            unmarked = FocusContext {
+                left: false,
+                left_for: None,
+                ..focus.clone()
+            };
+            Some(&unmarked)
+        }
+        other => other,
+    };
+    let ancestry = focus_ancestry(previous, window, report);
+    let previous_left = previous.is_some_and(|focus| focus.left);
+    let silent = report.cached.is_none()
+        || (report.whole_window
+            && (!has_text(report.node.name.as_deref())
+                || previous.is_some_and(|focus| {
+                    !focus.left
+                        && matches!(
+                            (focus.window.as_ref(), window),
+                            (Some(focus_window), Some(window))
+                                if focus_window.top_level == window.top_level
+                        )
+                })))
+        || crate::applications::is_shell_staging_window(window)
+        || previous.filter(|focus| !focus.left).is_some_and(|focus| {
+            !focus.alive && reads_the_same(focus, report.node, report.ancestors)
+        });
+    let live_reread = if silent {
+        None
+    } else {
+        let entered: Vec<&NodeSnapshot> = ancestry.entered.iter().collect();
+        let title = entered_window(state, window, report, previous_left)
+            .filter(|_| window.is_some_and(|window| !window.foreground_is_shell))
+            .filter(|_| ancestry.met.is_none())
+            .and_then(|top_level| window_title(top_level, report.ancestors, &entered))
+            .and_then(|title| {
+                report
+                    .ancestors
+                    .iter()
+                    .position(|ancestor| std::ptr::eq(ancestor, title))
+            });
+        let entered_from = report
+            .ancestors
+            .len()
+            .saturating_sub(ancestry.entered.len());
+        needs_live_ancestry(
+            report.cached.map(CachedFrom::index_usize),
+            entered_from,
+            title,
+        )
+    };
+    FocusPlan {
+        ancestry,
+        live_reread,
+    }
+}
+
+/// Sets `report` aside for a live re-read of its element by the focus
+/// reader that read it, since `plan` found that a cached ancestor would be
+/// spoken, for `reason`: its focus group's rank is recorded as taken, so
+/// the outpost's older entries of the group are not then taken, the live
+/// re-read is counted, replacing any pending for that focus reader, and
+/// asked for, with what the shell logs of it. Nothing else is written, and
+/// nothing is said (`crate::live_reread`).
+fn set_aside(
+    state: &mut SrState,
+    trace_id: TraceId,
+    report: &FocusReport<'_>,
+    (plan, reason, cached): (&FocusPlan<'_>, LiveRereadReason, CachedFrom),
+) -> Vec<Effect> {
+    record_group(state, report);
+    let outpost = report.node.id.outpost();
+    let reader = cached.0.reader;
+    let request = state
+        .live_rereads
+        .ask((outpost, reader), report.node.id, report.observed_at_us);
+    let join = report
+        .ancestors
+        .get(cached.index_usize().saturating_add(1))
+        .unwrap_or(report.node);
+    let lowest_common_ancestor = plan
+        .ancestry
+        .met
+        .map(|at_new| report.ancestors.get(at_new).unwrap_or(report.node).id);
+    vec![Effect::LiveReread(LiveReread {
+        request,
+        outpost,
+        reader,
+        trace_id,
+        logged: LiveRereadLog {
+            focus: report.node.id,
+            cache_join: (join.id, join.name.clone()),
+            lowest_common_ancestor,
+            reason,
+        },
+    })]
 }
 
 /// The title a focus entering the top-level window `top_level` says: the
@@ -1441,6 +1695,8 @@ fn outpost_ended(state: &mut SrState, outpost: OutpostId) -> Vec<Effect> {
     {
         focus.alive = false;
     }
+    // Its focus readers' pending live re-reads end with it.
+    state.live_rereads.outpost_ended(outpost);
     // Text positions die with the outpost that minted them.
     let mut effects = Vec::new();
     if state
@@ -2716,28 +2972,31 @@ pub(crate) fn source_of(node: &NodeSnapshot) -> UtteranceSource {
     }
 }
 
-/// A new focus's place in the focus line ([`focus_line`]).
-struct FocusLine<'a> {
+/// A new focus's place in Core's focus ancestry ([`focus_ancestry`]).
+struct JoinedAncestry<'a> {
     /// The focus's ancestors as Core keeps them, outermost first: the
-    /// previous line up to where the new chain meets it, then the new
-    /// chain's entries below that point.
+    /// previous focus ancestry up to the lowest common ancestor, then the
+    /// new chain's entries below it.
     ancestors: Arc<[NodeSnapshot]>,
-    /// The new chain's entries below the meeting point, outermost first:
-    /// the containers the focus has newly entered.
+    /// The entered ancestors: the new chain's entries below the lowest
+    /// common ancestor, outermost first, the containers the focus has newly
+    /// entered.
     entered: &'a [NodeSnapshot],
-    /// The two lines differ just below the desktop, sharing no entry: the
-    /// focus is in a new foreground window, and speech is cut.
+    /// The two ancestries differ just below the desktop, sharing no entry:
+    /// the focus is in a new foreground window, and speech is cut.
     cut: bool,
-    /// The two lines meet at an object they share, so the focus has not
-    /// moved to a new foreground window as NVDA judges it, by its focus
-    /// difference level, and no window title is added for it
-    /// ([`window_title`]).
-    met: bool,
+    /// The lowest common ancestor's index in the new chain, its ancestors
+    /// outermost first and then the focus; `None` when the two share none.
+    /// When they meet at an object they share, the focus has not moved to
+    /// a new foreground window as NVDA judges it, by its focus difference
+    /// level, and no window title is added for it ([`window_title`]).
+    met: Option<usize>,
 }
 
 /// Joins a new focus's chain, `report`'s ancestors and node, to the
-/// previous focus line, `previous`'s ancestors and focus, where they meet
-/// ([`meeting`]), as NVDA builds its focus line when the focus moves
+/// previous focus ancestry, `previous`'s ancestors and focus, at their
+/// lowest common ancestor ([`lowest_common_ancestor`]), as NVDA builds its
+/// focus ancestry when the focus moves
 /// (`docs/parity/focus-context.md`, "Focus-ancestry context"). The new
 /// chain is walked from the focus outward and stops at the first entry that
 /// is the same object as one in the previous line: by node id, or by window
@@ -2754,7 +3013,7 @@ struct FocusLine<'a> {
 /// among them an unnamed UI Automation top-level window, an MSAA window
 /// object and every layout container, which NVDA's line holds, so the
 /// focus's top-level window, which its window facts name, stands for the
-/// entry just below the desktop ([`line_top`]): with no object of the
+/// entry just below the desktop ([`ancestry_top`]): with no object of the
 /// chains shared, two lines in one top-level window meet there, empty
 /// chains or not, the whole chain is entered and speech is not cut, and
 /// lines in two top-level windows differ just below the desktop: the whole
@@ -2762,27 +3021,27 @@ struct FocusLine<'a> {
 /// focus Core takes, the whole chain is entered and speech is not cut, as
 /// NVDA, starting, makes the focus its focus object before it handles the
 /// focus, so the two lines meet at the focus itself.
-fn focus_line<'a>(
+fn focus_ancestry<'a>(
     previous: Option<&FocusContext>,
     window: Option<&WindowFacts>,
     report: &FocusReport<'a>,
-) -> FocusLine<'a> {
+) -> JoinedAncestry<'a> {
     let Some(previous) = previous else {
-        return FocusLine {
+        return JoinedAncestry {
             ancestors: Arc::from(report.ancestors),
             entered: report.ancestors,
             cut: false,
-            met: false,
+            met: None,
         };
     };
     // A left focus is followed as a focus from another top-level window is:
     // the lines meet only at the desktop, and speech is cut.
     if previous.left {
-        return FocusLine {
+        return JoinedAncestry {
             ancestors: Arc::from(report.ancestors),
             entered: report.ancestors,
             cut: true,
-            met: false,
+            met: None,
         };
     }
     let old_line = || {
@@ -2794,25 +3053,24 @@ fn focus_line<'a>(
     // A new element under the previous focus's node, the one it stood for
     // gone, is not that focus: the lines meet above it, if anywhere.
     let met = if report.replaces(&previous.snapshot) {
-        previous
-            .ancestors
-            .split_last()
-            .and_then(|(last, above)| meeting((above, last), (report.ancestors, report.node)))
+        previous.ancestors.split_last().and_then(|(last, above)| {
+            lowest_common_ancestor((above, last), (report.ancestors, report.node))
+        })
     } else {
-        meeting(
+        lowest_common_ancestor(
             (&previous.ancestors, &previous.snapshot),
             (report.ancestors, report.node),
         )
     };
     let Some((at_old, at_new)) = met else {
-        let old_top = line_top(&previous.snapshot, previous.window.as_ref());
-        let new_top = line_top(report.node, window);
+        let old_top = ancestry_top(&previous.snapshot, previous.window.as_ref());
+        let new_top = ancestry_top(report.node, window);
         let cut = old_top.is_none() || old_top != new_top;
-        return FocusLine {
+        return JoinedAncestry {
             ancestors: Arc::from(report.ancestors),
             entered: report.ancestors,
             cut,
-            met: false,
+            met: None,
         };
     };
     // The previous line is kept through the meeting entry, the previous
@@ -2827,21 +3085,21 @@ fn focus_line<'a>(
         .ancestors
         .get(at_new.saturating_add(1)..)
         .unwrap_or_default();
-    FocusLine {
+    JoinedAncestry {
         ancestors: old_line().take(kept).chain(entered).cloned().collect(),
         entered,
         cut: false,
-        met: true,
+        met: Some(at_new),
     }
 }
 
 /// The top-level window just below the desktop in the focus line of
 /// `focus`, as its window facts `window` name it, the entry a reader can
-/// leave out of the chain as not presentable ([`focus_line`]): `None` with
+/// leave out of the chain as not presentable ([`focus_ancestry`]): `None` with
 /// no facts, and for a focus whose containers an application's rule drops,
 /// whose container is the desktop, as the task switcher's item's is
 /// ([`crate::applications::drops_ancestry`]).
-fn line_top(focus: &NodeSnapshot, window: Option<&WindowFacts>) -> Option<WindowHandle> {
+fn ancestry_top(focus: &NodeSnapshot, window: Option<&WindowFacts>) -> Option<WindowHandle> {
     let window = window?;
     (!crate::applications::drops_ancestry(Some(window), focus)).then_some(window.top_level)
 }

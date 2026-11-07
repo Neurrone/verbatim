@@ -279,7 +279,8 @@ mod tests {
             OutpostToCore::Event { .. }
             | OutpostToCore::Reply { .. }
             | OutpostToCore::NotResponding { .. }
-            | OutpostToCore::IdleAnswer { .. } => Peeked::Other,
+            | OutpostToCore::IdleAnswer { .. }
+            | OutpostToCore::LiveRereadGone { .. } => Peeked::Other,
         };
         let mut samples = verbatim_model::protocol::samples::outpost_to_core();
         // A completed reply too, which carries nodes.
@@ -478,6 +479,8 @@ mod tests {
                 text: None,
                 earlier: None,
                 group: None,
+                answers: None,
+                first_cached_ancestor: None,
             },
         };
         let ready = OutpostToCore::Ready {
@@ -561,6 +564,8 @@ mod tests {
             value_from_selection: false,
             window: Some(0x40),
             same_as_last: Some(verbatim_model::EarlierElement::Gone),
+            answers: None,
+            cached_from: None,
         };
         let fact = ListenerFact {
             pid: Pid(1234),

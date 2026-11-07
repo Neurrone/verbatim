@@ -55,6 +55,8 @@ fn focus(state: &mut SrState, snapshot: NodeSnapshot) {
             text: None,
             earlier: None,
             group: None,
+            answers: None,
+            first_cached_ancestor: None,
         }),
     );
 }
@@ -3561,6 +3563,8 @@ fn a_replacement_outposts_silent_re_read_takes_its_caret_without_speaking() {
             text: Some(Box::new(caret_at_anchor(200))),
             earlier: None,
             group: None,
+            answers: None,
+            first_cached_ancestor: None,
         }),
     );
     assert_eq!(
@@ -3592,6 +3596,8 @@ fn focus_with_value(
             text: Some(Box::new(text)),
             earlier: None,
             group: None,
+            answers: None,
+            first_cached_ancestor: None,
         }),
     );
     effects
@@ -3693,6 +3699,8 @@ fn a_focused_field_with_text_selected_says_the_selection() {
             ))),
             earlier: None,
             group: None,
+            answers: None,
+            first_cached_ancestor: None,
         }),
     );
     assert!(

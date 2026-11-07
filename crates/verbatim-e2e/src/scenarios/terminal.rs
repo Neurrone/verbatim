@@ -139,6 +139,30 @@ pub(crate) fn open_windows_terminal(
     open(scenario, name, Terminal::WindowsTerminal, scripts)
 }
 
+/// Opens Windows Terminal running the shell, as [`open`] describes, but
+/// with its tab's title the shell's: the window is titled by what the shell
+/// sets, as a command that changes its title renames the window, where
+/// every other scenario's tab keeps the harness's title
+/// (`--suppressApplicationTitle`). The start script titles it with the
+/// harness's marker, as the tab's own title does.
+///
+/// # Errors
+///
+/// As [`open`].
+pub(crate) fn open_windows_terminal_titled_by_its_shell(
+    scenario: &mut Scenario,
+    name: &str,
+    scripts: &[(&str, &str)],
+) -> io::Result<ScenarioState> {
+    open_with(
+        scenario,
+        name,
+        Terminal::WindowsTerminal,
+        scripts,
+        (None, true),
+    )
+}
+
 /// Opens the console host running the shell, as [`open`] describes.
 ///
 /// # Errors
@@ -171,18 +195,19 @@ fn open(
     terminal: Terminal,
     scripts: &[(&str, &str)],
 ) -> io::Result<ScenarioState> {
-    open_with(scenario, name, terminal, scripts, None)
+    open_with(scenario, name, terminal, scripts, (None, false))
 }
 
 /// [`open`], with Windows Terminal's `settings.json` written as
 /// `windows_terminal_settings` when given, instead of starting from the
-/// release's defaults.
+/// release's defaults, and its tab titled by the shell when
+/// `shell_titles` ([`open_windows_terminal_titled_by_its_shell`]).
 fn open_with(
     scenario: &mut Scenario,
     name: &str,
     terminal: Terminal,
     scripts: &[(&str, &str)],
-    windows_terminal_settings: Option<&[u8]>,
+    (windows_terminal_settings, shell_titles): (Option<&[u8]>, bool),
 ) -> io::Result<ScenarioState> {
     let name = match terminal {
         Terminal::WindowsTerminal => name.to_owned(),
@@ -202,7 +227,7 @@ fn open_with(
             }
             let others_before = other_terminal_windows(scenario, None)?;
             let mut args = new_window();
-            args.extend(new_tab(&title, &start));
+            args.extend(new_tab(&title, &start, shell_titles));
             let window =
                 scenario.launch_owning_window(&executable, &args, &title, Some(&started))?;
             require_no_other_terminal_window(scenario, &others_before, window.pid)?;
@@ -283,12 +308,16 @@ fn new_window() -> Vec<String> {
 }
 
 /// A Windows Terminal tab titled `title` running the shell with the start
-/// script `start`.
-fn new_tab(title: &str, start: &str) -> Vec<String> {
-    let mut args: Vec<String> = ["new-tab", "--title", title, "--suppressApplicationTitle"]
+/// script `start`, keeping that title unless `shell_titles`, when the
+/// shell's title changes it.
+fn new_tab(title: &str, start: &str, shell_titles: bool) -> Vec<String> {
+    let mut args: Vec<String> = ["new-tab", "--title", title]
         .into_iter()
         .map(str::to_owned)
         .collect();
+    if !shell_titles {
+        args.push("--suppressApplicationTitle".to_owned());
+    }
     args.extend(shell_command(start, Terminal::WindowsTerminal));
     args
 }
@@ -348,7 +377,7 @@ pub(crate) fn open_windows_terminal_window(
     let (_, executable) = windows_terminal_paths(scenario);
     let others_before = other_terminal_windows(scenario, Some(running))?;
     let mut args = new_window();
-    args.extend(new_tab(&title, &start));
+    args.extend(new_tab(&title, &start, false));
     let window = scenario.launch_titled_once(&executable, &args, &title, false, Some(&started))?;
     if window.pid != running {
         return Err(io::Error::other(format!(
@@ -383,7 +412,7 @@ pub(crate) fn open_windows_terminal_for_tabs(
         name,
         Terminal::WindowsTerminal,
         &[],
-        Some(br#"{"confirmCloseAllTabs": false}"#),
+        (Some(br#"{"confirmCloseAllTabs": false}"#), false),
     )
 }
 
@@ -416,7 +445,7 @@ pub(crate) fn open_windows_terminal_tab(
     let (directory, start) = prepare_shell(scenario, name, &title, &[])?;
     let (_, executable) = windows_terminal_paths(scenario);
     let mut args: Vec<String> = vec!["-w".to_owned(), "0".to_owned()];
-    args.extend(new_tab(&title, &start));
+    args.extend(new_tab(&title, &start, false));
     scenario.run_handing_off(&executable, &args)?;
     let window = scenario.wait_for_window_in_front(&title, STEP_TIMEOUT)?;
     if window.pid != *pid {

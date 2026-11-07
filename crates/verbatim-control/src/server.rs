@@ -1286,6 +1286,7 @@ mod tests {
                 active_synth: None,
                 outposts: Vec::new(),
                 ready: true,
+                live_re_reads: 0,
             }),
             open_menu: Box::new(|| Err("the GUI is not up".to_owned())),
             latency: Box::new(|_last_n| Vec::new()),
@@ -1541,6 +1542,7 @@ mod tests {
                     active_synth: None,
                     outposts: Vec::new(),
                     ready: true,
+                    live_re_reads: 0,
                 }),
             }
         );

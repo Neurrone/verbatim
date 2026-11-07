@@ -1,6 +1,7 @@
-//! Control-plane protocol v3: v2 without the injected gesture, whose keys
-//! a client now presses with [`Request::SendKeys`], and with
-//! [`Request::OpenMenu`]; v2 added the end-to-end harness's barrier
+//! Control-plane protocol v4: v3 with Core's count of live re-reads in the
+//! status reply ([`StatusInfo::live_re_reads`]); v3 was v2 without the
+//! injected gesture, whose keys a client now presses with
+//! [`Request::SendKeys`], and with [`Request::OpenMenu`]; v2 added the end-to-end harness's barrier
 //! ([`Request::AwaitIdle`], [`Frame::InputHandled`]) and Core's focus
 //! report ([`Request::DumpFocus`]); v1 added each latency timeline's stages
 //! and cross-process call counts ([`LatencyRecord::stages`]).
@@ -27,8 +28,9 @@ use verbatim_model::{
 /// Version 2 added [`Request::AwaitIdle`], [`Request::DumpFocus`], and
 /// [`Frame::InputHandled`]. Version 3 removed the request that injected a
 /// gesture into the keyboard hook's thread, and added
-/// [`Request::OpenMenu`].
-pub const PROTOCOL_VERSION: u32 = 3;
+/// [`Request::OpenMenu`]. Version 4 added [`StatusInfo::live_re_reads`],
+/// read as 0 from an older peer.
+pub const PROTOCOL_VERSION: u32 = 4;
 
 /// The pipe name clients connect to.
 pub const PIPE_NAME: &str = r"\\.\pipe\verbatim-control";
@@ -304,6 +306,12 @@ pub struct StatusInfo {
     /// waits for this rather than for a fixed time.
     #[serde(default)]
     pub ready: bool,
+    /// How many live re-reads Core has asked for since it started: each a
+    /// focus report set aside because it would have spoken an ancestor its
+    /// focus reader took from its ancestry cache, and read again live. Read
+    /// only; 0 from a peer of version 3 or older.
+    #[serde(default)]
+    pub live_re_reads: u64,
 }
 
 /// Status of one outpost.

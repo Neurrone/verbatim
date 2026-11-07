@@ -548,6 +548,8 @@ mod ended;
 #[cfg(test)]
 mod explore;
 #[cfg(test)]
+pub(crate) use explore::config as explore_config;
+#[cfg(test)]
 mod generated;
 #[cfg(test)]
 mod tests;

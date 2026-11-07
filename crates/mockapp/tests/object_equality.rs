@@ -44,6 +44,8 @@ fn focus_event(reported: &Reported) -> NormalizedEvent {
         text: None,
         earlier: None,
         group: None,
+        answers: None,
+        first_cached_ancestor: None,
     }
 }
 

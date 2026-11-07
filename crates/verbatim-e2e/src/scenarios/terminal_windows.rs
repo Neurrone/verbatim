@@ -71,6 +71,23 @@
 //! Typing after a switch is echoed and its output spoken as in any
 //! terminal.
 //!
+//! `windows_terminal_two_windows` ends with a window renamed while the
+//! user is away. Its first window's tab is titled by its shell
+//! (`terminal::open_windows_terminal_titled_by_its_shell`), so that a
+//! command renames the window: `retitle.ps1`, typed there, waits until the
+//! second window is in front and then gives the first the title
+//! "retitled <title>". Nothing is said at the rename. Back in the first
+//! window, Verbatim says the new title, "retitled <title> window", then
+//! the terminal, still named for its tab's first title, with the new title
+//! as its description, "<title> terminal retitled <title>", and the line
+//! the caret is on. NVDA, captured at the pin (alpha-58022, 732d1ce2, five
+//! runs of the switch by Alt+Tab and five by bringing the window forward,
+//! identical but for its late echo of typed characters), says "<new title>
+//! window", then "<first title> terminal <new title>". The rename changes
+//! the window text saved with both focus readers' ancestry caches, so the
+//! return's ancestors are read live and Core asks for no live re-read,
+//! which the scenario asserts from the status reply.
+//!
 //! `*_leave_flood` leaves a terminal during a flood and returns. `away.ps1`
 //! writes a line of sixteen numbered words, "word1" to "word16", then
 //! "flood line 1" to "flood line 100", writes the file `half`, and waits
@@ -147,7 +164,28 @@ pub(crate) fn setup_console_host(scenario: &mut Scenario) -> io::Result<Scenario
 }
 
 pub(crate) fn setup_windows_terminal(scenario: &mut Scenario) -> io::Result<ScenarioState> {
-    terminal::open_windows_terminal(scenario, "two-a", &[])
+    terminal::open_windows_terminal_titled_by_its_shell(
+        scenario,
+        "two-a",
+        &[("retitle.ps1", &retitle_script())],
+    )
+}
+
+/// `retitle.ps1`, run in the first window: once the second is in front
+/// (the file `away`), the window's title changes to [`retitled`]'s, and
+/// the file `retitled` is written.
+fn retitle_script() -> String {
+    format!(
+        "{FILE_SIGNALS}Wait-For away\r\n\
+         $Host.UI.RawUI.WindowTitle = 'retitled ' + $Host.UI.RawUI.WindowTitle\r\n\
+         Mark retitled\r\n"
+    )
+}
+
+/// The title [`retitle_script`] gives the window titled `title`: it keeps
+/// the harness's marker, by which the window is found and closed.
+fn retitled(title: &str) -> String {
+    format!("retitled {title}")
 }
 
 pub(crate) fn setup_tabs(scenario: &mut Scenario) -> io::Result<ScenarioState> {
@@ -390,6 +428,53 @@ pub(crate) fn body_two_windows_terminal(scenario: &mut Scenario, state: &mut Sce
     ]);
     terminal::type_with_echo(scenario, "echo yo", terminal::Echo::Shown);
     scenario.speech().expect(&["yo", PROMPT]);
+    retitle_while_away(scenario, &first, &second, &directory(state));
+}
+
+/// The title steps of `windows_terminal_two_windows` (the module's
+/// documentation): in the first window, titled `first`, a command that
+/// renames the window once the user has gone to the second, `second`; the
+/// rename while away says nothing, and the return says the new title,
+/// "<new title> window", and the terminal, whose name is the tab's first
+/// title, with the new title as its description, then the line the caret
+/// is on, as NVDA was captured saying it. The window title saved with the
+/// ancestry caches has changed, so both focus readers read the return's
+/// ancestors live, and Core asks for no live re-read.
+fn retitle_while_away(scenario: &mut Scenario, first: &str, second: &str, directory: &str) {
+    scenario
+        .bring_window_forward(first)
+        .expect("brings the first window forward");
+    scenario.speech().expect(&[
+        &format!("{first} window"),
+        &format!("{first} terminal"),
+        PROMPT,
+    ]);
+    terminal::type_with_echo(scenario, r".\retitle.ps1", terminal::Echo::Shown);
+    scenario
+        .bring_window_forward(second)
+        .expect("brings the second window forward");
+    scenario.speech().expect(&[
+        &format!("{second} window"),
+        &format!("{second} terminal"),
+        PROMPT,
+    ]);
+    scenario
+        .write_agent_file(&format!(r"{directory}\away"), b"")
+        .expect("lets the command rename the first window");
+    scenario
+        .wait_for_agent_file(&format!(r"{directory}\retitled"), FLOOD_STEP)
+        .expect("the first window is renamed");
+    scenario.expect_nothing_more();
+    scenario
+        .bring_window_forward(first)
+        .expect("brings the renamed first window back");
+    let renamed = retitled(first);
+    scenario.speech().expect(&[
+        &format!("{renamed} window"),
+        &format!("{first} terminal {renamed}"),
+        PROMPT,
+    ]);
+    scenario.expect_live_re_reads(0);
 }
 
 /// Switches to the tab titled `title`, the `position`th of two, as NVDA was

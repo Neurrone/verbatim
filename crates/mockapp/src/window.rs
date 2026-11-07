@@ -28,9 +28,9 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 use windows::Win32::UI::WindowsAndMessaging::{
     CW_USEDEFAULT, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GWLP_USERDATA,
     GetClassNameW, GetMessageW, GetWindowLongPtrW, HMENU, MSG, OBJID_CLIENT, PostMessageW,
-    PostQuitMessage, RegisterClassExW, SW_SHOW, SetWindowLongPtrW, ShowWindow, TranslateMessage,
-    WINDOW_EX_STYLE, WM_ACTIVATE, WM_APP, WM_DESTROY, WM_GETOBJECT, WM_KEYDOWN, WNDCLASSEXW,
-    WS_CHILD, WS_OVERLAPPEDWINDOW,
+    PostQuitMessage, RegisterClassExW, SW_SHOW, SetWindowLongPtrW, SetWindowTextW, ShowWindow,
+    TranslateMessage, WINDOW_EX_STYLE, WM_ACTIVATE, WM_APP, WM_DESTROY, WM_GETOBJECT, WM_KEYDOWN,
+    WNDCLASSEXW, WS_CHILD, WS_OVERLAPPEDWINDOW,
 };
 use windows::core::{PCWSTR, w};
 use windows_core::Interface;
@@ -546,6 +546,10 @@ fn apply(hwnd: HWND, context: &'static WindowContext, command: Command) -> bool 
         ));
         return open;
     }
+    if let Command::SetTitle(title) = command {
+        set_title(hwnd, context, title);
+        return true;
+    }
     if let Command::OnActivate(armed) = command {
         ARMED.with(|list| list.borrow_mut().push(*armed));
         acknowledge("applied");
@@ -822,4 +826,29 @@ pub(crate) fn announce_call(command: &str, ms: u64) {
 
 fn to_wide(text: &str) -> Vec<u16> {
     text.encode_utf16().chain(std::iter::once(0)).collect()
+}
+
+/// `set-title <text>`: the window's text becomes `title`, and the root
+/// node's name with it, acknowledged.
+fn set_title(hwnd: HWND, context: &WindowContext, title: String) {
+    let wide = to_wide(&title);
+    // SAFETY: `hwnd` is this window's own live handle and `wide` a
+    // live, NUL-terminated buffer for the call.
+    let renamed = unsafe { SetWindowTextW(hwnd, PCWSTR(wide.as_ptr())) };
+    // The root node, the window's own element, is named by its title,
+    // as a UIA window's name follows its window text; no event is
+    // raised, as none speaks for a window's rename.
+    if let Some(root) = context
+        .tree
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .nodes
+        .first_mut()
+    {
+        root.name = Some(title);
+    }
+    acknowledge(&match renamed {
+        Ok(()) => "applied".to_owned(),
+        Err(error) => format!("rejected: {error}"),
+    });
 }

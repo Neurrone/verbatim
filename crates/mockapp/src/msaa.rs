@@ -412,6 +412,7 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
         }
         Command::Stall(..)
         | Command::OnActivate(_)
+        | Command::SetTitle(_)
         | Command::Island(_)
         | Command::Slow(_)
         | Command::SlowPatterns(_)

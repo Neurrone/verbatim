@@ -62,6 +62,8 @@ fn focus_event(trace_id: TraceId, source: Pid, snapshot: NodeSnapshot) -> Input 
             text: None,
             earlier: None,
             group: None,
+            answers: None,
+            first_cached_ancestor: None,
         },
     }
 }
@@ -123,6 +125,8 @@ fn focus_in(
             text: None,
             earlier: None,
             group: None,
+            answers: None,
+            first_cached_ancestor: None,
         },
     )
 }
@@ -147,6 +151,8 @@ fn focus_in_after(
             text: None,
             earlier: Some(earlier),
             group: None,
+            answers: None,
+            first_cached_ancestor: None,
         },
     )
 }
@@ -168,6 +174,8 @@ fn foreground_in(source: Pid, facts: WindowFacts, mut snapshot: NodeSnapshot) ->
             text: None,
             earlier: None,
             group: None,
+            answers: None,
+            first_cached_ancestor: None,
         },
     )
 }
@@ -750,6 +758,8 @@ fn a_state_change_on_an_ancestor_of_the_focus_is_spoken() {
                 text: None,
                 earlier: None,
                 group: None,
+                answers: None,
+                first_cached_ancestor: None,
             },
         ),
     );
@@ -1380,6 +1390,8 @@ fn sample_script() -> Vec<Input> {
                 text: None,
                 earlier: None,
                 group: None,
+                answers: None,
+                first_cached_ancestor: None,
             },
         },
         Input::Event {
@@ -1507,6 +1519,8 @@ fn focus_event_with_ancestors(
             text: None,
             earlier: None,
             group: None,
+            answers: None,
+            first_cached_ancestor: None,
         },
     }
 }
@@ -2027,6 +2041,8 @@ fn focus_event_with_selection(
             text: None,
             earlier: None,
             group: None,
+            answers: None,
+            first_cached_ancestor: None,
         },
     }
 }
@@ -3401,6 +3417,8 @@ fn a_foreground_report_that_changes_nothing_still_orders_later_arrivals() {
             text: None,
             earlier: None,
             group: None,
+            answers: None,
+            first_cached_ancestor: None,
         },
     };
     let (state, _) = reduce_from(&SrState::new(), &foreground(900), OutpostId(2));
@@ -5515,6 +5533,8 @@ fn held_nodes_group_focus_ancestors_selection_and_navigator_by_outpost() {
             text: None,
             earlier: None,
             group: None,
+            answers: None,
+            first_cached_ancestor: None,
         },
     );
     let (state, _) = reduce(&SrState::new(), &input);
@@ -7036,6 +7056,8 @@ fn a_submenu_items_speech_holds_when_its_submenu_takes_the_focus() {
             text: None,
             earlier: None,
             group: None,
+            answers: None,
+            first_cached_ancestor: None,
         },
     };
     let menu_item_of_focus = |effects: &[Effect]| match effects.first() {

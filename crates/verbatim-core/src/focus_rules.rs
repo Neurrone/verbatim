@@ -67,7 +67,7 @@ pub struct HeldNode {
     pub states: StateSet,
     /// The window it is, when it is one
     /// ([`NodeDetails::window`](verbatim_model::NodeDetails::window)), so
-    /// that an outpost compares it by [`already_entered`] as Core compares
+    /// that an outpost compares it by [`already_entered_ancestors`] as Core compares
     /// its snapshot. Left out of the message when `None`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub window: Option<WindowHandle>,
@@ -283,24 +283,24 @@ impl EnteredKey for verbatim_model::NodeSnapshot {
 /// one backend or one a stand-in above the process boundary, so that one
 /// window two outposts read is one entry. Two windows with the same role
 /// and name are two objects. Where two lines meet is chosen by this alone
-/// ([`meeting`]).
+/// ([`lowest_common_ancestor`]).
 pub fn same_object(old: &impl EnteredKey, new: &impl EnteredKey) -> bool {
     old.object_key().is_same_object(&new.object_key())
 }
 
-/// Where a new focus line meets the previous one, as NVDA joins them when
-/// the focus moves (`docs/parity/focus-context.md`, "Focus-ancestry
-/// context"): each line is a focus's ancestors, outermost first, the
-/// desktop left out, and then the focus, given as the two. The new line is
-/// walked from its focus outward, and at each entry the previous line from
-/// its focus outward, and the first pair that is the same object
-/// ([`same_object`]) is the meeting: `Some((old, new))`, their indexes in
-/// the two lines, the focus's being its ancestors' count. The focus line
-/// that results is the previous line up to and including `old`, then the
-/// new line's entries after `new`; those entries below the meeting point
-/// are the ones the focus has newly entered. `None` when the lines share
-/// no object. Nothing is allocated.
-pub fn meeting<O: EnteredKey, N: EnteredKey>(
+/// The lowest common ancestor of a new focus ancestry and the previous one,
+/// where Core joins them, as NVDA joins its focus ancestry when the focus
+/// moves (`docs/parity/focus-context.md`, "Focus-ancestry context"): each
+/// ancestry is a focus's ancestors, outermost first, the desktop left out,
+/// and then the focus, given as the two. The new ancestry is walked from
+/// its focus outward, and at each entry the previous one from its focus
+/// outward, and the first pair that is the same object ([`same_object`])
+/// is the lowest common ancestor: `Some((old, new))`, their indexes in the
+/// two, the focus's being its ancestors' count. The focus ancestry that
+/// results is the previous one up to and including `old`, then the new
+/// one's entries after `new`, the entered ancestors. `None` when the two
+/// share no object. Nothing is allocated.
+pub fn lowest_common_ancestor<O: EnteredKey, N: EnteredKey>(
     (previous, previous_focus): (&[O], &O),
     (new, new_focus): (&[N], &N),
 ) -> Option<(usize, usize)> {
@@ -314,19 +314,64 @@ pub fn meeting<O: EnteredKey, N: EnteredKey>(
     })
 }
 
-/// How many of `new`'s entries, a new focus line's ancestors outermost
-/// first and then its focus, are already entered, given `previous`, a line
-/// the focus may have been in, given the same way: those above or at where
-/// the two lines meet ([`meeting`]), since what is below the meeting point
-/// is entered, as NVDA's focus line is joined (`docs/parity/focus-context.md`,
-/// "Focus-ancestry context"); none when they share no object. An outpost
-/// judges by it whether a dialog is newly entered, and so gathers its own
-/// text. Nothing is allocated.
-pub fn already_entered<O: EnteredKey, N: EnteredKey>(
+/// How many of `new`'s entries, a new focus ancestry's ancestors outermost
+/// first and then its focus, are already entered, given `previous`, an
+/// ancestry the focus may have been in, given the same way: those above or
+/// at their lowest common ancestor ([`lowest_common_ancestor`]), since
+/// what is below it is entered, as NVDA's focus ancestry is joined
+/// (`docs/parity/focus-context.md`, "Focus-ancestry context"); none when
+/// they share no object. An outpost judges by it whether a dialog is newly
+/// entered, and so gathers its own text. Nothing is allocated.
+pub fn already_entered_ancestors<O: EnteredKey, N: EnteredKey>(
     previous: (&[O], &O),
     new: (&[N], &N),
 ) -> usize {
-    meeting(previous, new).map_or(0, |(_, at_new)| at_new.saturating_add(1))
+    lowest_common_ancestor(previous, new).map_or(0, |(_, at_new)| at_new.saturating_add(1))
+}
+
+/// The index of a report's innermost cached ancestor, its
+/// `first_cached_ancestor`, as its focus reader computes it from the
+/// entries it emits, `ancestors` outermost first, after its filters and
+/// rules: the innermost of them `is_cached` names, the node of an ancestor
+/// it took from its ancestry cache rather than read live. Where a filter
+/// left the innermost cached ancestor out, this is the next cached one
+/// outward that remains. `None` when none remains.
+pub fn first_cached_ancestor(
+    ancestors: &[NodeId],
+    is_cached: impl Fn(NodeId) -> bool,
+) -> Option<u32> {
+    ancestors
+        .iter()
+        .rposition(|&ancestor| is_cached(ancestor))
+        .and_then(|index| u32::try_from(index).ok())
+}
+
+/// Core's check that a report would speak an ancestor its focus reader
+/// took from its ancestry cache (`books/dev/src/reference/crates/verbatim-core.md`,
+/// "The ancestry cache"): `first_cached`, its `first_cached_ancestor`, the
+/// index of its innermost cached ancestor among its ancestors outermost
+/// first, so that every entry up to it is cached; `entered_from`, the
+/// index of its first entered ancestor, below the lowest common ancestor
+/// (its ancestors' count when it enters none); and `title`, the index of
+/// the entry the title rule would speak, if any. A cached ancestor is
+/// spoken when it is entered, or when it is the title rule's entry; the
+/// entered ancestors are spoken first, so they are the reason when both
+/// hold. `None` when no cached ancestor would be spoken, and for a report
+/// with no cached ancestor. Nothing is allocated.
+#[must_use]
+pub fn needs_live_ancestry(
+    first_cached: Option<usize>,
+    entered_from: usize,
+    title: Option<usize>,
+) -> Option<verbatim_model::LiveRereadReason> {
+    let first_cached = first_cached?;
+    if entered_from <= first_cached {
+        Some(verbatim_model::LiveRereadReason::Entered)
+    } else if title.is_some_and(|title| title <= first_cached) {
+        Some(verbatim_model::LiveRereadReason::Title)
+    } else {
+        None
+    }
 }
 
 #[cfg(test)]
@@ -444,12 +489,12 @@ mod tests {
         let old_line = [dialog.clone()];
         let previous = (old_line.as_slice(), &button);
         assert_eq!(
-            already_entered(previous, ([dialog].as_slice(), &other_button)),
+            already_entered_ancestors(previous, ([dialog].as_slice(), &other_button)),
             1
         );
         let same_name = held(4, Backend::Msaa, Role::Dialog, "Remove");
         assert_eq!(
-            already_entered(previous, ([same_name].as_slice(), &other_button)),
+            already_entered_ancestors(previous, ([same_name].as_slice(), &other_button)),
             0,
             "another dialog of the same role and name"
         );
@@ -466,12 +511,12 @@ mod tests {
         let previous = (old_line.as_slice(), &focus);
         let other = held(6, Backend::Msaa, Role::Button, "Cancel");
         assert_eq!(
-            already_entered(previous, ([window(2, 20)].as_slice(), &other)),
+            already_entered_ancestors(previous, ([window(2, 20)].as_slice(), &other)),
             1,
             "the same window, from another outpost"
         );
         assert_eq!(
-            already_entered(previous, ([window(2, 21)].as_slice(), &other)),
+            already_entered_ancestors(previous, ([window(2, 21)].as_slice(), &other)),
             0,
             "another window of the same role and name"
         );
@@ -480,7 +525,7 @@ mod tests {
             ..window(2, 20)
         };
         assert_eq!(
-            already_entered(previous, ([through_uia.clone()].as_slice(), &other)),
+            already_entered_ancestors(previous, ([through_uia.clone()].as_slice(), &other)),
             0,
             "the same window's object through the other backend"
         );
@@ -489,7 +534,7 @@ mod tests {
             ..window(3, 20)
         };
         assert_eq!(
-            already_entered(
+            already_entered_ancestors(
                 ([stand_in].as_slice(), &focus),
                 ([through_uia].as_slice(), &other)
             ),

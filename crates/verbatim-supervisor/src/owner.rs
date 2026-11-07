@@ -116,6 +116,9 @@ pub(super) enum OwnerEvent {
     Retired(Ending),
     /// From the app: run the idle barrier's round through the children.
     IdleRound(u64),
+    /// From the app: Core's live re-read for the listener
+    /// ([`CoreToListener::LiveReread`]).
+    LiveReread(CoreToListener),
     /// From the app: Verbatim is exiting. Every child is shut down, and the
     /// summary of every ending in Verbatim's life is sent back once all
     /// have ended; the owner then ends.
@@ -853,6 +856,7 @@ impl Owner {
                 self.summary.count(ending);
             }
             OwnerEvent::IdleRound(round) => self.idle_round(round),
+            OwnerEvent::LiveReread(command) => self.tell_listener(command),
         }
     }
 
@@ -1364,10 +1368,11 @@ impl Owner {
     }
 
     /// Sends the listener a message of the MSAA hand-over
-    /// (`books/dev/src/explanation/design/focus-pipeline.md`, section 12.4), or holds it, in
-    /// order, while the listener's launch is at work. With no listener, it
-    /// is not needed: the next one is told the applications whose outposts
-    /// have their hooks in on its command line.
+    /// (`books/dev/src/explanation/design/focus-pipeline.md`, section 12.4), or Core's live
+    /// re-read, never dropped, or holds it, in order, while the listener's
+    /// launch is at work. With no listener, it is not needed: the next one
+    /// is told the applications whose outposts have their hooks in on its
+    /// command line, and Core ends its live re-reads at the replacement.
     fn tell_listener(&mut self, command: CoreToListener) {
         let Some(listener) = self.listener.as_mut() else {
             return;

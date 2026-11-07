@@ -1222,6 +1222,7 @@ mod tests {
                 active_synth: None,
                 outposts: Vec::new(),
                 ready: true,
+                live_re_reads: 0,
             }),
             open_menu: Box::new(|| Ok(())),
             latency: Box::new(|_| Vec::new()),

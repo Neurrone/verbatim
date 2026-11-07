@@ -175,6 +175,15 @@ impl LiveOutposts {
             .map(|live| live.application.unwrap_or(live.target_pid))
     }
 
+    /// The application `outpost` watches, its target, while it is live:
+    /// the process whose focus listener's reading thread reads its UIA
+    /// focuses.
+    pub(crate) fn target_of(&self, outpost: OutpostId) -> Option<Pid> {
+        self.outposts
+            .get(&outpost)
+            .map(|generation| generation.live().target_pid)
+    }
+
     /// The process whose outpost serves the application `pid`: the target
     /// of the newest live generation reporting for it, else `pid` itself.
     pub(crate) fn target_for(&self, pid: Pid) -> Pid {

@@ -318,6 +318,8 @@ fn focus() -> Input {
             text: None,
             earlier: None,
             group: None,
+            answers: None,
+            first_cached_ancestor: None,
         },
     }
 }

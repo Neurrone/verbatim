@@ -46,6 +46,10 @@ pub(crate) fn body(scenario: &mut Scenario, state: &mut ScenarioState) {
     scenario.speech().expect(&["Settings... s"]);
     scenario.send_keys(&["escape"]).expect("sends escape");
     super::text_box::expect_announced(scenario, NAME, BOX_NAME, LINE);
+    // The return from Verbatim's menu to the text box is a return between
+    // top-level windows: its report would have spoken the window its focus
+    // reader took from its ancestry cache, and is read again live, once.
+    scenario.expect_live_re_reads(1);
 
     assert_eq!(
         super::outpost_of(scenario, target),

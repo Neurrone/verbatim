@@ -370,6 +370,12 @@ pub struct Reported {
     /// The failed cached reads the outpost made for it, and the listener's
     /// reader on this thread for a UIA focus.
     pub failed_reads: u32,
+    /// Where its cached ancestors begin, as the outpost computed it.
+    pub first_cached_ancestor: Option<verbatim_model::FirstCachedAncestor>,
+    /// The live re-read it answers, if any.
+    pub answers: Option<u64>,
+    /// Its trace.
+    pub trace: TraceId,
 }
 
 impl Reported {
@@ -505,6 +511,9 @@ pub struct OutpostUnderTest {
     /// The trace of the UIA focus event the listener's reader last read,
     /// which its read is delivered under, as the listener sends it.
     last_read: Cell<Option<TraceId>>,
+    /// The trace of the listener's reader's last read, which Core's live
+    /// re-read names it by.
+    reader_trace: Cell<Option<TraceId>>,
     /// The outpost's observation clock, which the test moves on.
     observation: Arc<TestClock>,
     /// The window the keyboard focus moves to during the outpost's next
@@ -732,6 +741,7 @@ impl OutpostUnderTest {
             core: RefCell::new(None),
             position: Cell::new(0),
             last_read: Cell::new(None),
+            reader_trace: Cell::new(None),
             observation,
             moves_to,
         }
@@ -1173,6 +1183,7 @@ impl OutpostUnderTest {
         let _ = verbatim_uia::calls::take_failed_reads();
         let arrival = self.listener_arrival();
         self.last_read.set(Some(arrival.trace));
+        self.reader_trace.set(Some(arrival.trace));
         let judged = self.reader.borrow_mut().read(element, kind, arrival);
         (judged, verbatim_uia::calls::take())
     }
@@ -1189,6 +1200,34 @@ impl OutpostUnderTest {
             place,
             left_at: self.listener_left_at.get(),
         }
+    }
+
+    /// Core's live re-read `request` of the listener's reader's last read,
+    /// made by the reader on this thread as its reading thread would, and
+    /// the calls it made.
+    pub fn listener_live_reread(&self, request: u64) -> (Judged, CallCounts) {
+        let trace = self.reader_trace.get().unwrap_or_else(TraceId::mint);
+        self.listener_live_reread_traced(request, trace)
+    }
+
+    /// [`Self::listener_live_reread`] of the read traced `trace`.
+    pub fn listener_live_reread_traced(
+        &self,
+        request: u64,
+        trace: TraceId,
+    ) -> (Judged, CallCounts) {
+        let _ = verbatim_uia::calls::take();
+        let judged = self.reader.borrow_mut().live_reread(request, trace);
+        (judged, verbatim_uia::calls::take())
+    }
+
+    /// Asks the outpost, as Core would, for its live re-read `request` of
+    /// its MSAA focus report traced `trace`, and returns at once.
+    pub fn live_reread(&self, request: u64, trace: TraceId) {
+        self.outpost.handle_command(&CoreToOutpost::LiveReread {
+            request,
+            trace_id: trace,
+        });
     }
 
     /// Has the user moved away from mockapp's application since the
@@ -1285,10 +1324,13 @@ impl OutpostUnderTest {
                         selected_child,
                         text,
                         earlier,
+                        first_cached_ancestor,
+                        answers,
                         ..
                     },
                 window,
                 timing,
+                trace_id,
                 ..
             } => Reported {
                 node,
@@ -1300,6 +1342,9 @@ impl OutpostUnderTest {
                 facts: window,
                 calls: timing.calls,
                 failed_reads: 0,
+                first_cached_ancestor,
+                answers,
+                trace: trace_id,
             },
             other => panic!("the outpost said {other:?}, not a focus with its ancestors"),
         };

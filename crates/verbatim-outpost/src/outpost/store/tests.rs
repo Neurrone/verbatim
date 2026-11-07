@@ -48,6 +48,8 @@ fn focus(nodes: &[NodeId]) -> OutpostToCore {
             text: None,
             earlier: None,
             group: None,
+            answers: None,
+            first_cached_ancestor: None,
         },
     }
 }

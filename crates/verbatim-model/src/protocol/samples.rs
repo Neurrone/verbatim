@@ -62,6 +62,7 @@ fn next(previous: Option<&OutpostToCore>) -> Option<OutpostToCore> {
         },
         OutpostToCore::Fault { .. } => OutpostToCore::TargetExited,
         OutpostToCore::TargetExited => OutpostToCore::IdleAnswer { round: 1 },
-        OutpostToCore::IdleAnswer { .. } => return None,
+        OutpostToCore::IdleAnswer { .. } => OutpostToCore::LiveRereadGone { request: 1 },
+        OutpostToCore::LiveRereadGone { .. } => return None,
     })
 }

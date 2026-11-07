@@ -333,6 +333,17 @@ pub enum NormalizedEvent {
         /// for a report of no group.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         group: Option<FocusGroup>,
+        /// Where the ancestors its focus reader took from its ancestry
+        /// cache begin, rather than read live
+        /// ([`FirstCachedAncestor`]); `None` when none was, or the report
+        /// answers a live re-read.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        first_cached_ancestor: Option<FirstCachedAncestor>,
+        /// The live re-read this report answers, by its request number
+        /// ([`Effect::LiveReread`]): a read of the same element with no
+        /// ancestry cache. `None` for any other report.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        answers: Option<u64>,
     },
     /// A property of a node changed.
     PropertyChanged {
@@ -639,6 +650,78 @@ pub struct Query {
     pub node_id: NodeId,
     /// What to read.
     pub kind: QueryKind,
+}
+
+/// A focus reader's kind: which of an application's two sources of focus
+/// reports read one. With the report's outpost generation it names the
+/// focus reader, which a live re-read is asked of.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub enum FocusReaderKind {
+    /// The focus listener's reading thread for the application.
+    Listener,
+    /// The application's outpost's own reads.
+    Outpost,
+}
+
+/// Where a focus report's cached ancestors begin: the entries of its
+/// ancestors, outermost first, that its focus reader took from its
+/// ancestry cache, its saved ancestors from its last read in the
+/// application, rather than read live. They are the outermost entries,
+/// from the first through `index`, the innermost of them, and lie above
+/// the cache join, where the reader's walk met its ancestry cache.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FirstCachedAncestor {
+    /// The index, in the report's ancestors outermost first, of its
+    /// innermost cached ancestor.
+    pub index: u32,
+    /// The focus reader that read the report, which a live re-read of it
+    /// is asked of.
+    pub reader: FocusReaderKind,
+}
+
+/// Why a report was set aside for a live re-read ([`Effect::LiveReread`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum LiveRereadReason {
+    /// A cached ancestor would have been spoken as entered: it lies below
+    /// the lowest common ancestor of the report and Core's focus ancestry.
+    Entered,
+    /// A cached ancestor is the entry the title rule would speak.
+    Title,
+}
+
+/// A live re-read Core asks of a focus reader: read the element of the
+/// report it set aside again, live, with no ancestry cache, and report it
+/// carrying `request` (`NormalizedEvent::FocusChanged::answers`), or answer
+/// it gone ([`Input::LiveRereadGone`]).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LiveReread {
+    /// Core's number for the request.
+    pub request: u64,
+    /// The outpost generation of the report set aside.
+    pub outpost: OutpostId,
+    /// The focus reader that read it.
+    pub reader: FocusReaderKind,
+    /// The report's trace, by which the focus reader finds its read.
+    pub trace_id: TraceId,
+    /// For the log: the report's focus, the cache join (the entry its
+    /// walk met its ancestry cache at: the entry just inside its innermost
+    /// cached ancestor), the lowest common ancestor Core found, `None` for
+    /// none, and why a cached ancestor would have been spoken.
+    pub logged: LiveRereadLog,
+}
+
+/// What Core logs of a live re-read ([`LiveReread::logged`]).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LiveRereadLog {
+    /// The report's focus.
+    pub focus: NodeId,
+    /// The cache join, and its name.
+    pub cache_join: (NodeId, Option<String>),
+    /// The lowest common ancestor of the report and Core's focus ancestry,
+    /// when they share one.
+    pub lowest_common_ancestor: Option<NodeId>,
+    /// Why a cached ancestor would have been spoken.
+    pub reason: LiveRereadReason,
 }
 
 /// One input to the reducer. Strictly accessibility-shaped.
@@ -998,6 +1081,18 @@ pub enum Input {
     /// ([`HookForeground`]), moves attention, and keeps its foreground
     /// record.
     Foreground(ForegroundWindow),
+    /// A focus reader answered the live re-read `request` gone
+    /// ([`Effect::LiveReread`]): its element is gone, or the reader no
+    /// longer holds the read the re-read names.
+    LiveRereadGone {
+        /// The outpost generation the answer came through.
+        outpost: OutpostId,
+        /// The request it answers.
+        request: u64,
+    },
+    /// The focus listener was replaced: every live re-read asked of it
+    /// ends with no answer.
+    ListenerReplaced,
 }
 
 /// What a [`Input::Script`] runs.
@@ -1285,4 +1380,8 @@ pub enum Effect {
     },
     /// Show a window of the GUI.
     Show(GuiRequest),
+    /// Ask a focus reader for a live re-read of a report Core set aside
+    /// because it would have spoken a cached ancestor; the shell logs it
+    /// and routes it to the listener or the outpost.
+    LiveReread(LiveReread),
 }

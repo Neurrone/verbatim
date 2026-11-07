@@ -276,6 +276,19 @@ pub struct UiaFocusRead {
     /// repeat read while the focus before it waited for Core's judgement
     /// (`docs/design/focus-pipeline-rework.md`, "One object, one identity").
     pub same_as_last: Option<crate::EarlierElement>,
+    /// Where the ancestors taken from the reading thread's ancestry cache
+    /// begin: the index, in [`Self::ancestors`] nearest first, of the
+    /// first one not read live, every one from there on reused from its
+    /// last read in the application. `None` when every ancestor was read
+    /// live.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cached_from: Option<u32>,
+    /// The live re-read this read answers, by Core's request number
+    /// (`verbatim_model::LiveReread`): a read of the held element of the
+    /// thread's last read, with no ancestry cache, which carries no
+    /// marker of its own. `None` for any other read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub answers: Option<u64>,
 }
 
 /// The thread that raised an MSAA `WinEvent` and when, as every hook that
@@ -468,6 +481,23 @@ pub enum DeliveredFact {
         /// The event's `idChild`.
         id_child: i32,
     },
+    /// The focus listener answers Core's live re-read `request` gone: the
+    /// application has no reading thread, or its thread no longer holds
+    /// the read the re-read names, or the element is gone. The outpost
+    /// passes it on to Core ([`OutpostToCore::LiveRereadGone`]).
+    UiaLiveRereadGone {
+        /// Core's request.
+        request: u64,
+    },
+    /// Core's live re-read `request` of the outpost's own MSAA report
+    /// traced `trace_id` ([`CoreToOutpost::LiveReread`]), taken into the
+    /// outpost's intake as a fact.
+    MsaaLiveReread {
+        /// Core's request.
+        request: u64,
+        /// The trace of the report to read again.
+        trace_id: TraceId,
+    },
 }
 
 impl DeliveredFact {
@@ -488,9 +518,10 @@ impl DeliveredFact {
 
     /// Whether this fact is part of a UIA focus's read: a marker, the read,
     /// a drop, a marked selection or notification, which resolves its
-    /// marker as a read does, or the end of a listener's reads. The
-    /// supervisor relays these in order and never drops one, since an
-    /// outpost waits on a marker until its read or drop arrives.
+    /// marker as a read does, the end of a listener's reads, or a live
+    /// re-read's answer of gone. The supervisor relays these in order and
+    /// never drops one, since an outpost waits on a marker until its read
+    /// or drop arrives, and Core on a live re-read until its answer.
     #[must_use]
     pub fn is_focus_read(&self) -> bool {
         matches!(
@@ -500,6 +531,7 @@ impl DeliveredFact {
                 | DeliveredFact::UiaFocusDropped { .. }
                 | DeliveredFact::UiaMarked { .. }
                 | DeliveredFact::UiaFocusReadsEnded
+                | DeliveredFact::UiaLiveRereadGone { .. }
         )
     }
 
@@ -537,7 +569,9 @@ impl DeliveredFact {
             | DeliveredFact::UiaFocusRead { .. }
             | DeliveredFact::UiaFocusDropped { .. }
             | DeliveredFact::UiaFocusReadsEnded
-            | DeliveredFact::UiaMarked { .. } => return None,
+            | DeliveredFact::UiaMarked { .. }
+            | DeliveredFact::UiaLiveRereadGone { .. }
+            | DeliveredFact::MsaaLiveReread { .. } => return None,
             DeliveredFact::UiaNotification {
                 snapshot,
                 notification,
@@ -710,6 +744,19 @@ pub enum CoreToOutpost {
     /// has not exited within its time limit. Nothing is answered: the pipe
     /// closing and the process exiting are the answer.
     Shutdown,
+    /// A live re-read of the outpost's last MSAA focus report, traced
+    /// `trace_id`, which Core set aside because it would have spoken a
+    /// cached ancestor: the object at the report's event address is read
+    /// again with its ancestors live and reported carrying `request`
+    /// (`NormalizedEvent::FocusChanged::answers`), or, when that is not the
+    /// last report or the address gives no object, answered
+    /// [`OutpostToCore::LiveRereadGone`].
+    LiveReread {
+        /// Core's request.
+        request: u64,
+        /// The report's trace.
+        trace_id: TraceId,
+    },
     /// To a spare outpost (`books/dev/src/explanation/design/focus-pipeline.md`, section 19): the
     /// application it watches from now on, for the rest of its life. It
     /// installs its process-scoped `WinEvent` hook for that application,
@@ -756,7 +803,7 @@ impl CoreToOutpost {
             | CoreToOutpost::Ping { .. }
             | CoreToOutpost::Shutdown
             | CoreToOutpost::ForwardingEnded { .. } => Kind::Lifecycle,
-            CoreToOutpost::DeliverFact { .. } => Kind::Routed,
+            CoreToOutpost::DeliverFact { .. } | CoreToOutpost::LiveReread { .. } => Kind::Routed,
             CoreToOutpost::Fetches(_) => Kind::Configuration,
         }
     }
@@ -819,6 +866,21 @@ pub enum CoreToListener {
     /// Shut down cleanly and exit, as an outpost does
     /// ([`CoreToOutpost::Shutdown`]).
     Shutdown,
+    /// A live re-read of the last focus the reading thread of `application`
+    /// read, traced `trace_id`, which Core set aside because it would have
+    /// spoken a cached ancestor: the thread reads its held element again
+    /// with no ancestry cache and sends the read, carrying `request`
+    /// ([`UiaFocusRead::answers`]), to the application's outpost, or
+    /// answers [`DeliveredFact::UiaLiveRereadGone`] there when it has no
+    /// such read.
+    LiveReread {
+        /// Core's request.
+        request: u64,
+        /// The application whose reading thread read the report.
+        application: Pid,
+        /// The report's trace.
+        trace_id: TraceId,
+    },
 }
 
 impl CoreToListener {
@@ -829,7 +891,9 @@ impl CoreToListener {
             CoreToListener::Ping { sent_at_us, .. }
             | CoreToListener::HookInstalled { sent_at_us, .. }
             | CoreToListener::HookRemoved { sent_at_us, .. } => *sent_at_us = now(),
-            CoreToListener::IdleQuery { .. } | CoreToListener::Shutdown => {}
+            CoreToListener::IdleQuery { .. }
+            | CoreToListener::Shutdown
+            | CoreToListener::LiveReread { .. } => {}
         }
     }
 
@@ -841,7 +905,9 @@ impl CoreToListener {
             CoreToListener::Ping { sent_at_us, .. }
             | CoreToListener::HookInstalled { sent_at_us, .. }
             | CoreToListener::HookRemoved { sent_at_us, .. } => *sent_at_us,
-            CoreToListener::IdleQuery { .. } | CoreToListener::Shutdown => 0,
+            CoreToListener::IdleQuery { .. }
+            | CoreToListener::Shutdown
+            | CoreToListener::LiveReread { .. } => 0,
         }
     }
 
@@ -849,7 +915,7 @@ impl CoreToListener {
     #[must_use]
     pub fn kind(&self) -> Kind {
         match self {
-            CoreToListener::IdleQuery { .. } => Kind::Ask,
+            CoreToListener::IdleQuery { .. } | CoreToListener::LiveReread { .. } => Kind::Ask,
             CoreToListener::HookInstalled { .. }
             | CoreToListener::HookRemoved { .. }
             | CoreToListener::Ping { .. }
@@ -1152,6 +1218,13 @@ pub enum OutpostToCore {
         /// The round answered.
         round: u64,
     },
+    /// Core's live re-read `request` is answered gone: its focus reader
+    /// has no such read, or its element is gone, or the outpost dropped
+    /// the read that answered it. Sent in order with the outpost's events.
+    LiveRereadGone {
+        /// Core's request.
+        request: u64,
+    },
 }
 
 /// Messages from the focus listener to verbatim.exe.
@@ -1289,7 +1362,8 @@ impl OutpostToCore {
             OutpostToCore::Reply { .. } | OutpostToCore::IdleAnswer { .. } => Kind::Answer,
             OutpostToCore::Event { .. }
             | OutpostToCore::Fault { .. }
-            | OutpostToCore::NotResponding { .. } => Kind::Report,
+            | OutpostToCore::NotResponding { .. }
+            | OutpostToCore::LiveRereadGone { .. } => Kind::Report,
             OutpostToCore::Ready { .. }
             | OutpostToCore::SpareReady { .. }
             | OutpostToCore::TargetExited
@@ -1320,7 +1394,8 @@ impl OutpostToCore {
             | OutpostToCore::Fault { .. }
             | OutpostToCore::NotResponding { .. }
             | OutpostToCore::TargetExited
-            | OutpostToCore::IdleAnswer { .. } => false,
+            | OutpostToCore::IdleAnswer { .. }
+            | OutpostToCore::LiveRereadGone { .. } => false,
         }
     }
 
@@ -1339,7 +1414,8 @@ impl OutpostToCore {
             | OutpostToCore::Fault { .. }
             | OutpostToCore::NotResponding { .. }
             | OutpostToCore::TargetExited
-            | OutpostToCore::IdleAnswer { .. } => {}
+            | OutpostToCore::IdleAnswer { .. }
+            | OutpostToCore::LiveRereadGone { .. } => {}
         }
     }
 
@@ -1395,7 +1471,8 @@ impl OutpostToCore {
             | OutpostToCore::Fault { .. }
             | OutpostToCore::NotResponding { .. }
             | OutpostToCore::TargetExited
-            | OutpostToCore::IdleAnswer { .. } => {}
+            | OutpostToCore::IdleAnswer { .. }
+            | OutpostToCore::LiveRereadGone { .. } => {}
         }
     }
 }
@@ -1579,7 +1656,8 @@ impl OutpostToCore {
             | OutpostToCore::Fault { .. }
             | OutpostToCore::NotResponding { .. }
             | OutpostToCore::TargetExited
-            | OutpostToCore::IdleAnswer { .. } => {}
+            | OutpostToCore::IdleAnswer { .. }
+            | OutpostToCore::LiveRereadGone { .. } => {}
         }
         named
     }

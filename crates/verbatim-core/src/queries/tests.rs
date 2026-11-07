@@ -85,6 +85,8 @@ fn focus(
             text: text.map(Box::new),
             earlier,
             group: None,
+            answers: None,
+            first_cached_ancestor: None,
         },
     )
 }

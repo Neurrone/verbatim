@@ -8,7 +8,7 @@ use std::ffi::c_void;
 use windows::Win32::Foundation::{CloseHandle, HWND};
 use windows::Win32::UI::WindowsAndMessaging::{
     GA_PARENT, GA_ROOT, GA_ROOTOWNER, GWL_STYLE, GetAncestor, GetForegroundWindow,
-    GetWindowLongPtrW, InternalGetWindowText, WS_DISABLED, WS_SYSMENU,
+    GetWindowLongPtrW, WS_DISABLED, WS_SYSMENU,
 };
 
 use verbatim_model::{Pid, WindowFacts, WindowHandle};
@@ -173,16 +173,7 @@ pub(super) fn window_style(handle: isize) -> WindowStyle {
     }
 }
 
-/// `handle`'s window text, read with `InternalGetWindowText`, which never
-/// sends the window a message. `None` when the window has no text.
-pub(super) fn window_text(handle: isize) -> Option<String> {
-    let mut buffer = [0u16; 512];
-    // SAFETY: the buffer outlives the call, which writes at most its length.
-    let length = unsafe { InternalGetWindowText(hwnd(handle), &mut buffer) };
-    let length = usize::try_from(length).ok()?;
-    let text = String::from_utf16_lossy(&buffer[..length.min(buffer.len())]);
-    (!text.trim().is_empty()).then_some(text)
-}
+pub(super) use verbatim_win32::window::window_text;
 
 /// `GetForegroundWindow()` if it is `target_pid`'s ([`served_by`]), else
 /// `None`. Always a genuine top-level window when it returns `Some`.

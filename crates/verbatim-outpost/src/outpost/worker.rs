@@ -39,9 +39,9 @@ use std::time::Instant;
 use verbatim_ia2::acquire::Purpose;
 use verbatim_ia2::{CHILDID_SELF, WinEventKind};
 use verbatim_model::{
-    Backend, CallCounts, CaretReport, CaretWatch, EarlierElement, FocusGroup, FocusText, NodeId,
-    NodeSnapshot, NormalizedEvent, PropertyChange, Role, State, StateSet, TextOp, TextPoint,
-    TextReply, TraceId, WindowFacts,
+    Backend, CallCounts, CaretReport, CaretWatch, EarlierElement, FirstCachedAncestor, FocusGroup,
+    FocusReaderKind, FocusText, NodeId, NodeSnapshot, NormalizedEvent, PropertyChange, Role, State,
+    StateSet, TextOp, TextPoint, TextReply, TraceId, WindowFacts,
 };
 use verbatim_uia::{
     Cached, Fill, HelpTextRefresh, Interning as _, Kept, SelectedItem, SuggestionsRefresh,
@@ -77,6 +77,7 @@ use crate::text::{Checked, Watched};
 use verbatim_core::focus_rules::{self, ChangeKind, HeldNode};
 use verbatim_reader_rules::Window;
 use verbatim_reader_rules::acceptance::{self, EventName};
+use verbatim_reader_rules::ancestry_cache::{CacheUse, title_check};
 use verbatim_win32::window::SystemWindows;
 use verbatim_win32::window::window_class_name;
 use verbatim_win32::window::{
@@ -818,13 +819,13 @@ struct Worker<'a> {
     /// a control's own focus event to its focused child.
     redirected: bool,
     /// The listener's mark, for the UIA focus about to be reported, that
-    /// its value is its first selected item's name: `None` leaves the mark
-    /// as it was, as every report but a UIA focus's does.
-    #[expect(
-        clippy::option_option,
-        reason = "a mark to set, to clear, or to leave as it was"
-    )]
-    value_from_selection: Option<Option<NodeId>>,
+    /// its value is its first selected item's name, which its held report
+    /// keeps (`reducer::Focus::value_from_selection`).
+    value_from_selection: bool,
+    /// Core's live re-read the focus about to be reported answers, until
+    /// its report is sent; one still here when the program has handled the
+    /// entry was dropped, and is answered gone ([`Worker::answer_gone`]).
+    answers: Option<u64>,
     /// The focus path of the UIA focus about to be reported, which its
     /// entry finds its element by before it is committed.
     focus_path: Option<FocusPath>,
@@ -857,7 +858,8 @@ impl<'a> Worker<'a> {
             pending_caret_read: None,
             cut: None,
             redirected: false,
-            value_from_selection: None,
+            value_from_selection: false,
+            answers: None,
             focus_path: None,
             earlier: None,
             stale: None,
@@ -1920,9 +1922,17 @@ impl Worker<'_> {
     /// events and the menu rules know where focus is. Then, once committed,
     /// the slider a `SensitiveSlider`'s thumb is in is looked up, and the
     /// work a terminal owes is attempted.
+    ///
+    /// Its source names the focus reader that read it, for its
+    /// `first_cached_ancestor`, computed here from the entries it emits,
+    /// after every filter and rule: the innermost of them that a walk took
+    /// from the ancestry cache ([`RequestContext::note_cached`]). A report
+    /// answering Core's live re-read ([`Worker::answers`]) carries the
+    /// request and no cached ancestor.
     #[expect(
         clippy::too_many_arguments,
-        reason = "a focus report has this many parts"
+        clippy::too_many_lines,
+        reason = "a focus report has this many parts, built and committed in order"
     )]
     fn emit_focus(
         &mut self,
@@ -1931,10 +1941,11 @@ impl Worker<'_> {
         backend: Backend,
         window: Option<isize>,
         node: NodeSnapshot,
-        foreground: bool,
+        source: FocusSource,
         object: Option<Object>,
         (ancestors, selected_child): read::Enrichment,
     ) {
+        let foreground = source == FocusSource::WholeWindow;
         // A focus in a window of a process Verbatim ignores is not
         // reported, as Core would drop it (`books/dev/src/how-to/e2e.md`).
         if let Some(hwnd) = window
@@ -1969,7 +1980,20 @@ impl Worker<'_> {
         } else {
             Evidence::Msaa
         };
-        let reported = self.focus_to_judge(&node, &ancestors, window, foreground);
+        let msaa_event = self.msaa_event;
+        let mut reported = self.focus_to_judge(&node, &ancestors, window, foreground);
+        reported.value_from_selection = std::mem::take(&mut self.value_from_selection);
+        let answers = self.answers;
+        let first_cached_ancestor = self.first_cached_ancestor(source, &ancestors);
+        let msaa_report =
+            msaa_event
+                .filter(|_| source == FocusSource::MsaaFocus)
+                .map(|(event, simple_child)| reducer::MsaaReport {
+                    trace,
+                    event,
+                    simple_child,
+                    observed_at_us,
+                });
         let (text, read_at) = if foreground {
             (None, None)
         } else {
@@ -2000,6 +2024,8 @@ impl Worker<'_> {
             text: text.map(Box::new),
             earlier,
             group: self.group,
+            first_cached_ancestor,
+            answers,
         };
         let message = self.event_message(trace, observed_at_us, backend, window, event);
         let mut effects = Effects {
@@ -2007,7 +2033,6 @@ impl Worker<'_> {
             report: Some(Report::Reported(reported, evidence)),
             dialog: Some(memo),
             caret_read: read_at.map(|at| (node_id, at)),
-            value_from_selection: self.value_from_selection.take(),
             focus_path: self.focus_path.take(),
             stale: self.stale.take(),
             ..Effects::default()
@@ -2029,6 +2054,7 @@ impl Worker<'_> {
                     event: (trace, observed_at_us),
                     redirected: std::mem::take(&mut self.redirected),
                     caret,
+                    msaa_report,
                 },
             );
             effects.follow = Some(follow);
@@ -2038,7 +2064,74 @@ impl Worker<'_> {
             return;
         }
         self.reported = true;
+        // The live re-read is answered by the report sent.
+        self.answers = None;
         self.after_follow(node_id, role, slider);
+    }
+
+    /// The `first_cached_ancestor` of a report from `source` whose
+    /// ancestors are `ancestors`, as emitted: the innermost of them a walk
+    /// took from the ancestry cache, taking the cached ancestors noted;
+    /// none for a report answering a live re-read, or from a source that
+    /// reuses no cache.
+    fn first_cached_ancestor(
+        &self,
+        source: FocusSource,
+        ancestors: &[NodeSnapshot],
+    ) -> Option<FirstCachedAncestor> {
+        let cached = self.context.take_cached();
+        let reader = source.reader().filter(|_| self.answers.is_none())?;
+        let ids: Vec<NodeId> = ancestors.iter().map(|ancestor| ancestor.id).collect();
+        focus_rules::first_cached_ancestor(&ids, |id| cached.contains(&id))
+            .map(|index| FirstCachedAncestor { index, reader })
+    }
+
+    /// Answers Core's live re-read the entry being handled was to answer,
+    /// gone, when no report answered it: its object was gone, or a rule
+    /// dropped its report. So a pending live re-read always ends.
+    fn answer_gone(&mut self) {
+        if let Some(request) = self.answers.take() {
+            tracing::debug!(
+                request,
+                "a live re-read was not answered by a report; answered gone"
+            );
+            self.commit(Effects {
+                result: Some(OutpostToCore::LiveRereadGone { request }),
+                ..Effects::default()
+            });
+        }
+    }
+
+    /// Core's live re-read `request` of this outpost's MSAA focus report
+    /// traced `trace`, its last report ([`reducer::MsaaReport`]): the object
+    /// at the report's event address read again, acquired from the event
+    /// as it was (`AccessibleObjectFromEvent`), its ancestors walked live
+    /// with no ancestry cache, and reported carrying `request`. The
+    /// report's verdict stands: NVDA's checks are not made again. Answered
+    /// gone when the last report is not that one, or the address gives no
+    /// object.
+    fn msaa_live_reread(&mut self, request: u64, trace: TraceId) {
+        self.answers = Some(request);
+        let stored = self
+            .context
+            .follow(|follow| follow.tracking.msaa_report)
+            .filter(|report| report.trace == trace);
+        if let Some(report) = stored {
+            let (hwnd, id_object, id_child) = report.event;
+            if let Some(candidate) =
+                verbatim_ia2::acquire::focus_candidate(hwnd, id_object, id_child)
+            {
+                let candidates = read::msaa_candidates(self.context);
+                let node = candidate.read(self.context.nodes(), Some(&candidates));
+                self.report_msaa_focus(
+                    node,
+                    (report.event, report.simple_child),
+                    (trace, report.observed_at_us),
+                    &candidates,
+                );
+            }
+        }
+        self.answer_gone();
     }
 
     /// What follows the commit that made `node_id`, of `role`, the followed
@@ -2081,9 +2174,26 @@ impl Worker<'_> {
         )
     }
 
-    /// The last focus this outpost reported, with its ancestors.
+    /// The last focus this outpost reported, with its ancestors: the
+    /// outpost's ancestry cache, where the next walk may stop and reuse the
+    /// rest. Empty, so that the walk reads live to the top or the process
+    /// boundary, when a window title saved with it reads otherwise now or
+    /// its window is gone (the title check, local calls), and for a read
+    /// answering Core's live re-read, which reuses nothing.
     fn focus_chain(&self) -> Vec<NodeSnapshot> {
-        let chain = self.context.follow(|follow| follow.tracking.chain.clone());
+        if self.answers.is_some() {
+            return Vec::new();
+        }
+        let (chain, titles) = self.context.follow(|follow| {
+            (
+                follow.tracking.chain.clone(),
+                follow.tracking.titles.clone(),
+            )
+        });
+        if title_check(&titles, verbatim_win32::window::live_title) == CacheUse::WalkLive {
+            tracing::debug!("a window title of the ancestry cache changed; the walk reads live");
+            return Vec::new();
+        }
         read::held_prefix(self.context, chain)
     }
 
@@ -2966,26 +3076,26 @@ impl Worker<'_> {
     /// event's cache can hold no name for an item an application names
     /// late.
     fn selection_as_value(&mut self, parts: &UiaSnapshotFact) -> Option<NormalizedEvent> {
-        // The report's focus the listener marked as one whose value is its
-        // first selected item's name, of every report the outpost has not
-        // released.
-        let marked = self
-            .context
-            .follow(|follow| follow.tracking.value_from_selection)?;
-        let focus = self.context.held().is_a_focus(marked).then_some(marked)?;
-        let focused = self
-            .context
-            .store
-            .element_of(focus)
-            .and_then(|agile| agile.resolve().ok())?;
+        // The reports' focuses the listener marked as ones whose value is
+        // their first selected item's name, of every report the outpost has
+        // not released, the newest first: the selected item is the child of
+        // one of them.
+        let marked: Vec<NodeId> = self.context.held().value_from_selection().collect();
         let uia = self.client.uia()?;
         let request = uia.request_fixed::<SelectedItem>().ok()?;
-        let Some(child) = uia
-            .find_child_by_runtime_id(focused.live(), &parts.runtime_id, &request)
-            .ok()
-            .flatten()
-        else {
-            tracing::debug!("a selection under a focus whose value it is not: not its child");
+        let found = marked.into_iter().find_map(|focus| {
+            let focused = self
+                .context
+                .store
+                .element_of(focus)
+                .and_then(|agile| agile.resolve().ok())?;
+            uia.find_child_by_runtime_id(focused.live(), &parts.runtime_id, &request)
+                .ok()
+                .flatten()
+                .map(|child| (focus, child))
+        });
+        let Some((focus, child)) = found else {
+            tracing::debug!("a selection under no focus whose value it is: not its child");
             return None;
         };
         let item = child.read();
@@ -3062,7 +3172,20 @@ impl Worker<'_> {
                 id_child,
             } => self.msaa_focus((hwnd, id_object, id_child), front, trace, observed_at_us),
             DeliveredFact::UiaFocusRead { read, .. } => {
+                self.answers = read.answers;
                 self.uia_focus(&read, trace, observed_at_us);
+                self.answer_gone();
+            }
+            // The listener's answer to Core's live re-read of gone, passed on
+            // in order with this outpost's events.
+            DeliveredFact::UiaLiveRereadGone { request } => {
+                self.commit(Effects {
+                    result: Some(OutpostToCore::LiveRereadGone { request }),
+                    ..Effects::default()
+                });
+            }
+            DeliveredFact::MsaaLiveReread { request, trace_id } => {
+                self.msaa_live_reread(request, trace_id);
             }
             // The intake resolves these; none reaches the worker.
             DeliveredFact::UiaFocusMarker { .. }
@@ -3313,7 +3436,7 @@ impl Worker<'_> {
             backend,
             Some(hwnd),
             node,
-            true,
+            FocusSource::WholeWindow,
             None,
             (Vec::new(), None),
         );
@@ -3473,7 +3596,7 @@ impl Worker<'_> {
             Backend::Msaa,
             Some(hwnd),
             node,
-            false,
+            FocusSource::MsaaFocus,
             object.clone(),
             enrichment,
         );
@@ -3514,8 +3637,11 @@ impl Worker<'_> {
             // duplicated fact", the verdicts): in a window it judges not
             // UIA, its MSAA focus speaks, and the listener's read is
             // dropped.
+            // A live re-read's answer keeps the verdict its report was
+            // given, as it reads the same element again.
             let judged_window = read.window.or(Some(read.hwnd).filter(|&hwnd| hwnd != 0));
-            if let Some(window) = judged_window
+            if read.answers.is_none()
+                && let Some(window) = judged_window
                 && read::own_window_verdict(context, window) != Some(true)
             {
                 tracing::debug!(
@@ -3548,6 +3674,16 @@ impl Worker<'_> {
             tracing::debug!(%trace, "UIA focus lost: a UIA window's element on its chain's way could not be read");
             return;
         };
+        // The ancestors the listener took from its ancestry cache, the
+        // facts from its cache join on, are cached ancestors of the report.
+        if let Some(from) = read.cached_from {
+            context.note_cached(
+                read.ancestors
+                    .iter()
+                    .skip(usize::try_from(from).unwrap_or(usize::MAX))
+                    .filter_map(|ancestor| context.nodes().existing(&ancestor.snapshot.runtime_id)),
+            );
+        }
         // Committed with the focus; the entry finds the focus's element by
         // it before then.
         self.focus_path = Some(FocusPath::of(read));
@@ -3578,14 +3714,14 @@ impl Worker<'_> {
         if self.refused() {
             return;
         }
-        self.value_from_selection = Some(read.value_from_selection.then_some(node.id));
+        self.value_from_selection = read.value_from_selection;
         self.emit_focus(
             trace,
             observed_at_us,
             Backend::Uia,
             reported,
             node,
-            false,
+            FocusSource::ListenerRead,
             Some(Object::Uia(runtime_id.clone())),
             (ancestors, selected),
         );
@@ -3846,7 +3982,7 @@ impl Worker<'_> {
             Backend::Msaa,
             Some(window),
             node,
-            false,
+            FocusSource::MenuOpening,
             Some(Object::Msaa(hwnd, id_object, id_child)),
             (ancestors, None),
         );
@@ -4156,6 +4292,7 @@ impl Worker<'_> {
                 event: (trace, observed_at_us),
                 redirected: false,
                 caret,
+                msaa_report: None,
             },
         );
         follow.adopt = adopt;
@@ -4239,6 +4376,36 @@ fn judged_focus(
         event,
         simple_child,
         dialog_texts,
+        value_from_selection: false,
+    }
+}
+
+/// What a focus report came from, for [`Worker::emit_focus`]: the focus
+/// reader that read it, when it is one whose walks may reuse an ancestry
+/// cache, and whether it is a whole-window focus.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FocusSource {
+    /// The focus listener's read of a UIA focus, its live re-read's answer
+    /// among them.
+    ListenerRead,
+    /// The outpost's own MSAA focus, its live re-read's answer among them.
+    MsaaFocus,
+    /// A whole-window focus, from a foreground change, which reads no
+    /// chain.
+    WholeWindow,
+    /// An MSAA menu opening, whose chain is at most Core's hidden frame.
+    MenuOpening,
+}
+
+impl FocusSource {
+    /// The focus reader whose ancestry cache the report's walk may have
+    /// reused, which a live re-read of it is asked of.
+    fn reader(self) -> Option<FocusReaderKind> {
+        match self {
+            Self::ListenerRead => Some(FocusReaderKind::Listener),
+            Self::MsaaFocus => Some(FocusReaderKind::Outpost),
+            Self::WholeWindow | Self::MenuOpening => None,
+        }
     }
 }
 
@@ -4302,6 +4469,8 @@ struct FocusMade {
     redirected: bool,
     /// The caret read with its report, if any.
     caret: Option<CaretReport>,
+    /// For an MSAA focus report, what a live re-read of it needs.
+    msaa_report: Option<reducer::MsaaReport>,
 }
 
 /// `made` as the follow its commit applies, computed before the commit
@@ -4319,7 +4488,18 @@ fn follow_of(context: &Context, made: FocusMade) -> (Follow, Option<NodeId>) {
         event: (trace, observed_at_us),
         redirected,
         caret,
+        msaa_report,
     } = made;
+    // The window text of each window entry of the chain, the outpost's
+    // ancestry cache, for its title check: local calls.
+    let titles = chain
+        .iter()
+        .filter_map(|node| node.details.window)
+        .map(|handle| {
+            let hwnd = super::window::hwnd_of(handle);
+            (hwnd, super::window::window_text(hwnd))
+        })
+        .collect();
     let terminal = role == Role::Terminal && matches!(object, Some(Object::Uia(_)));
     let console = window
         .is_some_and(|hwnd| window_class_name(hwnd) == verbatim_reader_rules::CONSOLE_WINDOW_CLASS);
@@ -4347,6 +4527,8 @@ fn follow_of(context: &Context, made: FocusMade) -> (Follow, Option<NodeId>) {
         trace,
         observed_at_us,
         adopt: true,
+        titles,
+        msaa_report,
     };
     (follow, to_find)
 }

@@ -252,6 +252,20 @@ each duplicated fact", the verdicts). A listener's read in a window the
 outpost judges not UIA, by the read's nearest window, judged at the read's
 observation, is dropped (`Worker::uia_focus`).
 
+The ancestry cache ([verbatim-core](verbatim-core.md), "The ancestry
+cache"). A reading thread's `LastFocus` keeps its read's ancestors, its
+ancestry cache, with the window text of each window entry, read when the
+entry was read live. A read stops at the cache only while every saved
+title reads the same now (`title_check`, local calls); the ancestors it
+takes from the cache are marked by `UiaFocusRead::cached_from`.
+`CoreToListener::LiveReread` queues a job of kind `FocusEvent::LiveReread`
+on the application's reading thread, with a marker of its own that no
+outpost waits on and the report's trace: `FocusReader::live_reread` walks
+the held element of the last read with that trace again, by the classic
+walk with no cache, keeps the read's place, and sends the read carrying
+`answers`; with no reading thread, no such read, or an abandoned read, the
+answer is `DeliveredFact::UiaLiveRereadGone` (`MarkerOwed`).
+
 ## Public API
 
 `run_listener` is the listener runtime (`docs/design/communication.md`,

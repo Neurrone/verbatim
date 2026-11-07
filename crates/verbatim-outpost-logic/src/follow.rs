@@ -63,9 +63,29 @@ pub struct Tracking {
     pub focus_role: Option<Role>,
     /// The dialog the last foreground report gathered text for.
     pub dialog: DialogMemo,
-    /// The UIA focus whose value is its first selected item's name, as the
-    /// listener read it (`UiaFocusRead::value_from_selection`).
-    pub value_from_selection: Option<NodeId>,
+    /// The window text of each window entry of `chain`, the outpost's
+    /// ancestry cache, read when it was reported, which the title check
+    /// reads again before a walk reuses it
+    /// (`verbatim_reader_rules::ancestry_cache`).
+    pub titles: Vec<verbatim_reader_rules::ancestry_cache::SavedTitle>,
+    /// The last focus this outpost reported, when it was an MSAA focus: its
+    /// trace, its event's address and its observation, which Core's live
+    /// re-read of it reads again (`CoreToOutpost::LiveReread`).
+    pub msaa_report: Option<MsaaReport>,
+}
+
+/// An MSAA focus report of the outpost's, as a live re-read finds it again
+/// ([`Tracking::msaa_report`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MsaaReport {
+    /// The report's trace.
+    pub trace: TraceId,
+    /// Its event's address: window, object id and child id.
+    pub event: (isize, i32, i32),
+    /// Whether its object was acquired as a simple child.
+    pub simple_child: bool,
+    /// When its event was observed, on the run's shared clock.
+    pub observed_at_us: u64,
 }
 
 /// The node whose caret was last read in a committed read, and when that
@@ -257,6 +277,12 @@ pub struct Follow {
     pub trace: TraceId,
     /// The event's observation, in microseconds on the run's shared clock.
     pub observed_at_us: u64,
+    /// The window text of each window entry of `chain`, read as it was
+    /// reported ([`Tracking::titles`]).
+    pub titles: Vec<verbatim_reader_rules::ancestry_cache::SavedTitle>,
+    /// For an MSAA focus report, what a live re-read of it needs
+    /// ([`Tracking::msaa_report`]).
+    pub msaa_report: Option<MsaaReport>,
     /// Whether it is adopted as the followed focus: false for a focus-now
     /// answer naming the focus already followed, under the same node,
     /// which keeps the tracking and the intake's marks as they are and is
@@ -313,9 +339,6 @@ pub struct Change {
     pub foreground: Option<(NodeId, Role, u64)>,
     /// The dialog memo the report leaves.
     pub dialog: Option<DialogMemo>,
-    /// The focus listener's mark of a UIA focus whose value is its first
-    /// selected item; `None` leaves the mark as it was.
-    pub value_from_selection: Option<Option<NodeId>>,
     /// The focus path of a UIA focus.
     pub focus_path: Option<FocusPath>,
     /// The focus's element found after its report, with its slider's when
@@ -619,6 +642,8 @@ pub fn apply(facts: &mut Facts, generation: u64, change: &Change, clock: Clock) 
             tracking.focus_role = Some(follow.role);
             tracking.window = follow.window;
             tracking.chain.clone_from(&follow.chain);
+            tracking.titles.clone_from(&follow.titles);
+            tracking.msaa_report = follow.msaa_report;
             tracking.batch = Some(follow.batch);
         }
         follow_state.retarget(&follow.target, &mut applied);
@@ -632,9 +657,6 @@ pub fn apply(facts: &mut Facts, generation: u64, change: &Change, clock: Clock) 
     }
     if let Some(path) = &change.focus_path {
         follow_state.focus_path = Some(path.clone());
-    }
-    if let Some(value_from_selection) = change.value_from_selection {
-        follow_state.tracking.value_from_selection = value_from_selection;
     }
     if let Some((node, role, batch)) = change.foreground {
         follow_state.end_watch_elsewhere(node, &mut applied);
@@ -798,6 +820,8 @@ mod tests {
             value_from_selection: false,
             window: None,
             same_as_last: None,
+            answers: None,
+            cached_from: None,
         }
     }
 

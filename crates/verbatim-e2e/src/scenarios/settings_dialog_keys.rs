@@ -147,5 +147,8 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
         "control+shift+tab",
         &["Categories: list Alt+c", "Terminal 3 of 3"],
     );
+    // Every move was within the dialog, whose ancestors Core holds: no
+    // report would have spoken a cached ancestor.
+    scenario.expect_live_re_reads(0);
     close_with(scenario, "escape");
 }

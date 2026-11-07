@@ -316,6 +316,11 @@ struct RequestContext<'a> {
     /// The program's own: its request, the caret events waiting when it
     /// was dispatched, and its worker's charge.
     program: Program<'a>,
+    /// The nodes the program's walks took from the outpost's ancestry
+    /// cache, the previous chain, above their cache join
+    /// ([`read::join_cache`]): the report's cached ancestors, from which its
+    /// `first_cached_ancestor` is computed as it is emitted.
+    joined_cache: RefCell<Vec<NodeId>>,
     /// The observation its verdicts are judged at: its entry's event's, or,
     /// when `None`, now on the arbitrator's observation clock at each
     /// judgement (`docs/design/focus-pipeline-rework.md`, "Who owns each
@@ -345,6 +350,7 @@ impl<'a> RequestContext<'a> {
             nodes: context.store.nodes_for(tag),
             facts: RefCell::new(facts),
             program_text: RefCell::default(),
+            joined_cache: RefCell::default(),
             program: Program {
                 request,
                 waiting,
@@ -353,6 +359,18 @@ impl<'a> RequestContext<'a> {
             },
             judged_at: None,
         }
+    }
+
+    /// Notes `nodes`, entries a walk took from the ancestry cache above its
+    /// cache join, as cached ancestors of the report the program makes.
+    fn note_cached(&self, nodes: impl IntoIterator<Item = NodeId>) {
+        self.joined_cache.borrow_mut().extend(nodes);
+    }
+
+    /// The cached ancestors the program's walks noted since the last call,
+    /// taken.
+    fn take_cached(&self) -> Vec<NodeId> {
+        std::mem::take(&mut *self.joined_cache.borrow_mut())
     }
 
     /// Judges every verdict the program asks for at the observation
@@ -1485,6 +1503,19 @@ impl Outpost {
                         ..EventTiming::default()
                     },
                 ),
+                Source::Other,
+            ),
+            // Core's live re-read of the outpost's last MSAA focus report,
+            // planned in its place as a fact.
+            CoreToOutpost::LiveReread { request, trace_id } => context.push(
+                Item::Fact(
+                    DeliveredFact::MsaaLiveReread {
+                        request: *request,
+                        trace_id: *trace_id,
+                    },
+                    None,
+                ),
+                (TraceId::mint(), now_us(), EventTiming::default()),
                 Source::Other,
             ),
             CoreToOutpost::IdleQuery { round } => context.push(

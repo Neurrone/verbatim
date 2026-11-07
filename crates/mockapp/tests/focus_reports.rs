@@ -35,15 +35,15 @@ use std::time::Duration;
 
 use verbatim_core::SrState;
 use verbatim_ia2::WinEventKind;
-use verbatim_listener_logic::focus::{FocusEvent, Judged, NOT_FOCUSED};
+use verbatim_listener_logic::focus::{FocusEvent, Judged, NOT_FOCUSED, NOT_THE_LAST_READ};
 use verbatim_model::protocol::{
     CoreToOutpost, DeliveredFact, OutpostToCore, Query, QueryOutcome, UiaFocusRead,
     UiaSnapshotFact, WinEventStamp,
 };
 use verbatim_model::{
-    Backend, CallCounts, EarlierElement, Effect, Fetches, FocusText, Input, NodeDetails,
-    NodeSnapshot, NormalizedEvent, OutpostId, Pid, PropertyChange, QueryKind, Role, SegmentContent,
-    State, StateSet, TraceId, WindowHandle,
+    Backend, CallCounts, EarlierElement, Effect, Fetches, FirstCachedAncestor, FocusReaderKind,
+    FocusText, Input, NodeDetails, NodeSnapshot, NormalizedEvent, OutpostId, Pid, PropertyChange,
+    QueryKind, Role, SegmentContent, State, StateSet, TraceId, WindowHandle,
 };
 use verbatim_outpost::Heard;
 use verbatim_process::arguments::OutpostOptions;
@@ -1993,6 +1993,8 @@ fn a_focus_whose_keyboard_focus_read_times_out_is_reported() {
             value_from_selection: false,
             window: Some(hwnd.0 as isize),
             same_as_last: None,
+            answers: None,
+            cached_from: None,
         }
     );
 
@@ -3365,9 +3367,201 @@ fn a_dialog_the_listener_read_has_its_text_on_its_first_report() {
     app.quit();
 }
 
+/// The ancestry cache's title check (`verbatim_reader_rules::ancestry_cache`):
+/// a second focus in the window reuses the listener's ancestry cache above
+/// its cache join, the list, and the outpost marks the window entry its
+/// cached ancestor; once the window's text changes, the next focus's walk
+/// reads live to the top, carrying no cached ancestor, and its window entry
+/// has the new title.
+fn a_changed_title_walks_to_the_top() {
+    let title = common::unique_title("mockapp-changed-title");
+    let mut app = common::spawn("reuse.json", "uia", &title);
+    let client = Client::new(common::find_window(&title));
+    let outpost = OutpostUnderTest::new(&app);
+    app.send("set-focus inner");
+    let first = outpost.uia_focus(&client.focused());
+    assert_eq!(
+        first.first_cached_ancestor, None,
+        "the first read reuses nothing"
+    );
+    app.send("set-focus alpha");
+    let second = outpost.uia_focus(&client.focused());
+    assert_eq!(
+        second.first_cached_ancestor,
+        Some(FirstCachedAncestor {
+            index: 0,
+            reader: FocusReaderKind::Listener
+        }),
+        "the window entry above the list is the cached ancestor: {:?}",
+        second.chain()
+    );
+    let renamed = format!("{title} renamed");
+    app.send(&format!("set-title {renamed}"));
+    app.send("set-focus inner");
+    let third = outpost.uia_focus(&client.focused());
+    assert_eq!(
+        third.first_cached_ancestor, None,
+        "the walk read live to the top"
+    );
+    assert_eq!(
+        third
+            .ancestors
+            .first()
+            .and_then(|window| window.name.as_deref()),
+        Some(renamed.as_str()),
+        "the window entry is read live, with its new title"
+    );
+    drop(outpost);
+    app.quit();
+}
+
+/// Core's live re-read of the listener's last read: the held element is
+/// walked again live, one step to the parent per ancestor and one to the
+/// root, reusing nothing, and the read answers the request with no cached
+/// ancestor; one for another trace, and one with no read held, are answered
+/// gone with no call.
+fn a_live_re_read_walks_the_held_element_with_no_cache() {
+    let title = common::unique_title("mockapp-live-reread");
+    let mut app = common::spawn("reuse.json", "uia", &title);
+    let client = Client::new(common::find_window(&title));
+    let outpost = OutpostUnderTest::new(&app);
+    let (gone, calls) = outpost.listener_live_reread(1);
+    assert!(
+        matches!(gone, Judged::Dropped(NOT_THE_LAST_READ)),
+        "with no last read: {gone:?}"
+    );
+    assert_eq!(calls.uia, 0, "no call with no last read");
+    app.send("set-focus inner");
+    let _ = outpost.uia_focus(&client.focused());
+    app.send("set-focus alpha");
+    let (judged, _) = outpost.listener_read(&client.focused());
+    let Judged::Read(cached) = judged else {
+        panic!("the second focus is read: {judged:?}");
+    };
+    assert_eq!(
+        cached.cached_from,
+        Some(1),
+        "the window came from the cache"
+    );
+    let steps = Arc::new(Mutex::new(0u32));
+    let counted = Arc::clone(&steps);
+    outpost.listener_observes_calls(Arc::new(move |call| {
+        if call == "a step to the parent" {
+            *counted.lock().unwrap_or_else(PoisonError::into_inner) += 1;
+        }
+    }));
+    let (reread, _) = outpost.listener_live_reread(7);
+    let Judged::Read(reread) = reread else {
+        panic!("the live re-read reads: {reread:?}");
+    };
+    assert_eq!(
+        (reread.answers, reread.cached_from, reread.ancestors.len()),
+        (Some(7), None, 2),
+        "the answer carries its request and every ancestor read live"
+    );
+    assert_eq!(
+        *steps.lock().unwrap_or_else(PoisonError::into_inner),
+        3,
+        "a step to each ancestor and one to the root"
+    );
+    let (other, calls) = outpost.listener_live_reread_traced(8, TraceId::mint());
+    assert!(
+        matches!(other, Judged::Dropped(NOT_THE_LAST_READ)),
+        "for another trace: {other:?}"
+    );
+    assert_eq!(calls.uia, 0, "no call for another trace");
+    drop(outpost);
+    app.quit();
+}
+
+/// A listener's live re-read's answer is taken in where it arrives, with no
+/// marker of its own, and reported with no join to the outpost's ancestry
+/// cache, carrying its request; the listener's answer of gone is passed on
+/// to Core.
+fn a_listener_live_re_read_is_completed_without_the_cache() {
+    let title = common::unique_title("mockapp-reread-answer");
+    let mut app = common::spawn("reuse.json", "uia", &title);
+    let client = Client::new(common::find_window(&title));
+    let outpost = OutpostUnderTest::new(&app);
+    app.send("set-focus inner");
+    let first = outpost.uia_focus(&client.focused());
+    app.send("set-focus alpha");
+    let _ = outpost.uia_focus(&client.focused());
+    let (judged, _) = outpost.listener_live_reread(3);
+    let answer = outpost.focus(judged.into_reread_fact(99, 3));
+    assert_eq!(
+        (answer.answers, answer.first_cached_ancestor),
+        (Some(3), None),
+        "the answer carries its request and no cached ancestor"
+    );
+    assert_eq!(
+        answer
+            .ancestors
+            .iter()
+            .map(|node| node.name.clone())
+            .collect::<Vec<_>>(),
+        first
+            .ancestors
+            .iter()
+            .map(|node| node.name.clone())
+            .collect::<Vec<_>>(),
+        "the same chain, read live"
+    );
+    outpost.deliver(DeliveredFact::UiaLiveRereadGone { request: 4 });
+    match outpost.next() {
+        OutpostToCore::LiveRereadGone { request: 4 } => {}
+        other => panic!("the outpost said {other:?}, not the answer of gone"),
+    }
+    drop(outpost);
+    app.quit();
+}
+
+/// Core's live re-read of the outpost's last MSAA focus report reacquires
+/// its object from the report's event address and reports it again, with
+/// no cached ancestor, carrying the request; one naming another trace is
+/// answered gone.
+fn an_msaa_live_re_read_reacquires_from_the_event_address() {
+    let title = common::unique_title("mockapp-msaa-reread");
+    let mut app = common::spawn("counts.json", "msaa", &title);
+    let hwnd = common::find_window(&title);
+    let outpost = OutpostUnderTest::new(&app);
+    common::apply(&mut app, hwnd, "set-focus first");
+    let reported = outpost.msaa_focus(hwnd, 2);
+    outpost.live_reread(5, reported.trace);
+    let answer = outpost.reported_focus();
+    assert_eq!(
+        (answer.node.id, answer.answers, answer.first_cached_ancestor),
+        (reported.node.id, Some(5), None),
+        "the same node, read again live"
+    );
+    outpost.live_reread(6, TraceId::mint());
+    match outpost.next() {
+        OutpostToCore::LiveRereadGone { request: 6 } => {}
+        other => panic!("the outpost said {other:?}, not the answer of gone"),
+    }
+    drop(outpost);
+    app.quit();
+}
+
 #[expect(clippy::too_many_lines, reason = "one entry per test")]
 fn main() {
     harness::run_isolated(&[
+        (
+            "a_changed_title_walks_to_the_top",
+            a_changed_title_walks_to_the_top,
+        ),
+        (
+            "a_live_re_read_walks_the_held_element_with_no_cache",
+            a_live_re_read_walks_the_held_element_with_no_cache,
+        ),
+        (
+            "a_listener_live_re_read_is_completed_without_the_cache",
+            a_listener_live_re_read_is_completed_without_the_cache,
+        ),
+        (
+            "an_msaa_live_re_read_reacquires_from_the_event_address",
+            an_msaa_live_re_read_reacquires_from_the_event_address,
+        ),
         (
             "a_focus_after_a_failed_acc_parent_reaches_its_dialog",
             a_focus_after_a_failed_acc_parent_reaches_its_dialog,

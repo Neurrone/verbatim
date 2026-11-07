@@ -590,6 +590,53 @@ code is in `reduce.rs` unless named.
   copy (role, name, value, states, ancestors' names and roles) takes its
   new ids silently.
 
+## The ancestry cache
+
+A focus reader, the listener's reading thread for an application or the
+outpost's own reads, keeps an ancestry cache: its last read's ancestors,
+where a later walk stops and reuses the rest. With it it saves the window
+text of each window entry, and before reusing it reads them again
+(`verbatim_reader_rules::ancestry_cache::title_check`, local calls): a
+changed title or a gone window makes the walk read live to the top or the
+process boundary. Each report marks where the ancestors taken from the
+cache begin, `first_cached_ancestor`, the index of its innermost cached
+ancestor among the entries it emits, computed by the outpost after every
+filter and rule (`focus_rules::first_cached_ancestor`), with the focus
+reader that read it.
+
+Core never trusts the cache. `plan_focus` computes, before anything is
+written, the report joined to Core's focus ancestry
+(`focus_rules::lowest_common_ancestor`), the entry the title rule would
+speak, and `focus_rules::needs_live_ancestry`: whether a cached ancestor
+would be spoken, as entered (below the lowest common ancestor) or as the
+title. A report that would is set aside: its focus group's rank is
+recorded as taken, nothing else is written, not even the ordering stamp,
+and `Effect::LiveReread` asks its focus reader to read the same element
+again with no cache, carrying what the shell logs (the focus, the cache
+join, the lowest common ancestor and the reason). The answer is a report
+carrying `answers`, applied as an ordinary report; it never needs another
+live re-read. A duplicate report keeps the newer reading of its live
+ancestors only, never of its cached ones.
+
+`live_reread.rs` holds one pending live re-read per focus reader (outpost
+generation and kind), counted in `SrState::live_re_reads`, which the
+control protocol's status reply carries. A pending live re-read ends on
+one path: its answer; its answer of gone (`Input::LiveRereadGone`); a
+newer focus applied; a newer live re-read for the same focus reader,
+which replaces it; its outpost generation's end; or, for the listener's,
+`Input::ListenerReplaced`. An answer to one no longer pending says
+nothing. A pending live re-read counts as work in flight for the idle
+barrier and as an applied focus for the fake focus's skip rule, and a
+repeat of its report while it waits is a duplicate. An answer whose window
+the user has left by the time it arrives is refused by the foreground test,
+as any report of the window left is. The shell routes the live re-read to
+the listener through the supervisor (`CoreToListener::LiveReread`) or to
+the outpost (`CoreToOutpost::LiveReread`), and answers it gone at once
+when it cannot be sent. Tests: `live_reread/tests.rs`, and the generated
+test `live_reread/generated.rs`, which compares Core with a reference
+model of NVDA's focus ancestry over a world whose names and titles change
+while the user is away.
+
 ## Object navigation and review
 
 (`docs/parity/review.md`.) `SrState` carries a navigator object and a

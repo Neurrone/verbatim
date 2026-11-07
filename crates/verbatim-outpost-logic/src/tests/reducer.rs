@@ -2452,6 +2452,8 @@ fn focus_read(marker: u64) -> DeliveredFact {
             value_from_selection: false,
             window: Some(0x10),
             same_as_last: None,
+            answers: None,
+            cached_from: None,
         }),
         focus: true,
     }

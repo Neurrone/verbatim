@@ -1061,6 +1061,11 @@ fn classify_fact(fact: &DeliveredFact, raiser: u32) -> (Option<Key>, Category, i
         DeliveredFact::UiaFocusMarker { .. }
         | DeliveredFact::UiaFocusDropped { .. }
         | DeliveredFact::UiaFocusReadsEnded => (None, Category::Exempt, 0),
+        // A live re-read's answer of gone and an MSAA live re-read are
+        // Core's, each planned in its place, never limited or replaced.
+        DeliveredFact::UiaLiveRereadGone { .. } | DeliveredFact::MsaaLiveReread { .. } => {
+            (None, Category::Exempt, 0)
+        }
         DeliveredFact::MenuPopup {
             hwnd,
             id_object,
@@ -1457,6 +1462,8 @@ mod tests {
                 value_from_selection: false,
                 window: Some(hwnd),
                 same_as_last: None,
+                answers: None,
+                cached_from: None,
             }),
             focus: true,
         }

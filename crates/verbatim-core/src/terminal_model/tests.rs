@@ -99,6 +99,8 @@ fn each_key_input_is_the_rules_key_and_a_clearing_key_forget_then_other() {
                 text: None,
                 earlier: None,
                 group: None,
+                answers: None,
+                first_cached_ancestor: None,
             },
         },
     );
@@ -192,6 +194,8 @@ fn terminal_focus(node: NodeId, text: Option<FocusText>, earlier: Option<Earlier
             text: text.map(Box::new),
             earlier,
             group: None,
+            answers: None,
+            first_cached_ancestor: None,
         },
     }
 }

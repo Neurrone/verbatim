@@ -94,6 +94,8 @@ fn terminal_focus(text: Option<verbatim_model::FocusText>) -> Input {
         text: text.map(Box::new),
         earlier: None,
         group: None,
+        answers: None,
+        first_cached_ancestor: None,
     })
 }
 
@@ -510,6 +512,8 @@ fn a_read_answered_after_the_focus_moved_to_another_console_is_not_taken() {
         text: None,
         earlier: None,
         group: None,
+        answers: None,
+        first_cached_ancestor: None,
     });
     let _ = reduce(&mut state, &other);
     assert_eq!(

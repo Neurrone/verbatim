@@ -228,6 +228,8 @@ fn a_menus_end_asks_for_the_foreground_focus_unless_a_later_focus_was_applied() 
                 text: None,
                 earlier: None,
                 group: None,
+                answers: None,
+                first_cached_ancestor: None,
             },
         },
     );
@@ -289,6 +291,8 @@ fn focus_in_window(number: u64, foreground: bool, us: u64) -> Input {
             text: None,
             earlier: None,
             group: None,
+            answers: None,
+            first_cached_ancestor: None,
         },
     }
 }

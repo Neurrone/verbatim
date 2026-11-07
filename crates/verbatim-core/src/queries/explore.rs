@@ -9,7 +9,7 @@ use proptest::test_runner::{Config, RngAlgorithm, RngSeed};
 
 /// A generated test's configuration: the seed and case count given, no
 /// failure persistence, no fork and no timeout, every field written out.
-pub(super) fn config(seed: u64, cases: u32) -> Config {
+pub(crate) fn config(seed: u64, cases: u32) -> Config {
     Config {
         cases,
         max_local_rejects: 65_536,

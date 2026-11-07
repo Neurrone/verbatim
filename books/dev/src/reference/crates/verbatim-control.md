@@ -1,6 +1,6 @@
 # verbatim-control
 
-The control plane (architecture section 10, decision D8): protocol v3 and
+The control plane (architecture section 10, decision D8): protocol v4 and
 the named-pipe server. Pulled forward from M2 so every M1 change is
 verifiable live.
 
@@ -14,7 +14,8 @@ Public API:
   `SpeechEnded`, `Sound`, `SpeechPaused`, and, since version 2, `InputHandled` and
   `OutpostEnded`); `ReplyPayload`, `StatusInfo` (whose `ready` says Verbatim can take
   input: GUI up, focus listener running, own-window outpost ready, focus
-  known),
+  known, and, since version 4, `live_re_reads`, Core's count of live
+  re-reads, read only),
   `OutpostStatus`, `OutpostState`, `LatencyRecord`, `FocusReport`; `PIPE_NAME`, `PROTOCOL_VERSION`; the
   same newline-JSON framing helpers. Of the two readers, `read_message` is
   for connections whose reads never time out: a read that fails partway

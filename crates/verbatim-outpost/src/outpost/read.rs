@@ -23,7 +23,7 @@ use verbatim_uia_rops::{
     navigation_step,
 };
 
-use verbatim_core::focus_rules::{HeldNode, already_entered};
+use verbatim_core::focus_rules::{HeldNode, already_entered_ancestors};
 
 use crate::dialog_text::is_dialog;
 
@@ -64,25 +64,30 @@ pub(super) type Enrichment = (Vec<NodeSnapshot>, Option<NodeSnapshot>);
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct FocusLost;
 
-/// `chain`, outermost first, whose outermost entry is `met`, extended
-/// outward with the part of `previous` above `met`: NVDA reuses the
-/// previous focus's ancestors from where the new focus's ancestry meets
-/// them, rather than reading them again. Each entry spliced is recorded as
-/// carried by the message the chain goes in, which names it, as a node
-/// looked up is (`super::store::Recorded`); `previous` holds only entries
-/// the store still holds, tagged with the walk's request
-/// ([`held_prefix`]).
-pub(super) fn splice(
+/// `chain`, outermost first, whose outermost entry is `met`, its cache
+/// join, extended outward with the part of `previous`, the outpost's
+/// ancestry cache, above `met`: NVDA reuses the previous focus's ancestors
+/// from where the new focus's ancestry meets them, rather than reading
+/// them again. The entries joined on are the report's cached ancestors,
+/// noted for its `first_cached_ancestor` ([`RequestContext::note_cached`]).
+/// Each is recorded as carried by the message the chain goes in, which
+/// names it, as a node looked up is (`super::store::Recorded`); `previous`
+/// holds only entries the store still holds, tagged with the walk's
+/// request ([`held_prefix`]), and none at all when its title check failed
+/// (`Worker::focus_chain`).
+pub(super) fn join_cache(
+    context: &RequestContext<'_>,
     previous: &[NodeSnapshot],
     chain: Vec<NodeSnapshot>,
     met: NodeId,
 ) -> Vec<NodeSnapshot> {
-    let (chain, _) = splice_onto(previous, chain, met);
+    let (chain, above) = join_cache_onto(previous, chain, met);
+    context.note_cached(above.iter().map(|node| node.id));
     chain
 }
 
-/// [`splice`]'s chain, and the entries of `previous` it spliced on.
-fn splice_onto(
+/// [`join_cache`]'s chain, and the entries of `previous` it joined on.
+fn join_cache_onto(
     previous: &[NodeSnapshot],
     chain: Vec<NodeSnapshot>,
     met: NodeId,
@@ -478,7 +483,7 @@ fn complete(
 ) -> Result<Vec<NodeSnapshot>, FocusLost> {
     Ok(match above {
         Above::Nothing => chain,
-        Above::Met(met) => splice(previous, chain, met),
+        Above::Met(met) => join_cache(context, previous, chain, met),
         Above::From(hwnd) => window_onward(context, uia, hwnd, (previous, candidates))?
             .into_iter()
             .chain(chain)
@@ -726,7 +731,7 @@ fn window_object_onward(
         // every UIA ancestor is ([`Ancestor::is_focus_context`]).
         let below = if element.read().is_focus_context(&top) {
             if known(top_id) {
-                return Ok(Some(splice(previous, vec![top], top_id)));
+                return Ok(Some(join_cache(context, previous, vec![top], top_id)));
             }
             vec![top]
         } else {
@@ -752,7 +757,7 @@ fn window_object_onward(
     };
     if known(client.id) {
         let client_id = client.id;
-        return Ok(Some(splice(previous, vec![client], client_id)));
+        return Ok(Some(join_cache(context, previous, vec![client], client_id)));
     }
     let above = msaa_ancestors(context, uia, &client, (previous, candidates))?;
     Ok(Some(
@@ -1213,7 +1218,7 @@ pub(super) fn msaa_candidates(context: &RequestContext<'_>) -> Candidates {
 /// How many of `nodes`, a new focus line outermost first ending with its
 /// focus, the focus had already entered from any report's line: those above
 /// or at where the line meets one of theirs
-/// (`verbatim_core::focus_rules::already_entered`).
+/// (`verbatim_core::focus_rules::already_entered_ancestors`).
 fn entered_before<'a>(
     focuses: impl IntoIterator<Item = &'a super::reducer::Focus>,
     nodes: &[&mut NodeSnapshot],
@@ -1224,7 +1229,7 @@ fn entered_before<'a>(
     };
     focuses
         .into_iter()
-        .map(|held| already_entered((&held.ancestors, &held.node), (ancestors, focus)))
+        .map(|held| already_entered_ancestors((&held.ancestors, &held.node), (ancestors, focus)))
         .max()
         .unwrap_or(0)
 }
@@ -1239,7 +1244,7 @@ pub(super) type DialogMemo = Option<(NodeId, Option<String>)>;
 /// (`docs/nvda/object-model.md`, "A dialog's own text"), while descriptions
 /// are read at all. A dialog no report's line is already inside is read,
 /// by the rule the reducer speaks entered containers by
-/// (`verbatim_core::focus_rules::already_entered`); one a report's line is
+/// (`verbatim_core::focus_rules::already_entered_ancestors`); one a report's line is
 /// already inside, a superset of Core's line, is given the text that
 /// report carried for it, with no call, so Core, which speaks it only when
 /// its own line enters the dialog, always has it
@@ -2063,8 +2068,8 @@ mod tests {
 
     use super::super::reducer::{Evidence, Focus, Held, InFront};
     use super::{
-        CONSOLE_WINDOW_CLASS, console_text_area_in, control_window, entered_before, splice_onto,
-        window_read_without_its_handle,
+        CONSOLE_WINDOW_CLASS, console_text_area_in, control_window, entered_before,
+        join_cache_onto, window_read_without_its_handle,
     };
     use verbatim_win32::window::window_owner;
 
@@ -2088,8 +2093,8 @@ mod tests {
     fn a_walk_meeting_the_previous_chain_reuses_what_lies_above() {
         let previous = vec![node(1), node(2), node(3)];
         // The new walk read 4 and then met 2, its outermost entry.
-        let (spliced, above) = splice_onto(&previous, vec![node(2), node(4)], NodeId::new(2));
-        assert_eq!(ids(&spliced), ids(&[node(1), node(2), node(4)]));
+        let (joined, above) = join_cache_onto(&previous, vec![node(2), node(4)], NodeId::new(2));
+        assert_eq!(ids(&joined), ids(&[node(1), node(2), node(4)]));
         assert_eq!(ids(above), ids(&[node(1)]));
     }
 
@@ -2108,8 +2113,8 @@ mod tests {
     #[test]
     fn a_walk_meeting_nothing_known_is_kept_whole() {
         let previous = [node(1)];
-        let (spliced, above) = splice_onto(&previous, vec![node(5), node(6)], NodeId::new(9));
-        assert_eq!(ids(&spliced), ids(&[node(5), node(6)]));
+        let (joined, above) = join_cache_onto(&previous, vec![node(5), node(6)], NodeId::new(9));
+        assert_eq!(ids(&joined), ids(&[node(5), node(6)]));
         assert_eq!(ids(above), Vec::<NodeId>::new());
     }
 
@@ -2187,6 +2192,7 @@ mod tests {
                 event: None,
                 simple_child: false,
                 dialog_texts: Vec::new(),
+                value_from_selection: false,
             },
             Evidence::Msaa,
         );

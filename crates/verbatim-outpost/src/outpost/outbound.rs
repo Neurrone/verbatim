@@ -658,6 +658,8 @@ mod tests {
             text: None,
             earlier,
             group: None,
+            answers: None,
+            first_cached_ancestor: None,
         })
     }
 

@@ -60,6 +60,8 @@ fn spoken_in(state: &mut SrState, reported: &Reported) -> Vec<Vec<SegmentContent
         text: None,
         earlier: None,
         group: None,
+        answers: None,
+        first_cached_ancestor: None,
     };
     event.assign_outpost(OutpostId(1));
     let effects = verbatim_core::reduce(

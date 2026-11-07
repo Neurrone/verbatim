@@ -336,6 +336,8 @@ fn focus_change(id: u64, owes: bool) -> Change {
                 text: None,
                 earlier: None,
                 group: None,
+                answers: None,
+                first_cached_ancestor: None,
             },
         }),
         follow: Some(Follow {
@@ -353,6 +355,8 @@ fn focus_change(id: u64, owes: bool) -> Change {
             trace: TraceId::from_raw(3),
             observed_at_us: 0,
             adopt: true,
+            msaa_report: None,
+            titles: Vec::new(),
         }),
         ..Change::default()
     }
@@ -513,6 +517,8 @@ fn every_entry_is_given_the_handling_deadline_but_focus_now_and_a_listener_reads
         value_from_selection: false,
         window: Some(0x10),
         same_as_last: None,
+        answers: None,
+        cached_from: None,
     };
     assert_eq!(
         deadline(Item::Fact(
@@ -2107,6 +2113,7 @@ fn reported_in_window(id: u64, in_front: InFront) -> Change {
         event: None,
         simple_child: false,
         dialog_texts: Vec::new(),
+        value_from_selection: false,
     };
     Change {
         report: Some(Report::Reported(focus, Evidence::Msaa)),
@@ -2544,6 +2551,8 @@ fn a_listener_read_in_a_hung_window_is_reported_and_tells_its_hang() {
         value_from_selection: false,
         window: Some(HUNG.get()),
         same_as_last: None,
+        answers: None,
+        cached_from: None,
     };
     let effects = replay.push(
         Item::Fact(

@@ -137,7 +137,8 @@ impl ToChild for CoreToOutpost {
             | CoreToOutpost::NodesHeld { .. }
             | CoreToOutpost::IdleQuery { .. }
             | CoreToOutpost::Shutdown
-            | CoreToOutpost::Assign { .. } => None,
+            | CoreToOutpost::Assign { .. }
+            | CoreToOutpost::LiveReread { .. } => None,
         }
     }
 }

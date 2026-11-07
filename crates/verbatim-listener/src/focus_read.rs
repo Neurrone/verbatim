@@ -149,7 +149,8 @@ use verbatim_uia_rops::{Ancestry, FocusAncestry, FocusQuery, Progress, focus_anc
 
 use verbatim_listener_logic::checks::{self, Check, Gathered, Nearest, Step};
 use verbatim_listener_logic::focus::{
-    Arrival, FocusEvent, Judged, Meta, NO_WINDOW, NOT_FOCUSED, NOTIFICATION_NO_WINDOW, arrival_of,
+    Arrival, FocusEvent, Judged, Meta, NO_WINDOW, NOT_FOCUSED, NOT_THE_LAST_READ,
+    NOTIFICATION_NO_WINDOW, arrival_of,
 };
 use verbatim_listener_logic::schedule::{
     AlarmChange, QueuePlace, Request, Schedule, ScheduleEffect, ScheduleInput, Waking,
@@ -162,6 +163,7 @@ use verbatim_process::clock::Clock;
 use verbatim_process::clock::now_us;
 use verbatim_reader_rules::Window;
 use verbatim_reader_rules::acceptance::{EventName, RequestedEvents, accepts_event};
+use verbatim_reader_rules::ancestry_cache::{CacheUse, SavedTitle, title_check};
 use verbatim_reader_rules::in_flight::{Reason, RuleWindow};
 use verbatim_win32::window::ForegroundReader;
 use verbatim_win32::window::SystemWindows;
@@ -416,15 +418,32 @@ fn focus_of(progress: &ReadProgress) -> (UiaSnapshotFact, Option<UiaSnapshotFact
 struct LastFocus {
     runtime_id: Vec<i32>,
     element: IUIAutomationElement,
-    /// Its raw-view ancestors, nearest first, or `None` when its read left
-    /// them unknown: the next read then reuses nothing of this focus.
-    ancestors: Option<Vec<UiaAncestorFact>>,
+    /// The element as its event's cache holds it, which a live re-read
+    /// walks from ([`FocusReader::live_reread`]).
+    input: Cached<FocusInput>,
+    /// The fact of its event's cache: its name and role.
+    event: UiaSnapshotFact,
+    /// Its own window from its event's cache, 0 for none.
+    hwnd: isize,
+    /// Its ancestry cache: its raw-view ancestors, nearest first, or `None`
+    /// when its read left them unknown: the next read then reuses nothing
+    /// of this focus.
+    ancestry_cache: Option<Vec<UiaAncestorFact>>,
+    /// The window text of each window entry of the ancestry cache, read by
+    /// `InternalGetWindowText` when the entry was read live, which the
+    /// title check reads again before the cache is reused.
+    titles: Vec<SavedTitle>,
     /// The window it was judged with, NVDA's object's `windowHandle`.
     window: isize,
     /// Its event's place in the order every event was queued in, by which
     /// a later menu opening tells whether it is still current
     /// ([`QueuePlace::current_since`]).
     place: u64,
+    /// Its event's trace, by which Core's live re-read names it.
+    trace: TraceId,
+    /// When its event was received, on the run's shared clock, which its
+    /// live re-read's report keeps.
+    observed_at_us: u64,
 }
 
 /// One application's focus reader: a UIA client of its own and the focus
@@ -545,10 +564,6 @@ impl FocusReader {
     /// came as `arrival`. Every call waits for the application, up to UIA's
     /// transaction timeout; nothing of the listener's own ends the read
     /// early but the schedule's deadline and moved-on rule.
-    #[expect(
-        clippy::too_many_lines,
-        reason = "the read's checks, query and outcome, read top to bottom as they run"
-    )]
     pub fn read(
         &mut self,
         sender: &Cached<ListenerEvent>,
@@ -595,32 +610,98 @@ impl FocusReader {
             .filter(|last| last.runtime_id == event.runtime_id)
             .map(|last| last.element.clone());
         // The focus before and its ancestors, nearest first: where the
-        // ancestor read stops ([`FocusQuery::known`]). A focus before whose
+        // ancestor read stops ([`FocusQuery::known`]), its ancestry cache,
+        // used only while every window title saved with it reads the same
+        // now (the title check, local calls). A focus before whose
         // ancestors are unknown is left out, itself included, since the
         // chain reused from where the read meets it would end there with
-        // nothing above it: the read then runs as a first read does.
+        // nothing above it: the read then runs as a first read does, and
+        // so does a read whose ancestry cache fails the title check, which
+        // walks live to the top or the process boundary.
         let known: Vec<Vec<i32>> = self
             .last
             .as_ref()
             .and_then(|last| {
-                let ancestors = last.ancestors.as_ref()?;
-                Some(
-                    std::iter::once(last.runtime_id.clone())
-                        .chain(
-                            ancestors
-                                .iter()
-                                .map(|ancestor| ancestor.snapshot.runtime_id.clone()),
-                        )
-                        .collect(),
-                )
+                let ancestors = last.ancestry_cache.as_ref()?;
+                (title_check(&last.titles, verbatim_win32::window::live_title) == CacheUse::Reuse)
+                    .then(|| {
+                        std::iter::once(last.runtime_id.clone())
+                            .chain(
+                                ancestors
+                                    .iter()
+                                    .map(|ancestor| ancestor.snapshot.runtime_id.clone()),
+                            )
+                            .collect()
+                    })
             })
             .unwrap_or_default();
+        let input = sender.narrow::<FocusInput>();
+        self.walk(
+            (&input, element, fact_of(event)),
+            (hwnd, nearest),
+            (&known, previous.as_ref(), require_focus),
+            (arrival, &calls),
+        )
+    }
+
+    /// Core's live re-read `request` of the read traced `trace`: the held
+    /// element of this thread's last read, read again by the classic walk,
+    /// one call per ancestor, with no ancestry cache and no evidence of an
+    /// earlier element, its name and role from its event's cache as its
+    /// first read had them. The read refreshes the ancestry cache and keeps
+    /// the last read's place, its menu currency, since it is not a new
+    /// event. Answered [`NOT_THE_LAST_READ`] when the thread holds no read,
+    /// or a later one.
+    pub fn live_reread(&mut self, request: u64, trace: TraceId) -> Judged {
+        let Some(last) = self.last.as_ref().filter(|last| last.trace == trace) else {
+            return Judged::Dropped(NOT_THE_LAST_READ);
+        };
+        let input = last.input.clone();
+        let element = last.element.clone();
+        let event = last.event.clone();
+        let (hwnd, nearest) = (last.hwnd, last.window);
+        let arrival = Arrival {
+            trace,
+            observed_at_us: last.observed_at_us,
+            place: last.place,
+            left_at: 0,
+        };
+        let calls = CallLog::default();
+        let judged = self.walk(
+            (&input, &element, event),
+            (hwnd, nearest),
+            (&[], None, false),
+            (arrival, &calls),
+        );
+        match judged {
+            Judged::Read(mut read) => {
+                read.answers = Some(request);
+                Judged::Read(read)
+            }
+            other => other,
+        }
+    }
+
+    /// The walk of a focus read, its query and outcome: `input`, the
+    /// focus's element as its event's cache holds it, `element` its live
+    /// element and `event` the fact of its event's cache; `hwnd` its own
+    /// window, `nearest` its nearest; the walk stopping at `known`, the
+    /// ancestry cache's runtime ids, reading whether `previous` still has
+    /// the keyboard focus, and the sender's own keyboard focus when
+    /// `require_focus`; `arrival` the event it came in.
+    fn walk(
+        &mut self,
+        (input, element, event): (&Cached<FocusInput>, &IUIAutomationElement, UiaSnapshotFact),
+        (hwnd, nearest): (isize, isize),
+        (known, previous, require_focus): (&[Vec<i32>], Option<&IUIAutomationElement>, bool),
+        (arrival, calls): (Arrival, &CallLog),
+    ) -> Judged {
         // What the walk reads, kept as it reads it, so a read whose walk
         // fails is reported from what it had read.
         let progress = RefCell::new(ReadProgress {
             hwnd,
             nearest,
-            event: fact_of(event),
+            event,
             fresh: None,
             selected_child: None,
             ancestors: Vec::new(),
@@ -633,7 +714,6 @@ impl FocusReader {
         // The ancestors are read without their place or their cell, as
         // every read of many elements is, and the focus with them
         // (`verbatim_uia::Place`, `verbatim_uia::Cell`).
-        let input = sender.narrow::<FocusInput>();
         let ancestors = AncestorGates {
             node: NodeGates {
                 place: None,
@@ -658,9 +738,9 @@ impl FocusReader {
                 // (`books/dev/src/explanation/design/listener-without-connections.md`, section 3,
                 // step 8).
                 let query = FocusQuery {
-                    element: &input,
-                    known: &known,
-                    previous: previous.as_ref(),
+                    element: input,
+                    known,
+                    previous,
                     depth_limit: MAX_ANCESTORS,
                     fill: &fill,
                     element_fill: &element_fill,
@@ -690,7 +770,7 @@ impl FocusReader {
         match read {
             Ok(FocusAncestry::NotFocused) => Judged::Dropped(NOT_FOCUSED),
             Ok(FocusAncestry::Focused(ancestry)) => {
-                self.focused(element, progress, &ancestry, (arrival, &calls))
+                self.focused((element, input), progress, &ancestry, (arrival, calls))
             }
             Err(error) => {
                 // The sender's own read failed, by UIA's transaction
@@ -705,9 +785,15 @@ impl FocusReader {
                 self.last = Some(LastFocus {
                     runtime_id: progress.event.runtime_id.clone(),
                     element: element.clone(),
-                    ancestors: None,
+                    input: input.clone(),
+                    event: progress.event.clone(),
+                    hwnd,
+                    ancestry_cache: None,
+                    titles: Vec::new(),
                     window: nearest,
                     place: arrival.place,
+                    trace: arrival.trace,
+                    observed_at_us: arrival.observed_at_us,
                 });
                 let (snapshot, selected_child, value_from_selection) = focus_of(&progress);
                 Judged::Read(Box::new(UiaFocusRead {
@@ -719,6 +805,8 @@ impl FocusReader {
                     value_from_selection,
                     window: Some(nearest),
                     same_as_last: progress.same_as_last,
+                    cached_from: None,
+                    answers: None,
                 }))
             }
         }
@@ -796,7 +884,7 @@ impl FocusReader {
     /// the event it came in, and `calls` the read's call log.
     fn focused(
         &mut self,
-        element: &IUIAutomationElement,
+        (element, input): (&IUIAutomationElement, &Cached<FocusInput>),
         mut progress: ReadProgress,
         ancestry: &Ancestry,
         (arrival, calls): (Arrival, &CallLog),
@@ -844,12 +932,15 @@ impl FocusReader {
             (
                 Some(met),
                 Some(LastFocus {
-                    ancestors: Some(before),
+                    ancestry_cache: Some(before),
                     ..
                 }),
-            ) => reused_ancestors(before, met),
+            ) => cached_ancestors(before, met),
             _ => Vec::new(),
         };
+        let live = progress.ancestors.len();
+        let cached_from = (!tail.is_empty()).then(|| u32::try_from(live).unwrap_or(u32::MAX));
+        let titles = self.saved_titles(&progress.ancestors, &tail);
         let ancestors = std::mem::take(&mut progress.ancestors)
             .into_iter()
             .chain(tail)
@@ -869,6 +960,8 @@ impl FocusReader {
             // walk named none.
             window: ancestry.window.or(Some(nearest)),
             same_as_last: ancestry.previous_focused,
+            cached_from,
+            answers: None,
         };
         log_ancestor_facts(path, &read.ancestors);
         if wants_legacy_checked_state(read.snapshot.role, read.snapshot.states) {
@@ -884,14 +977,48 @@ impl FocusReader {
         }
         // Only a chain that reaches the top is where a later read may stop
         // and reuse the rest, since the outpost goes on from a cut one.
+        let top = read.ancestors_end == AncestorsEnd::Top;
         self.last = Some(LastFocus {
             runtime_id: read.snapshot.runtime_id.clone(),
             element: element.clone(),
-            ancestors: (read.ancestors_end == AncestorsEnd::Top).then(|| read.ancestors.clone()),
+            input: input.clone(),
+            event: progress.event.clone(),
+            hwnd,
+            ancestry_cache: top.then(|| read.ancestors.clone()),
+            titles: if top { titles } else { Vec::new() },
             window: nearest,
             place: arrival.place,
+            trace: arrival.trace,
+            observed_at_us: arrival.observed_at_us,
         });
         Judged::Read(Box::new(read))
+    }
+
+    /// The window texts saved with a new ancestry cache, whose ancestors
+    /// read live are `live` and those taken from the cache `tail`: those of
+    /// the window entries read live, read now, and those of the entries
+    /// taken from the cache, as saved with them. Local calls.
+    fn saved_titles(&self, live: &[UiaAncestorFact], tail: &[UiaAncestorFact]) -> Vec<SavedTitle> {
+        let before = self.last.as_ref().map_or(&[][..], |last| &last.titles[..]);
+        live.iter()
+            .filter(|ancestor| ancestor.hwnd != 0)
+            .map(|ancestor| {
+                (
+                    ancestor.hwnd,
+                    verbatim_win32::window::window_text(ancestor.hwnd),
+                )
+            })
+            .chain(
+                tail.iter()
+                    .filter(|ancestor| ancestor.hwnd != 0)
+                    .filter_map(|ancestor| {
+                        before
+                            .iter()
+                            .find(|(window, _)| *window == ancestor.hwnd)
+                            .cloned()
+                    }),
+            )
+            .collect()
     }
 
     /// What a focus event goes through before anything of its sender,
@@ -1089,12 +1216,12 @@ fn log_ancestor_fact(path: &str, fact: &UiaAncestorFact) {
     );
 }
 
-/// The ancestors of the focus before that lie above the one the new
-/// focus's ancestor read stopped at, `met`, an index into the read's known
-/// runtime ids: the focus before itself, then its ancestors, nearest
-/// first. The stop is the last ancestor read, so what is reused begins
-/// just above it.
-fn reused_ancestors(before: &[UiaAncestorFact], met: usize) -> Vec<UiaAncestorFact> {
+/// The cached ancestors: those of the ancestry cache, the focus before's
+/// ancestors, that lie above the one the new focus's ancestor read stopped
+/// at, its cache join, `met`, an index into the read's known runtime ids:
+/// the focus before itself, then its ancestors, nearest first. The stop is
+/// the last ancestor read, so what is reused begins just above it.
+fn cached_ancestors(before: &[UiaAncestorFact], met: usize) -> Vec<UiaAncestorFact> {
     before.get(met..).map(<[_]>::to_vec).unwrap_or_default()
 }
 
@@ -1513,6 +1640,14 @@ impl<R: Reading> Readers<R> {
     /// ([`Schedule::focus_pending`]).
     pub(crate) fn focus_pending(&self, pid: Option<Pid>) -> bool {
         self.shared.lock().schedule.focus_pending(pid)
+    }
+
+    /// Whether application `pid` has a reading thread in charge of its
+    /// events, or abandoned to a read of them: Core's live re-read of an
+    /// application with none is answered gone at once, its last read gone
+    /// with its thread.
+    pub(crate) fn has_reading_thread(&self, pid: Pid) -> bool {
+        self.shared.lock().apps.contains_key(&pid)
     }
 
     /// Ends `pid`'s reading thread, the listener having learned that its
@@ -2040,6 +2175,8 @@ mod tests {
             value_from_selection: false,
             window: None,
             same_as_last: None,
+            answers: None,
+            cached_from: None,
         }))
     }
 
@@ -3203,7 +3340,7 @@ mod tests {
     }
 
     #[test]
-    fn the_reads_reused_from_the_focus_before_begin_above_the_stop() {
+    fn the_cached_ancestors_begin_above_the_cache_join() {
         let fact = |id: i32| UiaAncestorFact {
             snapshot: UiaSnapshotFact {
                 runtime_id: vec![42, id],
@@ -3225,12 +3362,12 @@ mod tests {
         };
         // Stopped at the focus before itself: all its ancestors are reused.
         assert_eq!(
-            ids(reused_ancestors(&before, 0)),
+            ids(cached_ancestors(&before, 0)),
             [vec![42, 1], vec![42, 2], vec![42, 3]]
         );
         // Stopped at its second ancestor: those above it.
-        assert_eq!(ids(reused_ancestors(&before, 2)), [vec![42, 3]]);
-        assert_eq!(ids(reused_ancestors(&before, 3)), Vec::<Vec<i32>>::new());
-        assert_eq!(ids(reused_ancestors(&before, 9)), Vec::<Vec<i32>>::new());
+        assert_eq!(ids(cached_ancestors(&before, 2)), [vec![42, 3]]);
+        assert_eq!(ids(cached_ancestors(&before, 3)), Vec::<Vec<i32>>::new());
+        assert_eq!(ids(cached_ancestors(&before, 9)), Vec::<Vec<i32>>::new());
     }
 }

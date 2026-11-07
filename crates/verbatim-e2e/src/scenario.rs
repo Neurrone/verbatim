@@ -981,6 +981,23 @@ impl Scenario {
         }
     }
 
+    /// Asserts that Core has asked for exactly `expected` live re-reads
+    /// since Verbatim started, once nothing more is to be said
+    /// ([`expect_nothing_more`](Self::expect_nothing_more)), read from the
+    /// control protocol's status reply (`StatusInfo::live_re_reads`).
+    ///
+    /// # Panics
+    ///
+    /// When the status cannot be read, or the count differs.
+    pub fn expect_live_re_reads(&mut self, expected: u64) {
+        self.expect_nothing_more();
+        let status = self.status().expect("reads Verbatim's status");
+        assert_eq!(
+            status.live_re_reads, expected,
+            "Core's live re-reads since Verbatim started"
+        );
+    }
+
     /// Whether Verbatim exited by itself at a step's keys
     /// ([`Scenario::send_keys_exiting`]), so that neither its focus nor
     /// its flight recorder can be dumped and it needs no quit.

@@ -403,6 +403,7 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
         // Handled by the window thread before dispatch.
         Command::Stall(..)
         | Command::OnActivate(_)
+        | Command::SetTitle(_)
         | Command::Island(_)
         | Command::Slow(_)
         | Command::SlowPatterns(_)

@@ -326,6 +326,8 @@ mod tests {
                         text: None,
                         earlier: None,
                         group: None,
+                        answers: None,
+                        first_cached_ancestor: None,
                     },
                 },
                 effect_count: 1,

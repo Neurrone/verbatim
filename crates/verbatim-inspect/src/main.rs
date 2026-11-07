@@ -150,6 +150,7 @@ fn print_status(status: &StatusInfo) {
         Some(synth) => println!("active synth: {synth}"),
         None => println!("active synth: none"),
     }
+    println!("live re-reads: {}", status.live_re_reads);
     if status.outposts.is_empty() {
         println!("outposts: none");
         return;

@@ -47,6 +47,11 @@ pub struct Focus {
     /// a later report whose line meets this one at or below a dialog
     /// carries the same text, with no call (`read::describe_dialogs`).
     pub dialog_texts: Vec<(NodeId, Option<String>)>,
+    /// Whether the focus listener read its focus as one whose value is its
+    /// first selected item's name (`UiaFocusRead::value_from_selection`):
+    /// a selection under it is a change of its value. The mark is kept per
+    /// report, so it holds for every report the outpost has not released.
+    pub value_from_selection: bool,
 }
 
 impl Focus {
@@ -116,6 +121,16 @@ impl Held {
     /// here ([`entered_in_front`](Self::entered_in_front)).
     pub fn reported(&mut self, mut focus: Focus, evidence: Evidence) {
         focus.entered_in_front = self.entered_in_front(&focus);
+        // A foreground change makes its window the foreground object for
+        // every older report in the window too, as NVDA's foreground
+        // object is the window whatever focus in it came first.
+        if let InFront::Foreground(Some(window)) = focus.in_front {
+            for report in &mut self.reports {
+                if report.top_level == Some(window) {
+                    report.entered_in_front = Some(window);
+                }
+            }
+        }
         if !self.repeats_newest(&focus, evidence) {
             self.states_read = Some((focus.node.id, focus.node.states));
         }
@@ -194,6 +209,17 @@ impl Held {
             .iter()
             .rev()
             .find(|report| report.top_level == Some(top_level))
+    }
+
+    /// The focuses of the reports the focus listener marked as ones whose
+    /// value is their first selected item's name
+    /// ([`Focus::value_from_selection`]), the newest first.
+    pub fn value_from_selection(&self) -> impl Iterator<Item = NodeId> + '_ {
+        self.reports
+            .iter()
+            .rev()
+            .filter(|focus| focus.value_from_selection)
+            .map(|focus| focus.node.id)
     }
 
     /// Whether `node` is the focus of any report.
@@ -290,6 +316,7 @@ mod tests {
             event: Some((7, -4, i32::try_from(id).unwrap_or(0))),
             simple_child: false,
             dialog_texts: Vec::new(),
+            value_from_selection: false,
         }
     }
 
@@ -360,6 +387,76 @@ mod tests {
         assert_eq!(held.replace_states(NodeId::new(1), expanded), Some(false));
         assert_eq!(held.replace_states(NodeId::new(1), expanded), Some(true));
         assert_eq!(held.replace_states(NodeId::new(3), expanded), None);
+    }
+
+    /// A foreground change of a window makes it the window every older
+    /// report in it entered in front, and changes no report in another.
+    #[test]
+    fn a_foreground_change_updates_entered_in_front_for_older_reports() {
+        let mut held = Held::default();
+        held.reported(
+            Focus {
+                in_front: InFront::Read(None),
+                entered_in_front: None,
+                ..reported(1)
+            },
+            Evidence::Msaa,
+        );
+        held.reported(
+            Focus {
+                top_level: Window::new(8),
+                in_front: InFront::Read(None),
+                entered_in_front: None,
+                ..reported(2)
+            },
+            Evidence::Msaa,
+        );
+        let entered = |held: &Held| {
+            held.focuses()
+                .map(|focus| focus.entered_in_front)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(entered(&held), vec![None, None]);
+        held.reported(
+            Focus {
+                in_front: InFront::Foreground(Window::new(7)),
+                ..reported(3)
+            },
+            Evidence::Msaa,
+        );
+        assert_eq!(entered(&held), vec![Window::new(7), None, Window::new(7)]);
+    }
+
+    /// The selection-as-value mark is each report's own: it holds for a
+    /// marked report while it is held, whatever reports come after it, and
+    /// goes with it.
+    #[test]
+    fn the_selection_as_value_mark_is_kept_per_held_focus() {
+        let mut held = Held::default();
+        held.reported(
+            Focus {
+                value_from_selection: true,
+                ..reported(1)
+            },
+            Evidence::Uia(None),
+        );
+        held.reported(reported(2), Evidence::Uia(None));
+        held.reported(
+            Focus {
+                value_from_selection: true,
+                ..reported(3)
+            },
+            Evidence::Uia(None),
+        );
+        assert_eq!(
+            held.value_from_selection().collect::<Vec<_>>(),
+            vec![NodeId::new(3), NodeId::new(1)]
+        );
+        held.release(&released(&[3]));
+        assert_eq!(
+            held.value_from_selection().collect::<Vec<_>>(),
+            vec![NodeId::new(1)]
+        );
     }
 
     /// A repeat of the newest report by its own evidence leaves the states

@@ -101,6 +101,11 @@ pub(super) struct Follow {
     /// which keeps the tracking and the intake's marks as they are and is
     /// only followed again.
     pub(super) adopt: bool,
+    /// The window text of each window entry of `chain`, read as it is
+    /// reported, for the title check of the outpost's ancestry cache.
+    pub(super) titles: Vec<verbatim_reader_rules::ancestry_cache::SavedTitle>,
+    /// For an MSAA focus report, what a live re-read of it needs.
+    pub(super) msaa_report: Option<super::reducer::MsaaReport>,
 }
 
 impl Follow {
@@ -121,6 +126,8 @@ impl Follow {
             trace: self.trace,
             observed_at_us: self.observed_at_us,
             adopt: self.adopt,
+            titles: self.titles.clone(),
+            msaa_report: self.msaa_report,
         }
     }
 }
@@ -140,13 +147,6 @@ pub(super) struct Effects {
     pub(super) foreground: Option<(NodeId, Role, u64)>,
     /// The dialog memo the report leaves.
     pub(super) dialog: Option<DialogMemo>,
-    /// The focus listener's mark of a UIA focus whose value is its first
-    /// selected item; `None` leaves the mark as it was.
-    #[expect(
-        clippy::option_option,
-        reason = "a mark to set, to clear, or to leave as it was"
-    )]
-    pub(super) value_from_selection: Option<Option<NodeId>>,
     /// The focus path of a UIA focus.
     pub(super) focus_path: Option<FocusPath>,
     /// The focus's element found after its report, with its slider's when
@@ -196,7 +196,6 @@ impl Effects {
             follow: self.follow.as_ref().map(Follow::pure),
             foreground: self.foreground,
             dialog: self.dialog.clone(),
-            value_from_selection: self.value_from_selection,
             focus_path: self.focus_path.clone(),
             element: self
                 .element
@@ -229,7 +228,6 @@ impl Effects {
             result: self.result,
             foreground: self.foreground,
             dialog: self.dialog,
-            value_from_selection: self.value_from_selection,
             focus_path: self.focus_path,
             owed_done: self.owed_done,
             caret_read: self.caret_read,

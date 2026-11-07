@@ -401,13 +401,17 @@ impl Spares {
 /// focus's application, and an application with no outpost cannot hold the
 /// focus (`docs/parity/focus-events.md`, "Background events"). A focus's
 /// drop and the end of a listener's reads resolve only markers an outpost
-/// already holds.
+/// already holds, and a live re-read's answer of gone only a live re-read
+/// Core asked through an outpost it holds; an MSAA live re-read is asked of
+/// an outpost directly, never routed.
 #[must_use]
 pub fn may_start_outpost(fact: &DeliveredFact) -> bool {
     match fact {
         DeliveredFact::UiaSelection { .. }
         | DeliveredFact::UiaFocusDropped { .. }
-        | DeliveredFact::UiaFocusReadsEnded => false,
+        | DeliveredFact::UiaFocusReadsEnded
+        | DeliveredFact::UiaLiveRereadGone { .. }
+        | DeliveredFact::MsaaLiveReread { .. } => false,
         DeliveredFact::UiaNotification { notification, .. } => {
             notification.activity_id.as_deref() == Some(crate::SNAP_RESULTS_ACTIVITY)
         }

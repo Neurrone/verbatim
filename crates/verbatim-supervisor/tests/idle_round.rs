@@ -178,7 +178,9 @@ fn listener_stand_in(
                 }
                 send(&ListenerToCore::IdleAnswer { round });
             }
-            CoreToListener::HookInstalled { .. } | CoreToListener::HookRemoved { .. } => {}
+            CoreToListener::HookInstalled { .. }
+            | CoreToListener::HookRemoved { .. }
+            | CoreToListener::LiveReread { .. } => {}
         }
     }
 }

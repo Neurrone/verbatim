@@ -72,7 +72,7 @@ use crossbeam_channel::Sender;
 use verbatim_model::{OutpostId, Pid};
 use verbatim_process::port_queue::{Poster, Progress};
 
-use verbatim_model::protocol::{CoreToOutpost, OutpostToCore};
+use verbatim_model::protocol::{CoreToListener, CoreToOutpost, OutpostToCore};
 
 pub use frames::{Frame, Frames};
 pub use retire::ShutdownSummary;
@@ -892,6 +892,22 @@ impl Supervisor {
         let _ = self
             .owner
             .send(owner::OwnerEvent::Views { attention, holding });
+    }
+
+    /// Sends the focus listener Core's live re-read `request` of the last
+    /// read, traced `trace_id`, of `application`'s reading thread
+    /// ([`CoreToListener::LiveReread`]), behind every command sent to it
+    /// before, never dropped; held while a listener is launching, and
+    /// nothing with none, since Core ends the live re-reads asked of a
+    /// listener at its replacement.
+    pub fn live_reread(&self, request: u64, application: Pid, trace_id: verbatim_model::TraceId) {
+        let _ = self
+            .owner
+            .send(owner::OwnerEvent::LiveReread(CoreToListener::LiveReread {
+                request,
+                application,
+                trace_id,
+            }));
     }
 
     /// Runs the idle barrier's round `round` through the children

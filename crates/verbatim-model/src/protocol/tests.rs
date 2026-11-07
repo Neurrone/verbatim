@@ -62,7 +62,11 @@ fn next_core_to_outpost(previous: Option<&CoreToOutpost>) -> Option<CoreToOutpos
         CoreToOutpost::NodesHeld { .. } => CoreToOutpost::IdleQuery { round: 1 },
         CoreToOutpost::IdleQuery { .. } => CoreToOutpost::Shutdown,
         CoreToOutpost::Shutdown => CoreToOutpost::Assign { target_pid: Pid(1) },
-        CoreToOutpost::Assign { .. } => return None,
+        CoreToOutpost::Assign { .. } => CoreToOutpost::LiveReread {
+            request: 1,
+            trace_id: TraceId::from_raw(4),
+        },
+        CoreToOutpost::LiveReread { .. } => return None,
     })
 }
 
@@ -86,7 +90,12 @@ fn next_core_to_listener(previous: Option<&CoreToListener>) -> Option<CoreToList
         },
         CoreToListener::Ping { .. } => CoreToListener::IdleQuery { round: 1 },
         CoreToListener::IdleQuery { .. } => CoreToListener::Shutdown,
-        CoreToListener::Shutdown => return None,
+        CoreToListener::Shutdown => CoreToListener::LiveReread {
+            request: 1,
+            application: Pid(2),
+            trace_id: TraceId::from_raw(4),
+        },
+        CoreToListener::LiveReread { .. } => return None,
     })
 }
 
@@ -178,6 +187,7 @@ fn every_variant_has_its_reviewed_kind() {
             "IdleQuery: Ask",
             "Shutdown: Lifecycle",
             "Assign: Lifecycle",
+            "LiveReread: Routed",
         ]
     );
     assert_eq!(
@@ -193,6 +203,7 @@ fn every_variant_has_its_reviewed_kind() {
             "Ping: Lifecycle",
             "IdleQuery: Ask",
             "Shutdown: Lifecycle",
+            "LiveReread: Ask",
         ]
     );
     assert_eq!(
@@ -212,6 +223,7 @@ fn every_variant_has_its_reviewed_kind() {
             "Fault: Report",
             "TargetExited: Lifecycle",
             "IdleAnswer: Answer",
+            "LiveRereadGone: Report",
         ]
     );
     assert_eq!(
@@ -272,6 +284,7 @@ fn only_an_event_and_a_completed_reply_carry_nodes() {
             ("Fault".to_owned(), false),
             ("TargetExited".to_owned(), false),
             ("IdleAnswer".to_owned(), false),
+            ("LiveRereadGone".to_owned(), false),
         ]
     );
     let outcomes = [
@@ -337,6 +350,8 @@ fn a_message_names_its_nodes_and_its_texts_anchors() {
             })),
             earlier: None,
             group: None,
+            first_cached_ancestor: None,
+            answers: None,
         },
     };
     let read = reply(QueryOutcome::Done(QueryResult::Text(TextReply::Read {
@@ -385,6 +400,8 @@ fn stamping_names_every_node_id_in_a_message_with_its_outpost() {
             text: None,
             earlier: None,
             group: None,
+            first_cached_ancestor: None,
+            answers: None,
         },
     };
     let mut chain = reply(QueryOutcome::Done(QueryResult::Ancestors(vec![snapshot(
