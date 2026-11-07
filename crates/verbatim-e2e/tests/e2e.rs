@@ -58,6 +58,7 @@ const LIVE: &[&str] = scenario_tests! {
     alt_tab_switcher
     return_after_retirement
     return_from_a_held_application
+    owned_dialog_across_processes
     lock_key_announcements
     quick_link_menu
     explorer_folder_window

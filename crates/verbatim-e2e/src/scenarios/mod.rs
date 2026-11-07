@@ -32,6 +32,7 @@ pub(crate) mod notepad_say_all;
 pub(crate) mod notepad_spelling_errors;
 pub(crate) mod object_navigation_in_settings;
 pub(crate) mod object_navigation_over_uia;
+pub(crate) mod owned_dialog_across_processes;
 pub(crate) mod password;
 pub(crate) mod quick_link_menu;
 pub(crate) mod rapid_tabbing_in_settings;

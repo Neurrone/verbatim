@@ -717,7 +717,11 @@ under `src/scenarios/` documents exactly what it asserts.
   mockapp UIA window, read once, entered again while mockapp holds the
   first call into it: its title said about a second later, and the return
   to the text box announced as without the stall, before mockapp's
-  `release`), `quick_link_menu` (the Windows+X menu opened from the desktop
+  `release`), `owned_dialog_across_processes` (a mockapp UIA window and a
+  UIA dialog a second mockapp process opens over it, owned by it: the
+  dialog entered with no owner title, its two buttons by Tab and
+  Shift+Tab, and Space closing it, the owner saying only its focus),
+  `quick_link_menu` (the Windows+X menu opened from the desktop
   and closed with Escape), `explorer_folder_window` (a File Explorer
   window on a harness folder, with File Explorer's "Working on it..." an
   optional utterance on the window's opening and after Enter and

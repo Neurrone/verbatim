@@ -76,6 +76,8 @@
 //!   ([`return_after_retirement`](crate::scenarios::return_after_retirement)),
 //!   an application left while its reads are held and returned to
 //!   ([`return_from_a_held_application`](crate::scenarios::return_from_a_held_application)),
+//!   a dialog one application opens over another's window and closes
+//!   ([`owned_dialog_across_processes`](crate::scenarios::owned_dialog_across_processes)),
 //!   the Windows+X menu opened and closed
 //!   ([`quick_link_menu`](crate::scenarios::quick_link_menu)),
 //!   a File Explorer window
@@ -172,16 +174,16 @@ use crate::scenarios::{
     demo_say_all, demo_settings_dialog_keys, demo_terminal_session, document_keys, editing,
     explorer_folder_window, lock_key_announcements, measure, menu_and_settings_dialog,
     notepad_say_all, notepad_spelling_errors, object_navigation_in_settings,
-    object_navigation_over_uia, password, quick_link_menu, rapid_tabbing_in_settings,
-    return_after_retirement, return_from_a_held_application, review_cursor, review_words,
-    second_application_and_verbatim_menu, selection_keys, settings_combo_box_expanded,
-    settings_dialog_keys, settings_search_suggestions, settings_search_suggestions_reentered,
-    settings_system_page, speak_time_and_date, spelling_errors, switch_to_onecore,
-    system_information_tree, terminal_commands, terminal_editing, terminal_flood,
-    terminal_key_timing, terminal_lists, terminal_overflow, terminal_pager, terminal_progress,
-    terminal_review_grid, terminal_screens, terminal_settings_page, terminal_status_bar,
-    terminal_typing, terminal_windows, text_box_say_all, theme_panel, typed_words,
-    verbatim_lifecycle, word_selection,
+    object_navigation_over_uia, owned_dialog_across_processes, password, quick_link_menu,
+    rapid_tabbing_in_settings, return_after_retirement, return_from_a_held_application,
+    review_cursor, review_words, second_application_and_verbatim_menu, selection_keys,
+    settings_combo_box_expanded, settings_dialog_keys, settings_search_suggestions,
+    settings_search_suggestions_reentered, settings_system_page, speak_time_and_date,
+    spelling_errors, switch_to_onecore, system_information_tree, terminal_commands,
+    terminal_editing, terminal_flood, terminal_key_timing, terminal_lists, terminal_overflow,
+    terminal_pager, terminal_progress, terminal_review_grid, terminal_screens,
+    terminal_settings_page, terminal_status_bar, terminal_typing, terminal_windows,
+    text_box_say_all, theme_panel, typed_words, verbatim_lifecycle, word_selection,
 };
 use crate::speech::{FailurePoint, SpeechFailure};
 
@@ -525,6 +527,18 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         setup: return_from_a_held_application::setup,
         body: return_from_a_held_application::body,
         teardown: return_from_a_held_application::teardown,
+    },
+    ScenarioDef {
+        name: "owned_dialog_across_processes",
+        group: Group::Shell,
+        settings: None,
+        local_only: false,
+        quick_retirement: false,
+        document: None,
+        comparable: Comparable::Yes,
+        setup: owned_dialog_across_processes::setup,
+        body: owned_dialog_across_processes::body,
+        teardown: owned_dialog_across_processes::teardown,
     },
     ScenarioDef {
         name: "lock_key_announcements",
