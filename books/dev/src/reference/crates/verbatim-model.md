@@ -345,7 +345,11 @@ that carries them on the pipes, `Message`, is
   across `Barrier::All`. `Merge for OutpostToCore` is the outbound
   queue's rule: an event replaces a waiting event of its node and kind and
   goes to the back, a caret report carrying the older's selection changes
-  before its own; the idle answer is `Barrier::All`; a reply bars only a
+  before its own, a change of states that leaves the node expanded with no
+  child count keeping the older's count, and a focus report keeping the
+  stronger `earlier` of the two, in the order `Gone`, `NotFocused`,
+  `Focused`, none, so the merged message says what Core would have
+  concluded from both in order; the idle answer is `Barrier::All`; a reply bars only a
   caret report with selection changes, and such a report never merges
   with one in general terms. `crates/verbatim-core/tests/merge.rs` proves
   Core's state and the others' speech the same, merged or not, for every

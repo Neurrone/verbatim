@@ -609,6 +609,85 @@ mod tests {
         );
     }
 
+    fn states_changed(expanded: bool, child_count: Option<u32>) -> OutpostToCore {
+        let states = verbatim_model::StateSet::new().with(verbatim_model::State::Focused);
+        let states = if expanded {
+            states.with(verbatim_model::State::Expanded)
+        } else {
+            states.with(verbatim_model::State::Collapsed)
+        };
+        event(NormalizedEvent::PropertyChanged {
+            node_id: node(1),
+            change: verbatim_model::PropertyChange::States(states),
+            child_count,
+        })
+    }
+
+    /// A tree view item made expanded raises a change that reads its child
+    /// count, then one read after it is expanded that reads none: merged,
+    /// the count is kept while the item stays expanded.
+    #[test]
+    fn a_merged_expansion_keeps_its_child_count() {
+        let mut pending = pending();
+        push(&mut pending, states_changed(true, Some(52)), &[]);
+        push(&mut pending, states_changed(true, None), &[]);
+        let written: Vec<String> = write(&mut pending).iter().map(summary).collect();
+        assert_eq!(written, vec![summary(&states_changed(true, Some(52)))]);
+
+        let mut collapsed = Pending::new();
+        push(&mut collapsed, states_changed(true, Some(52)), &[]);
+        push(&mut collapsed, states_changed(false, None), &[]);
+        let written: Vec<String> = write(&mut collapsed).iter().map(summary).collect();
+        assert_eq!(written, vec![summary(&states_changed(false, None))]);
+    }
+
+    fn focus(earlier: Option<verbatim_model::EarlierElement>) -> OutpostToCore {
+        event(NormalizedEvent::FocusChanged {
+            node: verbatim_model::NodeSnapshot {
+                id: node(1),
+                backend: Backend::Uia,
+                role: verbatim_model::Role::Button,
+                name: Some("OK".to_owned()),
+                value: None,
+                states: verbatim_model::StateSet::new(),
+                details: verbatim_model::NodeDetails::default(),
+            },
+            whole_window: false,
+            ancestors: Vec::new(),
+            selected_child: None,
+            text: None,
+            earlier,
+            group: None,
+        })
+    }
+
+    /// Two focus reports of one node merged keep the stronger evidence of
+    /// the element held before, in the order gone, not focused, focused,
+    /// none, so a newer report that says focused does not hide that the
+    /// older found another element.
+    #[test]
+    fn a_merged_focus_report_keeps_the_older_evidence_of_another_element() {
+        use verbatim_model::EarlierElement::{Focused, Gone, NotFocused};
+        for (older, newer, kept) in [
+            (Some(Gone), Some(Focused), Some(Gone)),
+            (Some(NotFocused), Some(Focused), Some(NotFocused)),
+            (Some(Gone), Some(NotFocused), Some(Gone)),
+            (Some(NotFocused), Some(Gone), Some(Gone)),
+            (Some(Focused), None, Some(Focused)),
+            (None, Some(Focused), Some(Focused)),
+        ] {
+            let mut pending = pending();
+            push(&mut pending, focus(older), &[]);
+            push(&mut pending, focus(newer), &[]);
+            let written: Vec<String> = write(&mut pending).iter().map(summary).collect();
+            assert_eq!(
+                written,
+                vec![summary(&focus(kept))],
+                "{older:?} then {newer:?}"
+            );
+        }
+    }
+
     #[test]
     fn nothing_is_merged_across_a_flush() {
         let mut pending = pending();

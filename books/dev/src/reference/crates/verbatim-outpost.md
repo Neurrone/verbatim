@@ -1303,6 +1303,9 @@ layer"):
 - Two waiting caret reports merge with both reports' changes in order
   (`Merge for OutpostToCore` in `verbatim_model::protocol`); one with
   changes never merges across a reply or with a report in general terms.
+  A merged change of states that leaves the node expanded keeps the older's
+  child count when the newer read none, and a merged focus report keeps
+  the stronger evidence of the element held before (`earlier`).
 
 Caret and text events:
 

@@ -7,7 +7,9 @@
 //! kind (and, for a property change, property; for a focus, whether it is
 //! a foreground change), and goes to the back, as NVDA's limiter gives a
 //! newer event of one key the newest place. A caret report carries the
-//! older report's selection changes before its own. Nothing merges across
+//! older report's selection changes before its own, a change of states the
+//! older's child count, and a focus report the stronger evidence of the
+//! element held before. Nothing merges across
 //! the idle barrier's answer, and a caret report with selection changes
 //! does not merge across a reply, nor with a report that says its changes
 //! in general terms.
@@ -15,7 +17,7 @@
 use std::mem::Discriminant;
 
 use super::OutpostToCore;
-use crate::{NodeId, NormalizedEvent, PropertyChange};
+use crate::{EarlierElement, NodeId, NormalizedEvent, PropertyChange, State};
 
 /// What a waiting message is to a newer one merged across it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -161,57 +163,84 @@ impl Merge for OutpostToCore {
 
     /// `newer` in place of `older`: a caret report carrying the older one's
     /// selection changes before its own, each change being from the report
-    /// before, and anything else replacing it. Two caret reports merged
+    /// before; a change of states that leaves the node expanded, with no
+    /// child count, keeping the older's count, which the change that made
+    /// it expanded read (`docs/nvda/speech.md`, "How many items an expanded
+    /// tree view item holds"); a focus report keeping the stronger evidence
+    /// of the element held before ([`stronger`]); and anything else
+    /// replacing it. Two caret reports merged
     /// are never both in general terms, nor is the older when it carries
     /// changes ([`Merge::may_merge`]), so the newer's general terms are
     /// kept.
-    fn merged(older: Self, newer: Self) -> Self {
-        match (older, newer) {
+    fn merged(older: Self, mut newer: Self) -> Self {
+        let (
+            OutpostToCore::Event { event: older, .. },
+            OutpostToCore::Event {
+                event: newer_event, ..
+            },
+        ) = (older, &mut newer)
+        else {
+            return newer;
+        };
+        match (older, newer_event) {
             (
-                OutpostToCore::Event {
-                    event:
-                        NormalizedEvent::CaretMoved {
-                            selection_changes: mut waiting,
-                            ..
-                        },
+                NormalizedEvent::CaretMoved {
+                    selection_changes: mut waiting,
                     ..
                 },
-                OutpostToCore::Event {
-                    trace_id,
-                    observed_at_us,
-                    backend,
-                    window,
-                    application,
-                    timing,
-                    event:
-                        NormalizedEvent::CaretMoved {
-                            node_id,
-                            caret,
-                            selection_changes,
-                            content_changed,
-                            new_selection,
-                        },
+                NormalizedEvent::CaretMoved {
+                    selection_changes, ..
                 },
             ) => {
-                waiting.extend(selection_changes);
-                OutpostToCore::Event {
-                    trace_id,
-                    observed_at_us,
-                    backend,
-                    window,
-                    application,
-                    timing,
-                    event: NormalizedEvent::CaretMoved {
-                        node_id,
-                        caret,
-                        selection_changes: waiting,
-                        content_changed,
-                        new_selection,
-                    },
-                }
+                waiting.append(selection_changes);
+                *selection_changes = waiting;
             }
-            (_, newer) => newer,
+            (
+                NormalizedEvent::PropertyChanged {
+                    change: PropertyChange::States(_),
+                    child_count: Some(count),
+                    ..
+                },
+                NormalizedEvent::PropertyChanged {
+                    change: PropertyChange::States(states),
+                    child_count: child_count @ None,
+                    ..
+                },
+            ) if states.contains(State::Expanded) => *child_count = Some(count),
+            (
+                NormalizedEvent::FocusChanged {
+                    earlier: older_earlier,
+                    ..
+                },
+                NormalizedEvent::FocusChanged { earlier, .. },
+            ) => *earlier = stronger(older_earlier, *earlier),
+            _ => {}
         }
+        newer
+    }
+}
+
+/// The stronger of two focus reports' evidence of the element held before
+/// under their node's identity, in the order `Gone`, `NotFocused`,
+/// `Focused`, none: what Core would have concluded from both in order,
+/// since Core takes a newer report saying `Focused` as a repeat of the
+/// older's element, which the older said was another.
+fn stronger(
+    older: Option<EarlierElement>,
+    newer: Option<EarlierElement>,
+) -> Option<EarlierElement> {
+    fn strength(earlier: Option<EarlierElement>) -> u8 {
+        match earlier {
+            None => 0,
+            Some(EarlierElement::Focused) => 1,
+            Some(EarlierElement::NotFocused) => 2,
+            Some(EarlierElement::Gone) => 3,
+        }
+    }
+    if strength(older) > strength(newer) {
+        older
+    } else {
+        newer
     }
 }
 
