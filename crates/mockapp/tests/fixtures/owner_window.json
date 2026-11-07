@@ -1,0 +1,9 @@
+{
+  "id": "root",
+  "role": "window",
+  "name": "Mockapp Owner",
+  "focus_on_activate": true,
+  "children": [
+    { "id": "open", "role": "button", "name": "Open", "states": ["focusable", "focused"] }
+  ]
+}

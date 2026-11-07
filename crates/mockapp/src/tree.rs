@@ -463,6 +463,8 @@ mod tests {
             edit_version_6: false,
             content: true,
             msaa_client: false,
+            dialog_keys: false,
+            focus_on_activate: false,
             client_role: false,
             location: [0; 4],
             children,

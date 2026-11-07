@@ -1502,6 +1502,67 @@ fn a_windows_forms_menu_item_is_checked_from_the_remote_read() {
 
 /// Runs this file's tests through the UIA test runner, which explains why
 /// these binaries do not exit normally (`common/harness.rs`).
+/// What the focus-now query answers for "Deep button" when a step to the
+/// parent of its container "Inner group" waits past UIA's transaction
+/// timeout (`slow-parent`), with remote operations on or off: the focus's
+/// name and the names of its ancestors, outermost first. The classic walk's
+/// first step, to "Inner group", times out too, since filling the parent's
+/// cache steps on from it.
+fn focus_now_with_a_slow_grandparent(remote: bool) -> (Option<String>, Vec<Option<String>>) {
+    const TIMEOUT: Duration = Duration::from_millis(300);
+    const SLOW_PARENT: Duration = Duration::from_millis(600);
+    let path = if remote { "remote" } else { "classic" };
+    let mut fixture = Fixture::start(&format!("mockapp-rops-now-slow-{path}"));
+    let mut outpost = OutpostUnderTest::with_options(
+        &fixture.app,
+        OutpostOptions {
+            remote_operations: remote,
+        },
+    );
+    fixture.app.send("set-focus deep");
+    outpost.read_focus_as(&fixture.find("Deep button"));
+    let client: IUIAutomation2 = fixture.uia.client().cast().expect("IUIAutomation2");
+    let restored = ProcessTimeout::set(&client, Kind::Transaction, TIMEOUT);
+    fixture
+        .app
+        .send(&format!("slow-parent group2 {}", SLOW_PARENT.as_millis()));
+    let (now, _) = outpost.focus_now_with_calls();
+    drop(restored);
+    let now = now.unwrap_or_else(|| panic!("{path}: the focus now has a focused control"));
+    drop(outpost);
+    fixture.app.quit();
+    (
+        now.node.name,
+        now.ancestors.into_iter().map(|node| node.name).collect(),
+    )
+}
+
+/// The outpost's own classic walk whose step to a parent times out goes on
+/// from the parent window of its outermost element's nearest window, by
+/// that window's own object read live, as any failed step does and as
+/// NVDA's parent read falls back to `Window._get_parent`: here the desktop,
+/// so the focus has no ancestor. Completed by plain windows from that
+/// nearest window, as a cut walk is, mockapp's window would be its one
+/// ancestor.
+fn a_failed_uia_ancestry_continues_from_the_parent_window_live() {
+    assert_eq!(
+        focus_now_with_a_slow_grandparent(false),
+        (Some("Deep button".to_owned()), Vec::new())
+    );
+}
+
+/// The same with remote operations on: the program, one transaction, fails
+/// by UIA's transaction timeout, and the focus's chain goes on from the
+/// parent window of its nearest window, mockapp's, here the desktop, so it
+/// has no ancestor. Completed by plain windows, as before, mockapp's window
+/// would be its one ancestor.
+fn a_failed_remote_program_continues_from_the_parent_window_live() {
+    assert_eq!(
+        focus_now_with_a_slow_grandparent(true),
+        (Some("Deep button".to_owned()), Vec::new())
+    );
+}
+
 fn main() {
     harness::run_isolated(&[
         (
@@ -1579,6 +1640,14 @@ fn main() {
         (
             "a_focus_now_whose_classic_walk_finds_no_parent_below_the_root_goes_on_from_its_windows_parent",
             a_focus_now_whose_classic_walk_finds_no_parent_below_the_root_goes_on_from_its_windows_parent,
+        ),
+        (
+            "a_failed_uia_ancestry_continues_from_the_parent_window_live",
+            a_failed_uia_ancestry_continues_from_the_parent_window_live,
+        ),
+        (
+            "a_failed_remote_program_continues_from_the_parent_window_live",
+            a_failed_remote_program_continues_from_the_parent_window_live,
         ),
         (
             "a_focus_inside_one_whose_parent_step_failed_meets_its_chain_there",

@@ -90,6 +90,17 @@ pub(crate) fn root_fragment(tree: SharedTree, hwnd: HWND) -> IRawElementProvider
     }
 }
 
+/// The window whose own root provider fails `ProviderOptions`
+/// (`fail-window-element`), 0 for none: its element is then UIA's
+/// proxies' alone.
+static FAILING_WINDOW: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
+
+/// Whether the root provider of `hwnd` fails (`fail-window-element`).
+pub(crate) fn window_element_fails(hwnd: HWND) -> bool {
+    let failing = FAILING_WINDOW.load(std::sync::atomic::Ordering::Relaxed);
+    failing != 0 && failing == hwnd.0 as isize
+}
+
 /// Whether every request for a text pattern fails (`refuse-text`).
 static REFUSE_TEXT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
@@ -277,6 +288,9 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
             guard.nodes[index].selection = (start.min(length), end.min(length));
             guard.nodes[index].text = Some(text);
         }
+        Command::FailWindowElement => {
+            FAILING_WINDOW.store(hwnd.0 as isize, std::sync::atomic::Ordering::Relaxed);
+        }
         Command::ClientName(_) => {
             return Err("client-name is not supported on the uia backend".into());
         }
@@ -389,6 +403,7 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
         // Handled by the window thread before dispatch.
         Command::Stall(..)
         | Command::OnActivate(_)
+        | Command::Island(_)
         | Command::Slow(_)
         | Command::SlowPatterns(_)
         | Command::RefuseText(_)
@@ -402,6 +417,80 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
         | Command::Unrecognized(_) => {}
     }
     Ok(())
+}
+
+/// What a dialog's key did ([`dialog_key`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum DialogKey {
+    /// It is no dialog key, or there is no button to move to or press.
+    Ignored,
+    /// Tab or Shift+Tab moved the focus to another button and raised UIA's
+    /// focus event.
+    Moved,
+    /// Space or Enter pressed the focused button.
+    Pressed,
+}
+
+/// A dialog's key `key`, with Shift held when `shift`, on the window `hwnd`
+/// whose fixture asks for them (`dialog_keys`): Tab moves the focus to the
+/// next button in tree order, after the last the first, Shift+Tab to the
+/// one before, each raising UIA's focus event, and Space or Enter presses
+/// the focused button, which the window then closes for.
+pub(crate) fn dialog_key(
+    tree: &SharedTree,
+    hwnd: HWND,
+    key: windows::Win32::UI::Input::KeyboardAndMouse::VIRTUAL_KEY,
+    shift: bool,
+) -> DialogKey {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{VK_RETURN, VK_SPACE, VK_TAB};
+    let (buttons, focused) = {
+        let guard = tree
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let buttons: Vec<usize> = (0..guard.nodes.len())
+            .filter(|&index| guard.nodes[index].role == Role::Button)
+            .collect();
+        (buttons, guard.focused)
+    };
+    let at = focused.and_then(|focused| buttons.iter().position(|&index| index == focused));
+    if key == VK_SPACE || key == VK_RETURN {
+        return if at.is_some() {
+            DialogKey::Pressed
+        } else {
+            DialogKey::Ignored
+        };
+    }
+    if key != VK_TAB || buttons.is_empty() {
+        return DialogKey::Ignored;
+    }
+    let count = buttons.len();
+    let next = match (at, shift) {
+        (Some(at), false) => (at + 1) % count,
+        (Some(at), true) => (at + count - 1) % count,
+        (None, false) => 0,
+        (None, true) => count - 1,
+    };
+    let index = buttons[next];
+    {
+        let mut guard = tree
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(previous) = guard.focused.replace(index) {
+            guard.nodes[previous]
+                .states
+                .remove(verbatim_model::State::Focused);
+        }
+        guard.nodes[index]
+            .states
+            .insert(verbatim_model::State::Focused);
+    }
+    match raise_focus(tree, hwnd, index) {
+        Ok(()) => DialogKey::Moved,
+        Err(error) => {
+            eprintln!("mockapp: {error}");
+            DialogKey::Moved
+        }
+    }
 }
 
 fn focus_node(tree: &SharedTree, id: &str) -> Option<usize> {
@@ -468,6 +557,17 @@ fn select_node(tree: &SharedTree, id: &str) -> Option<usize> {
         .states
         .insert(verbatim_model::State::Selected);
     Some(index)
+}
+
+/// Raises UIA's focus event for the focused node, when there is one, as
+/// an application restores its focus when its window is activated
+/// (`focus_on_activate`).
+pub(crate) fn raise_focused(tree: &SharedTree, hwnd: HWND) -> Result<(), String> {
+    let focused = tree
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .focused;
+    focused.map_or(Ok(()), |index| raise_focus(tree, hwnd, index))
 }
 
 fn raise_focus(tree: &SharedTree, hwnd: HWND, index: usize) -> Result<(), String> {
@@ -1340,6 +1440,9 @@ mod handler {
     impl IRawElementProviderSimple_Impl for RootProvider_Impl {
         fn ProviderOptions(&self) -> WinResult<ProviderOptions> {
             hits::hit(hits::Method::ProviderOptions);
+            if self.index == 0 && super::window_element_fails(self.hwnd) {
+                return Err(windows::Win32::Foundation::E_FAIL.into());
+            }
             Ok(provider_options())
         }
         fn GetPatternProvider(&self, pattern_id: UIA_PATTERN_ID) -> WinResult<IUnknown> {

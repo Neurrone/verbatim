@@ -2917,14 +2917,16 @@ fn thread_focus_window(hwnd: HWND) -> Option<HWND> {
 }
 
 /// A walk cut at the depth limit of 64 is completed by plain windows from
-/// its outermost element's nearest window, included, a deliberate
-/// difference from NVDA's fallback (`docs/design/focus-pipeline-rework.md`,
-/// "Decisions"): the button "Far", under 66 groups of its own in mockapp's
-/// window (`nested.json`), is read by the listener up to its 64th ancestor,
-/// which names the window to complete from, and reported with the window,
-/// a plain window named by its title, above the 64 groups read. Without the
-/// completion, the outermost group read is the chain's top.
-fn a_chain_cut_at_the_depth_limit_is_completed_by_its_windows() {
+/// its outermost element's nearest window, included, never read, a
+/// deliberate difference from NVDA's fallback
+/// (`docs/design/focus-pipeline-rework.md`, "Decisions"): the button "Far",
+/// under 66 groups of its own in mockapp's window (`nested.json`), is read
+/// by the listener up to its 64th ancestor, which names the window to
+/// complete from, and reported with the window, a plain window named by its
+/// title, above the 64 groups read. Started from that window's parent, as a
+/// failure's chain is, the window would be lost; without the completion,
+/// the outermost group read is the chain's top.
+fn a_depth_limited_chain_starts_at_its_unread_nearest_window() {
     let title = common::unique_title("mockapp-depth-limit");
     let app = common::spawn("nested.json", "uia", &title);
     let hwnd = common::find_window(&title);
@@ -3212,6 +3214,157 @@ fn a_focus_in_a_hung_nearest_window_keeps_the_listeners_ancestors() {
     app.quit();
 }
 
+/// A UIA focus whose walk's first step fails goes on from the parent
+/// window of its nearest window, by that window's own object read live, as
+/// NVDA's object, which carries its nearest window, walks its parent by
+/// `Window._get_parent`: the button "OK" in mockapp's UIA child window
+/// (`uia_island.json`), its step to "Embedded" failing (`island
+/// answer-parent`, past the listener's lookup of its nearest window), has
+/// the listener name the host window, and the outpost reports the host
+/// window's element, read then, above it. The child window, its nearest,
+/// is not in the chain, as NVDA's line does not hold it.
+fn a_failed_uia_read_continues_from_its_nearest_windows_parent() {
+    let (mut app, host, island) = uia_island("mockapp-failed-read-parent");
+    let outpost = OutpostUnderTest::new(&app);
+    let uia = Uia::new().expect("a UIA client");
+    let ok = common::listener_focus(&uia, island.0 as isize);
+    app.send("island answer-parent ok fail 1");
+    let (judged, _) = outpost.listener_read(&ok);
+    let Judged::Read(read) = judged else {
+        panic!("the listener did not report a focus whose step failed: {judged:?}");
+    };
+    assert_eq!(
+        (read.ancestors.len(), read.ancestors_end),
+        (
+            0,
+            verbatim_model::protocol::AncestorsEnd::ContinueFrom(host.0 as isize)
+        ),
+        "the listener's walk, going on from the host window"
+    );
+    let reported = outpost.focus(DeliveredFact::UiaFocusRead {
+        marker: 0,
+        read,
+        focus: true,
+    });
+    assert_eq!(
+        (roles_and_names(&reported), windows_of(&reported)),
+        (
+            vec![
+                (Role::Window, Some("Mockapp Island Fixture")),
+                (Role::Button, Some("OK"))
+            ],
+            vec![Some(handle(host)), None]
+        ),
+        "the outpost's chain and its windows"
+    );
+    outpost.settled();
+    drop(outpost);
+    app.quit();
+}
+
+/// A chain that goes on after a failure carries one entry per window: the
+/// button "OK" in mockapp's UIA child window (`uia_island.json`), whose
+/// step from the child window's own element, "Embedded", to the host
+/// window's fails (`island answer-parent embedded fail`), goes on from the
+/// parent window of the outermost element's window, the host's, never from
+/// that window itself, so the chain holds the host's element and the child
+/// window's, each once. Gone on from its nearest window, the child window
+/// would be in it twice, its element and a plain window for its handle.
+fn a_failed_read_s_chain_carries_one_entry_per_window() {
+    let (mut app, host, island) = uia_island("mockapp-one-entry-per-window");
+    let outpost = OutpostUnderTest::new(&app);
+    let uia = Uia::new().expect("a UIA client");
+    let ok = common::listener_focus(&uia, island.0 as isize);
+    app.send("island answer-parent embedded fail");
+    let reported = outpost.uia_focus(&ok);
+    assert_eq!(
+        (roles_and_names(&reported), windows_of(&reported)),
+        (
+            vec![
+                (Role::Window, Some("Mockapp Island Fixture")),
+                (Role::Group, Some("Embedded")),
+                (Role::Button, Some("OK"))
+            ],
+            vec![Some(handle(host)), Some(handle(island)), None]
+        ),
+        "the outpost's chain and its windows"
+    );
+    outpost.settled();
+    drop(outpost);
+    app.quit();
+}
+
+/// A UIA window whose element cannot be read, met on a focus's way up,
+/// loses the focus, as NVDA's unguarded `ElementFromHandleBuildCache` ends
+/// its event (`NVDAObjects/UIA/__init__.py` 1553 to 1557): the button "OK"
+/// in mockapp's UIA child window (`uia_island.json`), its step to
+/// "Embedded" failing, has its chain go on from the host window, whose root
+/// provider fails (`fail-window-element`), so that the outpost cannot make
+/// its element, and the outpost reports nothing. Read as a plain window, as
+/// before, the host would have been reported above the focus.
+fn a_uia_window_whose_element_cannot_be_read_loses_the_focus() {
+    let (mut app, host, island) = uia_island("mockapp-unreadable-window-element");
+    let outpost = OutpostUnderTest::new(&app);
+    let uia = Uia::new().expect("a UIA client");
+    let ok = common::listener_focus(&uia, island.0 as isize);
+    app.send("island answer-parent ok fail 1");
+    app.send("fail-window-element");
+    let request = uia
+        .request::<verbatim_uia::Ancestor>(common::ancestor_gates())
+        .expect("a cache request");
+    assert!(
+        uia.window_element(host.0 as isize, &request).is_err(),
+        "the host window's element cannot be made"
+    );
+    let (judged, _) = outpost.listener_read(&ok);
+    let Judged::Read(read) = judged else {
+        panic!("the listener dropped the focus: {judged:?}");
+    };
+    assert_eq!(
+        read.ancestors_end,
+        verbatim_model::protocol::AncestorsEnd::ContinueFrom(host.0 as isize),
+        "the listener's walk goes on from the host window"
+    );
+    outpost.deliver(DeliveredFact::UiaFocusRead {
+        marker: 0,
+        read,
+        focus: true,
+    });
+    outpost.settled();
+    drop(outpost);
+    app.quit();
+}
+
+/// A UIA dialog the focus listener read in a focus's chain, whose element
+/// the outpost does not hold, has its own text on the focus's first report:
+/// the outpost finds it by the path of the report being built, not by the
+/// one it committed before. The "Yes" button of mockapp's dialog window
+/// (`dialog_class_window.json`), the outpost's first report, carries the
+/// dialog's text.
+fn a_dialog_the_listener_read_has_its_text_on_its_first_report() {
+    const QUESTION: &str = "Remove the theme Mine? This cannot be undone. Its sounds go with it.";
+    let title = common::unique_title("mockapp-dialog-first-report");
+    let mut app = common::spawn("dialog_class_window.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let uia = Uia::new().expect("a UIA client");
+    let outpost = OutpostUnderTest::new(&app);
+    app.send("set-focus yes");
+    let reported = outpost.uia_focus(&common::listener_focus(&uia, hwnd.0 as isize));
+    assert_eq!(
+        reported
+            .ancestors
+            .iter()
+            .chain(std::iter::once(&reported.node))
+            .map(|node| (node.role, node.details.description.as_deref()))
+            .collect::<Vec<_>>(),
+        [(Role::Dialog, Some(QUESTION)), (Role::Button, None)],
+        "the chain's descriptions"
+    );
+    outpost.settled();
+    drop(outpost);
+    app.quit();
+}
+
 #[expect(clippy::too_many_lines, reason = "one entry per test")]
 fn main() {
     harness::run_isolated(&[
@@ -3256,8 +3409,24 @@ fn main() {
             a_focus_in_a_hung_nearest_window_keeps_the_listeners_ancestors,
         ),
         (
-            "a_chain_cut_at_the_depth_limit_is_completed_by_its_windows",
-            a_chain_cut_at_the_depth_limit_is_completed_by_its_windows,
+            "a_depth_limited_chain_starts_at_its_unread_nearest_window",
+            a_depth_limited_chain_starts_at_its_unread_nearest_window,
+        ),
+        (
+            "a_failed_uia_read_continues_from_its_nearest_windows_parent",
+            a_failed_uia_read_continues_from_its_nearest_windows_parent,
+        ),
+        (
+            "a_failed_read_s_chain_carries_one_entry_per_window",
+            a_failed_read_s_chain_carries_one_entry_per_window,
+        ),
+        (
+            "a_uia_window_whose_element_cannot_be_read_loses_the_focus",
+            a_uia_window_whose_element_cannot_be_read_loses_the_focus,
+        ),
+        (
+            "a_dialog_the_listener_read_has_its_text_on_its_first_report",
+            a_dialog_the_listener_read_has_its_text_on_its_first_report,
         ),
         (
             "a_listener_read_focus_is_reported_with_the_listeners_stamp",

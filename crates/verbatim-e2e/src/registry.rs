@@ -554,9 +554,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         name: "explorer_folder_window",
         group: Group::Shell,
         settings: None,
-        // Fails on the runner for the causes `docs/flaky-tests.md` records
-        // under "File Explorer", so it gives no signal there until that fix.
-        local_only: true,
+        local_only: false,
         quick_retirement: false,
         document: None,
         comparable: Comparable::Yes,

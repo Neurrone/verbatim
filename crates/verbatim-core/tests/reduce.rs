@@ -1906,6 +1906,7 @@ fn details_speak_in_nvda_property_order() {
         column: Some(1),
         parent_automation_id: None,
         window: None,
+        above_boundary: false,
     };
 
     // The first level spoken goes first ("Where the level goes" in
@@ -3595,7 +3596,8 @@ fn a_settings_pages_content_focus_observed_before_its_frame_came_in_front_is_spo
     );
     let toggle = node(1, Role::CheckBox, Some("Bluetooth"), None, StateSet::new());
     // The page's outpost reads the frame above its process boundary.
-    let frame_from_page = window_node(5, Backend::Msaa, Role::Pane, "Settings", 40);
+    let mut frame_from_page = window_node(5, Backend::Msaa, Role::Pane, "Settings", 40);
+    frame_from_page.details.above_boundary = true;
     let (input, outpost) = focus_observed(
         (Pid(11), OutpostId(2)),
         &facts,
@@ -4080,14 +4082,13 @@ fn a_foreground_change_to_another_window_announces_the_window_as_the_focus() {
 #[test]
 fn a_window_spoken_as_the_focus_is_not_repeated_when_its_control_takes_focus() {
     let source = Pid(1);
-    // A foreground report is read through MSAA.
-    let mut notepad = node(1, Role::Window, Some("Notepad"), None, StateSet::new());
-    notepad.backend = Backend::Msaa;
+    // A foreground report reads the window through its backend, UIA here.
+    let notepad = node(1, Role::Window, Some("Notepad"), None, StateSet::new());
     let (state, _) = reduce(&SrState::new(), &foreground_in(source, window(10), notepad));
 
     // The control's ancestry reaches the same window through another path,
-    // so its node id differs; the window's handle is where the two lines
-    // meet, and the line keeps its entry.
+    // so its node id differs; the window's handle and backend are where the
+    // two lines meet, and the line keeps its entry.
     let same_window = window_node(5, Backend::Uia, Role::Window, "Notepad", 10);
     let edit = node(2, Role::EditableText, Some("Text"), None, StateSet::new());
     let (_, effects) = reduce(
@@ -4285,17 +4286,19 @@ fn window_node(id: u64, backend: Backend, role: Role, name: &str, handle: u64) -
 /// The Settings app as its readers report it: the page's outpost reads the
 /// frame, above its process boundary, as NVDA's MSAA client for it, a pane
 /// marked a top-level window's client and named by its title, carrying
-/// the frame's handle, which the frame host's own focus, the frame's
-/// client area, carries too. The pane is the frame that focus entered, so
-/// the page's focus says the content window and the focus, as NVDA says
-/// "Settings" and then "Settings window" (`docs/parity/focus-context.md`,
+/// the frame's handle and the stand-in mark, and the frame host's own
+/// focus is the frame's client area, read through MSAA. The two are one
+/// object by their backend and by the stand-in rule alike, so the page's
+/// focus says the content window and the focus, as NVDA says "Settings"
+/// and then "Settings window" (`docs/parity/focus-context.md`,
 /// "Focus-ancestry context").
 #[test]
-fn a_frame_read_by_two_outposts_is_entered_once() {
+fn a_settings_frame_read_by_two_outposts_through_msaa_is_entered_once() {
     let mut client = window_node(1, Backend::Msaa, Role::Pane, "Settings", 10);
     client.details.top_level_client = true;
     let mut frame = window_node(4, Backend::Msaa, Role::Pane, "Settings", 10);
     frame.details.top_level_client = true;
+    frame.details.above_boundary = true;
     let content = window_node(2, Backend::Uia, Role::Window, "Settings", 11);
     let search = node(
         3,
@@ -4317,6 +4320,58 @@ fn a_frame_read_by_two_outposts_is_entered_once() {
                 role(Role::EditableText),
             ],
         ]
+    );
+}
+
+/// A dialog of one application owned by a window another application's
+/// outpost reads through UI Automation: the dialog's outpost describes the
+/// owner, above its process boundary, as a pane from Windows' state, a
+/// stand-in, which is the owner's UIA element by the stand-in rule, as
+/// NVDA's two lines hold one object there. So the dialog is entered with
+/// no owner title said, and the focus line keeps the owner's own entry.
+/// Without the mark the two backends would be two objects, and the owner's
+/// title would be said on the way in.
+#[test]
+fn a_uia_owner_window_above_another_process_meets_its_stand_in() {
+    let owner = window_node(1, Backend::Uia, Role::Window, "Owner", 10);
+    let open = node(2, Role::Button, Some("Open"), None, StateSet::new());
+    let (state, _) = reduce(
+        &SrState::new(),
+        &focus_in(Pid(1), foreground_window(10), open, vec![owner]),
+    );
+    let mut stand_in = window_node(3, Backend::Msaa, Role::Pane, "Owner", 10);
+    stand_in.details.top_level_client = true;
+    stand_in.details.above_boundary = true;
+    let dialog = window_node(4, Backend::Uia, Role::Dialog, "Owned", 20);
+    let ok = node(5, Role::Button, Some("OK"), None, StateSet::new());
+    let dialog_facts = WindowFacts {
+        root_owner: WindowHandle(10),
+        ..foreground_window(20)
+    };
+    let (_, effects) = reduce(
+        &state,
+        &focus_in(Pid(2), dialog_facts, ok, vec![stand_in, dialog]),
+    );
+    assert_eq!(
+        heard(&effects),
+        focus_heard(
+            FocusNow {
+                focus: ObjectKey::of_id(NodeId::in_outpost(OutpostId(2), 5)),
+                ancestors: vec![
+                    ObjectKey::of_id(NodeId::in_outpost(OutpostId(1), 1)),
+                    ObjectKey::of_id(NodeId::in_outpost(OutpostId(2), 4)),
+                ],
+                // The foreground record keeps the stand-in that entered the
+                // dialog's top-level window.
+                foreground: Some(ObjectKey::of_id(NodeId::in_outpost(OutpostId(2), 3))),
+                menu_item_of_focus: None,
+            },
+            vec![
+                vec![UtteranceSegment::label("Owned"), role(Role::Dialog)],
+                vec![UtteranceSegment::label("OK"), role(Role::Button)],
+            ]
+        ),
+        "the dialog entered with no owner said"
     );
 }
 
@@ -5928,13 +5983,14 @@ fn a_new_chain_meets_the_previous_one_at_a_window_reported_by_two_outposts() {
     );
 }
 
-/// A focus whose walk was cut by its bound, its chain completed by plain
-/// windows from its nearest window, meets the previous line at that window
-/// and enters nothing; the focus line then holds no more than that window,
-/// so the next focus, read in full, enters again the dialog the cut walk
-/// did not reach, as NVDA's focus line would have lost it.
+/// A focus whose walk was cut at its depth limit, its chain completed by
+/// plain windows from its nearest window, read as MSAA clients, shares
+/// nothing with a line holding that window's UIA element, another object
+/// by NVDA's equality, and says the window again; the focus line then
+/// holds no more than that window, so the next focus, read in full, enters
+/// again the window and the dialog the cut walk did not reach.
 #[test]
-fn a_chain_cut_in_the_same_window_says_again_what_it_did_not_reach() {
+fn a_depth_limited_chain_in_a_uia_window_says_again_what_it_did_not_reach() {
     let app = window_node(1, Backend::Uia, Role::Window, "App", 10);
     let options = node(3, Role::Dialog, Some("Options"), None, StateSet::new());
     let button = |id, name| node(id, Role::Button, Some(name), None, StateSet::new());
@@ -5954,7 +6010,9 @@ fn a_chain_cut_in_the_same_window_says_again_what_it_did_not_reach() {
             vec![UtteranceSegment::label("App"), role(Role::Window)],
             vec![UtteranceSegment::label("Options"), role(Role::Dialog)],
             vec![UtteranceSegment::label("OK"), role(Role::Button)],
+            vec![UtteranceSegment::label("App"), role(Role::Window)],
             vec![UtteranceSegment::label("Cancel"), role(Role::Button)],
+            vec![UtteranceSegment::label("App"), role(Role::Window)],
             vec![UtteranceSegment::label("Options"), role(Role::Dialog)],
             vec![UtteranceSegment::label("Apply"), role(Role::Button)],
         ]
@@ -6157,9 +6215,9 @@ fn a_container_matched_by_role_and_name_does_not_end_the_walk_to_the_meeting() {
 
 /// A UI Automation group and an MSAA group of one window, alike in role
 /// and name, are two entries, as NVDA's classes never compare equal: the
-/// MSAA group is entered and said, while the window, met by its handle, is
-/// not said again (`docs/parity/focus-context.md`, "Focus-ancestry
-/// context").
+/// MSAA group is entered and said, while the window, met by its handle and
+/// its backend, as an MSAA walk goes on from a UIA window's element, is not
+/// said again (`docs/parity/focus-context.md`, "Focus-ancestry context").
 #[test]
 fn a_uia_group_and_an_msaa_group_of_one_window_are_two_entries() {
     let group = |id, backend| {
@@ -6188,7 +6246,7 @@ fn a_uia_group_and_an_msaa_group_of_one_window_are_two_entries() {
             window(10),
             paste,
             vec![
-                window_node(4, Backend::Msaa, Role::Window, "App", 10),
+                window_node(4, Backend::Uia, Role::Window, "App", 10),
                 group(5, Backend::Msaa),
             ],
         ),

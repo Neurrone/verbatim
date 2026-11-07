@@ -817,8 +817,103 @@ fn a_command_for_an_unknown_node_is_rejected() {
 
 /// Runs this file's tests through the UIA test runner, which explains why
 /// these binaries do not exit normally (`common/harness.rs`).
+/// A window whose fixture asks for a dialog's keys (`owned_dialog.json`)
+/// moves the focus among its buttons by Tab and Shift+Tab, in tree order and
+/// around, and closes when Enter presses the focused button: the keys are
+/// sent to the hidden window as its messages, so no key reaches the
+/// desktop.
+fn dialog_keys_move_between_buttons_and_close_the_window() {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{VK_RETURN, VK_TAB};
+    use windows::Win32::UI::WindowsAndMessaging::{IsWindow, SendMessageW, WM_KEYDOWN};
+    common::init_com();
+    let title = common::unique_title("mockapp-dialog-keys");
+    let app = common::spawn("owned_dialog.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let uia = Uia::new().expect("a UIA client");
+    let focused = |name: &str| {
+        let element = common::named_element(&uia, hwnd, name);
+        // SAFETY: a live element; the read returns a plain boolean.
+        unsafe { element.CurrentHasKeyboardFocus() }
+            .expect("the button's keyboard focus")
+            .as_bool()
+    };
+    let key = |key: windows::Win32::UI::Input::KeyboardAndMouse::VIRTUAL_KEY| {
+        // SAFETY: a message to mockapp's live window, answered by its
+        // window procedure before the call returns.
+        let _ = unsafe {
+            SendMessageW(
+                hwnd,
+                WM_KEYDOWN,
+                Some(windows::Win32::Foundation::WPARAM(usize::from(key.0))),
+                Some(windows::Win32::Foundation::LPARAM(0)),
+            )
+        };
+    };
+    let before = (focused("OK"), focused("Cancel"));
+    key(VK_TAB);
+    let after_tab = (focused("OK"), focused("Cancel"));
+    key(VK_TAB);
+    let around = (focused("OK"), focused("Cancel"));
+    key(VK_RETURN);
+    // SAFETY: a local check of a window handle.
+    let open = unsafe { IsWindow(Some(hwnd)) }.as_bool();
+    assert_eq!(
+        (before, after_tab, around, open),
+        ((true, false), (false, true), (true, false), false),
+        "the focus before and after each Tab, and the window after Enter"
+    );
+    drop(app);
+}
+
+/// A window whose fixture asks for it (`owner_window.json`,
+/// `focus_on_activate`) raises UIA's focus event for its focused node,
+/// "Open", when it is activated, as an application restores its focus on
+/// reactivation: the activation is sent to the hidden window as its
+/// `WM_ACTIVATE` message, so nothing on the desktop is activated.
+fn focus_on_activate_raises_the_focused_nodes_focus_event() {
+    use windows::Win32::UI::WindowsAndMessaging::{SendMessageW, WA_ACTIVE, WM_ACTIVATE};
+    let title = common::unique_title("mockapp-focus-on-activate");
+    let app = common::spawn("owner_window.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let (sender, observed) = mpsc::channel::<Option<String>>();
+    let registration = Registration::with_parts(
+        vec![Part::shaped::<ListenerEvent>(Subscription::Event {
+            event: UIA_AutomationFocusChangedEventId,
+            callback: Arc::new(move |element: &Cached<ListenerEvent>| {
+                let _ = sender.send(element.read().name);
+            }),
+        })],
+        common::window_subtree(hwnd.0 as isize),
+    )
+    .expect("Registration::with_parts");
+    // SAFETY: a message to mockapp's live window, answered by its window
+    // procedure before the call returns.
+    let _ = unsafe {
+        SendMessageW(
+            hwnd,
+            WM_ACTIVATE,
+            Some(windows::Win32::Foundation::WPARAM(WA_ACTIVE as usize)),
+            Some(windows::Win32::Foundation::LPARAM(0)),
+        )
+    };
+    let name = observed
+        .recv_timeout(common::WAIT_TIMEOUT)
+        .unwrap_or_else(|error| panic!("no focus event after the activation: {error}"));
+    assert_eq!(name.as_deref(), Some("Open"), "the focus event's sender");
+    registration.close();
+    app.quit();
+}
+
 fn main() {
     harness::run_isolated(&[
+        (
+            "focus_on_activate_raises_the_focused_nodes_focus_event",
+            focus_on_activate_raises_the_focused_nodes_focus_event,
+        ),
+        (
+            "dialog_keys_move_between_buttons_and_close_the_window",
+            dialog_keys_move_between_buttons_and_close_the_window,
+        ),
         (
             "uia_set_name_raises_a_property_changed_event",
             uia_set_name_raises_a_property_changed_event,

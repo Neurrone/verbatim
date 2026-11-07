@@ -215,6 +215,52 @@ pub fn event_object(hwnd: isize, id_object: i32, id_child: i32) -> Option<EventO
 }
 
 impl EventObject {
+    /// Whether the object is `node`, a kept MSAA node, by NVDA's equality
+    /// against the event's own address (`IAccessible._isEqual`,
+    /// [`crate::equality`]), as NVDA directs a change event to the focus
+    /// object it equals: for a node [`which_of`](Self::which_of) cannot
+    /// place by its key, such as a client of role window, kept under its
+    /// window object's key. Reads nothing of either object unless the
+    /// node's event parameters, child id and window match the event's
+    /// address; then the object's role and name, and the kept object's
+    /// location, and its name when the two differ.
+    pub fn is_equal_to(&mut self, node: NodeId, registry: &dyn Interning) -> bool {
+        let event = equality::event_of(self.key, true, self.acc.child());
+        let Some(kept) = registry.facts_of(node) else {
+            return false;
+        };
+        if kept.key.0 != self.key.0
+            || !equality::same_event(kept.facts.event, event)
+            || kept
+                .object
+                .as_ref()
+                .is_none_or(|(_, child)| *child != self.acc.child())
+        {
+            return false;
+        }
+        let role = self.role();
+        let raw_role = match self.role {
+            Prefetched::Read(raw_role) => raw_role,
+            Prefetched::Unread => None,
+        };
+        let facts = Facts {
+            event,
+            identity: None,
+            raw_role,
+            name: self.name(role, registry),
+        };
+        let sighting = Sighting {
+            acc: &self.acc,
+            key: self.key,
+            facts: &facts,
+            location: None,
+        };
+        let candidates = Candidates::new(vec![vec![node]]);
+        equality::equal_candidate(registry, &candidates, &sighting, |acc, key, role| {
+            live_name(acc, key, role, registry)
+        }) == Some(node)
+    }
+
     /// Which of `nodes` the object is, by its identity, reading none of its
     /// properties: the node issued for the address the event names, else
     /// the node kept for the same COM object with the same child id in the
@@ -1034,14 +1080,29 @@ pub fn ancestor_chain_until(
         // object (`objectInForeground`) at the window's client address when
         // the focus enters a new top-level window: so it is the node any
         // other path gives the window's client, marked as a top-level
-        // window's client when it is one ([`is_top_level_client`]). One
-        // call, the acquisition.
-        let top_client = (window_client && window::parent(parent_hwnd) == desktop)
+        // window's client when it is one ([`is_top_level_client`]). So is a
+        // client reached from a windowless object inside a top-level
+        // window, at no address: an object of the client role in the
+        // window the walk is in, as a window has one client area, its role
+        // read once, for the read below or the acquisition's. One call, the
+        // acquisition.
+        let top_level = window::parent(parent_hwnd) == desktop;
+        let inside_role =
+            (top_level && !parent_at && !at_window_object && parent_hwnd == current_hwnd)
+                .then(|| parent_acc.role());
+        let reached_client = inside_role == Some(Some(ROLE_SYSTEM_CLIENT.cast_signed()));
+        let top_client = ((window_client && top_level) || reached_client)
             .then(|| Accessible::from_event(parent_hwnd, OBJID_CLIENT.0, CHILDID_SELF))
             .flatten();
-        let (parent_acc, parent_at, window_client, identity) = match top_client {
-            Some(client) => (client, true, false, None),
-            None => (parent_acc, parent_at, window_client, identity),
+        let (parent_acc, parent_at, window_client, identity, role) = match top_client {
+            Some(client) => (client, true, false, None, Prefetched::Unread),
+            None => (
+                parent_acc,
+                parent_at,
+                window_client,
+                identity,
+                inside_role.map_or(Prefetched::Unread, Prefetched::Read),
+            ),
         };
         let snapshot = read_snapshot_with(
             &parent_acc,
@@ -1049,6 +1110,7 @@ pub fn ancestor_chain_until(
             Reading {
                 window_client,
                 identity: identity.as_ref().map(Option::as_deref),
+                role,
                 ..context(parent_at)
             },
             registry,
@@ -1985,6 +2047,11 @@ fn read_snapshot_with(
     // re-acquiring that key yielded the client again, so navigating to
     // a parent window object announced it once and then went nowhere —
     // observed live as "parent is stuck" from any hwnd-backed control.
+    // The rename is the registry's key only: the object keeps the event
+    // parameters of the address it was acquired at, as NVDA's object keeps
+    // its event's, so a change event at that address is matched to it by
+    // NVDA's equality ([`EventObject::is_equal_to`]).
+    let acquired = key;
     let key = if role == Role::Window && key.2 == CHILDID_SELF && key.1 == OBJID_CLIENT.0 {
         (key.0, OBJID_WINDOW.0, key.2)
     } else {
@@ -1998,7 +2065,7 @@ fn read_snapshot_with(
         && (key.1 == OBJID_CLIENT.0 || key.1 == OBJID_WINDOW.0))
         .then(|| WindowHandle(u64::from_ne_bytes(key.0.to_ne_bytes())));
     let facts = Facts {
-        event: equality::event_of(key, at_address, acc.child()),
+        event: equality::event_of(acquired, at_address, acc.child()),
         identity: reading
             .identity
             .map(|identity| identity.map(<[u8]>::to_vec)),
@@ -2031,6 +2098,7 @@ fn read_snapshot_with(
             column: None,
             parent_automation_id: None,
             window,
+            above_boundary: false,
         },
     }
 }

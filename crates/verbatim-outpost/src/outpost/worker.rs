@@ -1954,7 +1954,10 @@ impl Worker<'_> {
         read::describe_dialogs(
             self.context,
             self.client,
-            ancestors.iter_mut().chain(std::iter::once(&mut node)),
+            (
+                ancestors.iter_mut().chain(std::iter::once(&mut node)),
+                self.focus_path.as_ref(),
+            ),
             (&mut memo, foreground),
         );
         let role = node.role;
@@ -2582,7 +2585,18 @@ impl Worker<'_> {
         if candidates.is_empty() {
             return None;
         }
-        let node = object.which_of(&candidates, self.context.nodes())?;
+        // The followed focus, when no key places the object: matched by
+        // NVDA's equality against the event's own address, as NVDA directs
+        // a change event to the focus object it equals, such as a client
+        // of role window kept under its window object's key.
+        let node = object
+            .which_of(&candidates, self.context.nodes())
+            .or_else(|| {
+                let followed = self.context.follow(|follow| follow.tracking.focus)?;
+                (candidates.contains(&followed)
+                    && object.is_equal_to(followed, self.context.nodes()))
+                .then_some(followed)
+            })?;
         // A carried node no report's line has is read for its role.
         let role = self.known_role(node).unwrap_or_else(|| object.role());
         Some((node, role))
@@ -3440,11 +3454,14 @@ impl Worker<'_> {
             .as_ref()
             .is_some_and(|object| *object != Object::Msaa(hwnd, id_object, id_child));
         let msaa_event = (event, simple_child);
-        let enrichment = read::msaa_enrichment(
+        let Ok(enrichment) = read::msaa_enrichment(
             self.context,
             self.client,
             (&node, &previous, Some(candidates)),
-        );
+        ) else {
+            tracing::debug!(%trace, "MSAA focus lost: a UIA window's element on its chain's way could not be read");
+            return;
+        };
         if self.refused() {
             return;
         }
@@ -3522,12 +3539,15 @@ impl Worker<'_> {
             .selected_child
             .as_ref()
             .map(|child| Self::uia_node(context, child, None));
-        let ancestors = read::uia_chain_from_read(
+        let Ok(ancestors) = read::uia_chain_from_read(
             context,
             self.client,
             (&read.ancestors, read.hwnd, read.window, read.ancestors_end),
             &previous,
-        );
+        ) else {
+            tracing::debug!(%trace, "UIA focus lost: a UIA window's element on its chain's way could not be read");
+            return;
+        };
         // Committed with the focus; the entry finds the focus's element by
         // it before then.
         self.focus_path = Some(FocusPath::of(read));
@@ -4063,7 +4083,7 @@ impl Worker<'_> {
         read::describe_dialogs(
             context,
             self.client,
-            windows.chain(focus),
+            (windows.chain(focus), None),
             (&mut None, false),
         );
         let answered = answer.focus.as_mut().map(|control| {

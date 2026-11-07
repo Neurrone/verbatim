@@ -9,9 +9,10 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
+use crate::NodeId;
+use crate::TraceId;
 use crate::text::{BulletStyle, LineStyle};
-use crate::tree::{ObjectKey, Rect, Role, State};
-use crate::{NodeId, TraceId, WindowHandle};
+use crate::tree::{ObjectKey, Rect, Role, State, WindowIdentity};
 
 /// Identifies one utterance from the moment the speech pipeline accepts it
 /// until its single ending (decision D17). Unlike a [`TraceId`], which names
@@ -464,9 +465,9 @@ pub struct FocusValidity {
     /// Whether that node was the focus when the speech was made.
     pub had_focus: bool,
     /// The window that node is, when it is one, so that another outpost's
-    /// node for the same window is the same object.
+    /// node for the same window's object is the same object.
     #[serde(default)]
-    pub window: Option<WindowHandle>,
+    pub window: Option<WindowIdentity>,
 }
 
 impl FocusValidity {
@@ -513,11 +514,31 @@ pub struct FocusNow {
 mod tests {
     use super::*;
 
-    /// Window `handle`'s node `id`, or a windowless node's for `None`.
+    use crate::{Backend, WindowHandle};
+
+    /// Window `handle`'s object, read through `backend`, a stand-in above
+    /// the process boundary when `stand_in` is set.
+    fn window(handle: u64, backend: Backend, stand_in: bool) -> WindowIdentity {
+        WindowIdentity {
+            handle: WindowHandle(handle),
+            backend,
+            stand_in,
+        }
+    }
+
+    /// Window `handle`'s MSAA node `id`, or a windowless node's for `None`.
     fn key(id: u64, handle: Option<u64>) -> ObjectKey {
         ObjectKey {
             id: NodeId::new(id),
-            window: handle.map(WindowHandle),
+            window: handle.map(|handle| window(handle, Backend::Msaa, false)),
+        }
+    }
+
+    /// Window `handle`'s node `id`, read through `backend`.
+    fn key_through(id: u64, handle: u64, backend: Backend, stand_in: bool) -> ObjectKey {
+        ObjectKey {
+            id: NodeId::new(id),
+            window: Some(window(handle, backend, stand_in)),
         }
     }
 
@@ -525,6 +546,29 @@ mod tests {
     fn a_window_node_is_the_same_object_as_another_node_of_its_window() {
         assert!(key(1, Some(7)).is_same_object(&key(2, Some(7))));
         assert!(!key(1, Some(7)).is_same_object(&key(2, Some(8))));
+    }
+
+    /// One window's UIA element and its MSAA client are two objects, as
+    /// NVDA never equals objects of two types (`NVDAObject.__eq__`).
+    #[test]
+    fn two_windows_of_one_handle_and_two_backends_are_two_objects() {
+        let uia = key_through(1, 7, Backend::Uia, false);
+        let msaa = key_through(2, 7, Backend::Msaa, false);
+        assert!(!uia.is_same_object(&msaa));
+        assert!(!msaa.is_same_object(&uia));
+        assert!(uia.is_same_object(&key_through(3, 7, Backend::Uia, false)));
+    }
+
+    /// A window described from Windows' state above the process boundary
+    /// stands in for its window's object through either backend, and for
+    /// no other window.
+    #[test]
+    fn a_stand_in_is_the_same_object_as_its_window_through_either_backend() {
+        let stand_in = key_through(1, 7, Backend::Msaa, true);
+        assert!(stand_in.is_same_object(&key_through(2, 7, Backend::Uia, false)));
+        assert!(key_through(2, 7, Backend::Uia, false).is_same_object(&stand_in));
+        assert!(stand_in.is_same_object(&key_through(3, 7, Backend::Msaa, false)));
+        assert!(!stand_in.is_same_object(&key_through(4, 8, Backend::Uia, false)));
     }
 
     #[test]
@@ -541,7 +585,7 @@ mod tests {
         let spoken = FocusValidity {
             node: NodeId::new(1),
             had_focus: true,
-            window: Some(WindowHandle(7)),
+            window: Some(window(7, Backend::Msaa, false)),
         };
         let now = |focus| FocusNow {
             focus,
@@ -553,6 +597,24 @@ mod tests {
         assert!(!spoken.holds(&now(key(2, Some(8)))));
     }
 
+    /// A window's focus speech, made for its MSAA client, ends once the
+    /// focus is the same window's UIA element, another object.
+    #[test]
+    fn focus_speech_ends_when_the_focus_is_its_window_through_another_backend() {
+        let spoken = FocusValidity {
+            node: NodeId::new(1),
+            had_focus: true,
+            window: Some(window(7, Backend::Msaa, false)),
+        };
+        let now = FocusNow {
+            focus: key_through(2, 7, Backend::Uia, false),
+            ancestors: Vec::new(),
+            foreground: None,
+            menu_item_of_focus: None,
+        };
+        assert!(!spoken.holds(&now));
+    }
+
     /// A window's focus speech holds while the foreground is that window as
     /// another outpost reported it.
     #[test]
@@ -560,7 +622,7 @@ mod tests {
         let spoken = FocusValidity {
             node: NodeId::new(1),
             had_focus: true,
-            window: Some(WindowHandle(7)),
+            window: Some(window(7, Backend::Msaa, false)),
         };
         let now = |foreground| FocusNow {
             focus: key(3, None),

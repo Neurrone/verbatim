@@ -211,10 +211,16 @@ recorder unchanged. What the reducer does with each type is in
   or is the same object as the focus, an ancestor of it, or the
   foreground object.
 - `ObjectKey`: an object's identity as Core and the speech manager compare
-  it, a node id and the window the node is when it is one (`ObjectKey::of`
-  a snapshot). `is_same_object` is the one identity rule
-  (`docs/parity/focus-context.md`, "Focus-ancestry context"): the same
-  node, or both windows and the same window.
+  it, a node id and the window the node is when it is one, a
+  `WindowIdentity` (`ObjectKey::of` a snapshot): the window's handle, the
+  backend of the object, and whether it is a stand-in, a window above the
+  process boundary described from Windows' state
+  (`NodeDetails::above_boundary`). `is_same_object` is the one identity
+  rule (`docs/parity/focus-context.md`, "Focus-ancestry context"): the
+  same node, or both windows with one handle and either one backend, as
+  NVDA never equals objects of two types (`NVDAObject.__eq__`), or one a
+  stand-in, which is whatever object its own application's API gives
+  (`WindowIdentity::is_same_window`).
 - `UtteranceId` and `UtteranceEnding` (decision D17). An `UtteranceId`
   names one utterance from acceptance to its single ending and is never
   reused within a process, unlike a `TraceId`, which several utterances

@@ -244,6 +244,9 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
         Command::ChildWindow | Command::ThreadWindow | Command::WindowFocus => {
             return Err("applied by the window".into());
         }
+        Command::FailWindowElement => {
+            return Err("fail-window-element is not supported on the msaa backend".into());
+        }
         Command::AccFocusWindow(window) => {
             tree.lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -409,6 +412,7 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
         }
         Command::Stall(..)
         | Command::OnActivate(_)
+        | Command::Island(_)
         | Command::Slow(_)
         | Command::SlowPatterns(_)
         | Command::RefuseText(_)

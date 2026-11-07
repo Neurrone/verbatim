@@ -178,15 +178,24 @@ before `read::corrected_backend` switches it to MSAA.
 
 Where a walk ends below the desktop, the chain goes on from a window
 (`read::window_onward`), as NVDA's `Window._get_parent` does: after an
-MSAA `accParent` that fails or names nothing, or a UIA step that fails, the
-parent window of the outermost object's window; after a window read
+MSAA `accParent` that fails or names nothing, a UIA step that fails or
+times out, or a walk that fails before it reads anything
+(`read::onward_after_failure`), the parent window of the outermost
+object's nearest window, never that window itself; after a window read
 through the other API, that window; above the boundary, the parent or
 owner. Each window is read by its own object as NVDA chooses it, its UIA
 element when the outpost judges it UIA, its MSAA client otherwise, and
 walked up by that backend; a window another process serves and every
 window above it, a ghost's or a hung application's window, and a window
-whose object cannot be acquired is a plain window, the chain going on from
-the parent window of the last two. Every UIA walk, the listener's
+whose MSAA client cannot be acquired is a plain window, the chain going on
+from the parent window of the last two. A window above the boundary is
+marked a stand-in (`NodeDetails::above_boundary`, by
+`read::plain_windows_from`), the same object as its own application's
+entry for it. A window read through UIA whose element cannot be read
+loses the focus (`read::FocusLost`): the program reports nothing, as
+NVDA's unguarded `ElementFromHandleBuildCache` ends its event. In debug
+builds every focus chain the outpost sends is checked to hold one entry
+per window before it is published. Every UIA walk, the listener's
 classic walk (`FocusQuery::plain`, judged with the listener's
 `FocusReader::set_window_readability_reader`) and the outpost's
 (`read::uia_walk_leaves`), checks the window each step reaches, and a
@@ -952,8 +961,8 @@ and the inherited pipe handles.
   chain twice (`verbatim_uia::plain_windows_start`);
   a walk that fails before it reads anything, a remote program by UIA's
   transaction timeout among them, or an MSAA node no longer reachable,
-  is completed by plain windows from the parent window of the focus's own
-  window, or from the window it is in (`read::plain_windows_above`). The
+  goes on from the parent window of the focus's nearest window, read live
+  (`read::onward_after_failure`). The
   listener does not stop its next read at a focus whose walk did not reach
   the top. Object navigation's ancestor query reads the whole chain.
 - NVDA's focused-state test of an MSAA focus
@@ -986,7 +995,15 @@ and the inherited pipe handles.
   carries the text that report gave it, with no call, so Core, which
   speaks it when its own line enters the dialog, always has it. A
   foreground report's (`Tracking`'s `dialog`) serves the focus that
-  follows.
+  follows. A UIA dialog the listener read, whose element the outpost does
+  not hold, is found by the path of the report being built
+  (`Worker::focus_path`, before its commit), so it has its text on the
+  report's first read.
+- A name, description or value change no key places among a report's
+  nodes is matched to the followed focus by NVDA's equality against the
+  event's own address (`EventObject::is_equal_to`), as NVDA directs a
+  change event to the focus object it equals: a client of role window is
+  kept under its window object's key, and so is reached only this way.
 
 ### Menus
 

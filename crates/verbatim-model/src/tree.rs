@@ -525,6 +525,17 @@ pub struct NodeDetails {
     /// "Focus-ancestry context"). Left out of the message when `None`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub window: Option<crate::WindowHandle>,
+    /// Whether the node is a window above the process boundary described
+    /// from Windows' own state, with no call into the application that
+    /// serves it (`books/dev/src/explanation/design/listener-without-connections.md`,
+    /// section 4.3): a stand-in for whatever object that application's own
+    /// API gives the window, so it is the same object as any node of its
+    /// window ([`WindowIdentity::is_same_window`]). Set only by the
+    /// outpost's description of such a window; `false` on every other node,
+    /// a plain window below the boundary included. Left out of the message
+    /// when `false`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub above_boundary: bool,
 }
 
 /// Everything the reducer needs to announce one node, captured in one place.
@@ -562,12 +573,52 @@ impl NodeSnapshot {
     }
 }
 
+/// The window an object is, as identity compares it
+/// ([`WindowIdentity::is_same_window`]): its handle, the backend of the
+/// object, and whether the object is a stand-in described from Windows'
+/// state above the process boundary ([`NodeDetails::above_boundary`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct WindowIdentity {
+    /// The window.
+    pub handle: crate::WindowHandle,
+    /// The backend of the object that is the window.
+    pub backend: Backend,
+    /// Whether the object is a stand-in above the process boundary. Left
+    /// out of the message when `false`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub stand_in: bool,
+}
+
+impl WindowIdentity {
+    /// The window `node` is, when it is one ([`NodeDetails::window`]).
+    #[must_use]
+    pub fn of(node: &NodeSnapshot) -> Option<Self> {
+        node.details.window.map(|handle| Self {
+            handle,
+            backend: node.backend,
+            stand_in: node.details.above_boundary,
+        })
+    }
+
+    /// Whether `self` and `other` are the same window's object: the same
+    /// handle and the same backend, as NVDA never equals two objects of
+    /// different types (`NVDAObject.__eq__`), or the same handle where
+    /// either is a stand-in, which is whatever object its own application's
+    /// API gives the window.
+    #[must_use]
+    pub fn is_same_window(&self, other: &Self) -> bool {
+        self.handle == other.handle
+            && (self.backend == other.backend || self.stand_in || other.stand_in)
+    }
+}
+
 /// What identifies an object across reports, as Core and the speech
 /// manager compare objects (`docs/parity/focus-context.md`,
 /// "Focus-ancestry context"): its node, and the window it is when it is
-/// one ([`NodeDetails::window`]). Two reports name the same object exactly
-/// when they have the same node, or both are windows and the same window,
-/// whichever outposts read them ([`is_same_object`](Self::is_same_object)).
+/// one ([`WindowIdentity`]). Two reports name the same object exactly when
+/// they have the same node, or are the same window's object
+/// ([`WindowIdentity::is_same_window`]), whichever outposts read them
+/// ([`is_same_object`](Self::is_same_object)).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ObjectKey {
     /// The node.
@@ -575,7 +626,7 @@ pub struct ObjectKey {
     /// The window the node is, when it is one. Left out of the message when
     /// `None`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub window: Option<crate::WindowHandle>,
+    pub window: Option<WindowIdentity>,
 }
 
 impl ObjectKey {
@@ -584,7 +635,7 @@ impl ObjectKey {
     pub fn of(node: &NodeSnapshot) -> Self {
         Self {
             id: node.id,
-            window: node.details.window,
+            window: WindowIdentity::of(node),
         }
     }
 
@@ -595,12 +646,13 @@ impl ObjectKey {
     }
 
     /// Whether `self` and `other` are the same object: the same node, or
-    /// both windows and the same window. The one rule, so that every place
-    /// that compares objects compares them alike.
+    /// both windows and the same window's object
+    /// ([`WindowIdentity::is_same_window`]). The one rule, so that every
+    /// place that compares objects compares them alike.
     #[must_use]
     pub fn is_same_object(&self, other: &Self) -> bool {
         self.id == other.id
-            || matches!((self.window, other.window), (Some(one), Some(other)) if one == other)
+            || matches!((self.window, other.window), (Some(one), Some(other)) if one.is_same_window(&other))
     }
 }
 

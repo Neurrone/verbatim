@@ -109,6 +109,19 @@ pub(crate) fn event_of(key: MsaaKey, at_address: bool, child: i32) -> (isize, Op
     }
 }
 
+/// Whether two objects' event parameters, each its event window, object
+/// id when known, and child id, allow them to be equal: the same window
+/// and child id, and the same object id where both know one (NVDA's
+/// `_isEqual`, its third step).
+pub(crate) fn same_event(
+    (window, object_id, child_id): (isize, Option<i32>, i32),
+    (other_window, other_object_id, other_child_id): (isize, Option<i32>, i32),
+) -> bool {
+    window == other_window
+        && child_id == other_child_id
+        && !matches!((object_id, other_object_id), (Some(one), Some(other)) if one != other)
+}
+
 /// The kept node among `candidates` that `sighting` is equal to, by NVDA's
 /// order, if one is; that node then takes the sighting's name, and is not
 /// compared again in this walk. `name` normalises a kept object's live
@@ -139,11 +152,7 @@ pub(crate) fn equal_candidate(
             }
             // 3. The event window, object id and child id, each where both
             // are known.
-            let (window, object_id, child_id) = theirs.event;
-            if window != mine.event.0
-                || child_id != mine.event.2
-                || matches!((object_id, mine.event.1), (Some(one), Some(other)) if one != other)
-            {
+            if !same_event(theirs.event, mine.event) {
                 continue;
             }
             // 4. The window.

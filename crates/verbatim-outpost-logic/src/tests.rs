@@ -2096,6 +2096,7 @@ fn reported_in_window(id: u64, in_front: InFront) -> Change {
         name: None,
         states: StateSet::new(),
         window: None,
+        above_boundary: false,
     };
     let focus = Focus {
         node: held_node,

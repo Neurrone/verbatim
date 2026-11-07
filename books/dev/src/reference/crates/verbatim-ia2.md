@@ -243,7 +243,11 @@ Public API:
   `event_object` (an event's object acquired and nothing read:
   `which_of(nodes, registry)` tells whether it is one of the given nodes by
   the address the node was issued for or by the same COM object and child
-  id, reading no property; `role()` reads its role alone; `name`,
+  id, reading no property; `is_equal_to(node, registry)` tells whether it
+  is a kept node by NVDA's equality (`IAccessible._isEqual`) against the
+  event's own address, reading the object's role and name and the kept
+  object's location only when the node's event parameters, window and
+  child id match the event's; `role()` reads its role alone; `name`,
   `description`, `states`, and `value` read that one property alone, as
   a full read of an object of the given role would give it, for a change
   of the focus or an ancestor whose role is known; `progress` reads what
@@ -353,7 +357,13 @@ by Core on entering the window: one acquisition; `progress`, an
   sighting, and the address is what recognizes an object again. An
   object reached through `accParent` with no address of its own (a
   windowless ancestor) has neither, so an event naming it is never
-  matched to it, as NVDA never matches it (`docs/parity/focus-announcement.md`, "Focus announcement content and property order"). Two seams
+  matched to it, as NVDA never matches it (`docs/parity/focus-announcement.md`, "Focus announcement content and property order").
+  A top-level window's client area an ancestor walk reaches with no
+  address, from a child window's window object or from a windowless
+  object inside the window (an object of the client role in the window
+  the walk is in), is acquired again at the window's client address and
+  read there, as NVDA reads its foreground object, so it carries its
+  window and is marked a top-level window's client. Two seams
   mirror NVDA where plain MSAA navigation would mislead. A `SysTreeView32`
   item's navigation and ancestor chain route through the tree control's
   own `TVM_GETNEXTITEM` relations (with the accid-to-htreeitem mapping
@@ -368,7 +378,10 @@ by Core on entering the window: one acquisition; `progress`, an
   draws its own check boxes. And a window-root object — the window face every windowed control
   exposes alongside its client object, keyed under `OBJID_WINDOW` (not
   `OBJID_CLIENT`, so the two faces of one hwnd get distinct node ids
-  rather than colliding) — navigates the Win32 window hierarchy rather
+  rather than colliding; a client object of role window is keyed there
+  too, while it keeps the event parameters of the address it was acquired
+  at, so a change event there is matched to it by equality) — navigates
+  the Win32 window hierarchy rather
   than `accNavigate`/`accParent`: parent is `GA_PARENT`, siblings are the
   next and previous visible top-level child windows
   (`GW_HWNDNEXT`/`GW_HWNDPREV`), and the first child is the first visible

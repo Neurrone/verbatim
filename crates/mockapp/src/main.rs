@@ -69,6 +69,11 @@ struct Cli {
     /// waits on events rather than reading stdout.
     #[arg(long)]
     line_events: Option<String>,
+    /// Makes the window an owned window of the top-level window titled
+    /// this, found by its exact title when mockapp starts, as a dialog
+    /// another process opens is owned by the window it opens over.
+    #[arg(long)]
+    owner_title: Option<String>,
 }
 
 /// The `--backend` values `mockapp` accepts, translated to
@@ -101,6 +106,8 @@ fn run(cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
     // The root's window class names the host window's class.
     let window_class = root.window_class.clone();
     let msaa_client = root.msaa_client;
+    let dialog_keys = root.dialog_keys;
+    let focus_on_activate = root.focus_on_activate;
     let native = root.take_native();
     let edit_version_6 = root.edit_version_6();
     let tree = std::sync::Arc::new(std::sync::Mutex::new(tree::Tree::build(root)));
@@ -124,8 +131,8 @@ fn run(cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
         native,
         edit_version_6,
         (&cli.title, window_class.as_deref()),
-        cli.show,
-        msaa_client,
+        (cli.show, cli.owner_title.as_deref()),
+        (msaa_client, dialog_keys, focus_on_activate),
     )?;
     Ok(())
 }

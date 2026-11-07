@@ -9,6 +9,7 @@
 //! `set-text <id> <text>`, `write-on-read <id> <text>`, `text-changed <id>`,
 //! `screen <id> <rows>`, `active-text-position <id> <start> <end>`,
 //! `notify <text>`, `stall <ms> [<at> <command>]`, `on-activate <command>`,
+//! `island <command>`,
 //! `slow <ms>`, `slow-patterns <ms>`, `refuse-text <on|off>`,
 //! `flood <count> <interval_ms> [name|text]`,
 //! `answer-property <property id> <fail|empty|usual>`,
@@ -22,7 +23,8 @@
 //! `disconnect-at-first-child <id>`,
 //! `focus-child <container> <child>`, `client-name <text>`,
 //! `client-identity`, `disable-client`, `acc-focus-window <hwnd>`,
-//! `child-window`, `child-client-identity`, `form-client`, `window-focus`, `hold`,
+//! `child-window`, `child-client-identity`, `form-client`, `window-focus`,
+//! `fail-window-element`, `hold`,
 //! `release`, `await-advised <event id> <count>`, and `quit`.
 //! Parsing runs on a dedicated thread (reading stdin blocks, and the window
 //! thread must keep pumping its message loop); parsed commands are handed
@@ -188,6 +190,11 @@ pub(crate) enum Command {
     /// activated; several are applied in the order given. Acknowledged
     /// `applied` when armed, and again by the command itself when it runs.
     OnActivate(Box<Command>),
+    /// `island <command>`: `command` is applied to the tree of the
+    /// fixture's `uia_window` child window, with that window, rather than
+    /// to the host window's, so a test sets how a node of the child
+    /// window's own tree answers. UIA-only.
+    Island(Box<Command>),
     /// `slow <ms>`: every provider call from now on is answered that many
     /// milliseconds late, as by an application busy building a window; 0
     /// answers at once again. Applied on the window thread, so the calls
@@ -212,6 +219,14 @@ pub(crate) enum Command {
     /// provider that is not ready yet does while its application starts.
     /// UIA-only.
     RefuseText(bool),
+    /// `fail-window-element`: from now on the host window's own UIA root
+    /// provider fails `ProviderOptions` (`E_FAIL`), so the element a
+    /// client gets for the window by `ElementFromHandle` is served by UIA's
+    /// own proxies alone, which `verbatim_uia` refuses as unreadable, while
+    /// the window still answers UIA's raw probe as one with a provider, as
+    /// an application whose root provider breaks does. A child window's
+    /// root provider, `uia_window`'s, answers as usual. UIA-only.
+    FailWindowElement,
     /// `answer-property <property id> fail`, `... empty` or `... usual`:
     /// from now on every provider's `GetPropertyValue` for that UIA
     /// property, by its numeric id, fails (`E_FAIL`), answers an empty
@@ -589,6 +604,7 @@ pub(crate) fn parse_command(line: &str) -> Option<Command> {
         },
         "stall" => stall(rest),
         "on-activate" => parse_command(rest).map(|command| Command::OnActivate(Box::new(command))),
+        "island" => parse_command(rest).map(|command| Command::Island(Box::new(command))),
         "slow" => rest.parse().ok().map(Command::Slow),
         "slow-patterns" => rest.parse().ok().map(Command::SlowPatterns),
         "flood" => flood(rest),
@@ -656,6 +672,7 @@ pub(crate) fn parse_command(line: &str) -> Option<Command> {
         "thread-window" => Some(Command::ThreadWindow),
         "child-client-identity" => Some(Command::ChildClientIdentity),
         "window-focus" => Some(Command::WindowFocus),
+        "fail-window-element" => Some(Command::FailWindowElement),
         "focus-child" => {
             let (container, child) = rest.split_once(' ')?;
             Some(Command::FocusChild(

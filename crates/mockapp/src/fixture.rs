@@ -135,6 +135,10 @@ struct RawNode {
     #[serde(default)]
     msaa_client: bool,
     #[serde(default)]
+    dialog_keys: bool,
+    #[serde(default)]
+    focus_on_activate: bool,
+    #[serde(default)]
     client_role: bool,
     /// Its MSAA location, left, top, width and height.
     #[serde(default)]
@@ -293,6 +297,16 @@ pub(crate) struct FixtureNode {
     /// has an MSAA parent that reports the scripted root's states, the
     /// focused state included.
     pub(crate) msaa_client: bool,
+    /// On the root, on the UIA backend: whether the window takes a dialog's
+    /// keys, Tab and Shift+Tab moving the focus among its buttons, in tree
+    /// order and around, each move raising UIA's focus event, and Space or
+    /// Enter pressing the focused button, which closes the window.
+    pub(crate) dialog_keys: bool,
+    /// On the root, on the UIA backend: whether the window raises UIA's
+    /// focus event for its focused node each time it is activated, as an
+    /// application restores its focus when its window is activated, a
+    /// Win32 dialog by `DefDlgProc` on every activation, its first included.
+    pub(crate) focus_on_activate: bool,
     /// On the MSAA backend: whether the node answers its role as
     /// `ROLE_SYSTEM_CLIENT`, a window's client area's, as a Windows Forms
     /// form's client area does, rather than its role's own MSAA role.
@@ -439,6 +453,8 @@ fn convert(
         edit_version_6: raw.edit_version_6,
         content: raw.content,
         msaa_client: raw.msaa_client,
+        dialog_keys: raw.dialog_keys,
+        focus_on_activate: raw.focus_on_activate,
         client_role: raw.client_role,
         location: raw.location,
         children,

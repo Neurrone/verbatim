@@ -1494,6 +1494,138 @@ fn a_foreground_report_is_stamped_at_its_confirmation_to_the_microsecond() {
     app.quit();
 }
 
+/// A name change of a client area whose role is "window", the focus, is
+/// spoken: the IA2 reader keys such a client under its window object's
+/// address, so no key places the event at `OBJID_CLIENT`, and the outpost
+/// matches it to its followed focus by NVDA's equality against the event's
+/// own address, as NVDA directs a change event to the focus object it
+/// equals (`IAccessible._isEqual`, `processGenericWinEvent`). mockapp's
+/// client area (`window_role_client.json`), focused at `OBJID_CLIENT`, is
+/// renamed (`client-name`), and Core says the new name.
+fn a_name_change_of_a_client_with_the_window_role_is_spoken() {
+    use windows::Win32::UI::WindowsAndMessaging::OBJID_CLIENT;
+    common::init_com();
+    let title = common::unique_title("mockapp-msaa-window-role-renamed");
+    let mut app = common::spawn("window_role_client.json", "msaa", &title);
+    let hwnd = common::find_window(&title);
+    let outpost = OutpostUnderTest::new(&app);
+    let mut state = SrState::new();
+
+    let reported = outpost.focus(DeliveredFact::MsaaFocus {
+        hwnd: hwnd.0 as isize,
+        id_object: OBJID_CLIENT.0,
+        id_child: 0,
+    });
+    assert_eq!(
+        (reported.node.role, reported.node.name.as_deref()),
+        (
+            verbatim_model::Role::Window,
+            Some("Mockapp Window Role Fixture")
+        ),
+        "the focus, the client area"
+    );
+    let _ = spoken_in(
+        &mut state,
+        focus_event(&reported),
+        in_front(reported.facts.clone()),
+    );
+    app.send("client-name Options");
+    let (event, facts) = next_event_in(&outpost);
+    outpost.settled();
+    assert_eq!(
+        spoken_in(&mut state, event, in_front(facts)),
+        [vec![SegmentContent::Label("Options".to_owned())]]
+    );
+    app.quit();
+}
+
+/// Object navigation still reaches a window's own window object above its
+/// client area and goes on past it, the purpose of the IA2 reader's key
+/// for a window object (`OBJID_WINDOW`), which a role-window client shares:
+/// from the client area of mockapp's real push button "Apply"
+/// (`group_box.json`), the parent is the button's window object, another
+/// node of the window role, and its parent the host window's client area,
+/// rather than the button's client area once more.
+fn a_parent_window_object_is_still_reached_by_navigation() {
+    use windows::Win32::UI::WindowsAndMessaging::{FindWindowExW, OBJID_CLIENT};
+    common::init_com();
+    let title = common::unique_title("mockapp-msaa-parent-window-object");
+    let app = common::spawn("group_box.json", "msaa", &title);
+    let host = common::find_window(&title);
+    // SAFETY: a local search of the host window's children.
+    let apply = unsafe {
+        FindWindowExW(
+            Some(host),
+            None,
+            windows::core::w!("Button"),
+            windows::core::w!("Apply"),
+        )
+    }
+    .expect("mockapp made the button");
+    let mut outpost = OutpostUnderTest::new(&app);
+    let button = outpost
+        .focus(DeliveredFact::MsaaFocus {
+            hwnd: apply.0 as isize,
+            id_object: OBJID_CLIENT.0,
+            id_child: 0,
+        })
+        .node;
+    let (window, _) = outpost.navigate(button.id, verbatim_model::QueryKind::Parent);
+    let (above, _) = outpost.navigate(window.id, verbatim_model::QueryKind::Parent);
+    assert_eq!(
+        (
+            window.role,
+            window.id != button.id,
+            above.name.as_deref(),
+            above.id != window.id && above.id != button.id,
+        ),
+        (
+            verbatim_model::Role::Window,
+            true,
+            Some("Mockapp Group Box Fixture"),
+            true,
+        ),
+        "the button's window object and the host's client area above it"
+    );
+    drop(outpost);
+    app.quit();
+}
+
+/// A top-level window's client area reached by `accParent` from a
+/// windowless object inside it, with no address of its own, is acquired at
+/// its window's client address and read there, as NVDA reads the
+/// foreground object (`objectInForeground`) when the focus enters a new
+/// top-level window, so its title is said: the "OK" button of mockapp's
+/// form (`form.json`), whose client area has the client role and names no
+/// address, entered with no foreground report, says "<title>" once before
+/// the focus. Read as reached, the client area carries no window, and the
+/// title is not said.
+fn a_top_level_client_reached_from_a_windowless_object_is_said_by_its_title() {
+    common::init_com();
+    let title = common::unique_title("mockapp-msaa-reached-client");
+    let app = common::spawn("form.json", "msaa", &title);
+    let hwnd = common::find_window(&title);
+    let outpost = OutpostUnderTest::new(&app);
+    let mut state = SrState::new();
+    let reported = outpost.msaa_focus(hwnd, FORM_BUTTON);
+    outpost.settled();
+    assert_eq!(
+        spoken_in(
+            &mut state,
+            focus_event(&reported),
+            in_front(reported.facts.clone())
+        ),
+        [
+            vec![SegmentContent::Label("Mockapp Form Fixture".to_owned())],
+            vec![
+                SegmentContent::Label("OK".to_owned()),
+                SegmentContent::Role(verbatim_model::Role::Button),
+            ],
+        ]
+    );
+    app.quit();
+}
+
 #[expect(clippy::too_many_lines, reason = "the binary's tests, listed in full")]
 fn main() {
     harness::run_isolated(&[
@@ -1540,6 +1672,18 @@ fn main() {
         (
             "a_name_change_of_the_window_core_took_is_spoken",
             a_name_change_of_the_window_core_took_is_spoken,
+        ),
+        (
+            "a_name_change_of_a_client_with_the_window_role_is_spoken",
+            a_name_change_of_a_client_with_the_window_role_is_spoken,
+        ),
+        (
+            "a_parent_window_object_is_still_reached_by_navigation",
+            a_parent_window_object_is_still_reached_by_navigation,
+        ),
+        (
+            "a_top_level_client_reached_from_a_windowless_object_is_said_by_its_title",
+            a_top_level_client_reached_from_a_windowless_object_is_said_by_its_title,
         ),
         (
             "a_foreground_change_after_another_application_s_focus_is_reported",

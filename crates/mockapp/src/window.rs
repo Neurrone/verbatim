@@ -23,7 +23,7 @@ use windows::Win32::UI::Accessibility::{
     IAccessible, LresultFromObject, UiaReturnRawElementProvider, UiaRootObjectId,
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    GetFocus, GetKeyState, SetFocus, VIRTUAL_KEY, VK_CONTROL,
+    GetFocus, GetKeyState, SetFocus, VIRTUAL_KEY, VK_CONTROL, VK_SHIFT,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CW_USEDEFAULT, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GWLP_USERDATA,
@@ -57,6 +57,11 @@ const WM_APP_COMMAND_READY: u32 = WM_APP + 1;
 /// whichever thread activated the window.
 const WM_APP_ACTIVATE_ARMED: u32 = WM_APP + 5;
 
+/// Posted to itself when a window whose fixture asks for it
+/// (`focus_on_activate`) is activated, so its focused node's UIA focus
+/// event is raised once the activation's messages have been handled.
+const WM_APP_FOCUS_ON_ACTIVATE: u32 = WM_APP + 8;
+
 thread_local! {
     /// The commands `on-activate` armed, in order, for the window thread.
     static ARMED: std::cell::RefCell<Vec<Command>> = const { std::cell::RefCell::new(Vec::new()) };
@@ -71,6 +76,12 @@ struct WindowContext {
     /// Whether a window on the UIA backend also answers MSAA's client
     /// object with the scripted root (the fixture's `msaa_client`).
     msaa_client: bool,
+    /// Whether the window takes a dialog's keys (the fixture's
+    /// `dialog_keys`).
+    dialog_keys: bool,
+    /// Whether the window raises its focused node's UIA focus event on each
+    /// activation (the fixture's `focus_on_activate`).
+    focus_on_activate: bool,
     tree: SharedTree,
     receiver: Receiver<Command>,
 }
@@ -100,15 +111,18 @@ impl From<windows::core::Error> for WindowError {
 /// with none, the window answers nothing itself, as a plain Win32 window.
 /// The nodes in `native` become real child windows, whatever the backend.
 /// With `msaa_client`, a window on the UIA backend also answers MSAA's
-/// client object with the scripted root.
+/// client object with the scripted root; with `dialog_keys`, it takes a
+/// dialog's keys; with `focus_on_activate`, it raises its focused node's
+/// UIA focus event on each activation. With `owner`, the window is owned
+/// by the top-level window of that exact title, which must exist.
 pub(crate) fn run(
     backend: Option<Backend>,
     tree: SharedTree,
     native: Vec<crate::fixture::FixtureNode>,
     edit_version_6: bool,
     (title, class): (&str, Option<&str>),
-    show: bool,
-    msaa_client: bool,
+    (show, owner): (bool, Option<&str>),
+    (msaa_client, dialog_keys, focus_on_activate): (bool, bool, bool),
 ) -> Result<(), WindowError> {
     // SAFETY: called once, before any window is created on this thread.
     unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) }.ok()?;
@@ -122,10 +136,11 @@ pub(crate) fn run(
         .map_or(CLASS_NAME, |wide| PCWSTR(wide.as_ptr()));
     register_class(hinstance.into(), class_name)?;
 
+    let owner = owner.map(owner_window).transpose()?;
     let title_wide = to_wide(title);
     // SAFETY: `class_name` names a class registered above, its buffer live
     // until the function returns; `title_wide` is a live, NUL-terminated
-    // buffer for the duration of the call.
+    // buffer for the duration of the call; `owner` is a live window.
     let hwnd = unsafe {
         CreateWindowExW(
             WINDOW_EX_STYLE(0),
@@ -136,7 +151,7 @@ pub(crate) fn run(
             CW_USEDEFAULT,
             CW_USEDEFAULT,
             CW_USEDEFAULT,
-            None,
+            owner,
             None::<HMENU>,
             Some(hinstance.into()),
             None,
@@ -179,6 +194,8 @@ pub(crate) fn run(
     let context = Box::leak(Box::new(WindowContext {
         backend,
         msaa_client,
+        dialog_keys,
+        focus_on_activate,
         tree,
         receiver,
     }));
@@ -216,6 +233,16 @@ pub(crate) fn run(
         unsafe { DispatchMessageW(&raw const msg) };
     }
     Ok(())
+}
+
+/// The top-level window titled exactly `title`, which an owned window is
+/// made over.
+fn owner_window(title: &str) -> Result<HWND, WindowError> {
+    use windows::Win32::UI::WindowsAndMessaging::FindWindowW;
+    let title = to_wide(title);
+    // SAFETY: `title` is a live, NUL-terminated buffer for the call.
+    unsafe { FindWindowW(PCWSTR::null(), PCWSTR(title.as_ptr())) }
+        .map_err(|error| WindowError(format!("no owner window of that title: {error}")))
 }
 
 fn wake(hwnd_value: isize) {
@@ -306,6 +333,20 @@ unsafe extern "system" fn wnd_proc(
                 let key = VIRTUAL_KEY(wparam.0 as u16);
                 // SAFETY: reads this thread's keyboard state; always sound.
                 let control = unsafe { GetKeyState(i32::from(VK_CONTROL.0)) } < 0;
+                if context.dialog_keys {
+                    // SAFETY: as above.
+                    let shift = unsafe { GetKeyState(i32::from(VK_SHIFT.0)) } < 0;
+                    match uia::dialog_key(&context.tree, hwnd, key, shift) {
+                        uia::DialogKey::Ignored => {}
+                        uia::DialogKey::Moved => return LRESULT(0),
+                        uia::DialogKey::Pressed => {
+                            // SAFETY: `hwnd` is this window's own live
+                            // handle; destroying it ends the message loop.
+                            let _ = unsafe { DestroyWindow(hwnd) };
+                            return LRESULT(0);
+                        }
+                    }
+                }
                 match uia::caret_key(&context.tree, key, control) {
                     uia::KeyMoved::Ignored => {}
                     uia::KeyMoved::Kept => return LRESULT(0),
@@ -323,13 +364,15 @@ unsafe extern "system" fn wnd_proc(
         // the focus is no trigger, since the window, restored from
         // minimized and brought forward as the agent does it, was seen to
         // take no keyboard focus.
-        WM_ACTIVATE => {
-            if wparam.0 & 0xFFFF != 0 && ARMED.with(|armed| !armed.borrow().is_empty()) {
-                // SAFETY: posting a payload-free message to this window.
-                unsafe {
-                    let _ = PostMessageW(Some(hwnd), WM_APP_ACTIVATE_ARMED, WPARAM(0), LPARAM(0));
-                }
+        WM_ACTIVATE if wparam.0 & 0xFFFF != 0 => activated(hwnd),
+        WM_APP_FOCUS_ON_ACTIVATE => {
+            // SAFETY: see above.
+            if let Some(context) = unsafe { context_for(hwnd) }
+                && let Err(error) = uia::raise_focused(&context.tree, hwnd)
+            {
+                eprintln!("mockapp: {error}");
             }
+            return LRESULT(0);
         }
         WM_APP_ACTIVATE_ARMED => {
             // SAFETY: see above.
@@ -359,6 +402,31 @@ unsafe extern "system" fn wnd_proc(
     // SAFETY: standard default handling for every message mockapp does not
     // special-case.
     unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
+}
+
+/// The window `hwnd` was activated: the commands `on-activate` armed, and
+/// the focused node's focus event when the fixture asks for it
+/// (`focus_on_activate`), are posted to run once the activation's messages
+/// are handled.
+fn activated(hwnd: HWND) {
+    let mut posted = Vec::new();
+    if ARMED.with(|armed| !armed.borrow().is_empty()) {
+        posted.push(WM_APP_ACTIVATE_ARMED);
+    }
+    // SAFETY: `hwnd` is a window `run` created, whose context was set
+    // right after it was.
+    if let Some(context) = unsafe { context_for(hwnd) }
+        && context.focus_on_activate
+        && context.backend == Some(Backend::Uia)
+    {
+        posted.push(WM_APP_FOCUS_ON_ACTIVATE);
+    }
+    for message in posted {
+        // SAFETY: posting a payload-free message to this window.
+        unsafe {
+            let _ = PostMessageW(Some(hwnd), message, WPARAM(0), LPARAM(0));
+        }
+    }
 }
 
 /// # Safety
@@ -396,6 +464,13 @@ fn handle_get_object(
     match context.backend {
         None => {}
         Some(Backend::Uia) => {
+            // A window whose root provider fails (`fail-window-element`)
+            // still says it has one to a request that wants no provider,
+            // as UIA answers for a provider that works, so the window keeps
+            // its UIA verdict while no client can make its element.
+            if obj_id == UiaRootObjectId && wparam.0 == 0 && uia::window_element_fails(hwnd) {
+                return LRESULT(0x1_0000);
+            }
             if obj_id == UiaRootObjectId
                 && let Ok(simple) = uia::root_provider(context.tree.clone(), hwnd)
             {
@@ -540,14 +615,7 @@ fn apply(hwnd: HWND, context: &'static WindowContext, command: Command) -> bool 
         }
         return true;
     }
-    let applied = match command {
-        Command::Unrecognized(line) => Err(format!("unrecognized command: {line}")),
-        command => match context.backend {
-            Some(Backend::Uia) => uia::apply_command(&context.tree, hwnd, command),
-            Some(Backend::Msaa) => msaa::apply_command(&context.tree, hwnd, command),
-            None => Err("a plain Win32 window has no scripted tree".to_owned()),
-        },
-    };
+    let applied = apply_to_tree(hwnd, context, command);
     // Acknowledged once it has taken effect, events raised, so a test
     // that waits for the line knows; a command that cannot be applied,
     // such as one naming a node the fixture lacks, says why instead.
@@ -556,6 +624,26 @@ fn apply(hwnd: HWND, context: &'static WindowContext, command: Command) -> bool 
         Err(reason) => acknowledge(&format!("rejected: {reason}")),
     }
     true
+}
+
+/// Applies `command`, one that acts on a scripted tree, to the window's
+/// tree through its backend, or, for `island`, to the `uia_window` child
+/// window's tree.
+fn apply_to_tree(hwnd: HWND, context: &WindowContext, command: Command) -> Result<(), String> {
+    match command {
+        Command::Unrecognized(line) => Err(format!("unrecognized command: {line}")),
+        Command::Island(command) => match (context.backend, crate::uia_window::island()) {
+            (Some(Backend::Uia), Some((tree, island))) => {
+                uia::apply_command(tree, island, *command)
+            }
+            _ => Err("island needs the UIA backend and a uia_window child window".to_owned()),
+        },
+        command => match context.backend {
+            Some(Backend::Uia) => uia::apply_command(&context.tree, hwnd, command),
+            Some(Backend::Msaa) => msaa::apply_command(&context.tree, hwnd, command),
+            None => Err("a plain Win32 window has no scripted tree".to_owned()),
+        },
+    }
 }
 
 /// `child-window`: a hidden child window of `hwnd`, of its class, whose

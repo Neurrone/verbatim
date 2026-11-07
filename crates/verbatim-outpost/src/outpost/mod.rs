@@ -654,6 +654,10 @@ impl Context {
     /// Sends `message` to Core without waiting, the nodes and anchors it
     /// names recorded as carried by it ([`store::Recorded`]).
     fn send(&self, message: OutpostToCore) {
+        debug_assert!(
+            one_entry_per_window(&message),
+            "a focus chain carries two entries for one window: {message:?}"
+        );
         self.outbound.publish(self.store.record(message));
     }
 
@@ -876,6 +880,47 @@ impl Context {
     ) -> Option<focus_path::Route> {
         let route = path.route_to(runtime_id)?;
         read::serves(self, route.window.get()).then_some(route)
+    }
+}
+
+/// Whether every focus chain `message` carries, a reported focus's or a
+/// focus-now answer's ancestors and focus, holds at most one entry for each
+/// window (`NodeDetails::window`): a chain goes on after a failure from the
+/// parent window of its outermost entry's nearest window, never from that
+/// window itself, so no window's own object is followed by another entry
+/// for its handle (`docs/design/focus-pipeline-rework.md`, "A window's
+/// name, and the one fallback"). Checked in debug builds before a message
+/// is sent.
+fn one_entry_per_window(message: &OutpostToCore) -> bool {
+    use verbatim_model::NormalizedEvent;
+    use verbatim_model::protocol::{QueryOutcome, QueryResult};
+    let distinct = |ancestors: &[verbatim_model::NodeSnapshot],
+                    focus: &verbatim_model::NodeSnapshot| {
+        let windows: Vec<_> = ancestors
+            .iter()
+            .chain(std::iter::once(focus))
+            .filter_map(|node| node.details.window)
+            .collect();
+        windows
+            .iter()
+            .enumerate()
+            .all(|(index, window)| !windows[index + 1..].contains(window))
+    };
+    match message {
+        OutpostToCore::Event {
+            event: NormalizedEvent::FocusChanged {
+                node, ancestors, ..
+            },
+            ..
+        } => distinct(ancestors, node),
+        OutpostToCore::Reply {
+            outcome: QueryOutcome::Done(QueryResult::Focus(answer)),
+            ..
+        } => answer
+            .focus
+            .as_ref()
+            .is_none_or(|control| distinct(&control.ancestors, &control.node)),
+        _ => true,
     }
 }
 

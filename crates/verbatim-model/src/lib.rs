@@ -96,6 +96,7 @@ pub use theme::{
 };
 pub use tree::{
     Backend, NodeDetails, NodeSnapshot, ObjectKey, Rect, Role, State, StateSet, TreeNode,
+    WindowIdentity,
 };
 
 use std::fmt;

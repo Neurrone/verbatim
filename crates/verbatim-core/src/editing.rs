@@ -1697,7 +1697,7 @@ fn focus_speech(
             validity: Some(FocusValidity {
                 node,
                 had_focus: true,
-                window: focus.snapshot.details.window,
+                window: verbatim_model::WindowIdentity::of(&focus.snapshot),
             }),
             say_all: false,
         },

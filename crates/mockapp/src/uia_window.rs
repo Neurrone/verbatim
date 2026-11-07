@@ -46,6 +46,7 @@ pub(crate) fn create(parent: HWND, node: FixtureNode) -> windows::core::Result<(
     // Leaked for the process's lifetime, as the host window's context is:
     // mockapp exits shortly after its message loop ends.
     let tree: &'static SharedTree = Box::leak(Box::new(Arc::new(Mutex::new(Tree::build(node)))));
+    let _ = ISLAND_TREE.set(tree);
     // SAFETY: the class was registered above; `parent` is the host window,
     // created on this thread; the title is a static string.
     let hwnd = unsafe {
@@ -69,7 +70,22 @@ pub(crate) fn create(parent: HWND, node: FixtureNode) -> windows::core::Result<(
     unsafe {
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, std::ptr::from_ref(tree) as isize);
     }
+    ISLAND_WINDOW.store(hwnd.0 as isize, std::sync::atomic::Ordering::Relaxed);
     Ok(())
+}
+
+/// The child window's tree, once it is made.
+static ISLAND_TREE: std::sync::OnceLock<&'static SharedTree> = std::sync::OnceLock::new();
+
+/// The child window, once it is made, 0 before.
+static ISLAND_WINDOW: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
+
+/// The child window's tree and the window (`island <command>`), `None` when
+/// the fixture made none.
+pub(crate) fn island() -> Option<(&'static SharedTree, HWND)> {
+    let tree = ISLAND_TREE.get()?;
+    let hwnd = ISLAND_WINDOW.load(std::sync::atomic::Ordering::Relaxed);
+    Some((tree, HWND(hwnd as *mut _)))
 }
 
 /// # Safety

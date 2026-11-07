@@ -276,6 +276,7 @@ mod tests {
             name: None,
             states: StateSet::default(),
             window: None,
+            above_boundary: false,
         }
     }
 

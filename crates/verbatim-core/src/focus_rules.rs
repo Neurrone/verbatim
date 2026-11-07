@@ -20,7 +20,7 @@
 //! `docs/parity/focus-context.md`.
 
 use serde::{Deserialize, Serialize};
-use verbatim_model::{Backend, NodeId, Role, StateSet, WindowHandle};
+use verbatim_model::{Backend, NodeId, ObjectKey, Role, StateSet, WindowHandle, WindowIdentity};
 
 /// How a window stands to the system's foreground window, the facts the
 /// acceptance test ends with (`docs/parity/focus-events.md`, "Event
@@ -71,6 +71,12 @@ pub struct HeldNode {
     /// its snapshot. Left out of the message when `None`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub window: Option<WindowHandle>,
+    /// Whether it is a window above the process boundary described from
+    /// Windows' state, a stand-in
+    /// ([`NodeDetails::above_boundary`](verbatim_model::NodeDetails::above_boundary)).
+    /// Left out of the message when `false`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub above_boundary: bool,
 }
 
 impl HeldNode {
@@ -84,6 +90,7 @@ impl HeldNode {
             name: node.name.clone(),
             states: node.states,
             window: node.details.window,
+            above_boundary: node.details.above_boundary,
         }
     }
 }
@@ -237,37 +244,34 @@ pub fn selection_target(
 
 /// A node as [`same_object`] compares it.
 pub trait EnteredKey {
-    /// Its id.
-    fn key_id(&self) -> NodeId;
-    /// The window it is, when it is one
-    /// ([`NodeDetails::window`](verbatim_model::NodeDetails::window)).
-    fn key_window(&self) -> Option<WindowHandle>;
+    /// Its identity: its id, and the window it is when it is one, with the
+    /// backend that read it and its stand-in mark
+    /// ([`WindowIdentity`](verbatim_model::WindowIdentity)).
+    fn object_key(&self) -> ObjectKey;
 }
 
 impl EnteredKey for HeldNode {
-    fn key_id(&self) -> NodeId {
-        self.id
-    }
-    fn key_window(&self) -> Option<WindowHandle> {
-        self.window
+    fn object_key(&self) -> ObjectKey {
+        ObjectKey {
+            id: self.id,
+            window: self.window.map(|handle| WindowIdentity {
+                handle,
+                backend: self.backend,
+                stand_in: self.above_boundary,
+            }),
+        }
     }
 }
 
 impl<T: EnteredKey> EnteredKey for &T {
-    fn key_id(&self) -> NodeId {
-        (*self).key_id()
-    }
-    fn key_window(&self) -> Option<WindowHandle> {
-        (*self).key_window()
+    fn object_key(&self) -> ObjectKey {
+        (*self).object_key()
     }
 }
 
 impl EnteredKey for verbatim_model::NodeSnapshot {
-    fn key_id(&self) -> NodeId {
-        self.id
-    }
-    fn key_window(&self) -> Option<WindowHandle> {
-        self.details.window
+    fn object_key(&self) -> ObjectKey {
+        ObjectKey::of(self)
     }
 }
 
@@ -275,20 +279,13 @@ impl EnteredKey for verbatim_model::NodeSnapshot {
 /// a new one, are the same object by the one identity rule
 /// ([`verbatim_model::ObjectKey::is_same_object`];
 /// `docs/parity/focus-context.md`, "Focus-ancestry context"): the same
-/// node; or both are windows, and they are the same window, so that one
+/// node; or both are windows, and the same window's object, read through
+/// one backend or one a stand-in above the process boundary, so that one
 /// window two outposts read is one entry. Two windows with the same role
 /// and name are two objects. Where two lines meet is chosen by this alone
 /// ([`meeting`]).
 pub fn same_object(old: &impl EnteredKey, new: &impl EnteredKey) -> bool {
-    key_of(old).is_same_object(&key_of(new))
-}
-
-/// `node`'s identity, as [`same_object`] compares it.
-fn key_of(node: &impl EnteredKey) -> verbatim_model::ObjectKey {
-    verbatim_model::ObjectKey {
-        id: node.key_id(),
-        window: node.key_window(),
-    }
+    old.object_key().is_same_object(&new.object_key())
 }
 
 /// Where a new focus line meets the previous one, as NVDA joins them when
@@ -432,6 +429,7 @@ mod tests {
             name: Some(name.to_owned()),
             states: StateSet::default(),
             window: None,
+            above_boundary: false,
         }
     }
 
@@ -458,7 +456,7 @@ mod tests {
     }
 
     #[test]
-    fn two_windows_are_one_container_exactly_when_their_handles_are_equal() {
+    fn two_windows_are_one_container_exactly_when_they_are_one_windows_object() {
         let window = |id, handle| HeldNode {
             window: Some(WindowHandle(handle)),
             ..held(id, Backend::Msaa, Role::Dialog, "Remove")
@@ -476,6 +474,27 @@ mod tests {
             already_entered(previous, ([window(2, 21)].as_slice(), &other)),
             0,
             "another window of the same role and name"
+        );
+        let through_uia = HeldNode {
+            backend: Backend::Uia,
+            ..window(2, 20)
+        };
+        assert_eq!(
+            already_entered(previous, ([through_uia.clone()].as_slice(), &other)),
+            0,
+            "the same window's object through the other backend"
+        );
+        let stand_in = HeldNode {
+            above_boundary: true,
+            ..window(3, 20)
+        };
+        assert_eq!(
+            already_entered(
+                ([stand_in].as_slice(), &focus),
+                ([through_uia].as_slice(), &other)
+            ),
+            1,
+            "a stand-in above the process boundary, for the same window"
         );
     }
 }

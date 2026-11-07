@@ -90,7 +90,7 @@ Recorded by Claude, 2026-11-04.
 
 ## File Explorer
 
-- `explorer_folder_window` on GitHub's runner (runs 41157849900 and 41163500778), where it is now skipped (see "Scenarios that fail on GitHub's runner, skipped there")
+- `explorer_folder_window` on GitHub's runner (runs 41157849900 and 41163500778)
   - How: "Items View list" is not spoken after "Working on it..."; the first utterance heard is "delta not selected 1 of 1". Passes locally.
   - Cause: the placeholder's UIA read fails on the runner (`UIA_E_ELEMENTNOTAVAILABLE`), so its chain is filled in from window handles, and `ObjectKey::is_same_object` treats two nodes on one window handle as one object whatever their backend, so nothing is entered. NVDA differs on both points.
   - Fix: [the focus pipeline rework's third build](roadmap.md#the-focus-pipeline-rework).
@@ -164,9 +164,8 @@ Recorded by Claude, 2026-11-04, pending Dickson's acceptance.
 
 ## Scenarios that fail on GitHub's runner, skipped there
 
-These are `local_only` in the registry. The `e2e` job leaves them out of its groups (`cargo xtask e2e-plan`), and they pass locally. No fix is planned for the first three: the runner's image is not ours.
+These are `local_only` in the registry. The `e2e` job leaves them out of its groups (`cargo xtask e2e-plan`), and they pass locally. No fix is planned for them: the runner's image is not ours.
 
 - The `notepad_` scenarios: the runner has classic Notepad, a Win32 edit control, not Windows 11 Notepad. Editing is also covered in the harness's Windows Forms text box.
 - `settings_search_suggestions`: the runner's Settings raises no selection event for a first suggestion as the list opens, so "Suggestions available" plays to completion there, while the scenario expects the first suggestion, which this machine's Settings selects as the list opens, to cut it off.
 - `settings_combo_box_expanded`: the runner's Settings opens its Date and time page with the focus on "Location Settings link", where this machine's opens it on "Region button", which the scenario's opening speech asserts.
-- `explorer_folder_window`: fails on the runner in 21 of 32 runs (to 2026-11-03) for the causes under "File Explorer" above, so it gives no signal there. It returns to the runner when [the focus pipeline rework's third build](roadmap.md#the-focus-pipeline-rework) fixes that failure.

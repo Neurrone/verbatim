@@ -22,6 +22,7 @@ use verbatim_model::{
 };
 use verbatim_model::{
     Backend, FocusGroup, FocusNow, FocusText, FocusValidity, ObjectKey, WindowHandle,
+    WindowIdentity,
 };
 
 use crate::focus_rules::{
@@ -1293,7 +1294,7 @@ fn focus_speech(
                 validity: Some(FocusValidity {
                     node: title.id,
                     had_focus: false,
-                    window: title.details.window,
+                    window: WindowIdentity::of(title),
                 }),
             },
             None,
@@ -1326,7 +1327,7 @@ fn focus_speech(
                 validity: Some(FocusValidity {
                     node: container.id,
                     had_focus: false,
-                    window: container.details.window,
+                    window: WindowIdentity::of(container),
                 }),
             },
             None,
@@ -1354,7 +1355,7 @@ fn focus_speech(
             validity: Some(FocusValidity {
                 node: report.node.id,
                 had_focus: true,
-                window: report.node.details.window,
+                window: WindowIdentity::of(report.node),
             }),
         },
         None,

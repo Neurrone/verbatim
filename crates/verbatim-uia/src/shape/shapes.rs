@@ -660,6 +660,7 @@ impl Node {
             column: None,
             parent_automation_id: None,
             window: self.role.window(),
+            above_boundary: false,
         };
         if let Some((row, column)) = self.cell.as_ref().and_then(Cell::coordinates) {
             details.row = Some(row);

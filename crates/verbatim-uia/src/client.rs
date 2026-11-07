@@ -59,21 +59,21 @@ pub enum AncestorWalk {
     Complete,
     /// It reached this known ancestor, the outermost one in the chain.
     MetKnown(verbatim_model::NodeId),
-    /// It ran out of time, a step found the provider did not answer within
-    /// UIA's transaction timeout, or it reached its hop limit with
-    /// ancestors left: the chain is completed by plain windows from this
-    /// window, included: the outermost element's nearest window, or its
-    /// parent window when that element is the window's own
+    /// It ran out of time, or it reached its hop limit with ancestors left:
+    /// the chain is completed by plain windows from this window, included:
+    /// the outermost element's nearest window, or its parent window when
+    /// that element is the window's own
     /// ([`plain_windows_start`](crate::plain_windows_start)), 0 when not
     /// known (`docs/design/focus-pipeline-rework.md`, "A window's name, and
     /// the one fallback").
     Cut(isize),
-    /// A step to a parent failed this way from an element below the root:
-    /// in the raw view a top-level window's parent is the root, so a
-    /// missing parent below it is abnormal, and the chain goes on from this
-    /// window's own object, the parent window of the outermost element's
-    /// nearest window, as NVDA reads the window hierarchy when its parent
-    /// read fails (`NVDAObjects/UIA/__init__.py` 2142 to 2145,
+    /// A step to a parent failed this way from an element below the root,
+    /// UIA's transaction timeout among the ways: in the raw view a
+    /// top-level window's parent is the root, so a missing parent below it
+    /// is abnormal, and the chain goes on from this window's own object,
+    /// the parent window of the outermost element's nearest window, as
+    /// NVDA reads the window hierarchy when its parent read fails
+    /// (`NVDAObjects/UIA/__init__.py` 2142 to 2145,
     /// `NVDAObjects/window/__init__.py` 287 to 293); 0 for none.
     Failed(FailedHop, isize),
 }
@@ -81,8 +81,8 @@ pub enum AncestorWalk {
 /// How a walk's step to a parent failed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FailedHop {
-    /// The step failed with this code, other than UIA's transaction
-    /// timeout, which leaves a walk out of time or failed.
+    /// The step failed with this code, UIA's transaction timeout among
+    /// them.
     Error(windows::core::HRESULT),
     /// The step answered no parent: the error carrying no failure code
     /// that `windows` reports for a null element.
@@ -614,13 +614,12 @@ impl Uia {
     /// first reported ancestor `stops.known` recognizes, from the previous
     /// focus's chain, with that ancestor outermost, as NVDA's focus
     /// ancestry stops where it meets the previous focus's ancestors; and
-    /// when `stops.out_of_time` says its time is up, a hop finds the
-    /// provider did not answer within UIA's transaction timeout, or a step
-    /// past the hop limit finds a parent, reporting the chain as cut
-    /// ([`AncestorWalk::Cut`]); and at a hop that otherwise fails, or finds
-    /// no parent, from an element below the root, reporting where the
-    /// chain goes on ([`AncestorWalk::Failed`]): only the root ends a
-    /// complete walk. Ancestors that are not presentable focus context are
+    /// when `stops.out_of_time` says its time is up, or a step past the hop
+    /// limit finds a parent, reporting the chain as cut
+    /// ([`AncestorWalk::Cut`]); and at a hop that fails, by UIA's
+    /// transaction timeout or otherwise, or finds no parent, from an
+    /// element below the root, reporting where the chain goes on
+    /// ([`AncestorWalk::Failed`]): only the root ends a complete walk. Ancestors that are not presentable focus context are
     /// crossed but never reported (NVDA's `isPresentableFocusAncestor`).
     /// `nearest` is `element`'s nearest window, from which the outermost
     /// element's is followed ([`outermost_nearest_window`](crate::outermost_nearest_window)),
@@ -696,16 +695,16 @@ impl Uia {
             hops += 1;
             let parent = match current.walk(&walker, Direction::Parent, request) {
                 Ok(parent) => parent,
-                // A hop that timed out, or ran past the deadline, is an
-                // incomplete chain. The root has no parent, which ends the
-                // chain as known; any other failed hop, or one that finds no
-                // parent, from an element below the root leaves the chain
-                // unknown, as NVDA's parent read falls back to the window
-                // hierarchy when it fails. Telling the root is local, and
-                // asked only here.
+                // A hop that ran past the deadline is an incomplete chain.
+                // The root has no parent, which ends the chain as known;
+                // any other failed hop, UIA's transaction timeout among
+                // them, or one that finds no parent, from an element below
+                // the root leaves the chain unknown, as NVDA's parent read
+                // falls back to the window hierarchy when it fails, whatever
+                // the error. Telling the root is local, and asked only here.
                 Err(error) => {
                     chain.reverse();
-                    if crate::timed_out(&error) || out_of_time() {
+                    if out_of_time() {
                         log(hops, "out of time");
                         return Ok((chain, None, AncestorWalk::Cut(cut_from(&trail))));
                     }

@@ -48,9 +48,11 @@ guide maps those behaviors onto the crate's types and modules.
     reducer speaks it entered as a focus and its value changes while it is
     the focus's parent, and an outpost follows its value changes while it
     is (`docs/parity/focus-context.md`, "A slider that focuses its thumb").
-  - `same_object(old, new)` with `EnteredKey`: whether an entry of a
-    previous focus line and one of a new line are the same object, one
-    node id or one window when both are windows.
+  - `same_object(old, new)` with `EnteredKey`, which gives an entry's
+    `ObjectKey`: whether an entry of a previous focus line and one of a
+    new line are the same object by `ObjectKey::is_same_object`, one node
+    id, or one window's object, of one backend or a stand-in above the
+    process boundary, when both are windows.
     `meeting((previous, previous_focus), (new, new_focus))` gives where a
     new focus line meets the previous one, as NVDA's `api.setFocusObject`
     finds it, by `same_object` alone, the indexes of the two entries, or
@@ -60,8 +62,9 @@ guide maps those behaviors onto the crate's types and modules.
     outermost first, at or above where it meets `previous`, by which an
     outpost gathers a newly entered dialog's own text. Neither allocates.
   - `HeldNode`: one node of a focus line as an outpost records its
-    reports (id, backend, role, name, states, and the window a node is,
-    when it is one); `HeldNode::of(snapshot)` builds one from a snapshot.
+    reports (id, backend, role, name, states, the window a node is, when
+    it is one, and its stand-in mark); `HeldNode::of(snapshot)` builds one
+    from a snapshot.
 - `is_selection_container(role)`: re-exported from `focus_rules`.
 - `SrState`, the reducer's state:
   - `new()`.
@@ -431,9 +434,9 @@ code is in `reduce.rs` unless named.
   key and its terminal's model, so the new element's text is taken
   afresh; for one gone the lines meet above it, a new element, and for
   one that only lost the focus they meet at it, as UI Automation compares
-  two elements by runtime id. `HeldNode` carries a window's handle as
-  the snapshot does, so an outpost's own use of the rule, for a dialog's
-  text, judges by `already_entered`.
+  two elements by runtime id. `HeldNode` carries a window's handle, the
+  backend and the stand-in mark as the snapshot does, so an outpost's own
+  use of the rule, for a dialog's text, judges by `already_entered`.
 - The window in front. `SrState::hook_foreground()`
   (`verbatim_model::HookForeground`) is decided from the window the focus
   listener last reported (`Input::Foreground`), one of Verbatim's own

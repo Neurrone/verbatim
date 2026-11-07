@@ -1214,15 +1214,15 @@ fn the_title_rule_leaves_attention() {
     assert_eq!(core.state.attention(), Some(Pid(1)));
 }
 
-// ---- The held UIA application's title ----
+// ---- A window's object through two backends ----
 
-/// A UIA focus after its window's text, the whole-window focus of the
-/// plain window the held application's title was read into, does not say
-/// the window again, though its chain's window element is another node:
-/// the two lines meet at the window, one window two readers read being one
-/// entry (`docs/parity/focus-context.md`, "Focus-ancestry context").
+/// A UIA focus after the whole-window focus of its window's MSAA object, a
+/// window read from local state when its UIA element could not be read,
+/// says the window again: the window's UIA element in its chain is another
+/// object, as NVDA never equals objects of two types (`NVDAObject.__eq__`;
+/// `docs/parity/focus-context.md`, "Focus-ancestry context").
 #[test]
-fn a_uia_focus_after_its_windows_text_does_not_say_the_window_again() {
+fn a_uia_focus_after_its_windows_msaa_object_says_the_window_again() {
     let mut core = in_the_edit();
     core.input(change_to(2, HELD, 200));
     let mut plain = node(8, Role::Window, "held-application");
@@ -1251,9 +1251,10 @@ fn a_uia_focus_after_its_windows_text_does_not_say_the_window_again() {
         [
             Heard::Expire {
                 focus: 3,
-                ancestors: vec![8],
+                ancestors: vec![9],
                 foreground: Some(8),
             },
+            said("held-application", Some(Role::Window)),
             said("OK", Some(Role::Button)),
         ]
     );

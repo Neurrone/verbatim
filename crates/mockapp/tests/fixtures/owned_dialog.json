@@ -1,0 +1,10 @@
+{
+  "id": "root",
+  "role": "dialog",
+  "name": "Mockapp Owned Dialog",
+  "dialog_keys": true,
+  "children": [
+    { "id": "ok", "role": "button", "name": "OK", "states": ["focusable", "focused"] },
+    { "id": "cancel", "role": "button", "name": "Cancel", "states": ["focusable"] }
+  ]
+}

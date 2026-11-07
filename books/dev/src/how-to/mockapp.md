@@ -23,6 +23,24 @@ top-level window, hidden unless `--show` is given, prints `ready` once
 the window exists and the provider is
 answering, then reads commands from stdin until `quit`.
 
+One mockapp window can own another's, as a dialog another process opens
+is owned by the window it opens over: `--owner-title <title>` makes the
+new window an owned window of the top-level window of that exact title,
+which must already exist. The fixtures `owner_window.json` and
+`owned_dialog.json` are such a pair, a UIA window with an "Open" button,
+whose root raises UIA's focus event for "Open" each time the window is
+activated (`focus_on_activate`), as an application restores its focus when
+the dialog over it closes, and a UIA dialog with "OK" and "Cancel"
+buttons, whose root asks for a dialog's
+keys (`dialog_keys`): Tab and Shift+Tab move the focus between its buttons,
+raising UIA's focus event, and Space or Enter presses the focused button,
+which closes the dialog, its process ending with it:
+
+```
+target\debug\mockapp.exe --fixture crates\mockapp\tests\fixtures\owner_window.json --backend uia --title "Mockapp Owner" --show
+target\debug\mockapp.exe --fixture crates\mockapp\tests\fixtures\owned_dialog.json --backend uia --title "Mockapp Owned Dialog" --show --owner-title "Mockapp Owner"
+```
+
 Fixture format: a JSON file holding one object per node, each with an
 `id`, a `role`, optional `name`, `value` and `states`, and nested
 `children`; the root object is the window itself. The crate guide lists
@@ -128,6 +146,13 @@ parses them.
   activated, after the activation's window messages; several run in the
   order given. It is acknowledged when armed and again when the command
   runs.
+- `island <command>` applies the command to the tree of the fixture's
+  `uia_window` child window, with that window, rather than to the host
+  window's, for example `island answer-parent ok fail 1`. UIA-only.
+- `fail-window-element` has the host window's own UIA root provider fail
+  `ProviderOptions` from then on, so the element a client gets for the
+  window is served by UIA's proxies alone, while the window still answers
+  the raw probe as one with a provider. UIA-only.
 - `slow <ms>` answers every provider call from then on that many
   milliseconds late, as an application busy building a window does; 0
   answers at once again.

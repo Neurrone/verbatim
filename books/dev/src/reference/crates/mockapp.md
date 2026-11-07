@@ -17,7 +17,7 @@ commands, are in [the mockapp tooling guide](../../how-to/mockapp.md).
 
 `mockapp --fixture <path.json> --backend <uia|msaa|win32> [--title <window
 title>] [--show] [--hide-window-handle] [--count-registrations]
-[--line-events <prefix>]` (default
+[--line-events <prefix>] [--owner-title <title>]` (default
 title `mockapp`). It creates one real top-level Win32 window titled per
 `--title`, hidden unless `--show` is given, prints `ready` (flushed) once
 the window exists and the provider is answering, then processes stdin
@@ -40,6 +40,11 @@ application opens with its focus on a control.
   when one exists, and nothing when none does: the end-to-end suite reads
   no stdout, and waits on such an event it created instead
   (`return_from_a_held_application`).
+- With `--owner-title <title>`, the window is an owned window of the
+  top-level window of that exact title, found as mockapp starts, as a
+  dialog another process opens is owned by the window it opens over: the
+  owned-window fixture is `owner_window.json` and `owned_dialog.json` run
+  in two processes ([the mockapp tooling guide](../../how-to/mockapp.md)).
 - With `--count-registrations`, the UIA root answers through a provider
   that also implements `IRawElementProviderAdviseEvents` (see `hits`
   below). It is off otherwise, since implementing that interface changes
@@ -80,6 +85,21 @@ complete name tables. The fields:
 - `content`: true unless set false; on the UIA backend a node set false
   answers `IsContentElement` false, so a client that presents only control
   and content elements, as NVDA does, takes it for layout.
+- `dialog_keys`, on the root: on the UIA backend the window takes a
+  dialog's keys, Tab and Shift+Tab moving the focus among its buttons in
+  tree order and around, each move raising UIA's focus event, and Space
+  or Enter pressing the focused button, which closes the window
+  (`owned_dialog.json`; `events.rs` sends the keys to the hidden window as
+  its messages).
+- `focus_on_activate`, on the root: on the UIA backend the window raises
+  UIA's focus event for its focused node each time it is activated
+  (`WM_ACTIVATE`, active or click-active), its first activation included,
+  as a Win32 dialog's `DefDlgProc` restores its focus on every
+  activation and an application restores its focus when its window is
+  activated again (`owner_window.json`; `events.rs` sends the activation
+  to the hidden window as its message). The event is raised from a
+  message the window posts to itself, once the activation's messages are
+  handled.
 - `msaa_client`, on the root: on the UIA backend the window also answers
   MSAA's client object with the scripted root, as a window with a native
   UIA provider can serve MSAA too, so a Win32 control inside it has an
@@ -190,7 +210,8 @@ reviewable surface.
   host that answers UIA's root object id with the same scripted UIA
   provider as the host's, over a tree of its own: the node, as its root,
   and its children. Windows' own window objects answer MSAA for it. At
-  most one per fixture.
+  most one per fixture. `island <command>` applies a command to its tree,
+  with its window.
 - `popup`: the owned popup the `popup <id>` command makes, a top-level
   window owned by the host, which hosts one node of the host's own tree:
   its `WM_GETOBJECT` answers that node's provider, and the node's
