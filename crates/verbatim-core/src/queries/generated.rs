@@ -769,6 +769,7 @@ impl Run {
         expected.foreground = self.state.foreground.clone();
         if let (Some(focus), Some(now)) = (expected.focus.as_mut(), self.state.focus.as_ref()) {
             focus.left = now.left;
+            focus.left_for = now.left_for;
         }
         assert_eq!(
             expected, self.state,

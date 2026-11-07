@@ -598,6 +598,7 @@ fn foreground_changed(state: &mut SrState, change: ForegroundWindow) -> Vec<Effe
     state.foreground.apply(ForegroundFact::Changed(change));
     if leaves && let Some(focus) = state.focus.as_mut() {
         focus.left = true;
+        focus.left_for = Some(change.window);
     }
     Vec::new()
 }
@@ -1033,6 +1034,17 @@ fn reduce_focus_changed(
     window: Option<&WindowFacts>,
     report: &FocusReport<'_>,
 ) -> Vec<Effect> {
+    // A report from the window Core's focus was left for is the next focus,
+    // with nothing between: the two lines are compared as they are, as NVDA
+    // compares its focus line with the one before, so a window owned across
+    // processes meets its owner both ways.
+    if let Some(focus) = state.focus.as_mut()
+        && focus.left
+        && window.is_some_and(|window| focus.left_for == Some(window.top_level))
+    {
+        focus.left = false;
+        focus.left_for = None;
+    }
     if report.whole_window {
         // Written before the refusal below, so that a refused report of the
         // window holding the focus still makes it the foreground object, as
@@ -1069,6 +1081,7 @@ fn reduce_focus_changed(
         trace_id: Some(trace_id),
         observed_at_us: report.observed_at_us,
         left: false,
+        left_for: None,
     };
 
     if let Some(focus) = previous
@@ -1101,6 +1114,7 @@ fn reduce_focus_changed(
     // since left is dropped by the speech manager, which is told where the
     // focus now is.
     let foreground_changed = line.cut;
+    let line_met = line.met;
     if foreground_changed && report.observed_at_us != 0 {
         state
             .foreground
@@ -1135,7 +1149,12 @@ fn reduce_focus_changed(
 
     // A new focus is a new object, whose formatting has not been reported.
     state.reported_format = None;
-    let title = title.and_then(|top_level| window_title(top_level, report.ancestors, &entered));
+    // NVDA says the window in front only when the focus line changed just
+    // below the desktop; lines that meet at an object they share, such as a
+    // window and the one it owns across processes, add no title.
+    let title = title
+        .filter(|_| !line_met)
+        .and_then(|top_level| window_title(top_level, report.ancestors, &entered));
     let speech = focus_speech(state, trace_id, report, (title, entered));
     effects.extend(speech);
     effects.extend(editing::focus_text(
@@ -2709,6 +2728,11 @@ struct FocusLine<'a> {
     /// The two lines differ just below the desktop, sharing no entry: the
     /// focus is in a new foreground window, and speech is cut.
     cut: bool,
+    /// The two lines meet at an object they share, so the focus has not
+    /// moved to a new foreground window as NVDA judges it, by its focus
+    /// difference level, and no window title is added for it
+    /// ([`window_title`]).
+    met: bool,
 }
 
 /// Joins a new focus's chain, `report`'s ancestors and node, to the
@@ -2748,50 +2772,17 @@ fn focus_line<'a>(
             ancestors: Arc::from(report.ancestors),
             entered: report.ancestors,
             cut: false,
+            met: false,
         };
     };
-    // A left focus is followed as a focus from another top-level window is,
-    // and speech is cut. NVDA makes the window it was left for its focus
-    // object first, so the lines meet only above that window's own entry, in
-    // what NVDA's foreground object has for ancestors: at the desktop for
-    // another application's window, at the owner for a window owned across
-    // processes, whose owner is that window's ancestor.
+    // A left focus is followed as a focus from another top-level window is:
+    // the lines meet only at the desktop, and speech is cut.
     if previous.left {
-        let front = window.and_then(|facts| {
-            report
-                .ancestors
-                .iter()
-                .position(|entry| entry.details.window == Some(facts.top_level))
-        });
-        let met = front
-            .and_then(|front| report.ancestors.get(..front))
-            .and_then(<[NodeSnapshot]>::split_last)
-            .and_then(|(last, above)| {
-                meeting((&previous.ancestors, &previous.snapshot), (above, last))
-            });
-        let Some((at_old, at_new)) = met else {
-            return FocusLine {
-                ancestors: Arc::from(report.ancestors),
-                entered: report.ancestors,
-                cut: true,
-            };
-        };
-        let entered = report
-            .ancestors
-            .get(at_new.saturating_add(1)..)
-            .unwrap_or_default();
-        let old_line = previous
-            .ancestors
-            .iter()
-            .chain(std::iter::once(&previous.snapshot));
         return FocusLine {
-            ancestors: old_line
-                .take(at_old.saturating_add(1))
-                .chain(entered)
-                .cloned()
-                .collect(),
-            entered,
+            ancestors: Arc::from(report.ancestors),
+            entered: report.ancestors,
             cut: true,
+            met: false,
         };
     }
     let old_line = || {
@@ -2821,6 +2812,7 @@ fn focus_line<'a>(
             ancestors: Arc::from(report.ancestors),
             entered: report.ancestors,
             cut,
+            met: false,
         };
     };
     // The previous line is kept through the meeting entry, the previous
@@ -2839,6 +2831,7 @@ fn focus_line<'a>(
         ancestors: old_line().take(kept).chain(entered).cloned().collect(),
         entered,
         cut: false,
+        met: true,
     }
 }
 

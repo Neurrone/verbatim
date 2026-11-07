@@ -4376,28 +4376,30 @@ fn a_uia_owner_window_above_another_process_meets_its_stand_in() {
 }
 
 /// [`a_uia_owner_window_above_another_process_meets_its_stand_in`] as it
-/// comes live: the dialog's foreground change reaches Core first, and the
-/// dialog, owned but not a pop-up window, is its own root owner, so Core's
-/// focus is marked left. NVDA makes the dialog its focus object at the
-/// foreground change, and the dialog's ancestry holds the owner, so the
-/// owner is not said again: the left line meets the new one above the new
-/// foreground window's own entry (capture of 2026-11-08,
-/// `owned_dialog_across_processes`).
+/// comes live, both ways: each window's foreground change reaches Core
+/// before its focus, and the dialog, owned but not a pop-up window, is its
+/// own root owner, so each change marks Core's focus left. The report that
+/// follows comes from the window the focus was left for, with nothing
+/// between, so the lines are compared as NVDA compares them: the dialog is
+/// entered with no owner said, and the return to the owner says only its
+/// focus (capture of 2026-11-08, `owned_dialog_across_processes`).
 #[test]
-fn a_dialog_left_for_still_meets_its_owner_above_it() {
+fn a_window_owned_across_processes_meets_its_owner_both_ways() {
+    let in_front = |window: u64, process: u32, at: u64| {
+        Input::Foreground(verbatim_model::ForegroundWindow {
+            window: WindowHandle(window),
+            root_owner: WindowHandle(window),
+            process: Pid(process),
+            observed_at_us: at,
+            own: false,
+            thread: 0,
+            console: false,
+            integrity: None,
+            own_integrity: None,
+        })
+    };
     let owner = window_node(1, Backend::Uia, Role::Window, "Owner", 10);
     let open = node(2, Role::Button, Some("Open"), None, StateSet::new());
-    let dialog_in_front = Input::Foreground(verbatim_model::ForegroundWindow {
-        window: WindowHandle(20),
-        root_owner: WindowHandle(20),
-        process: Pid(2),
-        observed_at_us: 600,
-        own: false,
-        thread: 0,
-        console: false,
-        integrity: None,
-        own_integrity: None,
-    });
     let mut stand_in = window_node(3, Backend::Msaa, Role::Pane, "Owner", 10);
     stand_in.details.top_level_client = true;
     stand_in.details.above_boundary = true;
@@ -4406,13 +4408,23 @@ fn a_dialog_left_for_still_meets_its_owner_above_it() {
     assert_eq!(
         spoken_by(&[
             observed(
-                focus_in(Pid(1), foreground_window(10), open, vec![owner]),
+                focus_in(
+                    Pid(1),
+                    foreground_window(10),
+                    open.clone(),
+                    vec![owner.clone()]
+                ),
                 500
             ),
-            dialog_in_front,
+            in_front(20, 2, 600),
             observed(
                 focus_in(Pid(2), foreground_window(20), ok, vec![stand_in, dialog]),
                 700
+            ),
+            in_front(10, 1, 800),
+            observed(
+                focus_in(Pid(1), foreground_window(10), open, vec![owner]),
+                900
             ),
         ]),
         vec![
@@ -4420,6 +4432,7 @@ fn a_dialog_left_for_still_meets_its_owner_above_it() {
             vec![UtteranceSegment::label("Open"), role(Role::Button)],
             vec![UtteranceSegment::label("Owned"), role(Role::Window)],
             vec![UtteranceSegment::label("OK"), role(Role::Button)],
+            vec![UtteranceSegment::label("Open"), role(Role::Button)],
         ]
     );
 }

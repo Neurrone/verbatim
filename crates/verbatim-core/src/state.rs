@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use verbatim_model::{
     CaretKey, Fetches, HeldAnchors, HookForeground, NodeId, NodeSnapshot, OutpostId, Pid, QueryId,
     ReaderSettings, ReviewCommand, Selection, SpeechMark, StateSet, TextAttributes, TextChunk,
-    TextPosition, TextUnit, TraceId, WindowFacts,
+    TextPosition, TextUnit, TraceId, WindowFacts, WindowHandle,
 };
 
 use crate::foreground::Foreground;
@@ -86,6 +86,13 @@ pub(crate) struct FocusContext {
     /// change, from the listener").
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub(crate) left: bool,
+    /// The window the latest foreground change that left the focus brought
+    /// in front. A report from that window, while the focus is left, is the
+    /// next focus with nothing between, so the two lines are compared as
+    /// they are, as NVDA compares its focus line with the one before
+    /// (`docs/parity/focus-context.md`, "Focus-ancestry context").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) left_for: Option<WindowHandle>,
 }
 
 /// What Core last spoke of the focus, against which a change of its name,
