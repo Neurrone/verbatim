@@ -157,6 +157,9 @@ const MEASURE_SET: &[&str] = scenario_tests! {
     measure_focus_windows_terminal_tabs
     measure_focus_text_box
     measure_focus_new_application
+    measure_focus_return
+    measure_focus_return_retitled
+    measure_focus_flood
     measure_keys_text_box
     measure_keys_notepad
     measure_keys_conhost

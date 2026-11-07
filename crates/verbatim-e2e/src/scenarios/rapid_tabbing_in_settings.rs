@@ -50,8 +50,9 @@ const LAST_CONTROL: &str = "Change...";
 /// sits in, entered from the category list, and the control.
 const FINAL: [&str; 2] = ["Synthesizer grouping", "Change... button Alt+h"];
 
-/// Waits on `events` until Core receives a focus on the node named `name`.
-fn wait_for_focus_on(events: &mut ControlClient, name: &str) {
+/// Waits on `events` until Core receives a focus on the node named `name`;
+/// `measure_focus_flood` waits on it too.
+pub(crate) fn wait_for_focus_on(events: &mut ControlClient, name: &str) {
     let deadline = Instant::now() + FOCUS_TIMEOUT;
     loop {
         match events.next_frame() {

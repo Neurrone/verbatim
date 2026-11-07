@@ -13,9 +13,11 @@
 //! key goes to is confirmed in front before every key; every wait is for
 //! evidence (Verbatim idle after the last input, a window in front, a file
 //! a script writes). Windows are switched as a taskbar button does, never
-//! with Alt+Tab. They assert nothing beyond completing: the registry runs
-//! the `measure` group with the speech collector in collect-only mode,
-//! which never fails on unasserted speech. Just before every input,
+//! with Alt+Tab. They assert nothing beyond completing, except where a
+//! workload proves it measures its path, as the focus returns do by their
+//! speech and their count of live re-reads: the registry runs the
+//! `measure` group with the speech collector in collect-only mode, which
+//! never fails on unasserted speech. Just before every input,
 //! everything Verbatim has queued is taken, not asserted, and written with
 //! the ground truth of each step (what was typed, what a key removed, and
 //! the harness numbers of its keys) into `measure-truth.jsonl` in the
@@ -316,6 +318,284 @@ pub(crate) fn body_focus_new_application(scenario: &mut Scenario, _state: &mut S
             .expect("closes the application's window");
         truth.drain(scenario, "after close");
     }
+}
+
+/// The Windows Forms text box's one line in the return workloads.
+const RETURN_LINE: &str = "alpha line";
+
+/// The return workloads' mockapp UIA window: a list holding two items, the
+/// first focused, below the window, so that a return's read meets the
+/// listener's ancestry cache at the list and takes the window from it, as
+/// mockapp's `a_uia_window_with_an_msaa_menu_re_reads_live_once_per_return`
+/// does; its focus event is raised each time the window is activated, as
+/// an application restores its focus. `{title}` is the window's title.
+const RETURN_FIXTURE: &str = r#"{
+  "id": "root",
+  "role": "window",
+  "name": "{title}",
+  "focus_on_activate": true,
+  "children": [
+    {
+      "id": "folder",
+      "role": "list",
+      "name": "Items View",
+      "states": ["focusable"],
+      "children": [
+        {
+          "id": "inner",
+          "role": "list_item",
+          "name": "Inner",
+          "states": ["focusable", "selectable", "focused"],
+          "position_in_set": 1,
+          "set_size": 2
+        },
+        {
+          "id": "alpha",
+          "role": "list_item",
+          "name": "alpha.txt",
+          "states": ["focusable", "selectable"],
+          "position_in_set": 2,
+          "set_size": 2
+        }
+      ]
+    }
+  ]
+}
+"#;
+
+/// The prefix of the named events the mockapp window `name` sets as it
+/// prints its lines (`--line-events`), unique to this run of the test
+/// binary.
+fn line_events(name: &str) -> String {
+    format!(r"Local\verbatim-e2e-{name}-{}-", std::process::id())
+}
+
+/// Opens a mockapp UIA window titled with [`harness_marker`] of `name`,
+/// from `fixture` with `{title}` replaced by that title, its standard input
+/// a pipe and its lines setting the events of [`line_events`], and waits
+/// for it to take the foreground. Returns its process id.
+fn open_mockapp(scenario: &mut Scenario, name: &str, fixture: &str) -> u32 {
+    let directory = scenario.run_directory().to_owned();
+    let title = harness_marker(name);
+    let path = scenario.harness_file(name, "json");
+    let output = scenario.harness_file(name, "log");
+    scenario
+        .write_agent_file(&path, fixture.replace("{title}", &title).as_bytes())
+        .expect("writes mockapp's fixture");
+    let events = line_events(name);
+    let args = [
+        "--fixture",
+        &path,
+        "--backend",
+        "uia",
+        "--title",
+        &title,
+        "--show",
+        "--line-events",
+        &events,
+    ]
+    .map(str::to_owned);
+    scenario
+        .launch_titled_with_stdin(&format!(r"{directory}\mockapp.exe"), &args, &title, &output)
+        .expect("opens the mockapp window")
+        .pid
+}
+
+/// Writes `command` to the mockapp window `name`, process `pid`, and waits
+/// for mockapp's acknowledgement that it took effect.
+fn apply_to_mockapp(scenario: &mut Scenario, (name, pid): (&str, u32), command: &str) {
+    let applied = format!("{}applied", line_events(name));
+    scenario
+        .create_event(&applied)
+        .expect("creates the event for mockapp's acknowledgement");
+    scenario
+        .write_stdin(pid, command)
+        .expect("writes the command to mockapp");
+    scenario
+        .wait_for_event(&applied, pid, WINDOW_TIMEOUT)
+        .expect("mockapp applies the command");
+}
+
+/// Asserts the entry into [`RETURN_FIXTURE`]'s window titled `title`: the
+/// window, the list and the item, as mockapp's
+/// `a_uia_window_with_an_msaa_menu_re_reads_live_once_per_return` speaks
+/// them, in the words `explorer_folder_window` hears for a list and its
+/// item.
+fn expect_list_entered(scenario: &mut Scenario, title: &str) {
+    scenario.speech().expect(&[
+        &format!("{title} window"),
+        "Items View list",
+        "Inner not selected 1 of 2",
+    ]);
+}
+
+/// The return workloads: from the Windows Forms text box `box_name`, open
+/// since the setup, to [`RETURN_FIXTURE`]'s mockapp window `app_name`, read
+/// by the listener, and back, [`REPEATS`] times, each window brought
+/// forward as a taskbar button does. With `retitle`, the mockapp window is
+/// given a new title each time while the text box is in front. Each
+/// window's speech is asserted, the mockapp window's by its title at that
+/// return.
+fn focus_returns(
+    scenario: &mut Scenario,
+    truth: &Truth,
+    (box_name, app_name): (&str, &str),
+    retitle: bool,
+) {
+    text_box::expect_announced(scenario, box_name, BOX_NAME, RETURN_LINE);
+    let pid = open_mockapp(scenario, app_name, RETURN_FIXTURE);
+    let app = harness_marker(app_name);
+    expect_list_entered(scenario, &app);
+    truth.write(&serde_json::json!({ "step": "launched", "kind": "mockapp_uia", "title": app }));
+    for round in 0..REPEATS {
+        scenario
+            .bring_window_forward(&harness_marker(box_name))
+            .expect("brings the text box forward");
+        truth.write(&serde_json::json!({ "step": "bring_forward", "to": "forms_text_box" }));
+        text_box::expect_announced(scenario, box_name, BOX_NAME, RETURN_LINE);
+        let title = if retitle {
+            let title = format!("{app} round {round}");
+            apply_to_mockapp(scenario, (app_name, pid), &format!("set-title {title}"));
+            truth.write(&serde_json::json!({ "step": "set_title", "title": title }));
+            title
+        } else {
+            app.clone()
+        };
+        // The new title still holds the marker the window is found by.
+        scenario
+            .bring_window_forward(&app)
+            .expect("brings the mockapp window forward");
+        truth.write(&serde_json::json!({
+            "step": "bring_forward", "to": "mockapp_uia", "title": title,
+        }));
+        expect_list_entered(scenario, &title);
+    }
+}
+
+/// The text box of `measure_focus_return`.
+const RETURN_BOX: &str = "m-return-box";
+
+pub(crate) fn setup_focus_return(scenario: &mut Scenario) -> io::Result<ScenarioState> {
+    text_box::open(scenario, RETURN_BOX, BOX_NAME, RETURN_LINE)?;
+    Ok(ScenarioState::None)
+}
+
+/// `measure_focus_return`: a return between top-level windows that a live
+/// re-read answers (`books/dev/src/reference/crates/verbatim-core.md`, "The
+/// ancestry cache"). The user goes from mockapp's UIA window to the
+/// Windows Forms text box and back ([`focus_returns`]); each return's
+/// focus event, read by the listener's reading thread for mockapp, which
+/// still holds its last focus, meets its ancestry cache at the list and
+/// takes the window from it, and Core, whose focus ancestry is the text
+/// box's, would enter the window from the cache, so it asks for a live
+/// re-read and speaks its answer. Exactly one live re-read per return.
+pub(crate) fn body_focus_return(scenario: &mut Scenario, _state: &mut ScenarioState) {
+    let truth = Truth {
+        name: "measure_focus_return",
+    };
+    focus_returns(scenario, &truth, (RETURN_BOX, "m-return-app"), false);
+    scenario.expect_live_re_reads(REPEATS as u64);
+}
+
+/// The text box of `measure_focus_return_retitled`.
+const RETITLED_BOX: &str = "m-retitled-box";
+
+pub(crate) fn setup_focus_return_retitled(scenario: &mut Scenario) -> io::Result<ScenarioState> {
+    text_box::open(scenario, RETITLED_BOX, BOX_NAME, RETURN_LINE)?;
+    Ok(ScenarioState::None)
+}
+
+/// `measure_focus_return_retitled`: the returns of `measure_focus_return`,
+/// with mockapp's window given a new title (`set-title`) each time while
+/// the text box is in front, so the listener's title check finds the
+/// window text saved with its ancestry cache changed and walks live to the
+/// top: the new title is spoken, with no live re-read.
+pub(crate) fn body_focus_return_retitled(scenario: &mut Scenario, _state: &mut ScenarioState) {
+    let truth = Truth {
+        name: "measure_focus_return_retitled",
+    };
+    focus_returns(scenario, &truth, (RETITLED_BOX, "m-retitled-app"), true);
+    scenario.expect_live_re_reads(0);
+}
+
+/// How many buttons the flood's mockapp window holds.
+const FLOOD_CHOICES: usize = 10;
+
+/// The flood's mockapp window: [`FLOOD_CHOICES`] buttons, `c1` to `c10`,
+/// named "Choice 1" to "Choice 10", the first focused. `{title}` is the
+/// window's title.
+fn flood_fixture() -> String {
+    let children: Vec<serde_json::Value> = (1..=FLOOD_CHOICES)
+        .map(|choice| {
+            let states: &[&str] = if choice == 1 {
+                &["focusable", "focused"]
+            } else {
+                &["focusable"]
+            };
+            serde_json::json!({
+                "id": format!("c{choice}"),
+                "role": "button",
+                "name": format!("Choice {choice}"),
+                "states": states,
+            })
+        })
+        .collect();
+    serde_json::json!({
+        "id": "root",
+        "role": "window",
+        "name": "{title}",
+        "children": children,
+    })
+    .to_string()
+}
+
+/// `measure_focus_flood`: a burst of focus events in one application.
+/// [`REPEATS`] times, mockapp's UIA window is sent one `focus` command for
+/// each of its buttons after the focused one, in one write, so they come
+/// faster than the listener reads each focus: up from the first to the
+/// last in even rounds, down from the last to the first in odd ones, so
+/// each burst ends on a button other than the one it started on. The
+/// evidence a burst is over is Core receiving the focus on its last
+/// button, as in `rapid_tabbing_in_settings`, and then Verbatim being idle.
+/// Which buttons a burst says depends on how mockapp's focus changes and
+/// the listener's reads interleave, so its speech is collected, not
+/// asserted. Every move is within one top-level window, so none asks for a
+/// live re-read.
+pub(crate) fn body_focus_flood(scenario: &mut Scenario, _state: &mut ScenarioState) {
+    let truth = Truth {
+        name: "measure_focus_flood",
+    };
+    let name = "m-flood-app";
+    let pid = open_mockapp(scenario, name, &flood_fixture());
+    let title = harness_marker(name);
+    scenario
+        .speech()
+        .expect(&[&format!("{title} window"), "Choice 1 button"]);
+    let mut events = scenario
+        .subscribe_events()
+        .expect("subscribes to Verbatim's events");
+    for round in 0..REPEATS {
+        let choices: Vec<usize> = if round % 2 == 0 {
+            (2..=FLOOD_CHOICES).collect()
+        } else {
+            (1..FLOOD_CHOICES).rev().collect()
+        };
+        let burst: Vec<String> = choices
+            .iter()
+            .map(|choice| format!("focus c{choice}"))
+            .collect();
+        ready(scenario, &truth, &title);
+        scenario
+            .write_stdin(pid, &burst.join("\n"))
+            .expect("writes the burst of focus commands");
+        let last = format!("Choice {}", choices[choices.len() - 1]);
+        truth.write(&serde_json::json!({
+            "step": "focus_burst", "round": round, "commands": burst, "last": last,
+        }));
+        super::rapid_tabbing_in_settings::wait_for_focus_on(&mut events, &last);
+        truth.drain(scenario, "after the burst");
+    }
+    scenario.expect_live_re_reads(0);
 }
 
 /// The long line `measure_speech_real` reads with a review key, so that a
