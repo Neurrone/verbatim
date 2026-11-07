@@ -526,6 +526,13 @@ struct Current {
     /// names in one of them is of a window gone, and never enters the
     /// record of hung windows.
     destroyed: BTreeSet<Window>,
+    /// Whether the user moving on from its window abandons it: not for a
+    /// query that is not about the focus, a tree dump or a shell item
+    /// query, which is bounded by its deadline alone, as NVDA's watchdog
+    /// judges a moved-on user against the focus object only
+    /// (`docs/nvda/main-loop-and-watchdog.md`). Its window is still checked
+    /// for a hang.
+    moved_on_abandons: bool,
     /// Its hang mark: an [`Input::HangSeen`] of its request found its
     /// window hung, so its worker, once abandoned, counts as parked on a
     /// hung window ([`Effect::Abandon`]'s `on_hung`). The record of hung
@@ -710,9 +717,12 @@ impl Reducer {
             Input::HandlingDeadline(deadline) => self.handling_deadline = Some(deadline),
             Input::Judged { request, moved_on } => {
                 if !self.stopping {
+                    let abandons = self
+                        .current_of(request)
+                        .is_some_and(|current| current.moved_on_abandons);
                     let decision = self
                         .flight
-                        .judged(request, moved_on.then_some(Reason::MovedOn));
+                        .judged(request, (moved_on && abandons).then_some(Reason::MovedOn));
                     self.decided(decision, now, &mut effects);
                 }
             }
@@ -1504,6 +1514,7 @@ impl Reducer {
             in_hand: InHand::of(&work, window),
             destroyed: BTreeSet::new(),
             hang_mark: false,
+            moved_on_abandons: !is_query_off_the_focus(&work),
         };
         // A program with no window at dispatch that calls into the
         // application has its worker name the window it calls into, a tree
@@ -1708,6 +1719,23 @@ fn budget(entry: &Entry, now: Now, handling: Duration) -> (Duration, Option<(Req
         | Item::Barrier { .. }
         | Item::NodesHeld { .. } => (handling, None),
     }
+}
+
+/// Whether `work` is a query that is not about the focus: a tree dump or a
+/// shell item query, which the user moving on never abandons.
+fn is_query_off_the_focus(work: &Work) -> bool {
+    matches!(
+        work,
+        Work::Entry { entry, .. } if matches!(
+            &entry.item,
+            Item::Query {
+                query: Query::DumpTree { .. }
+                    | Query::ShellItems { .. }
+                    | Query::ShellItemPosition { .. },
+                ..
+            }
+        )
+    )
 }
 
 /// Core's live re-read the program handling `item` answers: the listener's

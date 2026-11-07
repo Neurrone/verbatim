@@ -362,7 +362,9 @@ that carries them on the pipes, `Message`, is
   the newest waiting message of its key decides, and nothing merges
   across `Barrier::All`. `Merge for OutpostToCore` is the outbound
   queue's rule: an event replaces a waiting event of its node and kind and
-  goes to the back, a caret report carrying the older's selection changes
+  goes to the back (never a focus report answering Core's live re-read,
+  which has no key, as it alone answers its request), a caret report
+  carrying the older's selection changes
   before its own, a change of states that leaves the node expanded with no
   child count keeping the older's count, and a focus report keeping the
   stronger `earlier` of the two, in the order `Gone`, `NotFocused`,

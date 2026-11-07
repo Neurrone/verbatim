@@ -670,12 +670,14 @@ impl Context {
     }
 
     /// Sends `message` to Core without waiting, the nodes and anchors it
-    /// names recorded as carried by it ([`store::Recorded`]).
+    /// names recorded as carried by it ([`store::Recorded`]). A debug
+    /// build logs a focus chain naming one window twice, which a provider
+    /// can give (a child element reporting its host's handle), so it is
+    /// never asserted.
     fn send(&self, message: OutpostToCore) {
-        debug_assert!(
-            one_entry_per_window(&message),
-            "a focus chain carries two entries for one window: {message:?}"
-        );
+        if cfg!(debug_assertions) && !one_entry_per_window(&message) {
+            tracing::debug!(?message, "a focus chain carries two entries for one window");
+        }
         self.outbound.publish(self.store.record(message));
     }
 
@@ -907,8 +909,8 @@ impl Context {
 /// parent window of its outermost entry's nearest window, never from that
 /// window itself, so no window's own object is followed by another entry
 /// for its handle (`docs/design/focus-pipeline-rework.md`, "A window's
-/// name, and the one fallback"). Checked in debug builds before a message
-/// is sent.
+/// name, and the one fallback"). A message failing it is logged in debug
+/// builds, never asserted, since a provider can name one window twice.
 fn one_entry_per_window(message: &OutpostToCore) -> bool {
     use verbatim_model::NormalizedEvent;
     use verbatim_model::protocol::{QueryOutcome, QueryResult};
@@ -2027,5 +2029,54 @@ mod shutdown_tests {
         leaving.shutdown();
         assert!(verbatim_uia::registering_thread_runs());
         staying.shutdown();
+    }
+
+    /// A chain whose provider gives two of its elements one window handle,
+    /// a child element reporting its host's through
+    /// `UIA_NativeWindowHandlePropertyId`, is application input: it is sent
+    /// as it is, and a debug outpost does not panic on it.
+    #[test]
+    fn a_chain_naming_one_window_twice_is_sent() {
+        use verbatim_model::protocol::EventTiming;
+        use verbatim_model::{
+            Backend, NodeDetails, NodeId, NodeSnapshot, NormalizedEvent, Role, StateSet, TraceId,
+            WindowHandle,
+        };
+        let node = |number, role, window| NodeSnapshot {
+            id: NodeId::new(number),
+            backend: Backend::Uia,
+            role,
+            name: None,
+            value: None,
+            states: StateSet::new(),
+            details: NodeDetails {
+                window,
+                ..NodeDetails::default()
+            },
+        };
+        let host = Some(WindowHandle(0x10));
+        let message = OutpostToCore::Event {
+            trace_id: TraceId::mint(),
+            observed_at_us: 0,
+            backend: Backend::Uia,
+            window: None,
+            application: None,
+            timing: EventTiming::default(),
+            event: NormalizedEvent::FocusChanged {
+                node: node(3, Role::Button, None),
+                whole_window: false,
+                ancestors: vec![node(1, Role::Window, host), node(2, Role::Group, host)],
+                selected_child: None,
+                text: None,
+                earlier: None,
+                group: None,
+                answers: None,
+                first_cached_ancestor: None,
+            },
+        };
+        assert!(!super::one_entry_per_window(&message));
+        let sender = outpost();
+        sender.context.send(message);
+        sender.shutdown();
     }
 }

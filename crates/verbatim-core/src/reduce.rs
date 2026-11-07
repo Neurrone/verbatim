@@ -242,8 +242,9 @@ pub(crate) fn command_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
             trace_id,
             command,
             repeat,
+            pressed_at_ms,
             ..
-        } => reduce_command(state, *trace_id, *command, *repeat),
+        } => reduce_command(state, (*trace_id, *pressed_at_ms), *command, *repeat),
         Input::Script { repeat, script, .. } => shell::script(*script, *repeat),
         _ => Vec::new(),
     }
@@ -714,9 +715,10 @@ fn older_than_taken(state: &SrState, outpost: OutpostId, group: FocusGroup) -> b
 }
 
 /// Records that the focus of `report` was taken: the applied stamp, and
-/// its focus group, which ends the group for its older entries. A newer
-/// focus applied ends every pending live re-read (`crate::live_reread`)
-/// and Verbatim+Tab's waiting press, whose answer would be late
+/// its focus group, which ends the group for its older entries. The focus
+/// applied ends each pending live re-read of a report observed at or
+/// before it (`crate::live_reread`), and Verbatim+Tab's waiting press when
+/// it was observed after the press, whose answer would then be late
 /// (`crate::report_focus`).
 fn record_taken(state: &mut SrState, report: &FocusReport<'_>) {
     if report.observed_at_us != 0 {
@@ -725,8 +727,8 @@ fn record_taken(state: &mut SrState, report: &FocusReport<'_>) {
             .apply(ForegroundFact::Applied(report.observed_at_us));
     }
     record_group(state, report);
-    state.live_rereads.end_all();
-    state.report_press = None;
+    state.live_rereads.focus_applied(report.observed_at_us);
+    crate::report_focus::focus_applied(state, report.observed_at_us);
 }
 
 /// Records `report`'s focus group as taken, which ends the group for its
@@ -1963,7 +1965,7 @@ fn reduce_notification(trace_id: TraceId, notification: &Notification) -> Vec<Ef
 /// synchronous over state the reducer already holds.
 fn reduce_command(
     state: &mut SrState,
-    trace_id: TraceId,
+    (trace_id, pressed_at_ms): (TraceId, u64),
     command: ReviewCommand,
     repeat: u8,
 ) -> Vec<Effect> {
@@ -1978,7 +1980,9 @@ fn reduce_command(
         ReviewCommand::SayAllFromCaret | ReviewCommand::ReportCaretLocation => {
             caret_command(state, trace_id, command)
         }
-        ReviewCommand::ReportFocus => crate::report_focus::pressed(state, trace_id, repeat),
+        ReviewCommand::ReportFocus => {
+            crate::report_focus::pressed(state, (trace_id, pressed_at_ms), repeat)
+        }
         ReviewCommand::ReportStatusBar => {
             terminal_model::report_status_bar(state, trace_id, repeat)
         }

@@ -1523,6 +1523,48 @@ fn a_tree_dump_or_a_shell_query_whose_window_hangs_tells_its_hang_once() {
     }
 }
 
+/// A tree dump and the shell item queries are not about the focus, so the
+/// user moving on from the window their worker names abandons neither:
+/// each is bounded by its deadline alone, as NVDA's watchdog judges a
+/// moved-on user against the focus object only.
+#[test]
+fn a_tree_dump_or_a_shell_query_is_not_abandoned_when_the_user_moves_on() {
+    let item = verbatim_model::ShellItem {
+        name: "Mail".to_owned(),
+        runtime_id: vec![42, 1],
+    };
+    for query in [
+        Query::DumpTree { locations: false },
+        Query::ShellItems {
+            kind: verbatim_model::ShellItemKind::Taskbar,
+            answer_by_us: 3_001_000,
+        },
+        Query::ShellItemPosition {
+            kind: verbatim_model::ShellItemKind::Taskbar,
+            item: item.clone(),
+            answer_by_us: 3_001_000,
+        },
+    ] {
+        let mut replay = Replay::new();
+        let request = program(&replay.push(
+            Item::Query {
+                request_id: RequestId::shell(4),
+                query: query.clone(),
+            },
+            Source::Other,
+            1,
+        ))
+        .request;
+        replay.answers.named = Some(HUNG);
+        replay.answers.moved_on = true;
+        let effects = replay.tick(501);
+        assert_eq!(kinds(&effects), ["judge"], "{query:?}");
+        assert_eq!(replies(&effects), [], "{query:?}");
+        assert!(!abandons(&effects), "{query:?}");
+        assert!(replay.reducer.accepts(request), "{query:?}");
+    }
+}
+
 /// The probe of window 0x20, owned by thread 5, judging from 1 ms, that
 /// found `probed`.
 fn probe(probed: Probed) -> VerdictChange {

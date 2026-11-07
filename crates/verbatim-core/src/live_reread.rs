@@ -8,7 +8,9 @@
 //! One live re-read is pending per focus reader, an outpost generation
 //! with a kind (the listener's reading thread or the outpost's own reads).
 //! A pending live re-read ends on exactly one path: its answer, applied as
-//! an ordinary report; its answer of gone; a newer focus applied; a newer
+//! an ordinary report; its answer of gone; a focus applied that was
+//! observed at or after its report, so an older report's answer applied
+//! leaves it waiting (a focus of unknown time ends every one); a newer
 //! live re-read of the same focus reader, which replaces it; its outpost
 //! generation's end; or, for the listener's, the listener's replacement.
 //! An answer to a live re-read that is no longer pending is ignored, so a
@@ -100,9 +102,13 @@ impl LiveRereads {
         key.is_some_and(|key| self.pending.remove(&key).is_some())
     }
 
-    /// A newer focus was applied: every pending live re-read ends.
-    pub(crate) fn end_all(&mut self) {
-        self.pending.clear();
+    /// A focus observed at `observed_at_us` was applied: each pending live
+    /// re-read of a report observed at or before it ends, and one observed
+    /// later stays, its answer the newer focus. A focus of unknown time, 0,
+    /// ends every one, as nothing orders it.
+    pub(crate) fn focus_applied(&mut self, observed_at_us: u64) {
+        self.pending
+            .retain(|_, pending| observed_at_us != 0 && pending.observed_at_us > observed_at_us);
     }
 
     /// Outpost generation `outpost` ended: its focus readers' pending live

@@ -36,7 +36,11 @@
 //!   window left is;
 //! - a pending live re-read is answered gone only when its reader's last
 //!   read is of another element, so a repeat of the element a live re-read
-//!   waits for never leaves it unspoken.
+//!   waits for never leaves it unspoken;
+//! - a focus applied ends only the pending live re-reads of reports
+//!   observed at or before it, so once every request is answered Core's
+//!   focus is the newest focus reported, unless that report's own live
+//!   re-read ended unanswered.
 
 use std::collections::BTreeMap;
 
@@ -123,6 +127,9 @@ struct World {
     /// and its element, by which it answers a live re-read.
     last_read: BTreeMap<(u64, FocusReaderKind), (u64, Element)>,
     front: Option<usize>,
+    /// The newest focus reported, by its observation and node, until its
+    /// own live re-read ends unanswered.
+    newest: Option<(u64, NodeId)>,
     now: u64,
     log: Vec<String>,
 }
@@ -154,6 +161,7 @@ impl World {
             pending: BTreeMap::new(),
             last_read: BTreeMap::new(),
             front: None,
+            newest: None,
             now: 100,
             log: Vec::new(),
         }
@@ -370,6 +378,7 @@ impl World {
                     self.now += 10;
                 }
                 let element = (window, control);
+                self.newest = Some((self.now, Self::node_id(kind, element)));
                 let chain = self.read(kind, element, false);
                 self.last_read
                     .insert((WINDOWS[window].0, kind), (self.now, element));
@@ -386,6 +395,7 @@ impl World {
                 1 => {
                     if let Some(key) = self.pending.keys().next().copied() {
                         let asked = self.pending.remove(&key).unwrap();
+                        self.ended_unanswered(asked);
                         let effects = crate::reduce(
                             &mut self.state,
                             &Input::LiveRereadGone {
@@ -399,6 +409,15 @@ impl World {
                 _ => {
                     let effects = crate::reduce(&mut self.state, &Input::ListenerReplaced);
                     assert_eq!(effects, [], "{:?}", self.log);
+                    let ended: Vec<Asked> = self
+                        .pending
+                        .values()
+                        .filter(|asked| asked.reader == FocusReaderKind::Listener)
+                        .copied()
+                        .collect();
+                    for asked in ended {
+                        self.ended_unanswered(asked);
+                    }
                     self.pending
                         .retain(|(_, reader), _| *reader != FocusReaderKind::Listener);
                     self.last_read
@@ -408,6 +427,28 @@ impl World {
         }
         self.log.push(format!("{action:?}"));
         self.check_pending();
+        self.check_newest();
+    }
+
+    /// `asked` ended with no answer applied: when it was the newest
+    /// focus's, Core keeps an older focus, and no newest is judged.
+    fn ended_unanswered(&mut self, asked: Asked) {
+        if self.newest.is_some_and(|(at_us, _)| at_us == asked.at_us) {
+            self.newest = None;
+        }
+    }
+
+    /// Once every live re-read is answered, Core's focus is the newest
+    /// focus reported.
+    fn check_newest(&self) {
+        if let (true, Some((_, node))) = (self.pending.is_empty(), self.newest) {
+            assert_eq!(
+                self.state.focused().map(|(_, focused)| focused.id),
+                Some(node),
+                "Core's focus is not the newest reported: {:?}",
+                self.log
+            );
+        }
     }
 
     /// The pending live re-read's reader answers it, as the listener and
@@ -426,6 +467,7 @@ impl World {
                 self.log
             );
             self.pending.remove(&key);
+            self.ended_unanswered(asked);
             let effects = crate::reduce(
                 &mut self.state,
                 &Input::LiveRereadGone {
@@ -543,9 +585,14 @@ impl World {
             .any(|effect| matches!(effect, Effect::DropExpiredSpeech(_)))
         {
             // Taken, not dropped as a duplicate: NVDA's ancestry is the
-            // live chain, and every pending live re-read ended.
+            // live chain, and every pending live re-read of a report
+            // observed at or before it ended.
+            let at_us = match input {
+                Input::Event { observed_at_us, .. } => *observed_at_us,
+                _ => 0,
+            };
             self.nvda = new_chain;
-            self.pending.clear();
+            self.pending.retain(|_, asked| asked.at_us > at_us);
         }
     }
 }

@@ -479,7 +479,10 @@ knowing for review:
   purpose and the trace) and the list dialogs' shell items requests each
   end exactly once, at that outpost's `Ready`, where it is sent, at
   `NotWatched`, or, for a shell items request, at its deadline; a newer
-  focus query replaces one waiting. A Verbatim+Tab query that ends so
+  focus query replaces one waiting of its own kind, a Verbatim+Tab
+  `Report` query being kept apart from the query for Core's focus
+  (`Plain`, `Fake` or `Again`), so neither replaces the other, and at the
+  `Ready` the one for Core's focus is sent first. A Verbatim+Tab query that ends so
   unanswered is told to the reducer (`Input::ReadFocusUnanswered`): at
   `NotWatched` with "No focus", replaced silently.
   An `Ended` asks the replacement for the focus only when the supervisor

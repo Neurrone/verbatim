@@ -1229,8 +1229,11 @@ impl ReducerThread<'_> {
     /// answered "gone", and a status entry only waiting for its outpost
     /// removed.
     fn not_watched(&mut self, target_pid: Pid) {
-        if let Some(wanted) = self.wanted.not_watched(target_pid) {
-            self.focus_unanswered(wanted, false);
+        let unanswered = self.wanted.not_watched(target_pid);
+        if !unanswered.is_empty() {
+            for wanted in unanswered {
+                self.focus_unanswered(wanted, false);
+            }
             self.apply_follow_ups();
         }
         let mut outposts = self.context.outposts.lock().expect("outposts lock");
@@ -1355,7 +1358,8 @@ impl ReducerThread<'_> {
     /// application `pid`, for the focus query `wanted` now if it is ready,
     /// or as soon as it is, starting one if there is none. A console's
     /// client is served by its console host's outpost, which then reports
-    /// for it. A query waiting that this one replaces ends unanswered.
+    /// for it. A query waiting of its own kind that this one replaces ends
+    /// unanswered ([`wanted::Wanted::want_focus_now`]).
     fn want_focus(&mut self, (pid, server): (Pid, Pid), wanted: FocusWanted) {
         let FocusWanted {
             purpose, trace_id, ..
@@ -1517,7 +1521,7 @@ impl ReducerThread<'_> {
                 tracing::info!(%outpost, %outpost_pid, %target_pid, "outpost ready");
                 self.live.mark_ready(outpost);
                 let asked = self.wanted.ready(target_pid, now_us());
-                if let Some(wanted) = asked.focus_now {
+                for wanted in asked.focus_now.into_iter().chain(asked.report) {
                     if wanted.application != target_pid {
                         // A console host's replacement, asked for its
                         // console's client.

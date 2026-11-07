@@ -623,3 +623,45 @@ fn a_live_repeat_while_a_live_re_read_waits_is_spoken() {
     assert_eq!(heard(&crate::reduce(&mut state, &late.input())), []);
     assert_eq!(state, before);
 }
+
+#[test]
+fn an_answer_applied_keeps_a_live_re_read_of_a_report_observed_later() {
+    // Two focus readers of A: the listener's report of F2 is set aside as
+    // request 0, then the outpost's report of F5, observed later, as
+    // request 1. Request 0's answer applied ends only what was observed
+    // at or before it, so request 1's answer is applied after it.
+    let mut state = in_x();
+    let _ = crate::reduce(&mut state, &return_to_two().input());
+    let mut five = Report::new(A, button(5, "Five"), chain_of_a(), 450);
+    five.cached = Some((0, FocusReaderKind::Outpost));
+    assert_eq!(
+        heard(&crate::reduce(&mut state, &five.input())),
+        [Heard::Reread(LiveReread {
+            request: 1,
+            outpost: OutpostId(A),
+            reader: FocusReaderKind::Outpost,
+            trace_id: TraceId::from_raw(450),
+            logged: LiveRereadLog {
+                focus: id(A, 5),
+                cache_join: (id(A, 2), Some("Tools".to_owned())),
+                lowest_common_ancestor: None,
+                reason: LiveRereadReason::Entered,
+            },
+        })]
+    );
+    let mut first = Report::new(A, button(4, "Two"), chain_of_a(), 400);
+    first.answers = Some(0);
+    assert_eq!(
+        heard(&crate::reduce(&mut state, &first.input())),
+        two_spoken()
+    );
+    assert_eq!(state.live_rereads.pending().len(), 1);
+    let mut second = Report::new(A, button(5, "Five"), chain_of_a(), 450);
+    second.answers = Some(1);
+    assert_eq!(
+        heard(&crate::reduce(&mut state, &second.input())),
+        [Heard::Expire(5), said("Five", Role::Button)]
+    );
+    assert_eq!(state.focused().map(|(_, node)| node.id), Some(id(A, 5)));
+    assert!(state.live_rereads.pending().is_empty());
+}

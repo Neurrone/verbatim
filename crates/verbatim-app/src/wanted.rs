@@ -1,6 +1,6 @@
 //! The requests the app holds for an application whose outpost is not
-//! ready yet (`books/dev/src/explanation/design/ownership.md`): a focus-now request, asked of the replacement once
-//! it is ready, and the list dialogs' requests for the shell's items or for
+//! ready yet (`books/dev/src/explanation/design/ownership.md`): a focus-now request and Verbatim+Tab's
+//! `Report` query, each asked of the replacement once it is ready, and the list dialogs' requests for the shell's items or for
 //! where a clicked item is, asked of the taskbar's process. One owner holds
 //! both, keyed by the process whose outpost they wait for, and each entry
 //! ends exactly once:
@@ -99,8 +99,12 @@ pub(crate) struct FocusWanted {
 /// What waits for one process's outpost.
 #[derive(Default)]
 struct Waiting {
-    /// The focus query.
+    /// The focus query for Core's focus: `Plain`, `Fake` or `Again`.
     focus_now: Option<FocusWanted>,
+    /// Verbatim+Tab's `Report` query, kept apart from `focus_now`, so
+    /// neither replaces the other: a press never ends a start-focus query
+    /// unanswered, and a start-focus query never ends a waiting press.
+    report: Option<FocusWanted>,
     /// The shell items requests, in the order they were made.
     shell: Vec<ShellWanted>,
 }
@@ -114,26 +118,31 @@ pub(crate) struct Wanted {
 
 /// What a ready outpost is to be asked.
 pub(crate) struct Asked {
-    /// The focus query to send, if any.
+    /// The focus query for Core's focus to send, if any.
     pub(crate) focus_now: Option<FocusWanted>,
+    /// Verbatim+Tab's query to send, if any, after `focus_now`.
+    pub(crate) report: Option<FocusWanted>,
     /// The shell items requests to send.
     pub(crate) shell: Vec<ShellWanted>,
 }
 
 impl Wanted {
     /// Wants the focus query `wanted` of the outpost of `process`, once it
-    /// is ready. A newer want replaces one waiting, which is returned, its
-    /// asker to be told it ends unanswered.
+    /// is ready. A newer want replaces one waiting of its own kind, a
+    /// `Report` a `Report` and any other purpose any other, and the one
+    /// replaced is returned, its asker to be told it ends unanswered.
     pub(crate) fn want_focus_now(
         &mut self,
         process: Pid,
         wanted: FocusWanted,
     ) -> Option<FocusWanted> {
-        self.waiting
-            .entry(process)
-            .or_default()
-            .focus_now
-            .replace(wanted)
+        let waiting = self.waiting.entry(process).or_default();
+        let slot = if wanted.purpose == FocusPurpose::Report {
+            &mut waiting.report
+        } else {
+            &mut waiting.focus_now
+        };
+        slot.replace(wanted)
     }
 
     /// Wants `ask` of `kind`'s surface from the outpost of `process`, once
@@ -172,17 +181,26 @@ impl Wanted {
         }
         Asked {
             focus_now: waiting.focus_now,
+            report: waiting.report,
             shell,
         }
     }
 
     /// Nothing watches `process` now: what waits for its outpost is
-    /// answered "gone", a shell items request with nothing; the focus query
-    /// is returned, its asker to be told it ends unanswered.
-    pub(crate) fn not_watched(&mut self, process: Pid) -> Option<FocusWanted> {
-        let waiting = self.waiting.remove(&process)?;
-        if let Some(wanted) = waiting.focus_now {
-            tracing::info!(%process, application = %wanted.application, "no outpost will report the focus; it is no longer wanted");
+    /// answered "gone", a shell items request with nothing; the focus
+    /// queries are returned, the one for Core's focus first, each asker to
+    /// be told it ends unanswered.
+    pub(crate) fn not_watched(&mut self, process: Pid) -> Vec<FocusWanted> {
+        let Some(waiting) = self.waiting.remove(&process) else {
+            return Vec::new();
+        };
+        let focus: Vec<FocusWanted> = waiting
+            .focus_now
+            .into_iter()
+            .chain(waiting.report)
+            .collect();
+        for wanted in &focus {
+            tracing::info!(%process, application = %wanted.application, purpose = ?wanted.purpose, "no outpost will report the focus; it is no longer wanted");
         }
         for wanted in waiting.shell {
             tracing::warn!(
@@ -193,14 +211,14 @@ impl Wanted {
             // Dropped unanswered, the request is answered "nothing".
             drop(wanted.ask);
         }
-        waiting.focus_now
+        focus
     }
 
     /// How many applications' focus is wanted.
     pub(crate) fn focus_now_count(&self) -> usize {
         self.waiting
             .values()
-            .filter(|waiting| waiting.focus_now.is_some())
+            .filter(|waiting| waiting.focus_now.is_some() || waiting.report.is_some())
             .count()
     }
 }
@@ -250,7 +268,7 @@ mod tests {
         let mut wanted = Wanted::default();
         assert_eq!(wanted.want_focus_now(PROCESS, PLAIN), None);
         assert_eq!(wanted.focus_now_count(), 1);
-        assert_eq!(wanted.not_watched(PROCESS), Some(PLAIN));
+        assert_eq!(wanted.not_watched(PROCESS), [PLAIN]);
         assert_eq!(wanted.focus_now_count(), 0);
         assert_eq!(
             wanted.ready(PROCESS, 0).focus_now,
@@ -269,6 +287,35 @@ mod tests {
         assert_eq!(wanted.ready(PROCESS, 0).focus_now, Some(PLAIN));
         assert_eq!(wanted.ready(PROCESS, 0).focus_now, None, "taken once");
         assert_eq!(wanted.focus_now_count(), 0);
+    }
+
+    /// Verbatim+Tab's query and a focus query for Core's focus wait side
+    /// by side, neither replacing the other, each taken once at the `Ready`,
+    /// or each answered at the `NotWatched`; a newer want replaces only one
+    /// of its own kind.
+    #[test]
+    fn a_report_and_a_plain_focus_query_wait_apart() {
+        const REPORT: FocusWanted = FocusWanted {
+            application: Pid(8),
+            purpose: FocusPurpose::Report,
+            trace_id: TraceId::from_raw(4),
+        };
+        const FAKE: FocusWanted = FocusWanted {
+            application: Pid(8),
+            purpose: FocusPurpose::Fake,
+            trace_id: TraceId::from_raw(5),
+        };
+        let mut wanted = Wanted::default();
+        assert_eq!(wanted.want_focus_now(PROCESS, PLAIN), None);
+        assert_eq!(wanted.want_focus_now(PROCESS, REPORT), None);
+        assert_eq!(wanted.want_focus_now(PROCESS, FAKE), Some(PLAIN));
+        assert_eq!(wanted.focus_now_count(), 1);
+        let asked = wanted.ready(PROCESS, 0);
+        assert_eq!((asked.focus_now, asked.report), (Some(FAKE), Some(REPORT)));
+
+        assert_eq!(wanted.want_focus_now(PROCESS, REPORT), None);
+        assert_eq!(wanted.want_focus_now(PROCESS, PLAIN), None);
+        assert_eq!(wanted.not_watched(PROCESS), [PLAIN, REPORT]);
     }
 
     #[test]

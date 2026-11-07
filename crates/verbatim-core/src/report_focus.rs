@@ -10,8 +10,10 @@
 //! the interval asks again and replaces it, the older query's answer then
 //! being late. Its endings are its answer, its query's end with no answer
 //! ([`Input::ReadFocusUnanswered`]: abandoned at its deadline, or nothing to
-//! ask, its outpost's end or no focus), a newer focus Core applies, and a
-//! replacing press.
+//! ask, its outpost's end or no focus), a focus Core applies that was
+//! observed after the press, and a replacing press. A focus observed before
+//! the press and applied while it waits leaves it waiting, as NVDA runs
+//! NVDA+Tab after the focus event queued before it and speaks both.
 
 use serde::{Deserialize, Serialize};
 use verbatim_model::protocol::FocusPurpose;
@@ -33,12 +35,19 @@ pub(crate) struct WaitingPress {
     pub(crate) first: u8,
     /// The repeat count of the last press kept with it.
     pub(crate) last: u8,
+    /// When the press that asked was made, in milliseconds on the run's
+    /// shared clock; 0 when unknown.
+    pub(crate) pressed_at_ms: u64,
 }
 
-/// Verbatim+Tab pressed, `repeat` extra times in quick succession, under
-/// `trace_id`: kept with a press already waiting when it repeats it, else
-/// a new query, which replaces any press waiting.
-pub(crate) fn pressed(state: &mut SrState, trace_id: TraceId, repeat: u8) -> Vec<Effect> {
+/// Verbatim+Tab pressed at `pressed_at_ms`, `repeat` extra times in quick
+/// succession, under `trace_id`: kept with a press already waiting when it
+/// repeats it, else a new query, which replaces any press waiting.
+pub(crate) fn pressed(
+    state: &mut SrState,
+    (trace_id, pressed_at_ms): (TraceId, u64),
+    repeat: u8,
+) -> Vec<Effect> {
     if repeat > 0
         && let Some(waiting) = state.report_press.as_mut()
     {
@@ -49,6 +58,7 @@ pub(crate) fn pressed(state: &mut SrState, trace_id: TraceId, repeat: u8) -> Vec
         trace_id,
         first: repeat,
         last: repeat,
+        pressed_at_ms,
     });
     vec![Effect::ReadFocus(FocusPurpose::Report)]
 }
@@ -78,6 +88,19 @@ pub(crate) fn answered(
         effects.extend(speak(state, trace_id, node, repeat));
     }
     effects
+}
+
+/// Core applied a focus observed at `observed_at_us`: a waiting press ends,
+/// its answer then late, when the focus was observed after it, in a later
+/// millisecond, or when either time is unknown (0), as nothing orders them.
+pub(crate) fn focus_applied(state: &mut SrState, observed_at_us: u64) {
+    if state.report_press.is_some_and(|press| {
+        press.pressed_at_ms == 0
+            || observed_at_us == 0
+            || observed_at_us / 1_000 > press.pressed_at_ms
+    }) {
+        state.report_press = None;
+    }
 }
 
 /// What one press says of `node`, for its `repeat` count.

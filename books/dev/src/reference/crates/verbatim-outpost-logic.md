@@ -63,7 +63,11 @@ Public API:
   (`InFlight<Current>`): its request, deadline and moved-on rule are
   kept there, and the reducer keeps beside them only the query the
   program answers, its focus group try, whether it is deferred work, the
-  windows destroyed while it runs and its hang mark. A program is
+  windows destroyed while it runs, its hang mark and whether moving on
+  abandons it (`moved_on_abandons`: not for a tree dump or a shell item
+  query, which are not about the focus, as NVDA's watchdog judges a
+  moved-on user against the focus object only, so their window is checked
+  for a hang and their deadline alone ends them). A program is
   abandoned at its deadline or as moved on, never for a hang. The reducer calls it where it judges: a tick and the asks'
   answers; a foreground fact judges nothing. The program's window is
   checked at the grace's end and every half second after for a program

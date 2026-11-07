@@ -9,7 +9,9 @@
 //! newer event of one key the newest place. A caret report carries the
 //! older report's selection changes before its own, a change of states the
 //! older's child count, and a focus report the stronger evidence of the
-//! element held before. Nothing merges across
+//! element held before. A focus report answering Core's live re-read is
+//! never merged, either way, since it alone answers its request. Nothing
+//! merges across
 //! the idle barrier's answer, and a caret report with selection changes
 //! does not merge across a reply, nor with a report that says its changes
 //! in general terms.
@@ -98,15 +100,20 @@ impl Merge for OutpostToCore {
     type Key = EventKey;
 
     /// An event's node and kind; `None` for anything but an event, for a
-    /// notification, which says something of its own, and for a terminal's
+    /// notification, which says something of its own, for a terminal's
     /// read, since where each read starts is where the one before it said
-    /// to start.
+    /// to start, and for a focus report answering Core's live re-read,
+    /// which alone answers its request: merged into, or merging into a
+    /// repeat Core then refuses, it would leave the request unanswered.
     fn merge_key(&self) -> Option<EventKey> {
         let OutpostToCore::Event { event, .. } = self else {
             return None;
         };
         let kind = std::mem::discriminant(event);
         let (node, detail) = match event {
+            NormalizedEvent::FocusChanged {
+                answers: Some(_), ..
+            } => return None,
             NormalizedEvent::FocusChanged {
                 node,
                 whole_window: foreground,
@@ -341,6 +348,58 @@ mod tests {
         assert_eq!(place(&other, &keyed(1, false)), Some(0));
         let unbarred = [keyed(1, true), barrier(Barrier::None)];
         assert_eq!(place(&unbarred, &keyed(1, true)), Some(0));
+    }
+
+    /// A focus report of one button, answering live re-read `answers`.
+    fn focus(answers: Option<u64>) -> OutpostToCore {
+        OutpostToCore::Event {
+            trace_id: crate::TraceId::from_raw(1),
+            observed_at_us: 0,
+            backend: crate::Backend::Uia,
+            window: None,
+            application: None,
+            timing: super::super::EventTiming::default(),
+            event: NormalizedEvent::FocusChanged {
+                node: crate::NodeSnapshot {
+                    id: NodeId::new(3),
+                    backend: crate::Backend::Uia,
+                    role: crate::Role::Button,
+                    name: Some("Two".to_owned()),
+                    value: None,
+                    states: crate::StateSet::new(),
+                    details: crate::NodeDetails::default(),
+                },
+                whole_window: false,
+                ancestors: Vec::new(),
+                selected_child: None,
+                text: None,
+                earlier: None,
+                group: None,
+                first_cached_ancestor: None,
+                answers,
+            },
+        }
+    }
+
+    #[test]
+    fn a_live_re_reads_answer_is_never_merged_either_way() {
+        let answer = focus(Some(0));
+        let repeat = focus(None);
+        assert_eq!(
+            merge_into([(0, &answer)].into_iter(), &repeat),
+            None,
+            "a repeat into a waiting answer"
+        );
+        assert_eq!(
+            merge_into([(0, &repeat)].into_iter(), &answer),
+            None,
+            "an answer into a waiting repeat"
+        );
+        assert_eq!(
+            merge_into([(0, &repeat)].into_iter(), &repeat),
+            Some(0),
+            "two plain reports merge"
+        );
     }
 
     #[test]

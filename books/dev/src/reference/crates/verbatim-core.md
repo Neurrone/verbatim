@@ -622,7 +622,10 @@ ancestors only, never of its cached ones.
 generation and kind), counted in `SrState::live_re_reads`, which the
 control protocol's status reply carries. A pending live re-read ends on
 one path: its answer; its answer of gone (`Input::LiveRereadGone`); a
-newer focus applied; a newer live re-read for the same focus reader,
+focus applied that was observed at or after its report, so an older
+report's answer applied leaves a newer report's live re-read waiting (a
+focus of unknown time ends every one); a newer live re-read for the same
+focus reader,
 which replaces it; its outpost generation's end; or, for the listener's,
 `Input::ListenerReplaced`. An answer to one no longer pending says
 nothing. A pending live re-read counts as work in flight for the idle
@@ -683,8 +686,12 @@ asks again and replaces it, the older query's answer then being late.
 Its endings are its answer, `Input::ReadFocusUnanswered` (nothing to ask,
 its outpost's end, `NotWatched` or an empty answer say "No focus";
 abandoned at its deadline, or replaced in the app while it waited for an
-outpost, nothing), a newer focus Core applies (`record_taken`), and a
-replacing press. An answer for no waiting press says nothing.
+outpost, nothing), a focus Core applies that was observed after the
+press, in a later millisecond, or either time unknown (`record_taken`),
+and a replacing press. A focus observed before the press and applied while
+it waits leaves it waiting, as NVDA runs NVDA+Tab after the focus event
+queued before it and speaks both. An answer for no waiting press says
+nothing.
 
 Completions are matched by the state's latest navigation query id, not by
 navigator identity, so a focus event between a command and its completion

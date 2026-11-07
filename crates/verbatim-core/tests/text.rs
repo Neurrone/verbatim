@@ -5133,6 +5133,65 @@ fn a_verbatim_tab_answer_after_a_newer_focus_is_dropped() {
     );
 }
 
+/// A focus observed before the press, applied while its query waits, is
+/// spoken and the press's answer after it, as NVDA runs NVDA+Tab after the
+/// focus event queued before it; a focus observed after the press makes
+/// its answer late.
+#[test]
+fn a_focus_observed_before_a_waiting_verbatim_tab_keeps_its_press() {
+    let at = |observed_at_us, number| {
+        let mut input = event(NormalizedEvent::FocusChanged {
+            node: node(number, Role::Button, StateSet::new()),
+            whole_window: false,
+            ancestors: Vec::new(),
+            selected_child: None,
+            text: None,
+            earlier: None,
+            group: None,
+            answers: None,
+            first_cached_ancestor: None,
+        });
+        if let Input::Event {
+            observed_at_us: observed,
+            ..
+        } = &mut input
+        {
+            *observed = observed_at_us;
+        }
+        input
+    };
+    let press = Input::Command {
+        pressed_at_ms: 1_000,
+        key_seq: verbatim_model::KeySeq::NONE_YET,
+        trace_id: TraceId::from_raw(3),
+        command: ReviewCommand::ReportFocus,
+        repeat: 0,
+    };
+    let mut state = SrState::new();
+    let _ = reduce(&mut state, &at(500_000, 5));
+    assert_eq!(reduce(&mut state, &press), [REPORT_QUERY]);
+    let _ = reduce(&mut state, &at(999_000, 6));
+    let effects = reduce(
+        &mut state,
+        &report_answer(TraceId::from_raw(3), node(6, Role::Button, StateSet::new())),
+    );
+    assert_eq!(
+        spoken(&effects),
+        vec![
+            UtteranceSegment::label("Body"),
+            UtteranceSegment::new(SegmentContent::Role(Role::Button)),
+        ]
+    );
+
+    assert_eq!(reduce(&mut state, &press), [REPORT_QUERY]);
+    let _ = reduce(&mut state, &at(1_001_000, 7));
+    let late = reduce(
+        &mut state,
+        &report_answer(TraceId::from_raw(3), node(7, Role::Button, StateSet::new())),
+    );
+    assert_eq!(late, []);
+}
+
 /// A press with nothing to ask, or whose query's outpost ended or answered
 /// no focus, says "No focus", as with no focus at all.
 #[test]

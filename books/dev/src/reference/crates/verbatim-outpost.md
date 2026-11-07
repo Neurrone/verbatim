@@ -494,7 +494,9 @@ Inside an outpost (`docs/design/communication.md`, section 6.4;
   node's. The shell answers the reducer's `AskJudge` by that window, read
   under the charge's lock: hung or ghosted by the outpost's reader, which
   is a hang seen, told to Core once per hang and abandoning nothing, then
-  moved on; with no window named, the program stays. While a listener
+  moved on, which the reducer ignores for a tree dump and a shell item
+  query, as they are not about the focus and are bounded by their deadline
+  alone; with no window named, the program stays. While a listener
   read's marker has waited half a second, nothing is in flight behind it,
   so the shell answers the reducer's `CheckFront` from the window in
   front (`Context::foreground_window`, by the outpost's foreground
