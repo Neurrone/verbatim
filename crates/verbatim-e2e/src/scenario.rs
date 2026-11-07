@@ -998,6 +998,20 @@ impl Scenario {
         );
     }
 
+    /// Core's live re-reads since Verbatim started, read from its status once
+    /// nothing more is said, for a measure scenario whose count depends on
+    /// how many focus events an application raises for one element.
+    ///
+    /// # Panics
+    ///
+    /// Panics if more is said, or Verbatim does not answer its status.
+    pub fn live_re_reads(&mut self) -> u64 {
+        self.expect_nothing_more();
+        self.status()
+            .expect("reads Verbatim's status")
+            .live_re_reads
+    }
+
     /// Whether Verbatim exited by itself at a step's keys
     /// ([`Scenario::send_keys_exiting`]), so that neither its focus nor
     /// its flight recorder can be dumped and it needs no quit.

@@ -488,13 +488,19 @@ pub(crate) fn setup_focus_return(scenario: &mut Scenario) -> io::Result<Scenario
 /// still holds its last focus, meets its ancestry cache at the list and
 /// takes the window from it, and Core, whose focus ancestry is the text
 /// box's, would enter the window from the cache, so it asks for a live
-/// re-read and speaks its answer. Exactly one live re-read per return.
+/// re-read and speaks its answer: at least one live re-read per return,
+/// and one more for each further focus event the window raises for its
+/// item while a re-read waits, which Core judges as a new report.
 pub(crate) fn body_focus_return(scenario: &mut Scenario, _state: &mut ScenarioState) {
     let truth = Truth {
         name: "measure_focus_return",
     };
     focus_returns(scenario, &truth, (RETURN_BOX, "m-return-app"), false);
-    scenario.expect_live_re_reads(REPEATS as u64);
+    let re_reads = scenario.live_re_reads();
+    assert!(
+        re_reads >= REPEATS as u64,
+        "every return makes a live re-read: {re_reads} for {REPEATS} returns"
+    );
 }
 
 /// The text box of `measure_focus_return_retitled`.
