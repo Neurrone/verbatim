@@ -220,6 +220,14 @@ reviewable surface.
   children to the node's place, its accessibility parent in its owner,
   as UIA's provider repositioning does for a combo box's drop-down
   (`tests/fixtures/popup.json`).
+- `menu`: the Win32 popup menu the `popup-menu` command shows, the
+  system's own `#32768` window, served by MSAA's menu proxy: two items,
+  "First" and "Second", tracked by `TrackPopupMenuEx` on a thread of its
+  own, owned by a hidden window there, so the host's thread goes on
+  serving its provider and the commands. `menu-select <index>` selects an
+  item by the menu's own `MN_SELECTITEM`, which raises its focus event,
+  and `menu-close` ends the menu, answered once its loop has returned.
+  Nothing takes the foreground or the input.
 - `hits`: the provider-side hit counters (below).
 
 ### The UIA text pattern

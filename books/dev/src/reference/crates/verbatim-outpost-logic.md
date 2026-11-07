@@ -69,9 +69,10 @@ Public API:
   checked at the grace's end and every half second after for a program
   with a window, until its deadline. A program is abandoned only at its
   deadline or once the user moved on. On an abandonment the reducer emits
-  `Abandon` and answers its own obligations: the running query, the owed
-  work of the dead generation, the open watch, and the focus group's
-  older entries. A cut caret read's finish is handed on to a new request
+  `Abandon` and answers its own obligations: the running query, Core's
+  live re-read the entry answers (`LiveRereadGone`, sent too when a
+  program ends without answering it), the owed work of the dead
+  generation, the open watch, and the focus group's older entries. A cut caret read's finish is handed on to a new request
   (`InFlight::hand_on`), keeping the read's deadline and rule.
 - The rule for asks: the shell answers each ask at once, as the
   reducer's next inputs, before it takes another message, and the

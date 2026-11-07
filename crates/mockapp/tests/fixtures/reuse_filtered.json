@@ -1,0 +1,39 @@
+{
+  "id": "root",
+  "role": "window",
+  "name": "Mockapp Filtered Reuse Fixture",
+  "children": [
+    {
+      "id": "layout",
+      "role": "group",
+      "name": "Layout",
+      "content": false,
+      "children": [
+        {
+          "id": "folder",
+          "role": "list",
+          "name": "Items View",
+          "states": ["focusable"],
+          "children": [
+            {
+              "id": "inner",
+              "role": "list_item",
+              "name": "Inner",
+              "states": ["focusable", "selectable"],
+              "position_in_set": 1,
+              "set_size": 2
+            },
+            {
+              "id": "alpha",
+              "role": "list_item",
+              "name": "alpha.txt",
+              "states": ["focusable", "selectable"],
+              "position_in_set": 2,
+              "set_size": 2
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

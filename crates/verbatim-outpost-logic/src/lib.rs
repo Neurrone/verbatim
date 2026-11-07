@@ -510,6 +510,10 @@ struct Current {
     /// The query the program answers, if it answers one, which an
     /// abandonment or a program that ends without answering answers.
     running: Option<(RequestId, TraceId)>,
+    /// Core's live re-read its entry answers, if any, until a commit sends
+    /// the answer: one the program ends or is abandoned without answering
+    /// is answered gone, so a pending live re-read always ends.
+    live_reread: Option<u64>,
     /// The focus group try it is, if it is one.
     group: Option<GroupTry>,
     /// Whether it does work the idle barrier's answer waits for, as it
@@ -926,6 +930,11 @@ impl Reducer {
         if let Some(message) = change.result.clone() {
             if let Some(current) = self.current_of(request) {
                 current.running = None;
+                if current.live_reread.is_some()
+                    && current.live_reread == live_reread_answer(&message)
+                {
+                    current.live_reread = None;
+                }
             }
             self.send(message, effects);
         }
@@ -1104,8 +1113,8 @@ impl Reducer {
     }
 
     /// The worker in charge was abandoned: its replacement is started, and
-    /// the program's query, the owed work it attempted and the caret key's
-    /// watch it held are answered.
+    /// the program's query, the live re-read its entry answers, the owed
+    /// work it attempted and the caret key's watch it held are answered.
     fn abandoned(&mut self, abandoned: Abandoned<Current>, now: Now, effects: &mut Vec<Effect>) {
         let Abandoned {
             dead,
@@ -1139,6 +1148,9 @@ impl Reducer {
         }
         if let Some((request_id, trace)) = current.running {
             self.send(reply(request_id, trace, QueryOutcome::Abandoned), effects);
+        }
+        if let Some(request) = current.live_reread {
+            self.send(OutpostToCore::LiveRereadGone { request }, effects);
         }
         // A focus group's older entries are tried by the replacement.
         if let Some(group) = current.group {
@@ -1185,6 +1197,11 @@ impl Reducer {
                 ),
                 effects,
             );
+        }
+        // A live re-read its program did not answer: its object was gone,
+        // or a rule dropped its report.
+        if let Some(request) = current.live_reread {
+            self.send(OutpostToCore::LiveRereadGone { request }, effects);
         }
         if let Some(group) = current.group
             && !reported
@@ -1475,8 +1492,13 @@ impl Reducer {
             self.answer_watch(answer, now, effects);
         }
         let waiting = self.waiting(&work);
+        let live_reread = match &work {
+            Work::Entry { entry, .. } => live_reread_answered_by(&entry.item),
+            Work::Owed(_) | Work::Drop | Work::PollRead | Work::Finish { .. } => None,
+        };
         let current = Current {
             running,
+            live_reread,
             group,
             deferred: false,
             in_hand: InHand::of(&work, window),
@@ -1685,6 +1707,34 @@ fn budget(entry: &Entry, now: Now, handling: Duration) -> (Duration, Option<(Req
         | Item::NotedCaret { .. }
         | Item::Barrier { .. }
         | Item::NodesHeld { .. } => (handling, None),
+    }
+}
+
+/// Core's live re-read the program handling `item` answers: the listener's
+/// read answering it or its answer of gone, or Core's live re-read of an
+/// MSAA report; `None` for any other entry.
+fn live_reread_answered_by(item: &Item) -> Option<u64> {
+    match item {
+        Item::Fact(DeliveredFact::UiaFocusRead { read, .. }, _) => read.answers,
+        Item::Fact(
+            DeliveredFact::UiaLiveRereadGone { request }
+            | DeliveredFact::MsaaLiveReread { request, .. },
+            _,
+        ) => Some(*request),
+        _ => None,
+    }
+}
+
+/// The live re-read `message` answers: a focus report carrying its
+/// request, or its answer of gone.
+fn live_reread_answer(message: &OutpostToCore) -> Option<u64> {
+    match message {
+        OutpostToCore::Event {
+            event: verbatim_model::NormalizedEvent::FocusChanged { answers, .. },
+            ..
+        } => *answers,
+        OutpostToCore::LiveRereadGone { request } => Some(*request),
+        _ => None,
     }
 }
 

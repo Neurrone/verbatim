@@ -381,6 +381,16 @@ pub(crate) enum Command {
     /// window of the application on another thread than the host's, which
     /// the user can move on to while the host's thread is slow.
     ThreadWindow,
+    /// `popup-menu`: shows a Win32 popup menu of two items, "First" and
+    /// "Second", on a UI thread of its own (`crate::menu`), and answers
+    /// `popup-menu <hwnd>`, the menu window's decimal handle, once it is
+    /// shown.
+    PopupMenu,
+    /// `menu-select <index>`: selects the open menu's item at `index`,
+    /// from 0, as its arrow keys do, raising its focus event.
+    MenuSelect(usize),
+    /// `menu-close`: ends the open menu, answered once it has closed.
+    MenuClose,
     /// `child-client-identity`: the client area of the child window
     /// `child-window` made answers as `client-identity` makes the host's
     /// answer, `IAccIdentity` with its address and `accParent` with the
@@ -676,6 +686,9 @@ pub(crate) fn parse_command(line: &str) -> Option<Command> {
         "acc-focus-window" => Some(Command::AccFocusWindow(rest.trim().parse().ok()?)),
         "child-window" => Some(Command::ChildWindow),
         "thread-window" => Some(Command::ThreadWindow),
+        "popup-menu" => Some(Command::PopupMenu),
+        "menu-select" => rest.trim().parse().ok().map(Command::MenuSelect),
+        "menu-close" => Some(Command::MenuClose),
         "child-client-identity" => Some(Command::ChildClientIdentity),
         "window-focus" => Some(Command::WindowFocus),
         "fail-window-element" => Some(Command::FailWindowElement),

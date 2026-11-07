@@ -18,6 +18,7 @@ mod fixture;
 mod held_message;
 mod hits;
 mod list_view;
+mod menu;
 mod msaa;
 mod popup;
 mod stdin;

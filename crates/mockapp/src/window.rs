@@ -612,6 +612,10 @@ fn apply(hwnd: HWND, context: &'static WindowContext, command: Command) -> bool 
         }
         return true;
     }
+    if let Command::PopupMenu | Command::MenuSelect(_) | Command::MenuClose = command {
+        acknowledge(&crate::menu::command(&command));
+        return true;
+    }
     if let Command::ChildWindow = command {
         match child_window(hwnd, context) {
             Ok(()) => acknowledge("applied"),

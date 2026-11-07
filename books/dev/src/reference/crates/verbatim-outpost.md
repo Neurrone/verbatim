@@ -1402,10 +1402,13 @@ entries it emits, after its filters, by its `FocusSource`. A listener read
 carrying `answers` keeps its report's verdict and joins no cache; an MSAA
 live re-read (`CoreToOutpost::LiveReread`, planned as
 `DeliveredFact::MsaaLiveReread`) reacquires the object at the last MSAA
-report's event address (`Tracking::msaa_report`). A live re-read that no
-report answers, its object gone or its report dropped by a rule, is
-answered `OutpostToCore::LiveRereadGone`, as is the listener's
-`UiaLiveRereadGone`. A foreground change makes its window the window every
+report's event address (`Tracking::msaa_report`). The reducer records the
+live re-read each program's entry answers (`Current::live_reread`), cleared
+by the commit that sends its report or the listener's `UiaLiveRereadGone`;
+one the program ends, panics or is abandoned without answering, its object
+gone or its report dropped, is answered `OutpostToCore::LiveRereadGone`
+there, the one answer path. A newer focus of the same element never
+replaces a waiting answer in the intake. A foreground change makes its window the window every
 older report in it entered in front (`Held::reported`), and the
 selection-as-value mark is each held report's own
 (`Held::value_from_selection`).

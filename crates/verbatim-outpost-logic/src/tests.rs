@@ -2675,3 +2675,143 @@ fn a_program_abandoned_after_its_hang_was_seen_is_parked_on_a_hung_window() {
     replay.push(navigation(2), Source::Other, 11_002);
     assert_eq!(on_hung(&replay.tick(11_002 + 11_000)), [false]);
 }
+
+/// The listener's read of the button `runtime` in window 0x10, answering
+/// Core's live re-read `answers` when it is given.
+fn listener_read(runtime: i32, answers: Option<u64>) -> Item {
+    let read = verbatim_model::protocol::UiaFocusRead {
+        hwnd: 0x10,
+        snapshot: verbatim_model::protocol::UiaSnapshotFact {
+            runtime_id: vec![42, runtime],
+            role: Role::Button,
+            name: None,
+            value: None,
+            states: verbatim_model::StateSet::new(),
+            details: verbatim_model::NodeDetails::default(),
+        },
+        ancestors: Vec::new(),
+        ancestors_end: verbatim_model::protocol::AncestorsEnd::Top,
+        selected_child: None,
+        value_from_selection: false,
+        window: Some(0x10),
+        same_as_last: None,
+        answers,
+        cached_from: None,
+    };
+    Item::Fact(
+        DeliveredFact::UiaFocusRead {
+            marker: 99,
+            read: Box::new(read),
+            focus: true,
+        },
+        None,
+    )
+}
+
+/// The live re-reads `effects` answer gone, by request.
+fn gone(effects: &[Effect]) -> Vec<u64> {
+    sent(effects)
+        .into_iter()
+        .filter_map(|message| match message {
+            OutpostToCore::LiveRereadGone { request } => Some(*request),
+            _ => None,
+        })
+        .collect()
+}
+
+/// `deadline` in milliseconds.
+fn millis(deadline: Duration) -> u64 {
+    u64::try_from(deadline.as_millis()).unwrap_or(u64::MAX)
+}
+
+/// A live re-read's answer the outpost drops is answered gone, on every
+/// drop path, so Core's pending live re-read, which holds the idle barrier,
+/// always ends: a listener's read whose program ends without reporting it
+/// (a rule dropped it, or its element was gone), one whose program
+/// panicked, one abandoned at its deadline, and Core's live re-read of an
+/// MSAA report abandoned at its deadline. Each is answered once.
+#[test]
+fn a_live_re_read_answer_dropped_by_the_outpost_is_answered_gone() {
+    let mut replay = Replay::new();
+    let dropped = program(&replay.push(listener_read(1, Some(4)), Source::Other, 1)).request;
+    assert_eq!(gone(&replay.finish(dropped, false, 2)), [4]);
+
+    let panicked = program(&replay.push(listener_read(1, Some(5)), Source::Other, 3)).request;
+    let effects = replay.input(
+        Input::Finished {
+            request: panicked,
+            reported: false,
+            panicked: true,
+            cut: None,
+        },
+        4,
+    );
+    assert_eq!(gone(&effects), [5]);
+
+    replay.push(listener_read(1, Some(6)), Source::Other, 5);
+    let effects = replay.tick(5 + millis(FOCUS_READ_DEADLINE));
+    assert!(abandons(&effects));
+    assert_eq!(gone(&effects), [6]);
+
+    let at = 5 + millis(FOCUS_READ_DEADLINE) + 1;
+    replay.push(
+        Item::Fact(
+            DeliveredFact::MsaaLiveReread {
+                request: 7,
+                trace_id: TraceId::from_raw(3),
+            },
+            None,
+        ),
+        Source::Other,
+        at,
+    );
+    let effects = replay.tick(at + millis(HANDLING_DEADLINE));
+    assert!(abandons(&effects));
+    assert_eq!(gone(&effects), [7]);
+}
+
+/// A live re-read answered by its report is not answered again when its
+/// program is abandoned after sending it.
+#[test]
+fn a_live_re_read_answered_before_its_abandonment_is_not_answered_gone() {
+    let mut replay = Replay::new();
+    let request = program(&replay.push(listener_read(1, Some(4)), Source::Other, 1)).request;
+    let mut answer = focus_change(1, false);
+    if let Some(OutpostToCore::Event {
+        event: NormalizedEvent::FocusChanged { answers, .. },
+        ..
+    }) = &mut answer.result
+    {
+        *answers = Some(4);
+    }
+    assert_eq!(kinds(&replay.commit(request, answer, 2)), ["send"]);
+    let effects = replay.tick(1 + millis(FOCUS_READ_DEADLINE));
+    assert!(abandons(&effects));
+    assert_eq!(gone(&effects), Vec::<u64>::new());
+}
+
+/// A newer focus of the same element arriving while a live re-read's
+/// answer waits does not replace it: both are handled, the answer first,
+/// so its program alone answers the live re-read.
+#[test]
+fn a_newer_focus_of_the_same_element_never_replaces_a_live_re_read_answer() {
+    let answers = |program: &Program| match &program.work {
+        Work::Entry {
+            entry:
+                Entry {
+                    item: Item::Fact(DeliveredFact::UiaFocusRead { read, .. }, _),
+                    ..
+                },
+            ..
+        } => read.answers,
+        work => panic!("a listener read's program, not {work:?}"),
+    };
+    let mut replay = Replay::new();
+    let held = program(&replay.push(msaa_focus(1, 1), Source::Hook, 1)).request;
+    assert!(programs(&replay.push(listener_read(2, Some(4)), Source::Other, 2)).is_empty());
+    assert!(programs(&replay.push(listener_read(2, None), Source::Other, 3)).is_empty());
+    let answer = program(&replay.finish(held, false, 4)).clone();
+    assert_eq!(answers(&answer), Some(4), "the answer first");
+    let newer = program(&replay.finish(answer.request, false, 5)).clone();
+    assert_eq!(answers(&newer), None, "then the newer focus");
+}

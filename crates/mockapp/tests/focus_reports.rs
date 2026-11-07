@@ -3418,9 +3418,10 @@ fn a_changed_title_walks_to_the_top() {
 /// Core's live re-read of the listener's last read: the held element is
 /// walked again live, one step to the parent per ancestor and one to the
 /// root, reusing nothing, and the read answers the request with no cached
-/// ancestor; one for another trace, and one with no read held, are answered
-/// gone with no call.
-fn a_live_re_read_walks_the_held_element_with_no_cache() {
+/// ancestor, keeping the place of the read it re-reads, so a menu opening
+/// still judges that read by when its event was queued; one for another
+/// trace, and one with no read held, are answered gone with no call.
+fn a_live_re_read_walks_the_held_element_with_no_cache_and_keeps_its_place() {
     let title = common::unique_title("mockapp-live-reread");
     let mut app = common::spawn("reuse.json", "uia", &title);
     let client = Client::new(common::find_window(&title));
@@ -3443,6 +3444,9 @@ fn a_live_re_read_walks_the_held_element_with_no_cache() {
         Some(1),
         "the window came from the cache"
     );
+    // The user moves away from the application before Core's live re-read:
+    // the read it re-reads is no longer current for a menu opening.
+    outpost.listener_moved_away();
     let steps = Arc::new(Mutex::new(0u32));
     let counted = Arc::clone(&steps);
     outpost.listener_observes_calls(Arc::new(move |call| {
@@ -3470,6 +3474,16 @@ fn a_live_re_read_walks_the_held_element_with_no_cache() {
         "for another trace: {other:?}"
     );
     assert_eq!(calls.uia, 0, "no call for another trace");
+    // The live re-read kept its read's place, before the user moved away,
+    // so a menu opening on another element finds no current focus to
+    // compare with: four calls, where a current focus adds the comparison.
+    app.send("set-focus inner");
+    let (opening, calls) = outpost.listener_read_as(&client.focused(), FocusEvent::MenuOpened);
+    assert!(
+        matches!(opening, Judged::Read(_)),
+        "the opening: {opening:?}"
+    );
+    assert_eq!(calls.uia, 4, "no comparison with a current focus");
     drop(outpost);
     app.quit();
 }
@@ -3543,16 +3557,456 @@ fn an_msaa_live_re_read_reacquires_from_the_event_address() {
     app.quit();
 }
 
+/// What Core does with `message` from outpost `outpost`, watching
+/// application `application`, as the app applies it, and what it says.
+fn core_takes(
+    state: &mut SrState,
+    message: OutpostToCore,
+    (outpost, application): (OutpostId, Pid),
+) -> (Vec<Effect>, Vec<Vec<SegmentContent>>) {
+    let input = match message {
+        OutpostToCore::LiveRereadGone { request } => Input::LiveRereadGone { outpost, request },
+        mut message => {
+            if let OutpostToCore::Event { event, .. } = &mut message {
+                event.assign_outpost(outpost);
+            }
+            verbatim_model::protocol::event_input(application, message)
+                .unwrap_or_else(|| panic!("not a message Core takes as an input"))
+        }
+    };
+    let effects = verbatim_core::reduce(state, &input);
+    let spoken = effects
+        .iter()
+        .filter_map(|effect| match effect {
+            Effect::Speak(utterance, _) => Some(
+                utterance
+                    .segments
+                    .iter()
+                    .map(|segment| segment.content.clone())
+                    .collect(),
+            ),
+            _ => None,
+        })
+        .collect();
+    (effects, spoken)
+}
+
+/// The live re-reads `effects` ask for.
+fn live_rereads(effects: &[Effect]) -> Vec<&verbatim_model::LiveReread> {
+    effects
+        .iter()
+        .filter_map(|effect| match effect {
+            Effect::LiveReread(reread) => Some(reread),
+            _ => None,
+        })
+        .collect()
+}
+
+/// A report's `first_cached_ancestor` is computed from the entries the
+/// outpost emits, after its filters: the listener's read of the second
+/// focus in the list meets its ancestry cache at the list and takes the
+/// group above it and the window from the cache, but the group, not a
+/// content element, is filtered out of the chain, so the innermost cached
+/// ancestor emitted is the window, at index 0, where the read's own index
+/// would name the list, read live.
+fn first_cached_ancestor_is_computed_after_the_filters() {
+    let title = common::unique_title("mockapp-cached-filtered");
+    let mut app = common::spawn("reuse_filtered.json", "uia", &title);
+    let client = Client::new(common::find_window(&title));
+    let outpost = OutpostUnderTest::new(&app);
+    app.send("set-focus inner");
+    let _ = outpost.uia_focus(&client.focused());
+    app.send("set-focus alpha");
+    let (judged, _) = outpost.listener_read(&client.focused());
+    let Judged::Read(read) = &judged else {
+        panic!("the second focus is read: {judged:?}");
+    };
+    assert_eq!(
+        (
+            read.cached_from,
+            read.ancestors
+                .iter()
+                .map(|ancestor| ancestor.snapshot.name.as_deref())
+                .collect::<Vec<_>>()
+        ),
+        (
+            Some(1),
+            vec![
+                Some("Items View"),
+                Some("Layout"),
+                Some("Mockapp Filtered Reuse Fixture")
+            ]
+        ),
+        "the list read live, the group and the window from the cache"
+    );
+    let reported = outpost.focus(judged.into_fact(0, FocusEvent::Focus));
+    assert_eq!(
+        reported.chain(),
+        [
+            Some("Mockapp Filtered Reuse Fixture"),
+            Some("Items View"),
+            Some("alpha.txt")
+        ],
+        "the group filtered out"
+    );
+    assert_eq!(
+        reported.first_cached_ancestor,
+        Some(FirstCachedAncestor {
+            index: 0,
+            reader: FocusReaderKind::Listener
+        })
+    );
+    drop(outpost);
+    app.quit();
+}
+
+/// A live re-read's answer keeps the verdict its report was given, as it
+/// reads the same element again: in mockapp's window of a class on NVDA's
+/// MSAA list, which the outpost judges MSAA, the listener's read of the
+/// button, made anyway, is dropped by the outpost's verdict, while the
+/// same read answering Core's live re-read is reported, carrying its
+/// request, with no verdict judged again.
+fn a_live_re_read_answer_keeps_its_reports_verdict() {
+    let title = common::unique_title("mockapp-reread-verdict");
+    let mut app = common::spawn("msaa_class_window.json", "uia", &title);
+    let client = Client::new(common::find_window(&title));
+    let outpost = OutpostUnderTest::new(&app);
+    app.send("set-focus btn1");
+    outpost.listener_forces_uia(true);
+    outpost.deliver(outpost.listener_fact(&client.focused()));
+    outpost.settled();
+    let (judged, _) = outpost.listener_live_reread(5);
+    let answer = outpost.focus(judged.into_reread_fact(99, 5));
+    assert_eq!(
+        (answer.node.name.as_deref(), answer.answers),
+        (Some("Original Name"), Some(5)),
+        "the button, answering the live re-read"
+    );
+    drop(outpost);
+    app.quit();
+}
+
+/// A live re-read's answer the outpost drops is answered gone, so Core's
+/// pending live re-read ends: the listener's live re-read of the button
+/// "OK" in mockapp's UIA child window, its step to "Embedded" now failing,
+/// goes on from the host window, whose root provider now fails
+/// (`fail-window-element`), so the outpost, holding no element of the host
+/// window, loses the focus and reports nothing, and its program answers
+/// the live re-read gone. The listener's first read, which the live
+/// re-read reads again, is not handed to the outpost, so the outpost has
+/// not met the host window before.
+fn a_live_re_read_answer_the_outpost_drops_is_answered_gone() {
+    let (mut app, host, island) = uia_island("mockapp-reread-dropped");
+    let outpost = OutpostUnderTest::new(&app);
+    let uia = Uia::new().expect("a UIA client");
+    let ok = common::listener_focus(&uia, island.0 as isize);
+    let (first, _) = outpost.listener_read(&ok);
+    assert!(
+        matches!(first, Judged::Read(_)),
+        "the first read: {first:?}"
+    );
+    app.send("island answer-parent ok fail");
+    app.send("fail-window-element");
+    let (judged, _) = outpost.listener_live_reread(3);
+    let Judged::Read(read) = &judged else {
+        panic!("the live re-read reads: {judged:?}");
+    };
+    assert_eq!(
+        read.ancestors_end,
+        verbatim_model::protocol::AncestorsEnd::ContinueFrom(host.0 as isize),
+        "the walk goes on from the host window"
+    );
+    outpost.deliver(judged.into_reread_fact(99, 3));
+    match outpost.next() {
+        OutpostToCore::LiveRereadGone { request: 3 } => {}
+        other => panic!("the outpost said {other:?}, not the answer of gone"),
+    }
+    outpost.settled();
+    drop(outpost);
+    app.quit();
+}
+
+/// A return to an application whose window was retitled while the user was
+/// in another reads the window's whole chain live and says the new title,
+/// with no live re-read: the listener's reading thread for mockapp still
+/// holds its last focus, but the window text saved with its ancestry cache
+/// reads otherwise now, so the title check makes the walk read live to the
+/// top (`books/dev/src/reference/crates/verbatim-core.md`, "The ancestry
+/// cache"). The user goes from mockapp's UIA window to a second mockapp's
+/// MSAA button and back, each window made the foreground as the outposts
+/// read it, with no keystroke.
+fn a_return_to_an_application_reads_its_whole_chain() {
+    let title = common::unique_title("mockapp-return-retitled");
+    let mut app = common::spawn("reuse.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let client = Client::new(hwnd);
+    let outpost = OutpostUnderTest::new(&app);
+    let other_title = common::unique_title("mockapp-return-other");
+    let mut other = common::spawn("small.json", "msaa", &other_title);
+    let other_hwnd = common::find_window(&other_title);
+    let other_outpost = OutpostUnderTest::new(&other);
+    let mut state = SrState::new();
+    let from = (OutpostId(1), Pid(app.pid()));
+
+    app.send("set-focus inner");
+    outpost.deliver(outpost.listener_fact(&client.focused()));
+    let first = outpost.next();
+    outpost.settled();
+    let _ = core_takes(&mut state, first, from);
+
+    outpost.set_foreground(other_hwnd);
+    common::apply(&mut other, other_hwnd, "set-focus btn1");
+    // The button is node 1, after the root, so its object id is 2.
+    other_outpost.deliver(DeliveredFact::MsaaFocus {
+        hwnd: other_hwnd.0 as isize,
+        id_object: 2,
+        id_child: 0,
+    });
+    let away = other_outpost.next();
+    other_outpost.settled();
+    let _ = core_takes(&mut state, away, (OutpostId(2), Pid(other.pid())));
+
+    let retitled = format!("{title} retitled");
+    app.send(&format!("set-title {retitled}"));
+    outpost.set_foreground(hwnd);
+    outpost.deliver(outpost.listener_fact(&client.focused()));
+    let back = outpost.next();
+    outpost.settled();
+    let OutpostToCore::Event {
+        event:
+            NormalizedEvent::FocusChanged {
+                first_cached_ancestor,
+                ..
+            },
+        ..
+    } = &back
+    else {
+        panic!("the outpost said {back:?}, not the return's focus");
+    };
+    assert_eq!(
+        *first_cached_ancestor, None,
+        "the walk read live to the top"
+    );
+    let (effects, spoken) = core_takes(&mut state, back, from);
+    assert_eq!(
+        spoken,
+        [
+            vec![
+                SegmentContent::Label(retitled.clone()),
+                SegmentContent::Role(Role::Window),
+            ],
+            vec![
+                SegmentContent::Label("Items View".to_owned()),
+                SegmentContent::Role(Role::List),
+            ],
+            vec![
+                SegmentContent::Label("Inner".to_owned()),
+                SegmentContent::NegatedState(State::Selected),
+                SegmentContent::Position {
+                    position: 1,
+                    set_size: Some(2),
+                },
+            ],
+        ],
+        "the new title, then the list and the item"
+    );
+    assert_eq!(
+        live_rereads(&effects),
+        Vec::<&verbatim_model::LiveReread>::new()
+    );
+    assert_eq!(state.live_re_reads(), 0, "no live re-read");
+    drop(other_outpost);
+    other.quit();
+    drop(outpost);
+    app.quit();
+}
+
+/// A return to a UIA window from a Win32 popup menu of the same
+/// application (`popup-menu`, the system's `#32768` menu window, which MSAA
+/// serves) is read live once (`books/dev/src/reference/crates/verbatim-core.md`,
+/// "The ancestry cache"): the listener's reading thread still holds the
+/// window's last focus, since the menu's focuses are the outpost's own MSAA
+/// reads, so its read of the return meets its ancestry cache at the list
+/// and takes the window entry from it; Core's focus ancestry is the menu's,
+/// so the window would be spoken as entered from the cache, and Core says
+/// nothing and asks the listener to read the same element again live. Its
+/// answer, read with no cache, is spoken: the window, the list and the
+/// item. The menu's own focuses, opening it and moving within it, ask for
+/// none. mockapp's menu is shown on its own thread and its items selected
+/// by the menu's own message, so nothing takes the foreground or the
+/// keyboard; each report is the outpost's from its own hook, waited for as
+/// it comes.
+#[expect(
+    clippy::too_many_lines,
+    reason = "the menu's steps, the return and its live re-read, in order"
+)]
+fn a_uia_window_with_an_msaa_menu_re_reads_live_once_per_return() {
+    let title = common::unique_title("mockapp-menu-return");
+    let mut app = common::spawn("reuse.json", "uia", &title);
+    let client = Client::new(common::find_window(&title));
+    let outpost = OutpostUnderTest::new(&app);
+    let mut state = SrState::new();
+    let from = (OutpostId(1), Pid(app.pid()));
+    let window_list_and_item = vec![
+        vec![
+            SegmentContent::Label("Mockapp Reuse Fixture".to_owned()),
+            SegmentContent::Role(Role::Window),
+        ],
+        vec![
+            SegmentContent::Label("Items View".to_owned()),
+            SegmentContent::Role(Role::List),
+        ],
+        vec![
+            SegmentContent::Label("Inner".to_owned()),
+            SegmentContent::NegatedState(State::Selected),
+            SegmentContent::Position {
+                position: 1,
+                set_size: Some(2),
+            },
+        ],
+    ];
+
+    app.send("set-focus inner");
+    outpost.deliver(outpost.listener_fact(&client.focused()));
+    let first = outpost.next();
+    outpost.settled();
+    assert_eq!(
+        core_takes(&mut state, first, from).1,
+        window_list_and_item,
+        "the first focus in the window"
+    );
+
+    let opened = app.send_answered("popup-menu");
+    assert!(
+        opened.starts_with("popup-menu "),
+        "mockapp's answer to the menu: {opened:?}"
+    );
+    let (effects, spoken) = core_takes(&mut state, outpost.next(), from);
+    assert_eq!(
+        spoken,
+        [vec![
+            SegmentContent::Label("Context".to_owned()),
+            SegmentContent::Role(Role::Menu),
+        ]],
+        "the menu's opening"
+    );
+    assert_eq!(
+        live_rereads(&effects),
+        Vec::<&verbatim_model::LiveReread>::new()
+    );
+    for (index, item, key) in [(0, "First", "f"), (1, "Second", "s")] {
+        app.send(&format!("menu-select {index}"));
+        let (effects, spoken) = core_takes(&mut state, outpost.next(), from);
+        assert_eq!(
+            spoken,
+            [vec![
+                SegmentContent::Label(item.to_owned()),
+                SegmentContent::Shortcut(key.to_owned()),
+            ]],
+            "the move to {item}"
+        );
+        assert_eq!(
+            live_rereads(&effects),
+            Vec::<&verbatim_model::LiveReread>::new()
+        );
+    }
+    assert_eq!(state.live_re_reads(), 0, "none within the menu");
+    app.send("menu-close");
+
+    outpost.deliver(outpost.listener_fact(&client.focused()));
+    let back = outpost.next();
+    outpost.settled();
+    let OutpostToCore::Event {
+        event:
+            NormalizedEvent::FocusChanged {
+                first_cached_ancestor,
+                ..
+            },
+        ..
+    } = &back
+    else {
+        panic!("the outpost said {back:?}, not the return's focus");
+    };
+    assert_eq!(
+        *first_cached_ancestor,
+        Some(FirstCachedAncestor {
+            index: 0,
+            reader: FocusReaderKind::Listener
+        }),
+        "the window entry came from the listener's ancestry cache"
+    );
+    let (effects, spoken) = core_takes(&mut state, back, from);
+    assert_eq!(
+        spoken,
+        Vec::<Vec<SegmentContent>>::new(),
+        "nothing said yet"
+    );
+    let asked = live_rereads(&effects);
+    let [reread] = asked.as_slice() else {
+        panic!("one live re-read asked for: {effects:?}");
+    };
+    assert_eq!(
+        (
+            reread.outpost,
+            reread.reader,
+            reread.logged.reason,
+            reread.logged.lowest_common_ancestor,
+            reread.logged.cache_join.1.as_deref(),
+        ),
+        (
+            OutpostId(1),
+            FocusReaderKind::Listener,
+            verbatim_model::LiveRereadReason::Entered,
+            None,
+            Some("Items View"),
+        )
+    );
+    assert_eq!(state.live_re_reads(), 1, "one for the return");
+
+    let (judged, _) = outpost.listener_live_reread_traced(reread.request, reread.trace_id);
+    outpost.deliver(judged.into_reread_fact(99, reread.request));
+    let answer = outpost.next();
+    outpost.settled();
+    assert_eq!(
+        core_takes(&mut state, answer, from).1,
+        window_list_and_item,
+        "the live read is spoken"
+    );
+    assert_eq!(state.live_re_reads(), 1, "its answer asks for no other");
+    drop(outpost);
+    app.quit();
+}
+
 #[expect(clippy::too_many_lines, reason = "one entry per test")]
 fn main() {
     harness::run_isolated(&[
+        (
+            "first_cached_ancestor_is_computed_after_the_filters",
+            first_cached_ancestor_is_computed_after_the_filters,
+        ),
+        (
+            "a_live_re_read_answer_keeps_its_reports_verdict",
+            a_live_re_read_answer_keeps_its_reports_verdict,
+        ),
+        (
+            "a_live_re_read_answer_the_outpost_drops_is_answered_gone",
+            a_live_re_read_answer_the_outpost_drops_is_answered_gone,
+        ),
+        (
+            "a_return_to_an_application_reads_its_whole_chain",
+            a_return_to_an_application_reads_its_whole_chain,
+        ),
+        (
+            "a_uia_window_with_an_msaa_menu_re_reads_live_once_per_return",
+            a_uia_window_with_an_msaa_menu_re_reads_live_once_per_return,
+        ),
         (
             "a_changed_title_walks_to_the_top",
             a_changed_title_walks_to_the_top,
         ),
         (
-            "a_live_re_read_walks_the_held_element_with_no_cache",
-            a_live_re_read_walks_the_held_element_with_no_cache,
+            "a_live_re_read_walks_the_held_element_with_no_cache_and_keeps_its_place",
+            a_live_re_read_walks_the_held_element_with_no_cache_and_keeps_its_place,
         ),
         (
             "a_listener_live_re_read_is_completed_without_the_cache",

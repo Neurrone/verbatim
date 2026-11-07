@@ -823,8 +823,8 @@ struct Worker<'a> {
     /// keeps (`reducer::Focus::value_from_selection`).
     value_from_selection: bool,
     /// Core's live re-read the focus about to be reported answers, until
-    /// its report is sent; one still here when the program has handled the
-    /// entry was dropped, and is answered gone ([`Worker::answer_gone`]).
+    /// its report is sent; one its program ends or is abandoned without
+    /// answering is answered gone by the reducer.
     answers: Option<u64>,
     /// The focus path of the UIA focus about to be reported, which its
     /// entry finds its element by before it is committed.
@@ -2086,30 +2086,14 @@ impl Worker<'_> {
             .map(|index| FirstCachedAncestor { index, reader })
     }
 
-    /// Answers Core's live re-read the entry being handled was to answer,
-    /// gone, when no report answered it: its object was gone, or a rule
-    /// dropped its report. So a pending live re-read always ends.
-    fn answer_gone(&mut self) {
-        if let Some(request) = self.answers.take() {
-            tracing::debug!(
-                request,
-                "a live re-read was not answered by a report; answered gone"
-            );
-            self.commit(Effects {
-                result: Some(OutpostToCore::LiveRereadGone { request }),
-                ..Effects::default()
-            });
-        }
-    }
-
     /// Core's live re-read `request` of this outpost's MSAA focus report
     /// traced `trace`, its last report ([`reducer::MsaaReport`]): the object
     /// at the report's event address read again, acquired from the event
     /// as it was (`AccessibleObjectFromEvent`), its ancestors walked live
     /// with no ancestry cache, and reported carrying `request`. The
-    /// report's verdict stands: NVDA's checks are not made again. Answered
-    /// gone when the last report is not that one, or the address gives no
-    /// object.
+    /// report's verdict stands: NVDA's checks are not made again. Reports
+    /// nothing when the last report is not that one, or the address gives
+    /// no object, and the reducer answers it gone as the program ends.
     fn msaa_live_reread(&mut self, request: u64, trace: TraceId) {
         self.answers = Some(request);
         let stored = self
@@ -2131,7 +2115,6 @@ impl Worker<'_> {
                 );
             }
         }
-        self.answer_gone();
     }
 
     /// What follows the commit that made `node_id`, of `role`, the followed
@@ -3174,7 +3157,6 @@ impl Worker<'_> {
             DeliveredFact::UiaFocusRead { read, .. } => {
                 self.answers = read.answers;
                 self.uia_focus(&read, trace, observed_at_us);
-                self.answer_gone();
             }
             // The listener's answer to Core's live re-read of gone, passed on
             // in order with this outpost's events.

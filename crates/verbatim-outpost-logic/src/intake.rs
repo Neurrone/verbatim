@@ -752,7 +752,19 @@ impl Intake {
 /// splits what waits into stretches, each holding at most one entry per
 /// key, so the first found is the only one.
 fn remove_keyed(waiting: &mut VecDeque<Waiting>, key: &Key, at: usize) -> Option<(usize, Waiting)> {
-    remove_waiting(waiting, at, |waiting| waiting.key.as_ref() == Some(key))
+    remove_waiting(waiting, at, |waiting| {
+        waiting.key.as_ref() == Some(key) && !answers_live_reread(&waiting.entry.item)
+    })
+}
+
+/// Whether `item` is the listener's read answering Core's live re-read,
+/// which a newer focus of the same element never replaces: its program
+/// alone answers the live re-read, so a pending one always ends.
+fn answers_live_reread(item: &Item) -> bool {
+    matches!(
+        item,
+        Item::Fact(DeliveredFact::UiaFocusRead { read, .. }, _) if read.answers.is_some()
+    )
 }
 
 /// Moves each of the old focus `old`'s own UIA state changes that waits
