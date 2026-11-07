@@ -39,8 +39,7 @@ the process boundary, and the outpost of the focus's application
 completes the chain with the host or owner window and every window above
 it, read from Windows' own state with no call into the other process
 (`books/dev/src/explanation/design/listener-without-connections.md`, decision 7 and section
-4.4; `docs/design/focus-pipeline-rework.md`, "Calls that reach another
-application" and "The foreground wait"): each is described as NVDA's
+4.4; `books/dev/src/reference/adr/0001-focus.md`, "Object identity"): each is described as NVDA's
 MSAA client for it, a pane named by its text, marked a top-level
 window's client when its style has a system menu, so it is spoken by its
 title, and taken as structure otherwise; a ghost's or a hung

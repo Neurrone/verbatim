@@ -11,7 +11,8 @@ remembered fact of its application is kept in, is
 with the listener are [verbatim-reader-rules](verbatim-reader-rules.md),
 and the window queries [verbatim-win32](verbatim-win32.md). The reasons for
 this shape are in `books/dev/src/explanation/architecture.md`, section 1 ("Outposts", "The focus
-listener (D13)") and in `books/dev/src/explanation/design/focus-pipeline.md`.
+listener (D13)"), in [How focus works](../../explanation/design/focus.md)
+and in [ADR 0001: Focus](../adr/0001-focus.md).
 
 An outpost's application is set once: by `--target-pid` on its command
 line, or, for a spare, by the supervisor's `Assign`. Its `WinEvent` hook
@@ -55,7 +56,8 @@ at info, with the time it took; the shutdown waits for it.
 An outpost's own process-scoped hook takes in all its application's MSAA
 events, focus, foreground, menu-popup, alert, and tooltip included, so they
 reach it by one route in the order Windows raised them
-(`books/dev/src/explanation/design/focus-pipeline.md`, section 12.4). The listener forwards
+([ADR 0001: Focus](../adr/0001-focus.md), "One route per application, and
+the marker"). The listener forwards
 those events only until the outpost's hook is in, so that an application's
 first events start its outpost:
 
@@ -108,8 +110,7 @@ alone reports it.
 ### Console windows and frames of another process
 
 A console window is one application in its console host's outpost, as
-NVDA gives it and its text area the client's app module
-(`books/dev/src/explanation/design/focus-pipeline.md`, section 5.4). The listener sends each
+NVDA gives it and its text area the client's app module. The listener sends each
 `WinEvent` for a `ConsoleWindowClass` window to the process of the event's
 thread, the console host (`verbatim-listener`'s `listener::routed_process`), dropping one whose
 thread cannot be opened. The console host's outpost marks each event in a
@@ -151,8 +152,8 @@ page inside `ApplicationFrameHost`'s frame, is read by the listener up to
 the window below the boundary, and the outpost completes the chain with
 that window's parent or owner, and every window above it to the desktop,
 read from Windows' own state with no call into the other process
-(`docs/design/focus-pipeline-rework.md`, "A window's name, and the one
-fallback" and "The foreground wait"; the decision of 2026-10-29). A plain
+([ADR 0001: Focus](../adr/0001-focus.md), "Object identity"; the decision
+of 2026-10-29). A plain
 window (`read::plain_window`) is read from Windows' own state alone: role
 window, named by `InternalGetWindowText`, unavailable when its style
 disables it, never focused and never invisible, kept under its window
@@ -229,8 +230,8 @@ never crosses a process: the outpost mints the `NodeId` from the forwarded
 runtime id. Nothing polls: at startup, and after an outpost or the listener
 is replaced, Core asks for the focus with one focus-now query.
 
-An application usually gets a spare (`books/dev/src/explanation/design/focus-pipeline.md`,
-section 19): the supervisor keeps two outposts started with `--spare`, with
+An application usually gets a spare ([ADR 0001: Focus](../adr/0001-focus.md),
+"Spare outposts"): the supervisor keeps two outposts started with `--spare`, with
 everything made but a hook, which say `SpareReady`. A start takes the
 oldest, ready or not, and sends `Assign`; the spare sets its application,
 reads the clock, installs its hook, waits on the application's exit, and
@@ -367,7 +368,7 @@ the same tables and code, which the arbitrator's own lists are built from.
   spare. `Outpost::assign` sets the application once: the clock, the hook on
   the `WinEvent` thread (`verbatim_ia2::event_thread::EventThread::hook`), and `Ready`. When the hook
   fails it reports a `Fault`, sends no `Ready`, and exits with code 1
-  (`books/dev/src/explanation/design/focus-pipeline.md`, section 19.8). It serves until
+  ([ADR 0001: Focus](../adr/0001-focus.md), "Spare outposts"). It serves until
   `Shutdown` or the end of the command pipe, then shuts down cleanly, and a
   thread waiting on the target sends `TargetExited`.
 - `run_attach` watches a pid, asks for its focus, and prints each outbound
@@ -554,8 +555,8 @@ Inside an outpost (`docs/design/communication.md`, section 6.4;
   the `ThreadStart` fault point under the `faults` feature
   ([verbatim-faults](verbatim-faults.md)), which mockapp's `failure_paths`
   tests use.
-- The focus-following subscription (`books/dev/src/explanation/design/focus-pipeline.md`, section
-  17): one registration with NVDA's two groups. The base group, given every
+- The focus-following subscription ([ADR 0001: Focus](../adr/0001-focus.md),
+  "Focus-following subscriptions"): one registration with NVDA's two groups. The base group, given every
   UIA focus whose element the outpost has, holds name, value, and state
   changes and `Text_TextSelectionChanged`; the extended group, for a focus
   with text read through UIA, adds `Text_TextChanged` and the active text
@@ -588,7 +589,8 @@ Inside an outpost (`docs/design/communication.md`, section 6.4;
   old;
   `RemoveAllEventHandlers` only at shutdown. A move to what is already
   followed makes no call; a focus read through MSAA is followed by nothing.
-- The queue (`books/dev/src/explanation/design/focus-pipeline.md`, section 5; the rules are in
+- The queue ([How focus works](../../explanation/design/focus.md), "One MSAA
+  focus"; the rules are in
   `books/dev/src/explanation/architecture.md`, "Outposts"): one entry per object and kind, and for
   an MSAA event other than a menu opening per raising thread (a menu opening
   per address; the console host's events per window and kind), a newer
@@ -684,7 +686,8 @@ Inside an outpost (`docs/design/communication.md`, section 6.4;
   key's watch. A token dropped unanswered answers `Failed`. In debug builds
   the shell asserts after each transition that its tokens are the queries
   the reducer records.
-- Time limits in an entry (`books/dev/src/explanation/design/focus-pipeline.md`, section 6): UIA
+- Time limits in an entry ([ADR 0001: Focus](../adr/0001-focus.md), "Time
+  limits"): UIA
   calls end at `verbatim_uia::UIA_CONNECTION_TIMEOUT` (2 s) or
   `UIA_TRANSACTION_TIMEOUT` (10 s); the continuation of a listener read's
   chain, an MSAA focus's ancestor walk and a focus read's walk have no
@@ -759,8 +762,8 @@ and the inherited pipe handles.
   takes the entry from the mailbox (`Context::front_test`, carried on the
   entry as `reducer::Front`), never on the worker, which can wait behind a
   call into a held application; an MSAA focus's acceptance test is made
-  there too (`docs/design/focus-pipeline-rework-remaining.md`, "The
-  outpost's foreground tests, on its reducer's thread"). It counts among its thread's other events and among focus events
+  there too ([ADR 0001: Focus](../adr/0001-focus.md), "The foreground and
+  the window title"). It counts among its thread's other events and among focus events
   in the batch limits, so later focus events do not crowd it out.
 - A foreground fact in front is reported, whatever the focus: NVDA's two
   tests against its last queued focus are Core's, which refuses a
@@ -780,7 +783,8 @@ and the inherited pipe handles.
   object is made; Core judges it by its foreground record.
 - A foreground event for a UIA window is dropped, as NVDA drops every MSAA
   event for one; the window is announced from the focus's ancestry
-  (`books/dev/src/explanation/design/focus-pipeline.md`, section 16.4). A console window's title
+  ([ADR 0001: Focus](../adr/0001-focus.md), "The foreground and the window
+  title"). A console window's title
   comes from its window element among the listener's ancestors.
 - An MSAA client object of a `WS_SYSMENU` window is marked
   `NodeDetails::top_level_client`, read as a pane and presented by its
@@ -868,8 +872,8 @@ and the inherited pipe handles.
 
 - A UIA focus is reported from the listener's read (`Worker::uia_focus`):
   tested against the foreground with its nearest window (or 0, which passes,
-  as NVDA's `shouldAcceptEvent`; `books/dev/src/explanation/design/focus-pipeline.md`, section
-  16.2), its backend decided. Its runtime id keeps its node; when the
+  as NVDA's `shouldAcceptEvent`; [ADR 0001: Focus](../adr/0001-focus.md), "The
+  listener's checks, ported from NVDA's focus handler"), its backend decided. Its runtime id keeps its node; when the
   listener read that the earlier element under it lost the focus or is
   gone, the report carries that evidence (`FocusChanged::earlier`) and its
   commit evicts the element kept for the node, if still kept
@@ -891,7 +895,8 @@ and the inherited pipe handles.
   (`read::uia_chain_from_read`). Every UIA
   focus is handled, oldest first; Core culls expired speech.
 - The outpost then finds its own copy by the chain's runtime ids
-  (`books/dev/src/explanation/design/focus-pipeline.md`, section 16.5), after the report for a
+  ([ADR 0001: Focus](../adr/0001-focus.md), "The outpost's own element"),
+  after the report for a
   focus without text and before it for one that may have text: one
   `ElementFromHandle` and one remote operation
   (`verbatim_uia_rops::element_by_path`, or the classic walk within a
@@ -909,8 +914,7 @@ and the inherited pipe handles.
   its application's focused element instead
   (`read::focused_element_in`, trigger `read::FocusRead::CutWalk`), with
   the focus read's checks and process-id check, and keeps it when its
-  runtime id is the focus's (`Worker::element_after_cut_walk`;
-  `docs/design/focus-pipeline-rework.md`, the audit's difference 5). It
+  runtime id is the focus's (`Worker::element_after_cut_walk`). It
   finds the element only while the element still has the keyboard focus,
   a limit; a focus without text is not looked for this way.
 - While the focus's value is its selected item

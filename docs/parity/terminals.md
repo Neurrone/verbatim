@@ -307,7 +307,8 @@ grouping", "list", and the tab moved to ("<title> 1 of 2") in full, and
 on releasing Control the tab's terminal and its line.
 
 Verbatim: **matched (verified)** for Control+Tab and Control+Shift+Tab
-(`books/dev/src/explanation/design/focus-pipeline.md`, section 10.1, items 2 and 3). The
+(`books/dev/src/reference/adr/0001-focus.md`, "Who reads a UI Automation
+focus"). The
 focus listener judges and reads each focus from the event's own element
 on its thread for the application, a few milliseconds after the event,
 and the outpost reports every focus it read, in the order the events

@@ -200,7 +200,7 @@ processes, every exception attributed.
   until the reader gives its buffer back as the frame's turn ends.
 - A fact held while its outpost starts is reported as "waiting for the
   outpost to start". An application's outpost is usually a spare started
-  ahead of need (`books/dev/src/explanation/design/focus-pipeline.md`, section 19), so the wait
+  ahead of need ([ADR 0001](adr/0001-focus.md), "Spare outposts"), so the wait
   is the assignment and the hook, a P50 of 1.4 to 3.6 ms in a debug build;
   starting an outpost from nothing takes 36 to 118 ms, about 40 ms typical,
   in a debug build before it takes its first event.
@@ -232,7 +232,7 @@ default, and with the classic walk (`uia.remote_operations = false`).
 Rules that hold for every UIA focus:
 
 - The calls before the read are NVDA's focus handler's, in its order
-  (`books/dev/src/explanation/design/focus-pipeline.md`, section 18): the sender's nearest
+  ([ADR 0001](adr/0001-focus.md), "The listener's checks, ported from NVDA's focus handler"): the sender's nearest
   window (`NormalizeElementBuildCache`, answered from the event's cache
   for a sender that is a window), costing mockapp 31 provider calls for a
   button or the list and 22 for a list item; and the sender's keyboard
@@ -291,82 +291,73 @@ Rules that hold for every UIA focus:
   one `GetPropertyValue` the provider description that the outpost's
   lookup of the route's window caches for the proxy rule
   (`books/dev/src/explanation/design/listener-without-connections.md`, section 5).
-- Beside the calls, local work only and no wake-up: the reading thread
-  shares each fact it reads under an uncontended lock, and tells the
-  schedule the window it learns and its bound under the readers' lock;
-  the schedule sets the watchdog's alarm to the read's grace end as it
-  starts, sets it again only when the bound comes sooner, and moves it
-  back to whatever else is due, or cancels it, as it ends: two or three
-  timer calls that wake no thread. A read that returns within its grace
+- Beside the calls, local work only and no wake-up: the schedule sets
+  the watchdog's alarm to the read's grace end as it starts, and moves it
+  back to whatever else is due, or cancels it, as it ends: two timer
+  calls that wake no thread. A read that would reuse its ancestry cache
+  first makes the title check, one `InternalGetWindowText` per window
+  entry of the cache, local calls with no call into the application and
+  no message. A read that returns within its grace
   makes no moved-on call (`GetGUIThreadInfo`, `GetWindowThreadProcessId`,
   class and process reads); one still under way past its grace costs one
   watchdog wake-up and one moved-on call every half second, at most 25
   before `FOCUS_READ_DEADLINE` (stand-in reads held 3 seconds, debug: 5
   wake-ups and 5 calls); and when the new
   focus is inside the old, the intake moves the old focus's queued state
-  changes ahead of the read (`books/dev/src/explanation/design/focus-pipeline.md`, section
-  12.4), delaying the report by their handling, 0.2 to 1.8 ms per property
+  changes ahead of the read ([How focus works](../explanation/design/focus.md), "One UI Automation focus, end
+  to end"), delaying the report by their handling, 0.2 to 1.8 ms per property
   change in Settings' Date and time page (debug).
 - Bound: one step per ancestor until a known one, so the count grows only
   with how far the focus moved up the tree.
 
-### A WinEvent focus no UIA focus answers, and the gap's read
+### A WinEvent focus no UIA focus answers
 
-The wait is the outpost's gap record, beside the verdict that dropped its
-copy (`docs/design/focus-pipeline-rework.md`, "Who owns each duplicated
-fact", the gap's evidence).
+Dropped, as NVDA drops it ([ADR 0001](adr/0001-focus.md), "A focus UI Automation does
+not deliver"): no wait, no timer and no read in its place.
 
-- Per MSAA focus copy the worker judges, through either backend: one take
-  of the intake's lock. A copy dropped for UIA that opens the record sets
-  the threadpool timer, one `SetThreadpoolTimer`, under that lock, where
-  it never waits. Per accepted foreground change: one take of the lock.
-  An answer that closes the record cancels the timer, one
-  `SetThreadpoolTimer`.
-- Wake-ups: none on the steady path. A record answered before its bound
-  costs no wake-up: its timer is cancelled before it fires, and the
-  answer is applied as the marker resolves, with no wake of the worker.
-- Per record unanswered at its bound, a second after its first copy: one
-  threadpool callback, one intake entry and one worker wake-up, with no
-  message; or, after a drop for no window
-  above the sender (`books/dev/src/explanation/design/listener-without-connections.md`, risk
-  13), the read at once in the drop's or the copy's place, with no timer.
-  The read is the focus-now query's (`read::gap_focus_read`) through UIA
-  only: local checks first, so a hung application or a focus window
-  another application's or judged not UIA is not called, then one
-  `GetFocusedElementBuildCache`, whose request caches the element's
-  process, checked locally, then one local `GetGUIThreadInfo` for the
-  focus window again, the enrichment, the MSAA continuation above the
-  process boundary, and one `ElementFromHandleBuildCache` more for a
-  window's own element read without its handle, as the console host's is
-  (`books/dev/src/reference/uia-bugs.md`). The late UIA focus then costs one connection
-  more, its element found by path (`find_focus_element`). A marker in
-  flight at the bound, or a return whose copy came more than 100 ms before
-  its foreground change, costs one read that Core drops as a duplicate.
 - Per event the worker judges a window for, an MSAA event, a foreground
   change, a menu opening, a UIA selection, or a listener's read: the check
   that its application serves the window (`served_by`), local calls and
   no call into any application; an event naming another application's
   window is dropped there, before any probe
   (`a_focus_event_naming_another_applications_window_is_not_read`).
-- Memory: one record, the newest answer per top-level window of the
-  application, pruned when the window is destroyed, and two stamps, in the
-  outpost; nothing in the listener.
-- Reads made in vain are accepted: as File Explorer windows open in
-  turn, a record can come to a read after the focus moved to another process's window,
-  whose foreground event comes about 200 ms early; the read ends at its
-  local check, about 110 µs.
-- The harness's idle barrier: the outpost answers a round only once its
-  record is closed, at most a second and the gap's read after the record's
-  first copy.
-- Target: no call per focus and at most one read per record; met, with no
-  wake-up per focus change.
+
+### A return between top-level windows, and the live re-read
+
+A report whose cached ancestor Core would speak is set aside and read
+again live by the focus reader that sent it ([How focus works](../explanation/design/focus.md), "A return to
+a window, with the title check and the live re-read").
+
+- Per live re-read: one request from Core (through the app and the
+  supervisor to the listener, or to the outpost), the classic walk of the
+  held element at full depth with no ancestry cache, about 6 to 15 calls
+  into the application, NVDA's own cost on such a return, and the
+  answer's usual route; nothing on a move within one top-level window,
+  where no live re-read happens.
+- How often: one per focus event of the returned element while a live
+  re-read waits. `measure_focus_return`, 20 returns between the Windows
+  Forms text box and a mockapp UIA window read by the listener, counted
+  25, 29 and 32 live re-reads in three runs, since that window raises two
+  focus events for its item on a return. A return whose window title
+  changed meanwhile is walked live by the title check and costs none
+  (`measure_focus_return_retitled`).
+- Latency, debug, `cargo xtask measure` (2026-11-08), key or action to
+  speech queued: a return with live re-reads, median 1.0 ms and 99th
+  percentile 15.7 ms, the listener's handling median 6.2 ms and 99th
+  percentile 18.4 ms; a return walked live by the title check, median
+  0.8 ms and 99th percentile 11.6 ms, the listener's handling median
+  14.0 ms. A return with a live re-read is therefore no faster than one
+  walked live: the ancestry cache saves calls only on moves within a
+  window.
+- Memory: one pending live re-read per focus reader in Core, and the
+  window texts saved with each ancestry cache.
 
 ### The listener's reads in a window the outpost judges MSAA
 
 The listener makes no backend verdict and no probe; it skips a focus only
 when its nearest window's class is on NVDA's MSAA class list, and reads
-every other one (Dickson, 2026-10-30; `docs/design/focus-pipeline-rework.md`,
-the verdicts).
+every other one (Dickson, 2026-10-30; [ADR 0001](adr/0001-focus.md), "One judge per
+fact").
 
 - A focus in an MSAA window off the class lists, as UIA's MSAA proxy
   delivers it: the listener reads it, 3 UIA calls for mockapp's window
@@ -388,7 +379,7 @@ the verdicts).
   event (measured 2026-10-30 with a scratch mockapp test, `--backend
   msaa` under `stall`, not kept), with the transaction timeout then 5
   seconds. Each read is bounded by `FOCUS_READ_DEADLINE`, 13 seconds
-  (the read's budget of 2, the transaction timeout of 10 and a second),
+  (the handling deadline of 11 and two seconds for the checks),
   and the
   application's reading threads by `ABANDONED_LIMIT`; each application has
   its own reading thread, so no other application waits.
@@ -398,7 +389,7 @@ the verdicts).
 The outpost handles events in the order they arrive, as NVDA does, so an
 MSAA focus waits behind the events queued before it, as NVDA's does; a
 UIA focus is judged by the listener as it arrives
-(`books/dev/src/explanation/design/focus-pipeline.md`, sections 5 and 9). How long the wait
+([How focus works](../explanation/design/focus.md), "One MSAA focus"). How long the wait
 can be: in mockapp with every provider call answered 20 ms late, a focus
 behind ten selections was taken up about 610 ms after the query before it
 was answered (measured 2026-10-07).
@@ -415,8 +406,7 @@ was answered (measured 2026-10-07).
   nearest window, keyboard focus, cache and three steps (to the group, the
   window and the desktop's root), and the outpost's raw probe of the
   window, the one verdict, before it reports the listener's read
-  (`docs/design/focus-pipeline-rework.md`, "Who owns each duplicated
-  fact", the verdicts), once in the window's lifetime; the listener makes
+  ([ADR 0001](adr/0001-focus.md), "One judge per fact"), once in the window's lifetime; the listener makes
   no probe. 354 provider calls with the outpost's remote walk and 345 with
   its classic walk, 12 of them the grid item's row and column and the
   ancestors' automation ids, and 5 the outpost's probe.
@@ -437,9 +427,8 @@ other's MSAA window (`uia_focus_chains_stop_below_the_process_boundary`).
 
 - Minimum: the listener's calls of a cold focus, none a step into the
   parent's process, and no call of the outpost's into the parent's
-  process, the parent and the windows above it being plain windows read
-  from Windows' own state (`docs/design/focus-pipeline-rework.md`, "A
-  window's name, and the one fallback").
+  process, the parent and the windows above it being described from
+  Windows' own state ([ADR 0001](adr/0001-focus.md), "Object identity").
 - Today: the listener's 5 UIA calls and no window message, its two steps
   ending at the child's window. The outpost makes no call into the parent,
   with or without a UIA provider
@@ -485,56 +474,47 @@ and `a_hung_window_above_a_focus_now_is_a_plain_window_remote` and
   focus-now query read by a remote program, the same check of each
   window above the focus's own to the process boundary.
 
-### A focus whose walk is stuck at its bound, UIA
+### A focus whose application is slow or hung
 
-The listener's first focus in a window, "First" in `tree.json`, whose
-walk's first step to its parent answers 3 seconds late (`slow-parent`;
-`focus_reports.rs`'s
-`a_stuck_parent_step_is_published_at_the_bound_and_its_late_result_discarded`).
+A read waits for the application at every call, up to UI Automation's
+timeout per request and its thread's deadline ([How focus works](../explanation/design/focus.md), "Slow and
+hung applications").
 
-- Today: the read makes the calls a focus change makes up to the stuck
-  step; the watchdog wakes at the bound, 500 ms after the event's
-  observation for a focus in a new top-level window and 2 seconds
-  otherwise, and the read's work in flight asks for its publication,
-  which the shell makes with the ancestors read and the outermost one's
-  nearest window to complete from, by local calls on the watchdog's
-  thread; past the read's grace it also wakes every half second to judge
-  whether the user has moved on; the outpost then reads the windows not reached as plain
-  windows, about four local calls each. When the step returns, the thread
-  finishes its walk, its result discarded, and reads the application's
-  next event; no thread is abandoned or started, and no second message is
-  sent.
-- Bound: the thread stays in its call until the application answers or
-  UIA's transaction timeout ends the call, the application's later events
-  waiting for it until `FOCUS_READ_DEADLINE` abandons it.
+- While a listener read's marker waits past half a second, the outpost's
+  front check: two wake-ups a second of the reducer's thread, each three
+  local calls (`GetForegroundWindow`, the provider process, readability),
+  until the marker resolves; a read answered within half a second raises
+  none. Nothing on the event or speech path.
+- While a program is in flight past half a second: the moved-on check
+  and the hang check every half second, on one timer, local calls only.
+- A failed walk step goes on from the parent window's own object, read
+  live, making the calls NVDA makes there; only a failure pays it.
+- Bound: an application's later events wait behind its read up to its
+  deadline, 13 seconds, and one burst about 39 seconds behind two
+  abandoned reads; other applications do not wait.
 
-### A focus whose walk is stuck at its bound, the outpost
+### Focus changes measured across the pipeline
 
-An MSAA focus past NVDA's checks, and the gap's read once its focused
-element is read, keep their walk's progress in their worker's charge,
-from which the reducer publishes it (`books/dev/src/reference/crates/verbatim-outpost.md`,
-"The bound met when a call is stuck"). Measured by `focus_reports.rs`'s
-`an_msaa_focus_whose_walk_is_stuck_is_published_at_its_bound` and
-`a_gap_read_whose_walk_is_stuck_is_published_at_its_bound`, whose step to
-a parent answers 3 seconds late.
+Debug builds, 2026-11-08.
 
-- Per focus, on the steady path: the charge's lock, uncontended, taken
-  when the walk is armed, once for each ancestor the walk tells, for an
-  MSAA walk once more for its chain as it stops below the top and once as
-  it is complete, and once when the walk returns; one message to the
-  mailbox as it is armed, telling the reducer its bound, which sets the
-  shell's timer and wakes no thread on its own. No walk is armed for a
-  focus already past its bound, which costs none of this.
-- At the bound, with a call still under way: the reducer's thread wakes
-  once, copies the progress under the charge's lock, completes the chain
-  by local calls, about four per plain window, and sends the report; a
-  walk that returns past its bound before the bound's timer is published
-  the same way when its return reaches the reducer. When the walk
-  returns, its program sends nothing more, and the reducer dispatches the
-  work the focus owes, for a terminal its caret and its first read. No
-  thread is abandoned or started, and no second message is sent.
-- Bound: an MSAA call has no bound of its own, so a walk stuck in one
-  stays there until the program's deadline abandons its worker.
+- Wake-ups and processor time in all of Verbatim's processes, `cargo
+  xtask trace scenario` with `--after 5 --seconds 20`, the first run of
+  each series left out: `measure_focus_windows_terminal` 13,534 to
+  16,664 wake-ups and 1,258 to 1,606 ms, the listener's share 4,619 to
+  6,207 wake-ups and the outposts' 4,815 to 5,576;
+  `measure_focus_new_application` 8,429 and 8,599 wake-ups and 804 and
+  816 ms.
+- Latency, `cargo xtask measure`, the whole measure set, key or action to
+  speech queued: median 2.3 ms, 99th percentile 47.5 ms, most 277.0 ms
+  over 2,578 announcements. The listener's handling of a focus: median
+  27.0 ms, 99th percentile 104.4 ms (41 reads), a read waiting for every
+  call into the application.
+- Per case: `measure_focus_flood`, a burst of focuses over ten buttons of
+  one window, median 0.3 ms and 99th percentile 1.3 ms, the listener's
+  handling median 11.9 ms; `measure_focus_text_box` median 0.3 ms and
+  99th percentile 1.9 ms; `measure_focus_windows_terminal_tabs` 0.4 ms
+  (two announcements), the listener's handling 43.6 ms. Returns are in
+  "A return between top-level windows, and the live re-read".
 
 ### A focus change into a list, UIA
 
@@ -634,11 +614,11 @@ measured per input-hook wake.
   Each verdict probe is posted in its own commit,
   so a walk that probes adds a post for each. An event the push drops
   wakes nobody; one the reducer drops wakes only its thread.
-  Each further program of one entry, a run's next try, the gap's read a
-  dropped copy asks for, the owed work, or the finish of an edit
+  Each further program of one entry, a run's next try,
+  the owed work, or the finish of an edit
   control's caret read cut at its value change check (only with a
   selection before or after), adds two. Each timer, a
-  deadline, a grace, a walk's bound or the gap record's bound, costs one
+  deadline, a grace or a check of the window in front, costs one
   wake. Each 5 ms re-read of the console
   host's caret poll is a program of its own, timed by the shell's
   high-resolution timer, waking the shell for its timer, the worker, and
@@ -654,7 +634,7 @@ measured per input-hook wake.
   watch is open or a caret key is dispatched; and a scan of the intake for an edit control's
   value change when a caret read is cut at its value change check.
 - Locks: the reducer's thread takes the mailbox's lock to drain it, the store's for
-  a commit's writes, a worker's charge for a publication, and the
+  a commit's writes, and the
   backlog's with the store's inside it for a release; a worker takes its
   charge's lock for each step of a walk and for each text write, with the
   store's inside it.
@@ -1211,12 +1191,13 @@ speaks a grid item's row and column (`docs/parity/focus-announcement.md`,
 Core joins each focus's chain to the previous focus line where they meet
 and cuts speech when they share nothing below the desktop
 (`docs/parity/focus-context.md`, "Focus-ancestry context"); every reader
-completes a chain it could not read by plain windows; each UI Automation
+whose walk fails goes on from the parent window's own object, read
+live, as NVDA's does; each UI Automation
 ancestor carries its class name; and MSAA's invisible state is carried.
 
 - Minimum and today: the class name is in the role's cache group every
-  UIA ancestor is read with (`RoleCore`); the plain windows of a failed
-  walk are local calls, about four per window, as at a walk's bound.
+  UIA ancestor is read with (`RoleCore`); the plain windows of a chain
+  at the depth limit are local calls, about four per window.
 - Core: the meeting compares each entry of the new line with the previous
   line's, from the focus outward, until one matches, so at most the
   product of the two lines' lengths, a few dozen comparisons for chains of

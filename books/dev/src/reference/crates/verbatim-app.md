@@ -461,7 +461,8 @@ knowing for review:
   enters the reducer with that application as its source, and
   `LiveOutposts` records that the outpost serves it (`reports_for`,
   `target_for`), so its queries go there and the supervisor keeps it
-  (`books/dev/src/explanation/design/focus-pipeline.md`, section 5.4). A focus-now query for a
+  ([verbatim-outpost](verbatim-outpost.md), "Console windows and frames of
+  another process"). A focus-now query for a
   console's client whose console window is in front goes to the console
   host's outpost even before it has reported for the console: Core finds
   the host locally (`focus_now_server`, through

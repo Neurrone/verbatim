@@ -22,6 +22,9 @@ their NVDA meanings and are documented in [docs/nvda](https://github.com/Neurron
   ships, implementing Verbatim's C ABI (the `SynthDriver` trait as C
   exports) and loading the engine; the synthesizer host loads only it.
   [extensions](https://github.com/Neurrone/verbatim/blob/main/docs/design/extensions.md).
+- **Ancestry cache** — a focus reader's saved ancestors from its last
+  read in an application, with the window text of each window entry,
+  used to stop a later walk early. [verbatim-core](crates/verbatim-core.md), "The ancestry cache".
 - **Application identity** — the name a module binds to an outpost by:
   the executable name, replaced by the console client's for a console
   window, the hosted application's for WWAHost, the parent's for
@@ -39,6 +42,11 @@ their NVDA meanings and are documented in [docs/nvda](https://github.com/Neurron
   `extensions/builtin/` (planned), loaded by the same host as an installed module
   but never bundled, listed, installed or disabled.
   [extensions](https://github.com/Neurrone/verbatim/blob/main/docs/design/extensions.md).
+- **Cache join** — the entry where a focus reader's walk met its ancestry
+  cache and stopped. [verbatim-core](crates/verbatim-core.md), "The ancestry cache".
+- **Cached ancestor** — an entry of a reported ancestry taken from the
+  ancestry cache rather than read live; a report's
+  `first_cached_ancestor` is the index of its innermost one. [verbatim-core](crates/verbatim-core.md), "The ancestry cache".
 - **Call program** — a whole sequence of calls into an application with
   pure stopping rules, such as a focus's walk or a caret read, run by an
   outpost's worker on copies of what it reads; its commits and result
@@ -71,6 +79,8 @@ their NVDA meanings and are documented in [docs/nvda](https://github.com/Neurron
 - **Effect** — a reducer output: an instruction (Speak, Fetch,
   Activate…) the shell executes; the reducer itself does no I/O.
   [verbatim-core](crates/verbatim-core.md).
+- **Entered ancestors** — the entries of a new reported ancestry below
+  the lowest common ancestor, which Core speaks as entered. [How focus works](../explanation/design/focus.md).
 - **Extension** — the installable unit, a `.vext` zip holding an extension
   manifest, locale files and one or more module folders; NVDA's add-on.
   [extensions](https://github.com/Neurrone/verbatim/blob/main/docs/design/extensions.md).
@@ -81,6 +91,9 @@ their NVDA meanings and are documented in [docs/nvda](https://github.com/Neurron
 - **Flight recorder** — the bounded ring buffer of reducer inputs,
   dumpable to a versioned JSON-lines file and deterministically
   replayable. [verbatim-core](crates/verbatim-core.md).
+- **Focus ancestry** — Core's ordered list of the focus's ancestors and
+  the focus, from the desktop down, that it speaks from and joins each
+  new report against. [How focus works](../explanation/design/focus.md).
 - **Focus listener** — the permanent process, `verbatim-listener.exe`,
   holding the desktop-global focus registrations, whose callbacks never make a
   cross-process call (D13); since stage A step 6 of phase 6 it also judges
@@ -91,6 +104,9 @@ their NVDA meanings and are documented in [docs/nvda](https://github.com/Neurron
   the outpost holds everything it takes in after the marker until the
   listener's read of the focus, or its drop, takes the marker's place.
   [verbatim-listener](crates/verbatim-listener.md).
+- **Focus reader** — one source of focus reports for an application, its
+  outpost generation paired with a kind: the listener's reading thread,
+  or the outpost's own reads. [How focus works](../explanation/design/focus.md).
 - **Golden image** — the Packer-built Windows VM baseline the Hyper-V
   harness imports, deploys to, and checkpoints. [The VM harness](../how-to/vm.md).
 - **Held nodes** — the node references the reducer holds (the focus,
@@ -109,6 +125,13 @@ their NVDA meanings and are documented in [docs/nvda](https://github.com/Neurron
   can report (a role, a state, a description, a spelling error, an
   event), with a stable id and a category; a theme says how each is
   reported. [verbatim-model](crates/verbatim-model.md).
+- **Live re-read** — Core setting aside a report that would speak a
+  cached ancestor, as entered or as the window title, and asking the
+  focus reader that sent it to read the same element again with no
+  ancestry cache. [verbatim-core](crates/verbatim-core.md), "The ancestry cache".
+- **Lowest common ancestor** — the innermost entry a new reported
+  ancestry shares with Core's focus ancestry, where Core joins the two.
+  [How focus works](../explanation/design/focus.md).
 - **Message position** — the count of messages carrying node ids an
   outpost has sent, kept the same way by the outpost and Core; Core
   acknowledges a position when it reports its held nodes, so the
@@ -143,6 +166,8 @@ their NVDA meanings and are documented in [docs/nvda](https://github.com/Neurron
   start a replacement; rung 3, end a failed outpost, crashed, stuck or
   piling up abandoned workers, and give its application the next one.
   [Architecture](../explanation/architecture.md) section 1.
+- **Reported ancestry** — the ancestors a focus report carries, read by
+  its focus reader. [How focus works](../explanation/design/focus.md).
 - **Request table** — the app's record of every query sent to an
   outpost, the single owner of "exactly one outcome per query".
   [verbatim-app](crates/verbatim-app.md).
@@ -186,6 +211,10 @@ their NVDA meanings and are documented in [docs/nvda](https://github.com/Neurron
   one model. The built-in default theme is complete; every other theme
   holds only its differences. [verbatim-model](crates/verbatim-model.md)
   and [verbatim-config](crates/verbatim-config.md).
+- **Title check** — a focus reader's comparison of the window titles
+  saved in its ancestry cache with their live text, read locally from
+  Windows' state, before it uses the cache; any change makes the walk go
+  live. [verbatim-core](crates/verbatim-core.md), "The ancestry cache".
 - **Trace id** — the correlation id minted at the triggering input
   and carried through event, reducer, speech, and audio, making
   end-to-end latency timelines possible.

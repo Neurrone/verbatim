@@ -168,8 +168,8 @@ element's raw-view ancestors and what a focus report needs besides. A
   `shouldAllowUIAFocusEvent` answers true on a COM error; a failed read of
   `previous` answers it gone, so the focus is no repeat: NVDA's order, so a focus only being lost cannot read as
   a new element under its runtime id
-  (`docs/design/focus-pipeline-rework-remaining.md`, "The keep-id
-  evidence, read in NVDA's order"). Both reads are in the remote
+  ([ADR 0001: Focus](../adr/0001-focus.md), "The listener's checks, ported
+  from NVDA's focus handler"). Both reads are in the remote
   program's one round trip, and are the classic walk's first two calls;
 - `refresh`, for the focused element's own cache filled afresh in the
   same round trip, so the focus listener reports its value, states, and
@@ -598,8 +598,8 @@ id alone and fill no other cache, because a top-level window's first
 child is its title bar, whose location UIA asks of the window's thread
 (`WM_GETTITLEBARINFOEX`), which Windows answers for one window at a time
 across the desktop. The outpost uses it to find its own copy of an
-element the focus listener read (`books/dev/src/explanation/design/focus-pipeline.md`, section
-12.5).
+element the focus listener read ([ADR 0001: Focus](../adr/0001-focus.md),
+"The outpost's own element").
 
 ## Layer 3: the tree dump
 

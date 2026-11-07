@@ -2,7 +2,7 @@
 
 Status: a design for M5, not implemented. Dickson decided (2026-10-18) that the rule belongs in a Windows Terminal app module, built when M5 brings extensions, rather than in the core focus judgement; the roadmap's M5 entry tracks it, and `docs/design/extensions.md`, section 6, places the module's hook. Until it is built, the tests accept the repeated "terminal" as an optional utterance (`books/dev/src/reference/testing.md`, "Optional utterances"), which covers one repeat but not a late one, so that repeat can still fail a scenario.
 
-Background is in [the focus pipeline](../../books/dev/src/explanation/design/focus-pipeline.md), section 16.8 (the second identity, and NVDA receiving it) and section 18 (the listener's focus judgement). Evidence is in [`experiments/windows-terminal-raises-focus-from-a-second-runtime-identity/`](../../experiments/windows-terminal-raises-focus-from-a-second-runtime-identity/readme.md).
+Background is in [ADR 0001: Focus](../../books/dev/src/reference/adr/0001-focus.md), "The listener's checks, ported from NVDA's focus handler" (the listener's focus judgement), and in [verbatim-uia](../../books/dev/src/reference/crates/verbatim-uia.md), "Event registrations" (the focus handler's registration order, and the second identity). Evidence is in [`experiments/windows-terminal-raises-focus-from-a-second-runtime-identity/`](../../experiments/windows-terminal-raises-focus-from-a-second-runtime-identity/readme.md).
 
 ## The problem
 

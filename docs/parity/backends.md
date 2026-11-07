@@ -43,8 +43,7 @@ whole wait is out of date when stored ([The UIA client](../nvda/uia.md),
 Verbatim: **different** (`books/dev/src/explanation/design/listener-without-connections.md`,
 decision 2; the outposts' probe decided by Dickson on 2026-10-20; the one
 verdict per window decided by Dickson on 2026-10-30,
-`docs/design/focus-pipeline-rework.md`, "Who owns each duplicated fact",
-the verdicts): each outpost alone probes its application's windows, with
+`books/dev/src/reference/adr/0001-focus.md`, "One judge per fact"): each outpost alone probes its application's windows, with
 one raw `WM_GETOBJECT` for `UiaRootObjectId`, counting only the answer
 `0x10000` as a provider and waiting at most 3 seconds, rather than with
 `UiaHasServerSideProvider`, which answered "no" falsely beside another
@@ -100,7 +99,8 @@ Verbatim: **matched (unverified)**, case by case:
   `shouldAllowUIAFocusEvent`, then reads the element's states, value,
   and details afresh with one cache-building call, and its ancestors one
   step up at a time, every call on the element it holds and none a
-  remote operation (`books/dev/src/explanation/design/focus-pipeline.md`, section 12;
+  remote operation (`books/dev/src/explanation/design/focus.md`, "One UI
+  Automation focus, end to end";
   `books/dev/src/explanation/design/listener-without-connections.md`, sections 2 and 3).
   Pinned by mockapp's `a_focus_reports_the_states_read_when_it_is_handled`
   and Core's
@@ -111,14 +111,14 @@ Verbatim: **matched (unverified)**, case by case:
   accepts, and Core culls the speech of one no longer current.
 - When the listener's read fails (its application does not answer within
   the call timeout), the focus is reported from its event, its chain
-  completed by plain windows, as NVDA lets a focus through whose
+  going on from the parent window live, as NVDA lets a focus through whose
   `HasKeyboardFocus` read fails, whatever the event's cached
   `HasKeyboardFocus` says, always as the focus, with the focused state
   (mockapp's
   `a_focus_whose_read_fails_is_reported_whatever_its_event_says_of_its_focus`).
-  When the read's time budget has passed before the keyboard focus is
-  read, the event's cache stands in, as `docs/parity/focus-events.md`, "A
-  repeat when a read's time is up", records with its tests.
+  A keyboard focus read that fails lets the focus through, as
+  `docs/parity/focus-events.md`, "A focus whose keyboard focus read
+  fails", records with its tests.
 - The console host's window element never gives the focus, whatever it
   reports, as NVDA's `consoleUIAWindow` refuses its focus events
   (`NVDAObjects/UIA/winConsoleUIA.py` 356 to 358 and 446 to 447): one
@@ -132,8 +132,8 @@ Verbatim: **matched (unverified)**, case by case:
   which are in no tree, is reported from the listener's read with its own
   ancestors; its changes are followed from its window until its own event
   brings the element, and review and navigation start from the nearest
-  ancestor found (`books/dev/src/explanation/design/focus-pipeline.md`, decision 3 of section
-  15).
+  ancestor found (`books/dev/src/reference/adr/0001-focus.md`, "The outpost's
+  own element").
 - A focus's ancestors are read only until they meet the previous focus's
   chain, whose rest is reused, as NVDA's focus ancestry does. Different:
   reading the rest is limited to two seconds, after which the ancestors
@@ -297,7 +297,7 @@ and processing it newest first, stopping at the first valid one, when
 the next other event comes; the menu event is tried last.
 
 Verbatim: **matched (unverified)**, in each outpost's intake
-(`books/dev/src/explanation/design/focus-pipeline.md`, sections 5.1 and 5.2, which own the
+(`books/dev/src/explanation/design/focus.md`, "One MSAA focus", which owns the
 ordering; [verbatim-outpost](../../books/dev/src/reference/crates/verbatim-outpost.md), the queue
 under `Outpost`; `outpost/reducer/hold.rs` for the hand-over's hold). Every MSAA event is counted by the thread it carries,
 whichever hook took it in. Every foreground change of a batch is tried

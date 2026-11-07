@@ -11,7 +11,7 @@ Scenarios: the `windows_terminal_` scenarios generally, for example `windows_ter
 - How: a new Windows Terminal window's first focus speaks the title without "window". On GitHub's runner (run 41163500778, 2026-10-31) the expected "ready>" was heard as "verbatim-e2e-spoken-password-mvvtyykb terminal".
 - How often: `windows_terminal_progress` and one other scenario failed this way in one full run on GitHub's runner, after the crate split (run 41211072805, 2026-10-31). `windows_terminal_tabs` and two other scenarios failed this way after the caret watch build (run 41225371284, 2026-10-31), and two scenarios after the first determinism build (run 41233417983, 2026-10-31). On 2026-10-31, with the reducer build, two Windows Terminal flood scenarios since retired failed 10 of 10 and 4 of 9 locally.
 - Cause: the listener's ancestor walk for the focus passes its 500 ms bound, so the window's entry is missing from the chain.
-- Fix: out of scope until [the focus pipeline rework's remaining design](design/focus-pipeline-rework-remaining.md), which holds it.
+- Fix: built with the focus pipeline rework's third build (115d825f, 2026-11-08), which removed the walk's bound, so a read waits for the application; the entry is deleted once the Windows Terminal scenarios pass on GitHub's runner.
 
 ## Windows Terminal launch speech, not this cause
 
@@ -31,18 +31,10 @@ Scenarios: the `windows_terminal_` scenarios generally, for example `windows_ter
 
 Recorded by Claude, 2026-11-04, pending Dickson's acceptance.
 
-- `object_navigation_in_settings`, and `wpf_password` (run 41697089785, run 41564027712 before it, and runs 41839012031, 41848692720 and 42262303061)
-  - How: Verbatim's own Settings dialog took the focus about 2.9 s after Enter, and only its title was said; in `wpf_password` the dialog was said as "… window" where "… dialog" and its first field were expected ("Verbatim Settings: Speech", where "… dialog", the categories list and "Speech 1 of 3" were expected).
-  - Cause: the outpost's gap record's bound passed with no focus reported, so the window's text was sent, the gap record's late-focus case.
-  - Fix: [the focus pipeline rework's third build](roadmap.md#the-focus-pipeline-rework), whose first commit replaces the gap record.
 - `text_box_review_cursor`
   - How: Verbatim+Alt+Home (review the selection's start) was answered "unanswered" by the outpost's text read, so nothing was said within 15 s.
   - Cause: the harness's Windows Forms text box (a Windows PowerShell window) did not answer `EM_GETSEL` within the outpost's fixed 500 ms message limit (`MESSAGE_TIMEOUT_MS`, `crates/verbatim-ia2/src/edit.rs`); its interface thread had stalled twice at the scenario's start too. The menu guard changed nothing in the text box. NVDA waits for the same message until its watchdog judges the application hung, so a slow but live application is still read.
   - Fix: built with the slow applications build (d13eaef2 to d7b2962d, 2026-11-07): a window message has no time limit of its own and is waited for until the application answers or Windows judges its window hung, as NVDA does. Ten local runs passed, none slow; the entry is deleted once a run's log shows the slow read waited for and the speech heard.
-- `alt_tab_switcher` (coverage run 41708393940, an instrumented build)
-  - How: "Task Switching" was heard before the switcher's item "… row 1 column 2 2 of 4".
-  - Cause: the listener's read of the item's first focus passed its bound (its nearest-window lookup took 697 ms) and was published with no ancestors read, so the Alt+Tab rule, which needs the item's parent's automation id, did not apply, and the plain window "Task Switching" filled in from window handles was spoken; the full read 23 ms later spoke the item.
-  - Fix: [the focus pipeline rework's third build](roadmap.md#the-focus-pipeline-rework): a read published at its bound says which facts it did not read, and Core takes no containers from it.
 - `windows_terminal_control_flood`'s command marks steps (run 41697089785, when they were `windows_terminal_command_marks`)
   - How: 2.0 s after the second Verbatim+Alt+Up (the previous command mark), Verbatim played its "application not responding" sound where the mark's line "ready> .\long.ps1" was expected.
   - Cause: the mark lay above the rows Core keeps, so Core asked the outpost to search the terminal (`TerminalFind`); the search, a remote operation in Windows Terminal (`crates/verbatim-uia-rops/src/terminal_find.rs`), took 3.2 s, past the outpost's 2 s text deadline (`TEXT_DEADLINE`), so the worker was abandoned, and `finish` (`crates/verbatim-app/src/main.rs`) plays the sound for any abandoned query, without asking whether Windows judges the window hung. Windows Terminal was answering throughout. NVDA has no such sound.
@@ -93,8 +85,8 @@ Recorded by Claude, 2026-11-04.
 - `explorer_folder_window` on GitHub's runner (runs 41157849900 and 41163500778)
   - How: "Items View list" is not spoken after "Working on it..."; the first utterance heard is "delta not selected 1 of 1". Passes locally.
   - Cause: the placeholder's UIA read fails on the runner (`UIA_E_ELEMENTNOTAVAILABLE`), so its chain is filled in from window handles, and `ObjectKey::is_same_object` treats two nodes on one window handle as one object whatever their backend, so nothing is entered. NVDA differs on both points.
-  - Fix: [the focus pipeline rework's third build](roadmap.md#the-focus-pipeline-rework).
-  - Also seen (run 41501468361): File Explorer was blocked for about 5 s. The listener's read of the UIA focus on "Inner" was still in its nearest-window call (1.98 s) at its bound, so it was published with no ancestors and its late result discarded (`crates/verbatim-listener-logic/src/schedule.rs`); the outpost's MSAA focus item took 4.48 s, so its gap record's bound sent the title. "Inner" reached Core with window-handle panes, so "Items View list" and the position were not spoken. NVDA has no such bound: it queues the UIA focus whenever it arrives. Fix: [the focus pipeline rework's third build](roadmap.md#the-focus-pipeline-rework): a read that completes after its bound is published again rather than discarded.
+  - Fix: built with the focus pipeline rework's third build (42541256, 2026-11-08): a failed read goes on from the parent window, and two objects of different backends are never one, so the scenario returned to GitHub's runner; the entry is deleted once its runs there pass.
+  - Also seen (run 41501468361): File Explorer was blocked for about 5 s. The listener's read of the UIA focus on "Inner" was still in its nearest-window call (1.98 s) at its bound, so it was published with no ancestors and its late result discarded (`crates/verbatim-listener-logic/src/schedule.rs`); the outpost's MSAA focus item took 4.48 s, so its gap record's bound sent the title. "Inner" reached Core with window-handle panes, so "Items View list" and the position were not spoken. NVDA has no such bound: it queues the UIA focus whenever it arrives. Fix: built with the same build (115d825f): a read has no bound and is reported once, whenever it completes.
 - `explorer_folder_window` locally, Explorer's folder window not responding (2026-10-31)
   - How: nothing is spoken after the desktop's "Recycle Bin 1 of 13"; the folder window, opened in a new `explorer.exe` process, never takes the foreground, its UI thread stops answering about 1.5 s after it opens (an arbitration probe of its `ShellTabWindowClass` window times out at 3 s, an MSAA call waits 13 s), and it does not close within 15 s, so the next scenarios fail at launch on the window left open. Once in 13 runs, with the keep-id fix; the next 10 passed.
   - Cause: not found. Verbatim's outpost was the one waiting on Explorer; no Verbatim call was found that Explorer waited on.
@@ -140,12 +132,12 @@ Recorded by Claude, 2026-11-04, pending Dickson's acceptance.
   - Fix: none until it fails again; its failure message is to be kept, since which count moved names the call to look at.
 - `call_counts::msaa_form_focus_costs_exactly`, `call_counts::msaa_tree_view_costs_exactly` and `call_counts::uia_combo_box_costs_exactly`, under load
   - How: `msaa_form_focus_costs_exactly` failed 7 of 20 runs with four copies of it running at once (2026-11-03): an extra window-title entry at the top of its chain; under twelve busy processes the other two failed as well. Alone they pass.
-  - Cause, likely but not shown: the MSAA walk passes its bound under load, and the title is doubled when it does ([the follow-up](roadmap.md#the-focus-pipeline-rework), "The window title is doubled when an MSAA walk passes its bound").
-  - Fix: that follow-up. Until then `cargo xtask ci` runs `call_counts` alone.
+  - Cause, likely but not shown: the MSAA walk passed its bound under load, and the title was doubled when it did.
+  - Fix: the focus pipeline rework's third build removed the outpost's walk bound (b94fa1d8, 2026-11-08); the entry is deleted once the tests pass under load. Until then `cargo xtask ci` runs `call_counts` alone.
 - `focus_reports::an_msaa_client_area_reached_by_a_walk_carries_its_window_and_its_content_none` and `focus_reports::an_msaa_ancestor_reached_with_no_identity_string_is_its_windows_client`, under load
   - How: both failed in 1 of 4 runs of the whole unit-test suite under cargo-nextest, many tests at once while another build compiled (2026-11-03): the window's title, and in the second the window's client area, above the dialog at the top of the chain. Alone, the binary passed 3 of 3 under nextest and 3 of 3 under its own runner.
   - Cause, likely but not shown: as for the `call_counts` tests above.
-  - Fix: that follow-up. Until then `cargo xtask ci` runs `focus_reports` with nothing else beside it (`.config/nextest.toml`).
+  - Fix: as for the `call_counts` tests above. Until then `cargo xtask ci` runs `focus_reports` with nothing else beside it (`.config/nextest.toml`).
 
 ## Synthesizer host tests on GitHub's runner
 

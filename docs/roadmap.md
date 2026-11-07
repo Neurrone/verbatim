@@ -63,155 +63,22 @@ times, with the full suite where every scenario is affected. A change in
 what is heard goes to Dickson first; while he is away, it follows NVDA
 where NVDA is clear, recorded as provisional.
 
-### The focus pipeline rework
-
-Designed, reviewed and agreed with Dickson on 2026-10-29: every
-reconciliation between Verbatim's processes that the study of 2026-10-25
-found, so that each mechanism left either goes or is the only one of its
-kind, and every non-deliberate difference from NVDA's focus handling in
-[the focus pipeline audit](design/focus-pipeline-audit.md). The shape
-stays (the listener reads every UIA focus, the outposts the rest, Core
-decides). The decisions, the design and the order of work are in
-[the focus pipeline rework](design/focus-pipeline-rework.md), the one
-source for them; its first step is the measurements and captures. Built
-on 2026-10-30, ahead of its later steps: the outpost's commit point, the
-one identity rule for Core and the speech manager, and MSAA object
-equality, and the reused UIA runtime id keeping its node, with the gone
-element's text caches dropped before the caret read (Fable, 2026-10-30), and, after its review, on not focused as
-well. Follow-ups found: a focus group's older entries are
-lost with an abandoned worker, and the text anchors' locks are held
-across text calls; neither is made direct by the commit point. The
-keep-id review noted that the earlier element's step took the UIA and
-edit anchors' locks before a gone focus was reported; since the
-ownership refactor's store (276d2aa5) that step
-(`Worker::note_earlier`, through `text_reads::forget_text`) writes only
-the program's copies and its commit, and takes no lock of its own. NVDA's
-speech for the equality's edge cases waits for one capture session
-against mockapp's `object_equality.json` fixture.
-
-A defect found on 2026-11-01 belongs to the rework: switching to an
-application whose UIA calls are held, then back to the same place in
-Notepad, speaks nothing, in 4 of 4 runs. The busy application's outpost
-drops its MSAA foreground fact because UIA owns the window and its UIA
-focus read never answers, so Core never learns the focus left Notepad
-and judges the return unchanged. The return must be spoken as the same
-switch is without a stall, and a held UIA window's title is said from
-Windows' own state after a second (Dickson, 2026-11-02); the second
-build designs both, with the listener's foreground change as the only
-source of the fact that a window came to the foreground
-([the remaining builds](design/focus-pipeline-rework-remaining.md),
-"One foreground change, from the listener" and "The held UIA
-application's title").
-
-Paused after those steps (Dickson, 2026-10-30): reviews kept finding races
-between processes' copies of one fact, so the ownership refactor below
-comes first. The keep-id review's fix and M4.5 are built; the rework
-resumes with the second of the remaining builds in
-[the remaining builds](design/focus-pipeline-rework-remaining.md), then
-M4.6, then the third (Dickson, 2026-10-31). The second build was built
-on 2026-11-02: one foreground message from the listener, the left mark,
-the title rule, the held application's window text and the gap record
-closed by the outpost's own reports, with the keep-id evidence read in
-NVDA's order. The third build updates
-M4.6's generators for the inputs it changes, adds invariants for its new
-mechanisms, and writes the listener's checks before reading as pure
-functions of what its calls return. It also closes two gaps in the
-listener's readers' stop test (`crates/verbatim-listener/src/focus_read.rs`,
-Dickson, 2026-11-03): a stop that marks the schedule before the test's wait
-begins passes whether or not it woke the reading thread, and a stop that
-kept the readers' lock while joining their threads would hang the test
-rather than fail it.
-
-The third build also fixes `explorer_folder_window`'s failure on GitHub's
-runner (Dickson, 2026-11-03), local-only until then
-([the known failures](flaky-tests.md)). The placeholder's UIA read fails
-there with `UIA_E_ELEMENTNOTAVAILABLE`, so its chain is filled in from
-window handles starting at its own nearest window, an MSAA pane on the
-window that is the items view list's own; `ObjectKey::is_same_object`
-(`crates/verbatim-model/src/tree.rs`) treats two nodes on one window
-handle as one object whatever their backend, so delta's chain meets the
-old line at the list and nothing is entered. NVDA differs on both points:
-two objects of different types are never equal (`NVDAObject.__eq__`), and
-a failed UIA parent falls back to the parent window (`GA_PARENT`), so the
-list's window is not in its line. It touches the identity the build's one
-node per window (defect A) changes.
-
-Its first commit replaces the outpost's gap record (Dickson, 2026-11-03),
-with a design and an adversarial review of its own: the gap record took
-about twenty rounds of fixes since 2026-10-21, mostly from carrying two
-jobs in one record and judging queued work by a lifecycle flag. A held
-window's title becomes a deadline in Core's foreground record, set at each
-foreground change Core accepts and cleared when Core takes a focus in that
-window, due 5 s after the change, Windows' own hung threshold, instead of
-1 s, since the user cannot use a busy application before it answers
-anyway (Dickson, 2026-11-04), the title said from the window's text, which the listener's
-foreground message gains, read locally with no message to the
-application (Dickson, 2026-11-03); the outpost keeps one pending read per application, queued a
-second after the first focus copy it dropped and checked against what it
-has reported when handled, which foreground changes no longer touch. The
-study behind it weighed dropping the record as NVDA has none, which loses
-the File Explorer and Settings stretches where UI Automation raises no
-focus at all. From the chain commits 10c9e83a,
-3abda293, b94d2ea2, c7c7c6dc and 9fd28a66.
-
-It also fixes the slow-Explorer form of that failure (Dickson,
-2026-11-03): with File Explorer blocked for about 5 seconds (run
-41501468361), the listener's read of the focus was published at its
-bound with no ancestors, and its complete result, arriving later, was
-discarded (`crates/verbatim-listener-logic/src/schedule.rs`), so "Items
-View list" and the position were not spoken. NVDA has no such bound and
-queues the UIA focus whenever it arrives. A read completed after its
-bound is published again rather than discarded. With both forms fixed,
-`explorer_folder_window` is no longer local-only and returns to the
-GitHub runner.
-
-The same build makes a read published at its bound say which facts it
-did not read, and Core take no containers from such a read (Dickson,
-2026-11-04; matching NVDA, which has no bound and reads the parent live): in `alt_tab_switcher` (coverage run
-41708393940) the listener's read of the switcher's item was cut at its
-bound before the item's parent was read, so the Alt+Tab rule
-(`drops_ancestry`, `crates/verbatim-core/src/applications.rs`), which
-needs the parent's automation id, did not apply and the plain window
-"Task Switching" filled in from window handles was spoken before the
-full read's item.
-
-From the slow applications build (Dickson, 2026-11-06), the third build
-decides two things it left as they were: whether to speak a control
-with its own window in a hanging application once the application
-answers, as NVDA does, which needs the re-publication of a read
-completed after its bound (today the outpost drops a listener read
-whose window is hung, recorded in `docs/parity/focus-events.md` as a
-difference); and whether the listener's hung judgement during a blocked
-call stays, since abandoning the read leaves no late result to speak.
-Its walk bounds, 500 ms in a new window and 2 s in the same one
-(`SAME_WINDOW_BOUND`), and their publication at the bound are also
-its to decide. It also fixes a dialog's text missed on the first report
-of a focus the listener read inside a UI Automation dialog: the outpost
-finds the dialog through the focus path it reported before
-(`dialog_text_of`, `crates/verbatim-outpost/src/outpost/read.rs`), not
-the one being reported (Dickson, 2026-11-07).
-
 ### Follow-ups from the focus and ownership builds
 
 Follow-ups from the one judge build:
 
-- A window whose client area has the role "window" has its client filed
-  under OBJID_WINDOW by the IA2 reader's window-object rename
-  (`acquire.rs`), so a name change at OBJID_CLIENT never matches it and
-  is not spoken.
-- `entered_in_front` is not updated by a foreground change for older
-  reports in the window (`judged_focus` in the outpost's worker); the
-  one judge design asks for the update.
-- Selection-as-value uses the one mark the listener sets, checked against
-  every report; it should be a mark per held focus. Today only Explorer's
-  switcher rule reaches it.
 - Entering a top-level window without a system menu through an ancestor
-  walk does not say the window, where NVDA's objectInForeground does; and
-  a top-level client reached through accParent from a windowless object
-  inside the window is read as reached, so the window is not said either.
+  walk does not say the window, where NVDA's objectInForeground does.
 - Log the published message's calls on the outpost worker's `handled`
   line, so the uncounted UIA costs in the performance ledger can be
   measured.
+
+Follow-ups from the focus pipeline rework:
+
+- A focus group's older entries are lost with an abandoned worker.
+- The text anchors' locks are held across text calls.
+- NVDA's speech for the edge cases of MSAA object equality waits for one
+  capture session against mockapp's `object_equality.json` fixture.
 
 More follow-ups:
 
@@ -219,14 +86,12 @@ More follow-ups:
   behind (`crates/verbatim-agent/src/desktop.rs`, lines 262 to 300), which
   leaves Explorer's list without focus; open folder windows without
   minimizing them.
-- A late UIA focus on Explorer's DirectUIHWND window element, arriving
-  after the gap record already read the item, is reported as a new focus
-  and speaks "pane" (the keyboard-focus acceptance in `focus_read.rs`,
-  ede24c07). Check with an NVDA capture first.
-- The Windows Terminal launch walk passes the listener's 500 ms bound, so
-  the window is spoken without its role; the rule is unbuilt, in
-  [the remaining focus builds](design/focus-pipeline-rework-remaining.md),
-  "A window past the bound that the outpost judges UIA".
+- Explorer's DirectUIHWND window element was once spoken as "pane" after
+  its item, a late UIA focus reported as a new focus. Ten runs of
+  `explorer_folder_window` with the listener's and the outpost's debug
+  logging on 2026-11-08 spoke the expected words every time, and no focus
+  on a pane reached Core; every pane in the reports was an ancestor of a
+  list item. If it is heard again, check with an NVDA capture first.
 - A new console host's window can stay hidden and not responding while
   the outpost's first call into it passes its deadline (3 of 20 measure
   runs on 2026-10-31; [the flaky tests](flaky-tests.md), "A new console
@@ -657,8 +522,7 @@ package reader get generated tests of their own.
   names that version, and a receiver recognises a judgement made under
   a version it has moved past.
 - Focus vetoes and redirects with no read NVDA would not make (Dickson,
-  2026-10-29; [the focus pipeline rework](design/focus-pipeline-rework.md),
-  "Room for extensions"): a veto declared as a rule judged by the listener
+  2026-10-29): a veto declared as a rule judged by the listener
   from the event's cache; a hook's code veto or redirect run in the
   outpost after the listener's read, as NVDA runs `event_gainFocus` after
   its walk, so it makes no read NVDA would not; node and event rules
@@ -759,7 +623,7 @@ abandoned but changes nothing spoken.
 `CoCancelCall` ends no UIA client call, because UIA waits on its own
 channel rather than in a COM call
 (`uia-facts/nothing-cancels-a-uia-call/`, 2026-10-30),
-so the UIA readers keep abandonment, the bound and `BOUNDED_WALK_DEADLINE`.
+so the UIA readers keep abandonment and `FOCUS_READ_DEADLINE`.
 Cancelling the outpost worker's stuck MSAA calls through COM is built in
 M4.8 ([the guardian](design/guardian.md), section 12).
 

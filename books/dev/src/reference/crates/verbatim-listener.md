@@ -20,7 +20,10 @@ shape are in `books/dev/src/explanation/architecture.md`, section 1 ("The focus 
 
 A UIA element cannot be handed to another process, so the listener, which
 receives the event's own element, judges and reads a UIA focus
-(`books/dev/src/explanation/design/focus-pipeline.md`, sections 12, 16, and 18;
+([How focus works](../../explanation/design/focus.md), "One UI Automation
+focus, end to end"; [ADR 0001: Focus](../adr/0001-focus.md), "Who reads a UI
+Automation focus" and "The listener's checks, ported from NVDA's focus
+handler";
 `books/dev/src/explanation/design/listener-without-connections.md`, sections 2 and 3).
 
 - Shape. The registration and group are shaped as
@@ -95,8 +98,8 @@ receives the event's own element, judges and reads a UIA focus
   when it fails or times out, a gone element's included
   (`FocusQuery::require_focus`), in NVDA's order, so
   a focus only being lost as it is read cannot read as a new element
-  (`docs/design/focus-pipeline-rework-remaining.md`, "The keep-id
-  evidence, read in NVDA's order"); a menu opening redirected to the
+  ([ADR 0001: Focus](../adr/0001-focus.md), "The listener's checks, ported
+  from NVDA's focus handler"); a menu opening redirected to the
   current focus has that focus's keyboard focus read by the checks
   instead; value,
   states, and details afresh; a list's or tab control's selected child, or
@@ -248,8 +251,8 @@ responder out of it.
   reads have ended (`DeliveredFact::UiaFocusReadsEnded`).
 
 The verdicts. The outpost's verdict is the one verdict per window; the
-listener makes none (`docs/design/focus-pipeline-rework.md`, "Who owns
-each duplicated fact", the verdicts). A listener's read in a window the
+listener makes none ([ADR 0001: Focus](../adr/0001-focus.md), "One judge per
+fact"). A listener's read in a window the
 outpost judges not UIA, by the read's nearest window, judged at the read's
 observation, is dropped (`Worker::uia_focus`).
 
@@ -306,8 +309,8 @@ section 6.3).
   that a later end sets again; a callback that runs early sends nothing.
   The same timer, set for the soonest thing waiting on it, sends the
   desktop's news (`ListenerToCore::Desktop`,
-  `docs/design/focus-pipeline-rework-remaining.md`, "The desktop switch
-  and the virtual desktop's name"). A desktop switch
+  [ADR 0001: Focus](../adr/0001-focus.md), "The desktop's return and
+  name"). A desktop switch
   (`WinEventKind::DesktopSwitch`, hooked globally) back to the user's
   desktop, by NVDA's test, `OpenInputDesktop` then `CloseDesktop`
   (`verbatim_win32::window::input_desktop_opens`), is told 200 ms later
@@ -338,8 +341,8 @@ section 6.3).
   kept as the watch's pending window and sent with the observation of a
   later focus or foreground event that finds it in front, unless a newer
   foreground event replaces it (`foreground::ForegroundWatch`;
-  `docs/design/focus-pipeline-rework-remaining.md`, "One foreground
-  change, from the listener"). It is the only report that a window came to
+  [ADR 0001: Focus](../adr/0001-focus.md), "The foreground and the window
+  title"). It is the only report that a window came to
   the foreground. The console's events stay unhooked
   (`verbatim_ia2::suspend_kinds`) unless it starts with a console window in
   front, until one of that window's events names its thread. The app

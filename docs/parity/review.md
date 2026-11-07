@@ -61,14 +61,41 @@ query on the first press, its text included as on focus; its name
 spelled on the second press ("blank" with no name), and spelled with
 character descriptions on the third and later; "No focus" with none
 ([Focus and the navigator](../nvda/focus-and-navigator.md), "Reporting the
-focus"). Verbatim: **matched (verified)** on Verbatim+Tab,
-checked live in Windows 11 Notepad against an NVDA transcript: both say
-"Text editor document focused" and the line at the caret,
-NVDA in one utterance and Verbatim in two, the line as its own, as for
-any focus with text (pinned by `notepad_editing`). One
-difference with no counterpart in NVDA: while the outpost that reported
-the focus has ended and its replacement has not yet reported the focus
-again, Verbatim says "No focus", as its node ids name nothing then.
+focus"; `globalCommands.py`, `script_reportCurrentFocus`, which speaks
+`getObjectSpeech` of `api.getFocusObject()` for the query on the first
+press, `speakSpelling` of its name after, and "No focus" when the focus
+object is not an NVDA object). Verbatim: **matched (verified)** on
+Verbatim+Tab, checked live in Windows 11 Notepad against an NVDA
+transcript: both say "Text editor document focused" and the line at the
+caret, NVDA in one utterance and Verbatim in two, the line as its own,
+as for any focus with text (pinned by `notepad_editing`).
+
+Verbatim+Tab asks the application for its focus live (Dickson,
+2026-11-07; [ADR 0001: Focus](../../books/dev/src/reference/adr/0001-focus.md),
+"Report focus"): a focus query (`Query::ReadFocus`, purpose `Report`) to
+the outpost of the process that serves the foreground thread's focus
+window, found by local calls, so it reports the real focus even when the
+focus moved with no event. The answer is spoken only, the object then its
+line, as NVDA+Tab speaks its focus object, and is never taken as Core's
+focus, so Core's focus ancestry and later events are unchanged; the
+outpost neither follows nor adopts it. NVDA+Tab reports NVDA's own focus
+object instead, its properties read live; its history records no reason.
+A second and third press while the first waits spell after it is
+spoken; a press after the repeat interval replaces the waiting one, whose
+answer is not spoken; a focus observed after the press ends the waiting
+press, so a focus already on its way is spoken and then the answer, as
+NVDA runs its script after the focus queued before it (Claude,
+2026-11-08, pending Dickson's acceptance). When nothing can answer, no
+window in front, an ignored process, no outpost, the outpost's end, or an
+empty answer, Verbatim says "No focus", as NVDA+Tab does with no focus
+object; abandoned at its deadline, as in a hung application, or replaced,
+it says nothing (Claude, 2026-11-08, pending Dickson's acceptance).
+Core's `verbatim_tab_speaks_the_answer_alone_then_its_line`,
+`verbatim_tab_never_moves_cores_focus`,
+`verbatim_tab_with_nothing_to_ask_says_no_focus` and
+`verbatim_tab_abandoned_says_nothing`; the app's
+`verbatim_tab_is_routed_to_the_focus_windows_process`; mockapp's
+`a_report_focus_query_in_a_hung_window_waits_for_the_answer`.
 
 ### Review and navigator messages and repeated presses
 

@@ -12,7 +12,7 @@ In a process holding any UIA focus registration, a desktop-wide focus handler or
 
 ## What Verbatim relies on
 
-Outposts holding no focus registration, so that a hang holds only the listener (`books/dev/src/explanation/design/focus-pipeline.md`, section 12.3; the module comment of `crates/verbatim-listener/src/listener.rs`); D9's amended reason; the 2-second `CONNECTION_TIMEOUT`; the listener dropping a focus in a hung window (`window_is_hung` in `crates/verbatim-listener/src/focus_read.rs`), which rests on `IsHungAppWindow`'s mark. If a process with no focus registration began to be held, every outpost's events would stop during any hang; if the hold lengthened, the listener's silence would exceed what was accepted. Verbatim uses `CUIAutomation8` only, so the older coclass's wait affects nothing.
+Outposts holding no focus registration, so that a hang holds only the listener (`books/dev/src/explanation/design/focus.md`, "The shape, and why it is forced"; the module comment of `crates/verbatim-listener/src/listener.rs`); D9's amended reason; the 2-second `CONNECTION_TIMEOUT`; the listener dropping a focus in a hung window (`window_is_hung` in `crates/verbatim-listener/src/focus_read.rs`), which rests on `IsHungAppWindow`'s mark. If a process with no focus registration began to be held, every outpost's events would stop during any hang; if the hold lengthened, the listener's silence would exceed what was accepted. Verbatim uses `CUIAutomation8` only, so the older coclass's wait affects nothing.
 
 ## Method
 

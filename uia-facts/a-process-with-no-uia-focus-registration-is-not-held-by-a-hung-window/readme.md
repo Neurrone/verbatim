@@ -6,7 +6,7 @@ A focus `WinEvent` naming a window that does not answer UIA holds the UIA events
 
 ## What Verbatim relies on
 
-Outposts holding no focus registration, so that a hang holds only the listener (`books/dev/src/explanation/design/focus-pipeline.md`, section 12.3; the module comment of `crates/verbatim-listener/src/listener.rs`). If a process with no focus registration began to be held, every outpost's events would stop during any hang.
+Outposts holding no focus registration, so that a hang holds only the listener (`books/dev/src/explanation/design/focus.md`, "The shape, and why it is forced"; the module comment of `crates/verbatim-listener/src/listener.rs`). If a process with no focus registration began to be held, every outpost's events would stop during any hang.
 
 ## Method
 

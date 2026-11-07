@@ -6,7 +6,7 @@ During a hold by a hung window named in a focus `WinEvent`, UIA raises focus for
 
 ## What Verbatim relies on
 
-Nothing is built on it: it explains why a menu's focus is announced during a hold while focus within an existing window is not, as in NVDA (`books/dev/src/explanation/design/focus-pipeline.md`, section 12.3).
+Nothing is built on it: it explains why a menu's focus is announced during a hold while focus within an existing window is not, as in NVDA (`books/dev/src/reference/adr/0001-focus.md`, "Who reads a UI Automation focus").
 
 ## Method
 

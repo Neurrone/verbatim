@@ -16,7 +16,8 @@ Public API:
   foreground, menu-popup opens, alerts, and tooltip windows shown, the
   same kinds as the listener's below but scoped to the one process, so
   every MSAA event of the application reaches its outpost by one route
-  (`books/dev/src/explanation/design/focus-pipeline.md`, section 12.4); value, state, name,
+  ([ADR 0001: Focus](../adr/0001-focus.md), "One route per application, and
+  the marker"); value, state, name,
   description, and selection changes
   (`EVENT_OBJECT_SELECTION` is `WinEventKind::Selection`; the selection add,
   remove, and within events are reported as `WinEventKind::StateChange`, as

@@ -275,7 +275,7 @@ Every fact has one owner, one thread or one state machine run by one
 thread, and others learn it from one-way reports or views
 ([the ownership model](design/ownership.md)). Core owns every word and
 every fact across applications. Each outpost's reducer owns what its
-application remembers: the order of its two routes, verdicts, the gap,
+application remembers: the order of its two routes, verdicts, the hang notice,
 the reports Core may hold and the caret watch. The object store owns node
 identity and its release. The hook thread owns the key number. The
 threads that call into applications are the focus listener's reading
@@ -287,12 +287,11 @@ post their results back; the reducer's timed wait keeps every timer.
 Every test the outpost makes against the foreground, an MSAA focus's
 acceptance test and a foreground change's in-front test, is made on the
 reducer's thread from Windows' state as the entry is taken in, never on
-a worker, which can wait behind a call into a held application; and when
-an application's window is in front at its gap record's bound with no
-focus reported, its title is sent from Windows' state there, read from
-local data with no call into the application
-([its design](https://github.com/Neurrone/verbatim/blob/main/docs/design/focus-pipeline-rework-remaining.md), "The held UIA
-application's title"; Dickson, 2026-11-02). What it says to
+a worker, which can wait behind a call into a held application
+([ADR 0001](../reference/adr/0001-focus.md), "The foreground and the
+window title"; Dickson, 2026-11-02). Nothing is said for an application
+while it does not answer ([How focus works](design/focus.md), "Slow and
+hung applications"). What it says to
 Core waits in one queue, written by a thread of its own; queuing never
 waits, nothing is queued while a lock the watchdog takes is held, and
 waiting messages are merged by object and kind, but never a terminal's
@@ -370,7 +369,7 @@ Recovery is a ladder, cheapest rung first:
    backoff, 1 second, then 2, 4, up to 30, counted again once an outpost
    has stayed up a minute or the application comes to the foreground, and
    so are the failures of spares while they wait
-   (`books/dev/src/explanation/design/focus-pipeline.md`, section 19.5). The supervisor knows each application by a
+   ([ADR 0001](../reference/adr/0001-focus.md), "Spare outposts"). The supervisor knows each application by a
    process handle it holds for as long as it has a record for it, so the
    application's pid cannot name another process meanwhile, and no
    outpost is ever started or replaced for an application that has
@@ -407,7 +406,9 @@ that are global by nature:
   per outpost;
 - global MSAA WinEvent hooks (process id zero) for focus, foreground,
   menu-popup opens, the end of a menu or of the Alt+Tab switcher, alerts,
-  and tooltips shown, NVDA's own arrangement. Every foreground change
+  tooltips shown and the desktop switch, NVDA's own arrangement, and a
+  hook scoped to csrss's process for the desktop window's name change, so
+  the virtual desktop's name is read on csrss's reading thread. Every foreground change
   whose window is in front is also reported to Core, with when it was
   observed, its process, its root owner, the thread its event names and
   its process's integrity level, none replacing another: it is the only
@@ -425,8 +426,8 @@ answer (`docs/design/cross-process-calls-study.md`, instance 2). So the
 listener installs its WinEvent hooks first and makes that registration on
 a thread of its own: its MSAA facts flow at once, its pipe thread answers
 the supervisor's pings throughout, and its UIA events are dropped until
-the registration returns, a WinEvent focus whose UIA focus is dropped so
-being recovered by the gap record. It says `Ready` only once the
+the registration returns; a WinEvent focus in a UIA window whose UIA
+focus is dropped so is lost, as NVDA loses it. It says `Ready` only once the
 registration has returned, because the listener's `Ready` gates
 Verbatim's readiness to take input, and no input may be taken before UIA
 focus events can arrive. An MSAA
@@ -443,8 +444,8 @@ can, so a start merely delays the announcement, and hands the fact to it.
 Facts for an outpost still starting are held in arrival order, merged with
 NVDA's one-per-object rule, and released in that order when it is ready.
 The outpost's worker then acquires, arbitrates, enriches with ancestry and
-selection, and reports the focus event, degrading rather than falling
-silent when enrichment times out. Node identity never crosses processes:
+selection, and reports the focus event once it is complete, saying
+nothing while the application does not answer. Node identity never crosses processes:
 the navigator, object navigation, and every fetch route to the per-app
 outpost, and D9's isolation bounds every call that can block.
 
@@ -455,8 +456,9 @@ besides value, state, name, selection, and window destruction. The
 listener forwards those events only for an application whose outpost's
 hook is not yet in, so that an application's first events start its
 outpost; once told the hook is in, it says "forwarding ended" behind its
-last forwarded fact, and the outpost matches the two hooks' copies of an
-event by counting, so each event is handled once and none is dropped.
+last forwarded fact, and the outpost holds its own hook's events until
+then and drops its copies of what was forwarded, so each event is handled
+once and none is dropped.
 
 A UIA focus is judged and read by the listener, because a UIA element
 cannot be handed to another process and the listener is the one process
@@ -466,13 +468,14 @@ element for that application's reading thread, one per application,
 created on its first focus event and ended when the application's outpost
 ends. The thread judges the focus as NVDA's focus handler does, in its
 order: the hung window, whether the element is native UIA, NVDA's
-duplicate rule against the focus Core holds, the acceptance test against
+duplicate test against the element it read before, the acceptance test against
 the element's nearest window, the object's own refusals, and the element's
 `HasKeyboardFocus` read plainly, a focus that has lost it dropped as NVDA
 drops it. It then reads the element's value, states, and details afresh,
 and its ancestors, one step each, up to the first one known from the
-focus before, the desktop's root, or the process boundary, with calls on
-elements it holds only. A UIA menu opening takes the same route. The
+focus before (its ancestry cache, used only while the cached windows'
+titles are unchanged), the desktop's root, or the process boundary, with
+calls on elements it holds only. A UIA menu opening takes the same route. The
 read, or its drop, follows the marker through verbatim.exe, the only route
 between the listener and the outposts. The outpost holds every entry that
 arrives after a marker until the read takes the marker's place, so a
@@ -490,8 +493,9 @@ its focus events wait for the first of them to return, until the deadline
 after the cap was reached, when every waiting event is dropped, and each
 later one as it arrives, until a thread returns. When the listener is
 replaced, the supervisor tells every outpost to wait on none of its
-markers. `books/dev/src/explanation/design/focus-pipeline.md` gives the options weighed and the
-reasons.
+markers. [ADR 0001](../reference/adr/0001-focus.md) gives the options
+weighed and the reasons, and [How focus works](design/focus.md) the whole
+path of a focus.
 
 Which backend speaks for a window is a per-window verdict the app outpost
 keeps, which each fact consults independently whenever it arrives, so
@@ -506,7 +510,7 @@ nothing to retry.
 
 Nothing polls. After the listener is replaced, Core reads the foreground
 window itself and asks that application's outpost for its current focus
-once; desktop-wide UIA events from the gap are lost. A window that has no
+once; desktop-wide UIA events raised while no listener was running are lost. A window that has no
 name when focus enters it is not announced later, as in NVDA.
 
 The per-app outposts hold no UIA focus registration. Besides their

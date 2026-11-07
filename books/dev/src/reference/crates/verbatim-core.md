@@ -453,8 +453,8 @@ code is in `reduce.rs` unless named.
   (`applications::drops_ancestry`; "The Alt+Tab switcher's pane").
   `tests/reduce.rs` checks all three.
 - The foreground change (`Input::Foreground`;
-  `docs/design/focus-pipeline-rework-remaining.md`, "One foreground
-  change, from the listener"): the focus listener's report that a window
+  [ADR 0001: Focus](../adr/0001-focus.md), "The foreground and the
+  window title"): the focus listener's report that a window
   came to the foreground, the only one, applied at one point
   (`foreground_changed`). It gives the keyboard hook's view and, unless
   the window is one of Verbatim's own, attention, its process and window,
@@ -536,7 +536,8 @@ code is in `reduce.rs` unless named.
   unspoken; what Core last spoke of the focus is left as it was, so a
   change the repeat carried in is spoken when its event comes.
 - Background speech across a foreground change
-  (`books/dev/src/explanation/design/focus-pipeline.md`, section 7): a background event
+  ([ADR 0001: Focus](../adr/0001-focus.md), "One input to Core, in
+  arrival order"): a background event
   observed before the newest applied foreground change is dropped.
 - Changes (`docs/parity/changes-and-selection.md`). Each focus keeps two
   things: the reading Core holds (`FocusContext::snapshot` and

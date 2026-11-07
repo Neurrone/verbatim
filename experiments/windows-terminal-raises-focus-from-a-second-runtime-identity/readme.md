@@ -17,7 +17,7 @@ The scratch scenario `measure_terminal_identities` opens Windows Terminal and th
 
 `suffix.py` checked what stays equal between the two identities: in all 156 focus events from a second identity in these runs and the GitHub run, a focus from the usual identity in the same process arrived within 1 second, and the usual identity's runtime id after its `[42, window]` prefix equalled the last two parts of the second identity's (design record, "What stays equal between the two identities").
 
-Established, on this machine: the second identity occurs with every registration tried, in about 1 in 8 to 1 in 14 second windows; at launch the counts are too few to tell the registrations apart. NVDA receives it in second windows too (6 times in 15 pairs, `docs/design/focus-pipeline.md`, section 16.8).
+Established, on this machine: the second identity occurs with every registration tried, in about 1 in 8 to 1 in 14 second windows; at launch the counts are too few to tell the registrations apart. NVDA receives it in second windows too (6 times in 15 pairs, `books/dev/src/reference/uia-bugs.md`, "Windows Terminal raises focus from a second runtime identity").
 
 ## Files
 

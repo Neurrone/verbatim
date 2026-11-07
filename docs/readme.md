@@ -14,15 +14,18 @@ reference and explanation.
   architecture and its decisions of record, the walkthroughs, the crate
   guides, the tooling guides, the testing standard, test coverage, the
   performance ledger, the faults in UI Automation, the glossary, the
-  design records of finished work and the Windows background explainers.
+  decision records, the explanations of finished designs and the Windows
+  background explainers.
 - [The Extensions Development Guide](../books/extensions/src/SUMMARY.md),
   written in M5.
 - [The User Guide](../books/user/src/SUMMARY.md), not written yet.
 
-A design record moves from `docs/design/` into the Development guide's
-Explanation section, under `books/dev/src/explanation/design/`, in the
-commit that cuts it down once its work is built, because only finished
-work is published. A published page names a document here by its full
+Once its work is built, a design record under `docs/design/` becomes two
+published pages: an explanation of how the work functions today, under
+`books/dev/src/explanation/design/`, and a numbered decision record under
+`books/dev/src/reference/adr/`, with the problem, the options weighed and
+the limits; the record under `docs/design/` is then deleted, because only
+finished work is published. A published page names a document here by its full
 GitHub address, since the site carries nothing from `docs/`
 (`cargo xtask docs`, rule 5).
 
@@ -44,8 +47,9 @@ how NVDA does it.
 **Building a feature.** [The roadmap](roadmap.md) scopes the work; the
 crate you change has a guide in
 [the crate guides](../books/dev/src/reference/crates/readme.md) that must
-be kept current; the design records below and the finished ones in
-[the Development guide](../books/dev/src/explanation/design/readme.md)
+be kept current; the design records below,
+[the decision records](../books/dev/src/reference/adr/readme.md) and
+[the finished designs](../books/dev/src/explanation/design/readme.md)
 hold the reasons behind the work;
 [the UIA faults](../books/dev/src/reference/uia-bugs.md) say what UI
 Automation gets wrong.
@@ -76,14 +80,6 @@ harness, NVDA captures and troubleshooting.
   - [ownership-milestone-rules.md](design/ownership-milestone-rules.md) —
     the ownership rules each planned milestone follows, and the evidence
     behind them.
-  - [focus-pipeline-rework.md](design/focus-pipeline-rework.md) — the
-    reconciliations between the listener, the outposts and Core to
-    remove.
-  - [focus-pipeline-rework-remaining.md](design/focus-pipeline-rework-remaining.md)
-    — its remaining builds and the title rule, after the ownership
-    refactor.
-  - [focus-pipeline-audit.md](design/focus-pipeline-audit.md) — every
-    difference from NVDA's focus handling found on 2026-10-29.
   - [cross-process-calls-study.md](design/cross-process-calls-study.md)
     — every call that can reach another application, measured, with a
     verdict on the rule that only an application's own outpost calls it.

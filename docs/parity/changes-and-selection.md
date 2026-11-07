@@ -333,7 +333,8 @@ Settings raises the combo box's expand state change before the item's
 focus, and when the change reaches the outpost behind the item's focus
 marker, the outpost plans it ahead of the item's focus, since the item
 is inside the combo box that was the focus
-(`books/dev/src/explanation/design/focus-pipeline.md`, section 12.4; the outpost's intake test
+(`books/dev/src/reference/adr/0001-focus.md`, "One route per application, and
+the marker"; the outpost's intake test
 `the_old_focus_uia_events_behind_a_focus_inside_it_are_planned_first`),
 so Verbatim says "expanded" there too.
 

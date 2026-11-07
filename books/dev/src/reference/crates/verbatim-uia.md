@@ -16,7 +16,7 @@ listener make. Its remote operations are in `verbatim-uia-rops`
   held element), re-exported from `verbatim-model`, where the limits that
   nest around it are (`books/dev/src/reference/crates/verbatim-model.md`,
   "Time limits"). Both are settings of the process, not of a client
-  (experiment E1 in `books/dev/src/explanation/design/focus-pipeline.md`),
+  ([ADR 0001: Focus](../adr/0001-focus.md), "Time limits"),
   so UIA's first-time setup sets them once. Each bounds one request into a
   provider, not an operation: an operation of many requests is bounded by
   the deadline of the outpost's program it runs in. The connection timeout
@@ -201,7 +201,8 @@ description whatever the theme, as NVDA's `presentationType` does
   UIA counts the element both a control and content), minting each node
   from its runtime id with no element kept: the outpost reports a UIA
   focus's ancestors this way from the focus listener's read
-  (`books/dev/src/explanation/design/focus-pipeline.md`, section 12).
+  ([How focus works](../../explanation/design/focus.md), "One UI Automation
+  focus, end to end").
 
 ## Mapping and the `map` module
 
@@ -328,7 +329,8 @@ round trip.
 
 ## Event registrations
 
-The design is `books/dev/src/explanation/design/focus-pipeline.md`, section 17.
+The design is [ADR 0001: Focus](../adr/0001-focus.md), "Focus-following
+subscriptions".
 
 - `Registration::with_parts(parts, scope)`, `retarget(scope)`,
   `retarget_to(scope, group)`, and `retarget_with(scope, group, also)`:
@@ -372,7 +374,8 @@ The design is `books/dev/src/explanation/design/focus-pipeline.md`, section 17.
   delivers the focus events Windows Terminal raises from a second
   identity of its terminal to a client with only a focus handler, but not
   to one that also has a group on the desktop's root
-  (`books/dev/src/explanation/design/focus-pipeline.md`, section 16.8). The handler is
+  ([`experiments/windows-terminal-raises-focus-from-a-second-runtime-identity/`](https://github.com/Neurrone/verbatim/blob/main/experiments/windows-terminal-raises-focus-from-a-second-runtime-identity/readme.md)).
+  The handler is
   desktop-wide, so only the focus listener registers it. The order is
   NVDA's too: the desktop's root element is fetched before the focus
   handler is registered, the group is registered on that root after it,
@@ -458,8 +461,8 @@ shapes, are described in `books/dev/src/reference/crates/verbatim-outpost.md`.
   `SMTO_ABORTIFHUNG | SMTO_BLOCK | SMTO_ERRORONEXIT` and
   `UIA_RAW_PROBE_TIMEOUT_MS` (3,000 ms), counted as one window message, so it
   is called only from deadline-guarded threads. It asks once, as NVDA
-  does, and its answer is kept for 500 ms (`books/dev/src/explanation/design/focus-pipeline.md`,
-  section 8). Unlike `UiaHasServerSideProvider`, which NVDA calls, it
+  does, and its answer is kept for 500 ms ([ADR 0001: Focus](../adr/0001-focus.md), "One judge per
+  fact"). Unlike `UiaHasServerSideProvider`, which NVDA calls, it
   sends only that one message and makes no UIA connection, so it answers
   correctly where a connection would meet another process's queued remote
   operation, and where `UiaHasServerSideProvider` gives a new console
