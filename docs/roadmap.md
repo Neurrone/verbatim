@@ -185,7 +185,11 @@ difference); and whether the listener's hung judgement during a blocked
 call stays, since abandoning the read leaves no late result to speak.
 Its walk bounds, 500 ms in a new window and 2 s in the same one
 (`SAME_WINDOW_BOUND`), and their publication at the bound are also
-its to decide.
+its to decide. It also fixes a dialog's text missed on the first report
+of a focus the listener read inside a UI Automation dialog: the outpost
+finds the dialog through the focus path it reported before
+(`dialog_text_of`, `crates/verbatim-outpost/src/outpost/read.rs`), not
+the one being reported (Dickson, 2026-11-07).
 
 ### Follow-ups from the focus and ownership builds
 
