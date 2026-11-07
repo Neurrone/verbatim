@@ -139,6 +139,8 @@ struct RawNode {
     #[serde(default)]
     focus_on_activate: bool,
     #[serde(default)]
+    frameless: bool,
+    #[serde(default)]
     client_role: bool,
     /// Its MSAA location, left, top, width and height.
     #[serde(default)]
@@ -307,6 +309,11 @@ pub(crate) struct FixtureNode {
     /// application restores its focus when its window is activated, a
     /// Win32 dialog by `DefDlgProc` on every activation, its first included.
     pub(crate) focus_on_activate: bool,
+    /// On the root: whether the host window is a pop-up window with no
+    /// frame, as the taskbar's `Shell_TrayWnd` is, rather than an
+    /// overlapped one, so UIA's proxy for a window's frame adds no title
+    /// bar or title-bar buttons to its tree.
+    pub(crate) frameless: bool,
     /// On the MSAA backend: whether the node answers its role as
     /// `ROLE_SYSTEM_CLIENT`, a window's client area's, as a Windows Forms
     /// form's client area does, rather than its role's own MSAA role.
@@ -455,6 +462,7 @@ fn convert(
         msaa_client: raw.msaa_client,
         dialog_keys: raw.dialog_keys,
         focus_on_activate: raw.focus_on_activate,
+        frameless: raw.frameless,
         client_role: raw.client_role,
         location: raw.location,
         children,

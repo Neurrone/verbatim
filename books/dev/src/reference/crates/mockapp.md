@@ -124,6 +124,11 @@ complete name tables. The fields:
   the text area, read through UIA, to a Win32 control read through MSAA,
   as a Find dialog takes it. The tests start mockapp with no console, so
   no console host can be read for that window, and mockapp serves it.
+- `frameless`, on the root: the host window is a pop-up window with no
+  frame, as the taskbar's `Shell_TrayWnd` is, so UIA's proxy for a
+  window's frame adds no title bar to its tree, whose buttons' reads wait
+  seconds on `WM_GETTITLEBARINFOEX` under a parallel run
+  (`tests/fixtures/taskbar.json`).
 - `native`: the node is a real child window rather than a scripted node,
   on any backend: `tree_view`, `list_view`, `group_box`, `button`, or
   `uia_window` (each described under the modules below).
@@ -604,7 +609,7 @@ Each file's module comment says exactly what it asserts; in outline:
   started before the stall ended; and a navigation step, a walk down a
   focus's path, a UIA dialog's text (`dialog_class_window.json`, a
   top-level window of a dialog's class) and the taskbar's items
-  (`taskbar.json`, a window of `Shell_TrayWnd`'s class) each wait past the
+  (`taskbar.json`, a frameless window of `Shell_TrayWnd`'s class) each wait past the
   short limit they once had and answer in full. Each hold ends after
   evidence that the old limit has passed: the outpost's frozen clock moved
   past a limit that ran on it, or mockapp's window thread stalled for twice

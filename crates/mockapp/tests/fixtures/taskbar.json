@@ -3,6 +3,7 @@
   "role": "window",
   "name": "Mockapp Taskbar Fixture",
   "window_class": "Shell_TrayWnd",
+  "frameless": true,
   "children": [
     {
       "id": "apps",

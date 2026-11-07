@@ -106,6 +106,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
     let mut root = fixture::load(&cli.fixture)?;
     // The root's window class names the host window's class.
     let window_class = root.window_class.clone();
+    let frameless = root.frameless;
     let msaa_client = root.msaa_client;
     let dialog_keys = root.dialog_keys;
     let focus_on_activate = root.focus_on_activate;
@@ -131,7 +132,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
         tree,
         native,
         edit_version_6,
-        (&cli.title, window_class.as_deref()),
+        (&cli.title, window_class.as_deref(), frameless),
         (cli.show, cli.owner_title.as_deref()),
         (msaa_client, dialog_keys, focus_on_activate),
     )?;

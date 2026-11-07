@@ -30,7 +30,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     GetClassNameW, GetMessageW, GetWindowLongPtrW, HMENU, MSG, OBJID_CLIENT, PostMessageW,
     PostQuitMessage, RegisterClassExW, SW_SHOW, SetWindowLongPtrW, SetWindowTextW, ShowWindow,
     TranslateMessage, WINDOW_EX_STYLE, WM_ACTIVATE, WM_APP, WM_DESTROY, WM_GETOBJECT, WM_KEYDOWN,
-    WNDCLASSEXW, WS_CHILD, WS_OVERLAPPEDWINDOW,
+    WNDCLASSEXW, WS_CHILD, WS_OVERLAPPEDWINDOW, WS_POPUP,
 };
 use windows::core::{PCWSTR, w};
 use windows_core::Interface;
@@ -105,7 +105,8 @@ impl From<windows::core::Error> for WindowError {
 }
 
 /// Creates the host window, titled `title` and of the window class `class`
-/// (mockapp's own when `None`), shown when `show` is set, prints `ready`,
+/// (mockapp's own when `None`), a frameless pop-up window when `frameless`
+/// is set and an overlapped one otherwise, shown when `show` is set, prints `ready`,
 /// and runs the message loop until a `quit` command (or the window
 /// otherwise closes). `backend` decides how `WM_GETOBJECT` is answered;
 /// with none, the window answers nothing itself, as a plain Win32 window.
@@ -120,7 +121,7 @@ pub(crate) fn run(
     tree: SharedTree,
     native: Vec<crate::fixture::FixtureNode>,
     edit_version_6: bool,
-    (title, class): (&str, Option<&str>),
+    (title, class, frameless): (&str, Option<&str>, bool),
     (show, owner): (bool, Option<&str>),
     (msaa_client, dialog_keys, focus_on_activate): (bool, bool, bool),
 ) -> Result<(), WindowError> {
@@ -138,6 +139,19 @@ pub(crate) fn run(
 
     let owner = owner.map(owner_window).transpose()?;
     let title_wide = to_wide(title);
+    // A pop-up window takes no default place or size, so a frameless one
+    // is given a strip's, as the taskbar is.
+    let (style, x, y, width, height) = if frameless {
+        (WS_POPUP, 0, 0, 640, 48)
+    } else {
+        (
+            WS_OVERLAPPEDWINDOW,
+            CW_USEDEFAULT,
+            CW_USEDEFAULT,
+            CW_USEDEFAULT,
+            CW_USEDEFAULT,
+        )
+    };
     // SAFETY: `class_name` names a class registered above, its buffer live
     // until the function returns; `title_wide` is a live, NUL-terminated
     // buffer for the duration of the call; `owner` is a live window.
@@ -146,11 +160,11 @@ pub(crate) fn run(
             WINDOW_EX_STYLE(0),
             class_name,
             PCWSTR(title_wide.as_ptr()),
-            WS_OVERLAPPEDWINDOW,
-            CW_USEDEFAULT,
-            CW_USEDEFAULT,
-            CW_USEDEFAULT,
-            CW_USEDEFAULT,
+            style,
+            x,
+            y,
+            width,
+            height,
             owner,
             None::<HMENU>,
             Some(hinstance.into()),

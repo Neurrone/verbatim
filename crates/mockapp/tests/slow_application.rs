@@ -286,7 +286,11 @@ fn a_slow_dialog_text_is_reported_with_the_focus() {
 /// The taskbar's items, asked of the outpost of a mockapp window of the
 /// taskbar's class, whose walk mockapp holds while the outpost's frozen
 /// clock passes the walk's old budget of two seconds, are answered in full
-/// once mockapp answers: the walk has no budget of its own.
+/// once mockapp answers: the walk has no budget of its own. The window has
+/// no frame, as the real taskbar has none, so the walk meets no title bar,
+/// whose buttons' reads wait on the Desktop Window Manager for seconds
+/// under a parallel run and past UIA's connection timeout come back as no
+/// element.
 fn a_slow_shell_items_walk_answers_the_whole_list() {
     common::init_com();
     let title = common::unique_title("mockapp-slow-taskbar");
@@ -310,10 +314,7 @@ fn a_slow_shell_items_walk_answers_the_whole_list() {
             .collect::<Vec<_>>(),
         other => panic!("the query answered {other:?}, not the taskbar's items"),
     };
-    assert_eq!(
-        names,
-        ["Minimize", "Maximize", "Close", "Mail", "Files", "Music"]
-    );
+    assert_eq!(names, ["Mail", "Files", "Music"]);
     outpost.settled();
     drop(outpost);
     app.quit();

@@ -465,6 +465,7 @@ mod tests {
             msaa_client: false,
             dialog_keys: false,
             focus_on_activate: false,
+            frameless: false,
             client_role: false,
             location: [0; 4],
             children,
