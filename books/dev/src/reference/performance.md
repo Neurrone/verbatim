@@ -301,7 +301,7 @@ Rules that hold for every UIA focus:
   makes no moved-on call (`GetGUIThreadInfo`, `GetWindowThreadProcessId`,
   class and process reads); one still under way past its grace costs one
   watchdog wake-up and one moved-on call every half second, at most 25
-  before `BOUNDED_WALK_DEADLINE` (stand-in reads held 3 seconds, debug: 5
+  before `FOCUS_READ_DEADLINE` (stand-in reads held 3 seconds, debug: 5
   wake-ups and 5 calls); and when the new
   focus is inside the old, the intake moves the old focus's queued state
   changes ahead of the read (`books/dev/src/explanation/design/focus-pipeline.md`, section
@@ -387,7 +387,7 @@ the verdicts).
   focus read failing by the timeout and the focus let through from its
   event (measured 2026-10-30 with a scratch mockapp test, `--backend
   msaa` under `stall`, not kept), with the transaction timeout then 5
-  seconds. Each read is bounded by `BOUNDED_WALK_DEADLINE`, 13 seconds
+  seconds. Each read is bounded by `FOCUS_READ_DEADLINE`, 13 seconds
   (the read's budget of 2, the transaction timeout of 10 and a second),
   and the
   application's reading threads by `ABANDONED_LIMIT`; each application has
@@ -506,7 +506,7 @@ walk's first step to its parent answers 3 seconds late (`slow-parent`;
   sent.
 - Bound: the thread stays in its call until the application answers or
   UIA's transaction timeout ends the call, the application's later events
-  waiting for it until `BOUNDED_WALK_DEADLINE` abandons it.
+  waiting for it until `FOCUS_READ_DEADLINE` abandons it.
 
 ### A focus whose walk is stuck at its bound, the outpost
 
@@ -1356,7 +1356,7 @@ its probe adds 1 window message (above):
   read of the sender failed; mockapp's "Notes" in `ancestry.json`, which has no
   text pattern, costs the outpost 3 UIA calls and 1 window message, where
   without the read it was not found and its text not read
-  (`a_slow_windowless_text_focus_is_found_as_the_focused_element`).
+  (`a_windowless_text_focus_whose_walk_failed_is_found_as_the_focused_element`).
 - Measured on 2026-10-22 with `cargo xtask measure` (debug, info level,
   five runs; minimum, P50, P95, P99 and maximum in ms). mockapp's field as
   the first focus in a new application (`measure_focus_new_application`):

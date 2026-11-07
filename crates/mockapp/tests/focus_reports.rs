@@ -743,6 +743,45 @@ fn a_focus_is_found_by_its_path_and_followed() {
     app.quit();
 }
 
+/// A windowless focus whose walk up failed below its nearest window, so
+/// that its chain holds no window of its own, is found by the outpost from
+/// that nearest window, which the read carries, down by the chain's
+/// runtime ids, and its changes are followed: mockapp's button, a child of
+/// its window, with its chain cut to the button alone, going on from its
+/// window's parent, as a walk whose first step failed sends it.
+fn a_windowless_focus_with_a_failed_walk_is_found_from_its_nearest_window() {
+    let title = common::unique_title("mockapp-failed-walk-path");
+    let mut app = common::spawn("small.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let client = Client::new(hwnd);
+    let outpost = OutpostUnderTest::new(&app);
+
+    app.send("set-focus btn1");
+    let (judged, _) = outpost.listener_read(&client.focused());
+    let Judged::Read(mut read) = judged else {
+        panic!("the listener dropped the focus: {judged:?}");
+    };
+    assert_eq!(
+        (read.hwnd, read.window),
+        (0, Some(hwnd.0 as isize)),
+        "a windowless focus whose read carries its nearest window"
+    );
+    read.ancestors.clear();
+    read.ancestors_end = verbatim_model::protocol::AncestorsEnd::ContinueFrom(
+        verbatim_uia::parent_window(hwnd.0 as isize),
+    );
+    let reported = outpost.focus(DeliveredFact::UiaFocusRead {
+        marker: 0,
+        read,
+        focus: true,
+    });
+    assert_eq!(reported.node.name.as_deref(), Some("Original Name"));
+    assert_followed(&mut app, &outpost, "btn1", &reported.node);
+
+    drop(outpost);
+    app.quit();
+}
+
 /// A UIA focus with no path to its element, as Windows Terminal's tab
 /// focus elements, which are in no tree, have none, is reported from the
 /// listener's read, and nothing is followed. A focus event repeated on it
@@ -780,24 +819,21 @@ fn a_focus_without_a_path_is_followed_from_its_next_focus_event() {
     app.quit();
 }
 
-/// How late the cut walk's step to the text field's parent answers: past
-/// the listener's two-second read budget.
-const SLOW_PARENT_MS: u32 = 2100;
-
-/// A text field with no window of its own whose walk up the listener cut,
-/// so that the chain it sends holds no window, is found by the outpost
-/// as its application's focused element, read with the focus read's
-/// process-id check and taken because its runtime id is the field's, before
-/// the focus is reported (`docs/design/focus-pipeline-rework.md`, the
-/// audit's difference 5). The field, "Notes", is four levels below its
-/// window, where a walk down from the window by the runtime ids known would
-/// not reach it. The read's first step to the field's parent, after the
-/// nearest window's lookup, answers past the read's budget (`slow-parent`),
-/// spent on the system's clock, and the chain is completed by the field's
-/// nearest window as a plain window. Found, the field has no text pattern,
-/// so its text is reported as none, `NoText`; not found, it would be
-/// `NotRead`.
-fn a_slow_windowless_text_focus_is_found_as_the_focused_element() {
+/// A text field with no window of its own whose walk up the listener's
+/// step failed, so that the chain it sends holds no window, is found by
+/// the outpost as its application's focused element, read with the focus
+/// read's process-id check and taken because its runtime id is the
+/// field's, before the focus is reported
+/// (`docs/design/focus-pipeline-rework.md`, the audit's difference 5). The
+/// field, "Notes", is four levels below its window, where the walk down
+/// from its nearest window by the chain's runtime ids does not reach it.
+/// The read's first step to the field's parent, after the nearest window's
+/// lookup, fails (`answer-parent`), and the chain goes on from the parent
+/// window of the field's nearest window, as NVDA's failed parent read goes
+/// on. Found,
+/// the field has no text pattern, so its text is reported as none,
+/// `NoText`; not found, it would be `NotRead`.
+fn a_windowless_text_focus_whose_walk_failed_is_found_as_the_focused_element() {
     let title = common::unique_title("mockapp-cut-walk");
     let mut app = common::spawn("ancestry.json", "uia", &title);
     let hwnd = common::find_window(&title);
@@ -807,18 +843,14 @@ fn a_slow_windowless_text_focus_is_found_as_the_focused_element() {
     app.send("set-focus notes");
     let notes = client.focused();
     outpost.read_focus_as(notes.live().element());
-    outpost.follow_the_system_clock();
-    app.send(&format!("slow-parent notes {SLOW_PARENT_MS} 1"));
+    app.send("answer-parent notes fail 1");
     let (judged, _) = outpost.listener_read(&notes);
-    app.stamped_line("slow-parent started");
-    app.stamped_line("slow-parent ended");
-    app.send("slow-parent notes 0");
+    app.send("answer-parent notes usual");
     let Judged::Read(read) = judged else {
         panic!("the listener dropped the focus: {judged:?}");
     };
-    // The step came back past the read's budget with the field's parent,
-    // where the walk was cut: the chain is completed by plain windows from
-    // the field's nearest window.
+    // The step failed below the field's nearest window, and the chain goes
+    // on from that window's parent.
     assert_eq!(
         (
             read.hwnd,
@@ -828,11 +860,13 @@ fn a_slow_windowless_text_focus_is_found_as_the_focused_element() {
         ),
         (
             0,
-            1,
-            verbatim_model::protocol::AncestorsEnd::PlainFrom(hwnd.0 as isize),
+            0,
+            verbatim_model::protocol::AncestorsEnd::ContinueFrom(verbatim_uia::parent_window(
+                hwnd.0 as isize
+            )),
             Some(hwnd.0 as isize)
         ),
-        "the walk was cut below the field's nearest window"
+        "the walk failed below the field's nearest window"
     );
     outpost.deliver(DeliveredFact::UiaFocusRead {
         marker: 0,
@@ -860,26 +894,23 @@ fn a_slow_windowless_text_focus_is_found_as_the_focused_element() {
                         .collect::<Vec<_>>(),
                     text.as_deref()
                 ),
-                (
-                    Some("Notes"),
-                    vec![
-                        (Role::Pane, Some(title.as_str())),
-                        (Role::Group, Some("Inner group"))
-                    ],
-                    Some(&FocusText::NoText)
-                )
+                (Some("Notes"), Vec::new(), Some(&FocusText::NoText)),
+                "no ancestor: the chain goes on from the parent of the field's nearest window"
             );
-            // The window's probe, one message; the focused-element read,
-            // one UIA call, its stand-in counting no connection; and two on
-            // the field found. Without the read the field is not found, and
-            // no UIA call is made.
+            // The window's probe, one message; the route from the field's
+            // nearest window, its element read with one connection call
+            // and the walk down the chain's runtime ids, which does not
+            // reach the field four levels below, two UIA calls; the
+            // focused-element read, one UIA call, its stand-in counting no
+            // connection; and two on the field found. Without the read the
+            // field is not found.
             assert_eq!(
                 timing.calls,
                 CallCounts {
-                    uia: 3,
+                    uia: 5,
                     msaa: 0,
                     window_messages: 1,
-                    connections: 0,
+                    connections: 1,
                 }
             );
         }
@@ -892,10 +923,9 @@ fn a_slow_windowless_text_focus_is_found_as_the_focused_element() {
 }
 
 /// The listener's read of mockapp's "Notes", the focus, with the chain it
-/// sends cut to the field alone, completed by plain windows from its
-/// nearest window, as a walk up cut below the field's nearest window sends
-/// it: the chain the outpost finds the field's element after a cut walk
-/// for.
+/// sends cut to the field alone, going on from its nearest window's parent,
+/// as a walk up that failed below the field's nearest window sends it: the
+/// chain the outpost finds the field's element after a cut walk for.
 fn cut_read_of_notes(
     outpost: &OutpostUnderTest,
     notes: &Cached<ListenerEvent>,
@@ -906,8 +936,9 @@ fn cut_read_of_notes(
     };
     assert_eq!(read.hwnd, 0, "the field has no window of its own");
     read.ancestors.clear();
-    read.ancestors_end =
-        verbatim_model::protocol::AncestorsEnd::PlainFrom(read.window.unwrap_or(0));
+    read.ancestors_end = verbatim_model::protocol::AncestorsEnd::ContinueFrom(
+        verbatim_uia::parent_window(read.window.unwrap_or(0)),
+    );
     read
 }
 
@@ -946,7 +977,9 @@ fn assert_notes_reported(
 /// focus's only when its runtime id is the focus's: here it is the button
 /// "Deep button", the field's sibling, so the field is not found and its
 /// text is not read, `NotRead`; taken, the button would give `NoText`. The
-/// window's probe, one message, and the focused-element read, one UIA call.
+/// window's probe, one message; the route from the field's nearest window,
+/// one connection call and two UIA calls, which does not reach the field
+/// four levels below; and the focused-element read, one UIA call.
 fn a_cut_walks_focused_element_with_another_runtime_id_is_not_taken() {
     let title = common::unique_title("mockapp-cut-walk-other-id");
     let mut app = common::spawn("ancestry.json", "uia", &title);
@@ -961,10 +994,10 @@ fn a_cut_walks_focused_element_with_another_runtime_id_is_not_taken() {
         read,
         &FocusText::NotRead,
         CallCounts {
-            uia: 1,
+            uia: 3,
             msaa: 0,
             window_messages: 1,
-            connections: 0,
+            connections: 1,
         },
     );
 
@@ -977,8 +1010,10 @@ fn a_cut_walks_focused_element_with_another_runtime_id_is_not_taken() {
 /// of a second mockapp, whose runtime id the focus has, read by the
 /// listener there and sent as this application's, so the field is not
 /// found and its text is not read, `NotRead`; taken, it would give
-/// `NoText`. The window's probe, one message, and the focused-element read,
-/// one UIA call.
+/// `NoText`. The window's probe, one message; the route from the nearest
+/// window the read carries, this application's, one connection call and
+/// two UIA calls, which does not find the other's field; and the
+/// focused-element read, one UIA call.
 fn a_cut_walks_focused_element_of_another_process_is_not_taken() {
     let title = common::unique_title("mockapp-cut-walk-own");
     let app = common::spawn("ancestry.json", "uia", &title);
@@ -1001,10 +1036,10 @@ fn a_cut_walks_focused_element_of_another_process_is_not_taken() {
         read,
         &FocusText::NotRead,
         CallCounts {
-            uia: 1,
+            uia: 3,
             msaa: 0,
             window_messages: 1,
-            connections: 0,
+            connections: 1,
         },
     );
 
@@ -1825,84 +1860,83 @@ fn a_menu_opening_on_another_element_is_judged_by_its_own_window() {
     app.quit();
 }
 
-/// A windowless UIA focus whose read's time is up once its nearest window
-/// has been looked up is judged by NVDA's native check from its window's
-/// class alone, which needs no call (`FocusReader::native_window`): on no
-/// class list, it is read on, its keyboard focus taken from its event's
-/// cache, and reported from its event, its nearest window the one call
-/// made: no probe, which would be a window message, and nothing else once
-/// the time is up.
-fn a_focus_out_of_time_is_dropped_only_by_its_windows_class() {
-    let title = common::unique_title("mockapp-focus-kept-verdict");
-    let mut app = common::spawn("small.json", "uia", &title);
-    let client = Client::new(common::find_window(&title));
-    let outpost = OutpostUnderTest::new(&app);
-
-    app.send("set-focus slider1");
-    let _ = outpost.uia_focus(&client.focused());
-    app.send("set-focus btn1");
-    // The read's first reading of the time sets its budget's end; every
-    // later one is past it.
-    outpost.run_out_of_time_after(1);
-    let (judged, calls) = outpost.listener_read(&client.focused());
-    let Judged::Read(read) = judged else {
-        panic!("the listener did not read the focus: {judged:?}");
-    };
-    assert_eq!(read.snapshot.name.as_deref(), Some("Original Name"));
-    assert_eq!(
-        (calls.uia, calls.msaa, calls.window_messages),
-        (1, 0, 0),
-        "the nearest window alone: no probe, keyboard focus read, or read's call"
-    );
-
-    drop(outpost);
-    app.quit();
+/// Sets the process's UIA transaction timeout to `milliseconds`, through a
+/// client of its own, on the calling thread: a setting of the whole
+/// process (`books/dev/src/reference/uia-bugs.md`, "The connection timeout
+/// applies to the whole process"), which the listener's reader's calls
+/// then wait by.
+fn set_transaction_timeout(milliseconds: u32) {
+    let uia = Uia::new().expect("a UIA client");
+    let timeouts: IUIAutomation2 = uia.client().cast().expect("IUIAutomation2");
+    // SAFETY: setting a timeout takes a plain integer.
+    unsafe { timeouts.SetTransactionTimeout(milliseconds) }.expect("the timeout set");
 }
 
-/// A UIA focus out of time whose event's cache says its element did not
-/// have the keyboard focus is dropped, the cache standing in for NVDA's
-/// live read of it (`shouldAllowUIAFocusEvent`), which the time no longer
-/// allows: the nearest window is the one call made.
-fn a_focus_out_of_time_whose_event_says_it_lacked_the_keyboard_focus_is_dropped() {
-    let title = common::unique_title("mockapp-focus-out-of-time-unfocused");
-    let mut app = common::spawn("small.json", "uia", &title);
-    let client = Client::new(common::find_window(&title));
-    let outpost = OutpostUnderTest::new(&app);
+/// The process's UIA transaction timeout, in milliseconds.
+fn transaction_timeout() -> u32 {
+    let uia = Uia::new().expect("a UIA client");
+    let timeouts: IUIAutomation2 = uia.client().cast().expect("IUIAutomation2");
+    // SAFETY: reading a timeout returns a plain integer.
+    unsafe { timeouts.TransactionTimeout() }.expect("the transaction timeout")
+}
 
-    app.send("set-focus slider1");
-    let _ = outpost.uia_focus(&client.focused());
-    let button = client.named("Original Name");
-    // The read's first reading of the time sets its budget's end; every
-    // later one is past it.
-    outpost.run_out_of_time_after(1);
-    let (judged, calls) = outpost.listener_read(&button);
-    let Judged::Dropped(reason) = judged else {
-        panic!("the listener read a focus its event said was not focused: {judged:?}");
-    };
-    assert_eq!(
-        reason,
-        "its event says it did not have the keyboard focus, and its read's time was up"
-    );
-    assert_eq!(
-        (calls.uia, calls.msaa, calls.window_messages),
-        (1, 0, 0),
-        "the nearest window alone"
-    );
+/// How long a call mockapp holds is waited for before UIA's transaction
+/// timeout ends it, in the tests that hold one. UIA answers the read's
+/// later calls into the held window by the same timeout, so each of them
+/// fails too.
+const HELD_TIMEOUT_MS: u32 = 300;
 
-    drop(outpost);
-    app.quit();
+/// The listener's read of `element`, made with the process's transaction
+/// timeout at [`HELD_TIMEOUT_MS`] and mockapp holding its next provider
+/// call from the moment the read's call named `holding` begins, or from
+/// the read's start with none: the read, and the provider method mockapp
+/// held, once the usual timeout is restored and the call released.
+fn read_held(
+    app: common::MockApp,
+    outpost: &OutpostUnderTest,
+    element: &Cached<ListenerEvent>,
+    holding: Option<&'static str>,
+) -> (common::MockApp, Judged, String) {
+    let usual = transaction_timeout();
+    set_transaction_timeout(HELD_TIMEOUT_MS);
+    let app = Arc::new(Mutex::new(app));
+    match holding {
+        None => app.lock().unwrap_or_else(PoisonError::into_inner).hold(),
+        Some(holding) => {
+            let held = Arc::clone(&app);
+            outpost.listener_observes_calls(Arc::new(move |call| {
+                if call == holding {
+                    held.lock().unwrap_or_else(PoisonError::into_inner).hold();
+                }
+            }));
+        }
+    }
+    let (judged, _) = outpost.listener_read(element);
+    set_transaction_timeout(usual);
+    // The observer, which shares mockapp, is replaced by one that shares
+    // nothing, so mockapp is the test's alone again.
+    outpost.listener_observes_calls(Arc::new(|_| {}));
+    let mut app = Arc::try_unwrap(app)
+        .unwrap_or_else(|_| panic!("the observer let mockapp go"))
+        .into_inner()
+        .unwrap_or_else(PoisonError::into_inner);
+    let held = app.held();
+    app.release();
+    (app, judged, held)
 }
 
 /// A UIA focus whose live keyboard focus read fails by UIA's transaction
-/// timeout is let through, as NVDA lets any COM error of that read through
-/// (`shouldAllowUIAFocusEvent`), though its event's cache says it lacked the
-/// keyboard focus, and is reported from its event, as the focus with its
-/// chain completed by plain windows, once its read, still held, fails too. The sender is
-/// mockapp's window element, whose window's verdict an earlier focus kept,
-/// so that the live read is the read's first provider call, which mockapp
-/// holds past the timeout.
+/// timeout is let through to its walk, as NVDA lets any COM error of that
+/// read through (`shouldAllowUIAFocusEvent` answers true,
+/// `NVDAObjects/UIA/__init__.py` 1632 to 1637), though its event's cache
+/// says it lacked the keyboard focus. The walk's own read of it, into the
+/// same held window, times out too, so it is reported from its event's
+/// cache, its chain going on from its window's parent, read live by the
+/// outpost, as NVDA's object walks its parent by `Window._get_parent`. The
+/// sender is mockapp's window element, whose window's verdict an earlier
+/// focus kept, so that the live read is the read's first provider call,
+/// which mockapp holds past the timeout.
 fn a_focus_whose_keyboard_focus_read_times_out_is_reported() {
-    const TIMEOUT_MS: u32 = 300;
     let title = common::unique_title("mockapp-focus-read-timed-out");
     let mut app = common::spawn("small.json", "uia", &title);
     let hwnd = common::find_window(&title);
@@ -1925,17 +1959,8 @@ fn a_focus_whose_keyboard_focus_read_times_out_is_reported() {
         window.read().lacked_keyboard_focus(),
         "the event's cache says the window's element lacked the keyboard focus"
     );
-    let timeouts: IUIAutomation2 = client.uia.client().cast().expect("IUIAutomation2");
-    // SAFETY: reading a timeout returns a plain integer.
-    let usual = unsafe { timeouts.TransactionTimeout() }.expect("the transaction timeout");
-    // SAFETY: setting a timeout takes a plain integer.
-    unsafe { timeouts.SetTransactionTimeout(TIMEOUT_MS) }.expect("the timeout set");
-    app.hold();
-    let (judged, _) = outpost.listener_read(&window);
-    // SAFETY: as above.
-    unsafe { timeouts.SetTransactionTimeout(usual) }.expect("the timeout restored");
-    assert_eq!(app.held(), "GetPropertyValue");
-    app.release();
+    let (app, judged, held) = read_held(app, &outpost, &window, None);
+    assert_eq!(held, "GetPropertyValue", "the keyboard focus read was held");
     let Judged::Read(read) = judged else {
         panic!(
             "the listener did not report a focus whose keyboard focus read timed out: {judged:?}"
@@ -1943,8 +1968,7 @@ fn a_focus_whose_keyboard_focus_read_times_out_is_reported() {
     };
     // Reported whole as its event's cache gives it, its own class and
     // window included, with the Focused state, in its own window, its chain
-    // completed by plain windows from its parent window, the desktop, which
-    // is none of them.
+    // going on from its parent window, the desktop.
     assert_eq!(
         *read,
         UiaFocusRead {
@@ -1962,14 +1986,13 @@ fn a_focus_whose_keyboard_focus_read_times_out_is_reported() {
                 },
             },
             ancestors: Vec::new(),
-            ancestors_end: verbatim_model::protocol::AncestorsEnd::PlainFrom(
+            ancestors_end: verbatim_model::protocol::AncestorsEnd::ContinueFrom(
                 verbatim_uia::parent_window(hwnd.0 as isize)
             ),
             selected_child: None,
             value_from_selection: false,
             window: Some(hwnd.0 as isize),
             same_as_last: None,
-            bound_us: 2_000_000,
         }
     );
 
@@ -1977,35 +2000,115 @@ fn a_focus_whose_keyboard_focus_read_times_out_is_reported() {
     app.quit();
 }
 
-/// A UIA menu opening compared with the current focus, which it is not,
-/// asks the read's time before it looks up its windowless sender's nearest
-/// window, the comparison having been the read's first call: once the time
-/// is up, it is dropped after the comparison alone.
-fn a_menu_opening_out_of_time_after_its_comparison_is_dropped_before_its_window() {
-    let title = common::unique_title("mockapp-menu-opening-out-of-time");
+/// A UIA focus whose element is gone once its nearest window has been
+/// looked up, so that its live keyboard focus read fails, is let through to
+/// its walk, as NVDA's COM error rule lets a gone element through
+/// (`NVDAObjects/UIA/__init__.py` 1632 to 1637): its own read then fails
+/// too, and it is reported from its event's cache, its chain going on from
+/// the parent window of its nearest window, mockapp's, as NVDA's object
+/// walks its parent by `Window._get_parent`. mockapp's button is
+/// disconnected as the keyboard focus read begins.
+fn a_focus_whose_keyboard_focus_read_fails_is_walked() {
+    let title = common::unique_title("mockapp-focus-read-gone");
     let mut app = common::spawn("small.json", "uia", &title);
-    let client = Client::new(common::find_window(&title));
+    let hwnd = common::find_window(&title);
+    let client = Client::new(hwnd);
     let outpost = OutpostUnderTest::new(&app);
 
     app.send("set-focus btn1");
-    let _ = outpost.uia_focus(&client.focused());
-    app.send("set-focus slider1");
-    // The read's first reading of the time sets its budget's end and its
-    // second, before the comparison, is within it; every later one is past
-    // it.
-    outpost.run_out_of_time_after(2);
-    let (judged, calls) = outpost.listener_read_as(&client.focused(), FocusEvent::MenuOpened);
-    let Judged::Dropped(reason) = judged else {
-        panic!("the listener read a menu opening out of time: {judged:?}");
+    let button = client.focused();
+    let app = Arc::new(Mutex::new(app));
+    let gone = Arc::clone(&app);
+    outpost.listener_observes_calls(Arc::new(move |call| {
+        if call == "the focus's keyboard focus" {
+            gone.lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .send("disconnect btn1");
+        }
+    }));
+    let (judged, _) = outpost.listener_read(&button);
+    let Judged::Read(read) = judged else {
+        panic!("the listener did not report a gone focus let through: {judged:?}");
     };
     assert_eq!(
-        reason,
-        "its read ran out of time before its window was looked up"
+        (
+            read.hwnd,
+            read.snapshot.name.as_deref(),
+            read.snapshot.states.contains(State::Focused),
+            read.ancestors.len(),
+            read.ancestors_end,
+            read.window,
+        ),
+        (
+            0,
+            Some("Original Name"),
+            true,
+            0,
+            verbatim_model::protocol::AncestorsEnd::ContinueFrom(verbatim_uia::parent_window(
+                hwnd.0 as isize
+            )),
+            Some(hwnd.0 as isize),
+        ),
+        "reported from its event, going on from its nearest window's parent"
+    );
+
+    drop(outpost);
+    Arc::try_unwrap(app)
+        .unwrap_or_else(|_| panic!("the observer was dropped with the outpost"))
+        .into_inner()
+        .unwrap_or_else(PoisonError::into_inner)
+        .quit();
+}
+
+/// A UIA focus under the runtime id of the focus read before, whose
+/// earlier element's keyboard focus read fails by UIA's transaction
+/// timeout, is no repeat: the earlier element reads as gone, as NVDA
+/// catches its duplicate check's error and handles the event
+/// (`UIAHandler/__init__.py` 902 to 917), and the read goes on. Its later
+/// calls, into the same held window, time out too: the sender's keyboard
+/// focus lets it through, and it is reported from its event's cache, its
+/// chain going on from its nearest window's parent. mockapp holds the
+/// earlier element's read, the walk's first call, past the timeout, its
+/// first provider call for it being `FragmentRoot`.
+fn a_focus_whose_earlier_elements_read_times_out_is_read_as_a_new_element() {
+    let title = common::unique_title("mockapp-earlier-read-timed-out");
+    let mut app = common::spawn("small.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let client = Client::new(hwnd);
+    let outpost = OutpostUnderTest::new(&app);
+
+    app.send("set-focus btn1");
+    let button = client.focused();
+    let _ = outpost.uia_focus(&button);
+    let (app, judged, held) = read_held(
+        app,
+        &outpost,
+        &button,
+        Some("the previous focus's keyboard focus"),
     );
     assert_eq!(
-        (calls.uia, calls.msaa, calls.window_messages),
-        (1, 0, 0),
-        "the comparison, and no nearest window"
+        held, "FragmentRoot",
+        "the earlier element's keyboard focus read was held"
+    );
+    let Judged::Read(read) = judged else {
+        panic!("the listener did not read the focus: {judged:?}");
+    };
+    assert_eq!(
+        (
+            read.snapshot.name.as_deref(),
+            read.same_as_last,
+            read.ancestors.len(),
+            read.ancestors_end,
+        ),
+        (
+            Some("Original Name"),
+            Some(EarlierElement::Gone),
+            0,
+            verbatim_model::protocol::AncestorsEnd::ContinueFrom(verbatim_uia::parent_window(
+                hwnd.0 as isize
+            )),
+        ),
+        "read as a new element"
     );
 
     drop(outpost);
@@ -2862,175 +2965,6 @@ fn a_chain_cut_at_the_depth_limit_is_completed_by_its_windows() {
     app.quit();
 }
 
-/// A window a focus's walk has not reached by its bound is a plain window,
-/// named by its text (`docs/design/focus-pipeline-rework.md`, "A window's
-/// name, and the one fallback"), and the bound is measured from the
-/// event's observation: `MOVED_ON_GRACE`, 500 ms, for a focus whose
-/// top-level window is not that of the focus before it, and the read's
-/// budget, 2 seconds, otherwise. On the frozen observation clock, each
-/// focus waits before its read: "First", the listener's first focus,
-/// observed 500 ms before, reads none of its ancestors, and is reported
-/// below mockapp's window as a plain window named by its title, its list
-/// "Items" not reached; "Second", in the same window, observed 500 ms
-/// before, reads its whole chain, the window's UIA element named "Mockapp
-/// Tree Fixture" by its provider; and "First" again, observed 2 seconds
-/// before, reads none.
-fn a_window_not_reached_by_the_bound_is_named_by_its_text() {
-    let title = common::unique_title("mockapp-bound-text");
-    let mut app = common::spawn("tree.json", "uia", &title);
-    let hwnd = common::find_window(&title);
-    let client = Client::new(hwnd);
-    let outpost = OutpostUnderTest::on_frozen_time(&app);
-    let mut report = |id: &str, waited: Duration| {
-        app.send(&format!("set-focus {id}"));
-        let Judged::Read(read) = outpost.listener_read_after(&client.focused(), waited) else {
-            panic!("the listener dropped {id}");
-        };
-        let reported = outpost.focus(DeliveredFact::UiaFocusRead {
-            marker: 0,
-            read,
-            focus: true,
-        });
-        roles_and_names(&reported)
-            .into_iter()
-            .map(|(role, name)| (role, name.map(str::to_owned)))
-            .collect::<Vec<_>>()
-    };
-    let window = (Role::Pane, Some(title.clone()));
-    let first = (Role::ListItem, Some("First".to_owned()));
-    let uia_window = (Role::Window, Some("Mockapp Tree Fixture".to_owned()));
-    assert_eq!(
-        report("item1", Duration::from_millis(500)),
-        [window.clone(), first.clone()],
-        "a new window's focus at its bound of 500 ms"
-    );
-    assert_eq!(
-        report("item2", Duration::from_millis(500)),
-        [
-            uia_window,
-            (Role::List, Some("Items".to_owned())),
-            (Role::ListItem, Some("Second".to_owned()))
-        ],
-        "a focus in the same window within its bound of 2 seconds"
-    );
-    assert_eq!(
-        report("item1", Duration::from_secs(2)),
-        [window, first],
-        "a focus in the same window at its bound of 2 seconds"
-    );
-    drop(outpost);
-    app.quit();
-}
-
-/// How late the stuck step to "First"'s parent answers: far past the
-/// listener's bound, short of the five seconds after which Windows judges
-/// mockapp's window hung.
-const STUCK_PARENT_MS: u32 = 3000;
-
-/// A read that has passed NVDA's checks and whose step to a parent is
-/// stuck is published at its bound by the listener's watchdog, from what it
-/// has read, and its late result is discarded
-/// (`docs/design/focus-pipeline-rework.md`, "A window's name, and the one
-/// fallback"): with the listener's reading threads run here
-/// (`ReadingThreads`), their readers on the frozen clocks, so no read's
-/// walk reaches its bound between its calls and the watchdog's 500 ms run
-/// from each read's arming, the listener's first focus, "First", whose
-/// walk's first step to its parent answers 3 seconds late (`slow-parent`),
-/// is published before that step returns, with no ancestors read and its
-/// chain to be completed by plain windows from mockapp's window. Its
-/// thread is not abandoned: once the step returns, it reads the
-/// application's next focus, "Second", whose whole chain is its outcome,
-/// and nothing else is said of "First".
-fn a_stuck_parent_step_is_published_at_the_bound_and_its_late_result_discarded() {
-    use verbatim_listener::focus_read::ReadingThreads;
-    let title = common::unique_title("mockapp-bound-stuck");
-    let mut app = common::spawn("tree.json", "uia", &title);
-    let hwnd = common::find_window(&title);
-    let window = hwnd.0 as isize;
-    let client = Client::new(hwnd);
-    let frozen = std::time::Instant::now();
-    let frozen_us = common::now_us();
-    let (threads, outcomes) = ReadingThreads::new(
-        Box::new(move |reader| {
-            reader.set_clock(Arc::new(move || frozen));
-            reader.set_observation_clock(Arc::new(move || frozen_us));
-            // No window takes the foreground where the test runs.
-            reader.set_foreground_reader(Arc::new(move || window));
-        }),
-        Arc::new(verbatim_win32::window::readability),
-    );
-    let pid = Pid(app.pid());
-    app.send("set-focus item1");
-    let first = client.focused();
-    app.send(&format!("slow-parent item1 {STUCK_PARENT_MS} 1"));
-    let marker = threads
-        .push(pid, &first, frozen_us)
-        .expect("the focus's element kept for its read");
-    let (published, judged) = outcomes
-        .recv_timeout(common::WAIT_TIMEOUT)
-        .expect("the focus published");
-    let published_at = common::now_us();
-    app.stamped_line("slow-parent started");
-    let returned = app.stamped_line("slow-parent ended");
-    assert!(
-        published_at < returned,
-        "published at {published_at}, before the step returned at {returned}"
-    );
-    let Judged::Read(read) = judged else {
-        panic!("the stuck read was not published: {judged:?}");
-    };
-    assert_eq!(
-        (
-            published,
-            read.snapshot.name.as_deref(),
-            read.ancestors.len(),
-            read.ancestors_end
-        ),
-        (
-            marker,
-            Some("First"),
-            0,
-            verbatim_model::protocol::AncestorsEnd::PlainFrom(window)
-        ),
-        "the focus as read before its stuck step"
-    );
-    app.send("slow-parent item1 0");
-    app.send("set-focus item2");
-    let next = threads
-        .push(pid, &client.focused(), frozen_us)
-        .expect("the next focus's element kept for its read");
-    let (read_next, judged) = outcomes
-        .recv_timeout(common::WAIT_TIMEOUT)
-        .expect("the next focus read");
-    let Judged::Read(read) = judged else {
-        panic!("the next focus was not read: {judged:?}");
-    };
-    assert_eq!(
-        (
-            read_next,
-            read.snapshot.name.as_deref(),
-            read.ancestors
-                .iter()
-                .map(|ancestor| ancestor.snapshot.name.as_deref())
-                .collect::<Vec<_>>(),
-            read.ancestors_end
-        ),
-        (
-            next,
-            Some("Second"),
-            vec![Some("Items"), Some("Mockapp Tree Fixture")],
-            verbatim_model::protocol::AncestorsEnd::Top
-        ),
-        "the next focus, read by the same thread once the step returned"
-    );
-    drop(threads);
-    assert!(
-        outcomes.try_recv().is_err(),
-        "nothing more is said of either focus"
-    );
-    app.quit();
-}
-
 /// A hung application's window in a focus's ancestry is a plain window,
 /// named by its text, with no call, by NVDA's rule
 /// (`NVDAObjects/window/__init__.py` 85 to 97): a button in a child window
@@ -3326,14 +3260,6 @@ fn main() {
             a_chain_cut_at_the_depth_limit_is_completed_by_its_windows,
         ),
         (
-            "a_window_not_reached_by_the_bound_is_named_by_its_text",
-            a_window_not_reached_by_the_bound_is_named_by_its_text,
-        ),
-        (
-            "a_stuck_parent_step_is_published_at_the_bound_and_its_late_result_discarded",
-            a_stuck_parent_step_is_published_at_the_bound_and_its_late_result_discarded,
-        ),
-        (
             "a_listener_read_focus_is_reported_with_the_listeners_stamp",
             a_listener_read_focus_is_reported_with_the_listeners_stamp,
         ),
@@ -3390,20 +3316,16 @@ fn main() {
             a_menu_opening_on_another_element_is_judged_by_its_own_window,
         ),
         (
-            "a_focus_out_of_time_is_dropped_only_by_its_windows_class",
-            a_focus_out_of_time_is_dropped_only_by_its_windows_class,
-        ),
-        (
-            "a_focus_out_of_time_whose_event_says_it_lacked_the_keyboard_focus_is_dropped",
-            a_focus_out_of_time_whose_event_says_it_lacked_the_keyboard_focus_is_dropped,
-        ),
-        (
             "a_focus_whose_keyboard_focus_read_times_out_is_reported",
             a_focus_whose_keyboard_focus_read_times_out_is_reported,
         ),
         (
-            "a_menu_opening_out_of_time_after_its_comparison_is_dropped_before_its_window",
-            a_menu_opening_out_of_time_after_its_comparison_is_dropped_before_its_window,
+            "a_focus_whose_keyboard_focus_read_fails_is_walked",
+            a_focus_whose_keyboard_focus_read_fails_is_walked,
+        ),
+        (
+            "a_focus_whose_earlier_elements_read_times_out_is_read_as_a_new_element",
+            a_focus_whose_earlier_elements_read_times_out_is_read_as_a_new_element,
         ),
         (
             "a_menu_items_legacy_state_is_read_with_its_focus",
@@ -3466,12 +3388,16 @@ fn main() {
             a_focus_is_found_by_its_path_and_followed,
         ),
         (
+            "a_windowless_focus_with_a_failed_walk_is_found_from_its_nearest_window",
+            a_windowless_focus_with_a_failed_walk_is_found_from_its_nearest_window,
+        ),
+        (
             "a_focus_without_a_path_is_followed_from_its_next_focus_event",
             a_focus_without_a_path_is_followed_from_its_next_focus_event,
         ),
         (
-            "a_slow_windowless_text_focus_is_found_as_the_focused_element",
-            a_slow_windowless_text_focus_is_found_as_the_focused_element,
+            "a_windowless_text_focus_whose_walk_failed_is_found_as_the_focused_element",
+            a_windowless_text_focus_whose_walk_failed_is_found_as_the_focused_element,
         ),
         (
             "a_cut_walks_focused_element_with_another_runtime_id_is_not_taken",

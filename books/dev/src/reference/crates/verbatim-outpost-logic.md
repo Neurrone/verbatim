@@ -49,23 +49,22 @@ Public API:
 - A program's deadline is its entry's (`budget`): `HANDLING_DEADLINE`
   (11 seconds, `verbatim-model`'s) from when the program begins for every
   program but two, a focus read (`Query::ReadFocus`) and a listener read's
-  report, which have `BOUNDED_WALK_DEADLINE` (13 seconds); or, for a shell
+  report, which have `FOCUS_READ_DEADLINE` (13 seconds); or, for a shell
   items or position query, the `answer_by_us` the query carries, on the
   run's shared clock, so a query that waited behind other work has only
   what is left of it. One reached at or after its `answer_by_us` is too
   late: the reducer answers it at once with nothing read, an empty list or
   no candidates and incomplete, and dispatches no program, which would
   only be abandoned at once. A test's handling deadline
-  (`Input::HandlingDeadline`) takes `HANDLING_DEADLINE`'s place, and
-  `SAME_WINDOW_BOUND` more for the two. A query's `RequestId` is
+  (`Input::HandlingDeadline`) takes `HANDLING_DEADLINE`'s place, and the
+  two seconds `FOCUS_READ_DEADLINE` adds to it more for the two. A query's `RequestId` is
   stored and echoed in its reply, and decides nothing.
 - The program in flight is the reducer's work in flight
   (`InFlight<Current>`): its request, deadline and moved-on rule are
   kept there, and the reducer keeps beside them only the query the
   program answers, its focus group try, whether it is deferred work, the
-  windows destroyed while it runs and its hang mark. The outpost arms no
-  walk in the work in flight, so nothing of a program is ever published
-  or claimed. The reducer calls it where it judges: a tick and the asks'
+  windows destroyed while it runs and its hang mark. A program is
+  abandoned at its deadline or as moved on, never for a hang. The reducer calls it where it judges: a tick and the asks'
   answers; a foreground fact judges nothing. The program's window is
   checked at the grace's end and every half second after for a program
   with a window, until its deadline. A program is abandoned only at its

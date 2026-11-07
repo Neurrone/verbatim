@@ -882,22 +882,6 @@ impl Uia {
         container: &Live,
         request: &Request<S>,
     ) -> windows::core::Result<Option<Cached<S>>> {
-        self.selected_within(container, request, &|| false)
-    }
-
-    /// [`selected`](Self::selected) within the caller's time: `out_of_time`
-    /// is asked before each call after the first, and the answer is `None`,
-    /// the selected child unknown, once it says the time is up.
-    ///
-    /// # Errors
-    ///
-    /// As [`selected`](Self::selected).
-    pub fn selected_within<S: Shape>(
-        &self,
-        container: &Live,
-        request: &Request<S>,
-        out_of_time: &dyn Fn() -> bool,
-    ) -> windows::core::Result<Option<Cached<S>>> {
         let selection = self.request_fixed::<SelectionContainer>()?;
         let Some(container) = unanswered_is_error(container.refresh(&selection))? else {
             return Ok(None);
@@ -910,9 +894,6 @@ impl Uia {
                 let Some(pattern) = read.selection else {
                     return Ok(None);
                 };
-                if out_of_time() {
-                    return Ok(None);
-                }
                 unanswered_is_error(current_selection(&pattern))?
                     .and_then(|selection| selection.into_iter().next())
             }
@@ -920,9 +901,6 @@ impl Uia {
         let Some(first) = first else {
             return Ok(None);
         };
-        if out_of_time() {
-            return Ok(None);
-        }
         unanswered_is_error(Live::new(first).refresh(request))
     }
 

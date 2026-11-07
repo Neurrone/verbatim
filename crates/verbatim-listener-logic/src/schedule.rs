@@ -1,7 +1,7 @@
 //! The focus listener's read scheduler as a pure transition
 //! (`books/dev/src/explanation/design/ownership.md`): which reading
-//! thread reads which application's UIA event, when a read is abandoned or
-//! published at its bound, when an event waiting behind abandoned reads is
+//! thread reads which application's UIA event, when a read is abandoned,
+//! when an event waiting behind abandoned reads is
 //! dropped, which idle waiters may run, and whether a menu opening's
 //! reading thread may compare it with its own last read.
 //!
@@ -9,18 +9,16 @@
 //! microseconds on the shell's monotonic clock, and returns the
 //! [`ScheduleEffect`]s, in the order the shell applies them under its lock.
 //! Each application's read under way is its work in flight
-//! ([`InFlight`], `books/dev/src/reference/crates/verbatim-reader-rules.md`), which decides its abandonment, its
-//! publication at its bound and the half-second judgement of whether its
-//! window is hung and otherwise whether the user has moved on; what it
-//! needs of Windows it asks by an effect
-//! ([`ScheduleEffect::Judge`], [`ScheduleEffect::Publish`]), which
-//! the shell answers by an input once the step's other effects are
-//! applied, before it lets its lock go. The schedule also owns the
+//! ([`InFlight`], `books/dev/src/reference/crates/verbatim-reader-rules.md`), which decides its abandonment, at
+//! its deadline or by the half-second judgement of whether the user has
+//! moved on; what it needs of Windows it asks by an effect
+//! ([`ScheduleEffect::Judge`]), which the shell answers by an input once
+//! the step's other effects are applied, before it lets its lock go. The schedule also owns the
 //! watchdog's alarm: after every step it sets it to the soonest time
 //! anything is due. The schedule makes no call, reads no clock and holds
 //! no lock: the shell (`verbatim_listener::focus_read::Readers`) keeps the
 //! lock, the threads, their condition variables, the alarm's timer, the
-//! idle waiters' closures and each read's progress. So every ordering of
+//! idle waiters' closures and each read's window. So every ordering of
 //! inputs is a replay test of this module.
 //!
 //! The menu end's grace is a second pure transition here,
@@ -37,10 +35,9 @@ use verbatim_reader_rules::in_flight::{Abandoned, Ask, Decision, InFlight, Reaso
 pub use verbatim_reader_rules::in_flight::Request;
 
 use crate::focus::{
-    ABANDONED_LIMIT, FocusEvent, Judged, MOVED_ON, Meta, NOT_IN_TIME, REPLACED, STOPPED_RESPONDING,
-    WAITED_TOO_LONG,
+    ABANDONED_LIMIT, FocusEvent, Judged, MOVED_ON, Meta, NOT_IN_TIME, REPLACED, WAITED_TOO_LONG,
 };
-use verbatim_model::protocol::{EventTiming, UiaFocusRead};
+use verbatim_model::protocol::EventTiming;
 
 /// Why an event is dropped when the listener is shutting down.
 const SHUTTING_DOWN: &str = "the listener is shutting down";
@@ -104,20 +101,9 @@ pub enum ScheduleInput<J> {
         /// Its window.
         window: Window,
     },
-    /// `pid`'s read `request` passed NVDA's checks, its bound at `bound`,
-    /// in the schedule's microseconds.
-    Armed {
-        /// The read's application.
-        pid: Pid,
-        /// The read.
-        request: Request,
-        /// Its bound.
-        bound: u64,
-    },
     /// The shell's answer to [`ScheduleEffect::Judge`]: why the read is
-    /// abandoned, [`Reason::Hung`] when its window is hung or ghosted,
-    /// tested first, else [`Reason::MovedOn`] when the user has left its
-    /// window for another thread of its application; `None` when it stays.
+    /// abandoned, [`Reason::MovedOn`] when the user has left its window for
+    /// another thread of its application; `None` when it stays.
     Judged {
         /// The read's application.
         pid: Pid,
@@ -125,20 +111,6 @@ pub enum ScheduleInput<J> {
         request: Request,
         /// The verdict.
         verdict: Option<Reason>,
-    },
-    /// The shell's answer to [`ScheduleEffect::Publish`]: the read as
-    /// published from its progress, none when its walk had ended, and its
-    /// top-level window, if any.
-    Published {
-        /// The read's application.
-        pid: Pid,
-        /// The read.
-        request: Request,
-        /// The read as published, if its progress was there to publish.
-        read: Option<Box<UiaFocusRead>>,
-        /// The abandonment the ask carried, made once the publication is
-        /// sent.
-        then_abandon: Option<Reason>,
     },
     /// A foreground event reached the listener's hook, of top-level window
     /// `top_level`; `running_tops` is, for each application with a read
@@ -243,9 +215,8 @@ pub enum ScheduleEffect<J> {
     RunIdle(u64),
     /// The event the asking thread reads next.
     Job(Job<J>),
-    /// Judge `window`, the window of `pid`'s read `request`: whether it is
-    /// hung or ghosted, tested first, and otherwise whether the user has
-    /// left it for another thread of its application; answered by
+    /// Judge `window`, the window of `pid`'s read `request`: whether the
+    /// user has left it for another thread of its application; answered by
     /// [`ScheduleInput::Judged`] once the step's other effects are applied.
     Judge {
         /// The read's application.
@@ -255,19 +226,6 @@ pub enum ScheduleEffect<J> {
         /// Its window.
         window: Window,
     },
-    /// Publish `pid`'s read `request` at its bound from its progress, read
-    /// and not taken: answered by [`ScheduleInput::Published`], which
-    /// carries `then_abandon` back, once the step's other effects are
-    /// applied.
-    Publish {
-        /// The read's application.
-        pid: Pid,
-        /// The read.
-        request: Request,
-        /// Why the read is abandoned once published, when an abandonment
-        /// asked for the publication.
-        then_abandon: Option<Reason>,
-    },
 }
 
 /// The event a reading thread reads next.
@@ -275,7 +233,7 @@ pub enum ScheduleEffect<J> {
 pub struct Job<J> {
     /// The event's application.
     pub pid: Pid,
-    /// The read, which its learned window, its bound and its return name.
+    /// The read, which its learned window and its return name.
     pub request: Request,
     /// What the callback knew of it.
     pub meta: Meta,
@@ -284,9 +242,6 @@ pub struct Job<J> {
     /// The window the event is of as far as its cache says, which the
     /// moved-on rule judges its read by.
     pub window: RuleWindow,
-    /// Whether the focus event queued before it was another
-    /// application's.
-    pub after_elsewhere: bool,
     /// Its place in the order every event was queued in, and the place of
     /// the newest event that moved away from its application when it was
     /// queued ([`QueuePlace`]).
@@ -318,7 +273,6 @@ impl QueuePlace {
 /// One event waiting for its read.
 struct Queued<J> {
     place: u64,
-    after_elsewhere: bool,
     left_at: u64,
     kind: FocusEvent,
     key: Option<Vec<i32>>,
@@ -412,8 +366,6 @@ pub struct Schedule<J> {
     queued: u64,
     /// The idle waiters, each with the count of events queued when it came.
     idle_waiters: VecDeque<(u64, u64)>,
-    /// The application of the last focus or menu opening queued.
-    last_focus: Option<Pid>,
     /// When the watchdog's alarm is set to go off.
     alarm_due: Option<u64>,
 }
@@ -425,8 +377,7 @@ fn micros(duration: Duration) -> u64 {
 
 impl<J> Schedule<J> {
     /// A schedule abandoning a read past `deadline`, or past the moved-on
-    /// grace once its window is judged hung or the user has moved on from
-    /// it.
+    /// grace once the user has moved on from its window.
     #[must_use]
     pub fn new(deadline: Duration) -> Self {
         Self {
@@ -435,7 +386,6 @@ impl<J> Schedule<J> {
             stopping: false,
             queued: 0,
             idle_waiters: VecDeque::new(),
-            last_focus: None,
             alarm_due: None,
         }
     }
@@ -447,20 +397,17 @@ impl<J> Schedule<J> {
     }
 
     /// The markers of the events it holds whose outcome is still to be
-    /// sent, in order: those waiting, and those being read and not
-    /// published at their bound.
+    /// sent, in order: those waiting, and those being read.
     #[must_use]
     pub fn markers(&self) -> Vec<u64> {
         let mut markers: Vec<u64> = self
             .apps
             .values()
             .flat_map(|app| {
-                app.queue.iter().map(|queued| queued.meta.marker).chain(
-                    app.flight
-                        .running()
-                        .filter(|(_, _, published)| !published)
-                        .map(|(_, running, _)| running.meta.marker),
-                )
+                app.queue
+                    .iter()
+                    .map(|queued| queued.meta.marker)
+                    .chain(app.flight.running().map(|(_, running)| running.meta.marker))
             })
             .collect();
         markers.sort_unstable();
@@ -491,13 +438,14 @@ impl<J> Schedule<J> {
     #[must_use]
     pub fn focus_pending(&self, pid: Option<Pid>) -> bool {
         self.apps.iter().any(|(owner, app)| {
-            app.flight.running().is_some_and(|(_, running, published)| {
-                running.kind == FocusEvent::Focus && !published
-            }) || (app.threaded || Some(*owner) == pid)
-                && app
-                    .queue
-                    .iter()
-                    .any(|queued| queued.kind == FocusEvent::Focus)
+            app.flight
+                .running()
+                .is_some_and(|(_, running)| running.kind == FocusEvent::Focus)
+                || (app.threaded || Some(*owner) == pid)
+                    && app
+                        .queue
+                        .iter()
+                        .any(|queued| queued.kind == FocusEvent::Focus)
         })
     }
 
@@ -548,15 +496,6 @@ impl<J> Schedule<J> {
                     self.decided(&mut effects, now, pid, decision);
                 }
             }
-            ScheduleInput::Armed {
-                pid,
-                request,
-                bound,
-            } => {
-                if let Some(app) = self.apps.get_mut(&pid) {
-                    app.flight.armed(request, bound);
-                }
-            }
             ScheduleInput::Judged {
                 pid,
                 request,
@@ -567,12 +506,6 @@ impl<J> Schedule<J> {
                     self.decided(&mut effects, now, pid, decision);
                 }
             }
-            ScheduleInput::Published {
-                pid,
-                request,
-                read,
-                then_abandon,
-            } => self.published(&mut effects, now, (pid, request), read, then_abandon),
             ScheduleInput::Foreground {
                 top_level,
                 running_tops,
@@ -665,10 +598,6 @@ impl<J> Schedule<J> {
         }
         self.queued = self.queued.saturating_add(1);
         let place = self.queued;
-        let after_elsewhere = match kind {
-            FocusEvent::Focus | FocusEvent::MenuOpened => self.last_focus.replace(pid) != Some(pid),
-            FocusEvent::Selection | FocusEvent::Notification => false,
-        };
         // Another application's focus or menu opening moves away from
         // every other application's last read.
         if matches!(kind, FocusEvent::Focus | FocusEvent::MenuOpened) {
@@ -679,7 +608,6 @@ impl<J> Schedule<J> {
         };
         app.queue.push_back(Queued {
             place,
-            after_elsewhere,
             left_at: app.left_at,
             kind,
             key,
@@ -757,7 +685,6 @@ impl<J> Schedule<J> {
                 meta: queued.meta,
                 work: queued.job,
                 window: queued.window,
-                after_elsewhere: queued.after_elsewhere,
                 queue: QueuePlace {
                     place: queued.place,
                     left_at: queued.left_at,
@@ -789,18 +716,11 @@ impl<J> Schedule<J> {
             if read && top.is_some() {
                 app.last_top = top;
             }
-            match app.flight.end(request) {
-                Some((_, true)) => {
-                    tracing::info!(
-                        %pid,
-                        "a UIA focus read published at its bound returned; its result is discarded"
-                    );
-                }
-                Some((_, false)) => effects.push(ScheduleEffect::Outcome { pid, meta, judged }),
-                None => {
-                    tracing::error!(%pid, "a read returned that its thread was not reading");
-                    debug_assert!(false, "a read returned that its thread was not reading");
-                }
+            if app.flight.end(request).is_some() {
+                effects.push(ScheduleEffect::Outcome { pid, meta, judged });
+            } else {
+                tracing::error!(%pid, "a read returned that its thread was not reading");
+                debug_assert!(false, "a read returned that its thread was not reading");
             }
             self.wake_idle_waiters(effects);
             return;
@@ -833,8 +753,8 @@ impl<J> Schedule<J> {
             .apps
             .values()
             .filter_map(|app| match app.flight.running() {
-                Some((_, running, false)) => Some(running.place),
-                _ => app.queue.front().map(|queued| queued.place),
+                Some((_, running)) => Some(running.place),
+                None => app.queue.front().map(|queued| queued.place),
             })
             .min();
         while let Some(&(before, waiter)) = self.idle_waiters.front()
@@ -892,20 +812,12 @@ impl<J> Schedule<J> {
             Decision::Ask(Ask::Judge { window: None, .. }) => {
                 debug_assert!(false, "a read judged with no window");
             }
-            Decision::Ask(Ask::Publish {
-                request,
-                then_abandon,
-            }) => effects.push(ScheduleEffect::Publish {
-                pid,
-                request,
-                then_abandon,
-            }),
             Decision::Abandon(abandoned) => self.abandon(effects, now, pid, abandoned),
         }
     }
 
     /// `pid`'s read was abandoned: its thread is in charge no more, its
-    /// event is dropped unless it was published, and a new thread takes
+    /// event is dropped, and a new thread takes
     /// the events waiting, unless the application's abandoned threads are
     /// at the limit.
     fn abandon(
@@ -921,7 +833,6 @@ impl<J> Schedule<J> {
         let Abandoned {
             reason,
             item: running,
-            published,
             ..
         } = abandoned;
         effects.push(ScheduleEffect::Unwatch { pid });
@@ -944,20 +855,13 @@ impl<J> Schedule<J> {
                 tracing::warn!(%pid, abandoned = count, "a UIA focus read did not return in time; its thread is abandoned");
                 NOT_IN_TIME
             }
-            Reason::Hung => {
-                tracing::warn!(%pid, abandoned = count, "a UIA focus read's window stopped responding; its thread is abandoned");
-                STOPPED_RESPONDING
-            }
         };
         let waiting = !app.queue.is_empty();
-        // A read published at its bound has had its outcome sent.
-        if !published {
-            effects.push(ScheduleEffect::Outcome {
-                pid,
-                meta: running.meta,
-                judged: Judged::Dropped(why),
-            });
-        }
+        effects.push(ScheduleEffect::Outcome {
+            pid,
+            meta: running.meta,
+            judged: Judged::Dropped(why),
+        });
         if waiting {
             if count >= ABANDONED_LIMIT {
                 tracing::warn!(
@@ -969,50 +873,6 @@ impl<J> Schedule<J> {
             }
         }
         self.wake_idle_waiters(effects);
-    }
-
-    /// The shell's answer to a publication asked of `pid`'s read
-    /// `request`: the read, when its progress was there, is sent as its
-    /// outcome while the read is under way and not published, which
-    /// publishes it. Then the work in flight makes the abandonment the ask
-    /// carried, or, with none, judges what is left at `now`.
-    fn published(
-        &mut self,
-        effects: &mut Vec<ScheduleEffect<J>>,
-        now: u64,
-        (pid, request): (Pid, Request),
-        read: Option<Box<UiaFocusRead>>,
-        then_abandon: Option<Reason>,
-    ) {
-        let Some(app) = self.apps.get_mut(&pid) else {
-            return;
-        };
-        let meta = app
-            .flight
-            .running()
-            .filter(|(running, ..)| app.flight.accepts(*running) && *running == request)
-            .map(|(_, running, _)| running.meta);
-        let got = match (meta, read) {
-            (Some(meta), Some(read)) => {
-                tracing::info!(
-                    %pid,
-                    ancestors = read.ancestors.len(),
-                    "a UIA focus read's call was still under way at its bound; the focus is published from what it read"
-                );
-                effects.push(ScheduleEffect::Outcome {
-                    pid,
-                    meta,
-                    judged: Judged::Read(read),
-                });
-                true
-            }
-            _ => false,
-        };
-        let decision = app.flight.published(request, got, then_abandon, now);
-        if got {
-            self.wake_idle_waiters(effects);
-        }
-        self.decided(effects, now, pid, decision);
     }
 
     /// Drops every event of `pid`'s waiting with no thread to read it, in
@@ -1224,6 +1084,7 @@ mod generated;
 #[cfg(test)]
 mod tests {
     use verbatim_model::TraceId;
+    use verbatim_model::protocol::UiaFocusRead;
 
     use super::*;
 
@@ -1291,7 +1152,6 @@ mod tests {
         RunIdle(u64),
         Job(u32, u64, QueuePlace),
         Judge(u32, Request),
-        Publish(u32, Request, Option<Reason>),
     }
 
     fn seen(effects: Vec<ScheduleEffect<u64>>) -> Vec<Seen> {
@@ -1329,11 +1189,6 @@ mod tests {
                     assert_eq!(window, WINDOW);
                     Seen::Judge(pid.0, request)
                 }
-                ScheduleEffect::Publish {
-                    pid,
-                    request,
-                    then_abandon,
-                } => Seen::Publish(pid.0, request, then_abandon),
             })
             .collect()
     }
@@ -1376,7 +1231,6 @@ mod tests {
             value_from_selection: false,
             window: None,
             same_as_last: None,
-            bound_us: 2_000_000,
         })
     }
 
@@ -1389,30 +1243,6 @@ mod tests {
                 _ => None,
             })
             .unwrap_or_else(|| panic!("no job of {marker}: {effects:?}"))
-    }
-
-    /// A job of `pid`'s event `marker`, queued at `place` after its
-    /// application was last moved away from at `left_at`.
-    fn job(pid: u32, marker: u64, place: u64, left_at: u64) -> Seen {
-        Seen::Job(pid, marker, QueuePlace { place, left_at })
-    }
-
-    /// The effects of `input` at `now`, and whether each job among them
-    /// is after another application's focus, in order.
-    fn step_jobs(
-        schedule: &mut Schedule<u64>,
-        input: ScheduleInput<u64>,
-        now: u64,
-    ) -> (Vec<Seen>, Vec<bool>) {
-        let effects = schedule.step(input, now);
-        let after_elsewhere = effects
-            .iter()
-            .filter_map(|effect| match effect {
-                ScheduleEffect::Job(job) => Some(job.after_elsewhere),
-                _ => None,
-            })
-            .collect();
-        (seen(effects), after_elsewhere)
     }
 
     /// Takes application 1's two reads past their deadlines, abandoning
@@ -1595,179 +1425,6 @@ mod tests {
                 CANCEL,
             ]
         );
-    }
-
-    /// A read whose walk is armed is published before it is abandoned when
-    /// the user moves on: its outcome is the read, no drop follows, and its
-    /// late return sends nothing.
-    #[test]
-    fn a_read_is_published_before_it_is_abandoned_for_moving_on() {
-        let mut schedule = schedule();
-        let _ = step(&mut schedule, focus(1, 1), 0);
-        let _ = step(&mut schedule, next(1, 1), 0);
-        let asked = request(1, 1);
-        assert_eq!(
-            step(
-                &mut schedule,
-                ScheduleInput::Armed {
-                    pid: Pid(1),
-                    request: asked,
-                    bound: 2_000_000,
-                },
-                10,
-            ),
-            []
-        );
-        let _ = step(&mut schedule, ScheduleInput::Tick, GRACE);
-        assert_eq!(
-            step(
-                &mut schedule,
-                ScheduleInput::Judged {
-                    pid: Pid(1),
-                    request: asked,
-                    verdict: Some(Reason::MovedOn),
-                },
-                GRACE,
-            ),
-            [Seen::Publish(1, asked, Some(Reason::MovedOn))]
-        );
-        assert_eq!(schedule.markers(), [1], "not yet published");
-        assert_eq!(
-            step(
-                &mut schedule,
-                ScheduleInput::Published {
-                    pid: Pid(1),
-                    request: asked,
-                    read: Some(a_read()),
-                    then_abandon: Some(Reason::MovedOn),
-                },
-                GRACE,
-            ),
-            [Seen::Outcome(1, 1, "read"), Seen::Unwatch(1), CANCEL]
-        );
-        assert_eq!(schedule.markers(), Vec::<u64>::new());
-        assert_eq!(
-            step(&mut schedule, returned(1, asked, 1), 3_000_000),
-            [Seen::ForgetLast]
-        );
-    }
-
-    /// A read judged hung is abandoned for that reason as a moved-on one
-    /// is: one whose walk is armed is published first, its outcome the
-    /// read and no drop after it; one still in NVDA's checks is dropped
-    /// because its window stopped responding. Each time a new thread takes
-    /// the application's next event, and the abandoned thread counts
-    /// toward the abandoned limit, its late return sending nothing.
-    #[test]
-    fn a_read_judged_hung_is_abandoned_published_first_when_armed() {
-        let mut schedule = schedule();
-        let _ = step(&mut schedule, focus(1, 1), 0);
-        let _ = step(&mut schedule, next(1, 1), 0);
-        let armed = request(1, 1);
-        let _ = step(
-            &mut schedule,
-            ScheduleInput::Armed {
-                pid: Pid(1),
-                request: armed,
-                bound: 2_000_000,
-            },
-            10,
-        );
-        let _ = step(&mut schedule, focus(1, 2), 20);
-        assert_eq!(
-            step(&mut schedule, ScheduleInput::Tick, GRACE),
-            [Seen::Judge(1, armed), set(2 * GRACE)]
-        );
-        let hung = |request| ScheduleInput::Judged {
-            pid: Pid(1),
-            request,
-            verdict: Some(Reason::Hung),
-        };
-        assert_eq!(
-            step(&mut schedule, hung(armed), GRACE),
-            [Seen::Publish(1, armed, Some(Reason::Hung))]
-        );
-        assert_eq!(
-            step(
-                &mut schedule,
-                ScheduleInput::Published {
-                    pid: Pid(1),
-                    request: armed,
-                    read: Some(a_read()),
-                    then_abandon: Some(Reason::Hung),
-                },
-                GRACE,
-            ),
-            [
-                Seen::Outcome(1, 1, "read"),
-                Seen::Unwatch(1),
-                Seen::Spawn(1, 3, false),
-                CANCEL,
-            ]
-        );
-
-        let _ = step(&mut schedule, next(1, 3), GRACE);
-        let unarmed = request(3, 2);
-        assert_eq!(
-            step(&mut schedule, ScheduleInput::Tick, 2 * GRACE),
-            [Seen::Judge(1, unarmed), set(3 * GRACE)]
-        );
-        assert_eq!(
-            step(&mut schedule, hung(unarmed), 2 * GRACE),
-            [
-                Seen::Unwatch(1),
-                Seen::Outcome(1, 2, STOPPED_RESPONDING),
-                CANCEL,
-            ],
-            "nothing waits, so no thread is started"
-        );
-        assert_eq!(schedule.apps[&Pid(1)].abandoned, 2, "both threads count");
-        assert_eq!(
-            step(&mut schedule, returned(1, armed, 1), 3 * GRACE),
-            [Seen::ForgetLast]
-        );
-    }
-
-    /// A walk under way at its bound is published, its read's outcome sent
-    /// then; its return sends nothing more, and its thread reads on.
-    #[test]
-    fn a_walk_under_way_at_its_bound_is_published_and_its_return_discarded() {
-        let mut schedule = schedule();
-        let _ = step(&mut schedule, focus(1, 1), 0);
-        let _ = step(&mut schedule, next(1, 1), 0);
-        let asked = request(1, 1);
-        let _ = step(
-            &mut schedule,
-            ScheduleInput::Armed {
-                pid: Pid(1),
-                request: asked,
-                bound: 300_000,
-            },
-            10,
-        );
-        assert_eq!(
-            step(&mut schedule, ScheduleInput::Tick, 300_000),
-            [Seen::Publish(1, asked, None), set(GRACE)]
-        );
-        assert_eq!(
-            step(
-                &mut schedule,
-                ScheduleInput::Published {
-                    pid: Pid(1),
-                    request: asked,
-                    read: Some(a_read()),
-                    then_abandon: None,
-                },
-                300_000,
-            ),
-            [Seen::Outcome(1, 1, "read")]
-        );
-        assert!(!schedule.focus_pending(None), "published");
-        assert_eq!(
-            step(&mut schedule, returned(1, asked, 1), 400_000),
-            [CANCEL]
-        );
-        assert!(schedule.in_charge(Pid(1), 1), "its thread reads on");
     }
 
     /// Events waiting at the limit are dropped at the application's bound,
@@ -2136,118 +1793,8 @@ mod tests {
         assert!(schedule.apps.is_empty(), "let go");
     }
 
-    /// A job is after another application's focus when the focus or menu
-    /// opening queued before it, of any application, was another's.
-    #[test]
-    fn a_job_is_after_elsewhere_only_after_another_applications_focus() {
-        let mut schedule = schedule();
-        assert_eq!(
-            step(&mut schedule, focus(1, 1), 0),
-            [Seen::Spawn(1, 1, false)]
-        );
-        assert_eq!(
-            step_jobs(&mut schedule, next(1, 1), 0),
-            (vec![job(1, 1, 1, 0), set(GRACE)], vec![true]),
-            "the first focus"
-        );
-        assert_eq!(
-            step(&mut schedule, returned(1, request(1, 1), 1), 0),
-            [Seen::Outcome(1, 1, "read"), CANCEL]
-        );
-        assert_eq!(
-            step(&mut schedule, focus(1, 2), 0),
-            [Seen::Wake(Waking::Thread(Pid(1)))]
-        );
-        assert_eq!(
-            step_jobs(&mut schedule, next(1, 1), 0),
-            (vec![job(1, 2, 2, 0), set(GRACE)], vec![false]),
-            "a focus of the same application"
-        );
-        assert_eq!(
-            step(&mut schedule, focus(2, 3), 0),
-            [Seen::Spawn(2, 1, false)]
-        );
-        assert_eq!(
-            step_jobs(&mut schedule, next(2, 1), 0),
-            (vec![job(2, 3, 3, 0)], vec![true]),
-            "another application's focus"
-        );
-    }
-
-    /// A menu opening counts as a focus for whether a job is after
-    /// another application's, both its own job and the jobs after it, and
-    /// a selection or a notification counts as neither.
-    #[test]
-    fn a_menu_opening_counts_for_after_elsewhere_and_a_selection_or_notification_does_not() {
-        let mut schedule = schedule();
-        let _ = step(&mut schedule, focus(1, 1), 0);
-        let _ = step(&mut schedule, next(1, 1), 0);
-        let _ = step(&mut schedule, returned(1, request(1, 1), 1), 0);
-        assert_eq!(
-            step(&mut schedule, push(2, 2, FocusEvent::Selection), 0),
-            [Seen::Spawn(2, 1, false)]
-        );
-        assert_eq!(
-            step_jobs(&mut schedule, next(2, 1), 0),
-            (vec![job(2, 2, 2, 0), set(GRACE)], vec![false]),
-            "a selection after another application's focus"
-        );
-        assert_eq!(
-            step(&mut schedule, returned(2, request(1, 1), 2), 0),
-            [Seen::Outcome(2, 2, "read"), CANCEL]
-        );
-        assert_eq!(
-            step(&mut schedule, push(2, 3, FocusEvent::Notification), 0),
-            [Seen::Wake(Waking::Thread(Pid(2)))]
-        );
-        assert_eq!(
-            step_jobs(&mut schedule, next(2, 1), 0),
-            (vec![job(2, 3, 3, 0), set(GRACE)], vec![false]),
-            "a notification after another application's focus"
-        );
-        assert_eq!(
-            step(&mut schedule, returned(2, request(1, 2), 3), 0),
-            [Seen::Outcome(2, 3, "read"), CANCEL]
-        );
-        assert_eq!(
-            step(&mut schedule, focus(1, 4), 0),
-            [Seen::Wake(Waking::Thread(Pid(1)))]
-        );
-        assert_eq!(
-            step_jobs(&mut schedule, next(1, 1), 0),
-            (vec![job(1, 4, 4, 0), set(GRACE)], vec![false]),
-            "a focus after its own application's, a selection and a notification between"
-        );
-        assert_eq!(
-            step(&mut schedule, returned(1, request(1, 2), 4), 0),
-            [Seen::Outcome(1, 4, "read"), CANCEL]
-        );
-        assert_eq!(
-            step(&mut schedule, push(2, 5, FocusEvent::MenuOpened), 0),
-            [Seen::Wake(Waking::Thread(Pid(2)))]
-        );
-        assert_eq!(
-            step_jobs(&mut schedule, next(2, 1), 0),
-            (vec![job(2, 5, 5, 4), set(GRACE)], vec![true]),
-            "a menu opening after another application's focus"
-        );
-        assert_eq!(
-            step(&mut schedule, returned(2, request(1, 3), 5), 0),
-            [Seen::Outcome(2, 5, "read"), CANCEL]
-        );
-        assert_eq!(
-            step(&mut schedule, focus(1, 6), 0),
-            [Seen::Wake(Waking::Thread(Pid(1)))]
-        );
-        assert_eq!(
-            step_jobs(&mut schedule, next(1, 1), 0),
-            (vec![job(1, 6, 6, 5), set(GRACE)], vec![true]),
-            "a focus after another application's menu opening"
-        );
-    }
-
-    /// A focus is pending while one is read and not published, but a menu
-    /// opening's read is not one.
+    /// A focus is pending while one is read, but a menu opening's read is
+    /// not one.
     #[test]
     fn a_focus_is_pending_while_a_focus_is_read_and_not_while_a_menu_opening_is() {
         let mut schedule = schedule();

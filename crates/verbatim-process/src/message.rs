@@ -561,7 +561,6 @@ mod tests {
             value_from_selection: false,
             window: Some(0x40),
             same_as_last: Some(verbatim_model::EarlierElement::Gone),
-            bound_us: 500_000,
         };
         let fact = ListenerFact {
             pid: Pid(1234),

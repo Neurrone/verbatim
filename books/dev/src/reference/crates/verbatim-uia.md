@@ -112,10 +112,8 @@ call waits up to `UIA_CONNECTION_TIMEOUT` to connect and
   for a provider without it. A missing pattern or an empty selection is
   `Ok(None)`, as is any failure but two: a call that timed out
   (`timed_out`) or found the container or item gone (`element_is_gone`)
-  is an error, never "nothing selected". `selected_within(container,
-  request, out_of_time)` checks the caller's time before each call after
-  the first; `selected_node(container, request, registry)` reads the item
-  as a `Node` snapshot.
+  is an error, never "nothing selected". `selected_node(container,
+  request, registry)` reads the item as a `Node` snapshot.
 - `neighbor(element, request, registry, kind)`: one raw-view tree-walker
   step (parent, next or previous sibling, first child, named by a
   navigation `QueryKind` from `verbatim-model`), the neighbor as a `Node`

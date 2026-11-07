@@ -276,12 +276,6 @@ pub struct UiaFocusRead {
     /// repeat read while the focus before it waited for Core's judgement
     /// (`docs/design/focus-pipeline-rework.md`, "One object, one identity").
     pub same_as_last: Option<crate::EarlierElement>,
-    /// The bound of the read's walk, in microseconds from the event's
-    /// observation (`docs/design/focus-pipeline-rework.md`, the Terms):
-    /// `MOVED_ON_GRACE` when the focus's top-level window is not that of
-    /// the previous focus the listener observed, and the read's budget
-    /// otherwise. The outpost's continuation of the chain ends by it too.
-    pub bound_us: u64,
 }
 
 /// The thread that raised an MSAA `WinEvent` and when, as every hook that

@@ -75,19 +75,19 @@ pub(crate) const SHOW_MENU_GESTURE: &str = "kb:verbatim+v";
 /// How long a `DumpTree` control-plane request waits for the outpost's
 /// answer before giving up: the longest program that can be in flight
 /// ahead of the dump
-/// ([`BOUNDED_WALK_DEADLINE`](verbatim_model::BOUNDED_WALK_DEADLINE)), the
+/// ([`FOCUS_READ_DEADLINE`](verbatim_model::FOCUS_READ_DEADLINE)), the
 /// dump itself ([`HANDLING_DEADLINE`](verbatim_model::HANDLING_DEADLINE))
 /// and a second for the answer's way back, 25 seconds. The dump can also
 /// wait behind entries already queued, which no limit covers: it is a
 /// developer's tool.
-const DUMP_TREE_TIMEOUT: Duration = verbatim_model::BOUNDED_WALK_DEADLINE
+const DUMP_TREE_TIMEOUT: Duration = verbatim_model::FOCUS_READ_DEADLINE
     .saturating_add(verbatim_model::HANDLING_DEADLINE)
     .saturating_add(Duration::from_secs(1));
 
 // The dump's wait holds the longest program ahead of it and the dump's own.
 const _: () = assert!(
     DUMP_TREE_TIMEOUT.as_micros()
-        > verbatim_model::BOUNDED_WALK_DEADLINE.as_micros()
+        > verbatim_model::FOCUS_READ_DEADLINE.as_micros()
             + verbatim_model::HANDLING_DEADLINE.as_micros()
 );
 

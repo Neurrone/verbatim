@@ -29,24 +29,19 @@ const MARGIN: Duration = Duration::from_secs(1);
 /// request is promised to end by its own timeout.
 pub const HANDLING_DEADLINE: Duration = UIA_TRANSACTION_TIMEOUT.saturating_add(MARGIN);
 
-/// How long a walk in the window of the focus before it is waited for
-/// before it is published from its progress, and how long the focus
-/// listener's NVDA checks of a read may take: the bound both readers' walks
-/// share in the same top-level window, the outpost's and the listener's.
-pub const SAME_WINDOW_BOUND: Duration = Duration::from_secs(2);
+/// The time a focus read's checks around its walk may add to its one
+/// request: NVDA's checks before the walk and the read's local calls.
+const CHECKS: Duration = Duration::from_secs(2);
 
-/// The deadline of work whose walk or checks are a [`SAME_WINDOW_BOUND`]
-/// budget checked between calls, with no publication of their own beyond
-/// it: an outpost's focus-now query, its report of a listener read, and
-/// the listener's read from its start. The budget, one request and the
-/// margin, so the last call begun under the budget ends by its own timeout
-/// before the deadline.
-pub const BOUNDED_WALK_DEADLINE: Duration = HANDLING_DEADLINE.saturating_add(SAME_WINDOW_BOUND);
+/// The deadline of a focus read: the focus listener's read from its start,
+/// an outpost's focus read (`Query::ReadFocus`) and its report of a
+/// listener read. [`HANDLING_DEADLINE`] and two seconds for the checks
+/// around the walk, 13 seconds. Past it the read's thread is abandoned and
+/// the focus is lost; nothing else ends a read early but UIA's own
+/// timeout and the moved-on rule.
+pub const FOCUS_READ_DEADLINE: Duration = HANDLING_DEADLINE.saturating_add(CHECKS);
 
 // A task holds one request and the margin.
 const _: () = assert!(HANDLING_DEADLINE.as_micros() > UIA_TRANSACTION_TIMEOUT.as_micros());
-// A bounded walk's deadline holds its budget, one request and the margin.
-const _: () = assert!(
-    BOUNDED_WALK_DEADLINE.as_micros()
-        >= SAME_WINDOW_BOUND.as_micros() + UIA_TRANSACTION_TIMEOUT.as_micros() + MARGIN.as_micros()
-);
+// A focus read's deadline holds a task's and the checks around its walk.
+const _: () = assert!(FOCUS_READ_DEADLINE.as_micros() > HANDLING_DEADLINE.as_micros());

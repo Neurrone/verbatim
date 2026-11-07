@@ -158,7 +158,10 @@ played at once for an event, which reads as `sound:` and its indication
 (`sound: exit`); a sound inside an utterance is named in its text.
 
 - `expect(texts)`: each heard in full, queued and ended within
-  `STEP_TIMEOUT` (15 seconds, a bound on a hang).
+  `STEP_TIMEOUT` (75 seconds, a bound on a hang that covers the worst
+  step a slow application can make: four focus read deadlines and one
+  program's, which a compile-time assertion states; `IDLE_TIMEOUT` is the
+  same).
 - `expect_sequence(expected)`: the same, with each ending given:
   `heard(text)` or `cut_off(text)`, for a step whose speech is
   interrupted. An item may instead be an optional utterance

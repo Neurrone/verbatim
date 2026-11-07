@@ -32,20 +32,20 @@ use verbatim_model::Pid;
 /// carried in it as its `answer_by_us`, by which the outpost answers it,
 /// with its answer, with no items or abandoned. It is 63 seconds (Dickson,
 /// 2026-11-07): four focus read deadlines
-/// ([`BOUNDED_WALK_DEADLINE`](verbatim_model::BOUNDED_WALK_DEADLINE)),
+/// ([`FOCUS_READ_DEADLINE`](verbatim_model::FOCUS_READ_DEADLINE)),
 /// the longest a listener read's marker holds the query behind it when the
 /// taskbar and a folder window share one `explorer.exe`, three deadlines of
 /// abandoned reads and one report, and the program's own
 /// ([`HANDLING_DEADLINE`](verbatim_model::HANDLING_DEADLINE)), so an answer
 /// that comes is never thrown away.
-pub(crate) const SHELL_ITEMS_WAIT: Duration = verbatim_model::BOUNDED_WALK_DEADLINE
+pub(crate) const SHELL_ITEMS_WAIT: Duration = verbatim_model::FOCUS_READ_DEADLINE
     .saturating_mul(4)
     .saturating_add(verbatim_model::HANDLING_DEADLINE);
 
 // The wait holds the marker's longest hold and the query's own program.
 const _: () = assert!(
     SHELL_ITEMS_WAIT.as_micros()
-        >= 4 * verbatim_model::BOUNDED_WALK_DEADLINE.as_micros()
+        >= 4 * verbatim_model::FOCUS_READ_DEADLINE.as_micros()
             + verbatim_model::HANDLING_DEADLINE.as_micros()
 );
 

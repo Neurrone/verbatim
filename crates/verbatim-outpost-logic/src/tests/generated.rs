@@ -389,7 +389,7 @@ impl Gen {
                                     .reducer
                                     .flight
                                     .running()
-                                    .is_some_and(|(_, current, _)| current.deferred),
+                                    .is_some_and(|(_, current)| current.deferred),
                             "an idle answer with deferred work after {trail:?}"
                         );
                     }

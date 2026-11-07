@@ -388,9 +388,9 @@ a walk of the window's whole tree would wait on its
   `UIAutomationCore.dll`'s own detach code sometimes hangs or crashes in a
   process that has connected to providers (`books/dev/src/reference/uia-bugs.md`, "A process
   that used UIA can hang or crash as it exits").
-- The outpost the tests run (`tests/common/outpost.rs`) and its focus
-  reader read the time from the test, which stands still unless the test
-  moves it on (`pass_time`), so a window's verdict of no UIA provider runs
+- The outpost the tests run (`tests/common/outpost.rs`) reads the time
+  from the test, which stands still unless the test moves it on
+  (`pass_time`), so a window's verdict of no UIA provider runs
   out, its probe's `WM_GETOBJECT` is made, and a classic walk's time
   budget is spent only where the test says. The test hands the outpost
   focus facts as the listener would, and the outpost reads the focused
@@ -404,9 +404,8 @@ a walk of the window's whole tree would wait on its
     when the outpost was made, moved on only by the time passed and by a
     microsecond each read, so no real time is in it and no two reads are
     equal. Every test whose assertions depend on a verdict's 500 ms keep
-    or the listener's walk's bound must use it, because on the real clock
-    a slow runner's own steps run out a keep or reach the bound early:
-    every `call_counts` test, and the tests of the listener's bound.
+    must use it, because on the real clock a slow runner's own steps run
+    out a keep early: every `call_counts` test.
   - `OutpostUnderTest::new`, `with_options` and the rest give the real
     clock, the run's clock moved on by the time passed. Every other test
     uses it, because the outpost compares the stamps of its caret, text
@@ -418,14 +417,10 @@ a walk of the window's whole tree would wait on its
   moves the focus window as the outpost reads the focused element, and
   `listener_forces_uia` has the listener's reader skip no focus by its
   window's class (`FocusReader::forces_uia`), so it reads one in a window
-  on NVDA's MSAA class list. The listener's reader measures how long an event waited
-  before its read by the same observation clock, so `listener_read_after`
-  passes the time between a focus's observation and its read, bringing its
-  walk's bound that much sooner with no real wait. A test of the
-  listener's watchdog runs the listener's reading threads in its process
-  (`verbatim_listener::focus_read::ReadingThreads`), their readers on
-  frozen clocks of the test's, so that only the watchdog, on the system's
-  clock, meets a read's bound.
+  on NVDA's MSAA class list. The listener's reader has no clock: it waits
+  for every call. A test of the listener's watchdog can run the listener's
+  reading threads in its process
+  (`verbatim_listener::focus_read::ReadingThreads`).
 - `tests/uia_bugs/` is one test binary (`main.rs` declares a module per
   file) holding the tests that reproduce a fault or limitation of UI
   Automation or show that Verbatim's workaround for one still holds, each
@@ -561,7 +556,14 @@ Each file's module comment says exactly what it asserts; in outline:
   `reuse_text.json` and `reuse_terminal.json`, a text field or terminal
   given the runtime id of another, gone (`take-runtime-id`) or alive
   without the focus (`share-runtime-id`), reads its own line or is read
-  afresh as a terminal of its own, and its changes are followed; a focus captured
+  afresh as a terminal of its own, and its changes are followed; the
+  listener's checks that fail let a focus through, as NVDA's COM error
+  rule does: an earlier element's keyboard focus read that times out reads
+  it gone, so the focus is no repeat, and the sender's that times out, or
+  fails on an element disconnected (`disconnect`) after its nearest
+  window's lookup, lets it through to its walk, whose failed read goes on
+  from its window's parent; a windowless focus whose walk failed is found
+  from the nearest window its read carries; a focus captured
   before its item was selected is reported with the item selected; a
   foreground event for a UIA-read window is dropped and the focus that
   follows reported alone; and over `described_group.json` an unnamed

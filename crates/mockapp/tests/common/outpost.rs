@@ -17,12 +17,13 @@
 //! focus is the one the test reads as the foreground
 //! ([`Outpost::set_focus_window_reader`]).
 //!
-//! The outpost and the listener's reader read the time from the test too
-//! ([`Outpost::set_clock`], [`FocusReader::set_clock`]): the time stands
-//! still unless the test moves it on ([`OutpostUnderTest::pass_time`], or
+//! The outpost reads the time from the test too ([`Outpost::set_clock`]):
+//! the time stands still unless the test moves it on
+//! ([`OutpostUnderTest::pass_time`], or
 //! [`OutpostUnderTest::run_out_of_time_after`] partway through a step), so
-//! a classic walk's or a focus read's time budget is spent only where the
-//! test says, however long the test and its calls take. A test whose
+//! a classic walk's time budget is spent only where the test says, however
+//! long the test and its calls take. The listener's reader has no time
+//! budget: it waits for every call. A test whose
 //! budget a real wait must spend, as a stalled window's raw probe spends
 //! it, makes the time the system's instead
 //! ([`OutpostUnderTest::follow_the_system_clock`]). The outpost stamps its
@@ -467,7 +468,7 @@ pub struct OutpostUnderTest {
     pub focus: FocusSlot,
     /// Where the outpost's worker waits while the test holds it.
     gate: Arc<WorkerGate>,
-    /// The time the outpost and the listener's reader read.
+    /// The time the outpost reads.
     time: Arc<Mutex<Instant>>,
     /// How many more reads of the time give it unchanged before it jumps an
     /// hour on ([`Self::run_out_of_time_after`]), when set.
@@ -711,11 +712,6 @@ impl OutpostUnderTest {
         reader.set_foreground_reader(Arc::new(move || {
             listener_foreground.load(Ordering::Relaxed)
         }));
-        // And the same time, and the same observation clock, by which how
-        // long an event waited before its read is measured.
-        reader.set_clock(clock);
-        let observed = Arc::clone(&observation);
-        reader.set_observation_clock(Arc::new(move || observed.now()));
         Self {
             outpost,
             messages,
@@ -802,7 +798,7 @@ impl OutpostUnderTest {
         self.observation.now()
     }
 
-    /// The time the outpost and the listener's reader read now.
+    /// The time the outpost reads now.
     fn now(&self) -> Instant {
         if self.system_time.load(Ordering::Relaxed) {
             Instant::now()
@@ -865,7 +861,7 @@ impl OutpostUnderTest {
         self.foreground_reads.wait_for(count);
     }
 
-    /// Moves the time the outpost and the listener's reader read on by `by`.
+    /// Moves the time the outpost reads on by `by`.
     ///
     /// # Panics
     ///
@@ -888,10 +884,9 @@ impl OutpostUnderTest {
         );
     }
 
-    /// Lets the time the outpost and the listener's reader read be read
-    /// `reads` more times unchanged, and then jump an hour on, past every
-    /// time budget, for a step whose budget runs out at a chosen call: a
-    /// focus read reads the time first to set its budget's end.
+    /// Lets the time the outpost reads be read `reads` more times
+    /// unchanged, and then jump an hour on, past every time budget, for a
+    /// step whose budget runs out at a chosen call.
     ///
     /// # Panics
     ///
@@ -906,8 +901,7 @@ impl OutpostUnderTest {
             .unwrap_or_else(PoisonError::into_inner) = Some(reads);
     }
 
-    /// Makes the time the outpost and the listener's reader read the
-    /// system's from now on, for a step whose time budget a real wait must
+    /// Makes the time the outpost reads the system's from now on, for a step whose time budget a real wait must
     /// spend, as a stalled window's raw probe spends it. The test can no
     /// longer move the time ([`pass_time`](Self::pass_time),
     /// [`run_out_of_time_after`](Self::run_out_of_time_after)).
@@ -1181,20 +1175,6 @@ impl OutpostUnderTest {
         self.last_read.set(Some(arrival.trace));
         let judged = self.reader.borrow_mut().read(element, kind, arrival);
         (judged, verbatim_uia::calls::take())
-    }
-
-    /// [`Self::listener_read`] for a UIA focus event observed `waited`
-    /// before its read begins, as one that waits behind its application's
-    /// earlier reads is: the test's time passes between its observation and
-    /// its read, so its walk's bound, measured from its observation, comes
-    /// that much sooner.
-    pub fn listener_read_after(&self, element: &Cached<ListenerEvent>, waited: Duration) -> Judged {
-        let arrival = self.listener_arrival();
-        self.last_read.set(Some(arrival.trace));
-        self.pass_time(waited);
-        self.reader
-            .borrow_mut()
-            .read(element, FocusEvent::Focus, arrival)
     }
 
     /// The next event the stand-in for the listener's scheduler queues,

@@ -71,15 +71,28 @@ use crate::timeline::Timeline;
 
 /// How long an assertion waits for each expected utterance to be queued,
 /// and then for each to end: a bound on a hang, not a latency expectation.
-pub const STEP_TIMEOUT: Duration = Duration::from_secs(15);
+/// A step that passes waits only for its evidence; the bound covers the
+/// worst step a slow application can make: an application's events held
+/// behind its listener read's marker for three focus read deadlines, its
+/// report's, and one outpost program queued behind the released marker.
+pub const STEP_TIMEOUT: Duration = Duration::from_secs(75);
 
-// A step's wait holds the longest program an outpost or the focus listener
-// runs before speech can follow, a bounded walk.
-const _: () = assert!(STEP_TIMEOUT.as_micros() > verbatim_model::BOUNDED_WALK_DEADLINE.as_micros());
+/// The longest a step can wait before its speech: four focus read
+/// deadlines and one program's handling deadline, 63 seconds.
+const WORST_STEP: Duration = verbatim_model::FOCUS_READ_DEADLINE
+    .saturating_mul(4)
+    .saturating_add(verbatim_model::HANDLING_DEADLINE);
+
+// A step's wait holds the longest a step can wait before its speech.
+const _: () = assert!(STEP_TIMEOUT.as_micros() > WORST_STEP.as_micros());
 
 /// How long [`SpeechCollector::expect_nothing_more`] lets Verbatim take to
-/// become idle: a bound on a hang.
-const IDLE_TIMEOUT: Duration = Duration::from_secs(15);
+/// become idle: a bound on a hang, covering the worst step as
+/// [`STEP_TIMEOUT`] does.
+const IDLE_TIMEOUT: Duration = Duration::from_secs(75);
+
+// The idle wait holds the longest a step can wait before its speech.
+const _: () = assert!(IDLE_TIMEOUT.as_micros() > WORST_STEP.as_micros());
 
 /// How much longer than [`IDLE_TIMEOUT`] Verbatim's answer to `AwaitIdle`
 /// may take to arrive: a bound on a hang.

@@ -15,12 +15,31 @@ around it.
 
 Public API:
 
+- `checks` — what a UIA focus event goes through before its read, NVDA's
+  focus handler's checks, or for a menu opening its automation event
+  handler's, in their order, as one pure step function: `checks::next`
+  takes a `Gathered`, what the callback knew of the event (its kind, its
+  sender's own window, the window of the current focus a menu opening is
+  compared with, and whether a test forces UIA) and each call's answer
+  once made (the comparison, the nearest window's lookup as a `Nearest`,
+  the window's classes, the acceptance test against the foreground, the
+  sender's own window's class, the hidden frame, and a redirected menu
+  opening's keyboard focus), and answers a `Step`: `Call(Check)`, the one
+  call to make next, `Drop(reason)`, or `Read { window, require_focus }`.
+  The listener's reading thread loops, making the call named and recording
+  its answer. A failed comparison drops a menu opening, as NVDA catches no
+  error from it; a nearest window's lookup that timed out or found none
+  drops the event; a window the class verdict calls MSAA is skipped; and a
+  redirected menu opening's keyboard focus read that fails lets it
+  through, as NVDA's COM error rule does. The hung-window test is the
+  callback's, made as the event arrives, and not among these. A
+  `Gathered` lives for one read; the tests are a table of exact cases, one
+  per check and drop reason.
 - `focus` — the vocabulary a focus event is judged and scheduled in: its
   kind (`FocusEvent`), what the callback knew of it (`Meta`) and where it
   was queued (`Arrival`, `arrival_of`), and what became of it (`Judged`,
   with `into_fact`). Every reason an event is dropped is a constant here
-  (`NOT_IN_TIME`, `MOVED_ON`, `STOPPED_RESPONDING`, `HUNG`,
-  `WAITED_TOO_LONG`, `REPLACED`, `NO_WINDOW`,
+  (`NOT_IN_TIME`, `MOVED_ON`, `WAITED_TOO_LONG`, `REPLACED`, `NO_WINDOW`,
   `NOT_FOCUSED`, `MSAA_CLASS`, `NEAREST_TIMED_OUT` and the rest). A
   nearest window's lookup that fails with UIA's timeout
   is dropped for `NEAREST_TIMED_OUT`, however long it took.
@@ -31,25 +50,20 @@ Public API:
   `ScheduleInput` and the time, in microseconds on the shell's monotonic
   clock, and returns the `ScheduleEffect`s in the order the shell applies
   them under its lock: which thread reads which application's event, when a
-  read is abandoned or published at its bound, when an event waiting behind
+  read is abandoned, when an event waiting behind
   abandoned reads is dropped, which idle waiters may run, and whether a
   menu opening's thread may compare it with its own last read
   (`QueuePlace`). Each application's read under way is its work in
   flight (`InFlight`, re-exported `Request`): the schedule starts it at a
-  thread's `Next`, steps it with what the read learns (`Learned`), its
-  bound (`Armed`), the watchdog's `Tick` and the answers to its asks
-  (`Judged`, `Published`), and ends it at the thread's `Returned`. Its
-  two asks are effects (`Judge`, `Publish` with `then_abandon`), at
-  most one per application in a step, which the shell answers once the
-  step's other effects are applied. `Judged` carries the judgement's
-  verdict, `Reason::Hung` when the read's window is hung or ghosted,
-  tested first, `Reason::MovedOn` when the user has left it, or none; a
-  read abandoned for either publishes an armed walk first, and is
-  otherwise dropped, for `STOPPED_RESPONDING` or `MOVED_ON`. A read that
-  its thread ends before a call, its window found hung, is a `Returned`
-  like any other, its outcome the read published from its progress or the
-  drop for `HUNG`; should the judgement abandon it first, its return is an
-  abandoned thread's, counted once. An application's `threaded` says a
+  thread's `Next`, steps it with what the read learns (`Learned`), the
+  watchdog's `Tick` and the answer to its ask (`Judged`), and ends it at
+  the thread's `Returned`. Its ask is an effect (`Judge`), at most one per
+  application in a step, which the shell answers once the step's other
+  effects are applied. `Judged` carries the judgement's verdict,
+  `Reason::MovedOn` when the user has left the read's window, or none; a
+  read abandoned so is dropped for `MOVED_ON`, and one past its deadline
+  for `NOT_IN_TIME`. A read is never abandoned for its window's hang: it
+  waits for the application. An application's `threaded` says a
   thread is in charge, as the generation its work in flight has in
   charge; every start of a thread, new or reused, takes a new generation
   (`InFlight::succeed`). An abandonment has the shell stop watching the
@@ -94,15 +108,11 @@ against the model (an application's thread waiting or reading, its
 oldest abandoned thread, its read under way or the request before it).
 The actions are events of every kind from three applications, keyed or
 not, with a window known, unknown or never judged; the threads' asks and
-returns; abandoned threads' returns; reads ended by their thread before
-a call, their window found hung, published once armed and dropped
-otherwise, by the thread in charge or by one already abandoned; windows
-learned and walks armed;
+returns; abandoned threads' returns; windows learned, stale among them;
 time; foreground events with each read's top-level window; MSAA focuses;
 outposts' ends; idle waiters; and the stop. Each carries the answers to
-what it may cause: whether a read's window is hung, whether the user
-moved on, whether a read's progress
-was there to publish, and whether a new thread fails to start. They are
+what it may cause: whether the user moved on, and whether a new thread
+fails to start. They are
 given as the listener's shell gives them: effects in order, then each
 failed start, then each ask's answer, each a step of its own. The model
 is lists and sets: each application's waiting markers, read under way,
@@ -117,9 +127,10 @@ allows; jobs in push order to the thread in charge; each spawn's generation abov
 every earlier one in the application's life, with nothing waiting
 unthreaded below the abandoned limit; no new thread while two are
 abandoned; at most one ask per application, each of its read under way;
-a deadline abandonment at or past its deadline, and a hung or moved-on
-one, published first when armed, after that verdict; each read ended
-exactly once, published or dropped, sending nothing else; one forget-last per abandoned thread's return; an
+a deadline abandonment at or past its deadline, and a moved-on one after
+that verdict; each read ended exactly once, its outcome sent once, by its
+return or its abandonment, so every marker has exactly one answer, read
+or dropped; one forget-last per abandoned thread's return; an
 alarm set only when it changes; and after the stop no spawn, job, ask or
 alarm and every push dropped), and after every action compares the
 schedule's open markers, queues, reads under way, applications held,

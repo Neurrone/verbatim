@@ -855,8 +855,6 @@ fn uia_remote_enrichment(
         depth_limit: MAX_ANCESTOR_HOPS,
         fill: &fill,
         element_fill: &element_fill,
-        out_of_time: None,
-        stopped: None,
         require_focus: true,
         refresh: false,
         nearest_window: None,
@@ -955,7 +953,7 @@ fn uia_remote_enrichment(
         .map_or(focus_window, |ancestor| ancestor.read().node.role.hwnd);
     if walked == AncestorWalk::Complete
         && crossed.is_none()
-        && (ancestry.failed_hop.is_some() || ancestry.depth_limited || ancestry.out_of_time)
+        && (ancestry.failed_hop.is_some() || ancestry.depth_limited)
     {
         let hwnds = || {
             std::iter::once(focus_window).chain(
@@ -974,7 +972,7 @@ fn uia_remote_enrichment(
                     hwnds(),
                 )),
             );
-        } else if ancestry.depth_limited || ancestry.out_of_time {
+        } else if ancestry.depth_limited {
             walked = AncestorWalk::Cut(verbatim_uia::plain_windows_start(nearest, hwnds()));
         }
     }

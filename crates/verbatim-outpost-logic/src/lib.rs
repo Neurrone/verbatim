@@ -118,8 +118,8 @@ pub use self::watch::{
 pub use verbatim_model::HANDLING_DEADLINE;
 
 /// The deadline of a focus read ([`Query::ReadFocus`]) and of a listener
-/// read's report ([`verbatim_model::BOUNDED_WALK_DEADLINE`]).
-pub use verbatim_model::BOUNDED_WALK_DEADLINE;
+/// read's report ([`verbatim_model::FOCUS_READ_DEADLINE`]).
+pub use verbatim_model::FOCUS_READ_DEADLINE;
 
 /// One request of one worker generation: what a program's commits and the
 /// store's mint tags name it by.
@@ -1092,19 +1092,12 @@ impl Reducer {
     }
 
     /// Does what the work in flight decided at `now`: asks the shell, or
-    /// carries out an abandonment. The outpost arms no walk, so the work in
-    /// flight never asks it for a publication, and it gives no hung verdict.
+    /// carries out an abandonment.
     fn decided(&mut self, decision: Decision<Current>, now: Now, effects: &mut Vec<Effect>) {
         match decision {
             Decision::Nothing => {}
             Decision::Ask(Ask::Judge { request, window }) => {
                 effects.push(Effect::AskJudge { request, window });
-            }
-            Decision::Ask(Ask::Publish { request, .. }) => {
-                debug_assert!(
-                    false,
-                    "a publication asked of {request:?}, whose walk the outpost never arms"
-                );
             }
             Decision::Abandon(abandoned) => self.abandoned(abandoned, now, effects),
         }
@@ -1137,7 +1130,6 @@ impl Reducer {
             reason: match reason {
                 Reason::Deadline => "a call passed its deadline",
                 Reason::MovedOn => "the user moved on from a slow window",
-                Reason::Hung => "the window stopped responding",
             },
             on_hung: current.hang_mark,
             in_hand,
@@ -1175,7 +1167,7 @@ impl Reducer {
             self.dispatch_finish(cut, effects);
             return;
         }
-        let Some((current, _)) = self.flight.end(request) else {
+        let Some(current) = self.flight.end(request) else {
             return;
         };
         // A watch the program still holds, because it panicked or returned
@@ -1220,7 +1212,7 @@ impl Reducer {
             || self
                 .flight
                 .running()
-                .is_some_and(|(_, current, _)| current.deferred)
+                .is_some_and(|(_, current)| current.deferred)
             || !self.facts.follow.watch.is_none()
         {
             return;
@@ -1667,17 +1659,17 @@ fn micros(duration: Duration) -> u64 {
 /// The deadline for an entry begun at `now`, and the query it answers, if
 /// it is one, `handling` being [`HANDLING_DEADLINE`] or a test's in its
 /// place: `handling` for every entry but a focus read and a listener
-/// read's report, which have [`SAME_WINDOW_BOUND`](verbatim_model::SAME_WINDOW_BOUND)
-/// more ([`BOUNDED_WALK_DEADLINE`] when `handling` is
-/// [`HANDLING_DEADLINE`]). A shell item query's deadline is the one it
+/// read's report, which have the two seconds [`FOCUS_READ_DEADLINE`] adds
+/// to [`HANDLING_DEADLINE`] more ([`FOCUS_READ_DEADLINE`] when `handling`
+/// is [`HANDLING_DEADLINE`]). A shell item query's deadline is the one it
 /// carries, a due time on the shared clock fixed when the dialog asked, so
 /// a query that waited behind other work has only what is left of it.
 fn budget(entry: &Entry, now: Now, handling: Duration) -> (Duration, Option<(RequestId, TraceId)>) {
-    let bounded_walk = handling.saturating_add(verbatim_model::SAME_WINDOW_BOUND);
+    let focus_read = handling.saturating_add(FOCUS_READ_DEADLINE.saturating_sub(HANDLING_DEADLINE));
     match &entry.item {
         Item::Query { request_id, query } => {
             let deadline = match query {
-                Query::ReadFocus => bounded_walk,
+                Query::ReadFocus => focus_read,
                 Query::ShellItems { answer_by_us, .. }
                 | Query::ShellItemPosition { answer_by_us, .. } => {
                     Duration::from_micros(answer_by_us.saturating_sub(now.wall_us))
@@ -1686,7 +1678,7 @@ fn budget(entry: &Entry, now: Now, handling: Duration) -> (Duration, Option<(Req
             };
             (deadline, Some((*request_id, entry.trace)))
         }
-        Item::Fact(DeliveredFact::UiaFocusRead { .. }, _) => (bounded_walk, None),
+        Item::Fact(DeliveredFact::UiaFocusRead { .. }, _) => (focus_read, None),
         Item::Fact(..)
         | Item::Msaa { .. }
         | Item::Uia(_)

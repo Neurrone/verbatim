@@ -262,13 +262,12 @@ margin of a second, and a compile-time assertion states each nesting.
   told of and waited for, never abandoned for its hang, so the deadline is
   their only bound. A task of several slow calls can still pass it; only
   one request is promised to end by its own timeout.
-- `SAME_WINDOW_BOUND`, 2 seconds: the bound of a walk in the window of the
-  focus before it, both readers', and of the focus listener's NVDA checks.
-- `BOUNDED_WALK_DEADLINE`, 13 seconds: `HANDLING_DEADLINE` and
-  `SAME_WINDOW_BOUND`, the deadline of work whose walk or checks are a
-  budget checked between calls: an outpost's focus read
-  (`Query::ReadFocus`), its report of a listener read, and the listener's
-  read.
+- `FOCUS_READ_DEADLINE`, 13 seconds: `HANDLING_DEADLINE` and two seconds
+  for the checks around the walk, the deadline of a focus read: an
+  outpost's focus read (`Query::ReadFocus`), its report of a listener
+  read, and the listener's read from its start. Past it the read's thread
+  is abandoned and the focus lost; no read has a time budget or bound of
+  Verbatim's own within it.
 
 ## The wire protocol
 

@@ -69,9 +69,7 @@ pub use event::{
 };
 pub use gesture::{GestureId, GestureParseError};
 pub use key_seq::KeySeq;
-pub use limits::{
-    BOUNDED_WALK_DEADLINE, HANDLING_DEADLINE, SAME_WINDOW_BOUND, UIA_TRANSACTION_TIMEOUT,
-};
+pub use limits::{FOCUS_READ_DEADLINE, HANDLING_DEADLINE, UIA_TRANSACTION_TIMEOUT};
 pub use settings::{
     DEFAULT_TERMINAL_LINES, MAX_TERMINAL_LINES, ReaderSettings, SayAllUnit, TypingEcho,
 };

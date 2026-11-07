@@ -29,8 +29,8 @@ use verbatim_uia::{
     Ancestor, Cached, ElementExt, Fill, FocusInput, Kept, ListenerEvent, Live, Node, Shape, Uia,
 };
 use verbatim_uia_rops::{
-    Ancestry, Error, FocusAncestry, FocusAncestryFn, FocusQuery, NavigationDirection, Status,
-    StepQuery, focus_ancestry, focus_ancestry_classic, focus_ancestry_remote,
+    Ancestry, Error, FailedHop, FocusAncestry, FocusAncestryFn, FocusQuery, NavigationDirection,
+    Status, StepQuery, focus_ancestry, focus_ancestry_classic, focus_ancestry_remote,
     navigation_step_classic, navigation_step_remote,
 };
 use windows::Win32::Foundation::{HANDLE, HWND, LPARAM, WAIT_OBJECT_0, WPARAM};
@@ -51,8 +51,6 @@ const BOTH: [(&str, FocusAncestryFn); 2] = [
 /// A running ancestry fixture and a client reading it.
 struct Fixture {
     app: common::MockApp,
-    /// mockapp's window's title, the name a plain window gives it.
-    title: String,
     uia: Uia,
     root: IUIAutomationElement,
     hwnd: isize,
@@ -84,7 +82,6 @@ impl Fixture {
         );
         Self {
             app,
-            title,
             uia,
             root,
             hwnd,
@@ -175,8 +172,6 @@ fn query<'a>(
         depth_limit: 50,
         fill,
         element_fill: fill,
-        out_of_time: None,
-        stopped: None,
         require_focus: true,
         refresh: false,
         nearest_window: None,
@@ -575,8 +570,9 @@ fn execution_failure(error: &Error) -> Option<windows::core::HRESULT> {
 /// The finding that decides where the outpost may run a program: against a
 /// stalled provider, `Execute` waits exactly as a classic call does. UIA's
 /// connection timeout does not bound it; its transaction timeout does, and
-/// the run then ends with an execution failure carrying `UIA_E_TIMEOUT`.
-/// Both are process-wide.
+/// the run then ends with an execution failure carrying `UIA_E_TIMEOUT`,
+/// where the classic walk's calls each end by it, its step to the parent
+/// ending the walk at a failed step. Both are process-wide.
 fn a_stalled_provider_holds_execute_until_the_transaction_timeout() {
     const STALL: Duration = Duration::from_millis(4000);
     // The transaction timeout is process-wide; the test runs in a process
@@ -616,15 +612,23 @@ fn a_stalled_provider_holds_execute_until_the_transaction_timeout() {
             returned < ended,
             "{label}: the transaction timeout ended the call: it returned at {returned} us, after the stall ended at {ended} us"
         );
-        assert_eq!(
-            answer.as_ref().err().and_then(Error::hresult),
-            Some(hresult(UIA_E_TIMEOUT)),
-            "{label}: {answer:?}"
-        );
         if label == "remote" {
+            assert_eq!(
+                answer.as_ref().err().and_then(Error::hresult),
+                Some(hresult(UIA_E_TIMEOUT)),
+                "{label}: {answer:?}"
+            );
             assert!(
                 answer.as_ref().err().and_then(execution_failure).is_some(),
                 "{answer:?}"
+            );
+        } else {
+            // The keyboard focus read times out and lets the focus through,
+            // and the step to the parent times out and ends the walk.
+            assert_eq!(
+                timed_out_hop(&answer),
+                Some(FailedHop::Error(hresult(UIA_E_TIMEOUT))),
+                "{label}: {answer:?}"
             );
         }
     }
@@ -636,10 +640,23 @@ fn failure(answer: &Result<impl std::fmt::Debug, Error>) -> Option<windows::core
     answer.as_ref().err().and_then(Error::hresult)
 }
 
-/// A focus walk that hits UIA's transaction timeout is a failure, never a
-/// success with what it read before: the classic walk's hop that times out
-/// is not the root, and a remote program that times out is not answered
-/// by the classic walk, which would wait on the application a second time
+/// How a classic walk that answered ended at a failed step, with no
+/// ancestor read before it; `None` for any other answer.
+fn timed_out_hop(answer: &Result<FocusAncestry, Error>) -> Option<FailedHop> {
+    match answer {
+        Ok(FocusAncestry::Focused(ancestry)) if ancestry.ancestors.is_empty() => {
+            ancestry.failed_hop
+        }
+        _ => None,
+    }
+}
+
+/// A focus walk that hits UIA's transaction timeout is never a success with
+/// ancestors read past it: the classic walk's hop that times out ends the
+/// walk with the ancestors unknown (`Ancestry::failed_hop`), as any failed
+/// step does, so the chain goes on from the parent window, and a remote
+/// program that times out is a failure, not answered by the classic walk,
+/// which would wait on the application a second time
 /// (`books/dev/src/reference/crates/verbatim-uia-rops.md`, "Fallback rules"). With every
 /// provider call slow (`slow`), the live focus read answers in time but a
 /// hop that fills an ancestor's cache, many calls, does not; with the
@@ -658,8 +675,8 @@ fn a_focus_walk_that_times_out_fails() {
     fixture.app.send(&format!("slow {}", SLOW_CALL.as_millis()));
     let classic = focus_ancestry_classic(&fixture.uia, &query(&deep, &[], &fixture.fill));
     assert_eq!(
-        failure(&classic),
-        Some(hresult(UIA_E_TIMEOUT)),
+        timed_out_hop(&classic),
+        Some(FailedHop::Error(hresult(UIA_E_TIMEOUT))),
         "classic: {classic:?}"
     );
     let picked = focus_ancestry(&fixture.uia, &query(&deep, &[], &fixture.fill), true);
@@ -745,9 +762,10 @@ fn a_timed_out_nearest_window_lookup_reads_nothing_into_the_application() {
 /// so that filling an element's cache outlasts UIA's transaction timeout
 /// while the walk to its nearest window and the live read of its keyboard
 /// focus, which request no pattern, do not, the focus is reported from its
-/// event, as NVDA lets a focus through whose read fails, with its chain
-/// completed by the windows above it, whether remote operations are on or
-/// off. (With every provider call slow, the walk to the nearest
+/// event, as NVDA lets a focus through whose read fails, its chain going on
+/// from the parent window of mockapp's window, its nearest, as NVDA's
+/// failed parent read goes on by `Window._get_parent`, so that window is
+/// not in it, whether remote operations are on or off. (With every provider call slow, the walk to the nearest
 /// window times out first, and the focus is dropped, as
 /// `a_timed_out_nearest_window_lookup_reads_nothing_into_the_application`
 /// shows.)
@@ -818,14 +836,8 @@ fn a_focus_whose_walk_times_out_is_reported_below_its_window() {
                         .iter()
                         .map(|node| (node.role, node.name.clone(), node.details.window))
                         .collect::<Vec<_>>(),
-                    [(
-                        Role::Pane,
-                        Some(fixture.title.clone()),
-                        Some(verbatim_model::WindowHandle(u64::from_ne_bytes(
-                            fixture.hwnd.to_ne_bytes()
-                        )))
-                    )],
-                    "{path}: mockapp's window, its client pane named by its title"
+                    [],
+                    "{path}: nothing above it, the chain going on from the desktop"
                 );
             }
             other => panic!("{path}: the outpost said {other:?}, not the focus"),
@@ -1096,8 +1108,8 @@ fn a_focus_inside_one_whose_parent_step_failed_meets_its_chain_there() {
 /// it, raising no event, so that its live read says it has it, and the read
 /// times out, every pattern request slow (`slow-patterns`) as in
 /// `a_focus_whose_walk_times_out_is_reported_below_its_window`. Its chain
-/// is completed by plain windows from mockapp's window, the outermost
-/// ancestor read none.
+/// goes on from the parent window of mockapp's window, its nearest, no
+/// ancestor read.
 fn a_focus_whose_read_fails_is_reported_whatever_its_event_says_of_its_focus() {
     const TIMEOUT: Duration = Duration::from_millis(300);
     const SLOW_CALL: Duration = Duration::from_millis(40);
@@ -1137,9 +1149,11 @@ fn a_focus_whose_read_fails_is_reported_whatever_its_event_says_of_its_focus() {
         (read.ancestors.len(), read.ancestors_end),
         (
             0,
-            verbatim_model::protocol::AncestorsEnd::PlainFrom(fixture.hwnd)
+            verbatim_model::protocol::AncestorsEnd::ContinueFrom(verbatim_uia::parent_window(
+                fixture.hwnd
+            ))
         ),
-        "completed by plain windows from mockapp's window"
+        "going on from the parent window of mockapp's window"
     );
     drop(outpost);
     fixture.app.quit();
@@ -1284,7 +1298,9 @@ impl Drop for ProcessTimeout {
 /// A remote operation, and the classic reads, on an element whose process
 /// has exited fail with `UIA_E_ELEMENTNOTAVAILABLE`, so the call ended on
 /// the broken connection, not by waiting out a timeout, which ends a call
-/// with `UIA_E_TIMEOUT`.
+/// with `UIA_E_TIMEOUT`: the program's run, and the classic walk's step to
+/// the parent, its keyboard focus read failing first and letting the focus
+/// through, as NVDA's COM error rule does.
 fn a_provider_that_has_exited_fails_at_once() {
     let mut fixture = Fixture::start("mockapp-rops-exited");
     let deep = fixture.focus("deep", "Deep button");
@@ -1299,7 +1315,13 @@ fn a_provider_that_has_exited_fails_at_once() {
     );
     let answer = focus_ancestry_classic(&uia, &query(&deep, &[], &fill));
     assert!(
-        matches!(&answer, Err(Error::Uia(error)) if error.code() == hresult(UIA_E_ELEMENTNOTAVAILABLE)),
+        matches!(
+            &answer,
+            Ok(FocusAncestry::Focused(Ancestry {
+                failed_hop: Some(FailedHop::Error(code)),
+                ..
+            })) if *code == hresult(UIA_E_ELEMENTNOTAVAILABLE)
+        ),
         "{answer:?}"
     );
 }

@@ -411,7 +411,7 @@ an application each abandon a call that has taken half a second
 application on another UI thread than the window being handled or read,
 the application being each window's provider process, until their own
 deadlines (11 seconds for the worker, `HANDLING_DEADLINE`, and 13
-seconds, `BOUNDED_WALK_DEADLINE`, for a reading thread); the event is dropped and a new worker or reading thread
+seconds, `FOCUS_READ_DEADLINE`, for a reading thread); the event is dropped and a new worker or reading thread
 takes the application's later events
 (`books/dev/src/reference/crates/verbatim-listener.md`, "How a UIA focus is judged and
 read", owns when each judges). Console host's own Find, Properties
@@ -473,11 +473,11 @@ opening.
 
 Verbatim: **different** (Dickson, 2026-10-21). An application with two
 abandoned reading threads still in their calls gets no new thread until
-one returns: its events wait, until `BOUNDED_WALK_DEADLINE` after its second
+one returns: its events wait, until `FOCUS_READ_DEADLINE` after its second
 thread was abandoned. Then every event waiting is dropped, and each later
 one as it arrives, until an abandoned thread's call returns and takes
 the queue. The bound is one per application, not one per event, so the
-application's outpost runs at most `BOUNDED_WALK_DEADLINE` behind the hung reads,
+application's outpost runs at most `FOCUS_READ_DEADLINE` behind the hung reads,
 once, and a stream of events from the application cannot keep it
 behind. A focus waiting so is a pending focus only for its own
 application's menu openings, so that a hung window cannot silence every
@@ -500,7 +500,7 @@ and gathers a dialog's text inside the focus event, under its watchdog
 short limit of Verbatim's own. One UIA request may take 10 seconds
 (`UIA_TRANSACTION_TIMEOUT`), and an outpost's program 11
 (`HANDLING_DEADLINE`), or 13 for focus-now and the report of a listener
-read (`BOUNDED_WALK_DEADLINE`); a navigation step, an activation, a text
+read (`FOCUS_READ_DEADLINE`); a navigation step, an activation, a text
 request, a walk down a focus's path, a dialog's text and the shell's
 items have no shorter limit of their own. Deliberately different:
 

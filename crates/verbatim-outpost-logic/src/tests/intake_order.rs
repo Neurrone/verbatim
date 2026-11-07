@@ -925,7 +925,6 @@ fn focus_read(marker: u64, element: u8) -> DeliveredFact {
             value_from_selection: false,
             window: Some(9),
             same_as_last: None,
-            bound_us: 2_000_000,
         }),
         focus: true,
     }

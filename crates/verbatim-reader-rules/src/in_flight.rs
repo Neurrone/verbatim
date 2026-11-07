@@ -8,9 +8,9 @@
 //! its judgement, asked at [`MOVED_ON_GRACE`] after the item's start and
 //! every [`MOVED_ON_GRACE`] after that until the deadline, as NVDA's
 //! watchdog judges (`docs/nvda/main-loop-and-watchdog.md`): whether the
-//! item's window is hung, and otherwise whether the user has moved on from
-//! it; the publication of the item's walk at its bound, and its
-//! abandonment.
+//! user has moved on from the item's window; and its abandonment, at its
+//! deadline or once the user has moved on, the only two. A window found
+//! hung abandons nothing: the reader waits for its application.
 //!
 //! Each transition answers with a [`Decision`]: nothing, one [`Ask`] that
 //! the reader's shell answers by the matching transition, or an
@@ -36,24 +36,8 @@ pub struct Request {
     pub number: u64,
 }
 
-/// The walk of the item in flight, as far as its publication at its bound
-/// goes. One state, so that a walk armed after its publication cannot be
-/// represented.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Walk {
-    /// No bound is timed: the walk has not armed, has returned, or its
-    /// publication is being asked for.
-    Unarmed,
-    /// The walk passed its checks, and is published once its bound, the
-    /// time given, has passed.
-    Armed(u64),
-    /// The walk was published at its bound: nothing more of the item's is
-    /// applied, and it is never armed again.
-    Published,
-}
-
-/// The judgement of the item in flight: whether its window is hung, and
-/// otherwise whether the user has moved on from it.
+/// The judgement of the item in flight: whether the user has moved on from
+/// its window.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Moved {
     /// The item has no window: it is never judged.
@@ -122,17 +106,14 @@ pub enum Reason {
     /// The user moved on from the item's window to another thread of its
     /// application.
     MovedOn,
-    /// The item's window was found hung or ghosted, by Windows' own state.
-    Hung,
 }
 
 /// What the record asks of its reader's shell, answered by the matching
 /// transition before anything else is judged.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Ask {
-    /// Judge `request`'s item by its window: whether the window is hung,
-    /// tested first, and otherwise whether the user has left it for
-    /// another thread of its application; answered by
+    /// Judge `request`'s item by its window: whether the user has left it
+    /// for another thread of its application; answered by
     /// [`InFlight::judged`].
     Judge {
         /// The item asked about.
@@ -140,15 +121,6 @@ pub enum Ask {
         /// Its window; `None` for one its worker names, which the shell
         /// reads, the item staying while none is named.
         window: Option<Window>,
-    },
-    /// Publish the walk of `request`'s item from its progress; answered by
-    /// [`InFlight::published`], which carries `then_abandon` back.
-    Publish {
-        /// The item whose walk is published.
-        request: Request,
-        /// Why the item is abandoned once the publication is applied, when
-        /// an abandonment asked for it.
-        then_abandon: Option<Reason>,
     },
 }
 
@@ -164,8 +136,6 @@ pub struct Abandoned<T> {
     pub reason: Reason,
     /// The item.
     pub item: T,
-    /// Whether its walk was published at its bound.
-    pub published: bool,
 }
 
 /// What a transition decides.
@@ -185,7 +155,6 @@ struct Running<T> {
     request: Request,
     started: u64,
     deadline: u64,
-    walk: Walk,
     moved: Moved,
     item: T,
 }
@@ -232,15 +201,14 @@ impl<T> InFlight<T> {
             request,
             started: now,
             deadline: now.saturating_add(deadline),
-            walk: Walk::Unarmed,
             moved,
             item,
         });
         request
     }
 
-    /// A new request for the item running, keeping its times, its walk and
-    /// its moved-on rule; `None` with nothing running.
+    /// A new request for the item running, keeping its times and its
+    /// moved-on rule; `None` with nothing running.
     pub fn hand_on(&mut self) -> Option<Request> {
         let request = Request {
             generation: self.generation,
@@ -274,37 +242,6 @@ impl<T> InFlight<T> {
         }
     }
 
-    /// `request`'s walk passed its checks, its bound at `bound`; a walk
-    /// published is never armed again.
-    pub fn armed(&mut self, request: Request, bound: u64) {
-        if let Some(running) = self.running_of(request)
-            && running.walk != Walk::Published
-        {
-            running.walk = Walk::Armed(bound);
-        }
-    }
-
-    /// `request`'s walk returned, `past` its bound or not: an armed walk
-    /// past its bound is published; otherwise no bound is timed for it any
-    /// more.
-    pub fn walk_returned(&mut self, request: Request, past: bool) -> Decision<T> {
-        let Some(running) = self.running_of(request) else {
-            return Decision::Nothing;
-        };
-        if !matches!(running.walk, Walk::Armed(_)) {
-            return Decision::Nothing;
-        }
-        running.walk = Walk::Unarmed;
-        if past {
-            Decision::Ask(Ask::Publish {
-                request,
-                then_abandon: None,
-            })
-        } else {
-            Decision::Nothing
-        }
-    }
-
     /// The reader's time has come at `now`: what is due is judged
     /// ([`judge`](Self::judge)).
     pub fn tick(&mut self, now: u64) -> Decision<T> {
@@ -312,80 +249,21 @@ impl<T> InFlight<T> {
     }
 
     /// The answer to [`Ask::Judge`] for `request`: `None` when the item
-    /// stays, else why it is abandoned, its window hung or the user moved
-    /// on; an armed walk is published first and the item abandoned then,
-    /// and any other is abandoned at once, published or not.
+    /// stays, else why it is abandoned, the user having moved on.
     pub fn judged(&mut self, request: Request, verdict: Option<Reason>) -> Decision<T> {
-        let Some(running) = self.running_of(request) else {
+        if self.running_of(request).is_none() {
             return Decision::Nothing;
-        };
-        let Some(reason) = verdict else {
-            return Decision::Nothing;
-        };
-        if matches!(running.walk, Walk::Armed(_)) {
-            running.walk = Walk::Unarmed;
-            return Decision::Ask(Ask::Publish {
-                request,
-                then_abandon: Some(reason),
-            });
         }
-        self.abandon(reason)
-    }
-
-    /// The answer to [`Ask::Publish`] for `request`, with `got` when the
-    /// walk was published, which the reader applies before this: the walk
-    /// is then published, and the abandonment the ask carried is made, or
-    /// with none, what is due at `now` is judged again. An answer for an
-    /// item no longer running is dropped, its abandonment with it.
-    pub fn published(
-        &mut self,
-        request: Request,
-        got: bool,
-        then_abandon: Option<Reason>,
-        now: u64,
-    ) -> Decision<T> {
-        match self.publication(request, got, then_abandon) {
-            Some(Decision::Nothing) => self.judge(now),
-            decision => decision.unwrap_or(Decision::Nothing),
-        }
-    }
-
-    /// [`published`](Self::published) for a reader that has stopped, which
-    /// judges nothing more: the walk is published with `got`, and the
-    /// abandonment the ask carried is made, if any; nothing else is.
-    pub fn published_judging_nothing(
-        &mut self,
-        request: Request,
-        got: bool,
-        then_abandon: Option<Reason>,
-    ) -> Decision<T> {
-        self.publication(request, got, then_abandon)
-            .unwrap_or(Decision::Nothing)
-    }
-
-    /// Applies the answer to [`Ask::Publish`] for `request`, with its
-    /// abandonment, if any: `None` when `request` is not running.
-    fn publication(
-        &mut self,
-        request: Request,
-        got: bool,
-        then_abandon: Option<Reason>,
-    ) -> Option<Decision<T>> {
-        let running = self.running_of(request)?;
-        if got {
-            running.walk = Walk::Published;
-        }
-        Some(match then_abandon {
+        match verdict {
             Some(reason) => self.abandon(reason),
             None => Decision::Nothing,
-        })
+        }
     }
 
-    /// The item of `request`, once, with whether its walk was published, if
-    /// `request` is running.
-    pub fn end(&mut self, request: Request) -> Option<(T, bool)> {
+    /// The item of `request`, once, if `request` is running.
+    pub fn end(&mut self, request: Request) -> Option<T> {
         let running = self.running.take_if(|running| running.request == request)?;
-        Some((running.item, running.walk == Walk::Published))
+        Some(running.item)
     }
 
     /// A new generation in charge without an abandonment, for a reader
@@ -400,13 +278,12 @@ impl<T> InFlight<T> {
         self.generation
     }
 
-    /// Whether a result of `request` is applied: its item is running and
-    /// its walk was not published.
+    /// Whether a result of `request` is applied: its item is running.
     #[must_use]
     pub fn accepts(&self, request: Request) -> bool {
         self.running
             .as_ref()
-            .is_some_and(|running| running.request == request && running.walk != Walk::Published)
+            .is_some_and(|running| running.request == request)
     }
 
     /// The generation in charge.
@@ -415,17 +292,12 @@ impl<T> InFlight<T> {
         self.generation
     }
 
-    /// The item running, by its request, with whether its walk was
-    /// published.
+    /// The item running, by its request.
     #[must_use]
-    pub fn running(&self) -> Option<(Request, &T, bool)> {
-        self.running.as_ref().map(|running| {
-            (
-                running.request,
-                &running.item,
-                running.walk == Walk::Published,
-            )
-        })
+    pub fn running(&self) -> Option<(Request, &T)> {
+        self.running
+            .as_ref()
+            .map(|running| (running.request, &running.item))
     }
 
     /// The deadline of the item running.
@@ -439,16 +311,12 @@ impl<T> InFlight<T> {
         self.running.as_mut().map(|running| &mut running.item)
     }
 
-    /// When something is next due: the soonest of the deadline, the bound
-    /// while the walk is armed, and the next judgement while the window is
-    /// known or named.
+    /// When something is next due: the sooner of the deadline and the
+    /// next judgement while the window is known or named.
     #[must_use]
     pub fn next_wake(&self) -> Option<u64> {
         let running = self.running.as_ref()?;
         let mut due = running.deadline;
-        if let Walk::Armed(bound) = running.walk {
-            due = due.min(bound);
-        }
         if let Moved::Known { next, .. } | Moved::Named { next } = running.moved {
             due = due.min(next);
         }
@@ -457,34 +325,15 @@ impl<T> InFlight<T> {
 
     /// The judgments of the item at `now`, in this order, the first that
     /// applies deciding, so a transition makes at most one ask: its
-    /// deadline, which abandons it, publishing an armed walk first; its
-    /// walk's bound, which publishes the walk; and the judgement of its
-    /// window, once due, published or not. Judged the other way
-    /// round, a late tick past both the bound and the deadline would
-    /// abandon before the publication, losing what was read.
+    /// deadline, which abandons it, and the judgement of its window, once
+    /// due.
     fn judge(&mut self, now: u64) -> Decision<T> {
         let Some(running) = self.running.as_mut() else {
             return Decision::Nothing;
         };
         let request = running.request;
         if now >= running.deadline {
-            if matches!(running.walk, Walk::Armed(_)) {
-                running.walk = Walk::Unarmed;
-                return Decision::Ask(Ask::Publish {
-                    request,
-                    then_abandon: Some(Reason::Deadline),
-                });
-            }
             return self.abandon(Reason::Deadline);
-        }
-        if let Walk::Armed(bound) = running.walk
-            && now >= bound
-        {
-            running.walk = Walk::Unarmed;
-            return Decision::Ask(Ask::Publish {
-                request,
-                then_abandon: None,
-            });
         }
         let window = match &mut running.moved {
             Moved::Known { window, next } if now >= *next => {
@@ -518,7 +367,6 @@ impl<T> InFlight<T> {
             replacement: self.generation,
             reason,
             item: running.item,
-            published: running.walk == Walk::Published,
         })
     }
 

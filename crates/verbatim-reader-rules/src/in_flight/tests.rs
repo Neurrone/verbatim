@@ -21,13 +21,6 @@ const WINDOW: Window = match Window::new(0x10) {
     None => panic!("0x10 is not 0"),
 };
 
-fn publish(request: Request, then_abandon: Option<Reason>) -> Decision<u32> {
-    Decision::Ask(Ask::Publish {
-        request,
-        then_abandon,
-    })
-}
-
 fn moved_on(request: Request) -> Decision<u32> {
     Decision::Ask(Ask::Judge {
         request,
@@ -40,45 +33,13 @@ fn moving(moved_on: bool) -> Option<Reason> {
     moved_on.then_some(Reason::MovedOn)
 }
 
-fn abandoned(dead: u64, reason: Reason, published: bool) -> Decision<u32> {
+fn abandoned(dead: u64, reason: Reason) -> Decision<u32> {
     Decision::Abandon(Abandoned {
         dead,
         replacement: dead + 1,
         reason,
         item: 7,
-        published,
     })
-}
-
-/// A judgement that finds the item's window hung abandons it for that
-/// reason, publishing an armed walk first; one that finds it staying
-/// decides nothing.
-#[test]
-fn a_hung_judgement_abandons_publishing_an_armed_walk_first() {
-    let mut in_flight = InFlight::new();
-    let request = in_flight.start(7, 11_000 * MS, RuleWindow::Known(WINDOW), 0);
-    in_flight.armed(request, 2_000 * MS);
-    assert_eq!(in_flight.tick(GRACE), moved_on(request));
-    assert_eq!(
-        in_flight.judged(request, None),
-        Decision::Nothing,
-        "it stays"
-    );
-    assert_eq!(in_flight.tick(2 * GRACE), moved_on(request));
-    assert_eq!(
-        in_flight.judged(request, Some(Reason::Hung)),
-        publish(request, Some(Reason::Hung))
-    );
-    assert_eq!(
-        in_flight.published(request, true, Some(Reason::Hung), 2 * GRACE),
-        abandoned(0, Reason::Hung, true)
-    );
-    let unarmed = in_flight.start(7, 11_000 * MS, RuleWindow::Known(WINDOW), 2 * GRACE);
-    assert_eq!(in_flight.tick(3 * GRACE), moved_on(unarmed));
-    assert_eq!(
-        in_flight.judged(unarmed, Some(Reason::Hung)),
-        abandoned(1, Reason::Hung, false)
-    );
 }
 
 /// An item whose worker names its window is judged on the grace's
@@ -99,69 +60,18 @@ fn a_named_item_is_judged_on_the_graces_schedule() {
     assert_eq!(in_flight.tick(2 * GRACE), judge);
     assert_eq!(
         in_flight.judged(request, Some(Reason::MovedOn)),
-        abandoned(0, Reason::MovedOn, false)
+        abandoned(0, Reason::MovedOn)
     );
 }
 
-/// One late tick past the deadline, the bound and the moved-on rule's
-/// judgment is decided by the deadline, publishing the armed walk first;
-/// one past the bound and the judgment but before the deadline publishes,
-/// and the publication's answer then judges the moved-on rule.
+/// One late tick past both the deadline and the moved-on rule's judgment
+/// is decided by the deadline, with no judgment asked.
 #[test]
-fn a_late_tick_judges_the_deadline_then_the_bound_then_the_moved_on_rule() {
+fn a_late_tick_judges_the_deadline_before_the_moved_on_rule() {
     let mut late = InFlight::new();
-    let request = late.start(7, 2_000 * MS, RuleWindow::Known(WINDOW), 0);
-    late.armed(request, 1_000 * MS);
-    assert_eq!(
-        late.tick(3_000 * MS),
-        publish(request, Some(Reason::Deadline))
-    );
-    assert_eq!(
-        late.published(request, true, Some(Reason::Deadline), 3_000 * MS),
-        abandoned(0, Reason::Deadline, true)
-    );
-
-    let mut early = InFlight::new();
-    let request = early.start(7, 2_000 * MS, RuleWindow::Known(WINDOW), 0);
-    early.armed(request, 1_000 * MS);
-    assert_eq!(early.tick(1_500 * MS), publish(request, None));
-    assert_eq!(
-        early.published(request, true, None, 1_500 * MS),
-        moved_on(request)
-    );
-    assert_eq!(early.next_wake(), Some(2_000 * MS));
-}
-
-/// Each reason for an abandonment publishes an armed walk first, and the
-/// item leaves with its walk published.
-#[test]
-fn an_armed_walk_is_published_before_each_abandonment() {
-    let mut deadline = InFlight::new();
-    let request = deadline.start(7, 400 * MS, RuleWindow::Never, 0);
-    deadline.armed(request, 1_000 * MS);
-    assert_eq!(
-        deadline.tick(400 * MS),
-        publish(request, Some(Reason::Deadline))
-    );
-    assert_eq!(
-        deadline.published(request, true, Some(Reason::Deadline), 400 * MS),
-        abandoned(0, Reason::Deadline, true)
-    );
-
-    let mut moved = InFlight::new();
-    let request = moved.start(7, 10_000 * MS, RuleWindow::Known(WINDOW), 0);
-    moved.armed(request, 2_000 * MS);
-    assert_eq!(moved.tick(GRACE), moved_on(request));
-    assert_eq!(
-        moved.judged(request, moving(true)),
-        publish(request, Some(Reason::MovedOn))
-    );
-    assert_eq!(
-        moved.published(request, true, Some(Reason::MovedOn), GRACE),
-        abandoned(0, Reason::MovedOn, true)
-    );
-    assert_eq!(moved.generation(), 1);
-    assert!(moved.running().is_none());
+    let _ = late.start(7, 2_000 * MS, RuleWindow::Known(WINDOW), 0);
+    assert_eq!(late.tick(3_000 * MS), abandoned(0, Reason::Deadline));
+    assert!(late.running().is_none());
 }
 
 /// A window known at the start is judged at the grace's end and every
@@ -195,68 +105,26 @@ fn the_moved_on_rule_is_judged_every_half_second() {
     assert_eq!(early.next_wake(), Some(GRACE), "judged at the grace's end");
 }
 
-/// A published item still stuck is abandoned at once when the user has
-/// moved on.
-#[test]
-fn a_published_item_is_abandoned_at_once_when_the_user_moves_on() {
-    let mut in_flight = InFlight::new();
-    let request = in_flight.start(7, 8_000 * MS, RuleWindow::Known(WINDOW), 0);
-    in_flight.armed(request, 2_000 * MS);
-    assert_eq!(in_flight.tick(2_000 * MS), publish(request, None));
-    assert_eq!(
-        in_flight.published(request, true, None, 2_000 * MS),
-        moved_on(request)
-    );
-    assert_eq!(in_flight.judged(request, moving(false)), Decision::Nothing);
-    assert!(!in_flight.accepts(request), "published");
-    assert_eq!(in_flight.tick(2_500 * MS), moved_on(request));
-    assert_eq!(
-        in_flight.judged(request, moving(true)),
-        abandoned(0, Reason::MovedOn, true)
-    );
-}
-
 /// An answer for a request no longer running is dropped, and the
-/// abandonment it carried is not made.
+/// abandonment it would make is not made.
 #[test]
 fn an_answer_to_a_dead_request_is_dropped() {
     let mut in_flight = InFlight::new();
     let request = in_flight.start(7, 8_000 * MS, RuleWindow::Known(WINDOW), 0);
-    assert_eq!(in_flight.end(request), Some((7, false)));
+    assert_eq!(in_flight.end(request), Some(7));
     let next = in_flight.start(8, 8_000 * MS, RuleWindow::Known(WINDOW), 0);
     assert_eq!(in_flight.judged(request, moving(true)), Decision::Nothing);
-    assert_eq!(
-        in_flight.published(request, true, Some(Reason::Deadline), 0),
-        Decision::Nothing
-    );
-    assert_eq!(
-        in_flight.published(request, true, None, 0),
-        Decision::Nothing
-    );
     assert_eq!(in_flight.generation(), 0);
     assert!(in_flight.accepts(next), "the running item is untouched");
     assert_eq!(in_flight.end(request), None);
 }
 
-/// A walk that returns before its bound has no bound timed any more.
-#[test]
-fn a_walk_returned_before_its_bound_is_disarmed() {
-    let mut in_flight = InFlight::new();
-    let request = in_flight.start(7, 8_000 * MS, RuleWindow::Never, 0);
-    in_flight.armed(request, 2_000 * MS);
-    assert_eq!(in_flight.next_wake(), Some(2_000 * MS));
-    assert_eq!(in_flight.walk_returned(request, false), Decision::Nothing);
-    assert_eq!(in_flight.next_wake(), Some(8_000 * MS));
-    assert_eq!(in_flight.tick(2_000 * MS), Decision::Nothing);
-}
-
-/// An item handed on to a new request keeps its times, its walk and its
-/// moved-on rule, and the old request is refused.
+/// An item handed on to a new request keeps its times and its moved-on
+/// rule, and the old request is refused.
 #[test]
 fn an_item_handed_on_keeps_its_times() {
     let mut in_flight = InFlight::new();
     let request = in_flight.start(7, 2_000 * MS, RuleWindow::Known(WINDOW), 0);
-    in_flight.armed(request, 1_000 * MS);
     let handed = in_flight.hand_on().expect("an item running");
     assert_eq!(
         handed,
@@ -270,7 +138,7 @@ fn an_item_handed_on_keeps_its_times() {
     assert_eq!(in_flight.next_wake(), Some(GRACE));
     assert_eq!(in_flight.tick(GRACE), moved_on(handed));
     assert_eq!(in_flight.judged(handed, moving(false)), Decision::Nothing);
-    assert_eq!(in_flight.tick(1_000 * MS), publish(handed, None));
+    assert_eq!(in_flight.tick(2_000 * MS), abandoned(0, Reason::Deadline));
 }
 
 /// A generation succeeded without an abandonment refuses the last one's
@@ -279,7 +147,7 @@ fn an_item_handed_on_keeps_its_times() {
 fn a_succeeded_generation_takes_charge() {
     let mut in_flight = InFlight::new();
     let request = in_flight.start(7, 2_000 * MS, RuleWindow::Never, 0);
-    assert_eq!(in_flight.end(request), Some((7, false)));
+    assert_eq!(in_flight.end(request), Some(7));
     assert_eq!(in_flight.succeed(), 1);
     let next = in_flight.start(8, 2_000 * MS, RuleWindow::Never, 0);
     assert_eq!(
@@ -304,14 +172,9 @@ enum Action {
     Start { window: u8, deadline: u8 },
     /// The item learns its window.
     Learned,
-    /// The item's walk is armed, its bound this many milliseconds from now
-    /// less 200, so some bounds are already past.
-    Armed(u16),
     /// Time advances this many milliseconds, and the reader ticks unless it
     /// has stopped.
     Advance(u16),
-    /// The item's walk returns, past its bound or not.
-    WalkReturned(bool),
     /// The item is handed on to a new request.
     HandOn,
     /// The item ends.
@@ -329,10 +192,7 @@ enum Action {
 #[derive(Clone, Copy, Debug)]
 enum Stale {
     Learned,
-    Armed,
-    Returned,
     Judged(Reason),
-    Published(Option<Reason>),
     End,
 }
 
@@ -340,16 +200,7 @@ fn action() -> impl Strategy<Value = Action> {
     use proptest::prelude::*;
     let stale = prop_oneof![
         Just(Stale::Learned),
-        Just(Stale::Armed),
-        Just(Stale::Returned),
-        prop_oneof![Just(Reason::MovedOn), Just(Reason::Hung)].prop_map(Stale::Judged),
-        prop_oneof![
-            Just(None),
-            Just(Some(Reason::Deadline)),
-            Just(Some(Reason::MovedOn)),
-            Just(Some(Reason::Hung))
-        ]
-        .prop_map(Stale::Published),
+        prop_oneof![Just(Reason::MovedOn), Just(Reason::Deadline)].prop_map(Stale::Judged),
         Just(Stale::End),
     ];
     // Weighted toward the lifecycle: starts, ends, hand-ons, successions
@@ -357,12 +208,9 @@ fn action() -> impl Strategy<Value = Action> {
     prop_oneof![
         4 => (0..4u8, 0..4u8).prop_map(|(window, deadline)| Action::Start { window, deadline }),
         2 => Just(Action::Learned),
-        3 => (0..3_200u16).prop_map(Action::Armed),
         3 => (0..1_200u16).prop_map(Action::Advance),
-        // Steps that land on the grace's, the bounds' and the deadlines'
-        // own times.
+        // Steps that land on the grace's and the deadlines' own times.
         2 => prop_oneof![Just(100u16), Just(200), Just(400), Just(500)].prop_map(Action::Advance),
-        2 => any::<bool>().prop_map(Action::WalkReturned),
         2 => Just(Action::HandOn),
         3 => Just(Action::End),
         1 => Just(Action::Succeed),
@@ -372,7 +220,7 @@ fn action() -> impl Strategy<Value = Action> {
 }
 
 /// The readers' deadlines: a short one, as a shell item query's left of
-/// its own, an outpost's handling deadline, and the bounded walk's, the
+/// its own, an outpost's handling deadline, and the focus read's, the
 /// listener's.
 const DEADLINES: [u64; 4] = [400 * MS, 2_000 * MS, 11_000 * MS, 13_000 * MS];
 
@@ -381,34 +229,10 @@ const DEADLINES: [u64; 4] = [400 * MS, 2_000 * MS, 11_000 * MS, 13_000 * MS];
 struct Answers(Vec<bool>);
 
 impl Answers {
-    /// Whether the user has moved on, asked at `now`.
-    fn moved_on(&self, now: u64) -> bool {
-        self.at(now, 0)
-    }
-
-    /// Whether the item's window is hung, asked at `now`.
-    fn hung(&self, now: u64) -> bool {
-        self.at(now, 2)
-    }
-
-    /// The judgement asked at `now`: hung, tested first, else moved on,
-    /// else none.
+    /// The judgement asked at `now`: moved on, or none.
     fn judgement(&self, now: u64) -> Option<Reason> {
-        if self.hung(now) {
-            Some(Reason::Hung)
-        } else {
-            self.moved_on(now).then_some(Reason::MovedOn)
-        }
-    }
-
-    /// Whether the walk was published, asked at `now`.
-    fn published(&self, now: u64) -> bool {
-        self.at(now, 1)
-    }
-
-    fn at(&self, now: u64, salt: u64) -> bool {
-        let index = (now / MS + salt) % u64::try_from(self.0.len()).expect("a few answers");
-        self.0[usize::try_from(index).expect("a small index")]
+        let index = (now / MS) % u64::try_from(self.0.len()).expect("a few answers");
+        self.0[usize::try_from(index).expect("a small index")].then_some(Reason::MovedOn)
     }
 }
 
@@ -417,23 +241,18 @@ impl Answers {
 enum Event {
     /// It learns its window.
     Learned,
-    /// Its walk is armed, with this bound.
-    Armed(u64),
-    /// Its walk returns, past its bound or not.
-    Returned(bool),
     /// The reader ticks.
     Tick,
     /// It ends.
     End,
 }
 
-/// The fate of one item: still running, ended, or abandoned for a reason,
-/// each with whether its walk was published.
+/// The fate of one item: still running, ended, or abandoned for a reason.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Fate {
-    Running(bool),
-    Ended(bool),
-    Abandoned(Reason, bool),
+    Running,
+    Ended,
+    Abandoned(Reason),
 }
 
 /// The reference model: one item's timeline, from its start, scanned for
@@ -449,22 +268,18 @@ struct Timeline {
 
 impl Timeline {
     /// The item's fate after its events so far, with every answer drawn by
-    /// its time. Its walk is published at a judgment past its bound or at
-    /// a return past it, or before an abandonment while armed, when the
-    /// answer then says so. It is abandoned at the first judgment at or
-    /// past its deadline, or when its window is found hung or the user is
-    /// found to have moved on at a judgment of its window, known or named:
-    /// the grace after its start, or after the window is learned, and each
-    /// grace after the last. A judgment is a tick, or a window learned past
-    /// the grace; a stopped reader makes neither.
+    /// its time. It is abandoned at the first judgment at or past its
+    /// deadline, or when the user is found to have moved on at a judgment
+    /// of its window, known or named: the grace after its start, or after
+    /// the window is learned, and each grace after the last. A judgment is
+    /// a tick, or a window learned past the grace; a stopped reader makes
+    /// neither.
     fn fate(&self, answers: &Answers) -> Fate {
         let grace_end = self.start + GRACE;
         let mut next = match self.window {
             RuleWindow::Known(_) | RuleWindow::Named => Some(grace_end),
             RuleWindow::Never | RuleWindow::Unknown => None,
         };
-        let mut bound = None;
-        let mut published = false;
         for &(now, event) in &self.events {
             let judged = match event {
                 Event::Learned => {
@@ -475,47 +290,25 @@ impl Timeline {
                         false
                     }
                 }
-                Event::Armed(at) => {
-                    if !published {
-                        bound = Some(at);
-                    }
-                    false
-                }
-                Event::Returned(past) => {
-                    if bound.take().is_some() && past {
-                        published |= answers.published(now);
-                    }
-                    false
-                }
                 Event::Tick => true,
-                Event::End => return Fate::Ended(published),
+                Event::End => return Fate::Ended,
             };
             if !judged {
                 continue;
             }
-            let mut publish = |bound: &mut Option<u64>| {
-                if bound.take().is_some() {
-                    published |= answers.published(now);
-                }
-            };
             if now >= self.start + self.deadline {
-                publish(&mut bound);
-                return Fate::Abandoned(Reason::Deadline, published);
-            }
-            if bound.is_some_and(|at| now >= at) {
-                publish(&mut bound);
+                return Fate::Abandoned(Reason::Deadline);
             }
             if let Some(at) = next
                 && now >= at
             {
                 next = Some(now + GRACE);
                 if let Some(reason) = answers.judgement(now) {
-                    publish(&mut bound);
-                    return Fate::Abandoned(reason, published);
+                    return Fate::Abandoned(reason);
                 }
             }
         }
-        Fate::Running(published)
+        Fate::Running
     }
 }
 
@@ -523,30 +316,22 @@ impl Timeline {
 type Reached = BTreeMap<&'static str, u64>;
 
 /// The lifecycle states the gate's cases must each reach at least once.
-const LISTED: [&str; 23] = [
+const LISTED: [&str; 15] = [
     "started with no window",
     "started with a window to learn",
     "started with a known window",
     "started with a window its worker names",
     "a named window judged",
-    "published, then abandoned as hung",
-    "abandoned as hung",
     "a window learned past the grace judged at once",
-    "armed after its publication",
-    "published at its bound",
-    "published, then abandoned at the deadline",
-    "published, then abandoned as moved on",
     "abandoned at the deadline",
     "abandoned as moved on",
-    "abandoned with its walk published",
-    "ended with its walk published",
-    "ended unpublished",
+    "ended",
     "handed on",
     "succeeded",
     "a request the record does not keep",
     "a dead request answered",
     "stopped",
-    "published while stopped, judging nothing",
+    "an ended item's request refused while another runs",
 ];
 
 /// One generated run: the record, the time, the answers, the item running
@@ -562,8 +347,8 @@ struct Run {
     left: Vec<u32>,
     succeeded: u64,
     abandonments: u64,
-    /// Whether the reader has stopped: it ticks no more, starts nothing,
-    /// and a publication's answer judges nothing.
+    /// Whether the reader has stopped: it ticks no more and starts
+    /// nothing.
     stopped: bool,
     /// Every request issued, by number: none recurs.
     issued: BTreeSet<u64>,
@@ -648,15 +433,8 @@ impl Run {
                     self.reach(match abandoned.reason {
                         Reason::Deadline => "abandoned at the deadline",
                         Reason::MovedOn => "abandoned as moved on",
-                        Reason::Hung => "abandoned as hung",
                     });
-                    if abandoned.published {
-                        self.reach("abandoned with its walk published");
-                    }
-                    self.left_as = Some((
-                        abandoned.item,
-                        Fate::Abandoned(abandoned.reason, abandoned.published),
-                    ));
+                    self.left_as = Some((abandoned.item, Fate::Abandoned(abandoned.reason)));
                     return;
                 }
                 Decision::Ask(Ask::Judge {
@@ -678,29 +456,6 @@ impl Run {
                     let answer = self.answers.judgement(self.now);
                     decision = self.in_flight.judged(request, answer);
                 }
-                Decision::Ask(Ask::Publish {
-                    request: asked,
-                    then_abandon,
-                }) => {
-                    assert_eq!(asked, request, "{:?}", self.trail);
-                    let got = self.answers.published(self.now);
-                    if got {
-                        self.reach(match then_abandon {
-                            None => "published at its bound",
-                            Some(Reason::Deadline) => "published, then abandoned at the deadline",
-                            Some(Reason::MovedOn) => "published, then abandoned as moved on",
-                            Some(Reason::Hung) => "published, then abandoned as hung",
-                        });
-                    }
-                    decision = if self.stopped {
-                        self.reach("published while stopped, judging nothing");
-                        self.in_flight
-                            .published_judging_nothing(request, got, then_abandon)
-                    } else {
-                        self.in_flight
-                            .published(request, got, then_abandon, self.now)
-                    };
-                }
             }
         }
     }
@@ -716,9 +471,7 @@ impl Run {
     /// request changed nothing.
     fn seen(&self) -> impl PartialEq + std::fmt::Debug + use<> {
         (
-            self.in_flight
-                .running()
-                .map(|(request, id, published)| (request, *id, published)),
+            self.in_flight.running().map(|(request, id)| (request, *id)),
             self.in_flight.generation(),
             self.in_flight.next_wake(),
             self.in_flight.deadline(),
@@ -779,21 +532,6 @@ impl Run {
                 }
                 self.settle(decision);
             }
-            Action::Armed(offset) => {
-                let Some(request) = running else {
-                    return;
-                };
-                if self
-                    .in_flight
-                    .running()
-                    .is_some_and(|(_, _, published)| published)
-                {
-                    self.reach("armed after its publication");
-                }
-                let bound = (self.now + u64::from(offset) * MS).saturating_sub(200 * MS);
-                self.record(Event::Armed(bound));
-                self.in_flight.armed(request, bound);
-            }
             Action::Advance(ms) => {
                 self.now += u64::from(ms) * MS;
                 if self.stopped {
@@ -811,14 +549,6 @@ impl Run {
                     "a wake left due after a tick: {:?}",
                     self.trail
                 );
-            }
-            Action::WalkReturned(past) => {
-                let Some(request) = running else {
-                    return;
-                };
-                self.record(Event::Returned(past));
-                let decision = self.in_flight.walk_returned(request, past);
-                self.settle(decision);
             }
             Action::HandOn => {
                 let handed = self.in_flight.hand_on();
@@ -840,12 +570,8 @@ impl Run {
                 self.record(Event::End);
                 let ended = self.in_flight.end(request).expect("the item running ends");
                 assert_eq!(self.in_flight.end(request), None, "the item leaves once");
-                self.reach(if ended.1 {
-                    "ended with its walk published"
-                } else {
-                    "ended unpublished"
-                });
-                self.left_as = Some((ended.0, Fate::Ended(ended.1)));
+                self.reach("ended");
+                self.left_as = Some((ended, Fate::Ended));
             }
             Action::Succeed => {
                 if self.stopped {
@@ -867,20 +593,12 @@ impl Run {
                     return;
                 };
                 let before = self.seen();
+                if self.item.is_some() {
+                    self.reach("an ended item's request refused while another runs");
+                }
                 let decision = match stale {
                     Stale::Learned => self.in_flight.learned(dead, WINDOW, self.now),
-                    Stale::Armed => {
-                        self.in_flight.armed(dead, self.now);
-                        Decision::Nothing
-                    }
-                    Stale::Returned => self.in_flight.walk_returned(dead, true),
                     Stale::Judged(reason) => self.in_flight.judged(dead, Some(reason)),
-                    Stale::Published(then_abandon) if self.stopped => self
-                        .in_flight
-                        .published_judging_nothing(dead, true, then_abandon),
-                    Stale::Published(then_abandon) => {
-                        self.in_flight.published(dead, true, then_abandon, self.now)
-                    }
                     Stale::End => {
                         assert_eq!(self.in_flight.end(dead), None, "{:?}", self.trail);
                         Decision::Nothing
@@ -905,17 +623,13 @@ impl Run {
                 self.dead = Some(*request);
                 self.item = None;
             } else {
-                let Fate::Running(published) = fate else {
-                    panic!("{fate:?} of an item still running: {trail:?}");
-                };
+                assert_eq!(fate, Fate::Running, "an item still running: {trail:?}");
                 assert_eq!(
-                    self.in_flight
-                        .running()
-                        .map(|(request, id, published)| (request, *id, published)),
-                    Some((*request, timeline.id, published)),
+                    self.in_flight.running().map(|(request, id)| (request, *id)),
+                    Some((*request, timeline.id)),
                     "{trail:?}"
                 );
-                assert_eq!(self.in_flight.accepts(*request), !published);
+                assert!(self.in_flight.accepts(*request), "{trail:?}");
                 assert_eq!(
                     self.in_flight.deadline(),
                     Some(timeline.start + timeline.deadline),
@@ -927,15 +641,6 @@ impl Run {
                     Some(id),
                     "the item: {trail:?}"
                 );
-                if published {
-                    assert!(
-                        timeline
-                            .events
-                            .iter()
-                            .any(|(_, event)| matches!(event, Event::Armed(_))),
-                        "published only after armed"
-                    );
-                }
             }
         }
         if self.item.is_none() {
@@ -1082,13 +787,9 @@ impl Action {
     /// lists it.
     fn code(self) -> String {
         match self {
-            Action::Stale(Stale::Published(reason)) => format!(
-                "Action::Stale(Stale::Published({}))",
-                reason.map_or_else(
-                    || "None".to_owned(),
-                    |reason| format!("Some(Reason::{reason:?})")
-                )
-            ),
+            Action::Stale(Stale::Judged(reason)) => {
+                format!("Action::Stale(Stale::Judged(Reason::{reason:?}))")
+            }
             Action::Stale(stale) => format!("Action::Stale(Stale::{stale:?})"),
             other => format!("Action::{other:?}"),
         }
@@ -1135,9 +836,9 @@ fn found_cases_match_the_reference_model() {
 const SEED: u64 = 20_261_101;
 const CASES: u32 = 2_000;
 
-/// Generated cases of starts, learned windows, armed walks, ticks as time
-/// advances, returned walks, hand-ons, ends, successions, requests the
-/// record does not keep, answers to dead requests and a reader that stops,
+/// Generated cases of starts, learned windows, ticks as time advances,
+/// hand-ons, ends, successions, requests the record does not keep, answers
+/// to dead requests and a reader that stops,
 /// each ask answered at once by a value drawn by its time, give each item
 /// the fate a scan of its timeline names, with every invariant holding
 /// after every step and every item gone exactly once after the drain; each

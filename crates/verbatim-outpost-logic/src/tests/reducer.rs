@@ -1669,7 +1669,7 @@ impl Run {
                         && !reducer
                             .flight
                             .running()
-                            .is_some_and(|(_, current, _)| current.deferred),
+                            .is_some_and(|(_, current)| current.deferred),
                     "an idle answer with the watch open or a deferred program: {trail:?}"
                 );
             }
@@ -2158,11 +2158,11 @@ impl Run {
             reducer
                 .flight
                 .running()
-                .map(|(request, current, published)| (request, current.hang_mark, published)),
+                .map(|(request, current)| (request, current.hang_mark)),
             model
                 .flight
                 .as_ref()
-                .map(|flight| (flight.request, flight.hang_mark, false)),
+                .map(|flight| (flight.request, flight.hang_mark)),
             "the program in flight, its hang mark, and no walk published: {trail:?}"
         );
         if !model.stopping
@@ -2452,7 +2452,6 @@ fn focus_read(marker: u64) -> DeliveredFact {
             value_from_selection: false,
             window: Some(0x10),
             same_as_last: None,
-            bound_us: 2_000_000,
         }),
         focus: true,
     }

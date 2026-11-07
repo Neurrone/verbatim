@@ -4,6 +4,8 @@
 //! replay test. The listener's crate, `verbatim-listener`, runs it on its
 //! threads and makes every call.
 //!
+//! - [`checks`]: what a focus event goes through before its read, NVDA's
+//!   checks in their order, as a pure step function.
 //! - [`focus`]: the vocabulary a focus event is judged and scheduled in,
 //!   and the reasons an event is dropped.
 //! - [`schedule`]: the read scheduler, which reading thread reads which
@@ -49,6 +51,7 @@
     )
 )]
 
+pub mod checks;
 pub mod focus;
 pub mod foreground;
 pub mod schedule;

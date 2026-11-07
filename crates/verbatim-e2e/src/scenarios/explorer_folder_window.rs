@@ -27,39 +27,15 @@
 //! While it loads a folder, on the window's opening and after Enter or
 //! Backspace, File Explorer may give the keyboard focus for a moment to a
 //! placeholder, a static text element named "Working on it...", and then
-//! give it to the item: on GitHub's runners in 8 of 18 recorded runs after
-//! Enter, after Backspace in runs 39558690998 and 39583748471, and on the
-//! opening in run 39603654902; in none of 5 local runs of this scenario,
-//! though other File Explorer runs have met it on a development machine.
-//! Whether it comes depends on how quickly the machine loads the folder,
-//! so it is an optional utterance (`books/dev/src/reference/testing.md`, "Optional
-//! utterances", approved by Dickson for Enter on 2026-10-17 and for
-//! Backspace and the opening on 2026-10-21) rather than an expectation
-//! that depends on the machine: heard in full, cut off by the item's
-//! focus, or not said at all. Where it lands depends on the focus
-//! listener's own read of the placeholder (`verbatim-listener`'s
-//! `focus_read.rs`). When File Explorer removes it after the listener's
-//! nearest-window walk, the listener's classic read of it fails, or its
-//! read budget runs out, and the listener reports it with its ancestors
-//! unknown, so it is spoken with no ancestors, before what the item's
-//! focus brings: "Items View list", and on the opening the window's title
-//! before it; when the read succeeds, its ancestry ends in the list, so
-//! that speech comes first and the placeholder between it and the item.
-//! NVDA's own handling depends on the same kind of timing and speaks a
-//! placeholder whose element is gone by its main thread's handling
-//! without its list (`docs/parity/focus-events.md`, "A focus whose
-//! element is gone before its read"), so each of the three steps accepts
-//! the placeholder at either position, an explicit exception to the
-//! one-outcome rule (Dickson, 2026-10-21). The two optional places would
-//! also accept the placeholder said at both, so each step asserts that it
-//! was said at most once. The item is still required: a run where the
-//! placeholder keeps the focus fails.
+//! give it to the item. The listener reads every focus's keyboard focus
+//! live, as NVDA does, so a placeholder that has lost the focus by its read
+//! is dropped. NVDA's captures at the pin say no placeholder, so it is
+//! never expected, and a run that says it fails.
 
 use std::io;
 
 use crate::registry::ScenarioState;
 use crate::scenario::Scenario;
-use crate::speech::{heard, optional};
 
 pub(crate) use super::no_teardown as teardown;
 
@@ -95,22 +71,9 @@ pub(crate) fn body(scenario: &mut Scenario, state: &mut ScenarioState) {
 }
 
 /// The speech of a folder load: `context`, the window's title on the
-/// opening and "Items View list", then `item`, with File Explorer's
-/// placeholder optional before `context` or between it and the item, and
-/// said at most once in all.
+/// opening and "Items View list", then `item`.
 fn expect_after_load(scenario: &mut Scenario, context: &[&str], item: &str) {
-    let placeholder = "Working on it...";
-    let before = scenario.speech().optional_outcomes().len();
-    let mut expected = vec![optional(placeholder)];
-    expected.extend(context.iter().copied().map(heard));
-    expected.extend([optional(placeholder), heard(item)]);
-    scenario.speech().expect_sequence(&expected);
-    let said: usize = scenario.speech().optional_outcomes()[before..]
-        .iter()
-        .map(|outcome| outcome.endings.len())
-        .sum();
-    assert!(
-        said <= 1,
-        "{placeholder:?} was said {said} times in the folder load ending in {item:?}, where at most once is accepted"
-    );
+    let mut expected = context.to_vec();
+    expected.push(item);
+    scenario.speech().expect(&expected);
 }

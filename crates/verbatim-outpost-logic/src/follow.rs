@@ -122,6 +122,10 @@ pub struct FocusPath {
     /// Whether the listener's walk up from the focus did not reach the
     /// top: its read failed, or the walk was cut or ended at a failed step.
     cut: bool,
+    /// The focus's nearest window, as the read carries it, for a chain that
+    /// was cut: where a route starts when no element of the chain at or
+    /// above the one wanted has a window of its own.
+    nearest: Option<Window>,
 }
 
 /// Where an element of a [`FocusPath`] is found from: the window whose
@@ -150,7 +154,12 @@ impl FocusPath {
             }))
             .collect();
         let cut = read.ancestors_end != verbatim_model::protocol::AncestorsEnd::Top;
-        Self { chain, cut }
+        let nearest = read.window.and_then(Window::new).filter(|_| cut);
+        Self {
+            chain,
+            cut,
+            nearest,
+        }
     }
 
     /// Whether the chain begins with the focus `runtime_id` names, holds no
@@ -166,8 +175,14 @@ impl FocusPath {
 
     /// The route to the element of the chain whose runtime id is
     /// `runtime_id`: from the nearest element at or above it that has a
-    /// window of its own. `None` when no element of the chain has that
-    /// runtime id, or none at or above it has a window.
+    /// window of its own; or, for a chain whose walk up was cut below the
+    /// focus's nearest window, so that none at or above it has one, from
+    /// that nearest window, down by every runtime id of the chain from its
+    /// outermost element, which finds the element when the outermost is
+    /// the window's child, as a walk whose first step failed leaves a
+    /// child of its window. `None` when no element of the chain has that
+    /// runtime id, or none at or above it has a window and the chain was
+    /// not cut.
     #[must_use]
     pub fn route_to(&self, runtime_id: &[i32]) -> Option<Route> {
         let index = self.chain.iter().position(|(id, _)| id == runtime_id)?;
@@ -175,7 +190,8 @@ impl FocusPath {
         let (above, window) = from
             .iter()
             .enumerate()
-            .find_map(|(above, &(_, window))| Some((above, window?)))?;
+            .find_map(|(above, &(_, window))| Some((above, window?)))
+            .or_else(|| Some((from.len(), self.nearest?)))?;
         let path = from
             .get(..above)?
             .iter()
@@ -782,7 +798,6 @@ mod tests {
             value_from_selection: false,
             window: None,
             same_as_last: None,
-            bound_us: 2_000_000,
         }
     }
 
@@ -805,6 +820,31 @@ mod tests {
         let windowed_focus = FocusPath::of(&focus_read(60, [0, 0], AncestorsEnd::PlainFrom(70)));
         assert!(!windowed_focus.is_cut_at(&focus));
         assert!(!FocusPath::default().is_cut_at(&focus));
+    }
+
+    /// A windowless chain whose walk up failed below the focus's nearest
+    /// window, which the read carries, is routed from that window down by
+    /// every runtime id of the chain; a whole one, with no window of its
+    /// own, has no route.
+    #[test]
+    fn a_cut_windowless_chain_is_routed_from_its_nearest_window() {
+        use verbatim_model::protocol::AncestorsEnd;
+        let nearest = |end| UiaFocusRead {
+            window: Some(70),
+            ..focus_read(0, [0, 0], end)
+        };
+        assert_eq!(
+            FocusPath::of(&nearest(AncestorsEnd::ContinueFrom(90))).route_to(&[42, 1]),
+            Some(Route {
+                window: Window::new(70).expect("70 is not 0"),
+                path: vec![vec![42, 3], vec![42, 2], vec![42, 1]],
+                runtime_id: vec![42, 1],
+            })
+        );
+        assert_eq!(
+            FocusPath::of(&nearest(AncestorsEnd::Top)).route_to(&[42, 1]),
+            None
+        );
     }
 
     #[test]

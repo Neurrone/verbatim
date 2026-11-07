@@ -496,7 +496,7 @@ fn every_entry_is_given_the_handling_deadline_but_focus_now_and_a_listener_reads
         query,
     };
     let deadline = |item: Item| budget(&entry(item, 1), now(1_000), HANDLING_DEADLINE).0;
-    assert_eq!(deadline(focus_now(4)), BOUNDED_WALK_DEADLINE);
+    assert_eq!(deadline(focus_now(4)), FOCUS_READ_DEADLINE);
     let read = verbatim_model::protocol::UiaFocusRead {
         hwnd: 0x10,
         snapshot: verbatim_model::protocol::UiaSnapshotFact {
@@ -513,7 +513,6 @@ fn every_entry_is_given_the_handling_deadline_but_focus_now_and_a_listener_reads
         value_from_selection: false,
         window: Some(0x10),
         same_as_last: None,
-        bound_us: 2_000_000,
     };
     assert_eq!(
         deadline(Item::Fact(
@@ -524,7 +523,7 @@ fn every_entry_is_given_the_handling_deadline_but_focus_now_and_a_listener_reads
             },
             None,
         )),
-        BOUNDED_WALK_DEADLINE
+        FOCUS_READ_DEADLINE
     );
     assert_eq!(deadline(msaa_focus(1, 5)), HANDLING_DEADLINE);
     assert_eq!(deadline(name_change(1)), HANDLING_DEADLINE);
@@ -2544,7 +2543,6 @@ fn a_listener_read_in_a_hung_window_is_reported_and_tells_its_hang() {
         value_from_selection: false,
         window: Some(HUNG.get()),
         same_as_last: None,
-        bound_us: 2_000_000,
     };
     let effects = replay.push(
         Item::Fact(

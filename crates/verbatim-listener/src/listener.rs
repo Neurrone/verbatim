@@ -56,13 +56,13 @@
 //! sends the application's outpost a marker at once and queues the element
 //! for its application's thread; the thread's read, or its drop, follows
 //! the marker by the same route. Each read is a few calls on elements the
-//! listener holds, each of which UIA's call timeout ends, before each of
-//! which its window is tested for a hung application, and a watchdog
-//! abandons a thread whose read runs past its deadline, or past half a
-//! second once its window is hung or the user has moved
-//! on to a window of the same application on another UI thread, which it
-//! judges at the half second and every half second after, so a slow or
-//! hung application holds only its own thread. One exposure is UIA's own and cannot be contained here: a
+//! listener holds, each of which waits for the application up to UIA's
+//! call timeout, and a watchdog abandons a thread whose read runs past its
+//! deadline, or past half a second once the user has moved on to a window
+//! of the same application on another UI thread, which it judges at the
+//! half second and every half second after, so a slow or hung application
+//! holds only its own thread, and a focus in an application that hangs
+//! while it is read is spoken when it answers. One exposure is UIA's own and cannot be contained here: a
 //! hung window named in a focus `WinEvent` holds UIA's delivery of every
 //! focus event to the listener until it answers, as it holds NVDA's
 //! (`books/dev/src/reference/uia-bugs.md`, "A hung window named in a system focus event holds a
@@ -845,8 +845,8 @@ struct Listener {
 struct UiaFocusReading {
     /// The listener's window readability reader: the one judge of whether
     /// a window is hung, by Windows' own state, which each reading thread's
-    /// reader, the watchdog's judgement and the UIA callbacks' test on
-    /// arrival are given ([`Readers::window_hung`]). The system's
+    /// reader, for the windows its walk reaches, and the UIA callbacks'
+    /// test on arrival are given ([`Readers::window_hung`]). The system's
     /// ([`verbatim_win32::window::readability`]), unless a test gives its
     /// own.
     readability: WindowReadabilityReader,
@@ -1058,7 +1058,7 @@ impl Listener {
         }
         let readers = Arc::new(Readers::new(
             UiaFocusReading::new(),
-            verbatim_model::BOUNDED_WALK_DEADLINE,
+            verbatim_model::FOCUS_READ_DEADLINE,
         ));
         let msaa_outgoing = Arc::clone(&outgoing);
         let idle_readers = Arc::clone(&readers);
@@ -2266,7 +2266,7 @@ mod tests {
         });
         let readers = Arc::new(Readers::new(
             UiaFocusReading { readability },
-            verbatim_model::BOUNDED_WALK_DEADLINE,
+            verbatim_model::FOCUS_READ_DEADLINE,
         ));
         (Arc::new(outgoing), readers, drain(reader))
     }
@@ -2317,9 +2317,10 @@ mod tests {
     }
 
     /// A UIA focus whose sender's window hangs after it arrives is queued
-    /// behind its marker and read: its reading thread's test of the window
-    /// before its first call, the reader's second answer, finds it hung,
-    /// and its drop takes the marker's place.
+    /// behind its marker and read with no second test of its window: its
+    /// reading thread tests no window before its calls, so the reader is
+    /// asked once, as the focus arrived, and the read's outcome, here its
+    /// drop, takes the marker's place.
     #[test]
     fn a_focus_whose_window_hangs_after_it_arrives_is_read() {
         let uia = verbatim_uia::Uia::new().expect("a UIA client");
@@ -2363,8 +2364,8 @@ mod tests {
         assert_eq!(facts_once_stopped(&outgoing, readers, &sent), []);
         assert_eq!(
             *asked.lock().unwrap_or_else(PoisonError::into_inner),
-            [desktop_window(), desktop_window()],
-            "asked as it arrived, then by its read"
+            [desktop_window()],
+            "asked as it arrived, and not by its read"
         );
     }
 

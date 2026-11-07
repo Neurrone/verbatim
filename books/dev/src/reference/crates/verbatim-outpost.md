@@ -157,8 +157,7 @@ window (`read::plain_window`) is read from Windows' own state alone: role
 window, named by `InternalGetWindowText`, unavailable when its style
 disables it, never focused and never invisible, kept under its window
 object's address. A window `read::plain_windows_from` reads, above the
-process boundary, past a listener read published at the listener's
-bound, past the depth limit, or after a failure, that is not a
+process boundary, past the depth limit, or after a failure, that is not a
 ghost's or a hung application's is read the same way but described as
 NVDA's MSAA client for it (`read::client_pane`): role pane, marked
 `top_level_client` when its style has `WS_SYSMENU`, so Core speaks the
@@ -201,7 +200,7 @@ between its steps, so a focus-now query whose focus has such a window
 above its own (`read::plain_window_above`, local calls by
 `verbatim_uia::raw_view_parent_window`) reads its ancestors by the classic
 walk instead. The outpost's walks have no time limit but their program's
-deadline: a listener read the listener published at its bound
+deadline: a listener read cut at its depth limit
 (`AncestorsEnd::PlainFrom`), and a walk cut at its depth limit of 64, are
 completed by plain windows from the outermost element's nearest window,
 included, and no continuation is cut by time. Whether a
@@ -340,8 +339,7 @@ the same tables and code, which the arbitrator's own lists are built from.
   lifetime.
 - `Clock` (`verbatim_process::clock`), `Arbitrator::set_clock`, and
   `Arbitrator::now` time the classic
-  walk budgets (`SAME_WINDOW_BOUND`, through `arbitration::time_limit`); `Outpost::set_clock` and
-  `FocusReader::set_clock` set it for tests that count calls. The keeps'
+  walk budgets; `Outpost::set_clock` sets it for tests that count calls. The keeps'
   ends and an entry with no event are stamped by the `ObservationClock`
   (`Arbitrator::set_observation_clock`), the run's shared clock, which
   `Outpost::set_observation_clock` sets, with the stamps of the outpost's
@@ -877,9 +875,14 @@ and the inherited pipe handles.
   chain is kept (`outpost::focus_path`) for the controller relation, a
   dialog's text, and queries. A focus whose element is in no tree, as
   Windows Terminal's tab focuses, is reported all the same.
-- A text focus with no window of its own whose walk up the listener cut,
-  so that the chain holds only the focus (`FocusPath::is_cut_at`), has no
-  route; the outpost reads its application's focused element instead
+- A focus with no window of its own whose walk up the listener cut below
+  its nearest window, so that no element of its chain has a window of its
+  own, is routed from that nearest window, which the read carries
+  (`UiaFocusRead::window`), down by every runtime id of the chain
+  (`FocusPath::route_to`), which finds it when the chain's outermost
+  element is that window's child. A text focus whose chain holds only the
+  focus (`FocusPath::is_cut_at`) and that this does not find is read as
+  its application's focused element instead
   (`read::focused_element_in`, trigger `read::FocusRead::CutWalk`), with
   the focus read's checks and process-id check, and keeps it when its
   runtime id is the focus's (`Worker::element_after_cut_walk`;
@@ -938,12 +941,11 @@ and the inherited pipe handles.
   (`focus_rules::selection_target`); any other is read only inside a
   focused selection container (`focus_rules::is_selection_container`).
 - Ancestors (`read::uia_remote_enrichment`, `read::uia_enrichment`,
-  `read::msaa_enrichment`) stop at the previous chain and splice it, within
-  `SAME_WINDOW_BOUND`. A walk that finds no parent, or whose step fails,
+  `read::msaa_enrichment`) stop at the previous chain and splice it. A walk that finds no parent, or whose step fails,
   below the root (or below a top-level window, for the remote program and
   `Uia::ancestors`) goes on from the parent window of its outermost
   element's nearest window (`Ancestry::failed_hop`, `AncestorWalk::Failed`,
-  `verbatim_ia2::acquire::Walked::Onward`), and one cut by its time or depth
+  `verbatim_ia2::acquire::Walked::Onward`), and one cut by its depth
   limit is completed by plain windows (`AncestorWalk::Cut`, `Walked::Cut`),
   for a UIA walk from the parent window of its outermost element's window
   when that element is the window's own, so the window is not in the

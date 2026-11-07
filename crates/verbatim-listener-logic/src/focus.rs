@@ -12,7 +12,7 @@ use crate::schedule::QueuePlace;
 /// How many of an application's reading threads may be abandoned and still
 /// in their calls before it gets no new thread: its focus events then wait
 /// for the first of those threads whose call returns, within the bound
-/// the listener's read deadline (`verbatim_model::BOUNDED_WALK_DEADLINE`) states.
+/// the listener's read deadline (`verbatim_model::FOCUS_READ_DEADLINE`) states.
 pub const ABANDONED_LIMIT: usize = 2;
 
 /// Why an event is dropped whose read the watchdog abandoned at the
@@ -23,24 +23,10 @@ pub const NOT_IN_TIME: &str = "its read did not return in time";
 /// user moved on from its window, as an outpost's watchdog says it.
 pub const MOVED_ON: &str = "the user moved on from a slow window";
 
-/// Why an event is dropped whose read the watchdog abandoned because its
-/// window was found hung during a call, as an outpost's watchdog says it.
-pub const STOPPED_RESPONDING: &str = "its window stopped responding";
-
 /// Why an event is dropped that waited for a thread while its application's
 /// abandoned threads were at [`ABANDONED_LIMIT`] until the bound
-/// the listener's read deadline (`verbatim_model::BOUNDED_WALK_DEADLINE`) states, or arrived after that bound.
+/// the listener's read deadline (`verbatim_model::FOCUS_READ_DEADLINE`) states, or arrived after that bound.
 pub const WAITED_TOO_LONG: &str = "it waited too long behind its application's abandoned reads";
-
-/// Why a focus is dropped whose event said it lacked the keyboard focus
-/// when its read's time was up, before the live read of its focus.
-pub const UNFOCUSED_OUT_OF_TIME: &str =
-    "its event says it did not have the keyboard focus, and its read's time was up";
-
-/// Why a focus is dropped whose read's time was up before its sender's
-/// nearest window was looked up.
-pub const OUT_OF_TIME_BEFORE_LOOKUP: &str =
-    "its read ran out of time before its window was looked up";
 
 /// The kind of UIA event a reading thread takes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -84,9 +70,6 @@ pub const NOT_FOCUSED: &str = "its element no longer has the keyboard focus";
 /// The reason an event is dropped that a newer event of the same kind and
 /// element replaced while it waited, as NVDA's UIA limiter keeps one.
 pub const REPLACED: &str = "a newer focus event of its element replaced it";
-
-/// The reason a focus is dropped whose own window the system reports hung.
-pub const HUNG: &str = "its window is hung";
 
 /// The reason a menu opening is dropped whose comparison with the current
 /// focus failed.

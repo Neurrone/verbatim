@@ -163,7 +163,10 @@ element's raw-view ancestors and what a focus report needs besides. A
   give a dead element's runtime id to a new one (File Explorer does), and
   `require_focus`, for a live read of the element's `HasKeyboardFocus`
   after it (NVDA's check that a focus event is not stale), which stops the
-  walk when false: NVDA's order, so a focus only being lost cannot read as
+  walk when false and lets it go on when the read fails, by UIA's timeout
+  or any other error, a gone element's among them, as NVDA's
+  `shouldAllowUIAFocusEvent` answers true on a COM error; a failed read of
+  `previous` answers it gone, so the focus is no repeat: NVDA's order, so a focus only being lost cannot read as
   a new element under its runtime id
   (`docs/design/focus-pipeline-rework-remaining.md`, "The keep-id
   evidence, read in NVDA's order"). Both reads are in the remote
@@ -171,11 +174,7 @@ element's raw-view ancestors and what a focus report needs besides. A
 - `refresh`, for the focused element's own cache filled afresh in the
   same round trip, so the focus listener reports its value, states, and
   details without a second call;
-- for the classic walk only, `out_of_time`, checked before each call but
-  the element's own focus read; `stopped`, checked before every call, the
-  element's own focus read included, which ends the walk as `out_of_time`
-  does, the focus listener's test of its read's window for a hung
-  application, a skipped focus read letting the focus through; `before_call`, told each call's name as it begins so
+- for the classic walk only, `before_call`, told each call's name as it begins so
   the caller can time it; `nearest_window` and `value_available`,
   answers the caller already has, each saving a call; and `plain`, which
   says, by local calls, whether a window is a ghost's or a hung
@@ -186,9 +185,10 @@ element's raw-view ancestors and what a focus report needs besides. A
   between its steps; a caller with such a window above the focus runs the
   classic walk instead. And `progress`, told each fact as the walk reads
   it (`Progress`: the previous element's keyboard focus, the element read
-  afresh, the selected child, and each ancestor kept), so a caller can
-  share the walk's progress with a thread that publishes it should a call
-  not return in time.
+  afresh, the selected child, and each ancestor kept), so a caller keeps
+  what was read should a later call fail. Nothing of the query's ends the
+  classic walk early: each call waits for the provider, up to UIA's
+  transaction timeout.
 
 It answers `FocusAncestry::NotFocused` when `require_focus` is set and
 the element does not have the focus, and otherwise an `Ancestry`:
@@ -201,18 +201,16 @@ the element does not have the focus, and otherwise an `Ancestry`:
   calls).
 - `met_known`: which known runtime id the last ancestor has, when the
   walk stopped there; `depth_limited`: the walk stopped at the depth limit
-  with ancestors left; `out_of_time`: the classic walk stopped when the
-  query's time was up or it was stopped.
-- `failed_hop`: how a step to a parent failed below the top, a
-  `FailedHop` (`verbatim_uia::FailedHop`, re-exported): `Error` with the
-  failing code, or `NoParent`. `Ancestry::ancestors_unknown` is true for a
-  walk out of time or with a failed step, whose chain is not the whole
-  chain read. Callers go on from the parent
-  window of the outermost element's nearest window after a failed step, as
-  NVDA falls back to the window hierarchy when its parent read fails, and
-  complete a walk cut by its time or depth limit by plain windows from that
-  nearest window (`docs/design/focus-pipeline-rework.md`, "A window's name,
-  and the one fallback").
+  with ancestors left.
+- `failed_hop`: how a step to a parent failed below the top, by UIA's
+  transaction timeout or any other error, a `FailedHop`
+  (`verbatim_uia::FailedHop`, re-exported): `Error` with the failing code,
+  `UIA_E_TIMEOUT` among them, or `NoParent`. `Ancestry::ancestors_unknown`
+  is true for a walk with a failed step, whose chain is not the whole
+  chain read. Callers go on from the parent window of the outermost
+  element's nearest window after a failed step, as NVDA's failed parent
+  read goes on by `Window._get_parent`, and complete a walk cut by its
+  depth limit by plain windows from that nearest window.
 - `plain_window`: the window, read as plain by the query's `plain`, at
   whose step the classic walk stopped; callers go on from it as a plain
   window and by the window hierarchy.
@@ -220,9 +218,9 @@ the element does not have the focus, and otherwise an `Ancestry`:
   which the outpost reports as its node; for a combo box without the
   `Value` pattern, its first selected item, which is its value
   (`verbatim_uia::map::value_from_selection`). It is optional: when its
-  read fails, as on an item gone, or in the classic walk times out or
-  runs out of the query's time, it is `None` and the rest is read without
-  it, as NVDA's walk reads no selection.
+  read fails, as on an item gone, or in the classic walk times out, it is
+  `None` and the rest is read without it, as NVDA's walk reads no
+  selection.
 - `window`: the native window handle of the element or of its nearest
   raw-view ancestor that has one (NVDA's `getNearestWindowHandle`).
 - `previous_focused`: what was read of `previous`, a
@@ -289,10 +287,14 @@ gives it) is `Remote`, `Classic`, or `Fallback(error)`, so the caller can
 log the program's error and stop trying for a window whose import
 failed. A program that timed out or whose element is gone is not answered
 classically, which would wait on a stalled application a second time:
-its error is returned. The classic walk itself fails when its read of
-`previous` or a hop times out, so a walk that hit the timeout is never
+its error is returned. In the classic walk a read of `previous` that
+times out answers it gone, a keyboard focus read that times out lets the
+focus through, and a hop that times out ends the walk at a failed step
+(`Ancestry::failed_hop`), so a walk that hit the timeout is never
 reported as a short but complete ancestry; a selected child that times
-out or is gone is left out and the walk goes on. NVDA makes each call site check `remote.isSupported()`
+out or is gone is left out and the walk goes on. It fails only when the
+element's fresh cache, a cache request, the desktop root or the tree
+walker fails. NVDA makes each call site check `remote.isSupported()`
 and run its own classic code instead; here the choice and the fallback
 live in one function, so a failure is handled the same way everywhere.
 
@@ -591,7 +593,7 @@ are looked at in order until one has the next runtime id. The element
 found is a `Cached<Node>` filled by `PathQuery::fill`. The program does
 the whole path in one round trip; the classic walk takes one call per
 child it looks at (`verbatim_uia::Live::step`), one more for the fill,
-and checks `out_of_time` between calls. Both compare children by runtime
+and checks the caller's `out_of_time`, when it gives one, between calls. Both compare children by runtime
 id alone and fill no other cache, because a top-level window's first
 child is its title bar, whose location UIA asks of the window's thread
 (`WM_GETTITLEBARINFOEX`), which Windows answers for one window at a time
