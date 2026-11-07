@@ -14,6 +14,8 @@
 //!   the outpost's frozen clock moved past a limit that ran on it, or the
 //!   end of a stall of twice a limit that ran in real time, so each test fails with its old limit
 //!   restored.
+//! - The shell's items are answered complete or not at all: a walk whose
+//!   window's lookup UIA ends with its timeout fails whole.
 //! - A window that hangs while the outpost waits on it is told to Core once
 //!   and waited for: a query, and a listener read's marker
 //!   waiting with the hung window in front.
@@ -317,6 +319,38 @@ fn a_slow_shell_items_walk_answers_the_whole_list() {
     app.quit();
 }
 
+/// The taskbar's items, asked of the outpost of a mockapp window of the
+/// taskbar's class while mockapp's window thread is stalled past UIA's
+/// connection timeout, which ends the window's lookup with UIA's timeout
+/// error: the query fails whole, rather than answering the buttons read by
+/// then, none, as the list. The stall's end, which mockapp prints, is the
+/// evidence that the timeout passed; it is one and a half times the
+/// timeout, under the five seconds after which Windows judges the window
+/// hung.
+fn a_shell_items_walk_whose_lookup_times_out_fails_whole() {
+    common::init_com();
+    let title = common::unique_title("mockapp-timed-out-taskbar");
+    let mut app = common::spawn("taskbar.json", "uia", &title);
+    let mut outpost = OutpostUnderTest::new(&app);
+
+    let stall = verbatim_uia::UIA_CONNECTION_TIMEOUT * 3 / 2;
+    app.stall(stall);
+    let answer_by_us = common::now_us()
+        + u64::try_from(verbatim_model::HANDLING_DEADLINE.as_micros()).expect("small");
+    let request_id = outpost.ask(Query::ShellItems {
+        kind: ShellItemKind::Taskbar,
+        answer_by_us,
+    });
+    app.stall_ended(stall);
+    assert_eq!(
+        reply_to(&outpost, request_id),
+        QueryOutcome::Failed("the shell walk could not read every item".to_owned())
+    );
+    outpost.settled();
+    drop(outpost);
+    app.quit();
+}
+
 /// The "Inner group" ancestor of mockapp's ancestry fixture's "Notes"
 /// field, focused and reported through the listener's read, a node with no
 /// window of its own: its window is the application's focus window.
@@ -576,6 +610,10 @@ fn main() {
         (
             "a_slow_shell_items_walk_answers_the_whole_list",
             a_slow_shell_items_walk_answers_the_whole_list,
+        ),
+        (
+            "a_shell_items_walk_whose_lookup_times_out_fails_whole",
+            a_shell_items_walk_whose_lookup_times_out_fails_whole,
         ),
     ]);
 }

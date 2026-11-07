@@ -28,7 +28,10 @@
 //!
 //! The walk has no time limit of its own: its program's deadline bounds
 //! it, so a slow taskbar's whole list is shown once it answers, and one
-//! that does not finish by the deadline gives none.
+//! that does not finish by the deadline gives none. A list is complete or
+//! nothing: a window's lookup or a step that fails, as one UIA ends with
+//! its timeout does, or the node cap, fails the list query whole, rather
+//! than answering the buttons read by then as the list.
 
 use std::cell::Cell;
 
@@ -51,7 +54,9 @@ const MAX_DEPTH: u32 = 16;
 /// adversarially deep or wide provider.
 const MAX_NODES: usize = 1024;
 
-/// The items of `kind`, read in the outpost's application.
+/// The items of `kind`, read in the outpost's application: the whole
+/// list, or a failure when the walk left a button unread, so a list
+/// missing part of the shell's buttons is never shown as the list.
 pub(super) fn shell_items(
     context: &Context,
     client: &mut Client,
@@ -60,11 +65,13 @@ pub(super) fn shell_items(
     let uia = client
         .uia()
         .ok_or_else(|| ReadError::Failed("could not create a UIA client".to_owned()))?;
-    Ok(walk_surface(context, uia, kind)?
-        .found
-        .into_iter()
-        .map(|found| found.item)
-        .collect())
+    let walked = walk_surface(context, uia, kind)?;
+    if !walked.complete {
+        return Err(ReadError::Failed(
+            "the shell walk could not read every item".to_owned(),
+        ));
+    }
+    Ok(walked.found.into_iter().map(|found| found.item).collect())
 }
 
 /// The buttons of `kind` that may be `chosen`, an item the user picked
@@ -362,10 +369,10 @@ impl Walk<'_> {
 
     /// One step of the walk: the element reached, or none at the end of an
     /// element's children (the null element, an error carrying no failure
-    /// code). A step that fails is read as no more items too, as NVDA reads
-    /// a failed UIA step as no child, so the list keeps the items read by
-    /// then; the failure is logged, naming its error, so it is not
-    /// invisible, and leaves the walk incomplete.
+    /// code). A step that fails ends that element's children too, is
+    /// logged, naming its error, and leaves the walk incomplete, which
+    /// fails a list query ([`shell_items`]) and marks a position's answer
+    /// incomplete ([`shell_item_position`]).
     fn step(
         &self,
         found: windows::core::Result<Cached<ShellButton>>,
