@@ -5192,6 +5192,55 @@ fn a_focus_observed_before_a_waiting_verbatim_tab_keeps_its_press() {
     assert_eq!(late, []);
 }
 
+/// A plain focus query's answer applied while Verbatim+Tab's press waits
+/// does not end the press, though it is stamped with its read's start,
+/// after the press: an outpost asked both at its start answers the plain
+/// query first, and the press's own answer is then spoken, as NVDA speaks
+/// the focus and then NVDA+Tab's answer.
+#[test]
+fn a_plain_query_answer_read_after_a_waiting_press_keeps_the_press() {
+    let plain_answer = |observed_at_us, number| Input::Event {
+        trace_id: TraceId::from_raw(9),
+        observed_at_us,
+        source: Pid(1),
+        backend: Backend::Uia,
+        window: None,
+        event: NormalizedEvent::FocusChanged {
+            node: node(number, Role::Button, StateSet::new()),
+            whole_window: false,
+            ancestors: Vec::new(),
+            selected_child: None,
+            text: None,
+            earlier: None,
+            group: None,
+            answers: None,
+            first_cached_ancestor: None,
+        },
+        purpose: Some(verbatim_model::protocol::FocusPurpose::Plain),
+    };
+    let press = Input::Command {
+        pressed_at_ms: 1_000,
+        key_seq: verbatim_model::KeySeq::NONE_YET,
+        trace_id: TraceId::from_raw(3),
+        command: ReviewCommand::ReportFocus,
+        repeat: 0,
+    };
+    let mut state = SrState::new();
+    assert_eq!(reduce(&mut state, &press), [REPORT_QUERY]);
+    let _ = reduce(&mut state, &plain_answer(1_200_000, 6));
+    let effects = reduce(
+        &mut state,
+        &report_answer(TraceId::from_raw(3), node(6, Role::Button, StateSet::new())),
+    );
+    assert_eq!(
+        spoken(&effects),
+        vec![
+            UtteranceSegment::label("Body"),
+            UtteranceSegment::new(SegmentContent::Role(Role::Button)),
+        ]
+    );
+}
+
 /// A press with nothing to ask, or whose query's outpost ended or answered
 /// no focus, says "No focus", as with no focus at all.
 #[test]

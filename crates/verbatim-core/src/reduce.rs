@@ -107,7 +107,7 @@ fn reduce_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
             event,
             purpose,
             ..
-        } => reduce_event(
+        } => reduce_event_keeping_press(
             state,
             (*trace_id, *purpose),
             *observed_at_us,
@@ -905,6 +905,38 @@ fn is_late_live_reread_answer(state: &mut SrState, event: &NormalizedEvent) -> b
             ..
         } if !state.live_rereads.answered(node.id.outpost(), *request)
     )
+}
+
+/// [`reduce_event`], keeping a waiting Verbatim+Tab press across a focus
+/// query's answer. The answer is stamped with the time its read began, not
+/// when Core asked, so it cannot be placed against the press: only a focus
+/// event observed after the press ends it, as NVDA runs NVDA+Tab after the
+/// focus events queued before it and speaks both
+/// ([`crate::report_focus::focus_applied`]).
+fn reduce_event_keeping_press(
+    state: &mut SrState,
+    (trace_id, purpose): (TraceId, Option<FocusPurpose>),
+    observed_at_us: u64,
+    source: Pid,
+    window: Option<&WindowFacts>,
+    event: &NormalizedEvent,
+) -> Vec<Effect> {
+    let press = purpose
+        .is_some_and(|purpose| purpose != FocusPurpose::Report)
+        .then_some(state.report_press)
+        .flatten();
+    let effects = reduce_event(
+        state,
+        (trace_id, purpose),
+        observed_at_us,
+        source,
+        window,
+        event,
+    );
+    if press.is_some() && state.report_press.is_none() {
+        state.report_press = press;
+    }
+    effects
 }
 
 fn reduce_event(
