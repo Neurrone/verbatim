@@ -106,7 +106,7 @@ Limitations. A native provider that gives its top-level window another role or n
 
 ### The fake focus's tests (difference 18)
 
-Today. A menu or switcher end goes from the listener after `MENU_END_GRACE` (50 ms) to Core. Core asks the foreground application for its focus unless a focus observed since the end has been applied (`shell.rs`, `menu_or_switch_ended`). The app sends `Query::FocusNow` (`fake_focus`). The answer makes no focused-state test, and Core applies its duplicate rule to every answer, UIA or MSAA.
+Today. A menu or switcher end goes from the listener after `MENU_END_GRACE` (50 ms) to Core. Core asks the foreground application for its focus unless a focus observed since the end has been applied (`shell.rs`, `menu_or_switch_ended`). The app sends `Query::ReadFocus` (`fake_focus`). The answer makes no focused-state test, and Core applies its duplicate rule to every answer, UIA or MSAA.
 
 What NVDA does. `_fakeFocus` passes `objectWithFocus()` to `processFocusNVDAEvent` without force (`IAccessibleHandler/__init__.py` 991 to 1003, 762 to 783). For an IAccessible object only, it drops a duplicate of `lastQueuedFocusObject` by event address and refuses an object for which neither it nor any ancestor has the focused state (`shouldAllowIAccessibleFocusEvent`, `NVDAObjects/IAccessible/__init__.py` 874 to 892). A UIA object is queued with no test, and NVDA's event handler drops no repeated focus, so it is spoken again.
 
@@ -114,7 +114,7 @@ Where it runs: the app, which names the query's purpose; the outpost, which make
 
 The rules:
 
-- The query says why it is asked (`Query::FocusNow { purpose }`): `Fake` for a menu or switcher end, `Again` for the desktop's return (below), and `Plain` for every other use, as today. The app's request table keeps the purpose with the asker and marks the answer's input with it, as a field of `Input::Event` that only the app sets. Reason: each purpose has its own tests in NVDA, and only the app knows what asked.
+- The query says why it is asked (`Query::ReadFocus { purpose }`): `Fake` for a menu or switcher end, `Again` for the desktop's return (below), and `Plain` for every other use, as today. The app's request table keeps the purpose with the asker and marks the answer's input with it, as a field of `Input::Event` that only the app sets. Reason: each purpose has its own tests in NVDA, and only the app knows what asked.
 - For `Fake`, the outpost makes NVDA's focused-state test, `has_focused_state` (difference 19's walk), on an MSAA answer: on its focused control, or on the window's object when it has no control. An answer that fails is sent with no window and no control, which the app turns into no input. Reason: NVDA refuses it before it is queued, so nothing is spoken and attention does not move. A UIA answer has no test.
 - For `Fake`, Core applies its duplicate rule only to an MSAA answer (the node's backend), and takes a UIA answer for the node it holds as a new focus, spoken again. Reason: `processFocusNVDAEvent` tests duplicates for IAccessible objects only (question below). For `Again`, Core applies no duplicate rule, as `_handleUserDesktop` queues `gainFocus` directly. For `Plain`, Core keeps today's rule.
 - The skip rule (a focus observed since the end and applied) and the 50 ms grace stay.

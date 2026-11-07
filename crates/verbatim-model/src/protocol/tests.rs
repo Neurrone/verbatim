@@ -43,7 +43,7 @@ fn next_core_to_outpost(previous: Option<&CoreToOutpost>) -> Option<CoreToOutpos
         CoreToOutpost::ForwardingEnded { .. } => CoreToOutpost::Query {
             trace_id: TraceId::from_raw(2),
             request_id: RequestId::shell(1),
-            query: Query::FocusNow,
+            query: Query::ReadFocus,
             timing: timing(),
         },
         CoreToOutpost::Query { .. } => CoreToOutpost::Cancel {
@@ -432,7 +432,7 @@ fn a_request_id_round_trips_with_its_asker() {
             CoreToOutpost::Query {
                 trace_id: TraceId::from_raw(2),
                 request_id,
-                query: Query::FocusNow,
+                query: Query::ReadFocus,
                 timing: timing(),
             },
             CoreToOutpost::Cancel { request_id },

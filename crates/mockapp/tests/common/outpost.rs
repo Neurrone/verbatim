@@ -1406,7 +1406,7 @@ impl OutpostUnderTest {
     /// [`focus_now`](Self::focus_now)'s whole answer, with the calls its
     /// read made.
     pub fn focus_now_answer(&mut self) -> (FocusNow, CallCounts) {
-        let request_id = self.ask(Query::FocusNow);
+        let request_id = self.ask(Query::ReadFocus);
         let answer = match self.next() {
             OutpostToCore::Reply {
                 request_id: answered,

@@ -90,8 +90,6 @@ pub(super) struct Tag {
 pub(super) struct Removed {
     uia: Vec<verbatim_uia::Released>,
     msaa: Vec<verbatim_ia2::Released>,
-    /// Elements a lookup replaced as a node's ([`Nodes::keep`]).
-    elements: Vec<Agile<Kept>>,
     patterns: Vec<Patterns>,
     /// UIA ranges of text positions.
     ranges: Vec<UiaPos>,
@@ -811,15 +809,6 @@ impl Nodes<'_> {
             generation: self.generation,
             request: self.request.load(Ordering::Relaxed),
         }
-    }
-
-    /// The elements this handle's lookups replaced, for the caller to drop
-    /// once no lock is held.
-    pub(super) fn take_removed(&self) -> Removed {
-        let elements = std::mem::take(&mut *self.replaced.lock());
-        let mut removed = Removed::default();
-        removed.elements = elements;
-        removed
     }
 
     /// The kept UIA node for `runtime_id`, if there is one, looked up.

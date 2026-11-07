@@ -1182,7 +1182,7 @@ impl ReducerThread<'_> {
             CoreToOutpost::Query {
                 trace_id,
                 request_id: id,
-                query: Query::FocusNow,
+                query: Query::ReadFocus,
                 timing: EventTiming::default(),
             },
         );
@@ -1262,7 +1262,7 @@ impl ReducerThread<'_> {
             CoreToOutpost::Query {
                 trace_id,
                 request_id: id,
-                query: Query::FocusNow,
+                query: Query::ReadFocus,
                 timing: EventTiming::default(),
             },
         );
@@ -1893,11 +1893,11 @@ impl ReducerThread<'_> {
     /// starting one when there is none, so verbatim.exe makes no UIA
     /// connection into the shell's windows
     /// (`books/dev/src/explanation/design/listener-without-connections.md`, decision 9). The
-    /// outcome goes to `ask`'s callback, exactly once, within
-    /// [`wanted::SHELL_ITEMS_WAIT`] of now; `None` when there is no
-    /// taskbar, when its process gets no outpost or none is ready before
-    /// the outpost's deadline for the query, or when no answer has come by
-    /// then.
+    /// outcome goes to `ask`'s callback, exactly once, by the outpost's
+    /// deadline for the query, [`wanted::SHELL_ITEMS_WAIT`] from now, or at
+    /// the outpost's end; `None` when there is no taskbar, when its process
+    /// gets no outpost or none is ready before that deadline, or when the
+    /// outpost answers with nothing or abandoned.
     fn shell_items(&mut self, kind: ShellItemKind, ask: verbatim_gui::ShellAsk) {
         let Some(pid) = taskbar_process() else {
             // Dropped, the request is answered "nothing".
@@ -1915,8 +1915,10 @@ impl ReducerThread<'_> {
     }
 
     /// Sends `outpost` the shell items query or the position query `ask`
-    /// says, with the outpost's deadline from `times`, answered with nothing by Core, and withdrawn, if no outcome
-    /// has come by Core's deadline ([`wanted::ShellTimes::answer_by_us`]).
+    /// says, with the outpost's deadline from `times`
+    /// ([`wanted::ShellTimes::answer_by_us`]), by which the outpost answers
+    /// it; the request table answers it at the outpost's end, the one other
+    /// path.
     fn ask_shell_items(
         &mut self,
         outpost: OutpostId,
@@ -1924,7 +1926,7 @@ impl ReducerThread<'_> {
         ask: verbatim_gui::ShellAsk,
         times: wanted::ShellTimes,
     ) {
-        let answer_by_us = times.outpost_answer_by_us();
+        let answer_by_us = times.answer_by_us();
         let (asker, query) = match ask {
             verbatim_gui::ShellAsk::Items(deliver) => (
                 Asker::ShellItems { deliver },
@@ -1939,9 +1941,7 @@ impl ReducerThread<'_> {
                 },
             ),
         };
-        let id = self
-            .requests
-            .begin_until(outpost, asker, times.answer_by_us());
+        let id = self.requests.begin(outpost, asker);
         let trace_id = TraceId::mint();
         let command = CoreToOutpost::Query {
             trace_id,
@@ -2019,18 +2019,15 @@ impl ReducerThread<'_> {
         }
     }
 
-    /// The earliest time a shell items request is answered with nothing
-    /// if it has had no outcome by then, a request with a deadline is
-    /// ended, the held key's one deadline passes, the focused
+    /// The earliest time the held key's one deadline passes, the focused
     /// terminal's quiet-period timer is due, or a lock key's state is read.
     /// The last two are views of Core's state, read here after each step,
     /// so a timer whose model is gone is gone with it.
     fn next_deadline(&self) -> Option<Instant> {
-        self.wanted
-            .next_deadline()
+        self.state
+            .terminal_timer_due()
+            .map(ms_to_us)
             .into_iter()
-            .chain(self.requests.next_deadline())
-            .chain(self.state.terminal_timer_due().map(ms_to_us))
             .chain(
                 self.state
                     .toggle_key_read_due()
@@ -2043,26 +2040,10 @@ impl ReducerThread<'_> {
             .min()
     }
 
-    /// Answers every shell items request still waiting for its outpost at
-    /// the outpost's deadline for it with nothing, ends every request whose deadline
-    /// is past and withdraws it from its outpost, and tells Core once the
-    /// held key's one deadline is past.
+    /// Tells Core once the held key's one deadline is past, and moves the
+    /// terminal's timer and the lock keys' reads on.
     fn expire(&mut self, now: Instant) {
         let shared = now_us();
-        self.wanted.expire(shared);
-        for expired in self.requests.expire(shared) {
-            let command = CoreToOutpost::Cancel {
-                request_id: expired.id,
-            };
-            if let Err(error) = self
-                .context
-                .supervisor
-                .send_to_outpost(expired.outpost, command)
-            {
-                tracing::debug!(%error, outpost = %expired.outpost, "an expired request could not be withdrawn");
-            }
-            self.deliver(expired.asker, expired.outcome);
-        }
         if let Some((trace_id, _)) = self.held_due.take_if(|(_, due)| *due <= now) {
             self.apply(Input::HeldKeyDue { trace_id });
         }
@@ -2234,7 +2215,8 @@ enum Next {
 }
 
 /// Waits for the reducer thread's next command, or until `due`, the
-/// earliest shell items request's deadline, when one is outstanding. Only
+/// earliest of the thread's timers ([`ReducerThread::next_deadline`]), when
+/// one is due. Only
 /// the queue's end ends the thread: a wait that ran out, even a clock tick
 /// before `due`, as a system wait may, wakes it to check its deadlines.
 fn next_command(command_rx: &mut PortQueue<ShellCommand>, due: Option<Instant>) -> Next {

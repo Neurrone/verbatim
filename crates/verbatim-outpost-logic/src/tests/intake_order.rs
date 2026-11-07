@@ -355,7 +355,7 @@ impl Run {
                 query = Some(trace);
                 Item::Query {
                     request_id: RequestId::shell(trace),
-                    query: Query::FocusNow,
+                    query: Query::ReadFocus,
                 }
             }
             Kind::Round => Item::Barrier {
@@ -428,6 +428,7 @@ impl Run {
                 front: Front::Untested,
             },
             &self.marks,
+            std::time::Duration::ZERO,
         );
         if !self.closed {
             self.check_push(trace, kind, resolved, &before);

@@ -23,13 +23,8 @@
 //! worker's charge ([`Charge`]), answers the query the program was running
 //! "abandoned", and starts a replacement. An abandoned worker that
 //! eventually returns has its commits refused, posts that it returned, and
-//! exits.
-//!
-//! A focus walk's progress is kept in the worker's charge as it reads,
-//! under a lock held for one copy: the reducer publishes the walk from it
-//! at the walk's bound should the walk still be under way then, and the
-//! worker learns there whether its walk was published
-//! ([`Charge::returned`]).
+//! exits. A window found hung while a program waits on it abandons
+//! nothing: its hang is told to Core, and the program goes on.
 
 #![forbid(unsafe_code)]
 
@@ -64,7 +59,6 @@ use verbatim_model::protocol::{
 };
 use verbatim_process::clock::now_us;
 
-use super::bound::{self, BoundFocus, FocusProgress};
 use super::commit::{Committed, Effects, Follow, Stale, Target};
 use super::focus_path;
 use super::read::{self, Client, ReadError};
@@ -100,8 +94,7 @@ pub(super) struct Job {
 
 /// A worker generation's charge, shared between the worker and the shell
 /// under a lock held for one copy: whether the generation was abandoned,
-/// and its focus walk's progress, which the reducer publishes from at the
-/// walk's bound.
+/// and the window its program in hand names.
 #[derive(Default)]
 pub(super) struct Charge {
     state: Lock<ChargeState>,
@@ -109,12 +102,9 @@ pub(super) struct Charge {
 
 #[derive(Default)]
 struct ChargeState {
-    /// Whether the generation was abandoned: its walk stops at its next
-    /// step, its commits are refused, and its gate refuses every counted
-    /// call (`verbatim_win32::calls`).
+    /// Whether the generation was abandoned: its commits are refused, and
+    /// its gate refuses every counted call (`verbatim_win32::calls`).
     dead: bool,
-    /// The walk armed, if any.
-    walk: Option<Slot>,
     /// The window the program in hand calls into, as its worker named it,
     /// and what the program found there.
     named: Option<Named>,
@@ -133,39 +123,6 @@ struct Named {
     /// A counted call was made since the window was named, and returned,
     /// since the program goes on only once it has.
     called: bool,
-}
-
-/// A focus walk's slot.
-struct Slot {
-    request: Request,
-    progress: FocusProgress,
-    state: SlotState,
-}
-
-/// Where a walk stands, as its worker and the reducer each find it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum SlotState {
-    /// Under way: the reducer publishes it at its bound.
-    Armed,
-    /// Returned before its bound: its worker reports it.
-    Disarmed,
-    /// Returned past its bound: the reducer publishes it, its worker
-    /// sends nothing more for it.
-    PastBound,
-    /// Published by the reducer: its worker sends nothing more for it.
-    Published,
-}
-
-/// How a walk returned ([`Charge::returned`]).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Returned {
-    /// Before its bound, or never armed: its worker reports it.
-    Disarmed,
-    /// Published at its bound, or past it, for the reducer to publish: its
-    /// worker sends nothing else for it.
-    Published,
-    /// Its worker was abandoned.
-    Abandoned,
 }
 
 impl Charge {
@@ -234,75 +191,6 @@ impl Charge {
         {
             named.hung = true;
         }
-    }
-
-    /// Arms the walk of `request` as `progress`, unless the generation was
-    /// abandoned.
-    fn arm(&self, request: Request, progress: FocusProgress) -> bool {
-        let mut state = self.lock();
-        if state.dead {
-            return false;
-        }
-        state.walk = Some(Slot {
-            request,
-            progress,
-            state: SlotState::Armed,
-        });
-        true
-    }
-
-    /// The armed walk has read `step`. Answers whether the generation is
-    /// still in charge: an abandoned walk stops at its next step.
-    fn advance(&self, step: &read::WalkStep<'_>) -> bool {
-        let mut state = self.lock();
-        if state.dead {
-            return false;
-        }
-        if let Some(slot) = state
-            .walk
-            .as_mut()
-            .filter(|slot| slot.state == SlotState::Armed)
-        {
-            slot.progress.take_in(step);
-        }
-        true
-    }
-
-    /// The walk armed for `request` has returned at `now`: one still armed
-    /// past its bound is left for the reducer to publish, and one returned
-    /// before it is disarmed, so the reducer never publishes it.
-    fn returned(&self, request: Request, now: Instant) -> (Returned, Option<bool>) {
-        let mut state = self.lock();
-        if state.dead {
-            return (Returned::Abandoned, None);
-        }
-        let Some(slot) = state.walk.as_mut().filter(|slot| slot.request == request) else {
-            return (Returned::Disarmed, None);
-        };
-        match slot.state {
-            SlotState::Published | SlotState::PastBound => (Returned::Published, None),
-            SlotState::Disarmed => (Returned::Disarmed, None),
-            SlotState::Armed if now >= slot.progress.bound_at => {
-                slot.state = SlotState::PastBound;
-                (Returned::Published, Some(true))
-            }
-            SlotState::Armed => {
-                slot.state = SlotState::Disarmed;
-                (Returned::Disarmed, Some(false))
-            }
-        }
-    }
-
-    /// The reducer publishes the walk armed for `request`, if it is still
-    /// under way or returned past its bound: its progress as it stands, the
-    /// walk marked published. Local, under the lock for one copy.
-    pub(super) fn publish(&self, request: Request) -> Option<FocusProgress> {
-        let mut state = self.lock();
-        let slot = state.walk.as_mut().filter(|slot| {
-            slot.request == request && matches!(slot.state, SlotState::Armed | SlotState::PastBound)
-        })?;
-        slot.state = SlotState::Published;
-        Some(slot.progress.clone())
     }
 }
 
@@ -530,24 +418,26 @@ fn run_job(context: &Arc<Context>, client: &mut Client, job: Job, charge: &Arc<C
 
 /// The window a program with none at dispatch calls into, named with no
 /// call into the application: a query's node's own window, or the
-/// application's focus window for focus-now and a node of
-/// no window of its own; the owed work's and the console poll's node's;
-/// none for a query of no node, or when the application has no focus
-/// window, so the program is judged by its deadline alone. The queries it
-/// answers no window for are those `names_no_window` in
-/// `verbatim-outpost-logic` dispatches with `RuleWindow::Never`.
+/// application's focus window for a focus read and a node of no window of
+/// its own; a tree dump's application's main window, which it walks from;
+/// a shell item query's taskbar window; the owed work's and the console
+/// poll's node's; none when the application has no such window, so the
+/// program is checked by its deadline alone.
 fn named_window(context: &RequestContext<'_>, work: &Work) -> Option<Window> {
     match work {
         Work::Entry { entry, .. } => match &entry.item {
             Item::Query { query, .. } => match query {
-                Query::FocusNow => application_focus_window(context),
+                Query::ReadFocus => application_focus_window(context),
                 Query::Navigate { node_id, .. }
                 | Query::Activate { node_id }
                 | Query::Ancestors { node_id }
                 | Query::Text { node_id, .. } => node_window(context, *node_id),
-                Query::DumpTree { .. }
-                | Query::ShellItems { .. }
-                | Query::ShellItemPosition { .. } => None,
+                Query::DumpTree { .. } => {
+                    super::window::main_window_of(context.target_pid()).and_then(Window::new)
+                }
+                Query::ShellItems { .. } | Query::ShellItemPosition { .. } => {
+                    super::shell_items::taskbar_window().and_then(Window::new)
+                }
             },
             _ => application_focus_window(context),
         },
@@ -1929,33 +1819,19 @@ impl Worker<'_> {
     /// arrived is not new output, taken once the subscription has moved to
     /// the terminal, so output written after the read began raises a change
     /// that reads it (`books/dev/src/explanation/design/terminal-model.md`, "Reading rules", rule
-    /// 15), its caret read first for a terminal published at its bound; or
-    /// a `SensitiveSlider`'s lookup for a thumb published at its bound. The
-    /// commit of the attempt's result clears it, read or failed.
+    /// 15), from the caret read with the terminal's report. The commit of
+    /// the attempt's result clears it, read or failed.
     pub(super) fn attempt_owed(&mut self, owed: Owed) {
         let node_id = owed.node;
         match owed.work {
             OwedWork::FirstRead(caret) => {
-                // A terminal published at its bound has its caret read
-                // first.
-                let caret = caret.or_else(|| {
-                    let (text, read_at) = self.read_focus_text(node_id, Role::Terminal);
-                    self.pending_caret_read = read_at.map(|at| (node_id, at));
-                    if let Some(FocusText::Caret { caret, .. }) = text {
-                        Some(caret)
-                    } else {
-                        None
-                    }
-                });
-                let Some(caret) = caret.filter(|_| self.focused_terminal(node_id)) else {
-                    let caret_read = self.pending_caret_read.take();
+                if !self.focused_terminal(node_id) {
                     self.commit(Effects {
                         owed_done: Some(node_id),
-                        caret_read,
                         ..Effects::default()
                     });
                     return;
-                };
+                }
                 if let Some(subscription) = self.context.focus_events.get() {
                     subscription.settle();
                 }
@@ -1969,21 +1845,6 @@ impl Worker<'_> {
                 );
                 self.owed_attempt = None;
                 self.pending_caret_read = None;
-            }
-            OwedWork::Slider => {
-                let (chain, role) = self.context.follow(|follow| {
-                    let tracking = &follow.tracking;
-                    (
-                        tracking.chain.clone(),
-                        tracking.focus_role.unwrap_or(Role::Unknown),
-                    )
-                });
-                let element = self.slider_target(node_id, role, &chain);
-                self.commit(Effects {
-                    element,
-                    owed_done: Some(node_id),
-                    ..Effects::default()
-                });
             }
         }
     }
@@ -2165,7 +2026,6 @@ impl Worker<'_> {
                     event: (trace, observed_at_us),
                     redirected: std::mem::take(&mut self.redirected),
                     caret,
-                    at_bound: false,
                 },
             );
             effects.follow = Some(follow);
@@ -2216,37 +2076,6 @@ impl Worker<'_> {
             (window, foreground),
             self.msaa_event.take(),
         )
-    }
-
-    /// The focus walk this program armed has returned: whether it was
-    /// published at its bound, so the program sends nothing else for it. A
-    /// walk that returns still armed past its bound is published by the
-    /// reducer from the same progress ([`publication`]), so whichever comes
-    /// first, the walk's return or its bound, the report is the same. A
-    /// published walk counts its entry as reported, and the reducer then
-    /// has the work its focus owes attempted. An abandoned worker's walk
-    /// counts as published: it sends nothing more.
-    fn walk_returned(&mut self) -> bool {
-        let context = self.context;
-        let request = context.request();
-        let (returned, past) = context.charge().returned(request, Instant::now());
-        if let Some(past) = past {
-            context.mailbox.post(Posted::WalkReturned { request, past });
-        }
-        match returned {
-            Returned::Disarmed => false,
-            Returned::Abandoned => {
-                self.refused.set(true);
-                true
-            }
-            Returned::Published => {
-                tracing::debug!(
-                    "the walk returned after its bound; it is published from its progress, and its result is discarded"
-                );
-                self.reported = true;
-                true
-            }
-        }
     }
 
     /// The last focus this outpost reported, with its ancestors.
@@ -3591,9 +3420,8 @@ impl Worker<'_> {
     /// Reports `node`, the MSAA focus NVDA's checks accepted from the
     /// event at `event`, acquired as a simple child when `simple_child`,
     /// traced `trace` and observed at `observed_at_us`, with its ancestors
-    /// walked: the reducer publishes it at its walk's bound should a call
-    /// of the walk still be under way then, and the program sends nothing
-    /// more for it when the walk returns.
+    /// walked, once the walk returns, however long it takes within the
+    /// program's deadline.
     fn report_msaa_focus(
         &mut self,
         node: NodeSnapshot,
@@ -3602,7 +3430,6 @@ impl Worker<'_> {
         candidates: &verbatim_ia2::equality::Candidates,
     ) {
         let (hwnd, id_object, id_child) = event;
-        let context = self.context;
         let previous = self.focus_chain();
         let object = self
             .context
@@ -3613,43 +3440,12 @@ impl Worker<'_> {
             .as_ref()
             .is_some_and(|object| *object != Object::Msaa(hwnd, id_object, id_child));
         let msaa_event = (event, simple_child);
-        // Its walk, past NVDA's checks, is published at its bound should a
-        // call of it still be under way then; the chain goes on from the
-        // focus's own window until it reads more.
-        let left = read::walk_left(context, hwnd, observed_at_us);
-        let (timing, batch, group) = (self.timing, self.batch, self.group);
-        let watched = walk_watcher(context, |node, window| BoundFocus {
-            trace,
-            observed_at_us,
-            timing,
-            batch,
-            backend: Backend::Msaa,
-            window: Some(window),
-            node: node.clone(),
-            object: object.clone(),
-            msaa_event: Some(msaa_event),
-            group,
-        });
-        let from = match object {
-            Some(Object::Msaa(window, _, _)) => window,
-            _ => hwnd,
-        };
-        if !watched(read::WalkStep::Focus {
-            node: &node,
-            window: hwnd,
-            from,
-            left,
-        }) {
-            self.refused.set(true);
-            return;
-        }
         let enrichment = read::msaa_enrichment(
-            context,
+            self.context,
             self.client,
             (&node, &previous, Some(candidates)),
-            (left, Some(&watched)),
         );
-        if self.walk_returned() {
+        if self.refused() {
             return;
         }
         self.msaa_event = Some(msaa_event);
@@ -3674,7 +3470,10 @@ impl Worker<'_> {
     /// NVDA's `shouldAllowUIAFocusEvent` requires, and its states, value,
     /// details, ancestors, and selected child are the element's own, read
     /// with the classic walk, one call at a time on the element the
-    /// listener holds. The outpost reports it at once, its node
+    /// listener holds. The outpost reports it at once, with no test of its
+    /// window's hang: a window that hangs is waited for, each call within
+    /// the program's deadline, and its hang told by the program's check
+    /// (Dickson, 2026-11-07). Its node
     /// minted from its runtime id; the listener's evidence that the element
     /// it read before under that runtime id has lost the focus or died
     /// gives the id a new node first. Only then, off the way to speech,
@@ -3684,15 +3483,6 @@ impl Worker<'_> {
     /// may have text, before it is reported, since its caret is read with
     /// it.
     fn uia_focus(&mut self, read: &UiaFocusRead, trace: TraceId, observed_at_us: u64) {
-        // A read whose own window's application the system reports hung is
-        // dropped before anything is looked up or read, as an event is
-        // ([`Self::uia_event`]): one planned before the window became hung
-        // is dropped too, rather than published from a walk that met the
-        // hang.
-        if self.hung(read.hwnd) {
-            tracing::debug!(%trace, hwnd = read.hwnd, "UIA focus dropped: its window is hung");
-            return;
-        }
         let context = self.context;
         let judged = (|| {
             // NVDA's acceptance test against the foreground window was
@@ -3736,7 +3526,7 @@ impl Worker<'_> {
             context,
             self.client,
             (&read.ancestors, read.hwnd, read.window, read.ancestors_end),
-            (&previous, observed_at_us.saturating_add(read.bound_us)),
+            &previous,
         );
         // Committed with the focus; the entry finds the focus's element by
         // it before then.
@@ -4164,10 +3954,10 @@ impl Worker<'_> {
         // The check before the query's first call: a query whose named
         // window is hung or ghosted is answered abandoned with no call, its
         // commit naming the window hung, so a query on a hung window parks
-        // no worker. Focus-now answers a hung focus window with the plain
-        // window, from local data, as decided (Dickson, 2026-10-29), so it
-        // is not refused.
-        if !matches!(query, Query::FocusNow)
+        // no worker. A focus read is not refused: its own check of the
+        // focus window answers no focused control in a window that cannot
+        // be read, so nothing is said for it (Dickson, 2026-11-07).
+        if !matches!(query, Query::ReadFocus)
             && let Some(window) = self.context.charge().named(self.context.request())
             && self.context.readability(window.get()).is_hung()
         {
@@ -4204,7 +3994,7 @@ impl Worker<'_> {
         // answer is sent.
         let mut follow = None;
         let result = match query {
-            Query::FocusNow => {
+            Query::ReadFocus => {
                 let (answer, answered) = self.focus_now();
                 follow = answered;
                 Ok(QueryResult::Focus(answer))
@@ -4346,7 +4136,6 @@ impl Worker<'_> {
                 event: (trace, observed_at_us),
                 redirected: false,
                 caret,
-                at_bound: false,
             },
         );
         follow.adopt = adopt;
@@ -4493,18 +4282,13 @@ struct FocusMade {
     redirected: bool,
     /// The caret read with its report, if any.
     caret: Option<CaretReport>,
-    /// Whether it was published at its walk's bound, with nothing read
-    /// after its walk.
-    at_bound: bool,
 }
 
 /// `made` as the follow its commit applies, computed before the commit
 /// with local calls only: the subscription's target, whether the focus is
-/// a terminal, and what it owes. A terminal owes its first read, its caret
-/// read first when it was published at its bound; a thumb published at
-/// its bound owes its slider's lookup. Also the slider to look up after
-/// the commit, for a thumb the worker reports itself, whose slider's
-/// element is not kept.
+/// a terminal, and what it owes: a terminal read with its caret owes its
+/// first read. Also the slider to look up after the commit, for a thumb
+/// whose slider's element is not kept.
 fn follow_of(context: &Context, made: FocusMade) -> (Follow, Option<NodeId>) {
     let FocusMade {
         node: (node_id, role),
@@ -4515,7 +4299,6 @@ fn follow_of(context: &Context, made: FocusMade) -> (Follow, Option<NodeId>) {
         event: (trace, observed_at_us),
         redirected,
         caret,
-        at_bound,
     } = made;
     let terminal = role == Role::Terminal && matches!(object, Some(Object::Uia(_)));
     let console = window
@@ -4524,15 +4307,10 @@ fn follow_of(context: &Context, made: FocusMade) -> (Follow, Option<NodeId>) {
     // A focus whose own element is not kept yet has the slider found with
     // it, once it is.
     let to_find = to_find.filter(|_| target.element.is_some());
-    let owed = if terminal {
-        match (at_bound, &caret) {
-            (true, _) => Some(OwedWork::FirstRead(None)),
-            (false, Some(caret)) => Some(OwedWork::FirstRead(Some(caret.clone()))),
-            (false, None) => None,
-        }
-    } else {
-        to_find.filter(|_| at_bound).map(|_| OwedWork::Slider)
-    };
+    let owed = caret
+        .as_ref()
+        .filter(|_| terminal)
+        .map(|caret| OwedWork::FirstRead(caret.clone()));
     let follow = Follow {
         node: node_id,
         role,
@@ -4550,7 +4328,7 @@ fn follow_of(context: &Context, made: FocusMade) -> (Follow, Option<NodeId>) {
         observed_at_us,
         adopt: true,
     };
-    (follow, to_find.filter(|_| !at_bound))
+    (follow, to_find)
 }
 
 /// Where the focus-following subscription is moved for the focus
@@ -4618,115 +4396,6 @@ fn sensitive_slider_of(node_id: NodeId, chain: &[NodeSnapshot]) -> Option<NodeId
         return None;
     };
     (focus.id == node_id && focus_rules::is_sensitive_slider(parent)).then_some(parent.id)
-}
-
-/// The publication of a walk still under way at its bound, or returned
-/// past it, or whose worker is about to be abandoned, from `walk`, its
-/// progress as it stands (`docs/design/focus-pipeline-rework.md`, "A window's
-/// name, and the one fallback" and "The outpost's commit point"): the
-/// focus as read, its chain as [`bound::chain_at_bound`] makes it,
-/// completed by plain windows, with no selected child, no dialog text and
-/// no text of its own, recorded for Core's judgement, sent, and made the
-/// followed focus, with what it owes. The one function both publishers
-/// call, the reducer's publication at the walk's bound or once the walk
-/// returns past it ([`Worker::walk_returned`]), so the report does not
-/// depend on which comes first; the reducer's commit of it claims the
-/// walk.
-/// Local calls only.
-pub(super) fn publication(context: &RequestContext<'_>, walk: &FocusProgress) -> Effects {
-    let focus = &walk.focus;
-    let ancestors = bound::chain_at_bound(context, walk);
-    let judged = judged_focus(
-        context,
-        (&focus.node, &ancestors),
-        (focus.window, false),
-        focus.msaa_event,
-    );
-    let chain: Vec<NodeSnapshot> = ancestors
-        .iter()
-        .cloned()
-        .chain(std::iter::once(focus.node.clone()))
-        .collect();
-    let message = event_message(
-        context,
-        focus.timing,
-        (focus.trace, focus.observed_at_us),
-        (focus.backend, focus.window),
-        NormalizedEvent::FocusChanged {
-            node: focus.node.clone(),
-            whole_window: false,
-            ancestors,
-            selected_child: None,
-            text: None,
-            earlier: None,
-            group: focus.group,
-        },
-    );
-    let evidence = if focus.msaa_event.is_some() {
-        Evidence::Msaa
-    } else {
-        Evidence::Uia(None)
-    };
-    let (follow, _) = follow_of(
-        context,
-        FocusMade {
-            node: (focus.node.id, focus.node.role),
-            object: focus.object.clone(),
-            window: focus.window,
-            chain,
-            batch: focus.batch,
-            event: (focus.trace, focus.observed_at_us),
-            // An MSAA focus reached by redirecting its control's own focus
-            // event to the control's focused child.
-            redirected: matches!(
-                (&focus.object, focus.msaa_event),
-                (Some(Object::Msaa(hwnd, object, child)), Some((event, _)))
-                    if (*hwnd, *object, *child) != event
-            ),
-            caret: None,
-            at_bound: true,
-        },
-    );
-    Effects {
-        result: Some(message),
-        report: Some(Report::Reported(judged, evidence)),
-        follow: Some(follow),
-        ..Effects::default()
-    }
-}
-
-/// What tells the reducer a focus walk's progress, for the program
-/// `context` runs: arming it with the focus `focus` makes of the node and
-/// window read ([`read::WalkStep::Focus`]), and taking in each step after,
-/// in the worker's charge. A walk already past its bound when it begins is
-/// not armed: it cuts itself at its first check, and its program reports
-/// it alone. Answers whether the worker is still in charge, so an
-/// abandoned walk stops at its next step.
-fn walk_watcher<'a>(
-    context: &'a RequestContext<'a>,
-    focus: impl Fn(&NodeSnapshot, isize) -> BoundFocus + 'a,
-) -> impl Fn(read::WalkStep<'_>) -> bool + 'a {
-    move |step: read::WalkStep<'_>| match step {
-        read::WalkStep::Focus {
-            node,
-            window,
-            from,
-            left,
-        } => {
-            if left.is_zero() {
-                return true;
-            }
-            let request = context.request();
-            let progress = FocusProgress::new(focus(node, window), from, left);
-            let bound_at = progress.bound_at;
-            if !context.charge().arm(request, progress) {
-                return false;
-            }
-            context.mailbox.post(Posted::Armed { request, bound_at });
-            true
-        }
-        step => context.charge().advance(&step),
-    }
 }
 
 /// `facts`, the window facts of an event message carrying `event`, with

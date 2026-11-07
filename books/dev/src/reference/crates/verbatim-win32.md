@@ -62,6 +62,11 @@ Public API:
   when the system reports its application hung; `Readable` otherwise, in
   NVDA's order, all local calls. `event_window_unreadable(hwnd)` is why an
   event's window cannot be read, if it cannot (`Readability::reason`).
+  `hung_window_from_ghost(hwnd)` is the hung window a ghost window stands
+  in for, by user32's undocumented `HungWindowFromGhostWindow` as NVDA
+  uses it, `None` for any other window: an outpost maps the window in
+  front through it, since a ghost's own process is the desktop window
+  manager's.
   `readability` is what an outpost's and the listener's
   `WindowReadabilityReader` answers, the one judge of a hung window each
   asks at the moment of its decision, which tests replace, as a `ForegroundReader`

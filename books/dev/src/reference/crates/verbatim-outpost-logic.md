@@ -24,9 +24,10 @@ Public API:
   after every drain of its mailbox, a timer due or not, so a tick may
   find nothing due; and `next_timer(now)`, the time of the shell's timed wait. It makes
   no call of any kind.
-- `Input`: an entry from a producer, a verdict, a commit, a walk armed or returned, a
-  program finished, a release's answer, the answers to its asks (`Judged`, `Published`), and
-  the shell's close. `Effect`: dispatch a `Program`, send a message,
+- `Input`: an entry from a producer, a verdict, a commit, a
+  program finished, a release's answer, the answers to its asks
+  (`Judged`, `HangSeen`, `FrontReadable`), and the shell's close.
+  `Effect`: dispatch a `Program`, send a message,
   release, move the subscription (`Subscription`), drop elements or
   objects, abandon a worker generation (`Abandon`, with the dead
   generation, its replacement, the reason in words and what the program
@@ -34,20 +35,21 @@ Public API:
   trace and the window it waits on, for the log; the shell alone
   counts the abandoned workers that have not returned), publish the
   facts' marks, given after a transition that changed them and ahead of
-  its other effects, or the verdicts, and two asks: `AskJudge`, the judgement of the program's window, known at
-  dispatch or, for `None`, the one its worker named in its charge: whether
-  it is hung or ghosted, tested first, and otherwise whether the user has
-  left it for another thread of its application, answered `Judged` with
-  the verdict (`Reason::Hung`, `Reason::MovedOn` or none) and the window
-  judged; and `Publish`, the publication of a walk armed, with
-  the facts it is judged against and `then_abandon`, the abandonment
-  that asked for it (a `Reason`), which comes back in the answer so the
-  reducer keeps nothing between the two.
+  its other effects, or the verdicts, and two asks. `AskJudge` is the
+  check of the program's window, known at dispatch or, for `None`, the
+  one its worker named in its charge: whether it is hung or ghosted,
+  answered `HangSeen` with the window and the program's request when it
+  is, then whether the user has left it for another thread of its
+  application, answered `Judged` (`moved_on`). `CheckFront` is the check
+  of the window in front while a listener read's marker waits: answered
+  `HangSeen` with no request when a window of the application is hung or
+  ghosted there, a ghost mapped to the window it stands in for, and
+  `FrontReadable` when it can be read; another application's window in
+  front answers nothing. A hang abandons nothing.
 - A program's deadline is its entry's (`budget`): `HANDLING_DEADLINE`
   (11 seconds, `verbatim-model`'s) from when the program begins for every
-  program but two, focus-now and a listener read's report, which have
-  `BOUNDED_WALK_DEADLINE` (13 seconds), their walk being a budget checked
-  between calls with no publication of its own beyond it; or, for a shell
+  program but two, a focus read (`Query::ReadFocus`) and a listener read's
+  report, which have `BOUNDED_WALK_DEADLINE` (13 seconds); or, for a shell
   items or position query, the `answer_by_us` the query carries, on the
   run's shared clock, so a query that waited behind other work has only
   what is left of it. One reached at or after its `answer_by_us` is too
@@ -58,54 +60,66 @@ Public API:
   `SAME_WINDOW_BOUND` more for the two. A query's `RequestId` is
   stored and echoed in its reply, and decides nothing.
 - The program in flight is the reducer's work in flight
-  (`InFlight<Current>`): its request, deadline, walk and moved-on rule
-  are kept there, and the reducer keeps beside them only the query the
-  program answers, its focus group try and whether it is deferred work.
-  The reducer calls it where it judges: a tick, a walk returned, and
-  the asks' answers; a walk armed only records its bound, and a
-  foreground fact judges nothing. The
-  moved-on rule is judged at the grace's end and every half second after
-  for a program with a window, until its deadline. On an abandonment the
-  reducer emits `Abandon` and answers its own obligations: the running
-  query, the owed work of the dead generation, the open watch, and the
-  focus group's older entries unless the try was published. A cut caret
-  read's finish is handed on to a new request (`InFlight::hand_on`),
-  keeping the read's deadline, walk and rule.
-- The rule for asks: the shell answers each ask exactly once, as the
-  reducer's next input, before it takes another message, and the reducer
-  applies an answer only while its request is the program in flight. Of
-  the program's asks a transition makes
-  at most one: a tick judges the deadline first
-  (abandoning, by one `Publish` with `then_abandon` when a walk is armed),
-  then the walk's bound (`Publish`), then the moved-on rule's next
-  judgment (`AskJudge`), the first that applies deciding; a judgment
-  left over is made by the publication's answer against its own `Now`. A
-  verdict for a program already published abandons it at once. A program
-  with no window at dispatch that calls into the application, a query, the
-  owed work, the console poll's read, is dispatched with
-  `RuleWindow::Named`, judged on the grace's schedule by the window its
-  worker names; a release's drop, a tree dump and a shell item query,
-  whose workers name no window, are dispatched with `RuleWindow::Never`
-  and judged by their deadline alone.
-  `Program::window` carries the window the program's entry names, which
-  its worker names in its charge at once.
+  (`InFlight<Current>`): its request, deadline and moved-on rule are
+  kept there, and the reducer keeps beside them only the query the
+  program answers, its focus group try, whether it is deferred work, the
+  windows destroyed while it runs and its hang mark. The outpost arms no
+  walk in the work in flight, so nothing of a program is ever published
+  or claimed. The reducer calls it where it judges: a tick and the asks'
+  answers; a foreground fact judges nothing. The program's window is
+  checked at the grace's end and every half second after for a program
+  with a window, until its deadline. A program is abandoned only at its
+  deadline or once the user moved on. On an abandonment the reducer emits
+  `Abandon` and answers its own obligations: the running query, the owed
+  work of the dead generation, the open watch, and the focus group's
+  older entries. A cut caret read's finish is handed on to a new request
+  (`InFlight::hand_on`), keeping the read's deadline and rule.
+- The rule for asks: the shell answers each ask at once, as the
+  reducer's next inputs, before it takes another message, and the
+  reducer applies a check's answer only while its request is the program
+  in flight. A tick judges the program's deadline first, abandoning it,
+  then its check's next time (`AskJudge`); and, apart, the front check
+  when it is due. A program with no window at dispatch that calls into
+  the application, a query, the owed work, the console poll's read, is
+  dispatched with `RuleWindow::Named`, checked on the grace's schedule by
+  the window its worker names, a tree dump's the application's main
+  window and a shell item query's the taskbar's; a release's drop, which
+  calls into many windows, is dispatched with `RuleWindow::Never` and
+  judged by its deadline alone. `Program::window` carries the window the
+  program's entry names, which its worker names in its charge at once.
+- The front check: each UIA focus marker waiting in the intake for its
+  read keeps when the window in front is next checked, half a second
+  after it arrived (`Intake::push` is given the shell's clock), then every
+  half second while it is the first marker waiting
+  (`Intake::front_due`, `Intake::front_check`). `next_timer` times the
+  first marker's check, and a tick at it emits `CheckFront`; once the
+  marker resolves, by its read, its drop or the end of the listener's
+  reads, nothing is timed for it. The check judges the hang alone, never
+  the read, so the marker still has its one answer path.
 - The record of hung windows, kept in the application's own reducer: a
-  window enters it at a hung judgement of the program in flight, or at an
-  accepted commit naming it `Found::Hung` (its check before a call found it
-  hung, and no call was made), and `OutpostToCore::NotResponding` is sent
+  window enters it at a `HangSeen`, of the program in flight's check, of
+  a request no longer live, or of the window in front, or at an accepted
+  commit naming it `Found::Hung` (its check before a call found it hung,
+  and no call was made), and `OutpostToCore::NotResponding` is sent
   only as the record goes from empty to holding a window, once per hang of
   the application: a window entering while another is recorded sends
   nothing. A window leaves only on evidence that it answers,
   an accepted commit naming it `Found::Answered` (a counted call into it
-  returned), its destroy event, or the outpost's end. A program that made
-  no call into the window is never that evidence. A destroy wins over the
-  program in flight: a hang it names, by judgement or commit, in a window
-  whose destroy event reached the reducer while it ran
-  (`Current::destroyed`) enters nothing. The destroy takes effect as it
-  first reaches the reducer, from the hook or the listener, even as a hook
-  copy the hand-over's hold keeps back. The abandonment's
-  `Effect::Abandon` says whether its window was judged hung (`on_hung`),
-  which the shell counts apart for the pong.
+  returned) or a `FrontReadable` naming it, its destroy event, or the
+  outpost's end. A program that made no call into the window is never
+  that evidence. A destroy wins over the program in flight: a hang it
+  names, by its check or a commit, in a window whose destroy event reached
+  the reducer while it ran (`Current::destroyed`) enters nothing. The
+  destroy takes effect as it first reaches the reducer, from the hook or
+  the listener, even as a hook copy the hand-over's hold keeps back.
+- The hang mark: a `HangSeen` whose request is the program in flight's,
+  of the generation in charge, sets that program's mark, dropped with the
+  program. The abandonment's `Effect::Abandon` carries it as `on_hung`,
+  which the shell counts apart for the pong, so the supervisor's limit on
+  abandoned workers never replaces an outpost for its application's hang.
+  The record of hung windows cannot stand in for it: a program whose
+  worker names its window has none the record could be matched with at
+  abandonment.
 - `Program` and `Work`: what the worker generation in charge runs, with
   its copies of the facts (`Facts`), whose commits come back as `Change`s
   and are applied while their `Request` is live.
@@ -141,8 +155,8 @@ A committed foreground fact on another node ends it at once, even while
 the program in flight holds it, and that program's later check is
 ignored, since `WatchChange::Checked` applies only to a watch that is
 `Checking` (Claude, 2026-11-03, accepted by Dickson the same day). The
-reducer otherwise changes the watch only at a dispatch, at a publication
-that claims the program, or with no program in flight.
+reducer otherwise changes the watch only at a dispatch, at an
+abandonment, or with no program in flight.
 `next_timer` gives its due time only when it would be acted on.
 
 `cargo xtask ci` reads every file of the crate by the pure rule
@@ -174,30 +188,38 @@ longer live) and carrying the answers to the asks it may cause, which are
 answered in line in the shell's order. The actions are entries of every
 kind from the hook, the listener and the rest, several focuses pending at
 once among them; commits of every kind, and each program kind's own
-result; walks armed and returned; programs ended, cut and panicked;
-inputs of requests no longer live; verdicts of the generation in charge
+result; hangs seen by a program's check, in front or for a request no
+longer live, and readable windows in front; programs ended, cut and
+panicked; inputs of requests no longer live; verdicts of the generation in charge
 and of the one before; the hold; cancels; the close; and time on the
 three clocks, each advancing on its own, to the next timer or by chosen
 amounts. The model tracks the generation and the requests issued, the
-program in flight (its kind, its query, its walk, its deadline as
-dispatched, its window), the entries pending as a set rather than the
-intake's plan, the open queries, settles and rounds, the hook's copies
-held in their order, a release, the owed work and stopping. After every
+program in flight (its kind, its query, its hang mark, its deadline as
+dispatched, its window), the markers waiting with their front checks'
+due times, the windows' hang intervals, the entries pending as a set
+rather than the intake's plan, the open queries, settles and rounds, the
+hook's copies held in their order, a release, the owed work and
+stopping. After every
 call it checks the design's invariants and its postconditions: each dispatch under the next request
 with a deadline after its dispatch, a poll read holding the watch, a late shell query answered with nothing read,
 a cancel, a commit's message ahead of its other effects, a cut read's
 finish alone, a program's end answering its watch and its query before
-the next dispatch, a tick deciding the deadline, then the bound, then the
-moved-on rule, and an abandonment answering the
+the next dispatch, a tick deciding the deadline, then the program's
+check, an abandonment only at the deadline or in the answer that the
+user moved on, `on_hung` equal to the program's hang mark,
+`NotResponding` sent exactly as the hang record goes from empty to
+holding a window, the front checked exactly when a tick finds the first
+waiting marker's check due and never otherwise, the front check timed
+while a marker waits, and an abandonment answering the
 watch and the query before the next dispatch, and the hold's release on
 the end of forwarding, the end of the listener's reads or no listener,
 giving back some of the held copies in the hook's order, every one with
 no listener. Each kind's deadline and which copies a release keeps are
 the examples of the replay tests and `hold.rs`. Each case ends by draining
-(every program finished, every timer reached, the close), and then every
-query has one reply or is left to the shell's token, which only a query
-never taken from the intake, or the watch's, may be; and no focus group a
-try reported, or was published in, is tried again. Each case runs twice
+(every program finished, every marker dropped, every timer reached, the
+close), and then every query has one reply or is left to the shell's
+token, which only a query never taken from the intake, or the watch's,
+may be; and no focus group a try reported in is tried again. Each case runs twice
 and the two runs' effects are compared, and the test fails if a listed
 lifecycle state is never reached. The cases the test and its exploration
 found are kept as fixed cases, pasted as the failure prints them

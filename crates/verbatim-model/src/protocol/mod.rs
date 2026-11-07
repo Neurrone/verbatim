@@ -871,7 +871,7 @@ pub enum Query {
     /// foreground window, and its focused control with that control's
     /// ancestors and selected child. Used at startup and after an outpost or
     /// the listener is replaced, in place of retrying until focus settles.
-    FocusNow,
+    ReadFocus,
     /// One object-navigation step from `node_id` in the direction `kind`
     /// names.
     Navigate {
@@ -969,7 +969,7 @@ pub enum QueryOutcome {
     reason = "a reply is built once and moved, never stored in bulk"
 )]
 pub enum QueryResult {
-    /// The answer to [`Query::FocusNow`].
+    /// The answer to [`Query::ReadFocus`].
     Focus(FocusNow),
     /// The answer to [`Query::Navigate`]: the neighbor, or `None` for a
     /// genuine tree edge (not an error).
@@ -992,7 +992,7 @@ pub enum QueryResult {
     ShellItemPosition(crate::ShellCandidates),
 }
 
-/// The answer to [`Query::FocusNow`].
+/// The answer to [`Query::ReadFocus`].
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FocusNow {
     /// The application's top-level window and its facts, when it is the

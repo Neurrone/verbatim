@@ -361,6 +361,38 @@ fn ghost_window_from_hung_window() -> Option<unsafe extern "system" fn(HWND) -> 
     })
 }
 
+/// The hung window a ghost window `handle` stands in for, by
+/// `HungWindowFromGhostWindow`, an undocumented export of user32 that NVDA
+/// uses where present (`source/winBindings/user32.py`): `None` for a window
+/// that is not a ghost, or where the export is missing. A ghost's own
+/// process is the desktop window manager's, so a window in front is mapped
+/// through this before its application is judged. A local call; the
+/// export is looked up once.
+#[must_use]
+pub fn hung_window_from_ghost(handle: isize) -> Option<isize> {
+    static FUNCTION: OnceLock<Option<unsafe extern "system" fn(HWND) -> HWND>> = OnceLock::new();
+    let function = (*FUNCTION.get_or_init(|| {
+        // SAFETY: user32 is loaded in every process that has windows; the
+        // handle is not freed.
+        let user32 = unsafe { GetModuleHandleW(w!("user32.dll")) }.ok()?;
+        // SAFETY: a lookup by a NUL-terminated name in a loaded module.
+        let function = unsafe { GetProcAddress(user32, s!("HungWindowFromGhostWindow")) }?;
+        // SAFETY: the export takes a window handle and returns one
+        // (`HWND HungWindowFromGhostWindow(HWND)`), the signature NVDA
+        // declares for it; both are pointer-sized.
+        Some(unsafe {
+            std::mem::transmute::<
+                unsafe extern "system" fn() -> isize,
+                unsafe extern "system" fn(HWND) -> HWND,
+            >(function)
+        })
+    }))?;
+    // SAFETY: the function takes any window handle and returns null when
+    // it is not a ghost window.
+    let hung = unsafe { function(hwnd(handle)) }.0 as isize;
+    (hung != 0).then_some(hung)
+}
+
 /// Whether window `handle` is `target_pid`'s, the application an outpost
 /// serves: whether that process serves the window's UIA
 /// ([`crate::provider::served_by`]), so a console window is its console host's

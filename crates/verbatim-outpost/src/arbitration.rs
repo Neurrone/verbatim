@@ -98,13 +98,6 @@ pub const NEGATIVE_VERDICT_LIFETIME: Duration = Duration::from_millis(500);
 /// stamped.
 const NEGATIVE_VERDICT_LIFETIME_US: u64 = 500_000;
 
-/// Whether `budget` has passed by `clock` since this call: the out-of-time
-/// check a classic walk makes between its calls.
-pub(crate) fn time_limit(clock: &Clock, budget: Duration) -> impl Fn() -> bool + '_ {
-    let deadline = clock() + budget;
-    move || clock() >= deadline
-}
-
 /// A window's backend as [`decide`] judges it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Verdict {
@@ -743,22 +736,6 @@ mod tests {
             arb.verdict_at(&classes, 2_000 + NEGATIVE_VERDICT_LIFETIME_US),
             None
         );
-    }
-
-    #[test]
-    fn a_walks_time_limit_runs_out_by_the_arbitrators_clock() {
-        let start = Instant::now();
-        let time = Arc::new(Lock::new(start));
-        let mut arb = Arbitrator::new(&[]);
-        let read = Arc::clone(&time);
-        arb.set_clock(Arc::new(move || *read.lock()));
-        let budget = Duration::from_secs(1);
-        let clock = arb.clock();
-        let out_of_time = time_limit(&clock, budget);
-        *time.lock() = start + budget.saturating_sub(Duration::from_millis(1));
-        assert!(!out_of_time());
-        *time.lock() = start + budget;
-        assert!(out_of_time());
     }
 
     #[test]

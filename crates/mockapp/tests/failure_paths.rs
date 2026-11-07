@@ -79,7 +79,7 @@ fn a_first_worker_that_cannot_start_answers_its_program_and_starts_with_the_next
     let mut outpost = OutpostUnderTest::new(&app);
     focus_button(&mut app, &outpost, &title);
 
-    let first = outpost.ask(Query::FocusNow);
+    let first = outpost.ask(Query::ReadFocus);
     assert_eq!(
         outcome(&outpost, first),
         QueryOutcome::Failed("the outpost failed handling the query".to_owned()),
@@ -112,7 +112,7 @@ fn a_replacement_worker_that_cannot_start_answers_the_next_program() {
     let refusal = fail_worker_start(1, 1);
 
     app.hold();
-    let held = outpost.ask(Query::FocusNow);
+    let held = outpost.ask(Query::ReadFocus);
     let call = app.held();
     assert_eq!(
         outcome(&outpost, held),

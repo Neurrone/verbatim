@@ -7,7 +7,7 @@
 //! a short hold with no call into an application and no wait inside it,
 //! so a timer is never late by more than such a hold. They are the
 //! mailbox's, the outbound backlog's with the store's inside it for a
-//! release, the store's for its writes, and a walk slot's.
+//! release, the store's for its writes, and a worker's charge's.
 //!
 //! What the shell holds that names an application's object, the elements
 //! the focus-following subscription is moved to, is kept by token, so the
@@ -31,15 +31,15 @@ use verbatim_model::TraceId;
 use verbatim_model::protocol::{EventTiming, OutpostToCore, QueryOutcome, RequestId, Responder};
 use verbatim_uia::{Agile, Kept};
 
+use super::Context;
 use super::commit::{Effects, Writes};
 use super::outbound::Carried;
 use super::reducer::{
-    Asker, Change, Cut, Effect, Entry, Facts, Group, Input, Item, Marks, Now, Program, Reducer,
-    Request, Source, Subscription, VerdictChange, Verdicts,
+    Asker, Change, Cut, Effect, Entry, Group, Input, Item, Marks, Now, Program, Reducer, Request,
+    Source, Subscription, VerdictChange, Verdicts,
 };
 use super::store::{Removed, Store, Tag};
 use super::worker::{self, Charge, Job};
-use super::{Context, RequestContext};
 use verbatim_process::alarm::Alarm;
 
 /// What the mailbox carries to the shell, in the order it was appended.
@@ -71,10 +71,6 @@ pub(super) enum Posted {
         request: Request,
         effects: Box<Effects>,
     },
-    /// A program's walk was armed, its bound at the time given.
-    Armed { request: Request, bound_at: Instant },
-    /// A program's walk returned, past its bound or not.
-    WalkReturned { request: Request, past: bool },
     /// A program ended, with the caret read it cut at its value change
     /// check, if it cut one.
     Finished {
@@ -253,7 +249,8 @@ pub(super) struct Shell {
     generations: HashMap<u64, Generation>,
     threads: Vec<thread::JoinHandle<()>>,
     /// The abandoned workers that have not returned, by generation, with
-    /// whether each was abandoned because its window was judged hung: one
+    /// whether each is parked on a window seen hung, its program's hang
+    /// mark: one
     /// more as the shell carries out an abandonment, one fewer as one
     /// returns.
     parked: HashMap<u64, bool>,
@@ -516,33 +513,6 @@ impl Shell {
         std::mem::take(&mut self.threads)
     }
 
-    /// The publication of the walk `request` armed, if it is still armed
-    /// in the charge of `request`'s own generation and not returned before
-    /// its bound: its progress as it stands, claimed so its worker sends
-    /// nothing more for it, completed by plain windows with local calls
-    /// only, judged against `facts`, and written into the store as a commit
-    /// of its program.
-    fn publication(&mut self, request: Request, facts: Facts) -> Option<Change> {
-        let charge = Arc::clone(&self.generations.get(&request.generation)?.charge);
-        let progress = charge.publish(request)?;
-        let tag = tag_of(request);
-        let context = RequestContext::new(&self.context, tag, facts);
-        let effects = worker::publication(&context, &progress);
-        self.garbage.store.push(context.take_removed());
-        tracing::info!(
-            trace = %progress.focus.trace,
-            name = ?progress.focus.node.name,
-            "a focus walk was under way at its bound or its worker's abandonment; the focus is published as read so far"
-        );
-        Some(write(
-            &self.context.store,
-            tag,
-            effects,
-            &mut self.elements,
-            &mut self.garbage,
-        ))
-    }
-
     /// Takes one posted input into the reducer and applies what it asks.
     fn take(&mut self, posted: Posted) {
         let input = match posted {
@@ -587,11 +557,7 @@ impl Shell {
                     change: Box::new(change),
                 }
             }
-            Posted::Armed { request, bound_at } => Input::Armed {
-                request,
-                bound: bound_at.saturating_duration_since(self.context.epoch),
-            },
-            Posted::WalkReturned { request, past } => Input::WalkReturned { request, past },
+
             Posted::Finished {
                 request,
                 reported,
@@ -649,18 +615,18 @@ impl Shell {
     }
 
     /// Applies the reducer's effects, in order. An effect that asks, a
-    /// release, whether the user moved on, or a walk's publication, is
-    /// answered at once, exactly once, as the reducer's next input, before
-    /// the shell takes another message, and what the answer asks comes
-    /// before anything asked after the question.
+    /// release, a program's check or the check of the window in front, is
+    /// answered at once, as the reducer's next inputs, before the shell
+    /// takes another message, and what the answers ask comes before
+    /// anything asked after the question.
     fn apply(&mut self, effects: Vec<Effect>) {
         let mut effects: VecDeque<Effect> = effects.into();
         while let Some(effect) = effects.pop_front() {
-            let Some(answer) = self.carry_out(effect) else {
-                continue;
-            };
-            let now = self.now();
-            let more = self.reducer.input(answer, now);
+            let mut more = Vec::new();
+            for answer in self.carry_out(effect) {
+                let now = self.now();
+                more.extend(self.reducer.input(answer, now));
+            }
             for effect in more.into_iter().rev() {
                 effects.push_front(effect);
             }
@@ -668,8 +634,9 @@ impl Shell {
         self.check_tables();
     }
 
-    /// Carries out `effect`, returning the answer to one that asks.
-    fn carry_out(&mut self, effect: Effect) -> Option<Input> {
+    /// Carries out `effect`, returning the answers to one that asks, in
+    /// order.
+    fn carry_out(&mut self, effect: Effect) -> Vec<Input> {
         match effect {
             Effect::Dispatch(program) => self.dispatch(*program),
             Effect::Send(message) => self.send(*message),
@@ -678,19 +645,9 @@ impl Shell {
                 anchors,
                 acknowledged,
                 live,
-            } => return Some(self.release(&nodes, &anchors, acknowledged, &live)),
-            Effect::AskJudge { request, window } => return Some(self.judge(request, window)),
-            Effect::Publish {
-                request,
-                facts,
-                then_abandon,
-            } => {
-                return Some(Input::Published {
-                    request,
-                    change: self.publication(request, *facts).map(Box::new),
-                    then_abandon,
-                });
-            }
+            } => return vec![self.release(&nodes, &anchors, acknowledged, &live)],
+            Effect::AskJudge { request, window } => return self.judge(request, window),
+            Effect::CheckFront => return self.check_front().into_iter().collect(),
             Effect::Subscribe(subscription) => self.subscribe(&subscription),
             Effect::Unfollow(tokens) => {
                 for token in tokens {
@@ -756,11 +713,11 @@ impl Shell {
                 );
             }
         }
-        None
+        Vec::new()
     }
 
     /// The pong's counts of the abandoned workers that have not returned:
-    /// those parked on a window judged hung, and the rest, which the
+    /// those parked on a window seen hung, and the rest, which the
     /// supervisor's limit counts.
     fn count_parked(&self) {
         let on_hung = self.parked.values().filter(|&&on_hung| on_hung).count();
@@ -772,38 +729,66 @@ impl Shell {
             .store(self.parked.len().saturating_sub(on_hung), Ordering::Relaxed);
     }
 
-    /// Judges `request`'s program by `window`, or by the window its worker
-    /// named in its charge: hung or ghosted, by the outpost's reader, tested
-    /// first, and otherwise whether the user has left it for another thread
-    /// of its application, the window with the keyboard focus by the
-    /// outpost's reader ([`Outpost::set_focus_window_reader`](super::Outpost::set_focus_window_reader)).
-    /// Local calls, the charge's lock and the focus window reader's lock.
-    /// With no window, the program stays.
-    fn judge(&self, request: Request, window: Option<verbatim_reader_rules::Window>) -> Input {
+    /// Checks `request`'s program by `window`, or by the window its worker
+    /// named in its charge: whether it is hung or ghosted, by the outpost's
+    /// reader, which is told as a hang seen, and whether the user has left
+    /// it for another thread of its application, the window with the
+    /// keyboard focus by the outpost's reader
+    /// ([`Outpost::set_focus_window_reader`](super::Outpost::set_focus_window_reader)),
+    /// which abandons it. Local calls, the charge's lock and the focus
+    /// window reader's lock. With no window, the program stays.
+    fn judge(&self, request: Request, window: Option<verbatim_reader_rules::Window>) -> Vec<Input> {
         let window = window.or_else(|| {
             self.generations
                 .get(&request.generation)
                 .and_then(|generation| generation.charge.named(request))
         });
-        let verdict = window.and_then(|window| {
-            if self.context.readability(window.get()).is_hung() {
-                Some(super::reducer::Reason::Hung)
-            } else {
-                self.context
-                    .focus_window()
-                    .is_some_and(|front| {
-                        verbatim_win32::window::is_another_thread_of_its_application(
-                            window.get(),
-                            front,
-                        )
-                    })
-                    .then_some(super::reducer::Reason::MovedOn)
-            }
+        let Some(window) = window else {
+            return vec![Input::Judged {
+                request,
+                moved_on: false,
+            }];
+        };
+        let hang = self
+            .context
+            .readability(window.get())
+            .is_hung()
+            .then_some(Input::HangSeen {
+                window,
+                request: Some(request),
+            });
+        let moved_on = self.context.focus_window().is_some_and(|front| {
+            verbatim_win32::window::is_another_thread_of_its_application(window.get(), front)
         });
-        Input::Judged {
-            request,
-            verdict,
-            window,
+        hang.into_iter()
+            .chain([Input::Judged { request, moved_on }])
+            .collect()
+    }
+
+    /// Checks the window in front while a listener read's marker waits: the
+    /// foreground window, by the outpost's reader
+    /// ([`Outpost::set_foreground_reader`](super::Outpost::set_foreground_reader)),
+    /// a ghost mapped to the hung window it stands in for, since the
+    /// ghost's own process is the desktop window manager's, and, when the
+    /// outpost's application serves that window, its readability: a hang
+    /// seen when it is hung or ghosted, readable when it can be read, and
+    /// nothing for another application's window or one gone. Local calls
+    /// only, never into the application.
+    fn check_front(&self) -> Option<Input> {
+        let front = self.context.foreground_window();
+        let window = verbatim_win32::window::hung_window_from_ghost(front).unwrap_or(front);
+        if !super::read::serves(&self.context, window) {
+            return None;
+        }
+        let window = verbatim_reader_rules::Window::new(window)?;
+        match self.context.readability(window.get()) {
+            verbatim_win32::window::Readability::Readable => Some(Input::FrontReadable { window }),
+            verbatim_win32::window::Readability::Gone => None,
+            verbatim_win32::window::Readability::Ghosted
+            | verbatim_win32::window::Readability::Hung => Some(Input::HangSeen {
+                window,
+                request: None,
+            }),
         }
     }
 
@@ -1043,7 +1028,7 @@ mod tests {
         let entry = Entry::own(
             Item::Query {
                 request_id: RequestId::shell(1),
-                query: Query::FocusNow,
+                query: Query::ReadFocus,
             },
             TraceId::mint(),
             1,
@@ -1112,12 +1097,12 @@ mod tests {
         context
     }
 
-    /// The shell answers a publication it is asked for at once, as the
-    /// reducer's next input, and carries out what the answer asks before it
-    /// returns to its mailbox: asked by an abandonment for a program whose
-    /// charge holds no walk, it answers with nothing published, and the
-    /// abandonment completes, its replacement started and its query
-    /// answered, within the one step.
+    /// The shell answers a program's check at once, as the reducer's next
+    /// inputs, before it returns to its mailbox: asked of a focus read
+    /// whose window its reader answers hung, it answers that the hang was
+    /// seen, which sets the program's hang mark, so the program abandoned
+    /// at its deadline is counted parked on a hung window, its replacement
+    /// started and its query answered.
     #[test]
     fn an_ask_is_answered_before_the_shell_takes_another_message() {
         let mut shell = Shell {
@@ -1138,7 +1123,7 @@ mod tests {
             entry: Entry::own(
                 Item::Query {
                     request_id: RequestId::shell(1),
-                    query: Query::FocusNow,
+                    query: Query::ReadFocus,
                 },
                 TraceId::from_raw(1),
                 1,
@@ -1154,16 +1139,25 @@ mod tests {
             "the query's program in flight"
         );
         assert_eq!(shell.tokens.len(), 1);
-        shell.take(Posted::Armed {
+        *shell.context.window_readability.lock() =
+            Arc::new(|_| verbatim_win32::window::Readability::Hung);
+        shell.apply(vec![Effect::AskJudge {
             request,
-            bound_at: shell.context.epoch + std::time::Duration::from_secs(60),
-        });
-        shell.apply(vec![Effect::Publish {
-            request,
-            facts: Box::default(),
-            then_abandon: Some(verbatim_outpost_logic::Reason::Deadline),
+            window: verbatim_reader_rules::Window::new(5),
         }]);
-        assert!(!shell.reducer.accepts(request), "abandoned by the answer");
+        assert!(shell.reducer.accepts(request), "a hang abandons nothing");
+        let past = Now {
+            at: shell.context.epoch.elapsed() + std::time::Duration::from_secs(60),
+            ..shell.now()
+        };
+        let effects = shell.reducer.tick(past);
+        shell.apply(effects);
+        assert_eq!(
+            shell.parked,
+            HashMap::from([(0, true)]),
+            "parked on a hung window"
+        );
+        assert!(!shell.reducer.accepts(request), "abandoned at its deadline");
         assert_eq!(shell.reducer.generation(), 1);
         assert!(shell.tokens.is_empty(), "its query answered");
         assert!(

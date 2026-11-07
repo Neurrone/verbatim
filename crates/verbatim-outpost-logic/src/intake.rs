@@ -151,10 +151,11 @@
 //! mailbox order.
 
 use std::collections::{BTreeMap, VecDeque};
+use std::time::Duration;
 
 use verbatim_model::protocol::{DeliveredFact, RequestId, WinEventStamp};
 use verbatim_model::{NotificationKind, NotificationProcessing, TraceId};
-use verbatim_reader_rules::Window;
+use verbatim_reader_rules::{MOVED_ON_GRACE, Window};
 
 use super::entry::{Asker, Entry, Item, UiaKind, WinKind, is_state_property};
 
@@ -250,6 +251,10 @@ struct Waiting {
     /// For a UIA focus's marker still waiting for its read, the marker:
     /// nothing at or after it is planned.
     marker: Option<u64>,
+    /// For such a marker, when the window in front is next checked for a
+    /// hang while it waits, on the shell's clock: the grace after it
+    /// arrived, then every grace after that ([`Intake::front_check`]).
+    front_due: Option<Duration>,
     entry: Entry,
 }
 
@@ -423,8 +428,9 @@ impl Intake {
     ///
     /// A focus's read moving into a child of the focus in `marks` is placed after the old focus's own
     /// events. Returns the parked objects of the entries a newer one
-    /// replaced.
-    pub fn push(&mut self, entry: Entry, marks: &Marks) -> Pushed {
+    /// replaced. A marker arriving at `at`, on the shell's clock, has the
+    /// window in front checked from the grace after it.
+    pub fn push(&mut self, entry: Entry, marks: &Marks, at: Duration) -> Pushed {
         let mut pushed = Pushed::default();
         // A marked UIA event takes its marker's place as itself.
         let (entry, resolved_by_read) = match entry.item {
@@ -493,6 +499,7 @@ impl Intake {
             category,
             raiser,
             marker,
+            front_due: marker.map(|_| at.saturating_add(MOVED_ON_GRACE)),
             entry,
         };
         // A place is an index into `waiting` that nothing above removed.
@@ -550,6 +557,37 @@ impl Intake {
         self.idle
             .take()
             .map(|entry| (Planned::Run(entry), self.batch_number))
+    }
+
+    /// When the window in front is next checked for a hang: the due time
+    /// of the first marker still waiting for its read, which holds every
+    /// later entry, `None` while none waits.
+    #[must_use]
+    pub fn front_due(&self) -> Option<Duration> {
+        self.waiting
+            .iter()
+            .find(|waiting| waiting.marker.is_some())
+            .and_then(|waiting| waiting.front_due)
+    }
+
+    /// Whether the window in front is checked at `at`: the first marker
+    /// waiting for its read has its check due, which is then due again a
+    /// grace later, so a check is asked at most once a grace and only while
+    /// a marker has waited past the grace.
+    pub fn front_check(&mut self, at: Duration) -> bool {
+        let Some(due) = self
+            .waiting
+            .iter_mut()
+            .find(|waiting| waiting.marker.is_some())
+            .and_then(|waiting| waiting.front_due.as_mut())
+        else {
+            return false;
+        };
+        if at < *due {
+            return false;
+        }
+        *due = at.saturating_add(MOVED_ON_GRACE);
+        true
     }
 
     /// Closes the queue for the outpost's shutdown: everything waiting and
@@ -642,6 +680,7 @@ impl Intake {
                     category,
                     raiser,
                     marker: None,
+                    front_due: None,
                     entry,
                 },
             );
@@ -1292,7 +1331,7 @@ mod tests {
 
     impl WithMarks {
         fn push(&mut self, entry: Entry) -> Pushed {
-            self.intake.push(entry, &self.marks)
+            self.intake.push(entry, &self.marks, Duration::ZERO)
         }
 
         fn next(&mut self) -> Option<(Planned, u64)> {
@@ -1345,6 +1384,7 @@ mod tests {
             category,
             raiser: raiser_of(&item),
             marker: None,
+            front_due: None,
             entry: Entry {
                 item,
                 trace: TraceId::from_raw(1),
@@ -1368,6 +1408,7 @@ mod tests {
             category,
             raiser: 1,
             marker: None,
+            front_due: None,
             entry: Entry {
                 item,
                 trace: TraceId::from_raw(2),
@@ -1425,7 +1466,7 @@ mod tests {
     fn query(request_id: u64) -> Waiting {
         let item = Item::Query {
             request_id: RequestId::shell(request_id),
-            query: Query::FocusNow,
+            query: Query::ReadFocus,
         };
         let (key, category, _) = classify(&item);
         Waiting {
@@ -1433,6 +1474,7 @@ mod tests {
             category,
             raiser: 0,
             marker: None,
+            front_due: None,
             entry: Entry {
                 item,
                 trace: TraceId::from_raw(3),
@@ -1911,6 +1953,7 @@ mod tests {
             category,
             raiser: 0,
             marker: None,
+            front_due: None,
             entry: Entry {
                 item: held,
                 trace: TraceId::from_raw(4),

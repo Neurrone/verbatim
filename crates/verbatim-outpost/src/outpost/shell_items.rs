@@ -245,6 +245,13 @@ fn visible_overflow_window() -> Option<HWND> {
     .find(|&hwnd| unsafe { IsWindowVisible(hwnd) }.as_bool())
 }
 
+/// The taskbar window, `Shell_TrayWnd`, which every shell item query walks
+/// from: the window its program names, so it is checked for a hang as
+/// every program is. A local call.
+pub(super) fn taskbar_window() -> Option<isize> {
+    find_top_level("Shell_TrayWnd").map(|hwnd| hwnd.0 as isize)
+}
+
 /// Finds a top-level window by class name.
 fn find_top_level(class: &str) -> Option<HWND> {
     // SAFETY: FindWindowW reads window state only.

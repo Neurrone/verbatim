@@ -6,8 +6,9 @@
 //! after every call.
 //!
 //! The model tracks the generation in charge and the requests issued; the
-//! program in flight (its kind, the query it answers, its walk, its
-//! deadline as dispatched and its window); the entries pending as a set,
+//! program in flight (its kind, the query it answers, its hang mark, its
+//! deadline as dispatched and its window); the markers waiting with their
+//! front checks' due times; the entries pending as a set,
 //! not the intake's plan, which has its own test; the open queries,
 //! settles and idle rounds with the replies and answers each got; the
 //! hook's copies held, of which a release gives back some in their order
@@ -37,8 +38,8 @@ const EDIT: isize = 9;
 /// The moved-on grace, in microseconds.
 const GRACE_US: u64 = 500_000;
 
-/// The windows the hang cases name: a program's own, judged hung or
-/// answering, and destroyed.
+/// The windows the hang cases name: a program's own, found hung or
+/// answering, one in front, and destroyed.
 const HANGING: [isize; 2] = [0x30, 0x31];
 
 /// What an entry is.
@@ -134,10 +135,7 @@ enum Commit {
 enum Stale {
     Commit,
     Finished,
-    Armed,
-    WalkReturned,
     MovedOn,
-    Published,
 }
 
 /// How the clocks advance before a tick.
@@ -172,11 +170,12 @@ enum Action {
     Commit(Commit),
     /// An input of a request no longer live.
     Stale(Stale),
-    /// The program in flight's walk is armed, its bound this many
-    /// milliseconds ahead.
-    Armed(u16),
-    /// The program in flight's walk returns, past its bound or not.
-    WalkReturned(bool),
+    /// One of the hang cases' windows is seen hung: with no request (0), as
+    /// the front check finds it, the program in flight's (1), or the newest
+    /// request no longer live (2).
+    HangSeen { window: u8, request: u8 },
+    /// One of the hang cases' windows is in front and can be read.
+    FrontReadable(u8),
     /// The program in flight ends: having reported a focus, panicked, or
     /// cut at its value change check.
     Finished {
@@ -199,14 +198,14 @@ enum Action {
 struct Asks {
     /// Whether the user has moved on.
     moved_on: bool,
-    /// A publication's change: none, the claim lost (0), nothing (1), or a
-    /// focus report (2).
-    publish: u8,
+    /// The window a front check finds: another application's (0), one of
+    /// the hang cases' windows hung (1, 2), or readable (3, 4).
+    front: u8,
     /// Whether a release lets go of node 1, the watch's.
     release_node: bool,
     /// Whether a release lets go of objects to drop.
     objects: bool,
-    /// Whether the window judged is found hung.
+    /// Whether the window checked is found hung.
     hung: bool,
     /// The window a program with none at dispatch names in its charge:
     /// none (0), or one of the hang cases' windows (1, 2).
@@ -262,10 +261,7 @@ fn action() -> impl Strategy<Value = Action> {
     let stale = prop_oneof![
         Just(Stale::Commit),
         Just(Stale::Finished),
-        Just(Stale::Armed),
-        Just(Stale::WalkReturned),
         Just(Stale::MovedOn),
-        Just(Stale::Published),
     ];
     let advance = prop_oneof![
         3 => (0..3u8, 0..3u8).prop_map(|(observed, wall)| Advance::ToTimer { observed, wall }),
@@ -279,7 +275,7 @@ fn action() -> impl Strategy<Value = Action> {
         }),
     ];
     // Weighted toward the lifecycle: entries that start programs, their
-    // ends, abandonments by time, and the walk's publication.
+    // ends, abandonments by time, and hangs seen.
     prop_oneof![
         12 => (what(), from, prop::bool::weighted(0.2))
             .prop_map(|(what, from, more)| Action::Entry { what, from, more }),
@@ -290,8 +286,8 @@ fn action() -> impl Strategy<Value = Action> {
         1 => (any::<bool>(), 0..5u8).prop_map(|(dead, change)| Action::Verdict { dead, change }),
         6 => commit().prop_map(Action::Commit),
         2 => stale.prop_map(Action::Stale),
-        2 => (0..900u16).prop_map(Action::Armed),
-        2 => any::<bool>().prop_map(Action::WalkReturned),
+        2 => (0..2u8, 0..3u8).prop_map(|(window, request)| Action::HangSeen { window, request }),
+        1 => (0..2u8).prop_map(Action::FrontReadable),
         5 => (prop::bool::weighted(0.3), prop::bool::weighted(0.1), prop::bool::weighted(0.2))
             .prop_map(|(reported, panicked, cut)| Action::Finished { reported, panicked, cut }),
         6 => advance.prop_map(Action::Advance),
@@ -302,7 +298,7 @@ fn action() -> impl Strategy<Value = Action> {
 fn asks() -> impl Strategy<Value = Asks> {
     use proptest::prelude::*;
     (
-        (prop::bool::weighted(0.3), 0..3u8),
+        (prop::bool::weighted(0.3), 0..5u8),
         (
             prop::bool::weighted(0.3),
             any::<bool>(),
@@ -311,9 +307,9 @@ fn asks() -> impl Strategy<Value = Asks> {
         ),
     )
         .prop_map(
-            |((moved_on, publish), (release_node, objects, hung, named))| Asks {
+            |((moved_on, front), (release_node, objects, hung, named))| Asks {
                 moved_on,
-                publish,
+                front,
                 release_node,
                 objects,
                 hung,
@@ -343,16 +339,12 @@ enum Kind {
     Finish,
 }
 
-/// The walk of the program in flight.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Walk {
-    Unarmed,
-    Armed(u64),
-    Published,
-}
-
 /// The program in flight, as the model follows it.
 #[derive(Clone, Debug)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent facts of the program's, each changed by its own inputs"
+)]
 struct Flight {
     request: Request,
     kind: Kind,
@@ -362,7 +354,9 @@ struct Flight {
     for_query: bool,
     /// The focus group it is a try of, by number.
     group: Option<u64>,
-    walk: Walk,
+    /// Its hang mark: a hang was seen of its request, so its worker,
+    /// abandoned, is parked on a hung window.
+    hang_mark: bool,
     /// When it started, on the shell's clock, in microseconds.
     started: u64,
     /// Its deadline as dispatched.
@@ -426,8 +420,10 @@ struct Model {
     settled: BTreeMap<u64, u32>,
     /// The idle answers of each round.
     answered_rounds: BTreeMap<u64, u32>,
-    /// The markers not yet resolved, oldest first.
-    markers: Vec<u64>,
+    /// The markers not yet resolved, oldest first, each with when the
+    /// window in front is next checked while it is the first, and whether
+    /// it has been checked.
+    markers: Vec<(u64, u64, bool)>,
     /// The owed work: its instance, and the generation attempting it.
     owed: Option<(u64, Option<u64>)>,
     owed_tries: BTreeSet<(u64, u64)>,
@@ -442,8 +438,8 @@ struct Model {
     dead: Vec<Request>,
     /// Whether the last program to leave was abandoned.
     abandoned: bool,
-    /// The focus groups a try reported, or was published in, by number:
-    /// none of their older entries is tried after.
+    /// The focus groups a try reported in, by number: none of their older
+    /// entries is tried after.
     ended_groups: BTreeSet<u64>,
 }
 
@@ -516,22 +512,25 @@ enum Call {
 type Reached = BTreeMap<&'static str, u64>;
 
 /// The lifecycle states the gate's cases must each reach.
-const LISTED: [&str; 34] = [
+const LISTED: [&str; 37] = [
     "an entry dispatched",
     "a focus group continued",
     "a focus group continued after an abandonment",
     "abandoned at the deadline",
     "abandoned as moved on",
-    "abandoned as hung",
-    "a hang opened by a judgement",
+    "abandoned parked on a hung window",
+    "a hang opened by a check",
+    "a hang opened in front",
+    "a hang opened for a request no longer live",
     "a hang opened by a commit",
     "a hang ended by an answer",
+    "a hang ended in front",
     "a hang ended by a destroy event",
     "a hang after its window's destroy ignored",
     "a hang in a second window unsounded",
     "a refusal answered abandoned",
-    "a walk published",
-    "published, then abandoned",
+    "the front checked",
+    "the front checked again while its marker waits",
     "a cut read finished",
     "a program panicked",
     "a refused input",
@@ -569,6 +568,9 @@ struct Run {
     log: Vec<u64>,
     reached: Reached,
     trail: Vec<String>,
+    /// Whether the call being made answers a check with the user moved
+    /// on: the one abandonment before a deadline.
+    moving_on: bool,
 }
 
 impl Run {
@@ -581,7 +583,7 @@ impl Run {
             wall: 1_000,
             asks: Asks {
                 moved_on: false,
-                publish: 0,
+                front: 0,
                 release_node: false,
                 objects: false,
                 hung: false,
@@ -591,6 +593,7 @@ impl Run {
             log: Vec::new(),
             reached: Reached::new(),
             trail: Vec::new(),
+            moving_on: false,
         }
     }
 
@@ -625,7 +628,6 @@ impl Run {
 
     /// Takes `action`, then the shell's tick after the drain, unless more
     /// of the drain is to come.
-    #[expect(clippy::too_many_lines, reason = "one arm for each kind of action")]
     fn step(&mut self, action: Action) {
         self.trail.push(format!("{action:?}"));
         let tick = match action {
@@ -675,36 +677,21 @@ impl Run {
                 self.stale(stale);
                 true
             }
-            Action::Armed(ahead) => {
-                // Only a focus event's program walks.
-                if let Some(flight) = self
-                    .model
-                    .flight
-                    .as_mut()
-                    .filter(|flight| !flight.for_query && flight.kind == Kind::Entry)
-                {
-                    let bound = self.at + u64::from(ahead) * 1_000;
-                    if flight.walk != Walk::Published {
-                        flight.walk = Walk::Armed(bound);
-                    }
-                    let request = flight.request;
-                    self.input(Input::Armed {
-                        request,
-                        bound: Duration::from_micros(bound),
-                    });
-                }
+            Action::HangSeen { window, request } => {
+                let request = match request {
+                    0 => None,
+                    1 => self.model.flight.as_ref().map(|flight| flight.request),
+                    _ => self.model.dead.last().copied(),
+                };
+                let window =
+                    Window::new(HANGING[usize::from(window)]).expect("a hang case's window");
+                self.input(Input::HangSeen { window, request });
                 true
             }
-            Action::WalkReturned(past) => {
-                if let Some(flight) = self.model.flight.as_mut() {
-                    // A walk returned past its bound is published, as its
-                    // ask says.
-                    if matches!(flight.walk, Walk::Armed(_)) && !past {
-                        flight.walk = Walk::Unarmed;
-                    }
-                    let request = flight.request;
-                    self.input(Input::WalkReturned { request, past });
-                }
+            Action::FrontReadable(window) => {
+                let window =
+                    Window::new(HANGING[usize::from(window)]).expect("a hang case's window");
+                self.input(Input::FrontReadable { window });
                 true
             }
             Action::Finished {
@@ -844,7 +831,7 @@ impl Run {
                 let marker = if self.model.markers.is_empty() {
                     self.fresh()
                 } else {
-                    self.model.markers.remove(0)
+                    self.model.markers.remove(0).0
                 };
                 Item::Fact(focus_read(marker), None)
             }
@@ -852,7 +839,7 @@ impl Run {
                 let marker = if self.model.markers.is_empty() {
                     self.fresh()
                 } else {
-                    self.model.markers.remove(0)
+                    self.model.markers.remove(0).0
                 };
                 Item::Fact(
                     DeliveredFact::UiaFocusDropped {
@@ -868,7 +855,7 @@ impl Run {
                 query = Some(number);
                 Item::Query {
                     request_id: RequestId::shell(number),
-                    query: Query::FocusNow,
+                    query: Query::ReadFocus,
                 }
             }
             What::CaretKey => {
@@ -938,7 +925,11 @@ impl Run {
             if let What::Marker = what
                 && let Item::Fact(DeliveredFact::UiaFocusMarker { marker }, _) = &item
             {
-                model.markers.push(*marker);
+                model.markers.push((*marker, self.at + GRACE_US, false));
+            }
+            // The end of the listener's reads resolves every marker.
+            if let What::ReadsEnded = what {
+                model.markers.clear();
             }
             let held = source == Source::Hook && model.hold == 1;
             if held {
@@ -1219,20 +1210,11 @@ impl Run {
         let Some(change) = self.change(commit, &flight) else {
             return;
         };
-        let accepted = flight.walk != Walk::Published;
-        assert_eq!(
+        assert!(
             self.reducer.accepts(flight.request),
-            accepted,
-            "a commit is accepted exactly while its program is in flight unpublished: {:?}",
+            "a commit of the program in flight is accepted: {:?}",
             self.trail
         );
-        if !accepted {
-            self.refused(Input::Commit {
-                request: flight.request,
-                change: Box::new(change),
-            });
-            return;
-        }
         // The program's copy of the watch agrees with the reducer's.
         if !flight.uncompared {
             assert_eq!(
@@ -1343,23 +1325,9 @@ impl Run {
                 panicked: false,
                 cut: None,
             },
-            Stale::Armed => Input::Armed {
-                request,
-                bound: Duration::from_micros(self.at),
-            },
-            Stale::WalkReturned => Input::WalkReturned {
-                request,
-                past: true,
-            },
             Stale::MovedOn => Input::Judged {
                 request,
-                verdict: (true).then_some(Reason::MovedOn),
-                window: None,
-            },
-            Stale::Published => Input::Published {
-                request,
-                change: Some(Box::new(Change::default())),
-                then_abandon: Some(Reason::Deadline),
+                moved_on: true,
             },
         };
         self.refused(input);
@@ -1369,8 +1337,7 @@ impl Run {
         let Some(flight) = self.model.flight.clone() else {
             return;
         };
-        let cut = (cut && flight.kind == Kind::EditCaret && flight.walk != Walk::Published)
-            .then(|| self::cut(report_cut()));
+        let cut = (cut && flight.kind == Kind::EditCaret).then(|| self::cut(report_cut()));
         let cutting = cut.is_some() && !panicked;
         let watch = &self.reducer.facts.follow.watch;
         let (held, watch) = (
@@ -1380,8 +1347,7 @@ impl Run {
         if !cutting {
             self.model.flight = None;
             self.model.dead.push(flight.request);
-            if let (true, Some(group)) = (reported || flight.walk == Walk::Published, flight.group)
-            {
+            if let (true, Some(group)) = (reported, flight.group) {
                 self.model.ended_groups.insert(group);
             }
         }
@@ -1474,6 +1440,7 @@ impl Run {
             _ => None,
         };
         let hangs = self.hangs(input.as_ref());
+        self.moving_on = matches!(input, Some(Input::Judged { moved_on: true, .. }));
         let effects = match input {
             Some(input) => self.reducer.input(input, now),
             None => self.reducer.tick(now),
@@ -1502,9 +1469,9 @@ impl Run {
         }
         let mut answered = Vec::new();
         for effect in effects {
-            let answer = self.answer(&effect);
+            let answers = self.answer(&effect);
             answered.push(effect);
-            if let Some(answer) = answer {
+            for answer in answers {
                 let more = self.call(Some(answer), Call::Answer);
                 answered.extend(more);
             }
@@ -1514,53 +1481,62 @@ impl Run {
 
     /// The reference model of each window's hang intervals, moved on by
     /// `input` before the reducer takes it: an interval opens at the first
-    /// evidence of a hang, a judgement of the program in flight finding its
-    /// window hung or an accepted commit naming its window hung, and closes
-    /// only at evidence that the window answers, an accepted commit naming
-    /// it answered, or its destroy event; evidence of a hang from the
-    /// program in flight in a window destroyed since it started opens
-    /// nothing. Core is told of the window whose interval opens while no
-    /// other is open, once per hang of the application; one opened while
-    /// another is open is told nothing.
+    /// evidence of a hang, a hang seen by a check, of the program in flight,
+    /// of a request no longer live or of the window in front, or an
+    /// accepted commit naming its window hung, and closes only at evidence
+    /// that the window answers, an accepted commit naming it answered or
+    /// the window readable in front, or its destroy event; evidence of a
+    /// hang from the program in flight in a window destroyed since it
+    /// started opens nothing. Core is told of the window whose interval
+    /// opens while no other is open, once per hang of the application; one
+    /// opened while another is open is told nothing. A hang seen by the
+    /// program in flight's check also sets its hang mark.
     fn hangs(&mut self, input: Option<&Input>) -> Vec<isize> {
         let mut opened = Vec::new();
-        let mut open = |model: &mut Model, window: Window, reached: &mut Reached, how| {
-            if model
-                .flight
-                .as_ref()
-                .is_some_and(|flight| flight.destroyed.contains(&window.get()))
-            {
-                *reached
-                    .entry("a hang after its window's destroy ignored")
-                    .or_default() += 1;
-            } else if model.hung.is_empty() {
-                model.hung.insert(window.get());
-                opened.push(window.get());
-                *reached.entry(how).or_default() += 1;
-            } else if model.hung.insert(window.get()) {
-                *reached
-                    .entry("a hang in a second window unsounded")
-                    .or_default() += 1;
-            }
-        };
+        let mut open =
+            |model: &mut Model, (window, of_flight): (Window, bool), reached: &mut Reached, how| {
+                if of_flight
+                    && model
+                        .flight
+                        .as_ref()
+                        .is_some_and(|flight| flight.destroyed.contains(&window.get()))
+                {
+                    *reached
+                        .entry("a hang after its window's destroy ignored")
+                        .or_default() += 1;
+                } else if model.hung.is_empty() {
+                    model.hung.insert(window.get());
+                    opened.push(window.get());
+                    *reached.entry(how).or_default() += 1;
+                } else if model.hung.insert(window.get()) {
+                    *reached
+                        .entry("a hang in a second window unsounded")
+                        .or_default() += 1;
+                }
+            };
         match input {
-            Some(Input::Judged {
-                request,
-                verdict: Some(Reason::Hung),
-                window: Some(window),
-            }) if !self.reducer.stopping
-                && self
-                    .reducer
-                    .flight
-                    .running()
-                    .is_some_and(|(running, ..)| running == *request) =>
-            {
+            Some(Input::HangSeen { window, request }) if !self.reducer.stopping => {
+                let of_flight = request.is_some()
+                    && self.model.flight.as_ref().map(|flight| flight.request) == *request;
+                if of_flight && let Some(flight) = self.model.flight.as_mut() {
+                    flight.hang_mark = true;
+                }
+                let how = match (request, of_flight) {
+                    (None, _) => "a hang opened in front",
+                    (Some(_), true) => "a hang opened by a check",
+                    (Some(_), false) => "a hang opened for a request no longer live",
+                };
                 open(
                     &mut self.model,
-                    *window,
+                    (*window, of_flight),
                     &mut self.reached,
-                    "a hang opened by a judgement",
+                    how,
                 );
+            }
+            Some(Input::FrontReadable { window }) if !self.reducer.stopping => {
+                if self.model.hung.remove(&window.get()) {
+                    self.reach("a hang ended in front");
+                }
             }
             Some(Input::Commit { request, change }) if self.reducer.accepts(*request) => {
                 if change.result.as_ref().is_some_and(|result| {
@@ -1577,7 +1553,7 @@ impl Run {
                 match change.found {
                     Some((window, Found::Hung)) => open(
                         &mut self.model,
-                        window,
+                        (window, true),
                         &mut self.reached,
                         "a hang opened by a commit",
                     ),
@@ -1642,11 +1618,24 @@ impl Run {
             if changed { vec![0] } else { vec![] },
             "the marks are given first, exactly when they changed: {trail:?}"
         );
-        // At most one ask to the program, and at most one program.
-        let asks = positions(effects, |effect| {
-            matches!(effect, Effect::AskJudge { .. } | Effect::Publish { .. })
-        });
-        assert!(asks.len() <= 1, "two asks in one transition: {trail:?}");
+        // At most one ask of each kind, and at most one program.
+        let asks = positions(effects, |effect| matches!(effect, Effect::AskJudge { .. }));
+        assert!(asks.len() <= 1, "two checks in one transition: {trail:?}");
+        let front_checks = positions(effects, |effect| matches!(effect, Effect::CheckFront));
+        // The window in front is checked exactly when a tick finds the
+        // first marker's check due, and never by any other call.
+        let front_due = kind == Call::Tick
+            && !self.model.stopping
+            && self
+                .model
+                .markers
+                .first()
+                .is_some_and(|&(_, due, _)| self.at >= due);
+        assert_eq!(
+            front_checks.len(),
+            usize::from(front_due),
+            "the front checked exactly when the first marker's check is due: {trail:?}"
+        );
         let dispatches = positions(effects, |effect| matches!(effect, Effect::Dispatch(_)));
         assert!(
             dispatches.len() <= 1,
@@ -1690,58 +1679,29 @@ impl Run {
             assert!(
                 !effects.iter().any(|effect| matches!(
                     effect,
-                    Effect::Abandon { .. } | Effect::AskJudge { .. } | Effect::Publish { .. }
+                    Effect::Abandon { .. } | Effect::AskJudge { .. } | Effect::CheckFront
                 )),
                 "a tick after close abandons or asks: {trail:?}"
             );
         }
-        // A tick decides the program in flight's deadline, then its walk's
-        // bound, then the moved-on rule.
+        // A tick decides the program in flight's deadline, then its check.
         if kind == Call::Tick
             && !self.model.stopping
             && let Some(flight) = flight
         {
             let decided = effects.iter().position(|effect| {
-                matches!(
-                    effect,
-                    Effect::Abandon { .. } | Effect::Publish { .. } | Effect::AskJudge { .. }
-                )
+                matches!(effect, Effect::Abandon { .. } | Effect::AskJudge { .. })
             });
             let decision = decided.map(|at| &effects[at]);
             if self.at >= flight.deadline {
-                match flight.walk {
-                    Walk::Armed(_) => assert!(
-                        matches!(
-                            decision,
-                            Some(Effect::Publish {
-                                then_abandon: Some(Reason::Deadline),
-                                ..
-                            })
-                        ),
-                        "a tick past the deadline publishes the armed walk first: {trail:?}"
-                    ),
-                    _ => assert!(
-                        matches!(decision, Some(Effect::Abandon { .. })),
-                        "a tick past the deadline abandons: {trail:?}"
-                    ),
-                }
-            } else if let Walk::Armed(bound) = flight.walk
-                && self.at >= bound
-            {
                 assert!(
-                    matches!(
-                        decision,
-                        Some(Effect::Publish {
-                            then_abandon: None,
-                            ..
-                        })
-                    ),
-                    "a tick past the bound publishes: {trail:?}"
+                    matches!(decision, Some(Effect::Abandon { .. })),
+                    "a tick past the deadline abandons: {trail:?}"
                 );
             } else {
                 assert!(
                     matches!(decision, None | Some(Effect::AskJudge { .. })),
-                    "a tick before the deadline and the bound neither abandons nor publishes: {trail:?}"
+                    "a tick before the deadline does not abandon: {trail:?}"
                 );
                 if decision.is_some() {
                     assert!(
@@ -1876,15 +1836,12 @@ impl Run {
                     (self.model.generation, self.model.generation + 1),
                     "an abandonment names the generation in charge and the next: {trail:?}"
                 );
-                assert!(
-                    !matches!(flight.walk, Walk::Armed(_)),
-                    "an armed walk abandoned before its publication's answer: {trail:?}"
+                assert_eq!(
+                    *on_hung, flight.hang_mark,
+                    "an abandoned worker is parked on a hung window exactly when its program's hang mark is set: {trail:?}"
                 );
                 self.model.generation += 1;
                 self.model.dead.push(flight.request);
-                if let (Walk::Published, Some(group)) = (flight.walk, flight.group) {
-                    self.model.ended_groups.insert(group);
-                }
                 if let Some((_, attempting)) = self.model.owed
                     && attempting == Some(*dead)
                 {
@@ -1894,18 +1851,17 @@ impl Run {
                     }
                 }
                 self.model.abandoned = true;
+                if *on_hung {
+                    self.reach("abandoned parked on a hung window");
+                }
                 if self.at >= flight.deadline {
                     self.reach("abandoned at the deadline");
                 } else {
                     assert!(
-                        flight.window,
-                        "abandoned before its deadline with no window: {trail:?}"
+                        flight.window && self.moving_on,
+                        "abandoned before its deadline but by the user moving on: {trail:?}"
                     );
-                    self.reach(if *on_hung {
-                        "abandoned as hung"
-                    } else {
-                        "abandoned as moved on"
-                    });
+                    self.reach("abandoned as moved on");
                 }
             }
             Effect::Release { live, .. } => {
@@ -1923,14 +1879,20 @@ impl Run {
                     "asked about a program with no window: {trail:?}"
                 );
             }
-            Effect::Publish { request, .. } => {
-                let flight = self.model.flight.as_mut().expect("a program published");
-                assert_eq!(*request, flight.request, "{trail:?}");
-                assert!(
-                    matches!(flight.walk, Walk::Armed(_)),
-                    "a publication of a walk not armed: {trail:?}"
-                );
-                flight.walk = Walk::Unarmed;
+            Effect::CheckFront => {
+                let at = self.at;
+                let marker = self
+                    .model
+                    .markers
+                    .first_mut()
+                    .expect("a front check with a marker waiting");
+                let again = marker.2;
+                marker.1 = at + GRACE_US;
+                marker.2 = true;
+                self.reach("the front checked");
+                if again {
+                    self.reach("the front checked again while its marker waits");
+                }
             }
             Effect::Settled(id) => {
                 assert!(
@@ -2103,7 +2065,7 @@ impl Run {
             query,
             for_query: query.is_some(),
             group,
-            walk: Walk::Unarmed,
+            hang_mark: false,
             started: self.at,
             deadline,
             window,
@@ -2113,69 +2075,52 @@ impl Run {
         });
     }
 
-    /// The shell's answer to `effect`, if it asks one, from the action's
-    /// answers.
-    fn answer(&mut self, effect: &Effect) -> Option<Input> {
+    /// The shell's answers to `effect`, if it asks, from the action's
+    /// answers, in the order the shell gives them.
+    fn answer(&mut self, effect: &Effect) -> Vec<Input> {
         match effect {
             Effect::AskJudge { request, window } => {
                 let named = match self.asks.named {
                     0 => None,
                     named => Window::new(HANGING[usize::from(named - 1)]),
                 };
-                let window = window.or(named);
-                let verdict = if window.is_none() {
-                    None
-                } else if self.asks.hung {
-                    Some(Reason::Hung)
-                } else {
-                    self.asks.moved_on.then_some(Reason::MovedOn)
+                let Some(window) = window.or(named) else {
+                    return vec![Input::Judged {
+                        request: *request,
+                        moved_on: false,
+                    }];
                 };
-                Some(Input::Judged {
-                    request: *request,
-                    verdict,
+                let hang = self.asks.hung.then_some(Input::HangSeen {
                     window,
-                })
+                    request: Some(*request),
+                });
+                hang.into_iter()
+                    .chain([Input::Judged {
+                        request: *request,
+                        moved_on: self.asks.moved_on,
+                    }])
+                    .collect()
             }
-            Effect::Publish {
-                request,
-                then_abandon,
-                ..
-            } => {
-                let change = match self.asks.publish {
-                    0 => None,
-                    1 => Some(Change::default()),
-                    _ => Some(report(
-                        self.fresh(),
-                        Some(0x10),
-                        self.observed,
-                        false,
-                        false,
-                    )),
+            Effect::CheckFront => {
+                let window = |index: u8| {
+                    Window::new(HANGING[usize::from(index % 2)]).expect("a hang case's window")
                 };
-                if let Some(change) = &change
-                    && self.reducer.accepts(*request)
-                    && self.model.flight.is_some()
-                {
-                    self.commit_model(change);
-                    if let Some(flight) = self.model.flight.as_mut() {
-                        flight.walk = Walk::Published;
-                    }
-                    self.reach("a walk published");
-                    if then_abandon.is_some() {
-                        self.reach("published, then abandoned");
-                    }
+                match self.asks.front {
+                    0 => Vec::new(),
+                    hung @ 1..=2 => vec![Input::HangSeen {
+                        window: window(hung - 1),
+                        request: None,
+                    }],
+                    readable => vec![Input::FrontReadable {
+                        window: window(readable - 3),
+                    }],
                 }
-                Some(Input::Published {
-                    request: *request,
-                    change: change.map(Box::new),
-                    then_abandon: *then_abandon,
-                })
             }
             Effect::Release { .. } => {
                 self.model.releasing = false;
                 self.model.to_drop |= self.asks.objects;
                 self.reach("a release answered");
-                Some(Input::Released {
+                vec![Input::Released {
                     nodes: if self.asks.release_node {
                         [1].into_iter().collect()
                     } else {
@@ -2183,9 +2128,9 @@ impl Run {
                     },
                     anchors: BTreeSet::new(),
                     objects: self.asks.objects,
-                })
+                }]
             }
-            _ => None,
+            _ => Vec::new(),
         }
     }
 
@@ -2213,13 +2158,23 @@ impl Run {
             reducer
                 .flight
                 .running()
-                .map(|(request, _, published)| (request, published)),
+                .map(|(request, current, published)| (request, current.hang_mark, published)),
             model
                 .flight
                 .as_ref()
-                .map(|flight| (flight.request, flight.walk == Walk::Published)),
-            "the program in flight: {trail:?}"
+                .map(|flight| (flight.request, flight.hang_mark, false)),
+            "the program in flight, its hang mark, and no walk published: {trail:?}"
         );
+        if !model.stopping
+            && let Some(&(_, front, _)) = model.markers.first()
+        {
+            assert!(
+                reducer
+                    .next_timer(self.now())
+                    .is_some_and(|due| due <= Duration::from_micros(front)),
+                "a marker waiting has its front check timed: {trail:?}"
+            );
+        }
         assert_eq!(
             reducer
                 .facts
@@ -2238,8 +2193,10 @@ impl Run {
         assert!(!reducer.releasing, "a release left unanswered: {trail:?}");
     }
 
-    /// Ends the case: every program in flight finished and every deadline
-    /// ticked past, then the close and its last programs; then every query
+    /// Ends the case: every program in flight finished, every marker
+    /// dropped, since the window in front is checked for as long as one
+    /// waits, and every deadline ticked past, then the close and its last
+    /// programs; then every query
     /// has had exactly one reply or is left to the shell's token, and
     /// every settle exactly one answer or was dropped by the close.
     fn drain(&mut self) {
@@ -2251,6 +2208,12 @@ impl Run {
         for _ in 0..400 {
             if self.model.flight.is_some() {
                 self.step(finish);
+            } else if !self.model.stopping && !self.model.markers.is_empty() {
+                self.step(Action::Entry {
+                    what: What::Dropped,
+                    from: From::Other,
+                    more: false,
+                });
             } else if !self.model.stopping && self.reducer.next_timer(self.now()).is_some() {
                 self.step(Action::Advance(Advance::ToTimer {
                     observed: 0,
@@ -2369,7 +2332,8 @@ const SEED: u64 = 20_261_102;
 const CASES: u32 = 1_500;
 
 /// Generated cases of entries of every kind from every source, commits,
-/// walks armed and returned, programs ended, cut and panicked, inputs of
+/// hangs seen by a check, in front or of a request no longer live, readable
+/// windows in front, programs ended, cut and panicked, inputs of
 /// requests no longer live, verdicts, the hold, cancels, the close and
 /// time on three clocks, with every ask answered in line, keep the
 /// reference model's state and every invariant and postcondition the
@@ -2396,7 +2360,7 @@ fn generated_cases_keep_the_reducers_rules() {
 /// The answers of a step that asks nothing the case relies on.
 const PLAIN: Asks = Asks {
     moved_on: false,
-    publish: 0,
+    front: 0,
     release_node: false,
     objects: false,
     hung: false,

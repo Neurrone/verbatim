@@ -323,31 +323,22 @@ mod tests {
         }
     }
 
-    /// A shell items outcome reaches the dialog, and a request ended at its
-    /// deadline, failed, gives it nothing and is named with its outpost to
-    /// be withdrawn.
+    /// A shell items outcome reaches the dialog, and a request its outpost
+    /// ended with, answered gone, gives it nothing.
     #[test]
-    fn a_shell_items_answer_reaches_the_dialog_and_a_passed_deadline_gives_none() {
+    fn a_shell_items_answer_reaches_the_dialog_and_an_ended_outpost_gives_none() {
         let outcomes = std::sync::Arc::default();
         let mut table = RequestTable::default();
-        let answered = table.begin_until(OutpostId(1), shell_items(&outcomes), 5_000_000);
-        let expired = table.begin_until(OutpostId(1), shell_items(&outcomes), 5_000_000);
+        let answered = table.begin(OutpostId(1), shell_items(&outcomes));
+        table.begin(OutpostId(1), shell_items(&outcomes));
         finish(
             &mut table,
             answered,
             OutpostId(1),
             QueryOutcome::Done(QueryResult::ShellItems(Vec::new())),
         );
-        let ended = table.expire(5_000_000);
-        assert_eq!(
-            ended
-                .iter()
-                .map(|ended| (ended.id, ended.outpost))
-                .collect::<Vec<_>>(),
-            [(expired, OutpostId(1))]
-        );
-        for ended in ended {
-            assert_eq!(deliver(ended.asker, ended.outcome), [] as [Input; 0]);
+        for (asker, outcome) in table.outpost_ended(OutpostId(1)) {
+            assert_eq!(deliver(asker, outcome), [] as [Input; 0]);
         }
         assert_eq!(
             *outcomes.lock().expect("outcomes"),
@@ -371,7 +362,6 @@ mod tests {
             std::sync::Mutex<Vec<Option<verbatim_model::ShellCandidates>>>,
         > = std::sync::Arc::default();
         let mut table = RequestTable::default();
-        let deadline = 5_000_000;
         let asker = |outcomes: &std::sync::Arc<std::sync::Mutex<Vec<_>>>| {
             let kept = std::sync::Arc::clone(outcomes);
             Asker::ShellItemPosition {
@@ -396,8 +386,8 @@ mod tests {
             }],
             complete: true,
         };
-        let answered = table.begin_until(OutpostId(1), asker(&outcomes), deadline);
-        let failed = table.begin_until(OutpostId(1), asker(&outcomes), deadline);
+        let answered = table.begin(OutpostId(1), asker(&outcomes));
+        let failed = table.begin(OutpostId(1), asker(&outcomes));
         finish(
             &mut table,
             answered,
@@ -411,7 +401,7 @@ mod tests {
             QueryOutcome::Failed("no client".into()),
         );
         assert_eq!(*outcomes.lock().expect("outcomes"), vec![Some(found), None]);
-        assert_eq!(table.next_deadline(), None);
+        assert!(table.is_empty());
     }
 
     /// A reply to a query of Core's reducer re-enters it as its answer,

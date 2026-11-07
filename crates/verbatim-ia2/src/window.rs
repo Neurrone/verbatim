@@ -6,10 +6,12 @@
 //! Every window message this crate sends, the list view's, tree view's and
 //! edit control's, goes through [`send_message`]: the window's readability
 //! is tested first, so a hung or ghosted window fails at once and a
-//! destroyed one is gone, and the message is then sent with no time limit
-//! of its own, its program's deadline and the judgement that its window is
-//! hung its only bounds (`books/dev/src/reference/crates/verbatim-model.md`,
-//! "Time limits"). Each counts as one window message. The integer messages
+//! destroyed one is gone, as NVDA's `SMTO_ABORTIFHUNG` refuses it, but for
+//! a message from `WM_APP` to `0xBFFF`, which NVDA exempts and none of this
+//! crate's is; the message is then sent with no time limit of its own, its
+//! program's deadline its only bound
+//! (`books/dev/src/reference/crates/verbatim-model.md`, "Time limits").
+//! Each counts as one window message. The integer messages
 //! here answer zero when they fail. Only messages
 //! whose parameters are plain integers are offered, never one that carries a
 //! pointer, so sending them cannot make a window procedure in this process
@@ -26,7 +28,7 @@ use windows::Win32::UI::Controls::{
     TVM_MAPACCIDTOHTREEITEM, TVM_MAPHTREEITEMTOACCID,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    IsWindow, SMTO_BLOCK, SMTO_ERRORONEXIT, SendMessageTimeoutW,
+    IsWindow, SMTO_BLOCK, SMTO_ERRORONEXIT, SendMessageTimeoutW, WM_APP,
 };
 
 use verbatim_model::CallKind;
@@ -67,10 +69,21 @@ pub(crate) enum Unanswered {
 /// (mockapp's `window_messages`, 2026-11-06).
 const NO_TIME_LIMIT: u32 = 0x7FFF_FFFF;
 
+/// Whether `msg` is refused, unsent, by a window that is hung or ghosted:
+/// every message but those from `WM_APP` to `0xBFFF`, which NVDA sends
+/// without `SMTO_ABORTIFHUNG` (`cancellableSendMessageTimeoutTemplate`,
+/// `nvdaHelperLocal.cpp` 61 to 108), so an application's own messages are
+/// waited for as NVDA waits for them.
+const fn refused_when_hung(msg: u32) -> bool {
+    msg < WM_APP || msg > 0xBFFF
+}
+
 /// Sends `msg` to window `hwnd`, counted as one window message, and
 /// answers its result. The window's readability is tested first, by local
 /// calls, and a hung or ghosted window fails at once, unsent, as a
-/// destroyed one is gone. `buffer` is the address of a buffer in the
+/// destroyed one is gone, unless `msg` is exempt
+/// ([`refused_when_hung`]): such a message is sent whatever the window's
+/// state, a destroyed window failing it. `buffer` is the address of a buffer in the
 /// target's memory the message carries, if any, which the fault points
 /// see. The window's process is not checked against the buffer's: a
 /// window handle carries a 16-bit reuse counter, so a handle's value
@@ -92,11 +105,15 @@ pub(crate) unsafe fn send_message(
     (wparam, lparam): (usize, isize),
     #[cfg_attr(not(any(test, feature = "faults")), expect(unused_variables))] buffer: Option<usize>,
 ) -> Result<isize, Unanswered> {
-    match verbatim_win32::calls::message_readability(hwnd) {
-        verbatim_win32::window::Readability::Readable => {}
-        verbatim_win32::window::Readability::Gone => return Err(Unanswered::Gone),
-        verbatim_win32::window::Readability::Ghosted
-        | verbatim_win32::window::Readability::Hung => return Err(Unanswered::NotResponding),
+    if refused_when_hung(msg) {
+        match verbatim_win32::calls::message_readability(hwnd) {
+            verbatim_win32::window::Readability::Readable => {}
+            verbatim_win32::window::Readability::Gone => return Err(Unanswered::Gone),
+            verbatim_win32::window::Readability::Ghosted
+            | verbatim_win32::window::Readability::Hung => {
+                return Err(Unanswered::NotResponding);
+            }
+        }
     }
     count(CallKind::WindowMessage).map_err(|_| Unanswered::Abandoned)?;
     #[cfg(any(test, feature = "faults"))]
@@ -196,4 +213,66 @@ pub(crate) fn tree_view_state_image(hwnd: isize, item: isize) -> u32 {
         )
     };
     u32::try_from((state >> 12) & 3).unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// NVDA's exemption from `SMTO_ABORTIFHUNG` is the range from `WM_APP`
+    /// to `0xBFFF`, and every message this crate sends to an application
+    /// lies outside it, so each is refused by a hung window as NVDA's is.
+    #[test]
+    fn every_message_sent_to_an_application_is_refused_by_a_hung_window() {
+        use windows::Win32::UI::Controls::RichEdit::{
+            EM_EXGETSEL, EM_EXLINEFROMCHAR, EM_EXSETSEL, EM_FINDWORDBREAK, EM_GETTEXTLENGTHEX,
+            EM_GETTEXTRANGE,
+        };
+        use windows::Win32::UI::Controls::{
+            EM_GETLINE, EM_GETLINECOUNT, EM_GETSEL, EM_LINEFROMCHAR, EM_LINEINDEX, EM_LINELENGTH,
+            EM_POSFROMCHAR, EM_SCROLLCARET, EM_SETSEL,
+        };
+        use windows::Win32::UI::WindowsAndMessaging::{WM_GETTEXT, WM_GETTEXTLENGTH};
+        assert!(!refused_when_hung(WM_APP));
+        assert!(!refused_when_hung(0xBFFF));
+        assert!(refused_when_hung(WM_APP - 1));
+        assert!(refused_when_hung(0xC000));
+        let sent = [
+            CCM_GETVERSION,
+            LVM_GETITEMCOUNT,
+            TVM_GETITEMSTATE,
+            TVM_GETNEXTITEM,
+            TVM_MAPACCIDTOHTREEITEM,
+            TVM_MAPHTREEITEMTOACCID,
+            crate::list_view::LVM_GETHEADER,
+            crate::list_view::LVM_GETSUBITEMRECT,
+            crate::list_view::LVM_GETCOLUMNORDERARRAY,
+            crate::list_view::LVM_GETCOLUMNW,
+            crate::list_view::LVM_GETITEMTEXTW,
+            crate::list_view::LVM_GETVIEW,
+            crate::list_view::HDM_GETITEMCOUNT,
+            EM_EXGETSEL,
+            EM_EXLINEFROMCHAR,
+            EM_EXSETSEL,
+            EM_FINDWORDBREAK,
+            EM_GETTEXTLENGTHEX,
+            EM_GETTEXTRANGE,
+            EM_GETLINE,
+            EM_GETLINECOUNT,
+            EM_GETSEL,
+            EM_LINEFROMCHAR,
+            EM_LINEINDEX,
+            EM_LINELENGTH,
+            EM_POSFROMCHAR,
+            EM_SCROLLCARET,
+            EM_SETSEL,
+            WM_GETTEXT,
+            WM_GETTEXTLENGTH,
+        ];
+        let exempt: Vec<u32> = sent
+            .into_iter()
+            .filter(|&msg| !refused_when_hung(msg))
+            .collect();
+        assert_eq!(exempt, Vec::<u32>::new());
+    }
 }

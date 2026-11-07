@@ -21,8 +21,9 @@ const MARGIN: Duration = Duration::from_secs(1);
 /// The deadline of one task of an outpost's, a program, and of Core's wait
 /// for most of their answers: one UIA request, [`UIA_TRANSACTION_TIMEOUT`],
 /// and a margin of a second. It bounds MSAA calls and window messages too,
-/// which have no time limit of their own: the deadline and the judgement
-/// that a window is hung are their only bounds. A task of several slow
+/// which have no time limit of their own: the deadline is their only
+/// bound, since a window found hung while one waits on it is told of and
+/// waited for, never abandoned for its hang. A task of several slow
 /// calls can still pass it, as a core cycle of several slow calls passes
 /// NVDA's watchdog (`docs/nvda/main-loop-and-watchdog.md`); only one
 /// request is promised to end by its own timeout.

@@ -4,7 +4,7 @@
 //! ordering that once needed a real bound, a real deadline or a race to
 //! reproduce is one test here.
 
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::BTreeSet;
 use std::time::Duration;
 
 use verbatim_model::protocol::{
@@ -23,55 +23,53 @@ mod intake_order;
 mod reducer;
 
 /// The answers the shell gives the reducer's asks, as a test records them:
-/// whether the user has moved on, and the publications the shell would make
-/// at a walk's bound, in order, with the requests it published.
+/// whether the user has moved on, whether the window checked is hung, and
+/// the window in front with whether it is hung.
 #[derive(Clone, Default)]
 struct Answers {
     moved_on: bool,
-    /// Whether the window judged is found hung.
+    /// Whether the window checked is found hung.
     hung: bool,
-    /// The window the program in flight's worker named, which a judgement
-    /// of a program with no window at dispatch reads.
+    /// The window the program in flight's worker named, which a check of a
+    /// program with no window at dispatch reads.
     named: Option<Window>,
-    publications: VecDeque<Change>,
-    published: Vec<Request>,
+    /// The window of the outpost's application in front, and whether it is
+    /// hung, for a front check; `None` for another application's.
+    front: Option<(Window, bool)>,
 }
 
 impl Answers {
-    /// The answer to `effect`, if it asks one, as the shell gives it.
-    fn to(&mut self, effect: &Effect) -> Option<Input> {
+    /// The answers to `effect`, if it asks, in the order the shell gives
+    /// them.
+    fn to(&mut self, effect: &Effect) -> Vec<Input> {
         match effect {
             Effect::AskJudge { request, window } => {
-                let window = window.or(self.named);
-                let verdict = if window.is_none() {
-                    None
-                } else if self.hung {
-                    Some(Reason::Hung)
-                } else {
-                    self.moved_on.then_some(Reason::MovedOn)
+                let Some(window) = window.or(self.named) else {
+                    return vec![Input::Judged {
+                        request: *request,
+                        moved_on: false,
+                    }];
                 };
-                Some(Input::Judged {
-                    request: *request,
-                    verdict,
+                let hang = self.hung.then_some(Input::HangSeen {
                     window,
-                })
+                    request: Some(*request),
+                });
+                hang.into_iter()
+                    .chain([Input::Judged {
+                        request: *request,
+                        moved_on: self.moved_on,
+                    }])
+                    .collect()
             }
-            Effect::Publish {
-                request,
-                then_abandon,
-                ..
-            } => {
-                let change = self.publications.pop_front().map(Box::new);
-                if change.is_some() {
-                    self.published.push(*request);
-                }
-                Some(Input::Published {
-                    request: *request,
-                    change,
-                    then_abandon: *then_abandon,
-                })
-            }
-            _ => None,
+            Effect::CheckFront => match self.front {
+                Some((window, true)) => vec![Input::HangSeen {
+                    window,
+                    request: None,
+                }],
+                Some((window, false)) => vec![Input::FrontReadable { window }],
+                None => Vec::new(),
+            },
+            _ => Vec::new(),
         }
     }
 }
@@ -88,9 +86,9 @@ fn with_answers(
 ) -> Vec<Effect> {
     let mut out = Vec::new();
     for effect in effects {
-        let answer = answers.to(&effect);
+        let answered = answers.to(&effect);
         out.push(effect);
-        if let Some(answer) = answer {
+        for answer in answered {
             let more = reducer.input(answer, now);
             out.extend(with_answers(reducer, answers, more, now));
         }
@@ -205,7 +203,7 @@ fn name_change(child: i32) -> Item {
 fn focus_now(request_id: u64) -> Item {
     Item::Query {
         request_id: RequestId::shell(request_id),
-        query: Query::FocusNow,
+        query: Query::ReadFocus,
     }
 }
 
@@ -298,6 +296,26 @@ fn node(id: u64, role: Role) -> NodeSnapshot {
     }
 }
 
+/// The caret a terminal's report was read with, which its first read is
+/// owed with.
+fn reported_caret() -> verbatim_model::CaretReport {
+    verbatim_model::CaretReport {
+        line: verbatim_model::TextChunk {
+            unit: TextUnit::Line,
+            text: String::new(),
+            start: verbatim_model::TextAnchor(1),
+            offset: 0,
+            languages: Vec::new(),
+            first: true,
+            last: true,
+            truncated: false,
+            formats: Vec::new(),
+        },
+        selection: None,
+        selection_line: None,
+    }
+}
+
 /// The commit that reports node `id` as the focus and follows it, owing a
 /// terminal's first read when `owes`.
 fn focus_change(id: u64, owes: bool) -> Change {
@@ -331,7 +349,7 @@ fn focus_change(id: u64, owes: bool) -> Change {
             terminal: owes,
             console: false,
             target: Target::default(),
-            owed: owes.then_some(OwedWork::FirstRead(None)),
+            owed: owes.then(|| OwedWork::FirstRead(reported_caret())),
             trace: TraceId::from_raw(3),
             observed_at_us: 0,
             adopt: true,
@@ -468,186 +486,6 @@ fn a_foreground_change_and_a_focus_of_one_batch_are_one_group_tried_newest_first
     assert_eq!(handles(program(&effects)), (3, Some(1)), "then the change");
 }
 
-#[test]
-fn a_walk_returned_before_its_bound_is_reported_by_its_program() {
-    let mut replay = Replay::new();
-    let effects = replay.push(msaa_focus(1, 1), Source::Hook, 1);
-    let request = program(&effects).request;
-    replay.input(
-        Input::Armed {
-            request,
-            bound: Duration::from_millis(500),
-        },
-        2,
-    );
-    replay.input(
-        Input::WalkReturned {
-            request,
-            past: false,
-        },
-        100,
-    );
-    // The bound comes and goes: nothing is published.
-    assert_eq!(sent(&replay.tick(500)), Vec::<&OutpostToCore>::new());
-    let effects = replay.commit(request, focus_change(1, false), 120);
-    assert_eq!(sent(&effects).len(), 1, "the program's report");
-    assert_eq!(followed(&replay), Some(NodeId::new(1)));
-    assert_eq!(replay.answers.published, []);
-}
-
-#[test]
-fn a_walk_under_way_at_its_bound_is_published_and_its_programs_report_refused() {
-    let mut replay = Replay::new();
-    let effects = replay.push(msaa_focus(1, 1), Source::Hook, 1);
-    let request = program(&effects).request;
-    replay.input(
-        Input::Armed {
-            request,
-            bound: Duration::from_millis(500),
-        },
-        2,
-    );
-    replay
-        .answers
-        .publications
-        .push_back(focus_change(1, false));
-    assert_eq!(
-        replay.reducer.next_timer(now(2)),
-        Some(Duration::from_millis(500))
-    );
-    let effects = replay.tick(500);
-    assert_eq!(sent(&effects).len(), 1, "the publication");
-    assert_eq!(replay.answers.published, [request]);
-    assert_eq!(followed(&replay), Some(NodeId::new(1)));
-    // The walk returns: its program's own report is not applied (2bd69a85).
-    assert!(!replay.reducer.accepts(request));
-    replay.input(
-        Input::WalkReturned {
-            request,
-            past: true,
-        },
-        600,
-    );
-    assert_eq!(replay.answers.published.len(), 1, "published once");
-    // The program ends having reported: the group ends.
-    let effects = replay.finish(request, true, 610);
-    assert!(programs(&effects).is_empty());
-}
-
-#[test]
-fn a_walk_returned_past_its_bound_is_published_from_its_progress() {
-    let mut replay = Replay::new();
-    let effects = replay.push(msaa_focus(1, 1), Source::Hook, 1);
-    let request = program(&effects).request;
-    replay.input(
-        Input::Armed {
-            request,
-            bound: Duration::from_millis(500),
-        },
-        2,
-    );
-    replay
-        .answers
-        .publications
-        .push_back(focus_change(1, false));
-    // The walk returns past its bound before the bound's timer fired.
-    let effects = replay.input(
-        Input::WalkReturned {
-            request,
-            past: true,
-        },
-        501,
-    );
-    assert_eq!(sent(&effects).len(), 1, "the publication");
-    assert!(!replay.reducer.accepts(request));
-    assert_eq!(
-        sent(&replay.tick(502)),
-        Vec::<&OutpostToCore>::new(),
-        "published once"
-    );
-}
-
-#[test]
-fn a_walk_whose_worker_is_abandoned_is_published_first_and_its_sends_after_refused() {
-    let mut replay = Replay::new();
-    let effects = replay.push(msaa_focus(1, 1), Source::Hook, 1);
-    let request = program(&effects).request;
-    replay.input(
-        Input::Armed {
-            request,
-            bound: Duration::from_secs(20),
-        },
-        2,
-    );
-    replay.answers.publications.push_back(focus_change(1, true));
-    // The deadline comes before the bound: the walk is published, then its
-    // worker abandoned, in one step of the shell's: the tick asks for the
-    // publication, and its answer commits it then abandons (c47d57ae).
-    let effects = replay.tick(11_001);
-    let order: Vec<&str> = effects
-        .iter()
-        .filter_map(|effect| match effect {
-            Effect::Send(_) => Some("send"),
-            Effect::Abandon { .. } => Some("abandon"),
-            Effect::Dispatch(_) => Some("dispatch"),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(order, ["send", "abandon", "dispatch"]);
-    // The replacement attempts what the published focus owes first.
-    let owed = program(&effects);
-    assert!(matches!(owed.work, Work::Owed(_)));
-    assert_eq!(owed.request.generation, 1);
-    // What the abandoned worker sends afterwards is refused.
-    assert!(!replay.reducer.accepts(request));
-    assert_eq!(followed(&replay), Some(NodeId::new(1)));
-}
-
-/// A focus adopted in the transition that dispatches its owed work gives
-/// the mailbox its marks ahead of every other effect of that transition,
-/// so the program dispatched starts only once the mailbox judges by them.
-#[test]
-fn an_adopted_focus_gives_its_marks_ahead_of_the_dispatch() {
-    let mut replay = Replay::new();
-    let effects = replay.push(msaa_focus(1, 1), Source::Hook, 1);
-    let request = program(&effects).request;
-    replay.input(
-        Input::Armed {
-            request,
-            bound: Duration::from_secs(20),
-        },
-        2,
-    );
-    replay.answers.publications.push_back(focus_change(1, true));
-    // The deadline publishes the walk; the publication's answer adopts the
-    // terminal's focus, abandons the worker and dispatches its owed read.
-    let effects = replay.tick(11_001);
-    let order: Vec<&str> = effects
-        .iter()
-        .filter_map(|effect| match effect {
-            Effect::Publish { .. } => Some("publish"),
-            Effect::Marks(_) => Some("marks"),
-            Effect::Send(_) => Some("send"),
-            Effect::Abandon { .. } => Some("abandon"),
-            Effect::Dispatch(_) => Some("dispatch"),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(order, ["publish", "marks", "send", "abandon", "dispatch"]);
-    let marks = effects.iter().find_map(|effect| match effect {
-        Effect::Marks(marks) => Some(marks),
-        _ => None,
-    });
-    assert_eq!(
-        marks,
-        Some(&Marks {
-            focused: Some(Object::Msaa(9, -4, 1)),
-            terminal: TerminalMark::In(Window::new(9).unwrap()),
-            ..Marks::default()
-        })
-    );
-}
-
 /// Every entry is given the handling deadline but two, focus-now and a
 /// listener read's report, which are given the bounded walk's: what is
 /// left until its answer is due for a shell query.
@@ -781,10 +619,6 @@ fn owed_work_and_a_drop_are_dispatched_under_the_handling_deadline() {
     assert_eq!(replay.reducer.flight.deadline(), Some(6_000 + 11_000_000));
 }
 
-/// The deadline of the program dispatched at 1 ms, at which the tests
-/// below abandon it.
-const DEADLINE: Reason = Reason::Deadline;
-
 /// What `effects` do, by kind, in order: a send, an abandonment, a
 /// dispatch, or an ask.
 fn kinds(effects: &[Effect]) -> Vec<&'static str> {
@@ -794,142 +628,11 @@ fn kinds(effects: &[Effect]) -> Vec<&'static str> {
             Effect::Send(_) => Some("send"),
             Effect::Abandon { .. } => Some("abandon"),
             Effect::Dispatch(_) => Some("dispatch"),
-            Effect::Publish { .. } => Some("publish"),
             Effect::AskJudge { .. } => Some("judge"),
+            Effect::CheckFront => Some("check front"),
             _ => None,
         })
         .collect()
-}
-
-/// One late tick past both the walk's bound and the deadline judges the
-/// deadline first: it makes one ask, a publication carrying the
-/// abandonment, and abandons nothing until its answer, which commits the
-/// published focus, then abandons, and the older entries of the focus
-/// group are not tried, since the try was published.
-#[test]
-fn a_late_tick_past_the_bound_and_the_deadline_publishes_once_then_abandons() {
-    let mut reducer = Reducer::new();
-    let push = |reducer: &mut Reducer, item: Item, at_ms: u64| {
-        reducer.input(
-            Input::Entry {
-                entry: entry(item, at_ms),
-                source: Source::Hook,
-            },
-            now(at_ms),
-        )
-    };
-    // A program in flight, so the two focuses wait for one batch.
-    let busy = program(&push(&mut reducer, name_change(1), 0)).request;
-    push(&mut reducer, msaa_focus(1, 1), 0);
-    push(&mut reducer, msaa_focus(2, 2), 0);
-    let finished = Input::Finished {
-        request: busy,
-        reported: false,
-        panicked: false,
-        cut: None,
-    };
-    let request = program(&reducer.input(finished, now(1))).request;
-    reducer.input(
-        Input::Armed {
-            request,
-            bound: Duration::from_millis(9_998),
-        },
-        now(2),
-    );
-    let effects = reducer.tick(now(11_001));
-    assert!(
-        matches!(
-            &effects[..],
-            [Effect::Publish { request: asked, then_abandon: Some(DEADLINE), .. }]
-                if *asked == request
-        ),
-        "{effects:?}"
-    );
-    let effects = reducer.input(
-        Input::Published {
-            request,
-            change: Some(Box::new(focus_change(1, false))),
-            then_abandon: Some(DEADLINE),
-        },
-        now(11_001),
-    );
-    assert_eq!(kinds(&effects), ["send", "abandon"]);
-    assert_eq!(reducer.facts().follow.tracking.focus, Some(NodeId::new(1)));
-    assert!(!reducer.accepts(request));
-}
-
-/// The grace's end asks whether the user moved on; a yes, with a walk
-/// armed, asks for the walk's publication carrying the
-/// abandonment, and its answer, with nothing published, abandons. An
-/// answer whose request is no longer in flight changes nothing.
-#[test]
-fn moving_on_during_a_walk_publishes_then_abandons_and_a_late_answer_is_dropped() {
-    let mut reducer = Reducer::new();
-    let entry_of = |item: Item, at_ms: u64| Input::Entry {
-        entry: entry(item, at_ms),
-        source: Source::Hook,
-    };
-    let request = program(&reducer.input(entry_of(msaa_focus(1, 1), 1), now(1))).request;
-    reducer.input(
-        Input::Armed {
-            request,
-            bound: Duration::from_secs(5),
-        },
-        now(2),
-    );
-    // An entry waits, for the replacement to take.
-    reducer.input(entry_of(name_change(2), 3), now(3));
-    let effects = reducer.tick(now(501));
-    assert!(
-        matches!(
-            &effects[..],
-            [Effect::AskJudge { request: asked, window }] if *asked == request && *window == Window::new(9)
-        ),
-        "{effects:?}"
-    );
-    let moved = Reason::MovedOn;
-    let effects = reducer.input(
-        Input::Judged {
-            request,
-            verdict: (true).then_some(Reason::MovedOn),
-            window: None,
-        },
-        now(600),
-    );
-    assert!(
-        matches!(
-            &effects[..],
-            [Effect::Publish { request: asked, then_abandon: Some(why), .. }]
-                if *asked == request && *why == moved
-        ),
-        "{effects:?}"
-    );
-    let effects = reducer.input(
-        Input::Published {
-            request,
-            change: None,
-            then_abandon: Some(moved),
-        },
-        now(600),
-    );
-    assert_eq!(kinds(&effects)[..2], ["abandon", "dispatch"]);
-    // The answers come again, out of turn: nothing is abandoned again.
-    let replacement = program(&effects).request;
-    for answer in [
-        Input::Judged {
-            request,
-            verdict: (true).then_some(Reason::MovedOn),
-            window: None,
-        },
-        Input::Published {
-            request,
-            change: Some(Box::new(focus_change(2, false))),
-            then_abandon: Some(moved),
-        },
-    ] {
-        assert_eq!(kinds(&reducer.input(answer, now(601))), Vec::<&str>::new());
-    }
-    assert!(reducer.accepts(replacement));
 }
 
 #[test]
@@ -1344,31 +1047,6 @@ fn a_takes_check_that_found_nothing_puts_the_polling_watch_back_as_it_stood() {
     reads(&replay.finish(update, false, 31));
 }
 
-#[test]
-fn a_program_claimed_while_it_holds_the_watch_ends_it_once() {
-    let mut replay = polling();
-    let update = program(&replay.push(console_caret(), Source::Hook, 4)).request;
-    replay.commit(update, takes(), 5);
-    replay.answers.publications.push_back(Change::default());
-    replay.input(
-        Input::Armed {
-            request: update,
-            bound: Duration::from_millis(6),
-        },
-        5,
-    );
-    // Published at its walk's bound: its later result is refused.
-    assert_eq!(replies(&replay.tick(6)), []);
-    assert!(!replay.reducer.accepts(update));
-    assert_eq!(replies(&replay.commit(update, answered(), 7)), []);
-    assert_eq!(
-        replies(&replay.finish(update, false, 8)),
-        [(7, "watch ended")]
-    );
-    assert_eq!(*watch_of(&replay), Watch::None);
-    assert!(replay.reducer.queries().is_empty());
-}
-
 /// The idle round `round`.
 fn round(round: u64) -> Item {
     Item::Barrier {
@@ -1781,10 +1459,12 @@ fn the_moved_on_rule_is_judged_again_every_half_second() {
     assert!(abandons(&replay.tick(1_001)));
 }
 
-/// A tree dump and the shell item queries name no window, so the moved-on
-/// rule is never judged for them: the reducer's only wake is the deadline.
+/// A tree dump and the shell item queries, dispatched with no window, are
+/// checked by the window their worker names, half a second after their
+/// start, as every other program is: a hang found there is told to Core
+/// once, and the query stays in flight.
 #[test]
-fn a_query_naming_no_window_wakes_only_at_its_deadline() {
+fn a_tree_dump_or_a_shell_query_whose_window_hangs_tells_its_hang_once() {
     let item = verbatim_model::ShellItem {
         name: "Mail".to_owned(),
         runtime_id: vec![42, 1],
@@ -1808,19 +1488,31 @@ fn a_query_naming_no_window_wakes_only_at_its_deadline() {
         ),
     ] {
         let mut replay = Replay::new();
-        replay.push(
+        let request = program(&replay.push(
             Item::Query {
                 request_id: RequestId::shell(4),
                 query: query.clone(),
             },
             Source::Other,
             1,
-        );
+        ))
+        .request;
         assert_eq!(
             replay.reducer.next_timer(now(1)),
-            Some(Duration::from_millis(1) + deadline),
+            Some(Duration::from_millis(501)),
             "{query:?}"
         );
+        assert_eq!(
+            replay.reducer.flight.deadline(),
+            Some(1_000 + micros(deadline))
+        );
+        replay.answers.named = Some(HUNG);
+        replay.answers.hung = true;
+        let effects = replay.tick(501);
+        assert_eq!(kinds(&effects), ["judge", "send"], "{query:?}");
+        assert_eq!(not_responding(&effects), [HUNG.get()], "{query:?}");
+        assert_eq!(kinds(&replay.tick(1_001)), ["judge"], "{query:?}");
+        assert!(replay.reducer.accepts(request), "{query:?}");
     }
 }
 
@@ -2557,36 +2249,6 @@ fn a_check_abandoned_with_the_polling_watch_leaves_no_due_time() {
     assert!(programs(&replay.tick(4 + 11_001)).is_empty());
 }
 
-/// While the outpost stops nothing is judged: a walk that returns past its
-/// bound after its deadline is published, and its answer abandons nothing.
-#[test]
-fn a_publication_answered_while_stopping_judges_nothing() {
-    let mut replay = Replay::new();
-    let effects = replay.push(msaa_focus(1, 1), Source::Hook, 1);
-    let request = program(&effects).request;
-    replay.input(
-        Input::Armed {
-            request,
-            bound: Duration::from_millis(500),
-        },
-        2,
-    );
-    replay.input(Input::Close, 3);
-    replay
-        .answers
-        .publications
-        .push_back(focus_change(1, false));
-    let effects = replay.input(
-        Input::WalkReturned {
-            request,
-            past: true,
-        },
-        20_000,
-    );
-    assert_eq!(kinds(&effects), ["publish", "send"]);
-    assert!(replay.reducer.busy(), "the program runs on");
-}
-
 /// An MSAA focus carries the outpost's acceptance test, made as the
 /// reducer took it in, to its program unchanged, though the program runs
 /// only once the program before it ends: the worker makes no test against
@@ -2660,10 +2322,11 @@ fn found(window: Window, found: Found, answers: Option<(u64, QueryOutcome)>) -> 
     }
 }
 
-/// A query whose worker named a window the judgement finds hung is
-/// answered abandoned, and the window's hang is told to Core once; a
-/// second query on it, refused by its check before its first call, is
-/// answered abandoned and tells nothing, nor does a third.
+/// A query whose worker named a window its check finds hung tells the
+/// window's hang to Core once and stays in flight, checked again half a
+/// second later with nothing more told; once it answers, a second query on
+/// the window, refused by its check before its first call, is answered
+/// abandoned and tells nothing, nor does a third.
 #[test]
 fn a_query_judged_hung_tells_its_windows_hang_once() {
     let mut replay = Replay::new();
@@ -2671,10 +2334,26 @@ fn a_query_judged_hung_tells_its_windows_hang_once() {
     replay.answers.named = Some(HUNG);
     replay.answers.hung = true;
     let effects = replay.tick(1 + 500);
-    assert!(abandons(&effects));
-    assert_eq!(replies(&effects), [(1, "abandoned")]);
+    assert_eq!(kinds(&effects), ["judge", "send"]);
     assert_eq!(not_responding(&effects), [HUNG.get()]);
-    assert!(!replay.reducer.accepts(first));
+    assert!(replay.reducer.accepts(first), "the query still in flight");
+    let effects = replay.tick(1 + 1_000);
+    assert_eq!(kinds(&effects), ["judge"], "the same hang");
+    assert!(replay.reducer.accepts(first));
+    let effects = replay.commit(
+        first,
+        Change {
+            result: Some(reply(
+                RequestId::shell(1),
+                TraceId::from_raw(1),
+                QueryOutcome::Gone,
+            )),
+            ..Change::default()
+        },
+        1_200,
+    );
+    assert_eq!(replies(&effects), [(1, "gone")]);
+    replay.finish(first, false, 1_201);
     replay.answers.named = None;
     for request_id in [2, 3] {
         let refused = program(&replay.push(navigation(request_id), Source::Other, 600)).request;
@@ -2843,10 +2522,11 @@ fn a_hang_committed_after_its_windows_destroy_is_not_recorded() {
     );
 }
 
-/// A listener read whose window is hung is dropped by its program with no
-/// call, and its commit, naming the window hung, tells Core of the hang.
+/// A listener read whose window hangs while its program reads it tells Core
+/// of the hang at its check, and is reported once the application answers:
+/// its program is neither dropped nor abandoned.
 #[test]
-fn a_listener_read_dropped_for_a_hung_window_tells_its_hang() {
+fn a_listener_read_in_a_hung_window_is_reported_and_tells_its_hang() {
     let mut replay = Replay::new();
     let read = verbatim_model::protocol::UiaFocusRead {
         hwnd: HUNG.get(),
@@ -2878,9 +2558,112 @@ fn a_listener_read_dropped_for_a_hung_window_tells_its_hang() {
         Source::Listener,
         1,
     );
-    let dropping = program(&effects);
-    assert_eq!(dropping.window, Some(HUNG));
-    let effects = replay.commit(dropping.request, found(HUNG, Found::Hung, None), 2);
+    let reading = program(&effects);
+    assert_eq!(reading.window, Some(HUNG));
+    let request = reading.request;
+    replay.answers.hung = true;
+    let effects = replay.tick(1 + 500);
+    assert_eq!(kinds(&effects), ["judge", "send"]);
     assert_eq!(not_responding(&effects), [HUNG.get()]);
-    assert_eq!(sent(&effects).len(), 1, "nothing but the hang");
+    assert!(replay.reducer.accepts(request), "the read still in flight");
+    replay.answers.hung = false;
+    let effects = replay.commit(request, focus_change(2, false), 4_000);
+    assert_eq!(kinds(&effects), ["send"], "the focus reported");
+    assert_eq!(followed(&replay), Some(NodeId::new(2)));
+}
+
+/// A UIA focus's marker, `marker`.
+fn marker(marker: u64) -> Item {
+    Item::Fact(DeliveredFact::UiaFocusMarker { marker }, None)
+}
+
+/// A marker waiting for its read past the grace has the window in front
+/// checked: first half a second after it arrived, then every half second
+/// while it waits, and never sooner.
+#[test]
+fn a_marker_waiting_past_the_grace_asks_for_the_front_check_every_half_second() {
+    let mut replay = Replay::new();
+    assert!(programs(&replay.push(marker(1), Source::Other, 10)).is_empty());
+    assert_eq!(
+        replay.reducer.next_timer(now(10)),
+        Some(Duration::from_millis(510))
+    );
+    assert_eq!(kinds(&replay.tick(509)), Vec::<&str>::new());
+    assert_eq!(kinds(&replay.tick(510)), ["check front"]);
+    assert_eq!(
+        replay.reducer.next_timer(now(510)),
+        Some(Duration::from_millis(1_010))
+    );
+    assert_eq!(kinds(&replay.tick(1_009)), Vec::<&str>::new());
+    assert_eq!(kinds(&replay.tick(1_010)), ["check front"]);
+}
+
+/// A hung window of the outpost's application in front while a marker
+/// waits is told to Core once, however many checks find it; a readable
+/// one in front takes it out of the record, so the next hang is told.
+#[test]
+fn a_hang_found_in_front_while_a_marker_waits_is_told_once() {
+    let mut replay = Replay::new();
+    replay.push(marker(1), Source::Other, 0);
+    replay.answers.front = Some((HUNG, true));
+    let effects = replay.tick(500);
+    assert_eq!(kinds(&effects), ["check front", "send"]);
+    assert_eq!(not_responding(&effects), [HUNG.get()]);
+    assert_eq!(kinds(&replay.tick(1_000)), ["check front"], "the same hang");
+    replay.answers.front = Some((HUNG, false));
+    assert_eq!(kinds(&replay.tick(1_500)), ["check front"]);
+    assert!(replay.reducer.hung.is_empty(), "it answers");
+    replay.answers.front = Some((HUNG, true));
+    assert_eq!(
+        not_responding(&replay.tick(2_000)),
+        [HUNG.get()],
+        "a new hang"
+    );
+}
+
+/// Once the marker's read comes no front check is asked, nor timed.
+#[test]
+fn no_front_check_is_asked_once_the_marker_resolves() {
+    let mut replay = Replay::new();
+    replay.push(marker(1), Source::Other, 0);
+    replay.answers.front = Some((HUNG, true));
+    let effects = replay.push(
+        Item::Fact(
+            DeliveredFact::UiaFocusDropped {
+                marker: 1,
+                focus: true,
+            },
+            None,
+        ),
+        Source::Other,
+        300,
+    );
+    assert_eq!(kinds(&effects), Vec::<&str>::new());
+    assert_eq!(replay.reducer.next_timer(now(300)), None);
+    assert_eq!(kinds(&replay.tick(500)), Vec::<&str>::new());
+    assert!(replay.reducer.hung.is_empty());
+}
+
+/// A program whose check found its window hung, abandoned at its deadline,
+/// is counted parked on a hung window; one whose check never did is not.
+#[test]
+fn a_program_abandoned_after_its_hang_was_seen_is_parked_on_a_hung_window() {
+    let on_hung = |effects: &[Effect]| {
+        effects
+            .iter()
+            .filter_map(|effect| match effect {
+                Effect::Abandon { on_hung, .. } => Some(*on_hung),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    let mut replay = Replay::new();
+    replay.push(navigation(1), Source::Other, 1);
+    replay.answers.named = Some(HUNG);
+    replay.answers.hung = true;
+    replay.tick(1 + 500);
+    replay.answers.hung = false;
+    assert_eq!(on_hung(&replay.tick(1 + 11_000)), [true]);
+    replay.push(navigation(2), Source::Other, 11_002);
+    assert_eq!(on_hung(&replay.tick(11_002 + 11_000)), [false]);
 }

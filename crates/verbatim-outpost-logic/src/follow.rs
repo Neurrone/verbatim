@@ -109,13 +109,8 @@ pub struct Owed {
 /// The work a followed focus owes ([`Owed`]).
 #[derive(Clone, Debug)]
 pub enum OwedWork {
-    /// A terminal's first read, with the caret read with its report, or
-    /// `None` for a terminal published at its walk's bound, whose caret is
-    /// read first.
-    FirstRead(Option<CaretReport>),
-    /// A `SensitiveSlider`'s lookup, for a thumb published at its walk's
-    /// bound, whose slider's element this outpost does not keep.
-    Slider,
+    /// A terminal's first read, with the caret read with its report.
+    FirstRead(CaretReport),
 }
 
 /// The raw-view chain of the UIA focus the outpost last reported from the

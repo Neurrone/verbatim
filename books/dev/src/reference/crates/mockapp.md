@@ -404,10 +404,9 @@ a walk of the window's whole tree would wait on its
     when the outpost was made, moved on only by the time passed and by a
     microsecond each read, so no real time is in it and no two reads are
     equal. Every test whose assertions depend on a verdict's 500 ms keep
-    or a walk's bound must use it, because on the real clock a slow
-    runner's own steps run out a keep or reach the bound early: every
-    `call_counts` test, and the outpost's tests of a walk's bound (a stuck
-    MSAA focus's walk, and the continuation of a listener's chain).
+    or the listener's walk's bound must use it, because on the real clock
+    a slow runner's own steps run out a keep or reach the bound early:
+    every `call_counts` test, and the tests of the listener's bound.
   - `OutpostUnderTest::new`, `with_options` and the rest give the real
     clock, the run's clock moved on by the time passed. Every other test
     uses it, because the outpost compares the stamps of its caret, text
@@ -426,9 +425,7 @@ a walk of the window's whole tree would wait on its
   listener's watchdog runs the listener's reading threads in its process
   (`verbatim_listener::focus_read::ReadingThreads`), their readers on
   frozen clocks of the test's, so that only the watchdog, on the system's
-  clock, meets a read's bound. The outpost's own watchdog meets its
-  walks' bound the same way: the outpost's walks are timed by the frozen
-  clock and its watchdog by the system's.
+  clock, meets a read's bound.
 - `tests/uia_bugs/` is one test binary (`main.rs` declares a module per
   file) holding the tests that reproduce a fault or limitation of UI
   Automation or show that Verbatim's workaround for one still holds, each
@@ -582,11 +579,13 @@ Each file's module comment says exactly what it asserts; in outline:
   past a limit that ran on it, or mockapp's window thread stalled for twice
   a limit that ran in real time, the stall's printed end the evidence. A
   query whose held call's window the outpost's reader then answers hung
-  is abandoned, Core told the window stopped responding and the pong
-  counting the worker parked on a hung window, and the abandoned worker,
-  released, makes no navigation step of its walk; a query on a windowless
-  node of a hung window is refused with no call; and a listener read whose
-  own window is hung is dropped with no call, Core told once.
+  tells Core once that the window stopped responding, is not abandoned,
+  the pong counting no worker parked, and answers its neighbor once
+  mockapp answers; a listener read's marker waiting while mockapp's window
+  thread stalls past Windows' five seconds tells Core once of the hang,
+  found in front with no program in flight, and the focus is reported
+  once its read is delivered after the stall; and a query on a windowless
+  node of a hung window is refused with no call.
 - `window_messages.rs` holds a message to a native control inside its
   window procedure (`hold-message`) and watches `verbatim-ia2`'s sends at
   its observation point `WindowMessageSent`, so the binary requires the

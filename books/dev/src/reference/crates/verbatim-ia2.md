@@ -435,7 +435,11 @@ by Core on entering the window: one acquisition; `progress`, an
   to an application, the list view's, tree view's and edit control's.
   The window's readability is tested first, by local calls
   (`verbatim_win32::window::readability`): a hung or ghosted window fails
-  at once, unsent, and a destroyed one is gone. A message carrying the
+  at once, unsent, as NVDA's `SMTO_ABORTIFHUNG` refuses it, and a
+  destroyed one is gone. A message from `WM_APP` to `0xBFFF`, which NVDA
+  exempts from that flag, is sent untested (`refused_when_hung`); none of
+  the crate's messages is one, which a unit test checks for every message
+  it sends. A message carrying the
   address of a buffer in the target's memory is sent with no check that
   the window is still in the buffer's process: a window handle carries a
   16-bit reuse counter, so a handle's value recurs only after about
@@ -444,8 +448,7 @@ by Core on entering the window: one acquisition; `progress`, an
   no time limit of its own, the largest that `SendMessageTimeoutW` waits,
   `i32::MAX` milliseconds (it takes a larger one as passed at once),
   without `SMTO_ABORTIFHUNG`: only a send with no time limit tells when its
-  message was answered, so its program's deadline and the judgement that
-  its window is hung are its bounds
+  message was answered, so its program's deadline is its bound
   (`books/dev/src/reference/crates/verbatim-model.md`, "Time limits"). A
   failed send is gone when the window no longer exists, as it does once
   its thread ends, which `SMTO_ERRORONEXIT` fails the send for. Under the

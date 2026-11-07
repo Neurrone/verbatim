@@ -711,7 +711,7 @@ mod tests {
         };
         let mut buffer = Vec::new();
         let queries = [
-            Query::FocusNow,
+            Query::ReadFocus,
             Query::Navigate {
                 node_id: NodeId::new(9),
                 kind: QueryKind::NextSibling,

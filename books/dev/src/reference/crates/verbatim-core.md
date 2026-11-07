@@ -270,19 +270,18 @@ asker `A` as a token it never calls. `verbatim-app` gives its `Asker` and
 carries each outcome out (`requests::deliver`,
 [verbatim-app](verbatim-app.md)).
 
-- `begin` and `begin_until(outpost, asker, deadline_us)` record a
-  request. A deadline is in microseconds on the run's shared clock.
+- `begin` records a request. The table keeps no deadline: an outpost
+  answers each query by its program's deadline, or the query's own
+  `answer_by_us`, so a clock here would be a second path to its one
+  outcome.
 - Every ending hands the asker back with its outcome, so each asker leaves
   the table exactly once: `finish(id, outpost, outcome)` only for the
   generation asked and only the first time; `outpost_ended(outpost)`, each
-  outstanding request answered "gone"; `expire(now_us)`, each past its
-  deadline answered failed (`DEADLINE_PASSED`) and named with its outpost
-  (`Expired`) for the shell to withdraw. `find(which)` names a request to
+  outstanding request answered "gone". `find(which)` names a request to
   withdraw from its outpost while it keeps its one outcome.
 - Request numbers are given in increasing order and kept in a
-  `BTreeMap`, so the outcomes `outpost_ended` and `expire` return together
-  come in the order the requests were made.
-- `next_deadline` is the earliest deadline.
+  `BTreeMap`, so the outcomes `outpost_ended` returns together come in the
+  order the requests were made.
 
 ## The flight recorder
 

@@ -157,12 +157,13 @@ window (`read::plain_window`) is read from Windows' own state alone: role
 window, named by `InternalGetWindowText`, unavailable when its style
 disables it, never focused and never invisible, kept under its window
 object's address. A window `read::plain_windows_from` reads, above the
-process boundary or past a walk's bound or failure, that is not a
+process boundary, past a listener read published at the listener's
+bound, past the depth limit, or after a failure, that is not a
 ghost's or a hung application's is read the same way but described as
 NVDA's MSAA client for it (`read::client_pane`): role pane, marked
 `top_level_client` when its style has `WS_SYSMENU`, so Core speaks the
-Settings frame, or a top-level window published at its bound, by its
-title, and takes a child window between as structure; a ghost's or a
+Settings frame, or a top-level window the listener's read did not reach,
+by its title, and takes a child window between as structure; a ghost's or a
 hung application's stays a plain window. The ghost and hung checks are
 three local calls per window, and the style is read once
 (`window::window_style`). The outpost connects to, probes, and walks up into only its
@@ -199,12 +200,11 @@ hung window is never probed. A remote program cannot judge a window
 between its steps, so a focus-now query whose focus has such a window
 above its own (`read::plain_window_above`, local calls by
 `verbatim_uia::raw_view_parent_window`) reads its ancestors by the classic
-walk instead. A walk cut by its time
-(its bound, for the continuation of a listener's read that read's bound
-from the event's observation, `UiaFocusRead::bound_us`; for an MSAA
-focus's walk, `read::walk_left`; `SAME_WINDOW_BOUND`
-for a focus-now answer) or its depth limit of 64 is completed by plain
-windows from its outermost element's nearest window, included. Whether a
+walk instead. The outpost's walks have no time limit but their program's
+deadline: a listener read the listener published at its bound
+(`AncestorsEnd::PlainFrom`), and a walk cut at its depth limit of 64, are
+completed by plain windows from the outermost element's nearest window,
+included, and no continuation is cut by time. Whether a
 window can be read is the system's judgement
 (`verbatim_win32::window::readability`, a `Readability`), which a
 test that cannot wait five seconds for Windows to judge an application
@@ -426,15 +426,18 @@ Inside an outpost (`docs/design/communication.md`, section 6.4;
   hold, the arbitrator's verdicts (`reducer::verdicts`), each node's text
   facts (`reducer::text`), the program in flight as its work in flight
   (`verbatim_reader_rules::in_flight::InFlight`: the worker generation in
-  charge, the deadline, the moved-on rule and the walk's bound), and the
-  queries not yet answered. Inputs
+  charge, the deadline and the moved-on rule) with its hang mark, the
+  record of hung windows, and the queries not yet answered. Inputs
   come in mailbox order; effects go out: dispatch a program, send a
   message, release, move the subscription, abandon a worker, set a timer.
   It names no Windows type, holds no application object and makes no
   call; what it needs of Windows' own state it asks for by an effect
-  (`Effect::AskJudge`, the judgement of the program's window, answered
-  `Input::Judged`; `Effect::Publish`, a walk's publication), which the shell's `apply` answers at once, exactly
-  once, as the reducer's next input, before it takes another message, and
+  (`Effect::AskJudge`, the check of the program's window, answered
+  `Input::HangSeen` when it is hung and `Input::Judged` with whether the
+  user moved on; `Effect::CheckFront`, the check of the window in front
+  while a listener read's marker waits, answered `Input::HangSeen` or
+  `Input::FrontReadable`), which the shell's `apply` answers at once, as
+  the reducer's next inputs, before it takes another message, and
   what the answer asks is carried out before anything asked after the
   question, as a release's answer is. `cargo xtask ci`
   reads every file of its crate by the pure rule
@@ -450,13 +453,13 @@ Inside an outpost (`docs/design/communication.md`, section 6.4;
   (`books/dev/src/reference/crates/verbatim-outpost-logic.md`): the shell ticks
   the reducer after every drain of the mailbox, not only when a timer is
   due; each of the three clocks of `Now` never goes back; an abandoned
-  worker still posts its program's finish, arming and walk return; a
+  worker still posts its program's finish; a
   program's posts arrive in the order posted, and its finish exactly once;
   Core's request ids are unique for the outpost's life; entries queued
   behind the close still reach the reducer; the shell gives the reducer
   only a commit it accepts; a program that answers a query commits that
-  query's reply as its one message; only an MSAA focus's report arms a
-  walk; only a caret key's program opens the watch, and a program commits
+  query's reply as its one message; no program arms a walk; only a caret
+  key's program opens the watch, and a program commits
   a check of it only while it holds it; only the owed
   work commits it done; and only a caret read of an edit control's client
   area is cut at its value change check.
@@ -475,20 +478,31 @@ Inside an outpost (`docs/design/communication.md`, section 6.4;
   the application: the window its entry names, at its start; else a
   query's node's own window (the window an MSAA node is kept under, or a
   UIA element's whose runtime id is `[42, hwnd]`), the application's focus
-  window for focus-now and a node of no window of its own
+  window for a focus read and a node of no window of its own
   (the foreground thread's focus window when that thread is the
   application's, else the top-level window of the focus the outpost
-  expects Core to hold), the owed work's and the console poll's node's;
-  none for a query of no node. The shell answers the reducer's
-  `AskJudge` by that window, read under the charge's lock: hung or
-  ghosted by the outpost's reader first, then moved on; with no window
-  named, the program stays. An event's check before its first call
-  (`Worker::readable`), a listener read's of its own window, a query's of
+  expects Core to hold), a tree dump's application's main window
+  (`window::main_window_of`), a shell item query's taskbar window
+  (`shell_items::taskbar_window`), the owed work's and the console poll's
+  node's. The shell answers the reducer's `AskJudge` by that window, read
+  under the charge's lock: hung or ghosted by the outpost's reader, which
+  is a hang seen, told to Core once per hang and abandoning nothing, then
+  moved on; with no window named, the program stays. While a listener
+  read's marker has waited half a second, nothing is in flight behind it,
+  so the shell answers the reducer's `CheckFront` from the window in
+  front (`Context::foreground_window`, by the outpost's foreground
+  reader): a ghost is mapped to the hung window it stands in for
+  (`verbatim_win32::window::hung_window_from_ghost`), since the ghost's
+  process is the desktop window manager's, and a window the application
+  serves is judged by the readability reader, all by local calls. An
+  event's check before its first call (`Worker::readable`), a query's of
   its named window, and a window message's (through the call gate) all ask
   the same reader; a window found hung is named in the program's commit as
   hung, and a query refused so is answered `Abandoned` with no call, so a
-  query on a hung window parks no worker. Focus-now is not refused: it
-  answers a hung focus window with the plain window, from local data. Each
+  query on a hung window parks no worker. A listener read is not tested:
+  its program reads the focus, waiting for the application call by call
+  within its deadline. A focus read is not refused: its check of the focus
+  window answers no focused control in a window that cannot be read. Each
   commit names the program's window and what it found
   (`reducer::Found`): hung at a check, or answered once a counted call was
   made. The worker installs a call gate on its thread
@@ -497,9 +511,9 @@ Inside an outpost (`docs/design/communication.md`, section 6.4;
   with `CallError::Abandoned` and makes no call, which no caller reads as
   a fact about the application. The shell keeps each parked worker's
   reason by generation (`Posted::Returned` carries the generation), and
-  the pong reports those parked on a window judged hung
-  (`parked_on_hung`) apart from the rest (`parked_count`), which alone the
-  supervisor's limit counts.
+  the pong reports those parked on a window seen hung, by their program's
+  hang mark (`parked_on_hung`), apart from the rest (`parked_count`),
+  which alone the supervisor's limit counts.
 - Programs (`outpost::worker`): the worker generation in charge takes one
   program at a time from its inbox, an entry's handling, the owed work, a
   release's drop, or the finish of a caret
@@ -511,7 +525,7 @@ Inside an outpost (`docs/design/communication.md`, section 6.4;
   each commit (`commit::Effects`) to the mailbox, applying its pure part
   to its own copies (`reducer::apply`), so what it reads after is what the
   reducer will hold. The shell applies a commit only while its request is
-  live, its generation in charge and its walk not published, and refuses
+  live, the program in flight of the generation in charge, and refuses
   any other whole: first the
   writes only it makes, to the store and its table of the elements the
   subscription follows (`commit::Writes`), the program's text writes
@@ -575,7 +589,7 @@ Inside an outpost (`docs/design/communication.md`, section 6.4;
   (`caret_after_update`). Per batch the newest 4 MSAA focus events and 10
   other MSAA events per thread are kept (the focus's own events beyond the
   limit, a foreground change by either). Nothing is dropped at planning
-  for a hung window: the worker tests a UIA event's or focus read's own
+  for a hung window: the worker tests a UIA event's own
   window first as it handles it (`IsHungAppWindow`, a window of 0
   passing, as NVDA's test passes a sender with no cached window), before
   any window lookup or read, so an entry whose window became hung while
@@ -585,8 +599,7 @@ Inside an outpost (`docs/design/communication.md`, section 6.4;
   each try a program under its own deadline, until one is reported, at the
   run's newest place, as NVDA's `pumpAll` does (`ends_a_run`); the reducer
   dispatches the next try when a try's program ends unreported, and the
-  replacement of a worker abandoned in a try that was not published tries
-  the next. Three
+  replacement of a worker abandoned in a try tries the next. Three
   focus candidates per backend are kept (`Planned::Focus`). A foreground
   change removes a waiting focus on its client object from the same thread
   not raised after it. A run whose events all carry raise times is tried in
@@ -622,13 +635,11 @@ Inside an outpost (`docs/design/communication.md`, section 6.4;
   2 s. A program on a window also has its worker abandoned once the user
   has moved to another UI thread of the same provider process, judged
   when the half-second grace ends and every half second after until the
-  deadline, as NVDA's watchdog judges, published or not, by an ask the
-  shell answers with
+  deadline, as NVDA's watchdog judges, by an ask the shell answers with
   `verbatim_win32::window::is_another_thread_of_its_application` against
   the window with the keyboard focus, by the outpost's focus window
-  reader;
-  a foreground fact judges nothing. It publishes an
-  armed walk first, marks the generation dead in the worker's charge
+  reader; the same check tells a hang of the window and abandons nothing
+  for it; a foreground fact judges nothing. It marks the generation dead in the worker's charge
   (`worker::Charge`), answers the query the program was running
   `Abandoned`, and starts a replacement. `Effect::Abandon` carries what the
   program had in hand (`InHand`, kept in the reducer's record of the
@@ -641,43 +652,17 @@ Inside an outpost (`docs/design/communication.md`, section 6.4;
   carries out `Effect::Abandon` and one fewer at each return, which no
   longer reaches the reducer, and publishes the count to an atomic the
   I/O thread answers pings with.
-- The bound met when a call is stuck (`outpost::bound`;
-  `docs/design/focus-pipeline-rework.md`, "A window's name, and the one
-  fallback"). An MSAA focus that has passed NVDA's checks, its
-  focused-state test among them, and been read, arms its walk in the
-  worker's charge
-  (`Charge::arm`, a `bound::FocusProgress`) and tell the reducer its bound,
-  by the design's Terms (`read::walk_left`): `MOVED_ON_GRACE` when the
-  focus's top-level window is not that of the focus the outpost expects
-  Core to hold (`Held::expected`), `SAME_WINDOW_BOUND` otherwise, measured
-  from the event's observation. The walk tells what it reads as it reads it
-  (`read::WalkStep`), each step taken into the charge under its lock: the
-  MSAA walk each ancestor and its chain, the classic UIA walk each
-  ancestor it keeps, a remote program nothing until it returns. A walk
-  already past its bound when it begins is not armed. Should the walk
-  still be under way at the bound, the reducer publishes the focus from
-  that progress (`Effect::Publish`, carried out by `Shell::publication`
-  against the charge of the request's own generation, and
-  `worker::publication`), its chain
-  as `bound::chain_at_bound` makes it, by local calls on the reducer's
-  thread, with no selected child, dialog text or text of its own. A walk
-  that returns past its bound is marked so in the charge, and the reducer
-  publishes it from the same progress, so the report does not depend on
-  which comes first; one that returns before is disarmed there, and its
-  program reports it. The publication records the report, sends it,
-  makes the focus the followed one with the work it owes, and claims the
-  walk's request: nothing more of its program is applied. The reducer
-  publishes an armed walk before it abandons its worker: the abandonment
-  asks for the publication, carrying its reason, and the answer commits
-  the publication and then abandons, in one step of the shell's. The owed work, a terminal's first read or a
-  `SensitiveSlider`'s lookup for a thumb published at its bound, is a
-  program the reducer dispatches before anything else, once per worker
-  generation, under a deadline of its own with no moved-on window.
+- A focus is reported once its walk returns, in full, however long the
+  walk takes within its program's deadline: no walk is published at a
+  bound. The owed work, a terminal's first read from the caret read with
+  its report, is a program the reducer dispatches before anything else,
+  once per worker generation, under a deadline of its own with no
+  moved-on window.
 - Requests and their tags: each program is a request with a mint tag of
   its own (`store::Tag`, the generation and a request number the reducer
   gives), which its `RequestContext` carries with the store's handle; the
-  program in flight's request is live until it ends, its worker is
-  abandoned, or its walk's publication claims it. A program's text writes
+  program in flight's request is live until it ends or its worker is
+  abandoned. A program's text writes
   go to the store only with a commit the reducer accepts, as every other
   write of the shell's does ("Window destruction and held objects", text
   on copies). A terminal read works on a
@@ -692,14 +677,15 @@ Inside an outpost (`docs/design/communication.md`, section 6.4;
   the reducer records.
 - Time limits in an entry (`books/dev/src/explanation/design/focus-pipeline.md`, section 6): UIA
   calls end at `verbatim_uia::UIA_CONNECTION_TIMEOUT` (2 s) or
-  `UIA_TRANSACTION_TIMEOUT` (10 s); the listener's read's bound bounds the
-  continuation of its chain, the walk's bound an MSAA focus's ancestor
-  walk between calls, and `SAME_WINDOW_BOUND` (2 s) a
-  focus-now answer's; a dialog's text, UIA's as MSAA's, is gathered in
+  `UIA_TRANSACTION_TIMEOUT` (10 s); the continuation of a listener read's
+  chain, an MSAA focus's ancestor walk and a focus read's walk have no
+  limit but their program's deadline; a dialog's text, UIA's as MSAA's, is gathered in
   its program on the worker's own client, bounded by the program's
   deadline, as NVDA gathers it inside its focus event; tree view,
-  list view, and edit messages use `SendMessageTimeoutW`; an `IAccessible`
-  call is bounded by the entry's deadline.
+  list view, and edit messages use `SendMessageTimeoutW`, refused unsent
+  by a hung or ghosted window as NVDA's `SMTO_ABORTIFHUNG` refuses them,
+  none being in the `WM_APP` to `0xBFFF` range NVDA exempts; an
+  `IAccessible` call is bounded by the entry's deadline.
 - The I/O thread, the main thread (`verbatim_process::transport::ChildIo`,
   at `THREAD_PRIORITY_HIGHEST`), waits only on its completion port, hands
   each command to `Outpost::handle_command` (which answers pings itself and
@@ -932,8 +918,8 @@ and the inherited pipe handles.
   alike: a foreground change sets it to its window, any other focus
   inherits it from the newest report in its top-level window, and
   otherwise it is the read. The two agree at each commit, since only the
-  program in flight, a publication that claims it, and a release with no
-  program in flight write the reports. The newest is `expected()`. A report of
+  program in flight and a release with no program in flight write the
+  reports. The newest is `expected()`. A report of
   the newest report's node whose own evidence says the same element still
   has the focus leaves the states last read as they were. The followed
   focus (`Tracking::focus`, `focus_role`, `window`, `chain`) is the newest
@@ -1023,8 +1009,8 @@ foreground application for its focus unless a newer focus was applied.
   (`Store::nodes_for(tag)`, `RequestContext::nodes`), which implements the
   interning traits of `verbatim-uia` and `verbatim-ia2` and tags each node
   with the request's tag in the same hold of the store's lock, keeping an
-  element a lookup replaced for its holder to drop (`take_removed`, which
-  a publication hands to the next program's worker); a plain
+  element a lookup replaced for its holder to drop as the handle drops,
+  on the worker; a plain
   window and a foreground's client object read from local data are minted
   by window handle (`Nodes::window`, `Nodes::client`), as their MSAA keys.
   The lines a walk copies are tagged too: the previous focus's chain it may
@@ -1162,8 +1148,8 @@ scripts wait for, without waiting:
   (`Now::wall_us`), and the worker reads no clock for it. A watch ends
   with `TextReply::WatchEnded`, which Core does not speak, when the next
   key's dispatch replaces it, a focus on another node or a replaced node is
-  reported, its node is released, its holder panics, returns without a
-  result or is claimed by its walk's publication, or at
+  reported, its node is released, its holder panics or returns without a
+  result, or at
   `CARET_WATCH_BOUND` (`HANDLING_DEADLINE`, 11 s, after it opened, so a
   key whose application shows its effect within the time a task allows it
   is still spoken, for a watch that does not

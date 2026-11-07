@@ -19,13 +19,13 @@ use crate::edit::{EditError, RemoteBuffer, TargetProcess, message_error, text_of
 use crate::window;
 
 const LVM_FIRST: u32 = 0x1000;
-const LVM_GETHEADER: u32 = LVM_FIRST + 31;
-const LVM_GETSUBITEMRECT: u32 = LVM_FIRST + 56;
-const LVM_GETCOLUMNORDERARRAY: u32 = LVM_FIRST + 59;
-const LVM_GETCOLUMNW: u32 = LVM_FIRST + 95;
-const LVM_GETITEMTEXTW: u32 = LVM_FIRST + 115;
-const LVM_GETVIEW: u32 = LVM_FIRST + 143;
-const HDM_GETITEMCOUNT: u32 = 0x1200;
+pub(crate) const LVM_GETHEADER: u32 = LVM_FIRST + 31;
+pub(crate) const LVM_GETSUBITEMRECT: u32 = LVM_FIRST + 56;
+pub(crate) const LVM_GETCOLUMNORDERARRAY: u32 = LVM_FIRST + 59;
+pub(crate) const LVM_GETCOLUMNW: u32 = LVM_FIRST + 95;
+pub(crate) const LVM_GETITEMTEXTW: u32 = LVM_FIRST + 115;
+pub(crate) const LVM_GETVIEW: u32 = LVM_FIRST + 143;
+pub(crate) const HDM_GETITEMCOUNT: u32 = 0x1200;
 
 const LV_VIEW_DETAILS: isize = 1;
 const LV_VIEW_TILE: isize = 4;

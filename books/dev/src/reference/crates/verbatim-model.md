@@ -258,14 +258,17 @@ margin of a second, and a compile-time assertion states each nesting.
   process (re-exported by `verbatim-uia`).
 - `HANDLING_DEADLINE`, 11 seconds: one task, an outpost's program, the
   request and the margin. It bounds MSAA calls and window messages too,
-  which have no limit of their own. A task of several slow calls can still
-  pass it; only one request is promised to end by its own timeout.
+  which have no limit of their own: a window found hung while one waits is
+  told of and waited for, never abandoned for its hang, so the deadline is
+  their only bound. A task of several slow calls can still pass it; only
+  one request is promised to end by its own timeout.
 - `SAME_WINDOW_BOUND`, 2 seconds: the bound of a walk in the window of the
   focus before it, both readers', and of the focus listener's NVDA checks.
 - `BOUNDED_WALK_DEADLINE`, 13 seconds: `HANDLING_DEADLINE` and
   `SAME_WINDOW_BOUND`, the deadline of work whose walk or checks are a
-  budget checked between calls: an outpost's focus-now, its report of a
-  listener read, and the listener's read.
+  budget checked between calls: an outpost's focus read
+  (`Query::ReadFocus`), its report of a listener read, and the listener's
+  read.
 
 ## The wire protocol
 
@@ -316,11 +319,11 @@ that carries them on the pipes, `Message`, is
   write and read stamps. `Urgent` is what
   an outpost sends ahead of its queue (`Pong`, `Ready`, `TargetExited`,
   `SpareReady`), none of which carries a node.
-- `Query` is `FocusNow`, `Navigate`, `Activate`, `Ancestors`, `DumpTree`,
+- `Query` is `ReadFocus`, `Navigate`, `Activate`, `Ancestors`, `DumpTree`,
   `Text`, `ShellItems` or `ShellItemPosition`. A shell items or position
   query carries its deadline on the run's shared clock, `answer_by_us`;
   one dispatched past it is answered with no items. A
-  `FocusNow` answer carries the foreground window when the application
+  `ReadFocus` answer (`FocusNow`) carries the foreground window when the application
   holds the foreground, its focused control (`FocusedControl`) with
   ancestors, selected child, window facts and text, and when reading
   began.
@@ -331,7 +334,7 @@ that carries them on the pipes, `Message`, is
   Core plays the "not responding" sound for it only when the window's
   application holds attention. The pong's `parked_count` counts the
   abandoned workers not yet returned but for those parked on a window the
-  outpost judged hung, which `parked_on_hung` counts.
+  outpost saw hung while their program ran, which `parked_on_hung` counts.
 - `EventTiming` records each point of an event's way, in microseconds
   (`docs/design/communication.md`, section 10.1); `hop_us` is the time
   between two stamps.

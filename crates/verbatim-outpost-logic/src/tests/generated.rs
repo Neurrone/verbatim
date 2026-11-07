@@ -51,9 +51,7 @@ enum Action {
     Deadline,
     /// The watch's due time comes.
     Due,
-    /// The program in flight's walk is armed and published at its bound,
-    /// reporting a focus elsewhere or nothing.
-    Publish(bool),
+
     /// Core's held nodes arrive.
     NodesHeld,
     /// The release they asked for lets go of the watch's node.
@@ -64,7 +62,7 @@ enum Action {
     Close,
 }
 
-const ACTIONS: [Action; 19] = [
+const ACTIONS: [Action; 17] = [
     Action::Key,
     Action::CaretEvent,
     Action::Open(false),
@@ -78,8 +76,6 @@ const ACTIONS: [Action; 19] = [
     Action::Cut,
     Action::Deadline,
     Action::Due,
-    Action::Publish(false),
-    Action::Publish(true),
     Action::NodesHeld,
     Action::Released,
     Action::Round,
@@ -108,7 +104,6 @@ struct Flight {
     request: Request,
     kind: Kind,
     copy: Facts,
-    claimed: bool,
     /// Whether it opened a watch or committed a check's result.
     done: bool,
 }
@@ -210,13 +205,7 @@ impl Gen {
                     && !self.reducer.releasing
                     && self.reducer.facts.follow.watch.due().is_some()
             }
-            // A report is published only by an event's walk, and nothing
-            // once the outpost closes.
-            Action::Publish(report) => {
-                !self.closed
-                    && flight.is_some_and(|flight| !flight.claimed)
-                    && (!report || matches!(kind, Some(Kind::Event | Kind::Other)))
-            }
+
             Action::NodesHeld => !self.closed && !self.held_pushed,
             Action::Released => self.reducer.releasing,
             Action::Round => !self.closed && !self.rounds,
@@ -253,7 +242,7 @@ impl Gen {
         let flight = self.flight.as_mut().expect("a program in flight");
         let request = flight.request;
         let accepted = self.reducer.accepts(request);
-        assert_eq!(accepted, !flight.claimed, "{:?}", self.trail);
+        assert!(accepted, "{:?}", self.trail);
         if accepted {
             assert_eq!(
                 untimed(&flight.copy.follow.watch),
@@ -342,20 +331,7 @@ impl Gen {
                 let now = self.now();
                 self.tick(now)
             }
-            Action::Publish(report) => {
-                self.flight_mut().claimed = true;
-                let request = self.flight_mut().request;
-                self.answers.publications.push_back(if report {
-                    focus_change(2, false)
-                } else {
-                    Change::default()
-                });
-                let bound = Duration::from_millis(self.at + 1);
-                self.input(Input::Armed { request, bound });
-                self.at += 1;
-                let now = self.now();
-                self.tick(now)
-            }
+
             Action::NodesHeld => {
                 self.held_pushed = true;
                 self.push(Item::NodesHeld {
@@ -396,7 +372,6 @@ impl Gen {
                         request: program.request,
                         kind: kind_of(program),
                         copy: program.facts.clone(),
-                        claimed: false,
                         done: false,
                     });
                 }

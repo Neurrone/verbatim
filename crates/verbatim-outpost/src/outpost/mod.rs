@@ -12,8 +12,9 @@
 //! 2. The reducer ([`reducer`]), on a thread of its own run by its shell
 //!    ([`shell`]): the pure state machine that holds every remembered fact
 //!    of the application, the intake's order with NVDA's limiter rules
-//!    among them, and keeps the outpost's timers: a worker's deadline, the
-//!    walk's bound and the caret key's watch.
+//!    among them, and keeps the outpost's timers: a worker's deadline and
+//!    its half-second check, the check of the window in front while a
+//!    listener read's marker waits, and the caret key's watch.
 //! 3. The workers ([`worker`]): the threads that call into the application,
 //!    one generation in charge at a time, each running one program at a
 //!    time on copies, posting its commits to the mailbox. A worker whose
@@ -40,7 +41,6 @@
 //! never reported. A node reported later, or named by a request still
 //! running, is kept.
 
-mod bound;
 mod commit;
 mod focus_path;
 pub(crate) mod lock;
@@ -185,12 +185,12 @@ pub(crate) struct Context {
     /// The outpost's start, from which the reducer's clock counts.
     epoch: Instant,
     /// Abandoned workers that have not yet returned, as the reducer last
-    /// counted them, but for those parked on a window judged hung: an
+    /// counted them, but for those parked on a window seen hung: an
     /// atomic, so the I/O thread answers a ping without waiting on
     /// anything.
     abandoned: AtomicUsize,
     /// Abandoned workers that have not yet returned, parked on a window the
-    /// outpost judged hung.
+    /// outpost saw hung while their program ran (its hang mark).
     abandoned_on_hung: AtomicUsize,
     /// The reducer's thread, which returns every worker thread started.
     shell: Lock<Option<JoinHandle<Vec<JoinHandle<()>>>>>,
@@ -299,25 +299,23 @@ pub type FocusWindowReader = Arc<dyn Fn() -> Option<isize> + Send + Sync>;
 pub type FocusedElementReader =
     Arc<dyn Fn(&Uia, &Request<Node>) -> windows::core::Result<Cached<Node>> + Send + Sync>;
 
-/// The outpost's shared state as one request sees it: the store's handle
-/// for the request ([`store::Nodes`]), carrying its mint tag, that of a
-/// program, or of the request a publication at a walk's bound claims; and,
-/// for a program, its copies of the facts it reads. The store tags every
+/// The outpost's shared state as one program sees it: the store's handle
+/// for the request ([`store::Nodes`]), carrying its mint tag, and its
+/// copies of the facts it reads. The store tags every
 /// node the request issues or looks up with it, and a program's text
 /// writes are made only with a commit the reducer accepts.
 struct RequestContext<'a> {
     context: &'a Context,
     nodes: store::Nodes<'a>,
-    /// The facts the request reads: a program's copies, which its commits
-    /// are applied to, or the reducer's own, copied for a publication.
+    /// The facts the program reads: its copies, which its commits are
+    /// applied to.
     facts: RefCell<Facts>,
     /// What the program holds of the store's text, and its text writes
     /// not yet committed ([`text_reads::ProgramText`]).
     program_text: RefCell<text_reads::ProgramText>,
-    /// The program's own, when the context is a program's: its request,
-    /// the caret events waiting when it was dispatched, and its worker's
-    /// charge.
-    program: Option<Program<'a>>,
+    /// The program's own: its request, the caret events waiting when it
+    /// was dispatched, and its worker's charge.
+    program: Program<'a>,
     /// The observation its verdicts are judged at: its entry's event's, or,
     /// when `None`, now on the arbitrator's observation clock at each
     /// judgement (`docs/design/focus-pipeline-rework.md`, "Who owns each
@@ -334,20 +332,6 @@ struct Program<'a> {
 }
 
 impl<'a> RequestContext<'a> {
-    /// The context of a thread that runs no program, tagging what it mints
-    /// with `tag` and reading `facts`: the reducer's publication at a
-    /// walk's bound.
-    fn new(context: &'a Context, tag: store::Tag, facts: Facts) -> Self {
-        Self {
-            context,
-            nodes: context.store.nodes_for(tag),
-            facts: RefCell::new(facts),
-            program_text: RefCell::default(),
-            program: None,
-            judged_at: None,
-        }
-    }
-
     /// The context of program `request`, given `facts`, `waiting`, and its
     /// worker's `charge`.
     fn for_program(
@@ -361,12 +345,12 @@ impl<'a> RequestContext<'a> {
             nodes: context.store.nodes_for(tag),
             facts: RefCell::new(facts),
             program_text: RefCell::default(),
-            program: Some(Program {
+            program: Program {
                 request,
                 waiting,
                 charge,
                 _context: std::marker::PhantomData,
-            }),
+            },
             judged_at: None,
         }
     }
@@ -378,12 +362,8 @@ impl<'a> RequestContext<'a> {
     }
 
     /// The program this context runs.
-    ///
-    /// # Panics
-    ///
-    /// When the context runs no program: only a program's code asks.
     fn program(&self) -> &Program<'a> {
-        self.program.as_ref().expect("a program's context")
+        &self.program
     }
 
     fn tag(&self) -> store::Tag {
@@ -394,11 +374,6 @@ impl<'a> RequestContext<'a> {
     /// look up nodes.
     fn nodes(&self) -> &store::Nodes<'a> {
         &self.nodes
-    }
-
-    /// What the request's lookups replaced, to drop once no lock is held.
-    fn take_removed(&self) -> store::Removed {
-        self.nodes.take_removed()
     }
 
     /// The program's request.
@@ -413,13 +388,10 @@ impl<'a> RequestContext<'a> {
 
     /// The caret events waiting when the program was dispatched.
     fn waiting(&self) -> &[WaitingCaret] {
-        self.program
-            .as_ref()
-            .map_or(&[], |program| program.waiting.as_slice())
+        self.program.waiting.as_slice()
     }
 
-    /// The facts as the program's copies hold them, or the reducer's own,
-    /// copied, for a publication.
+    /// The facts as the program's copies hold them.
     fn facts(&self) -> Ref<'_, Facts> {
         self.facts.borrow()
     }
@@ -491,7 +463,7 @@ impl<'a> RequestContext<'a> {
     /// any: at the program's end, for the writes no commit after them
     /// carried.
     fn commit_text(&self) {
-        if self.program.is_some() && self.program_text.borrow().has_pending() {
+        if self.program_text.borrow().has_pending() {
             let _ = self.commit(Effects::default());
         }
     }
@@ -538,16 +510,13 @@ impl crate::arbitration::Judgement for RequestContext<'_> {
     /// Keeps `change` in the program's copies and posts it at once, as a
     /// message of its own, even from an abandoned worker: the reducer
     /// judges by its generation whether to record it, and a probe that
-    /// timed out is recorded from any. A context that runs no program keeps
-    /// it in its copies only.
+    /// timed out is recorded from any.
     fn record(&self, change: VerdictChange) {
         let _ = Arc::make_mut(&mut self.facts.borrow_mut().verdicts).apply(&change);
-        if let Some(program) = &self.program {
-            self.mailbox.post(Posted::Verdict {
-                generation: program.request.generation,
-                change,
-            });
-        }
+        self.mailbox.post(Posted::Verdict {
+            generation: self.program.request.generation,
+            change,
+        });
     }
 }
 
@@ -593,12 +562,6 @@ impl Context {
     /// with ([`Outpost::set_observation_clock`]).
     fn observed_now(&self) -> u64 {
         self.observation.get().map_or_else(now_us, |clock| clock())
-    }
-
-    /// The outpost's clock ([`Outpost::set_clock`]), which its classic
-    /// walks measure their time budgets by.
-    fn clock(&self) -> verbatim_process::clock::Clock {
-        self.arbitrator().clock()
     }
 
     /// The handle of the window with the keyboard focus, by the reader the
@@ -1944,7 +1907,7 @@ pub fn run_attach(target_pid: u32, options: OutpostOptions) -> io::Result<()> {
     outpost.handle_command(&CoreToOutpost::Query {
         trace_id: TraceId::mint(),
         request_id: RequestId::shell(0),
-        query: Query::FocusNow,
+        query: Query::ReadFocus,
         timing: EventTiming::default(),
     });
     loop {

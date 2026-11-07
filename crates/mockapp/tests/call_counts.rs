@@ -2320,46 +2320,6 @@ fn an_acc_focus_served_by_another_process_answers_no_focused_control() {
     other_app.quit();
 }
 
-/// The focus-now answer onto a hung window is the plain window, with no
-/// call into the application: the window speaks by its text, a deliberate
-/// difference (Dickson, 2026-10-29), where NVDA says nothing
-/// (`experiments/focus-pipeline-rework-measurements/readme.md`,
-/// "Focus-now onto a hung window"). mockapp's focus window, judged hung, is
-/// answered as the focus, a plain window named by its title, with nothing
-/// above it, and mockapp counts no call or message. Judged readable, the
-/// answer reads the window's client area and its focus. The answer's
-/// foreground window is the system's, which mockapp's hidden window never
-/// is, so it is not asserted.
-fn focus_now_onto_a_hung_window_answers_its_plain_window() {
-    let title = common::unique_title("mockapp-focus-now-hung");
-    let app = common::spawn("small.json", "msaa", &title);
-    let hwnd = common::find_window(&title);
-    let mut outpost = OutpostUnderTest::new(&app);
-    outpost.judge_hung(hwnd);
-    common::reset_hits(hwnd);
-    let (answer, outpost_calls) = outpost.focus_now_answer();
-    let focus = answer.focus.as_ref().map(|focus| {
-        (
-            focus.node.role,
-            focus.node.name.as_deref(),
-            focus.ancestors.len(),
-        )
-    });
-    assert_eq!(
-        focus,
-        Some((Role::Window, Some(title.as_str()), 0)),
-        "the focus now's focus"
-    );
-    assert_eq!(outpost_calls, calls(0, 0, 0), "the outpost's calls");
-    assert_eq!(
-        (common::read_hits(hwnd), common::read_get_objects(hwnd)),
-        (vec![], vec![]),
-        "mockapp's calls and messages"
-    );
-    drop(outpost);
-    app.quit();
-}
-
 /// A mockapp MSAA window for another mockapp's window to be placed below
 /// ([`place_below`]), and its handle; shown without being activated when
 /// it is to be an owner, since UIA's raw view puts an owned window under
@@ -5213,10 +5173,6 @@ fn main() {
         (
             "an_acc_focus_served_by_another_process_answers_no_focused_control",
             an_acc_focus_served_by_another_process_answers_no_focused_control,
-        ),
-        (
-            "focus_now_onto_a_hung_window_answers_its_plain_window",
-            focus_now_onto_a_hung_window_answers_its_plain_window,
         ),
         ("caret_moves_cost_exactly", caret_moves_cost_exactly),
         (

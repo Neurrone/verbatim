@@ -223,11 +223,6 @@ More follow-ups:
   after the gap record already read the item, is reported as a new focus
   and speaks "pane" (the keyboard-focus acceptance in `focus_read.rs`,
   ede24c07). Check with an NVDA capture first.
-- The window title is doubled when an MSAA walk passes its bound:
-  `chain_at_bound` (`crates/verbatim-outpost/src/outpost/bound.rs`) and the
-  MSAA walk's progress callback start from the focus's own window when the
-  focus is that window's own object. Continue from the parent window, as
-  the UIA path does (since 45379c5c).
 - The Windows Terminal launch walk passes the listener's 500 ms bound, so
   the window is spoken without its role; the rule is unbuilt, in
   [the remaining focus builds](design/focus-pipeline-rework-remaining.md),

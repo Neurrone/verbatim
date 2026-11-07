@@ -639,28 +639,29 @@ knowing for review:
   `Asker::ShellItemPosition`, or starts an outpost for it and sends the
   query once it is ready, and hands the outcome to the dialog's delivery
   callback, exactly once, through its responder: the items or the
-  candidates, or `None` for any failure, within
-  `wanted::SHELL_ITEMS_WAIT` (11.5 seconds, the outpost's handling
-  deadline and a reply margin of half a second) of the request. Its times
-  are fixed on the run's shared clock when the dialog asks
-  (`wanted::ShellTimes`): Core's deadline for the answer 11.5 seconds
-  later, and the outpost's deadline for the query half a second before
-  that, carried in the query (`answer_by_us`), so a slow taskbar's whole
-  list is shown once it answers rather than Core cutting it off. The
-  answer is `None` when the process gets no outpost (`NotWatched`), when
-  its outpost is not ready before the outpost's deadline for the query
-  (`Wanted::ready` and `Wanted::expire`), when no answer has come by Core's deadline, or when
-  the request is dropped anywhere on its way. The requests still waiting
-  for an outpost are `wanted::Wanted`'s; a request sent is the request
-  table's, recorded with Core's deadline in microseconds on the run's
-  shared clock (`RequestTable::begin_until`), so a late answer is
-  dropped, and withdrawn from its outpost with `CoreToOutpost::Cancel`
-  when that deadline passes; the reducer thread turns that deadline into a moment on the
-  monotonic clock for its wait, erring a microsecond late (`instant_at`). The reducer thread waits for its next
-  command only until the earliest such deadline (`recv_timeout`), and
-  waits without one when none is outstanding; only the queue's end
-  (`Received::Closed`) ends it, since a system wait can run out a clock
-  tick before the deadline. The GUI event thread tells the reducer of `GuiEvent::ShellItemGone`
+  candidates, or `None` for any failure. The request has one clock: the
+  outpost's deadline for the query, `wanted::SHELL_ITEMS_WAIT` (63
+  seconds, four focus read deadlines and one program's, so the longest a
+  listener read's marker holds the query in an `explorer.exe` shared by
+  the taskbar and a folder window, and the query's own program, end
+  before it; Dickson, 2026-11-07) after the dialog asks, fixed on the
+  run's shared clock (`wanted::ShellTimes`) and carried in the query
+  (`answer_by_us`), by which the outpost answers it, with its answer,
+  with nothing or abandoned. The answer is `None` when the process gets
+  no outpost (`NotWatched`), when its outpost is not ready before that
+  deadline (`Wanted::ready`), when the outpost answers with nothing,
+  abandoned, or ends (the request table's `outpost_ended`), or when the
+  request is dropped anywhere on its way. The requests still waiting
+  for an outpost are `wanted::Wanted`'s, each ended by its outpost's
+  `Ready` or its application's `NotWatched`, one of which ends every
+  start, so no timer of the app's ends one; a request sent is the request
+  table's (`RequestTable::begin`), with no deadline of Core's, which could
+  answer a request its outpost then answers too. The reducer thread
+  turns its own timers into a moment on the monotonic clock for its
+  wait, erring a microsecond late (`instant_at`), and waits for its next
+  command only until the earliest (`recv_timeout`), and without one when
+  none is due; only the queue's end (`Received::Closed`) ends it, since a
+  system wait can run out a clock tick before the deadline. The GUI event thread tells the reducer of `GuiEvent::ShellItemGone`
   (`Input::ShellItemGone`) when the list dialog finds its chosen item
   gone, and of `GuiEvent::ShellItemUnclickable`
   (`Input::ShellItemUnclickable`) when it finds the item with no point to

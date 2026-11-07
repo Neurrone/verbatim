@@ -10,14 +10,13 @@
 //!   request whose outpost deadline has passed by then, answered with
 //!   nothing;
 //! - at the application's `NotWatched` ([`Wanted::not_watched`]), where it
-//!   is answered "gone";
-//! - for a shell items request only, at the outpost's deadline for it
-//!   ([`ShellTimes::outpost_answer_by_us`]), where it is answered with
-//!   nothing ([`Wanted::expire`]).
+//!   is answered "gone".
 //!
-//! A request waiting through a failure's backoff keeps waiting, so the
-//! replacement answers it: an `Ended` with a generation following ends
-//! nothing here.
+//! The supervisor ends every start of an outpost with one of the two, so
+//! no timer of the app's ends a request here: a timer would be a second
+//! path to the same end. A request waiting through a failure's backoff
+//! keeps waiting, so the replacement answers it: an `Ended` with a
+//! generation following ends nothing here.
 
 use std::collections::HashMap;
 use std::time::Duration;
@@ -28,20 +27,27 @@ use verbatim_model::Pid;
 /// The list dialog's whole wait for its list or a clicked item's position
 /// from its request, whether the taskbar's outpost is starting, the query
 /// waits behind other work in the outpost, or the walk is slow
-/// (`books/dev/src/explanation/design/listener-without-connections.md`, section 10, step 11):
-/// the handling deadline of the outpost's program
-/// ([`HANDLING_DEADLINE`](verbatim_model::HANDLING_DEADLINE)) and
-/// [`SHELL_ITEMS_REPLY_MARGIN`], 11.5 seconds. Core does not cut the walk
-/// off: the outpost's deadline for the query is the margin before Core's.
-pub(crate) const SHELL_ITEMS_WAIT: Duration =
-    verbatim_model::HANDLING_DEADLINE.saturating_add(SHELL_ITEMS_REPLY_MARGIN);
+/// (`books/dev/src/explanation/design/listener-without-connections.md`, section 10, step 11),
+/// the one clock of the request: the outpost's deadline for the query,
+/// carried in it as its `answer_by_us`, by which the outpost answers it,
+/// with its answer, with no items or abandoned. It is 63 seconds (Dickson,
+/// 2026-11-07): four focus read deadlines
+/// ([`BOUNDED_WALK_DEADLINE`](verbatim_model::BOUNDED_WALK_DEADLINE)),
+/// the longest a listener read's marker holds the query behind it when the
+/// taskbar and a folder window share one `explorer.exe`, three deadlines of
+/// abandoned reads and one report, and the program's own
+/// ([`HANDLING_DEADLINE`](verbatim_model::HANDLING_DEADLINE)), so an answer
+/// that comes is never thrown away.
+pub(crate) const SHELL_ITEMS_WAIT: Duration = verbatim_model::BOUNDED_WALK_DEADLINE
+    .saturating_mul(4)
+    .saturating_add(verbatim_model::HANDLING_DEADLINE);
 
-// The dialog's wait holds the outpost's program for the query.
-const _: () = assert!(SHELL_ITEMS_WAIT.as_micros() > verbatim_model::HANDLING_DEADLINE.as_micros());
-
-/// The time left between the outpost's deadline for a shell items query and
-/// Core's, for the answer's way through the pipes and the reducer thread.
-const SHELL_ITEMS_REPLY_MARGIN: Duration = Duration::from_millis(500);
+// The wait holds the marker's longest hold and the query's own program.
+const _: () = assert!(
+    SHELL_ITEMS_WAIT.as_micros()
+        >= 4 * verbatim_model::BOUNDED_WALK_DEADLINE.as_micros()
+            + verbatim_model::HANDLING_DEADLINE.as_micros()
+);
 
 /// The times of one shell items request, all on the run's shared clock and
 /// fixed when the dialog asks.
@@ -52,18 +58,11 @@ pub(crate) struct ShellTimes {
 }
 
 impl ShellTimes {
-    /// Core's deadline for the answer: [`SHELL_ITEMS_WAIT`] from the
-    /// request.
+    /// The outpost's deadline for the query, past which it is abandoned:
+    /// [`SHELL_ITEMS_WAIT`] from the request. A request not sent by then is
+    /// answered with nothing.
     pub(crate) fn answer_by_us(self) -> u64 {
         self.asked_us.saturating_add(micros(SHELL_ITEMS_WAIT))
-    }
-
-    /// The outpost's deadline for the query, past which it is abandoned:
-    /// [`SHELL_ITEMS_REPLY_MARGIN`] before Core's. A request not sent by
-    /// then is answered with nothing.
-    pub(crate) fn outpost_answer_by_us(self) -> u64 {
-        self.answer_by_us()
-            .saturating_sub(micros(SHELL_ITEMS_REPLY_MARGIN))
     }
 }
 
@@ -115,8 +114,7 @@ impl Wanted {
     }
 
     /// Wants `ask` of `kind`'s surface from the outpost of `process`, once
-    /// it is ready, answered with nothing at the outpost's deadline for it
-    /// if it still waits.
+    /// it is ready, or answered with nothing at its `NotWatched`.
     pub(crate) fn want_shell_items(
         &mut self,
         process: Pid,
@@ -140,7 +138,7 @@ impl Wanted {
         let (late, shell): (Vec<ShellWanted>, Vec<ShellWanted>) = waiting
             .shell
             .into_iter()
-            .partition(|wanted| wanted.times.outpost_answer_by_us() <= now_us);
+            .partition(|wanted| wanted.times.answer_by_us() <= now_us);
         for wanted in late {
             tracing::warn!(
                 kind = ?wanted.kind,
@@ -173,42 +171,6 @@ impl Wanted {
             // Dropped unanswered, the request is answered "nothing".
             drop(wanted.ask);
         }
-    }
-
-    /// Answers every shell items request whose outpost deadline is
-    /// `now_us`, on the run's shared clock, or earlier with nothing.
-    pub(crate) fn expire(&mut self, now_us: u64) {
-        for (process, waiting) in &mut self.waiting {
-            let (expired, kept): (Vec<ShellWanted>, Vec<ShellWanted>) =
-                std::mem::take(&mut waiting.shell)
-                    .into_iter()
-                    .partition(|wanted| wanted.times.outpost_answer_by_us() <= now_us);
-            waiting.shell = kept;
-            for wanted in expired {
-                tracing::warn!(
-                    kind = ?wanted.kind,
-                    %process,
-                    "the taskbar's outpost was not ready in time for its query; the shell's items are not read"
-                );
-                drop(wanted.ask);
-            }
-        }
-        self.waiting
-            .retain(|_, waiting| waiting.focus_now.is_some() || !waiting.shell.is_empty());
-    }
-
-    /// The earliest outpost deadline of a waiting shell items request, on
-    /// the run's shared clock.
-    pub(crate) fn next_deadline(&self) -> Option<u64> {
-        self.waiting
-            .values()
-            .flat_map(|waiting| {
-                waiting
-                    .shell
-                    .iter()
-                    .map(|wanted| wanted.times.outpost_answer_by_us())
-            })
-            .min()
     }
 
     /// How many applications' focus is wanted.
@@ -250,10 +212,7 @@ mod tests {
 
     #[test]
     fn a_shell_items_requests_times_are_fixed_from_the_dialogs_request() {
-        assert_eq!(
-            (ASKED.outpost_answer_by_us(), ASKED.answer_by_us()),
-            (21_000_000, 21_500_000)
-        );
+        assert_eq!(ASKED.answer_by_us(), 73_000_000);
     }
 
     #[test]
@@ -276,7 +235,6 @@ mod tests {
     fn a_focus_now_request_has_no_deadline_and_is_taken_once_at_its_ready() {
         let mut wanted = Wanted::default();
         wanted.want_focus_now(PROCESS, Pid(8));
-        wanted.expire(u64::MAX);
         assert_eq!(wanted.focus_now_count(), 1, "kept; it has no deadline");
         assert_eq!(wanted.ready(PROCESS, 0).focus_now, Some(Pid(8)));
         assert_eq!(wanted.ready(PROCESS, 0).focus_now, None, "taken once");
@@ -291,7 +249,6 @@ mod tests {
         wanted.not_watched(Pid(9));
         assert_eq!(*outcomes.lock().expect("outcomes"), Vec::new(), "another's");
         wanted.not_watched(PROCESS);
-        wanted.expire(ASKED.outpost_answer_by_us());
         assert!(wanted.ready(PROCESS, ASKED.asked_us).shell.is_empty());
         assert_eq!(*outcomes.lock().expect("outcomes"), vec![None]);
     }
@@ -303,9 +260,7 @@ mod tests {
         let mut wanted = Wanted::default();
         let (outcomes, ask) = recorder();
         wanted.want_shell_items(PROCESS, ShellItemKind::Taskbar, ask, ASKED);
-        let taken = wanted
-            .ready(PROCESS, ASKED.outpost_answer_by_us() - 1)
-            .shell;
+        let taken = wanted.ready(PROCESS, ASKED.answer_by_us() - 1).shell;
         assert_eq!(
             taken
                 .iter()
@@ -313,9 +268,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![(ShellItemKind::Taskbar, ASKED)]
         );
-        wanted.expire(ASKED.outpost_answer_by_us());
         wanted.not_watched(PROCESS);
-        assert_eq!(wanted.next_deadline(), None);
         assert_eq!(*outcomes.lock().expect("outcomes"), Vec::new());
         drop(taken);
     }
@@ -327,27 +280,8 @@ mod tests {
         let mut wanted = Wanted::default();
         let (outcomes, ask) = recorder();
         wanted.want_shell_items(PROCESS, ShellItemKind::Taskbar, ask, ASKED);
-        assert!(
-            wanted
-                .ready(PROCESS, ASKED.outpost_answer_by_us())
-                .shell
-                .is_empty()
-        );
+        assert!(wanted.ready(PROCESS, ASKED.answer_by_us()).shell.is_empty());
         wanted.not_watched(PROCESS);
-        assert_eq!(*outcomes.lock().expect("outcomes"), vec![None]);
-    }
-
-    #[test]
-    fn a_shell_items_request_still_waiting_at_its_deadline_is_answered_nothing_once() {
-        let mut wanted = Wanted::default();
-        let (outcomes, ask) = recorder();
-        wanted.want_shell_items(PROCESS, ShellItemKind::SystemTray, ask, ASKED);
-        assert_eq!(wanted.next_deadline(), Some(ASKED.outpost_answer_by_us()));
-        wanted.expire(ASKED.outpost_answer_by_us() - 1);
-        assert_eq!(*outcomes.lock().expect("outcomes"), Vec::new());
-        wanted.expire(ASKED.outpost_answer_by_us());
-        wanted.not_watched(PROCESS);
-        assert!(wanted.ready(PROCESS, 0).shell.is_empty());
         assert_eq!(*outcomes.lock().expect("outcomes"), vec![None]);
     }
 }
