@@ -189,6 +189,7 @@ fn focus(
             answers: None,
             first_cached_ancestor: None,
         },
+        purpose: None,
     }
 }
 
@@ -508,6 +509,7 @@ fn an_event_with_no_window_facts_from_the_focus_hosted_application_is_attended()
             change: PropertyChange::Name(Some("Wi-Fi off".to_owned())),
             child_count: None,
         },
+        purpose: None,
     };
     assert_eq!(core.input(renamed(3)), []);
     assert_eq!(

@@ -7,9 +7,10 @@
 //! foreground window. Each asserts every effect its input produces.
 
 use verbatim_core::{SrState, reduce};
+use verbatim_model::protocol::FocusPurpose;
 use verbatim_model::{
-    Backend, Earcon, Effect, ForegroundWindow, HookForeground, Input, KeySeq, LockKey, Message,
-    NodeDetails, NodeId, NodeSnapshot, NormalizedEvent, OutpostId, Phrase, Pid, Role,
+    Backend, DesktopNews, Earcon, Effect, ForegroundWindow, HookForeground, Input, KeySeq, LockKey,
+    Message, NodeDetails, NodeId, NodeSnapshot, NormalizedEvent, OutpostId, Phrase, Pid, Role,
     SegmentContent, SpeechPriority, StateSet, TraceId, Utterance, UtteranceSegment, WindowFacts,
     WindowHandle,
 };
@@ -231,6 +232,7 @@ fn a_menus_end_asks_for_the_foreground_focus_unless_a_later_focus_was_applied() 
                 answers: None,
                 first_cached_ancestor: None,
             },
+            purpose: None,
         },
     );
     assert_eq!(state.latest_focus_observed_at(), Some(1_000));
@@ -246,7 +248,9 @@ fn a_menus_end_asks_for_the_foreground_focus_unless_a_later_focus_was_applied() 
     // None since: the application in front is asked for its focus.
     assert_eq!(
         reduce(&mut state, &Input::MenuOrSwitchEnded { ended_at_us: 1_001 }),
-        [Effect::ReadForegroundFocus]
+        [Effect::ReadFocus(
+            verbatim_model::protocol::FocusPurpose::Fake
+        )]
     );
 }
 
@@ -294,6 +298,7 @@ fn focus_in_window(number: u64, foreground: bool, us: u64) -> Input {
             answers: None,
             first_cached_ancestor: None,
         },
+        purpose: None,
     }
 }
 
@@ -312,7 +317,9 @@ fn a_menus_end_is_compared_with_the_focus_taken_only() {
     assert_eq!(state.latest_focus_observed_at(), Some(1_000));
     assert_eq!(
         reduce(&mut state, &Input::MenuOrSwitchEnded { ended_at_us: 1_500 }),
-        [Effect::ReadForegroundFocus]
+        [Effect::ReadFocus(
+            verbatim_model::protocol::FocusPurpose::Fake
+        )]
     );
 }
 
@@ -542,5 +549,248 @@ fn a_hang_in_the_process_focused_inside_the_attention_window_plays_the_sound() {
             }
         ),
         []
+    );
+}
+
+/// Every segment `effects` speak, in order.
+fn spoken(effects: &[Effect]) -> Vec<UtteranceSegment> {
+    effects
+        .iter()
+        .filter_map(|effect| match effect {
+            Effect::Speak(utterance, _) => Some(utterance.segments.clone()),
+            _ => None,
+        })
+        .flatten()
+        .collect()
+}
+
+/// A focus of node `number`, an "OK" button read through `backend`, with
+/// `ancestors`, in window 10, observed at `us`, answering a focus query for
+/// `purpose`, or a report for `None`.
+fn button_focus(
+    (number, backend): (u64, Backend),
+    ancestors: Vec<NodeSnapshot>,
+    us: u64,
+    purpose: Option<FocusPurpose>,
+) -> Input {
+    let Input::Event {
+        trace_id,
+        source,
+        window,
+        event: NormalizedEvent::FocusChanged { mut node, .. },
+        ..
+    } = focus_in_window(number, false, us)
+    else {
+        unreachable!("a focus");
+    };
+    node.backend = backend;
+    Input::Event {
+        trace_id,
+        observed_at_us: us,
+        source,
+        backend,
+        window,
+        event: NormalizedEvent::FocusChanged {
+            node,
+            whole_window: false,
+            ancestors,
+            selected_child: None,
+            text: None,
+            earlier: None,
+            group: None,
+            answers: None,
+            first_cached_ancestor: None,
+        },
+        purpose,
+    }
+}
+
+/// The "OK" button's announcement.
+fn ok_button() -> Vec<UtteranceSegment> {
+    vec![
+        UtteranceSegment::label("OK"),
+        UtteranceSegment::new(SegmentContent::Role(Role::Button)),
+    ]
+}
+
+/// A fake focus's MSAA answer of the MSAA focus Core holds is a duplicate
+/// by NVDA's rule for MSAA objects, and says nothing.
+#[test]
+fn a_fake_focus_on_the_msaa_focus_core_holds_says_nothing() {
+    let mut state = SrState::new();
+    let _ = reduce(
+        &mut state,
+        &button_focus((5, Backend::Msaa), Vec::new(), 1_000, None),
+    );
+    let effects = reduce(
+        &mut state,
+        &button_focus(
+            (5, Backend::Msaa),
+            Vec::new(),
+            2_000,
+            Some(FocusPurpose::Fake),
+        ),
+    );
+    assert_eq!(effects, []);
+}
+
+/// A fake focus's UIA answer of the UIA focus Core holds is queued with no
+/// duplicate test, as NVDA queues a UIA object, and is spoken again.
+#[test]
+fn a_fake_focus_on_the_uia_focus_core_holds_is_spoken_again() {
+    let mut state = SrState::new();
+    let _ = reduce(
+        &mut state,
+        &button_focus((5, Backend::Uia), Vec::new(), 1_000, None),
+    );
+    let effects = reduce(
+        &mut state,
+        &button_focus(
+            (5, Backend::Uia),
+            Vec::new(),
+            2_000,
+            Some(FocusPurpose::Fake),
+        ),
+    );
+    assert_eq!(spoken(&effects), ok_button());
+}
+
+/// A return to the user's desktop asks the application in front for its
+/// focus again, as NVDA queues it again.
+#[test]
+fn the_focus_is_asked_for_after_a_return_to_the_users_desktop() {
+    assert_eq!(
+        effects_of(&Input::Desktop {
+            trace_id: TraceId::from_raw(9),
+            news: DesktopNews::Returned,
+        }),
+        [Effect::ReadFocus(FocusPurpose::Again)]
+    );
+}
+
+/// The desktop's return's answer has no duplicate test, so the MSAA focus
+/// Core holds is spoken again.
+#[test]
+fn a_desktop_return_s_focus_is_spoken_again_on_the_focus_core_holds() {
+    let mut state = SrState::new();
+    let _ = reduce(
+        &mut state,
+        &button_focus((5, Backend::Msaa), Vec::new(), 1_000, None),
+    );
+    let effects = reduce(
+        &mut state,
+        &button_focus(
+            (5, Backend::Msaa),
+            Vec::new(),
+            2_000,
+            Some(FocusPurpose::Again),
+        ),
+    );
+    assert_eq!(spoken(&effects), ok_button());
+}
+
+/// A list, outpost 1's node 3, named `name`.
+fn list(name: &str) -> NodeSnapshot {
+    NodeSnapshot {
+        id: NodeId::in_outpost(OutpostId(1), 3),
+        backend: Backend::Uia,
+        role: Role::List,
+        name: Some(name.to_owned()),
+        value: None,
+        states: StateSet::new(),
+        details: NodeDetails::default(),
+    }
+}
+
+/// The virtual desktop's name is kept until the next focus, which says it
+/// before the containers it enters, as NVDA says it; its
+/// due time then says nothing.
+#[test]
+fn the_virtual_desktops_name_is_spoken_before_the_next_focuss_containers() {
+    let mut state = SrState::new();
+    let name = Input::Desktop {
+        trace_id: TraceId::from_raw(9),
+        news: DesktopNews::Name("Desktop 2".to_owned()),
+    };
+    assert_eq!(reduce(&mut state, &name), []);
+    let effects = reduce(
+        &mut state,
+        &button_focus((5, Backend::Uia), vec![list("Desktop")], 1_000, None),
+    );
+    let mut expected = vec![
+        UtteranceSegment::text("Desktop 2"),
+        UtteranceSegment::label("Desktop"),
+        UtteranceSegment::new(SegmentContent::Role(Role::List)),
+    ];
+    expected.extend(ok_button());
+    assert_eq!(spoken(&effects), expected);
+    let due = Input::Desktop {
+        trace_id: TraceId::from_raw(10),
+        news: DesktopNews::NameDue,
+    };
+    assert_eq!(reduce(&mut state, &due), []);
+}
+
+/// A name no focus follows is spoken as a message at its due time,
+/// queued, and only once.
+#[test]
+fn the_virtual_desktops_name_is_spoken_when_no_focus_follows() {
+    let mut state = SrState::new();
+    let name = Input::Desktop {
+        trace_id: TraceId::from_raw(9),
+        news: DesktopNews::Name("Desktop 2".to_owned()),
+    };
+    let due = Input::Desktop {
+        trace_id: TraceId::from_raw(10),
+        news: DesktopNews::NameDue,
+    };
+    assert_eq!(reduce(&mut state, &name), []);
+    assert_eq!(
+        reduce(&mut state, &due),
+        [Effect::Speak(
+            Utterance {
+                trace_id: TraceId::from_raw(10),
+                priority: SpeechPriority::Queued,
+                segments: vec![UtteranceSegment::text("Desktop 2")],
+                source: None,
+                say_all: false,
+                validity: None,
+            },
+            None,
+        )]
+    );
+    assert_eq!(reduce(&mut state, &due), []);
+}
+
+/// A fake focus's answer carries the application's name and the Alt key's
+/// state as a reported focus does, so the Alt+Tab switcher's item, read
+/// with Alt held, drops its containers, none of them spoken.
+#[test]
+fn the_alt_tab_rule_applies_to_a_fake_focus_answer() {
+    let mut state = SrState::new();
+    let mut item = button_focus(
+        (6, Backend::Uia),
+        vec![list("Running applications")],
+        1_000,
+        Some(FocusPurpose::Fake),
+    );
+    let Input::Event {
+        window: Some(window),
+        event: NormalizedEvent::FocusChanged { node, .. },
+        ..
+    } = &mut item
+    else {
+        unreachable!("a focus in a window");
+    };
+    window.application = "explorer".to_owned();
+    window.alt_held = true;
+    node.role = Role::ListItem;
+    node.name = Some("Notepad".to_owned());
+    node.details.parent_automation_id = Some("SwitchItemListControl".to_owned());
+    let effects = reduce(&mut state, &item);
+    assert_eq!(
+        spoken(&effects),
+        [UtteranceSegment::label("Notepad")],
+        "the item alone, its list not said"
     );
 }

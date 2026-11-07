@@ -136,7 +136,9 @@ recorder unchanged. What the reducer does with each type is in
   executes the input's effects under and Core's key stamp looks up.
   - Inputs are events (each with its source pid, backend, optional
     `WindowFacts`, and the observation time on the run's shared clock in
-    microseconds, one clock read for every event kind), `Answered` (an
+    microseconds, one clock read for every event kind, and, for the answer
+    to a `Query::ReadFocus`, its `purpose`, which only the app sets),
+    `Answered` (an
     outpost's answer to a query the reducer asked, its `QueryId`, the
     outpost that answered and the protocol's `QueryOutcome`, which the
     reducer turns into the result its query's kind takes), `OutpostEnded`
@@ -150,7 +152,10 @@ recorder unchanged. What the reducer does with each type is in
     `ApplicationNotResponding`, `LockKeyToggled` (a `LockKey` and its
     state), `ClockRead`, `ClipboardCopied`, `ShellItemGone`,
     `ShellItemUnclickable`, `PreviewSpeech`, `PreviewEarcon`,
-    `MenuOrSwitchEnded`, and `Foreground`. The text inputs are under
+    `MenuOrSwitchEnded`, `Foreground`, `ReadFocusUnanswered` (Verbatim+Tab's
+    query ended with no answer, abandoned or not) and `Desktop` (a
+    `DesktopNews`: the user's desktop returned, the virtual desktop's
+    name, or its due time). The text inputs are under
     "The text protocol".
   - Effects are `Speak` (an utterance and the number of the user input
     that caused it, which Core stamps as its last step; every
@@ -162,8 +167,9 @@ recorder unchanged. What the reducer does with each type is in
     to activate, under its `QueryId`); `Withdraw` (a query Core gave up
     on, to withdraw from its outpost);
     `CopyToClipboard` (routed through the shell's clipboard helper, its
-    result back as `Input::ClipboardCopied`); `ReadForegroundFocus`
-    (NVDA's fake focus); `ReadClock { repeat }` (read the time and date
+    result back as `Input::ClipboardCopied`); `ReadFocus(FocusPurpose)`
+    (NVDA's fake focus, the desktop's return, or Verbatim+Tab's live
+    query); `ReadClock { repeat }` (read the time and date
     into `Input::ClockRead`); `Show(GuiRequest)` (the menu, or the list of
     a `ShellItemKind`'s items). A lock key's read and the terminal's
     quiet-period timer are not effects: the shell reads their due times
@@ -307,8 +313,8 @@ that carries them on the pipes, `Message`, is
     `TargetExited` and `IdleAnswer`.
   - `ListenerToCore`: `Ready`, `FocusFact` (a `ListenerFact`, a pid and
     the `DeliveredFact` routed to that pid's outpost), `ForwardingEnded`,
-    `MenuOrSwitchEnded`, `ForegroundWindow`, `Pong`, `Fault` and
-    `IdleAnswer`.
+    `MenuOrSwitchEnded`, `Desktop` (a `DesktopNews`, with its timing),
+    `ForegroundWindow`, `Pong`, `Fault` and `IdleAnswer`.
 - Every variant has a `Kind` (`kind()`, an exhaustive match): `Ask`,
   `Answer`, `Report`, `Release`, `Lifecycle`, `Routed` or
   `Configuration`. The module denies wildcard matches over its enums, and
@@ -325,7 +331,11 @@ that carries them on the pipes, `Message`, is
   an outpost sends ahead of its queue (`Pong`, `Ready`, `TargetExited`,
   `SpareReady`), none of which carries a node.
 - `Query` is `ReadFocus`, `Navigate`, `Activate`, `Ancestors`, `DumpTree`,
-  `Text`, `ShellItems` or `ShellItemPosition`. A shell items or position
+  `Text`, `ShellItems` or `ShellItemPosition`. A `ReadFocus` carries its
+  `FocusPurpose`: `Plain` (the start, a replacement), `Fake` (a menu's or
+  the switcher's end), `Again` (the user's desktop returned) or `Report`
+  (Verbatim+Tab), which decides the tests its answer gets in the outpost
+  and in Core. A shell items or position
   query carries its deadline on the run's shared clock, `answer_by_us`;
   one dispatched past it is answered with no items. A
   `ReadFocus` answer (`FocusNow`) carries the foreground window when the application

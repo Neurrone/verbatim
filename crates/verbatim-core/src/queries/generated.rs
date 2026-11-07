@@ -635,6 +635,7 @@ impl Run {
                 answers: None,
                 first_cached_ancestor: None,
             },
+            purpose: None,
         }
     }
 
@@ -653,6 +654,7 @@ impl Run {
                     self.model.now / 1_000,
                 )),
             },
+            purpose: None,
         }
     }
 

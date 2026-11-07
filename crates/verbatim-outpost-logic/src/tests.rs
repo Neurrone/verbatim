@@ -203,7 +203,9 @@ fn name_change(child: i32) -> Item {
 fn focus_now(request_id: u64) -> Item {
     Item::Query {
         request_id: RequestId::shell(request_id),
-        query: Query::ReadFocus,
+        query: Query::ReadFocus {
+            purpose: verbatim_model::protocol::FocusPurpose::Plain,
+        },
     }
 }
 

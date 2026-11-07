@@ -454,6 +454,7 @@ mod tests {
                 answers: None,
                 first_cached_ancestor: None,
             },
+            purpose: None,
         };
         assert_eq!(
             describe_input(&input),

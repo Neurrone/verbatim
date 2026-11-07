@@ -48,6 +48,11 @@ pub enum WinKind {
     ShellForeground,
     /// The console host's caret moved.
     ConsoleCaret,
+    /// The input desktop switched; only the focus listener takes it.
+    DesktopSwitch,
+    /// The desktop window's name changed; only the focus listener takes
+    /// it.
+    DesktopName,
 }
 
 /// The UIA property ids the reducer tells apart, as `UIAutomationClient.h`

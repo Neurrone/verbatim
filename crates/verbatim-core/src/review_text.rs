@@ -152,6 +152,7 @@ pub(crate) fn command_mark(
             edge: None,
             command,
         }),
+        about: None,
     };
     crate::terminal_model::command_mark(state, node, trace_id, (forward, from), then)
         .unwrap_or_default()
@@ -175,7 +176,11 @@ fn request(state: &mut SrState, node: NodeId, op: TextOp, then: TextFollowUp) ->
     state.queries.forget(|then| matches!(then, Then::Text(_)));
     let (_, effect) = state.queries.ask(
         crate::queries::Asking::Text(node, op),
-        Then::Text(PendingText { node, then }),
+        Then::Text(PendingText {
+            node,
+            then,
+            about: None,
+        }),
     );
     vec![effect]
 }

@@ -112,6 +112,7 @@ fn spoken_in(
             backend: Backend::Msaa,
             window,
             event,
+            purpose: None,
         },
     )
     .into_iter()
@@ -339,6 +340,7 @@ fn said(state: &mut SrState, mut event: NormalizedEvent) -> Vec<Said> {
             backend: Backend::Msaa,
             window: None,
             event,
+            purpose: None,
         },
     )
     .into_iter()
@@ -598,6 +600,7 @@ fn a_progress_bar_off_the_focus_indicates_its_percentage() {
                 backend: Backend::Msaa,
                 window: None,
                 event,
+                purpose: None,
             },
         )
     };

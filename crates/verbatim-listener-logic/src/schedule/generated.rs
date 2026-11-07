@@ -1600,12 +1600,17 @@ fn fixed_cases_keep_the_schedules_rules() {
     }
 }
 
-/// One step of a sequence of the menu end's grace.
+/// One step of a sequence of the listener's timer: a menu end's grace,
+/// the desktop's return and the desktop name's due time.
 #[derive(Clone, Copy, Debug)]
 enum Grace {
     /// A menu ends, its grace 300 microseconds.
     Ended,
-    /// The grace's timer goes off, as set or early.
+    /// The user's desktop returns, told 200 microseconds later.
+    Returned,
+    /// A desktop name is sent, its due time 250 microseconds later.
+    NameSent,
+    /// The timer goes off, as set or early.
     Fired,
     /// An idle round is to be answered.
     IdleAnswer,
@@ -1616,8 +1621,10 @@ enum Grace {
 }
 
 /// Each step a grace sequence may take.
-const GRACE_STEPS: [Grace; 6] = [
+const GRACE_STEPS: [Grace; 8] = [
     Grace::Ended,
+    Grace::Returned,
+    Grace::NameSent,
     Grace::Fired,
     Grace::IdleAnswer,
     Grace::Close,
@@ -1628,7 +1635,19 @@ const GRACE_STEPS: [Grace; 6] = [
 /// The grace's length the sequences give.
 const GRACE_US: u64 = 300;
 
-/// A grace sequence, with what it has sent.
+/// The desktop return's delay the sequences give.
+const RETURN_US: u64 = 200;
+
+/// The desktop name's due time the sequences give.
+const NAME_DUE_US: u64 = 250;
+
+/// The three things that wait on the timer, as the model numbers them.
+const END: usize = 0;
+const RETURN: usize = 1;
+const NAME: usize = 2;
+
+/// A grace sequence, with what it has sent: the reference model, which
+/// keeps each of the three waiting things' due time on its own.
 #[derive(Clone, Debug, Default)]
 struct GraceRun {
     grace: GraceState,
@@ -1637,12 +1656,11 @@ struct GraceRun {
     /// How many ends and rounds have come.
     ends: u64,
     rounds: u64,
-    /// When the newest end's grace is over, while no end has been sent
-    /// since it came.
-    pending: Option<u64>,
-    /// The rounds not answered as they came, each with the newest end
-    /// when it came.
-    held: Vec<(u64, u64)>,
+    /// When each waiting thing is due, while it has not been sent since
+    /// its newest arming: the end, the return and the name's due time.
+    pending: [Option<u64>; 3],
+    /// The rounds not answered as they came.
+    held: Vec<u64>,
     closed: bool,
     /// The ends sent, and the rounds answered.
     sent: Vec<u64>,
@@ -1650,18 +1668,32 @@ struct GraceRun {
 }
 
 impl GraceRun {
-    /// Takes `step`, checking its effects against the grace's rules.
+    /// Takes `step`, checking its effects against the timer's rules.
     fn step(&mut self, step: Grace) {
         self.trail.push(step);
         let now = self.now;
         let input = match step {
             Grace::Ended => {
                 self.ends += 1;
-                self.pending = Some(now + GRACE_US);
+                self.pending[END] = Some(now + GRACE_US);
                 GraceInput::Ended {
                     ended_at_us: self.ends,
                     timing: EventTiming::default(),
                     grace: GRACE_US,
+                }
+            }
+            Grace::Returned => {
+                self.pending[RETURN] = Some(now + RETURN_US);
+                GraceInput::Returned {
+                    timing: EventTiming::default(),
+                    after: RETURN_US,
+                }
+            }
+            Grace::NameSent => {
+                self.pending[NAME] = Some(now + NAME_DUE_US);
+                GraceInput::NameSent {
+                    timing: EventTiming::default(),
+                    after: NAME_DUE_US,
                 }
             }
             Grace::Fired => GraceInput::Fired,
@@ -1679,8 +1711,17 @@ impl GraceRun {
             }
         };
         let effects = self.grace.step(input, now);
-        for effect in &effects {
-            match effect {
+        self.check(step, now, &effects);
+    }
+
+    /// Checks `effects`, those of `step` taken at `now`, against the
+    /// timer's rules and the model, which it moves on.
+    fn check(&mut self, step: Grace, now: u64, effects: &[GraceEffect]) {
+        // The due times of what this step sent, in the order sent.
+        let mut sent_dues = Vec::new();
+        let mut timers = Vec::new();
+        for effect in effects {
+            let thing = match effect {
                 GraceEffect::SendEnd { ended_at_us, .. } => {
                     // Only the newest end is sent, and once.
                     assert_eq!(*ended_at_us, self.ends, "{:?}", self.trail);
@@ -1690,48 +1731,89 @@ impl GraceRun {
                         self.trail
                     );
                     self.sent.push(*ended_at_us);
-                    self.pending = None;
+                    END
                 }
+                GraceEffect::SendReturned(_) => RETURN,
+                GraceEffect::SendNameDue(_) => NAME,
                 GraceEffect::SendIdleAnswer(round) => {
                     assert!(
                         !self.answered.contains(round),
                         "a round answered twice: {:?}",
                         self.trail
                     );
-                    // A round that waited is answered after an end at
-                    // least as new as the one it waited for.
-                    if let Some(&(_, end)) = self.held.iter().find(|(held, _)| held == round) {
-                        assert!(
-                            self.sent.last().is_some_and(|sent| *sent >= end),
-                            "round {round} answered before end {end}: {:?}",
-                            self.trail
-                        );
-                    }
-                    self.held.retain(|(held, _)| held != round);
+                    // A round is answered only once nothing waits.
+                    assert_eq!(
+                        self.pending, [None; 3],
+                        "round {round} answered while something waits: {:?}",
+                        self.trail
+                    );
+                    self.held.retain(|held| held != round);
                     self.answered.push(*round);
+                    continue;
                 }
-                GraceEffect::SetTimer(_) => {}
-            }
+                GraceEffect::SetTimer(after) => {
+                    timers.push(*after);
+                    continue;
+                }
+            };
+            // Each thing is sent only while it waits, once its time is
+            // over, and once.
+            let due = self.pending[thing].take().unwrap_or_else(|| {
+                panic!("{effect:?} sent with nothing waiting: {:?}", self.trail)
+            });
+            assert!(
+                due <= now,
+                "{effect:?} sent before its time: {:?}",
+                self.trail
+            );
+            sent_dues.push(due);
         }
-        if matches!(step, Grace::IdleAnswer) && !self.answered.contains(&self.rounds) {
-            self.held.push((self.rounds, self.ends));
-        }
-        // No round is held while no end is pending.
         assert!(
-            self.pending.is_some() || self.held.is_empty(),
-            "a round held with no end pending: {:?}",
+            sent_dues.is_sorted(),
+            "sent out of the order of their times: {:?}",
+            self.trail
+        );
+        if matches!(step, Grace::Fired) {
+            assert!(
+                self.pending.iter().flatten().all(|&due| due > now),
+                "a thing due left unsent: {:?}",
+                self.trail
+            );
+        }
+        // The timer is set for the soonest thing waiting, after a step that
+        // can change it, and never while closed.
+        let soonest = self.pending.iter().flatten().min().copied();
+        let expected = match (step, soonest) {
+            (Grace::IdleAnswer | Grace::Close, _) | (_, None) => None,
+            _ if self.closed => None,
+            (_, Some(due)) => Some(due.saturating_sub(now)),
+        };
+        assert_eq!(
+            timers,
+            expected.into_iter().collect::<Vec<_>>(),
+            "the timer: {:?}",
+            self.trail
+        );
+        if matches!(step, Grace::IdleAnswer) && !self.answered.contains(&self.rounds) {
+            self.held.push(self.rounds);
+        }
+        // No round is held while nothing waits.
+        assert!(
+            self.pending.iter().any(Option::is_some) || self.held.is_empty(),
+            "a round held with nothing waiting: {:?}",
             self.trail
         );
     }
 
-    /// Ends the sequence as the timer would: once the grace is over, it
-    /// fires, unless closed. Then every round is answered once and the
-    /// newest end sent once; closed, at most once each.
+    /// Ends the sequence as the timer would: it fires at each waiting
+    /// thing's time, unless closed. Then every round is answered once,
+    /// the newest end sent once and nothing waits; closed, at most once
+    /// each.
     fn drain(mut self) {
-        if !self.closed
-            && let Some(over) = self.pending
+        while !self.closed
+            && let Some(&due) = self.pending.iter().flatten().min()
         {
-            self.now = self.now.max(over);
+            self.now = self.now.max(due);
             self.step(Grace::Fired);
         }
         if !self.closed {
@@ -1810,14 +1892,16 @@ fn found_grace_sequences_keep_the_graces_rules() {
     }
 }
 
-/// Every sequence of up to six steps of the menu end's grace (ends, the
-/// timer going off as set or early, idle rounds, the close and time)
-/// keeps the grace's rules: only the newest end is sent, no end or round
-/// is sent twice, no round is held with no end pending, a round that
-/// waited is answered after the end it waited for, and once drained every
-/// round has its answer and the newest end was sent, unless the timer was
-/// closed. The timer's exact settings are the grace's own tests'
-/// examples.
+/// Every sequence of up to six steps of the listener's timer (menu ends,
+/// the desktop's returns, desktop names sent, the timer going off as set
+/// or early, idle rounds, the close and time) keeps its rules against a
+/// reference model that keeps each waiting thing's time on its own: each
+/// is sent once, only once its time is over, the newest end alone, those
+/// a firing sends in the order of their times and none due left unsent;
+/// the timer is set for the soonest thing waiting; no round is answered
+/// while anything waits, none twice and none held with nothing waiting;
+/// and once drained every round has its answer and the newest end was
+/// sent, unless the timer was closed.
 #[test]
 fn every_short_grace_sequence_keeps_the_graces_rules() {
     // Each depth in turn, so the sequence a failure prints is one of the

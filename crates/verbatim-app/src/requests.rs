@@ -15,7 +15,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use crossbeam_channel::Sender;
 use verbatim_model::protocol::{
-    FocusNow, QueryOutcome, QueryResult, RequestId, Requester, Responder,
+    FocusNow, FocusPurpose, QueryOutcome, QueryResult, RequestId, Requester, Responder,
 };
 use verbatim_model::{
     Input, NodeSnapshot, NormalizedEvent, OutpostId, Pid, QueryId, TraceId, TreeNode, WindowFacts,
@@ -54,15 +54,14 @@ pub(crate) enum Asker {
         /// Where the answer goes.
         reply: Sender<DumpTreeResult>,
     },
-    /// The shell's focus-now query, at startup or after an outpost or the
-    /// listener was replaced: its answer re-enters the reducer as a
-    /// foreground change and a focus, from application `source`.
-    FocusNow { source: Pid, trace_id: TraceId },
-    /// The focus-now query sent when a menu or the Alt+Tab switcher closed
-    /// and no focus event followed: only the focused control re-enters the
-    /// reducer, as NVDA's fake focus queues a focus on it and nothing for
-    /// its window.
-    FakeFocus { source: Pid, trace_id: TraceId },
+    /// A focus query of application `source`, for `purpose`
+    /// ([`FocusPurpose`]), under `trace_id`: its answer re-enters the
+    /// reducer marked with its purpose ([`read_focus_inputs`]).
+    ReadFocus {
+        source: Pid,
+        trace_id: TraceId,
+        purpose: FocusPurpose,
+    },
     /// The tray or taskbar list dialog's request for the shell's items,
     /// whose outcome goes to `deliver`: the items, or `None` for any
     /// failure.
@@ -196,32 +195,60 @@ pub(crate) fn deliver(asker: Asker, outcome: QueryOutcome) -> Vec<Input> {
         }
         Asker::ShellItems { deliver } => deliver_shell_items(deliver, outcome),
         Asker::ShellItemPosition { deliver } => deliver_shell_item_position(deliver, outcome),
-        Asker::FocusNow { source, trace_id } => match outcome {
-            QueryOutcome::Done(QueryResult::Focus(focus)) => focus_inputs(source, trace_id, focus),
-            other => {
-                tracing::warn!(reason = describe(&other), %source, "focus-now query failed");
-                Vec::new()
+        Asker::ReadFocus {
+            source,
+            trace_id,
+            purpose,
+        } => read_focus_inputs((source, trace_id, purpose), outcome),
+    }
+}
+
+/// The reducer inputs the outcome of a focus query of `source`, asked for
+/// `purpose` under `trace_id`, becomes, each marked with its purpose: for
+/// a plain query, the focus and its window ([`focus_inputs`]); for a fake
+/// focus or the desktop's return, only the focused control, as NVDA's fake
+/// focus and `_handleUserDesktop` queue a focus on it and nothing for its
+/// window; for Verbatim+Tab, the control or, with none, the window, and
+/// with neither or no answer at all, its end unanswered, abandoned or not
+/// ([`Input::ReadFocusUnanswered`]), since Core waits for every press's
+/// answer.
+pub(crate) fn read_focus_inputs(
+    (source, trace_id, purpose): (Pid, TraceId, FocusPurpose),
+    outcome: QueryOutcome,
+) -> Vec<Input> {
+    let focus = match outcome {
+        QueryOutcome::Done(QueryResult::Focus(focus)) => focus,
+        other => {
+            tracing::warn!(reason = describe(&other), %source, ?purpose, "focus query failed");
+            return match purpose {
+                FocusPurpose::Report => vec![Input::ReadFocusUnanswered {
+                    trace_id,
+                    abandoned: other == QueryOutcome::Abandoned,
+                }],
+                FocusPurpose::Plain | FocusPurpose::Fake | FocusPurpose::Again => Vec::new(),
+            };
+        }
+    };
+    match purpose {
+        FocusPurpose::Plain => focus_inputs((source, trace_id, purpose), focus),
+        FocusPurpose::Fake | FocusPurpose::Again => focus_inputs(
+            (source, trace_id, purpose),
+            FocusNow {
+                window: None,
+                ..focus
+            },
+        ),
+        FocusPurpose::Report => {
+            let inputs = focus_inputs((source, trace_id, purpose), focus);
+            if inputs.is_empty() {
+                vec![Input::ReadFocusUnanswered {
+                    trace_id,
+                    abandoned: false,
+                }]
+            } else {
+                inputs
             }
-        },
-        Asker::FakeFocus { source, trace_id } => match outcome {
-            QueryOutcome::Done(QueryResult::Focus(FocusNow {
-                focus,
-                observed_at_us,
-                ..
-            })) => focus_inputs(
-                source,
-                trace_id,
-                FocusNow {
-                    window: None,
-                    focus,
-                    observed_at_us,
-                },
-            ),
-            other => {
-                tracing::warn!(reason = describe(&other), %source, "fake-focus query failed");
-                Vec::new()
-            }
-        },
+        }
     }
 }
 
@@ -240,7 +267,10 @@ pub(crate) fn deliver(asker: Asker, outcome: QueryOutcome) -> Vec<Input> {
 /// takes the window's. The same rules as live events then apply, so a
 /// report of the focus the user already heard after a replacement is taken
 /// silently.
-fn focus_inputs(source: Pid, trace_id: TraceId, focus: FocusNow) -> Vec<Input> {
+fn focus_inputs(
+    (source, trace_id, purpose): (Pid, TraceId, FocusPurpose),
+    focus: FocusNow,
+) -> Vec<Input> {
     let event = |node: NodeSnapshot,
                  window: Option<WindowFacts>,
                  foreground,
@@ -264,6 +294,7 @@ fn focus_inputs(source: Pid, trace_id: TraceId, focus: FocusNow) -> Vec<Input> {
                 answers: None,
                 first_cached_ancestor: None,
             },
+            purpose: Some(purpose),
         }
     };
     match (focus.focus, focus.window) {
@@ -500,9 +531,10 @@ mod tests {
         let trace_id = TraceId::mint();
         let id = table.begin(
             OutpostId(1),
-            Asker::FocusNow {
+            Asker::ReadFocus {
                 source: Pid(5),
                 trace_id,
+                purpose: FocusPurpose::Plain,
             },
         );
         let window = node(Role::Window, "Untitled - Notepad");
@@ -547,6 +579,7 @@ mod tests {
                     answers: None,
                     first_cached_ancestor: None,
                 },
+                purpose: Some(FocusPurpose::Plain),
             }]
         );
     }
@@ -561,9 +594,10 @@ mod tests {
         let begin = |table: &mut RequestTable| {
             table.begin(
                 OutpostId(1),
-                Asker::FocusNow {
+                Asker::ReadFocus {
                     source: Pid(5),
                     trace_id,
+                    purpose: FocusPurpose::Plain,
                 },
             )
         };
@@ -599,6 +633,7 @@ mod tests {
                     answers: None,
                     first_cached_ancestor: None,
                 },
+                purpose: Some(FocusPurpose::Plain),
             }]
         );
 
@@ -639,6 +674,7 @@ mod tests {
                     answers: None,
                     first_cached_ancestor: None,
                 },
+                purpose: Some(FocusPurpose::Plain),
             }]
         );
     }
@@ -649,9 +685,10 @@ mod tests {
         let trace_id = TraceId::mint();
         let id = table.begin(
             OutpostId(1),
-            Asker::FocusNow {
+            Asker::ReadFocus {
                 source: Pid(5),
                 trace_id,
+                purpose: FocusPurpose::Plain,
             },
         );
         let control = node(Role::Button, "OK");
@@ -691,6 +728,7 @@ mod tests {
                     answers: None,
                     first_cached_ancestor: None,
                 },
+                purpose: Some(FocusPurpose::Plain),
             }]
         );
     }
@@ -704,13 +742,15 @@ mod tests {
         let trace_id = TraceId::mint();
         let control = node(Role::Button, "OK");
         for asker in [
-            Asker::FocusNow {
+            Asker::ReadFocus {
                 source: Pid(5),
                 trace_id,
+                purpose: FocusPurpose::Plain,
             },
-            Asker::FakeFocus {
+            Asker::ReadFocus {
                 source: Pid(5),
                 trace_id,
+                purpose: FocusPurpose::Fake,
             },
         ] {
             let id = table.begin(OutpostId(1), asker);
@@ -739,6 +779,58 @@ mod tests {
                 })
                 .collect();
             assert_eq!(stamps, [1_234_567]);
+        }
+    }
+    /// A fake focus's answer the outpost refused, with no window and no
+    /// control, is no input: nothing is spoken and attention does not move.
+    #[test]
+    fn a_refused_fake_focus_answer_is_no_input() {
+        let refused = FocusNow {
+            window: None,
+            focus: None,
+            observed_at_us: 1234,
+        };
+        assert_eq!(
+            read_focus_inputs(
+                (Pid(5), TraceId::from_raw(3), FocusPurpose::Fake),
+                QueryOutcome::Done(QueryResult::Focus(refused)),
+            ),
+            []
+        );
+    }
+
+    /// Verbatim+Tab's query ends in Core whatever its outcome: abandoned at
+    /// its deadline, silently; gone, failed or with no focus, saying "No
+    /// focus".
+    #[test]
+    fn a_report_focus_query_with_no_answer_is_told_to_core() {
+        let trace_id = TraceId::from_raw(3);
+        let unanswered =
+            |outcome| read_focus_inputs((Pid(5), trace_id, FocusPurpose::Report), outcome);
+        assert_eq!(
+            unanswered(QueryOutcome::Abandoned),
+            [Input::ReadFocusUnanswered {
+                trace_id,
+                abandoned: true,
+            }]
+        );
+        let nothing = FocusNow {
+            window: None,
+            focus: None,
+            observed_at_us: 1234,
+        };
+        for outcome in [
+            QueryOutcome::Gone,
+            QueryOutcome::Failed("no client".to_owned()),
+            QueryOutcome::Done(QueryResult::Focus(nothing)),
+        ] {
+            assert_eq!(
+                unanswered(outcome),
+                [Input::ReadFocusUnanswered {
+                    trace_id,
+                    abandoned: false,
+                }]
+            );
         }
     }
 }

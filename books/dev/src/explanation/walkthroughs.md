@@ -190,11 +190,11 @@ releases Alt. Notepad has no outpost yet.
       the one applied is not spoken again, and the navigator and review
       cursor snap to the new focus.
 12. **The switcher's end.** About 50 ms after the switcher closed, Core
-    receives `MenuOrSwitchEnded`. `ReducerThread::fake_focus` does nothing
-    if the reducer has applied a focus observed since
-    (`SrState::latest_focus_observed_at`), the usual case; otherwise it
-    asks the foreground application's outpost for its focus
-    (`Asker::FakeFocus`), NVDA's fake focus.
+    receives `MenuOrSwitchEnded`. The reducer does nothing if it has
+    applied a focus observed since (`SrState::latest_focus_observed_at`),
+    the usual case; otherwise it emits `Effect::ReadFocus(FocusPurpose::Fake)`,
+    and `ReducerThread::read_focus` asks the foreground application's
+    outpost for its focus, NVDA's fake focus.
 
 The ordering rules exist because Windows' events race: a foreground
 change is stamped with the time its window was confirmed in front, and a

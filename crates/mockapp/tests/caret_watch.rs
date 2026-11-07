@@ -350,6 +350,43 @@ fn a_focus_now_text_fields_caret_event_is_reported() {
     app.quit();
 }
 
+/// The same text field asked for by Verbatim+Tab's query
+/// (`FocusPurpose::Report`), whose answer Core only speaks: the outpost
+/// neither adopts nor follows it, so its text is not read with it, its
+/// calls the read's alone, a command's pinned here, and a
+/// caret event no key caused, which reaches the outpost only through its
+/// `WinEvent` hook since the field's own events are not followed, is
+/// reported with nothing.
+fn a_report_answer_is_neither_adopted_nor_followed() {
+    let (mut app, hwnd, mut outpost) = start("mockapp-caret-watch-report");
+    app.send("set-focus doc");
+    outpost.read_focus_as(focused(hwnd).live().element());
+    let (answer, calls) = outpost.focus_now_for(verbatim_model::protocol::FocusPurpose::Report);
+    // The read of the window and the focus alone, with no caret read:
+    // Core asks for the line.
+    assert_eq!(
+        calls,
+        verbatim_model::CallCounts {
+            uia: 2,
+            window_messages: 1,
+            ..verbatim_model::CallCounts::default()
+        },
+        "the query's calls"
+    );
+    let control = answer.focus.expect("the answer has a focused control");
+    assert_eq!(
+        (control.node.name.as_deref(), control.text),
+        (Some("Notes"), None),
+        "the field, its text not read"
+    );
+    app.send("caret doc 1");
+    app.send("caret-event doc");
+    outpost.heard(&[Heard::Msaa(WinEventKind::TextSelectionChange)]);
+    outpost.settled();
+    drop(outpost);
+    app.quit();
+}
+
 /// A key that moves nothing is answered with nothing: its watch stays open
 /// without the worker waiting, a caret event that shows no change leaves it
 /// open, and the next key's watch replaces it, ending it with nothing to
@@ -1463,6 +1500,10 @@ fn main() {
         (
             "a_focus_now_text_fields_caret_event_is_reported",
             a_focus_now_text_fields_caret_event_is_reported,
+        ),
+        (
+            "a_report_answer_is_neither_adopted_nor_followed",
+            a_report_answer_is_neither_adopted_nor_followed,
         ),
         (
             "a_focus_change_during_a_caret_watch_is_handled_at_once",

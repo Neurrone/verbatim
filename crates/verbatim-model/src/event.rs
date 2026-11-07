@@ -754,6 +754,10 @@ pub enum Input {
         window: Option<WindowFacts>,
         /// The event itself.
         event: NormalizedEvent,
+        /// For the answer to a [`crate::protocol::Query::ReadFocus`], why
+        /// it was asked, which only the app sets; `None` for every report.
+        #[serde(default)]
+        purpose: Option<crate::protocol::FocusPurpose>,
     },
     /// An outpost answered a query the reducer asked ([`Effect::Fetch`],
     /// [`Effect::Text`] or [`Effect::Activate`]), or the shell could not
@@ -1093,6 +1097,42 @@ pub enum Input {
     /// The focus listener was replaced: every live re-read asked of it
     /// ends with no answer.
     ListenerReplaced,
+    /// Verbatim+Tab's query ([`Effect::ReadFocus`] with
+    /// [`crate::protocol::FocusPurpose::Report`]), asked under `trace_id`,
+    /// ends with no answer: `abandoned` past its deadline, when nothing is
+    /// said; otherwise nothing could be asked, or its outpost ended or
+    /// answered no focus, when "No focus" is said.
+    ReadFocusUnanswered {
+        /// The trace the query was asked under, the press's.
+        trace_id: TraceId,
+        /// Whether it was abandoned at its deadline.
+        abandoned: bool,
+    },
+    /// News of the desktop, from the focus listener.
+    Desktop {
+        /// A trace the shell mints for it, which its speech carries.
+        trace_id: TraceId,
+        /// What happened.
+        news: DesktopNews,
+    },
+}
+
+/// News of the desktop the focus listener tells Core
+/// (`docs/design/focus-pipeline-rework-remaining.md`, "The desktop switch
+/// and the virtual desktop's name").
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DesktopNews {
+    /// The user's desktop returned, 200 ms after the desktop switch, as
+    /// NVDA tells it later: Core asks the application in front for its
+    /// focus again.
+    Returned,
+    /// The virtual desktop's name, the desktop window's MSAA name read
+    /// after its name change: kept until the next focus Core takes, or its
+    /// due time.
+    Name(String),
+    /// The name's due time, 250 ms after its event: a name still kept is
+    /// spoken as a message.
+    NameDue,
 }
 
 /// What a [`Input::Script`] runs.
@@ -1138,7 +1178,9 @@ impl Input {
             | Self::ClipboardCopied { trace_id, .. }
             | Self::ShellItemGone { trace_id, .. }
             | Self::ShellItemUnclickable { trace_id, .. }
-            | Self::PreviewSpeech { trace_id, .. } => Some(*trace_id),
+            | Self::PreviewSpeech { trace_id, .. }
+            | Self::ReadFocusUnanswered { trace_id, .. }
+            | Self::Desktop { trace_id, .. } => Some(*trace_id),
             _ => None,
         }
     }
@@ -1367,11 +1409,15 @@ pub enum Effect {
     /// a later key's own effects), and its requests and speech must carry
     /// its own key's trace, so that its answers and speech are that key's.
     ForKey(TraceId, Box<Effect>),
-    /// Ask the application in front for its focus, reported as a focus on
-    /// the control alone, as NVDA's fake focus after a menu or the Alt+Tab
-    /// switcher closes; an application whose outpost is not ready is asked
-    /// for its focus as at a foreground change.
-    ReadForegroundFocus,
+    /// Ask for the focus now, for `purpose`
+    /// ([`crate::protocol::FocusPurpose`]): for a fake focus after a menu or
+    /// the Alt+Tab switcher closes, or the desktop's return, the
+    /// application in front, its answer reported as a focus on the control
+    /// alone, and one whose outpost is not ready asked as at a foreground
+    /// change; for Verbatim+Tab, the process of the foreground thread's
+    /// focus window, under the trace the shell executes this with, its
+    /// answer spoken only.
+    ReadFocus(crate::protocol::FocusPurpose),
     /// Read the time and date, for the report-time gesture: the shell
     /// enters [`Input::ClockRead`] with the trace it executed this under.
     ReadClock {

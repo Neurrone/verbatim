@@ -306,6 +306,7 @@ fn spoken(state: &mut SrState, mut event: NormalizedEvent) -> Vec<Said> {
             backend: Backend::Uia,
             window: None,
             event,
+            purpose: None,
         },
     )
     .into_iter()

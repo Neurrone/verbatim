@@ -355,7 +355,9 @@ impl Run {
                 query = Some(trace);
                 Item::Query {
                     request_id: RequestId::shell(trace),
-                    query: Query::ReadFocus,
+                    query: Query::ReadFocus {
+                        purpose: verbatim_model::protocol::FocusPurpose::Plain,
+                    },
                 }
             }
             Kind::Round => Item::Barrier {

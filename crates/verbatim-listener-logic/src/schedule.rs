@@ -974,19 +974,32 @@ impl<J> Schedule<J> {
     }
 }
 
-/// What waits for a menu end's grace to pass (`listener`'s `MenuEnd`).
+/// What waits on the listener's one timer (`listener`'s `MenuEnd`): a menu
+/// end's grace, the user's desktop's return, 200 ms after its switch, as
+/// NVDA calls `_handleUserDesktop` later, and the virtual desktop's name's
+/// due time, 250 ms after its event, as NVDA calls
+/// `handlePossibleDesktopNameChange` later
+/// (`docs/design/focus-pipeline-rework-remaining.md`, "The desktop switch
+/// and the virtual desktop's name"). Each is sent when its time is over,
+/// soonest first, and the idle barrier's answers wait for all of them.
 #[derive(Clone, Debug, Default)]
 pub struct GraceState {
     /// The end: when it ended, its stamps, and when its grace is over, in
     /// microseconds on the shell's monotonic clock.
     end: Option<(u64, EventTiming, u64)>,
-    /// The idle barrier's rounds answered once the end is sent.
+    /// The desktop's return, with its stamps and when it is due, a newer
+    /// switch's replacing it.
+    returned: Option<(EventTiming, u64)>,
+    /// The desktop name's due time, with its stamps and when it is due, a
+    /// newer name's replacing it.
+    name_due: Option<(EventTiming, u64)>,
+    /// The idle barrier's rounds answered once nothing waits.
     answers: Vec<u64>,
     /// Whether the timer is being closed, so it is set no more.
     closed: bool,
 }
 
-/// One input to the menu end's grace.
+/// One input to the timer's state.
 #[derive(Clone, Copy)]
 pub enum GraceInput {
     /// A menu or the switcher ended at `ended_at_us`, its grace of `grace`
@@ -1000,7 +1013,23 @@ pub enum GraceInput {
         /// The grace, in microseconds.
         grace: u64,
     },
-    /// The grace's timer went off.
+    /// The user's desktop returned, to be told `after` microseconds from
+    /// `now`.
+    Returned {
+        /// The switch's timing, for the latency log.
+        timing: EventTiming,
+        /// How long after now it is told, in microseconds.
+        after: u64,
+    },
+    /// The virtual desktop's name was sent; its due time is `after`
+    /// microseconds from `now`, or now when that is past.
+    NameSent {
+        /// The name change's timing, for the latency log.
+        timing: EventTiming,
+        /// How long after now it is due, in microseconds.
+        after: u64,
+    },
+    /// The timer went off.
     Fired,
     /// The idle barrier's round `round` is to be answered.
     IdleAnswer(u64),
@@ -1008,7 +1037,7 @@ pub enum GraceInput {
     Close,
 }
 
-/// One effect of the grace's step.
+/// One effect of the timer's step.
 #[derive(Debug, PartialEq, Eq)]
 pub enum GraceEffect {
     /// Send the end.
@@ -1019,6 +1048,10 @@ pub enum GraceEffect {
         /// The end's timing, for the latency log.
         timing: EventTiming,
     },
+    /// Send that the user's desktop returned.
+    SendReturned(EventTiming),
+    /// Send the desktop name's due time.
+    SendNameDue(EventTiming),
     /// Send the idle barrier's answer for the round.
     SendIdleAnswer(u64),
     /// Set the timer to go off this many microseconds from now.
@@ -1027,9 +1060,10 @@ pub enum GraceEffect {
 
 impl GraceState {
     /// Takes one input at `now`, microseconds on the shell's monotonic
-    /// clock: a callback that runs before the end's grace is over, one of
-    /// a grace an earlier end began, or a timer that fired a little early,
-    /// sends nothing and sets the timer again for the rest of the grace.
+    /// clock: a callback that runs before anything waiting is due, one of a
+    /// time an earlier input set, or a timer that fired a little early,
+    /// sends nothing and sets the timer again for the soonest still to
+    /// come.
     pub fn step(&mut self, input: GraceInput, now: u64) -> Vec<GraceEffect> {
         match input {
             GraceInput::Ended {
@@ -1038,30 +1072,56 @@ impl GraceState {
                 grace,
             } => {
                 self.end = Some((ended_at_us, timing, now.saturating_add(grace)));
-                vec![GraceEffect::SetTimer(grace)]
+                self.timer(now).into_iter().collect()
+            }
+            GraceInput::Returned { timing, after } => {
+                self.returned = Some((timing, now.saturating_add(after)));
+                self.timer(now).into_iter().collect()
+            }
+            GraceInput::NameSent { timing, after } => {
+                self.name_due = Some((timing, now.saturating_add(after)));
+                self.timer(now).into_iter().collect()
             }
             GraceInput::Fired => {
-                if let Some((_, _, over)) = self.end
-                    && now < over
+                let mut due: Vec<(u64, GraceEffect)> = Vec::new();
+                if let Some((ended_at_us, timing, over)) = self.end
+                    && over <= now
                 {
-                    return if self.closed {
-                        Vec::new()
-                    } else {
-                        vec![GraceEffect::SetTimer(over.saturating_sub(now))]
-                    };
+                    self.end = None;
+                    due.push((
+                        over,
+                        GraceEffect::SendEnd {
+                            ended_at_us,
+                            timing,
+                        },
+                    ));
                 }
-                let mut effects = Vec::new();
-                if let Some((ended_at_us, timing, _)) = self.end.take() {
-                    effects.push(GraceEffect::SendEnd {
-                        ended_at_us,
-                        timing,
-                    });
+                if let Some((timing, over)) = self.returned
+                    && over <= now
+                {
+                    self.returned = None;
+                    due.push((over, GraceEffect::SendReturned(timing)));
                 }
-                effects.extend(self.answers.drain(..).map(GraceEffect::SendIdleAnswer));
+                if let Some((timing, over)) = self.name_due
+                    && over <= now
+                {
+                    self.name_due = None;
+                    due.push((over, GraceEffect::SendNameDue(timing)));
+                }
+                due.sort_by_key(|(over, _)| *over);
+                let mut effects: Vec<GraceEffect> =
+                    due.into_iter().map(|(_, effect)| effect).collect();
+                match self.timer(now) {
+                    Some(timer) => effects.push(timer),
+                    None if self.waits() => {}
+                    None => {
+                        effects.extend(self.answers.drain(..).map(GraceEffect::SendIdleAnswer));
+                    }
+                }
                 effects
             }
             GraceInput::IdleAnswer(round) => {
-                if self.end.is_some() {
+                if self.waits() {
                     self.answers.push(round);
                     Vec::new()
                 } else {
@@ -1073,6 +1133,28 @@ impl GraceState {
                 Vec::new()
             }
         }
+    }
+
+    /// Whether anything waits for its time.
+    fn waits(&self) -> bool {
+        self.end.is_some() || self.returned.is_some() || self.name_due.is_some()
+    }
+
+    /// The timer set for the soonest time still to come, unless the timer
+    /// is being closed or nothing waits.
+    fn timer(&self, now: u64) -> Option<GraceEffect> {
+        if self.closed {
+            return None;
+        }
+        [
+            self.end.map(|(_, _, over)| over),
+            self.returned.map(|(_, over)| over),
+            self.name_due.map(|(_, over)| over),
+        ]
+        .into_iter()
+        .flatten()
+        .min()
+        .map(|over| GraceEffect::SetTimer(over.saturating_sub(now)))
     }
 }
 

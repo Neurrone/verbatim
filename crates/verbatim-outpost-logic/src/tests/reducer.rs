@@ -855,7 +855,9 @@ impl Run {
                 query = Some(number);
                 Item::Query {
                     request_id: RequestId::shell(number),
-                    query: Query::ReadFocus,
+                    query: Query::ReadFocus {
+                        purpose: verbatim_model::protocol::FocusPurpose::Plain,
+                    },
                 }
             }
             What::CaretKey => {

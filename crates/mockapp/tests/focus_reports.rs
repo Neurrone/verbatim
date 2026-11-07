@@ -37,7 +37,7 @@ use verbatim_core::SrState;
 use verbatim_ia2::WinEventKind;
 use verbatim_listener_logic::focus::{FocusEvent, Judged, NOT_FOCUSED, NOT_THE_LAST_READ};
 use verbatim_model::protocol::{
-    CoreToOutpost, DeliveredFact, OutpostToCore, Query, QueryOutcome, UiaFocusRead,
+    CoreToOutpost, DeliveredFact, OutpostToCore, Query, QueryOutcome, QueryResult, UiaFocusRead,
     UiaSnapshotFact, WinEventStamp,
 };
 use verbatim_model::{
@@ -1444,6 +1444,7 @@ fn reduced(
             backend: Backend::Uia,
             window: None,
             event,
+            purpose: None,
         },
     );
     let spoken = effects
@@ -1460,6 +1461,78 @@ fn reduced(
         })
         .collect();
     (effects, spoken)
+}
+
+/// A fake focus's MSAA answer whose object neither has the focused state
+/// nor is inside one that has, its state cleared by `set-states`, is
+/// refused as NVDA refuses it before it is queued: the answer carries no
+/// window and no control, which the app turns into no input. The same
+/// object asked for by a plain query, which has no such test, is its
+/// focused control.
+fn a_fake_focus_on_an_msaa_object_without_the_focused_state_answers_nothing() {
+    use verbatim_model::protocol::FocusPurpose;
+    let title = common::unique_title("mockapp-fake-focus-unfocused");
+    let mut app = common::spawn("counts.json", "msaa", &title);
+    let mut outpost = OutpostUnderTest::new(&app);
+    app.send("set-focus first");
+    app.send("set-states first focusable");
+    let (fake, _) = outpost.focus_now_for(FocusPurpose::Fake);
+    assert_eq!((fake.window, fake.focus), (None, None));
+    let (plain, _) = outpost.focus_now_for(FocusPurpose::Plain);
+    assert_eq!(
+        plain.focus.map(|control| control.node.name),
+        Some(Some("First".to_owned()))
+    );
+    drop(outpost);
+    app.quit();
+}
+
+/// Verbatim+Tab's query in a window that hangs while it is read waits for
+/// the answer: mockapp holds the read's call, the outpost finds the window
+/// hung and tells Core once, abandons nothing, and once mockapp answers,
+/// answers the focused control.
+fn a_report_focus_query_in_a_hung_window_waits_for_the_answer() {
+    use verbatim_model::protocol::FocusPurpose;
+    let title = common::unique_title("mockapp-hung-report");
+    let mut app = common::spawn("small.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let client = Client::new(hwnd);
+    let mut outpost = OutpostUnderTest::with_options(
+        &app,
+        OutpostOptions {
+            remote_operations: false,
+        },
+    );
+    app.send("set-focus btn1");
+    outpost.read_focus_as(client.focused().live().element());
+    app.hold();
+    let request_id = outpost.ask(Query::ReadFocus {
+        purpose: FocusPurpose::Report,
+    });
+    assert_eq!(app.held(), "GetObject", "the read's call was held");
+    outpost.judge_hung(hwnd);
+    assert_eq!(
+        outpost.next(),
+        OutpostToCore::NotResponding {
+            window: hwnd.0 as isize
+        },
+        "Core is told of the hang"
+    );
+    app.release();
+    match outpost.next() {
+        OutpostToCore::Reply {
+            request_id: answered,
+            outcome: QueryOutcome::Done(QueryResult::Focus(now)),
+            ..
+        } if answered == request_id => assert_eq!(
+            now.focus.map(|control| control.node.name),
+            Some(Some("Original Name".to_owned()))
+        ),
+        other => panic!("the outpost said {other:?}, not the focus"),
+    }
+    outpost.settled();
+    drop(outpost);
+    app.quit();
 }
 
 /// The focused element a focus-now query reads, when it belongs to another
@@ -3980,6 +4053,14 @@ fn a_uia_window_with_an_msaa_menu_re_reads_live_once_per_return() {
 #[expect(clippy::too_many_lines, reason = "one entry per test")]
 fn main() {
     harness::run_isolated(&[
+        (
+            "a_fake_focus_on_an_msaa_object_without_the_focused_state_answers_nothing",
+            a_fake_focus_on_an_msaa_object_without_the_focused_state_answers_nothing,
+        ),
+        (
+            "a_report_focus_query_in_a_hung_window_waits_for_the_answer",
+            a_report_focus_query_in_a_hung_window_waits_for_the_answer,
+        ),
         (
             "first_cached_ancestor_is_computed_after_the_filters",
             first_cached_ancestor_is_computed_after_the_filters,

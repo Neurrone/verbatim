@@ -319,6 +319,7 @@ impl World {
                 first_cached_ancestor,
                 answers,
             },
+            purpose: None,
         }
     }
 

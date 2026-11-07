@@ -53,6 +53,7 @@ fn event(event: NormalizedEvent) -> Input {
         backend: Backend::Uia,
         window: None,
         event,
+        purpose: None,
     }
 }
 

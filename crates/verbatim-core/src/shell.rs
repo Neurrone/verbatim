@@ -61,6 +61,7 @@ pub(crate) fn reduce(state: &mut SrState, input: &Input) -> Vec<Effect> {
         Input::PreviewSpeech { trace_id, segments } => preview_speech(*trace_id, segments),
         Input::PreviewEarcon(earcon) => vec![Effect::PlayEarcon(*earcon)],
         Input::MenuOrSwitchEnded { ended_at_us } => menu_or_switch_ended(state, *ended_at_us),
+        Input::Desktop { trace_id, news } => crate::desktop::news(state, *trace_id, news),
         _ => Vec::new(),
     }
 }
@@ -248,7 +249,9 @@ fn menu_or_switch_ended(state: &SrState, ended_at_us: u64) -> Vec<Effect> {
     if applied.is_some_and(|observed| observed >= ended_at_us) {
         Vec::new()
     } else {
-        vec![Effect::ReadForegroundFocus]
+        vec![Effect::ReadFocus(
+            verbatim_model::protocol::FocusPurpose::Fake,
+        )]
     }
 }
 

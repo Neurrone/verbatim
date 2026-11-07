@@ -49,6 +49,11 @@ pub enum FocusEvent {
     /// A notification, judged by its sender's nearest window
     /// (the listener's `FocusReader::check_fact`).
     Notification,
+    /// The desktop window's name change, whose MSAA name csrss's reading
+    /// thread reads for the virtual desktop's name. Like a live re-read, it
+    /// has no marker an outpost waits on, moves away from no application,
+    /// and is no pending focus.
+    DesktopName,
 }
 
 /// The reason a focus or selection is dropped when its sender has no

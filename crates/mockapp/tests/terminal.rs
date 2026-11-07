@@ -146,6 +146,7 @@ impl Session<'_> {
                 node_id: terminal_node(),
                 snapshot: Box::new(snapshot),
             },
+            purpose: None,
         }
     }
 
@@ -321,6 +322,7 @@ fn focus() -> Input {
             answers: None,
             first_cached_ancestor: None,
         },
+        purpose: None,
     }
 }
 
@@ -388,6 +390,7 @@ fn new_output_is_said_line_by_line(remote: bool) {
             node_id: terminal_node(),
             snapshot: Box::new(snapshot),
         },
+        purpose: None,
     });
     let text = |text: &str| vec![SegmentContent::Text(text.to_owned())];
     assert_eq!(session.spoken, [text("three"), text("four")]);

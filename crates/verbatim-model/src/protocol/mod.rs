@@ -929,9 +929,12 @@ impl CoreToListener {
 pub enum Query {
     /// The application's current foreground window, if it is the system's
     /// foreground window, and its focused control with that control's
-    /// ancestors and selected child. Used at startup and after an outpost or
-    /// the listener is replaced, in place of retrying until focus settles.
-    ReadFocus,
+    /// ancestors and selected child, read for `purpose`, which decides the
+    /// tests the answer gets ([`FocusPurpose`]).
+    ReadFocus {
+        /// Why the focus is read.
+        purpose: FocusPurpose,
+    },
     /// One object-navigation step from `node_id` in the direction `kind`
     /// names.
     Navigate {
@@ -999,6 +1002,29 @@ pub enum Query {
         /// run's shared clock, as for [`Query::ShellItems`].
         answer_by_us: u64,
     },
+}
+
+/// Why a [`Query::ReadFocus`] reads the focus, which the app keeps with its
+/// asker and marks the answer's input with (`Input::Event`'s `purpose`),
+/// since each has its own tests in NVDA
+/// (`docs/design/focus-pipeline-rework-remaining.md`, "The fake focus's
+/// tests").
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum FocusPurpose {
+    /// At the start, and after an outpost or the listener was replaced:
+    /// the answer is taken as a focus by Core's usual rules.
+    Plain,
+    /// A menu or the Alt+Tab switcher closed with no focus event, NVDA's
+    /// fake focus: an MSAA answer is refused by the outpost when neither it
+    /// nor an ancestor has the focused state, and Core applies its
+    /// duplicate rule to an MSAA answer only.
+    Fake,
+    /// The user's desktop returned: Core applies no duplicate rule, as
+    /// NVDA queues that focus with no test.
+    Again,
+    /// Verbatim+Tab: the answer is spoken only, never taken as Core's
+    /// focus, and the outpost neither adopts nor follows it.
+    Report,
 }
 
 /// The one outcome of a query.
@@ -1288,6 +1314,20 @@ pub enum ListenerToCore {
         /// When the listener observed the end and queued it, and when its
         /// writer began writing this message, as a fact's are stamped;
         /// verbatim.exe logs the listener's stages from them.
+        #[serde(default)]
+        timing: EventTiming,
+    },
+    /// News of the desktop, for Core
+    /// (`docs/design/focus-pipeline-rework-remaining.md`, "The desktop
+    /// switch and the virtual desktop's name"): the user's desktop returned,
+    /// 200 ms after the switch; the virtual desktop's name, read on csrss's
+    /// reading thread; or that name's due time, 250 ms after its event and
+    /// after the name. Sent only by the listener; the supervisor passes it
+    /// to the app, which gives it to Core.
+    Desktop {
+        /// What happened.
+        news: crate::DesktopNews,
+        /// When the listener observed it and queued it, as a menu end's.
         #[serde(default)]
         timing: EventTiming,
     },
@@ -1689,6 +1729,7 @@ pub fn event_input(source: Pid, message: OutpostToCore) -> Option<crate::Input> 
         backend,
         window,
         event,
+        purpose: None,
     })
 }
 
@@ -1700,6 +1741,7 @@ impl ListenerToCore {
             ListenerToCore::IdleAnswer { .. } => Kind::Answer,
             ListenerToCore::Fault { .. }
             | ListenerToCore::MenuOrSwitchEnded { .. }
+            | ListenerToCore::Desktop { .. }
             | ListenerToCore::Foreground { .. } => Kind::Report,
             ListenerToCore::Ready { .. }
             | ListenerToCore::Pong { .. }
@@ -1715,7 +1757,8 @@ impl ListenerToCore {
     pub fn written(&mut self, at_us: u64) {
         match self {
             ListenerToCore::FocusFact { timing, .. }
-            | ListenerToCore::MenuOrSwitchEnded { timing, .. } => {
+            | ListenerToCore::MenuOrSwitchEnded { timing, .. }
+            | ListenerToCore::Desktop { timing, .. } => {
                 timing.listener_written_at_us = at_us;
             }
             ListenerToCore::Pong { written_at_us, .. } => *written_at_us = at_us,

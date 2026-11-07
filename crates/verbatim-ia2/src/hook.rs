@@ -47,10 +47,11 @@ use windows::Win32::UI::WindowsAndMessaging::{
     EVENT_OBJECT_LOCATIONCHANGE, EVENT_OBJECT_NAMECHANGE, EVENT_OBJECT_SELECTION,
     EVENT_OBJECT_SELECTIONADD, EVENT_OBJECT_SELECTIONREMOVE, EVENT_OBJECT_SELECTIONWITHIN,
     EVENT_OBJECT_SHOW, EVENT_OBJECT_STATECHANGE, EVENT_OBJECT_TEXTSELECTIONCHANGED,
-    EVENT_OBJECT_VALUECHANGE, EVENT_SYSTEM_ALERT, EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_MENUEND,
-    EVENT_SYSTEM_MENUPOPUPEND, EVENT_SYSTEM_MENUPOPUPSTART, EVENT_SYSTEM_SWITCHEND, HWND_MESSAGE,
-    OBJID_ALERT, OBJID_CARET, OBJID_CLIENT, OBJID_MENU, OBJID_SYSMENU, OBJID_WINDOW,
-    WINDOW_EX_STYLE, WINDOW_STYLE, WINEVENT_OUTOFCONTEXT,
+    EVENT_OBJECT_VALUECHANGE, EVENT_SYSTEM_ALERT, EVENT_SYSTEM_DESKTOPSWITCH,
+    EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_MENUEND, EVENT_SYSTEM_MENUPOPUPEND,
+    EVENT_SYSTEM_MENUPOPUPSTART, EVENT_SYSTEM_SWITCHEND, GetDesktopWindow,
+    GetWindowThreadProcessId, HWND_MESSAGE, OBJID_ALERT, OBJID_CARET, OBJID_CLIENT, OBJID_MENU,
+    OBJID_SYSMENU, OBJID_WINDOW, WINDOW_EX_STYLE, WINDOW_STYLE, WINEVENT_OUTOFCONTEXT,
 };
 use windows::core::w;
 
@@ -131,6 +132,19 @@ pub enum WinEventKind {
     /// once for a selection's move (`books/dev/src/reference/crates/verbatim-outpost.md`,
     /// "Terminals").
     ConsoleCaret,
+    /// `EVENT_SYSTEM_DESKTOPSWITCH`: the input desktop changed, to the
+    /// secure desktop or back to the user's. The focus listener takes it
+    /// globally, as NVDA does, to tell Core of the user's desktop's return.
+    DesktopSwitch,
+    /// `EVENT_OBJECT_NAMECHANGE` on the desktop window (`GetDesktopWindow`),
+    /// which csrss.exe raises at each switch of virtual desktop: the virtual
+    /// desktop's name changed. An install that asks for this kind hooks the
+    /// name change scoped to csrss's process alone, the process that owns
+    /// the desktop window, so that no other application's name change
+    /// wakes the thread (`docs/design/focus-pipeline-rework-remaining.md`,
+    /// "The desktop switch and the virtual desktop's name"); every other
+    /// window's is dropped at the hook. It is never [`WinEventKind::NameChange`].
+    DesktopName,
 }
 
 /// Every raw `WinEvent` id Verbatim subscribes to, paired with its normalized
@@ -140,7 +154,7 @@ pub enum WinEventKind {
 /// to the one kind, so a caller that wants state changes also gets the
 /// selection add, remove, and within hooks. Each raw id appears once,
 /// checked as the crate compiles.
-const SUBSCRIPTIONS: [(u32, WinEventKind); 24] = [
+const SUBSCRIPTIONS: [(u32, WinEventKind); 25] = [
     (EVENT_OBJECT_FOCUS, WinEventKind::Focus),
     (EVENT_SYSTEM_FOREGROUND, WinEventKind::Foreground),
     (EVENT_OBJECT_VALUECHANGE, WinEventKind::ValueChange),
@@ -174,6 +188,7 @@ const SUBSCRIPTIONS: [(u32, WinEventKind); 24] = [
     (EVENT_CONSOLE_UPDATE_SCROLL, WinEventKind::ConsoleUpdate),
     (EVENT_CONSOLE_LAYOUT, WinEventKind::ConsoleUpdate),
     (EVENT_CONSOLE_CARET, WinEventKind::ConsoleCaret),
+    (EVENT_SYSTEM_DESKTOPSWITCH, WinEventKind::DesktopSwitch),
 ];
 
 /// The per-application outpost's subscription set (decision D13): the
@@ -213,7 +228,9 @@ pub const APP_SUBSCRIPTIONS: &[WinEventKind] = &[
 /// are in the set too, for the keyboard hook's view of the foreground
 /// (architecture section 5), but the listener keeps them unhooked
 /// ([`suspend_kinds`]) except while a console window in front has not yet
-/// named its thread through one of them.
+/// named its thread through one of them. The desktop's switch and the
+/// desktop window's name change are there for Core: the second is hooked
+/// scoped to csrss's process ([`WinEventKind::DesktopName`]).
 pub const LISTENER_SUBSCRIPTIONS: &[WinEventKind] = &[
     WinEventKind::Focus,
     WinEventKind::Foreground,
@@ -225,6 +242,8 @@ pub const LISTENER_SUBSCRIPTIONS: &[WinEventKind] = &[
     WinEventKind::ShellForeground,
     WinEventKind::ConsoleUpdate,
     WinEventKind::ConsoleCaret,
+    WinEventKind::DesktopSwitch,
+    WinEventKind::DesktopName,
 ];
 
 /// One `WinEvent` as a hook delivers it.
@@ -341,6 +360,10 @@ thread_local! {
         const { RefCell::new(None) };
     /// The kinds this thread's hooks were installed for.
     static KINDS: RefCell<Vec<WinEventKind>> = const { RefCell::new(Vec::new()) };
+    /// This thread's hook of the desktop window's name change, scoped to
+    /// csrss's process ([`WinEventKind::DesktopName`]), 0 while it has none:
+    /// the events it delivers are told apart by it.
+    static DESKTOP_NAME_HOOK: std::cell::Cell<isize> = const { std::cell::Cell::new(0) };
     /// This thread's hook set: the process it is scoped to, and each raw
     /// event hooked now with its hook, `None` while the thread has none.
     static HOOKS: RefCell<Option<HookSet>> = const { RefCell::new(None) };
@@ -354,6 +377,22 @@ struct HookSet {
     /// raised on, when the set hears them; never narrowed by
     /// [`suspend_kinds`].
     marker: Option<(HWINEVENTHOOK, HWND)>,
+    /// The hook of the desktop window's name change, scoped to csrss's
+    /// process, when the set asked for [`WinEventKind::DesktopName`]; never
+    /// narrowed by [`suspend_kinds`].
+    desktop_name: Option<HWINEVENTHOOK>,
+}
+
+/// The process that owns the desktop window, csrss.exe's in the session,
+/// which raises its name change: `GetWindowThreadProcessId` of
+/// `GetDesktopWindow()`, local calls.
+fn desktop_window_process() -> Option<u32> {
+    let mut pid = 0u32;
+    // SAFETY: `GetDesktopWindow` has no preconditions.
+    let desktop = unsafe { GetDesktopWindow() };
+    // SAFETY: tolerates any handle; `pid` is a local out-parameter.
+    unsafe { GetWindowThreadProcessId(desktop, Some(&raw mut pid)) };
+    (pid != 0).then_some(pid)
 }
 
 /// Hooks this process's sync markers on the calling thread, and makes the
@@ -558,6 +597,7 @@ impl WinEventHook {
             }
             CALLBACK.with(|slot| *slot.borrow_mut() = None);
             KINDS.with(|slot| slot.borrow_mut().clear());
+            DESKTOP_NAME_HOOK.with(|slot| slot.set(0));
         };
         let mut hooked: Vec<(u32, HWINEVENTHOOK)> = Vec::with_capacity(SUBSCRIPTIONS.len());
         for (event, kind) in SUBSCRIPTIONS {
@@ -572,6 +612,25 @@ impl WinEventHook {
                 }
             }
         }
+        // The desktop window's name change, scoped to the process that owns
+        // the desktop window, kept apart from the set's raw events.
+        let desktop_name = if kinds.contains(&WinEventKind::DesktopName) {
+            let hooked_name = desktop_window_process()
+                .ok_or_else(|| "the desktop window's process could not be read".to_owned())
+                .and_then(|csrss| hook_event(EVENT_OBJECT_NAMECHANGE, csrss));
+            match hooked_name {
+                Ok(hook) => {
+                    DESKTOP_NAME_HOOK.with(|slot| slot.set(hook.0 as isize));
+                    Some(hook)
+                }
+                Err(error) => {
+                    undo(hooked);
+                    return Err(error);
+                }
+            }
+        } else {
+            None
+        };
         let marker = match on_marker {
             Some(on_marker) => match hook_sync_markers() {
                 Ok(marker) => {
@@ -580,6 +639,9 @@ impl WinEventHook {
                     Some(marker)
                 }
                 Err(error) => {
+                    if let Some(hook) = desktop_name {
+                        unhook_event(hook);
+                    }
                     undo(hooked);
                     return Err(error);
                 }
@@ -594,6 +656,7 @@ impl WinEventHook {
                 target_pid,
                 hooked,
                 marker,
+                desktop_name,
             });
         });
         Ok((
@@ -615,7 +678,11 @@ impl Drop for WinEventHook {
                 unhook_event(hook);
                 destroy_marker_window(window);
             }
+            if let Some(hook) = set.desktop_name {
+                unhook_event(hook);
+            }
         }
+        DESKTOP_NAME_HOOK.with(|slot| slot.set(0));
         CALLBACK.with(|slot| *slot.borrow_mut() = None);
         MARKER_CALLBACK.with(|slot| *slot.borrow_mut() = None);
         KINDS.with(|slot| slot.borrow_mut().clear());
@@ -753,7 +820,7 @@ fn is_wanted(
 ) -> bool {
     if matches!(
         kind,
-        WinEventKind::ConsoleUpdate | WinEventKind::ConsoleCaret
+        WinEventKind::ConsoleUpdate | WinEventKind::ConsoleCaret | WinEventKind::DesktopSwitch
     ) {
         return true;
     }
@@ -789,7 +856,7 @@ fn is_wanted(
 }
 
 unsafe extern "system" fn win_event_proc(
-    _hook: HWINEVENTHOOK,
+    hook: HWINEVENTHOOK,
     event: u32,
     hwnd: HWND,
     id_object: i32,
@@ -813,13 +880,21 @@ unsafe extern "system" fn win_event_proc(
     }
     // `time` is on the event clock.
     let raised_ms_ago = event_clock().wrapping_sub(time);
-    let wanted = KINDS.with(|kinds| {
-        wanted_kind(
-            (event, hwnd.0 as isize, id_object, id_child),
-            &kinds.borrow(),
-            crate::window::window_class_name,
-        )
-    });
+    // The csrss-scoped hook's name changes are the desktop window's alone.
+    let desktop_name_hook = DESKTOP_NAME_HOOK.with(std::cell::Cell::get);
+    let wanted = if desktop_name_hook != 0 && hook.0 as isize == desktop_name_hook {
+        // SAFETY: `GetDesktopWindow` has no preconditions.
+        let desktop = unsafe { GetDesktopWindow() };
+        (hwnd == desktop).then_some(WinEventKind::DesktopName)
+    } else {
+        KINDS.with(|kinds| {
+            wanted_kind(
+                (event, hwnd.0 as isize, id_object, id_child),
+                &kinds.borrow(),
+                crate::window::window_class_name,
+            )
+        })
+    };
     if let Some(kind) = wanted {
         // An event on a window object stands for its client area, as NVDA's
         // event hook treats it, so a window's foreground report and a focus

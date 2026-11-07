@@ -41,7 +41,7 @@ use verbatim_ia2::{CHILDID_SELF, WinEventKind};
 use verbatim_model::{
     Backend, CallCounts, CaretReport, CaretWatch, EarlierElement, FirstCachedAncestor, FocusGroup,
     FocusReaderKind, FocusText, NodeId, NodeSnapshot, NormalizedEvent, PropertyChange, Role, State,
-    StateSet, TextOp, TextPoint, TextReply, TraceId, WindowFacts,
+    StateSet, TextOp, TextPoint, TextReply, TraceId, WindowFacts, WindowHandle,
 };
 use verbatim_uia::{
     Cached, Fill, HelpTextRefresh, Interning as _, Kept, SelectedItem, SuggestionsRefresh,
@@ -54,8 +54,8 @@ use windows::Win32::UI::Accessibility::{
 use windows::Win32::UI::WindowsAndMessaging::{OBJID_CLIENT, OBJID_WINDOW};
 
 use verbatim_model::protocol::{
-    DeliveredFact, EventTiming, FocusNow, FocusedControl, OutpostToCore, Query, QueryOutcome,
-    QueryResult, RequestId, UiaFocusRead, UiaSnapshotFact,
+    DeliveredFact, EventTiming, FocusNow, FocusPurpose, FocusedControl, OutpostToCore, Query,
+    QueryOutcome, QueryResult, RequestId, UiaFocusRead, UiaSnapshotFact,
 };
 use verbatim_process::clock::now_us;
 
@@ -428,7 +428,7 @@ fn named_window(context: &RequestContext<'_>, work: &Work) -> Option<Window> {
     match work {
         Work::Entry { entry, .. } => match &entry.item {
             Item::Query { query, .. } => match query {
-                Query::ReadFocus => application_focus_window(context),
+                Query::ReadFocus { .. } => application_focus_window(context),
                 Query::Navigate { node_id, .. }
                 | Query::Activate { node_id }
                 | Query::Ancestors { node_id }
@@ -544,6 +544,8 @@ pub(super) fn win_event_kind(kind: WinKind) -> WinEventKind {
         WinKind::ConsoleUpdate => WinEventKind::ConsoleUpdate,
         WinKind::ShellForeground => WinEventKind::ShellForeground,
         WinKind::ConsoleCaret => WinEventKind::ConsoleCaret,
+        WinKind::DesktopSwitch => WinEventKind::DesktopSwitch,
+        WinKind::DesktopName => WinEventKind::DesktopName,
     }
 }
 
@@ -568,6 +570,8 @@ pub(super) fn win_kind(kind: WinEventKind) -> WinKind {
         WinEventKind::ConsoleUpdate => WinKind::ConsoleUpdate,
         WinEventKind::ShellForeground => WinKind::ShellForeground,
         WinEventKind::ConsoleCaret => WinKind::ConsoleCaret,
+        WinEventKind::DesktopSwitch => WinKind::DesktopSwitch,
+        WinEventKind::DesktopName => WinKind::DesktopName,
     }
 }
 
@@ -625,8 +629,8 @@ fn terminal_event_of(op: &TextOp) -> Option<Event> {
 /// acceptance, or `None` for a kind the worker handles outside the test:
 /// an object destroyed, which NVDA handles in its event callback, and
 /// Verbatim's own kinds, the text selection of edit controls, the console
-/// host's updates and caret, and the shell's coming to the front, which
-/// only the listener takes (`docs/parity/focus-events.md`, "Event
+/// host's updates and caret, and the shell's coming to the front and the
+/// desktop's switch and name, which only the listener takes (`docs/parity/focus-events.md`, "Event
 /// acceptance").
 fn event_name_of(kind: WinEventKind) -> Option<EventName> {
     Some(match kind {
@@ -646,7 +650,9 @@ fn event_name_of(kind: WinEventKind) -> Option<EventName> {
         | WinEventKind::TextSelectionChange
         | WinEventKind::ConsoleUpdate
         | WinEventKind::ConsoleCaret
-        | WinEventKind::ShellForeground => return None,
+        | WinEventKind::ShellForeground
+        | WinEventKind::DesktopSwitch
+        | WinEventKind::DesktopName => return None,
     })
 }
 
@@ -4095,7 +4101,7 @@ impl Worker<'_> {
         // no worker. A focus read is not refused: its own check of the
         // focus window answers no focused control in a window that cannot
         // be read, so nothing is said for it (Dickson, 2026-11-07).
-        if !matches!(query, Query::ReadFocus)
+        if !matches!(query, Query::ReadFocus { .. })
             && let Some(window) = self.context.charge().named(self.context.request())
             && self.context.readability(window.get()).is_hung()
         {
@@ -4132,8 +4138,8 @@ impl Worker<'_> {
         // answer is sent.
         let mut follow = None;
         let result = match query {
-            Query::ReadFocus => {
-                let (answer, answered) = self.focus_now();
+            Query::ReadFocus { purpose } => {
+                let (answer, answered) = self.focus_now(*purpose);
                 follow = answered;
                 Ok(QueryResult::Focus(answer))
             }
@@ -4183,14 +4189,39 @@ impl Worker<'_> {
         }
     }
 
-    /// The answer to a focus-now query, with its control, when it has one,
-    /// and the control as events are judged against it, to commit with the
-    /// answer and follow ([`follow_answer`](Self::follow_answer)). Core
-    /// takes the control as its focus, so its text is read as a reported
-    /// focus's is: a text field's line is spoken and Core has its caret.
-    fn focus_now(&mut self) -> (FocusNow, Option<(AnsweredFocus, reducer::Focus)>) {
+    /// The answer to a focus-now query for `purpose`, with its control,
+    /// when it has one, and the control as events are judged against it,
+    /// to commit with the answer and follow
+    /// ([`follow_answer`](Self::follow_answer)). Core takes the control as
+    /// its focus, so its text is read as a reported focus's is: a text
+    /// field's line is spoken and Core has its caret. Verbatim+Tab's answer
+    /// (`FocusPurpose::Report`) is spoken only, never taken by Core, so it
+    /// is neither adopted nor followed, nor its text read: Core asks for
+    /// its line. Each window's facts carry the application's name and
+    /// whether Alt is held, as a reported focus's do, for Core's rules for
+    /// an application's windows, the Alt+Tab switcher's among them
+    /// ([`focus_answer_facts`]).
+    fn focus_now(
+        &mut self,
+        purpose: FocusPurpose,
+    ) -> (FocusNow, Option<(AnsweredFocus, reducer::Focus)>) {
         let context = self.context;
-        let (mut answer, window) = read::focus_now(context, self.client);
+        let (mut answer, window) =
+            read::focus_now(context, self.client, purpose == FocusPurpose::Fake);
+        for (hwnd, facts) in answer
+            .window
+            .iter_mut()
+            .map(|(_, facts)| facts)
+            .chain(
+                answer
+                    .focus
+                    .iter_mut()
+                    .filter_map(|focus| focus.window.as_mut()),
+            )
+            .map(|facts| (facts.top_level, facts))
+        {
+            focus_answer_facts(context, hwnd, facts);
+        }
         let windows = answer.window.iter_mut().map(|(window, _)| window);
         let focus = answer.focus.iter_mut().flat_map(|focus| {
             let FocusedControl {
@@ -4204,6 +4235,9 @@ impl Worker<'_> {
             (windows.chain(focus), None),
             (&mut None, false),
         );
+        if purpose == FocusPurpose::Report {
+            return (answer, None);
+        }
         let answered = answer.focus.as_mut().map(|control| {
             let node = &control.node;
             let (text, read_at) = self.read_focus_text(node.id, node.role);
@@ -4580,6 +4614,22 @@ fn sensitive_slider_of(node_id: NodeId, chain: &[NodeSnapshot]) -> Option<NodeId
         return None;
     };
     (focus.id == node_id && focus_rules::is_sensitive_slider(parent)).then_some(parent.id)
+}
+
+/// `facts`, the window facts of a focus query's answer for the top-level
+/// window `top_level`, with the application's name, a console window's
+/// client's, and whether Alt is held, as [`event_window_facts`] fills a
+/// focus report's. Local calls.
+fn focus_answer_facts(
+    context: &RequestContext<'_>,
+    top_level: WindowHandle,
+    facts: &mut WindowFacts,
+) {
+    let hwnd = super::window::hwnd_of(top_level);
+    let target = context.target_pid();
+    let client = console_client(hwnd, target);
+    facts.application = context.application_name(client.map_or(target, |client| client.0));
+    facts.alt_held = alt_is_held();
 }
 
 /// `facts`, the window facts of an event message carrying `event`, with

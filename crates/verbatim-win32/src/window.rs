@@ -608,6 +608,27 @@ pub type ForegroundReader = Arc<dyn Fn() -> isize + Send + Sync>;
 /// reader's `set_window_readability_reader`).
 pub type WindowReadabilityReader = Arc<dyn Fn(isize) -> Readability + Send + Sync>;
 
+/// Whether this process can open the input desktop now, NVDA's test after a
+/// desktop switch (`processDesktopSwitchWinEvent`): it can on the user's
+/// desktop, and cannot on the secure desktop. `OpenInputDesktop` with no
+/// access asked, then `CloseDesktop`; local calls.
+#[must_use]
+pub fn input_desktop_opens() -> bool {
+    use windows::Win32::System::StationsAndDesktops::{
+        CloseDesktop, DESKTOP_ACCESS_FLAGS, DESKTOP_CONTROL_FLAGS, OpenInputDesktop,
+    };
+    // SAFETY: no pointer is passed; the call fails safely on a desktop this
+    // process may not open.
+    let Ok(desktop) =
+        (unsafe { OpenInputDesktop(DESKTOP_CONTROL_FLAGS(0), false, DESKTOP_ACCESS_FLAGS(0)) })
+    else {
+        return false;
+    };
+    // SAFETY: the handle was opened above and is closed once.
+    let _ = unsafe { CloseDesktop(desktop) };
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::mpsc;

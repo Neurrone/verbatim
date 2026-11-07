@@ -62,6 +62,7 @@ fn scripted_inputs() -> Vec<Input> {
                 answers: None,
                 first_cached_ancestor: None,
             },
+            purpose: None,
         },
         Input::Event {
             observed_at_us: 0,
@@ -73,6 +74,7 @@ fn scripted_inputs() -> Vec<Input> {
                 node_id,
                 value: Some("55".to_owned()),
             },
+            purpose: None,
         },
         Input::Event {
             observed_at_us: 0,
@@ -85,6 +87,7 @@ fn scripted_inputs() -> Vec<Input> {
                 change: PropertyChange::States(StateSet::new().with(State::Disabled)),
                 child_count: None,
             },
+            purpose: None,
         },
     ]
 }

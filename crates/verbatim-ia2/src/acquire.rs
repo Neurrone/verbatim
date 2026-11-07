@@ -1550,22 +1550,18 @@ pub fn selected_child(node: NodeId, registry: &dyn Interning) -> Option<NodeSnap
     }
 }
 
-/// Reads the focused object in `hwnd`, the window with the keyboard focus,
-/// for a focus-now query (including Core's after a menu closes): its
-/// client's `accFocus`, with a fallback to the client itself. `accFocus`
-/// names whatever it names when it is called, so the window of the object
-/// it names is checked with `serves` before anything else is read of it:
-/// an object of a window the caller's application does not serve answers
-/// `None`, no focused control, and is read no further
-/// (`docs/design/cross-process-calls-study.md`, instance 8). An object no
-/// lookup places is compared with `candidates` by NVDA's equality
-/// ([`Candidates`]). Blocking; worker only.
+/// The focused object in `hwnd`, the window with the keyboard focus, for a
+/// focus-now query (including Core's after a menu closes), acquired but
+/// not yet read, so the caller can make NVDA's focused-state test on it
+/// first ([`FocusedObject`]): its client's `accFocus`, with a fallback to
+/// the client itself. `accFocus` names whatever it names when it is
+/// called, so the window of the object it names is checked with `serves`
+/// before anything else is read of it: an object of a window the caller's
+/// application does not serve answers `None`, no focused control, and is
+/// read no further (`docs/design/cross-process-calls-study.md`, instance
+/// 8). Blocking; worker only.
 #[must_use]
-pub fn focused_snapshot(
-    hwnd: isize,
-    registry: &dyn Interning,
-    (serves, candidates): (&dyn Fn(isize) -> bool, Option<&Candidates>),
-) -> Option<NodeSnapshot> {
+pub fn focused_object(hwnd: isize, serves: &dyn Fn(isize) -> bool) -> Option<FocusedObject> {
     let client = Accessible::client_of_window(hwnd)?;
     // A child object reached through `accFocus` has no address of its
     // own; the client and its children by id do.
@@ -1598,16 +1594,73 @@ pub fn focused_snapshot(
         return None;
     }
     let key = (node_hwnd, OBJID_CLIENT.0, acc.child());
-    Some(read_snapshot_with(
-        &acc,
-        key,
-        Reading {
-            at_address,
-            compare: candidates,
-            ..Reading::default()
+    Some(FocusedObject {
+        candidate: FocusCandidate {
+            acc,
+            key,
+            role: Prefetched::Unread,
+            state: Prefetched::Unread,
         },
-        registry,
-    ))
+        at_address,
+    })
+}
+
+/// The MSAA name of the object a `WinEvent` names at its address,
+/// `AccessibleObjectFromEvent` then `accName`, nothing else read: the
+/// virtual desktop's name, from the desktop window's name change, as NVDA
+/// takes the desktop window's name (`eventHandler.py` 338 to 346). `None`
+/// when the object cannot be acquired or its name read. Blocking; a
+/// reading thread only.
+#[must_use]
+pub fn name_at_event(hwnd: isize, id_object: i32, id_child: i32) -> Option<String> {
+    Accessible::from_event(hwnd, id_object, id_child)?.name()
+}
+
+/// The focused object [`focused_object`] acquired, not yet read.
+pub struct FocusedObject {
+    /// The object, as a focus event's candidate is kept, so the
+    /// focused-state test runs on it the same way.
+    candidate: FocusCandidate,
+    /// Whether it is at an address of its own: the client and its children
+    /// by id are; a child object `accFocus` named is not.
+    at_address: bool,
+}
+
+impl FocusedObject {
+    /// Whether the object or one of its ancestors has the focused state,
+    /// as [`FocusCandidate::has_focused_state`] tests a focus event's
+    /// object, for NVDA's fake focus, which tests what it queues
+    /// (`shouldAllowIAccessibleFocusEvent`). Its state word is kept for
+    /// the read.
+    pub fn has_focused_state(
+        &mut self,
+        max_hops: u32,
+        plain: &dyn Fn(isize) -> bool,
+        parent_window: &mut dyn FnMut(isize) -> ParentWindow,
+    ) -> bool {
+        self.candidate
+            .has_focused_state(max_hops, plain, parent_window)
+    }
+
+    /// Reads the object, an object no lookup places compared with
+    /// `candidates` by NVDA's equality ([`Candidates`]).
+    #[must_use]
+    pub fn read(self, registry: &dyn Interning, candidates: Option<&Candidates>) -> NodeSnapshot {
+        let FocusCandidate {
+            acc, key, state, ..
+        } = self.candidate;
+        read_snapshot_with(
+            &acc,
+            key,
+            Reading {
+                at_address: self.at_address,
+                state,
+                compare: candidates,
+                ..Reading::default()
+            },
+            registry,
+        )
+    }
 }
 
 /// Walks the MSAA tree from `hwnd`'s client accessible object, bounded by
@@ -1803,7 +1856,7 @@ fn walk_recursive(
 /// recurse into: a child id is a simple element addressed by that id on
 /// `parent`; an object is its own `IAccessible`, addressed by
 /// `CHILDID_SELF`, and may belong to a distinct window (a nested control),
-/// resolved the same way [`focused_snapshot`] resolves a focused child
+/// resolved the same way [`focused_object`] resolves a focused child
 /// object. Anything else, or an object that is not an `IAccessible`, is
 /// `parent` itself.
 fn resolve_child(parent: &Accessible, entry: &Related, parent_hwnd: isize) -> (Accessible, isize) {
@@ -2459,7 +2512,7 @@ fn live_name(
 
 /// What `accFocus` named on a client accessible: nothing distinct, a child by
 /// id (`VT_I4`), or a child's own object (`VT_DISPATCH`). The single place that
-/// parses the `accFocus` `VARIANT`, shared by [`focused_snapshot`] and
+/// parses the `accFocus` `VARIANT`, shared by [`focused_object`] and
 /// [`snapshot_from_focus_event`] (which needs to distinguish the forms to
 /// apply NVDA's redirect rule).
 enum FocusTarget {

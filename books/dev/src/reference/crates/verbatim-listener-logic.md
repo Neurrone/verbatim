@@ -81,8 +81,14 @@ Public API:
   `Alarm(Set(due))` only when that changed, or after a `Tick`, which
   spends the one-shot timer; `Alarm(Now)` is the
   shutdown's. A foreground event only moves applications away for menu
-  currentness. `GraceState::step` is the menu end's grace, which the
-  listener's threadpool timer and its callers drive.
+  currentness. `GraceState::step` is the listener's one timer, which the
+  listener's threadpool timer and its callers drive: a menu end's grace,
+  the desktop's return 200 ms after its switch and the desktop name's due
+  time 250 ms after its event, each sent once its time is over, soonest
+  first, the timer set for the soonest still waiting, and the idle
+  barrier's answers held while anything waits. `FocusEvent::DesktopName`
+  is the kind of the desktop name's read, which, like a live re-read, has
+  no marker, moves away from no application and is no pending focus.
 - `foreground` — what the listener learns of each window that came to
   the foreground, for Core: `ForegroundWatch` takes the window in front at
   the start (`start`), each foreground event with whether its window was
@@ -149,12 +155,15 @@ the failure prints them (`books/dev/src/reference/testing.md`, "Exploration test
 failing sequence of either enumeration below is kept in its own found
 list. The menu
 end's grace and the foreground watch are each tested by every sequence of
-up to six steps against their rules, with no model of their effects (in
-the generated test's file, and in
-`crates/verbatim-listener-logic/src/foreground.rs`): for the grace, only
-the newest end sent and once, no round answered twice or held with no end
-pending, a held round answered after its end, and once drained every
-round answered and the newest end sent unless closed; for the foreground
+up to six steps against their rules (in the generated test's file, and in
+`crates/verbatim-listener-logic/src/foreground.rs`): for the grace,
+against a reference model that keeps each thing waiting on the timer, the
+end, the desktop's return and the name's due time, at its own time, each
+sent once, only once its time is over, the newest end alone, those one
+firing sends in the order of their times and none due left unsent, the
+timer set for the soonest waiting, no round answered while anything waits,
+twice, or held with nothing waiting, and once drained every round answered
+and the newest end sent unless closed; for the foreground
 watch, nothing before the start, an event in front reported at once, one
 not in front reported only as the newest, once, with the observation of
 the event that found it, and a console's thread named only while the

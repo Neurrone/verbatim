@@ -73,6 +73,7 @@ fn spoken_in(state: &mut SrState, reported: &Reported) -> Vec<Vec<SegmentContent
             backend: Backend::Msaa,
             window: None,
             event,
+            purpose: None,
         },
     );
     effects
@@ -741,6 +742,7 @@ fn a_sensitive_slider_s_value_change_reaches_core_while_its_thumb_is_the_focus()
             backend: Backend::Uia,
             window: None,
             event: change,
+            purpose: None,
         },
     );
     let said: Vec<Vec<SegmentContent>> = effects

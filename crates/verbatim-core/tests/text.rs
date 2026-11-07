@@ -41,6 +41,7 @@ fn event(event: NormalizedEvent) -> Input {
         backend: Backend::Uia,
         window: None,
         event,
+        purpose: None,
     }
 }
 
@@ -724,6 +725,7 @@ fn caret_event_at(state: &mut SrState, line: TextChunk, observed_at_ms: u64) -> 
                 content_changed: false,
                 new_selection: None,
             },
+            purpose: None,
         },
     )
 }
@@ -3753,6 +3755,7 @@ fn selection_report(
             content_changed: false,
             new_selection: None,
         },
+        purpose: None,
     }
 }
 
@@ -3850,6 +3853,7 @@ fn general_report(selection: Option<Selection>, changes: &[bool], new: Option<&s
                 characters: u32::try_from(text.len()).expect("a short text"),
             }),
         },
+        purpose: None,
     }
 }
 
@@ -4907,18 +4911,53 @@ fn reporting_an_edit_field_again_spells_then_copies_its_name_and_caret_line() {
     );
 }
 
+/// Verbatim+Tab's press: [`command`]'s, traced 3.
+fn verbatim_tab(repeat: u8) -> Input {
+    command(ReviewCommand::ReportFocus, repeat)
+}
+
+/// The answer to the Verbatim+Tab query asked under `trace_id`: `node`,
+/// the focus its application has now.
+fn report_answer(trace_id: TraceId, node: NodeSnapshot) -> Input {
+    Input::Event {
+        trace_id,
+        observed_at_us: 0,
+        source: Pid(1),
+        backend: Backend::Uia,
+        window: None,
+        event: NormalizedEvent::FocusChanged {
+            node,
+            whole_window: false,
+            ancestors: Vec::new(),
+            selected_child: None,
+            text: None,
+            earlier: None,
+            group: None,
+            answers: None,
+            first_cached_ancestor: None,
+        },
+        purpose: Some(verbatim_model::protocol::FocusPurpose::Report),
+    }
+}
+
+/// The live query Verbatim+Tab asks.
+const REPORT_QUERY: Effect = Effect::ReadFocus(verbatim_model::protocol::FocusPurpose::Report);
+
+/// Verbatim+Tab says nothing until its query answers, then the answer as
+/// a query announces it, the focus's known caret line in place of its
+/// value, the navigator staying where it was; an answer that is not the
+/// focus Core holds is asked for its own text, which is spoken.
 #[test]
-fn reporting_the_focus_reads_the_focus_wherever_the_navigator_is() {
+fn verbatim_tab_speaks_the_answer_alone_then_its_line() {
     let mut state = SrState::new();
     let mut edit = node(5, Role::EditableText, StateSet::new());
     edit.value = Some("one two".to_owned());
-    focus(&mut state, edit);
+    focus(&mut state, edit.clone());
     caret_event(&mut state, 5, line("one two\n", 100, 4));
     let _ = navigate_to(&mut state, node(31, Role::Button, StateSet::new()));
 
-    // The focus is announced as a query, its known caret line in place of
-    // its value, and the navigator stays where it was.
-    let effects = reduce(&mut state, &command(ReviewCommand::ReportFocus, 0));
+    assert_eq!(reduce(&mut state, &verbatim_tab(0)), [REPORT_QUERY]);
+    let effects = reduce(&mut state, &report_answer(TraceId::from_raw(3), edit));
     assert_eq!(
         spoken(&effects),
         vec![
@@ -4936,14 +4975,25 @@ fn reporting_the_focus_reads_the_focus_wherever_the_navigator_is() {
         ]
     );
 
-    // A focus whose caret Core does not know is asked for its text, and the
-    // answer is spoken although the navigator is elsewhere.
-    let mut state = SrState::new();
-    focus(&mut state, node(5, Role::EditableText, StateSet::new()));
-    let _ = navigate_to(&mut state, node(31, Role::Button, StateSet::new()));
-    let effects = reduce(&mut state, &command(ReviewCommand::ReportFocus, 0));
+    // An answer of another element than Core's focus is asked for its
+    // selected text, which is spoken.
+    assert_eq!(reduce(&mut state, &verbatim_tab(0)), [REPORT_QUERY]);
+    let effects = reduce(
+        &mut state,
+        &report_answer(
+            TraceId::from_raw(3),
+            node(7, Role::EditableText, StateSet::new()),
+        ),
+    );
+    assert_eq!(
+        spoken(&effects),
+        vec![
+            UtteranceSegment::label("Body"),
+            UtteranceSegment::new(SegmentContent::Role(Role::EditableText)),
+        ]
+    );
     let selection = request(&effects);
-    assert_eq!(selection.node_id, id(5));
+    assert_eq!(selection.node_id, id(7));
     let effects = reduce(
         &mut state,
         &completed(
@@ -4962,50 +5012,162 @@ fn reporting_the_focus_reads_the_focus_wherever_the_navigator_is() {
     );
 }
 
+/// Verbatim+Tab's answer is spoken only: Core's focus and its navigator
+/// stay as they were, so the focus's own repeat is still a duplicate.
 #[test]
-fn reporting_the_focus_again_spells_its_name_alone() {
+fn verbatim_tab_never_moves_cores_focus() {
     let mut state = SrState::new();
-    let mut edit = node(5, Role::EditableText, StateSet::new());
-    edit.name = Some("Ab".to_owned());
-    focus(&mut state, edit);
-    caret_event(&mut state, 5, line("cd\n", 100, 1));
-
-    // The second press spells the name, not the caret's line.
-    let effects = reduce(&mut state, &command(ReviewCommand::ReportFocus, 1));
+    let held = node(5, Role::Button, StateSet::new());
+    focus(&mut state, held.clone());
+    let before = state.clone();
+    assert_eq!(reduce(&mut state, &verbatim_tab(0)), [REPORT_QUERY]);
+    let mut other = node(9, Role::Link, StateSet::new());
+    other.name = Some("Other".to_owned());
+    let effects = reduce(&mut state, &report_answer(TraceId::from_raw(3), other));
     assert_eq!(
         spoken(&effects),
         vec![
+            UtteranceSegment::label("Other"),
+            UtteranceSegment::new(SegmentContent::Role(Role::Link)),
+        ]
+    );
+    assert_eq!(state.focused(), before.focused());
+    let effects = reduce(
+        &mut state,
+        &event(NormalizedEvent::FocusChanged {
+            node: held,
+            whole_window: false,
+            ancestors: Vec::new(),
+            selected_child: None,
+            text: None,
+            earlier: None,
+            group: None,
+            answers: None,
+            first_cached_ancestor: None,
+        }),
+    );
+    assert_eq!(effects, [], "the focus Core holds, repeated");
+}
+
+/// A second press within the repeat interval while the first waits is
+/// kept with it, and a third too: the answer is spoken, then its name
+/// spelled, then spelled with character descriptions. A press repeated
+/// with none waiting asks again and spells its answer's name, "blank" for
+/// none.
+#[test]
+fn a_second_verbatim_tab_while_waiting_speaks_the_object_then_spells() {
+    let mut state = SrState::new();
+    let mut edit = node(5, Role::EditableText, StateSet::new());
+    edit.name = Some("Ab".to_owned());
+    focus(&mut state, edit.clone());
+    caret_event(&mut state, 5, line("cd\n", 100, 1));
+    assert_eq!(reduce(&mut state, &verbatim_tab(0)), [REPORT_QUERY]);
+    assert_eq!(reduce(&mut state, &verbatim_tab(1)), []);
+    assert_eq!(reduce(&mut state, &verbatim_tab(2)), []);
+    let effects = reduce(&mut state, &report_answer(TraceId::from_raw(3), edit));
+    assert_eq!(
+        spoken(&effects),
+        vec![
+            UtteranceSegment::label("Ab"),
+            UtteranceSegment::new(SegmentContent::Role(Role::EditableText)),
+            UtteranceSegment::text("cd"),
             UtteranceSegment::new(SegmentContent::SpelledCapital("A".to_owned())),
             UtteranceSegment::text("b"),
+            UtteranceSegment::new(SegmentContent::CharacterDescription("A".to_owned())),
+            UtteranceSegment::new(SegmentContent::CharacterDescription("b".to_owned())),
         ]
     );
 
-    // The third and later spell it with descriptions, and copy nothing.
-    for repeat in [2, 3] {
-        let effects = reduce(&mut state, &command(ReviewCommand::ReportFocus, repeat));
-        assert_eq!(
-            spoken(&effects),
-            vec![
-                UtteranceSegment::new(SegmentContent::CharacterDescription("A".to_owned())),
-                UtteranceSegment::new(SegmentContent::CharacterDescription("b".to_owned())),
-            ]
-        );
-    }
-
-    // A focus with no name is "blank".
-    let mut state = SrState::new();
-    let mut unnamed = node(5, Role::EditableText, StateSet::new());
+    let mut unnamed = node(6, Role::EditableText, StateSet::new());
     unnamed.name = None;
-    focus(&mut state, unnamed);
-    let effects = reduce(&mut state, &command(ReviewCommand::ReportFocus, 1));
+    assert_eq!(reduce(&mut state, &verbatim_tab(1)), [REPORT_QUERY]);
+    let effects = reduce(&mut state, &report_answer(TraceId::from_raw(3), unnamed));
     assert_eq!(spoken(&effects), vec![message(Message::Blank)]);
 }
 
+/// An answer that comes after a newer focus was applied is late, and says
+/// nothing; so is a replaced press's, whose newer press's answer is
+/// spoken.
 #[test]
-fn reporting_the_focus_with_none_says_no_focus() {
+fn a_verbatim_tab_answer_after_a_newer_focus_is_dropped() {
     let mut state = SrState::new();
-    let effects = reduce(&mut state, &command(ReviewCommand::ReportFocus, 0));
+    focus(&mut state, node(5, Role::Button, StateSet::new()));
+    assert_eq!(reduce(&mut state, &verbatim_tab(0)), [REPORT_QUERY]);
+    focus(&mut state, node(6, Role::Button, StateSet::new()));
+    let effects = reduce(
+        &mut state,
+        &report_answer(TraceId::from_raw(3), node(5, Role::Button, StateSet::new())),
+    );
+    assert_eq!(effects, []);
+
+    let press = |trace| Input::Command {
+        pressed_at_ms: 0,
+        key_seq: verbatim_model::KeySeq::NONE_YET,
+        trace_id: TraceId::from_raw(trace),
+        command: ReviewCommand::ReportFocus,
+        repeat: 0,
+    };
+    assert_eq!(reduce(&mut state, &press(40)), [REPORT_QUERY]);
+    assert_eq!(reduce(&mut state, &press(41)), [REPORT_QUERY]);
+    let late = reduce(
+        &mut state,
+        &report_answer(
+            TraceId::from_raw(40),
+            node(6, Role::Button, StateSet::new()),
+        ),
+    );
+    assert_eq!(late, []);
+    let effects = reduce(
+        &mut state,
+        &report_answer(
+            TraceId::from_raw(41),
+            node(6, Role::Button, StateSet::new()),
+        ),
+    );
+    assert_eq!(
+        spoken(&effects),
+        vec![
+            UtteranceSegment::label("Body"),
+            UtteranceSegment::new(SegmentContent::Role(Role::Button)),
+        ]
+    );
+}
+
+/// A press with nothing to ask, or whose query's outpost ended or answered
+/// no focus, says "No focus", as with no focus at all.
+#[test]
+fn verbatim_tab_with_nothing_to_ask_says_no_focus() {
+    let mut state = SrState::new();
+    assert_eq!(reduce(&mut state, &verbatim_tab(0)), [REPORT_QUERY]);
+    let effects = reduce(
+        &mut state,
+        &Input::ReadFocusUnanswered {
+            trace_id: TraceId::from_raw(3),
+            abandoned: false,
+        },
+    );
     assert_eq!(spoken(&effects), vec![message(Message::NoFocus)]);
+}
+
+/// A query abandoned at its deadline, its application hung, says nothing,
+/// and its press waits no more: an answer under its trace is late.
+#[test]
+fn verbatim_tab_abandoned_says_nothing() {
+    let mut state = SrState::new();
+    assert_eq!(reduce(&mut state, &verbatim_tab(0)), [REPORT_QUERY]);
+    let effects = reduce(
+        &mut state,
+        &Input::ReadFocusUnanswered {
+            trace_id: TraceId::from_raw(3),
+            abandoned: true,
+        },
+    );
+    assert_eq!(effects, []);
+    let late = reduce(
+        &mut state,
+        &report_answer(TraceId::from_raw(3), node(5, Role::Button, StateSet::new())),
+    );
+    assert_eq!(late, []);
 }
 
 /// A caret key the keyboard hook held back, pressed at `pressed_at_ms`.

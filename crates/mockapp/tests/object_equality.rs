@@ -63,6 +63,7 @@ fn spoken(state: &mut SrState, reported: &Reported) -> Vec<Vec<SegmentContent>> 
             backend: Backend::Msaa,
             window: reported.facts.clone(),
             event,
+            purpose: None,
         },
     )
     .into_iter()

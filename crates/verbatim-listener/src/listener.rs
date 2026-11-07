@@ -153,6 +153,7 @@ use verbatim_ia2::event_thread::{EventHandlers, EventThread, MakeHandlers, Nudge
 use verbatim_listener_logic::focus::{FocusEvent, Judged, Meta, arrival_of};
 use verbatim_listener_logic::foreground::{ForegroundWatch, Front, Step};
 use verbatim_listener_logic::schedule::{GraceEffect, GraceInput, GraceState, QueuePlace};
+use verbatim_model::DesktopNews;
 use verbatim_model::protocol::{
     CoreToListener, DeliveredFact, EventTiming, FactKey, ListenerFact, ListenerToCore, Responder,
     UiaSnapshotFact, WinEventStamp, hop_us,
@@ -167,6 +168,16 @@ use verbatim_win32::window::{Readability, WindowReadabilityReader, window_class_
 /// before telling Core, so a focus event the end causes can arrive first:
 /// NVDA's fake-focus delay (`processFakeFocusWinEvent`).
 const MENU_END_GRACE: Duration = Duration::from_millis(50);
+
+/// How long after a switch back to the user's desktop the listener tells
+/// Core, as NVDA calls `_handleUserDesktop` 200 ms later
+/// (`processDesktopSwitchWinEvent`).
+const DESKTOP_RETURN_DELAY: Duration = Duration::from_millis(200);
+
+/// How long after the desktop window's name change the virtual desktop's
+/// name is due, as NVDA calls `handlePossibleDesktopNameChange` 250 ms
+/// later (`eventHandler.py` 338 to 346).
+const DESKTOP_NAME_DUE: Duration = Duration::from_millis(250);
 
 /// The priority of the listener's main thread, its I/O thread, which reads
 /// Core's pipe, handles each command, and finishes the writes to Core that
@@ -436,6 +447,22 @@ impl MenuEnd {
                             timing,
                         })),
                 ),
+                GraceEffect::SendReturned(timing) => sent(&self.sender.send(Sent::Fact(
+                    None,
+                    ListenerToCore::Desktop {
+                        news: DesktopNews::Returned,
+                        timing,
+                    },
+                    None,
+                ))),
+                GraceEffect::SendNameDue(timing) => sent(&self.sender.send(Sent::Fact(
+                    None,
+                    ListenerToCore::Desktop {
+                        news: DesktopNews::NameDue,
+                        timing,
+                    },
+                    None,
+                ))),
                 GraceEffect::SendIdleAnswer(round) => {
                     sent(&self.sender.send(Sent::IdleAnswer(round)));
                 }
@@ -454,6 +481,11 @@ impl MenuEnd {
     fn grace_ended(&self) {
         self.step(GraceInput::Fired);
     }
+}
+
+/// `duration` in whole microseconds.
+fn micros(duration: Duration) -> u64 {
+    u64::try_from(duration.as_micros()).unwrap_or(u64::MAX)
 }
 
 /// A send's outcome: once the listener is shutting down, or Core's pipe
@@ -794,6 +826,51 @@ impl Outgoing {
         });
     }
 
+    /// The input desktop switched, as the listener's callback observed at
+    /// `observed_at_us`: when it is the user's desktop again, by NVDA's
+    /// test ([`verbatim_win32::window::input_desktop_opens`]), Core is told
+    /// 200 ms later, on the menu end's timer ([`DESKTOP_RETURN_DELAY`]). A
+    /// switch to the secure desktop is not told (M8.6).
+    fn desktop_switched(&self, observed_at_us: u64, users: bool) {
+        if !users {
+            tracing::debug!("the input desktop switched away from the user's desktop");
+            return;
+        }
+        let timing = EventTiming {
+            observed_at_us,
+            listener_handled_at_us: self.now(),
+            ..EventTiming::default()
+        };
+        self.menu_end.step(GraceInput::Returned {
+            timing,
+            after: micros(DESKTOP_RETURN_DELAY),
+        });
+    }
+
+    /// The virtual desktop's name `name`, read on csrss's reading thread
+    /// for the name change observed at `timing`'s observation: sent to
+    /// Core, followed by its due time 250 ms after the change
+    /// ([`DESKTOP_NAME_DUE`]), at once when that has passed, on the menu
+    /// end's timer.
+    fn desktop_name(&self, name: String, timing: EventTiming) {
+        let mut timing = timing;
+        let now = self.now();
+        timing.listener_handled_at_us = now;
+        sent(&self.sender.send(Sent::Fact(
+            None,
+            ListenerToCore::Desktop {
+                news: DesktopNews::Name(name),
+                timing,
+            },
+            None,
+        )));
+        let elapsed = now.saturating_sub(timing.observed_at_us);
+        self.menu_end.step(GraceInput::NameSent {
+            timing,
+            after: micros(DESKTOP_NAME_DUE).saturating_sub(elapsed),
+        });
+    }
+
     /// Answers the idle barrier's round `round`, behind every fact sent
     /// before, never merged and never ahead as urgent; behind a menu end
     /// still in its grace too, once that is sent.
@@ -843,6 +920,11 @@ struct Listener {
 /// sent to its application's outpost behind its marker, through the
 /// answer owed for it ([`MarkerOwed`]).
 struct UiaFocusReading {
+    /// What reads the desktop window's MSAA name for the virtual desktop's
+    /// name, at a name change's address: `AccessibleObjectFromEvent` and
+    /// `accName` ([`verbatim_ia2::acquire::name_at_event`]), unless a test
+    /// gives its own.
+    desktop_name: fn(isize, i32, i32) -> Option<String>,
     /// The listener's window readability reader: the one judge of whether
     /// a window is hung, by Windows' own state, which each reading thread's
     /// reader, for the windows its walk reaches, and the UIA callbacks'
@@ -856,6 +938,7 @@ impl UiaFocusReading {
     /// The listener's reading, judging windows by the system's state.
     fn new() -> Self {
         Self {
+            desktop_name: verbatim_ia2::acquire::name_at_event,
             readability: Arc::new(verbatim_win32::window::readability),
         }
     }
@@ -882,6 +965,11 @@ pub(crate) enum UiaJob {
     /// Core's live re-read `request`, of the read traced by the job's
     /// trace ([`FocusReader::live_reread`]).
     LiveReread(u64),
+    /// The desktop window's name change at its address, whose MSAA name is
+    /// the virtual desktop's, read on csrss's reading thread, answered to
+    /// `name`: dropped unanswered, as when the read is abandoned, nothing is
+    /// sent.
+    DesktopName((isize, i32, i32), Responder<String>),
 }
 
 impl Reading for UiaFocusReading {
@@ -914,6 +1002,14 @@ impl Reading for UiaFocusReading {
         let (element, kind, fact) = match job {
             UiaJob::Event(element, _, _, kind, fact) => (element, kind, fact),
             UiaJob::LiveReread(request) => return reader.live_reread(request, meta.trace),
+            UiaJob::DesktopName((hwnd, id_object, id_child), name) => {
+                if let Some(read) = (self.desktop_name)(hwnd, id_object, id_child) {
+                    name.answer(read);
+                } else {
+                    tracing::debug!(hwnd, "the desktop window's name could not be read");
+                }
+                return Judged::Dropped(DESKTOP_NAME_READ);
+            }
         };
         match element.resolve() {
             Ok(sender) => reader.judge_watched(
@@ -935,7 +1031,7 @@ impl Reading for UiaFocusReading {
     fn window(&self, job: &Self::Job) -> Option<isize> {
         match job {
             UiaJob::Event(_, hwnd, _, FocusEvent::Focus | FocusEvent::MenuOpened, _) => Some(*hwnd),
-            UiaJob::Event(..) | UiaJob::LiveReread(_) => None,
+            UiaJob::Event(..) | UiaJob::LiveReread(_) | UiaJob::DesktopName(..) => None,
         }
     }
 
@@ -951,6 +1047,7 @@ impl Reading for UiaFocusReading {
         match job {
             UiaJob::Event(_, _, _, kind, _) => *kind,
             UiaJob::LiveReread(_) => FocusEvent::LiveReread,
+            UiaJob::DesktopName(..) => FocusEvent::DesktopName,
         }
     }
 
@@ -962,7 +1059,7 @@ impl Reading for UiaFocusReading {
             UiaJob::Event(_, _, runtime_id, kind, _) => {
                 (*kind != FocusEvent::Notification).then_some((*kind, runtime_id.as_slice()))
             }
-            UiaJob::LiveReread(_) => None,
+            UiaJob::LiveReread(_) | UiaJob::DesktopName(..) => None,
         }
     }
 
@@ -979,6 +1076,10 @@ impl Reading for UiaFocusReading {
     type Owed = MarkerOwed;
 
     fn outcome(&self, pid: Pid, meta: Meta, owed: MarkerOwed, judged: Judged) {
+        let Some(answer) = owed.answer else {
+            // The desktop's name read owes nothing: it sent its name.
+            return;
+        };
         if let Some(reason) = judged.dropped_reason() {
             tracing::debug!(%pid, marker = meta.marker, reason, "UIA focus dropped");
         }
@@ -986,9 +1087,12 @@ impl Reading for UiaFocusReading {
             Some(request) => judged.into_reread_fact(meta.marker, request),
             None => judged.into_fact(meta.marker, meta.kind),
         };
-        owed.answer.answer(fact);
+        answer.answer(fact);
     }
 }
+
+/// What a desktop name read's outcome is: no outpost waits for it.
+const DESKTOP_NAME_READ: &str = "a read of the desktop window's name, owing no outpost anything";
 
 /// The answer the listener owes an application's outpost for the UIA
 /// focus event whose marker it sent: made as the event is queued for its
@@ -1004,7 +1108,9 @@ impl Reading for UiaFocusReading {
 /// dropped unanswered too, as when the read was abandoned, so Core's
 /// pending live re-read always ends.
 pub(crate) struct MarkerOwed {
-    answer: Responder<DeliveredFact>,
+    /// The answer, `None` for the desktop name's read, which no outpost
+    /// waits on.
+    answer: Option<Responder<DeliveredFact>>,
     reread: Option<u64>,
 }
 
@@ -1014,7 +1120,7 @@ impl MarkerOwed {
     fn new(outgoing: &Arc<Outgoing>, pid: Pid, meta: Meta, reread: Option<u64>) -> Self {
         let outgoing = Arc::clone(outgoing);
         Self {
-            answer: Responder::new(move |fact: Option<DeliveredFact>| {
+            answer: Some(Responder::new(move |fact: Option<DeliveredFact>| {
                 let fact = fact.unwrap_or_else(|| {
                     let ended = Judged::Dropped("the listener ended before it was read");
                     match reread {
@@ -1023,8 +1129,16 @@ impl MarkerOwed {
                     }
                 });
                 outgoing.focus_read(pid, fact, meta);
-            }),
+            })),
             reread,
+        }
+    }
+
+    /// What the desktop name's read owes: nothing.
+    fn nothing() -> Self {
+        Self {
+            answer: None,
+            reread: None,
         }
     }
 }
@@ -1113,8 +1227,16 @@ impl Listener {
             // kept on this thread by both handlers.
             let watch = Rc::new(RefCell::new(ForegroundWatch::default()));
             let start_watch = Rc::clone(&watch);
+            let desktop_readers = Arc::clone(&readers);
             EventHandlers {
                 win_event: Box::new(move |event: WinEvent| {
+                    if matches!(
+                        event.kind,
+                        WinEventKind::DesktopSwitch | WinEventKind::DesktopName
+                    ) {
+                        desktop_event(&outgoing, &desktop_readers, event);
+                        return;
+                    }
                     if matches!(
                         event.kind,
                         WinEventKind::ConsoleUpdate | WinEventKind::ConsoleCaret
@@ -1757,6 +1879,44 @@ fn forward_msaa_event(outgoing: &Outgoing, event: WinEvent) -> Forwarded {
     forwarded(console, focus_of)
 }
 
+/// The desktop's `WinEvent`s, for Core: a desktop switch, judged by NVDA's
+/// test, local calls; and the desktop window's name change, whose name is
+/// read on the reading thread of the desktop window's process, csrss's, as
+/// D13's callbacks make no cross-process call, behind every read that
+/// thread has waiting; its read is abandoned at its deadline, as any read
+/// is, and then nothing is sent.
+fn desktop_event(outgoing: &Arc<Outgoing>, readers: &Readers<UiaFocusReading>, event: WinEvent) {
+    let observed_at_us = outgoing.now();
+    if event.kind == WinEventKind::DesktopSwitch {
+        outgoing.desktop_switched(
+            observed_at_us,
+            verbatim_win32::window::input_desktop_opens(),
+        );
+        return;
+    }
+    let csrss = Pid(window_pid(event.hwnd));
+    let meta = Meta {
+        timing: EventTiming {
+            observed_at_us,
+            ..EventTiming::default()
+        },
+        ..outgoing.received(FocusEvent::DesktopName)
+    };
+    let named = Arc::clone(outgoing);
+    let name = Responder::new(move |name: Option<String>| {
+        if let Some(name) = name {
+            named.desktop_name(name, meta.timing);
+        }
+    });
+    tracing::debug!(%csrss, marker = meta.marker, "the desktop window's name changed");
+    readers.push(
+        csrss,
+        meta,
+        UiaJob::DesktopName((event.hwnd, event.id_object, event.id_child), name),
+        MarkerOwed::nothing(),
+    );
+}
+
 /// What [`forward_msaa_event`] found of an event it forwarded or dropped.
 #[derive(Clone, Copy)]
 struct Forwarded {
@@ -2342,10 +2502,71 @@ mod tests {
             answer(asked.len() - 1)
         });
         let readers = Arc::new(Readers::new(
-            UiaFocusReading { readability },
+            UiaFocusReading {
+                desktop_name: verbatim_ia2::acquire::name_at_event,
+                readability,
+            },
             verbatim_model::FOCUS_READ_DEADLINE,
         ));
         (Arc::new(outgoing), readers, drain(reader))
+    }
+
+    /// The desktop window's name change, as the csrss-scoped hook delivers
+    /// it, injected here, is read on the reading thread of the desktop
+    /// window's process, csrss's, by the reading's name reader, which here
+    /// answers "Desktop 2" for the desktop window's own address: Core is
+    /// sent the name, then its due time, on the listener's timer, and
+    /// nothing else.
+    #[test]
+    fn a_name_change_of_the_desktop_window_is_read_on_csrss_s_reading_thread() {
+        let (outgoing, reader) = outgoing();
+        let readers = Arc::new(Readers::new(
+            UiaFocusReading {
+                desktop_name: |hwnd, id_object, id_child| {
+                    (hwnd == desktop_window()
+                        && id_object == windows::Win32::UI::WindowsAndMessaging::OBJID_CLIENT.0
+                        && id_child == 0)
+                        .then(|| "Desktop 2".to_owned())
+                },
+                readability: Arc::new(|_| Readability::Readable),
+            },
+            verbatim_model::FOCUS_READ_DEADLINE,
+        ));
+        let outgoing = Arc::new(outgoing);
+        let sent = drain(reader);
+        let csrss = Pid(window_pid(desktop_window()));
+        desktop_event(
+            &outgoing,
+            &readers,
+            WinEvent {
+                kind: WinEventKind::DesktopName,
+                hwnd: desktop_window(),
+                id_object: windows::Win32::UI::WindowsAndMessaging::OBJID_CLIENT.0,
+                id_child: 0,
+                thread: 0,
+                time: 0,
+                raised_ms_ago: 0,
+            },
+        );
+        let news = || match sent.recv_timeout(Duration::from_secs(10)) {
+            Ok(ListenerToCore::Desktop { news, .. }) => news,
+            other => panic!("news of the desktop: {other:?}"),
+        };
+        assert_eq!(
+            [news(), news()],
+            [
+                DesktopNews::Name("Desktop 2".to_owned()),
+                DesktopNews::NameDue
+            ]
+        );
+        assert!(
+            readers.has_reading_thread(csrss),
+            "csrss's reading thread read it"
+        );
+        readers.stop();
+        drop(readers);
+        outgoing.close();
+        assert_eq!(sent.iter().collect::<Vec<_>>(), []);
     }
 
     /// The facts the listener sent once its readers are stopped and let go,

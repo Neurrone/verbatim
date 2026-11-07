@@ -1983,7 +1983,9 @@ pub fn run_attach(target_pid: u32, options: OutpostOptions) -> io::Result<()> {
     outpost.handle_command(&CoreToOutpost::Query {
         trace_id: TraceId::mint(),
         request_id: RequestId::shell(0),
-        query: Query::ReadFocus,
+        query: Query::ReadFocus {
+            purpose: verbatim_model::protocol::FocusPurpose::Plain,
+        },
         timing: EventTiming::default(),
     });
     loop {

@@ -66,7 +66,10 @@ Public API:
   in for, by user32's undocumented `HungWindowFromGhostWindow` as NVDA
   uses it, `None` for any other window: an outpost maps the window in
   front through it, since a ghost's own process is the desktop window
-  manager's.
+  manager's, and the app maps Verbatim+Tab's focus window through it.
+  `input_desktop_opens()` is NVDA's test after a desktop switch, whether
+  `OpenInputDesktop` opens the input desktop now: it does on the user's
+  desktop and not on the secure desktop; local calls.
   `readability` is what an outpost's and the listener's
   `WindowReadabilityReader` answers, the one judge of a hung window each
   asks at the moment of its decision, which tests replace, as a `ForegroundReader`

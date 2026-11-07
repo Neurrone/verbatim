@@ -102,6 +102,7 @@ fn each_key_input_is_the_rules_key_and_a_clearing_key_forget_then_other() {
                 answers: None,
                 first_cached_ancestor: None,
             },
+            purpose: None,
         },
     );
     state.terminals.add(node, Settings::default());
@@ -197,6 +198,7 @@ fn terminal_focus(node: NodeId, text: Option<FocusText>, earlier: Option<Earlier
             answers: None,
             first_cached_ancestor: None,
         },
+        purpose: None,
     }
 }
 

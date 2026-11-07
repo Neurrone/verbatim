@@ -1176,6 +1176,7 @@ fn focused_notes() -> SrState {
                 answers: None,
                 first_cached_ancestor: None,
             },
+            purpose: None,
         },
     );
     state

@@ -801,7 +801,20 @@ and the inherited pipe handles.
   2026-10-29). Through MSAA the focus is the focus window's client's
   `accFocus`, and an object it names in a window this application does not
   serve answers no focused control
-  (`verbatim_ia2::acquire::focused_snapshot`). There are no retries.
+  (`verbatim_ia2::acquire::focused_object`). There are no retries.
+- A focus query says why it is asked (`Query::ReadFocus { purpose }`).
+  For a fake focus (`FocusPurpose::Fake`), an MSAA control is read only
+  when it or an ancestor has the focused state, NVDA's
+  `shouldAllowIAccessibleFocusEvent` test on what its fake focus queues
+  (`FocusedObject::has_focused_state`, the walk a focus event's object
+  gets); one that fails makes the whole answer empty, no window and no
+  control (`read::FocusReadMiss::Unfocused`). A UIA control has no test,
+  and a fake focus with no control is no input whatever its window, so the
+  window is not tested. Every answer's window facts carry the
+  application's name, a console window's client's, and whether Alt is
+  held (`worker::focus_answer_facts`), as a reported focus's do, so Core's
+  rules for an application's windows, the Alt+Tab switcher's among them,
+  apply to an answer too.
 - Hidden-frame suppression (decision D9): Core's hidden 1x1 frame, marked
   with `verbatim_model::HIDDEN_FRAME_WINDOW_PROP`, is never announced. Every
   `FocusChanged` path checks the property (`GetPropW`) on the window and its
@@ -1343,7 +1356,10 @@ Caret and text events:
   does): another node's watch ends, the intake is told through the
   follow change it commits, and the tracking takes it, unless it is
   already followed under the same node, which is followed again, not
-  adopted.
+  adopted. Verbatim+Tab's answer (`FocusPurpose::Report`), which Core
+  only speaks, is none of these: its caret is not read, Core asking for
+  its line, and it is neither recorded, adopted nor followed, so the
+  followed chain and the events judged against it are unchanged.
 
 ### Queries
 

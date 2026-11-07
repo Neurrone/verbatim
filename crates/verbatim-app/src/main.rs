@@ -44,8 +44,8 @@ use verbatim_core::{ReducerRecorder, SrState, reduce};
 use verbatim_gui::{GuiCommand, GuiEvent, GuiHandle, ShellItemKind, run_gui};
 use verbatim_input::{DecisionConfig, GestureMap, KeyboardLayout};
 use verbatim_input_windows::{ForegroundView, InputHook};
-use verbatim_model::protocol::RequestId;
 use verbatim_model::protocol::{CoreToOutpost, EventTiming, OutpostToCore, Query, QueryOutcome};
+use verbatim_model::protocol::{FocusPurpose, RequestId};
 use verbatim_model::{
     Earcon, Effect, ForegroundWindow, GestureId, GuiRequest, Input, LockKey, OutpostId, Pid,
     ReaderSettings, TextRequest, TraceId, WindowHandle,
@@ -65,6 +65,7 @@ use verbatim_synth_capture::CaptureSynth;
 use latency::LatencyLedger;
 use live::LiveOutposts;
 use requests::{Asker, DumpTicket, DumpTreeResult, RequestTable};
+use wanted::FocusWanted;
 
 /// The one binding not carried by the keyboard layout's own script table:
 /// Verbatim+V opens the menu. The review, object-navigation, time, and
@@ -889,6 +890,69 @@ fn foreground_pid() -> Option<Pid> {
     (pid != 0).then_some(Pid(pid))
 }
 
+/// What Verbatim+Tab's routing reads of the windows now
+/// ([`report_focus_target`]): local calls, which a test gives its own.
+trait WindowsLookup {
+    /// The window with the keyboard focus on the foreground thread, else
+    /// its active window (`GetGUIThreadInfo`).
+    fn focus_window(&self) -> Option<isize>;
+    /// The window in front (`GetForegroundWindow`).
+    fn foreground_window(&self) -> Option<isize>;
+    /// The hung window a ghost window stands in for
+    /// (`HungWindowFromGhostWindow`).
+    fn hung_window_from_ghost(&self, hwnd: isize) -> Option<isize>;
+    /// The process that owns a window (`GetWindowThreadProcessId`).
+    fn owner(&self, hwnd: isize) -> Option<u32>;
+    /// The process that serves a window's UIA, a console window's console
+    /// host ([`verbatim_win32::provider::provider_process`]).
+    fn provider(&self, hwnd: isize) -> Option<u32>;
+}
+
+/// The windows as Windows reports them now.
+struct WindowsNow;
+
+impl WindowsLookup for WindowsNow {
+    fn focus_window(&self) -> Option<isize> {
+        verbatim_win32::window::focus_window()
+    }
+
+    fn foreground_window(&self) -> Option<isize> {
+        use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+        // SAFETY: no preconditions.
+        let hwnd = unsafe { GetForegroundWindow() }.0 as isize;
+        (hwnd != 0).then_some(hwnd)
+    }
+
+    fn hung_window_from_ghost(&self, hwnd: isize) -> Option<isize> {
+        verbatim_win32::window::hung_window_from_ghost(hwnd)
+    }
+
+    fn owner(&self, hwnd: isize) -> Option<u32> {
+        window_pid(hwnd).map(|pid| pid.0)
+    }
+
+    fn provider(&self, hwnd: isize) -> Option<u32> {
+        verbatim_win32::provider::provider_process(hwnd)
+    }
+}
+
+/// Where Verbatim+Tab's query goes (Dickson, 2026-11-07): the application
+/// that owns the foreground thread's focus window, or with none the window
+/// in front, a ghost window first mapped to the hung window it stands in
+/// for, so a frozen application's query goes to its own outpost; with the
+/// process that serves that window, whose outpost is asked, a console
+/// window's console host, `None` when it cannot be read. So Settings
+/// answers from its own process, not from `ApplicationFrameHost`'s frame.
+/// `None` with no window in front. Local calls.
+fn report_focus_target(windows: &dyn WindowsLookup) -> Option<(Pid, Option<Pid>)> {
+    let window = windows
+        .focus_window()
+        .or_else(|| windows.foreground_window())?;
+    let window = windows.hung_window_from_ghost(window).unwrap_or(window);
+    let application = windows.owner(window).filter(|&pid| pid != 0)?;
+    Some((Pid(application), windows.provider(window).map(Pid)))
+}
+
 /// The reducer thread's dependencies, bundled to keep [`reducer_loop`]'s
 /// signature from growing an argument for every subsystem it touches.
 struct ReducerContext {
@@ -1124,10 +1188,17 @@ impl ReducerThread<'_> {
                 // foreground afresh and ask its application for the focus.
                 if replacement && let Some(pid) = foreground_pid() {
                     self.want_focus_now(pid);
+                    self.apply_follow_ups();
                 }
             }
             OutpostMessage::MenuOrSwitchEnded { ended_at_us } => {
                 self.apply(Input::MenuOrSwitchEnded { ended_at_us });
+            }
+            OutpostMessage::Desktop(news) => {
+                self.apply(Input::Desktop {
+                    trace_id: TraceId::mint(),
+                    news,
+                });
             }
             OutpostMessage::Foreground(report) => {
                 self.apply(Input::Foreground(ForegroundWindow {
@@ -1150,28 +1221,41 @@ impl ReducerThread<'_> {
             // `Frames` turns these into the messages they carry, before
             // anything reaches here.
             OutpostMessage::Frame(_) => {}
-            OutpostMessage::NotWatched { target_pid, .. } => {
-                // No outpost will answer for it: what waits for one is
-                // answered "gone".
-                self.wanted.not_watched(target_pid);
-                let mut outposts = self.context.outposts.lock().expect("outposts lock");
-                if outposts
-                    .get(&target_pid)
-                    .is_some_and(|status| status.outpost_pid.is_none())
-                {
-                    outposts.remove(&target_pid);
-                }
-            }
+            OutpostMessage::NotWatched { target_pid, .. } => self.not_watched(target_pid),
         }
     }
 
-    /// The reducer asked for the focus of whichever application is in
-    /// front (`Effect::ReadForegroundFocus`), after a menu or the Alt+Tab
-    /// switcher closed: usually not the one that owned the menu, as NVDA's
-    /// fake focus. Only the control is reported, as NVDA queues a focus on
-    /// it and nothing for its window. An application with no ready outpost
-    /// is asked for its window too, since attention may be moving to it.
-    fn fake_focus(&mut self, trace_id: TraceId) {
+    /// No outpost will answer for `target_pid`: what waits for one is
+    /// answered "gone", and a status entry only waiting for its outpost
+    /// removed.
+    fn not_watched(&mut self, target_pid: Pid) {
+        if let Some(wanted) = self.wanted.not_watched(target_pid) {
+            self.focus_unanswered(wanted, false);
+            self.apply_follow_ups();
+        }
+        let mut outposts = self.context.outposts.lock().expect("outposts lock");
+        if outposts
+            .get(&target_pid)
+            .is_some_and(|status| status.outpost_pid.is_none())
+        {
+            outposts.remove(&target_pid);
+        }
+    }
+
+    /// The reducer asked for the focus now, for `purpose`
+    /// (`Effect::ReadFocus`), under `trace_id`: Verbatim+Tab's
+    /// ([`Self::report_focus`]), or the application in front's, after a
+    /// menu or the Alt+Tab switcher closed, usually not the one that owned
+    /// the menu, as NVDA's fake focus, or when the user's desktop returned.
+    /// Only the control is reported, as NVDA queues a focus on it and
+    /// nothing for its window. An application with no ready outpost is
+    /// asked for its window too, as at the start, since attention may be
+    /// moving to it.
+    fn read_focus(&mut self, purpose: FocusPurpose, trace_id: TraceId) {
+        if purpose == FocusPurpose::Report {
+            self.report_focus(trace_id);
+            return;
+        }
         let Some(pid) = foreground_pid().filter(|&pid| !self.context.supervisor.is_ignored(pid))
         else {
             return;
@@ -1180,24 +1264,38 @@ impl ReducerThread<'_> {
             self.want_focus_now(pid);
             return;
         };
-        let id = self.requests.begin(
-            outpost,
-            Asker::FakeFocus {
-                source: pid,
+        self.ask_focus(outpost, pid, purpose, trace_id);
+    }
+
+    /// Verbatim+Tab's query, under the press's `trace_id`: asked of the
+    /// process of the foreground thread's focus window
+    /// ([`report_focus_target`]), started if it has no outpost, and told
+    /// unanswered, for Core to say "No focus", once the press's input is
+    /// handled, when there is no window in front, its process is ignored,
+    /// or no outpost can serve it.
+    fn report_focus(&mut self, trace_id: TraceId) {
+        let target = report_focus_target(&WindowsNow);
+        let asked = target.is_some_and(|(application, server)| {
+            !self.context.supervisor.is_ignored(application)
+                && server.is_some_and(|server| {
+                    self.want_focus(
+                        (application, server),
+                        FocusWanted {
+                            application,
+                            purpose: FocusPurpose::Report,
+                            trace_id,
+                        },
+                    );
+                    true
+                })
+        });
+        if !asked {
+            tracing::info!(?target, "Verbatim+Tab has nothing to ask");
+            self.follow_ups.push(Input::ReadFocusUnanswered {
                 trace_id,
-            },
-        );
-        self.send(
-            trace_id,
-            outpost,
-            id,
-            CoreToOutpost::Query {
-                trace_id,
-                request_id: id,
-                query: Query::ReadFocus,
-                timing: EventTiming::default(),
-            },
-        );
+                abandoned: false,
+            });
+        }
     }
 
     /// Whether `event` is a focus in a top-level window of a process
@@ -1243,30 +1341,87 @@ impl ReducerThread<'_> {
             );
             return;
         };
-        if server != pid {
+        self.want_focus(
+            (pid, server),
+            FocusWanted {
+                application: pid,
+                purpose: FocusPurpose::Plain,
+                trace_id: TraceId::mint(),
+            },
+        );
+    }
+
+    /// Asks the outpost of `server`, the process serving the window of the
+    /// application `pid`, for the focus query `wanted` now if it is ready,
+    /// or as soon as it is, starting one if there is none. A console's
+    /// client is served by its console host's outpost, which then reports
+    /// for it. A query waiting that this one replaces ends unanswered.
+    fn want_focus(&mut self, (pid, server): (Pid, Pid), wanted: FocusWanted) {
+        let FocusWanted {
+            purpose, trace_id, ..
+        } = wanted;
+        let replaced = if server != pid {
             let host = server;
             if let Some(outpost) = self.live.ready(host) {
                 self.live.reports_for(outpost, pid);
-                self.focus_now(outpost, pid);
+                self.ask_focus(outpost, pid, purpose, trace_id);
+                None
             } else {
-                self.wanted.want_focus_now(host, pid);
+                let replaced = self.wanted.want_focus_now(host, wanted);
                 self.context.supervisor.ensure_spawned(host);
+                replaced
             }
         } else if let Some(outpost) = self.live.ready(pid) {
-            self.focus_now(outpost, pid);
+            self.ask_focus(outpost, pid, purpose, trace_id);
+            None
         } else {
             let target = self.live.target_for(pid);
-            self.wanted.want_focus_now(target, pid);
+            let replaced = self.wanted.want_focus_now(target, wanted);
             self.context.supervisor.ensure_spawned(target);
+            replaced
+        };
+        if let Some(replaced) = replaced {
+            self.focus_unanswered(replaced, true);
         }
     }
 
-    /// Sends the focus-now query.
-    fn focus_now(&mut self, outpost: OutpostId, source: Pid) {
-        let trace_id = TraceId::mint();
-        let id = self
-            .requests
-            .begin(outpost, Asker::FocusNow { source, trace_id });
+    /// Applies the inputs handling left to follow (`follow_ups`), in order.
+    fn apply_follow_ups(&mut self) {
+        for input in std::mem::take(&mut self.follow_ups) {
+            self.apply(input);
+        }
+    }
+
+    /// The focus query `wanted` ends with no answer: for Verbatim+Tab,
+    /// Core is told, its press ending silently when `silently`, else with
+    /// "No focus", as a follow-up input, applied after the input whose
+    /// effects are being carried out, if any; no other asker waits.
+    fn focus_unanswered(&mut self, wanted: FocusWanted, silently: bool) {
+        if wanted.purpose == FocusPurpose::Report {
+            self.follow_ups.push(Input::ReadFocusUnanswered {
+                trace_id: wanted.trace_id,
+                abandoned: silently,
+            });
+        }
+    }
+
+    /// Sends the focus query of application `source` for `purpose`, under
+    /// `trace_id`.
+    fn ask_focus(
+        &mut self,
+        outpost: OutpostId,
+        source: Pid,
+        purpose: FocusPurpose,
+        trace_id: TraceId,
+    ) {
+        let id = self.requests.begin(
+            outpost,
+            Asker::ReadFocus {
+                source,
+                trace_id,
+                purpose,
+            },
+        );
         self.send(
             trace_id,
             outpost,
@@ -1274,7 +1429,7 @@ impl ReducerThread<'_> {
             CoreToOutpost::Query {
                 trace_id,
                 request_id: id,
-                query: Query::ReadFocus,
+                query: Query::ReadFocus { purpose },
                 timing: EventTiming::default(),
             },
         );
@@ -1362,13 +1517,13 @@ impl ReducerThread<'_> {
                 tracing::info!(%outpost, %outpost_pid, %target_pid, "outpost ready");
                 self.live.mark_ready(outpost);
                 let asked = self.wanted.ready(target_pid, now_us());
-                if let Some(application) = asked.focus_now {
-                    if application != target_pid {
+                if let Some(wanted) = asked.focus_now {
+                    if wanted.application != target_pid {
                         // A console host's replacement, asked for its
                         // console's client.
-                        self.live.reports_for(outpost, application);
+                        self.live.reports_for(outpost, wanted.application);
                     }
-                    self.focus_now(outpost, application);
+                    self.ask_focus(outpost, wanted.application, wanted.purpose, wanted.trace_id);
                 }
                 for wanted in asked.shell {
                     self.ask_shell_items(outpost, wanted.kind, wanted.ask, wanted.times);
@@ -1450,7 +1605,10 @@ impl ReducerThread<'_> {
             }
             ShellCommand::ShellItems(kind, ask) => self.shell_items(kind, ask),
             ShellCommand::DumpTreeGivenUp(ticket) => self.dump_tree_given_up(ticket),
-            ShellCommand::FocusNow(pid) => self.want_focus_now(pid),
+            ShellCommand::FocusNow(pid) => {
+                self.want_focus_now(pid);
+                self.apply_follow_ups();
+            }
             ShellCommand::Exiting { replaced, heard } => {
                 // The hook is gone, so nothing more joins the line, and a
                 // key in it would now arrive after keys pressed since.
@@ -1649,9 +1807,7 @@ impl ReducerThread<'_> {
         for effect in effects {
             self.execute(trace_id, effect);
         }
-        for input in std::mem::take(&mut self.follow_ups) {
-            self.apply(input);
-        }
+        self.apply_follow_ups();
         // The marks held behind a lock key's announcement go once it has
         // been made.
         for input in self.marks.release(self.state.announces_toggle_key()) {
@@ -1814,7 +1970,7 @@ impl ReducerThread<'_> {
                 );
             }
             Effect::PlayEarcon(earcon) => self.context.manager.play_earcon(&mut self.token, earcon),
-            Effect::ReadForegroundFocus => self.fake_focus(trace_id),
+            Effect::ReadFocus(purpose) => self.read_focus(purpose, trace_id),
             Effect::PassHeldKey(held) => self.held_keys.pass_on(held),
             Effect::BoundHeldKey(due) => {
                 self.held_due = due.map(|(key, within_ms)| {
@@ -2070,7 +2226,17 @@ impl ReducerThread<'_> {
                     && (self.state.attention() == Some(application)
                         || self.state.focus_source() == Some(application)) =>
             {
-                self.wanted.want_focus_now(target_pid, application);
+                let replaced = self.wanted.want_focus_now(
+                    target_pid,
+                    FocusWanted {
+                        application,
+                        purpose: FocusPurpose::Plain,
+                        trace_id: TraceId::mint(),
+                    },
+                );
+                if let Some(replaced) = replaced {
+                    self.focus_unanswered(replaced, true);
+                }
             }
             Some(_) => {}
             None => tracing::error!(
@@ -2721,5 +2887,96 @@ mod tests {
             arrived,
             ["outpost message for 1", "key 7", "outpost message for 2"]
         );
+    }
+    /// Windows as a test describes them: the foreground thread's focus
+    /// window, the window in front, the ghosts and the hung windows they
+    /// stand in for, each window's owner, and the console windows' hosts.
+    struct FakeWindows {
+        focus: Option<isize>,
+        foreground: Option<isize>,
+        ghosts: &'static [(isize, isize)],
+        owners: &'static [(isize, u32)],
+        hosts: &'static [(isize, u32)],
+    }
+
+    impl WindowsLookup for FakeWindows {
+        fn focus_window(&self) -> Option<isize> {
+            self.focus
+        }
+
+        fn foreground_window(&self) -> Option<isize> {
+            self.foreground
+        }
+
+        fn hung_window_from_ghost(&self, hwnd: isize) -> Option<isize> {
+            self.ghosts
+                .iter()
+                .find_map(|&(ghost, hung)| (ghost == hwnd).then_some(hung))
+        }
+
+        fn owner(&self, hwnd: isize) -> Option<u32> {
+            self.owners
+                .iter()
+                .find_map(|&(window, pid)| (window == hwnd).then_some(pid))
+        }
+
+        fn provider(&self, hwnd: isize) -> Option<u32> {
+            self.hosts
+                .iter()
+                .find_map(|&(window, host)| (window == hwnd).then_some(host))
+                .or_else(|| self.owner(hwnd))
+        }
+    }
+
+    /// Verbatim+Tab goes to the process of the foreground thread's focus
+    /// window: Settings' page in `ApplicationFrameHost`'s frame answers from
+    /// `SystemSettings`; a ghost is mapped to the hung window it stands in
+    /// for; a console window is served by its console host for its client;
+    /// with no focus window, the window in front's; with neither, nowhere.
+    #[test]
+    fn verbatim_tab_is_routed_to_the_focus_windows_process() {
+        let settings = FakeWindows {
+            focus: Some(0x20),
+            foreground: Some(0x10),
+            ghosts: &[],
+            owners: &[(0x10, 5), (0x20, 7)],
+            hosts: &[],
+        };
+        assert_eq!(report_focus_target(&settings), Some((Pid(7), Some(Pid(7)))));
+        let frozen = FakeWindows {
+            focus: Some(0x30),
+            foreground: Some(0x30),
+            ghosts: &[(0x30, 0x40)],
+            owners: &[(0x30, 2), (0x40, 9)],
+            hosts: &[],
+        };
+        assert_eq!(report_focus_target(&frozen), Some((Pid(9), Some(Pid(9)))));
+        let console = FakeWindows {
+            focus: Some(0x50),
+            foreground: Some(0x50),
+            ghosts: &[],
+            owners: &[(0x50, 11)],
+            hosts: &[(0x50, 12)],
+        };
+        assert_eq!(
+            report_focus_target(&console),
+            Some((Pid(11), Some(Pid(12))))
+        );
+        let no_focus_window = FakeWindows {
+            focus: None,
+            ..settings
+        };
+        assert_eq!(
+            report_focus_target(&no_focus_window),
+            Some((Pid(5), Some(Pid(5))))
+        );
+        let nothing = FakeWindows {
+            focus: None,
+            foreground: None,
+            ghosts: &[],
+            owners: &[],
+            hosts: &[],
+        };
+        assert_eq!(report_focus_target(&nothing), None);
     }
 }

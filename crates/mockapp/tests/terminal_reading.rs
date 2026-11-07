@@ -283,7 +283,9 @@ fn rows(rows: &[&str]) -> String {
 /// terminal, which it then reads first, as it reads a terminal that gains
 /// the focus.
 fn focus_now(outpost: &mut OutpostUnderTest) -> FocusedControl {
-    let request = outpost.ask(Query::ReadFocus);
+    let request = outpost.ask(Query::ReadFocus {
+        purpose: verbatim_model::protocol::FocusPurpose::Plain,
+    });
     let control = match outpost.next() {
         OutpostToCore::Reply {
             request_id,

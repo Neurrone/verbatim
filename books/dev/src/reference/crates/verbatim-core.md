@@ -544,9 +544,9 @@ code is in `reduce.rs` unless named.
   last spoke of it (`FocusContext::spoken`, a `SpokenRecord`): the
   focus's name, value, description and states, and each ancestor's
   states. A repeat never moves the record. A focus taken moves it, and
-  so does a report that speaks the focus's reading (the report-focus
-  command, reporting the current object while the navigator holds the
-  reading, and the navigator's return to the focus), whatever the reason
+  so does a report that speaks the focus's reading (Verbatim+Tab's
+  answer of the focus, reporting the current object while the navigator
+  holds the reading, and the navigator's return to the focus), whatever the reason
   it is spoken. A navigation that lands on the focus's node fetches a
   separate object, so reporting it moves the record only when it equals
   the reading. A name, value or description change on the focus moves it
@@ -646,13 +646,40 @@ sibling and first-child moves emit a navigation `Fetch` whose completion
 moves and announces the navigator, a newer navigation turning an older
 one still pending to nothing; activate emits `Activate`, whose answer says
 what was done; to-focus snaps back, turning a pending navigation to
-nothing; report focus
-(`report_focus`) runs against the focus. With no navigator a command says
-"No navigator object". An object with text is announced by
+nothing; report focus asks a live query ("Verbatim+Tab", below). With no
+navigator a command says "No navigator object". An object with text is announced by
 `announce_navigator` and `editing::navigator_text`: name, role and states,
 then its text, read from the known caret or through a `PendingText` with
 `NavigatorSelection` and `NavigatorLine` follow-ups, which a newer text
 request supersedes.
+
+### Verbatim+Tab
+
+(`report_focus.rs`.) Each press is a live focus query,
+`Effect::ReadFocus(FocusPurpose::Report)`, which the app routes to the
+process of the foreground thread's focus window
+([verbatim-app](verbatim-app.md)); nothing is said until it answers.
+The answer comes back as an `Input::Event` whose `purpose` is `Report`,
+under the press's trace, and is spoken only: never taken as Core's
+focus, nor recorded as the last focus queued, so Core's focus ancestry,
+its navigator and the outposts' followed chains are unchanged. The first
+press says the object as a query announces it (`reduce::announce_query`),
+then its text as the navigator's is read (`editing::reported_text`, whose
+`PendingText::about` carries the answer, which is neither the navigator
+object nor the focus); an answer of the focus Core holds moves what was
+last spoken of it. A second press spells the name, "blank" for none, a
+third and later with character descriptions.
+
+The press waiting for its answer is `SrState::report_press`
+(`WaitingPress`: its trace and the first and last repeat counts kept).
+A press within the repeat interval while one waits is kept with it, so
+the answer is spoken, then spelled, in order; a press after the interval
+asks again and replaces it, the older query's answer then being late.
+Its endings are its answer, `Input::ReadFocusUnanswered` (nothing to ask,
+its outpost's end, `NotWatched` or an empty answer say "No focus";
+abandoned at its deadline, or replaced in the app while it waited for an
+outpost, nothing), a newer focus Core applies (`record_taken`), and a
+replacing press. An answer for no waiting press says nothing.
 
 Completions are matched by the state's latest navigation query id, not by
 navigator identity, so a focus event between a command and its completion
@@ -706,9 +733,26 @@ number, so a key pressed within the 30 ms does not silence it, as NVDA's
 announcement after its timer is heard; it never waits behind a held key,
 since NVDA starts that timer when the key is pressed, outside its script
 queue. `MenuOrSwitchEnded` asks for the
-foreground application's focus (`Effect::ReadForegroundFocus`, NVDA's
-fake focus) unless a focus observed since has been applied
-(`docs/parity/backends.md`). `tests/shell.rs` checks each rule.
+foreground application's focus (`Effect::ReadFocus(FocusPurpose::Fake)`,
+NVDA's fake focus) unless a focus observed since has been applied, or a
+report set aside for a pending live re-read
+(`docs/parity/backends.md`). A focus query's answer is marked with its
+purpose (`Input::Event::purpose`), which decides the duplicate rule
+(`reduce::duplicate_rule_applies`): a fake focus's answer is judged only
+when it was read through MSAA, as NVDA's `processFocusNVDAEvent` tests
+IAccessible objects only, so a UIA answer of the focus Core holds is
+spoken again; the desktop's return's (`Again`) never; a plain query's as
+any report.
+
+The desktop's news (`desktop.rs`, `Input::Desktop`): the user's desktop
+returned asks the application in front for its focus again
+(`Effect::ReadFocus(FocusPurpose::Again)`, NVDA's `_handleUserDesktop`);
+the virtual desktop's name is kept (`SrState::desktop_name`, the newest
+only) until the next focus Core takes, which says it after the
+foreground's title and before the entered containers, as NVDA's
+`doPreGainFocus` calls `handlePossibleDesktopNameChange`, or, at its due
+time (`DesktopNews::NameDue`), spoken as a queued message. `tests/shell.rs`
+checks each rule.
 
 ## Text
 

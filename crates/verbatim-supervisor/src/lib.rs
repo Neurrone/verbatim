@@ -457,6 +457,9 @@ pub enum OutpostMessage {
         /// shared clock.
         ended_at_us: u64,
     },
+    /// News of the desktop from the focus listener: the app gives it to
+    /// Core.
+    Desktop(verbatim_model::DesktopNews),
     /// A window came to the system's foreground, as the focus listener
     /// learned it: the app gives it to Core, which decides the keyboard
     /// hook's view of the foreground (architecture section 5), attention

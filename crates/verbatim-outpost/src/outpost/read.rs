@@ -1397,8 +1397,11 @@ fn dialog_text_of(
 /// Through MSAA, the focused object is the focus window's client's
 /// `accFocus`, whose answer is checked as an object of a window this
 /// application serves before it is read
-/// ([`verbatim_ia2::acquire::focused_snapshot`]): another process's
-/// answers no focused control.
+/// ([`verbatim_ia2::acquire::focused_object`]): another process's
+/// answers no focused control. For a fake focus (`fake`), it is read only
+/// when it or an ancestor has the focused state, as NVDA's
+/// `processFocusNVDAEvent` tests an `IAccessible` object before it queues
+/// it, and answers [`FocusReadMiss::Unfocused`] otherwise.
 ///
 /// Through UIA, the focused element is read with
 /// `GetFocusedElementBuildCache`, which reads the keyboard focus again
@@ -1415,7 +1418,7 @@ fn dialog_text_of(
 pub(super) fn focused_control_in(
     context: &RequestContext<'_>,
     client: &mut Client,
-    trigger: FocusRead,
+    (trigger, fake): (FocusRead, bool),
 ) -> Result<(isize, FocusedControl), FocusReadMiss> {
     let hwnd = checked_focus_window(context)?;
     // The focused element is read from the window's provider at once.
@@ -1427,12 +1430,23 @@ pub(super) fn focused_control_in(
         // newest focus it waits for (`docs/design/focus-pipeline-rework.md`,
         // "MSAA object equality").
         let candidates = msaa_candidates(context);
-        let node = verbatim_ia2::acquire::focused_snapshot(
-            hwnd,
-            context.nodes(),
-            (&|window| serves(context, window), Some(&candidates)),
-        )
-        .ok_or(FocusReadMiss::Failed(None))?;
+        let mut object =
+            verbatim_ia2::acquire::focused_object(hwnd, &|window| serves(context, window))
+                .ok_or(FocusReadMiss::Failed(None))?;
+        if fake
+            && !object.has_focused_state(
+                MAX_ANCESTOR_HOPS,
+                &|window| reads_as_plain(context, window),
+                &mut |window| parent_window_for_focused_state(context, client, window),
+            )
+        {
+            tracing::debug!(
+                hwnd,
+                "the fake focus's MSAA object has no focused state, nor any ancestor; nothing is answered"
+            );
+            return Err(FocusReadMiss::Unfocused);
+        }
+        let node = object.read(context.nodes(), Some(&candidates));
         let (ancestors, selected_child) =
             msaa_enrichment(context, client, (&node, &[], Some(&candidates)))
                 .map_err(|FocusLost| FocusReadMiss::Failed(None))?;
@@ -1594,6 +1608,9 @@ pub(super) enum FocusReadMiss {
     /// The read itself failed, with the error's `HRESULT` when the failed
     /// call gave one.
     Failed(Option<windows::core::HRESULT>),
+    /// A fake focus's MSAA object, which neither it nor any ancestor has
+    /// the focused state for: NVDA refuses it before it is queued.
+    Unfocused,
 }
 
 /// What asked [`focused_control_in`] to read the application's focus,
@@ -1645,10 +1662,16 @@ fn console_text_area_in(node: &mut NodeSnapshot, window_class: impl FnOnce() -> 
 /// window that cannot be read, a ghost's
 /// or a hung application's, is a plain window, as its focus is
 /// ([`focused_control_in`]). Returned with the window whose focused element
-/// it read, the control's own window.
+/// it read, the control's own window. For a fake focus (`fake`), an MSAA
+/// control with no focused state, nor any ancestor, makes the whole answer
+/// empty, no window and no control, as NVDA refuses the object before it
+/// is queued (`docs/design/focus-pipeline-rework-remaining.md`, "The fake
+/// focus's tests"); a fake focus with no control is no input, whatever its
+/// window, so the window is not tested.
 pub(super) fn focus_now(
     context: &RequestContext<'_>,
     client: &mut Client,
+    fake: bool,
 ) -> (FocusNow, Option<isize>) {
     let observed_at_us = now_us();
     // A foreground window that cannot be read is a plain window, with no
@@ -1663,9 +1686,18 @@ pub(super) fn focus_now(
             };
             (node, window_facts(hwnd))
         });
-    let (control_window, focus) = focused_control_in(context, client, FocusRead::FocusNow)
-        .ok()
-        .unzip();
+    let control = focused_control_in(context, client, (FocusRead::FocusNow, fake));
+    if control == Err(FocusReadMiss::Unfocused) {
+        return (
+            FocusNow {
+                window: None,
+                focus: None,
+                observed_at_us,
+            },
+            None,
+        );
+    }
+    let (control_window, focus) = control.ok().unzip();
     (
         FocusNow {
             window,

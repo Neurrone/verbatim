@@ -154,6 +154,7 @@ impl Report {
             backend: Backend::Uia,
             window: Some(facts(self.top, self.foreground)),
             event,
+            purpose: None,
         }
     }
 }
@@ -533,7 +534,7 @@ fn a_pending_live_re_read_counts_for_the_fake_focus_skip_and_the_barrier() {
     assert_eq!(state.outstanding_queries(), 0);
     assert_eq!(
         heard(&crate::reduce(&mut state, &ended)),
-        [Heard::Other("ReadForegroundFocus".to_owned())]
+        [Heard::Other("ReadFocus(Fake)".to_owned())]
     );
 }
 

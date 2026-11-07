@@ -13,6 +13,7 @@
 
 use std::sync::Arc;
 
+use verbatim_model::protocol::FocusPurpose;
 use verbatim_model::{
     ActionName, Earcon, EarlierElement, Effect, FetchResult, ForegroundWindow, Input, Message,
     NodeId, NodeSnapshot, NormalizedEvent, Notification, NotificationProcessing, OutpostId, Phrase,
@@ -104,10 +105,11 @@ fn reduce_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
             source,
             window,
             event,
+            purpose,
             ..
         } => reduce_event(
             state,
-            *trace_id,
+            (*trace_id, *purpose),
             *observed_at_us,
             *source,
             window.as_ref(),
@@ -186,6 +188,7 @@ fn reduce_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
         Input::LiveRereadGone { .. } | Input::ListenerReplaced => {
             crate::live_reread::ended(state, input)
         }
+        Input::ReadFocusUnanswered { .. } => crate::report_focus::ended(state, input),
         // Playback will reach none of a cut utterance's marks it had not
         // reached: say-all stops, as on any cut, and terminal output drops
         // what waits, as anything that cuts speech off does.
@@ -723,7 +726,9 @@ fn older_than_taken(state: &SrState, outpost: OutpostId, group: FocusGroup) -> b
 
 /// Records that the focus of `report` was taken: the applied stamp, and
 /// its focus group, which ends the group for its older entries. A newer
-/// focus applied ends every pending live re-read (`crate::live_reread`).
+/// focus applied ends every pending live re-read (`crate::live_reread`)
+/// and Verbatim+Tab's waiting press, whose answer would be late
+/// (`crate::report_focus`).
 fn record_taken(state: &mut SrState, report: &FocusReport<'_>) {
     if report.observed_at_us != 0 {
         state
@@ -732,6 +737,7 @@ fn record_taken(state: &mut SrState, report: &FocusReport<'_>) {
     }
     record_group(state, report);
     state.live_rereads.end_all();
+    state.report_press = None;
 }
 
 /// Records `report`'s focus group as taken, which ends the group for its
@@ -743,13 +749,29 @@ fn record_group(state: &mut SrState, report: &FocusReport<'_>) {
     }
 }
 
+/// Whether Core's duplicate rule judges a focus of `node`, read for
+/// `purpose`: every report and a plain focus query's answer; a fake
+/// focus's answer only when it was read through MSAA, as NVDA tests a
+/// fake focus for duplicates only for MSAA objects; the desktop's return
+/// never, as NVDA queues that focus with no test
+/// (`docs/design/focus-pipeline-rework-remaining.md`, "The fake focus's
+/// tests").
+fn duplicate_rule_applies(purpose: Option<FocusPurpose>, node: &NodeSnapshot) -> bool {
+    match purpose {
+        None | Some(FocusPurpose::Plain | FocusPurpose::Report) => true,
+        Some(FocusPurpose::Fake) => node.backend == Backend::Msaa,
+        Some(FocusPurpose::Again) => false,
+    }
+}
+
 /// Records the observation of `event`, a focus that passed the stale and
 /// foreground tests, as the ordering stamp, and answers whether it is a
 /// duplicate of the focus Core holds, whose newer reading is then kept
-/// unspoken.
+/// unspoken; none for a focus the rule does not judge
+/// ([`duplicate_rule_applies`]).
 fn focus_is_a_duplicate(
     state: &mut SrState,
-    observed_at_us: u64,
+    (observed_at_us, purpose): (u64, Option<FocusPurpose>),
     window: Option<&WindowFacts>,
     event: &NormalizedEvent,
 ) -> bool {
@@ -764,6 +786,9 @@ fn focus_is_a_duplicate(
     else {
         return false;
     };
+    if !duplicate_rule_applies(purpose, node) {
+        return false;
+    }
     if !is_duplicate_focus(state, node, *earlier) {
         let duplicate = is_duplicate_of_pending(state, node, *earlier);
         if duplicate {
@@ -881,24 +906,33 @@ fn reduce_caret_moved(
     effects
 }
 
+/// Whether `event` is a live re-read's answer that comes late: one is
+/// taken only while its live re-read is pending, which it ends; any other
+/// says nothing (`crate::live_reread`).
+fn is_late_live_reread_answer(state: &mut SrState, event: &NormalizedEvent) -> bool {
+    matches!(
+        event,
+        NormalizedEvent::FocusChanged {
+            node,
+            answers: Some(request),
+            ..
+        } if !state.live_rereads.answered(node.id.outpost(), *request)
+    )
+}
+
 fn reduce_event(
     state: &mut SrState,
-    trace_id: TraceId,
+    (trace_id, purpose): (TraceId, Option<FocusPurpose>),
     observed_at_us: u64,
     source: Pid,
     window: Option<&WindowFacts>,
     event: &NormalizedEvent,
 ) -> Vec<Effect> {
-    // A live re-read's answer is taken only while its live re-read is
-    // pending, which it ends; any other is late, and says nothing
-    // (`crate::live_reread`).
-    if let NormalizedEvent::FocusChanged {
-        node,
-        answers: Some(request),
-        ..
-    } = event
-        && !state.live_rereads.answered(node.id.outpost(), *request)
-    {
+    // Verbatim+Tab's answer is only spoken (`crate::report_focus`).
+    if purpose == Some(FocusPurpose::Report) {
+        return crate::report_focus::answered(state, trace_id, event);
+    }
+    if is_late_live_reread_answer(state, event) {
         return Vec::new();
     }
     if focus_dropped_first(state, observed_at_us, window, event) {
@@ -909,7 +943,7 @@ fn reduce_event(
         Acceptance::Background => return reduce_background(state, trace_id, observed_at_us, event),
         Acceptance::Attended => {}
     }
-    if focus_is_a_duplicate(state, observed_at_us, window, event) {
+    if focus_is_a_duplicate(state, (observed_at_us, purpose), window, event) {
         return Vec::new();
     }
 
@@ -1250,9 +1284,13 @@ fn reduce_focus_changed(
     // A nameless whole-window focus, and any focus in the shell's staging
     // windows, say nothing; speech was cut above if the foreground window
     // changed.
+    // The virtual desktop's name kept is said by the focus taken, as NVDA
+    // says it before any focus (`crate::desktop`).
+    let desktop_name = crate::desktop::name_for_focus(state, trace_id);
     if report.whole_window && !has_text(report.node.name.as_deref())
         || crate::applications::is_shell_staging_window(window)
     {
+        effects.extend(desktop_name);
         return effects;
     }
 
@@ -1264,7 +1302,7 @@ fn reduce_focus_changed(
     let title = title
         .filter(|_| !line_met)
         .and_then(|top_level| window_title(top_level, report.ancestors, &entered));
-    let speech = focus_speech(state, trace_id, report, (title, entered));
+    let speech = focus_speech(state, trace_id, report, (title, entered, desktop_name));
     effects.extend(speech);
     effects.extend(editing::focus_text(
         state,
@@ -1551,7 +1589,7 @@ fn focus_speech(
     state: &mut SrState,
     trace_id: TraceId,
     report: &FocusReport<'_>,
-    (title, entered): (Option<&NodeSnapshot>, Vec<&NodeSnapshot>),
+    (title, entered, desktop_name): (Option<&NodeSnapshot>, Vec<&NodeSnapshot>, Option<Effect>),
 ) -> Vec<Effect> {
     let last_level = &mut state.last_tree_level;
     let reads_text = editing::may_have_text(report.node.role);
@@ -1573,6 +1611,11 @@ fn focus_speech(
             None,
         ));
     }
+    // The virtual desktop's name, after the foreground's title and before
+    // the entered containers, in NVDA's order
+    // (`docs/design/focus-pipeline-rework-remaining.md`, "The desktop
+    // switch and the virtual desktop's name").
+    effects.extend(desktop_name);
     for container in entered {
         // Entering a menu bar, menu, or menu item cuts speech and says
         // nothing, in its place among the entered containers, outermost
@@ -1950,7 +1993,7 @@ fn reduce_command(
         ReviewCommand::SayAllFromCaret | ReviewCommand::ReportCaretLocation => {
             caret_command(state, trace_id, command)
         }
-        ReviewCommand::ReportFocus => report_focus(state, trace_id, repeat),
+        ReviewCommand::ReportFocus => crate::report_focus::pressed(state, trace_id, repeat),
         ReviewCommand::ReportStatusBar => {
             terminal_model::report_status_bar(state, trace_id, repeat)
         }
@@ -2025,6 +2068,7 @@ fn caret_command(state: &mut SrState, trace_id: TraceId, command: ReviewCommand)
         Then::Text(PendingText {
             node,
             then: TextFollowUp::Location,
+            about: None,
         }),
     );
     vec![effect]
@@ -2228,40 +2272,35 @@ fn report_object(state: &mut SrState, trace_id: TraceId, repeat: u8) -> Vec<Effe
     }
 }
 
-/// Reports the focus object, leaving the navigator where it is
-/// (`docs/nvda/focus-and-navigator.md`, "Reporting the focus"): on the
-/// first press as reporting the current object reports the navigator, its
-/// text included; on the second its name spelled, "blank" when it has none;
-/// on the third and later its name spelled with character descriptions.
-/// Says "No focus" with no focus whose outpost is still running.
-fn report_focus(state: &mut SrState, trace_id: TraceId, repeat: u8) -> Vec<Effect> {
-    let Some(object) = state
+/// The utterance that announces `object` for a query, as
+/// [`announce_navigator`] announces it, without its text: an object that
+/// may have text leaves its value out, its text said after the rest.
+/// Verbatim+Tab speaks its answer so (`crate::report_focus`). An answer of
+/// the focus Core holds moves what was last spoken of it to what is spoken
+/// now, as [`announce_focus_object`] does, so a change the answer spoke is
+/// not spoken again when its event comes; nothing else of the focus
+/// changes.
+pub(crate) fn announce_query(
+    state: &mut SrState,
+    trace_id: TraceId,
+    object: &NodeSnapshot,
+) -> Utterance {
+    if let Some(focus) = state
         .focus
-        .as_ref()
-        .filter(|focus| focus.alive)
-        .map(|focus| focus.snapshot.clone())
-    else {
-        return vec![editing::speak(
-            trace_id,
-            review_text::message(Message::NoFocus),
-        )];
-    };
-    if repeat == 0 {
-        return announce_focus_object(state, trace_id, &object, Reason::Query);
+        .as_mut()
+        .filter(|focus| focus.snapshot.id == object.id)
+    {
+        let ancestors = Arc::clone(&focus.spoken().ancestors);
+        focus.spoken = Some(SpokenRecord::of(object, ancestors));
     }
-    let segments =
-        review_text::spell_or_blank(object.name.as_deref().unwrap_or_default(), repeat > 1, None);
-    vec![Effect::Speak(
-        Utterance {
-            trace_id,
-            priority: SpeechPriority::Queued,
-            segments,
-            source: Some(source_of(&object)),
-            say_all: false,
-            validity: None,
-        },
-        None,
-    )]
+    let levels = (Reason::Query, &mut state.last_tree_level);
+    if editing::may_have_text(object.role) && object.value.is_some() {
+        let mut announced = object.clone();
+        announced.value = None;
+        announce_node(trace_id, SpeechPriority::Queued, &announced, levels)
+    } else {
+        announce_node(trace_id, SpeechPriority::Queued, object, levels)
+    }
 }
 
 /// The text the report-object copy press puts on the clipboard: the

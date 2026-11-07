@@ -703,6 +703,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one sample of each query and of each outcome"
+    )]
     fn queries_and_every_outcome_round_trip() {
         let node = NodeSnapshot {
             id: NodeId::new(9),
@@ -715,7 +719,9 @@ mod tests {
         };
         let mut buffer = Vec::new();
         let queries = [
-            Query::ReadFocus,
+            Query::ReadFocus {
+                purpose: verbatim_model::protocol::FocusPurpose::Plain,
+            },
             Query::Navigate {
                 node_id: NodeId::new(9),
                 kind: QueryKind::NextSibling,

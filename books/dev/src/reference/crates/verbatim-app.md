@@ -434,13 +434,15 @@ knowing for review:
   with its outcome, and `requests::deliver` carries the outcome out, at
   the reducer thread's three places an outcome comes: an outpost's reply,
   an outpost's end, and a deadline passed. Every query the shell sends an
-  outpost for itself (a tree dump, a focus-now query, the fake focus, and
-  the shell item queries) is recorded with a fresh `RequestId` tagged
+  outpost for itself (a tree dump, a focus query, and the shell item
+  queries) is recorded with a fresh `RequestId` tagged
   `Requester::Shell` and the outpost generation it went to, and sent as a
   `Query` carrying that id; the outpost's one `Reply` echoes it with one
   of five outcomes. The first outcome removes the entry and goes to the
-  asker: a tree dump's is sent on its reply channel; and a
-  focus-now query's becomes reducer input: a focus on the focused control,
+  asker: a tree dump's is sent on its reply channel; and a focus query's
+  (`Asker::ReadFocus`, with its purpose, `FocusPurpose`) becomes reducer
+  input marked with its purpose (`requests::read_focus_inputs`). A plain
+  query's (`Plain`) is a focus on the focused control,
   with its ancestors and the text its outpost read with it, its window
   announced only as an entered ancestor when it is presentable, as NVDA
   announces the focus it starts with, or, with no focused control, a
@@ -473,9 +475,13 @@ knowing for review:
   entry that was only waiting for its outpost, so nothing, the idle
   barrier included, waits for an outpost that will never come. The wishes
   have one owner, `wanted::Wanted`, keyed by the process whose outpost
-  they wait for: a focus-now request and the list dialogs' shell items
-  requests each end exactly once, at that outpost's `Ready`, where it is
-  sent, at `NotWatched`, or, for a shell items request, at its deadline.
+  they wait for: a focus query (`FocusWanted`: the application, the
+  purpose and the trace) and the list dialogs' shell items requests each
+  end exactly once, at that outpost's `Ready`, where it is sent, at
+  `NotWatched`, or, for a shell items request, at its deadline; a newer
+  focus query replaces one waiting. A Verbatim+Tab query that ends so
+  unanswered is told to the reducer (`Input::ReadFocusUnanswered`): at
+  `NotWatched` with "No focus", replaced silently.
   An `Ended` asks the replacement for the focus only when the supervisor
   says a generation follows (`follows`), so the app never infers a
   replacement the supervisor will not start. `LiveOutposts` keeps each
@@ -485,11 +491,28 @@ knowing for review:
   closed, told 50 ms later with the time it ended), the reducer is given
   `Input::MenuOrSwitchEnded`, and unless it has applied a focus observed
   since that time (`SrState::latest_focus_observed_at`) it emits
-  `Effect::ReadForegroundFocus`, for which the reducer thread asks the
-  foreground application's ready outpost for
-  its focus as `Asker::FakeFocus`, whose answer re-enters the reducer as
-  the focus on the control alone, NVDA's fake focus; an application with
-  no ready outpost gets an ordinary focus-now query.
+  `Effect::ReadFocus(FocusPurpose::Fake)`, for which the reducer thread
+  asks the foreground application's ready outpost for its focus, whose
+  answer re-enters the reducer as the focus on the control alone, NVDA's
+  fake focus; an outpost's refused answer, no window and no control, is
+  no input. `OutpostMessage::Desktop` becomes `Input::Desktop`, under a
+  trace minted for it; the desktop's return makes the reducer emit
+  `Effect::ReadFocus(FocusPurpose::Again)`, asked and answered as the fake
+  focus is. An application with no ready outpost gets a plain query.
+  Verbatim+Tab's `Effect::ReadFocus(FocusPurpose::Report)` is asked under
+  the press's trace (`report_focus`) of the process of the foreground
+  thread's focus window, `GetGUIThreadInfo`'s `hwndFocus`, else its active
+  window, else the window in front, a ghost window first mapped to the
+  hung window it stands in for (`HungWindowFromGhostWindow`), so a frozen
+  application's query goes to its own outpost and a Settings page's to
+  `SystemSettings` rather than `ApplicationFrameHost`
+  (`report_focus_target`, local calls behind `WindowsLookup`, which a test
+  gives its own); its outpost is the window's provider process, a console
+  window's console host. The answer is the control or, with none, the
+  window, marked `Report`; no window in front, an ignored process, a
+  window with no readable provider, an empty answer, the outpost's end or
+  a failure is `Input::ReadFocusUnanswered` with "No focus", and the
+  query's abandonment at its deadline is the same input said silently.
   Later outcomes for the same id, and outcomes from any other outpost, are
   dropped. Core makes the outcome itself when a query cannot be sent
   ("failed", which a navigation sees as `Unanswered`; only "gone" becomes

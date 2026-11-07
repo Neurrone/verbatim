@@ -329,6 +329,7 @@ mod tests {
                         answers: None,
                         first_cached_ancestor: None,
                     },
+                    purpose: None,
                 },
                 effect_count: 1,
             },
@@ -488,6 +489,7 @@ mod tests {
                     node_id: NodeId::new(9),
                     value: Some("cut off here".to_owned()),
                 },
+                purpose: None,
             },
             effect_count: 1,
         };

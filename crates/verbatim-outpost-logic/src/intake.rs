@@ -1484,7 +1484,9 @@ mod tests {
     fn query(request_id: u64) -> Waiting {
         let item = Item::Query {
             request_id: RequestId::shell(request_id),
-            query: Query::ReadFocus,
+            query: Query::ReadFocus {
+                purpose: verbatim_model::protocol::FocusPurpose::Plain,
+            },
         };
         let (key, category, _) = classify(&item);
         Waiting {

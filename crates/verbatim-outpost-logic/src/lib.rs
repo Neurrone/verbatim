@@ -1691,7 +1691,7 @@ fn budget(entry: &Entry, now: Now, handling: Duration) -> (Duration, Option<(Req
     match &entry.item {
         Item::Query { request_id, query } => {
             let deadline = match query {
-                Query::ReadFocus => focus_read,
+                Query::ReadFocus { .. } => focus_read,
                 Query::ShellItems { answer_by_us, .. }
                 | Query::ShellItemPosition { answer_by_us, .. } => {
                     Duration::from_micros(answer_by_us.saturating_sub(now.wall_us))

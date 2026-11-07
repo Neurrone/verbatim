@@ -1431,7 +1431,15 @@ impl OutpostUnderTest {
     /// [`focus_now`](Self::focus_now)'s whole answer, with the calls its
     /// read made.
     pub fn focus_now_answer(&mut self) -> (FocusNow, CallCounts) {
-        let request_id = self.ask(Query::ReadFocus);
+        self.focus_now_for(verbatim_model::protocol::FocusPurpose::Plain)
+    }
+
+    /// [`focus_now_answer`](Self::focus_now_answer) for `purpose`.
+    pub fn focus_now_for(
+        &mut self,
+        purpose: verbatim_model::protocol::FocusPurpose,
+    ) -> (FocusNow, CallCounts) {
+        let request_id = self.ask(Query::ReadFocus { purpose });
         let answer = match self.next() {
             OutpostToCore::Reply {
                 request_id: answered,

@@ -218,9 +218,10 @@ receives the event's own element, judges and reads a UIA focus
   dropped unanswered, as an event still waiting when the readers stop is,
   sends the marker's drop. Debug builds
   assert after every step that the owed markers are exactly those the
-  schedule holds (`Schedule::markers`). The menu end's grace is the pure `GraceState::step`
-  in the same module (`GraceInput`: `Ended`, `Fired`, `IdleAnswer`,
-  `Close`; `GraceEffect`: `SendEnd`, `SendIdleAnswer`, `SetTimer`), driven
+  schedule holds (`Schedule::markers`). The listener's one timer is the pure `GraceState::step`
+  in the same module (`GraceInput`: `Ended`, `Returned`, `NameSent`,
+  `Fired`, `IdleAnswer`, `Close`; `GraceEffect`: `SendEnd`,
+  `SendReturned`, `SendNameDue`, `SendIdleAnswer`, `SetTimer`), driven
   by the listener's threadpool timer. `cargo xtask ci` reads the module
   against an allow-list (`xtask/src/ownership.rs`), which also keeps any
 responder out of it.
@@ -275,8 +276,9 @@ section 6.3).
   `THREAD_PRIORITY_HIGHEST`); every thread that produces a fact writes it
   itself, encoded into the sender's one buffer.
 - It installs the global MSAA hooks (`LISTENER_SUBSCRIPTIONS`: focus,
-  foreground, menu-popup, menu and switcher end, alert, and tooltip shown,
-  forwarded as `DeliveredFact::Show`) and, through one `Registration`, the
+  foreground, menu-popup, menu and switcher end, alert, tooltip shown,
+  forwarded as `DeliveredFact::Show`, and the desktop's switch, with the
+  desktop window's name change hooked scoped to csrss) and, through one `Registration`, the
   focus handler (`Subscription::Focus`) then element selected, menu opened,
   and notifications as one group on the desktop root, and says `Ready` only
   once all are in, so a menu opened right after start is seen. Range-value changes and live regions are not subscribed:
@@ -302,6 +304,26 @@ section 6.3).
 - A menu's or the Alt+Tab switcher's end goes to Core (`MenuOrSwitchEnded`)
   once its 50 ms grace passes with no later end, from a threadpool timer
   that a later end sets again; a callback that runs early sends nothing.
+  The same timer, set for the soonest thing waiting on it, sends the
+  desktop's news (`ListenerToCore::Desktop`,
+  `docs/design/focus-pipeline-rework-remaining.md`, "The desktop switch
+  and the virtual desktop's name"). A desktop switch
+  (`WinEventKind::DesktopSwitch`, hooked globally) back to the user's
+  desktop, by NVDA's test, `OpenInputDesktop` then `CloseDesktop`
+  (`verbatim_win32::window::input_desktop_opens`), is told 200 ms later
+  (`DesktopNews::Returned`), as NVDA calls `_handleUserDesktop` later; a
+  switch to the secure desktop is not told. The desktop window's name
+  change (`WinEventKind::DesktopName`, hooked scoped to csrss's process,
+  the desktop window's owner, so no other application's name change wakes
+  the thread) is queued, as D13's callbacks make no cross-process call,
+  for the reading thread of csrss's process (`UiaJob::DesktopName`, a job
+  that owes no outpost anything), which reads the desktop window's MSAA
+  name at the event's address
+  (`verbatim_ia2::acquire::name_at_event`) and sends it
+  (`DesktopNews::Name`), its due time following 250 ms after the event,
+  at once when that has passed (`DesktopNews::NameDue`); a read
+  abandoned at its deadline sends nothing. The idle barrier's answer
+  waits for everything waiting on the timer.
 - For every foreground event whose window `GetForegroundWindow` names on
   the `WinEvent` thread, whatever its process, Program Manager's and the
   taskbar's included, the listener sends `Foreground` (window, its root

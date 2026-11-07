@@ -109,6 +109,7 @@ fn focus_event(node: NodeSnapshot, ancestors: Vec<NodeSnapshot>) -> Input {
             answers: None,
             first_cached_ancestor: None,
         },
+        purpose: None,
     }
 }
 
@@ -240,6 +241,7 @@ fn caret_moved(line: TextChunk, observed_at_ms: u64) -> Input {
             content_changed: false,
             new_selection: None,
         },
+        purpose: None,
     }
 }
 
@@ -327,6 +329,7 @@ fn a_terminal_line_allocates_the_same_whatever_the_ancestor_chain() {
             node_id: NodeId::new(1),
             snapshot: Box::new(outpost.read(None, at_ms).1),
         },
+        purpose: None,
     };
     outpost.sim.write(b"PS> ");
     let first = snapshot(&mut outpost, 100);

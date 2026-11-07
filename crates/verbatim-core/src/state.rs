@@ -433,6 +433,11 @@ impl SrState {
 pub(crate) struct PendingText {
     pub(crate) node: NodeId,
     pub(crate) then: TextFollowUp,
+    /// The object whose text a navigator follow-up reads when it is
+    /// neither the navigator object nor the focus: Verbatim+Tab's answer,
+    /// which Core never takes (`crate::report_focus`).
+    #[serde(default)]
+    pub(crate) about: Option<Box<NodeSnapshot>>,
 }
 
 /// What to do with the answer to a [`PendingText`] request.
@@ -660,6 +665,14 @@ pub struct SrState {
     /// many it has asked for (`crate::live_reread`).
     #[serde(default)]
     pub(crate) live_rereads: crate::live_reread::LiveRereads,
+    /// Verbatim+Tab's press waiting for its live query's answer
+    /// (`crate::report_focus`).
+    #[serde(default)]
+    pub(crate) report_press: Option<crate::report_focus::WaitingPress>,
+    /// The virtual desktop's name, kept until the next focus Core takes
+    /// or its due time (`crate::desktop`).
+    #[serde(default)]
+    pub(crate) desktop_name: Option<String>,
     /// Core's queries not yet ended, each from its request to its one
     /// ending (`crate::queries`).
     #[serde(default)]

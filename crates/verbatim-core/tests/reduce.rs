@@ -65,6 +65,7 @@ fn focus_event(trace_id: TraceId, source: Pid, snapshot: NodeSnapshot) -> Input 
             answers: None,
             first_cached_ancestor: None,
         },
+        purpose: None,
     }
 }
 
@@ -104,6 +105,7 @@ fn event_in(source: Pid, facts: Option<WindowFacts>, event: NormalizedEvent) -> 
         backend: Backend::Uia,
         window: facts,
         event,
+        purpose: None,
     }
 }
 
@@ -407,6 +409,7 @@ fn focus_slider_then_drag_speaks_value_only_on_change() {
             node_id: NodeId::new(2),
             value: Some("55".to_string()),
         },
+        purpose: None,
     };
     let (state, effects) = reduce(&state, &value_changed);
 
@@ -592,6 +595,7 @@ fn value_changed_for_non_focused_node_produces_no_effects() {
             node_id: NodeId::new(9),
             value: Some("changed".to_string()),
         },
+        purpose: None,
     };
     let (state, effects) = reduce(&state, &other_value_changed);
 
@@ -629,6 +633,7 @@ fn a_name_change_on_the_focus_speaks_the_new_name_alone_queued() {
             change: PropertyChange::Name(Some("New name".to_string())),
             child_count: None,
         },
+        purpose: None,
     };
     let (state, effects) = reduce(&state, &name_changed);
 
@@ -670,6 +675,7 @@ fn states_changed_with_children(
             change: PropertyChange::States(states),
             child_count,
         },
+        purpose: None,
     }
 }
 
@@ -964,6 +970,7 @@ fn a_description_change_on_the_focus_is_spoken() {
             change: PropertyChange::Description(Some(description.to_owned())),
             child_count: None,
         },
+        purpose: None,
     };
 
     let (state, effects) = reduce(&state, &described(41, "Too short"));
@@ -1010,6 +1017,7 @@ fn suggestions_opening_on_the_focus_and_closing_play_their_indications() {
             change: PropertyChange::Suggestions(open),
             child_count: None,
         },
+        purpose: None,
     };
 
     let (state, effects) = reduce(&state, &suggestions(41, true));
@@ -1393,6 +1401,7 @@ fn sample_script() -> Vec<Input> {
                 answers: None,
                 first_cached_ancestor: None,
             },
+            purpose: None,
         },
         Input::Event {
             observed_at_us: 0,
@@ -1404,6 +1413,7 @@ fn sample_script() -> Vec<Input> {
                 node_id,
                 value: Some("x".to_string()),
             },
+            purpose: None,
         },
         Input::Tick,
     ]
@@ -1522,6 +1532,7 @@ fn focus_event_with_ancestors(
             answers: None,
             first_cached_ancestor: None,
         },
+        purpose: None,
     }
 }
 
@@ -2044,6 +2055,7 @@ fn focus_event_with_selection(
             answers: None,
             first_cached_ancestor: None,
         },
+        purpose: None,
     }
 }
 
@@ -2094,6 +2106,7 @@ fn selection_event(trace_id: TraceId, source: Pid, node: NodeSnapshot) -> Input 
         backend: Backend::Uia,
         window: None,
         event: NormalizedEvent::SelectionChanged { node },
+        purpose: None,
     }
 }
 
@@ -2223,6 +2236,7 @@ fn notification_event(
                 activity_id: None,
             },
         },
+        purpose: None,
     }
 }
 
@@ -2564,7 +2578,7 @@ fn a_name_change_after_a_repeat_carried_it_is_spoken() {
 
 #[test]
 fn a_name_change_the_report_of_the_focus_spoke_is_silent() {
-    // A repeat carries the new name in; the report-focus command speaks it,
+    // A repeat carries the new name in; Verbatim+Tab's answer speaks it,
     // which moves what was last spoken of the focus, so the name change's
     // own event finds it already spoken.
     let source = Pid(1);
@@ -2574,11 +2588,25 @@ fn a_name_change_the_report_of_the_focus_spoke_is_silent() {
         &focus_event(TraceId::from_raw(97), source, first),
     );
     let renamed = node(42, Role::Button, Some("Disconnect"), None, StateSet::new());
-    let (state, _) = reduce(&state, &focus_event(TraceId::from_raw(98), source, renamed));
+    let (state, _) = reduce(
+        &state,
+        &focus_event(TraceId::from_raw(98), source, renamed.clone()),
+    );
     let (state, effects) = reduce(
         &state,
         &command(TraceId::from_raw(99), ReviewCommand::ReportFocus, 0),
     );
+    assert_eq!(
+        effects,
+        [Effect::ReadFocus(
+            verbatim_model::protocol::FocusPurpose::Report
+        )]
+    );
+    let mut answer = focus_event(TraceId::from_raw(99), source, renamed);
+    if let Input::Event { purpose, .. } = &mut answer {
+        *purpose = Some(verbatim_model::protocol::FocusPurpose::Report);
+    }
+    let (state, effects) = reduce(&state, &answer);
     assert_eq!(
         heard(&effects),
         vec![queued(vec![
@@ -3420,6 +3448,7 @@ fn a_foreground_report_that_changes_nothing_still_orders_later_arrivals() {
             answers: None,
             first_cached_ancestor: None,
         },
+        purpose: None,
     };
     let (state, _) = reduce_from(&SrState::new(), &foreground(900), OutpostId(2));
     let edit = node(
@@ -5635,6 +5664,7 @@ fn value_changed(node_id: u64, value: &str) -> Input {
             node_id: NodeId::new(node_id),
             value: Some(value.to_string()),
         },
+        purpose: None,
     }
 }
 
@@ -5948,6 +5978,7 @@ fn controlled_selection(controller: u64, selected: NodeSnapshot) -> Input {
             controller: NodeId::new(controller),
             node: selected,
         },
+        purpose: None,
     }
 }
 
@@ -7059,6 +7090,7 @@ fn a_submenu_items_speech_holds_when_its_submenu_takes_the_focus() {
             answers: None,
             first_cached_ancestor: None,
         },
+        purpose: None,
     };
     let menu_item_of_focus = |effects: &[Effect]| match effects.first() {
         Some(Effect::DropExpiredSpeech(now)) => now.menu_item_of_focus.map(NodeId::number),

@@ -1028,7 +1028,9 @@ mod tests {
         let entry = Entry::own(
             Item::Query {
                 request_id: RequestId::shell(1),
-                query: Query::ReadFocus,
+                query: Query::ReadFocus {
+                    purpose: verbatim_model::protocol::FocusPurpose::Plain,
+                },
             },
             TraceId::mint(),
             1,
@@ -1123,7 +1125,9 @@ mod tests {
             entry: Entry::own(
                 Item::Query {
                     request_id: RequestId::shell(1),
-                    query: Query::ReadFocus,
+                    query: Query::ReadFocus {
+                        purpose: verbatim_model::protocol::FocusPurpose::Plain,
+                    },
                 },
                 TraceId::from_raw(1),
                 1,

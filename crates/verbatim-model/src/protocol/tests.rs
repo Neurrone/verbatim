@@ -43,7 +43,9 @@ fn next_core_to_outpost(previous: Option<&CoreToOutpost>) -> Option<CoreToOutpos
         CoreToOutpost::ForwardingEnded { .. } => CoreToOutpost::Query {
             trace_id: TraceId::from_raw(2),
             request_id: RequestId::shell(1),
-            query: Query::ReadFocus,
+            query: Query::ReadFocus {
+                purpose: FocusPurpose::Plain,
+            },
             timing: timing(),
         },
         CoreToOutpost::Query { .. } => CoreToOutpost::Cancel {
@@ -136,7 +138,11 @@ fn next_listener_to_core(previous: Option<&ListenerToCore>) -> Option<ListenerTo
             ended_at_us: 1,
             timing: timing(),
         },
-        ListenerToCore::MenuOrSwitchEnded { .. } => ListenerToCore::Foreground {
+        ListenerToCore::MenuOrSwitchEnded { .. } => ListenerToCore::Desktop {
+            news: crate::DesktopNews::Returned,
+            timing: timing(),
+        },
+        ListenerToCore::Desktop { .. } => ListenerToCore::Foreground {
             window: 1,
             root_owner: 1,
             process: 2,
@@ -238,6 +244,7 @@ fn every_variant_has_its_reviewed_kind() {
             "FocusFact: Routed",
             "ForwardingEnded: Lifecycle",
             "MenuOrSwitchEnded: Report",
+            "Desktop: Report",
             "Foreground: Report",
             "Pong: Lifecycle",
             "Fault: Report",
@@ -449,7 +456,9 @@ fn a_request_id_round_trips_with_its_asker() {
             CoreToOutpost::Query {
                 trace_id: TraceId::from_raw(2),
                 request_id,
-                query: Query::ReadFocus,
+                query: Query::ReadFocus {
+                    purpose: FocusPurpose::Plain,
+                },
                 timing: timing(),
             },
             CoreToOutpost::Cancel { request_id },

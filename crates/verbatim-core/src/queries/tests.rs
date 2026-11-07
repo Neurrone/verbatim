@@ -65,6 +65,7 @@ fn event(source: OutpostId, event: NormalizedEvent) -> Input {
         backend: Backend::Uia,
         window: None,
         event,
+        purpose: None,
     }
 }
 
@@ -1596,6 +1597,7 @@ fn a_watch_with_a_command_behind_it_in_a_console_runs_the_command_from_memory() 
                     command: ReviewCommand::ReviewCurrentLine,
                     repeat: 0,
                 },
+                about: None,
             }),
         },
     );

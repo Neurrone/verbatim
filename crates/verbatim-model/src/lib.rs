@@ -62,8 +62,8 @@ mod tree;
 
 pub use calls::{CallCounts, CallKind};
 pub use event::{
-    ActionName, Earcon, EarlierElement, Effect, FetchResult, FirstCachedAncestor, FocusGroup,
-    FocusReaderKind, ForegroundWindow, GuiRequest, HookForeground, Input, LiveReread,
+    ActionName, DesktopNews, Earcon, EarlierElement, Effect, FetchResult, FirstCachedAncestor,
+    FocusGroup, FocusReaderKind, ForegroundWindow, GuiRequest, HookForeground, Input, LiveReread,
     LiveRereadLog, LiveRereadReason, LockKey, NormalizedEvent, Notification, NotificationKind,
     NotificationProcessing, Pid, ProgressReading, PropertyChange, Query, QueryId, QueryKind,
     ReviewCommand, Script, WindowFacts, WindowHandle,

@@ -43,7 +43,13 @@ Public API:
   front, and a tooltip window shown (`WinEventKind::Show`:
   `EVENT_OBJECT_SHOW` from a `tooltips_class32` window on its client or a
   custom object, every other show event dropped at the hook, as NVDA
-  accepts no others from a standard control). A popup menu opening announces the menu
+  accepts no others from a standard control), the input desktop's switch
+  (`WinEventKind::DesktopSwitch`, `EVENT_SYSTEM_DESKTOPSWITCH`), and the
+  desktop window's name change (`WinEventKind::DesktopName`,
+  `EVENT_OBJECT_NAMECHANGE` on `GetDesktopWindow()`), which the set
+  hooks scoped to the desktop window's own process, csrss's, apart from
+  its other raw events, and tells apart by its hook, every other window's
+  name change it delivers dropped. A popup menu opening announces the menu
   itself the moment it opens, NVDA's menu-start behavior — the app outpost
   emits it as focus on the menu's client object with no ancestry, the
   identical node its foreground-announce fallback produces for a menu-class
@@ -218,7 +224,7 @@ Public API:
   item announces the item, as NVDA does (`docs/parity/windows-and-processes.md`, "A control's
   own focus with a focused child"); the
   `accFocus` VARIANT is parsed in one shared place, `read_acc_focus`, which
-  `focused_snapshot` also uses, so the child-id and child-object forms are
+  `focused_object` also uses, so the child-id and child-object forms are
   handled once), `focus_candidate` (the same acquisition and redirect,
   reading no more than the redirect needs, so the outpost can make NVDA's
   checks before the read: `key()` is the address after the redirect, for
@@ -261,11 +267,17 @@ Public API:
   object, and no location read, since a read of many objects, an ancestor
   chain, never reads one (`books/dev/src/explanation/design/uia-shapes.md`, decision 9) and a
   change reports none; ancestor walks read for context too),
-  `focused_snapshot(hwnd, registry, serves)` ("what is focused right now"
+  `focused_object(hwnd, serves)` ("what is focused right now"
   in `hwnd`, the window with the keyboard focus: its client's `accFocus`,
   for a focus-now query; the window of the object `accFocus` names is
   checked with `serves` before anything is read of it, and an object of a
-  window the caller's application does not serve answers `None`), and the
+  window the caller's application does not serve answers `None`),
+  acquired and not yet read (`FocusedObject`), so a fake focus can make
+  NVDA's focused-state test on it first (`has_focused_state`, the walk a
+  focus event's candidate gets) before it is read (`read`);
+  `name_at_event(hwnd, id_object,
+  id_child)` (an event address's `accName` alone, the virtual desktop's
+  name); and the
   node-relative operations, which take a `NodeId` and
   read through the object the registry kept for it (a node issued from
   local window data, which has no object, is acquired at its address).

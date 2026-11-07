@@ -50,6 +50,7 @@
 )]
 
 mod applications;
+mod desktop;
 pub mod dump;
 mod editing;
 pub mod flight_recorder;
@@ -61,6 +62,7 @@ mod proven;
 mod queries;
 mod recorder;
 mod reduce;
+mod report_focus;
 pub mod requests;
 mod review;
 mod review_text;
