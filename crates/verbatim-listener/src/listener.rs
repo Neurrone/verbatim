@@ -89,13 +89,8 @@
 //! applications whose outposts' hooks are in, and forwards none of their
 //! events from the start.
 //!
-//! The wait for a UIA focus that never comes is the outpost's, beside the
-//! verdict that dropped its own copy of the `WinEvent` focus, closed by
-//! what the outpost itself reports (`docs/design/focus-pipeline-rework-remaining.md`,
-//! "The gap, closed by the outpost's own reports"): a drop of a UIA focus
-//! the listener sends carries one fact for it, whether the sender had no
-//! window above it, and nothing is placed here. The listener makes no
-//! backend verdict; it skips a focus only by its window's class
+//! A UIA focus that never comes is lost, as NVDA loses it: nothing waits
+//! for it, here or in the outpost. The listener makes no backend verdict; it skips a focus only by its window's class
 //! (`verbatim_listener_logic::focus::MSAA_CLASS`).
 //!
 //! Outgoing facts are coalesced with NVDA's UIA limiter rule before they are
@@ -973,9 +968,9 @@ impl Reading for UiaFocusReading {
 /// reading thread ([`queue_for_reading`]), kept by the readers' shell, and
 /// consumed by the event's outcome, which sends the read or the drop.
 /// Dropped unanswered, as when the readers are dropped with the event
-/// still waiting, it sends the marker's drop, one that leaves the
-/// application's gap record open, as the drop of an element that could not
-/// be kept for its read does, so the outpost never waits on the marker.
+/// still waiting, it sends the marker's drop, as the drop of an element
+/// that could not be kept for its read does, so the outpost never waits on
+/// the marker.
 pub(crate) struct MarkerOwed(Responder<DeliveredFact>);
 
 impl MarkerOwed {
@@ -1036,7 +1031,7 @@ impl Listener {
     /// failure is reported as a fault, before the announcement. Every UIA
     /// event is dropped until `install` returns
     /// ([`Outgoing::uia_event_process`]); a `WinEvent` focus whose UIA
-    /// focus is dropped meanwhile is left to its outpost's gap record.
+    /// focus is dropped meanwhile is lost, as NVDA loses one.
     ///
     /// The applications in `hooks_in` have outposts with their own hooks
     /// in already: none of their `WinEvent`s is forwarded, and each outpost
@@ -1460,7 +1455,7 @@ fn queue_for_reading(
         ),
         Err(error) => {
             tracing::warn!(%error, "a UIA focus's element could not be kept for its read");
-            // Its drop leaves its application's gap record to its bound.
+            // Its drop resolves its marker.
             outgoing.focus_read(
                 pid,
                 Judged::Dropped("its element could not be kept for its read")
@@ -2057,7 +2052,6 @@ mod tests {
             DeliveredFact::UiaFocusDropped {
                 marker: 2,
                 focus: true,
-                no_window: false,
             },
             meta(2),
         );
@@ -2076,12 +2070,10 @@ mod tests {
                 DeliveredFact::UiaFocusDropped {
                     marker: 1,
                     focus: true,
-                    no_window: false,
                 },
                 DeliveredFact::UiaFocusDropped {
                     marker: 2,
                     focus: true,
-                    no_window: false,
                 },
             ]
         );
@@ -2365,7 +2357,6 @@ mod tests {
                 DeliveredFact::UiaFocusDropped {
                     marker: 1,
                     focus: true,
-                    no_window: false,
                 },
             ]
         );
@@ -2782,7 +2773,6 @@ mod tests {
             DeliveredFact::UiaFocusDropped {
                 marker: 1,
                 focus: true,
-                no_window: false,
             },
             meta,
         );

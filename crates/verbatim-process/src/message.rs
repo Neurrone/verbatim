@@ -603,7 +603,6 @@ mod tests {
             DeliveredFact::UiaFocusDropped {
                 marker: 9,
                 focus: true,
-                no_window: false,
             },
             DeliveredFact::UiaFocusReadsEnded,
         ] {

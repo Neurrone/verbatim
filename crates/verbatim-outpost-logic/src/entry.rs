@@ -205,20 +205,6 @@ pub enum Item {
         /// Whether the reducer has put it directly behind the noted caret.
         behind_noted: bool,
     },
-    /// The gap record's bound has passed: the record, still open, is read,
-    /// when `bound` is still its bound.
-    GapBound {
-        /// The number of the bound whose test queued it.
-        bound: u64,
-    },
-    /// A drop for no window above its sender answered the open gap record,
-    /// whose read takes the drop's marker's place, stamped with the
-    /// record's stamp, the entry's observation; `window` is the record's
-    /// window.
-    GapRead {
-        /// The record's window.
-        window: isize,
-    },
 }
 
 impl Item {
@@ -254,11 +240,6 @@ pub enum Front {
         /// window, on the observation clock, or `None` when it was not, or
         /// was Core's hidden frame, which no outpost reports.
         in_front_at_us: Option<u64>,
-        /// Whether the outpost judges its window UIA by a kept verdict or
-        /// the class lists, read locally and with no probe, by which the
-        /// gap record it opens waits for the application's focus rather
-        /// than the window's title.
-        uia: bool,
     },
 }
 

@@ -284,25 +284,6 @@ pub enum Report {
     Answered(held::Focus),
 }
 
-/// A program's judgement the gap record takes (`super::gap_record`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum GapNote {
-    /// A copy in `window`, of top-level window `top_level`, observed at
-    /// `at_us`, dropped because its window is judged UIA.
-    CopyDropped {
-        /// The copy's window.
-        window: isize,
-        /// The window's top-level window.
-        top_level: isize,
-        /// The copy's observation, in microseconds.
-        at_us: u64,
-        /// The copy's trace.
-        trace: TraceId,
-    },
-    /// `window` was destroyed.
-    WindowDestroyed(isize),
-}
-
 /// What one commit of a program changes, its pure part: built by the
 /// program with every call it needs already made, and applied by the
 /// reducer, after the shell has made its store writes, in the order today's
@@ -347,8 +328,6 @@ pub struct Change {
     pub clear_redirect: bool,
     /// A held node's states, as an MSAA state change read them.
     pub states: Option<(NodeId, StateSet)>,
-    /// The program's judgements for the gap record, in order.
-    pub gap: Vec<GapNote>,
     /// A held terminal's caret event, noted to be read once nothing else
     /// is waiting, with its event's timing, which the read of the caret
     /// judges the caret reads since the event by.

@@ -5,7 +5,7 @@
 //! The outpost mailbox's alarm is its reducer's wait: the event
 //! is set when something is appended while the reducer's thread waits, and
 //! the timer is set to the reducer's next timer, a program's deadline, a
-//! walk's bound, a caret key's watch or the gap record's bound, at a
+//! walk's bound or a caret key's watch, at a
 //! resolution finer than the system's 15.6 ms timer, so the thread wakes
 //! only when a timer is due or something is appended
 //! (`books/dev/src/explanation/design/wake-ups.md`, item 3).

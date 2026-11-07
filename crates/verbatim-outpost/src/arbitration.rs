@@ -378,21 +378,6 @@ fn provider_usable(
     }
 }
 
-/// Whether window `hwnd` is judged UIA without a probe, from the class
-/// lists or a kept verdict of `judgement`'s, at its observation: local
-/// calls only.
-pub(crate) fn known_to_use_uia(
-    arbitrator: &Lock<Arbitrator>,
-    judgement: &dyn Judgement,
-    hwnd: isize,
-) -> bool {
-    let classes = verbatim_win32::window::window_classes(hwnd);
-    let verdicts = judgement.verdicts();
-    let arbitrator = lock(arbitrator);
-    let at_us = judgement.judged_at(&arbitrator);
-    arbitrator.verdict_at(&verdicts, hwnd, &classes, at_us) == Some(true)
-}
-
 /// [`decide`] for an outpost's worker, `true` for UIA: a window whose probe
 /// timed out is read through MSAA, and kept as a "no" for
 /// [`NEGATIVE_VERDICT_LIFETIME`] from the probe's end.

@@ -799,7 +799,6 @@ mod tests {
         assert!(!may_start_outpost(&DeliveredFact::UiaFocusDropped {
             marker: 1,
             focus: true,
-            no_window: false,
         }));
         assert!(!may_start_outpost(&DeliveredFact::UiaFocusReadsEnded));
         for fact in [

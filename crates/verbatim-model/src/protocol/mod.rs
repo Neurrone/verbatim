@@ -392,16 +392,6 @@ pub enum DeliveredFact {
         /// Whether the event dropped was a focus rather than a menu
         /// opening, a selection, or a notification.
         focus: bool,
-        /// Whether the focus was dropped because its sender had no window
-        /// above it, as a sender gone before its read has: the event for
-        /// where the focus went may never come, so the outpost reads its
-        /// gap record at once (`books/dev/src/explanation/design/listener-without-connections.md`,
-        /// risk 13). The one fact a drop carries for the gap record, which
-        /// the outpost alone closes, by its own reports
-        /// (`docs/design/focus-pipeline-rework-remaining.md`, "The gap,
-        /// closed by the outpost's own reports").
-        #[serde(default)]
-        no_window: bool,
     },
     /// The focus listener that sent the markers still waiting has ended:
     /// none of them will be resolved, so none is waited for any more. Made

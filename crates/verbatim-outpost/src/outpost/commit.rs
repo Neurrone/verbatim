@@ -21,7 +21,7 @@ use verbatim_uia::{Agile, Kept};
 use verbatim_model::protocol::{EventTiming, OutpostToCore};
 
 use super::reducer::{
-    Change, DialogMemo, FocusPath, Found, GapNote, Group, Object, OwedWork, Report, WatchChange,
+    Change, DialogMemo, FocusPath, Found, Group, Object, OwedWork, Report, WatchChange,
 };
 use super::store::TextWrite;
 
@@ -174,8 +174,6 @@ pub(super) struct Effects {
     pub(super) states: Option<(NodeId, StateSet)>,
     /// A UIA focus's stale element, evicted before the focus is followed.
     pub(super) stale: Option<Stale>,
-    /// The program's judgements for the gap record.
-    pub(super) gap: Vec<GapNote>,
     /// A held terminal's caret event, noted to be read once nothing else is
     /// waiting, with its event's timing.
     pub(super) noted_caret: Option<(NodeId, TraceId, u64, EventTiming)>,
@@ -211,7 +209,6 @@ impl Effects {
             absorb: self.absorb,
             clear_redirect: self.clear_redirect,
             states: self.states,
-            gap: self.gap.clone(),
             noted_caret: self.noted_caret,
             replaced: self.stale.as_ref().map(|stale| stale.node),
             text: Vec::new(),
@@ -241,7 +238,6 @@ impl Effects {
             absorb: self.absorb,
             clear_redirect: self.clear_redirect,
             states: self.states,
-            gap: self.gap,
             found: self.found,
             noted_caret: self.noted_caret,
             replaced: self.stale.as_ref().map(|stale| stale.node),

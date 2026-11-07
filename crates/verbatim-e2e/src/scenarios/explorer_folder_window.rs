@@ -16,7 +16,13 @@
 //! Backspace "Items View list" and the subfolder's entry, selected again,
 //! with its position, as NVDA says it. Enter and Backspace each replace
 //! the items view list with a new element, so it is entered anew
-//! (`docs/parity/focus-context.md`, "Focus-ancestry context").
+//! (`docs/parity/focus-context.md`, "Focus-ancestry context"). NVDA's
+//! captures at the pin say exactly these in each of 10 runs, with no
+//! placeholder and no pane, and the same opening for a new window made by
+//! Control+N in each of 10 more. NVDA also says the folder's tab,
+//! selected, after the opening in 7 of the 10 runs, from a UIA selection
+//! event of the tab item (`SelectionItem_ElementSelected`), which the
+//! expectation leaves out.
 //!
 //! While it loads a folder, on the window's opening and after Enter or
 //! Backspace, File Explorer may give the keyboard focus for a moment to a

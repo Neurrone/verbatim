@@ -128,17 +128,13 @@ receives the event's own element, judges and reads a UIA focus
 - The read (`DeliveredFact::UiaFocusRead`, whose `focus` says focus or menu
   opening) or the drop (`DeliveredFact::UiaFocusDropped`, whose `focus`
   says the same) follows the marker through verbatim.exe, never coalesced
-  or dropped. A focus's drop carries one fact for its outpost's gap
-  record, whether its sender had no window above it (`no_window`); the
-  outpost closes the record by its own reports, and the listener places
-  nothing. A focus whose nearest
-  window's lookup failed with `UIA_E_TIMEOUT` is dropped with no other
-  call, however long the lookup took, for
-  `verbatim_listener_logic::focus::NEAREST_TIMED_OUT`. That leaves the
-  record to its bound, so the outpost's gap read there reads the focus.
-  An application whose lookups keep failing has every focus spoken
-  through the gap, up to a second late, and the focuses between two gap
-  reads not spoken.
+  or dropped. A focus whose nearest window's lookup failed with
+  `UIA_E_TIMEOUT` is dropped with no other call, however long the lookup
+  took, for `verbatim_listener_logic::focus::NEAREST_TIMED_OUT`, and a
+  focus whose nearest window's lookup finds none for
+  `verbatim_listener_logic::focus::NO_WINDOW`; both are lost, as NVDA's
+  handler drops them. An application whose lookups keep failing has its
+  focuses not spoken.
 - Budget and bound. NVDA's checks have `SAME_WINDOW_BOUND` (2 seconds,
   `verbatim-model`'s, the bound both readers share in the same window) from
   the read's start, asked before each call after the first (`Budget`).
@@ -260,7 +256,7 @@ receives the event's own element, judges and reads a UIA focus
   `verbatim_model::protocol::Responder`), which the shell keeps by marker
   beside the schedule, never in it, and the event's outcome consumes; one
   dropped unanswered, as an event still waiting when the readers stop is,
-  sends the marker's drop, leaving the gap record open. Debug builds
+  sends the marker's drop. Debug builds
   assert after every step that the owed markers are exactly those the
   schedule holds (`Schedule::markers`). The menu end's grace is the pure `GraceState::step`
   in the same module (`GraceInput`: `Ended`, `Fired`, `IdleAnswer`,
@@ -290,110 +286,11 @@ responder out of it.
 - When the listener is replaced, the supervisor tells every outpost its
   reads have ended (`DeliveredFact::UiaFocusReadsEnded`).
 
-The gap record (`reducer::gap_record`, in the reducer's intake;
-`docs/design/focus-pipeline-rework-remaining.md`, "The gap, closed by the
-outpost's own reports"; `books/dev/src/explanation/design/listener-without-connections.md`,
-decision 11). UI Automation sometimes delivers an application's focus late
-or never while its `WinEvent` focus comes, and an application whose thread
-is held raises none, so the outpost keeps, beside the verdict that dropped
-its own copy, one record: a focus copy it dropped because it judged the
-window UIA, or a foreground change into one of its windows, with its
-window, top-level window, stamp, what it waits for, and the bound's due
-time, on one clock.
-
-- Opening. The worker opens it when it drops a focus copy, its own hook's
-  or the listener's forwarded before the hook is in, because its verdict
-  on the copy's window is UIA (`Worker::copy_dropped_for_uia`, its
-  program's commit carrying a `GapNote`), to wait for the application's
-  focus. It looks back first: a report the outpost sent in the copy's
-  top-level window, observed up to 100 ms before the copy or after it
-  (`gap_record::ANSWERED_BEFORE_US`), stands for it, and nothing opens;
-  otherwise a drop for no window above the sender observed so has the
-  focus read at once in the copy's place, stamped with the copy's
-  observation, the reducer's next program. A copy handled through MSAA
-  opens nothing. The reducer also opens it as it takes in a foreground
-  change into one of the application's windows that the outpost's one
-  test found in front, the hook's copy or the listener's, a held copy as
-  it is released, stamped with the event's observation: waiting for the
-  application's focus when the outpost judges the window UIA by a kept
-  verdict or the class lists, read locally with no probe
-  (`arbitration::known_to_use_uia`), and for the window's title otherwise
-  (`gap_record::Awaits`). It does not wait for a copy, which an
-  application whose thread is held may never raise.
-- Restamps. While it is open, a later copy the worker drops for UIA in
-  its top-level window gives it that copy's observation and window, its
-  bound unchanged; a later foreground change into it does too, and arms a
-  new bound a second from the change, so every visit to a held
-  application says its title at one second. The stamp only moves forward:
-  an older event, as in a focus run tried newest first, neither restamps
-  nor closes it.
-- Closing, by the outpost's own reports
-  (`docs/design/focus-pipeline-rework-remaining.md`, "The gap, closed by
-  the outpost's own reports"): the reducer applies every focus it sends
-  Core, an event's or a focus-now answer's, placed by its window facts'
-  top-level window (`GapRecord::reported`). One in the record's top-level
-  window observed no earlier than 100 ms before its stamp closes it, but a
-  whole-window focus there closes only a record waiting for the window's
-  title; one in another top-level window, or with no window facts, closes
-  it only when observed after the stamp. The newest report per top-level
-  window, a whole-window focus never among them, is kept for the
-  look-back, pruned when the window is destroyed. A drop carries one fact
-  for the record, whether its sender had no window above it
-  (`no_window`): such a drop closes the record it answers and takes its
-  marker's place as the record's read (`Item::GapRead`), and is kept as
-  the newest no-window stamp. Every other drop, a give-up included, and a
-  listener's read the outpost drops, leave the record to its bound.
-- The bound (`gap_record::BOUND_US`, one second from the first copy or
-  the newest foreground change) is one of the reducer's timers, read from
-  the open record itself (`GapRecord::waiting_due_us`). When it passes,
-  whatever program is in flight, the reducer asks the shell to test the
-  record's top-level window against the foreground (`Effect::TestGapBound`,
-  answered by `Input::GapBoundTested`), with local calls on its thread
-  (`acceptance::foreground_relation`). An unrelated window closes the
-  record with nothing sent or read. Otherwise, when the window is the
-  foreground window itself, the shell sends its window text as a
-  whole-window focus read from local data (`worker::window_text`): the
-  plain window (`read::plain_window`) for a window the outpost judges UIA
-  by a kept verdict or the class lists (`Context::known_to_use_uia`), and
-  otherwise its MSAA client pane (`read::client_pane`), so it is said as
-  the switch without a stall says it, minted under a request
-  tag of its own, stamped with the record's stamp; and for a record
-  waiting for the application's focus, `Item::GapBound` is pushed into
-  the intake, behind every marker queued before it. Handled with the
-  record open and its bound passed by the observation clock
-  (`GapRecord::bound_reached`), it is read; a bound reached early is
-  waited for again. The record stays open until a report closes it, with
-  no timer, until a later copy in its window arms a new bound a second
-  from the copy, so a focus after a gap read the worker could not finish
-  is still read. A test sets a timer of its own (`Outpost::set_gap_timer`,
-  behind the `GapTimer` trait) in place of the reducer's, and reaches the
-  bound itself (`Outpost::gap_bound_reacher`).
-- The read (`Worker::gap_read`, `read::gap_focus_read`, trigger
-  `read::FocusRead::Gap`) is the focus-now read through UIA only, made
-  once: refused with local calls when the foreground thread's focus window
-  is not the application's, is Core's hidden frame, cannot be read, or is
-  one the outpost judges not UIA; and refused after
-  `GetFocusedElementBuildCache` when the focus window, taken again with
-  `GetGUIThreadInfo`, has changed to one the outpost does not judge UIA
-  without a probe (`arbitration::known_to_use_uia`), since a focus that
-  moved into an MSAA window meanwhile comes back as UIA's MSAA proxy for
-  it, and a proxied list item has no window handle to judge. It is
-  reported as a UIA focus, stamped with the record's stamp, logged at info
-  with both windows, whether a listener UIA focus had reached the outpost
-  before the stamp (`uia_focus_before`) and whether the record's window was
-  gone (`sender_gone`); a late UIA focus of the same element is reported
-  under the read's node, which Core takes as a duplicate.
-- The idle barrier's answer waits while the record's bound is still to
-  be handled (`GapRecord::pending`, `Reducer::answer_idle`); the reducer
-  judges it again after every input, so a report that closes the record,
-  leaving the worker nothing to handle, still lets the answer go.
-
 The verdicts. The outpost's verdict is the one verdict per window; the
 listener makes none (`docs/design/focus-pipeline-rework.md`, "Who owns
 each duplicated fact", the verdicts). A listener's read in a window the
 outpost judges not UIA, by the read's nearest window, judged at the read's
-observation, is dropped (`Worker::uia_focus`), and leaves the gap record
-to its bound.
+observation, is dropped (`Worker::uia_focus`).
 
 ## Public API
 

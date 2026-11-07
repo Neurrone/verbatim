@@ -394,15 +394,8 @@ a walk of the window's whole tree would wait on its
   out, its probe's `WM_GETOBJECT` is made, and a classic walk's time
   budget is spent only where the test says. The test hands the outpost
   focus facts as the listener would, and the outpost reads the focused
-  element from the test rather than the system. The outpost under test
-  keeps its own gap record, closed by the reports it sends: each drop
-  handed over carries whether its sender had no window
-  (`listener_outcome`), at the bound it sends the window's text, which a
-  test takes with `window_text`, and the test injects the record's timer's firing rather than waiting for
-  it, once the time it passes (`pass_time`) reaches the bound the outpost
-  set, rounded up to a tenth of a second, or at once, from a thread of its
-  own, for a bound already past (`gap_timer_set` says whether one is set).
-  The outpost stamps its own events and times its verdicts' keeps by the
+  element from the test rather than the system. The test moves the time
+  on itself (`pass_time`). The outpost stamps its own events and times its verdicts' keeps by the
   test's observation clock (`observed_now`), with which the facts handed
   over are stamped. Each test chooses that clock once, as it makes the
   outpost, so none switches partway through (Fable, 2026-10-30):
@@ -410,15 +403,11 @@ a walk of the window's whole tree would wait on its
     `on_frozen_time_with_options`) gives the frozen clock: the run's clock
     when the outpost was made, moved on only by the time passed and by a
     microsecond each read, so no real time is in it and no two reads are
-    equal. Every test whose assertions depend on a verdict's 500 ms keep,
-    the gap record's bound or a restamp must use it, because on the real
-    clock a slow runner's own steps run out a keep or reach the bound
-    early: every `call_counts` test, the gap record's tests in
-    `focus_reports` (the `a_winevent_focus_` tests, the return and
-    foreground restamp tests, the timer tests, and the others that hand
-    over a copy the outpost drops for UIA), the outpost's tests of a walk's
-    bound (a stuck MSAA focus's or gap's read's walk, and the continuation
-    of a listener's chain), and the one in `remote_ops`.
+    equal. Every test whose assertions depend on a verdict's 500 ms keep
+    or a walk's bound must use it, because on the real clock a slow
+    runner's own steps run out a keep or reach the bound early: every
+    `call_counts` test, and the outpost's tests of a walk's bound (a stuck
+    MSAA focus's walk, and the continuation of a listener's chain).
   - `OutpostUnderTest::new`, `with_options` and the rest give the real
     clock, the run's clock moved on by the time passed. Every other test
     uses it, because the outpost compares the stamps of its caret, text
@@ -580,10 +569,7 @@ Each file's module comment says exactly what it asserts; in outline:
   foreground event for a UIA-read window is dropped and the focus that
   follows reported alone; and over `described_group.json` an unnamed
   grouping with a description is reported as focus context without the
-  description when the theme turns descriptions off; and over
-  `popup.json`, with the list in a `popup`, the item's report closes the
-  gap record its copy opened in the popup, placed by its own top-level
-  window, not its owner's.
+  description when the theme turns descriptions off.
 - `slow_application.rs`: a real outpost waits for a slow application
   rather than cutting it off. It reports a focus on an `msaa`-backend
   mockapp whose window thread is stalled with `stall`, the read having

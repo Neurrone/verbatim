@@ -33,10 +33,9 @@
 //! ([`OutpostUnderTest::new`]), or that clock frozen when the outpost was
 //! made, moved on by the time passed and by a microsecond each time it is
 //! read ([`OutpostUnderTest::on_frozen_time`]). On the frozen clock a
-//! window's verdict of no UIA provider runs out, and the gap record's
-//! bound is reached, only once the test passes the time, however long its
-//! steps take, so every test whose assertions depend on a verdict's keep,
-//! the gap's bound or a restamp uses it. The others keep the real one,
+//! window's verdict of no UIA provider runs out only once the test passes
+//! the time, however long its steps take, so every test whose assertions
+//! depend on a verdict's keep uses it. The others keep the real one,
 //! because the outpost compares the stamps of caret, text and terminal
 //! reads, read from the run's clock itself, with events' observations;
 //! the facts the test hands over are stamped on the chosen clock
@@ -59,20 +58,6 @@
 //! event mockapp never raised, or raised before the outpost was made. Only
 //! [`OutpostUnderTest::deliver_win_event`] hands over a stamped one, the
 //! listener's copy of an event mockapp raised.
-//!
-//! The outpost keeps its own gap record, and the test times its bound
-//! ([`Outpost::set_gap_timer`]): once the test has passed the time left to
-//! the bound when the outpost set it, rounded up to a tenth of a second so
-//! that the observation clock's ticks between a copy's stamp and the
-//! timer's setting never reach it, the test reaches it
-//! ([`Outpost::gap_bound_reacher`]), as the outpost's timer does when it
-//! fires, and a bound already past is reached at once from a thread of its
-//! own, as the threadpool's callback reaches it, since the outpost sets the
-//! timer under its intake's lock; no test waits for it. A drop the test hands over carries its
-//! answer to the record ([`OutpostUnderTest::listener_outcome`] places it
-//! as the listener does). An idle round the test starts
-//! ([`OutpostUnderTest::idle_round`]) reaches the outpost's idle answer,
-//! which waits while its record is open.
 //!
 //! The test stands in for Core's holding of the outpost's nodes too: as
 //! each focus the outpost reports, or each focus-now answer with a control,
@@ -102,10 +87,10 @@ use verbatim_model::protocol::{
     QueryOutcome, QueryResult, RequestId, WinEventStamp,
 };
 use verbatim_model::{
-    Backend, CallCounts, FocusText, NodeId, NodeSnapshot, NormalizedEvent, Pid, QueryKind, TraceId,
+    CallCounts, FocusText, NodeId, NodeSnapshot, NormalizedEvent, Pid, QueryKind, TraceId,
     WindowFacts, WindowHandle,
 };
-use verbatim_outpost::{GapTimer, Heard, Outpost};
+use verbatim_outpost::{Heard, Outpost};
 use verbatim_process::arguments::OutpostOptions;
 use verbatim_process::message::read_message;
 use verbatim_process::overlapped::{End, Flow, pipe};
@@ -447,62 +432,10 @@ impl TestClock {
     }
 }
 
-/// The gap record's timer as the test times it: the time the test has to
-/// pass, from how much it had passed, for the bound the outpost last set
-/// to be reached, if it is set ([`OutpostUnderTest::pass_time`]). A bound
-/// already past is reached at once, from a thread of its own.
-struct TestGapTimer {
-    /// The outpost's observation clock.
-    clock: Arc<TestClock>,
-    /// The passed time, in microseconds, at which the bound is reached.
-    reached_at_passed_us: Mutex<Option<u64>>,
-    /// What reaches the bound.
-    reach: std::sync::OnceLock<Arc<dyn Fn() + Send + Sync>>,
-}
-
-/// The step the time left to a bound is rounded up to: more than the
-/// frozen clock's ticks, a microsecond a read, between a copy's
-/// observation and its handling in any test.
-const BOUND_STEP_US: u64 = 100_000;
-
-impl GapTimer for TestGapTimer {
-    fn set(&self, due_us: u64) {
-        let passed = self.clock.passed();
-        let left = due_us.saturating_sub(self.clock.now());
-        if left == 0 {
-            *self
-                .reached_at_passed_us
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner) = None;
-            if let Some(reach) = self.reach.get() {
-                let reach = Arc::clone(reach);
-                std::thread::spawn(move || reach());
-            }
-            return;
-        }
-        let left = left.div_ceil(BOUND_STEP_US) * BOUND_STEP_US;
-        *self
-            .reached_at_passed_us
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner) = Some(passed + left);
-    }
-
-    fn cancel(&self) {
-        *self
-            .reached_at_passed_us
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner) = None;
-    }
-}
-
 /// Has `outpost` stamp its own events' observations, and time its
-/// verdicts' keeps, by the test's observation clock, `time`, and time its
-/// gap record's bound by the test's time: the clock, which the test moves
-/// on, and the timer.
-fn observe_on_the_tests_time(
-    outpost: &Outpost,
-    time: ObservationTime,
-) -> (Arc<TestClock>, Arc<TestGapTimer>) {
+/// verdicts' keeps, by the test's observation clock, `time`: the clock,
+/// which the test moves on.
+fn observe_on_the_tests_time(outpost: &Outpost, time: ObservationTime) -> Arc<TestClock> {
     let clock = Arc::new(TestClock {
         time,
         start_us: now_us(),
@@ -511,14 +444,7 @@ fn observe_on_the_tests_time(
     });
     let observed = Arc::clone(&clock);
     outpost.set_observation_clock(Arc::new(move || observed.now()));
-    let gap_timer = Arc::new(TestGapTimer {
-        clock: Arc::clone(&clock),
-        reached_at_passed_us: Mutex::new(None),
-        reach: std::sync::OnceLock::new(),
-    });
-    let _ = gap_timer.reach.set(outpost.gap_bound_reacher());
-    outpost.set_gap_timer(Arc::clone(&gap_timer) as Arc<dyn GapTimer>);
-    (clock, gap_timer)
+    clock
 }
 
 /// The focus line the stand-in for Core holds in the outpost: the trace of
@@ -580,8 +506,6 @@ pub struct OutpostUnderTest {
     last_read: Cell<Option<TraceId>>,
     /// The outpost's observation clock, which the test moves on.
     observation: Arc<TestClock>,
-    /// The gap record's timer.
-    gap_timer: Arc<TestGapTimer>,
     /// The window the keyboard focus moves to during the outpost's next
     /// read of the focused element, 0 for none.
     moves_to: Arc<AtomicIsize>,
@@ -618,7 +542,7 @@ impl OutpostUnderTest {
 
     /// [`Self::new`] on the frozen observation clock
     /// ([`ObservationTime::Frozen`]), for a test whose assertions depend on
-    /// a verdict's keep, the gap record's bound or a restamp.
+    /// a verdict's keep.
     pub fn on_frozen_time(app: &super::MockApp) -> Self {
         Self::on_frozen_time_with_options(app, OutpostOptions::default())
     }
@@ -773,7 +697,7 @@ impl OutpostUnderTest {
             *time
         });
         outpost.set_clock(Arc::clone(&clock));
-        let (observation, gap_timer) = observe_on_the_tests_time(&outpost, observation_time);
+        let observation = observe_on_the_tests_time(&outpost, observation_time);
         let (foreground_reads, gate, focus_window) =
             read_the_tests_foreground(&outpost, &foreground);
         let (heard_tx, heard) = mpsc::channel();
@@ -813,7 +737,6 @@ impl OutpostUnderTest {
             position: Cell::new(0),
             last_read: Cell::new(None),
             observation,
-            gap_timer,
             moves_to,
         }
     }
@@ -954,29 +877,6 @@ impl OutpostUnderTest {
         *self.time.lock().unwrap_or_else(PoisonError::into_inner) += by;
         self.observation
             .pass(u64::try_from(by.as_micros()).unwrap_or(u64::MAX));
-        let passed = self.observation.passed();
-        let mut reached = self
-            .gap_timer
-            .reached_at_passed_us
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        if reached.is_some_and(|at| passed >= at) {
-            *reached = None;
-            drop(reached);
-            if let Some(reach) = self.gap_timer.reach.get() {
-                reach();
-            }
-        }
-    }
-
-    /// Whether the outpost has the gap record's timer set, for a bound not
-    /// yet reached.
-    pub fn gap_timer_set(&self) -> bool {
-        self.gap_timer
-            .reached_at_passed_us
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .is_some()
     }
 
     /// Fails the test once the time is the system's, which the test can no
@@ -1344,8 +1244,8 @@ impl OutpostUnderTest {
     /// ([`Outpost::observe_foreground_programs`]), and returns once the
     /// worker is waiting there. Events the test then has the application
     /// raise wait in the outpost's intake, and are planned as one batch
-    /// when the worker goes on. The change itself says nothing and opens no
-    /// gap record, its window not in front. The worker waits under the
+    /// when the worker goes on. The change itself says nothing, its window
+    /// not in front. The worker waits under the
     /// change's deadline, so a step that holds it must be brief.
     pub fn hold_worker(&self) {
         self.hold_worker_on(super::another_applications_window().0 as isize);
@@ -1388,49 +1288,6 @@ impl OutpostUnderTest {
     pub fn focus(&self, fact: DeliveredFact) -> Reported {
         self.deliver(fact);
         self.reported_focus()
-    }
-
-    /// The window text the outpost sends next, at its gap record's bound
-    /// with no focus of the window reported, for a window the outpost
-    /// judges UIA: a whole-window focus of the plain window, read from local
-    /// data, named `title`, as the switch without a stall says the window
-    /// (`docs/design/focus-pipeline-rework-remaining.md`, "The held UIA
-    /// application's title"). Returns its stamp.
-    pub fn window_text(&self, title: &str) -> u64 {
-        self.held_text(title, verbatim_model::Role::Window, false)
-    }
-
-    /// [`window_text`](Self::window_text) for a window the outpost does not
-    /// judge UIA: the window's MSAA client pane, standing for the top-level
-    /// window, so it says the title alone, as the window's whole-window
-    /// focus does. Returns its observation.
-    pub fn client_text(&self, title: &str) -> u64 {
-        self.held_text(title, verbatim_model::Role::Pane, true)
-    }
-
-    fn held_text(&self, title: &str, role: verbatim_model::Role, top_level_client: bool) -> u64 {
-        match self.next() {
-            OutpostToCore::Event {
-                event:
-                    NormalizedEvent::FocusChanged {
-                        node,
-                        whole_window: true,
-                        ancestors,
-                        ..
-                    },
-                observed_at_us,
-                backend: Backend::Msaa,
-                ..
-            } if node.role == role && ancestors.is_empty() => {
-                assert_eq!(node.name.as_deref(), Some(title), "the window's text");
-                assert_eq!(
-                    node.details.top_level_client, top_level_client,
-                    "whether it stands for the top-level window's client"
-                );
-                observed_at_us
-            }
-            other => panic!("the outpost said {other:?}, not the window's text"),
-        }
     }
 
     /// The focus the outpost reports next, which must be the next thing it

@@ -2737,7 +2737,7 @@ mod tests {
     impl Fixture {
         /// Queues `job`, of `pid`'s event `meta`, its marker answered as
         /// the listener answers one: by its outcome, or, dropped unanswered,
-        /// as a drop that leaves its application's gap record to its bound.
+        /// as a drop.
         fn push(&self, pid: Pid, meta: Meta, job: <Script as Reading>::Job) {
             let facts = self
                 .readers
@@ -2752,7 +2752,6 @@ mod tests {
                 let _ = facts.send(fact.unwrap_or(DeliveredFact::UiaFocusDropped {
                     marker,
                     focus: true,
-                    no_window: false,
                 }));
             });
             self.readers.push(pid, meta, job, owed);
@@ -2889,9 +2888,8 @@ mod tests {
 
     /// A focus whose nearest window's class is on NVDA's MSAA class list,
     /// and not under a shell window, is skipped with no call, by the class
-    /// verdict the outposts' arbitrators give, and its drop carries no fact
-    /// for the gap record, which the outpost closes by its own reports; one
-    /// on no list, or under a shell
+    /// verdict the outposts' arbitrators give; one on no list, or under a
+    /// shell
     /// window, is read, and so is any focus while a test forces UIA.
     #[test]
     fn a_focus_whose_windows_class_is_on_the_msaa_list_is_skipped() {
@@ -2911,7 +2909,6 @@ mod tests {
             DeliveredFact::UiaFocusDropped {
                 marker: 9,
                 focus: true,
-                no_window: false,
             }
         );
     }
@@ -3007,7 +3004,6 @@ mod tests {
                 DeliveredFact::UiaFocusDropped {
                     marker,
                     focus: true,
-                    no_window: false,
                 } => (marker, false),
                 other => panic!("not a focus's read or drop: {other:?}"),
             })
@@ -3058,7 +3054,6 @@ mod tests {
                 let _ = facts.send(fact.unwrap_or(DeliveredFact::UiaFocusDropped {
                     marker,
                     focus: true,
-                    no_window: false,
                 }));
             })
         };

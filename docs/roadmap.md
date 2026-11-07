@@ -333,7 +333,7 @@ The decisions, in brief:
   - The listener kept an ended application for good once its abandoned read returned, one per such process (found by the scheduler's model).
   - A reading thread's failed start was stepped before the other effects of its step, so an idle answer went ahead of another application's drop (found by exploration).
   - The build's upkeep: building the tests took 5.1 hours, the mutation runs 3.7 hours of machine time, and the design's surveys and reviews about 0.6 hours.
-  - Counted toward the threshold (Dickson, 2026-11-03), though found outside the three builds since no one knew of it: a gap read queued for a bound that a foreground change then replaced ran before the new bound's relatedness test was answered, so a window answered unrelated was read (found by the scheduled exploration, seed 1, Explore run 41623400047). Fixed by the gap record's replacement, the third build's first commit; its shrunk case is kept as a replay test.
+  - Counted toward the threshold (Dickson, 2026-11-03), though found outside the three builds since no one knew of it: a gap read queued for a bound that a foreground change then replaced ran before the new bound's relatedness test was answered, so a window answered unrelated was read (found by the scheduled exploration, seed 1, Explore run 41623400047). Fixed by the gap record's removal, the third build's first commit, with its replay test.
 
 ### The simulation of the reducers, deferred
 

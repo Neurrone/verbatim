@@ -141,10 +141,8 @@ releases Alt. Notepad has no outpost yet.
    property changes, and the caret. Arbitration decides which backend owns
    the window (`Arbitrator`: NVDA's class lists, then the raw probe, one
    `WM_GETOBJECT`), so the MSAA focus for the same control is dropped in
-   `Worker::msaa_focus`. A WinEvent focus the worker dropped because it
-   judges its window UIA, and that no UIA focus answers within a second, is
-   read by the outpost itself through UIA at its gap record's bound
-   (`crates/verbatim-outpost-logic/src/gap_record.rs`).
+   `Worker::msaa_focus`, as NVDA's `winEventToNVDAEvent` drops a native
+   UIA window's event: its UIA focus alone reports it.
 8. **The worker publishes, and keeps what it reported.** `emit_focus`
    publishes an `OutpostToCore::Event` carrying the trace id, the
    observation time, the backend, the window's `WindowFacts` (top-level

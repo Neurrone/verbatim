@@ -19,8 +19,8 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 use common::outpost::OutpostUnderTest;
-use verbatim_listener_logic::focus::{FocusEvent, Judged};
-use verbatim_model::protocol::{DeliveredFact, OutpostToCore, WinEventStamp};
+use verbatim_listener_logic::focus::Judged;
+use verbatim_model::protocol::{DeliveredFact, OutpostToCore};
 use verbatim_model::{CallCounts, NormalizedEvent};
 use verbatim_model::{Role, State};
 use verbatim_process::arguments::OutpostOptions;
@@ -740,55 +740,6 @@ fn a_timed_out_nearest_window_lookup_reads_nothing_into_the_application() {
     fixture.app.quit();
 }
 
-/// A focus whose nearest window's lookup fails with UIA's timeout is
-/// dropped by the listener for the lookup's timeout, however long the
-/// lookup took, and its drop leaves open the outpost's gap record that its
-/// `WinEvent` copy opened, its timer still set for the read at the record's
-/// bound (Dickson, 2026-10-30). The transaction timeout, 300 ms, ends the
-/// lookup's slow step to the parent (`slow-parent`). The read at the bound is not made here: the outpost under test
-/// shares the listener's process, whose UI Automation then fails its calls
-/// to mockapp with `UIA_E_TIMEOUT` within a millisecond, where a real
-/// outpost is a process of its own.
-fn a_nearest_window_lookup_that_times_out_leaves_the_gap_record_open() {
-    const TIMEOUT: Duration = Duration::from_millis(300);
-    const SLOW_PARENT: Duration = Duration::from_millis(900);
-    let mut fixture = Fixture::start("mockapp-rops-lookup-failed-fast");
-    let deep = fixture.focus_delivered("deep", "Deep button");
-    let outpost = OutpostUnderTest::on_frozen_time(&fixture.app);
-    outpost.read_focus_as(deep.live().element());
-    outpost.deliver_win_event(
-        DeliveredFact::MsaaFocus {
-            hwnd: fixture.hwnd,
-            id_object: -4,
-            id_child: 0,
-        },
-        WinEventStamp { thread: 1, time: 1 },
-    );
-    outpost.settled();
-    assert!(outpost.gap_timer_set(), "the copy opened the record");
-
-    let client: IUIAutomation2 = fixture.uia.client().cast().expect("IUIAutomation2");
-    let restored = ProcessTimeout::set(&client, Kind::Transaction, TIMEOUT);
-    fixture
-        .app
-        .send(&format!("slow-parent deep {}", SLOW_PARENT.as_millis()));
-    let (judged, _) = outpost.listener_read(&deep);
-    fixture.app.stamped_line("slow-parent started");
-    fixture.app.stamped_line("slow-parent ended");
-    fixture.app.send("slow-parent deep 0");
-    drop(restored);
-    let Judged::Dropped(reason) = judged else {
-        panic!("the listener took a focus whose nearest window's lookup failed: {judged:?}");
-    };
-    assert_eq!(reason, verbatim_listener_logic::focus::NEAREST_TIMED_OUT);
-
-    outpost.deliver(judged.into_fact(0, FocusEvent::Focus));
-    outpost.settled();
-    assert!(outpost.gap_timer_set(), "the drop left the record open");
-    drop(outpost);
-    fixture.app.quit();
-}
-
 /// The focus listener, the focus walk's caller, and the outpost handle a
 /// walk that timed out: with every pattern request slow (`slow-patterns`),
 /// so that filling an element's cache outlasts UIA's transaction timeout
@@ -1083,61 +1034,6 @@ fn a_focus_now_whose_classic_walk_finds_no_parent_below_the_root_goes_on_from_it
             "{answer}"
         );
     }
-}
-
-/// The focus the outpost reads itself after a `WinEvent` focus in its UIA
-/// window that no UIA focus follows, read once the wait's bound has passed
-/// by the outpost's clock, whose step from its container "Inner group" to
-/// that container's parent finds none, goes on from the parent window of
-/// the outermost element's nearest window, the desktop here, as the
-/// focus-now query's read does.
-fn a_focus_read_after_a_winevent_focus_whose_walk_finds_no_parent_goes_on_from_its_windows_parent()
-{
-    let mut fixture = Fixture::start("mockapp-rops-gap-none");
-    let outpost = OutpostUnderTest::on_frozen_time_with_options(
-        &fixture.app,
-        OutpostOptions {
-            remote_operations: false,
-        },
-    );
-    fixture.app.send("set-focus deep");
-    fixture.app.send("answer-parent group2 none");
-    outpost.read_focus_as(&fixture.find("Deep button"));
-    // The listener's copy of a `WinEvent` focus on the window's client
-    // object, with no UIA focus event of its own.
-    outpost.deliver_win_event(
-        DeliveredFact::MsaaFocus {
-            hwnd: fixture.hwnd,
-            id_object: -4,
-            id_child: 0,
-        },
-        WinEventStamp { thread: 1, time: 1 },
-    );
-    outpost.settled();
-    outpost.pass_time(Duration::from_secs(1));
-    outpost.settle();
-    outpost.window_text(&fixture.app.title);
-    match outpost.next() {
-        OutpostToCore::Event {
-            event: NormalizedEvent::FocusChanged {
-                node, ancestors, ..
-            },
-            ..
-        } => {
-            assert_eq!(node.name.as_deref(), Some("Deep button"));
-            assert_eq!(
-                ancestors
-                    .iter()
-                    .map(|node| node.name.as_deref())
-                    .collect::<Vec<_>>(),
-                [Some("Inner group")]
-            );
-        }
-        other => panic!("the outpost said {other:?}, not the focus"),
-    }
-    outpost.settled();
-    drop(outpost);
-    fixture.app.quit();
 }
 
 /// A focus whose walk's step to a parent fails has a chain that goes on
@@ -1639,10 +1535,6 @@ fn main() {
             a_timed_out_nearest_window_lookup_reads_nothing_into_the_application,
         ),
         (
-            "a_nearest_window_lookup_that_times_out_leaves_the_gap_record_open",
-            a_nearest_window_lookup_that_times_out_leaves_the_gap_record_open,
-        ),
-        (
             "a_focus_whose_walk_times_out_is_reported_below_its_window",
             a_focus_whose_walk_times_out_is_reported_below_its_window,
         ),
@@ -1665,10 +1557,6 @@ fn main() {
         (
             "a_focus_now_whose_classic_walk_finds_no_parent_below_the_root_goes_on_from_its_windows_parent",
             a_focus_now_whose_classic_walk_finds_no_parent_below_the_root_goes_on_from_its_windows_parent,
-        ),
-        (
-            "a_focus_read_after_a_winevent_focus_whose_walk_finds_no_parent_goes_on_from_its_windows_parent",
-            a_focus_read_after_a_winevent_focus_whose_walk_finds_no_parent_goes_on_from_its_windows_parent,
         ),
         (
             "a_focus_inside_one_whose_parent_step_failed_meets_its_chain_there",

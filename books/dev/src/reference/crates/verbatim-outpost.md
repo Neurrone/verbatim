@@ -47,8 +47,7 @@ listener receives before those subscriptions are all installed is dropped
 as NVDA drops events before its global handlers are registered; Verbatim's
 start asks the foreground application's outpost for its focus instead
 (`ShellCommand::FocusNow`), and a `WinEvent` focus whose UIA focus is so
-dropped is read by its outpost at the gap record's bound when the outpost
-judges the copy's window UIA (below). The installation's end is logged
+dropped is lost, as NVDA loses it. The installation's end is logged
 at info, with the time it took; the shutdown waits for it.
 
 ### The hand-over of an application's MSAA events
@@ -98,11 +97,13 @@ first events start its outpost:
 The listener judges and reads each UIA focus from the event's own element,
 since an element cannot be handed to another process; how is
 [verbatim-listener](verbatim-listener.md)'s. The read reaches the outpost
-as a `UiaFocusRead`, or its drop as a `UiaFocusDropped`, which says
-whether its sender had no window above it, behind the marker the listener
-sent first, and the
-outpost's reducer keeps the intake's order and the gap record
-([verbatim-outpost-logic](verbatim-outpost-logic.md)).
+as a `UiaFocusRead`, or its drop as a `UiaFocusDropped`, behind the
+marker the listener sent first, and the outpost's reducer keeps the
+intake's order ([verbatim-outpost-logic](verbatim-outpost-logic.md)). A
+`WinEvent` focus copy in a window the outpost judges UIA is dropped
+("MSAA focus dropped: UIA owns the window"), as NVDA's
+`winEventToNVDAEvent` drops a native UIA window's event, so its UIA focus
+alone reports it.
 
 ### Console windows and frames of another process
 
@@ -129,8 +130,7 @@ whose cached process is not the outpost's application, the console host
 for a console, or that has none cached, is read no further: no
 enrichment, walk, subscription or report, `None` answered, and a debug
 line naming both processes. Each read is logged at debug with what asked
-for it (`read::FocusRead`: a focus-now query, the gap's read, or a cut
-walk, below). The one connection the call makes into
+for it (`read::FocusRead`: a focus-now query or a cut walk, below). The one connection the call makes into
 the other application cannot be prevented.
 
 Every window the worker judges or acts on for an event, whether its own
@@ -202,7 +202,7 @@ above its own (`read::plain_window_above`, local calls by
 walk instead. A walk cut by its time
 (its bound, for the continuation of a listener's read that read's bound
 from the event's observation, `UiaFocusRead::bound_us`; for an MSAA
-focus's walk and the gap's read, `read::walk_left`; `SAME_WINDOW_BOUND`
+focus's walk, `read::walk_left`; `SAME_WINDOW_BOUND`
 for a focus-now answer) or its depth limit of 64 is completed by plain
 windows from its outermost element's nearest window, included. Whether a
 window can be read is the system's judgement
@@ -376,11 +376,10 @@ the same tables and code, which the arbitrator's own lists are built from.
   `observe_foreground_programs` (a `ForegroundProgramObserver`, told on the
   worker the window of each foreground change a program is about to
   handle, so a test can hold the worker there);
-  `set_focus_window_reader` (a `FocusWindowReader` for focus-now, the
-  gap's read and the moved-on judgement); `set_observation_clock` (a `verbatim_process::clock::ObservationClock`
-  for the outpost's own events' stamps and its verdicts' keeps); and
-  `set_gap_timer` (a `GapTimer` for the gap record's bound, which
-  `gap_bound_reacher` reaches); `set_handling_deadline` (a deadline in
+  `set_focus_window_reader` (a `FocusWindowReader` for focus-now and the
+  moved-on judgement); `set_observation_clock` (a `verbatim_process::clock::ObservationClock`
+  for the outpost's own events' stamps and its verdicts' keeps);
+  `set_handling_deadline` (a deadline in
   place of the reducer's `HANDLING_DEADLINE`, 11 seconds, for the
   programs dispatched after it, so a test that waits out a worker's
   abandonment waits less; Verbatim never calls it); and `without_listener`, for an outpost
@@ -392,7 +391,7 @@ the same tables and code, which the arbitrator's own lists are built from.
   asked (`Registration::settle`), every published message is written
   (`Outbound::flush`), and the event thread has taken every nudge. The
   reducer answers it as it is reached (`Effect::Settled`), waiting for no
-  open caret watch, open gap record or held copies of the hook's, as
+  open caret watch or held copies of the hook's, as
   Core's round does; it divides batches as the round does, and waits for
   nothing that arrived after it. The shell keeps its waiter by number, and
   checks after every transition that the waiters are the settles waiting
@@ -422,7 +421,7 @@ Inside an outpost (`docs/design/communication.md`, section 6.4;
 - The reducer ([verbatim-outpost-logic](verbatim-outpost-logic.md)), a
   pure state machine on a thread of
   its own, run by its shell (`outpost::shell`): it holds the intake's
-  order (`reducer::intake`), the gap record, the reports Core may hold
+  order (`reducer::intake`), the reports Core may hold
   (`reducer::held`), the follow state (`reducer::follow`), the hand-over's
   hold, the arbitrator's verdicts (`reducer::verdicts`), each node's text
   facts (`reducer::text`), the program in flight as its work in flight
@@ -441,8 +440,8 @@ Inside an outpost (`docs/design/communication.md`, section 6.4;
   reads every file of its crate by the pure rule
   (`xtask/src/ownership.rs`). The shell waits on the mailbox's alarm
   (`verbatim_process::alarm::Alarm`): an event set by an append while it waits, and a
-  high-resolution timer set to the reducer's next timer, so the watchdog
-  thread and the gap record's threadpool timer are gone, and each timer
+  high-resolution timer set to the reducer's next timer, so no watchdog
+  thread or threadpool timer is kept, and each timer
   costs one wake. Every lock its thread takes is a short hold with no
   call: the mailbox's, the backlog's with the store's inside it for a
   release, the store's for a commit's writes, and a worker's charge.
@@ -456,10 +455,9 @@ Inside an outpost (`docs/design/communication.md`, section 6.4;
   Core's request ids are unique for the outpost's life; entries queued
   behind the close still reach the reducer; the shell gives the reducer
   only a commit it accepts; a program that answers a query commits that
-  query's reply as its one message; only an MSAA focus's report and the
-  gap's read arm a walk; only a caret key's program opens the watch, and
-  a program commits a check of it only while it holds it; only an
-  event's program commits a copy's drop for the gap record; only the owed
+  query's reply as its one message; only an MSAA focus's report arms a
+  walk; only a caret key's program opens the watch, and a program commits
+  a check of it only while it holds it; only the owed
   work commits it done; and only a caret read of an edit control's client
   area is cut at its value change check.
 - Locks (`outpost::lock`): every lock the crate declares is a
@@ -477,7 +475,7 @@ Inside an outpost (`docs/design/communication.md`, section 6.4;
   the application: the window its entry names, at its start; else a
   query's node's own window (the window an MSAA node is kept under, or a
   UIA element's whose runtime id is `[42, hwnd]`), the application's focus
-  window for focus-now, the gap's read and a node of no window of its own
+  window for focus-now and a node of no window of its own
   (the foreground thread's focus window when that thread is the
   application's, else the top-level window of the focus the outpost
   expects Core to hold), the owed work's and the console poll's node's;
@@ -646,14 +644,13 @@ Inside an outpost (`docs/design/communication.md`, section 6.4;
 - The bound met when a call is stuck (`outpost::bound`;
   `docs/design/focus-pipeline-rework.md`, "A window's name, and the one
   fallback"). An MSAA focus that has passed NVDA's checks, its
-  focused-state test among them, and been read, and the gap's read once
-  its focused element is read, arm their walk in the worker's charge
+  focused-state test among them, and been read, arms its walk in the
+  worker's charge
   (`Charge::arm`, a `bound::FocusProgress`) and tell the reducer its bound,
   by the design's Terms (`read::walk_left`): `MOVED_ON_GRACE` when the
   focus's top-level window is not that of the focus the outpost expects
   Core to hold (`Held::expected`), `SAME_WINDOW_BOUND` otherwise, measured
-  from the event's observation for an MSAA focus and from the read's start
-  for the gap's read. The walk tells what it reads as it reads it
+  from the event's observation. The walk tells what it reads as it reads it
   (`read::WalkStep`), each step taken into the charge under its lock: the
   MSAA walk each ancestor and its chain, the classic UIA walk each
   ancestor it keeps, a remote program nothing until it returns. A walk
@@ -696,8 +693,8 @@ Inside an outpost (`docs/design/communication.md`, section 6.4;
 - Time limits in an entry (`books/dev/src/explanation/design/focus-pipeline.md`, section 6): UIA
   calls end at `verbatim_uia::UIA_CONNECTION_TIMEOUT` (2 s) or
   `UIA_TRANSACTION_TIMEOUT` (10 s); the listener's read's bound bounds the
-  continuation of its chain, the walk's bound an MSAA focus's or the gap's
-  read's ancestor walk between calls, and `SAME_WINDOW_BOUND` (2 s) a
+  continuation of its chain, the walk's bound an MSAA focus's ancestor
+  walk between calls, and `SAME_WINDOW_BOUND` (2 s) a
   focus-now answer's; a dialog's text, UIA's as MSAA's, is gathered in
   its program on the worker's own client, bounded by the program's
   deadline, as NVDA gathers it inside its focus event; tree view,
@@ -1015,8 +1012,7 @@ foreground application for its focus unless a newer focus was applied.
 ### Window destruction and held objects
 
 - Window destruction: `EVENT_OBJECT_DESTROY` for a window drops its verdict,
-  the gap record's report kept for it (through its program's commit), its
-  classic mark, and its MSAA nodes.
+  its classic mark, and its MSAA nodes.
 - Held objects: the object store (`outpost::store`;
   `books/dev/src/explanation/design/ownership.md`) owns both
   registries, each node's text patterns and anchors, the terminals' kept
@@ -1439,9 +1435,7 @@ progress. The round is in band, so it covers pipes and backlogs.
   flight, so nothing before it is unhandled, and answers it
   (`Reducer::answer_idle`) as it is reached and after every input, once the
   hook's copies are no longer held at the outpost's start, no
-  caret key's watch is open or held by the program in flight, and the gap
-  record is closed and not being read by the
-  program in flight. Entries after the query are not waited for, nor is a
+  caret key's watch is open or held by the program in flight. Entries after the query are not waited for, nor is a
   program handling one. An outpost that ends answers by its `Ended`.
 
 ## Shutting down

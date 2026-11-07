@@ -42,17 +42,6 @@ use super::worker::{self, Charge, Job};
 use super::{Context, RequestContext};
 use verbatim_process::alarm::Alarm;
 
-/// Times the gap record's bound in place of the reducer's own timer: for a
-/// test that says when the bound is reached rather than waiting for it
-/// (`Outpost::set_gap_timer`). Setting and cancelling never wait.
-pub trait GapTimer: Send + Sync {
-    /// Sets the timer for `due_us`, on the observation clock, replacing any
-    /// time set before.
-    fn set(&self, due_us: u64);
-    /// Cancels the timer, if it is set.
-    fn cancel(&self);
-}
-
 /// What the mailbox carries to the shell, in the order it was appended.
 #[expect(
     clippy::large_enum_variant,
@@ -96,12 +85,8 @@ pub(super) enum Posted {
     },
     /// An abandoned worker of this generation returned from its call.
     Returned(u64),
-    /// A test times the gap record's bound with a timer of its own.
-    GapTimerGiven,
     /// A test shortens the deadline for handling an entry.
     HandlingDeadline(Duration),
-    /// The gap record's bound was reached by the timer a test set.
-    GapBound,
     /// The outpost is shutting down.
     Close,
 }
@@ -151,9 +136,7 @@ impl Mailbox {
                     | Posted::WithoutListener
                     | Posted::ForwardingEnded(_)
                     | Posted::Cancel(_)
-                    | Posted::GapTimerGiven
                     | Posted::HandlingDeadline(_)
-                    | Posted::GapBound
             )
         {
             return;
@@ -560,66 +543,6 @@ impl Shell {
         ))
     }
 
-    /// The gap record's test at its bound, of its top-level window
-    /// `top_level` against the system's foreground, made from Windows'
-    /// state with local calls only on this thread: whether the window is
-    /// related to the foreground window by the acceptance test
-    /// (`acceptance::foreground_relation`: the same top-level window or
-    /// root owner, topmost, or a `Windows.UI.Core` window under the active
-    /// window), and, when it is the foreground window itself, its window
-    /// text sent as a whole-window focus stamped `stamp_us`: the plain
-    /// window, or for a window not known to be read through UIA its MSAA
-    /// client pane, read from local data, minted under `request`'s tag with the
-    /// store's lock, a short hold, and written as a commit of its
-    /// (`docs/design/focus-pipeline-rework-remaining.md`, "The held UIA
-    /// application's title"). No call is made into the application.
-    fn gap_bound_test(
-        &mut self,
-        request: Request,
-        top_level: verbatim_reader_rules::Window,
-        (stamp_us, trace): (u64, TraceId),
-        facts: Facts,
-    ) -> (bool, Option<Change>) {
-        let foreground = self.context.foreground_window();
-        let class = verbatim_win32::window::window_class_name(top_level.get());
-        let related = verbatim_reader_rules::acceptance::foreground_relation(
-            top_level,
-            &class,
-            &verbatim_win32::window::SystemWindows { foreground },
-        )
-        .related();
-        if !related || foreground != top_level.get() {
-            tracing::debug!(
-                top_level = top_level.get(),
-                foreground,
-                related,
-                "the gap record's bound: no window text is sent"
-            );
-            return (related, None);
-        }
-        // Said as the switch without a stall says the window: a window the
-        // outpost reads through UIA by its window element, "<title>
-        // window"; any other by its MSAA client, its title alone.
-        let uia = self.context.known_to_use_uia(top_level.get(), stamp_us);
-        let tag = tag_of(request);
-        let context = RequestContext::new(&self.context, tag, facts);
-        let effects = worker::window_text(&context, top_level.get(), uia, (trace, stamp_us));
-        self.garbage.store.push(context.take_removed());
-        tracing::info!(
-            %trace,
-            top_level = top_level.get(),
-            "the gap record's bound passed with no focus reported; the window's text is sent"
-        );
-        let change = write(
-            &self.context.store,
-            tag,
-            effects,
-            &mut self.elements,
-            &mut self.garbage,
-        );
-        (true, Some(change))
-    }
-
     /// Takes one posted input into the reducer and applies what it asks.
     fn take(&mut self, posted: Posted) {
         let input = match posted {
@@ -627,7 +550,7 @@ impl Shell {
                 // The one test of an MSAA focus or a foreground change
                 // against the foreground, made as the reducer takes it in,
                 // never on the worker ([`super::reducer::Front`]).
-                entry.front = self.context.front_test(&entry.item, entry.observed_at_us);
+                entry.front = self.context.front_test(&entry.item);
                 if let Item::Query { request_id, .. } = &entry.item
                     && !self.closing
                 {
@@ -690,9 +613,7 @@ impl Shell {
                 );
                 return;
             }
-            Posted::GapTimerGiven => Input::GapTimerGiven,
             Posted::HandlingDeadline(deadline) => Input::HandlingDeadline(deadline),
-            Posted::GapBound => Input::GapBound,
             Posted::Close => {
                 self.closing = true;
                 self.context.mailbox.close();
@@ -748,10 +669,6 @@ impl Shell {
     }
 
     /// Carries out `effect`, returning the answer to one that asks.
-    #[expect(
-        clippy::too_many_lines,
-        reason = "one arm per effect, each carried out in place or by a function of its own"
-    )]
     fn carry_out(&mut self, effect: Effect) -> Option<Input> {
         match effect {
             Effect::Dispatch(program) => self.dispatch(*program),
@@ -772,21 +689,6 @@ impl Shell {
                     request,
                     change: self.publication(request, *facts).map(Box::new),
                     then_abandon,
-                });
-            }
-            Effect::TestGapBound {
-                request,
-                top_level,
-                stamp_us,
-                trace,
-                facts,
-            } => {
-                let (related, title) =
-                    self.gap_bound_test(request, top_level, (stamp_us, trace), *facts);
-                return Some(Input::GapBoundTested {
-                    request,
-                    related,
-                    title: title.map(Box::new),
                 });
             }
             Effect::Subscribe(subscription) => self.subscribe(&subscription),
@@ -852,14 +754,6 @@ impl Shell {
                     waited_ms = waited.as_millis(),
                     "a caret key's watch ended without evidence"
                 );
-            }
-            Effect::GapTimer(due) => {
-                if let Some(timer) = self.context.gap_timer() {
-                    match due {
-                        Some(due_us) => timer.set(due_us),
-                        None => timer.cancel(),
-                    }
-                }
             }
         }
         None

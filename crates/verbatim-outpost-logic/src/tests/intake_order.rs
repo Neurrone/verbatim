@@ -389,7 +389,6 @@ impl Run {
                     DeliveredFact::UiaFocusDropped {
                         marker,
                         focus: true,
-                        no_window: false,
                     },
                     None,
                 )

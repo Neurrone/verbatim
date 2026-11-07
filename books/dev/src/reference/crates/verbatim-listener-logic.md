@@ -21,10 +21,8 @@ Public API:
   with `into_fact`). Every reason an event is dropped is a constant here
   (`NOT_IN_TIME`, `MOVED_ON`, `STOPPED_RESPONDING`, `HUNG`,
   `WAITED_TOO_LONG`, `REPLACED`, `NO_WINDOW`,
-  `NOT_FOCUSED`, `MSAA_CLASS`, `NEAREST_TIMED_OUT` and the rest); a
-  focus's drop carries one fact for its application's gap record, whether
-  its sender had no window above it (`no_window`), which `into_fact` sets
-  for `NO_WINDOW`. A nearest window's lookup that fails with UIA's timeout
+  `NOT_FOCUSED`, `MSAA_CLASS`, `NEAREST_TIMED_OUT` and the rest). A
+  nearest window's lookup that fails with UIA's timeout
   is dropped for `NEAREST_TIMED_OUT`, however long it took.
   `ABANDONED_LIMIT` is how many of an
   application's threads may be abandoned in their calls before it gets no
@@ -85,8 +83,8 @@ Public API:
 `cargo xtask ci` reads `schedule.rs` by the pure rule
 (`xtask/src/ownership.rs`).
 
-Tests: each module's unit tests, the scheduler's a replay of inputs with
-exact effects, and every drop reason's fact for the gap record. The
+Tests: each module's unit tests, and the scheduler's a replay of inputs
+with exact effects. The
 scheduler has a generated test against a reference model
 (`crates/verbatim-listener-logic/src/schedule/generated.rs`): lists of
 actions weighted toward the lifecycle, run through proptest's

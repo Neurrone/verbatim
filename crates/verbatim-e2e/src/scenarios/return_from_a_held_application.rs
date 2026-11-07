@@ -1,16 +1,15 @@
 //! The return from an application whose reads are held
 //! (`docs/design/focus-pipeline-rework-remaining.md`, "One foreground
-//! change" and "The held UIA application's title"): the user leaves the
-//! Windows Forms text box ([`super::text_box`]) for a `mockapp` UIA window
-//! whose window thread holds the first call any client makes into it
-//! (mockapp's `hold`), as a hung application's does, and comes back. The
-//! held window's title is said about a second after the switch, from the
-//! outpost's own local data, and the return to the text box says what the
-//! same switch says without a stall.
+//! change"): the user leaves the Windows Forms text box
+//! ([`super::text_box`]) for a `mockapp` UIA window whose window thread
+//! holds the first call any client makes into it (mockapp's `hold`), as a
+//! hung application's does, and comes back. Nothing is said for the held
+//! window while it does not answer, as NVDA says nothing, and the return
+//! to the text box says what the same switch says without a stall.
 //!
 //! The mockapp window is read once first, so the outpost's verdict that
-//! it is a UIA window is kept and the entry into it opens the gap record
-//! with no probe. The scenario waits on mockapp's own evidence: the
+//! it is a UIA window is kept and the entry into it makes no probe. The
+//! scenario waits on mockapp's own evidence: the
 //! named events mockapp sets as it prints `applied` for the `hold` and
 //! `held` as the outpost's call begins (`--line-events`).
 
@@ -115,7 +114,8 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
         .wait_for_event(&applied, held, WINDOW_TIMEOUT)
         .expect("mockapp takes hold");
 
-    // Entered while held: the title, about a second after the switch.
+    // Entered while held: nothing is said, so the next utterance is the
+    // return's.
     let held_call = format!("{events}held");
     scenario
         .create_event(&held_call)
@@ -126,7 +126,6 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     scenario
         .wait_for_event(&held_call, held, WINDOW_TIMEOUT)
         .expect("a call into mockapp is held");
-    scenario.speech().expect(&[&held_window]);
 
     // The return, said as the same switch without a stall.
     scenario

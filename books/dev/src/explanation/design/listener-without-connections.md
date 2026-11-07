@@ -197,7 +197,7 @@ The design was built in these steps, each with its scenarios.
 9. The end-to-end agent's desktop reading through MSAA (decision 10).
 10. The lock removed: code, protocol, tests and documents (section 7).
 11. Core's tray dialog's shell items as a query to File Explorer's outpost (decision 9). The dialog's whole wait, for its list or a clicked item's position, is at most 11.5 seconds from its request (`SHELL_ITEMS_WAIT`; Dickson, 2026-11-01, amended 2026-11-06), whether the taskbar's outpost is starting, the query waits behind other work, or the walk is slow. Core does not cut the walk off: the query carries the outpost's deadline, 11 seconds after the request on the run's shared clock, and Core gives up and withdraws the query half a second after that. A request whose outpost is ready only at or after the outpost's deadline is answered with nothing and not sent.
-12. Decision 11's read after a `WinEvent` focus with no UIA focus following it, now the outpost's gap record (`crates/verbatim-outpost-logic/src/gap_record.rs`).
+12. Decision 11's read after a `WinEvent` focus with no UIA focus following it is not kept: a focus UI Automation does not deliver is lost, as in NVDA (Dickson, 2026-11-07).
 
 ## Follow-ups outside this design
 

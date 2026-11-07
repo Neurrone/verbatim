@@ -15,10 +15,7 @@
 //! advancing on its own. Which deadline each kind of program gets, which
 //! held copies a release keeps and the caret watch's transitions are not
 //! modelled: they are the examples of `src/tests.rs`, `hold.rs` and the
-//! watch's enumeration (`tests/generated.rs`). The gap
-//! record is not modelled: each call's change of it is checked against
-//! what the design lets change it (`Run::check_gap`), not against its
-//! stamps' arithmetic, which `gap_record.rs`'s own tests hold.
+//! watch's enumeration (`tests/generated.rs`).
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
@@ -52,8 +49,8 @@ enum What {
     /// An MSAA focus on a child of window 0x11, of top-level window 0x10.
     MsaaFocus(u8),
     /// A foreground change into a top-level window: untested (0), not in
-    /// front (1) or in front (2), judged UIA or not.
-    Foreground { window: u8, front: u8, uia: bool },
+    /// front (1) or in front (2).
+    Foreground { window: u8, front: u8 },
     /// A UIA property change of an element of window 0x10.
     UiaProperty,
     /// The caret's location change of the edit control.
@@ -65,9 +62,8 @@ enum What {
     /// The read of the oldest marker not yet resolved, or one whose marker
     /// never came.
     Read,
-    /// The drop of the oldest marker not yet resolved, for no window above
-    /// its sender or not.
-    Dropped { no_window: bool },
+    /// The drop of the oldest marker not yet resolved.
+    Dropped,
     /// The end of the listener's reads.
     ReadsEnded,
     /// Core's focus-now query.
@@ -114,8 +110,6 @@ enum Commit {
     TakeOther,
     /// The held watch's check found its evidence or nothing.
     Checked { answered: bool },
-    /// A copy dropped for UIA in window 0x11 of a top-level window.
-    CopyDropped { top: u8 },
     /// A held terminal's caret noted.
     NotedCaret,
     /// The owed work done.
@@ -208,11 +202,6 @@ struct Asks {
     /// A publication's change: none, the claim lost (0), nothing (1), or a
     /// focus report (2).
     publish: u8,
-    /// Whether the gap record's window is related to the foreground at
-    /// its bound.
-    related: bool,
-    /// Whether its window text is sent then.
-    title: bool,
     /// Whether a release lets go of node 1, the watch's.
     release_node: bool,
     /// Whether a release lets go of objects to drop.
@@ -229,14 +218,13 @@ fn what() -> impl Strategy<Value = What> {
     prop_oneof![
         3 => (0..2u8).prop_map(What::NameChange),
         4 => (1..4u8).prop_map(What::MsaaFocus),
-        3 => (0..2u8, 0..3u8, any::<bool>())
-            .prop_map(|(window, front, uia)| What::Foreground { window, front, uia }),
+        3 => (0..2u8, 0..3u8).prop_map(|(window, front)| What::Foreground { window, front }),
         1 => Just(What::UiaProperty),
         2 => Just(What::EditCaret),
         1 => Just(What::ValueChange),
         2 => Just(What::Marker),
         2 => Just(What::Read),
-        2 => any::<bool>().prop_map(|no_window| What::Dropped { no_window }),
+        2 => Just(What::Dropped),
         1 => Just(What::ReadsEnded),
         2 => Just(What::FocusNow),
         3 => Just(What::CaretKey),
@@ -260,7 +248,6 @@ fn commit() -> impl Strategy<Value = Commit> {
         5 => Just(Commit::Take),
         3 => Just(Commit::TakeOther),
         2 => any::<bool>().prop_map(|answered| Commit::Checked { answered }),
-        2 => (0..2u8).prop_map(|top| Commit::CopyDropped { top }),
         1 => Just(Commit::NotedCaret),
         2 => Just(Commit::OwedDone),
         3 => (0..2u8, any::<bool>(), any::<bool>())
@@ -315,12 +302,7 @@ fn action() -> impl Strategy<Value = Action> {
 fn asks() -> impl Strategy<Value = Asks> {
     use proptest::prelude::*;
     (
-        (
-            prop::bool::weighted(0.3),
-            0..3u8,
-            prop::bool::weighted(0.8),
-            any::<bool>(),
-        ),
+        (prop::bool::weighted(0.3), 0..3u8),
         (
             prop::bool::weighted(0.3),
             any::<bool>(),
@@ -329,11 +311,9 @@ fn asks() -> impl Strategy<Value = Asks> {
         ),
     )
         .prop_map(
-            |((moved_on, publish, related, title), (release_node, objects, hung, named))| Asks {
+            |((moved_on, publish), (release_node, objects, hung, named))| Asks {
                 moved_on,
                 publish,
-                related,
-                title,
                 release_node,
                 objects,
                 hung,
@@ -351,8 +331,6 @@ enum Kind {
     Key,
     /// The edit control's caret event, which may be cut.
     EditCaret,
-    /// The gap record's read.
-    GapRead,
     /// A noted caret's read.
     Noted,
     /// The owed work.
@@ -396,55 +374,11 @@ struct Flight {
     copy: Facts,
     /// Whether its copy of the watch is compared no more: after it has
     /// committed a check of the watch, its copy may show a poll the reducer
-    /// ended by its clock, which the copy does not read; and after a gap
-    /// title's foreground fact ended the watch while it was in flight, its
-    /// copy still shows the watch the reducer no longer has
+    /// ended by its clock, which the copy does not read.
     uncompared: bool,
     /// The windows destroyed while it ran, whose hang it names afterwards
     /// opens nothing.
     destroyed: BTreeSet<isize>,
-}
-
-/// The open gap record as the reducer holds it, seen from outside: its
-/// top-level window, its newest stamp's trace, what it waits for, when its
-/// bound passes and whether its bound is still to be handled.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct GapSeen {
-    top: isize,
-    trace: TraceId,
-    focus: bool,
-    due: u64,
-    pending: bool,
-}
-
-impl GapSeen {
-    fn of(gap: &crate::gap_record::GapRecord) -> Option<Self> {
-        Some(Self {
-            top: gap.top_level()?,
-            trace: gap.trace()?,
-            focus: gap.awaits()? == Awaits::Focus,
-            due: gap.due_us()?,
-            pending: gap.pending(),
-        })
-    }
-
-    /// The record's identity: a change of it is an opening or a restamp.
-    fn identity(self) -> (isize, TraceId, bool, u64) {
-        (self.top, self.trace, self.focus, self.due)
-    }
-}
-
-/// What the design lets change the gap record, as the inputs since the
-/// last call gave it: the top-level windows of the foreground changes
-/// found in front, each with whether it was judged UIA, and of the copies
-/// dropped for UIA; whether a drop for no window above its sender came;
-/// and whether a bound's test found its window unrelated.
-#[derive(Clone, Debug, Default)]
-struct GapCauses {
-    foreground: Vec<(isize, bool)>,
-    copies: Vec<isize>,
-    no_window: bool,
-    unrelated: bool,
 }
 
 /// A pending entry: what it is and where it came from.
@@ -501,19 +435,11 @@ struct Model {
     /// Whether a release's drop is due, and whether one is under way.
     to_drop: bool,
     releasing: bool,
-    /// What may change the gap record, gathered until the next call; and
-    /// the gap reads a drop for no window or a copy may have made, one
-    /// each at most.
-    gap_causes: GapCauses,
-    gap_reads: u32,
     /// A noted caret, kept for when nothing else is ready.
     noted: bool,
     stopping: bool,
     /// The requests no longer live, newest last.
     dead: Vec<Request>,
-    /// The trace of the bound's entry that reads the gap record, once its
-    /// test found it related.
-    bound_reads: BTreeSet<TraceId>,
     /// Whether the last program to leave was abandoned.
     abandoned: bool,
     /// The focus groups a try reported, or was published in, by number:
@@ -525,7 +451,6 @@ struct Model {
 fn kind_of(program: &Program) -> Kind {
     match &program.work {
         Work::Entry { entry, .. } => match &entry.item {
-            Item::GapRead { .. } => Kind::GapRead,
             Item::NotedCaret { .. } => Kind::Noted,
             Item::Query {
                 query:
@@ -591,7 +516,7 @@ enum Call {
 type Reached = BTreeMap<&'static str, u64>;
 
 /// The lifecycle states the gate's cases must each reach.
-const LISTED: [&str; 40] = [
+const LISTED: [&str; 34] = [
     "an entry dispatched",
     "a focus group continued",
     "a focus group continued after an abandonment",
@@ -619,12 +544,6 @@ const LISTED: [&str; 40] = [
     "the watch polled",
     "a query cancelled",
     "a late shell query answered",
-    "the gap record opened by a foreground change",
-    "the gap record opened by a copy",
-    "the gap bound tested, related",
-    "the gap bound tested, unrelated",
-    "a title committed",
-    "a gap read dispatched",
     "an idle round answered",
     "a settle answered",
     "a hook copy held",
@@ -663,8 +582,6 @@ impl Run {
             asks: Asks {
                 moved_on: false,
                 publish: 0,
-                related: true,
-                title: false,
                 release_node: false,
                 objects: false,
                 hung: false,
@@ -759,10 +676,13 @@ impl Run {
                 true
             }
             Action::Armed(ahead) => {
-                // Only a focus event's program and the gap's read walk.
-                if let Some(flight) = self.model.flight.as_mut().filter(|flight| {
-                    !flight.for_query && matches!(flight.kind, Kind::Entry | Kind::GapRead)
-                }) {
+                // Only a focus event's program walks.
+                if let Some(flight) = self
+                    .model
+                    .flight
+                    .as_mut()
+                    .filter(|flight| !flight.for_query && flight.kind == Kind::Entry)
+                {
                     let bound = self.at + u64::from(ahead) * 1_000;
                     if flight.walk != Walk::Published {
                         flight.walk = Walk::Armed(bound);
@@ -867,10 +787,8 @@ impl Run {
             What::Foreground {
                 window,
                 front: tested,
-                uia,
             } => {
-                // Never the hook's held copy, whose record the model would
-                // open only as the hold decides to take it in.
+                // Never the hook's held copy.
                 source = match from {
                     From::Hook | From::Listener => Source::Listener,
                     From::Other => Source::Other,
@@ -879,11 +797,9 @@ impl Run {
                     0 => Front::Untested,
                     1 => Front::Foreground {
                         in_front_at_us: None,
-                        uia,
                     },
                     _ => Front::Foreground {
                         in_front_at_us: Some(observed),
-                        uia,
                     },
                 };
                 Item::Fact(
@@ -932,7 +848,7 @@ impl Run {
                 };
                 Item::Fact(focus_read(marker), None)
             }
-            What::Dropped { no_window } => {
+            What::Dropped => {
                 let marker = if self.model.markers.is_empty() {
                     self.fresh()
                 } else {
@@ -942,7 +858,6 @@ impl Run {
                     DeliveredFact::UiaFocusDropped {
                         marker,
                         focus: true,
-                        no_window,
                     },
                     None,
                 )
@@ -1035,18 +950,6 @@ impl Run {
             } else {
                 self.take_in(what, trace, query);
             }
-        } else if let What::Foreground {
-            window,
-            front: 2,
-            uia,
-        } = what
-        {
-            // The reducer applies a foreground change to the gap record as
-            // it takes it in, before its closed intake drops it.
-            self.model
-                .gap_causes
-                .foreground
-                .push((TOPS[usize::from(window)], uia));
         }
         let entry = Entry {
             item,
@@ -1064,29 +967,13 @@ impl Run {
 
     /// The model takes in an entry the reducer pushes into its intake.
     fn take_in(&mut self, what: What, trace: u64, query: Option<u64>) {
-        let model = &mut self.model;
-        match what {
-            What::Foreground {
-                window,
-                front: 2,
-                uia,
-            } => model
-                .gap_causes
-                .foreground
-                .push((TOPS[usize::from(window)], uia)),
-            What::Dropped { no_window: true } => {
-                model.gap_causes.no_window = true;
-                model.gap_reads += 1;
-            }
-            _ => {}
-        }
         if !matches!(
             what,
             What::Round
                 | What::Settle
                 | What::NodesHeld
                 | What::Marker
-                | What::Dropped { .. }
+                | What::Dropped
                 | What::ReadsEnded
         ) {
             self.model
@@ -1225,7 +1112,6 @@ impl Run {
 
     /// The change `commit` is for the program in flight, `flight`, if it
     /// can make it.
-    #[expect(clippy::too_many_lines, reason = "one arm for each kind of commit")]
     fn change(&mut self, commit: Commit, flight: &Flight) -> Option<Change> {
         let commit = match commit {
             Commit::Own(flag) => match flight.kind {
@@ -1259,7 +1145,7 @@ impl Run {
                 if flight.for_query
                     || !matches!(
                         flight.kind,
-                        Kind::Entry | Kind::EditCaret | Kind::GapRead | Kind::Owed | Kind::Noted
+                        Kind::Entry | Kind::EditCaret | Kind::Owed | Kind::Noted
                     )
                 {
                     return None;
@@ -1277,18 +1163,6 @@ impl Run {
             },
             Commit::Checked { answered: true } => answered(),
             Commit::Checked { answered: false } => watching(1),
-            Commit::CopyDropped { .. } if flight.for_query || flight.kind != Kind::Entry => {
-                return None;
-            }
-            Commit::CopyDropped { top } => Change {
-                gap: vec![GapNote::CopyDropped {
-                    window: 0x11,
-                    top_level: TOPS[usize::from(top)],
-                    at_us: self.observed,
-                    trace: TraceId::from_raw(self.fresh()),
-                }],
-                ..Change::default()
-            },
             Commit::NotedCaret => Change {
                 noted_caret: Some((
                     NodeId::new(3),
@@ -1359,9 +1233,7 @@ impl Run {
             });
             return;
         }
-        // The program's copy of the watch agrees with the reducer's, until
-        // a gap title's foreground fact ends the watch, which the reducer
-        // does at once, the program in flight holding it or not.
+        // The program's copy of the watch agrees with the reducer's.
         if !flight.uncompared {
             assert_eq!(
                 untimed(&flight.copy.follow.watch),
@@ -1425,12 +1297,6 @@ impl Run {
             && attempting == Some(model.generation)
         {
             model.owed = None;
-        }
-        for note in &change.gap {
-            if let GapNote::CopyDropped { top_level, .. } = note {
-                model.gap_causes.copies.push(*top_level);
-                model.gap_reads += 1;
-            }
         }
         if change.noted_caret.is_some() {
             model.noted = true;
@@ -1601,27 +1467,12 @@ impl Run {
     fn call(&mut self, input: Option<Input>, kind: Call) -> Vec<Effect> {
         let now = self.now();
         let marks = self.reducer.facts.marks.clone();
-        let gap_due = self.reducer.intake.gap().due_us();
-        let gap_before = GapSeen::of(self.reducer.intake.gap());
         let flight_before = self.model.flight.clone();
         // The query of the watch a program holds.
         let watch_before = match &self.reducer.facts.follow.watch {
             watch @ Watch::Checking { .. } => watch.open().map(|open| open.request_id.number),
             _ => None,
         };
-        // A committed foreground fact elsewhere ends the caret watch at
-        // once, even one the program in flight holds (Claude, 2026-11-03, accepted
-        // by Dickson the same day): the gap's window text, committed
-        // while its record is open, is a report on a node no watch is on.
-        let title_ends = matches!(
-            &input,
-            Some(Input::GapBoundTested {
-                related: true,
-                title: Some(_),
-                ..
-            })
-        ) && self.reducer.intake.gap().is_open()
-            && !self.reducer.facts.follow.watch.is_none();
         let hangs = self.hangs(input.as_ref());
         let effects = match input {
             Some(input) => self.reducer.input(input, now),
@@ -1642,67 +1493,19 @@ impl Run {
             "Core is told of a hang exactly as it opens: {:?}",
             self.trail
         );
-        if title_ends {
-            assert!(
-                self.reducer.facts.follow.watch.is_none(),
-                "a gap title's commit left the watch open: {:?}",
-                self.trail
-            );
-            if let Some(flight) = self.model.flight.as_mut() {
-                flight.uncompared = true;
-            }
-            self.reach("the watch ended by a title");
-        }
         self.log.push(hash(&format!("{effects:?}")));
-        self.check_gap(gap_before, &effects);
-        self.check_call(
-            kind,
-            &effects,
-            &marks,
-            gap_due,
-            flight_before.as_ref(),
-            watch_before,
-        );
-        // The gap's test's request is issued as the call makes it.
-        for effect in &effects {
-            if let Effect::TestGapBound { request, .. } = effect {
-                self.issued(*request);
-            }
-        }
+        self.check_call(kind, &effects, &marks, flight_before.as_ref(), watch_before);
         // The shell carries out every effect of the call before any answer
-        // comes back, so a program the call dispatched is in flight when a
-        // test's answer commits a title that ends the watch.
+        // comes back.
         for effect in &effects {
             self.apply(effect);
         }
         let mut answered = Vec::new();
         for effect in effects {
-            let gap = self.reducer.intake.gap();
-            let reads = gap.awaits() == Some(Awaits::Focus);
-            let closed = matches!(effect, Effect::TestGapBound { .. }) && !gap.is_open();
             let answer = self.answer(&effect);
-            let tested = match (&effect, &answer) {
-                (
-                    Effect::TestGapBound { trace, .. },
-                    Some(Input::GapBoundTested { related: true, .. }),
-                ) => Some(*trace),
-                _ => None,
-            };
-            // A record found related at its bound and still open waits for
-            // its bound's entry, which reads it when it waits for a focus;
-            // one waiting for a title waits with no timer.
-            if let (Some(trace), true) = (tested, reads) {
-                self.model.bound_reads.insert(trace);
-            }
             answered.push(effect);
             if let Some(answer) = answer {
                 let more = self.call(Some(answer), Call::Answer);
-                // A record closed before its test is answered sends nothing.
-                assert!(
-                    !closed || !more.iter().any(|effect| matches!(effect, Effect::Send(_))),
-                    "a title sent for a record already closed: {:?}",
-                    self.trail
-                );
                 answered.extend(more);
             }
         }
@@ -1809,87 +1612,6 @@ impl Run {
         opened
     }
 
-    /// Checks the gap record's change in one call, from `before`, against
-    /// what the design lets change it (`books/dev/src/reference/crates/verbatim-outpost-logic.md`), never against its stamps' arithmetic: it opens,
-    /// or is restamped, only by a foreground change found in front or a
-    /// copy dropped for UIA in its top-level window, waiting for a focus
-    /// after a copy, a change judged UIA, or a record of its window that
-    /// waited for one, and for a title otherwise, its bound to be handled;
-    /// it closes only by a report it answers (a whole-window focus in its
-    /// own window never closes one waiting for a focus), its window found
-    /// unrelated at its bound, a drop for no window above its sender while
-    /// it waits for a focus, or a copy in another top-level window; and its
-    /// bound passes only at or after its due time.
-    fn check_gap(&mut self, before: Option<GapSeen>, effects: &[Effect]) {
-        let after = GapSeen::of(self.reducer.intake.gap());
-        let causes = std::mem::take(&mut self.model.gap_causes);
-        let trail = &self.trail;
-        match (before, after) {
-            (_, Some(now)) if before.map(GapSeen::identity) != Some(now.identity()) => {
-                let foreground: Vec<bool> = causes
-                    .foreground
-                    .iter()
-                    .filter(|(top, _)| *top == now.top)
-                    .map(|&(_, uia)| uia)
-                    .collect();
-                let copy = causes.copies.contains(&now.top);
-                assert!(
-                    copy || !foreground.is_empty(),
-                    "the gap record opened or restamped in {:#x} with no foreground change or copy there: {before:?} to {now:?}, {trail:?}",
-                    now.top
-                );
-                let focus = copy
-                    || foreground.contains(&true)
-                    || before.is_some_and(|was| was.top == now.top && was.focus);
-                assert_eq!(
-                    now.focus, focus,
-                    "what the opened gap record waits for: {trail:?}"
-                );
-                assert!(
-                    now.pending,
-                    "a gap record opened with its bound handled: {trail:?}"
-                );
-                self.reach(if copy {
-                    "the gap record opened by a copy"
-                } else {
-                    "the gap record opened by a foreground change"
-                });
-            }
-            (Some(was), None) => {
-                let reported = effects.iter().any(|effect| match effect {
-                    Effect::Send(message) => match &**message {
-                        OutpostToCore::Event {
-                            event: NormalizedEvent::FocusChanged { whole_window, .. },
-                            window,
-                            ..
-                        } => {
-                            let top = window
-                                .as_ref()
-                                .map(|facts| isize::from_ne_bytes(facts.top_level.0.to_ne_bytes()));
-                            !(*whole_window && top == Some(was.top) && was.focus)
-                        }
-                        _ => false,
-                    },
-                    _ => false,
-                });
-                assert!(
-                    reported
-                        || causes.unrelated
-                        || (causes.no_window && was.focus)
-                        || causes.copies.iter().any(|&top| top != was.top),
-                    "the gap record closed with no report, unrelated window, drop for no window or copy elsewhere: {was:?}, {trail:?}"
-                );
-            }
-            (Some(was), Some(now)) if was.pending && !now.pending => {
-                assert!(
-                    self.observed >= was.due,
-                    "the gap record's bound passed before its due time: {trail:?}"
-                );
-            }
-            _ => {}
-        }
-    }
-
     /// Checks one call's effects as a whole, against the state before it:
     /// the invariants a call keeps, and the order of a tick's effects.
     #[expect(clippy::too_many_lines, reason = "one check per invariant")]
@@ -1898,7 +1620,6 @@ impl Run {
         kind: Call,
         effects: &[Effect],
         marks: &Marks,
-        gap_due: Option<u64>,
         flight: Option<&Flight>,
         watch_before: Option<u64>,
     ) {
@@ -1921,50 +1642,6 @@ impl Run {
             if changed { vec![0] } else { vec![] },
             "the marks are given first, exactly when they changed: {trail:?}"
         );
-        // The gap timer exactly when the bound changed, to the new bound.
-        let timers: Vec<Option<u64>> = effects
-            .iter()
-            .filter_map(|effect| match effect {
-                Effect::GapTimer(due) => Some(*due),
-                _ => None,
-            })
-            .collect();
-        let due = reducer.intake.gap().due_us();
-        assert_eq!(
-            timers,
-            if due == gap_due { vec![] } else { vec![due] },
-            "the gap timer is given exactly when the bound changed: {trail:?}"
-        );
-        // The gap's test is asked under a request of the generation in
-        // charge as the call makes it; an ask answered before it may
-        // abandon that generation, and its window text is committed under
-        // the request all the same, the shell's own read, not a worker's.
-        for (at, effect) in effects.iter().enumerate() {
-            if let Effect::TestGapBound {
-                request, top_level, ..
-            } = effect
-            {
-                let abandoned = effects[..at]
-                    .iter()
-                    .filter(|effect| matches!(effect, Effect::Abandon { .. }))
-                    .count();
-                assert_eq!(
-                    request.generation,
-                    self.model.generation + abandoned as u64,
-                    "the gap's test under a generation not in charge: {trail:?}"
-                );
-                // Asked of the open record as the call finds its bound
-                // passed, which is then no longer waited for.
-                let gap = reducer.intake.gap();
-                assert!(
-                    gap.pending()
-                        && gap.waiting_due_us().is_none()
-                        && gap.due_us().is_some_and(|due| self.observed >= due),
-                    "the gap bound tested before it passed: {trail:?}"
-                );
-                assert_eq!(Some(top_level.get()), gap.top_level(), "{trail:?}");
-            }
-        }
         // At most one ask to the program, and at most one program.
         let asks = positions(effects, |effect| {
             matches!(effect, Effect::AskJudge { .. } | Effect::Publish { .. })
@@ -1994,8 +1671,8 @@ impl Run {
         .first()
         {
             assert!(
-                !reducer.hold.holding() && !reducer.intake.gap().pending(),
-                "an idle answer while holding or with the gap pending: {trail:?}"
+                !reducer.hold.holding(),
+                "an idle answer while holding: {trail:?}"
             );
             if dispatches.iter().all(|&dispatch| dispatch < idle) {
                 assert!(
@@ -2008,21 +1685,18 @@ impl Run {
                 );
             }
         }
-        // After close, no tick abandons, asks or tests the gap bound.
+        // After close, no tick abandons or asks.
         if self.model.stopping && kind == Call::Tick {
             assert!(
                 !effects.iter().any(|effect| matches!(
                     effect,
-                    Effect::Abandon { .. }
-                        | Effect::AskJudge { .. }
-                        | Effect::Publish { .. }
-                        | Effect::TestGapBound { .. }
+                    Effect::Abandon { .. } | Effect::AskJudge { .. } | Effect::Publish { .. }
                 )),
-                "a tick after close abandons, asks or tests the gap: {trail:?}"
+                "a tick after close abandons or asks: {trail:?}"
             );
         }
         // A tick decides the program in flight's deadline, then its walk's
-        // bound, then the moved-on rule, then the gap's bound.
+        // bound, then the moved-on rule.
         if kind == Call::Tick
             && !self.model.stopping
             && let Some(flight) = flight
@@ -2075,17 +1749,6 @@ impl Run {
                         "the moved-on rule judged before its grace or with no window: {trail:?}"
                     );
                 }
-            }
-            if let (Some(decided), Some(tested)) = (
-                decided,
-                effects
-                    .iter()
-                    .position(|effect| matches!(effect, Effect::TestGapBound { .. })),
-            ) {
-                assert!(
-                    decided < tested,
-                    "the gap's bound before the program's: {trail:?}"
-                );
             }
         }
         // An abandonment answers the watch its program held and the query
@@ -2269,7 +1932,6 @@ impl Run {
                 );
                 flight.walk = Walk::Unarmed;
             }
-            Effect::TestGapBound { request, .. } => self.model.dead.push(*request),
             Effect::Settled(id) => {
                 assert!(
                     self.model.settles.remove(id),
@@ -2401,19 +2063,6 @@ impl Run {
                 }
                 self.reach("an entry dispatched");
             }
-            Kind::GapRead => {
-                let Work::Entry { entry, .. } = &program.work else {
-                    unreachable!("an entry's program");
-                };
-                if !self.model.bound_reads.remove(&entry.trace) {
-                    assert!(
-                        self.model.gap_reads > 0,
-                        "a gap read the record did not ask for: {trail:?}"
-                    );
-                    self.model.gap_reads -= 1;
-                }
-                self.reach("a gap read dispatched");
-            }
             Kind::Noted => {
                 assert!(self.model.noted, "a noted caret read, not noted: {trail:?}");
                 self.model.noted = false;
@@ -2520,34 +2169,6 @@ impl Run {
                     request: *request,
                     change: change.map(Box::new),
                     then_abandon: *then_abandon,
-                })
-            }
-            Effect::TestGapBound {
-                request,
-                top_level,
-                stamp_us,
-                ..
-            } => {
-                let related = self.asks.related;
-                let open = self.reducer.intake.gap().is_open();
-                let title = (related && self.asks.title).then(|| {
-                    if open {
-                        self.reach("a title committed");
-                    }
-                    title(self.fresh(), top_level.get(), *stamp_us)
-                });
-                if !open {
-                    self.reach("a gap test of a record closed before it");
-                } else if related {
-                    self.reach("the gap bound tested, related");
-                } else {
-                    self.model.gap_causes.unrelated = true;
-                    self.reach("the gap bound tested, unrelated");
-                }
-                Some(Input::GapBoundTested {
-                    request: *request,
-                    related,
-                    title: title.map(Box::new),
                 })
             }
             Effect::Release { .. } => {
@@ -2684,16 +2305,6 @@ fn positions(effects: &[Effect], wanted: impl Fn(&Effect) -> bool) -> Vec<usize>
         .collect()
 }
 
-/// The window text of top-level window `top`, sent at the gap record's
-/// bound as a whole-window focus stamped `stamp_us`, as the shell's test
-/// commits it: a report and the foreground's tracking, with no follow.
-fn title(id: u64, top: isize, stamp_us: u64) -> Change {
-    let mut change = report(id, Some(top), stamp_us, true, false);
-    change.follow = None;
-    change.foreground = Some((NodeId::new(id), Role::Window, 0));
-    change
-}
-
 /// Runs the generated cases `config` draws, each twice from a new reducer,
 /// shrinking a failure to its smallest case; what the cases reached.
 ///
@@ -2786,8 +2397,6 @@ fn generated_cases_keep_the_reducers_rules() {
 const PLAIN: Asks = Asks {
     moved_on: false,
     publish: 0,
-    related: false,
-    title: false,
     release_node: false,
     objects: false,
     hung: false,
@@ -2807,35 +2416,12 @@ const fn arrives(what: What) -> (Action, Asks) {
     )
 }
 
-/// A tick at the time the reducer's next timer gives.
-/// An advance of the clocks by `at`, `observed` and `wall` milliseconds.
-const fn by(at: u16, observed: u16, wall: u16) -> Action {
-    Action::Advance(Advance::By { at, observed, wall })
-}
-
-const TO_TIMER: Action = Action::Advance(Advance::ToTimer {
-    observed: 0,
-    wall: 0,
-});
-
-/// The cases the generated tests and the exploration found, each the
-/// smallest a failure shrank to, kept as lists of actions: the gap
-/// record's bound tested after the close; a probe that left the verdicts
-/// as they were sent as a change; a title sent for a record a publication
-/// in the same tick closed; and the title committed under the request of a
-/// generation the same tick's moved-on answer abandoned
-/// (`books/dev/src/reference/crates/verbatim-outpost-logic.md`); from the
-/// mutation baseline, a take of a node no watch is on while one waits; and
-/// a title committed while the program in flight holds the watch, which
-/// ends it at once; a gap record's bound's entry taken after a copy in
-/// another top-level window replaced the record; and a title answered in the tick that dispatched a
-/// replacement program holding the watch, which ends it all the same.
+/// The cases the generated tests found, each the smallest a failure
+/// shrank to, kept as lists of actions: a probe that left the verdicts as
+/// they were sent as a change
+/// (`books/dev/src/reference/crates/verbatim-outpost-logic.md`); and from
+/// the mutation baseline, a take of a node no watch is on while one waits.
 fn fixed() -> Vec<Vec<(Action, Asks)>> {
-    let in_front = What::Foreground {
-        window: 0,
-        front: 2,
-        uia: false,
-    };
     let uia = |dead| Action::Verdict { dead, change: 0 };
     let finished = Action::Finished {
         reported: false,
@@ -2851,138 +2437,21 @@ fn fixed() -> Vec<Vec<(Action, Asks)>> {
             (Action::Commit(Commit::TakeOther), PLAIN),
         ],
         vec![
-            (Action::Close, PLAIN),
-            arrives(in_front),
-            (TO_TIMER, PLAIN),
-            (by(1_000, 1_000, 0), PLAIN),
-        ],
-        vec![
             (uia(false), PLAIN),
             (Action::Close, PLAIN),
             (uia(false), PLAIN),
             (uia(false), PLAIN),
         ],
-        vec![
-            arrives(What::NameChange(0)),
-            (Action::Commit(Commit::CopyDropped { top: 0 }), PLAIN),
-            (Action::Armed(1_000), PLAIN),
-            (
-                by(1_000, 1_000, 0),
-                Asks {
-                    publish: 2,
-                    related: true,
-                    title: true,
-                    ..PLAIN
-                },
-            ),
-        ],
-        vec![
-            arrives(What::NameChange(0)),
-            (Action::Commit(Commit::CopyDropped { top: 0 }), PLAIN),
-            (TO_TIMER, PLAIN),
-            (
-                TO_TIMER,
-                Asks {
-                    moved_on: true,
-                    related: true,
-                    title: true,
-                    ..PLAIN
-                },
-            ),
-        ],
-        vec![
-            arrives(What::CaretKey),
-            (Action::Commit(Commit::OpenWatch { console: false }), PLAIN),
-            (finished, PLAIN),
-            arrives(in_front),
-            (Action::Commit(Commit::Take), PLAIN),
-            (
-                by(1_100, 1_100, 0),
-                Asks {
-                    related: true,
-                    title: true,
-                    ..PLAIN
-                },
-            ),
-            (Action::Commit(Commit::Checked { answered: false }), PLAIN),
-        ],
-        vec![
-            arrives(What::CaretKey),
-            (Action::Commit(Commit::Own(false)), PLAIN),
-            arrives(in_front),
-            (
-                by(12_000, 12_000, 12_000),
-                Asks {
-                    related: true,
-                    title: true,
-                    ..PLAIN
-                },
-            ),
-            (Action::Commit(Commit::Take), PLAIN),
-        ],
-        stale_bound_entry(),
-    ]
-}
-
-/// The exploration's case of a gap record replaced while its bound's entry
-/// waits: the record of one top-level window, found related at its bound,
-/// queues its entry; a copy dropped in another top-level window replaces
-/// it; at the late tick that tests the new record's bound, the program the
-/// tick dispatched takes the first record's entry, which reads nothing.
-fn stale_bound_entry() -> Vec<(Action, Asks)> {
-    let finished = Action::Finished {
-        reported: false,
-        panicked: false,
-        cut: false,
-    };
-    let late = by(12_000, 12_000, 12_000);
-    vec![
-        arrives(What::NameChange(0)),
-        arrives(What::FocusNow),
-        (
-            Action::Commit(Commit::Report {
-                top: 0,
-                whole: false,
-                owes: true,
-            }),
-            PLAIN,
-        ),
-        arrives(What::FocusNow),
-        (finished, PLAIN),
-        (finished, PLAIN),
-        (finished, PLAIN),
-        arrives(What::Foreground {
-            window: 0,
-            front: 2,
-            uia: true,
-        }),
-        (
-            late,
-            Asks {
-                related: true,
-                ..PLAIN
-            },
-        ),
-        (Action::Commit(Commit::CopyDropped { top: 1 }), PLAIN),
-        (late, PLAIN),
     ]
 }
 
 /// Every fixed case keeps the reducer's rules, and gives the same effects
-/// when run twice; the last two end the held watch by a title.
+/// when run twice.
 #[test]
 fn fixed_cases_keep_the_reducers_rules() {
-    let mut ended = 0;
     for case in fixed() {
-        let first = Run::case(&case);
-        assert_eq!(first.log, Run::case(&case).log, "{case:?}");
-        ended += first
-            .reached
-            .get("the watch ended by a title")
-            .copied()
-            .unwrap_or(0);
+        assert_eq!(Run::case(&case).log, Run::case(&case).log, "{case:?}");
     }
-    assert_eq!(ended, 2, "the title's cases end the held watch");
 }
 
 /// The source an entry from `from` is given as.

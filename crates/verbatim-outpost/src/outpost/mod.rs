@@ -13,7 +13,7 @@
 //!    ([`shell`]): the pure state machine that holds every remembered fact
 //!    of the application, the intake's order with NVDA's limiter rules
 //!    among them, and keeps the outpost's timers: a worker's deadline, the
-//!    walk's bound, the caret key's watch and the gap record's bound.
+//!    walk's bound and the caret key's watch.
 //! 3. The workers ([`worker`]): the threads that call into the application,
 //!    one generation in charge at a time, each running one program at a
 //!    time on copies, posting its commits to the mailbox. A worker whose
@@ -58,7 +58,7 @@ use std::cell::{Ref, RefCell};
 use std::collections::HashMap;
 use std::io;
 use std::os::windows::io::OwnedHandle;
-use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use lock::{Lock, LockGuard};
@@ -108,7 +108,6 @@ pub(crate) use reducer::{
 use reducer::{
     Entry, Facts, FollowState, Item, Object, OpenWatch, Source, UiaEvent, UiaKind, WaitingCaret,
 };
-pub use shell::GapTimer;
 use shell::{Mailbox, Posted, Shell};
 use worker::Charge;
 
@@ -185,9 +184,6 @@ pub(crate) struct Context {
     mailbox: Mailbox,
     /// The outpost's start, from which the reducer's clock counts.
     epoch: Instant,
-    /// What times the gap record's bound in place of the reducer's own
-    /// timer, when a test sets one ([`Outpost::set_gap_timer`]).
-    gap_timer: Lock<Option<Arc<dyn GapTimer>>>,
     /// Abandoned workers that have not yet returned, as the reducer last
     /// counted them, but for those parked on a window judged hung: an
     /// atomic, so the I/O thread answers a ping without waiting on
@@ -256,11 +252,6 @@ pub(crate) struct Context {
     /// The failed cached reads the worker has made (`verbatim_uia::calls`),
     /// taken after each entry.
     failed_reads: AtomicU32,
-    /// When the first of the focus listener's UIA focuses reached this
-    /// outpost, its read or its drop as a focus, on the run's clock in
-    /// microseconds, 0 before any: the gap's read logs whether
-    /// one came before the copy's observation (`uia_focus_before`).
-    first_uia_focus_us: AtomicU64,
     /// What nudges the event thread, which decides whether the hook is
     /// narrowed ([`narrowing`]); set once the thread runs.
     event_thread: OnceLock<Nudger>,
@@ -598,11 +589,6 @@ impl Context {
         self.arbitrator.lock()
     }
 
-    /// The gap record's timer a test set, if one did.
-    fn gap_timer(&self) -> Option<Arc<dyn GapTimer>> {
-        self.gap_timer.lock().clone()
-    }
-
     /// Now on the clock the outpost stamps its own events' observations
     /// with ([`Outpost::set_observation_clock`]).
     fn observed_now(&self) -> u64 {
@@ -643,33 +629,6 @@ impl Context {
         reader()
     }
 
-    /// Whether the outpost judges window `hwnd` UIA at `at_us` by a kept
-    /// verdict or the class lists, with no probe and nothing recorded: the
-    /// reducer's verdicts as the mailbox last copied them, and local calls
-    /// only, so the reducer's thread may ask it.
-    pub(super) fn known_to_use_uia(&self, hwnd: isize, at_us: u64) -> bool {
-        /// The judgement of a window's backend at one time, from the
-        /// mailbox's copy of the reducer's verdicts.
-        struct AtTake {
-            verdicts: Arc<reducer::Verdicts>,
-            at_us: u64,
-        }
-        impl crate::arbitration::Judgement for AtTake {
-            fn judged_at(&self, _: &crate::arbitration::Arbitrator) -> u64 {
-                self.at_us
-            }
-            fn verdicts(&self) -> Arc<reducer::Verdicts> {
-                Arc::clone(&self.verdicts)
-            }
-            fn record(&self, _: VerdictChange) {}
-        }
-        let judgement = AtTake {
-            verdicts: self.mailbox.verdicts(),
-            at_us,
-        };
-        crate::arbitration::known_to_use_uia(&self.arbitrator, &judgement, hwnd)
-    }
-
     /// The outpost's one test of `item` against the system's foreground,
     /// made from Windows' state on the reducer's thread as the reducer takes
     /// the entry from the mailbox, with local calls only: NVDA's acceptance
@@ -678,12 +637,9 @@ impl Context {
     /// are local), and of a foreground change whether its window is the
     /// foreground window, and when that was found, on the observation clock
     /// (`docs/design/focus-pipeline-rework-remaining.md`, "The outpost's
-    /// foreground tests, on its reducer's thread"), with whether the outpost
-    /// judges the window UIA by a kept verdict or the class lists, for the
-    /// gap record the change opens. Nothing else is tested.
-    fn front_test(&self, item: &Item, observed_at_us: u64) -> reducer::Front {
+    /// foreground tests, on its reducer's thread"). Nothing else is tested.
+    fn front_test(&self, item: &Item) -> reducer::Front {
         use verbatim_reader_rules::acceptance::{self, EventName};
-        let known_to_use_uia = |hwnd| self.known_to_use_uia(hwnd, observed_at_us);
         let fact = match item {
             Item::Fact(DeliveredFact::UiaMarked { fact, .. }, _) => &**fact,
             Item::Fact(fact, _) => fact,
@@ -699,7 +655,6 @@ impl Context {
                     && !verbatim_win32::window::window_belongs_to_hidden_frame(hwnd);
                 reducer::Front::Foreground {
                     in_front_at_us: in_front.then_some(tested_at_us),
-                    uia: in_front && known_to_use_uia(hwnd),
                 }
             }
             DeliveredFact::MsaaFocus { hwnd, .. } => {
@@ -929,18 +884,6 @@ impl Context {
     ) {
         let item = Item::Fact(fact.clone(), win_event);
         let stamps = (trace, timing.observed_at_us, timing);
-        // The first UIA focus's arrival, stamped with the relay's own
-        // stamp: one load per fact, and one store, once.
-        if self.first_uia_focus_us.load(Ordering::Relaxed) == 0
-            && matches!(
-                fact,
-                DeliveredFact::UiaFocusRead { focus: true, .. }
-                    | DeliveredFact::UiaFocusDropped { focus: true, .. }
-            )
-        {
-            self.first_uia_focus_us
-                .store(timing.relayed_at_us, Ordering::Relaxed);
-        }
         let source = if win_event.is_some() && fact.is_win_event() {
             Source::Listener
         } else {
@@ -1116,7 +1059,6 @@ impl Outpost {
             outbound,
             mailbox: Mailbox::default(),
             epoch: Instant::now(),
-            gap_timer: Lock::new(None),
             abandoned: AtomicUsize::new(0),
             abandoned_on_hung: AtomicUsize::new(0),
             shell: Lock::new(None),
@@ -1136,7 +1078,6 @@ impl Outpost {
             heard: OnceLock::new(),
             foreground_programs: OnceLock::new(),
             failed_reads: AtomicU32::new(0),
-            first_uia_focus_us: AtomicU64::new(0),
             event_thread: OnceLock::new(),
         });
         if let Some(registration) = register_focus_events(&context) {
@@ -1274,7 +1215,7 @@ impl Outpost {
     /// measures what the outpost's handling cost the application, or that
     /// asserts the outpost said nothing more, waits on this for its
     /// evidence. Unlike Core's idle round, it waits for no open caret
-    /// watch, open gap record or held copies of the hook's, and it divides
+    /// watch or held copies of the hook's, and it divides
     /// batches as the round does. Returns once the outpost shuts down.
     pub fn settle(&self) {
         let (done_tx, done_rx) = std::sync::mpsc::channel();
@@ -1406,15 +1347,6 @@ impl Outpost {
         self.context.arbitrator().set_clock(clock);
     }
 
-    /// Times the gap record's bound with `timer` from now on, in place of
-    /// the outpost's threadpool timer: a test says when the bound is
-    /// reached ([`gap_bound_reacher`](Self::gap_bound_reacher)) rather than
-    /// waiting for it.
-    pub fn set_gap_timer(&self, timer: Arc<dyn GapTimer>) {
-        *self.context.gap_timer.lock() = Some(timer);
-        self.context.mailbox.post(Posted::GapTimerGiven);
-    }
-
     /// Gives the programs dispatched from now on `deadline` in place of
     /// the deadline for handling an event, a focus or a query
     /// (`verbatim_outpost_logic::HANDLING_DEADLINE`, 11 seconds), for a
@@ -1424,19 +1356,6 @@ impl Outpost {
         self.context
             .mailbox
             .post(Posted::HandlingDeadline(deadline));
-    }
-
-    /// What reaches the gap record's bound, as the outpost's timer reaches
-    /// it when it fires, from any thread: its entry is queued behind every
-    /// marker queued before it. It does nothing once the outpost is gone.
-    #[must_use]
-    pub fn gap_bound_reacher(&self) -> Arc<dyn Fn() + Send + Sync> {
-        let context = Arc::downgrade(&self.context);
-        Arc::new(move || {
-            if let Some(context) = context.upgrade() {
-                context.mailbox.post(Posted::GapBound);
-            }
-        })
     }
 
     /// Stamps the observation of every event the outpost's own hook and

@@ -137,18 +137,6 @@
 //!   reported, which lags a focus read taken in but not yet handled, so
 //!   a state change of that read's element queued behind the next focus
 //!   inside it is not moved: a stated limit.
-//! - The gap record ([`super::gap_record`]) is kept here: a UIA focus's
-//!   drop for no window above its sender, the one fact a drop carries for
-//!   it, is applied to it as the drop resolves its marker, and when it
-//!   answers an open record it takes its marker's place as the record's
-//!   read ([`Item::GapRead`]). The reducer applies the rest: programs'
-//!   judgements of copies with their commits, each foreground change as it
-//!   is pushed, and each report as it is sent; and the bound's entry
-//!   ([`Item::GapBound`]), pushed once the bound's test found the record's
-//!   window related to the foreground, waits behind every marker queued
-//!   before it, so a UIA focus already being read decides first
-//!   (`docs/design/focus-pipeline-rework-remaining.md`, "The gap, closed by
-//!   the outpost's own reports").
 //! - A batch that holds a foreground change is handed out at once, never
 //!   held for its window to become the foreground window: Windows raises
 //!   the foreground event once the change is made, so a foreground event
@@ -169,7 +157,6 @@ use verbatim_model::{NotificationKind, NotificationProcessing, TraceId};
 use verbatim_reader_rules::Window;
 
 use super::entry::{Asker, Entry, Item, UiaKind, WinKind, is_state_property};
-use super::gap_record::GapRecord;
 
 /// The object id of a window's client area (`OBJID_CLIENT`), which the
 /// hook gives an event on a window object, as NVDA's event callback does.
@@ -318,8 +305,6 @@ pub struct Intake {
     /// else is ready ([`Intake::when_idle`]).
     idle: Option<Entry>,
     closed: bool,
-    /// The gap record and the answers it looks back on.
-    gap: GapRecord,
 }
 
 /// What the intake, and the programs it hands entries to, read of the
@@ -407,9 +392,7 @@ pub struct Pushed {
 
 impl Intake {
     /// Resolves the markers `entry` resolves without a read, a drop or the
-    /// end of the listener's reads; whether it was one. A drop whose answer
-    /// had the gap record read at once is not one: it has become that read
-    /// ([`Item::GapRead`]), which takes the marker's place.
+    /// end of the listener's reads; whether it was one.
     fn resolves_without_read(&mut self, entry: &Entry) -> bool {
         match &entry.item {
             Item::Fact(DeliveredFact::UiaFocusDropped { marker, .. }, _) => {
@@ -422,38 +405,6 @@ impl Intake {
                 true
             }
             _ => false,
-        }
-    }
-
-    /// Applies `entry`, a UIA focus's drop for no window above its sender,
-    /// to the gap record, and returns it with the marker it resolves: one
-    /// that answered the open record becomes the record's read
-    /// ([`Item::GapRead`]), which takes the drop's marker's place, stamped
-    /// with the record's stamp. Any other entry is returned as it is.
-    fn apply_gap_outcome(&mut self, entry: Entry) -> (Entry, Option<u64>) {
-        let Item::Fact(
-            DeliveredFact::UiaFocusDropped {
-                marker,
-                no_window: true,
-                ..
-            },
-            _,
-        ) = entry.item
-        else {
-            return (entry, None);
-        };
-        match self.gap.no_window(entry.observed_at_us) {
-            None => (entry, None),
-            Some(read) => (
-                Entry {
-                    item: Item::GapRead {
-                        window: read.window,
-                    },
-                    observed_at_us: read.stamp_us,
-                    ..entry
-                },
-                Some(marker),
-            ),
         }
     }
 
@@ -470,9 +421,7 @@ impl Intake {
     /// 67); the hook gives an event on a window object as its client
     /// object, as NVDA's callback does.
     ///
-    /// A UIA focus's drop for no window above its sender is applied to the
-    /// gap record as it resolves its marker. A focus's read moving into a
-    /// child of the focus in `marks` is placed after the old focus's own
+    /// A focus's read moving into a child of the focus in `marks` is placed after the old focus's own
     /// events. Returns the parked objects of the entries a newer one
     /// replaced.
     pub fn push(&mut self, entry: Entry, marks: &Marks) -> Pushed {
@@ -494,7 +443,6 @@ impl Intake {
             pushed.unparked = entry.item.parked();
             return pushed;
         }
-        let (entry, gap_read_resolves) = self.apply_gap_outcome(entry);
         if self.resolves_without_read(&entry) {
             return pushed;
         }
@@ -504,7 +452,7 @@ impl Intake {
         };
         let resolves = match &entry.item {
             Item::Fact(DeliveredFact::UiaFocusRead { marker, .. }, _) => Some(*marker),
-            _ => resolved_by_read.or(gap_read_resolves),
+            _ => resolved_by_read,
         };
         let mut place = resolves.and_then(|resolves| {
             self.waiting
@@ -557,23 +505,6 @@ impl Intake {
             None => self.waiting.push_back(waiting),
         }
         pushed
-    }
-
-    /// The gap record's bound's entry, its test having found the record's
-    /// window related to the foreground: it waits behind every marker
-    /// queued before it, so a UIA focus already being read decides first.
-    pub fn push_gap_bound(&mut self, entry: Entry, marks: &Marks) {
-        let _ = self.push(entry, marks);
-    }
-
-    /// The gap record and the reports it looks back on.
-    pub fn gap(&self) -> &GapRecord {
-        &self.gap
-    }
-
-    /// The gap record, for the reducer's changes to it.
-    pub fn gap_mut(&mut self) -> &mut GapRecord {
-        &mut self.gap
     }
 
     /// The next entry to handle and the number of its batch, planning a new
@@ -956,11 +887,9 @@ fn classify(item: &Item) -> (Option<Key>, Category, isize) {
         Item::Fact(fact, _) => classify_fact(fact, raiser_of(item)),
         // Only the newest list of held nodes matters.
         Item::NodesHeld { .. } => (Some(Key::NodesHeld), Category::Exempt, 0),
-        Item::Query { .. }
-        | Item::NotedCaret { .. }
-        | Item::Barrier { .. }
-        | Item::GapBound { .. }
-        | Item::GapRead { .. } => (None, Category::Exempt, 0),
+        Item::Query { .. } | Item::NotedCaret { .. } | Item::Barrier { .. } => {
+            (None, Category::Exempt, 0)
+        }
     }
 }
 
@@ -1088,9 +1017,8 @@ fn classify_fact(fact: &DeliveredFact, raiser: u32) -> (Option<Key>, Category, i
             read.hwnd,
         ),
         // A marker is never planned: its read takes its place, or a drop
-        // removes it. A drop, which becomes the gap record's read when it
-        // takes the marker's place, and the end of the listener's reads are
-        // never queued.
+        // removes it. A drop and the end of the listener's reads are never
+        // queued.
         DeliveredFact::UiaFocusMarker { .. }
         | DeliveredFact::UiaFocusDropped { .. }
         | DeliveredFact::UiaFocusReadsEnded => (None, Category::Exempt, 0),
@@ -1369,10 +1297,6 @@ mod tests {
 
         fn next(&mut self) -> Option<(Planned, u64)> {
             self.intake.next(&self.marks)
-        }
-
-        fn push_gap_bound(&mut self, entry: Entry) {
-            self.intake.push_gap_bound(entry, &self.marks);
         }
     }
 
@@ -2423,7 +2347,6 @@ mod tests {
                 DeliveredFact::UiaFocusDropped {
                     marker: 7,
                     focus: true,
-                    no_window: false,
                 },
                 None,
             ),
@@ -2440,7 +2363,6 @@ mod tests {
                 DeliveredFact::UiaFocusDropped {
                     marker: 8,
                     focus: true,
-                    no_window: false,
                 },
                 None,
             ),
@@ -2448,97 +2370,6 @@ mod tests {
         );
         assert_eq!(handed_out(&mut intake), [3]);
         assert!(!intake.busy());
-    }
-
-    /// The gap record's bound's entry, pushed while a UIA focus's marker
-    /// waits, waits behind it: the read that resolves the marker is handed
-    /// out first, so it decides before the bound's entry is handled.
-    #[test]
-    fn the_bounds_entry_waits_behind_a_marker() {
-        let mut intake = WithMarks::default();
-        push_item(&mut intake, marker(7), 1);
-        intake.push_gap_bound(Entry::own(
-            Item::GapBound { bound: 1 },
-            TraceId::from_raw(12),
-            0,
-        ));
-        assert_eq!(handed_out(&mut intake), Vec::<u64>::new());
-        push_item(
-            &mut intake,
-            Item::Fact(
-                DeliveredFact::UiaFocusDropped {
-                    marker: 7,
-                    focus: true,
-                    no_window: false,
-                },
-                None,
-            ),
-            2,
-        );
-        let (planned, _) = intake.next().expect("the bound's entry");
-        assert!(
-            matches!(
-                planned.entries()[..],
-                [Entry {
-                    item: Item::GapBound { .. },
-                    ..
-                }]
-            ),
-            "the bound's entry once the marker is resolved"
-        );
-        assert!(!intake.busy());
-    }
-
-    /// A UIA focus's drop for no window above its sender that answers the
-    /// open gap record takes its marker's place as the record's read,
-    /// stamped with the record's stamp, the record closed; any other drop
-    /// resolves its marker with nothing handed to the worker and leaves the
-    /// record open.
-    #[test]
-    fn a_drop_for_no_window_is_applied_as_its_marker_resolves() {
-        let mut intake = WithMarks::default();
-        let dropped = |marker, no_window| {
-            Item::Fact(
-                DeliveredFact::UiaFocusDropped {
-                    marker,
-                    focus: true,
-                    no_window,
-                },
-                None,
-            )
-        };
-        let drop_of = |item, at_us| Entry {
-            item,
-            trace: TraceId::from_raw(at_us),
-            observed_at_us: at_us,
-            timing: verbatim_model::protocol::EventTiming::default(),
-            front: crate::Front::Untested,
-        };
-        let _ = intake
-            .intake
-            .gap_mut()
-            .copy_dropped(0x11, 0x10, (500_000, TraceId::from_raw(2)));
-        push_item(&mut intake, marker(7), 500_500);
-        let _ = intake.push(drop_of(dropped(7, false), 500_500));
-        assert!(intake.intake.gap().is_open());
-        assert!(!intake.busy(), "nothing for the worker");
-        push_item(&mut intake, marker(8), 501_000);
-        push_item(&mut intake, name_change(3), 502_000);
-        let _ = intake.push(drop_of(dropped(8, true), 501_000));
-        assert!(!intake.intake.gap().is_open());
-        let (planned, _) = intake.next().expect("the record's read");
-        assert!(
-            matches!(
-                planned.entries()[..],
-                [Entry {
-                    item: Item::GapRead { window: 0x11 },
-                    observed_at_us: 500_000,
-                    ..
-                }]
-            ),
-            "the record's read in the marker's place"
-        );
-        assert_eq!(handed_out(&mut intake), [502_000]);
     }
 
     #[test]

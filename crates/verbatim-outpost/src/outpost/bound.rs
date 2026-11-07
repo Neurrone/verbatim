@@ -7,8 +7,8 @@
 //! (`crate::focus_read`, `ReadProgress`).
 //!
 //! The worker arms it once a focus has passed every check NVDA makes before
-//! it queues a focus and has been read, for an MSAA focus and the gap's
-//! read, unless the walk is already past its bound: the focus, its event,
+//! it queues a focus and has been read, for an MSAA focus, unless the walk
+//! is already past its bound: the focus, its event,
 //! and the bound. The walk then tells it each ancestor it reads and the
 //! window from which plain windows would complete the chain
 //! ([`super::read::WalkStep`]). Plain data, kept under the charge's lock

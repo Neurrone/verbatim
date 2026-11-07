@@ -69,9 +69,9 @@ use super::commit::{Committed, Effects, Follow, Stale, Target};
 use super::focus_path;
 use super::read::{self, Client, ReadError};
 use super::reducer::{
-    self, Cut, Entry, Evidence, Finish, FocusPath, Front, GapNote, GapRead, Handling, Item, Object,
-    OpenWatch, Owed, OwedWork, Program, Report, Request, UiaEvent, UiaKind, VerdictChange,
-    WatchChange, WinKind, Work,
+    self, Cut, Entry, Evidence, Finish, FocusPath, Front, Handling, Item, Object, OpenWatch, Owed,
+    OwedWork, Program, Report, Request, UiaEvent, UiaKind, VerdictChange, WatchChange, WinKind,
+    Work,
 };
 use super::shell::{Garbage, Posted};
 use super::text_reads;
@@ -86,8 +86,7 @@ use verbatim_reader_rules::acceptance::{self, EventName};
 use verbatim_win32::window::SystemWindows;
 use verbatim_win32::window::window_class_name;
 use verbatim_win32::window::{
-    foreground_window_handle, top_level_of, window_belongs_to_hidden_frame, window_exists,
-    window_is_hidden_frame,
+    foreground_window_handle, top_level_of, window_belongs_to_hidden_frame, window_is_hidden_frame,
 };
 
 pub(super) use super::reducer::is_state_property;
@@ -531,7 +530,7 @@ fn run_job(context: &Arc<Context>, client: &mut Client, job: Job, charge: &Arc<C
 
 /// The window a program with none at dispatch calls into, named with no
 /// call into the application: a query's node's own window, or the
-/// application's focus window for focus-now, the gap's read, and a node of
+/// application's focus window for focus-now and a node of
 /// no window of its own; the owed work's and the console poll's node's;
 /// none for a query of no node, or when the application has no focus
 /// window, so the program is judged by its deadline alone. The queries it
@@ -630,8 +629,6 @@ fn describe_item(item: &Item) -> String {
         Item::NodesHeld { nodes, .. } => format!("nodes held ({})", nodes.len()),
         Item::NotedCaret { node_id } => format!("noted caret of {node_id:?}"),
         Item::Barrier { asker, .. } => format!("barrier of {asker:?}"),
-        Item::GapBound { .. } => "the gap record's bound".to_owned(),
-        Item::GapRead { window } => format!("the gap record's read, window {window}"),
     }
 }
 
@@ -1024,14 +1021,7 @@ impl Worker<'_> {
             // Read now that nothing else waits, unless a read since saw it.
             Item::NotedCaret { node_id } => self.caret_of(node_id, trace, observed_at_us),
             // The reducer's own: never a program's.
-            Item::NodesHeld { .. } | Item::Barrier { .. } | Item::GapBound { .. } => {}
-            Item::GapRead { window } => self.gap_read(
-                GapRead {
-                    window,
-                    stamp_us: observed_at_us,
-                },
-                trace,
-            ),
+            Item::NodesHeld { .. } | Item::Barrier { .. } => {}
         }
     }
 
@@ -1283,109 +1273,6 @@ impl Worker<'_> {
                 });
             }
         }
-    }
-
-    /// The gap's read (`docs/design/focus-pipeline-rework.md`, "Who owns
-    /// each duplicated fact", the gap's evidence): no UIA focus answered a
-    /// `WinEvent` focus this outpost dropped because it judged its window
-    /// UIA, the record's `read.window`, by its bound, or a UIA focus whose
-    /// sender has no window above it came beside it. The application's
-    /// focus is read through UIA only, once, with the focus-now query's read
-    /// and its checks of the foreground thread's focus window before and
-    /// after (`read::gap_focus_read`), and reported as a UIA focus is,
-    /// stamped with the record's stamp, the newest copy or foreground change
-    /// it took, so Core's stale rule drops it when a focus observed after
-    /// that, in a window the user has gone to, was applied first. A UIA
-    /// focus of the same element that comes after the read is reported
-    /// under the same node, which Core takes as a duplicate. Its log says
-    /// whether a listener UIA focus had reached the outpost before the
-    /// record's stamp, to the microsecond (`uia_focus_before`), and whether
-    /// the record's window was gone as the read began (`sender_gone`),
-    /// which together tell late delivery from a burst of gone senders; a
-    /// read that found no focus also logs how long it took (`elapsed_us`)
-    /// and, when a failed call gave one, its error's `HRESULT` (`error`).
-    fn gap_read(&mut self, read: GapRead, trace: TraceId) {
-        let context = self.context;
-        let GapRead { window, stamp_us } = read;
-        let waited_ms = now_us().saturating_sub(stamp_us) / 1_000;
-        let first_uia_focus_us = context.first_uia_focus_us.load(Ordering::Relaxed);
-        let uia_focus_before = first_uia_focus_us != 0 && first_uia_focus_us < stamp_us;
-        let sender_gone = !window_exists(window);
-        // Its walk is published at its bound, measured from the read's
-        // start, should a call of it still be under way then.
-        let (timing, batch) = (self.timing, self.batch);
-        let watched = walk_watcher(context, |node, window| BoundFocus {
-            trace,
-            observed_at_us: stamp_us,
-            timing,
-            batch,
-            backend: node.backend,
-            window: Some(window),
-            node: node.clone(),
-            object: object_of(context, node),
-            msaa_event: None,
-            group: None,
-        });
-        let started = Instant::now();
-        let found = read::gap_focus_read(
-            context,
-            self.client,
-            (context.observed_now(), Some(&watched)),
-        );
-        let elapsed_us = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
-        if self.walk_returned() {
-            return;
-        }
-        let Ok((hwnd, control)) = found else {
-            let miss = found.err();
-            let error = match miss {
-                Some(read::FocusReadMiss::Failed(Some(code))) => {
-                    Some(format!("{:#010x}", code.0.cast_unsigned()))
-                }
-                _ => None,
-            };
-            tracing::info!(
-                %trace,
-                window,
-                waited_ms,
-                uia_focus_before,
-                sender_gone,
-                ?miss,
-                error,
-                elapsed_us,
-                "no UIA focus answered a WinEvent focus in a UIA window; the gap's read found none"
-            );
-            return;
-        };
-        let FocusedControl {
-            node,
-            ancestors,
-            selected_child,
-            ..
-        } = control;
-        tracing::info!(
-            %trace,
-            window,
-            focus_window = hwnd,
-            waited_ms,
-            uia_focus_before,
-            sender_gone,
-            role = ?node.role,
-            name = ?node.name,
-            "no UIA focus answered a WinEvent focus in a UIA window; the focus is read and reported"
-        );
-        let object = object_of(context, &node);
-        let backend = node.backend;
-        self.emit_focus(
-            trace,
-            stamp_us,
-            backend,
-            Some(hwnd),
-            node,
-            false,
-            object,
-            (ancestors, selected_child),
-        );
     }
 
     /// Whether `node_id` is the focus this outpost last reported.
@@ -2479,14 +2366,11 @@ impl Worker<'_> {
                 self.context.forget_window(hwnd);
                 // A reused window handle must never inherit these nodes;
                 // their objects are released once the store's lock is let
-                // go, and their text facts are forgotten with the commit.
+                // go, and their text facts are forgotten with the
+                // program's commit.
                 let (removed, gone) = self.context.store.forget_window(hwnd);
                 drop(removed);
                 text_reads::forget_nodes(self.context, &gone);
-                self.commit(Effects {
-                    gap: vec![GapNote::WindowDestroyed(hwnd)],
-                    ..Effects::default()
-                });
             }
             return;
         }
@@ -3628,12 +3512,11 @@ impl Worker<'_> {
         let Some(uia_owns) = read::own_window_verdict(self.context, hwnd) else {
             return;
         };
-        let top_level = top_level_of(hwnd);
         if uia_owns {
-            // UIA owns this window; its UIA fact reports the focus, and the
-            // gap record waits for it.
+            // UIA owns this window; its UIA fact reports the focus, as
+            // NVDA's `winEventToNVDAEvent` drops a native UIA window's
+            // event.
             tracing::debug!(hwnd, "MSAA focus dropped: UIA owns the window");
-            self.copy_dropped_for_uia((hwnd, top_level), trace, observed_at_us);
             return;
         }
         // A control taking the focus raised focus on itself and then on its
@@ -3781,32 +3664,6 @@ impl Worker<'_> {
             object.clone(),
             enrichment,
         );
-    }
-
-    /// A focus copy in `window`, of top-level window `top_level`, observed
-    /// at `observed_at_us`, that this outpost dropped because it judges the
-    /// window UIA: it opens the gap record, or restamps the one open in its
-    /// top-level window, unless an answer observed with it stands for it;
-    /// a drop for no window observed with it has the application's focus
-    /// read at once in its place, stamped with its observation, the
-    /// reducer's next program
-    /// ([`super::reducer::CopyDropped`]).
-    fn copy_dropped_for_uia(
-        &mut self,
-        (window, top_level): (isize, isize),
-        trace: TraceId,
-        observed_at_us: u64,
-    ) {
-        tracing::debug!(%trace, window, "a copy is dropped for UIA; the gap record takes it");
-        self.commit(Effects {
-            gap: vec![GapNote::CopyDropped {
-                window,
-                top_level,
-                at_us: observed_at_us,
-                trace,
-            }],
-            ..Effects::default()
-        });
     }
 
     /// A UIA focus as the focus listener judged and read it from the
@@ -4834,53 +4691,6 @@ pub(super) fn publication(context: &RequestContext<'_>, walk: &FocusProgress) ->
         result: Some(message),
         report: Some(Report::Reported(judged, evidence)),
         follow: Some(follow),
-        ..Effects::default()
-    }
-}
-
-/// The window text of top-level window `hwnd`, sent at the gap record's
-/// bound when no focus of the window has come
-/// (`docs/design/focus-pipeline-rework-remaining.md`, "The held UIA
-/// application's title"): a whole-window focus read from local data under
-/// the window's MSAA key, so it is said as the switch without a stall says
-/// the window: for a window the outpost judges UIA (`uia`), the plain
-/// window (`read::plain_window`), "<title> window", as its window element
-/// is said; for any other, its MSAA client pane (`read::client_pane`), its
-/// title alone, as its whole-window focus is said. Traced `trace` and
-/// stamped `stamp_us`, the record's. Made on the reducer's thread with no
-/// call into the application; a window, it is not followed.
-pub(super) fn window_text(
-    context: &RequestContext<'_>,
-    hwnd: isize,
-    uia: bool,
-    (trace, stamp_us): (TraceId, u64),
-) -> Effects {
-    let node = if uia {
-        read::plain_window(context, hwnd)
-    } else {
-        read::client_pane(context, hwnd)
-    };
-    let judged = judged_focus(context, (&node, &[]), (Some(hwnd), true), None);
-    let (node_id, role) = (node.id, node.role);
-    let message = event_message(
-        context,
-        EventTiming::default(),
-        (trace, stamp_us),
-        (Backend::Msaa, Some(hwnd)),
-        NormalizedEvent::FocusChanged {
-            node,
-            whole_window: true,
-            ancestors: Vec::new(),
-            selected_child: None,
-            text: None,
-            earlier: None,
-            group: None,
-        },
-    );
-    Effects {
-        result: Some(message),
-        report: Some(Report::Reported(judged, Evidence::Msaa)),
-        foreground: Some((node_id, role, 0)),
         ..Effects::default()
     }
 }

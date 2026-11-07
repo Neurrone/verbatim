@@ -1565,7 +1565,7 @@ pub(super) fn focused_control_in(
             context,
             client,
             hwnd,
-            (trigger, false),
+            trigger,
             (verbatim_model::SAME_WINDOW_BOUND, None),
         )
     } else {
@@ -1599,53 +1599,14 @@ pub(super) fn focused_control_in(
     }
 }
 
-/// The gap's read (`docs/design/focus-pipeline-rework.md`, "Who owns each
-/// duplicated fact", the gap's evidence): [`focused_control_in`] through UIA
-/// only, refused with local calls when the focus window is not one this
-/// outpost judges UIA, since a focus in an MSAA window is that window's
-/// copy's to speak, and refused after `GetFocusedElementBuildCache` when the
-/// foreground thread's focus window, taken again with `GetGUIThreadInfo`, a
-/// local call, has changed to a window it does not judge UIA without a
-/// probe: a focus moved into an MSAA window between the check and the read
-/// comes back as UIA's MSAA proxy for it, which that window's copy speaks
-/// too, and a proxied list item has no window handle of its own to judge.
-/// Its walk's bound is measured from `started_us`, when the read begins on
-/// the run's shared clock ([`walk_left`]), and `progress` is told what the
-/// walk reads ([`WalkStep`]).
-pub(super) fn gap_focus_read(
-    context: &RequestContext<'_>,
-    client: &mut Client,
-    (started_us, progress): (u64, WalkProgress<'_>),
-) -> Result<(isize, FocusedControl), FocusReadMiss> {
-    let hwnd = checked_focus_window(context)?;
-    if !window_uses_uia(context, hwnd) {
-        tracing::debug!(
-            hwnd,
-            "the gap's read is refused: the outpost does not judge the focus window UIA"
-        );
-        return Err(FocusReadMiss::Refused);
-    }
-    let left = walk_left(context, hwnd, started_us);
-    uia_focused_control(
-        context,
-        client,
-        hwnd,
-        (FocusRead::Gap, true),
-        (left, progress),
-    )
-}
-
 /// [`focused_control_in`]'s read through UIA, of the focus window `hwnd`,
-/// for `trigger`; with `recheck`, the read is refused once the focused
-/// element is read if the focus window has changed since to one this
-/// outpost does not judge UIA ([`gap_focus_read`]). Its walk has `left` of
-/// its bound left, and tells `progress` the focus once read and what it
+/// for `trigger`. Its walk has `left` of its bound left, and tells `progress` the focus once read and what it
 /// reads after ([`WalkStep`]).
 fn uia_focused_control(
     context: &RequestContext<'_>,
     client: &mut Client,
     hwnd: isize,
-    (trigger, recheck): (FocusRead, bool),
+    trigger: FocusRead,
     (left, progress): (std::time::Duration, WalkProgress<'_>),
 ) -> Result<(isize, FocusedControl), FocusReadMiss> {
     {
@@ -1656,23 +1617,6 @@ fn uia_focused_control(
             .ancestor_request(uia)
             .map_err(|error| FocusReadMiss::Failed(Some(error.code())))?;
         let element = checked_focused_element(context, (uia, &nodes), hwnd, trigger)?;
-        if recheck {
-            let now = context.focus_window();
-            if now != Some(hwnd)
-                && !now.is_some_and(|now| {
-                    serves(context, now)
-                        && crate::arbitration::known_to_use_uia(&context.arbitrator, context, now)
-                })
-            {
-                tracing::debug!(
-                    ?trigger,
-                    hwnd,
-                    ?now,
-                    "the focus window changed during the read to one the outpost does not judge UIA; nothing more is read"
-                );
-                return Err(FocusReadMiss::Refused);
-            }
-        }
         let mut node =
             with_legacy_checked_state(element.live().element(), element.snapshot(context.nodes()));
         // The element's own UIA class, from its cache, for Core's rules for
@@ -1834,11 +1778,6 @@ pub(super) enum FocusReadMiss {
 pub(super) enum FocusRead {
     /// A focus-now query ([`focus_now`]).
     FocusNow,
-    /// The gap's read: no UIA focus answered a `WinEvent` focus this
-    /// outpost dropped because it judged its window UIA, by the gap
-    /// record's bound, or a UIA focus whose sender had no window above it
-    /// came beside it ([`gap_focus_read`]).
-    Gap,
     /// A windowless text focus whose walk up the listener cut, so the
     /// chain it sent holds only the focus and no route leads to its
     /// element ([`focused_element_in`]).

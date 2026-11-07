@@ -25,7 +25,7 @@ Public API:
   find nothing due; and `next_timer(now)`, the time of the shell's timed wait. It makes
   no call of any kind.
 - `Input`: an entry from a producer, a verdict, a commit, a walk armed or returned, a
-  program finished, a release's answer, the gap record's bound, the answers to its asks (`MovedOn`, `Published`, `GapBoundTested`), and
+  program finished, a release's answer, the answers to its asks (`Judged`, `Published`), and
   the shell's close. `Effect`: dispatch a `Program`, send a message,
   release, move the subscription (`Subscription`), drop elements or
   objects, abandon a worker generation (`Abandon`, with the dead
@@ -34,18 +34,7 @@ Public API:
   trace and the window it waits on, for the log; the shell alone
   counts the abandoned workers that have not returned), publish the
   facts' marks, given after a transition that changed them and ahead of
-  its other effects, or the verdicts, set the gap record's timer, given
-  after a transition that changed the open record's bound, and three asks:
-  `TestGapBound`, the gap record's test at its bound of its top-level
-  window against the foreground, with its window text sent as a
-  whole-window focus when the window is in front, minted under a request
-  of its own that no program runs as, asked after the same tick's ask of
-  the program in flight and so answered after that ask's answer: a record
-  that answer's report closed commits nothing, and a generation that answer
-  abandoned still owns the request the text is committed under, without
-  the acceptance test, since the text is the shell's own read made in line,
-  not a worker's result; no record is tested, or timed, once the outpost
-  stops; `AskJudge`, the judgement of the program's window, known at
+  its other effects, or the verdicts, and two asks: `AskJudge`, the judgement of the program's window, known at
   dispatch or, for `None`, the one its worker named in its charge: whether
   it is hung or ghosted, tested first, and otherwise whether the user has
   left it for another thread of its application, answered `Judged` with
@@ -84,9 +73,8 @@ Public API:
   keeping the read's deadline, walk and rule.
 - The rule for asks: the shell answers each ask exactly once, as the
   reducer's next input, before it takes another message, and the reducer
-  applies an answer only while its request is the program in flight, but
-  `GapBoundTested`, which concerns the gap record, not a program, and is
-  applied whatever is in flight. Of the program's asks a transition makes
+  applies an answer only while its request is the program in flight. Of
+  the program's asks a transition makes
   at most one: a tick judges the deadline first
   (abandoning, by one `Publish` with `then_abandon` when a walk is armed),
   then the walk's bound (`Publish`), then the moved-on rule's next
@@ -94,7 +82,7 @@ Public API:
   left over is made by the publication's answer against its own `Now`. A
   verdict for a program already published abandons it at once. A program
   with no window at dispatch that calls into the application, a query, the
-  owed work, the gap's read, the console poll's read, is dispatched with
+  owed work, the console poll's read, is dispatched with
   `RuleWindow::Named`, judged on the grace's schedule by the window its
   worker names; a release's drop, a tree dump and a shell item query,
   whose workers name no window, are dispatched with `RuleWindow::Never`
@@ -150,13 +138,11 @@ and nothing else ready, its due time ends a waiting watch at its bound
 or dispatches a poll read (`Work::PollRead`). A report on another node or
 a replaced node ends it in any state, and a release of its node ends it.
 A committed foreground fact on another node ends it at once, even while
-the program in flight holds it: the gap record's window text, the one
-report the reducer commits for itself, does so whatever program is in
-flight, and that program's later check is ignored, since
-`WatchChange::Checked` applies only to a watch that is `Checking`
-(Claude, 2026-11-03, accepted by Dickson the same day). The reducer otherwise
-changes the watch only at a dispatch, at a publication that claims the
-program, or with no program in flight.
+the program in flight holds it, and that program's later check is
+ignored, since `WatchChange::Checked` applies only to a watch that is
+`Checking` (Claude, 2026-11-03, accepted by Dickson the same day). The
+reducer otherwise changes the watch only at a dispatch, at a publication
+that claims the program, or with no program in flight.
 `next_timer` gives its due time only when it would be acted on.
 
 `cargo xtask ci` reads every file of the crate by the pure rule
@@ -196,18 +182,13 @@ amounts. The model tracks the generation and the requests issued, the
 program in flight (its kind, its query, its walk, its deadline as
 dispatched, its window), the entries pending as a set rather than the
 intake's plan, the open queries, settles and rounds, the hook's copies
-held in their order, a release, the owed work and stopping. The gap record is not modelled: each call's change of it is
-checked against what the design lets change it (opened or restamped by a
-foreground change found in front or a copy dropped in its window, closed
-by a report it answers, an unrelated window at its bound, a drop for no
-window or a copy elsewhere, its bound passed only once due), never against
-its stamps' arithmetic. After every call it checks the design's sixteen
-invariants and its postconditions: each dispatch under the next request
+held in their order, a release, the owed work and stopping. After every
+call it checks the design's invariants and its postconditions: each dispatch under the next request
 with a deadline after its dispatch, a poll read holding the watch, a late shell query answered with nothing read,
 a cancel, a commit's message ahead of its other effects, a cut read's
 finish alone, a program's end answering its watch and its query before
 the next dispatch, a tick deciding the deadline, then the bound, then the
-moved-on rule, then the gap's bound, and an abandonment answering the
+moved-on rule, and an abandonment answering the
 watch and the query before the next dispatch, and the hold's release on
 the end of forwarding, the end of the listener's reads or no listener,
 giving back some of the held copies in the hook's order, every one with

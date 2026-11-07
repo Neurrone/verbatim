@@ -132,13 +132,6 @@ Recorded by Claude, 2026-11-04, pending Dickson's acceptance.
 - Cause: this machine's display adapter, a VirtIO display-only driver with no 3D acceleration, leaves the Desktop Window Manager to compose the screen on the processor. During `conhost_flood` `dwm.exe` used two whole processors of the twelve (200%), and went on at 190 to 200% for about 60 seconds after the scenario and its recording had ended, working off the flood's redraws, before falling to its idle 12 to 15% (sampled every 2 seconds, 2026-11-04). A scenario started in that minute waits on DWM: the launch evidence (`launched-process-<pid>.txt`, `wait-chains.txt`) shows Windows Terminal's main thread waiting 30 seconds on an ALPC call to `dwm.exe`, having used 155 ms of processor time. GitHub's runner, which passes these scenarios, was not measured.
 - Fix: none yet. A graphics adapter with 3D acceleration for the VM would remove the cause; a harness wait for DWM to be idle before a launch would only hide it.
 
-## The scheduled exploration of the outpost reducer
-
-- The Explore workflow's `explore` job, `verbatim-outpost-logic`'s `explore_reducer` with seed 1
-  - How: fails every run with "the gap bound tested before it passed" until the gap record is replaced.
-  - Cause: the gap record's defect counted in docs/roadmap.md, "Follow-ups from M4.6" (a queued gap read from a replaced bound run before the new bound's test is answered).
-  - Fix: [the focus pipeline rework's third build](roadmap.md#the-focus-pipeline-rework), its first commit. Recorded by Claude, 2026-11-04, pending Dickson's acceptance.
-
 ## Mockapp tests under `cargo xtask ci`
 
 - `call_counts::uia_focus_chains_stop_below_the_process_boundary`

@@ -521,9 +521,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         local_only: false,
         quick_retirement: false,
         document: None,
-        comparable: Comparable::No(
-            "it says the held application's title and the return, where NVDA is silent: a deliberate difference",
-        ),
+        comparable: Comparable::Yes,
         setup: return_from_a_held_application::setup,
         body: return_from_a_held_application::body,
         teardown: return_from_a_held_application::teardown,

@@ -6,8 +6,7 @@
 //! a logic crate: in the GPL tier, with no Windows dependency, so it builds
 //! and is tested on any host.
 //!
-//! It holds the intake's order ([`intake`]), the gap record and its timer,
-//! the reports Core may hold ([`held`]), the follow state ([`follow`]),
+//! It holds the intake's order ([`intake`]), the reports Core may hold ([`held`]), the follow state ([`follow`]),
 //! the hand-over's hold ([`hold`]), the arbitrator's verdicts
 //! ([`verdicts`]), the record of hung windows, the program in flight with the worker generation in
 //! charge, its deadline, its moved-on rule and its walk's bound, kept by
@@ -65,7 +64,6 @@
 
 mod entry;
 mod follow;
-mod gap_record;
 mod held;
 mod hold;
 mod intake;
@@ -92,10 +90,9 @@ pub use self::entry::{
     Asker, Entry, Front, Item, Source, UiaEvent, UiaKind, WinKind, is_state_property,
 };
 pub use self::follow::{
-    Applied, Change, DialogMemo, Facts, FocusPath, Follow, FollowState, Found, GapNote, Group,
-    Owed, OwedWork, Report, Route, Subscription, Target, WatchChange, apply_local,
+    Applied, Change, DialogMemo, Facts, FocusPath, Follow, FollowState, Found, Group, Owed,
+    OwedWork, Report, Route, Subscription, Target, WatchChange, apply_local,
 };
-pub use self::gap_record::{Awaits, CopyDropped, GapRead};
 pub use self::held::{Evidence, Focus, Held, InFront};
 pub use self::intake::{Handling, Marks, Object, Planned, TerminalMark};
 pub use self::text::{
@@ -325,32 +322,6 @@ pub enum Effect {
     /// A verdict of UIA for a window's lifetime was recorded: the event
     /// thread may narrow its hook (the outpost's `narrowing`).
     Narrow,
-    /// Set the gap record's timer for this observation time, or cancel it:
-    /// given after a transition that changed the open record's bound.
-    GapTimer(Option<u64>),
-    /// The gap record's bound has passed: test the record's top-level
-    /// window, `top_level`, against the system's foreground from Windows'
-    /// state with local calls (`acceptance::foreground_relation`), and,
-    /// when it is the foreground window itself, send its window text as a
-    /// whole-window focus: the plain window read from local data, minted
-    /// under `request`'s tag, stamped `stamp_us` and traced `trace`, judged
-    /// against `facts` and written into the store as a commit
-    /// (`docs/design/focus-pipeline-rework-remaining.md`, "The held UIA
-    /// application's title"). Answered by [`Input::GapBoundTested`] before
-    /// the shell takes another message.
-    TestGapBound {
-        /// The request the window text is minted under, which no program
-        /// runs as.
-        request: Request,
-        /// The record's top-level window.
-        top_level: Window,
-        /// The record's stamp.
-        stamp_us: u64,
-        /// The record's trace.
-        trace: TraceId,
-        /// The facts the window text's report is judged against.
-        facts: Box<Facts>,
-    },
     /// Judge `request`'s program by its window, `window`, or, for `None`,
     /// the window its worker named in its charge for that request, if any:
     /// whether the window is hung or ghosted, tested first, by the
@@ -468,27 +439,10 @@ pub enum Input {
         /// Whether there are objects to drop.
         objects: bool,
     },
-    /// A test times the gap record's bound: the reducer keeps no timer of
-    /// its own for it from now on.
-    GapTimerGiven,
     /// A test that waits out a program's deadline shortens it: entries
     /// dispatched from now on that would have [`HANDLING_DEADLINE`] have
     /// this one. Verbatim never sends it.
     HandlingDeadline(Duration),
-    /// The gap record's bound was reached by a timer the shell was given.
-    GapBound,
-    /// The shell's answer to [`Effect::TestGapBound`]: whether the record's
-    /// top-level window is related to the foreground, and the window text
-    /// sent as a whole-window focus, as a commit of `request`'s, when the
-    /// window was the foreground window itself.
-    GapBoundTested {
-        /// The request the test was asked under.
-        request: Request,
-        /// Whether the record's window is related to the foreground.
-        related: bool,
-        /// The window text's whole-window focus, when one is sent.
-        title: Option<Box<Change>>,
-    },
     /// The shell's answer to [`Effect::AskJudge`].
     Judged {
         /// The program asked about.
@@ -540,8 +494,6 @@ impl InHand {
                     Item::NodesHeld { .. } => "the nodes Core holds",
                     Item::NotedCaret { .. } => "a noted caret",
                     Item::Barrier { .. } => "the idle barrier",
-                    Item::GapBound { .. } => "the gap record's bound",
-                    Item::GapRead { .. } => "the gap record's read",
                 },
                 Some(entry.trace),
             ),
@@ -568,9 +520,8 @@ struct Current {
     /// The focus group try it is, if it is one.
     group: Option<GroupTry>,
     /// Whether it does work the idle barrier's answer waits for, as it
-    /// waits for an open watch or an open gap record: it reads the gap
-    /// record, or it holds the caret key's watch, or answered it and may
-    /// still read the terminal under the key's trace.
+    /// waits for an open watch: it holds the caret key's watch, or answered
+    /// it and may still read the terminal under the key's trace.
     deferred: bool,
     /// What the program has in hand, for the log of its abandonment.
     in_hand: InHand,
@@ -592,18 +543,14 @@ struct GroupTry {
 /// The reducer.
 #[cfg_attr(test, derive(Clone, Debug))]
 #[derive(Default)]
-#[expect(
-    clippy::struct_excessive_bools,
-    reason = "independent facts of the reducer's, each changed by its own inputs"
-)]
 pub struct Reducer {
     intake: intake::Intake,
     hold: hold::Hold,
     facts: Facts,
     /// The program in flight, and the worker generation in charge.
     flight: InFlight<Current>,
-    /// The tries left of a focus group whose try was abandoned, or the
-    /// gap's read a dropped copy asked for, to run before anything else.
+    /// The tries left of a focus group whose try was abandoned, to run
+    /// before anything else.
     after: VecDeque<(Entry, Option<GroupTry>)>,
     /// Whether a release let go of objects for a worker to drop.
     to_drop: bool,
@@ -613,9 +560,6 @@ pub struct Reducer {
     idle_query: Option<u64>,
     /// How many focus groups have been tried.
     focus_groups: u64,
-    /// Whether a test's timer times the gap record's bound in place of the
-    /// reducer's own.
-    gap_timer_given: bool,
     /// A test's deadline in place of [`HANDLING_DEADLINE`]
     /// ([`Input::HandlingDeadline`]).
     handling_deadline: Option<Duration>,
@@ -695,8 +639,7 @@ impl Reducer {
     /// program in flight next has due (its deadline, its walk's bound, or
     /// its next judgment of the moved-on rule), the watch's due time while
     /// no program is in flight, no release is pending and the outpost is
-    /// not stopping (only then is it acted on), and the gap record's bound
-    /// while the outpost is not stopping, on the shell's clock.
+    /// not stopping (only then is it acted on), on the shell's clock.
     #[must_use]
     pub fn next_timer(&self, now: Now) -> Option<Duration> {
         let mut times = Vec::new();
@@ -711,16 +654,6 @@ impl Reducer {
             && let Some(due_us) = self.facts.follow.watch.due()
         {
             let left = due_us.saturating_sub(now.wall_us);
-            // A time past the clock's range never comes.
-            times.extend(now.at.checked_add(Duration::from_micros(left)));
-        }
-        if let Some(due_us) = self
-            .intake
-            .gap()
-            .waiting_due_us()
-            .filter(|_| !self.gap_timer_given && !self.stopping)
-        {
-            let left = due_us.saturating_sub(now.observed_us);
             // A time past the clock's range never comes.
             times.extend(now.at.checked_add(Duration::from_micros(left)));
         }
@@ -775,14 +708,7 @@ impl Reducer {
                 anchors,
                 objects,
             } => self.released(&nodes, &anchors, objects, now, &mut effects),
-            Input::GapTimerGiven => self.gap_timer_given = true,
             Input::HandlingDeadline(deadline) => self.handling_deadline = Some(deadline),
-            Input::GapBound => self.gap_bound(&mut effects),
-            Input::GapBoundTested {
-                request,
-                related,
-                title,
-            } => self.gap_bound_tested(request, related, title, now, &mut effects),
             Input::Judged {
                 request,
                 verdict,
@@ -815,7 +741,7 @@ impl Reducer {
         }
         self.pump(now, &mut effects);
         self.answer_idle(&mut effects);
-        self.changed(before, &mut effects);
+        self.changed(&before, &mut effects);
         effects
     }
 
@@ -827,119 +753,25 @@ impl Reducer {
             let decision = self.flight.tick(micros(now.at));
             self.decided(decision, now, &mut effects);
         }
-        if !self.gap_timer_given
-            && self
-                .intake
-                .gap()
-                .waiting_due_us()
-                .is_some_and(|due_us| now.observed_us >= due_us)
-        {
-            self.gap_bound(&mut effects);
-        }
         self.pump(now, &mut effects);
         self.answer_idle(&mut effects);
-        self.changed(before, &mut effects);
+        self.changed(&before, &mut effects);
         effects
     }
 
     /// What the shell keeps a copy of, before a transition: the facts'
-    /// marks, for the mailbox, and the open gap record's bound, for a
-    /// test's timer ([`changed`](Self::changed)).
-    fn observed(&self) -> (Marks, Option<u64>) {
-        (self.facts.marks.clone(), self.intake.gap().due_us())
+    /// marks, for the mailbox ([`changed`](Self::changed)).
+    fn observed(&self) -> Marks {
+        self.facts.marks.clone()
     }
 
     /// Gives the shell what a transition changed of what it keeps a copy
     /// of, from `before`: the marks ahead of every other effect, so that a
     /// program the transition dispatched, which may read what a cleared
-    /// mark would drop, starts only once the mailbox judges by them, and
-    /// the gap record's bound.
-    fn changed(&self, (marks, gap_due_us): (Marks, Option<u64>), effects: &mut Vec<Effect>) {
-        if self.facts.marks != marks {
+    /// mark would drop, starts only once the mailbox judges by them.
+    fn changed(&self, marks: &Marks, effects: &mut Vec<Effect>) {
+        if self.facts.marks != *marks {
             effects.insert(0, Effect::Marks(self.facts.marks.clone()));
-        }
-        let due_us = self.intake.gap().due_us();
-        if due_us != gap_due_us {
-            effects.push(Effect::GapTimer(due_us));
-        }
-    }
-
-    /// The gap record's bound has been reached: the shell is asked to test
-    /// the record's top-level window against the foreground, and to send
-    /// its window text when it is in front, whatever program is in flight,
-    /// since a second is the silence budget (Dickson, 2026-11-02;
-    /// `docs/design/focus-pipeline-rework-remaining.md`, "The held UIA
-    /// application's title"). With no record waiting for its bound there
-    /// is nothing to test; a record with no top-level window closes. Once
-    /// the outpost stops nothing is tested, so no window text reaches Core
-    /// after the close.
-    fn gap_bound(&mut self, effects: &mut Vec<Effect>) {
-        if self.stopping {
-            return;
-        }
-        let Some(at) = self.intake.gap_mut().at_bound() else {
-            return;
-        };
-        let Some(top_level) = Window::new(at.top_level) else {
-            self.intake.gap_mut().close();
-            return;
-        };
-        effects.push(Effect::TestGapBound {
-            request: self.flight.next_request(),
-            top_level,
-            stamp_us: at.stamp_us,
-            trace: at.trace,
-            facts: Box::new(self.facts.clone()),
-        });
-    }
-
-    /// The shell's test of the gap record's window at its bound: an
-    /// unrelated window closes the record, with nothing sent or read.
-    /// Otherwise its window text, when sent, is committed as `request`'s,
-    /// its report recorded and its message sent; and a record waiting for
-    /// the application's focus has its bound's entry queued, behind every
-    /// marker queued before it, so the worker makes the gap's read when it
-    /// is free, while one waiting for the window's title has no read of its
-    /// own. The record stays open until a report closes it.
-    ///
-    /// The test is asked in the tick that found the bound passed, after
-    /// that tick's ask of the program in flight, if any, whose answer the
-    /// shell gives first. That answer may have reported the focus, which
-    /// closed the record, and then nothing is committed: the title is said
-    /// only when no focus of the window has been reported. It may also have
-    /// abandoned the generation `request` belongs to; the window text is
-    /// committed under `request` all the same, without the acceptance test
-    /// a program's commit needs, since it is the shell's own read, made in
-    /// line from local data, not a result of the worker that was abandoned.
-    fn gap_bound_tested(
-        &mut self,
-        request: Request,
-        related: bool,
-        title: Option<Box<Change>>,
-        now: Now,
-        effects: &mut Vec<Effect>,
-    ) {
-        if !self.intake.gap().is_open() {
-            return;
-        }
-        if !related {
-            self.intake.gap_mut().close();
-            return;
-        }
-        let reads = self.intake.gap().awaits() == Some(Awaits::Focus);
-        let trace = self.intake.gap().trace();
-        let bound = self.intake.gap().bound_number();
-        if let Some(change) = title {
-            self.commit(request, &change, now, effects);
-        }
-        match (trace, bound) {
-            (Some(trace), Some(bound)) if reads && self.intake.gap().is_open() => {
-                self.intake.push_gap_bound(
-                    Entry::own(Item::GapBound { bound }, trace, now.observed_us),
-                    &self.facts.marks,
-                );
-            }
-            _ => self.intake.gap_mut().bound_passed(),
         }
     }
 
@@ -1017,38 +849,12 @@ impl Reducer {
         }
     }
 
-    /// Pushes `entry` into the intake, recording a query. A foreground
-    /// change its test found in front opens the gap record, or restamps an
-    /// open one, and arms its bound, as it is taken in, whatever its window,
-    /// waiting for the application's focus in a window the outpost judges
-    /// UIA and for the window's title otherwise: an application whose
-    /// thread is held raises no focus copy, on a second visit or entered
-    /// already hung (`docs/design/focus-pipeline-rework-remaining.md`, "The
-    /// gap, closed by the outpost's own reports").
+    /// Pushes `entry` into the intake, recording a query.
     fn push(&mut self, entry: Entry, effects: &mut Vec<Effect>) {
         if let Item::Query { request_id, .. } = entry.item
             && !self.stopping
         {
             self.queries.insert(request_id);
-        }
-        if let (
-            Item::Fact(DeliveredFact::Foreground { hwnd }, _),
-            Front::Foreground {
-                in_front_at_us: Some(in_front_at_us),
-                uia,
-            },
-        ) = (&entry.item, entry.front)
-        {
-            let awaits = if uia { Awaits::Focus } else { Awaits::Title };
-            // Stamped with its event's observation; one with none known, by
-            // its test's.
-            let at_us = match entry.observed_at_us {
-                0 => in_front_at_us,
-                observed_at_us => observed_at_us,
-            };
-            self.intake
-                .gap_mut()
-                .foreground(*hwnd, (at_us, entry.trace), awaits);
         }
         let pushed = self.intake.push(entry, &self.facts.marks);
         if !pushed.unparked.is_empty() {
@@ -1056,14 +862,8 @@ impl Reducer {
         }
     }
 
-    /// Sends `message`; a reply answers its query, and a focus closes the
-    /// gap record it answers ([`gap_report`]).
+    /// Sends `message`; a reply answers its query.
     fn send(&mut self, message: OutpostToCore, effects: &mut Vec<Effect>) {
-        if let Some((top_level, at_us, whole_window)) = gap_report(&message) {
-            self.intake
-                .gap_mut()
-                .reported(top_level, at_us, whole_window);
-        }
         if let OutpostToCore::Reply { request_id, .. } = &message {
             self.queries.remove(request_id);
             if let Some(current) = self.flight.item_mut().filter(|current| {
@@ -1130,9 +930,6 @@ impl Reducer {
                 current.running = None;
             }
             self.send(message, effects);
-        }
-        for note in &change.gap {
-            self.gap_note(*note);
         }
         if let Some((node_id, trace, observed_at_us, timing)) = change.noted_caret {
             // The event's timing goes with it: its read is skipped only
@@ -1259,38 +1056,6 @@ impl Reducer {
             }
         };
         self.send(message, effects);
-    }
-
-    /// A program's judgement for the gap record.
-    fn gap_note(&mut self, note: GapNote) {
-        match note {
-            GapNote::CopyDropped {
-                window,
-                top_level,
-                at_us,
-                trace,
-            } => {
-                let dropped = self
-                    .intake
-                    .gap_mut()
-                    .copy_dropped(window, top_level, (at_us, trace));
-                if dropped == CopyDropped::ReadNow {
-                    // Read at once, in the copy's place, as part of the
-                    // same try of its group.
-                    let group = self.flight.item_mut().and_then(|current| {
-                        current.group.as_ref().map(|group| GroupTry {
-                            number: group.number,
-                            rank: group.rank,
-                            batch: group.batch,
-                            older: VecDeque::new(),
-                        })
-                    });
-                    self.after
-                        .push_front((Entry::own(Item::GapRead { window }, trace, at_us), group));
-                }
-            }
-            GapNote::WindowDestroyed(hwnd) => self.intake.gap_mut().window_destroyed(hwnd),
-        }
     }
 
     /// What a release let go of: nodes and anchors by number, and whether
@@ -1468,26 +1233,11 @@ impl Reducer {
                 effects,
             );
         }
-        if let Some(group) = current.group {
-            let ended = reported || published;
-            let read_after = self
-                .after
-                .front()
-                .is_some_and(|(entry, _)| matches!(entry.item, Item::GapRead { .. }));
-            if ended {
-                // The gap's read of an ended try is still made, outside it.
-                if read_after && let Some((_, group)) = self.after.front_mut() {
-                    *group = None;
-                }
-            } else if read_after {
-                // The gap's read goes on the try, and its older entries
-                // after it.
-                if let Some((_, Some(read_group))) = self.after.front_mut() {
-                    read_group.older = group.older;
-                }
-            } else {
-                self.continue_group(group);
-            }
+        if let Some(group) = current.group
+            && !reported
+            && !published
+        {
+            self.continue_group(group);
         }
     }
 
@@ -1501,8 +1251,8 @@ impl Reducer {
 
     /// Answers the idle barrier's query once no deferred work is pending:
     /// the hook's copies are not held at the start, no caret key's watch is
-    /// open, the gap record's bound is not still to be handled, and
-    /// the program in flight neither reads it nor holds the watch. The program in flight is otherwise not waited for:
+    /// open, and the program in flight does not hold the watch. The program
+    /// in flight is otherwise not waited for:
     /// the query is reached only with none in flight, so a program in
     /// flight then handles an entry that arrived after the query.
     fn answer_idle(&mut self, effects: &mut Vec<Effect>) {
@@ -1512,7 +1262,6 @@ impl Reducer {
                 .running()
                 .is_some_and(|(_, current, _)| current.deferred)
             || !self.facts.follow.watch.is_none()
-            || self.intake.gap().pending()
         {
             return;
         }
@@ -1688,18 +1437,6 @@ impl Reducer {
                     live,
                 });
             }
-            Item::GapBound { bound } => {
-                if let Ok(Some(GapRead { window, stamp_us })) =
-                    self.intake.gap_mut().bound_reached(bound, now.observed_us)
-                {
-                    let read = Entry {
-                        item: Item::GapRead { window },
-                        observed_at_us: stamp_us,
-                        ..entry
-                    };
-                    self.dispatch_entry(read, Handling::Run, batch, None, now, effects);
-                }
-            }
             // A shell query reached at its deadline is answered at once with
             // no items, as one abandoned there would have nothing to say.
             Item::Query {
@@ -1767,8 +1504,8 @@ impl Reducer {
     }
 
     /// Dispatches `work` under `deadline`, concerning `window`, if any,
-    /// and answering `running`, as a try of `group` when it is one. A read
-    /// of the gap record is deferred work. A caret key's program ends the
+    /// and answering `running`, as a try of `group` when it is one. A caret
+    /// key's program ends the
     /// open watch, which the next key replaces, before its copy is taken.
     fn dispatch(
         &mut self,
@@ -1788,20 +1525,10 @@ impl Reducer {
             self.answer_watch(answer, now, effects);
         }
         let waiting = self.waiting(&work);
-        let deferred = matches!(
-            &work,
-            Work::Entry {
-                entry: Entry {
-                    item: Item::GapRead { .. },
-                    ..
-                },
-                ..
-            }
-        );
         let current = Current {
             running,
             group,
-            deferred,
+            deferred: false,
             in_hand: InHand::of(&work, window),
             destroyed: BTreeSet::new(),
         };
@@ -2022,8 +1749,6 @@ fn budget(entry: &Entry, now: Now, handling: Duration) -> (Duration, Option<(Req
         | Item::Uia(_)
         | Item::NotedCaret { .. }
         | Item::Barrier { .. }
-        | Item::GapBound { .. }
-        | Item::GapRead { .. }
         | Item::NodesHeld { .. } => (handling, None),
     }
 }
@@ -2053,32 +1778,5 @@ pub fn watch_ended(open: &OpenWatch, published_at_us: u64) -> OutpostToCore {
             published_at_us,
             ..open.timing
         },
-    }
-}
-
-/// What `message` reports to the gap record, when it is a focus the
-/// outpost sends Core: its window facts' top-level window, when it has any,
-/// its observation, and whether it is a whole-window focus. An event's
-/// focus, and a focus-now answer's focused control at the time its read
-/// began.
-fn gap_report(message: &OutpostToCore) -> Option<(Option<isize>, u64, bool)> {
-    let top_level = |facts: Option<&verbatim_model::WindowFacts>| {
-        facts.map(|facts| isize::from_ne_bytes(facts.top_level.0.to_ne_bytes()))
-    };
-    match message {
-        OutpostToCore::Event {
-            event: verbatim_model::NormalizedEvent::FocusChanged { whole_window, .. },
-            window,
-            observed_at_us,
-            ..
-        } => Some((top_level(window.as_ref()), *observed_at_us, *whole_window)),
-        OutpostToCore::Reply {
-            outcome: QueryOutcome::Done(QueryResult::Focus(now)),
-            ..
-        } => now
-            .focus
-            .as_ref()
-            .map(|focus| (top_level(focus.window.as_ref()), now.observed_at_us, false)),
-        _ => None,
     }
 }

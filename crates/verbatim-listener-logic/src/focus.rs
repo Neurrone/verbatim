@@ -2,11 +2,7 @@
 //! threads and its read scheduler ([`crate::schedule`]) are written in: the
 //! event's kind ([`FocusEvent`]), what the callback knew of it ([`Meta`])
 //! and where it was queued ([`Arrival`]), what became of it ([`Judged`]),
-//! and the reasons an event is dropped. A drop carries one fact for its
-//! application's gap record, which the outpost alone closes by its own
-//! reports: whether its sender had no window above it
-//! (`docs/design/focus-pipeline-rework-remaining.md`, "The gap, closed by
-//! the outpost's own reports").
+//! and the reasons an event is dropped.
 
 use verbatim_model::TraceId;
 use verbatim_model::protocol::{DeliveredFact, EventTiming, UiaFocusRead};
@@ -73,9 +69,8 @@ pub const NO_WINDOW: &str = "it has no window above it, so NVDA makes no object 
 /// window failed with `UIA_E_TIMEOUT` (`verbatim_uia::nearest_window_lookup`),
 /// however long it took: NVDA's lookup answers no window and NVDA drops the
 /// focus, and the listener reads nothing more into an application that has
-/// just failed to answer; the drop leaves the outpost's gap record to its
-/// bound, whose read reads the application's focus anew
-/// (`docs/design/focus-pipeline-rework.md`, the audit's difference 14).
+/// just failed to answer (`docs/design/focus-pipeline-rework.md`, the
+/// audit's difference 14).
 pub const NEAREST_TIMED_OUT: &str = "its nearest window's lookup timed out, so NVDA drops it";
 
 /// The reason a notification is dropped when its sender has no window
@@ -127,9 +122,7 @@ pub enum Judged {
 
 impl Judged {
     /// The fact that resolves marker `marker`, sent for an event of kind
-    /// `kind`, with this outcome; a focus's drop carries whether its sender
-    /// had no window above it ([`NO_WINDOW`]), the one fact a drop gives its
-    /// application's gap record.
+    /// `kind`, with this outcome.
     #[must_use]
     pub fn into_fact(self, marker: u64, kind: FocusEvent) -> DeliveredFact {
         let focus = kind == FocusEvent::Focus;
@@ -139,11 +132,7 @@ impl Judged {
                 read,
                 focus,
             },
-            Judged::Dropped(reason) => DeliveredFact::UiaFocusDropped {
-                marker,
-                focus,
-                no_window: focus && reason == NO_WINDOW,
-            },
+            Judged::Dropped(_) => DeliveredFact::UiaFocusDropped { marker, focus },
             Judged::Passed(fact) => DeliveredFact::UiaMarked { marker, fact },
         }
     }
@@ -214,113 +203,5 @@ pub fn arrival_of(meta: Meta, queue: QueuePlace) -> Arrival {
         observed_at_us: meta.timing.observed_at_us,
         place: queue.place,
         left_at: queue.left_at,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use verbatim_model::NodeDetails;
-    use verbatim_model::protocol::UiaSnapshotFact;
-
-    use super::*;
-
-    /// A read of a focus, as a reading thread reads one.
-    fn read_focus() -> Judged {
-        Judged::Read(Box::new(UiaFocusRead {
-            hwnd: 0,
-            snapshot: UiaSnapshotFact {
-                runtime_id: vec![42],
-                role: verbatim_model::Role::Button,
-                name: None,
-                value: None,
-                states: verbatim_model::StateSet::new(),
-                details: NodeDetails::default(),
-            },
-            ancestors: Vec::new(),
-            ancestors_end: verbatim_model::protocol::AncestorsEnd::Top,
-            selected_child: None,
-            value_from_selection: false,
-            window: None,
-            same_as_last: None,
-            bound_us: 2_000_000,
-        }))
-    }
-
-    /// A focus's drop carries whether its sender had no window above it,
-    /// the one fact a drop gives its application's gap record; every other
-    /// drop of a focus, and a drop of any other kind of event, carries none.
-    /// Every reason the listener drops a focus for is listed.
-    #[test]
-    fn a_focus_events_drop_carries_whether_its_sender_had_no_window() {
-        let dropped = |reason, kind| match Judged::Dropped(reason).into_fact(9, kind) {
-            DeliveredFact::UiaFocusDropped { no_window, .. } => no_window,
-            other => panic!("a drop, not {other:?}"),
-        };
-        assert!(dropped(
-            "it has no window above it, so NVDA makes no object for it",
-            FocusEvent::Focus
-        ));
-        for reason in [
-            "its window's class is on NVDA's MSAA list, so its MSAA events speak for it",
-            "its window is hung",
-            "its comparison with the current focus failed",
-            "its window is not related to the foreground window",
-            "the console window's own focus",
-            "Core's hidden frame",
-            "its read did not return in time",
-            "it waited too long behind its application's abandoned reads",
-            "its read ran out of time before its window was looked up",
-            "its event says it did not have the keyboard focus, and its read's time was up",
-            "its nearest window's lookup timed out, so NVDA drops it",
-            "its nearest window's lookup failed with a timeout at once, so NVDA drops it",
-            "its element no longer has the keyboard focus",
-            "the user moved on from a slow window",
-            "a newer focus event of its element replaced it",
-            "no thread to read it",
-            "the listener is shutting down",
-            "its element could not be kept for its read",
-            "its reading thread has no UIA client",
-            "its element could not be resolved",
-        ] {
-            assert!(!dropped(reason, FocusEvent::Focus), "{reason}");
-        }
-        for kind in [
-            FocusEvent::Selection,
-            FocusEvent::Notification,
-            FocusEvent::MenuOpened,
-        ] {
-            assert!(!dropped(
-                "it has no window above it, so NVDA makes no object for it",
-                kind
-            ));
-        }
-        assert!(matches!(
-            read_focus().into_fact(9, FocusEvent::Focus),
-            DeliveredFact::UiaFocusRead {
-                marker: 9,
-                focus: true,
-                ..
-            }
-        ));
-    }
-
-    /// A focus whose nearest window's lookup failed with `UIA_E_TIMEOUT`,
-    /// however long it took, is dropped for the lookup's timeout, and its
-    /// drop, as every drop but one for no window, leaves the gap record to
-    /// its bound, whose read reads the application's focus anew.
-    #[test]
-    fn a_nearest_window_lookup_that_times_out_leaves_the_record_to_its_bound() {
-        assert_eq!(
-            NEAREST_TIMED_OUT,
-            "its nearest window's lookup timed out, so NVDA drops it"
-        );
-        assert_eq!(
-            Judged::Dropped(NEAREST_TIMED_OUT).into_fact(9, FocusEvent::Focus),
-            DeliveredFact::UiaFocusDropped {
-                marker: 9,
-                focus: true,
-                no_window: false,
-            }
-        );
     }
 }

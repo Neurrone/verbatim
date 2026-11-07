@@ -318,7 +318,7 @@ Not established. In steady state a UIA focus follows its `WinEvent` in the same 
 
 #### Workarounds that worked
 
-Not a workaround of the fault but a recovery from it (Dickson, 2026-10-21): the application's outpost, which sees the `WinEvent` focus copy, waits a second from the copy's observation for its UIA focus and otherwise reads the application's focus itself, at once when the UIA focus came after its sender was gone, with no window above it (decision 11 of the same design). The full suite's `conhost_two_windows` has met the late delivery, its second console window's UIA focus coming 2.15 seconds after its `WinEvent` focus, and the read at the bound reported the focus with its window. The burst's recovery is tested in mockapp.
+None is kept (Dickson, 2026-11-07): Verbatim speaks a focus UI Automation delivers late when it comes, and loses one it never delivers, as NVDA does. No recovery waits for the missing focus or reads it in its place.
 
 #### Workarounds that didn't work
 
@@ -330,7 +330,7 @@ By its source, NVDA loses these focuses: it drops a `WinEvent` focus in a native
 
 #### Reproduction test
 
-None: the fault does not reproduce reliably, and no mockapp simulation is built for such a fault (Dickson, 2026-10-19). The recovery's tests are `focus_reports.rs`'s `a_winevent_focus_` tests. The fact binary in [`uia-facts/a-new-processs-focus-events-reach-the-desktop-wide-handler-late-or-not-at-all/`](https://github.com/Neurrone/verbatim/blob/main/uia-facts/a-new-processs-focus-events-reach-the-desktop-wide-handler-late-or-not-at-all/readme.md) counts late and missing focus over 11 starts of the provider program, a tree it controls, on the unlocked desktop; it met none.
+None: the fault does not reproduce reliably, and no mockapp simulation is built for such a fault (Dickson, 2026-10-19). No recovery is kept: a focus UI Automation delivers late is spoken when it comes, and one it never delivers is lost, as in NVDA. The fact binary in [`uia-facts/a-new-processs-focus-events-reach-the-desktop-wide-handler-late-or-not-at-all/`](https://github.com/Neurrone/verbatim/blob/main/uia-facts/a-new-processs-focus-events-reach-the-desktop-wide-handler-late-or-not-at-all/readme.md) counts late and missing focus over 11 starts of the provider program, a tree it controls, on the unlocked desktop; it met none.
 
 #### Evidence
 
@@ -443,7 +443,7 @@ NVDA reads the raw-view parent through the proxy (`nvda/source/NVDAObjects/UIA/_
 
 #### Reproduction test
 
-No test reproduces it yet: mockapp's provider cannot produce an in-provider window element without its host's properties, and a root with no host provider fails UIA's own search of the window (1b2e5420). The outpost's read again is tested by its choice of ancestor (`read.rs`, `a_window_element_read_without_its_handle_is_named_by_its_runtime_id`), and the console window reported with a read after a `WinEvent` focus by `focus_reports.rs`'s `a_winevent_focus_in_a_console_window_no_uia_focus_follows_is_read_with_its_window`, which passes without the read again, since mockapp's window element has its title in the provider. The fact program in [`uia-facts/inside-a-remote-operation-conhosts-window-has-no-handle-or-title/`](https://github.com/Neurrone/verbatim/blob/main/uia-facts/inside-a-remote-operation-conhosts-window-has-no-handle-or-title/readme.md) shows the fault in a console host started directly: inside an operation the window element has handle 0 and no name, and the client side's read has both.
+No test reproduces it yet: mockapp's provider cannot produce an in-provider window element without its host's properties, and a root with no host provider fails UIA's own search of the window (1b2e5420). The outpost's read again is tested by its choice of ancestor (`read.rs`, `a_window_element_read_without_its_handle_is_named_by_its_runtime_id`). The fact program in [`uia-facts/inside-a-remote-operation-conhosts-window-has-no-handle-or-title/`](https://github.com/Neurrone/verbatim/blob/main/uia-facts/inside-a-remote-operation-conhosts-window-has-no-handle-or-title/readme.md) shows the fault in a console host started directly: inside an operation the window element has handle 0 and no name, and the client side's read has both.
 
 #### Evidence
 

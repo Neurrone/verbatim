@@ -31,7 +31,7 @@ Behaviour must not change for inputs that don't overflow or miss.
 
 Code a planned rework rewrites wholesale is not fixed first. Each item takes an item-level `#[expect(..., reason = "rewritten by <rework>")]`, removed by that rework:
 
-- whole modules: `crates/verbatim-supervisor/src/owner.rs` (M6.2), `crates/verbatim-outpost-logic/src/gap_record.rs` (the focus pipeline rework's third build), and the speech manager's `QueueThread` in `crates/verbatim-speech/src/manager.rs` (M6.3);
+- whole modules: `crates/verbatim-supervisor/src/owner.rs` (M6.2) and the speech manager's `QueueThread` in `crates/verbatim-speech/src/manager.rs` (M6.3);
 - items: the `ReducerThread` decision functions in `crates/verbatim-app/src/main.rs` (M6.2); the `caret_history` family in `crates/verbatim-core/src/editing.rs` and the outpost's text caret items (the caret and selection rework); the synthesizer host's `Host` and `Commands` and `verbatim-synth-hosted`'s `HostedSynth` state (M6's second step).
 
 Everything else is fixed.
