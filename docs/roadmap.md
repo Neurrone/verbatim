@@ -775,8 +775,13 @@ a process's UIA events"):
 - The ghost window: when a window stops answering, Windows shows its
   ghost, "(Not Responding)", which takes the foreground, and Verbatim
   speaks nothing, neither then nor when the window answers again.
-  Captured with NVDA first; speech that differs from NVDA's is
-  Dickson's.
+  NVDA says nothing either: captured on 2026-11-07 with NVDA's pinned
+  build, the ghost (class `Ghost`, owned by `dwm.exe`, titled "...
+  (Not Responding)") took the foreground about 5 s after a freeze, in
+  front, after Alt+Tab back and after a taskbar click, with no speech
+  then or on release. Injected keys do not reach a foreground ghost, so
+  keys pressed while it is in front were not captured. Speech that
+  differs from NVDA's is Dickson's.
 - An event flood wedges the process receiving it: at about 10,000 UIA
   events a second from one application, UIA's worker thread in the
   receiving process stops delivering any event and keeps one core busy
