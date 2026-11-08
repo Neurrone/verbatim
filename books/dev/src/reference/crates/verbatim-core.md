@@ -73,7 +73,8 @@ guide maps those behaviors onto the crate's types and modules.
     snapshot, its ancestors, and the navigator object, which the control
     plane's `DumpFocus` answers with.
   - `latest_focus_observed_at()`, when the newest focus the reducer took
-    was observed, in microseconds (the applied stamp), which lets the
+    was observed, in microseconds (the focus object's own observation
+    time, `None` when it is not known), which lets the
     shell skip a fake focus after a menu closes when a later focus has
     been taken.
   - `attention()`, the application holding attention, which the shell
@@ -519,19 +520,18 @@ code is in `reduce.rs` unless named.
   entered window, so the return from Verbatim's menu says the title.
 - The foreground record (`foreground.rs`): one `Foreground` with private
   fields, written only by `apply` with one `ForegroundFact` per writer
-  (`Changed`, `Object`, `Entered`, `LineCut`, `Observed`, `Applied`) and
+  (`Changed`, `Object`, `Entered`, `LineCut`, `Observed`) and
   read through accessors. It holds the attention record, the front, the
   entered window, the foreground object, the time of the newest
   foreground change, the listener's foreground window for the hook, and
-  the stamps: the ordering stamps (`focus_stamps`, the newest also as
-  `latest_focus`), the observation of each report Core accepted into its
+  the ordering stamps (`focus_stamps`), the observation of each report Core accepted into its
   order, taken, waiting for a live re-read, a duplicate or a refused
   whole-window focus, with its generation, window and whether it was a
   whole-window report, which the stale rule reads, kept while a report
   Core can still accept could be stale by them (`Foreground::stale_floor`,
-  the newest ordinary stamp); and the applied stamp, written only for a
-  focus executed, which a menu's end reads. `SrState` flattens it into the keys it held before, and a dump
-  without the applied stamp takes the ordering stamp for it.
+  the newest ordinary stamp). When the focus taken was observed, which a
+  menu's end reads, is the focus object's own `observed_at_us` in the
+  focus queue. `SrState` flattens it into the keys it held before.
 - Repeats and staleness (`docs/parity/focus-events.md`, "Duplicate focus
   suppression" and "Stale focus events"). A focus is judged in this
   order: an older entry of a focus group whose newer report Core took is

@@ -125,14 +125,6 @@ impl LatestFocus {
     }
 }
 
-/// The applied stamp as a dump holds it: an object, so a dump written
-/// before the stamp existed, which has no such key, is told from one whose
-/// stamp is still unset.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-struct AppliedStamp {
-    observed_at_us: Option<u64>,
-}
-
 /// The record as it is serialized: the same keys the state held before the
 /// record existed, so earlier dumps still load.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -148,16 +140,8 @@ struct Stored {
     front: Option<Front>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     entered: Option<WindowHandle>,
-    #[serde(default)]
-    latest_focus: Option<LatestFocus>,
-    /// Absent in a dump written before the stamps were kept as a set,
-    /// where `latest_focus` was the one stamp.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     focus_stamps: Vec<LatestFocus>,
-    /// Absent in a dump written before the stamps were split, where the
-    /// one stamp stood for both.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    applied_focus: Option<AppliedStamp>,
 }
 
 /// One writer of the foreground record.
@@ -184,8 +168,6 @@ pub(crate) enum ForegroundFact {
     /// A focus report was accepted into Core's order: an ordering stamp,
     /// whatever is then decided of it.
     Observed(LatestFocus),
-    /// A focus observed at this time was taken: the applied stamp.
-    Applied(u64),
 }
 
 /// The foreground record ([module docs](self)).
@@ -199,15 +181,10 @@ pub(crate) struct Foreground {
     front: Option<Front>,
     entered: Option<WindowHandle>,
     stamps: Vec<LatestFocus>,
-    applied_at: Option<u64>,
 }
 
 impl From<Stored> for Foreground {
     fn from(stored: Stored) -> Self {
-        let applied_at = match stored.applied_focus {
-            Some(applied) => applied.observed_at_us,
-            None => stored.latest_focus.map(|latest| latest.observed_at_us),
-        };
         Self {
             attention: stored.attention,
             object: stored.foreground,
@@ -215,19 +192,13 @@ impl From<Stored> for Foreground {
             window: stored.foreground_window,
             front: stored.front,
             entered: stored.entered,
-            stamps: if stored.focus_stamps.is_empty() {
-                stored.latest_focus.into_iter().collect()
-            } else {
-                stored.focus_stamps
-            },
-            applied_at,
+            stamps: stored.focus_stamps,
         }
     }
 }
 
 impl From<Foreground> for Stored {
     fn from(record: Foreground) -> Self {
-        let latest_focus = record.latest_focus();
         Self {
             attention: record.attention,
             foreground: record.object,
@@ -235,11 +206,7 @@ impl From<Foreground> for Stored {
             foreground_window: record.window,
             front: record.front,
             entered: record.entered,
-            latest_focus,
             focus_stamps: record.stamps,
-            applied_focus: Some(AppliedStamp {
-                observed_at_us: record.applied_at,
-            }),
         }
     }
 }
@@ -284,7 +251,6 @@ impl Foreground {
                     self.stamps.retain(|kept| kept.observed_at_us >= floor);
                 }
             }
-            ForegroundFact::Applied(at) => self.applied_at = Some(at),
         }
     }
 
@@ -334,6 +300,7 @@ impl Foreground {
 
     /// The newest ordering stamp: the newest observation of a focus report
     /// Core accepted into its order.
+    #[cfg(test)]
     pub(crate) fn latest_focus(&self) -> Option<LatestFocus> {
         self.stamps
             .iter()
@@ -373,12 +340,6 @@ impl Foreground {
         self.stamps
             .iter()
             .any(|stamp| stamp.makes_stale(outpost, observed_at_us, top_level))
-    }
-
-    /// The applied stamp: when the newest focus taken was observed, which
-    /// a menu's or the switcher's end compares with.
-    pub(crate) fn applied_at(&self) -> Option<u64> {
-        self.applied_at
     }
 }
 
@@ -499,47 +460,7 @@ mod tests {
             whole_window: false,
         };
         let mut record = Foreground::default();
-        record.apply(ForegroundFact::Applied(1_000));
         record.apply(ForegroundFact::Observed(latest));
-        assert_eq!(
-            (record.latest_focus(), record.applied_at()),
-            (Some(latest), Some(1_000))
-        );
-    }
-
-    #[test]
-    fn a_focus_taken_moves_the_applied_stamp_alone() {
-        let mut record = Foreground::default();
-        record.apply(ForegroundFact::Applied(3_000));
-        assert_eq!(
-            (record.latest_focus(), record.applied_at()),
-            (None, Some(3_000))
-        );
-    }
-
-    #[test]
-    fn a_dump_from_before_the_split_takes_its_one_stamp_for_both() {
-        let old = r#"{"attention":null,"latest_focus":{"outpost":1,"observed_at_us":5,"top_level":null}}"#;
-        let record: Foreground = serde_json::from_str(old).expect("an old dump loads");
-        assert_eq!(record.applied_at(), Some(5));
-        let again: Foreground =
-            serde_json::from_str(&serde_json::to_string(&record).expect("serializes"))
-                .expect("loads");
-        assert_eq!(again, record);
-    }
-
-    #[test]
-    fn an_unset_applied_stamp_survives_a_dump() {
-        let mut record = Foreground::default();
-        record.apply(ForegroundFact::Observed(LatestFocus {
-            outpost: OutpostId(1),
-            observed_at_us: 9,
-            top_level: None,
-            whole_window: false,
-        }));
-        let again: Foreground =
-            serde_json::from_str(&serde_json::to_string(&record).expect("serializes"))
-                .expect("loads");
-        assert_eq!(again.applied_at(), None);
+        assert_eq!(record.latest_focus(), Some(latest));
     }
 }

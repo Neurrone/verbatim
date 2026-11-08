@@ -759,18 +759,8 @@ impl Run {
             self.trail
         );
         assert_eq!(
-            (
-                record.object(),
-                record.changed_at(),
-                record.latest_focus(),
-                record.applied_at()
-            ),
-            (
-                was.object(),
-                was.changed_at(),
-                was.latest_focus(),
-                was.applied_at()
-            ),
+            (record.object(), record.changed_at(), record.latest_focus()),
+            (was.object(), was.changed_at(), was.latest_focus()),
             "a foreground change kept the record's object and stamps: {:?}",
             self.trail
         );

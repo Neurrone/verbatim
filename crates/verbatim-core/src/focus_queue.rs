@@ -36,7 +36,6 @@ use crate::state::FocusContext;
 
 /// Core's focus ([module docs](self)).
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(from = "Stored", into = "Stored")]
 pub(crate) struct FocusState {
     /// The focus object: the focus last executed, none before the first.
     object: Option<FocusContext>,
@@ -45,12 +44,15 @@ pub(crate) struct FocusState {
     /// The reports not yet decided, and the inputs that reached Core behind
     /// them, in the order they reached Core; only the first can be waiting
     /// for its live re-read.
+    #[serde(default, skip_serializing_if = "VecDeque::is_empty")]
     queue: VecDeque<Queued>,
     /// The foreground changes that reached Core and may still apply to a
     /// report, in the order observed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     changes: Vec<Change>,
     /// How many of the inputs the queue orders Core has taken: reports,
     /// foreground changes, and the endings of live re-reads.
+    #[serde(default)]
     inputs: u64,
 }
 
@@ -555,174 +557,11 @@ impl FocusState {
     }
 }
 
-/// The state as a dump holds it: the current form, or the focus context a
-/// dump written before the queue existed holds, with its left mark inside
-/// it, told apart by the current form's `last` key, so that a malformed
-/// current dump reports its own error.
-enum Stored {
-    Current(Current),
-    Earlier(Option<EarlierFocus>),
-}
-
-impl Serialize for Stored {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        match self {
-            Self::Current(current) => current.serialize(serializer),
-            Self::Earlier(earlier) => earlier.serialize(serializer),
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for Stored {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        use serde::de::Error as _;
-        let value = serde_json::Value::deserialize(deserializer)?;
-        let current = value
-            .as_object()
-            .is_some_and(|object| object.contains_key("last"));
-        if current {
-            serde_json::from_value(value)
-                .map(Self::Current)
-                .map_err(D::Error::custom)
-        } else {
-            serde_json::from_value(value)
-                .map(Self::Earlier)
-                .map_err(D::Error::custom)
-        }
-    }
-}
-
-/// [`FocusState`]'s own form.
-#[derive(Serialize, Deserialize)]
-struct Current {
-    object: Option<FocusContext>,
-    last: Last,
-    #[serde(default, skip_serializing_if = "VecDeque::is_empty")]
-    queue: VecDeque<Queued>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    changes: Vec<Change>,
-    #[serde(default)]
-    inputs: u64,
-}
-
-/// A focus context as a dump written before the queue existed holds it.
-#[derive(Serialize, Deserialize)]
-struct EarlierFocus {
-    #[serde(flatten)]
-    focus: FocusContext,
-    #[serde(default)]
-    left: bool,
-    #[serde(default)]
-    left_for: Option<WindowHandle>,
-}
-
-impl From<Stored> for FocusState {
-    fn from(stored: Stored) -> Self {
-        match stored {
-            Stored::Current(Current {
-                object,
-                last,
-                queue,
-                changes,
-                inputs,
-            }) => Self {
-                object,
-                last,
-                queue,
-                changes,
-                inputs,
-            },
-            Stored::Earlier(None) => Self::default(),
-            // An earlier focus reached Core at input 0; its left mark stands
-            // as a change that reached Core after it and applies to every
-            // later report.
-            Stored::Earlier(Some(earlier)) => Self {
-                changes: earlier
-                    .left_for
-                    .filter(|_| earlier.left)
-                    .map(|window| Change {
-                        observed_at_us: 0,
-                        window,
-                        root_owner: window,
-                        arrival: 1,
-                    })
-                    .into_iter()
-                    .collect(),
-                object: Some(earlier.focus),
-                last: Last::Executed { arrival: 0 },
-                queue: VecDeque::new(),
-                inputs: 1,
-            },
-        }
-    }
-}
-
-impl From<FocusState> for Stored {
-    fn from(state: FocusState) -> Self {
-        Self::Current(Current {
-            object: state.object,
-            last: state.last,
-            queue: state.queue,
-            changes: state.changes,
-            inputs: state.inputs,
-        })
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use verbatim_model::{Backend, NodeDetails, NodeId, Role, StateSet};
-
     use super::*;
 
-    fn focus() -> FocusContext {
-        FocusContext {
-            source: Pid(3),
-            window: None,
-            snapshot: NodeSnapshot {
-                id: NodeId::new(7),
-                backend: Backend::Uia,
-                role: Role::Button,
-                name: Some("OK".to_owned()),
-                value: None,
-                states: StateSet::new(),
-                details: NodeDetails::default(),
-            },
-            ancestors: Arc::from(Vec::new()),
-            last_selection: None,
-            alive: true,
-            reported_focused: false,
-            trace_id: None,
-            observed_at_us: 100,
-            spoken: None,
-        }
-    }
-
-    /// A dump written before the queue holds the focus context with its
-    /// left mark inside it: it loads as the focus object, the last queued
-    /// focus, with the mark as a change that applies to every later report.
-    #[test]
-    fn a_dump_from_before_the_queue_loads_its_left_focus() {
-        let mut earlier = serde_json::to_value(focus()).expect("a focus serializes");
-        let object = earlier.as_object_mut().expect("a focus is an object");
-        object.insert("left".to_owned(), serde_json::Value::Bool(true));
-        object.insert("left_for".to_owned(), serde_json::json!(30));
-        let state: FocusState = serde_json::from_value(earlier).expect("an old dump loads");
-        assert_eq!(state.object(), Some(&focus()));
-        assert_eq!(state.last, Last::Executed { arrival: 0 });
-        assert_eq!(
-            state.changes,
-            [Change {
-                observed_at_us: 0,
-                window: WindowHandle(30),
-                root_owner: WindowHandle(30),
-                arrival: 1,
-            }]
-        );
-    }
-
-    /// A malformed dump of the current form reports its own error, not the
-    /// earlier form's.
+    /// A malformed dump reports its own error.
     #[test]
     fn a_malformed_current_dump_reports_its_own_error() {
         let error = serde_json::from_value::<FocusState>(

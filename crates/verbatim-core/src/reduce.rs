@@ -712,17 +712,11 @@ fn older_than_taken(state: &SrState, outpost: OutpostId, group: FocusGroup) -> b
     })
 }
 
-/// Records that the focus of `report` was taken: the applied stamp, and
-/// its focus group, which ends the group for its older entries, and
+/// Records that the focus of `report` was taken: its focus group, which ends the group for its older entries, and
 /// Verbatim+Tab's waiting press when
 /// it was observed after the press, whose answer would then be late
 /// (`crate::report_focus`).
 fn record_taken(state: &mut SrState, report: &FocusReport<'_>) {
-    if report.observed_at_us != 0 {
-        state
-            .foreground
-            .apply(ForegroundFact::Applied(report.observed_at_us));
-    }
     record_group(state, report);
     crate::report_focus::focus_applied(state, report.observed_at_us);
 }

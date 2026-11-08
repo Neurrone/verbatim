@@ -937,12 +937,15 @@ impl SrState {
         self.focus.object().map(|focus| focus.source)
     }
 
-    /// When the newest focus the reducer took was observed, in
-    /// microseconds since the Unix epoch on the run's shared clock; `None`
-    /// before any (the applied stamp).
+    /// When the focus object, the newest focus the reducer took, was
+    /// observed, in microseconds since the Unix epoch on the run's shared
+    /// clock; `None` before any, or when its observation is not known.
     #[must_use]
     pub fn latest_focus_observed_at(&self) -> Option<u64> {
-        self.foreground.applied_at()
+        self.focus
+            .object()
+            .map(|focus| focus.observed_at_us)
+            .filter(|&observed| observed != 0)
     }
 
     /// Every node the state refers to, grouped by the outpost that issued
