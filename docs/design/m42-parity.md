@@ -49,7 +49,7 @@ Toasts follow the listener's record, since they add to the listener's reading qu
 Where it runs: the subscription and its test on the listener's UIA callback thread; the reading on the application's reading thread, as a selection or notification is; the report in the toast host's outpost; the speech decision in Core.
 
 - The listener adds one more part, `UIA_Window_WindowOpenedEventId`, to its desktop-wide registration, shaped as `ListenerEvent`, on the same client as its other parts.
-- Its callback keeps only a window whose control type is window and whose automation id contains `ToastView`, from the event's cache, and whose window class is `Windows.UI.Core.CoreWindow`, by a local call (`nvda/source/NVDAObjects/UIA/__init__.py` 1282 to 1287).
+- Its callback keeps only a window whose control type is window and whose automation id contains `ToastView`, from the event's cache, (`nvda/source/NVDAObjects/UIA/__init__.py` 1282 to 1287). The rest of the rule, that the window class of its nearest window is `Windows.UI.Core.CoreWindow`, is tested on the reading thread, because a toast's element is XAML with no window of its own, so finding that window is a call into the application, which the callback must not make. A candidate failing it is dropped there.
 - It goes through `queue_for_reading` as `FocusEvent::Toast`, so it is ordered with the application's other events and dropped from a hung window.
 - The outpost reports it as `NormalizedEvent::Alert`, spoken queued from any application, as `reduce_alert` does today.
 - MSAA alert and show events from a native UIA window are dropped, as NVDA drops every `WinEvent` from one (`nvda/source/IAccessibleHandler/__init__.py` 577 to 582). This runs on the outpost's worker when it handles the event, from the arbitrator's verdict for the window (`known_to_use_uia`, `crates/verbatim-outpost/src/arbitration.rs`), which is already kept per window. A window with no verdict yet is probed as a focus's is, once, on a deadline-guarded worker.
@@ -78,7 +78,7 @@ struct LastToast { id: ToastId, at_us: u64 }
 | Some | toast, otherwise | Speaks; replaces the record. |
 | Any | MSAA alert | Speaks; the record is untouched. |
 
-Costs: the listener's callback runs once per window opened anywhere and wakes nothing else unless the window is a toast. One round trip at most to read the toast, on the reading thread. The MSAA drop is a lookup of a kept verdict on the outpost's worker, with at most one probe per window. No new timer.
+Costs: the listener's callback runs once per window opened anywhere and wakes nothing else unless the window is a toast. Two round trips at most for a candidate, on the reading thread: its nearest window, and the read of the toast. The MSAA drop is a lookup of a kept verdict on the outpost's worker, with at most one probe per window. No new timer.
 
 Limits: a toast whose host is restarted within one second has a new runtime id and is spoken. Windows 8.1 and tooltip-opened toasts are out of scope, since Verbatim supports Windows 11 only.
 

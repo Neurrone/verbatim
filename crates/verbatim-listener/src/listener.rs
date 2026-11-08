@@ -142,7 +142,7 @@ use verbatim_model::{Notification, OutpostId, Pid, TraceId};
 use verbatim_process::scheduling::{ThreadPriority, prioritize_role};
 use verbatim_process::transport::{Backlog, ChildIo, SendError, Sender, Served, Serving};
 use verbatim_uia::map::{
-    CachedUiaParts, ignores_notifications, is_toast, notification_kind_from_uia,
+    CachedUiaParts, ignores_notifications, is_toast_candidate, notification_kind_from_uia,
     notification_processing_from_uia,
 };
 use verbatim_uia::{
@@ -1814,13 +1814,14 @@ fn notification_subscription(
 }
 
 /// The desktop-wide subscription to UIA window openings, kept only for a
-/// Windows toast by NVDA's rule ([`is_toast`]), which goes through its
-/// application's reading thread as a notification does, so that its reading
-/// is ordered with the application's other events and dropped from a hung
-/// window. It runs once per window opened anywhere and wakes nothing else
-/// unless the window is a toast: the rule reads the event's cache and, for a
-/// window whose control type and automation id pass, its window class by a
-/// local call.
+/// candidate for a Windows toast by what the event's cache answers of NVDA's
+/// rule ([`is_toast_candidate`]). A candidate goes through its application's
+/// reading thread as a notification does, so that its reading is ordered
+/// with the application's other events and dropped from a hung window, and
+/// the rest of the rule, the class of its nearest window, is tested there,
+/// since finding that window is a call into the application
+/// (`FocusReader::check_fact`). It runs once per window opened anywhere,
+/// makes no call, and wakes nothing else unless the window is a candidate.
 fn toast_subscription(
     outgoing: &Arc<Outgoing>,
     readers: &Arc<Readers<UiaFocusReading>>,
@@ -1831,23 +1832,26 @@ fn toast_subscription(
         event: UIA_Window_WindowOpenedEventId,
         callback: Arc::new(move |sender: &Cached<ListenerEvent>| {
             let fields = sender.read();
-            if !is_toast(
-                fields.role.control_type,
-                fields.automation_id.as_deref(),
-                || window_class_name(fields.role.hwnd),
-            ) {
+            if !is_toast_candidate(fields.role.control_type, fields.automation_id.as_deref()) {
+                tracing::debug!(
+                    control_type = ?fields.role.control_type,
+                    automation_id = ?fields.automation_id,
+                    "a window opened is no toast"
+                );
                 return;
             }
-            if let Some((hwnd, snapshot)) = capture(sender, &fields) {
-                queue_for_reading(
-                    &outgoing,
-                    &readers,
-                    sender,
-                    &fields,
-                    FocusEvent::Toast,
-                    Some(DeliveredFact::UiaToast { hwnd, snapshot }),
-                );
-            }
+            let Some((hwnd, snapshot)) = capture(sender, &fields) else {
+                tracing::debug!("a toast candidate has no owning process");
+                return;
+            };
+            queue_for_reading(
+                &outgoing,
+                &readers,
+                sender,
+                &fields,
+                FocusEvent::Toast,
+                Some(DeliveredFact::UiaToast { hwnd, snapshot }),
+            );
         }),
     }
 }

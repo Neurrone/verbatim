@@ -1,0 +1,14 @@
+{
+  "id": "root",
+  "role": "window",
+  "name": "Toast host",
+  "window_class": "ApplicationFrameWindow",
+  "children": [
+    {
+      "id": "toast",
+      "role": "window",
+      "name": "New notification",
+      "automation_id": "FlexibleToastView"
+    }
+  ]
+}

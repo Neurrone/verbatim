@@ -395,21 +395,22 @@ pub fn ignores_notifications(class_name: Option<&str>, automation_id: Option<&st
     is_terminal_class(class_name) || automation_id == Some("Text Area")
 }
 
-/// Whether a window opened is a Windows toast, by NVDA's rule
-/// (`NVDAObjects/UIA/__init__.py` 1282 to 1287): control type window,
-/// automation id containing `ToastView`, and window class
-/// `Windows.UI.Core.CoreWindow`, asked of `window_class` only when the others
-/// pass, as it is a local call the event's cache spares for every other
-/// window.
+/// Whether a window opened may be a Windows toast, by the part of NVDA's
+/// rule its event's cache answers (`NVDAObjects/UIA/__init__.py` 1282 to
+/// 1287): control type window and automation id containing `ToastView`. The
+/// rest is [`is_toast_window_class`], of its nearest window.
 #[must_use]
-pub fn is_toast(
-    control_type: Option<i32>,
-    automation_id: Option<&str>,
-    window_class: impl FnOnce() -> String,
-) -> bool {
+pub fn is_toast_candidate(control_type: Option<i32>, automation_id: Option<&str>) -> bool {
     control_type == Some(UIA_WindowControlTypeId.0)
         && automation_id.is_some_and(|id| id.contains("ToastView"))
-        && window_class() == "Windows.UI.Core.CoreWindow"
+}
+
+/// Whether `class`, the class of a toast candidate's nearest window, is the
+/// one NVDA's rule names. The element itself is XAML, with no window of its
+/// own, so NVDA's window handle for it is its nearest window's.
+#[must_use]
+pub fn is_toast_window_class(class: &str) -> bool {
+    class == "Windows.UI.Core.CoreWindow"
 }
 
 /// Whether an element of UIA class `class_name` reports no value. The
@@ -487,25 +488,22 @@ mod tests {
         ));
     }
 
-    /// NVDA's toast rule: each of its three fields, control type window,
-    /// automation id containing `ToastView`, and window class, and the
-    /// class asked only when the first two pass.
+    /// NVDA's toast rule, each of its three fields: the two the event's
+    /// cache answers, and the class of the nearest window.
     #[test]
-    fn a_window_opened_is_a_toast_only_by_all_of_nvdas_fields() {
+    fn a_toast_is_told_by_each_field_of_nvdas_rule() {
         let window = Some(UIA_WindowControlTypeId.0);
-        let core = || "Windows.UI.Core.CoreWindow".to_owned();
-        let asked = || -> String { panic!("the window class is a local call only a match asks") };
-        assert!(is_toast(window, Some("MicrosoftToastViewThing"), core));
-        assert!(!is_toast(window, Some("MicrosoftToastViewThing"), || {
-            "ApplicationFrameWindow".to_owned()
-        }));
-        assert!(!is_toast(window, Some("OtherView"), asked));
-        assert!(!is_toast(window, None, asked));
-        assert!(!is_toast(
+        assert!(is_toast_candidate(window, Some("FlexibleToastView")));
+        assert!(!is_toast_candidate(window, Some("OtherView")));
+        assert!(!is_toast_candidate(window, None));
+        assert!(!is_toast_candidate(
             Some(UIA_PaneControlTypeId.0),
-            Some("ToastView"),
-            asked
+            Some("ToastView")
         ));
+        assert!(!is_toast_candidate(None, Some("ToastView")));
+        assert!(is_toast_window_class("Windows.UI.Core.CoreWindow"));
+        assert!(!is_toast_window_class("ApplicationFrameWindow"));
+        assert!(!is_toast_window_class(""));
     }
 
     /// The exact state set holding `states` and nothing else.

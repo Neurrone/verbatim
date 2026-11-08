@@ -467,7 +467,8 @@ pub enum DeliveredFact {
     /// window-opened subscription keeps one (`docs/parity/alerts.md`,
     /// "Toasts"): read on the application's reading thread as a selection is.
     UiaToast {
-        /// The toast's native window handle.
+        /// The toast's window: as the callback sends it, its own, 0 for
+        /// none; once its reading thread has passed it, its nearest.
         hwnd: isize,
         /// The toast as its reading thread read it.
         snapshot: UiaSnapshotFact,

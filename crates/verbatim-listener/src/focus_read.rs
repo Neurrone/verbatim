@@ -144,7 +144,9 @@ use windows::Win32::UI::Accessibility::{
 };
 
 use verbatim_model::{FOCUS_READ_DEADLINE, NodeDetails, Pid, State, TraceId};
-use verbatim_uia::map::{CachedUiaParts, add_legacy_checked_state, wants_legacy_checked_state};
+use verbatim_uia::map::{
+    CachedUiaParts, add_legacy_checked_state, is_toast_window_class, wants_legacy_checked_state,
+};
 use verbatim_uia::{
     Ancestor, AncestorGates, Cached, ElementExt as _, Fill, FocusInput, ListenerEvent,
     ListenerSelection, Node, NodeGates, Shape, Uia,
@@ -154,7 +156,7 @@ use verbatim_uia_rops::{Ancestry, FocusAncestry, FocusQuery, Progress, focus_anc
 use verbatim_listener_logic::checks::{self, Check, Gathered, Nearest, Step};
 use verbatim_listener_logic::focus::{
     Arrival, FocusEvent, Judged, Meta, NO_WINDOW, NOT_FOCUSED, NOT_THE_LAST_READ,
-    NOTIFICATION_NO_WINDOW, TOAST_NOT_READ, arrival_of,
+    NOTIFICATION_NO_WINDOW, TOAST_NOT_CORE_WINDOW, TOAST_NOT_READ, arrival_of,
 };
 use verbatim_listener_logic::schedule::{
     AlarmChange, AppKey, QueuePlace, Request, Schedule, ScheduleEffect, ScheduleInput, Waking,
@@ -879,24 +881,46 @@ impl FocusReader {
         }
     }
 
-    /// The toast whose sender is `sender`, read for what its event's cache
-    /// did not carry (its value, states, description and position in its
-    /// set), one call: the toast's window-opened registration's cache request is kept small,
-    /// as it is filled for every window opened anywhere. Dropped when the
-    /// read fails, as NVDA, having no object for the toast, says nothing.
+    /// The toast candidate whose sender is `sender`, its own window `hwnd`,
+    /// 0 for none: the rest of NVDA's rule, and the read of what its event's
+    /// cache did not carry. Its nearest window is found, one call when it has
+    /// no window of its own, as a XAML toast's element has none, and must be
+    /// of the class NVDA's rule names, a local call. It is then read for its
+    /// value, states, description and position in its set, one call, since
+    /// the registration's cache request is kept small, being filled for
+    /// every window opened anywhere. Dropped at any failure, as NVDA, having
+    /// no object for the toast, says nothing; every drop is logged.
     fn read_toast(
         &self,
         sender: &Cached<ListenerEvent>,
         hwnd: isize,
         snapshot: UiaSnapshotFact,
     ) -> Judged {
+        let window = if hwnd == 0 {
+            verbatim_uia::nearest_window_handle(sender.live().element())
+        } else {
+            Some(hwnd)
+        };
+        let Some(window) = window else {
+            tracing::debug!(runtime_id = ?snapshot.runtime_id, "a toast candidate has no window above it");
+            return Judged::Dropped(NO_WINDOW);
+        };
+        let class = window_class_name(window);
+        if !is_toast_window_class(&class) {
+            tracing::debug!(
+                window,
+                class,
+                "a toast candidate's nearest window is of another class"
+            );
+            return Judged::Dropped(TOAST_NOT_CORE_WINDOW);
+        }
         let read = self
             .uia
             .request_fixed::<ListenerSelection>()
             .and_then(|request| sender.live().refresh(&request));
         match read {
             Ok(toast) => Judged::Passed(Box::new(DeliveredFact::UiaToast {
-                hwnd,
+                hwnd: window,
                 snapshot: {
                     let parts = toast.read().parts(snapshot.runtime_id);
                     UiaSnapshotFact {

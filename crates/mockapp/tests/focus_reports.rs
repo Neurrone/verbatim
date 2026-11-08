@@ -4172,6 +4172,71 @@ fn a_return_with_two_focus_events_of_one_element_is_spoken_once() {
     app.quit();
 }
 
+/// The fact the listener's callback sends for the toast element of mockapp's
+/// window, with the element, which has no window of its own.
+fn toast_candidate(client: &Client) -> (Cached<ListenerEvent>, DeliveredFact) {
+    let element = client.named("New notification");
+    let fields = element.read();
+    assert_eq!(fields.role.hwnd, 0, "the element has no window of its own");
+    assert!(verbatim_uia::map::is_toast_candidate(
+        fields.role.control_type,
+        fields.automation_id.as_deref(),
+    ));
+    let (hwnd, snapshot) =
+        verbatim_listener::listener::capture(&element, &fields).expect("a process");
+    (element, DeliveredFact::UiaToast { hwnd, snapshot })
+}
+
+/// A toast whose element has no window of its own, as a XAML toast's has
+/// none, is told by its nearest window's class on the reading thread, and
+/// passed on with that window and what its read found.
+fn a_toast_without_a_window_of_its_own_is_passed_on_with_its_nearest() {
+    let title = common::unique_title("mockapp-toast-element");
+    let app = common::spawn("toast_element.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let client = Client::new(hwnd);
+    let outpost = OutpostUnderTest::new(&app);
+    let (element, fact) = toast_candidate(&client);
+
+    let Judged::Passed(passed) = outpost.listener_check(&element, fact) else {
+        panic!("the toast was not passed on");
+    };
+    let DeliveredFact::UiaToast {
+        hwnd: window,
+        snapshot,
+    } = *passed
+    else {
+        panic!("a toast, not {passed:?}");
+    };
+    assert_eq!(
+        (
+            window,
+            snapshot.name.as_deref(),
+            snapshot.details.position_in_set,
+            snapshot.details.set_size
+        ),
+        (hwnd.0 as isize, Some("New notification"), Some(1), Some(1))
+    );
+    drop(outpost);
+    app.quit();
+}
+
+/// A toast candidate whose nearest window is of another class is dropped.
+fn a_toast_candidate_under_another_window_class_is_dropped() {
+    let title = common::unique_title("mockapp-toast-other-class");
+    let app = common::spawn("toast_element_other_class.json", "uia", &title);
+    let client = Client::new(common::find_window(&title));
+    let outpost = OutpostUnderTest::new(&app);
+    let (element, fact) = toast_candidate(&client);
+
+    assert!(matches!(
+        outpost.listener_check(&element, fact),
+        Judged::Dropped(verbatim_listener_logic::focus::TOAST_NOT_CORE_WINDOW)
+    ));
+    drop(outpost);
+    app.quit();
+}
+
 /// The foreground window's progress bars: subscribed by its outpost when
 /// Core says the window is in front, and only a progress bar's range value
 /// change reported, as a progress change, once the role test on the callback
@@ -4212,6 +4277,14 @@ fn a_foreground_windows_progress_bar_is_reported_until_attention_leaves() {
 #[expect(clippy::too_many_lines, reason = "one entry per test")]
 fn main() {
     harness::run_isolated(&[
+        (
+            "a_toast_without_a_window_of_its_own_is_passed_on_with_its_nearest",
+            a_toast_without_a_window_of_its_own_is_passed_on_with_its_nearest,
+        ),
+        (
+            "a_toast_candidate_under_another_window_class_is_dropped",
+            a_toast_candidate_under_another_window_class_is_dropped,
+        ),
         (
             "a_foreground_windows_progress_bar_is_reported_until_attention_leaves",
             a_foreground_windows_progress_bar_is_reported_until_attention_leaves,

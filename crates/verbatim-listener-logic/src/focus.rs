@@ -76,6 +76,10 @@ pub const NEAREST_TIMED_OUT: &str = "its nearest window's lookup timed out, so N
 /// above it.
 pub const NOTIFICATION_NO_WINDOW: &str = "its sender has no window above it";
 
+/// The reason a toast candidate is dropped whose nearest window is not of
+/// the class NVDA's rule names.
+pub const TOAST_NOT_CORE_WINDOW: &str = "its nearest window is not of the class a toast's is";
+
 /// The reason a toast is dropped when its read on the reading thread fails.
 pub const TOAST_NOT_READ: &str = "the toast could not be read";
 

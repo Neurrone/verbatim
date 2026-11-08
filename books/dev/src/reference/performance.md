@@ -938,10 +938,11 @@ once per window opened anywhere on the desktop, and wakes nothing else
 unless the window is a toast (`docs/parity/alerts.md`, "Toasts").
 
 - Minimum and today: no call into an application for a window that is no
-  toast. The control type and automation id come from the event's cache;
-  the window class, a local call, is read only when both pass.
-- A toast: one call on its application's reading thread, for what the
-  cache request leaves out.
+  candidate: the control type and automation id come from the event's
+  cache.
+- A candidate: at most two calls on its application's reading thread, its
+  nearest window and what the cache request leaves out, and the window's
+  class, a local call.
 - From the design's costs; not measured.
 
 ### A progress bar's change, UIA

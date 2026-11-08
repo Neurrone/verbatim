@@ -25,11 +25,12 @@ Windows 11 toast reaches this path, and its exact words, wait on the
 `toast` scenario's run against NVDA. The focus listener's
 desktop-wide UIA registration includes the window-opened event; its
 callback keeps a window of control type window whose automation id
-contains `ToastView`, from the event's cache, and whose window class is
-`Windows.UI.Core.CoreWindow`, by a local call, and runs once per window
-opened anywhere, waking nothing else unless the window is a toast. The
-toast goes through its application's reading thread, where one call reads
-its value, states, description and position, and is reported as
+contains `ToastView`, from the event's cache, and runs once per window
+opened anywhere, waking nothing else unless the window is such a
+candidate. The candidate goes through its application's reading thread,
+where the class of its nearest window, the element being XAML with no
+window of its own, must be `Windows.UI.Core.CoreWindow`; one call reads
+its value, states, description and position, and it is reported as
 `NormalizedEvent::Alert` with `AlertOrigin::ToastWindowOpened`, carrying a
 hash of its runtime id. The reducer speaks it queued from anywhere, never
 moving focus, and drops a toast whose id equals the last spoken toast's

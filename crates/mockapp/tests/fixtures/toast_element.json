@@ -1,0 +1,16 @@
+{
+  "id": "root",
+  "role": "window",
+  "name": "Toast host",
+  "window_class": "Windows.UI.Core.CoreWindow",
+  "children": [
+    {
+      "id": "toast",
+      "role": "window",
+      "name": "New notification",
+      "automation_id": "FlexibleToastView",
+      "position_in_set": 1,
+      "set_size": 1
+    }
+  ]
+}
