@@ -9,10 +9,13 @@
 //! schedule's types.
 //!
 //! The world: a process takes an id, raises events, and exits; its outpost
-//! crashes, retires or ends with it; an id is taken again only once the
-//! exit has been answered, which a step does whole; an event raised before an
-//! exit can arrive after it, while the id is free, and the supervisor then
-//! answers that no outpost's hook is in. Reading threads ask, return, hang
+//! crashes, retires or ends with it. The listener is told of an exit only
+//! when the supervisor holds the process; the exit of one it cannot hold
+//! reaches the listener only as its outpost's end. An id is taken again once
+//! a told exit has been answered, which a step does whole, and at any time
+//! after an exit not told. An event raised before an exit can arrive after
+//! it, while the id is free, and the supervisor then answers that no
+//! outpost's hook is in. Reading threads ask, return, hang
 //! past their deadlines or are slow, and act only when they can: a waiting
 //! thread once woken, the alarm only when set, a little early or later. A
 //! case ends with every process exited and every read returned.
@@ -30,9 +33,15 @@
 //! thread until one returns; events wait until the deadline after the second
 //! was abandoned, then all are dropped and each later one as it arrives;
 //! a read is judged from its half second, every half second, once its
-//! window is known, and abandoned at the deadline; a new generation starts
-//! with no abandoned reads; a process gone drops at once what waits with no
-//! thread and is held no longer than its readers; every event has exactly
+//! window is known, and abandoned at the deadline. A generation boundary
+//! comes only from an exit the listener was told: the next event of that id
+//! starts a new generation with no abandoned reads, and the process told
+//! gone drops at once what waits with no thread. A process whose exit was
+//! not told is, to the listener, an application whose outpost ended: a
+//! later event of its id, a stale one or a new process's, rejoins its record
+//! and returns it to live, and what waits is dropped at its bound. A record
+//! whose outpost ended, or whose exit was told, is held no longer than its
+//! thread, its readers and its events; every event has exactly
 //! one outcome; every idle waiter runs once, when every event queued before
 //! it has its outcome. The thread in charge reads what it was given, its
 //! process gone or not. An outpost that ends with its application running
@@ -101,9 +110,9 @@ enum Action {
     Time(Passing),
     /// The outpost of `slot`'s running process ends, crashed or retired.
     OutpostGone { slot: u8 },
-    /// The process at `slot` exits, its outpost ending before it (0),
-    /// after it (1) or there being none (2).
-    Exit { slot: u8, outpost: u8 },
+    /// The process at `slot` exits, the listener told of it or not; told,
+    /// its outpost ends before it (0), after it (1) or there is none (2).
+    Exit { slot: u8, outpost: u8, told: bool },
     /// The supervisor answers `slot`'s stale event: no hook is in.
     NoHook { slot: u8 },
     /// An idle waiter is queued.
@@ -163,7 +172,8 @@ fn action() -> impl Strategy<Value = Action> {
             .prop_map(|(slot, which, abandoned)| Action::Learn { slot, which, abandoned }),
         7 => passing.prop_map(Action::Time),
         2 => slot.clone().prop_map(|slot| Action::OutpostGone { slot }),
-        3 => (slot.clone(), 0..3u8).prop_map(|(slot, outpost)| Action::Exit { slot, outpost }),
+        3 => (slot.clone(), 0..3u8, prop::bool::weighted(0.7))
+            .prop_map(|(slot, outpost, told)| Action::Exit { slot, outpost, told }),
         2 => slot.prop_map(|slot| Action::NoHook { slot }),
         2 => Just(Action::WhenIdle),
     ]
@@ -243,11 +253,10 @@ struct Generation {
     abandoned: Vec<Hung>,
     /// When the second abandonment came, while two are out.
     limit_since: Option<u64>,
-    /// Whether its process has gone, by its exit or the supervisor's
-    /// answer to a stale event.
+    /// Whether the listener was told its process exited.
     gone: bool,
-    /// Whether its outpost has ended with its application running, no
-    /// event having come since.
+    /// Whether its outpost has ended, as far as the listener knows with
+    /// its application running, no event having come since.
     outpost_ended: bool,
 }
 
@@ -346,10 +355,13 @@ fn abandon(generation: &mut Generation, key: Key, how: How, now: u64, out: &mut 
 #[derive(Debug, Default)]
 struct Model {
     generations: BTreeMap<Key, Generation>,
-    /// The process running at each slot.
-    running: [Option<u32>; 2],
-    /// The generation of a stale event not yet answered, at each slot.
-    stale: [Option<u32>; 2],
+    /// Whether a process is running at each slot.
+    running: [bool; 2],
+    /// The generation the listener's events of each slot join, none after
+    /// a told exit until an event starts the next.
+    current: [Option<u32>; 2],
+    /// Whether a stale event of each slot waits for the supervisor's answer.
+    unanswered: [bool; 2],
     /// Whether a process has ever exited at each slot.
     exited_once: [bool; 2],
     next_process: u32,
@@ -435,7 +447,10 @@ impl Model {
 }
 
 /// The listed things every gate run must reach.
-const LISTED: [&str; 25] = [
+const LISTED: [&str; 28] = [
+    "an exit not told",
+    "a stale event rejoining a record",
+    "an id reused after an exit not told",
     "a failed start",
     "an event replaced",
     "an outpost ended with a thread in charge",
@@ -520,7 +535,11 @@ impl Run {
             } => self.learn(usize::from(slot), which, abandoned, asks),
             Action::Time(passing) => self.time(passing, asks),
             Action::OutpostGone { slot } => self.outpost_gone(usize::from(slot), asks),
-            Action::Exit { slot, outpost } => self.exit(usize::from(slot), outpost, asks),
+            Action::Exit {
+                slot,
+                outpost,
+                told,
+            } => self.exit(usize::from(slot), outpost, told, asks),
             Action::NoHook { slot } => self.no_hook(usize::from(slot), asks),
             Action::WhenIdle => {
                 self.model.next_waiter += 1;
@@ -673,20 +692,23 @@ impl Run {
     }
 
     fn start(&mut self, slot: usize) -> bool {
-        if self.model.running[slot].is_some() || self.model.stale[slot].is_some() {
+        if self.model.running[slot] {
             return false;
         }
+        self.model.running[slot] = true;
+        if self.model.current[slot].is_some() {
+            if self.model.exited_once[slot] {
+                self.reach("an id reused after an exit not told");
+            }
+            return true;
+        }
         self.model.next_process += 1;
-        let process = self.model.next_process;
-        self.model.running[slot] = Some(process);
-        self.model
-            .generations
-            .insert((slot, process), Generation::default());
+        self.model.current[slot] = Some(self.model.next_process);
         if self
             .model
             .generations
             .keys()
-            .any(|(other, older)| *other == slot && *older != process)
+            .any(|(other, _)| *other == slot)
         {
             self.reach("an id reused with its readers out");
         }
@@ -701,19 +723,23 @@ impl Run {
         window: u8,
         asks: Asks,
     ) -> bool {
-        let process = match self.model.running[slot].or(self.model.stale[slot]) {
-            Some(process) => process,
-            None if self.model.exited_once[slot] => {
-                self.model.next_process += 1;
-                let process = self.model.next_process;
-                self.model.stale[slot] = Some(process);
-                self.model
-                    .generations
-                    .insert((slot, process), Generation::default());
-                self.reach("a stale event");
-                process
+        let running = self.model.running[slot];
+        if !running && !self.model.exited_once[slot] {
+            return false;
+        }
+        if !running {
+            self.model.unanswered[slot] = true;
+            self.reach("a stale event");
+        }
+        let process = if let Some(process) = self.model.current[slot] {
+            if !running {
+                self.reach("a stale event rejoining a record");
             }
-            None => return false,
+            process
+        } else {
+            self.model.next_process += 1;
+            self.model.current[slot] = Some(self.model.next_process);
+            self.model.next_process
         };
         let key = (slot, process);
         let kind = match kind {
@@ -740,7 +766,7 @@ impl Run {
         };
         let now = self.model.now;
         let mut expected = Expected::default();
-        let generation = self.model.generations.get_mut(&key).expect("its record");
+        let generation = self.model.generations.entry(key).or_default();
         let later = std::mem::take(&mut generation.outpost_ended);
         let replaced: Vec<u64> = generation
             .waiting
@@ -1076,11 +1102,11 @@ impl Run {
     /// is not stopped and goes once nothing is left, and the record and its
     /// count stay.
     fn outpost_gone(&mut self, slot: usize, asks: Asks) -> bool {
-        let Some(process) = self.model.running[slot] else {
+        if !self.model.running[slot] {
             return false;
-        };
-        let key = (slot, process);
-        let generation = self.model.generations.get_mut(&key).expect("its record");
+        }
+        let key = (slot, self.model.current[slot].expect("a running process's"));
+        let generation = self.model.generations.entry(key).or_default();
         generation.outpost_ended = true;
         let threaded = generation.thread.is_some();
         let waiting = !generation.waiting.is_empty();
@@ -1099,17 +1125,32 @@ impl Run {
         true
     }
 
-    /// The process at `slot` exits: its generation is gone, and what waits
-    /// with no thread is dropped at once.
-    fn exit(&mut self, slot: usize, outpost: u8, asks: Asks) -> bool {
-        let Some(process) = self.model.running[slot] else {
+    /// The process at `slot` exits. Told, its generation is gone and what
+    /// waits with no thread is dropped at once. Not told, the listener
+    /// learns only that its outpost ended.
+    fn exit(&mut self, slot: usize, outpost: u8, told: bool, asks: Asks) -> bool {
+        if !self.model.running[slot] {
             return false;
-        };
-        let key = (slot, process);
-        self.model.running[slot] = None;
+        }
+        self.model.running[slot] = false;
         self.model.exited_once[slot] = true;
+        if !told {
+            let key = (slot, self.model.current[slot].expect("a running process's"));
+            self.model.generations.entry(key).or_default().outpost_ended = true;
+            self.reach("an exit not told");
+            let told = self.seam.no_hook(app_of(key));
+            self.compare(Expected::default(), told, asks);
+            return true;
+        }
+        let key = (
+            slot,
+            self.model.current[slot]
+                .take()
+                .expect("a running process's"),
+        );
+        self.model.unanswered[slot] = false;
         let mut expected = Expected::default();
-        let generation = self.model.generations.get_mut(&key).expect("its record");
+        let generation = self.model.generations.entry(key).or_default();
         generation.gone = true;
         let reading = matches!(
             generation.thread,
@@ -1140,23 +1181,22 @@ impl Run {
         true
     }
 
-    /// The supervisor answers a stale event's generation: its process is
-    /// gone.
+    /// The supervisor answers a stale event: no outpost's hook is in, which
+    /// to the listener is only its outpost's end.
     fn no_hook(&mut self, slot: usize, asks: Asks) -> bool {
-        let Some(process) = self.model.stale[slot].take() else {
+        if !std::mem::take(&mut self.model.unanswered[slot]) {
             return false;
-        };
-        let key = (slot, process);
-        let generation = self.model.generations.get_mut(&key).expect("its record");
-        generation.gone = true;
+        }
+        let key = (slot, self.model.current[slot].expect("a stale event's"));
+        self.model.generations.entry(key).or_default().outpost_ended = true;
         let told = self.seam.no_hook(app_of(key));
         self.compare(Expected::default(), told, asks);
         true
     }
 
     /// After an action: the alarm, the pending focus, and that nothing is
-    /// held for a generation whose process has gone and whose readers have
-    /// all returned.
+    /// held for a generation told gone, or whose outpost ended, once its
+    /// thread and readers have gone and nothing waits.
     fn check_state(&mut self) {
         assert_eq!(
             self.seam.alarm(),
@@ -1177,7 +1217,7 @@ impl Run {
             .generations
             .iter()
             .filter(|(_, generation)| {
-                generation.gone
+                (generation.gone || generation.outpost_ended)
                     && generation.thread.is_none()
                     && generation.abandoned.is_empty()
                     && generation.waiting.is_empty()
@@ -1187,7 +1227,7 @@ impl Run {
         for key in spent {
             assert!(
                 !self.seam.held(app_of(key)),
-                "a generation held after its process and readers have gone: {key:?}: {:?}",
+                "a generation held with its outpost or process and its readers gone: {key:?}: {:?}",
                 self.trail
             );
             self.model.generations.remove(&key);
@@ -1203,7 +1243,15 @@ impl Run {
             spawn_fails: false,
         };
         for slot in 0..2u8 {
-            self.act(Action::Exit { slot, outpost: 2 }, plain);
+            let told = true;
+            self.act(
+                Action::Exit {
+                    slot,
+                    outpost: 2,
+                    told,
+                },
+                plain,
+            );
         }
         for _ in 0..1_000 {
             let asking = self.model.generations.iter().find(|(_, generation)| {
@@ -1231,7 +1279,7 @@ impl Run {
                 self.act(action, plain);
                 continue;
             }
-            if let Some(slot) = (0..2).find(|slot| self.model.stale[*slot].is_some()) {
+            if let Some(slot) = (0..2).find(|slot| self.model.unanswered[*slot]) {
                 let slot = u8::try_from(slot).expect("two slots");
                 self.act(Action::NoHook { slot }, plain);
                 continue;
@@ -1366,7 +1414,8 @@ fn generated_cases_keep_the_schedules_rules() {
 /// the earlier test's finds: a push replacing the one event an idle waiter
 /// waited for; an ended application whose last abandoned read returned; and
 /// a failed start in a tick that abandons another application's read after
-/// it, with an idle waiter queued before.
+/// it, with an idle waiter queued before; and last, a stale event after
+/// the supervisor's answer to an earlier one, rejoining that record.
 fn fixed() -> Vec<Vec<(Action, Asks)>> {
     let plain = |action| {
         (
@@ -1394,6 +1443,7 @@ fn fixed() -> Vec<Vec<(Action, Asks)>> {
     let exit = plain(Action::Exit {
         slot: 0,
         outpost: 0,
+        told: true,
     });
     vec![
         vec![
@@ -1401,6 +1451,7 @@ fn fixed() -> Vec<Vec<(Action, Asks)>> {
         ],
         vec![start, focus, exit, focus],
         vec![start, focus, focus, ask, late, ask, focus, late],
+        vec![start, exit, focus, plain(Action::NoHook { slot: 0 }), focus],
         vec![start, menu, waiter, menu],
         vec![
             start,
