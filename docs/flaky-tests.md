@@ -22,10 +22,17 @@ Scenarios: the `windows_terminal_` scenarios generally, for example `windows_ter
 
 ## Windows Terminal's second terminal identity cancels the terminal expected in full
 
-- Scenarios: `windows_terminal_two_windows` (run 41590454080, 2026-11-03); `windows_terminal_editing` (run 42429967492, 2026-11-08), whose opening's terminal focus came under one identity, the second, then the first again, so it was said three times where the opening accepts one repeat.
+- Scenarios: `windows_terminal_two_windows` (run 41590454080, 2026-11-03; run 42492633218, 2026-11-08, the first window's terminal reported as node 1 then node 7, the second identity's "… terminal Administrator: …" said and cancelled where "blank" was expected); `windows_terminal_editing` (run 42429967492, 2026-11-08), whose opening's terminal focus came under one identity, the second, then the first again, so it was said three times where the opening accepts one repeat.
 - How: the second window's focus is raised five times within about 200 ms by Windows Terminal; each "terminal" and "blank" queued behind the slow "… window" utterance cancels the one waiting before it, so the "… terminal" the scenario expects heard in full ends cancelled: "was expected to end Completed, but ended Cancelled".
 - Cause: Windows Terminal raises focus from a second runtime identity ([UIA faults](../books/dev/src/reference/uia-bugs.md), "Windows Terminal raises focus from a second runtime identity"); Verbatim's rule dropping those repeats is not built, and the scenario's tolerance for optional repeats (`SECOND_WINDOW_REPEATS`, `crates/verbatim-e2e/src/scenarios/terminal.rs`) does not cover the expected utterance itself being cancelled. Whether NVDA cuts the earlier utterance the same way needs a capture.
 - Fix: [M5](roadmap.md#m5--extensions-v1), the Terminal built-in's rule for the second terminal identity.
+
+## Settings' page focus never delivered by UI Automation
+
+- `settings_system_page` on GitHub's runner (run 42492633218, 2026-11-08)
+  - How: "Settings" was said for the frame, then nothing for 75 s; "Settings window" was never queued.
+  - Cause: the page's `Windows.UI.Core.CoreWindow` (hwnd 328450, `SystemSettings.exe`) raised two MSAA focus events, which the outpost dropped because UI Automation owns the window, as NVDA drops them; UI Automation delivered no focus event for the page to the listener, whose handler had delivered the frame's focus two seconds before. A focus UI Automation never delivers is lost, as in NVDA ([ADR 0001](../books/dev/src/reference/adr/0001-focus.md), its limits).
+  - Fix: none in Verbatim; passed on GitHub's runner in the two runs before it.
 
 ## Single failures in the first grouped runs (runs 41693694156 and 41697089785, 2026-11-03)
 
