@@ -1327,16 +1327,16 @@ impl<J> Schedule<J> {
             effects.push(ScheduleEffect::LogicError(ABANDONED_UNCHARGED));
             return;
         };
-        let count = charge.abandoned.saturating_add(1);
+        let count = NonZeroUsize::MIN.saturating_add(charge.abandoned);
         let queue = std::mem::take(&mut charge.queue);
         let mut flight = std::mem::take(&mut charge.flight);
         effects.push(ScheduleEffect::Outcome {
             pid: app.pid,
             meta: under_way.meta,
-            judged: Judged::Dropped(abandonment(app, count, reason)),
+            judged: Judged::Dropped(abandonment(app, count.get(), reason)),
         });
         // The one place the count rises: it reaches the limit only here.
-        if count >= ABANDONED_LIMIT {
+        if count.get() >= ABANDONED_LIMIT {
             let waiting = !queue.is_empty();
             match slot {
                 Slot::Running {
@@ -1371,7 +1371,7 @@ impl<J> Schedule<J> {
                 }
             }
         } else if queue.is_empty() {
-            let abandoned = NonZeroUsize::new(count).unwrap_or(NonZeroUsize::MIN);
+            let abandoned = count;
             match slot {
                 Slot::Running {
                     reader,
@@ -1393,7 +1393,7 @@ impl<J> Schedule<J> {
             // A new thread takes what waits.
             let generation = flight.succeed();
             let charge = Charge {
-                abandoned: count,
+                abandoned: count.get(),
                 flight,
                 queue,
             };
