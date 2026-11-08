@@ -1198,16 +1198,47 @@ fn held_key(trace: u64) -> Input {
 
 #[test]
 fn a_caret_key_while_a_report_waits_runs_after_the_command_before_it() {
-    // A command, then a caret key, both while F2 waits: after F2's answer,
-    // the command runs first, then the key, each under its own trace.
-    let mut state = pending();
+    // A command, then a caret key, both while the report of an edit field
+    // waits: after its answer the command runs first, then the key, which
+    // asks the field's caret watch, each under its own trace. Handled at
+    // its arrival, the key would find F0, a button with no caret to watch.
+    let field = || node(4, Role::EditableText, "Notes field");
+    let mut state = in_x();
+    let report = Report::new(A, field(), chain_of_a(), 400).cached(1);
+    let _ = crate::reduce(&mut state, &report.input());
     assert_eq!(heard(&crate::reduce(&mut state, &to_focus(450))), []);
     assert_eq!(heard(&crate::reduce(&mut state, &caret_key(460))), []);
-    let mut answer = Report::new(A, button(4, "Two"), chain_of_a(), 400);
+    let mut answer = Report::new(A, field(), chain_of_a(), 400);
     answer.answers = Some(0);
-    let mut expected = Vec::from(two_spoken());
-    expected.push(Heard::ForKey(450, vec![moved_to("Two")]));
-    assert_eq!(heard(&crate::reduce(&mut state, &answer.input())), expected);
+    let effects = crate::reduce(&mut state, &answer.input());
+    // Each key-tagged effect in order: its trace, and whether it asks the
+    // field's caret watch.
+    let keyed: Vec<(TraceId, bool)> = effects
+        .iter()
+        .filter_map(|effect| match effect {
+            Effect::ForKey(trace, inner) => Some((
+                *trace,
+                matches!(
+                    &**inner,
+                    Effect::Text(verbatim_model::TextRequest {
+                        node_id,
+                        op: verbatim_model::TextOp::AwaitCaret(_),
+                        ..
+                    }) if *node_id == id(A, 4)
+                ),
+            )),
+            _ => None,
+        })
+        .collect();
+    // The move to the field says it, then reads its text.
+    assert_eq!(
+        keyed,
+        [
+            (TraceId::from_raw(450), false),
+            (TraceId::from_raw(450), false),
+            (TraceId::from_raw(460), true)
+        ]
+    );
 }
 
 #[test]

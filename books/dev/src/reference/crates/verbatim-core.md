@@ -863,8 +863,12 @@ application. Any other answer, or the read's deadline passing, passes the
 key on with the hook's time; with no focus whose caret is read, it is
 passed at once.
 
-A held key has one deadline, which Core keeps for the key named in
-`HeldKeys::bounded`: `KEY_AHEAD_BOUND_MS` (100 ms) after the key ahead was
+A held key that reaches Core while focus reports wait joins the focus
+queue first and is taken in its turn, as NVDA runs its caret script in
+its queue (ADR 0001, "One ordered focus queue"); that wait is bounded by
+the live re-read ahead of it, by its reader's moved-on rule and read
+deadline. Once taken, a held key has one deadline, which Core keeps for
+the key named in `HeldKeys::bounded`: `KEY_AHEAD_BOUND_MS` (100 ms) after the key ahead was
 passed on while the key waits for that key's watch, and
 `HELD_READ_BOUND_MS` (150 ms) after its read is asked while the read is
 in flight. `Effect::BoundHeldKey` sets the shell's one slot, or clears it
