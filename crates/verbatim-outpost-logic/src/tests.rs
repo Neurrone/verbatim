@@ -2814,6 +2814,34 @@ fn a_live_re_read_answer_dropped_by_the_outpost_is_answered_gone() {
     assert_eq!(gone(&effects), [7]);
 }
 
+/// Core's live re-read of an MSAA report the user has moved on from, its
+/// window named by its worker, is abandoned by the moved-on rule once its
+/// grace ends and answered gone, so it never holds Core's focus queue to
+/// its deadline.
+#[test]
+fn a_live_re_read_the_user_moved_on_from_is_answered_gone() {
+    let mut replay = Replay::new();
+    let effects = replay.push(
+        Item::Fact(
+            DeliveredFact::MsaaLiveReread {
+                request: 7,
+                trace_id: TraceId::from_raw(3),
+            },
+            None,
+        ),
+        Source::Other,
+        1,
+    );
+    assert_eq!(programs(&effects).len(), 1);
+    // Its worker names its report's window.
+    replay.answers.named = Window::new(0x30);
+    replay.answers.moved_on = true;
+    assert!(!abandons(&replay.tick(400)), "nothing judged in the grace");
+    let effects = replay.tick(501);
+    assert!(abandons(&effects));
+    assert_eq!(gone(&effects), [7]);
+}
+
 /// A live re-read answered by its report is not answered again when its
 /// program is abandoned after sending it.
 #[test]

@@ -2030,7 +2030,12 @@ impl ReducerThread<'_> {
                         self.context.supervisor.live_reread(
                             reread.request,
                             target,
-                            reread.trace_id,
+                            (
+                                reread.trace_id,
+                                reread.window.map_or(0, |window| {
+                                    isize::try_from(window.0).unwrap_or_default()
+                                }),
+                            ),
                         );
                         true
                     }

@@ -224,16 +224,16 @@ fn grow(snapshot: &mut Input, length: usize) {
 /// kept. A field found that is not listed fails the case.
 const ENDED_MAY_REMAIN: &[(&str, &str)] = &[
     (
-        "focus.snapshot.id.outpost",
+        "focus.object.snapshot.id.outpost",
         "the focus keeps its copied data with its ids dead, so a replacement's \
          report of the same focus is taken silently; the next focus taken replaces it",
     ),
     (
-        "focus.ancestors[].id.outpost",
+        "focus.object.ancestors[].id.outpost",
         "the dead focus's ancestors, kept with it for the same comparison",
     ),
     (
-        "focus.spoken.ancestors[][].outpost",
+        "focus.object.spoken.ancestors[][].outpost",
         "what Core last spoke of the dead focus's line, against which the next \
          focus's line says only what changed; the next focus taken replaces it",
     ),
@@ -247,6 +247,12 @@ const ENDED_MAY_REMAIN: &[(&str, &str)] = &[
         "the newest focus observation's stamp, which orders later focus events by \
          time; its generation only exempts that generation's own reports, and an \
          ended one sends none",
+    ),
+    (
+        "focus_stamps[].outpost",
+        "the stale rule's stamps, each a report Core accepted, which order later \
+         focus events by time as the newest does; let go once two newer ordinary \
+         stamps of other generations cover them",
     ),
     (
         "reported_format[].outpost",
@@ -407,7 +413,7 @@ impl Run {
                 if let Some(node) = self
                     .state
                     .focus
-                    .as_ref()
+                    .object()
                     .map(|focus| focus.snapshot.id)
                     .filter(|node| node.number() == 7)
                 {
@@ -771,10 +777,8 @@ impl Run {
         let mut expected = before;
         // Each part of the record is checked above.
         expected.foreground = self.state.foreground.clone();
-        if let (Some(focus), Some(now)) = (expected.focus.as_mut(), self.state.focus.as_ref()) {
-            focus.left = now.left;
-            focus.left_for = now.left_for;
-        }
+        // The change applies to the last queued focus, its left mark.
+        expected.focus.take_changes_of(&self.state.focus);
         assert_eq!(
             expected, self.state,
             "a foreground change: {:?}",
@@ -789,7 +793,7 @@ impl Run {
         if self
             .state
             .focus
-            .as_ref()
+            .object()
             .is_some_and(|focus| focus.alive && focus.snapshot.id.outpost() == outpost)
         {
             self.reach("a focus dead with its outpost");
@@ -829,7 +833,7 @@ impl Run {
         assert!(
             state
                 .focus
-                .as_ref()
+                .object()
                 .is_none_or(|focus| focus.snapshot.id.outpost() != outpost || !focus.alive),
             "{trail:?}"
         );
@@ -986,12 +990,12 @@ impl Run {
             } => Some(node.id),
             _ => None,
         };
-        let taken = focused.is_some() && state.focus != before.focus;
+        let taken = focused.is_some() && state.focus.object() != before.focus.object();
         if let Some(node) = focused {
             if taken {
-                let focus = state.focus.as_ref().expect("a focus taken");
+                let focus = state.focus.object().expect("a focus taken");
                 assert!(
-                    focus.snapshot.id == node && focus.alive && !focus.left,
+                    focus.snapshot.id == node && focus.alive && state.focus.applied_unmarked(),
                     "a focus taken: {trail}"
                 );
                 *self.reached.entry("a focus taken").or_default() += 1;
@@ -1002,7 +1006,7 @@ impl Run {
         }
         // The focus is left only at a foreground change, and back only
         // when a focus is taken.
-        let left = |state: &SrState| state.focus.as_ref().is_some_and(|focus| focus.left);
+        let left = |state: &SrState| state.focus.last_left();
         if !left(&before) && left(state) {
             assert!(
                 matches!(input, Input::Foreground(_)),

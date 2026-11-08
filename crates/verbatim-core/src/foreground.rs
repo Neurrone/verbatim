@@ -78,7 +78,7 @@ impl Front {
 }
 
 /// A focus observation by which a focus from another outpost generation is
-/// ordered ([`Foreground::latest_focus`]).
+/// ordered, an ordering stamp ([`Foreground::stale`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct LatestFocus {
     /// The outpost generation that reported it.
@@ -87,6 +87,34 @@ pub(crate) struct LatestFocus {
     pub(crate) observed_at_us: u64,
     /// Its top-level window, when known.
     pub(crate) top_level: Option<WindowHandle>,
+    /// Whether it was a whole-window report.
+    #[serde(default)]
+    pub(crate) whole_window: bool,
+}
+
+impl LatestFocus {
+    /// Whether this stamp makes a focus from `outpost`, observed at
+    /// `observed_at_us`, in the top-level window `top_level`, stale: from
+    /// another generation and observed after it, unless it is a
+    /// whole-window report of that focus's own top-level window.
+    fn makes_stale(
+        &self,
+        outpost: OutpostId,
+        observed_at_us: u64,
+        top_level: Option<WindowHandle>,
+    ) -> bool {
+        self.outpost != outpost
+            && self.observed_after(observed_at_us)
+            && !(self.whole_window && top_level.is_some() && self.top_level == top_level)
+    }
+
+    /// Whether `other` makes stale every focus this one does: from the same
+    /// generation, observed no earlier, and no more exempt.
+    fn covered_by(&self, other: &Self) -> bool {
+        other.outpost == self.outpost
+            && other.observed_at_us >= self.observed_at_us
+            && (!other.whole_window || (self.whole_window && other.top_level == self.top_level))
+    }
 }
 
 impl LatestFocus {
@@ -122,6 +150,10 @@ struct Stored {
     entered: Option<WindowHandle>,
     #[serde(default)]
     latest_focus: Option<LatestFocus>,
+    /// Absent in a dump written before the stamps were kept as a set,
+    /// where `latest_focus` was the one stamp.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    focus_stamps: Vec<LatestFocus>,
     /// Absent in a dump written before the stamps were split, where the
     /// one stamp stood for both.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -149,8 +181,8 @@ pub(crate) enum ForegroundFact {
     /// A focus taken cut speech off for a new foreground window, observed
     /// at this time.
     LineCut(u64),
-    /// A focus observation passed the stale and foreground tests: the
-    /// ordering stamp, whether or not the focus is then taken.
+    /// A focus report was accepted into Core's order: an ordering stamp,
+    /// whatever is then decided of it.
     Observed(LatestFocus),
     /// A focus observed at this time was taken: the applied stamp.
     Applied(u64),
@@ -166,7 +198,7 @@ pub(crate) struct Foreground {
     window: Option<ForegroundWindow>,
     front: Option<Front>,
     entered: Option<WindowHandle>,
-    latest_focus: Option<LatestFocus>,
+    stamps: Vec<LatestFocus>,
     applied_at: Option<u64>,
 }
 
@@ -183,7 +215,11 @@ impl From<Stored> for Foreground {
             window: stored.foreground_window,
             front: stored.front,
             entered: stored.entered,
-            latest_focus: stored.latest_focus,
+            stamps: if stored.focus_stamps.is_empty() {
+                stored.latest_focus.into_iter().collect()
+            } else {
+                stored.focus_stamps
+            },
             applied_at,
         }
     }
@@ -191,6 +227,7 @@ impl From<Stored> for Foreground {
 
 impl From<Foreground> for Stored {
     fn from(record: Foreground) -> Self {
+        let latest_focus = record.latest_focus();
         Self {
             attention: record.attention,
             foreground: record.object,
@@ -198,7 +235,8 @@ impl From<Foreground> for Stored {
             foreground_window: record.window,
             front: record.front,
             entered: record.entered,
-            latest_focus: record.latest_focus,
+            latest_focus,
+            focus_stamps: record.stamps,
             applied_focus: Some(AppliedStamp {
                 observed_at_us: record.applied_at,
             }),
@@ -234,7 +272,18 @@ impl Foreground {
                 self.object = object;
             }
             ForegroundFact::LineCut(at) => self.changed_at = Some(at),
-            ForegroundFact::Observed(latest) => self.latest_focus = Some(latest),
+            ForegroundFact::Observed(stamp) => {
+                // A stamp no focus can be stale by alone is let go: one
+                // another stamp covers, or one older than the floor, since
+                // no focus Core can still accept was observed before it.
+                self.stamps.retain(|kept| !kept.covered_by(&stamp));
+                if !self.stamps.iter().any(|kept| stamp.covered_by(kept)) {
+                    self.stamps.push(stamp);
+                }
+                if let Some(floor) = self.stale_floor() {
+                    self.stamps.retain(|kept| kept.observed_at_us >= floor);
+                }
+            }
             ForegroundFact::Applied(at) => self.applied_at = Some(at),
         }
     }
@@ -283,14 +332,47 @@ impl Foreground {
         self.entered
     }
 
-    /// The ordering stamp: the newest focus observation that passed the
-    /// stale and foreground tests, taken, a duplicate, or a refused
-    /// foreground report. Each outpost keeps its own events in order, but
-    /// two outpost generations can deliver theirs out of the order they
-    /// were observed in, where NVDA handles every event in one queue; a
-    /// focus from another generation observed before this one is stale.
+    /// The newest ordering stamp: the newest observation of a focus report
+    /// Core accepted into its order.
     pub(crate) fn latest_focus(&self) -> Option<LatestFocus> {
-        self.latest_focus
+        self.stamps
+            .iter()
+            .copied()
+            .max_by_key(|stamp| stamp.observed_at_us)
+    }
+
+    /// The observation before which no focus Core receives from now on can
+    /// be accepted: the newest stamp of an ordinary report. A focus of its
+    /// generation reaches Core after it in the order observed, since each
+    /// outpost generation's reports reach Core in that order (the marker
+    /// holds an application's events behind its listener read), and a
+    /// focus of another observed before it is stale by it, which no window
+    /// exempts.
+    pub(crate) fn stale_floor(&self) -> Option<u64> {
+        self.stamps
+            .iter()
+            .filter(|stamp| !stamp.whole_window)
+            .map(|stamp| stamp.observed_at_us)
+            .max()
+    }
+
+    /// Whether a focus from `outpost`, observed at `observed_at_us`, in the
+    /// top-level window `top_level`, is stale: an ordering stamp, the
+    /// observation of a report Core accepted into its order, from another
+    /// generation was observed after it, unless that stamp is a whole-window
+    /// report of the focus's own top-level window. Each outpost keeps its
+    /// own events in order, but two outpost generations can deliver theirs
+    /// out of the order they were observed in, where NVDA handles every
+    /// event in one queue.
+    pub(crate) fn stale(
+        &self,
+        outpost: OutpostId,
+        observed_at_us: u64,
+        top_level: Option<WindowHandle>,
+    ) -> bool {
+        self.stamps
+            .iter()
+            .any(|stamp| stamp.makes_stale(outpost, observed_at_us, top_level))
     }
 
     /// The applied stamp: when the newest focus taken was observed, which
@@ -414,6 +496,7 @@ mod tests {
             outpost: OutpostId(1),
             observed_at_us: 2_000,
             top_level: None,
+            whole_window: false,
         };
         let mut record = Foreground::default();
         record.apply(ForegroundFact::Applied(1_000));
@@ -452,6 +535,7 @@ mod tests {
             outpost: OutpostId(1),
             observed_at_us: 9,
             top_level: None,
+            whole_window: false,
         }));
         let again: Foreground =
             serde_json::from_str(&serde_json::to_string(&record).expect("serializes"))

@@ -239,13 +239,11 @@ fn preview_speech(trace_id: TraceId, segments: &[UtteranceSegment]) -> Vec<Effec
 /// observed since then has been applied, the application in front is asked
 /// for its focus, as NVDA's fake focus is queued when no focus event was
 /// validly processed with the end; a focus fact dropped or unreadable does
-/// not skip it (`docs/parity/backends.md`). A report set aside for a
-/// pending live re-read counts as applied, since its answer is the focus
-/// it read.
+/// not skip it (`docs/parity/backends.md`). An end that reaches Core while
+/// focus reports wait is judged once they are decided, in its turn in the
+/// focus queue, so a report that ended unanswered counts for nothing.
 fn menu_or_switch_ended(state: &SrState, ended_at_us: u64) -> Vec<Effect> {
-    let applied = state
-        .latest_focus_observed_at()
-        .max(state.live_rereads.latest_observed_at());
+    let applied = state.latest_focus_observed_at();
     if applied.is_some_and(|observed| observed >= ended_at_us) {
         Vec::new()
     } else {

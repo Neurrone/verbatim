@@ -227,7 +227,7 @@ impl SaidItem {
 pub(crate) fn terminal_focus(state: &SrState) -> Option<NodeId> {
     state
         .focus
-        .as_ref()
+        .object()
         .filter(|focus| focus.alive && focus.snapshot.role == verbatim_model::Role::Terminal)
         .map(|focus| focus.snapshot.id)
 }
@@ -973,12 +973,12 @@ fn output_utterance(
         segments,
         source: state
             .focus
-            .as_ref()
+            .object()
             .map(|focus| crate::reduce::source_of(&focus.snapshot)),
         say_all: false,
         validity: state
             .focus
-            .as_ref()
+            .object()
             .map(|focus| focus.snapshot.id)
             .map(|node| FocusValidity {
                 node,
@@ -1218,7 +1218,7 @@ pub(crate) fn focus_moved(state: &mut SrState, node: NodeId, left: bool) {
     if left
         || state
             .focus
-            .as_ref()
+            .object()
             .is_none_or(|focus| focus.snapshot.id != node)
     {
         state.terminal = TerminalSpeechState::default();
@@ -1275,7 +1275,7 @@ pub(crate) fn toggle(state: &mut SrState, trace_id: TraceId) -> Vec<Effect> {
 fn focus_window(state: &SrState, node: NodeId) -> Option<verbatim_model::WindowIdentity> {
     state
         .focus
-        .as_ref()
+        .object()
         .filter(|focus| focus.snapshot.id == node)
         .and_then(|focus| verbatim_model::WindowIdentity::of(&focus.snapshot))
 }

@@ -349,8 +349,18 @@ a window, with the title check and the live re-read").
   14.0 ms. A return with a live re-read is therefore no faster than one
   walked live: the ancestry cache saves calls only on moves within a
   window.
-- Memory: one pending live re-read per focus reader in Core, and the
-  window texts saved with each ancestry cache.
+- Memory: at most one live re-read waiting in Core, at the focus queue's
+  front, and the window texts saved with each ancestry cache.
+- The focus queue behind a live re-read has no cap (ADR 0001, "One
+  ordered focus queue"): it holds what the applications raise while the
+  re-read waits, bounded in time by the reader's read deadline, 13
+  seconds, and by the moved-on rule, which answers the re-read gone from
+  half a second after it starts once the user is in another thread's
+  window. Executing a backlog takes one input: 1,000 reports behind one
+  re-read, median 1.4 ms and at most 1.7 ms over 20 runs, about 1.5
+  microseconds a report; 100, median 0.19 ms; 10, median 0.02 ms (release
+  build, a scratch measurement of `reduce` on 2026-11-08). Each report
+  overtaken is spoken and expires in the speech manager, as in NVDA.
 
 ### The listener's reads in a window the outpost judges MSAA
 

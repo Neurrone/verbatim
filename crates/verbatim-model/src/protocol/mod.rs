@@ -882,6 +882,10 @@ pub enum CoreToListener {
         application: Pid,
         /// The report's trace.
         trace_id: TraceId,
+        /// The report's top-level window, by which the reading thread's
+        /// moved-on rule judges the re-read; 0 for none.
+        #[serde(default)]
+        window: isize,
     },
 }
 

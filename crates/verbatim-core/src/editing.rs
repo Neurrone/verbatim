@@ -133,7 +133,7 @@ pub(crate) fn caret_key(state: &mut SrState, key: CaretKey, pressed_at_ms: u64) 
     if !selects(key) && key.motion != CaretMotion::Other {
         state.typed_word.clear();
     }
-    let Some(focus) = state.focus.as_ref().filter(|focus| focus.alive) else {
+    let Some(focus) = state.focus.object().filter(|focus| focus.alive) else {
         return effects;
     };
     let node = focus.snapshot.id;
@@ -246,7 +246,7 @@ fn supersede_caret(state: &mut SrState, node: NodeId) -> Vec<UtteranceSegment> {
 /// The focus whose caret keys are watched for evidence: alive, with a
 /// caret Core knows or a role that may have text ([`caret_key`]'s test).
 pub(crate) fn text_focus(state: &SrState) -> Option<NodeId> {
-    let focus = state.focus.as_ref().filter(|focus| focus.alive)?;
+    let focus = state.focus.object().filter(|focus| focus.alive)?;
     let node = focus.snapshot.id;
     let known = state.caret.as_ref().is_some_and(|caret| caret.node == node);
     (known || may_have_text(focus.snapshot.role)).then_some(node)
@@ -757,7 +757,7 @@ pub(crate) fn caret_reply(
     }
     let Some(focus) = state
         .focus
-        .as_ref()
+        .object()
         .filter(|focus| focus.alive && focus.snapshot.id == pending.node)
     else {
         return Vec::new();
@@ -1433,7 +1433,7 @@ fn selected_segments(text: String) -> Option<Vec<UtteranceSegment>> {
 fn focus_value(state: &SrState, trace_id: TraceId, node: NodeId) -> Vec<Effect> {
     let Some(value) = state
         .focus
-        .as_ref()
+        .object()
         .and_then(|focus| focus.snapshot.value.clone())
         .filter(|value| !value.is_empty())
     else {
@@ -1460,7 +1460,7 @@ fn caret_line(state: &mut SrState, node: NodeId) -> Option<Vec<UtteranceSegment>
     let caret = state.caret.as_ref().filter(|caret| caret.node == node)?;
     let grid = state
         .focus
-        .as_ref()
+        .object()
         .is_some_and(|focus| is_grid(focus.snapshot.role));
     let mut reported = reported_format(state, node);
     let segments = line_segments(&caret.line, grid, &mut reported);
@@ -1606,7 +1606,7 @@ pub(crate) fn navigator_text_reply(
     let navigator = state.navigator.as_ref().map(|navigator| &navigator.object);
     let focus = state
         .focus
-        .as_ref()
+        .object()
         .filter(|focus| focus.alive)
         .map(|focus| &focus.snapshot);
     let carried = pending.about.as_deref();
@@ -1712,7 +1712,7 @@ fn focus_speech(
 ) -> Vec<Effect> {
     let Some(focus) = state
         .focus
-        .as_ref()
+        .object()
         .filter(|focus| focus.alive && focus.snapshot.id == node)
     else {
         return Vec::new();
@@ -1757,7 +1757,7 @@ pub(crate) fn later_key(state: &mut SrState, at_ms: u64) {
 pub(crate) fn clearing_key(state: &mut SrState) {
     let terminal = state
         .focus
-        .as_ref()
+        .object()
         .is_some_and(|focus| focus.alive && focus.snapshot.role == Role::Terminal);
     if terminal {
         state.typed_word.clear();
@@ -1775,7 +1775,7 @@ pub(crate) fn character_typed(state: &mut SrState, trace_id: TraceId, typed: &st
     // A caret key still watched is not answered by the caret the typing
     // moves: the typing's key press has marked it (`later_key`), so its
     // answer only keeps the caret current.
-    let Some(focus) = state.focus.as_ref().filter(|focus| focus.alive) else {
+    let Some(focus) = state.focus.object().filter(|focus| focus.alive) else {
         return effects;
     };
     if focus.snapshot.role == Role::Terminal {
@@ -1796,7 +1796,7 @@ pub(crate) fn character_typed(state: &mut SrState, trace_id: TraceId, typed: &st
 /// Echoes typed text by the settings: a finished word first, when word echo
 /// is on and the text ends one, then the characters.
 pub(crate) fn echo(state: &mut SrState, trace_id: TraceId, typed: &str) -> Vec<Effect> {
-    let Some(focus) = state.focus.as_ref().filter(|focus| focus.alive) else {
+    let Some(focus) = state.focus.object().filter(|focus| focus.alive) else {
         return Vec::new();
     };
     let editable = is_editable(&focus.snapshot);

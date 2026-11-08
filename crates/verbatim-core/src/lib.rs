@@ -54,6 +54,7 @@ mod desktop;
 pub mod dump;
 mod editing;
 pub mod flight_recorder;
+mod focus_queue;
 pub mod focus_rules;
 mod foreground;
 mod keys;

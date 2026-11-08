@@ -617,7 +617,7 @@ fn nodes_held(state: &SrState) -> BTreeMap<OutpostId, std::collections::BTreeSet
     let mut insert = |id: NodeId| {
         held.entry(id.outpost()).or_default().insert(id);
     };
-    if let Some(focus) = state.focus.as_ref().filter(|focus| focus.alive) {
+    if let Some(focus) = state.focus.object().filter(|focus| focus.alive) {
         insert(focus.snapshot.id);
         focus
             .ancestors

@@ -902,14 +902,21 @@ impl Supervisor {
     /// ([`CoreToListener::LiveReread`]), behind every command sent to it
     /// before, never dropped; held while a listener is launching, and
     /// nothing with none, since Core ends the live re-reads asked of a
-    /// listener at its replacement.
-    pub fn live_reread(&self, request: u64, application: Pid, trace_id: verbatim_model::TraceId) {
+    /// listener at its replacement. `window` is the report's top-level
+    /// window, by which the moved-on rule judges the re-read, 0 for none.
+    pub fn live_reread(
+        &self,
+        request: u64,
+        application: Pid,
+        (trace_id, window): (verbatim_model::TraceId, isize),
+    ) {
         let _ = self
             .owner
             .send(owner::OwnerEvent::LiveReread(CoreToListener::LiveReread {
                 request,
                 application,
                 trace_id,
+                window,
             }));
     }
 

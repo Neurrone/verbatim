@@ -458,13 +458,17 @@ code is in `reduce.rs` unless named.
   came to the foreground, the only one, applied at one point
   (`foreground_changed`). It gives the keyboard hook's view and, unless
   the window is one of Verbatim's own, attention, its process and window,
-  and the record's front, its window, root owner and stamp. When its
-  window is neither the top-level window of Core's focus nor the entered
-  window, its root owner is not that focus's root owner, and it was
-  observed after the ordering stamp, Core's focus is marked left
-  (`FocusContext::left`). It speaks nothing, cuts nothing, sets no
-  ordering stamp, and changes no node, focus group or navigator.
-- A left focus reported again is taken as a focus from another top-level
+  and the record's front, its window, root owner and stamp. It applies
+  to the last queued focus (below), the left mark's one home: Core keeps
+  the change with that focus (`focus_queue::Change`), and a report Core
+  judges after it, observed after it, finds that focus left for the
+  change's window when the window is neither its top-level window nor of
+  its root owner. A change observed before the last queued focus but
+  reaching Core after it applies too, to the reports judged after it
+  (Dickson's limit); a report already judged keeps its verdict. It speaks
+  nothing, cuts nothing, sets no ordering stamp, and changes no node,
+  focus group or navigator.
+- A report judged left is executed as a focus from another top-level
   window is: no duplicate, a whole-window focus of its window is not
   refused, a replacement outpost's report is not taken silently, its line
   meets the previous line only at the desktop with speech cut, its spoken
@@ -472,7 +476,8 @@ code is in `reduce.rs` unless named.
   forgotten, and the terminal model is blurred and focused anew, so the
   return from an application that never answered says, and leaves, what
   the same switch with no stall does (`tests/foreground.rs` compares both
-  the speech and the whole state).
+  the speech and the whole state). A report from the window the focus was
+  left for is not judged left, so the two lines are compared as they are.
 - Event acceptance (`books/dev/src/explanation/architecture.md`, section 2, "Attention and
   acceptance (D14)"; `docs/parity/focus-events.md`, "Event acceptance").
   The state keeps an attention record, the application and window of the
@@ -495,13 +500,14 @@ code is in `reduce.rs` unless named.
   switching applications"). A whole-window focus (`whole_window`), an
   outpost's report of a foreground change into a window it reads through
   MSAA or a held UIA application's title, makes its window the foreground
-  object and is refused when Core's focus is in its top-level window and
-  not left (handles, since node ids differ between outposts); a nameless
+  object and is refused when the last queued focus is in its top-level
+  window and the report is not judged left (handles, since node ids
+  differ between outposts); a nameless
   one is taken silently. It never moves attention. The title rule
   (`enter_window`, `window_title`): a focus Core takes whose top-level
   window is the foreground window it was published with
   (`WindowFacts::foreground_window`), when that window is not the entered
-  window or Core's focus was left, enters it, making its chain's
+  window or the report is judged left, enters it, making its chain's
   outermost entry the foreground object, and says the window's own entry,
   the outermost with its handle, with a whole-window focus's words, after
   the cut and before the other entered containers, unless its line
@@ -517,11 +523,14 @@ code is in `reduce.rs` unless named.
   read through accessors. It holds the attention record, the front, the
   entered window, the foreground object, the time of the newest
   foreground change, the listener's foreground window for the hook, and
-  two stamps: the ordering stamp (`latest_focus`), written for every
-  attended focus observation, taken, a duplicate or a refused
-  whole-window focus, which the stale rule and the left mark read; and the
-  applied stamp, written only for a focus taken, which a menu's end
-  reads. `SrState` flattens it into the keys it held before, and a dump
+  the stamps: the ordering stamps (`focus_stamps`, the newest also as
+  `latest_focus`), the observation of each report Core accepted into its
+  order, taken, waiting for a live re-read, a duplicate or a refused
+  whole-window focus, with its generation, window and whether it was a
+  whole-window report, which the stale rule reads, kept while a report
+  Core can still accept could be stale by them (`Foreground::stale_floor`,
+  the newest ordinary stamp); and the applied stamp, written only for a
+  focus executed, which a menu's end reads. `SrState` flattens it into the keys it held before, and a dump
   without the applied stamp takes the ordering stamp for it.
 - Repeats and staleness (`docs/parity/focus-events.md`, "Duplicate focus
   suppression" and "Stale focus events"). A focus is judged in this
@@ -529,12 +538,47 @@ code is in `reduce.rs` unless named.
   dropped (`FocusGroup`, keyed by the report's outpost generation and the
   group's number); an application's rule; the stale rule, which drops a
   focus from another outpost generation observed before the ordering
-  stamp (`observed_at_us`, a tie being no earlier); the front test
-  (`classify`); then the ordering stamp is written, and a focus that
-  `repeats_focus` judges a repeat, unless Core's focus was left, is
-  dropped, its newer reading kept
-  unspoken; what Core last spoke of the focus is left as it was, so a
-  change the repeat carried in is spoken when its event comes.
+  stamps (`Foreground::stale`, `observed_at_us`, a tie being no
+  earlier), one that a whole-window report of the focus's own top-level
+  window set left out; two ordinary reports of one window shared by two
+  processes, a frame and its content, follow the rule against each other;
+  the front test (`classify`); then its ordering stamp is written, and
+  once it reaches the queue's front it is judged against the last queued
+  focus: a
+  whole-window focus of its window is refused, and a focus that
+  `repeats_focus` judges a repeat of it, unless the report is judged left
+  or reached Core while the last queued focus still waited for its live
+  re-read, is dropped, its newer reading kept unspoken on the focus object
+  when it is the duplicate's node (`keep_duplicate`: its node and the
+  ancestors it read live, matched as the lines are joined); what Core last spoke of
+  the focus is left as it was, so a change the repeat carried in is
+  spoken when its event comes. A focus dropped by the stale rule is never
+  queued, so the events around it are judged as if it had not happened:
+  focuses A, B, A from two generations in two top-level windows, reaching
+  Core as A, the repeat of A, then B, say nothing after the first A and
+  end on A, where NVDA says B then A.
+- The focus queue (`focus_queue.rs`;
+  [ADR 0001: Focus](../adr/0001-focus.md), "One ordered focus queue"):
+  `FocusState` holds the focus object, the focus last executed, which
+  commands, text, review and held nodes act on; the last queued focus,
+  the newest report decided (`Last`): nothing yet, the focus object
+  (`Executed`), or a report that ended unanswered, never spoken
+  (`Unanswered`); the queue of what is not yet decided (`Queued`): focus
+  reports, and the key commands, scripts and menu or switcher ends that
+  reached Core while reports waited, handled in their turn
+  (`reduce::waited_input`); and the foreground changes that can still
+  apply to a report. Each report is queued as an `Entry` as it reaches Core,
+  `Pending`, and decided at the queue's front (`reduce::run_queue`,
+  `reduce::decide_report`), every report ahead of it decided: judged,
+  planned against the focus object and executed, so its speech expires as
+  NVDA's speech manager expires a focus overtaken, or set aside for its
+  live re-read (`EntryState::Rereading`), which holds every report behind
+  it, in the order they reached Core; once answered it is executed
+  (`Answered`), or it ends unanswered and is the last queued focus
+  (`Unanswered`). The queue counts the inputs it orders, reports,
+  foreground changes and the endings of live re-reads, to know which
+  change reached Core before which report and whether a repeat came while
+  a wait was open; the count starts again whenever nothing waits.
 - Background speech across a foreground change
   ([ADR 0001: Focus](../adr/0001-focus.md), "One input to Core, in
   arrival order"): a background event
@@ -586,10 +630,13 @@ code is in `reduce.rs` unless named.
   otherwise.
 - Outpost replacement (`docs/parity/focus-events.md`, "Recovery after an
   outpost is replaced"). Node ids carry the outpost generation. On
-  `Input::OutpostEnded` the focus is marked dead and a navigator or
-  pending navigation there is cleared; a later focus matching the kept
-  copy (role, name, value, states, ancestors' names and roles) takes its
-  new ids silently.
+  `Input::OutpostEnded` the focus and the waiting reports of that
+  generation are marked dead, the reports waiting for its readers' live
+  re-reads end unanswered and the queue runs on, and a navigator or
+  pending navigation there is cleared; a later focus of another
+  generation matching the kept copy (role, name, value, states, ancestors'
+  names and roles), not judged left, takes its new ids silently, and one
+  judged left is announced.
 
 ## The ancestry cache
 
@@ -610,41 +657,52 @@ written, the report joined to Core's focus ancestry
 (`focus_rules::lowest_common_ancestor`), the entry the title rule would
 speak, and `focus_rules::needs_live_ancestry`: whether a cached ancestor
 would be spoken, as entered (below the lowest common ancestor) or as the
-title. A report that would is set aside: its focus group's rank is
-recorded as taken, nothing else is written, not even the ordering stamp,
-and `Effect::LiveReread` asks its focus reader to read the same element
-again with no cache, carrying what the shell logs (the focus, the cache
-join, the lowest common ancestor and the reason). The answer is a report
-carrying `answers`, applied as an ordinary report; it never needs another
-live re-read. A duplicate report keeps the newer reading of its live
-ancestors only, never of its cached ones.
+title. The line it is joined to is the focus object's, since the plan is
+made only when the report reaches the queue's front. A report that would
+speak a cached ancestor waits at the front for a live re-read, asked with
+the input that let Core decide it, unless its outpost generation has
+ended by then, when no re-read is asked and it ends unanswered, the last
+queued focus, unspoken. Otherwise its focus group's rank is recorded
+as taken, and `Effect::LiveReread` asks its focus reader to read the same
+element again with no cache, carrying what the shell logs (the focus, the
+cache join, the lowest common ancestor and the reason). The answer is a
+report carrying `answers`, its reading and names replacing the report's,
+executed in its turn with the report's verdict; it is judged by no rule
+the report passed, and never needs another live re-read. A duplicate
+report keeps the newer reading of its live ancestors only, never of its
+cached ones; a window above its reader's process boundary, described from
+Windows' state, is always live. A window entry is matched by its handle,
+as the lines are joined.
 
-`live_reread.rs` holds one pending live re-read per focus reader (outpost
-generation and kind), counted in `SrState::live_re_reads`, which the
-control protocol's status reply carries. A pending live re-read ends on
-one path: its answer; its answer of gone (`Input::LiveRereadGone`); a
-focus applied that was observed at or after its report, so an older
-report's answer applied leaves a newer report's live re-read waiting (a
-focus of unknown time ends every one); a newer live re-read for the same
-focus reader,
-which replaces it; its outpost generation's end; or, for the listener's,
-`Input::ListenerReplaced`. An answer to one no longer pending says
-nothing. A pending live re-read counts as work in flight for the idle
-barrier and as an applied focus for the fake focus's skip rule. A repeat
-of its element while it waits is no duplicate: it is judged as a new
-report, so it asks a newer live re-read under its own trace or is taken,
-because a focus reader answers a live re-read only for the read it holds
-last, and the repeat replaced it. An answer whose window
-the user has left by the time it arrives is refused by the foreground test,
-as any report of the window left is. The shell routes the live re-read to
+`live_reread.rs` ends the waiting reports. Live re-reads are counted in
+`SrState::live_re_reads`, which the control protocol's status reply
+carries. A waiting report ends on one path: its answer, executed in its
+turn, or refused by the foreground test when its window has been left;
+its answer of gone (`Input::LiveRereadGone`); its outpost generation's
+end; or, for the listener's, `Input::ListenerReplaced`. One that ends
+unanswered is never spoken and stays the last queued focus, which the
+next report is judged against, while that report's speech is executed
+against the focus spoken before it. An answer to a report no longer
+waiting says nothing. The waiting reports count as work in flight for the
+idle barrier and as applied focuses for the fake focus's skip rule. A
+repeat of its element that reaches Core while it waits is no duplicate
+of it: it is decided as a new report when the wait ends, asking its own
+live re-read or not, because a focus reader answers a live re-read only
+for the read it holds last, and the repeat replaced it. The shell routes the live re-read to
 the listener through the supervisor (`CoreToListener::LiveReread`) or to
 the outpost (`CoreToOutpost::LiveReread`), and answers it gone at once
 when it cannot be sent. Tests: `live_reread/tests.rs`, and the generated
-test `live_reread/generated.rs`, which compares Core with a reference
-model of NVDA's focus ancestry over a world whose names and titles change
-while the user is away, its focus readers answering as the real ones do,
+test `live_reread/generated.rs`, which compares what Core's speech queue
+holds and its focus object with a reference model of NVDA's one focus
+queue, taking the reports in the order they reach Core, with Verbatim's
+recorded decisions and limits, over a generated world of MSAA and UI
+Automation windows, some owned across processes and some shared by a
+frame and its content, whose names and
+titles change while the user is away, with repeated focuses, foreground
+changes with no focus, focuses before their foreground change and
+reports delivered late, its focus readers answering as the real ones do,
 and checks that no live re-read is answered gone for a repeat of its
-element.
+element while its window is in front.
 
 ## Object navigation and review
 
@@ -747,8 +805,8 @@ announcement after its timer is heard; it never waits behind a held key,
 since NVDA starts that timer when the key is pressed, outside its script
 queue. `MenuOrSwitchEnded` asks for the
 foreground application's focus (`Effect::ReadFocus(FocusPurpose::Fake)`,
-NVDA's fake focus) unless a focus observed since has been applied, or a
-report set aside for a pending live re-read
+NVDA's fake focus) unless a focus observed since has been applied, or is
+waiting in the focus queue
 (`docs/parity/backends.md`). A focus query's answer is marked with its
 purpose (`Input::Event::purpose`), which decides the duplicate rule
 (`reduce::duplicate_rule_applies`): a fake focus's answer is judged only

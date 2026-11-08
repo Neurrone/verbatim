@@ -83,7 +83,7 @@ pub(crate) fn start(
         .or_else(|| {
             state
                 .focus
-                .as_ref()
+                .object()
                 .filter(|focus| focus.snapshot.id == node)
                 .map(|focus| focus.snapshot.role)
         })

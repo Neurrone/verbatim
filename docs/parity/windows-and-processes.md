@@ -19,10 +19,15 @@ own process, where a remote operation's walk ends, the classic way,
 until the top-level window, and the outpost reads the frame through its
 own API, so the frame is an entered ancestor of the page's focus and is
 announced with it whichever outpost is quicker; a foreground report for
-the frame that comes before the focus is announced, and the page's
-focus does not announce the frame again, since both nodes carry the same
-window. **matched (unverified)** (a reducer
-test feeding both orders). A console window is one application, as
+the frame that comes before the focus is announced, and the page's focus
+does not announce the frame again, since both nodes carry the same
+window, and the frame's foreground report does not make the page's focus
+stale. **matched (unverified)** (a reducer test feeding both orders).
+Two ordinary focus reports in the window, a frame control's and the
+page's, follow the stale rule against each other, so one observed before
+the other but reaching Core after it is not spoken, where NVDA speaks it
+(Dickson, 2026-11-08, ADR 0001, "One input to Core, in arrival order").
+**differs**. A console window is one application, as
 "Console windows" says.
 
 ### Content hosted in another process's window

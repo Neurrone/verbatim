@@ -965,8 +965,9 @@ pub(crate) enum UiaJob {
         Option<DeliveredFact>,
     ),
     /// Core's live re-read `request`, of the read traced by the job's
-    /// trace ([`FocusReader::live_reread`]).
-    LiveReread(u64),
+    /// trace ([`FocusReader::live_reread`]), and its report's top-level
+    /// window, 0 for none.
+    LiveReread(u64, isize),
     /// The desktop window's name change at its address, whose MSAA name is
     /// the virtual desktop's, read on csrss's reading thread, answered to
     /// `name`: dropped unanswered, as when the read is abandoned, nothing is
@@ -1003,7 +1004,7 @@ impl Reading for UiaFocusReading {
         };
         let (element, kind, fact) = match job {
             UiaJob::Event(element, _, _, kind, fact) => (element, kind, fact),
-            UiaJob::LiveReread(request) => return reader.live_reread(request, meta.trace),
+            UiaJob::LiveReread(request, _) => return reader.live_reread(request, meta.trace),
             UiaJob::DesktopName((hwnd, id_object, id_child), name) => {
                 if let Some(read) = (self.desktop_name)(hwnd, id_object, id_child) {
                     name.answer(read);
@@ -1029,11 +1030,16 @@ impl Reading for UiaFocusReading {
     /// selection's or a notification's check, which NVDA makes on UIA's
     /// callback thread, whose calls its watchdog never cancels
     /// (`docs/parity/focus-events.md`, "A slow read the user has moved on
-    /// from").
+    /// from"). A live re-read is judged by its report's top-level window,
+    /// as the read it repeats was, so that a slow one the user has moved on
+    /// from ends answered gone instead of holding Core's focus queue.
     fn window(&self, job: &Self::Job) -> Option<isize> {
         match job {
             UiaJob::Event(_, hwnd, _, FocusEvent::Focus | FocusEvent::MenuOpened, _) => Some(*hwnd),
-            UiaJob::Event(..) | UiaJob::LiveReread(_) | UiaJob::DesktopName(..) => None,
+            // No lookup learns a re-read's window later: with none it is
+            // judged by its deadline alone.
+            UiaJob::LiveReread(_, hwnd) => (*hwnd != 0).then_some(*hwnd),
+            UiaJob::Event(..) | UiaJob::DesktopName(..) => None,
         }
     }
 
@@ -1048,7 +1054,7 @@ impl Reading for UiaFocusReading {
     fn kind(&self, job: &Self::Job) -> FocusEvent {
         match job {
             UiaJob::Event(_, _, _, kind, _) => *kind,
-            UiaJob::LiveReread(_) => FocusEvent::LiveReread,
+            UiaJob::LiveReread(..) => FocusEvent::LiveReread,
             UiaJob::DesktopName(..) => FocusEvent::DesktopName,
         }
     }
@@ -1061,7 +1067,7 @@ impl Reading for UiaFocusReading {
             UiaJob::Event(_, _, runtime_id, kind, _) => {
                 (*kind != FocusEvent::Notification).then_some((*kind, runtime_id.as_slice()))
             }
-            UiaJob::LiveReread(_) | UiaJob::DesktopName(..) => None,
+            UiaJob::LiveReread(..) | UiaJob::DesktopName(..) => None,
         }
     }
 
@@ -1408,7 +1414,8 @@ impl Listener {
                 request,
                 application,
                 trace_id,
-            } => self.live_reread(*request, *application, *trace_id),
+                window,
+            } => self.live_reread(*request, *application, (*trace_id, *window)),
             // The serving loop ends on `Shutdown`, before it is handled here.
             CoreToListener::Shutdown => {}
         }
@@ -1420,8 +1427,10 @@ impl Listener {
     /// outpost waits on, the report's trace and its observation; answered
     /// gone at once when the application has no reading thread, the thread
     /// answering it gone when it no longer holds that read. Its answer
-    /// goes to the application's outpost, in order with its facts.
-    fn live_reread(&self, request: u64, application: Pid, trace: TraceId) {
+    /// goes to the application's outpost, in order with its facts. `window`,
+    /// the report's top-level window, is what the moved-on rule judges it
+    /// by.
+    fn live_reread(&self, request: u64, application: Pid, (trace, window): (TraceId, isize)) {
         let meta = Meta {
             trace,
             ..self.outgoing.received(FocusEvent::LiveReread)
@@ -1439,7 +1448,7 @@ impl Listener {
         self.readers.push(
             application,
             meta,
-            UiaJob::LiveReread(request),
+            UiaJob::LiveReread(request, window),
             MarkerOwed::new(&self.outgoing, application, meta, Some(request)),
         );
     }
@@ -2122,6 +2131,17 @@ mod tests {
 
     use super::*;
     use verbatim_process::message::read_message;
+
+    /// A live re-read is judged by the moved-on rule by its report's
+    /// top-level window, as the read it repeats was, so a slow one the user
+    /// has moved on from ends answered gone; with no window it is judged
+    /// by its deadline alone.
+    #[test]
+    fn a_live_re_read_is_judged_by_its_reports_window() {
+        let reading = UiaFocusReading::new();
+        assert_eq!(reading.window(&UiaJob::LiveReread(4, 0x120)), Some(0x120));
+        assert_eq!(reading.window(&UiaJob::LiveReread(4, 0)), None);
+    }
 
     /// An `Outgoing` writing to a pipe with a buffer of `buffer` bytes, its
     /// writes that pend finished by a thread of the sender's own, as the

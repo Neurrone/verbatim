@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use verbatim_model::{
     CaretKey, Fetches, HeldAnchors, HookForeground, NodeId, NodeSnapshot, OutpostId, Pid, QueryId,
     ReaderSettings, ReviewCommand, Selection, SpeechMark, StateSet, TextAttributes, TextChunk,
-    TextPosition, TextUnit, TraceId, WindowFacts, WindowHandle,
+    TextPosition, TextUnit, TraceId, WindowFacts,
 };
 
 use crate::foreground::Foreground;
@@ -75,23 +75,6 @@ pub(crate) struct FocusContext {
     /// when the reading stands in ([`FocusContext::spoken`]).
     #[serde(default)]
     pub(crate) spoken: Option<SpokenRecord>,
-    /// Whether the user has left the focus for another top-level window:
-    /// written only by the focus listener's foreground change into a window
-    /// unrelated to it, observed after every report Core has judged since
-    /// it took the focus, and gone with the next focus taken. A focus left
-    /// and reported again is taken as a focus from another top-level window
-    /// is, so the return from an application that never answered says what
-    /// the same switch with no stall says
-    /// (`books/dev/src/reference/adr/0001-focus.md`, "The foreground and the window title").
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub(crate) left: bool,
-    /// The window the latest foreground change that left the focus brought
-    /// in front. A report from that window, while the focus is left, is the
-    /// next focus with nothing between, so the two lines are compared as
-    /// they are, as NVDA compares its focus line with the one before
-    /// (`docs/parity/focus-context.md`, "Focus-ancestry context").
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) left_for: Option<WindowHandle>,
 }
 
 /// What Core last spoke of the focus, against which a change of its name,
@@ -645,7 +628,10 @@ pub(crate) struct SayAll {
 /// recorded window replays from its start.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SrState {
-    pub(crate) focus: Option<FocusContext>,
+    /// Core's focus: the focus object and the last queued focus
+    /// (`crate::focus_queue`).
+    #[serde(default)]
+    pub(crate) focus: crate::focus_queue::FocusState,
     /// The foreground record: attention, the foreground window and object,
     /// and the stamps that order focuses, under the keys the state held
     /// before the record existed.
@@ -801,14 +787,14 @@ impl SrState {
     }
 
     /// How many of Core's queries an outpost has yet to answer that the
-    /// idle barrier waits for, with each pending live re-read: a caret
+    /// idle barrier waits for, with the report queued for a live re-read: a caret
     /// key's watch, which waits for the application, and a request Core
     /// answers from a terminal's memory are not counted.
     #[must_use]
     pub fn outstanding_queries(&self) -> usize {
         self.queries
             .outstanding()
-            .saturating_add(self.live_rereads.pending_count())
+            .saturating_add(self.focus.rereading())
     }
 
     /// How many live re-reads Core has asked for since it started: each a
@@ -889,7 +875,7 @@ impl SrState {
     #[must_use]
     pub fn focused(&self) -> Option<(Pid, &NodeSnapshot)> {
         self.focus
-            .as_ref()
+            .object()
             .filter(|focus| focus.alive)
             .map(|focus| (focus.source, &focus.snapshot))
     }
@@ -907,9 +893,9 @@ impl SrState {
         Option<&NodeSnapshot>,
     ) {
         (
-            self.focus.as_ref().map(|focus| &focus.snapshot),
+            self.focus.object().map(|focus| &focus.snapshot),
             self.focus
-                .as_ref()
+                .object()
                 .map_or(&[][..], |focus| &focus.ancestors[..]),
             self.navigator.as_ref().map(|navigator| &navigator.object),
         )
@@ -948,7 +934,7 @@ impl SrState {
     /// The application the focus belongs to; `None` before any focus.
     #[must_use]
     pub fn focus_source(&self) -> Option<Pid> {
-        self.focus.as_ref().map(|focus| focus.source)
+        self.focus.object().map(|focus| focus.source)
     }
 
     /// When the newest focus the reducer took was observed, in
@@ -972,7 +958,7 @@ impl SrState {
         let mut insert = |id: NodeId| {
             held.entry(id.outpost()).or_default().insert(id);
         };
-        if let Some(focus) = self.focus.as_ref().filter(|focus| focus.alive) {
+        if let Some(focus) = self.focus.object().filter(|focus| focus.alive) {
             insert(focus.snapshot.id);
             for ancestor in focus.ancestors.iter() {
                 insert(ancestor.id);
@@ -1077,7 +1063,7 @@ impl SrState {
     /// Whether the focused node is exactly `node_id` and still alive.
     pub(crate) fn focus_matches(&self, node_id: NodeId) -> bool {
         self.focus
-            .as_ref()
+            .object()
             .is_some_and(|focus| focus.alive && focus.snapshot.id == node_id)
     }
 

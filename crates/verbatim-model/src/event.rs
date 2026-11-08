@@ -701,6 +701,11 @@ pub struct LiveReread {
     pub reader: FocusReaderKind,
     /// The report's trace, by which the focus reader finds its read.
     pub trace_id: TraceId,
+    /// The report's top-level window, when it carried window facts, by
+    /// which the reader's moved-on rule judges the re-read as it judges a
+    /// focus read.
+    #[serde(default)]
+    pub window: Option<WindowHandle>,
     /// For the log: the report's focus, the cache join (the entry its
     /// walk met its ancestry cache at: the entry just inside its innermost
     /// cached ancestor), the lowest common ancestor Core found, `None` for

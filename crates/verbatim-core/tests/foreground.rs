@@ -287,29 +287,44 @@ fn a_foreground_change_sets_no_ordering_stamp() {
 }
 
 /// A foreground change observed before Core's focus, reaching Core after
-/// it, does not leave that focus: a repeat of the focus is a duplicate.
+/// it, applies to the reports Core judges after it that were observed
+/// after it (Dickson's limit, 2026-11-08): a repeat of the focus is the
+/// return, spoken.
 #[test]
-fn a_foreground_change_observed_before_the_focus_leaves_it_in_front() {
+fn a_foreground_change_observed_before_the_focus_marks_later_reports() {
     let mut core = Core::new();
     core.input(change_to(1, MAIN, 50));
     core.input(focus(1, in_front(MAIN), edit(), vec![main_window()], 500));
     assert_eq!(core.input(change_to(2, HELD, 400)), []);
     assert_eq!(
         core.input(focus(1, in_front(MAIN), edit(), vec![main_window()], 600)),
-        []
+        the_edit_entered()
     );
 }
 
-/// A foreground change observed at the same time as Core's focus is no
-/// later than it, and does not leave it either.
+/// A foreground change observed at the same time as Core's focus, reaching
+/// Core after it, marks it for the reports observed after the change.
 #[test]
-fn a_foreground_change_observed_with_the_focus_leaves_it_in_front() {
+fn a_foreground_change_observed_with_the_focus_marks_later_reports() {
     let mut core = Core::new();
     core.input(change_to(1, MAIN, 50));
     core.input(focus(1, in_front(MAIN), edit(), vec![main_window()], 500));
     assert_eq!(core.input(change_to(2, HELD, 500)), []);
     assert_eq!(
         core.input(focus(1, in_front(MAIN), edit(), vec![main_window()], 600)),
+        the_edit_entered()
+    );
+}
+
+/// A foreground change applies only to a report observed after it: a
+/// repeat observed before the change, reaching Core after it, is still a
+/// duplicate.
+#[test]
+fn a_foreground_change_leaves_a_report_observed_before_it_judged_without_it() {
+    let mut core = in_the_edit();
+    assert_eq!(core.input(change_to(2, HELD, 300)), []);
+    assert_eq!(
+        core.input(focus(1, in_front(MAIN), edit(), vec![main_window()], 200)),
         []
     );
 }
@@ -394,11 +409,12 @@ fn a_whole_window_focus_of_the_left_focus_window_is_taken() {
     );
 }
 
-/// A foreground change observed before the newest report Core judged, a
-/// duplicate of its focus that reached Core first, marks nothing: the
-/// focus the user is back in stays a duplicate.
+/// A duplicate judged before foreground changes observed earlier reached
+/// Core keeps its verdict, and the changes apply to the reports judged
+/// after them (Dickson's limit, 2026-11-08): the next report of the focus
+/// is the return, spoken.
 #[test]
-fn a_foreground_change_observed_before_the_newest_judged_report_marks_nothing() {
+fn a_foreground_change_reaching_core_after_a_duplicate_marks_the_next_report() {
     let mut core = in_the_edit();
     assert_eq!(
         core.input(focus(1, in_front(MAIN), edit(), vec![main_window()], 350)),
@@ -408,7 +424,7 @@ fn a_foreground_change_observed_before_the_newest_judged_report_marks_nothing() 
     assert_eq!(core.input(change_to(1, MAIN, 300)), []);
     assert_eq!(
         core.input(focus(1, in_front(MAIN), edit(), vec![main_window()], 400)),
-        []
+        the_edit_entered()
     );
 }
 
@@ -475,16 +491,30 @@ fn a_return_after_a_foreground_change_says_what_the_switch_says_without_a_stall(
 
 /// Core's whole state after the return from an application that never
 /// answered is the state the same switch leaves when the application's
-/// focus was taken: for a button, and for a terminal, whose speech state
-/// and model are keyed on its node.
+/// focus was taken, but for the stale rule's stamps: for a button, and for
+/// a terminal, whose speech state and model are keyed on its node.
 #[test]
 fn the_state_after_a_return_is_the_state_after_the_switch_without_a_stall() {
     let chain = [main_window()];
     let terminal = node(1, Role::Terminal, "Terminal");
+    // The stale rule's stamps differ by construction: they record the busy
+    // application's report, which the stalled one never sent.
+    let without_stamps = |state: &SrState| {
+        let mut value = serde_json::to_value(state).expect("the state serializes");
+        let object = value.as_object_mut().expect("the state is an object");
+        object.remove("focus_stamps");
+        object.remove("latest_focus");
+        value
+    };
     for focused in [edit(), terminal] {
         let (_, stalled) = return_to((&focused, &chain), true);
         let (_, answered) = return_to((&focused, &chain), false);
-        assert_eq!(stalled, answered, "{:?}", focused.role);
+        assert_eq!(
+            without_stamps(&stalled),
+            without_stamps(&answered),
+            "{:?}",
+            focused.role
+        );
     }
 }
 

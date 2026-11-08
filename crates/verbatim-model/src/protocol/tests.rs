@@ -96,6 +96,7 @@ fn next_core_to_listener(previous: Option<&CoreToListener>) -> Option<CoreToList
             request: 1,
             application: Pid(2),
             trace_id: TraceId::from_raw(4),
+            window: 8,
         },
         CoreToListener::LiveReread { .. } => return None,
     })

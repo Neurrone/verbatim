@@ -439,6 +439,13 @@ fn named_window(context: &RequestContext<'_>, work: &Work) -> Option<Window> {
                     super::shell_items::taskbar_window().and_then(Window::new)
                 }
             },
+            // A live re-read calls into its report's window, by which the
+            // moved-on rule judges it as it judged the report's read.
+            Item::Fact(DeliveredFact::MsaaLiveReread { trace_id, .. }, _) => context
+                .follow(|follow| follow.tracking.msaa_report)
+                .filter(|report| report.trace == *trace_id)
+                .and_then(|report| Window::new(report.event.0))
+                .or_else(|| application_focus_window(context)),
             _ => application_focus_window(context),
         },
         Work::Owed(owed) => node_window(context, owed.node),
