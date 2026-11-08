@@ -393,7 +393,7 @@ fn dispatch(connection: u64, id: u64, request: Request) -> Frame {
         | Request::ScreenReaderFlag
         | Request::EditCharacterPosition { .. }
         | Request::UiaCharacterPosition { .. }
-        | Request::SwitcherItems
+        | Request::SwitcherItems { .. }
         | Request::LocalClock { .. }) => state_request(id, request),
         Request::ListFiles { path } => list_reply(id, files::list(&path)),
         Request::ListFolders { path } => list_reply(id, files::list_folders(&path)),
@@ -660,13 +660,15 @@ fn state_request(id: u64, request: Request) -> Frame {
         Request::UiaCharacterPosition { line, column } => {
             position_reply(id, focus::uia_character_position(line, column))
         }
-        Request::SwitcherItems => match focus::switcher_items() {
-            Ok(items) => Frame::Reply {
-                to: id,
-                payload: ReplyPayload::SwitcherItems { items },
-            },
-            Err(error) => error_frame(id, &error),
-        },
+        Request::SwitcherItems { timeout_ms } => {
+            match focus::switcher_items(Duration::from_millis(timeout_ms)) {
+                Ok(items) => Frame::Reply {
+                    to: id,
+                    payload: ReplyPayload::SwitcherItems { items },
+                },
+                Err(error) => error_frame(id, &error),
+            }
+        }
         other => Frame::Error {
             to: id,
             message: format!("not a state request: {other:?}"),

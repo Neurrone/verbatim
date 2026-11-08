@@ -189,7 +189,11 @@ Public API:
     first bounding rectangle, rounded), and `SwitcherItems` (every item of
     the open Alt+Tab switcher's `SwitchItemListControl` list, in its order,
     each one's name, grid
-    row and column, position and the list's size). The
+    row and column, position and the list's size; the switcher's window
+    is in front before its list exists, so the read first waits, up to
+    the request's timeout, on UI Automation's focus-changed events, for
+    the focus to be an element whose raw-view parent is that list, and
+    reads the items from that parent). The
     requests that keep UI Automation, which need facts only
     it has, report an element or pattern as not found only when UI
     Automation answers with none, and any other failure with its HRESULT

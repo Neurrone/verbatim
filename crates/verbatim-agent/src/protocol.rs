@@ -84,10 +84,13 @@ use serde::{Deserialize, Serialize};
 /// [`ListPosition`], [`Request::MinimizeAll`]'s [`TaskbarCommand`] and
 /// [`MinimizeOutcome`], the windows left open in
 /// [`ReplyPayload::WindowsClosed`], and a wait for the ended processes in
-/// [`Request::EndLaunched`]. A test run against an older agent is refused
+/// [`Request::EndLaunched`]; version 33 has [`Request::SwitcherItems`]
+/// wait, up to its timeout, for an item of the switcher's list to have the
+/// focus, since the switcher's window is in front before its list exists.
+/// A test run against an older agent is refused
 /// at `Hello` instead of losing its connection mid-run, or running without
 /// the exclusion.
-pub const AGENT_PROTOCOL_VERSION: u32 = 32;
+pub const AGENT_PROTOCOL_VERSION: u32 = 33;
 
 /// How long the agent gives the taskbar to handle its Minimize All command
 /// ([`Request::MinimizeAll`]), in milliseconds.
@@ -395,9 +398,13 @@ pub enum Request {
     /// Reads every item of the Alt+Tab switcher's list ("Running
     /// applications", UI Automation id `SwitchItemListControl`), while the
     /// switcher is open, through UI Automation: each item's name, its grid
-    /// row and column and its position in the list. Answered by
-    /// [`ReplyPayload::SwitcherItems`].
-    SwitcherItems,
+    /// row and column and its position in the list, once UI Automation's
+    /// focus events show the keyboard focus on an item of the list, waited
+    /// for up to `timeout_ms`. Answered by [`ReplyPayload::SwitcherItems`].
+    SwitcherItems {
+        /// How long to wait for an item of the list to have the focus.
+        timeout_ms: u64,
+    },
     /// Lists the processes that have exited in the job of the process `pid`
     /// the agent launched (every process it started, and they started), in
     /// the order they exited: how a test finds that one of Verbatim's own

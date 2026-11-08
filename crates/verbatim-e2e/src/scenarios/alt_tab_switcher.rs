@@ -12,8 +12,9 @@
 //!
 //! The items, their rows, columns and positions depend on how many windows
 //! the desktop has, so the whole list is read through the agent, from the
-//! switcher's own list, once the switcher is in front and before any of
-//! its speech is asserted. Alt+Tab is what the scenario is about, so it is pressed
+//! switcher's own list, once the switcher is in front and an item of its
+//! list has the focus (its window is in front before the list exists),
+//! and before any of its speech is asserted. Alt+Tab is what the scenario is about, so it is pressed
 //! (`books/dev/src/reference/testing.md`, "The harness does not change what it measures");
 //! which window it reaches is known because the harness opened both, in
 //! order, after every other window was minimized.
@@ -63,8 +64,8 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
         .wait_for_window_in_front(SWITCHER_TITLE, WINDOW_TIMEOUT)
         .expect("the switcher comes to the front");
     let items = scenario
-        .switcher_items()
-        .expect("reads the switcher's items");
+        .switcher_items(WINDOW_TIMEOUT)
+        .expect("reads the switcher's items once one has the focus");
     let count = items.len();
     let places: Vec<(usize, u32, u32)> = items
         .iter()

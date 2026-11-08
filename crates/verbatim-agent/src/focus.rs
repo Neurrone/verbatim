@@ -8,6 +8,8 @@
 //! (`books/dev/src/explanation/design/listener-without-connections.md`, section 4.5).
 
 use std::io;
+use std::sync::mpsc;
+use std::time::{Duration, Instant};
 
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::System::Com::{
@@ -16,7 +18,8 @@ use windows::Win32::System::Com::{
 use windows::Win32::System::Variant::{VARIANT, VT_I4};
 use windows::Win32::UI::Accessibility::{
     AccessibleObjectFromWindow, CUIAutomation, IAccessible, IUIAutomation, IUIAutomationElement,
-    TreeScope_Children, TreeScope_Descendants, UIA_AutomationIdPropertyId, UIA_SizeOfSetPropertyId,
+    IUIAutomationFocusChangedEventHandler, IUIAutomationTreeWalker, TreeScope_Children,
+    TreeScope_Descendants, UIA_AutomationIdPropertyId, UIA_SizeOfSetPropertyId,
     WindowFromAccessibleObject,
 };
 use windows::Win32::UI::Controls::{LVM_GETITEMCOUNT, LVM_GETNEXTITEM, LVNI_FOCUSED};
@@ -592,27 +595,162 @@ fn uia_position_through_uia(line: u32, column: u32) -> io::Result<(i32, i32)> {
 /// Every item of the Alt+Tab switcher's list, read through UI Automation
 /// while the switcher is open, in the list's order: its name, its grid row
 /// and column, each from one, its position in the list, from one, and the
-/// list's size. The switcher's window is found by its class, its list by
-/// its automation id, `SwitchItemListControl`, and the items, its
-/// children, are read one property at a time: the agent is the harness's
-/// own reader, apart from Verbatim's shapes (`books/dev/src/explanation/design/uia-shapes.md`).
+/// list's size. The switcher's window is in front before its list exists,
+/// so the read first waits up to `timeout`, on UI Automation's focus
+/// events ([`until_found`]), for the keyboard focus to be an item of the
+/// list, an element whose raw-view parent has the automation id
+/// `SwitchItemListControl`: the focus Verbatim says the item from. The
+/// items, that parent's children, are then read one property at a time:
+/// the agent is the harness's own reader, apart from Verbatim's shapes
+/// (`books/dev/src/explanation/design/uia-shapes.md`).
 ///
 /// # Errors
 ///
-/// Returns an error if UI Automation cannot be reached, the switcher is not
-/// open, or an item reports no row, column or position.
-pub fn switcher_items() -> io::Result<Vec<SwitcherItem>> {
-    through_uia("SwitcherItems", switcher_items_through_uia)
+/// Returns an error if UI Automation cannot be reached, no item of the
+/// switcher's list has the focus within `timeout`, or an item reports no
+/// row, column or position.
+pub fn switcher_items(timeout: Duration) -> io::Result<Vec<SwitcherItem>> {
+    through_uia("SwitcherItems", || switcher_items_through_uia(timeout))
+}
+
+/// Waits up to `timeout` for `read` to find what it looks for: reads once
+/// now and again after each wake on `wakes`, and returns what it found, or
+/// `None` once `timeout` has passed with no wake that found it. The waker
+/// is installed before the call, so a change before the first read is
+/// seen by that read and one after it wakes the wait. An error from `read`
+/// ends the wait with that error.
+fn until_found<T>(
+    mut read: impl FnMut() -> io::Result<Option<T>>,
+    wakes: &mpsc::Receiver<()>,
+    timeout: Duration,
+) -> io::Result<Option<T>> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if let Some(found) = read()? {
+            return Ok(Some(found));
+        }
+        let left = deadline.saturating_duration_since(Instant::now());
+        match wakes.recv_timeout(left) {
+            Ok(()) => {}
+            Err(mpsc::RecvTimeoutError::Timeout) => return Ok(None),
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                return Err(io::Error::other("the focus event handler is gone"));
+            }
+        }
+    }
+}
+
+/// The UI Automation focus-changed handler [`switcher_items`] waits on:
+/// each focus event sends one wake, and the waiting thread reads the focus
+/// itself, so no element crosses threads.
+mod focus_wake {
+    // The `implement` macro's expansion.
+    #![allow(clippy::inline_always, clippy::ref_as_ptr)]
+
+    use std::sync::mpsc::Sender;
+
+    use windows::Win32::UI::Accessibility::{
+        IUIAutomationElement, IUIAutomationFocusChangedEventHandler,
+        IUIAutomationFocusChangedEventHandler_Impl,
+    };
+
+    /// A handler that sends a wake to `sender` at each focus event.
+    pub(super) fn new(sender: Sender<()>) -> IUIAutomationFocusChangedEventHandler {
+        Waking { sender }.into()
+    }
+
+    #[windows_core::implement(IUIAutomationFocusChangedEventHandler)]
+    struct Waking {
+        sender: Sender<()>,
+    }
+
+    impl IUIAutomationFocusChangedEventHandler_Impl for Waking_Impl {
+        fn HandleFocusChangedEvent(
+            &self,
+            _sender: windows_core::Ref<IUIAutomationElement>,
+        ) -> windows_core::Result<()> {
+            // The receiver is dropped only after the handler is removed,
+            // so a failed send is an event already past the wait.
+            let _ = self.sender.send(());
+            Ok(())
+        }
+    }
+}
+
+/// A registered focus-changed handler, removed on drop.
+struct FocusHandler<'a> {
+    automation: &'a IUIAutomation,
+    handler: IUIAutomationFocusChangedEventHandler,
+}
+
+impl Drop for FocusHandler<'_> {
+    fn drop(&mut self) {
+        // SAFETY: a plain COM call removing the handler this value added.
+        if let Err(error) = unsafe {
+            self.automation
+                .RemoveFocusChangedEventHandler(&self.handler)
+        } {
+            tracing::warn!(%error, "removing the switcher's focus handler failed");
+        }
+    }
+}
+
+/// `result`, a UI Automation read that answers a null element when there
+/// is none, as `None` then, and any other error reported with its HRESULT
+/// and message as `what` failing.
+fn present<T>(result: windows::core::Result<T>, what: &str) -> io::Result<Option<T>> {
+    match result {
+        Ok(value) => Ok(Some(value)),
+        Err(error) if error.code().0 == 0 => Ok(None),
+        Err(error) => Err(io::Error::other(format!(
+            "{what} failed with {:#010x}: {}",
+            error.code().0,
+            error.message()
+        ))),
+    }
+}
+
+/// The switcher's list, when the item with the keyboard focus has it as
+/// its raw-view parent, found by its automation id
+/// `SwitchItemListControl`; otherwise `None`, with `seen` set to what has
+/// the focus, for the error if the wait runs out.
+fn focused_switcher_list(
+    automation: &IUIAutomation,
+    walker: &IUIAutomationTreeWalker,
+    seen: &mut String,
+) -> io::Result<Option<IUIAutomationElement>> {
+    // SAFETY: plain COM calls on live interfaces.
+    let Some(focus) = present(
+        unsafe { automation.GetFocusedElement() },
+        "GetFocusedElement",
+    )?
+    else {
+        "nothing".clone_into(seen);
+        return Ok(None);
+    };
+    // SAFETY: as above.
+    let name = unsafe { focus.CurrentName() }.map_err(io::Error::other)?;
+    // SAFETY: as above.
+    let parent = unsafe { walker.GetParentElement(&focus) };
+    let Some(parent) = present(parent, "GetParentElement of the focus")? else {
+        *seen = format!("{name:?}, with no parent");
+        return Ok(None);
+    };
+    // SAFETY: as above.
+    let parent_id = unsafe { parent.CurrentAutomationId() }.map_err(io::Error::other)?;
+    if parent_id == "SwitchItemListControl" {
+        return Ok(Some(parent));
+    }
+    *seen = format!("{name:?}, whose parent's automation id is {parent_id:?}");
+    Ok(None)
 }
 
 /// [`switcher_items`]'s UI Automation calls.
-fn switcher_items_through_uia() -> io::Result<Vec<SwitcherItem>> {
+fn switcher_items_through_uia(timeout: Duration) -> io::Result<Vec<SwitcherItem>> {
     use windows::Win32::UI::Accessibility::{
         UIA_GridItemColumnPropertyId, UIA_GridItemRowPropertyId,
         UIA_IsGridItemPatternAvailablePropertyId, UIA_PositionInSetPropertyId,
     };
-    use windows::Win32::UI::WindowsAndMessaging::FindWindowW;
-    use windows::core::w;
 
     // SAFETY: as in `focused_element`.
     let _ = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
@@ -620,22 +758,29 @@ fn switcher_items_through_uia() -> io::Result<Vec<SwitcherItem>> {
     let automation: IUIAutomation =
         unsafe { CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER) }
             .map_err(io::Error::other)?;
-    // SAFETY: a local lookup by class name.
-    let window = unsafe { FindWindowW(w!("XamlExplorerHostIslandWindow"), None) }
-        .map_err(|_| io::Error::other("the Alt+Tab switcher's window is not open"))?;
     // SAFETY: plain COM calls on live interfaces.
-    let root = unsafe { automation.ElementFromHandle(window) }.map_err(io::Error::other)?;
-    let id = VARIANT::from(BSTR::from("SwitchItemListControl"));
+    let walker = unsafe { automation.RawViewWalker() }.map_err(io::Error::other)?;
+    let (sender, wakes) = mpsc::channel();
+    let handler = focus_wake::new(sender);
     // SAFETY: as above.
-    let list_condition =
-        unsafe { automation.CreatePropertyCondition(UIA_AutomationIdPropertyId, &id) }
-            .map_err(io::Error::other)?;
-    // SAFETY: as above.
-    let list = found(
-        unsafe { root.FindFirst(TreeScope_Descendants, &list_condition) },
-        "FindFirst for the switcher's list",
-        || "the switcher has no list of running applications".to_owned(),
-    )?;
+    unsafe { automation.AddFocusChangedEventHandler(None, &handler) }.map_err(io::Error::other)?;
+    let registered = FocusHandler {
+        automation: &automation,
+        handler,
+    };
+    let mut seen = String::new();
+    let list = until_found(
+        || focused_switcher_list(&automation, &walker, &mut seen),
+        &wakes,
+        timeout,
+    );
+    drop(registered);
+    let list = list?.ok_or_else(|| {
+        io::Error::other(format!(
+            "no item of the switcher's list of running applications had the focus within \
+             {timeout:?}; the focus was {seen}"
+        ))
+    })?;
     // SAFETY: as above.
     let every = unsafe { automation.CreateTrueCondition() }.map_err(io::Error::other)?;
     // SAFETY: as above.
@@ -688,4 +833,86 @@ fn switcher_items_through_uia() -> io::Result<Vec<SwitcherItem>> {
         });
     }
     Ok(items)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_wait_whose_first_read_finds_needs_no_wake() {
+        let (_sender, wakes) = mpsc::channel();
+        let mut reads = 0;
+        let found = until_found(
+            || {
+                reads += 1;
+                Ok(Some("the list"))
+            },
+            &wakes,
+            Duration::ZERO,
+        )
+        .expect("the wait");
+        assert_eq!((found, reads), (Some("the list"), 1));
+    }
+
+    #[test]
+    fn a_wait_reads_again_at_each_wake_until_one_finds() {
+        let (sender, wakes) = mpsc::channel();
+        for _ in 0..3 {
+            sender.send(()).expect("a wake");
+        }
+        let mut reads = 0;
+        let found = until_found(
+            || {
+                reads += 1;
+                Ok((reads == 3).then_some("the list"))
+            },
+            &wakes,
+            Duration::from_secs(30),
+        )
+        .expect("the wait");
+        assert_eq!((found, reads), (Some("the list"), 3));
+        assert_eq!(wakes.try_recv(), Ok(()), "the third wake is left unread");
+    }
+
+    #[test]
+    fn a_wait_with_no_wake_that_finds_ends_at_its_timeout() {
+        let (sender, wakes) = mpsc::channel();
+        sender.send(()).expect("a wake");
+        let mut reads = 0;
+        let found = until_found(
+            || {
+                reads += 1;
+                Ok(None::<&str>)
+            },
+            &wakes,
+            Duration::from_millis(1),
+        )
+        .expect("the wait");
+        assert_eq!((found, reads), (None, 2));
+    }
+
+    #[test]
+    fn a_failed_read_ends_the_wait_with_its_error() {
+        let (sender, wakes) = mpsc::channel();
+        sender.send(()).expect("a wake");
+        let mut reads = 0;
+        let error = until_found(
+            || {
+                reads += 1;
+                if reads == 2 {
+                    Err(io::Error::other("the read failed"))
+                } else {
+                    Ok(None::<&str>)
+                }
+            },
+            &wakes,
+            Duration::from_secs(30),
+        )
+        .expect_err("the read's error");
+        assert_eq!(
+            (error.to_string(), reads),
+            ("the read failed".to_owned(), 2)
+        );
+    }
 }

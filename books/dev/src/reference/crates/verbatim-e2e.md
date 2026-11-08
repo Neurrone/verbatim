@@ -450,7 +450,9 @@ input methods above:
   place of a character by line and column, from a Win32 edit control's
   own messages or a UI Automation text's bounding rectangle),
   `switcher_items` (every item of the open Alt+Tab switcher's list, in
-  its order: each one's name, row, column and position in the list),
+  its order: each one's name, row, column and position in the list,
+  read once an item of the list has the focus, waited for up to the
+  given timeout),
   `focus_by_automation_id` (focuses an element with UI Automation's
   `SetFocus` and returns how many children it has), `controlled_items`
   (of the first element the focused element controls, the set size its

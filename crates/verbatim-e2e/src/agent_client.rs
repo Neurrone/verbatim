@@ -950,13 +950,19 @@ impl AgentClient {
     }
 
     /// Every item of the open Alt+Tab switcher's list, in the list's
-    /// order ([`Request::SwitcherItems`]).
+    /// order ([`Request::SwitcherItems`]), once an item of it has the
+    /// focus, waited for up to `timeout`.
     ///
     /// # Errors
     ///
     /// Returns an error if the request fails.
-    pub fn switcher_items(&mut self) -> io::Result<Vec<SwitcherItem>> {
-        match self.request(Request::SwitcherItems)? {
+    pub fn switcher_items(&mut self, timeout: Duration) -> io::Result<Vec<SwitcherItem>> {
+        match self.request_waiting(
+            Request::SwitcherItems {
+                timeout_ms: millis(timeout),
+            },
+            timeout,
+        )? {
             Frame::Reply {
                 payload: ReplyPayload::SwitcherItems { items },
                 ..

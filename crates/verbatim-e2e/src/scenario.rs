@@ -2121,13 +2121,16 @@ impl Scenario {
 
     /// Every item of the open Alt+Tab switcher's list, read by the agent,
     /// in the list's order: each one's name, its row, column and position,
-    /// each from one, and the list's size.
+    /// each from one, and the list's size, once UI Automation's focus
+    /// events show an item of the list with the focus, waited for up to
+    /// `timeout`: the switcher's window is in front before its list exists.
     ///
     /// # Errors
     ///
-    /// Returns an error if the request fails.
-    pub fn switcher_items(&mut self) -> io::Result<Vec<SwitcherItem>> {
-        self.agent.switcher_items()
+    /// Returns an error if the request fails or no item of the list has the
+    /// focus within `timeout`.
+    pub fn switcher_items(&mut self, timeout: Duration) -> io::Result<Vec<SwitcherItem>> {
+        self.agent.switcher_items(timeout)
     }
 
     /// The process id of the program the scenario launched last, and the
