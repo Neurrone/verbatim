@@ -17,7 +17,7 @@ use verbatim_model::{Pid, TraceId};
 
 use super::super::{
     AlarmChange, AppKey, Duration, FocusEvent, Judged, MOVED_ON, Meta, NO_THREAD, NOT_IN_TIME,
-    REPLACED, Reason, Request, RuleWindow, Schedule, ScheduleEffect, ScheduleInput,
+    PROCESS_EXITED, REPLACED, Reason, Request, RuleWindow, Schedule, ScheduleEffect, ScheduleInput,
     WAITED_TOO_LONG, Waking, Window,
 };
 use super::Cached;
@@ -305,7 +305,9 @@ fn how(judged: &Judged) -> How {
         Judged::Dropped(reason) if *reason == NOT_IN_TIME => How::NotInTime,
         Judged::Dropped(reason) if *reason == MOVED_ON => How::MovedOn,
         Judged::Dropped(reason) if *reason == WAITED_TOO_LONG => How::WaitedTooLong,
-        Judged::Dropped(reason) if *reason == READ_FAILED => How::Failed,
+        Judged::Dropped(reason) if *reason == READ_FAILED || *reason == PROCESS_EXITED => {
+            How::Failed
+        }
         Judged::Dropped(reason) if *reason == NO_THREAD => How::NoThread,
         Judged::Dropped(reason) if *reason == REPLACED => How::Replaced,
         Judged::Dropped(reason) => panic!("an outcome the world cannot cause: {reason}"),
