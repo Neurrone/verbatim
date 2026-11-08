@@ -30,6 +30,9 @@ struct Answers {
     moved_on: bool,
     /// Whether the window checked is found hung.
     hung: bool,
+    /// A window that answers whatever `hung` says, for a test of two
+    /// windows, one hung.
+    answering: Option<Window>,
     /// The window the program in flight's worker named, which a check of a
     /// program with no window at dispatch reads.
     named: Option<Window>,
@@ -42,7 +45,20 @@ impl Answers {
     /// The answers to `effect`, if it asks, in the order the shell gives
     /// them.
     fn to(&mut self, effect: &Effect) -> Vec<Input> {
+        let judged_hung = |window| self.hung && self.answering != Some(window);
         match effect {
+            Effect::JudgeTold { window, waiting } => vec![Input::ToldJudged {
+                window: *window,
+                waiting: *waiting,
+                hung: judged_hung(*window),
+            }],
+            Effect::CheckHung { window } => judged_hung(*window)
+                .then_some(Input::HangSeen {
+                    window: *window,
+                    request: None,
+                })
+                .into_iter()
+                .collect(),
             Effect::AskJudge { request, window } => {
                 let Some(window) = window.or(self.named) else {
                     return vec![Input::Judged {
@@ -50,7 +66,7 @@ impl Answers {
                         moved_on: false,
                     }];
                 };
-                let hang = self.hung.then_some(Input::HangSeen {
+                let hang = judged_hung(window).then_some(Input::HangSeen {
                     window,
                     request: Some(*request),
                 });
@@ -637,6 +653,8 @@ fn kinds(effects: &[Effect]) -> Vec<&'static str> {
             Effect::Dispatch(_) => Some("dispatch"),
             Effect::AskJudge { .. } => Some("judge"),
             Effect::CheckFront => Some("check front"),
+            Effect::JudgeTold { .. } => Some("judge told"),
+            Effect::CheckHung { .. } => Some("check hung"),
             _ => None,
         })
         .collect()
@@ -2427,150 +2445,149 @@ fn a_query_judged_hung_tells_its_windows_hang_once() {
     }
 }
 
-/// A commit naming the window answered takes it out of the record, so the
-/// next hang is told again; a program that made no call into it, whose
-/// commit names nothing, leaves it in.
+/// A commit naming a window hung counts only if the window is hung now,
+/// and the hang it tells is told once.
 #[test]
-fn only_an_answer_ends_a_windows_hang() {
+fn a_commit_naming_a_window_hung_is_confirmed_live() {
     let mut replay = Replay::new();
+    let stale = program(&replay.push(navigation(1), Source::Other, 1)).request;
+    let effects = replay.commit(stale, found(HUNG, Found::Hung, None), 2);
+    assert_eq!(kinds(&effects), ["check hung"]);
+    assert_eq!(not_responding(&effects), Vec::<isize>::new());
+    assert_eq!(replay.reducer.hang, Hang::None);
+    replay.finish(stale, false, 3);
+    replay.answers.hung = true;
+    let live = program(&replay.push(navigation(2), Source::Other, 4)).request;
+    let effects = replay.commit(live, found(HUNG, Found::Hung, None), 5);
+    assert_eq!(not_responding(&effects), [HUNG.get()]);
+    assert_eq!(
+        kinds(&replay.commit(live, found(HUNG, Found::Hung, None), 6)),
+        ["check hung", "judge told"],
+        "the same hang, judged"
+    );
+}
+
+/// The told window is judged on each entry taken and each commit, and a
+/// commit naming it answered does not end its hang unless it is found not
+/// hung then; once it is, its next freeze is a new hang.
+#[test]
+fn a_told_windows_hang_ends_when_it_is_judged_not_hung() {
+    let mut replay = Replay::new();
+    replay.answers.hung = true;
     let hang = program(&replay.push(navigation(1), Source::Other, 1)).request;
+    replay.commit(hang, found(HUNG, Found::Hung, None), 2);
     assert_eq!(
-        not_responding(&replay.commit(hang, found(HUNG, Found::Hung, None), 2)),
-        [HUNG.get()]
+        kinds(&replay.commit(hang, found(HUNG, Found::Answered, None), 3)),
+        ["judge told"]
     );
-    replay.finish(hang, false, 3);
-    let callless = program(&replay.push(name_change(1), Source::Hook, 4)).request;
+    assert_eq!(replay.reducer.hang, Hang::Told { window: HUNG });
+    replay.finish(hang, false, 4);
+    replay.answers.hung = false;
+    let next = program(&replay.push(navigation(2), Source::Other, 5)).request;
+    assert_eq!(replay.reducer.hang, Hang::None, "judged as the entry came");
+    replay.answers.hung = true;
     assert_eq!(
-        not_responding(&replay.commit(callless, Change::default(), 5)),
-        Vec::<isize>::new()
-    );
-    replay.finish(callless, false, 6);
-    let again = program(&replay.push(navigation(2), Source::Other, 7)).request;
-    assert_eq!(
-        not_responding(&replay.commit(again, found(HUNG, Found::Hung, None), 8)),
-        Vec::<isize>::new(),
-        "still the same hang"
-    );
-    assert_eq!(
-        not_responding(&replay.commit(again, found(HUNG, Found::Answered, None), 9)),
-        Vec::<isize>::new()
-    );
-    replay.finish(again, false, 10);
-    let next = program(&replay.push(navigation(3), Source::Other, 11)).request;
-    assert_eq!(
-        not_responding(&replay.commit(next, found(HUNG, Found::Hung, None), 12)),
+        not_responding(&replay.commit(next, found(HUNG, Found::Hung, None), 6)),
         [HUNG.get()],
         "a new hang"
     );
 }
 
-/// A second window met hung while one is recorded tells Core nothing, so
-/// the application sounds once per hang; a destroy event takes its window
-/// out of the record, and once an answer has emptied it, the next hang is
-/// told.
+/// A second window met hung while the told window is hung is the same hang;
+/// once the told window answers, the window still hung is a new one, told
+/// when it is next seen, and replaces it.
 #[test]
-fn a_second_hung_window_tells_nothing_and_a_destroy_ends_its_windows_hang() {
-    let mut replay = Replay::new();
-    let hang = program(&replay.push(navigation(1), Source::Other, 1)).request;
-    assert_eq!(
-        not_responding(&replay.commit(hang, found(HUNG, Found::Hung, None), 2)),
-        [HUNG.get()]
-    );
-    replay.finish(hang, false, 3);
+fn a_second_hung_window_is_told_only_after_the_told_window_recovers() {
     let other = Window::new(0x41).expect("not 0");
+    let mut replay = Replay::new();
+    replay.answers.hung = true;
+    let first = program(&replay.push(navigation(1), Source::Other, 1)).request;
+    replay.commit(first, found(HUNG, Found::Hung, None), 2);
+    replay.finish(first, false, 3);
     let second = program(&replay.push(navigation(2), Source::Other, 4)).request;
     assert_eq!(
         not_responding(&replay.commit(second, found(other, Found::Hung, None), 5)),
         Vec::<isize>::new(),
         "the same hang of the application"
     );
-    replay.finish(second, false, 6);
-    let destroy = replay.push(
-        Item::Msaa {
-            kind: WinKind::Destroy,
-            hwnd: HUNG.get(),
-            id_object: 0,
-            id_child: 0,
-            raiser: 3,
-        },
-        Source::Hook,
-        7,
-    );
-    replay.finish(program(&destroy).request, false, 7);
-    let answer = program(&replay.push(navigation(3), Source::Other, 8)).request;
+    replay.answers.answering = Some(HUNG);
     assert_eq!(
-        not_responding(&replay.commit(answer, found(other, Found::Answered, None), 9)),
-        Vec::<isize>::new()
+        not_responding(&replay.commit(second, found(other, Found::Hung, None), 6)),
+        [other.get()],
+        "the told window answers and the other is told"
     );
-    replay.finish(answer, false, 10);
-    let after = program(&replay.push(navigation(4), Source::Other, 11)).request;
-    assert_eq!(
-        not_responding(&replay.commit(after, found(HUNG, Found::Hung, None), 12)),
-        [HUNG.get()],
-        "the destroy and the answer emptied the record: a new hang"
-    );
+    assert_eq!(replay.reducer.hang, Hang::Told { window: other });
 }
 
-/// A destroy the hand-over's hold keeps back still takes effect as it
-/// arrives: the program running meanwhile, committing the destroyed
-/// window hung, records nothing and tells Core nothing.
+/// An answer for a window no longer told changes nothing, with or without
+/// a window waiting on it.
 #[test]
-fn a_held_destroy_wins_over_the_running_programs_hang() {
+fn an_answer_for_a_window_no_longer_told_changes_nothing() {
+    let other = Window::new(0x41).expect("not 0");
     let mut replay = Replay::new();
-    let running = program(&replay.push(navigation(1), Source::Other, 1)).request;
+    replay.answers.hung = true;
+    replay.input(
+        Input::HangSeen {
+            window: other,
+            request: None,
+        },
+        1,
+    );
+    for waiting in [None, Some(HUNG)] {
+        let effects = replay.input(
+            Input::ToldJudged {
+                window: HUNG,
+                waiting,
+                hung: false,
+            },
+            2,
+        );
+        assert_eq!(not_responding(&effects), Vec::<isize>::new());
+        assert_eq!(replay.reducer.hang, Hang::Told { window: other });
+    }
+}
+
+/// A destroy ends a hang told of its window as it arrives, even as a hook
+/// copy the hand-over's hold keeps back; another window's destroy does not.
+#[test]
+fn a_destroy_ends_its_windows_hang_as_it_arrives() {
+    let destroy = |hwnd| Item::Msaa {
+        kind: WinKind::Destroy,
+        hwnd,
+        id_object: 0,
+        id_child: 0,
+        raiser: 3,
+    };
+    let mut replay = Replay::new();
+    replay.answers.hung = true;
+    replay.input(
+        Input::HangSeen {
+            window: HUNG,
+            request: None,
+        },
+        1,
+    );
     replay.input(Input::Hooked, 2);
-    let held = replay.push(
-        Item::Msaa {
-            kind: WinKind::Destroy,
-            hwnd: HUNG.get(),
-            id_object: 0,
-            id_child: 0,
-            raiser: 3,
-        },
-        Source::Hook,
-        3,
-    );
-    assert!(programs(&held).is_empty(), "{held:?}");
+    assert!(programs(&replay.push(destroy(0x41), Source::Hook, 3)).is_empty());
+    assert_eq!(replay.reducer.hang, Hang::Told { window: HUNG });
+    assert!(programs(&replay.push(destroy(HUNG.get()), Source::Hook, 4)).is_empty());
     assert!(replay.reducer.hold.holding());
-    assert_eq!(
-        not_responding(&replay.commit(running, found(HUNG, Found::Hung, None), 4)),
-        Vec::<isize>::new(),
-        "the window is gone"
-    );
-    assert!(replay.reducer.hung.is_empty());
+    assert_eq!(replay.reducer.hang, Hang::None);
 }
 
-/// A destroy pushed while a program runs wins over the hang that program
-/// names in the destroyed window afterwards: Core is told nothing, and a
-/// later program's hang in a window with the handle is a new one.
+/// Nothing is told after the outpost closes, not even of a program still
+/// in flight.
 #[test]
-fn a_hang_committed_after_its_windows_destroy_is_not_recorded() {
+fn nothing_is_told_after_close() {
     let mut replay = Replay::new();
-    let stale = program(&replay.push(navigation(1), Source::Other, 1)).request;
-    replay.push(
-        Item::Msaa {
-            kind: WinKind::Destroy,
-            hwnd: HUNG.get(),
-            id_object: 0,
-            id_child: 0,
-            raiser: 3,
-        },
-        Source::Hook,
-        2,
-    );
+    replay.answers.hung = true;
+    let running = program(&replay.push(navigation(1), Source::Other, 1)).request;
+    replay.input(Input::Close, 2);
     assert_eq!(
-        not_responding(&replay.commit(stale, found(HUNG, Found::Hung, None), 3)),
-        Vec::<isize>::new(),
-        "the window is gone"
+        kinds(&replay.commit(running, found(HUNG, Found::Hung, None), 3)),
+        Vec::<&str>::new()
     );
-    let effects = replay.finish(stale, false, 4);
-    replay.finish(program(&effects).request, false, 5);
-    let after = program(&replay.push(navigation(2), Source::Other, 6)).request;
-    assert_eq!(
-        not_responding(&replay.commit(after, found(HUNG, Found::Hung, None), 7)),
-        [HUNG.get()],
-        "a window with the handle, hung anew"
-    );
+    assert_eq!(replay.reducer.hang, Hang::None);
 }
 
 /// A listener read whose window hangs while its program reads it tells Core
@@ -2620,7 +2637,11 @@ fn a_listener_read_in_a_hung_window_is_reported_and_tells_its_hang() {
     assert!(replay.reducer.accepts(request), "the read still in flight");
     replay.answers.hung = false;
     let effects = replay.commit(request, focus_change(2, false), 4_000);
-    assert_eq!(kinds(&effects), ["send"], "the focus reported");
+    assert_eq!(
+        kinds(&effects),
+        ["send", "judge told"],
+        "the focus reported"
+    );
     assert_eq!(followed(&replay), Some(NodeId::new(2)));
 }
 
@@ -2652,7 +2673,7 @@ fn a_marker_waiting_past_the_grace_asks_for_the_front_check_every_half_second() 
 
 /// A hung window of the outpost's application in front while a marker
 /// waits is told to Core once, however many checks find it; a readable
-/// one in front takes it out of the record, so the next hang is told.
+/// one in front ends the hang, so the next hang is told.
 #[test]
 fn a_hang_found_in_front_while_a_marker_waits_is_told_once() {
     let mut replay = Replay::new();
@@ -2664,7 +2685,7 @@ fn a_hang_found_in_front_while_a_marker_waits_is_told_once() {
     assert_eq!(kinds(&replay.tick(1_000)), ["check front"], "the same hang");
     replay.answers.front = Some((HUNG, false));
     assert_eq!(kinds(&replay.tick(1_500)), ["check front"]);
-    assert!(replay.reducer.hung.is_empty(), "it answers");
+    assert_eq!(replay.reducer.hang, Hang::None, "it answers");
     replay.answers.front = Some((HUNG, true));
     assert_eq!(
         not_responding(&replay.tick(2_000)),
@@ -2693,7 +2714,7 @@ fn no_front_check_is_asked_once_the_marker_resolves() {
     assert_eq!(kinds(&effects), Vec::<&str>::new());
     assert_eq!(replay.reducer.next_timer(now(300)), None);
     assert_eq!(kinds(&replay.tick(500)), Vec::<&str>::new());
-    assert!(replay.reducer.hung.is_empty());
+    assert_eq!(replay.reducer.hang, Hang::None);
 }
 
 /// A program whose check found its window hung, abandoned at its deadline,

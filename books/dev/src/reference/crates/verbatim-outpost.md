@@ -444,7 +444,9 @@ Inside an outpost (`docs/design/communication.md`, section 6.4;
   `Input::HangSeen` when it is hung and `Input::Judged` with whether the
   user moved on; `Effect::CheckFront`, the check of the window in front
   while a listener read's marker waits, answered `Input::HangSeen` or
-  `Input::FrontReadable`), which the shell's `apply` answers at once, as
+  `Input::FrontReadable`; `Effect::JudgeTold`, the told window judged,
+  answered `Input::ToldJudged`; `Effect::CheckHung`, a window a commit
+  named hung confirmed, answered `Input::HangSeen` when it is), which the shell's `apply` answers at once, as
   the reducer's next inputs, before it takes another message, and
   what the answer asks is carried out before anything asked after the
   question, as a release's answer is. `cargo xtask ci`
@@ -523,7 +525,9 @@ Inside an outpost (`docs/design/communication.md`, section 6.4;
   reason by generation (`Posted::Returned` carries the generation), and
   the pong reports those parked on a window seen hung, by their program's
   hang mark (`parked_on_hung`), apart from the rest (`parked_count`),
-  which alone the supervisor's limit counts.
+  which alone the supervisor's limit counts. The two counts are one value
+  (`Lock<Parked>`), written together when a worker is parked or returns
+  and read once per ping, so each parked worker is counted once in a pong.
 - Programs (`outpost::worker`): the worker generation in charge takes one
   program at a time from its inbox, an entry's handling, the owed work, a
   release's drop, or the finish of a caret

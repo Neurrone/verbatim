@@ -529,8 +529,8 @@ fn a_query_whose_user_moved_on_is_abandoned() {
 /// A query on a node with no window of its own, reached by navigation off
 /// the followed focus's chain, whose application's focus window the
 /// outpost's reader answers hung, is refused at its check before its first
-/// call: Core is told the window stopped responding, the query is answered
-/// abandoned, and no call reaches mockapp.
+/// call: the query is answered abandoned, Core is told the window stopped
+/// responding once its check confirms it, and no call reaches mockapp.
 fn a_query_on_a_windowless_node_of_a_hung_window_is_refused_with_no_call() {
     common::init_com();
     let title = common::unique_title("mockapp-hung-refused");
@@ -552,12 +552,6 @@ fn a_query_on_a_windowless_node_of_a_hung_window_is_refused_with_no_call() {
         node_id: deep.id,
         kind: QueryKind::NextSibling,
     });
-    assert_eq!(
-        outpost.next(),
-        OutpostToCore::NotResponding {
-            window: hwnd.0 as isize
-        }
-    );
     match outpost.next() {
         OutpostToCore::Reply {
             request_id: answered,
@@ -567,6 +561,12 @@ fn a_query_on_a_windowless_node_of_a_hung_window_is_refused_with_no_call() {
         } if answered == request_id => assert_eq!(timing.calls, CallCounts::default()),
         other => panic!("the outpost said {other:?}, not the refusal"),
     }
+    assert_eq!(
+        outpost.next(),
+        OutpostToCore::NotResponding {
+            window: hwnd.0 as isize
+        }
+    );
     outpost.settled();
     assert_eq!(common::read_hits(hwnd), [], "no call reached mockapp");
     drop(outpost);

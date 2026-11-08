@@ -21,14 +21,15 @@
 //! A hang is a notice, never a reason to abandon: the shell's check of the
 //! program in flight's window, every half second from its start, and of
 //! the window in front while a listener read's marker has waited half a
-//! second, give [`Input::HangSeen`], which records the window and tells
-//! Core once per hang ([`OutpostToCore::NotResponding`]). A program is
-//! abandoned only at its deadline or once the user moved on.
+//! second, give [`Input::HangSeen`], which tells Core once per hang
+//! ([`OutpostToCore::NotResponding`]) and keeps the window told ([`Hang`]).
+//! A program is abandoned only at its deadline or once the user moved on.
 //!
 //! What it never does: make a call of any kind, wait, read a clock, or
 //! keep an object. What it needs of Windows' own state it asks for by an
 //! effect, which the shell answers with an input before it takes another
-//! message ([`Effect::AskJudge`], [`Effect::CheckFront`]). Time is the
+//! message ([`Effect::AskJudge`], [`Effect::CheckFront`],
+//! [`Effect::JudgeTold`], [`Effect::CheckHung`]). Time is the
 //! shell's: a [`Now`] given with each input, and [`Reducer::next_timer`]
 //! for the shell's timed wait.
 
@@ -350,6 +351,23 @@ pub enum Effect {
     /// when it can be read, before the shell takes another message. Local
     /// calls only; it judges the hang, never the read.
     CheckFront,
+    /// Judge the told window `window` by the outpost's one judge of whether
+    /// a window is hung, a local call, answered by [`Input::ToldJudged`]
+    /// before the shell takes another message.
+    JudgeTold {
+        /// The window judged.
+        window: Window,
+        /// The window found hung while `window` was told, which is told in
+        /// its place if `window` is not hung.
+        waiting: Option<Window>,
+    },
+    /// Confirm that a window a commit named hung is hung now, by the
+    /// outpost's one judge, a local call, answered by [`Input::HangSeen`]
+    /// with no request when it is, before the shell takes another message.
+    CheckHung {
+        /// The window the commit named.
+        window: Window,
+    },
     /// A caret key's watch ended without evidence, for the log: why, and
     /// how long it waited.
     WatchEnded {
@@ -441,9 +459,10 @@ pub enum Input {
     },
     /// A window the shell found hung or ghosted: by the check of program
     /// `request`'s window ([`Effect::AskJudge`]), or, with no request, in
-    /// front while a marker waits ([`Effect::CheckFront`]). It enters the
-    /// record of hung windows, and sets the program's hang mark when
-    /// `request` is the program in flight; nothing is abandoned.
+    /// front while a marker waits ([`Effect::CheckFront`]) or named hung by
+    /// a commit ([`Effect::CheckHung`]). It is told as [`Hang`] says, and
+    /// sets the program's hang mark when `request` is the program in
+    /// flight; nothing is abandoned.
     HangSeen {
         /// The window found hung.
         window: Window,
@@ -451,11 +470,22 @@ pub enum Input {
         request: Option<Request>,
     },
     /// The shell's answer to [`Effect::CheckFront`] for a window of the
-    /// outpost's application in front that can be read: it leaves the
-    /// record of hung windows, as a commit naming it answered takes it out.
+    /// outpost's application in front that can be read: if it is the
+    /// window told, its hang has ended.
     FrontReadable {
         /// The window in front.
         window: Window,
+    },
+    /// The shell's answer to [`Effect::JudgeTold`], which brings back the
+    /// effect's two windows. An answer for a window no longer told changes
+    /// nothing.
+    ToldJudged {
+        /// The window judged.
+        window: Window,
+        /// The window waiting on the answer, if any.
+        waiting: Option<Window>,
+        /// Whether `window` is hung.
+        hung: bool,
     },
     /// The outpost is shutting down.
     Close,
@@ -522,10 +552,6 @@ struct Current {
     deferred: bool,
     /// What the program has in hand, for the log of its abandonment.
     in_hand: InHand,
-    /// The windows whose destroy event was pushed while it ran: a hang it
-    /// names in one of them is of a window gone, and never enters the
-    /// record of hung windows.
-    destroyed: BTreeSet<Window>,
     /// Whether the user moving on from its window abandons it: not for a
     /// query that is not about the focus, a tree dump or a shell item
     /// query, which is bounded by its deadline alone, as NVDA's watchdog
@@ -535,9 +561,9 @@ struct Current {
     moved_on_abandons: bool,
     /// Its hang mark: an [`Input::HangSeen`] of its request found its
     /// window hung, so its worker, once abandoned, counts as parked on a
-    /// hung window ([`Effect::Abandon`]'s `on_hung`). The record of hung
-    /// windows cannot tell it at abandonment, since a program whose worker
-    /// names its window has no window the record could be matched with.
+    /// hung window ([`Effect::Abandon`]'s `on_hung`). [`Hang`] cannot tell
+    /// it at abandonment, since a program whose worker names its window has
+    /// no window to compare with the one told.
     hang_mark: bool,
 }
 
@@ -548,6 +574,25 @@ struct GroupTry {
     rank: u32,
     batch: u64,
     older: VecDeque<Entry>,
+}
+
+/// The outpost's record of hung windows: one value per outpost, ended with
+/// its generation. One hang is told per application, so a second window seen
+/// hung while the told window is still hung is the same hang; a later hang in
+/// another window, which a window still hung when the told window recovers
+/// is, is told again and replaces it (Dickson, 2026-11-07, 2026-11-08). A
+/// told window found not hung ends the hang, so its later freeze is a new
+/// hang (Dickson, 2026-11-09).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum Hang {
+    /// No hang is being told.
+    #[default]
+    None,
+    /// `window`'s hang was told to Core.
+    Told {
+        /// The window told.
+        window: Window,
+    },
 }
 
 /// The reducer.
@@ -578,16 +623,11 @@ pub struct Reducer {
     /// node it frees.
     releasing: bool,
     stopping: bool,
-    /// The record of hung windows: each window from the first evidence of
-    /// its hang, an [`Input::HangSeen`] or a commit naming it hung, until
-    /// evidence that it answers, a commit naming it answered or a readable
-    /// window in front ([`Input::FrontReadable`]), or its destroy event; [`OutpostToCore::NotResponding`] is sent as the record goes
-    /// from empty to holding a window, once per hang of the application,
-    /// and further windows recorded meanwhile send nothing. A destroy wins
-    /// over a hang the program in flight names after it
-    /// ([`Current::destroyed`]), so a destroyed handle is never recorded
-    /// again by evidence gathered before its destroy.
-    hung: BTreeSet<Window>,
+    /// The hang told to Core ([`OutpostToCore::NotResponding`], sent only
+    /// by this record), judged live while it lasts on each input that takes
+    /// an entry, applies a commit or starts a program. Nothing is told after
+    /// [`Input::Close`].
+    hang: Hang,
 }
 
 impl Reducer {
@@ -675,8 +715,12 @@ impl Reducer {
     pub fn input(&mut self, input: Input, now: Now) -> Vec<Effect> {
         let before = self.observed();
         let mut effects = Vec::new();
+        let mut taken = false;
         match input {
-            Input::Entry { entry, source } => self.entry(entry, source, now, &mut effects),
+            Input::Entry { entry, source } => {
+                taken = true;
+                self.entry(entry, source, now, &mut effects);
+            }
             Input::Hooked => self.hold.hooked(),
             Input::WithoutListener => {
                 let held = self.hold.without_listener();
@@ -700,6 +744,7 @@ impl Reducer {
             }
             Input::Commit { request, change } => {
                 if self.accepts(request) {
+                    taken = true;
                     self.commit(request, &change, now, &mut effects);
                 }
             }
@@ -731,16 +776,18 @@ impl Reducer {
                     if let Some(current) = request.and_then(|request| self.current_of(request)) {
                         current.hang_mark = true;
                     }
-                    self.hang_seen(request, window, &mut effects);
+                    self.hang_seen(window, &mut effects);
                 }
             }
-            Input::FrontReadable { window } => {
-                if !self.stopping {
-                    self.hung.remove(&window);
-                }
-            }
+            Input::FrontReadable { window } => self.hang_ended(window),
+            Input::ToldJudged {
+                window,
+                waiting,
+                hung,
+            } => self.told_judged(window, waiting, hung, &mut effects),
             Input::Close => {
                 self.stopping = true;
+                self.hang = Hang::None;
                 let unparked = self.intake.close();
                 if !unparked.is_empty() {
                     effects.push(Effect::Unpark(unparked));
@@ -749,6 +796,7 @@ impl Reducer {
         }
         self.pump(now, &mut effects);
         self.answer_idle(&mut effects);
+        self.judge_told(taken, &mut effects);
         self.changed(&before, &mut effects);
         effects
     }
@@ -766,6 +814,7 @@ impl Reducer {
         }
         self.pump(now, &mut effects);
         self.answer_idle(&mut effects);
+        self.judge_told(false, &mut effects);
         self.changed(&before, &mut effects);
         effects
     }
@@ -831,12 +880,9 @@ impl Reducer {
         }
     }
 
-    /// A destroyed window answers nothing more: it leaves the record of
-    /// hung windows, and a window with its handle later is another, so the
-    /// program in flight, begun before the destroy, cannot put it back.
+    /// A destroyed window answers nothing more: a hang told of it ends.
     /// Applied as the destroy first reaches the reducer, from either
-    /// source, even as a hook copy the hand-over's hold keeps back, so the
-    /// program running meanwhile cannot record the window hung; a second
+    /// source, even as a hook copy the hand-over's hold keeps back; a second
     /// copy changes nothing.
     fn destroy_seen(&mut self, item: &Item) {
         if let Item::Msaa {
@@ -846,10 +892,7 @@ impl Reducer {
         } = *item
             && let Some(window) = Window::new(hwnd)
         {
-            self.hung.remove(&window);
-            if let Some(current) = self.flight.item_mut() {
-                current.destroyed.insert(window);
-            }
+            self.hang_ended(window);
         }
     }
 
@@ -888,52 +931,77 @@ impl Reducer {
         effects.push(Effect::Send(Box::new(message)));
     }
 
-    /// `window` was found hung, by `request`'s program or its check, or in
-    /// front with no request: it enters the record of hung windows, unless
-    /// the window was destroyed while that program ran, and Core is told
-    /// only as the record goes from empty to holding a window, so the
-    /// application sounds once per hang however many of its windows the
-    /// hang is met in (Dickson, 2026-11-07).
-    fn hang_seen(&mut self, request: Option<Request>, window: Window, effects: &mut Vec<Effect>) {
-        if request
-            .and_then(|request| self.current_of(request))
-            .is_some_and(|current| current.destroyed.contains(&window))
-        {
-            return;
-        }
-        let first = self.hung.is_empty();
-        if self.hung.insert(window) && first {
-            self.send(
-                OutpostToCore::NotResponding {
-                    window: window.get(),
-                },
-                effects,
-            );
+    /// `window` was found hung: told if no hang is, the same hang if it is
+    /// the window told, and otherwise a new one only if the told window is
+    /// found not hung.
+    fn hang_seen(&mut self, window: Window, effects: &mut Vec<Effect>) {
+        match self.hang {
+            Hang::None => self.tell_hang(window, effects),
+            Hang::Told { window: told } if told == window => {}
+            Hang::Told { window: told } => effects.push(Effect::JudgeTold {
+                window: told,
+                waiting: Some(window),
+            }),
         }
     }
 
-    /// What `request`'s program found of its window: a hang enters the
-    /// record, and an answer takes the window out of it.
-    fn found(
+    /// Tells Core of `window`'s hang, which becomes the hang told.
+    fn tell_hang(&mut self, window: Window, effects: &mut Vec<Effect>) {
+        self.hang = Hang::Told { window };
+        self.send(
+            OutpostToCore::NotResponding {
+                window: window.get(),
+            },
+            effects,
+        );
+    }
+
+    /// A hang told of `window` has ended; one of another window has not.
+    fn hang_ended(&mut self, window: Window) {
+        if self.hang == (Hang::Told { window }) {
+            self.hang = Hang::None;
+        }
+    }
+
+    /// Asks once that the told window be judged, with nothing waiting on
+    /// the answer, on an input where an entry is `taken` from the mailbox, a
+    /// commit applied or a program started. A cut read's finish continues
+    /// the program already started, so it is not a program started.
+    fn judge_told(&self, taken: bool, effects: &mut Vec<Effect>) {
+        let started = effects.iter().any(
+            |effect| matches!(effect, Effect::Dispatch(program) if !matches!(program.work, Work::Finish { .. })),
+        );
+        if let Hang::Told { window } = self.hang
+            && (taken || started)
+        {
+            effects.push(Effect::JudgeTold {
+                window,
+                waiting: None,
+            });
+        }
+    }
+
+    /// The judgement of `window`, told when it was asked: not hung ends its
+    /// hang, and the window waiting, if any, is a new one.
+    fn told_judged(
         &mut self,
-        request: Request,
-        (window, found): (Window, Found),
+        window: Window,
+        waiting: Option<Window>,
+        hung: bool,
         effects: &mut Vec<Effect>,
     ) {
-        match found {
-            Found::Hung => self.hang_seen(Some(request), window, effects),
-            Found::Answered => {
-                self.hung.remove(&window);
-            }
+        if hung || self.hang != (Hang::Told { window }) {
+            return;
+        }
+        match waiting {
+            Some(waiting) => self.tell_hang(waiting, effects),
+            None => self.hang = Hang::None,
         }
     }
 
     /// Applies the commit of `request`'s program: its report recorded for
     /// Core's judgement, then its messages sent, then the rest.
     fn commit(&mut self, request: Request, change: &Change, now: Now, effects: &mut Vec<Effect>) {
-        if let Some(found) = change.found {
-            self.found(request, found, effects);
-        }
         if let Some(report) = &change.report {
             follow::record(&mut self.facts.held, report);
         }
@@ -947,6 +1015,15 @@ impl Reducer {
                 }
             }
             self.send(message, effects);
+        }
+        // A window named hung is never taken at the commit's word: its call
+        // may have begun before a hang or a destroy, and failed after it.
+        // Asked before the told window's judgement, which ends the input,
+        // so an answer that replaces the told window comes first.
+        if let Some((window, Found::Hung)) = change.found
+            && !self.stopping
+        {
+            effects.push(Effect::CheckHung { window });
         }
         if let Some((node_id, trace, observed_at_us, timing)) = change.noted_caret {
             // The event's timing goes with it: its read is skipped only
@@ -1512,7 +1589,6 @@ impl Reducer {
             group,
             deferred: false,
             in_hand: InHand::of(&work, window),
-            destroyed: BTreeSet::new(),
             hang_mark: false,
             moved_on_abandons: !is_query_off_the_focus(&work),
         };

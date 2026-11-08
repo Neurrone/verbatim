@@ -26,7 +26,7 @@ Public API:
   no call of any kind.
 - `Input`: an entry from a producer, a verdict, a commit, a
   program finished, a release's answer, the answers to its asks
-  (`Judged`, `HangSeen`, `FrontReadable`), and the shell's close.
+  (`Judged`, `HangSeen`, `FrontReadable`, `ToldJudged`), and the shell's close.
   `Effect`: dispatch a `Program`, send a message,
   release, move the subscription (`Subscription`), drop elements or
   objects, abandon a worker generation (`Abandon`, with the dead
@@ -35,7 +35,7 @@ Public API:
   trace and the window it waits on, for the log; the shell alone
   counts the abandoned workers that have not returned), publish the
   facts' marks, given after a transition that changed them and ahead of
-  its other effects, or the verdicts, and two asks. `AskJudge` is the
+  its other effects, or the verdicts, and four asks. `AskJudge` is the
   check of the program's window, known at dispatch or, for `None`, the
   one its worker named in its charge: whether it is hung or ghosted,
   answered `HangSeen` with the window and the program's request when it
@@ -45,7 +45,10 @@ Public API:
   `HangSeen` with no request when a window of the application is hung or
   ghosted there, a ghost mapped to the window it stands in for, and
   `FrontReadable` when it can be read; another application's window in
-  front answers nothing. A hang abandons nothing.
+  front answers nothing. `JudgeTold` judges the told window by the
+  outpost's one judge of a hung window, and `CheckHung` confirms a window
+  a commit named hung, answered `HangSeen` with no request when it is hung.
+  A hang abandons nothing.
 - A program's deadline is its entry's (`budget`): `HANDLING_DEADLINE`
   (11 seconds, `verbatim-model`'s) from when the program begins for every
   program but two, a focus read (`Query::ReadFocus`) and a listener read's
@@ -62,8 +65,8 @@ Public API:
 - The program in flight is the reducer's work in flight
   (`InFlight<Current>`): its request, deadline and moved-on rule are
   kept there, and the reducer keeps beside them only the query the
-  program answers, its focus group try, whether it is deferred work, the
-  windows destroyed while it runs, its hang mark and whether moving on
+  program answers, its focus group try, whether it is deferred work, its
+  hang mark and whether moving on
   abandons it (`moved_on_abandons`: not for a tree dump or a shell item
   query, which are not about the focus, as NVDA's watchdog judges a
   moved-on user against the focus object only, so their window is checked
@@ -100,29 +103,33 @@ Public API:
   marker resolves, by its read, its drop or the end of the listener's
   reads, nothing is timed for it. The check judges the hang alone, never
   the read, so the marker still has its one answer path.
-- The record of hung windows, kept in the application's own reducer: a
-  window enters it at a `HangSeen`, of the program in flight's check, of
-  a request no longer live, or of the window in front, or at an accepted
-  commit naming it `Found::Hung` (its check before a call found it hung,
-  and no call was made), and `OutpostToCore::NotResponding` is sent
-  only as the record goes from empty to holding a window, once per hang of
-  the application: a window entering while another is recorded sends
-  nothing. A window leaves only on evidence that it answers,
-  an accepted commit naming it `Found::Answered` (a counted call into it
-  returned) or a `FrontReadable` naming it, its destroy event, or the
-  outpost's end. A program that made no call into the window is never
-  that evidence. A destroy wins over the program in flight: a hang it
-  names, by its check or a commit, in a window whose destroy event reached
-  the reducer while it ran (`Current::destroyed`) enters nothing. The
-  destroy takes effect as it first reaches the reducer, from the hook or
-  the listener, even as a hook copy the hand-over's hold keeps back.
+- The record of hung windows is one value of the reducer, `Hang`: no hang
+  told, or told of one window. `OutpostToCore::NotResponding` is sent only
+  by that record, as it goes to told, so one hang is told per application:
+  a `HangSeen` of the told window changes nothing, and a `HangSeen` of
+  another window, while the told window is still hung, is the same hang.
+  While a hang is told, each input that takes an entry, applies a commit
+  or starts a program, a cut read's finish not counted, asks once that the
+  told window be judged live (`JudgeTold`). A window found hung while
+  another is told asks the same, with that window waiting on the answer,
+  and the answer (`ToldJudged`) names both, so an answer for a window no
+  longer told changes nothing. Found not hung, the told window's hang
+  ends, and the window waiting, if any, is a new hang, told and replacing
+  it; a window that recovers and later freezes again is a new hang too. A
+  commit naming a window hung is never taken at its word: it is confirmed
+  live first (`CheckHung`, whose `HangSeen` carries no request), so a
+  program begun before a window's destruction cannot record it, and a
+  commit naming a window answered is judged as any commit and ends
+  nothing itself. A readable window in front or a destroy event, as it
+  first reaches the reducer even as a hook copy the hold keeps back, ends a
+  hang told of that window. Nothing is told after `Close`.
 - The hang mark: a `HangSeen` whose request is the program in flight's,
   of the generation in charge, sets that program's mark, dropped with the
   program. The abandonment's `Effect::Abandon` carries it as `on_hung`,
   which the shell counts apart for the pong, so the supervisor's limit on
   abandoned workers never replaces an outpost for its application's hang.
   The record of hung windows cannot stand in for it: a program whose
-  worker names its window has none the record could be matched with at
+  worker names its window has no window to compare with the one told at
   abandonment.
 - `Program` and `Work`: what the worker generation in charge runs, with
   its copies of the facts (`Facts`), whose commits come back as `Change`s

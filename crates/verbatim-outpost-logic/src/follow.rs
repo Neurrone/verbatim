@@ -378,8 +378,8 @@ pub struct Change {
     /// makes it, so its own commit carries them only for the reducer.
     pub text: Vec<TextChange>,
     /// The program's window and what the program found there, when it
-    /// found anything: the evidence the reducer's record of hung windows
-    /// is kept by.
+    /// found anything: a window named hung is confirmed live before it
+    /// counts ([`Effect::CheckHung`](crate::Effect::CheckHung)).
     pub found: Option<(Window, Found)>,
 }
 

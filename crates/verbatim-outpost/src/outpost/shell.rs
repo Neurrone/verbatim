@@ -20,7 +20,6 @@
 
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::sync::Arc;
-use std::sync::atomic::Ordering;
 use std::sync::mpsc;
 
 use super::lock::{Lock, LockGuard};
@@ -648,6 +647,25 @@ impl Shell {
             } => return vec![self.release(&nodes, &anchors, acknowledged, &live)],
             Effect::AskJudge { request, window } => return self.judge(request, window),
             Effect::CheckFront => return self.check_front().into_iter().collect(),
+            Effect::JudgeTold { window, waiting } => {
+                return vec![Input::ToldJudged {
+                    window,
+                    waiting,
+                    hung: self.context.readability(window.get()).is_hung(),
+                }];
+            }
+            Effect::CheckHung { window } => {
+                return self
+                    .context
+                    .readability(window.get())
+                    .is_hung()
+                    .then_some(Input::HangSeen {
+                        window,
+                        request: None,
+                    })
+                    .into_iter()
+                    .collect();
+            }
             Effect::Subscribe(subscription) => self.subscribe(&subscription),
             Effect::Unfollow(tokens) => {
                 for token in tokens {
@@ -716,17 +734,12 @@ impl Shell {
         Vec::new()
     }
 
-    /// The pong's counts of the abandoned workers that have not returned:
-    /// those parked on a window seen hung, and the rest, which the
-    /// supervisor's limit counts.
+    /// The pong's counts of the abandoned workers that have not returned,
+    /// written together.
     fn count_parked(&self) {
         let on_hung = self.parked.values().filter(|&&on_hung| on_hung).count();
-        self.context
-            .abandoned_on_hung
-            .store(on_hung, Ordering::Relaxed);
-        self.context
-            .abandoned
-            .store(self.parked.len().saturating_sub(on_hung), Ordering::Relaxed);
+        let other = self.parked.len().saturating_sub(on_hung);
+        *self.context.parked.lock() = super::Parked { other, on_hung };
     }
 
     /// Checks `request`'s program by `window`, or by the window its worker
@@ -984,9 +997,9 @@ fn token(
 mod tests {
     use std::collections::BTreeSet;
 
-    use verbatim_model::protocol::{Query, RequestId};
+    use verbatim_model::protocol::{Query, RequestId, Urgent};
 
-    use super::super::reducer::{Anchor, NodeAnchors, TextChange};
+    use super::super::reducer::{Anchor, InHand, NodeAnchors, TextChange};
     use super::super::store::TextWrite;
     use super::*;
 
@@ -1099,15 +1112,9 @@ mod tests {
         context
     }
 
-    /// The shell answers a program's check at once, as the reducer's next
-    /// inputs, before it returns to its mailbox: asked of a focus read
-    /// whose window its reader answers hung, it answers that the hang was
-    /// seen, which sets the program's hang mark, so the program abandoned
-    /// at its deadline is counted parked on a hung window, its replacement
-    /// started and its query answered.
-    #[test]
-    fn an_ask_is_answered_before_the_shell_takes_another_message() {
-        let mut shell = Shell {
+    /// A shell on [`context`], with nothing in flight and no worker.
+    fn shell() -> Shell {
+        Shell {
             context: context(),
             reducer: Reducer::new(),
             tokens: HashMap::new(),
@@ -1120,7 +1127,28 @@ mod tests {
             parked: HashMap::new(),
             closing: false,
             warm: false,
-        };
+        }
+    }
+
+    /// Ends the workers `shell` started and waits for them.
+    fn end_workers(shell: &mut Shell) {
+        shell.generations.clear();
+        for thread in shell.threads.drain(..) {
+            thread
+                .join()
+                .expect("the worker ends once its inbox closes");
+        }
+    }
+
+    /// The shell answers a program's check at once, as the reducer's next
+    /// inputs, before it returns to its mailbox: asked of a focus read
+    /// whose window its reader answers hung, it answers that the hang was
+    /// seen, which sets the program's hang mark, so the program abandoned
+    /// at its deadline is counted parked on a hung window, its replacement
+    /// started and its query answered.
+    #[test]
+    fn an_ask_is_answered_before_the_shell_takes_another_message() {
+        let mut shell = shell();
         shell.take(Posted::Entry {
             entry: Entry::own(
                 Item::Query {
@@ -1168,11 +1196,41 @@ mod tests {
             shell.generations.contains_key(&1),
             "its replacement started"
         );
-        shell.generations.clear();
-        for thread in shell.threads.drain(..) {
-            thread
-                .join()
-                .expect("the worker ends once its inbox closes");
-        }
+        end_workers(&mut shell);
+    }
+
+    /// A worker abandoned on a window seen hung and one abandoned otherwise
+    /// are each counted once in a pong, in their own count, and a worker
+    /// that returns leaves its count.
+    #[test]
+    fn each_parked_worker_is_counted_once_in_a_pong() {
+        let mut shell = shell();
+        let abandon = |dead, on_hung| Effect::Abandon {
+            dead,
+            replacement: dead + 1,
+            reason: "a test's abandonment",
+            on_hung,
+            in_hand: InHand {
+                work: "nothing",
+                trace: None,
+                window: None,
+            },
+        };
+        let counts = |shell: &Shell| match shell.context.pong(7) {
+            Urgent::Pong {
+                seq: 7,
+                parked_count,
+                parked_on_hung,
+            } => (parked_count, parked_on_hung),
+            other => panic!("not the ping's pong: {other:?}"),
+        };
+        assert_eq!(counts(&shell), (0, 0));
+        shell.apply(vec![abandon(0, true)]);
+        assert_eq!(counts(&shell), (0, 1), "the one on a hung window");
+        shell.apply(vec![abandon(1, false)]);
+        assert_eq!(counts(&shell), (1, 1), "one more, not on a hung window");
+        shell.take(Posted::Returned(0));
+        assert_eq!(counts(&shell), (1, 0), "the one on a hung window returned");
+        end_workers(&mut shell);
     }
 }

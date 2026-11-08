@@ -58,7 +58,7 @@ use std::cell::{Ref, RefCell};
 use std::collections::HashMap;
 use std::io;
 use std::os::windows::io::OwnedHandle;
-use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use lock::{Lock, LockGuard};
@@ -167,6 +167,17 @@ impl ApplicationNames {
     }
 }
 
+/// The abandoned workers that have not returned, as one value, so that a
+/// pong counts each once: written together when a worker is parked or
+/// returns, read once per ping.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct Parked {
+    /// Those not parked on a window seen hung.
+    other: usize,
+    /// Those parked on a window seen hung: their program's hang mark.
+    on_hung: usize,
+}
+
 /// What the outpost's threads share.
 pub(crate) struct Context {
     /// The application, set once ([`Outpost::assign`]); 0 until then, a
@@ -184,14 +195,9 @@ pub(crate) struct Context {
     mailbox: Mailbox,
     /// The outpost's start, from which the reducer's clock counts.
     epoch: Instant,
-    /// Abandoned workers that have not yet returned, as the reducer last
-    /// counted them, but for those parked on a window seen hung: an
-    /// atomic, so the I/O thread answers a ping without waiting on
-    /// anything.
-    abandoned: AtomicUsize,
-    /// Abandoned workers that have not yet returned, parked on a window the
-    /// outpost saw hung while their program ran (its hang mark).
-    abandoned_on_hung: AtomicUsize,
+    /// The abandoned workers that have not yet returned, as the pong
+    /// reports them. The lock is held only to assign or copy the value.
+    parked: Lock<Parked>,
     /// The reducer's thread, which returns every worker thread started.
     shell: Lock<Option<JoinHandle<Vec<JoinHandle<()>>>>>,
     /// Every application object the outpost keeps, and the identity it
@@ -594,6 +600,16 @@ impl Context {
     fn readability(&self, hwnd: isize) -> verbatim_win32::window::Readability {
         let reader = Arc::clone(&self.window_readability.lock());
         reader(hwnd)
+    }
+
+    /// The answer to ping `seq`.
+    fn pong(&self, seq: u64) -> Urgent {
+        let parked = *self.parked.lock();
+        Urgent::Pong {
+            seq,
+            parked_count: parked.other,
+            parked_on_hung: parked.on_hung,
+        }
     }
 
     /// Why window `hwnd` cannot be read, `None` when it can
@@ -1086,8 +1102,7 @@ impl Outpost {
             outbound,
             mailbox: Mailbox::default(),
             epoch: Instant::now(),
-            abandoned: AtomicUsize::new(0),
-            abandoned_on_hung: AtomicUsize::new(0),
+            parked: Lock::new(Parked::default()),
             shell: Lock::new(None),
             store: store::Store::new(),
             arbitrator: Lock::new(Arbitrator::new(&[])),
@@ -1533,11 +1548,7 @@ impl Outpost {
                 context.mailbox.post(Posted::Cancel(*request_id));
             }
             CoreToOutpost::Ping { seq, .. } => {
-                context.outbound.urgent(Urgent::Pong {
-                    seq: *seq,
-                    parked_count: context.abandoned.load(Ordering::Relaxed),
-                    parked_on_hung: context.abandoned_on_hung.load(Ordering::Relaxed),
-                });
+                context.outbound.urgent(context.pong(*seq));
             }
             CoreToOutpost::Fetches(fetches) => {
                 *context.fetches.lock() = *fetches;
