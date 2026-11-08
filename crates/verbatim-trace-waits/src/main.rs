@@ -97,6 +97,7 @@ const IMAGE: GUID = GUID::from_u128(0x2cb15d1d_5fc1_11d2_abe1_00a0c911f518);
 
 /// Opcodes of the thread events used.
 const THREAD_START: u8 = 1;
+const THREAD_END: u8 = 2;
 const THREAD_DC_START: u8 = 3;
 const CSWITCH: u8 = 36;
 const READY_THREAD: u8 = 50;
@@ -110,30 +111,40 @@ const IMAGE_DC_START: u8 = 3;
 /// A context switch's `OldThreadState` for a thread still ready.
 const STATE_READY: i8 = 1;
 
+/// A thread as the reports count it: its id, and how many threads with
+/// that id ended before it started, since Windows reuses an ended thread's
+/// id and the new thread must not inherit the old one's figures or name.
+type ThreadKey = (u32, u32);
+
 /// Everything read from the trace.
 #[derive(Default)]
 struct Waits {
+    /// How many threads of each id have started after an earlier one with
+    /// that id ended: the second half of the id's current [`ThreadKey`].
+    generation: HashMap<u32, u32>,
+    /// The ids whose thread ended: their next start is a new thread.
+    ended: HashSet<u32>,
     /// When each ready thread became ready, in 100-nanosecond units.
     ready_since: HashMap<u32, i64>,
     /// Each thread's ready waits, in 100-nanosecond units.
-    by_thread: HashMap<u32, Vec<i64>>,
+    by_thread: HashMap<ThreadKey, Vec<i64>>,
     /// How many times each thread was readied from a wait: its wake-ups.
-    woken: HashMap<u32, usize>,
+    woken: HashMap<ThreadKey, usize>,
     /// When each running thread was given its processor, and each thread's
     /// time on a processor, in 100-nanosecond units.
     on_cpu_since: HashMap<u32, i64>,
-    cpu: HashMap<u32, i64>,
+    cpu: HashMap<ThreadKey, i64>,
     /// Each thread's process.
-    process_of: HashMap<u32, u32>,
+    process_of: HashMap<ThreadKey, u32>,
     /// Each thread's name, when it has one.
-    names: HashMap<u32, String>,
+    names: HashMap<ThreadKey, String>,
     /// Each process's executable's file name, lowercased.
     images: HashMap<u32, String>,
     /// When each blocked thread was switched out, in 100-nanosecond units.
     blocked_since: HashMap<u32, i64>,
     /// Each blocked wait of half a millisecond or more: the thread, the
     /// thread that readied it, and how long it was blocked.
-    wakes: Vec<(u32, u32, i64)>,
+    wakes: Vec<(ThreadKey, ThreadKey, i64)>,
     /// The thread running on each processor, by its index, from the
     /// context switches: the thread that readies another, since a ready
     /// event does not name it.
@@ -187,7 +198,7 @@ struct Waits {
     sample_time: HashMap<u32, i64>,
     /// When each collected sample was taken, and its thread, in the order
     /// of `sample_stacks`.
-    sample_taken: Vec<(i64, u32)>,
+    sample_taken: Vec<(i64, ThreadKey)>,
     /// The user parts still to come of collected samples' walks, by the
     /// thread walked and the event's time as the walk gives it: the
     /// sample's index in `sample_stacks`.
@@ -197,12 +208,12 @@ struct Waits {
 /// One blocked wait, as long as `--blocked` asks or longer, of a thread it
 /// names.
 struct LongWait {
-    thread: u32,
+    thread: ThreadKey,
     /// When it was switched out and when it was readied, in the trace's
     /// 100-nanosecond units since 1601 (UTC).
     from: i64,
     to: i64,
-    waker: u32,
+    waker: ThreadKey,
     /// The stack it waited on, and the stack that readied it, each as a
     /// process and return addresses, innermost first.
     wait_stack: Option<(u32, Vec<u64>)>,
@@ -230,47 +241,7 @@ impl Waits {
         // the whole of it.
         let processor = unsafe { record.BufferContext.Anonymous.ProcessorIndex };
         if header.ProviderId == THREAD {
-            match opcode {
-                CSWITCH => {
-                    if let Some(new) = u32_at(data, 0) {
-                        self.running.insert(processor, new);
-                        if let Some(index) = self.awaiting_switch_in.remove(&new) {
-                            self.long_wait_pending.insert(processor, (index, true));
-                        }
-                    }
-                    self.cswitch(data, time);
-                }
-                READY_THREAD => {
-                    if let Some(thread) = u32_at(data, 0) {
-                        if self
-                            .stack_target
-                            .as_ref()
-                            .is_some_and(|target| self.targets(thread, target))
-                        {
-                            self.stack_pending.insert(processor);
-                        }
-                        self.ready_since.entry(thread).or_insert(time);
-                        *self.woken.entry(thread).or_default() += 1;
-                        if let Some(since) = self.blocked_since.remove(&thread) {
-                            let waker = self.running.get(&processor).copied().unwrap_or(0);
-                            if time - since >= SHORTEST_BLOCKED {
-                                self.wakes.push((thread, waker, time - since));
-                            }
-                            self.long_block(thread, since, time, waker, processor);
-                        }
-                    }
-                }
-                THREAD_START | THREAD_DC_START => self.thread(data),
-                THREAD_SET_NAME => {
-                    if let (Some(process), Some(thread)) = (u32_at(data, 0), u32_at(data, 4)) {
-                        self.process_of.insert(thread, process);
-                        if let Some(name) = wide_at(data, 8) {
-                            self.names.insert(thread, name);
-                        }
-                    }
-                }
-                _ => {}
-            }
+            self.thread_event(opcode, data, time, processor);
         } else if header.ProviderId == IMAGE && matches!(opcode, IMAGE_LOAD | IMAGE_DC_START) {
             self.image(data);
         } else if header.ProviderId == PERF_INFO && opcode == SAMPLED_PROFILE {
@@ -290,6 +261,66 @@ impl Waits {
         }
     }
 
+    /// A kernel thread event, with its opcode, payload, time and the
+    /// processor that logged it.
+    fn thread_event(&mut self, opcode: u8, data: &[u8], time: i64, processor: u16) {
+        match opcode {
+            CSWITCH => {
+                if let Some(new) = u32_at(data, 0) {
+                    self.running.insert(processor, new);
+                    if let Some(index) = self.awaiting_switch_in.remove(&new) {
+                        self.long_wait_pending.insert(processor, (index, true));
+                    }
+                }
+                self.cswitch(data, time);
+            }
+            READY_THREAD => {
+                if let Some(id) = u32_at(data, 0) {
+                    let thread = self.key(id);
+                    if self
+                        .stack_target
+                        .as_ref()
+                        .is_some_and(|target| self.targets(thread, target))
+                    {
+                        self.stack_pending.insert(processor);
+                    }
+                    self.ready_since.entry(id).or_insert(time);
+                    *self.woken.entry(thread).or_default() += 1;
+                    if let Some(since) = self.blocked_since.remove(&id) {
+                        let waker = self.key(self.running.get(&processor).copied().unwrap_or(0));
+                        if time - since >= SHORTEST_BLOCKED {
+                            self.wakes.push((thread, waker, time - since));
+                        }
+                        self.long_block(thread, since, time, waker, processor);
+                    }
+                }
+            }
+            THREAD_START | THREAD_DC_START => self.thread(data),
+            // The id is retired at its next start rather than here, since
+            // the ended thread's last switch out comes after this event.
+            THREAD_END => {
+                if let Some(id) = u32_at(data, 4) {
+                    self.ended.insert(id);
+                }
+            }
+            THREAD_SET_NAME => {
+                if let (Some(process), Some(id)) = (u32_at(data, 0), u32_at(data, 4)) {
+                    let thread = self.key(id);
+                    self.process_of.insert(thread, process);
+                    if let Some(name) = wide_at(data, 8) {
+                        self.names.insert(thread, name);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// The thread that now has the id `id`.
+    fn key(&self, id: u32) -> ThreadKey {
+        (id, self.generation.get(&id).copied().unwrap_or(0))
+    }
+
     /// Whether the span from `from` to `to` overlaps the `--timeline`
     /// window, if there is one.
     fn in_window(&self, from: i64, to: i64) -> bool {
@@ -301,7 +332,14 @@ impl Waits {
     /// `time`, when `waker` readied it on `processor`: kept when it is long
     /// enough, with its readying stack to come on that processor and its
     /// waiting stack at its next switch in.
-    fn long_block(&mut self, thread: u32, since: i64, time: i64, waker: u32, processor: u16) {
+    fn long_block(
+        &mut self,
+        thread: ThreadKey,
+        since: i64,
+        time: i64,
+        waker: ThreadKey,
+        processor: u16,
+    ) {
         if time - since < self.long_blocked
             || !self.in_window(since, time)
             || !self
@@ -321,7 +359,7 @@ impl Waits {
             ready_stack: None,
         });
         self.long_wait_pending.insert(processor, (index, false));
-        self.awaiting_switch_in.insert(thread, index);
+        self.awaiting_switch_in.insert(thread.0, index);
     }
 
     /// A stack walk on `processor` taken for a long blocked wait, its
@@ -341,7 +379,7 @@ impl Waits {
             .step_by(8)
             .filter_map(|offset| u64_at(data, offset));
         let wait = &mut self.long_blocks[index];
-        if waiting && walked.0 != wait.thread {
+        if waiting && walked.0 != wait.thread.0 {
             return true;
         }
         let stack = if waiting {
@@ -368,13 +406,16 @@ impl Waits {
             return;
         };
         if let Some(since) = self.ready_since.remove(&new) {
-            self.by_thread.entry(new).or_default().push(time - since);
+            self.by_thread
+                .entry(self.key(new))
+                .or_default()
+                .push(time - since);
         }
         if new != 0 {
             self.on_cpu_since.insert(new, time);
         }
         if let Some(since) = self.on_cpu_since.remove(&old) {
-            *self.cpu.entry(old).or_default() += time - since;
+            *self.cpu.entry(self.key(old)).or_default() += time - since;
         }
         // Taken off the processor while still ready: pre-empted, so it
         // waits from now; otherwise it blocks until something readies it.
@@ -393,10 +434,22 @@ impl Waits {
     /// A thread's start, or a thread running when the trace began: its
     /// process, and its name at offset 72 (after the process and thread
     /// ids, seven pointers, the sub-process tag and four priority bytes).
+    ///
+    /// A start with the id of a thread that ended is a new thread: it
+    /// takes the id's next [`ThreadKey`], and the ended thread's waits in
+    /// progress are dropped.
     fn thread(&mut self, data: &[u8]) {
-        let (Some(process), Some(thread)) = (u32_at(data, 0), u32_at(data, 4)) else {
+        let (Some(process), Some(id)) = (u32_at(data, 0), u32_at(data, 4)) else {
             return;
         };
+        if self.ended.remove(&id) {
+            *self.generation.entry(id).or_default() += 1;
+            self.ready_since.remove(&id);
+            self.on_cpu_since.remove(&id);
+            self.blocked_since.remove(&id);
+            self.awaiting_switch_in.remove(&id);
+        }
+        let thread = self.key(id);
         self.process_of.insert(thread, process);
         if let Some(name) = wide_at(data, 72).filter(|name| !name.is_empty()) {
             self.names.insert(thread, name);
@@ -431,7 +484,7 @@ impl Waits {
     /// any process, or, for `<process.exe>:<name>`, one of that name in a
     /// process of that image, an empty name meaning a thread with none,
     /// and `<process.exe>:#<thread id>` the thread of that id.
-    fn targets(&self, thread: u32, target: &str) -> bool {
+    fn targets(&self, thread: ThreadKey, target: &str) -> bool {
         let name = self.names.get(&thread);
         match target.split_once(':') {
             Some((image, wanted)) => {
@@ -442,7 +495,7 @@ impl Waits {
                     .is_some_and(|known| known.eq_ignore_ascii_case(image));
                 in_image
                     && match (wanted.strip_prefix('#'), name) {
-                        (Some(id), _) => id.parse() == Ok(thread),
+                        (Some(id), _) => id.parse() == Ok(thread.0),
                         (None, _) if wanted == "*" => true,
                         (None, Some(name)) => name == wanted,
                         (None, None) => wanted.is_empty(),
@@ -468,9 +521,10 @@ impl Waits {
     /// A CPU sample: counted, with the module it was running in, when its
     /// thread is the one asked for; its stack follows.
     fn sample(&mut self, data: &[u8], time: i64) {
-        let (Some(address), Some(thread)) = (u64_at(data, 0), u32_at(data, 8)) else {
+        let (Some(address), Some(id)) = (u64_at(data, 0), u32_at(data, 8)) else {
             return;
         };
+        let thread = self.key(id);
         if !self
             .sample_target
             .as_ref()
@@ -479,12 +533,12 @@ impl Waits {
         {
             return;
         }
-        self.sample_time.insert(thread, time);
+        self.sample_time.insert(id, time);
         let process = self.process_of.get(&thread).copied().unwrap_or(0);
         let module = self.module(process, address);
         self.samples += 1;
         *self.sampled_in.entry(module).or_default() += 1;
-        self.sample_pending.insert(thread);
+        self.sample_pending.insert(id);
     }
 
     /// A collected sample's stack: each module on it counted once.
@@ -510,7 +564,7 @@ impl Waits {
                 .insert(walked, self.sample_stacks.len() - 1);
         }
         let taken = self.sample_time.remove(&thread).unwrap_or(0);
-        self.sample_taken.push((taken, thread));
+        self.sample_taken.push((taken, self.key(thread)));
         for module in modules {
             *self.sampled_under.entry(module).or_default() += 1;
         }
@@ -709,7 +763,7 @@ fn read(
 }
 
 fn report(waits: &Waits, processes: &[String]) {
-    let mut rows: Vec<(String, u32, String, Vec<i64>)> = waits
+    let mut rows: Vec<(String, ThreadKey, String, Vec<i64>)> = waits
         .by_thread
         .iter()
         .filter_map(|(&thread, list)| {
@@ -726,7 +780,8 @@ fn report(waits: &Waits, processes: &[String]) {
     rows.sort_by(|a, b| (&a.0, &a.2, a.1).cmp(&(&b.0, &b.2, b.1)));
     // Milliseconds to the microsecond, from 100-nanosecond units.
     let ms = |units: i64| format!("{}.{:03}", units / 10_000, units % 10_000 / 10);
-    for (process, thread, name, sorted) in rows {
+    for (process, key, name, sorted) in rows {
+        let thread = key.0;
         let at = |permille: usize| sorted[(sorted.len() - 1) * permille / 1_000];
         let over = |limit_ms: i64| {
             sorted
@@ -736,8 +791,8 @@ fn report(waits: &Waits, processes: &[String]) {
         };
         println!(
             "{process} thread {thread} {name:?}: woken {}, on a processor {} ms; {} waits; median {} ms, 99.9th {} ms, maximum {} ms; over 1 ms {}, over 10 ms {}, over 100 ms {}",
-            waits.woken.get(&thread).copied().unwrap_or(0),
-            ms(waits.cpu.get(&thread).copied().unwrap_or(0)),
+            waits.woken.get(&key).copied().unwrap_or(0),
+            ms(waits.cpu.get(&key).copied().unwrap_or(0)),
             sorted.len(),
             ms(at(500)),
             ms(at(999)),
@@ -753,11 +808,11 @@ fn report(waits: &Waits, processes: &[String]) {
 /// reads it), grouped by the thread that woke them, each labelled by its
 /// process image, process, thread id and name.
 fn woken_by(waits: &Waits, target: &str) -> HashMap<String, Vec<i64>> {
-    let label = |thread: u32| {
+    let label = |thread: ThreadKey| {
         let process = waits.process_of.get(&thread).copied().unwrap_or(0);
         let image = waits.images.get(&process).map_or("?", String::as_str);
         let name = waits.names.get(&thread).map_or("", String::as_str);
-        format!("{image} {process} thread {thread} {name:?}")
+        format!("{image} {process} thread {} {name:?}", thread.0)
     };
     let mut by_waker: HashMap<String, Vec<i64>> = HashMap::new();
     for &(thread, waker, blocked) in &waits.wakes {
@@ -857,7 +912,7 @@ fn report_samples(waits: &Waits, target: &str, mut symbols: symbols::Symbols) {
 /// for all of them.
 fn report_by_name(waits: &Waits, processes: &[String]) {
     let mut by_name: HashMap<(String, String), (usize, i64)> = HashMap::new();
-    let threads: HashSet<u32> = waits
+    let threads: HashSet<ThreadKey> = waits
         .woken
         .keys()
         .chain(waits.cpu.keys())
@@ -913,11 +968,11 @@ fn report_by_name(waits: &Waits, processes: &[String]) {
 /// its times (UTC), its waker, and the stacks it waited on and was
 /// readied from.
 fn report_blocked(waits: &Waits, mut symbols: symbols::Symbols) {
-    let label = |thread: u32| {
+    let label = |thread: ThreadKey| {
         let process = waits.process_of.get(&thread).copied().unwrap_or(0);
         let image = waits.images.get(&process).map_or("?", String::as_str);
         let name = waits.names.get(&thread).map_or("", String::as_str);
-        format!("{image} {process} thread {thread} {name:?}")
+        format!("{image} {process} thread {} {name:?}", thread.0)
     };
     let mut order: Vec<&LongWait> = waits.long_blocks.iter().collect();
     order.sort_by_key(|wait| wait.from);
@@ -953,11 +1008,11 @@ fn report_blocked(waits: &Waits, mut symbols: symbols::Symbols) {
 /// waited on and was readied from, and each CPU sample in it with its
 /// stack, kernel frames left out.
 fn report_timeline(waits: &Waits, mut symbols: symbols::Symbols) {
-    let label = |thread: u32| {
+    let label = |thread: ThreadKey| {
         let process = waits.process_of.get(&thread).copied().unwrap_or(0);
         let image = waits.images.get(&process).map_or("?", String::as_str);
         let name = waits.names.get(&thread).map_or("", String::as_str);
-        format!("{image} {process} thread {thread} {name:?}")
+        format!("{image} {process} thread {} {name:?}", thread.0)
     };
     let mut named = |process: u32, addresses: &[u64]| -> Vec<String> {
         addresses
@@ -1181,12 +1236,16 @@ mod tests {
         // thread; thread 3 is a worker of verbatim.exe, and thread 4 the
         // waker of them all.
         for (thread, process) in [(1, 10), (2, 10), (3, 20), (4, 20)] {
-            waits.process_of.insert(thread, process);
+            waits.process_of.insert((thread, 0), process);
         }
-        waits.names.insert(1, "verbatim-worker".to_owned());
-        waits.names.insert(3, "verbatim-worker".to_owned());
-        waits.names.insert(4, "main".to_owned());
-        waits.wakes = vec![(1, 4, 10_000), (2, 4, 20_000), (3, 4, 30_000)];
+        waits.names.insert((1, 0), "verbatim-worker".to_owned());
+        waits.names.insert((3, 0), "verbatim-worker".to_owned());
+        waits.names.insert((4, 0), "main".to_owned());
+        waits.wakes = vec![
+            ((1, 0), (4, 0), 10_000),
+            ((2, 0), (4, 0), 20_000),
+            ((3, 0), (4, 0), 30_000),
+        ];
         let waker = r#"verbatim.exe 20 thread 4 "main""#.to_owned();
 
         assert_eq!(
@@ -1210,13 +1269,13 @@ mod tests {
         // Threads 1 and 2 are unnamed outpost threads, 3 a named one of
         // verbatim.exe.
         for (thread, process) in [(1, 10), (2, 10), (3, 20)] {
-            waits.process_of.insert(thread, process);
+            waits.process_of.insert((thread, 0), process);
         }
-        waits.names.insert(3, "main".to_owned());
+        waits.names.insert((3, 0), "main".to_owned());
         let taken = |target: &str| -> Vec<u32> {
             [1, 2, 3]
                 .into_iter()
-                .filter(|&thread| waits.targets(thread, target))
+                .filter(|&thread| waits.targets((thread, 0), target))
                 .collect()
         };
 
@@ -1260,14 +1319,81 @@ mod tests {
         waits.images.insert(20, "verbatim.exe".to_owned());
         // Threads 1 and 2 are Notepad's, one named; 3 is verbatim.exe's.
         for (thread, process) in [(1, 10), (2, 10), (3, 20)] {
-            waits.process_of.insert(thread, process);
+            waits.process_of.insert((thread, 0), process);
         }
-        waits.names.insert(2, "DWM Compositor Thread".to_owned());
+        waits
+            .names
+            .insert((2, 0), "DWM Compositor Thread".to_owned());
         let taken: Vec<u32> = [1, 2, 3]
             .into_iter()
-            .filter(|&thread| waits.targets(thread, "notepad.exe:*"))
+            .filter(|&thread| waits.targets((thread, 0), "notepad.exe:*"))
             .collect();
 
         assert_eq!(taken, vec![1, 2]);
+    }
+
+    /// A thread event's payload: the process and thread ids, and the name
+    /// at 72, as `thread` reads a start.
+    fn started(process: u32, thread: u32, name: &str) -> Vec<u8> {
+        let mut data = [process.to_le_bytes(), thread.to_le_bytes()].concat();
+        data.resize(72, 0);
+        data.extend(name.encode_utf16().chain([0]).flat_map(u16::to_le_bytes));
+        data
+    }
+
+    /// A context switch's payload: the new and old thread ids, and the old
+    /// thread's state at 14 (0, blocked).
+    fn switched(new: u32, old: u32) -> Vec<u8> {
+        let mut data = [new.to_le_bytes(), old.to_le_bytes()].concat();
+        data.resize(16, 0);
+        data
+    }
+
+    /// Two threads with one id, the first ending before the second starts,
+    /// are counted as two threads, each with its own name, wake-ups and
+    /// time on a processor, as Windows reuses an ended thread's id.
+    #[test]
+    fn a_reused_thread_id_starts_a_new_thread() {
+        let mut waits = Waits::default();
+        let ready = 7_u32.to_le_bytes();
+        // Thread 7 of process 10, "verbatim-retire", woken once and on a
+        // processor from 100 to 300, then ended and switched out at 400.
+        waits.thread_event(THREAD_START, &started(10, 7, "verbatim-retire"), 0, 0);
+        waits.thread_event(READY_THREAD, &ready, 50, 0);
+        waits.thread_event(CSWITCH, &switched(7, 0), 100, 0);
+        waits.thread_event(CSWITCH, &switched(0, 7), 300, 0);
+        waits.thread_event(READY_THREAD, &ready, 350, 0);
+        waits.thread_event(CSWITCH, &switched(7, 0), 360, 0);
+        waits.thread_event(THREAD_END, &started(10, 7, ""), 390, 0);
+        waits.thread_event(CSWITCH, &switched(0, 7), 400, 0);
+        // A new thread 7, "verbatim-worker", woken three times and on a
+        // processor for 10 each time.
+        waits.thread_event(THREAD_START, &started(10, 7, "verbatim-worker"), 500, 0);
+        for at in [600_000, 700_000, 800_000] {
+            waits.thread_event(READY_THREAD, &ready, at, 0);
+            waits.thread_event(CSWITCH, &switched(7, 0), at + 5, 0);
+            waits.thread_event(CSWITCH, &switched(0, 7), at + 15, 0);
+        }
+
+        assert_eq!(
+            waits.names,
+            HashMap::from([
+                ((7, 0), "verbatim-retire".to_owned()),
+                ((7, 1), "verbatim-worker".to_owned()),
+            ])
+        );
+        assert_eq!(waits.woken, HashMap::from([((7, 0), 2), ((7, 1), 3)]));
+        assert_eq!(waits.cpu, HashMap::from([((7, 0), 240), ((7, 1), 30)]));
+        assert_eq!(
+            waits.by_thread,
+            HashMap::from([((7, 0), vec![50, 10]), ((7, 1), vec![5, 5, 5])])
+        );
+        // The first thread's last switch out is no blocked wait of the
+        // second's: only the second's own waits, from 600,015 and 700,015,
+        // are kept.
+        assert_eq!(
+            waits.wakes,
+            vec![((7, 1), (0, 0), 99_985), ((7, 1), (0, 0), 99_985)]
+        );
     }
 }

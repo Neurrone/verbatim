@@ -10,7 +10,7 @@ check).
 
 It has no library API. It reads the trace with Windows' event consumer
 (`OpenTraceW` and `ProcessTrace`), which needs no elevation for a trace
-file, and takes four kinds of kernel event:
+file, and takes these kernel events:
 
 - a ready thread (`ReadyThread`): the thread named becomes ready, unless it
   already is;
@@ -20,6 +20,10 @@ file, and takes four kinds of kernel event:
 - a thread's start, or a thread running when the trace began, and a
   thread's new name (`SetThreadDescription`, which Rust's named threads
   set): its process and its name;
+- a thread's end: Windows reuses an ended thread's id, so the next start
+  with that id is counted as a new thread, with its own name and figures
+  (the ended thread's last switch out, which follows its end event, still
+  counts to the ended thread);
 - an image loaded in a process: the process is named by its `.exe`.
 
 For each thread of the processes named (by default `verbatim.exe`,
