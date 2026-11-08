@@ -1,401 +1,462 @@
-//! The read scheduler's generated test (`books/dev/src/reference/crates/verbatim-listener-logic.md`): lists of actions, each made valid when it is
-//! applied by resolving its target against the model, given to
-//! [`Schedule::step`] as the listener's shell gives them: every effect
-//! applied in order, then each failed spawn stepped, and then the step's
-//! asks answered, each as a step of its own. Each effect is checked as
-//! permitted by what the model holds, and after every action the
-//! invariants the design lists are checked. Each case ends by draining:
-//! every read returned, every waiting event read, every alarm reached;
-//! then every marker has had exactly one outcome and every idle waiter has
-//! run once.
+//! The read scheduler's generated test: a world of real processes and
+//! threads, and a reference model written from the parity ledger's "Reads
+//! held behind an application's abandoned reads" and "A slow read the user
+//! has moved on from" (`docs/parity/focus-events.md`) and the recorded
+//! decisions (`docs/roadmap.md`, "State models"; the limits of
+//! `docs/design/state-models.md`). Neither looks at the schedule's rules:
+//! the model predicts what each step tells, and every prediction is compared
+//! with what the schedule told through [`seam`], the one place that names the
+//! schedule's types.
 //!
-//! The model is lists and sets: per application, the markers waiting in
-//! push order with their kind and key, its read under way, the thread it
-//! runs, whether a thread is in charge, its abandoned threads, whether its
-//! outpost ended, and the requests given; globally, each
-//! marker's place and outcomes, the idle waiters and the alarm as the
-//! schedule last set it. It predicts no replacement, drop, place or alarm
-//! time: it follows the outcomes the schedule emits and checks each was
-//! permitted, a deadline abandonment at or after its deadline, a moved-on
-//! one after that verdict, no read surviving a tick at or past its
-//! deadline, and the alarm never later than a read's next wake and later
-//! than each tick. Which place an event is given, its moving away, the
-//! bound of a wait at the abandoned limit and whether a focus is pending
-//! are the schedule's own tests' examples.
+//! The world: a process takes an id, raises events, and exits; its outpost
+//! crashes, retires or ends with it; an id is taken again only once the
+//! exit has been answered, which a step does whole; an event raised before an
+//! exit can arrive after it, while the id is free, and the supervisor then
+//! answers that no outpost's hook is in. Reading threads ask, return, hang
+//! past their deadlines or are slow, and act only when they can: a waiting
+//! thread once woken, the alarm only when set, a little early or later. A
+//! case ends with every process exited and every read returned.
+//!
+//! The model keeps, per process (a generation of its application), its
+//! events waiting in push order, the thread in charge with what it does, the
+//! threads abandoned to reads, when the limit was reached and whether the
+//! process has gone. It predicts, for every step, each event's outcome and
+//! why, which thread starts and whether reused, what a thread that asks is
+//! told, which reads are judged, when the alarm is due, which idle waiters
+//! run and whether a focus is pending. It compares them exactly, the
+//! outcomes per application in order.
+//!
+//! The recorded rules: two abandoned reads hold back an application's next
+//! thread until one returns; events wait until the deadline after the second
+//! was abandoned, then all are dropped and each later one as it arrives;
+//! a read is judged from its half second, every half second, once its
+//! window is known, and abandoned at the deadline; an outpost that ends
+//! with its application running keeps the abandoned count; a new generation
+//! starts with none; a process gone drops at once what waits with no thread
+//! and is held no longer than its readers; every event has exactly one
+//! outcome; every idle waiter runs once, when every event queued before it
+//! has its outcome. The thread in charge reads what it was given, its
+//! process gone or not.
+//!
+//! The world has no shutdown, no failed spawn and no event replaced by a
+//! newer one: no recorded rule says what those do. An outpost's end with its
+//! application running comes only when no thread is in charge and nothing
+//! waits, since no recorded rule says what becomes of a thread then.
 //!
 //! The menu end's grace is tested by every sequence of up to six steps,
 //! below ([`every_short_grace_sequence_keeps_the_graces_rules`]).
+
+mod seam;
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 
 use proptest::strategy::Strategy;
 use proptest::test_runner::{Config, TestError, TestRunner};
-use verbatim_model::TraceId;
-use verbatim_model::protocol::UiaFocusRead;
 
+use self::seam::{App, How, ReadToken, Seam, ThreadToken, Told};
 use super::*;
 
-/// The read deadline the schedule is made with, in microseconds: short
-/// enough that the generated time passes it.
+/// The read deadline, in microseconds, short enough that time passes it.
 const DEADLINE: u64 = 2_000_000;
 
-/// The moved-on grace, in microseconds.
+/// The half second after which a read is judged, in microseconds.
 const GRACE: u64 = 500_000;
 
-/// The applications' processes.
-const PIDS: [u32; 3] = [1, 2, 3];
+/// How many abandoned reads hold back an application's next thread.
+const LIMIT: usize = 2;
 
-/// The top-level window numbered `index`.
-fn window(index: u8) -> Window {
-    Window::new(0x10 * (isize::from(index % 2) + 1)).expect("never 0")
-}
+/// The process ids the world's processes take.
+const PIDS: [u32; 2] = [1, 2];
 
-/// One step of a case.
+/// One step of the world.
 #[derive(Clone, Copy, Debug)]
 enum Action {
-    /// An event of application `app` arrives: a focus (0), a menu opening
-    /// (1), a selection (2) or a notification (3), of element `key`, a
-    /// notification's none, its window unknown (0) or known (1, 2), a
-    /// selection's and a notification's never judged.
-    Push {
-        app: u8,
-        kind: u8,
-        key: Option<u8>,
-        window: u8,
+    /// A process takes the free id of `slot`.
+    Start { slot: u8 },
+    /// An event of the process at `slot`, or, none running, a stale event
+    /// of the one that exited.
+    Event { slot: u8, kind: u8, window: u8 },
+    /// The thread in charge of `slot`'s oldest application that may act
+    /// asks for its next event.
+    Ask { slot: u8 },
+    /// A read of `slot`'s applications returns.
+    Return { slot: u8, which: u8, found: bool },
+    /// A read of `slot`'s applications learns its window.
+    Learn {
+        slot: u8,
+        which: u8,
+        abandoned: bool,
     },
-    /// The application's thread, waiting with no read under way, asks for
-    /// its next event.
-    Next { app: u8 },
-    /// A read of the application returns: the read of its thread in
-    /// charge, or the oldest of its abandoned threads', read or dropped,
-    /// with a top-level window (1, 2) or none (0).
-    Return {
-        app: u8,
-        stray: bool,
-        read: bool,
-        top: u8,
-    },
-    /// The application's read under way, or the request before it, learns
-    /// its window.
-    Learned { app: u8, stale: bool, window: u8 },
-    /// Time passes and the watchdog ticks.
-    Advance(Advance),
-    /// A foreground event of a top-level window (1, 2) or none (0), each
-    /// application's read under way being of the top-level window its
-    /// entry in `tops` names.
-    Foreground { top: u8, tops: [u8; 3] },
-    /// An MSAA focus of the application's is forwarded.
-    MsaaFocus { app: u8 },
-    /// The application's outpost ends.
-    OutpostEnded { app: u8 },
+    /// Time passes, and the alarm goes off if it is due.
+    Time(Passing),
+    /// The outpost of `slot`'s running process ends, crashed or retired.
+    OutpostGone { slot: u8 },
+    /// The process at `slot` exits, its outpost ending before it (0),
+    /// after it (1) or there being none (2).
+    Exit { slot: u8, outpost: u8 },
+    /// The supervisor answers `slot`'s stale event: no hook is in.
+    NoHook { slot: u8 },
     /// An idle waiter is queued.
     WhenIdle,
-    /// The listener shuts down.
-    Stop,
 }
 
-/// How far time moves before a tick.
+/// How far time moves before the alarm is checked.
 #[derive(Clone, Copy, Debug)]
-enum Advance {
-    /// To the watchdog's timer, if one is set, and this many
-    /// milliseconds past it.
-    ToTimer(u8),
+enum Passing {
     /// This many milliseconds.
     By(u16),
+    /// To the alarm, and this many milliseconds past it.
+    ToAlarm(u8),
+    /// The alarm's timer goes off a little early.
+    Early,
     /// Past every deadline at once.
     Late,
 }
 
-/// The shell's answers to the asks and spawns an action causes.
+/// The answer the shell gives to every judgement of a step.
 #[derive(Clone, Copy, Debug)]
 struct Asks {
-    /// The judgement of a read's window: the user moved on from it, or
-    /// not.
-    verdict: Option<Reason>,
-    /// Whether a new thread fails to start.
-    spawn_fails: bool,
+    /// Whether the user has moved on from the read's window.
+    moved_on: bool,
+}
+
+/// The window an event's cache gives.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Cached {
+    /// It is never judged by the moved-on rule.
+    Never,
+    /// Its read has still to learn it.
+    Unknown,
+    /// It is known.
+    Known,
 }
 
 fn action() -> impl Strategy<Value = Action> {
     use proptest::prelude::*;
-    let app = 0..3u8;
-    let advance = prop_oneof![
-        3 => (0..3u8).prop_map(Advance::ToTimer),
-        2 => (0..700u16).prop_map(Advance::By),
-        1 => Just(Advance::Late),
+    let slot = 0..2u8;
+    let passing = prop_oneof![
+        3 => (0..3u8).prop_map(Passing::ToAlarm),
+        2 => (0..1500u16).prop_map(Passing::By),
+        1 => Just(Passing::Early),
+        2 => Just(Passing::Late),
     ];
-    // Weighted toward the lifecycle: events that start reads, the reads'
-    // returns, abandonments by time, and outposts' ends.
     prop_oneof![
-        10 => (app.clone(), 0..4u8, prop::option::weighted(0.6, 0..2u8), 0..3u8)
-            .prop_map(|(app, kind, key, window)| Action::Push { app, kind, key, window }),
-        8 => app.clone().prop_map(|app| Action::Next { app }),
-        6 => (app.clone(), prop::bool::weighted(0.4), any::<bool>(), 0..3u8)
-            .prop_map(|(app, stray, read, top)| Action::Return { app, stray, read, top }),
-        2 => (app.clone(), prop::bool::weighted(0.2), 1..3u8)
-            .prop_map(|(app, stale, window)| Action::Learned { app, stale, window }),
-        6 => advance.prop_map(Action::Advance),
-        2 => (0..3u8, [0..3u8, 0..3u8, 0..3u8])
-            .prop_map(|(top, tops)| Action::Foreground { top, tops }),
-        1 => app.clone().prop_map(|app| Action::MsaaFocus { app }),
-        2 => app.prop_map(|app| Action::OutpostEnded { app }),
+        3 => slot.clone().prop_map(|slot| Action::Start { slot }),
+        10 => (slot.clone(), 0..4u8, 0..3u8)
+            .prop_map(|(slot, kind, window)| Action::Event { slot, kind, window }),
+        8 => slot.clone().prop_map(|slot| Action::Ask { slot }),
+        5 => (slot.clone(), 0..4u8, any::<bool>())
+            .prop_map(|(slot, which, found)| Action::Return { slot, which, found }),
+        4 => (slot.clone(), 0..4u8, any::<bool>())
+            .prop_map(|(slot, which, abandoned)| Action::Learn { slot, which, abandoned }),
+        7 => passing.prop_map(Action::Time),
+        2 => slot.clone().prop_map(|slot| Action::OutpostGone { slot }),
+        3 => (slot.clone(), 0..3u8).prop_map(|(slot, outpost)| Action::Exit { slot, outpost }),
+        2 => slot.prop_map(|slot| Action::NoHook { slot }),
         2 => Just(Action::WhenIdle),
-        1 => Just(Action::Stop),
     ]
 }
 
 fn asks() -> impl Strategy<Value = Asks> {
-    use proptest::prelude::*;
-    let verdict = prop_oneof![
-        4 => Just(None),
-        2 => Just(Some(Reason::MovedOn)),
-    ];
-    (verdict, prop::bool::weighted(0.1)).prop_map(|(verdict, spawn_fails)| Asks {
-        verdict,
-        spawn_fails,
-    })
+    proptest::bool::weighted(0.3).prop_map(|moved_on| Asks { moved_on })
 }
 
-/// An event waiting for its read, as the model holds it.
-#[derive(Clone, Debug)]
-struct Waiting {
+/// An event, as the model holds it.
+#[derive(Clone, Copy, Debug)]
+struct Event {
     marker: u64,
     kind: FocusEvent,
-    key: Option<u8>,
-    window: RuleWindow,
+    cached: Cached,
+}
+
+/// When a read's window is judged.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Rule {
+    /// Never.
+    Never,
+    /// Not while its window is unknown.
+    Unknown,
+    /// Next at this time.
+    Known(u64),
 }
 
 /// A read under way, as the model holds it.
-#[derive(Clone, Debug)]
-struct Read {
-    marker: u64,
-    kind: FocusEvent,
-    request: Request,
-    start: u64,
-    window: RuleWindow,
-}
-
-/// A thread abandoned in its read, which has not returned.
 #[derive(Clone, Copy, Debug)]
-struct Stray {
-    request: Request,
-    marker: u64,
-    kind: FocusEvent,
+struct Reading {
+    event: Event,
+    /// Told when its job is given.
+    read: Option<ReadToken>,
+    started: u64,
+    rule: Rule,
 }
 
-/// One application, as the model holds it.
-#[derive(Clone, Debug, Default)]
-struct App {
-    queue: Vec<Waiting>,
-    /// Whether a thread is in charge, as the schedule says it.
-    threaded: bool,
-    /// The generation of the last spawn.
-    generation: u64,
-    /// The thread of `generation`, while it runs.
-    thread: Option<u64>,
-    /// Its read, while one is under way.
-    read: Option<Read>,
-    strays: Vec<Stray>,
-    ending: bool,
-    /// The highest generation spawned in its life.
-    highest: u64,
-    /// The requests its jobs were given in its life.
-    requests: BTreeSet<Request>,
+/// What the thread in charge does.
+#[derive(Clone, Copy, Debug)]
+enum Doing {
+    /// About to ask for its next event.
+    Asking,
+    /// Waiting to be woken, or woken and about to ask.
+    Parked { woken: bool },
+    /// Reading.
+    Reading(Reading),
 }
 
-impl App {
-    /// Whether the application's outpost has ended and it has nothing
-    /// left: no thread in charge, no abandoned thread, no event.
-    fn spent(&self) -> bool {
-        self.ending
-            && !self.threaded
-            && self.strays.is_empty()
-            && self.queue.is_empty()
-            && self.read.is_none()
+/// The thread in charge of a generation.
+#[derive(Clone, Copy, Debug)]
+struct Thread {
+    /// Told when it is spawned.
+    id: Option<ThreadToken>,
+    doing: Doing,
+}
+
+/// A thread abandoned in its read.
+#[derive(Clone, Copy, Debug)]
+struct Hung {
+    read: ReadToken,
+    event: Event,
+}
+
+/// One process, as the listener sees it: a generation of its application.
+#[derive(Debug, Default)]
+struct Generation {
+    waiting: Vec<Event>,
+    thread: Option<Thread>,
+    abandoned: Vec<Hung>,
+    /// When the second abandonment came, while two are out.
+    limit_since: Option<u64>,
+    /// Whether its process has gone, by its exit or the supervisor's
+    /// answer to a stale event.
+    gone: bool,
+}
+
+/// A generation's key: its slot and process number.
+type Key = (usize, u32);
+
+fn app_of(key: Key) -> App {
+    App {
+        pid: PIDS[key.0],
+        process: key.1,
+    }
+}
+
+/// What a step should tell, in the shape it is compared in: per process
+/// id, in order.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct Phase {
+    outcomes: BTreeMap<u32, Vec<(u64, How)>>,
+    spawns: BTreeMap<u32, Vec<bool>>,
+    jobs: BTreeMap<u32, Vec<u64>>,
+    judges: BTreeMap<u32, u32>,
+    ran: Vec<u64>,
+}
+
+/// What the model predicts of one step.
+#[derive(Debug, Default)]
+struct Expected {
+    phase: Phase,
+    /// The generations a thread starts for, in order.
+    spawned: Vec<Key>,
+    /// The generation whose thread is given the job.
+    job: Option<Key>,
+}
+
+impl Expected {
+    fn outcome(&mut self, key: Key, marker: u64, how: How) {
+        self.phase
+            .outcomes
+            .entry(PIDS[key.0])
+            .or_default()
+            .push((marker, how));
+    }
+
+    fn spawn(&mut self, key: Key, reuse: bool) {
+        self.phase
+            .spawns
+            .entry(PIDS[key.0])
+            .or_default()
+            .push(reuse);
+        self.spawned.push(key);
+    }
+}
+
+/// Drops every event waiting behind no thread: outcomes in arrival order.
+fn drop_waiting(generation: &mut Generation, key: Key, out: &mut Expected) {
+    for event in generation.waiting.drain(..) {
+        out.outcome(key, event.marker, How::WaitedTooLong);
+    }
+}
+
+/// The thread in charge's read is abandoned: its event gets its outcome, a
+/// new thread takes what waits below the limit, and at the limit the wait
+/// begins, a gone process's events being dropped at once.
+fn abandon(generation: &mut Generation, key: Key, how: How, now: u64, out: &mut Expected) {
+    let Some(Thread {
+        doing: Doing::Reading(reading),
+        ..
+    }) = generation.thread.take()
+    else {
+        panic!("an abandonment with no read under way");
+    };
+    let read = reading.read.expect("a read's token is told at its job");
+    out.outcome(key, reading.event.marker, how);
+    generation.abandoned.push(Hung {
+        read,
+        event: reading.event,
+    });
+    if generation.abandoned.len() >= LIMIT && generation.limit_since.is_none() {
+        generation.limit_since = Some(now);
+    }
+    if generation.waiting.is_empty() {
+        return;
+    }
+    if generation.abandoned.len() < LIMIT {
+        generation.thread = Some(Thread {
+            id: None,
+            doing: Doing::Asking,
+        });
+        out.spawn(key, false);
+    } else if generation.gone {
+        drop_waiting(generation, key, out);
     }
 }
 
 /// The reference model.
 #[derive(Debug, Default)]
 struct Model {
-    apps: BTreeMap<u32, App>,
-    stopping: bool,
-    queued: u64,
-    /// The idle waiters, each with the place counter when it came.
-    waiters: Vec<(u64, u64)>,
-    next_waiter: u64,
+    generations: BTreeMap<Key, Generation>,
+    /// The process running at each slot.
+    running: [Option<u32>; 2],
+    /// The generation of a stale event not yet answered, at each slot.
+    stale: [Option<u32>; 2],
+    /// Whether a process has ever exited at each slot.
+    exited_once: [bool; 2],
+    next_process: u32,
     next_marker: u64,
-    /// Each event's place, by marker.
+    next_waiter: u64,
+    /// Each event's place in push order, by marker.
     places: BTreeMap<u64, u64>,
-    /// How many outcomes each marker has had.
-    outcomes: BTreeMap<u64, u32>,
-    /// The markers pushed after the stop.
-    after_stop: BTreeSet<u64>,
-    /// How many times each idle waiter has run.
-    ran: BTreeMap<u64, u32>,
-    /// The time the watchdog's timer is set to.
-    timer: Option<u64>,
+    done: BTreeSet<u64>,
+    /// The idle waiters: each with the count of events queued at it.
+    waiters: Vec<(u64, u64)>,
+    ran: BTreeSet<u64>,
     now: u64,
 }
 
 impl Model {
-    /// Whether waiter `before` may run: every event queued at or before
-    /// place `before` has had its outcome.
-    fn idle(&self, before: u64) -> bool {
-        self.places
-            .iter()
-            .all(|(marker, place)| *place > before || self.outcomes.contains_key(marker))
-    }
-
-    /// The markers whose outcome is owed: those waiting, and those read.
-    fn open(&self) -> Vec<u64> {
-        let mut open: Vec<u64> = self
-            .apps
+    /// When anything is next due.
+    fn soonest_due(&self) -> Option<u64> {
+        self.generations
             .values()
-            .flat_map(|app| {
-                app.queue
-                    .iter()
-                    .map(|queued| queued.marker)
-                    .chain(app.read.iter().map(|read| read.marker))
+            .flat_map(|generation| {
+                let reading = match generation.thread {
+                    Some(Thread {
+                        doing: Doing::Reading(reading),
+                        ..
+                    }) => {
+                        let judged = match reading.rule {
+                            Rule::Known(next) => Some(next),
+                            Rule::Never | Rule::Unknown => None,
+                        };
+                        Some(judged.map_or(reading.started + DEADLINE, |next| {
+                            next.min(reading.started + DEADLINE)
+                        }))
+                    }
+                    _ => None,
+                };
+                let bound = (generation.thread.is_none() && !generation.waiting.is_empty())
+                    .then_some(generation.limit_since.map(|since| since + DEADLINE))
+                    .flatten();
+                reading.into_iter().chain(bound)
             })
-            .collect();
-        open.sort_unstable();
-        open
+            .min()
+    }
+
+    /// Whether a focus is pending for a menu opening of `pid`'s.
+    fn focus_pending(&self, pid: Option<u32>) -> bool {
+        self.generations.iter().any(|(key, generation)| {
+            let waiting = generation
+                .waiting
+                .iter()
+                .any(|event| event.kind == FocusEvent::Focus);
+            let reading = matches!(
+                generation.thread,
+                Some(Thread {
+                    doing: Doing::Reading(reading),
+                    ..
+                }) if reading.event.kind == FocusEvent::Focus
+            );
+            reading || (waiting && (generation.thread.is_some() || Some(PIDS[key.0]) == pid))
+        })
+    }
+
+    /// The events of the step are done; `out` gains the idle waiters that
+    /// run.
+    fn commit(&mut self, out: &mut Expected) {
+        for outcomes in out.phase.outcomes.values() {
+            self.done.extend(outcomes.iter().map(|(marker, _)| *marker));
+        }
+        let mut ran = Vec::new();
+        let (done, places) = (&self.done, &self.places);
+        self.waiters.retain(|&(before, waiter)| {
+            let idle = places
+                .iter()
+                .all(|(marker, place)| *place > before || done.contains(marker));
+            if idle {
+                ran.push(waiter);
+            }
+            !idle
+        });
+        ran.sort_unstable();
+        self.ran.extend(ran.iter().copied());
+        out.phase.ran = ran;
     }
 }
 
-/// What an outermost step was given, for the checks of its effects.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Given {
-    Push { pid: u32, marker: u64 },
-    Next(u32),
-    Returned { stray: bool },
-    Tick,
-    Learned,
-    Judged { verdict: Option<Reason> },
-    Foreground,
-    MsaaFocus,
-    OutpostEnded(u32),
-    WhenIdle,
-    SpawnFailed(u32),
-    Stop,
-}
-
-/// What one step of the schedule's effects showed, for the checks at its
-/// end.
-#[derive(Debug, Default)]
-struct Seen {
-    asks: BTreeMap<u32, u32>,
-    /// The reads the step abandoned: each one's application and marker,
-    /// and whether its outcome came.
-    abandoned: Vec<(u32, u64, bool)>,
-    /// The read the step's return ended, and whether its outcome came.
-    returned: Option<(u64, bool)>,
-    forgets: u32,
-}
-
-/// The listed states a gate's cases must reach.
-const LISTED: [&str; 23] = [
-    "a job given",
-    "an event replaced",
-    "a spawn",
-    "a spawn failed",
-    "a thread reused",
-    "an abandonment at the deadline",
-    "an abandonment for moving on",
-    "an abandoned read returned",
+/// The listed things every gate run must reach.
+const LISTED: [&str; 19] = [
+    "an id reused with its readers out",
+    "a stale event",
     "the abandoned limit reached",
     "an event waiting at the limit",
     "events dropped at their bound",
     "events dropped as one arrives",
-    "an idle waiter run",
-    "an idle waiter run at a later step",
-    "an application removed at its outpost's end",
-    "an application forgotten",
-    "an ended application read on",
-    "a stale input",
+    "a thread reused",
+    "an abandonment at the deadline",
+    "an abandonment for moving on",
     "a judgement asked",
-    "a foreground event moving away",
-    "an outcome after the stop",
-    "a push after the stop",
-    "an empty queue at a thread's ask",
+    "an abandoned read returned",
+    "an exit with a read under way",
+    "an exit dropping waiting events",
+    "a crash keeping a count",
+    "a thread told to end",
+    "a thread told to wait",
+    "an idle waiter run",
+    "an early alarm",
+    "a learned window judged at once",
 ];
 
-/// One case's run: the schedule and the model side by side.
+/// One case's run: the world, the schedule and the model side by side.
 struct Run {
-    schedule: Schedule<u64>,
+    seam: Seam,
     model: Model,
     trail: Vec<String>,
-    /// Each step's effects, for the run twice.
     log: Vec<String>,
     reached: BTreeMap<&'static str, u32>,
-    /// The read a thread in charge returns, for its step: its marker.
-    returning: Option<u64>,
-    /// The applications the model held as the action began.
-    held_before: Vec<u32>,
-    /// The applications the action's steps let go
-    /// ([`ScheduleEffect::Forget`]), in order.
-    forgotten: Vec<u32>,
-}
-
-/// The meta of event `marker` of `kind`.
-fn meta(marker: u64, kind: FocusEvent) -> Meta {
-    Meta {
-        marker,
-        kind,
-        trace: TraceId::from_raw(marker),
-        timing: verbatim_model::protocol::EventTiming::default(),
-    }
-}
-
-/// A focus read, as a reading thread returns one.
-fn a_read() -> Box<UiaFocusRead> {
-    Box::new(UiaFocusRead {
-        hwnd: 0,
-        snapshot: verbatim_model::protocol::UiaSnapshotFact {
-            runtime_id: vec![42],
-            role: verbatim_model::Role::Button,
-            name: None,
-            value: None,
-            states: verbatim_model::StateSet::new(),
-            details: verbatim_model::NodeDetails::default(),
-        },
-        ancestors: Vec::new(),
-        ancestors_end: verbatim_model::protocol::AncestorsEnd::Top,
-        selected_child: None,
-        value_from_selection: false,
-        window: None,
-        same_as_last: None,
-        answers: None,
-        cached_from: None,
-    })
-}
-
-/// The reason an outcome gives, or `"read"` for a read.
-fn reason(judged: &Judged) -> &'static str {
-    match judged {
-        Judged::Read(_) => "read",
-        Judged::Dropped(reason) => reason,
-        Judged::Passed(_) => "passed",
-    }
 }
 
 impl Run {
     fn new() -> Self {
         Self {
-            schedule: Schedule::new(Duration::from_micros(DEADLINE)),
+            seam: Seam::new(DEADLINE),
             model: Model::default(),
             trail: Vec::new(),
             log: Vec::new(),
             reached: BTreeMap::new(),
-            returning: None,
-            held_before: Vec::new(),
-            forgotten: Vec::new(),
         }
     }
 
-    /// Runs `actions`, then drains.
+    /// Runs `actions`, then ends the case.
     fn case(actions: &[(Action, Asks)]) -> Self {
         let mut run = Self::new();
         for &(action, asks) in actions {
@@ -409,1033 +470,709 @@ impl Run {
         *self.reached.entry(state).or_default() += 1;
     }
 
-    /// Applies `action`, resolved against the model, with `asks`.
-    #[expect(clippy::too_many_lines, reason = "one arm for each action")]
+    /// Applies `action` and checks what it told. An action the world
+    /// cannot take now does nothing.
     fn act(&mut self, action: Action, asks: Asks) {
         self.trail.push(format!("{action:?} {asks:?}"));
-        self.held_before = self.model.apps.keys().copied().collect();
-        self.forgotten.clear();
-        let pid_of = |app: u8| PIDS[usize::from(app)];
-        match action {
-            Action::Push {
-                app,
-                kind,
-                key,
-                window: index,
-            } => {
-                let pid = pid_of(app);
-                let kind = match kind {
-                    0 => FocusEvent::Focus,
-                    1 => FocusEvent::MenuOpened,
-                    2 => FocusEvent::Selection,
-                    _ => FocusEvent::Notification,
-                };
-                // A notification has no key; a selection and a notification
-                // are never judged by the moved-on rule.
-                let key = key.filter(|_| kind != FocusEvent::Notification);
-                let rule = match (kind, index) {
-                    (FocusEvent::Selection | FocusEvent::Notification, _) => RuleWindow::Never,
-                    (_, 0) => RuleWindow::Unknown,
-                    (_, index) => RuleWindow::Known(window(index)),
-                };
-                self.model.next_marker += 1;
-                let marker = self.model.next_marker;
-                self.pushed(pid, marker, kind, key, rule);
-                self.shell(
-                    ScheduleInput::Push {
-                        pid: Pid(pid),
-                        meta: meta(marker, kind),
-                        job: marker,
-                        kind,
-                        key: key.map(|key| vec![i32::from(key)]),
-                        window: rule,
-                    },
-                    Given::Push { pid, marker },
-                    asks,
-                );
+        let acted = match action {
+            Action::Start { slot } => self.start(usize::from(slot)),
+            Action::Event { slot, kind, window } => {
+                self.event(usize::from(slot), kind, window, asks)
             }
-            Action::Next { app } => {
-                let pid = pid_of(app);
-                let Some(generation) = self
-                    .model
-                    .apps
-                    .get(&pid)
-                    .filter(|app| app.read.is_none())
-                    .and_then(|app| app.thread)
-                else {
-                    return;
-                };
-                self.shell(
-                    ScheduleInput::Next {
-                        pid: Pid(pid),
-                        generation,
-                    },
-                    Given::Next(pid),
-                    asks,
-                );
-                self.next_asked(pid);
+            Action::Ask { slot } => self.ask(usize::from(slot), asks),
+            Action::Return { slot, which, found } => {
+                self.read_returns(usize::from(slot), which, found, asks)
             }
-            Action::Return {
-                app,
-                stray,
-                read,
-                top,
-            } => {
-                let pid = pid_of(app);
-                let Some(model) = self.model.apps.get(&pid) else {
-                    return;
-                };
-                let (request, marker, kind) = if stray {
-                    let Some(stray) = model.strays.first() else {
-                        return;
-                    };
-                    (stray.request, stray.marker, stray.kind)
-                } else {
-                    let Some(read) = model.read.as_ref() else {
-                        return;
-                    };
-                    (read.request, read.marker, read.kind)
-                };
-                let top = (top > 0).then(|| window(top));
-                self.returning(pid, stray);
-                self.shell(
-                    ScheduleInput::Returned {
-                        pid: Pid(pid),
-                        request,
-                        meta: meta(marker, kind),
-                        judged: if read {
-                            Judged::Read(a_read())
-                        } else {
-                            Judged::Dropped("its element could not be resolved")
-                        },
-                        top,
-                    },
-                    Given::Returned { stray },
-                    asks,
-                );
-                self.thread_returned(pid, stray);
-            }
-            Action::Learned {
-                app,
-                stale,
-                window: index,
-            } => {
-                let pid = pid_of(app);
-                let Some(request) = self.target(pid, stale) else {
-                    return;
-                };
-                let learned = window(index);
-                if !self.model.stopping
-                    && let Some(read) = self.read_of(pid, request)
-                    && read.window == RuleWindow::Unknown
-                {
-                    read.window = RuleWindow::Known(learned);
-                }
-                self.shell(
-                    ScheduleInput::Learned {
-                        pid: Pid(pid),
-                        request,
-                        window: learned,
-                    },
-                    Given::Learned,
-                    asks,
-                );
-            }
-            Action::Advance(advance) => {
-                let now = self.model.now;
-                self.model.now = match advance {
-                    Advance::ToTimer(past) => self
-                        .model
-                        .timer
-                        .map_or(now, |timer| timer.max(now) + u64::from(past) * 1_000),
-                    Advance::By(ms) => now + u64::from(ms) * 1_000,
-                    Advance::Late => now + 3 * DEADLINE,
-                };
-                self.tick(asks);
-            }
-            Action::Foreground { top, tops } => {
-                let top_level = (top > 0).then(|| window(top));
-                // The applications with reads under way, exactly, each
-                // with its read's top-level window as far as it is known.
-                let running_tops: Vec<(Pid, Option<Window>)> = self
-                    .model
-                    .apps
-                    .iter()
-                    .filter(|(_, app)| app.read.is_some())
-                    .map(|(pid, _)| {
-                        let at = PIDS.iter().position(|each| each == pid).unwrap_or(0);
-                        (Pid(*pid), (tops[at] > 0).then(|| window(tops[at])))
-                    })
-                    .collect();
-                let left_at = |schedule: &Schedule<u64>| -> Vec<u64> {
-                    schedule.apps.values().map(|app| app.left_at).collect()
-                };
-                let before = left_at(&self.schedule);
-                self.shell(
-                    ScheduleInput::Foreground {
-                        top_level,
-                        running_tops,
-                    },
-                    Given::Foreground,
-                    asks,
-                );
-                if left_at(&self.schedule) != before {
-                    self.reach("a foreground event moving away");
-                }
-            }
-            Action::MsaaFocus { app } => {
-                let pid = pid_of(app);
-                self.shell(
-                    ScheduleInput::MsaaFocus { pid: Pid(pid) },
-                    Given::MsaaFocus,
-                    asks,
-                );
-            }
-            Action::OutpostEnded { app } => {
-                let pid = pid_of(app);
-                if let Some(model) = self.model.apps.get_mut(&pid) {
-                    if !model.threaded && model.strays.is_empty() && model.queue.is_empty() {
-                        self.model.apps.remove(&pid);
-                        self.reach("an application removed at its outpost's end");
-                    } else {
-                        model.ending = true;
-                    }
-                }
-                self.shell(
-                    ScheduleInput::OutpostEnded { pid: Pid(pid) },
-                    Given::OutpostEnded(pid),
-                    asks,
-                );
-            }
+            Action::Learn {
+                slot,
+                which,
+                abandoned,
+            } => self.learn(usize::from(slot), which, abandoned, asks),
+            Action::Time(passing) => self.time(passing, asks),
+            Action::OutpostGone { slot } => self.outpost_gone(usize::from(slot), asks),
+            Action::Exit { slot, outpost } => self.exit(usize::from(slot), outpost, asks),
+            Action::NoHook { slot } => self.no_hook(usize::from(slot), asks),
             Action::WhenIdle => {
-                // The shell steps no waiter once the readers stop.
-                if self.model.stopping {
-                    return;
-                }
                 self.model.next_waiter += 1;
                 let waiter = self.model.next_waiter;
-                self.model.waiters.push((self.model.queued, waiter));
-                self.shell(ScheduleInput::WhenIdle { waiter }, Given::WhenIdle, asks);
-                if self.model.waiters.iter().any(|(_, each)| *each == waiter) {
-                    self.reach("an idle waiter waits");
-                }
+                let queued = self.model.places.len() as u64;
+                self.model.waiters.push((queued, waiter));
+                let told = self.seam.when_idle(waiter);
+                self.compare(Expected::default(), told, asks);
+                true
             }
-            Action::Stop => {
-                if self.model.stopping {
-                    return;
-                }
-                self.model.stopping = true;
-                self.shell(ScheduleInput::Stop, Given::Stop, asks);
-            }
+        };
+        if acted {
+            self.check_state();
         }
-        self.settle();
-        // The shell forgets exactly the applications the action let go,
-        // each once.
-        let mut forgotten = self.forgotten.clone();
-        forgotten.sort_unstable();
-        let gone: Vec<u32> = self
-            .held_before
-            .iter()
-            .copied()
-            .filter(|pid| !self.model.apps.contains_key(pid))
-            .collect();
-        assert_eq!(
-            forgotten, gone,
-            "the applications forgotten: {:?}",
-            self.trail
-        );
-        if !gone.is_empty() {
-            self.reach("an application forgotten");
-        }
-        self.compare();
     }
 
-    /// The model's part of a push of event `marker`, before its step.
-    fn pushed(
-        &mut self,
-        pid: u32,
-        marker: u64,
-        kind: FocusEvent,
-        key: Option<u8>,
-        rule: RuleWindow,
-    ) {
-        let model = &mut self.model;
-        if model.stopping {
-            model.after_stop.insert(marker);
-            self.reach("a push after the stop");
-            return;
+    /// A step's told effects against the model's prediction, then the
+    /// tokens bound and the judgements answered.
+    fn compare(&mut self, mut expected: Expected, told: Vec<Told>, asks: Asks) {
+        self.log.push(format!("{told:?}"));
+        self.model.commit(&mut expected);
+        if !expected.phase.ran.is_empty() {
+            self.reach("an idle waiter run");
         }
-        model.queued += 1;
-        let place = model.queued;
-        model.places.insert(marker, place);
-        let app = model.apps.entry(pid).or_default();
-        app.ending = false;
-        app.queue.push(Waiting {
+        let mut actual = Phase::default();
+        let mut started = Vec::new();
+        let mut reads = Vec::new();
+        let mut woken = Vec::new();
+        let mut judged = Vec::new();
+        for each in told {
+            match each {
+                Told::Outcome { pid, marker, how } => {
+                    actual.outcomes.entry(pid).or_default().push((marker, how));
+                }
+                Told::Start { pid, thread, reuse } => {
+                    actual.spawns.entry(pid).or_default().push(reuse);
+                    started.push((pid, thread));
+                }
+                Told::Woken(pid) => woken.push(pid),
+                Told::Job { pid, marker, read } => {
+                    actual.jobs.entry(pid).or_default().push(marker);
+                    reads.push(read);
+                }
+                Told::Judge { pid, read } => {
+                    *actual.judges.entry(pid).or_default() += 1;
+                    judged.push((pid, read));
+                }
+                Told::Ran(waiter) => actual.ran.push(waiter),
+            }
+        }
+        actual.ran.sort_unstable();
+        assert_eq!(
+            actual, expected.phase,
+            "what the step told, against the model's prediction: {:?}",
+            self.trail
+        );
+        self.bind(&expected, &started, &reads);
+        self.wake(&woken);
+        for (pid, read) in judged {
+            self.answer(pid, read, asks);
+        }
+    }
+
+    /// Records the tokens the step told, for what the threads will send.
+    fn bind(&mut self, expected: &Expected, started: &[(u32, ThreadToken)], reads: &[ReadToken]) {
+        for (key, (pid, thread)) in expected.spawned.iter().zip(started) {
+            assert_eq!(PIDS[key.0], *pid, "spawned in the model's order");
+            let generation = self.model.generations.get_mut(key).expect("spawned");
+            generation.thread.as_mut().expect("spawned").id = Some(*thread);
+        }
+        if let (Some(key), Some(read)) = (expected.job, reads.first()) {
+            let generation = self.model.generations.get_mut(&key).expect("a job's");
+            if let Some(Thread {
+                doing: Doing::Reading(reading),
+                ..
+            }) = generation.thread.as_mut()
+            {
+                reading.read = Some(*read);
+            }
+        }
+    }
+
+    /// The woken threads may ask.
+    fn wake(&mut self, woken: &[u32]) {
+        for (key, generation) in &mut self.model.generations {
+            if !woken.contains(&PIDS[key.0]) {
+                continue;
+            }
+            if let Some(Thread {
+                doing: Doing::Parked { woken },
+                ..
+            }) = generation.thread.as_mut()
+            {
+                *woken = true;
+            }
+        }
+    }
+
+    /// The shell answers the judgement of `pid`'s read.
+    fn answer(&mut self, pid: u32, read: ReadToken, asks: Asks) {
+        let key = self
+            .model
+            .generations
+            .iter()
+            .find(|(key, generation)| {
+                PIDS[key.0] == pid
+                    && matches!(generation.thread, Some(Thread {
+                        doing: Doing::Reading(reading),
+                        ..
+                    }) if reading.read == Some(read))
+            })
+            .map(|(key, _)| *key)
+            .expect("a judgement of a read under way");
+        let now = self.model.now;
+        let mut expected = Expected::default();
+        if asks.moved_on {
+            let generation = self.model.generations.get_mut(&key).expect("found");
+            abandon(generation, key, How::MovedOn, now, &mut expected);
+            self.reach("an abandonment for moving on");
+        }
+        let told = self.seam.judged(app_of(key), read, asks.moved_on);
+        self.compare(expected, told, asks);
+    }
+
+    fn start(&mut self, slot: usize) -> bool {
+        if self.model.running[slot].is_some() || self.model.stale[slot].is_some() {
+            return false;
+        }
+        self.model.next_process += 1;
+        let process = self.model.next_process;
+        self.model.running[slot] = Some(process);
+        self.model
+            .generations
+            .insert((slot, process), Generation::default());
+        if self
+            .model
+            .generations
+            .keys()
+            .any(|(other, older)| *other == slot && *older != process)
+        {
+            self.reach("an id reused with its readers out");
+        }
+        true
+    }
+
+    fn event(&mut self, slot: usize, kind: u8, window: u8, asks: Asks) -> bool {
+        let process = match self.model.running[slot].or(self.model.stale[slot]) {
+            Some(process) => process,
+            None if self.model.exited_once[slot] => {
+                self.model.next_process += 1;
+                let process = self.model.next_process;
+                self.model.stale[slot] = Some(process);
+                self.model
+                    .generations
+                    .insert((slot, process), Generation::default());
+                self.reach("a stale event");
+                process
+            }
+            None => return false,
+        };
+        let key = (slot, process);
+        let kind = match kind {
+            0 => FocusEvent::Focus,
+            1 => FocusEvent::MenuOpened,
+            2 => FocusEvent::Selection,
+            _ => FocusEvent::Notification,
+        };
+        let cached = match (kind, window) {
+            (FocusEvent::Selection | FocusEvent::Notification, _) => Cached::Never,
+            (_, 0) => Cached::Unknown,
+            _ => Cached::Known,
+        };
+        self.model.next_marker += 1;
+        let marker = self.model.next_marker;
+        let place = self.model.places.len() as u64 + 1;
+        self.model.places.insert(marker, place);
+        let event = Event {
             marker,
             kind,
-            key,
-            window: rule,
-        });
-    }
-
-    /// The request an input of `pid`'s names: its read's, or, `stale`, the
-    /// newest before it.
-    fn target(&mut self, pid: u32, stale: bool) -> Option<Request> {
-        let app = self.model.apps.get(&pid)?;
-        if stale {
-            let current = app.read.as_ref().map(|read| read.request);
-            let stale = app
-                .requests
-                .iter()
-                .rev()
-                .copied()
-                .find(|request| Some(*request) != current)?;
-            self.reach("a stale input");
-            Some(stale)
-        } else {
-            // Only a read judged by the moved-on rule is told its window.
-            app.read
-                .as_ref()
-                .filter(|read| read.window != RuleWindow::Never)
-                .map(|read| read.request)
-        }
-    }
-
-    /// `pid`'s read under way, if it is `request`'s.
-    fn read_of(&mut self, pid: u32, request: Request) -> Option<&mut Read> {
-        self.model
-            .apps
-            .get_mut(&pid)?
-            .read
-            .as_mut()
-            .filter(|read| read.request == request)
-    }
-
-    /// The model's part of a return, before its step: the read leaves its
-    /// thread, or an abandoned thread leaves the list.
-    fn returning(&mut self, pid: u32, stray: bool) {
-        let Some(app) = self.model.apps.get_mut(&pid) else {
-            return;
+            cached,
         };
-        if stray {
-            app.strays.remove(0);
-        } else if let Some(read) = app.read.take() {
-            self.returning = Some(read.marker);
-        }
-    }
-
-    /// After a thread in charge's return: it reads on, or ends.
-    fn thread_returned(&mut self, pid: u32, stray: bool) {
-        let stopping = self.model.stopping;
-        if let Some(app) = self.model.apps.get_mut(&pid)
-            && !stray
-            && (stopping || !app.threaded)
-        {
-            app.thread = None;
-        }
-    }
-
-    /// After a thread's ask for its next event: with nothing waiting, an
-    /// ended application's thread ends, and a thread not in charge ends.
-    fn next_asked(&mut self, pid: u32) {
-        let stopping = self.model.stopping;
-        let Some(app) = self.model.apps.get_mut(&pid) else {
-            return;
-        };
-        if app.read.is_none() && !stopping && app.queue.is_empty() {
-            *self
-                .reached
-                .entry("an empty queue at a thread's ask")
-                .or_default() += 1;
-            if app.ending {
-                app.threaded = false;
-            }
-        }
-        if stopping || !app.threaded {
-            app.thread = None;
-        }
-    }
-
-    /// The watchdog's tick at the model's time.
-    fn tick(&mut self, asks: Asks) {
-        // The tick spends the timer.
-        self.model.timer = None;
-        self.shell(ScheduleInput::Tick, Given::Tick, asks);
         let now = self.model.now;
-        if !self.model.stopping {
-            for (pid, app) in &self.model.apps {
-                if let Some(read) = &app.read {
-                    assert!(
-                        read.start + DEADLINE > now,
-                        "{pid}'s read survived a tick past its deadline: {:?}",
-                        self.trail
-                    );
-                }
-            }
-            // The tick acted on everything due by now, so the alarm is
-            // left unset or later: never a wake it will not act on.
-            assert!(
-                self.model.timer.is_none_or(|due| due > now),
-                "the alarm at {:?} after a tick at {now}: {:?}",
-                self.model.timer,
-                self.trail
-            );
-        }
-    }
-
-    /// Steps the schedule with `input` as the shell does: each effect
-    /// applied in order, then each failed spawn stepped, then each
-    /// ask answered as a step of its own.
-    #[expect(
-        clippy::too_many_lines,
-        reason = "one arm for each effect the shell handles itself"
-    )]
-    fn shell(&mut self, input: ScheduleInput<u64>, given: Given, asks: Asks) {
-        let now = self.model.now;
-        let stopping_before = self.model.stopping && given != Given::Stop;
-        let effects = self.schedule.step(input, now);
-        self.log.push(format!("{effects:?}"));
-        self.postconditions(given, &effects);
-        let mut seen = Seen {
-            returned: self.returning.take().map(|marker| (marker, false)),
-            ..Seen::default()
-        };
-        let mut answers = Vec::new();
-        let mut failed = Vec::new();
-        let timer_before = self.model.timer;
-        for effect in effects {
-            if stopping_before {
-                assert!(
-                    matches!(
-                        effect,
-                        ScheduleEffect::Outcome { .. }
-                            | ScheduleEffect::Wake(_)
-                            | ScheduleEffect::ForgetLast
-                            | ScheduleEffect::Forget { .. }
-                            | ScheduleEffect::RunIdle(_)
-                    ),
-                    "after the stop: {effect:?}, {:?}",
-                    self.trail
-                );
-            }
-            match effect {
-                ScheduleEffect::Judge {
-                    pid,
-                    request,
-                    window,
-                } => {
-                    self.asked(&mut seen, pid.0, request);
-                    let read = self.model.apps[&pid.0].read.as_ref().expect("asked");
-                    assert_eq!(read.window, RuleWindow::Known(window), "{:?}", self.trail);
-                    assert!(now >= read.start + GRACE, "{:?}", self.trail);
-                    self.reach("a judgement asked");
-                    let verdict = asks.verdict;
-                    answers.push((
-                        ScheduleInput::Judged {
-                            pid,
-                            request,
-                            verdict,
-                        },
-                        Given::Judged { verdict },
-                    ));
-                }
-                ScheduleEffect::Spawn {
-                    pid,
-                    generation,
-                    reuse,
-                } => {
-                    let fails = !reuse && asks.spawn_fails;
-                    self.spawned(given, pid.0, generation, reuse, fails);
-                    if fails {
-                        failed.push((pid, generation));
-                    }
-                }
-                ScheduleEffect::Alarm(change) => match change {
-                    AlarmChange::Set(due) => {
-                        assert_ne!(
-                            due, timer_before,
-                            "an alarm set to what it was: {:?}",
-                            self.trail
-                        );
-                        self.model.timer = due;
-                    }
-                    AlarmChange::Now => {
-                        assert_eq!(given, Given::Stop, "{:?}", self.trail);
-                    }
-                },
-                effect => self.apply(given, &mut seen, effect),
-            }
-        }
-        // An abandoned read's outcome comes, and a returned read's: every
-        // marker has exactly one answer.
-        for (pid, marker, outcome) in &seen.abandoned {
-            assert!(
-                *outcome,
-                "{pid}'s abandoned read {marker}: {:?}",
-                self.trail
-            );
-        }
-        if let Some((marker, outcome)) = seen.returned {
-            assert!(outcome, "returned read {marker}: {:?}", self.trail);
-        }
-        // One forget-last per return from an abandoned thread.
-        let stray = matches!(given, Given::Returned { stray: true });
-        assert_eq!(seen.forgets, u32::from(stray), "{:?}", self.trail);
-        // A failed spawn is stepped once the step's other effects are
-        // applied, ahead of its answers.
-        for (pid, generation) in failed {
-            // No thread is in charge, and its events are dropped.
-            if let Some(app) = self.model.apps.get_mut(&pid.0) {
-                app.threaded = false;
-            }
-            self.reach("a spawn failed");
-            self.shell(
-                ScheduleInput::SpawnFailed { pid, generation },
-                Given::SpawnFailed(pid.0),
-                asks,
-            );
-        }
-        for (answer, given) in answers {
-            self.shell(answer, given, asks);
-        }
-    }
-
-    /// Checks the exact effects of the inputs whose effects the model
-    /// decides alone.
-    fn postconditions(&mut self, given: Given, effects: &[ScheduleEffect<u64>]) {
-        let trail = &self.trail;
-        let kinds: Vec<String> = effects.iter().map(effect_name).collect();
-        match given {
-            Given::Push { marker, .. } if self.model.after_stop.contains(&marker) => {
-                assert_eq!(
-                    kinds,
-                    [format!("outcome {marker} {SHUTTING_DOWN}")],
-                    "{trail:?}"
-                );
-            }
-            Given::Push { pid, .. } if self.model.apps[&pid].threaded => {
-                // A push to an application with a thread in charge wakes it.
-                assert!(kinds.contains(&format!("wake {pid}")), "{trail:?}");
-            }
-            Given::Stop => assert_eq!(kinds, ["wake all", "alarm now"], "{trail:?}"),
-            Given::Foreground | Given::MsaaFocus => {
-                assert_eq!(kinds, Vec::<String>::new(), "{trail:?}");
-            }
-            Given::OutpostEnded(pid) => {
-                let expected: Vec<String> = if self.model.apps.contains_key(&pid) {
-                    vec![format!("wake {pid}")]
-                } else if self.held_before.contains(&pid) {
-                    vec![format!("forget {pid}")]
-                } else {
-                    Vec::new()
-                };
-                assert_eq!(kinds, expected, "{trail:?}");
-            }
-            Given::SpawnFailed(pid) => {
-                // Its waiting events dropped in order, then the waiters
-                // they held run, then the alarm.
-                let queue: Vec<String> = self.model.apps[&pid]
-                    .queue
-                    .iter()
-                    .map(|queued| format!("outcome {} {NO_THREAD}", queued.marker))
-                    .collect();
-                assert_eq!(
-                    &kinds[..queue.len().min(kinds.len())],
-                    &queue[..],
-                    "{trail:?}"
-                );
-            }
-            _ => {}
-        }
-        // Nothing of an application follows its forgetting in the step.
-        for (at, effect) in effects.iter().enumerate() {
-            if let ScheduleEffect::Forget { pid } = effect {
-                assert!(
-                    effects[at + 1..]
-                        .iter()
-                        .all(|later| effect_pid(later) != Some(*pid)),
-                    "an effect of {pid} after its forgetting: {kinds:?} {trail:?}"
-                );
-            }
-        }
-    }
-
-    /// The model's check of a step's ask of `pid`'s read `request`.
-    fn asked(&mut self, seen: &mut Seen, pid: u32, request: Request) {
-        let count = seen.asks.entry(pid).or_default();
-        *count += 1;
-        assert_eq!(
-            *count, 1,
-            "a second ask of {pid} in a step: {:?}",
-            self.trail
-        );
-        assert!(
-            !self.model.stopping,
-            "an ask after the stop: {:?}",
-            self.trail
-        );
-        assert_eq!(
-            self.model.apps[&pid].read.as_ref().map(|read| read.request),
-            Some(request),
-            "an ask of a request not under way: {:?}",
-            self.trail
-        );
-    }
-
-    /// The model's part of a spawn.
-    fn spawned(&mut self, given: Given, pid: u32, generation: u64, reuse: bool, fails: bool) {
-        let trail = format!("{:?}", self.trail);
-        assert!(!self.model.stopping, "a spawn after the stop: {trail}");
-        let app = self
-            .model
-            .apps
-            .get_mut(&pid)
-            .expect("a spawn of an application held");
-        assert!(
-            !app.threaded,
-            "a spawn while a thread is in charge: {trail}"
-        );
-        assert!(
-            generation > app.highest,
-            "a spawn's generation {generation} not above {}: {trail}",
-            app.highest
-        );
-        assert!(
-            app.strays.len() < ABANDONED_LIMIT,
-            "a new thread while {} are abandoned: {trail}",
-            app.strays.len()
-        );
-        assert!(
-            !app.queue.is_empty(),
-            "a spawn with nothing waiting: {trail}"
-        );
-        assert_eq!(
-            reuse,
-            matches!(given, Given::Returned { stray: true }),
-            "a thread reused only as an abandoned one returns: {trail}"
-        );
-        assert!(
-            app.thread.is_none(),
-            "a spawn beside a running thread: {trail}"
-        );
-        app.threaded = true;
-        app.generation = generation;
-        app.highest = generation;
-        app.thread = (!fails).then_some(generation);
-        self.reach(if reuse { "a thread reused" } else { "a spawn" });
-    }
-
-    /// Carries out `effect` in the model, checking it.
-    #[expect(clippy::too_many_lines, reason = "one arm for each kind of effect")]
-    fn apply(&mut self, given: Given, seen: &mut Seen, effect: ScheduleEffect<u64>) {
-        let trail = format!("{:?}", self.trail);
-        let now = self.model.now;
-        match effect {
-            ScheduleEffect::Outcome { pid, meta, judged } => {
-                let (pid, marker, why) = (pid.0, meta.marker, reason(&judged));
-                let count = self.model.outcomes.entry(marker).or_default();
-                *count += 1;
-                assert_eq!(*count, 1, "a second outcome for {marker}: {trail}");
-                if self.model.after_stop.contains(&marker) {
-                    assert!(
-                        why == SHUTTING_DOWN
-                            && matches!(given, Given::Push { marker: pushed, .. } if pushed == marker),
-                        "{trail}"
-                    );
-                    return;
-                }
-                if self.model.stopping && given != Given::Stop {
-                    self.reach("an outcome after the stop");
-                }
-                if let Some((_, _, outcome)) = seen
-                    .abandoned
-                    .iter_mut()
-                    .find(|(owner, abandoned, _)| *owner == pid && *abandoned == marker)
-                {
-                    assert!(!*outcome, "an abandoned read's second outcome: {trail}");
-                    *outcome = true;
-                    match why {
-                        NOT_IN_TIME => self.reach("an abandonment at the deadline"),
-                        MOVED_ON => {
-                            assert_eq!(
-                                given,
-                                Given::Judged {
-                                    verdict: Some(Reason::MovedOn)
-                                },
-                                "a moved-on abandonment with no such verdict: {trail}"
-                            );
-                            self.reach("an abandonment for moving on");
-                        }
-                        other => panic!("an abandoned read dropped for {other}: {trail}"),
-                    }
-                    return;
-                }
-                if let Some((returned, outcome)) = seen.returned.as_mut()
-                    && *returned == marker
-                {
-                    assert!(!*outcome, "a returned read's second outcome: {trail}");
-                    *outcome = true;
-                    return;
-                }
-                let app = self.model.apps.get_mut(&pid);
-                if let Some(app) = app {
-                    assert!(
-                        app.read.as_ref().is_none_or(|read| read.marker != marker),
-                        "an outcome for a read under way that neither returned nor was abandoned: {trail}"
-                    );
-                    let Some(at) = app.queue.iter().position(|queued| queued.marker == marker)
-                    else {
-                        panic!("an outcome for {marker}, not open: {trail}");
-                    };
-                    let queued = app.queue.remove(at);
-                    match why {
-                        REPLACED => {
-                            let Given::Push { marker: pushed, .. } = given else {
-                                panic!("a replacement but by a push: {trail}");
-                            };
-                            let new = app
-                                .queue
-                                .iter()
-                                .find(|each| each.marker == pushed)
-                                .expect("the new event queued");
-                            assert!(
-                                new.kind == queued.kind
-                                    && new.key.is_some()
-                                    && new.key == queued.key,
-                                "a replacement of another element or kind: {trail}"
-                            );
-                            self.reach("an event replaced");
-                        }
-                        WAITED_TOO_LONG => {
-                            assert!(
-                                !app.threaded && app.strays.len() >= ABANDONED_LIMIT,
-                                "an event dropped while not at the abandoned limit: {trail}"
-                            );
-                            match given {
-                                Given::Tick => self.reach("events dropped at their bound"),
-                                Given::Push { .. } => self.reach("events dropped as one arrives"),
-                                _ => panic!("a drop at the bound but at a tick or a push: {trail}"),
-                            }
-                        }
-                        NO_THREAD => {
-                            assert_eq!(given, Given::SpawnFailed(pid), "{trail}");
-                        }
-                        other => panic!("a waiting event dropped for {other}: {trail}"),
-                    }
-                } else {
-                    panic!("an outcome for {marker} of an application not held: {trail}");
-                }
-            }
-            ScheduleEffect::Wake(Waking::Thread(pid)) => {
-                assert!(
-                    given == Given::OutpostEnded(pid.0)
-                        || matches!(given, Given::Push { pid: pushed, .. } if pushed == pid.0),
-                    "{trail}"
-                );
-            }
-            ScheduleEffect::Wake(Waking::All) => assert_eq!(given, Given::Stop, "{trail}"),
-            ScheduleEffect::Unwatch { pid } => {
-                let pid = pid.0;
-                assert!(
-                    matches!(
-                        given,
-                        Given::Tick | Given::Learned | Given::Judged { verdict: Some(_) }
-                    ),
-                    "an abandonment of what no judgement decided: {trail}"
-                );
-                let app = self.model.apps.get_mut(&pid).expect("an application held");
-                let read = app.read.take().expect("an abandonment of a read under way");
-                if matches!(given, Given::Tick | Given::Learned) {
-                    assert!(
-                        now >= read.start + DEADLINE,
-                        "a deadline abandonment before its deadline: {trail}"
-                    );
-                }
-                app.strays.push(Stray {
-                    request: read.request,
-                    marker: read.marker,
-                    kind: read.kind,
+        let mut expected = Expected::default();
+        let generation = self.model.generations.get_mut(&key).expect("its record");
+        generation.waiting.push(event);
+        let mut waits = false;
+        let mut dropped = false;
+        if generation.thread.is_none() {
+            if generation.abandoned.len() < LIMIT {
+                generation.thread = Some(Thread {
+                    id: None,
+                    doing: Doing::Asking,
                 });
-                app.thread = None;
-                app.threaded = false;
-                if app.strays.len() == ABANDONED_LIMIT {
-                    self.reach("the abandoned limit reached");
-                }
-                seen.abandoned.push((pid, read.marker, false));
+                expected.spawn(key, false);
+            } else if generation
+                .limit_since
+                .is_some_and(|since| now >= since + DEADLINE)
+            {
+                drop_waiting(generation, key, &mut expected);
+                dropped = true;
+            } else {
+                waits = true;
             }
-            ScheduleEffect::ForgetLast => {
-                seen.forgets += 1;
-                self.reach("an abandoned read returned");
-            }
-            ScheduleEffect::Forget { pid } => {
-                assert!(
-                    self.held_before.contains(&pid.0) && !self.forgotten.contains(&pid.0),
-                    "{pid} forgotten, not held or forgotten twice: {trail}"
-                );
-                self.forgotten.push(pid.0);
-            }
-            ScheduleEffect::RunIdle(waiter) => {
-                let at = self
-                    .model
-                    .waiters
-                    .iter()
-                    .position(|(_, each)| *each == waiter)
-                    .unwrap_or_else(|| panic!("waiter {waiter} run, not waiting: {trail}"));
-                let (before, _) = self.model.waiters.remove(at);
-                assert!(
-                    self.model.idle(before),
-                    "waiter {waiter} run before its events' outcomes: {trail}"
-                );
-                *self.model.ran.entry(waiter).or_default() += 1;
-                self.reach("an idle waiter run");
-                if given != Given::WhenIdle {
-                    self.reach("an idle waiter run at a later step");
-                }
-            }
-            ScheduleEffect::Job(job) => {
-                let pid = job.pid.0;
-                assert_eq!(given, Given::Next(pid), "{trail}");
-                let app = self
-                    .model
-                    .apps
-                    .get_mut(&pid)
-                    .expect("a job of an application held");
-                assert!(app.read.is_none(), "a second read at once: {trail}");
-                assert!(!app.queue.is_empty(), "a job with nothing waiting: {trail}");
-                // In push order, less those replaced or dropped.
-                let queued = app.queue.remove(0);
-                assert_eq!(job.meta.marker, queued.marker, "{trail}");
-                assert_eq!(job.work, queued.marker, "{trail}");
-                assert_eq!(job.window, queued.window, "{trail}");
-                assert!(
-                    app.threaded && app.thread == Some(app.generation),
-                    "a job but to the thread in charge: {trail}"
-                );
-                assert_eq!(
-                    job.request.generation, app.generation,
-                    "a job to a generation not in charge: {trail}"
-                );
-                assert!(
-                    app.requests.insert(job.request),
-                    "a request given twice: {trail}"
-                );
-                app.read = Some(Read {
-                    marker: queued.marker,
-                    kind: queued.kind,
-                    request: job.request,
-                    start: now,
-                    window: queued.window,
-                });
-                self.reach("a job given");
-                if self.model.apps[&pid].ending {
-                    self.reach("an ended application read on");
-                }
-            }
-            effect => panic!("{effect:?} applied as an ask: {trail}"),
         }
-    }
-
-    /// The model's rules at the end of an action: an application whose
-    /// outpost has ended and has nothing left is no longer held.
-    fn settle(&mut self) {
-        let spent: Vec<u32> = self
-            .model
-            .apps
-            .iter()
-            .filter(|(_, app)| app.spent())
-            .map(|(pid, _)| *pid)
-            .collect();
-        for pid in spent {
-            self.model.apps.remove(&pid);
-        }
-        let waiting: Vec<u32> = self
-            .model
-            .apps
-            .iter()
-            .filter(|(_, app)| !app.threaded && !app.queue.is_empty())
-            .map(|(pid, _)| *pid)
-            .collect();
-        if !waiting.is_empty() && !self.model.stopping {
+        if waits {
             self.reach("an event waiting at the limit");
         }
+        if dropped {
+            self.reach("events dropped as one arrives");
+        }
+        let told = self.seam.event(app_of(key), marker, kind, cached);
+        self.compare(expected, told, asks);
+        true
     }
 
-    /// The schedule's open markers, applications and queues are the
-    /// model's lists, and the invariants hold, after an action.
-    fn compare(&self) {
-        let trail = &self.trail;
-        let model = &self.model;
-        let schedule = &self.schedule;
-        assert_eq!(schedule.stopping(), model.stopping, "stopping: {trail:?}");
-        assert_eq!(
-            schedule.markers(),
-            model.open(),
-            "the open markers: {trail:?}"
-        );
-        assert_eq!(
-            schedule.apps.keys().map(|pid| pid.0).collect::<Vec<_>>(),
-            model.apps.keys().copied().collect::<Vec<_>>(),
-            "the applications held: {trail:?}"
-        );
-        for (pid, app) in &model.apps {
-            let real = &schedule.apps[&Pid(*pid)];
-            assert_eq!(
-                real.queue
-                    .iter()
-                    .map(|queued| queued.meta.marker)
-                    .collect::<Vec<_>>(),
-                app.queue
-                    .iter()
-                    .map(|queued| queued.marker)
-                    .collect::<Vec<_>>(),
-                "{pid}'s queue: {trail:?}"
-            );
-            assert_eq!(
-                real.flight
-                    .running()
-                    .map(|(request, running)| (request, running.meta.marker)),
-                app.read.as_ref().map(|read| (read.request, read.marker)),
-                "{pid}'s read: {trail:?}"
-            );
-            assert_eq!(
-                (real.threaded, real.ending, real.abandoned),
-                (app.threaded, app.ending, app.strays.len()),
-                "{pid}'s thread in charge, ending and abandoned threads: {trail:?}"
-            );
-            for stray in &app.strays {
-                assert!(
-                    !schedule.in_charge(Pid(*pid), stray.request.generation),
-                    "an abandoned thread in charge: {trail:?}"
-                );
+    fn ask(&mut self, slot: usize, asks: Asks) -> bool {
+        let Some(key) = self
+            .model
+            .generations
+            .iter()
+            .find(|(key, generation)| {
+                key.0 == slot
+                    && matches!(
+                        generation.thread,
+                        Some(Thread {
+                            doing: Doing::Asking | Doing::Parked { woken: true },
+                            ..
+                        })
+                    )
+            })
+            .map(|(key, _)| *key)
+        else {
+            return false;
+        };
+        let now = self.model.now;
+        let mut expected = Expected::default();
+        let generation = self.model.generations.get_mut(&key).expect("found");
+        let thread = generation.thread.as_mut().expect("found");
+        let token = thread.id.expect("told at its spawn");
+        let asked = if generation.waiting.is_empty() {
+            if generation.gone {
+                Asked::Ends
+            } else {
+                Asked::Waits
             }
-            if !model.stopping {
-                // A thread in charge runs; an event waits with no thread
-                // only at the abandoned limit.
-                assert_eq!(app.threaded, app.thread.is_some(), "{pid}: {trail:?}");
-                assert!(
-                    app.threaded || app.queue.is_empty() || app.strays.len() >= ABANDONED_LIMIT,
-                    "{pid}'s events wait with no thread below the limit: {trail:?}"
-                );
-                // The alarm is never later than a read's next wake.
-                if let Some(wake) = real.flight.next_wake() {
-                    assert!(
-                        model.timer.is_some_and(|due| due <= wake),
-                        "the alarm {:?} later than {pid}'s read's wake {wake}: {trail:?}",
-                        model.timer
-                    );
+        } else {
+            Asked::Reads
+        };
+        match asked {
+            Asked::Reads => {
+                let event = generation.waiting.remove(0);
+                thread.doing = Doing::Reading(Reading {
+                    event,
+                    read: None,
+                    started: now,
+                    rule: match event.cached {
+                        Cached::Never => Rule::Never,
+                        Cached::Unknown => Rule::Unknown,
+                        Cached::Known => Rule::Known(now + GRACE),
+                    },
+                });
+                expected
+                    .phase
+                    .jobs
+                    .entry(PIDS[key.0])
+                    .or_default()
+                    .push(event.marker);
+                expected.job = Some(key);
+            }
+            Asked::Waits => {
+                thread.doing = Doing::Parked { woken: false };
+                self.reach("a thread told to wait");
+            }
+            Asked::Ends => {
+                generation.thread = None;
+                self.reach("a thread told to end");
+            }
+        }
+        let told = self.seam.next(app_of(key), token);
+        self.compare(expected, told, asks);
+        if asked != Asked::Reads {
+            assert_eq!(
+                self.seam.in_charge(app_of(key), token),
+                asked == Asked::Waits,
+                "the thread told to wait or to end, by the model: {:?}: {:?}",
+                asked,
+                self.trail
+            );
+        }
+        true
+    }
+
+    /// `slot`'s reads out, in key order: the generation, and the abandoned
+    /// read's index when not the thread in charge's.
+    fn reads_out(&self, slot: usize) -> Vec<(Key, Option<usize>)> {
+        self.model
+            .generations
+            .iter()
+            .filter(|(key, _)| key.0 == slot)
+            .flat_map(|(key, generation)| {
+                let in_charge = matches!(
+                    generation.thread,
+                    Some(Thread {
+                        doing: Doing::Reading(_),
+                        ..
+                    })
+                )
+                .then_some((*key, None));
+                let abandoned = (0..generation.abandoned.len()).map(|index| (*key, Some(index)));
+                in_charge.into_iter().chain(abandoned).collect::<Vec<_>>()
+            })
+            .collect()
+    }
+
+    fn read_returns(&mut self, slot: usize, which: u8, found: bool, asks: Asks) -> bool {
+        let reads = self.reads_out(slot);
+        if reads.is_empty() {
+            return false;
+        }
+        let (key, hung) = reads[usize::from(which) % reads.len()];
+        let mut expected = Expected::default();
+        let generation = self.model.generations.get_mut(&key).expect("its record");
+        let (read, event) = if let Some(index) = hung {
+            let Hung { read, event } = generation.abandoned.remove(index);
+            if generation.abandoned.len() < LIMIT {
+                generation.limit_since = None;
+            }
+            // An abandoned thread's return takes what waits with no thread.
+            if generation.thread.is_none() && !generation.waiting.is_empty() {
+                generation.thread = Some(Thread {
+                    id: None,
+                    doing: Doing::Asking,
+                });
+                expected.spawn(key, true);
+                self.reach("a thread reused");
+            }
+            self.reach("an abandoned read returned");
+            (read, event)
+        } else {
+            let thread = generation.thread.as_mut().expect("under way");
+            let Doing::Reading(reading) = thread.doing else {
+                panic!("a read's return with none under way");
+            };
+            thread.doing = Doing::Asking;
+            let how = if found { How::Read } else { How::Failed };
+            expected.outcome(key, reading.event.marker, how);
+            (reading.read.expect("told at its job"), reading.event)
+        };
+        let told = self
+            .seam
+            .returned(app_of(key), read, event.marker, event.kind, found);
+        self.compare(expected, told, asks);
+        true
+    }
+
+    fn learn(&mut self, slot: usize, which: u8, abandoned: bool, asks: Asks) -> bool {
+        let reads: Vec<(Key, Option<usize>)> = self
+            .reads_out(slot)
+            .into_iter()
+            .filter(|(_, hung)| hung.is_some() == abandoned)
+            .collect();
+        if reads.is_empty() {
+            return false;
+        }
+        let (key, hung) = reads[usize::from(which) % reads.len()];
+        let now = self.model.now;
+        let generation = self.model.generations.get_mut(&key).expect("its record");
+        let mut expected = Expected::default();
+        let mut at_once = false;
+        let read = if let Some(index) = hung {
+            generation.abandoned[index].read
+        } else {
+            let Some(Thread {
+                doing: Doing::Reading(reading),
+                ..
+            }) = generation.thread.as_mut()
+            else {
+                panic!("a read's learning with none under way");
+            };
+            let read = reading.read.expect("told at its job");
+            if reading.rule == Rule::Unknown {
+                let end = reading.started + GRACE;
+                reading.rule = Rule::Known(end.max(now));
+                if now >= end {
+                    reading.rule = Rule::Known(now + GRACE);
+                    *expected.phase.judges.entry(PIDS[key.0]).or_default() += 1;
+                    at_once = true;
+                }
+            }
+            read
+        };
+        if at_once {
+            self.reach("a learned window judged at once");
+        }
+        let told = self.seam.learned(app_of(key), read);
+        self.compare(expected, told, asks);
+        true
+    }
+
+    fn time(&mut self, passing: Passing, asks: Asks) -> bool {
+        let alarm = self.seam.alarm();
+        let now = self.model.now;
+        self.model.now = match passing {
+            Passing::By(ms) => now + u64::from(ms) * 1_000,
+            Passing::ToAlarm(past) => match alarm {
+                Some(alarm) => alarm.max(now) + u64::from(past) * 1_000,
+                None => now,
+            },
+            Passing::Early => now,
+            Passing::Late => now + 3 * DEADLINE,
+        };
+        self.seam.set_now(self.model.now);
+        let fires = match (passing, alarm) {
+            (_, None) => false,
+            (Passing::Early, Some(alarm)) => alarm > self.model.now,
+            (_, Some(alarm)) => alarm <= self.model.now,
+        };
+        if fires {
+            if matches!(passing, Passing::Early) {
+                self.reach("an early alarm");
+            }
+            self.tick(asks);
+        }
+        true
+    }
+
+    /// The alarm goes off: at the model's time, what is due is done, each
+    /// read's deadline before its judgement.
+    fn tick(&mut self, asks: Asks) {
+        let now = self.model.now;
+        let mut expected = Expected::default();
+        let mut abandoned = 0;
+        let mut dropped = false;
+        let mut judged = 0;
+        for (key, generation) in &mut self.model.generations {
+            match generation.thread {
+                Some(Thread {
+                    doing: Doing::Reading(reading),
+                    ..
+                }) => {
+                    if now >= reading.started + DEADLINE {
+                        abandon(generation, *key, How::NotInTime, now, &mut expected);
+                        abandoned += 1;
+                    } else if let Rule::Known(next) = reading.rule
+                        && now >= next
+                    {
+                        if let Some(Thread {
+                            doing: Doing::Reading(reading),
+                            ..
+                        }) = generation.thread.as_mut()
+                        {
+                            reading.rule = Rule::Known(now + GRACE);
+                        }
+                        *expected.phase.judges.entry(PIDS[key.0]).or_default() += 1;
+                        judged += 1;
+                    }
+                }
+                Some(_) => {}
+                None => {
+                    if !generation.waiting.is_empty()
+                        && generation
+                            .limit_since
+                            .is_some_and(|since| now >= since + DEADLINE)
+                    {
+                        drop_waiting(generation, *key, &mut expected);
+                        dropped = true;
+                    }
                 }
             }
         }
-        // Each idle waiter runs in the step in which every event queued
-        // before it has its outcome.
-        for (before, waiter) in &model.waiters {
-            assert!(
-                !model.idle(*before),
-                "waiter {waiter} not run once its events had their outcomes: {trail:?}"
+        for _ in 0..abandoned {
+            self.reach("an abandonment at the deadline");
+            if self
+                .model
+                .generations
+                .values()
+                .any(|generation| generation.abandoned.len() == LIMIT)
+            {
+                self.reach("the abandoned limit reached");
+            }
+        }
+        for _ in 0..judged {
+            self.reach("a judgement asked");
+        }
+        if dropped {
+            self.reach("events dropped at their bound");
+        }
+        let told = self.seam.tick();
+        self.compare(expected, told, asks);
+    }
+
+    /// An outpost ends with its application running: nothing changes for
+    /// the listener's record. The world has this only with no thread in
+    /// charge and nothing waiting.
+    fn outpost_gone(&mut self, slot: usize, asks: Asks) -> bool {
+        let Some(process) = self.model.running[slot] else {
+            return false;
+        };
+        let key = (slot, process);
+        let generation = self.model.generations.get(&key).expect("its record");
+        if generation.thread.is_some() || !generation.waiting.is_empty() {
+            return false;
+        }
+        if !generation.abandoned.is_empty() {
+            self.reach("a crash keeping a count");
+        }
+        let told = self.seam.outpost_gone(app_of(key));
+        self.compare(Expected::default(), told, asks);
+        true
+    }
+
+    /// The process at `slot` exits: its generation is gone, and what waits
+    /// with no thread is dropped at once.
+    fn exit(&mut self, slot: usize, outpost: u8, asks: Asks) -> bool {
+        let Some(process) = self.model.running[slot] else {
+            return false;
+        };
+        let key = (slot, process);
+        self.model.running[slot] = None;
+        self.model.exited_once[slot] = true;
+        let mut expected = Expected::default();
+        let generation = self.model.generations.get_mut(&key).expect("its record");
+        generation.gone = true;
+        let reading = matches!(
+            generation.thread,
+            Some(Thread {
+                doing: Doing::Reading(_),
+                ..
+            })
+        );
+        let dropping = generation.thread.is_none() && !generation.waiting.is_empty();
+        if dropping {
+            drop_waiting(generation, key, &mut expected);
+        }
+        if reading {
+            self.reach("an exit with a read under way");
+        }
+        if dropping {
+            self.reach("an exit dropping waiting events");
+        }
+        let mut told = Vec::new();
+        if outpost == 0 {
+            told.extend(self.seam.no_hook(app_of(key)));
+        }
+        told.extend(self.seam.exited(app_of(key)));
+        if outpost == 1 {
+            told.extend(self.seam.no_hook(app_of(key)));
+        }
+        self.compare(expected, told, asks);
+        true
+    }
+
+    /// The supervisor answers a stale event's generation: its process is
+    /// gone.
+    fn no_hook(&mut self, slot: usize, asks: Asks) -> bool {
+        let Some(process) = self.model.stale[slot].take() else {
+            return false;
+        };
+        let key = (slot, process);
+        let generation = self.model.generations.get_mut(&key).expect("its record");
+        generation.gone = true;
+        let told = self.seam.no_hook(app_of(key));
+        self.compare(Expected::default(), told, asks);
+        true
+    }
+
+    /// After an action: the alarm, the pending focus, and that nothing is
+    /// held for a generation whose process has gone and whose readers have
+    /// all returned.
+    fn check_state(&mut self) {
+        assert_eq!(
+            self.seam.alarm(),
+            self.model.soonest_due(),
+            "when the alarm is due: {:?}",
+            self.trail
+        );
+        for pid in std::iter::once(None).chain(PIDS.iter().map(|pid| Some(*pid))) {
+            assert_eq!(
+                self.seam.focus_pending(pid),
+                self.model.focus_pending(pid),
+                "whether a focus is pending, for {pid:?}: {:?}",
+                self.trail
             );
+        }
+        let spent: Vec<Key> = self
+            .model
+            .generations
+            .iter()
+            .filter(|(_, generation)| {
+                generation.gone
+                    && generation.thread.is_none()
+                    && generation.abandoned.is_empty()
+                    && generation.waiting.is_empty()
+            })
+            .map(|(key, _)| *key)
+            .collect();
+        for key in spent {
+            assert!(
+                !self.seam.held(app_of(key)),
+                "a generation held after its process and readers have gone: {key:?}: {:?}",
+                self.trail
+            );
+            self.model.generations.remove(&key);
         }
     }
 
-    /// Ends the case: every read returned, every waiting event read and
-    /// every alarm reached; then, with the listener running, every marker
-    /// has had exactly one outcome and every idle waiter has run once,
-    /// and, stopped, every marker pushed after the stop was dropped and
-    /// each other has had at most one.
+    /// Ends the case: every process exits, every thread acts and every
+    /// read returns; then every event has had its outcome, every waiter
+    /// has run, and nothing is held.
     fn drain(&mut self) {
-        let plain = Asks {
-            verdict: None,
-            spawn_fails: false,
-        };
-        for _ in 0..400 {
-            let reading = self.model.apps.iter().find_map(|(pid, app)| {
-                app.read
-                    .as_ref()
-                    .map(|_| (*pid, false))
-                    .or_else(|| (!app.strays.is_empty()).then_some((*pid, true)))
+        let plain = Asks { moved_on: false };
+        for slot in 0..2u8 {
+            self.act(Action::Exit { slot, outpost: 2 }, plain);
+        }
+        for _ in 0..1_000 {
+            let asking = self.model.generations.iter().find(|(_, generation)| {
+                matches!(
+                    generation.thread,
+                    Some(Thread {
+                        doing: Doing::Asking | Doing::Parked { woken: true },
+                        ..
+                    })
+                )
             });
-            let asking = self
-                .model
-                .apps
-                .iter()
-                .find(|(_, app)| app.thread.is_some() && (!app.queue.is_empty() || app.ending))
-                .map(|(pid, _)| *pid);
-            let app_of = |pid: u32| {
-                u8::try_from(PIDS.iter().position(|each| *each == pid).unwrap_or(0)).unwrap_or(0)
-            };
-            if let Some((pid, stray)) = reading {
-                self.act(
-                    Action::Return {
-                        app: app_of(pid),
-                        stray,
-                        read: false,
-                        top: 0,
-                    },
-                    plain,
-                );
-            } else if let Some(pid) = asking.filter(|_| !self.model.stopping) {
-                self.act(Action::Next { app: app_of(pid) }, plain);
-            } else if self.model.timer.is_some() && !self.model.stopping {
-                self.act(Action::Advance(Advance::ToTimer(0)), plain);
-            } else {
-                break;
+            if let Some((key, _)) = asking {
+                let slot = u8::try_from(key.0).expect("two slots");
+                self.act(Action::Ask { slot }, plain);
+                continue;
             }
+            let reading = (0..2).find(|slot| !self.reads_out(*slot).is_empty());
+            if let Some(slot) = reading {
+                let slot = u8::try_from(slot).expect("two slots");
+                let action = Action::Return {
+                    slot,
+                    which: 0,
+                    found: false,
+                };
+                self.act(action, plain);
+                continue;
+            }
+            if let Some(slot) = (0..2).find(|slot| self.model.stale[*slot].is_some()) {
+                let slot = u8::try_from(slot).expect("two slots");
+                self.act(Action::NoHook { slot }, plain);
+                continue;
+            }
+            if self.seam.alarm().is_some() {
+                self.act(Action::Time(Passing::ToAlarm(0)), plain);
+                continue;
+            }
+            break;
         }
         let trail = &self.trail;
         let model = &self.model;
-        for marker in model.places.keys().chain(&model.after_stop) {
-            let outcomes = model.outcomes.get(marker).copied().unwrap_or(0);
-            if model.stopping {
-                assert!(outcomes <= 1, "marker {marker}: {trail:?}");
-            } else {
-                assert_eq!(outcomes, 1, "marker {marker}'s outcomes: {trail:?}");
-            }
+        for marker in model.places.keys() {
+            assert!(
+                model.done.contains(marker),
+                "event {marker} had no outcome: {trail:?}"
+            );
         }
         for waiter in 1..=model.next_waiter {
-            let ran = model.ran.get(&waiter).copied().unwrap_or(0);
-            if model.stopping {
-                assert!(ran <= 1, "waiter {waiter}: {trail:?}");
-            } else {
-                assert_eq!(ran, 1, "waiter {waiter} ran {ran} times: {trail:?}");
-            }
+            assert!(
+                model.ran.contains(&waiter),
+                "waiter {waiter} never ran: {trail:?}"
+            );
         }
+        assert!(
+            model.generations.is_empty(),
+            "held at the end, with every process exited: {:?}: {trail:?}",
+            model.generations.keys().collect::<Vec<_>>()
+        );
     }
 }
 
-/// An effect's name, with what the postconditions compare.
-fn effect_name(effect: &ScheduleEffect<u64>) -> String {
-    match effect {
-        ScheduleEffect::Outcome { meta, judged, .. } => {
-            format!("outcome {} {}", meta.marker, reason(judged))
-        }
-        ScheduleEffect::Spawn { pid, .. } => format!("spawn {}", pid.0),
-        ScheduleEffect::Wake(Waking::Thread(pid)) => format!("wake {}", pid.0),
-        ScheduleEffect::Wake(Waking::All) => "wake all".to_owned(),
-        ScheduleEffect::Unwatch { pid } => format!("unwatch {}", pid.0),
-        ScheduleEffect::ForgetLast => "forget last".to_owned(),
-        ScheduleEffect::Forget { pid } => format!("forget {}", pid.0),
-        ScheduleEffect::Alarm(AlarmChange::Now) => "alarm now".to_owned(),
-        ScheduleEffect::Alarm(AlarmChange::Set(due)) => format!("alarm {due:?}"),
-        ScheduleEffect::RunIdle(waiter) => format!("run {waiter}"),
-        ScheduleEffect::Job(job) => format!("job {}", job.meta.marker),
-        ScheduleEffect::Judge { pid, .. } => format!("judge {}", pid.0),
-    }
-}
-
-/// The application an effect names, if any.
-fn effect_pid(effect: &ScheduleEffect<u64>) -> Option<Pid> {
-    match effect {
-        ScheduleEffect::Outcome { pid, .. }
-        | ScheduleEffect::Spawn { pid, .. }
-        | ScheduleEffect::Wake(Waking::Thread(pid))
-        | ScheduleEffect::Unwatch { pid }
-        | ScheduleEffect::Forget { pid }
-        | ScheduleEffect::Judge { pid, .. } => Some(*pid),
-        ScheduleEffect::Job(job) => Some(job.pid),
-        ScheduleEffect::Wake(Waking::All)
-        | ScheduleEffect::ForgetLast
-        | ScheduleEffect::Alarm(_)
-        | ScheduleEffect::RunIdle(_) => None,
-    }
+/// What a thread that asks is told.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Asked {
+    /// To read the event at the queue's head.
+    Reads,
+    /// To wait.
+    Waits,
+    /// To end.
+    Ends,
 }
 
 /// Runs the generated cases `config` draws, each twice from a new
@@ -1471,7 +1208,7 @@ impl Action {
     /// lists it.
     fn code(self) -> String {
         match self {
-            Action::Advance(advance) => format!("Action::Advance(Advance::{advance:?})"),
+            Action::Time(passing) => format!("Action::Time(Passing::{passing:?})"),
             other => format!("Action::{other:?}"),
         }
     }
@@ -1494,17 +1231,14 @@ fn fixed_report(case: &[(Action, Asks)], again: &str) -> String {
 }
 
 /// The gate's seed and case count.
-const SEED: u64 = 20_261_103;
-const CASES: u32 = 2_000;
+const SEED: u64 = 20_261_109;
+const CASES: u32 = 5_000;
 
-/// Generated cases of events of every kind from three applications, the
-/// threads' asks and returns, abandoned threads' returns, windows learned,
-/// stale among them, time, foreground events, MSAA
-/// focuses, outposts' ends, idle waiters, failed spawns and the stop, with
-/// every ask answered after its step's effects, keep the model's state and
-/// every invariant and postcondition the design lists after every step,
-/// end with every marker given one outcome and every waiter run once,
-/// give the same effects when run twice, and reach every listed state.
+/// Generated cases of the world (processes starting, exiting and reusing an
+/// id, stale events, every kind of event, threads asking, returning, hanging
+/// and slow, windows learned, outposts ending, alarms going off, waiters) are
+/// compared with the reference model after every step, each run twice for
+/// the same effects, and reach every listed state.
 #[test]
 fn generated_cases_keep_the_schedules_rules() {
     let reached = run_generated(
@@ -1522,76 +1256,38 @@ fn generated_cases_keep_the_schedules_rules() {
     );
 }
 
-/// The answers of a step that asks nothing the case relies on.
-const PLAIN: Asks = Asks {
-    verdict: None,
-    spawn_fails: false,
-};
-
-/// A focus of application `app`, keyed by no element, its window unknown.
-const fn focus(app: u8) -> (Action, Asks) {
-    (
-        Action::Push {
-            app,
-            kind: 0,
-            key: None,
-            window: 0,
-        },
-        PLAIN,
-    )
-}
-
-/// `action`, with the plain answers.
-const fn plain(action: Action) -> (Action, Asks) {
-    (action, PLAIN)
-}
-
 /// The cases the generated test found, each the smallest a failure shrank
-/// to, kept as lists of actions: a push replacing the one event an idle
-/// waiter waited for; an ended application whose last abandoned read
-/// returned; and a failed start in a tick that abandons another
-/// application's read after it, with an idle waiter queued before.
+/// to or that case made explicit, kept as lists of actions. In order: a new
+/// process of a reused id, whose first event must have a thread, inheriting
+/// its predecessor's two abandoned reads; a stale event of an exited
+/// process, joining the exited process's record instead of starting a
+/// generation of its own, as an event clears `ending`; and events waiting
+/// at the abandoned limit when the process exits, dropped at once.
 fn fixed() -> Vec<Vec<(Action, Asks)>> {
-    let menu = plain(Action::Push {
-        app: 0,
-        kind: 1,
-        key: Some(0),
+    let plain = |action| (action, Asks { moved_on: false });
+    let start = plain(Action::Start { slot: 0 });
+    let focus = plain(Action::Event {
+        slot: 0,
+        kind: 0,
         window: 0,
     });
+    let ask = plain(Action::Ask { slot: 0 });
+    let late = plain(Action::Time(Passing::Late));
+    let exit = plain(Action::Exit {
+        slot: 0,
+        outpost: 0,
+    });
     vec![
-        vec![menu, plain(Action::WhenIdle), menu],
         vec![
-            focus(0),
-            plain(Action::Next { app: 0 }),
-            plain(Action::Advance(Advance::Late)),
-            plain(Action::OutpostEnded { app: 0 }),
-            plain(Action::Return {
-                app: 0,
-                stray: true,
-                read: false,
-                top: 0,
-            }),
+            start, focus, focus, ask, late, ask, late, exit, start, focus,
         ],
-        vec![
-            focus(2),
-            focus(0),
-            focus(0),
-            plain(Action::Next { app: 0 }),
-            plain(Action::Next { app: 2 }),
-            plain(Action::WhenIdle),
-            (
-                Action::Advance(Advance::Late),
-                Asks {
-                    spawn_fails: true,
-                    ..PLAIN
-                },
-            ),
-        ],
+        vec![start, focus, exit, focus],
+        vec![start, focus, focus, ask, late, ask, focus, late],
     ]
 }
 
-/// Every fixed case keeps the schedule's rules, and gives the same
-/// effects when run twice.
+/// Every fixed case keeps the schedule's rules, and gives the same effects
+/// when run twice.
 #[test]
 fn fixed_cases_keep_the_schedules_rules() {
     for case in fixed() {
