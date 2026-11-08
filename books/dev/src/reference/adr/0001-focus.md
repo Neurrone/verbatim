@@ -73,7 +73,9 @@ Evaluated and discarded, because the application is not responding anyway and an
 
 Kept at 13 seconds: the deadline (Dickson, 2026-11-07). A hang longer than about 13 seconds right after a focus loses that focus, where NVDA speaks it when the stall ends.
 
-A tree dump and a shell items query are judged by their deadline and the hang check only, not by the moved-on rule, because they are not about the focus (Claude, 2026-11-08, pending Dickson's acceptance); NVDA's watchdog judges its recovery against its focus object. A shell items list whose walk could not read every button fails whole rather than answering the buttons read so far (Claude, 2026-11-08, pending Dickson's acceptance), by the same rule.
+The listener's focus events waiting for one application's reading thread are not capped: a slow but responsive application that raises many focus events has each read in order, as NVDA reads its queue, even though the last focus is then spoken late (Dickson, 2026-11-08).
+
+A tree dump and a shell items query are judged by their deadline and the hang check only, not by the moved-on rule, because they are not about the focus (Claude, 2026-11-08, accepted by Dickson); NVDA's watchdog judges its recovery against its focus object. A shell items list whose walk could not read every button fails whole rather than answering the buttons read so far (Claude, 2026-11-08, pending Dickson's acceptance), by the same rule.
 
 ### A focus UI Automation does not deliver (Dickson, 2026-11-07)
 
@@ -115,7 +117,7 @@ A repeat of the same element while its live re-read waits is judged as a new rep
 
 Verbatim+Tab asks the application for its focus live, so it reports the real focus even when it moved without an event, and speaks the answer without taking it as Core's focus. The query goes to the process of the foreground thread's focus window, so Settings answers from its content's process rather than its frame's. NVDA+Tab reports NVDA's own focus object with live properties; its history records no reason. Weighed: taking a different answer as Core's focus, silently or as a new focus; rejected, because a real focus event of the same element on its way would then be dropped as a duplicate.
 
-When the query is answered with nothing to report, Verbatim says "No focus", as NVDA+Tab does when it has no focus object; when it is abandoned at its deadline or replaced by a later press, nothing (Claude, 2026-11-08, pending Dickson's acceptance). A waiting press is ended only by a focus observed after it, so a focus already on its way when the key was pressed is spoken and then the answer, as NVDA runs its script after the focus queued before it (Claude, 2026-11-08, pending Dickson's acceptance).
+When the query is answered with nothing to report, Verbatim says "No focus", as NVDA+Tab does when it has no focus object; when it is abandoned at its deadline or replaced by a later press, nothing (Claude, 2026-11-08, accepted by Dickson). A waiting press is ended only by a focus observed after it, so a focus already on its way when the key was pressed is spoken and then the answer, as NVDA runs its script after the focus queued before it (Claude, 2026-11-08, pending Dickson's acceptance).
 
 ### Window messages, shell items and test limits (Claude, 2026-11-07, pending Dickson's acceptance; the shell items' wait Dickson's, 2026-11-07)
 
