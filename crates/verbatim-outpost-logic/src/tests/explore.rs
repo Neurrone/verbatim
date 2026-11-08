@@ -71,6 +71,13 @@ fn explore_followed() {
 
 #[test]
 #[ignore = "exploration: run by the nightly workflow with its own seed (books/dev/src/reference/testing.md, Exploration tests)"]
+fn explore_generated() {
+    let (config, again) = explored("explore_generated");
+    super::generated::run_generated(config, &again);
+}
+
+#[test]
+#[ignore = "exploration: run by the nightly workflow with its own seed (books/dev/src/reference/testing.md, Exploration tests)"]
 fn explore_intake() {
     let (config, again) = explored("explore_intake");
     let _ = super::intake_order::run_generated(config, &again);

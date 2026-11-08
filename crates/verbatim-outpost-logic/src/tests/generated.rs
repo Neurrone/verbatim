@@ -14,14 +14,15 @@
 //!   evidence: the caret having left where it was, the characters beside it
 //!   changing, the unit at the caret changing after Delete, the caret's line
 //!   changing after a key that deletes, or the selection changing;
-//! - an answer with no read is taken only where nothing could be read of
-//!   the key: a newer key, a focus elsewhere, a replaced element, a release
-//!   or a program ended without its check (`docs/parity/text.md`, "A caret
-//!   key that moves nothing"); after Core's final read it is compared with
-//!   the state then, like a read's answer;
+//! - an "ended" answer after Core's final read says no effect, compared
+//!   with the state at that step like a read's answer;
 //! - a key Core has not called off is answered once, and a key it called off
 //!   gets no answer after the call-off is handled;
-//! - the before read's answer comes before any other of its key;
+//! - a key ended by a newer key, a focus elsewhere, a replaced element or a
+//!   check that ended without its result gets exactly one "ended" answer,
+//!   never one from a read made after that; an "ended" answer with none of
+//!   those causes, other than Core's final read, is a failure;
+//! - a held key's before read's answer comes before any other of its key;
 //! - one last read per node, the newest committed, gone at the node's
 //!   release or the element's replacement.
 //!
@@ -37,17 +38,19 @@
 //!
 //! Its limits. The programs live in
 //! `crates/verbatim-outpost/src/outpost/worker.rs`, and the judgement of a
-//! key's evidence and the search for its baseline in
-//! `crates/verbatim-outpost/src/text/mod.rs` (`baseline`, `evidence`), which
-//! this crate cannot reach. The module [`seam`] therefore carries a
-//! transcription of today's judgement and is the one place that names a
-//! production type, so that the rework changes that module alone: a failure
-//! here shows the rule in that transcription, read against the reducer's real
-//! facts, not a run of the outpost's own code. Today's code has no input for
-//! Core's final read or a key's end: the seam gives the final read as the
-//! watch's bound and reports that the end cannot be delivered, so the
-//! call-off and before-read comparisons have nothing to compare until the
-//! builder's seam sends them.
+//! key's evidence in `crates/verbatim-outpost/src/text/mod.rs` (`baseline`,
+//! `evidence`), which this crate cannot reach. The seam calls one function
+//! with the facts a read yields, `seam::judge_evidence`; its body is
+//! today's judgement transcribed here, and is the one thing the builder
+//! replaces with the real call once the pure judgement moves into this
+//! crate. Until then the history search and first check defects in
+//! [`fixed`] are shown only in that transcription, read against the
+//! reducer's real facts, not in a run of the outpost's own code. Today's
+//! code has no input for Core's final read or a key's end, and no before
+//! read's answer: the seam gives the final read as the watch's bound, the
+//! closest effect, and fails with `cannot_express` for the call-off and a
+//! held key's before read, so that those checks fail rather than pass
+//! comparing nothing.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -110,16 +113,16 @@ fn had_effect(kind: KeyKind, arrival: TextState, now: TextState) -> bool {
 enum Seen {
     /// A read of a node committed, with its number.
     ReadCommitted { node: u64, read: u64 },
+    /// A key's request began to be handled.
+    KeyHandled { key: u64 },
     /// A key's before read answered: today's reducer has no such answer.
     #[expect(dead_code, reason = "the rework's seam reports it")]
     BeforeAnswered { key: u64 },
-    /// A key answered: the read its answer rests on, if it had one, and
-    /// whether it says the key had an effect.
-    Answered {
-        key: u64,
-        read: Option<u64>,
-        effect: bool,
-    },
+    /// A key answered from a read: the read, and whether it says the key had
+    /// an effect.
+    Answered { key: u64, read: u64, effect: bool },
+    /// A key's "ended" answer, resting on no read.
+    Ended { key: u64 },
 }
 
 /// The adapter between this test's vocabulary and the reducer: the only code
@@ -135,6 +138,65 @@ mod seam {
 
     use super::*;
     use crate::{Anchor, CaretSeen, KeptSelection, NodeAnchors};
+
+    /// Fails the case at an order or answer today's code cannot express, so
+    /// that its check fails rather than comparing nothing.
+    fn cannot_express(what: &str) -> ! {
+        panic!("today's code cannot express {what}: the rework's seam delivers it")
+    }
+
+    /// How a read compares with one earlier read, each by the comparisons
+    /// only the provider can make.
+    #[derive(Clone, Copy, Debug)]
+    #[expect(
+        clippy::struct_excessive_bools,
+        reason = "each is one comparison the provider makes"
+    )]
+    struct Compared {
+        caret_moved: bool,
+        selection_moved: bool,
+        beside_changed: bool,
+        unit_changed: bool,
+        line_changed: bool,
+    }
+
+    /// The facts a read yields, for the judgement of a key's evidence.
+    struct ReadFacts {
+        /// The read against each caret the outpost reported of the node,
+        /// oldest first, with when each was read.
+        reported: Vec<(u64, Compared)>,
+        /// The read against where Core knew the caret.
+        since: Option<Compared>,
+        pressed_at_ms: u64,
+        /// The key compares the unit at the caret.
+        compares_unit: bool,
+        deletes: bool,
+        /// A caret event prompted the check.
+        caret_event: bool,
+    }
+
+    /// Whether `read` is the key's evidence: today's judgement, transcribed
+    /// from `baseline` and `evidence` in
+    /// `crates/verbatim-outpost/src/text/mod.rs` (the newest caret the
+    /// outpost reported from a read before the key, else where Core knew it;
+    /// with neither, a caret event alone is evidence). This body is the one
+    /// thing the builder replaces with the real call.
+    fn judge_evidence(read: &ReadFacts) -> bool {
+        let reported = read
+            .reported
+            .iter()
+            .rev()
+            .find(|(read_at_ms, _)| *read_at_ms < read.pressed_at_ms)
+            .map(|(_, compared)| compared);
+        let Some(compared) = reported.or(read.since.as_ref()) else {
+            return read.caret_event;
+        };
+        compared.caret_moved
+            || compared.selection_moved
+            || compared.beside_changed
+            || (read.compares_unit && compared.unit_changed)
+            || (read.deletes && reported.is_some() && compared.line_changed)
+    }
 
     /// The window of an edit node's caret events, by node number.
     fn window_of(node: u64) -> isize {
@@ -154,7 +216,6 @@ mod seam {
         Key {
             key: u64,
             node: u64,
-            kind: KeyKind,
             watch: CaretWatch,
         },
         /// A caret event's check and report.
@@ -168,6 +229,10 @@ mod seam {
         request: Request,
         kind: Kind,
         done: bool,
+        /// An event's program has taken the watch of its node, if any.
+        taken: bool,
+        /// The key whose check this program holds, ended if it ends first.
+        held: Option<u64>,
     }
 
     /// The reducer under test with the programs the world runs for it.
@@ -177,8 +242,6 @@ mod seam {
         answers: Answers,
         at: u64,
         flight: Option<Flight>,
-        /// Each key's kind, for the judgement of its later checks.
-        kinds: BTreeMap<u64, KeyKind>,
         /// What each read found, by its number.
         reads: BTreeMap<u64, TextState>,
         /// Each node's newest read Core has been told of.
@@ -189,12 +252,15 @@ mod seam {
 
     impl Seam {
         pub(super) fn new() -> Self {
+            let mut reducer = Reducer::new();
+            // A program's deadline is short, so that an abandonment's clock
+            // does not reach the watch's own bound, which is not its cause.
+            let _ = reducer.input(Input::HandlingDeadline(Duration::from_millis(1)), now(1));
             Self {
-                reducer: Reducer::new(),
+                reducer,
                 answers: Answers::default(),
                 at: 1,
                 flight: None,
-                kinds: BTreeMap::new(),
                 reads: BTreeMap::new(),
                 core_knows: BTreeMap::new(),
                 pending_read: None,
@@ -217,6 +283,11 @@ mod seam {
             self.flight
                 .as_ref()
                 .is_some_and(|flight| !flight.done && matches!(flight.kind, Kind::Event { .. }))
+        }
+
+        /// The key whose check the program in flight holds.
+        pub(super) fn holds(&self) -> Option<u64> {
+            self.flight.as_ref().and_then(|flight| flight.held)
         }
 
         /// Whether the program in flight can run out of its deadline.
@@ -256,13 +327,29 @@ mod seam {
         /// Reads the effects: programs dispatched, and keys answered.
         fn effects(&mut self, effects: Vec<Effect>) -> Vec<Seen> {
             let mut seen = Vec::new();
+            // A key's request is handled before the end of the older key
+            // its dispatch sends.
+            for effect in &effects {
+                if let Effect::Dispatch(program) = effect
+                    && let Kind::Key { key, .. } = Self::kind_of(program)
+                {
+                    seen.push(Seen::KeyHandled { key });
+                }
+            }
             for effect in effects {
                 match effect {
                     Effect::Dispatch(program) => {
+                        let kind = Self::kind_of(&program);
+                        let held = match kind {
+                            Kind::Key { key, .. } => Some(key),
+                            _ => None,
+                        };
                         self.flight = Some(Flight {
                             request: program.request,
-                            kind: self.kind_of(&program),
+                            kind,
                             done: false,
+                            taken: false,
+                            held,
                         });
                     }
                     Effect::Abandon { .. } => self.flight = None,
@@ -273,18 +360,20 @@ mod seam {
                             ..
                         } = *message
                         {
-                            let evidence = matches!(
-                                outcome,
-                                QueryOutcome::Done(QueryResult::Text(TextReply::Done))
-                            );
-                            seen.push(Seen::Answered {
-                                key: request_id.number,
-                                read: if evidence {
-                                    self.pending_read.take()
-                                } else {
-                                    None
-                                },
-                                effect: evidence,
+                            let key = request_id.number;
+                            seen.push(match outcome {
+                                QueryOutcome::Done(QueryResult::Text(TextReply::Done)) => {
+                                    let read = self.pending_read.take().expect("its read");
+                                    Seen::Answered {
+                                        key,
+                                        read,
+                                        effect: true,
+                                    }
+                                }
+                                // Today's closest effect of an "ended" answer:
+                                // the watch's end, or an abandoned or failed
+                                // check.
+                                _ => Seen::Ended { key },
                             });
                         }
                     }
@@ -294,7 +383,7 @@ mod seam {
             seen
         }
 
-        fn kind_of(&self, program: &Program) -> Kind {
+        fn kind_of(program: &Program) -> Kind {
             match &program.work {
                 Work::Entry { entry, .. } => match &entry.item {
                     Item::Query {
@@ -307,7 +396,6 @@ mod seam {
                     } => Kind::Key {
                         key: request_id.number,
                         node: node_id.number(),
-                        kind: self.kinds[&request_id.number],
                         watch: watch.clone(),
                     },
                     Item::Msaa { hwnd, .. } => Kind::Event {
@@ -320,9 +408,17 @@ mod seam {
         }
 
         /// A key's request reaches the outpost.
-        pub(super) fn press(&mut self, key: u64, node: u64, kind: KeyKind) -> Vec<Seen> {
+        pub(super) fn press(
+            &mut self,
+            key: u64,
+            node: u64,
+            kind: KeyKind,
+            held: bool,
+        ) -> Vec<Seen> {
+            if held {
+                cannot_express("a held key's before read");
+            }
             self.tick_clock();
-            self.kinds.insert(key, kind);
             let since = self.core_knows.get(&node).map(|&read| TextPosition {
                 anchor: TextAnchor(read),
                 offset: self.reads[&read].caret,
@@ -344,10 +440,17 @@ mod seam {
             })
         }
 
-        /// Core's final read of a key arrives: today, the watch's bound.
-        pub(super) fn final_read(&mut self) -> Vec<Seen> {
+        /// Core's final read of `key` arrives: today, its watch's bound.
+        pub(super) fn final_read(&mut self, key: u64) -> Vec<Seen> {
             self.tick_clock();
-            let Some(due) = self.reducer.facts.follow.watch.due() else {
+            let watch = &self.reducer.facts.follow.watch;
+            if watch
+                .open()
+                .is_none_or(|open| open.request_id.number != key)
+            {
+                return Vec::new();
+            }
+            let Some(due) = watch.due() else {
                 return Vec::new();
             };
             self.at = self.at.max(due / 1_000);
@@ -357,11 +460,13 @@ mod seam {
             self.effects(effects)
         }
 
-        /// Core calls a key off. Today nothing carries it, so it is not
-        /// handled; the builder's seam sends the order and returns `true`.
-        pub(super) fn call_off(&mut self, _key: u64) -> bool {
-            self.tick_clock();
-            false
+        /// Core calls a key off: today nothing carries the order.
+        #[expect(
+            clippy::unused_self,
+            reason = "the rework's seam sends the order through the reducer"
+        )]
+        pub(super) fn call_off(&mut self, _key: u64) -> Vec<Seen> {
+            cannot_express("Core calling a key off")
         }
 
         /// A caret event of `node` arrives.
@@ -419,38 +524,39 @@ mod seam {
             }
         }
 
-        /// Today's judgement, transcribed from `baseline` and `evidence` in
-        /// `crates/verbatim-outpost/src/text/mod.rs`: the newest caret the
-        /// outpost reported from a read before the key, else where Core
-        /// knew it; with neither, a caret event alone is evidence.
-        fn judge(
-            &self,
-            node: u64,
-            watch: &CaretWatch,
-            kind: KeyKind,
-            now: TextState,
-            caret_event: bool,
-        ) -> bool {
-            let facts = self.reducer.facts.text.edit(node);
-            let reported = facts.and_then(|facts| {
-                facts
-                    .carets
-                    .iter()
-                    .rev()
-                    .find(|seen| seen.read_at_ms < watch.pressed_at_ms)
-            });
-            let baseline = reported
-                .map(|seen| seen.caret.anchor.0)
-                .or(watch.since.map(|position| position.anchor.0));
-            let Some(baseline) = baseline else {
-                return caret_event;
+        /// The facts a read of `node` finding `now` yields for `watch`, and
+        /// the judgement of them.
+        fn judge(&self, node: u64, watch: &CaretWatch, now: TextState, caret_event: bool) -> bool {
+            let compared = |read: u64| {
+                let then = self.reads[&read];
+                Compared {
+                    caret_moved: then.caret != now.caret,
+                    selection_moved: then.selection != now.selection,
+                    beside_changed: then.beside != now.beside,
+                    unit_changed: then.unit != now.unit,
+                    line_changed: then.line != now.line,
+                }
             };
-            let then = self.reads[&baseline];
-            then.caret != now.caret
-                || then.selection != now.selection
-                || then.beside != now.beside
-                || (kind == KeyKind::Delete && then.unit != now.unit)
-                || (watch.deletes && reported.is_some() && then.line != now.line)
+            let reported = self
+                .reducer
+                .facts
+                .text
+                .edit(node)
+                .map_or_else(Vec::new, |facts| {
+                    facts
+                        .carets
+                        .iter()
+                        .map(|seen| (seen.read_at_ms, compared(seen.caret.anchor.0)))
+                        .collect()
+                });
+            judge_evidence(&ReadFacts {
+                reported,
+                since: watch.since.map(|position| compared(position.anchor.0)),
+                pressed_at_ms: watch.pressed_at_ms,
+                compares_unit: watch.compare.is_some(),
+                deletes: watch.deletes,
+                caret_event,
+            })
         }
 
         fn take_read(&mut self, node: u64, state: TextState) -> u64 {
@@ -467,27 +573,38 @@ mod seam {
             })
         }
 
-        /// The program in flight makes its read of `app` and commits.
+        /// The watch on `node` the program in flight holds.
+        fn held_watch(&self, node: u64) -> Option<(CaretWatch, u64)> {
+            match &self.reducer.facts.follow.watch {
+                Watch::Checking { open, .. } if open.node_id.number() == node => {
+                    Some((open.watch.clone(), open.request_id.number))
+                }
+                _ => None,
+            }
+        }
+
+        /// The program in flight makes its next step: an event's takes its
+        /// node's watch, then reads `app`; the rest read at once. It commits
+        /// what the step found.
         pub(super) fn run(&mut self, app: &impl Fn(u64) -> TextState) -> Vec<Seen> {
             self.tick_clock();
             let Some(flight) = self.flight.as_mut().filter(|flight| !flight.done) else {
                 return Vec::new();
             };
-            flight.done = true;
             let request = flight.request;
-            match flight.kind.clone() {
-                Kind::Key {
-                    key,
-                    node,
-                    kind,
-                    watch,
-                } => {
+            let taken = flight.taken;
+            let kind = flight.kind.clone();
+            if !matches!(kind, Kind::Event { .. }) {
+                flight.done = true;
+                flight.held = None;
+            }
+            match kind {
+                Kind::Key { key, node, watch } => {
                     let state = app(node);
                     let read = self.take_read(node, state);
                     let report = self.report(node, read, state);
                     let mut seen = vec![Seen::ReadCommitted { node, read }];
-                    let evidence = self.judge(node, &watch, kind, state, false);
-                    let change = if evidence {
+                    let change = if self.judge(node, &watch, state, false) {
                         self.pending_read = Some(read);
                         Change {
                             result: Some(reply(
@@ -519,52 +636,65 @@ mod seam {
                     seen.extend(self.commit(request, change));
                     seen
                 }
-                Kind::Event { node } => {
-                    let mut seen = self.commit(
-                        request,
-                        Change {
-                            watch: Some(WatchChange::Take(NodeId::new(node))),
-                            ..Change::default()
-                        },
-                    );
-                    let held = match &self.reducer.facts.follow.watch {
-                        Watch::Checking { open, .. } if open.node_id.number() == node => {
-                            Some((open.watch.clone(), open.request_id.number))
-                        }
-                        _ => None,
-                    };
-                    let state = app(node);
-                    let read = self.take_read(node, state);
-                    let report = self.report(node, read, state);
-                    seen.push(Seen::ReadCommitted { node, read });
-                    let watch = held.map(|(watch, key)| {
-                        let kind = self.kinds[&key];
-                        let evidence = self.judge(node, &watch, kind, state, true);
-                        if evidence {
-                            self.pending_read = Some(read);
-                            WatchChange::Checked(Checked::Answered {
-                                reply: TextReply::Done,
-                                calls: CallCounts::default(),
-                                awaited_at_us: 0,
-                            })
-                        } else {
-                            WatchChange::Checked(Checked::Watching {
-                                calls: CallCounts::default(),
-                            })
-                        }
-                    });
-                    seen.extend(self.commit(
-                        request,
-                        Change {
-                            watch,
-                            text: vec![report],
-                            ..Change::default()
-                        },
-                    ));
-                    seen
-                }
+                Kind::Event { node } => self.run_event(request, node, taken, app),
                 Kind::Other => Vec::new(),
             }
+        }
+
+        fn run_event(
+            &mut self,
+            request: Request,
+            node: u64,
+            taken: bool,
+            app: &impl Fn(u64) -> TextState,
+        ) -> Vec<Seen> {
+            let mut seen = Vec::new();
+            if !taken {
+                seen = self.commit(
+                    request,
+                    Change {
+                        watch: Some(WatchChange::Take(NodeId::new(node))),
+                        ..Change::default()
+                    },
+                );
+                let held = self.held_watch(node).map(|(_, key)| key);
+                let flight = self.flight.as_mut().expect("the event's program");
+                flight.taken = true;
+                flight.held = held;
+                if held.is_some() {
+                    return seen;
+                }
+            }
+            let flight = self.flight.as_mut().expect("the event's program");
+            flight.done = true;
+            flight.held = None;
+            let state = app(node);
+            let read = self.take_read(node, state);
+            let report = self.report(node, read, state);
+            seen.push(Seen::ReadCommitted { node, read });
+            let watch = self.held_watch(node).map(|(watch, _)| {
+                if self.judge(node, &watch, state, true) {
+                    self.pending_read = Some(read);
+                    WatchChange::Checked(Checked::Answered {
+                        reply: TextReply::Done,
+                        calls: CallCounts::default(),
+                        awaited_at_us: 0,
+                    })
+                } else {
+                    WatchChange::Checked(Checked::Watching {
+                        calls: CallCounts::default(),
+                    })
+                }
+            });
+            seen.extend(self.commit(
+                request,
+                Change {
+                    watch,
+                    text: vec![report],
+                    ..Change::default()
+                },
+            ));
+            seen
         }
 
         fn finished(&mut self, panicked: bool) -> Vec<Seen> {
@@ -644,7 +774,7 @@ use seam::Seam;
 #[derive(Clone, Copy, Debug)]
 enum Action {
     /// A key's request; its node, and whether it deletes, by the numbers.
-    Press { kind: u8, node: u8 },
+    Press { kind: u8, node: u8, held: bool },
     /// Core's final read of the key numbered by the index.
     FinalRead(u8),
     /// Core calls the key numbered by the index off.
@@ -679,13 +809,24 @@ enum Action {
 
 /// What the model holds of a key.
 #[derive(Clone, Copy, Debug)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each is a separate fact of the key, read by its own rule"
+)]
 struct KeyRecord {
     node: u64,
     kind: KeyKind,
     arrival: TextState,
+    /// Whether the key's before read is answered before any other.
+    held: bool,
     answers: u32,
     before_seen: bool,
     called_off: bool,
+    /// Its request began to be handled.
+    handled: bool,
+    /// What ended it, a newer key, a focus elsewhere, a replaced element or
+    /// a check ended without its result, with the newest read then.
+    ended: Option<u64>,
 }
 
 /// One case's run: the reducer and the model beside it.
@@ -697,6 +838,8 @@ struct World {
     released: BTreeSet<u64>,
     /// What each committed read found, by its number, in order.
     reads: BTreeMap<u64, TextState>,
+    /// The number of the newest read committed of any node.
+    newest_read: u64,
     /// A number for the next change the application makes.
     change: u32,
     log: Vec<String>,
@@ -715,6 +858,7 @@ impl World {
             newest: BTreeMap::new(),
             released: BTreeSet::new(),
             reads: BTreeMap::new(),
+            newest_read: 0,
             change: 0,
             log: Vec::new(),
         }
@@ -739,6 +883,21 @@ impl World {
         self.keys.keys().nth(at).copied()
     }
 
+    /// Records `cause` as what ended every key it names, of those handled
+    /// and not yet answered.
+    fn ended_by(&mut self, cause: impl Fn(u64, &KeyRecord) -> bool) {
+        let newest_read = self.newest_read;
+        for (key, record) in &mut self.keys {
+            if record.handled
+                && record.answers == 0
+                && record.ended.is_none()
+                && cause(*key, record)
+            {
+                record.ended = Some(newest_read);
+            }
+        }
+    }
+
     /// Runs `actions` from a new world, each made valid when it is applied,
     /// compared with the model after every step; ends with every key's
     /// answer (`drain`).
@@ -758,7 +917,7 @@ impl World {
     fn step(&mut self, action: Action) {
         self.log.push(format!("{action:?}"));
         let (seen, compared_key) = match action {
-            Action::Press { kind, node } => {
+            Action::Press { kind, node, held } => {
                 let node = node_number(node);
                 if self.released.contains(&node) {
                     return;
@@ -771,27 +930,35 @@ impl World {
                         node,
                         kind,
                         arrival: self.app(node),
+                        held,
                         answers: 0,
                         before_seen: false,
                         called_off: false,
+                        handled: false,
+                        ended: None,
                     },
                 );
-                (self.seam.press(key, node, kind), None)
+                (self.seam.press(key, node, kind, held), None)
             }
             Action::FinalRead(index) => {
                 if self.seam.busy() {
                     return;
                 }
-                (self.seam.final_read(), self.key_number(index))
+                let Some(key) = self.key_number(index) else {
+                    return;
+                };
+                (self.seam.final_read(key), Some(key))
             }
             Action::End(index) => {
                 let Some(key) = self.key_number(index) else {
                     return;
                 };
-                if self.seam.call_off(key) {
-                    self.keys.get_mut(&key).expect("a key").called_off = true;
+                let record = self.keys.get_mut(&key).expect("a key");
+                if record.answers != 0 || record.called_off {
+                    return;
                 }
-                (Vec::new(), None)
+                record.called_off = true;
+                (self.seam.call_off(key), None)
             }
             Action::Move { node } => {
                 self.change(node_number(node), |state, _| state.caret += 1);
@@ -837,25 +1004,32 @@ impl World {
                 if !self.seam.busy() {
                     return;
                 }
+                let held = self.seam.holds();
+                self.ended_by(|key, _| Some(key) == held);
                 (self.seam.finish(), None)
             }
             Action::Panic => {
                 if !self.seam.busy() {
                     return;
                 }
+                let held = self.seam.holds();
+                self.ended_by(|key, _| Some(key) == held);
                 (self.seam.panic(), None)
             }
             Action::Abandon => {
                 if !self.seam.can_abandon() {
                     return;
                 }
+                let held = self.seam.holds();
+                self.ended_by(|key, _| Some(key) == held);
                 (self.seam.abandon(), None)
             }
             Action::Replace { node } => {
-                if !self.seam.fresh() {
+                if !self.seam.fresh_event() {
                     return;
                 }
                 let node = node_number(node);
+                self.ended_by(|_, record| record.node == node);
                 self.newest.remove(&node);
                 (self.seam.replace(node), None)
             }
@@ -863,6 +1037,7 @@ impl World {
                 if !self.seam.fresh_event() {
                     return;
                 }
+                self.ended_by(|_, _| true);
                 (self.seam.focus_elsewhere(), None)
             }
             Action::Release { node } => {
@@ -871,7 +1046,7 @@ impl World {
                 let open = self
                     .keys
                     .values()
-                    .any(|record| record.node == node && record.answers == 0);
+                    .any(|record| record.node == node && record.answers == 0 && !record.called_off);
                 if self.seam.busy() || self.released.contains(&node) || open {
                     return;
                 }
@@ -884,9 +1059,8 @@ impl World {
         self.compare();
     }
 
-    /// Takes in the answers and reads a step reported. A no-read answer is
-    /// compared with the state at this step when `compared_key` names the
-    /// key, that is when the step was Core's final read.
+    /// Takes in the answers and reads a step reported; `compared_key` names
+    /// the key of Core's final read when this step was one.
     fn observe(&mut self, seen: &[Seen], compared_key: Option<u64>) {
         for item in seen {
             self.log.push(format!("{item:?}"));
@@ -894,6 +1068,12 @@ impl World {
                 Seen::ReadCommitted { node, read } => {
                     self.reads.insert(read, self.app(node));
                     self.newest.insert(node, read);
+                    self.newest_read = read;
+                }
+                Seen::KeyHandled { key } => {
+                    // A newer key ends the keys older than it.
+                    self.ended_by(|older, _| older < key);
+                    self.keys.get_mut(&key).expect("a key").handled = true;
                 }
                 Seen::BeforeAnswered { key } => {
                     let record = self.keys.get_mut(&key).expect("a key");
@@ -905,16 +1085,47 @@ impl World {
                     record.before_seen = true;
                 }
                 Seen::Answered { key, read, effect } => {
-                    self.answered(key, read, effect, compared_key);
+                    let record = self.count_answer(key);
+                    assert!(
+                        record.ended.is_none_or(|ended| read <= ended),
+                        "key {key} answered from read {read}, made after it was ended: {:?}",
+                        self.log
+                    );
+                    let state = self.reads[&read];
+                    let expected = had_effect(record.kind, record.arrival, state);
+                    assert_eq!(
+                        effect, expected,
+                        "key {key}'s answer says effect {effect}, but its state then {state:?} against its arrival {:?} says {expected}: {:?}",
+                        record.arrival, self.log
+                    );
+                }
+                Seen::Ended { key } => {
+                    let record = self.count_answer(key);
+                    if record.ended.is_none() {
+                        assert_eq!(
+                            compared_key,
+                            Some(key),
+                            "key {key} ended with nothing that ends it: {:?}",
+                            self.log
+                        );
+                        let state = self.app(record.node);
+                        assert!(
+                            !had_effect(record.kind, record.arrival, state),
+                            "key {key}'s final read says no effect, but its state {state:?} differs from its arrival {:?}: {:?}",
+                            record.arrival,
+                            self.log
+                        );
+                    }
                 }
             }
         }
     }
 
-    fn answered(&mut self, key: u64, read: Option<u64>, effect: bool, compared_key: Option<u64>) {
-        let Some(record) = self.keys.get(&key).copied() else {
-            return;
-        };
+    /// Counts one answer of `key`, after the rules every answer keeps: none
+    /// after Core called it off, none twice, and a held key's before read's
+    /// answer first.
+    fn count_answer(&mut self, key: u64) -> KeyRecord {
+        let record = self.keys.get_mut(&key).expect("a key");
         assert!(
             !record.called_off,
             "key {key} answered after Core called it off: {:?}",
@@ -925,22 +1136,13 @@ impl World {
             "key {key} answered twice: {:?}",
             self.log
         );
-        self.keys.get_mut(&key).expect("a key").answers += 1;
-        let state = match read {
-            Some(read) => Some(self.reads[&read]),
-            // After Core's final read the key's answer is a comparison of
-            // the state then, even when it carries no read.
-            None if compared_key == Some(key) => Some(self.app(record.node)),
-            None => None,
-        };
-        if let Some(state) = state {
-            let expected = had_effect(record.kind, record.arrival, state);
-            assert_eq!(
-                effect, expected,
-                "key {key}'s answer says effect {effect}, but its state then {state:?} against its arrival {:?} says {expected}: {:?}",
-                record.arrival, self.log
-            );
-        }
+        assert!(
+            !record.held || record.before_seen,
+            "held key {key} answered before its before read's answer: {:?}",
+            self.log
+        );
+        record.answers += 1;
+        *record
     }
 
     /// The last read of each node the reducer keeps is the model's.
@@ -965,8 +1167,11 @@ impl World {
     fn drain(&mut self) {
         for _ in 0..64 {
             while self.seam.busy() {
-                self.step(Action::Run);
-                self.step(Action::Finish);
+                if self.seam.fresh() {
+                    self.step(Action::Run);
+                } else {
+                    self.step(Action::Finish);
+                }
             }
             let open: Vec<u64> = self
                 .keys
@@ -982,13 +1187,7 @@ impl World {
             self.step(Action::FinalRead(index));
         }
         for (key, record) in &self.keys {
-            if record.called_off {
-                assert_eq!(
-                    record.answers, 0,
-                    "key {key}, called off, was answered: {:?}",
-                    self.log
-                );
-            } else {
+            if !record.called_off {
                 assert_eq!(
                     record.answers, 1,
                     "key {key} was answered {} times: {:?}",
@@ -1004,7 +1203,11 @@ fn action() -> impl Strategy<Value = Action> {
     use proptest::prelude::*;
     let node = 0_u8..2;
     prop_oneof![
-        (0_u8..3, node.clone()).prop_map(|(kind, node)| Action::Press { kind, node }),
+        (0_u8..3, node.clone(), any::<bool>()).prop_map(|(kind, node, held)| Action::Press {
+            kind,
+            node,
+            held
+        }),
         (0_u8..4).prop_map(Action::FinalRead),
         (0_u8..4).prop_map(Action::End),
         node.clone().prop_map(|node| Action::Move { node }),
@@ -1077,7 +1280,10 @@ fn generated_cases_answer_each_key_by_its_arrival() {
 }
 
 /// The cases the generated test failed on against today's code, each kept
-/// as its actions.
+/// as its actions. The history search and first check cases fail in the
+/// transcription at `seam::judge_evidence`, not in a run of the outpost's
+/// own code; the held key and call-off cases fail where the seam says
+/// today's code cannot express them.
 fn fixed() -> Vec<Vec<Action>> {
     vec![
         // The history search: the application moved the caret after the last
@@ -1089,7 +1295,11 @@ fn fixed() -> Vec<Vec<Action>> {
             Action::Run,
             Action::Finish,
             Action::Move { node: 1 },
-            Action::Press { kind: 0, node: 1 },
+            Action::Press {
+                kind: 0,
+                node: 1,
+                held: false,
+            },
             Action::Run,
             Action::Finish,
         ],
@@ -1097,26 +1307,60 @@ fn fixed() -> Vec<Vec<Action>> {
         // check, and the next caret event of the node, raised for nothing,
         // is taken as evidence.
         vec![
-            Action::Press { kind: 0, node: 1 },
+            Action::Press {
+                kind: 0,
+                node: 1,
+                held: false,
+            },
             Action::Run,
             Action::Finish,
             Action::Event { node: 1 },
+            Action::Run,
             Action::Run,
             Action::Finish,
         ],
         // The final read: the application changed the characters beside the
         // caret with no event, and the watch's bound answers no effect.
         vec![
-            Action::Press { kind: 0, node: 1 },
+            Action::Press {
+                kind: 0,
+                node: 1,
+                held: false,
+            },
             Action::EditBeside { node: 1 },
+        ],
+        // A held key's before read: the seam cannot express it today.
+        vec![Action::Press {
+            kind: 0,
+            node: 1,
+            held: true,
+        }],
+        // Core calling a key off: the seam cannot express it today.
+        vec![
+            Action::Press {
+                kind: 0,
+                node: 1,
+                held: false,
+            },
+            Action::End(0),
         ],
     ]
 }
 
-/// The found cases keep the key's answers.
+/// The found cases keep the key's answers. Every case is run, whichever
+/// fail first, so a run names each that fails.
 #[test]
 fn fixed_cases_answer_each_key_by_its_arrival() {
-    for case in fixed() {
-        let _ = World::case(&case);
-    }
+    let failing: Vec<usize> = fixed()
+        .iter()
+        .enumerate()
+        .filter(|(_, case)| {
+            std::panic::catch_unwind(|| {
+                let _ = World::case(case);
+            })
+            .is_err()
+        })
+        .map(|(number, _)| number)
+        .collect();
+    assert_eq!(failing, Vec::<usize>::new(), "the fixed cases that fail");
 }
