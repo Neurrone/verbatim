@@ -122,23 +122,13 @@ More follow-ups:
 Facts kept in several places or as combinations of flags, found by a
 study of Core, the outposts and the listener on 2026-11-08, each with a
 history of repeated fixes. Each is rebuilt as one explicit state with one
-writer, in this order, after Core's focus queue redesign (Dickson,
-2026-11-08):
+writer, in this order, now that Core's focus queue is built (Dickson,
+2026-11-08). Symbols are named rather than lines, which move.
 
-- Core's held-key line: one stage, idle, reading a key's caret or
-  awaiting the watch, in place of two optional fields and a search of the
-  query table.
-- The listener's record of an application: keyed by its generation
-  rather than its process number, so a reused number inherits nothing,
-  with one lifecycle value in place of the `threaded`, `ending` and
-  `limit_reached` combinations.
-- The outpost's record of hung windows: one hang being told per
-  application, judged live, in place of the hung set, the destroyed set
-  and the two counters. A later hang in another window of the same
-  application plays the "not responding" sound again (Dickson,
-  2026-11-08).
-- The outpost's followed focus: one record replaced whole when a focus is
-  adopted, in place of its separate optional fields.
+- Core's held-key line. Today: `HeldKeys` in `crates/verbatim-core/src/state.rs` (`waiting`, `passed_at_ms`, `awaiting_watch`, `bounded`), with the key being read found by searching the query table for `Then::HeldRead`; the stage is written at about nine places in `editing.rs` and `queries.rs`, `awaiting_watch` is found by scanning the effects just made for an `AwaitCaret`, and `bounded` is set apart from the stage its deadline belongs to. Fix history: 8658fc10 then 8893fd97 (a deadline set after the read was asked left a timer), 0bd0d8ed then c635a70f (keys held after exit), b748ab99 and 71b7ab52 (a trace lost on resuming). NVDA has no line: a caret script runs alone and waits in `_hasCaretMoved`, later scripts queued behind it. Proposed: one stage, idle, reading a key's caret (its query, key and due time) or awaiting a watch (its query, when passed on, due time), beside `waiting`, with `caret_key` returning the watch's query instead of a scan. Keys now also wait behind focus reports in Core's focus queue (ADR 0001), which the stage must keep.
+- The listener's record of an application. Today: `App` in `crates/verbatim-listener-logic/src/schedule.rs` (`threaded`, `flight`, `abandoned`, `limit_reached`, `ending`, `left_at`, `last_top`), "spent" derived from four of them; `ending` copies the supervisor's fact and any later event clears it; records are keyed by process id alone, so a reused id inherits an ended process's abandoned count and `limit_reached` (found by reading, not reproduced); the last top-level window is kept three times (`last_top`, the running read's `top_level` in `crates/verbatim-listener/src/focus_read.rs`, `FocusReader.last`). Fix history: e282e7ea, 8fa9c917, f67f1dc9, 6c9a1a93, 1c5e1a6d. Proposed: records keyed by application generation, one lifecycle value (live with its reader idle, in charge or starved since a time, or ending) holding the abandoned count.
+- The outpost's record of hung windows. Today: the reducer's `hung` set and the program in flight's `destroyed` set and `hang_mark` (`crates/verbatim-outpost-logic/src/lib.rs`), the `abandoned` and `abandoned_on_hung` counters read by two separate loads (`crates/verbatim-outpost/src/outpost/mod.rs`), and the supervisor's `Parked` (`crates/verbatim-core/src/supervisor/policy.rs`); `NotResponding` is sent only as the set goes from empty to holding a window, and a window leaves it only when named answered, found readable or destroyed, so a background window that recovers unseen silences a later hang in another window (found by reading). Fix history: 91589a28, d7b2962d, c39da5ff, a2e2508d, 3e8c5725, b94fa1d8. NVDA keeps no record: it asks `isHungAppWindow` where it needs it. Proposed: one hang being told per application, its window judged live at each half-second check and ended when that window answers or is destroyed, and each parked worker counted once in the pong. A later hang in another window of the same application plays the "not responding" sound again (Dickson, 2026-11-08).
+- The outpost's followed focus. Today: `Tracking` (nine optional fields, `crates/verbatim-outpost-logic/src/follow.rs`), `Marks` (`intake.rs`), `FollowState` (`followed`, `followed_element`, `followed_slider`, `kept_groups`, `focus_path`, `owed`) and the newest held report, rewritten together at adoption but `focus_path`, the foreground role and batch, and element retargets written by separate parts of a commit, a commit being about fifteen independent optional fields. Fix history: 2bd69a85, 62ee398b, f6b84c89. Proposed: one followed record replaced whole when a focus is adopted, with only the foreground role and batch outside it; check first which facts the outpost still needs now that Core's focus is a queue.
 
 ### The ownership refactor
 
