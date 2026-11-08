@@ -150,8 +150,8 @@ Public API:
 The followed focus (`src/follow.rs`) is one record, `Followed`: the node,
 its role, object, window, chain and titles, how it was read (`Origin`: the
 listener's read with its focus path, an MSAA focus with what a live re-read
-needs, a focus-now answer, a menu opening), its terminal mark, its redirect,
-system-caret and absorbed marks, its subscription and what it owes. A
+needs, a focus-now answer, a menu opening), its terminal mark, its redirect
+and system-caret marks, its subscription and what it owes. A
 commit's `FocusCommit::Adopt` replaces the record whole, so that no fact of an
 older focus survives beside a newer one; the subscription it replaces keeps
 its group among `kept_groups` until its node is released.
@@ -162,11 +162,14 @@ dialog memo, both outside the record, and follows nothing. A caret key's
 watch on another node than the one an adoption or a foreground report names
 ends. An element found after its report moves the subscription only while
 its node is followed; otherwise its tokens are let go. `MarkChange` is the
-one change of a mark a commit makes. What the mailbox and the intake read is
-computed from the record (`Facts::marks`), and `Effect::Marks` is sent when
-the computed value changes. A commit the state table says cannot occur, a
-`FocusCommit::Again` or a `MarkChange` with nothing followed, changes
-nothing and comes back as `Effect::LogicError`, which the shell logs as an
+one change of a mark a commit makes. `FollowState::absorbed`, beside the
+record, is a held console's window, which need not be the followed focus's:
+an adoption clears it, as does anything that may end the hold. What the
+mailbox and the intake read is computed from the record and it
+(`Facts::marks`), and `Effect::Marks` is sent when the computed value
+changes. A commit the state table says cannot occur, a
+`FocusCommit::Again` or a mark of the record's changed with nothing
+followed, changes nothing and comes back as `Effect::LogicError`, which the shell logs as an
 error.
 
 The caret key's watch (`src/watch.rs`) is one state in the follow state,

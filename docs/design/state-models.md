@@ -178,7 +178,7 @@ Core's queue changes what Core does with reports, not what the outpost needs to 
 - `Marks.system_caret_unused`: dropping the system caret's events at the mailbox.
 - `Tracking`'s focus, role, window, chain, titles and MSAA report, and `FocusPath`: the ancestor walks, the live re-read, the worker's element lookups.
 
-Each of the five `Marks` fields is set at adoption, ended by the next adoption, and describes the followed focus, so they move into its record.
+`focused`, `terminal`, `focus_redirected` and `system_caret_unused` are set at adoption, ended by the next adoption, and describe the followed focus, so they move into its record. `absorbed` names a held terminal's window, which need not be the followed focus's, so it sits beside the record.
 
 ### State
 
@@ -195,7 +195,6 @@ struct Followed {
     terminal: TerminalMark,
     redirected: bool,
     system_caret_unused: bool,
-    absorbed: Option<isize>,
     subscription: Option<Subscribed>,
     owed: Option<Owed>,
 }
@@ -216,7 +215,7 @@ struct Subscribed { group: Group, element: u64, slider: Option<(NodeId, u64)> }
 struct LastReported { role: Role, batch: u64 }
 ```
 
-`FollowState` becomes `followed: Option<Followed>`, `last_reported: Option<LastReported>`, `dialog: DialogMemo`, `kept_groups`, and `watch` and `caret_read` as today. `Facts.marks` goes; the marks the mailbox copies are computed from `followed`, so `Effect::Marks` is sent when the computed value changes.
+`FollowState` becomes `followed: Option<Followed>`, `last_reported: Option<LastReported>`, `dialog: DialogMemo`, `absorbed: Option<isize>`, `kept_groups`, and `watch` and `caret_read` as today. `Facts.marks` goes; the marks the mailbox copies are computed from `followed` and `absorbed`, so `Effect::Marks` is sent when the computed value changes.
 
 `Change`'s `follow`, `foreground`, `dialog` and `focus_path` become one `focus: Option<FocusCommit>`, and `drop_system_caret`, `absorb` and `clear_redirect` one `mark: Option<MarkChange>`, since each commit that makes one makes only that one:
 
@@ -236,6 +235,7 @@ Rules, each with its reason:
 - Adoption replaces the record whole, so no fact of an older focus survives beside a newer one, and a focus route of an older focus cannot be read for the new one. The previous subscription moves to `kept_groups` at that moment.
 - The role and batch sit outside the record because a foreground report writes them and follows nothing, and the menu rule compares with either.
 - `dialog` sits outside too: a foreground report writes it for the focus that comes after. A focus-now adoption has none and leaves it.
+- `absorbed` sits outside too: it is a held terminal's window and not a fact of the followed focus, because a terminal stays held after the focus moves elsewhere in its console, and marking it then keeps one absorb dropping the updates at the mailbox instead of a wake for each. An adoption clears it, as do an entry that may end the hold and a terminal's first read.
 - An element found after its report changes the record's subscription only while its node is followed; otherwise its tokens are let go.
 - A caret key's watch on a node other than the one an adoption or a foreground report names is ended, in every column, because the watch's node can be a query's node rather than the followed one.
 
@@ -243,7 +243,7 @@ Rules, each with its reason:
 
 | Rule | Nothing followed | Followed, this node | Followed, another node |
 | --- | --- | --- | --- |
-| Adopt | Record set; subscription moved; a watch on another node than the adopted one ended | Record replaced whole; a subscription on the same elements is not moved; a watch on another node ended | Record replaced whole; old subscription kept by its group; a watch on another node ended |
+| Adopt | Record set; subscription moved; a watch on another node than the adopted one ended; `absorbed` cleared | Record replaced whole; a subscription on the same elements is not moved; a watch on another node ended; `absorbed` cleared | Record replaced whole; old subscription kept by its group; a watch on another node ended; `absorbed` cleared |
 | Again (focus-now on the focus followed) | Cannot occur: the program adopts instead | Subscription moved to its target; owed work replaced; nothing else changes | Cannot occur: programs run one at a time and an abandoned worker's commit is refused |
 | Foreground report | `last_reported` and `dialog` replaced; no record; a watch on another node than the reported one ended | The same; record unchanged | The same; record unchanged |
 | Element found | Tokens let go | Subscription moved to it | Tokens let go |
@@ -251,9 +251,10 @@ Rules, each with its reason:
 | Owed work done | Nothing | Cleared if this generation attempts it | Nothing |
 | Worker attempting owed work abandoned | Nothing | Owed cleared | Nothing |
 | Node released | Kept groups of it dropped | Subscription none, its tokens let go; the rest stays for the walks | Kept groups of it dropped |
-| `MarkChange` | Cannot occur: every site tests the focus first | Applied | Cannot occur: every site tests the focus first |
-| Entry that may end a held terminal's hold | Nothing | `absorbed` cleared | `absorbed` cleared |
-| Mailbox's copy | Default marks | Computed from the record | Computed from the record |
+| `MarkChange::Absorb` | Applied: `absorbed` names a held terminal's window and needs no record | Applied | Applied: the terminal held may be another node's, and `absorbed` is cleared by the same rules |
+| `MarkChange::DropSystemCaret`, `MarkChange::ClearRedirect` | Cannot occur: every site tests the focus first | Applied | Cannot occur: every site tests the focus first |
+| Entry that may end a held terminal's hold | `absorbed` cleared | `absorbed` cleared | `absorbed` cleared |
+| Mailbox's copy | Default marks with `absorbed` | Computed from the record and `absorbed` | Computed from the record and `absorbed` |
 
 ### Removed
 

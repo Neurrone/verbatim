@@ -496,6 +496,28 @@ fn a_cleared_absorption_reaches_the_mailbox_before_the_read_that_cleared_it() {
     ));
 }
 
+/// A commit the followed focus's state table says cannot occur reaches the
+/// shell as the logic error it is.
+#[test]
+fn a_commit_that_cannot_occur_reaches_the_shell_as_a_logic_error() {
+    let mut replay = Replay::new();
+    let request = program(&replay.push(name_change(1), Source::Hook, 1)).request;
+    let effects = replay.commit(
+        request,
+        Change {
+            mark: Some(MarkChange::DropSystemCaret),
+            ..Change::default()
+        },
+        2,
+    );
+    assert!(matches!(
+        &effects[..],
+        [Effect::LogicError(LogicError::MarkWithNothingFollowed(
+            MarkChange::DropSystemCaret
+        ))]
+    ));
+}
+
 #[test]
 fn a_foreground_change_and_a_focus_of_one_batch_are_one_group_tried_newest_first() {
     let mut replay = Replay::new();

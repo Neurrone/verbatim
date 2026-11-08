@@ -70,13 +70,6 @@ pub struct Followed {
     /// Whether the system caret's events are dropped as they are pushed:
     /// the focus has caret events of its own.
     pub system_caret_unused: bool,
-    /// The console window whose updates are dropped as they are pushed: a
-    /// program marks it while the focused console terminal's reading is
-    /// held with its text changed and no caret key's watch is open, when it
-    /// would do nothing for an update; it is cleared before anything that
-    /// changes that is handled, so an update observed after the read that
-    /// ends the hold begins is never dropped.
-    pub absorbed: Option<isize>,
     /// Where the focus-following subscription follows it, `None` for
     /// nothing.
     pub subscription: Option<Subscribed>,
@@ -104,13 +97,14 @@ impl Followed {
         }
     }
 
-    /// The marks the mailbox and the intake read of this focus.
-    fn marks(&self) -> Marks {
+    /// The marks the mailbox and the intake read of this focus, with the
+    /// held terminal's window `absorbed`, which is not a fact of it.
+    fn marks(&self, absorbed: Option<isize>) -> Marks {
         Marks {
             focused: self.object.clone(),
             terminal: self.terminal,
             focus_redirected: self.redirected,
-            absorbed: self.absorbed,
+            absorbed,
             system_caret_unused: self.system_caret_unused,
         }
     }
@@ -400,8 +394,8 @@ pub enum LogicError {
     /// A focus-now answer followed again with no focus followed: the
     /// program adopts instead.
     AgainWithNothingFollowed,
-    /// A mark change with no focus followed: every site tests the focus
-    /// first.
+    /// A change of a mark on the followed focus with no focus followed:
+    /// every site tests the focus first.
     MarkWithNothingFollowed(MarkChange),
 }
 
@@ -503,6 +497,15 @@ pub struct FollowState {
     /// the store releases their node, so the outpost hears the changes of
     /// every node it has not released (`books/dev/src/explanation/design/ownership.md`).
     pub kept_groups: Vec<(NodeId, Group, u64)>,
+    /// The console window whose updates are dropped as they are pushed: a
+    /// held terminal's window, which need not be the followed focus's, as
+    /// a terminal stays held after the focus moves elsewhere in its console.
+    /// A program marks it while the terminal's reading is held with its text
+    /// changed and no caret key's watch is open, when it would do nothing
+    /// for an update; an adoption clears it, as does anything that may end
+    /// the hold before it is handled, so an update observed after the read
+    /// that ends the hold begins is never dropped.
+    pub absorbed: Option<isize>,
     /// The caret key's watch for evidence.
     pub watch: Watch,
     /// The last committed read of a caret.
@@ -529,10 +532,14 @@ impl Facts {
     /// from its record.
     #[must_use]
     pub fn marks(&self) -> Marks {
-        self.follow
-            .followed
-            .as_ref()
-            .map_or_else(Marks::default, Followed::marks)
+        let absorbed = self.follow.absorbed;
+        self.follow.followed.as_ref().map_or_else(
+            || Marks {
+                absorbed,
+                ..Marks::default()
+            },
+            |followed| followed.marks(absorbed),
+        )
     }
 }
 
@@ -710,6 +717,7 @@ impl FollowState {
                     .replace(followed)
                     .and_then(|before| Some((before.node, before.subscription?)));
                 self.subscription_moved(previous, (node, target), applied);
+                self.absorbed = None;
                 self.last_reported = Some(*reported);
                 if let Some(dialog) = dialog {
                     self.dialog.clone_from(dialog);
@@ -769,16 +777,19 @@ impl FollowState {
 
     /// Applies a commit's change of the marks on the followed focus.
     fn apply_mark(&mut self, mark: MarkChange, applied: &mut Applied) {
-        let Some(followed) = self.followed.as_mut() else {
-            applied
-                .logic_errors
-                .push(LogicError::MarkWithNothingFollowed(mark));
-            return;
+        let set: fn(&mut Followed) = match mark {
+            MarkChange::Absorb(window) => {
+                self.absorbed = Some(window);
+                return;
+            }
+            MarkChange::DropSystemCaret => |followed| followed.system_caret_unused = true,
+            MarkChange::ClearRedirect => |followed| followed.redirected = false,
         };
-        match mark {
-            MarkChange::Absorb(window) => followed.absorbed = Some(window),
-            MarkChange::DropSystemCaret => followed.system_caret_unused = true,
-            MarkChange::ClearRedirect => followed.redirected = false,
+        match self.followed.as_mut() {
+            Some(followed) => set(followed),
+            None => applied
+                .logic_errors
+                .push(LogicError::MarkWithNothingFollowed(mark)),
         }
     }
 }
@@ -910,7 +921,6 @@ pub(crate) fn plain_followed(node: NodeId, role: Role) -> Followed {
         terminal: TerminalMark::None,
         redirected: false,
         system_caret_unused: false,
-        absorbed: None,
         subscription: None,
         owed: None,
     }

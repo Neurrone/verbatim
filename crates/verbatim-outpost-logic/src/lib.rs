@@ -1366,7 +1366,7 @@ impl Reducer {
                 let owed = owed.clone();
                 // Whatever the owed read observes must reach it.
                 if owed_clears_absorb(&owed) {
-                    followed.absorbed = None;
+                    self.facts.follow.absorbed = None;
                 }
                 let node = followed.node;
                 self.dispatch(
@@ -1550,10 +1550,8 @@ impl Reducer {
         let window = intake::window_of(&entry.item);
         // Anything that may end a held terminal's hold reads every update
         // observed after it begins.
-        if clears_absorb(&entry.item)
-            && let Some(followed) = self.facts.follow.followed.as_mut()
-        {
-            followed.absorbed = None;
+        if clears_absorb(&entry.item) {
+            self.facts.follow.absorbed = None;
         }
 
         let group_place = group.as_ref().map(|group| FocusGroup {

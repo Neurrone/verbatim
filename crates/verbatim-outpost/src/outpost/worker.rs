@@ -1373,13 +1373,7 @@ impl Worker<'_> {
     /// updates, about one per line, otherwise woke the worker once each.
     fn absorb_while_held(&self, node_id: NodeId, hwnd: isize) {
         if self.held_with_changes(node_id)
-            && self.context.follow(|follow| {
-                follow.watch.kept().is_none()
-                    && follow
-                        .followed
-                        .as_ref()
-                        .is_some_and(|followed| followed.node == node_id)
-            })
+            && self.context.follow(|follow| follow.watch.kept().is_none())
         {
             self.commit(Effects {
                 mark: Some(MarkChange::Absorb(hwnd)),
@@ -4623,7 +4617,6 @@ fn follow_of(context: &Context, made: FocusMade) -> (FollowMade, Option<NodeId>)
         terminal: Followed::terminal_mark(terminal, window),
         redirected,
         system_caret_unused: terminal && console,
-        absorbed: None,
         subscription: None,
         owed,
     };
@@ -4763,7 +4756,6 @@ mod tests {
                 terminal: reducer::TerminalMark::None,
                 redirected: false,
                 system_caret_unused: false,
-                absorbed: None,
                 subscription: None,
                 owed: None,
             }),
