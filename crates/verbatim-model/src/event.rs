@@ -296,10 +296,7 @@ pub enum NormalizedEvent {
         /// window facts name its top-level window. Carried on the event rather than
         /// fetched afterward so the reducer can speak entered containers
         /// *before* the control, in NVDA's order, joining this chain to
-        /// the previous focus's where they meet. `#[serde(default)]` keeps
-        /// events recorded before this field existed deserializing
-        /// unchanged.
-        #[serde(default)]
+        /// the previous focus's where they meet.
         ancestors: Vec<NodeSnapshot>,
         /// The selected child of a newly focused selection container (a
         /// list's selected item, a tab control's active tab), fetched by
@@ -354,9 +351,6 @@ pub enum NormalizedEvent {
         /// view item expanded, whose count is spoken when the change makes
         /// it expanded (`docs/nvda/speech.md`, "How many items an expanded
         /// tree view item holds"). `None` everywhere else.
-        /// `#[serde(default)]` keeps events recorded before this field
-        /// existed deserializing unchanged.
-        #[serde(default)]
         child_count: Option<u32>,
     },
     /// The value of a node changed (slider drag, combo selection, text edit).
@@ -796,7 +790,6 @@ pub enum Input {
         /// through so a command's speech joins the latency timeline.
         trace_id: TraceId,
         /// The gesture's key number, which its speech carries.
-        #[serde(default = "KeySeq::none_yet")]
         key_seq: KeySeq,
         /// Which command.
         command: ReviewCommand,
@@ -820,7 +813,6 @@ pub enum Input {
         /// Trace ID minted when the gesture was observed.
         trace_id: TraceId,
         /// The gesture's key number, which its speech carries.
-        #[serde(default = "KeySeq::none_yet")]
         key_seq: KeySeq,
         /// How many times the gesture was pressed in quick succession, zero
         /// for the first press: the time on 0 and the date after; the
@@ -841,7 +833,6 @@ pub enum Input {
         trace_id: TraceId,
         /// The key's number. The announcement does not carry it, so a key
         /// pressed within the 30 ms does not silence it.
-        #[serde(default = "KeySeq::none_yet")]
         key_seq: KeySeq,
         /// Which key.
         toggle: LockKey,
@@ -860,7 +851,6 @@ pub enum Input {
         /// Trace ID minted when the key was observed.
         trace_id: TraceId,
         /// The key's number, which its speech carries.
-        #[serde(default = "KeySeq::none_yet")]
         key_seq: KeySeq,
         /// Which key.
         key: CaretKey,
@@ -882,7 +872,6 @@ pub enum Input {
         /// key to pass on.
         trace_id: TraceId,
         /// The key's number, which its speech carries.
-        #[serde(default = "KeySeq::none_yet")]
         key_seq: KeySeq,
         /// Which key.
         key: CaretKey,
@@ -910,7 +899,6 @@ pub enum Input {
         /// Trace ID minted when the typing was observed.
         trace_id: TraceId,
         /// The number of the key that typed it, which its speech carries.
-        #[serde(default = "KeySeq::none_yet")]
         key_seq: KeySeq,
         /// The text typed, a tab as a tab character and Enter as a carriage
         /// return.
@@ -930,7 +918,6 @@ pub enum Input {
         /// Trace ID minted when the key was observed.
         trace_id: TraceId,
         /// The key's number, which its speech carries.
-        #[serde(default = "KeySeq::none_yet")]
         key_seq: KeySeq,
         /// As [`Input::CharacterTyped`]'s: when the hook saw the key; 0
         /// when unknown.

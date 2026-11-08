@@ -99,7 +99,7 @@ guide maps those behaviors onto the crate's types and modules.
 - `flight_recorder` and `FlightRecorder<T, S>`: see "The flight recorder".
 - `RecordedInput`, `ReducerRecorder` and `replay(initial, inputs)`: see
   "The flight recorder".
-- `dump`: `DUMP_FORMAT_VERSION`, `OLDEST_DUMP_FORMAT_VERSION`,
+- `dump`: `DUMP_FORMAT_VERSION`,
   `UNKNOWN_COMMIT`, `DumpHeader`, `DumpContents`,
   `DumpReadError`, `write_dump` and `read_dump`; see "The dump format".
 - `read_of(&TerminalSnapshot)`, `snapshot_of(&Read, waited, colours)` and
@@ -347,10 +347,9 @@ inputs start from, then one compact-JSON `RecordedInput` per line.
 `write_dump(writer, crate_version, commit, uncommitted_changes, timestamp,
 base, inputs)` writes one; `read_dump(reader)` reads one back as
 `DumpContents` (header, base state, the inputs that parsed completely, and
-whether the file ended mid-line). It reads every format version from
-`OLDEST_DUMP_FORMAT_VERSION` (6) to `DUMP_FORMAT_VERSION` (7): a version 6
-header has no commit, so it reads as `UNKNOWN_COMMIT` with no uncommitted
-changes.
+whether the file ended mid-line). It reads only `DUMP_FORMAT_VERSION`
+(8), and keeps no fallbacks for dumps older code wrote: a dump either
+loads or reports its own error.
 
 `DumpReadError` distinguishes a missing header, a malformed header, an
 unsupported format version, a base state line that is missing or cut off,
@@ -914,8 +913,7 @@ innermost `ForKey` around it, or else of the input's trace
 to a key's request comes back under the key's trace, so its speech
 carries the key's number; speech of an input no key caused carries none.
 The table is part of the state, so a flight recorder checkpoint carries
-it, and an input from an old dump carries `KeySeq::NONE_YET`, which is
-not recorded.
+it. `KeySeq::NONE_YET` is not recorded.
 
 ### Caret keys
 

@@ -41,8 +41,7 @@ impl KeySeq {
         self.0
     }
 
-    /// [`KeySeq::NONE_YET`], the serde default of every key field, so an
-    /// input from an old flight dump reads with no number.
+    /// [`KeySeq::NONE_YET`], as a function.
     #[must_use]
     pub const fn none_yet() -> Self {
         Self::NONE_YET

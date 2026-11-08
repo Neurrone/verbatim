@@ -56,25 +56,19 @@ pub(crate) struct FocusContext {
     /// so a later state set without the focused state means the focus has
     /// left it before the next focus event arrived (`docs/parity/changes-and-selection.md`,
     /// "State changes after the focus has left").
-    #[serde(default)]
     pub(crate) reported_focused: bool,
-    /// The trace of the event Core took this focus from; `None` in a
-    /// recording made before it was kept.
-    #[serde(default)]
+    /// The trace of the event Core took this focus from.
     pub(crate) trace_id: Option<TraceId>,
     /// When that event was observed, in microseconds on the run's shared
     /// clock (0 when not known).
-    #[serde(default)]
     pub(crate) observed_at_us: u64,
     /// What Core last spoke of the focus and its ancestors. A focus taken
     /// writes it, as does a report that speaks the focus's reading, a name,
     /// value or description change on the focus, a state change on the
     /// focus other than the focused state's loss on a focus that reported
     /// itself focused, and a state change of an ancestor with an entry; a
-    /// repeat never does. `None` in a recording made before it was kept,
-    /// when the reading stands in ([`FocusContext::spoken`]).
-    #[serde(default)]
-    pub(crate) spoken: Option<SpokenRecord>,
+    /// repeat never does.
+    pub(crate) spoken: SpokenRecord,
 }
 
 /// What Core last spoke of the focus, against which a change of its name,
@@ -117,35 +111,22 @@ impl SpokenRecord {
 }
 
 impl FocusContext {
-    /// The spoken record, made from the reading the first time it is needed
-    /// when a recording made before it was kept left it out.
+    /// The spoken record, to change in place.
     pub(crate) fn spoken(&mut self) -> &mut SpokenRecord {
-        let (snapshot, ancestors) = (&self.snapshot, &self.ancestors);
-        self.spoken.get_or_insert_with(|| {
-            SpokenRecord::of(
-                snapshot,
-                ancestors
-                    .iter()
-                    .map(|ancestor| (ancestor.id, ancestor.states))
-                    .collect(),
-            )
-        })
+        &mut self.spoken
     }
 
     /// The states last spoken of `node`, the focus or one of its ancestors,
-    /// or its reading's when nothing was recorded for it; `None` for a node
-    /// not in the focus line.
+    /// or its reading's when nothing was recorded for an ancestor; `None`
+    /// for a node not in the focus line.
     pub(crate) fn spoken_states(&self, node: NodeId) -> Option<StateSet> {
         if node == self.snapshot.id {
-            return Some(
-                self.spoken
-                    .as_ref()
-                    .map_or(self.snapshot.states, |spoken| spoken.states),
-            );
+            return Some(self.spoken.states);
         }
         self.spoken
-            .as_ref()
-            .and_then(|spoken| spoken.ancestors.iter().find(|(id, _)| *id == node))
+            .ancestors
+            .iter()
+            .find(|(id, _)| *id == node)
             .map(|(_, states)| *states)
             .or_else(|| {
                 self.ancestors
@@ -168,7 +149,6 @@ pub(crate) struct Navigator {
     /// text. Always a valid boundary within that text.
     pub(crate) review_offset: usize,
     /// How the review cursor reviews the object's text (milestone M4).
-    #[serde(default)]
     pub(crate) text: ReviewText,
 }
 
@@ -241,19 +221,16 @@ pub(crate) struct CaretContext {
     pub(crate) selection: Option<Selection>,
     /// The line the selection starts in, when it starts on a line before
     /// the caret's (`CaretReport::selection_line`).
-    #[serde(default)]
     pub(crate) selection_line: Option<TextChunk>,
     /// The line break last seen ending a line of the node's text, such as
     /// a carriage return in Windows 11 Notepad or a carriage return and line
     /// feed in a standard edit control: what a Backspace at the start of a
     /// line deletes, since a text uses one kind of line break throughout,
     /// when the caret's own line has none (the last line).
-    #[serde(default)]
     pub(crate) line_break: Option<String>,
     /// When the report this caret came from was observed or read, in
     /// milliseconds, 0 when unknown. A timed report observed before this one, arriving later,
     /// does not replace it, so the caret is always the newest known.
-    #[serde(default)]
     pub(crate) observed_at_ms: u64,
 }
 
@@ -288,7 +265,6 @@ pub(crate) struct TimedCaret {
     pub(crate) selection: Option<Selection>,
     /// The line the selection starts in, when it starts on a line before
     /// the caret's (`CaretReport::selection_line`).
-    #[serde(default)]
     pub(crate) selection_line: Option<TextChunk>,
 }
 
@@ -305,23 +281,19 @@ pub(crate) struct PendingCaret {
     /// For a Backspace, the caret's line before the key and the caret's
     /// offset in it, which the line after the key is compared with to find
     /// what the key really removed.
-    #[serde(default)]
     pub(crate) before: Option<(String, u32)>,
     /// When the next key after this one was pressed (Unix milliseconds),
     /// once one has been: an answer read at or after then may show that
     /// key's effect, not this one's, so it only keeps the caret current.
-    #[serde(default)]
     pub(crate) later_key_at_ms: Option<u64>,
     /// Whether text was selected when the key was pressed, by the caret
     /// Core found the key at: a Backspace over a selection says what was
     /// before the caret, and a key outside the caret table whose answer
     /// shows that selection removed says only the selection's change.
-    #[serde(default)]
     pub(crate) selected_before: bool,
     /// The key deletes backward over a selection that starts on an
     /// earlier line than the caret's, so what comes before its start is
     /// not known and the key says only the selection's change.
-    #[serde(default)]
     pub(crate) before_unknown: bool,
     /// The selection changes of caret reports that came while the key
     /// waited for its answer, as they are spoken: the outpost compared them
@@ -329,7 +301,6 @@ pub(crate) struct PendingCaret {
     /// compares with no more, so they are said after the key's own words,
     /// as NVDA says its caret event's words after the key's script's
     /// (`editing::selection_changed`).
-    #[serde(default)]
     pub(crate) heard: Vec<verbatim_model::UtteranceSegment>,
 }
 
@@ -378,16 +349,13 @@ pub(crate) struct HeldKeys {
     pub(crate) waiting: std::collections::VecDeque<WaitingKey>,
     /// When the last held key was passed on, on the outposts' clock: a key
     /// behind it reaches the application no earlier.
-    #[serde(default)]
     pub(crate) passed_at_ms: u64,
     /// The watch of the held key last passed on, until it is answered: a
     /// held key behind it has its caret read only then.
-    #[serde(default)]
     pub(crate) awaiting_watch: Option<QueryId>,
     /// The held key whose one deadline the shell keeps
     /// ([`verbatim_model::Effect::BoundHeldKey`]): for its wait for
     /// `awaiting_watch`, or for the read of its caret.
-    #[serde(default)]
     pub(crate) bounded: Option<TraceId>,
 }
 
@@ -418,7 +386,6 @@ pub(crate) struct PendingText {
     /// The object whose text a navigator follow-up reads when it is
     /// neither the navigator object nor the focus: Verbatim+Tab's answer,
     /// which Core never takes (`crate::report_focus`).
-    #[serde(default)]
     pub(crate) about: Option<Box<NodeSnapshot>>,
 }
 
@@ -601,19 +568,15 @@ pub(crate) struct SayAll {
     /// Utterances read and not yet handed to speech, in order, each its
     /// pieces. At most one read-ahead batch's worth
     /// (`verbatim_model::MAX_READ_AHEAD_TEXT`), with what was held back.
-    #[serde(default)]
     pub(crate) buffer: std::collections::VecDeque<Vec<BufferedPiece>>,
     /// Text read with no sentence end after it, held back to be spoken
     /// with what follows it (`docs/nvda/speech.md`, "Say-all speaks
     /// without pauses").
-    #[serde(default)]
     pub(crate) held: Vec<BufferedPiece>,
     /// How many units in a row were read with no sentence end, blank ones
     /// included: at `say_all::MAX_HELD`, what is held back is spoken.
-    #[serde(default)]
     pub(crate) held_units: usize,
     /// The trace of the latest read, which pieces handed out later carry.
-    #[serde(default)]
     pub(crate) trace: Option<TraceId>,
     /// The document's end has been read.
     pub(crate) finished: bool,
@@ -630,7 +593,6 @@ pub(crate) struct SayAll {
 pub struct SrState {
     /// Core's focus: the focus object and the last queued focus
     /// (`crate::focus_queue`).
-    #[serde(default)]
     pub(crate) focus: crate::focus_queue::FocusState,
     /// The foreground record: attention, the foreground window and object,
     /// and the stamps that order focuses, under the keys the state held
@@ -644,33 +606,26 @@ pub struct SrState {
     /// kept: when another outpost's report is taken between two reports of
     /// one group, the older entry was observed before that report, and the
     /// stale rule drops it instead.
-    #[serde(default)]
     pub(crate) group_taken: Option<(OutpostId, verbatim_model::FocusGroup)>,
     /// The live re-reads Core waits for, one per focus reader, and how
     /// many it has asked for (`crate::live_reread`).
-    #[serde(default)]
     pub(crate) live_rereads: crate::live_reread::LiveRereads,
     /// Verbatim+Tab's press waiting for its live query's answer
     /// (`crate::report_focus`).
-    #[serde(default)]
     pub(crate) report_press: Option<crate::report_focus::WaitingPress>,
     /// The virtual desktop's name, kept until the next focus Core takes
     /// or its due time (`crate::desktop`).
-    #[serde(default)]
     pub(crate) desktop_name: Option<String>,
     /// Core's queries not yet ended, each from its request to its one
     /// ending (`crate::queries`).
-    #[serde(default)]
     pub(crate) queries: crate::queries::Queries,
     /// The navigator object and review cursor (roadmap M3). `None` until
     /// the first focus lands; from then it tracks focus unless an
     /// object-navigation command moves it away.
     pub(crate) navigator: Option<Navigator>,
     /// The reader settings (milestone M4).
-    #[serde(default)]
     pub(crate) settings: ReaderSettings,
     /// The focus's caret, when the focus has text.
-    #[serde(default)]
     pub(crate) caret: Option<CaretContext>,
     /// The focus's latest caret reports whose time is known, oldest first,
     /// all for the node of `caret`: up to [`CARET_HISTORY`], held inline so
@@ -678,77 +633,60 @@ pub struct SrState {
     /// not known empties it, since its order among them is unknown; a
     /// caret Core moved itself is kept at time 0, before any key
     /// (`editing::caret_moved_by_core`).
-    #[serde(default)]
     pub(crate) caret_history: [Option<TimedCaret>; CARET_HISTORY],
     /// The caret keys the keyboard hook held back
     /// (`books/dev/src/explanation/design/key-holding.md`).
-    #[serde(default)]
     pub(crate) held_keys: HeldKeys,
     /// The key numbers of what recent user inputs caused, by trace, which
     /// Core stamps their speech with (`crate::keys`).
-    #[serde(default)]
     pub(crate) key_origins: crate::keys::KeyOrigins,
     /// The lock keys pressed whose new state is still to be announced, in
     /// the order pressed (`Input::ToggleKeyPressed`), each with when its
     /// state is read, on the run's shared clock.
-    #[serde(default)]
     pub(crate) toggle_keys: std::collections::VecDeque<(verbatim_model::LockKey, u64)>,
     /// The select-then-copy start marker.
-    #[serde(default)]
     pub(crate) start_marker: Option<StartMarker>,
     /// How many times a start marker has been set: which marker a copy's
     /// read was made for, so its reply clears that one and keeps a marker
     /// set since (`docs/parity/review.md`, "Select then copy from the
     /// review cursor").
-    #[serde(default)]
     pub(crate) start_marker_generation: u64,
     /// The say-all in progress.
-    #[serde(default)]
     pub(crate) say_all: Option<SayAll>,
     /// The word typed so far, for typed word echo; at most
     /// `editing::MAX_TYPED_WORD` bytes.
-    #[serde(default)]
     pub(crate) typed_word: String,
     /// The next index mark number.
-    #[serde(default)]
     pub(crate) next_mark: u64,
     /// The details the active theme wants fetched (`Input::Fetches`).
-    #[serde(default)]
     pub(crate) fetches: Fetches,
     /// The focused terminal's output still to be spoken (milestone M4 item
     /// 9), bounded by the flood policy's limits.
-    #[serde(default)]
     pub(crate) terminal: crate::terminal::TerminalSpeechState,
     /// Core's model of each terminal it reads, the most recently read last,
     /// at most 16 (`crate::terminal_model`): none until an outpost sends a
     /// terminal snapshot.
-    #[serde(default)]
     pub(crate) terminals: crate::terminal_model::Terminals,
     /// The number of the last text anchor Core minted for a terminal's
     /// review answers, in a range no outpost mints from
     /// (`crate::terminal_model::TERMINAL_ANCHORS`).
-    #[serde(default)]
     pub(crate) next_terminal_anchor: u64,
     /// The formatting last reported in a node's text (milestone M4 item 7):
     /// NVDA's per-object cache, from which only changes are spoken
     /// (`docs/nvda/document-formatting.md`). A new focus starts afresh.
-    #[serde(default)]
     pub(crate) reported_format: Option<(NodeId, TextAttributes)>,
     /// The last tree or list item level spoken first, which an item at
     /// the same level speaks last instead ("Where the level goes" in
     /// `docs/nvda/speech.md`).
-    #[serde(default)]
     pub(crate) last_tree_level: Option<u32>,
     /// The percentage each progress bar last indicated, in hundredths, by
     /// the centre of its location on the screen, as NVDA remembers it
     /// (`docs/nvda/object-model.md`, "How a progress bar reports its
     /// value"), the most recent last, at most [`PROGRESS_BARS_KEPT`].
-    #[serde(default)]
     pub(crate) progress_reported: Vec<((i32, i32), u32)>,
     /// Verbatim is exiting (`Input::Exiting`): no later input does
     /// anything, so nothing is said after the exit sound, as NVDA says
     /// nothing once it has stopped its handlers.
-    #[serde(default)]
     pub(crate) exiting: bool,
 }
 

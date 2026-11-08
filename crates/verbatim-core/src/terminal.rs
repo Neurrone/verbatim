@@ -83,7 +83,6 @@ pub(crate) struct TerminalSpeechState {
     /// How many more lines the group being spoken hands to speech before
     /// the backlog is looked at; `None` between bursts of output, when
     /// everything has been heard.
-    #[serde(default)]
     pub(crate) group: Option<usize>,
     /// The opening marks of output handed to speech whose playback has not
     /// reached them yet, oldest first, with whether each is a line.
@@ -91,19 +90,16 @@ pub(crate) struct TerminalSpeechState {
     /// The closing mark of the last utterance of output handed to speech,
     /// until playback reaches it: while it is set, output is still being
     /// heard.
-    #[serde(default)]
     pub(crate) sounding: Option<SpeechMark>,
     /// The trace of the newest output, which output handed to speech when
     /// a mark is reached is spoken under.
     pub(crate) trace: Option<TraceId>,
     /// The group's last line is playing, and the backlog is looked at once
     /// the request is answered.
-    #[serde(default)]
     pub(crate) deciding: bool,
     /// When speech was last cut off (milliseconds on the shared clock):
     /// output from a read that began before it was read before the cut,
     /// and is not spoken.
-    #[serde(default)]
     pub(crate) cut_at_ms: u64,
 }
 

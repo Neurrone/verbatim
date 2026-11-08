@@ -484,9 +484,7 @@ pub struct NodeDetails {
     /// `WS_SYSMENU` style). Such a client reads as a pane, yet it stands
     /// for its window: entered as a focus ancestor, it is presented, by its
     /// title, as the window is (`docs/parity/focus-context.md`, "Top-level windows in
-    /// the ancestry"). `#[serde(default)]` keeps snapshots recorded before
-    /// this field existed deserializing unchanged.
-    #[serde(default)]
+    /// the ancestry").
     pub top_level_client: bool,
     /// The node's own UI Automation class name (`ClassName`), carried only
     /// on the snapshot of a UI Automation focus, a menu opening's or the
@@ -559,10 +557,7 @@ pub struct NodeSnapshot {
     pub value: Option<String>,
     /// Current states.
     pub states: StateSet,
-    /// The optional properties beyond the core four. `#[serde(default)]`
-    /// keeps snapshots recorded before this field existed (M2 flight
-    /// recorder dumps) deserializing unchanged.
-    #[serde(default)]
+    /// The optional properties beyond the core four.
     pub details: NodeDetails,
 }
 

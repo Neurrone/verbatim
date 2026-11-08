@@ -52,7 +52,6 @@ pub(crate) struct FocusState {
     changes: Vec<Change>,
     /// How many of the inputs the queue orders Core has taken: reports,
     /// foreground changes, and the endings of live re-reads.
-    #[serde(default)]
     inputs: u64,
 }
 

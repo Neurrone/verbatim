@@ -220,7 +220,6 @@ pub(crate) struct TerminalModel {
     /// Core's flood policy ([`TextOp::TerminalHold`]): it holds only while
     /// the terminal has the focus, and goes with the model, so an ended
     /// outpost's hold goes with it.
-    #[serde(default)]
     pub(crate) held: bool,
 }
 

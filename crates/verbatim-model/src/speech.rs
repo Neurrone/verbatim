@@ -432,9 +432,7 @@ pub struct Utterance {
     /// Segments, spoken in order.
     pub segments: Vec<UtteranceSegment>,
     /// The node this utterance describes, when there is one, for
-    /// presentation themes. `#[serde(default)]` keeps utterances recorded
-    /// before this field existed deserializing unchanged.
-    #[serde(default)]
+    /// presentation themes.
     pub source: Option<UtteranceSource>,
     /// For focus speech: the node it announces, so the speech manager can
     /// drop it once that node is no longer relevant to the focus

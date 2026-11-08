@@ -88,7 +88,6 @@ pub(crate) struct LatestFocus {
     /// Its top-level window, when known.
     pub(crate) top_level: Option<WindowHandle>,
     /// Whether it was a whole-window report.
-    #[serde(default)]
     pub(crate) whole_window: bool,
 }
 
@@ -125,16 +124,13 @@ impl LatestFocus {
     }
 }
 
-/// The record as it is serialized: the same keys the state held before the
-/// record existed, so earlier dumps still load.
+/// The record as it is serialized, under the keys `SrState` flattens it
+/// into.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 struct Stored {
     attention: Option<Attention>,
-    #[serde(default)]
     foreground: Option<ObjectKey>,
-    #[serde(default)]
     foreground_changed_at: Option<u64>,
-    #[serde(default)]
     foreground_window: Option<ForegroundWindow>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     front: Option<Front>,

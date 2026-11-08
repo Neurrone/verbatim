@@ -35,15 +35,13 @@ use crate::state::SrState;
 /// to any of them is one input. Version 6: a lock key's read waiting in the
 /// state keeps its due time, and a terminal's hold is its model's.
 /// Version 7: the header records the commit the writing build was made
-/// from and whether its working tree had uncommitted changes; a version 6
-/// dump, otherwise the same, still reads, its commit unknown.
-pub const DUMP_FORMAT_VERSION: u32 = 7;
-
-/// The oldest format version [`read_dump`] still reads.
-pub const OLDEST_DUMP_FORMAT_VERSION: u32 = 6;
+/// from and whether its working tree had uncommitted changes. Version 8:
+/// the foreground record keeps no applied stamp, and the focus's spoken
+/// record is always present. Only the current version is read.
+pub const DUMP_FORMAT_VERSION: u32 = 8;
 
 /// The commit a header records when the writing build's commit is not
-/// known: a build made without git, or a version 6 dump.
+/// known: a build made without git.
 pub const UNKNOWN_COMMIT: &str = "unknown";
 
 /// The first line of a dump: format version, the crate version that wrote
@@ -58,20 +56,14 @@ pub struct DumpHeader {
     pub crate_version: String,
     /// The commit the writing build was made from, as `git rev-parse HEAD`
     /// gives it, or [`UNKNOWN_COMMIT`].
-    #[serde(default = "unknown_commit")]
     pub commit: String,
     /// Whether the working tree of the writing build had uncommitted
     /// changes; false when its commit is unknown.
-    #[serde(default)]
     pub uncommitted_changes: bool,
     /// When the dump was written, in whatever format the caller chose; this
     /// crate never reads a clock, so it neither validates nor parses this
     /// field.
     pub timestamp: String,
-}
-
-fn unknown_commit() -> String {
-    UNKNOWN_COMMIT.to_owned()
 }
 
 /// The result of reading a dump: its header, the state its inputs start
@@ -139,7 +131,7 @@ impl std::fmt::Display for DumpReadError {
             }
             Self::UnsupportedVersion { found, supported } => write!(
                 f,
-                "flight-recorder dump format version {found} is not supported (this build reads versions {OLDEST_DUMP_FORMAT_VERSION} to {supported})"
+                "flight-recorder dump format version {found} is not supported (this build reads version {supported})"
             ),
             Self::MalformedLine {
                 line_number,
@@ -230,7 +222,7 @@ pub fn read_dump<R: BufRead>(reader: &mut R) -> Result<DumpContents, DumpReadErr
     }
     let header: DumpHeader =
         serde_json::from_str(line.trim_end()).map_err(DumpReadError::MalformedHeader)?;
-    if !(OLDEST_DUMP_FORMAT_VERSION..=DUMP_FORMAT_VERSION).contains(&header.format_version) {
+    if header.format_version != DUMP_FORMAT_VERSION {
         return Err(DumpReadError::UnsupportedVersion {
             found: header.format_version,
             supported: DUMP_FORMAT_VERSION,
@@ -400,36 +392,6 @@ mod tests {
             }
             other => panic!("expected UnsupportedVersion, got {other:?}"),
         }
-    }
-
-    /// A version 6 header has no commit: the dump reads, its commit
-    /// unknown.
-    #[test]
-    fn a_version_6_dump_reads_with_an_unknown_commit() {
-        let mut buffer = Vec::new();
-        buffer.extend_from_slice(
-            br#"{"format_version":6,"crate_version":"9.9.9","timestamp":"2026-07-14T00:00:00Z"}"#,
-        );
-        buffer.push(b'\n');
-        write_line(&mut buffer, &sample_base()).expect("writes the base state");
-        for input in sample_inputs() {
-            write_line(&mut buffer, &input).expect("writes an input");
-        }
-
-        let contents = read_dump(&mut buffer.as_slice()).expect("reads");
-
-        assert_eq!(
-            contents.header,
-            DumpHeader {
-                format_version: 6,
-                crate_version: "9.9.9".to_owned(),
-                commit: UNKNOWN_COMMIT.to_owned(),
-                uncommitted_changes: false,
-                timestamp: "2026-07-14T00:00:00Z".to_owned(),
-            }
-        );
-        assert_eq!(contents.base, sample_base());
-        assert_eq!(contents.inputs, sample_inputs());
     }
 
     #[test]

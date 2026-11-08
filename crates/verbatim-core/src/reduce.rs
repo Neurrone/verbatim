@@ -1542,7 +1542,7 @@ fn focus_context(
         source,
         window: window.cloned(),
         snapshot: report.node.clone(),
-        spoken: Some(spoken_record(previous, report, &ancestors)),
+        spoken: spoken_record(previous, report, &ancestors),
         ancestors,
         last_selection: report.selected_child.map(|selected| selected.id),
         alive: true,
@@ -2430,7 +2430,7 @@ fn announce_focus_object(
         .filter(|focus| focus.snapshot == *object)
     {
         let ancestors = Arc::clone(&focus.spoken().ancestors);
-        focus.spoken = Some(SpokenRecord::of(object, ancestors));
+        focus.spoken = SpokenRecord::of(object, ancestors);
     }
     announce_navigator(state, trace_id, object, reason)
 }
@@ -2509,7 +2509,7 @@ pub(crate) fn announce_query(
         .filter(|focus| focus.snapshot.id == object.id)
     {
         let ancestors = Arc::clone(&focus.spoken().ancestors);
-        focus.spoken = Some(SpokenRecord::of(object, ancestors));
+        focus.spoken = SpokenRecord::of(object, ancestors);
     }
     let levels = (Reason::Query, &mut state.last_tree_level);
     if editing::may_have_text(object.role) && object.value.is_some() {
