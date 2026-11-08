@@ -109,7 +109,10 @@ pub(crate) fn run(
         // lag behind a key the application has already handled.
         ReviewText::Caret => Outcome::Done(seed(state, node, TextPoint::Caret, command, repeat)),
         ReviewText::Unknown => {
-            let has_caret = state.caret.as_ref().is_some_and(|caret| caret.node == node);
+            let has_caret = state
+                .focus
+                .object()
+                .is_some_and(|focus| focus.snapshot.id == node && focus.caret.is_some());
             if has_caret || may_have_text(navigator.object.role) {
                 Outcome::Done(seed(state, node, TextPoint::Caret, command, repeat))
             } else {

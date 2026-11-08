@@ -188,7 +188,7 @@ impl Session<'_> {
     fn effect(&mut self, effect: Effect) -> Option<Input> {
         let reply = match effect {
             Effect::Text(request) => match &request.op {
-                TextOp::AwaitCaret(_) => TextReply::WatchEnded,
+                TextOp::Key(_) => TextReply::Unanswered,
                 // The session reads only when a test or Core asks.
                 TextOp::TerminalHold => TextReply::Done,
                 TextOp::TerminalHistory { above, whole } => {

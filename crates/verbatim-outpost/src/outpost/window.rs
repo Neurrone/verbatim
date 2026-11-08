@@ -19,14 +19,6 @@ use verbatim_win32::window::{
     window_is_visible, window_owner,
 };
 
-/// Milliseconds since the Unix epoch on the run's shared clock
-/// ([`verbatim_process::clock::now_us`]), the observation timestamp that orders
-/// events across processes and anchors the keypress-to-audio latency
-/// timeline. Shared with the listener, which stamps facts at observation.
-pub(crate) fn now_ms() -> u64 {
-    verbatim_process::clock::now_us() / 1_000
-}
-
 /// The observation `timing` holds, in microseconds on the run's shared
 /// clock; now, when `timing` holds none.
 pub(crate) fn observed_us(timing: &verbatim_model::protocol::EventTiming) -> u64 {

@@ -2,7 +2,9 @@
 //! UIA text provider: the worker never waits for a caret key, so a focus
 //! change made while a key's watch is open is handled at once, a caret move
 //! the application reports later still answers the watch, a key that
-//! moves nothing is answered by nothing at all, and a text pattern missing
+//! moves nothing is answered by nothing at all, a selection made with no
+//! event is found by the read before a held key and a repeated focus, and
+//! a text pattern missing
 //! as the focus arrives is read once the application raises a caret event,
 //! and the system caret's move is the caret event of a UIA focus that
 //! raises none of its own, as its show is a classic edit control's; and a
@@ -32,8 +34,9 @@ use verbatim_model::protocol::{
     DeliveredFact, OutpostToCore, Query, QueryOutcome, QueryResult, RequestId,
 };
 use verbatim_model::{
-    CaretReply, CaretReport, CaretWatch, FocusText, NodeId, NormalizedEvent, SelectionChange,
-    TextOp, TextPoint, TextPosition, TextReply, TextUnit,
+    CaretMotion, CaretReply, CaretReport, FocusText, KeyAnswer, KeyRead, KeyRequest, KeyStart,
+    KeyStarted, KeyTag, NodeId, NormalizedEvent, QueryId, SelectionChange, TextOp, TextPoint,
+    TextPosition, TextReply, WatchKind,
 };
 use verbatim_outpost::Heard;
 use verbatim_uia::{Cached, ListenerEvent, Uia};
@@ -92,22 +95,82 @@ fn focus_notes(
 }
 
 /// Right Arrow's watch, with the caret Core knew before the key.
-fn right_arrow(before: &CaretReport) -> TextOp {
-    TextOp::AwaitCaret(CaretWatch {
-        landing: false,
-        since: Some(TextPosition {
-            anchor: before.line.start,
-            offset: before.line.offset,
-        }),
-        pressed_at_ms: 0,
-        unit: TextUnit::Character,
-        compare: None,
-        deletes: false,
-    })
+/// A key's request of `node`, as Core makes it.
+fn ask_key(
+    outpost: &mut OutpostUnderTest,
+    node: NodeId,
+    motion: CaretMotion,
+    start: KeyStart,
+) -> (RequestId, KeyTag) {
+    let tag = KeyTag(QueryId(
+        NEXT_TAG.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+    ));
+    let request = KeyRequest {
+        tag,
+        kind: WatchKind::TextField,
+        unit: motion.unit(),
+        motion,
+        start,
+    };
+    let id = outpost.ask(Query::Text {
+        node_id: node,
+        op: TextOp::Key(request),
+    });
+    (id, tag)
 }
 
-/// The answer to caret key `key`, which must be the outpost's next message.
-fn answer_to(outpost: &OutpostUnderTest, key: RequestId) -> TextReply {
+/// The next key's tag: each key's own.
+static NEXT_TAG: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+/// A key judged from the node's last read, and its request's answer read.
+fn key_from_last_read(outpost: &mut OutpostUnderTest, node: NodeId, motion: CaretMotion) -> KeyTag {
+    let (key, tag) = ask_key(
+        outpost,
+        node,
+        motion,
+        KeyStart::FromLastRead { withdrawn: None },
+    );
+    assert_eq!(
+        reply_to(outpost, key),
+        TextReply::Key(Box::new(KeyStarted::Watching))
+    );
+    tag
+}
+
+/// A held key's request and its before read's answer.
+fn held_key(
+    outpost: &mut OutpostUnderTest,
+    node: NodeId,
+    motion: CaretMotion,
+) -> (KeyTag, CaretReply) {
+    let (key, tag) = ask_key(outpost, node, motion, KeyStart::ReadFirst);
+    let TextReply::Key(started) = reply_to(outpost, key) else {
+        panic!("not a key's answer");
+    };
+    let KeyStarted::Read(read) = *started else {
+        panic!("a read, not {started:?}");
+    };
+    (tag, *read)
+}
+
+/// The tagged answer to key `tag`, which must be the outpost's next message.
+fn answer_to(outpost: &OutpostUnderTest, tag: KeyTag) -> KeyAnswer {
+    match outpost.next() {
+        OutpostToCore::Event {
+            event:
+                NormalizedEvent::KeyAnswered {
+                    tag: answered,
+                    answer,
+                    ..
+                },
+            ..
+        } if answered == tag => answer,
+        other => panic!("the outpost said {other:?}, not the answer to the key"),
+    }
+}
+
+/// The answer to query `key`, which must be the outpost's next message.
+fn reply_to(outpost: &OutpostUnderTest, key: RequestId) -> TextReply {
     match outpost.next() {
         OutpostToCore::Reply {
             request_id,
@@ -118,11 +181,11 @@ fn answer_to(outpost: &OutpostUnderTest, key: RequestId) -> TextReply {
     }
 }
 
-/// The caret a key's answer reports, with what the key did.
-fn caret_reply(reply: TextReply) -> CaretReply {
-    match reply {
-        TextReply::Caret(reply) => *reply,
-        other => panic!("a caret reply, not {other:?}"),
+/// The read of a key's evidence.
+fn evidence(answer: KeyAnswer) -> KeyRead {
+    match answer {
+        KeyAnswer::Evidence(read) => *read,
+        other => panic!("evidence, not {other:?}"),
     }
 }
 
@@ -164,7 +227,7 @@ fn a_caret_watch_ends_when_its_nodes_element_is_replaced() {
     let hwnd = common::find_window(&title);
     let mut outpost = OutpostUnderTest::new(&app);
     outpost.deliver(focus_fact(&mut app, &outpost, hwnd, "first"));
-    let (node, before) = match outpost.next() {
+    let (node, _) = match outpost.next() {
         OutpostToCore::Event {
             event:
                 NormalizedEvent::FocusChanged {
@@ -181,10 +244,7 @@ fn a_caret_watch_ends_when_its_nodes_element_is_replaced() {
     };
     outpost.settled();
     // Right Arrow, which the application ignores.
-    let key = outpost.ask(Query::Text {
-        node_id: node,
-        op: right_arrow(&before),
-    });
+    let key = key_from_last_read(&mut outpost, node, CaretMotion::NextCharacter);
     // The watch is open, its first read made.
     outpost.settled();
     app.send("take-runtime-id second first");
@@ -199,7 +259,7 @@ fn a_caret_watch_ends_when_its_nodes_element_is_replaced() {
     app.send("caret second 2");
     app.send("caret-event second");
     heard_caret_event(&outpost);
-    assert_eq!(answer_to(&outpost, key), TextReply::WatchEnded);
+    assert_eq!(answer_to(&outpost, key), KeyAnswer::Ended);
     match outpost.next() {
         OutpostToCore::Event {
             event: NormalizedEvent::CaretMoved { node_id, .. },
@@ -214,16 +274,14 @@ fn a_caret_watch_ends_when_its_nodes_element_is_replaced() {
 
 /// A focus change that arrives while a caret key's watch is open is
 /// reported first: the worker does not wait for the key's evidence before
-/// handling it. The watch then ends with the focus, answered with nothing.
+/// handling it. A text field's watch stays open: Core, which decides the
+/// focus, ends it.
 fn a_focus_change_during_a_caret_watch_is_handled_at_once() {
     let (mut app, hwnd, mut outpost) = start("mockapp-caret-watch-focus");
-    let (notes, before) = focus_notes(&mut app, &outpost, hwnd);
+    let (notes, _) = focus_notes(&mut app, &outpost, hwnd);
     let to_ok = focus_fact(&mut app, &outpost, hwnd, "ok");
     // Right Arrow, which the application ignores, then the focus moves.
-    let key = outpost.ask(Query::Text {
-        node_id: notes,
-        op: right_arrow(&before),
-    });
+    let _ = key_from_last_read(&mut outpost, notes, CaretMotion::NextCharacter);
     outpost.deliver(to_ok);
     match outpost.next() {
         OutpostToCore::Event {
@@ -232,7 +290,6 @@ fn a_focus_change_during_a_caret_watch_is_handled_at_once() {
         } => assert_eq!(node.name.as_deref(), Some("OK")),
         other => panic!("the outpost said {other:?} before the focus on OK"),
     }
-    assert_eq!(answer_to(&outpost, key), TextReply::WatchEnded);
     outpost.settled();
     drop(outpost);
     app.quit();
@@ -243,20 +300,16 @@ fn a_focus_change_during_a_caret_watch_is_handled_at_once() {
 /// caret where the key took it.
 fn a_caret_move_raised_later_answers_the_watch() {
     let (mut app, hwnd, mut outpost) = start("mockapp-caret-watch-later");
-    let (notes, before) = focus_notes(&mut app, &outpost, hwnd);
-    let key = outpost.ask(Query::Text {
-        node_id: notes,
-        op: right_arrow(&before),
-    });
+    let (notes, _) = focus_notes(&mut app, &outpost, hwnd);
+    let key = key_from_last_read(&mut outpost, notes, CaretMotion::NextCharacter);
     // The watch is open: nothing is said, and the worker has finished.
     outpost.settled();
     app.send("caret doc 1");
     app.send("caret-event doc");
-    let reply = caret_reply(answer_to(&outpost, key));
-    assert!(reply.moved);
+    let reply = evidence(answer_to(&outpost, key));
     assert_eq!(reply.caret.line.text, "alpha beta\n");
     assert_eq!(reply.caret.line.offset, 1);
-    assert_eq!(reply.unit.expect("the character").text, "l");
+    assert_eq!(reply.unit.text, "l");
     assert_eq!(reply.selection_changes, []);
     heard_caret_event(&outpost);
     outpost.settled();
@@ -265,7 +318,7 @@ fn a_caret_move_raised_later_answers_the_watch() {
 }
 
 /// A held caret key's caret, read before the key is passed on
-/// (`TextOp::ReadCaret`, `books/dev/src/explanation/design/key-holding.md`), is its watch's
+/// (`KeyStart::ReadFirst`, `books/dev/src/explanation/design/key-holding.md`), is its watch's
 /// baseline, though the application moved the caret there without
 /// reporting it: the watch stays open until the key's own move, and is
 /// answered with the caret where the key took it. Judged from the focus's
@@ -276,12 +329,7 @@ fn a_held_keys_watch_is_judged_from_the_caret_read_before_it() {
     let (notes, _) = focus_notes(&mut app, &outpost, hwnd);
     // The application moves its caret and reports nothing.
     app.send("caret doc 3");
-    let read = outpost.ask(Query::Text {
-        node_id: notes,
-        op: TextOp::ReadCaret,
-    });
-    let before = caret_reply(answer_to(&outpost, read));
-    assert!(!before.moved);
+    let (key, before) = held_key(&mut outpost, notes, CaretMotion::NextCharacter);
     assert_eq!(
         (before.caret.line.text.as_str(), before.caret.line.offset),
         (
@@ -290,30 +338,13 @@ fn a_held_keys_watch_is_judged_from_the_caret_read_before_it() {
             3
         )
     );
-    outpost.settled();
-    // The key is passed on just after the read, as Core takes it.
-    let key = outpost.ask(Query::Text {
-        node_id: notes,
-        op: TextOp::AwaitCaret(CaretWatch {
-            landing: false,
-            since: Some(TextPosition {
-                anchor: before.caret.line.start,
-                offset: before.caret.line.offset,
-            }),
-            pressed_at_ms: before.read_at_ms + 1,
-            unit: TextUnit::Character,
-            compare: None,
-            deletes: false,
-        }),
-    });
     // The watch is open: the caret is where the read found it.
     outpost.settled();
     app.send("caret doc 4");
     app.send("caret-event doc");
-    let reply = caret_reply(answer_to(&outpost, key));
-    assert!(reply.moved);
+    let reply = evidence(answer_to(&outpost, key));
     assert_eq!(reply.caret.line.offset, 4);
-    assert_eq!(reply.unit.expect("the character").text, "a");
+    assert_eq!(reply.unit.text, "a");
     heard_caret_event(&outpost);
     outpost.settled();
     drop(outpost);
@@ -393,27 +424,26 @@ fn a_report_answer_is_neither_adopted_nor_followed() {
 /// say.
 fn a_key_that_moves_nothing_is_answered_with_nothing() {
     let (mut app, hwnd, mut outpost) = start("mockapp-caret-watch-nothing");
-    let (notes, before) = focus_notes(&mut app, &outpost, hwnd);
-    let first = outpost.ask(Query::Text {
-        node_id: notes,
-        op: right_arrow(&before),
-    });
+    let (notes, _) = focus_notes(&mut app, &outpost, hwnd);
+    let first = key_from_last_read(&mut outpost, notes, CaretMotion::NextCharacter);
     outpost.settled();
     // The application's late report of a caret that has not moved, handled
     // before the next key is asked: the outpost has heard it and settled.
     app.send("caret-event doc");
+    let caret = reported_caret(&outpost, notes);
+    assert_eq!(
+        caret.line.offset, 0,
+        "the check finding nothing goes untagged"
+    );
     heard_caret_event(&outpost);
     outpost.settled();
-    let second = outpost.ask(Query::Text {
-        node_id: notes,
-        op: right_arrow(&before),
-    });
-    assert_eq!(answer_to(&outpost, first), TextReply::WatchEnded);
+    let second = key_from_last_read(&mut outpost, notes, CaretMotion::NextCharacter);
+    assert_eq!(answer_to(&outpost, first), KeyAnswer::Ended);
     outpost.settled();
     // The second key's watch is open in its turn.
     app.send("caret doc 1");
     app.send("caret-event doc");
-    assert!(caret_reply(answer_to(&outpost, second)).moved);
+    let _ = evidence(answer_to(&outpost, second));
     heard_caret_event(&outpost);
     outpost.settled();
     drop(outpost);
@@ -427,11 +457,11 @@ fn a_key_that_moves_nothing_is_answered_with_nothing() {
 /// request reaches the client the same way, as no pattern, so the focus is
 /// reported as having no text, and Core speaks its value, as NVDA does for
 /// an object without text. That answer is not kept past the evidence that
-/// it is out of date: a caret key's watch on the document stays open, and
-/// once the provider answers, the application's caret event, which only an
-/// element with text raises, has the text read again and answers the key.
+/// it is out of date: once the provider answers, the application's caret
+/// event, which only an element with text raises, has the text read again
+/// and the caret reported.
 fn a_text_pattern_missing_at_the_focus_is_read_at_the_next_caret_event() {
-    let (mut app, hwnd, mut outpost) = start("mockapp-caret-watch-not-ready");
+    let (mut app, hwnd, outpost) = start("mockapp-caret-watch-not-ready");
     app.send("refuse-text on");
     let fact = focus_fact(&mut app, &outpost, hwnd, "doc");
     outpost.deliver(fact);
@@ -447,30 +477,16 @@ fn a_text_pattern_missing_at_the_focus_is_read_at_the_next_caret_event() {
         } if matches!(*text, FocusText::NoText) => node.id,
         other => panic!("the outpost said {other:?}, not the document's focus with no text"),
     };
-    let key = outpost.ask(Query::Text {
-        node_id: notes,
-        op: TextOp::AwaitCaret(CaretWatch {
-            landing: false,
-            since: None,
-            pressed_at_ms: 0,
-            unit: TextUnit::Character,
-            compare: None,
-            deletes: false,
-        }),
-    });
-    // The watch is open: nothing is said, and the worker has finished.
     outpost.settled();
 
     app.send("refuse-text off");
     app.send("caret doc 1");
     app.send("caret-event doc");
-    let reply = caret_reply(answer_to(&outpost, key));
-    assert!(reply.moved);
+    let caret = reported_caret(&outpost, notes);
     assert_eq!(
-        (reply.caret.line.text.as_str(), reply.caret.line.offset),
+        (caret.line.text.as_str(), caret.line.offset),
         ("alpha beta\n", 1)
     );
-    assert_eq!(reply.unit.expect("the character").text, "l");
     heard_caret_event(&outpost);
     outpost.settled();
     drop(outpost);
@@ -745,7 +761,10 @@ fn a_selections_start_on_the_carets_line_is_reported_in_it() {
         (
             caret.line.text.as_str(),
             caret.line.offset,
-            caret.selection.map(|selection| selection.start)
+            caret
+                .selection
+                .as_ref()
+                .map(|selection| selection.range.start)
         ),
         (
             "alpha beta\n",
@@ -763,12 +782,17 @@ fn a_selections_start_on_the_carets_line_is_reported_in_it() {
     let caret = reported_caret(&outpost, notes);
     assert_eq!(caret.line.text, "gamma\n");
     let start_line = caret
-        .selection_line
+        .selection
+        .as_ref()
+        .and_then(|selection| selection.start_line.clone())
         .expect("the line the selection starts in");
     assert_eq!(
         (
             start_line.text.as_str(),
-            caret.selection.map(|selection| selection.start)
+            caret
+                .selection
+                .as_ref()
+                .map(|selection| selection.range.start)
         ),
         (
             "alpha beta\n",
@@ -788,7 +812,10 @@ fn a_selections_start_on_the_carets_line_is_reported_in_it() {
     assert_eq!(
         (
             caret.line.first,
-            caret.selection.map(|selection| selection.start)
+            caret
+                .selection
+                .as_ref()
+                .map(|selection| selection.range.start)
         ),
         (
             true,
@@ -804,31 +831,60 @@ fn a_selections_start_on_the_carets_line_is_reported_in_it() {
     app.quit();
 }
 
+/// A selection made with no event, as a mouse selection can be, found by
+/// the read before a held key: the read answers with its change.
+fn a_selection_found_by_a_before_read_is_answered_with_its_change() {
+    let (mut app, hwnd, mut outpost) = start("mockapp-caret-watch-before-selection");
+    let (notes, _) = focus_notes(&mut app, &outpost, hwnd);
+    app.send("caret doc 0 5");
+    let (_, before) = held_key(&mut outpost, notes, CaretMotion::NextCharacter);
+    assert_eq!(before.selection_changes, [change(true, "alpha")]);
+    outpost.settled();
+    drop(outpost);
+    app.quit();
+}
+
+/// Control+A in a field, its caret event not yet raised, then the focus
+/// reported again: the repeated focus carries the selection's change, and
+/// the next repeat, finding it read, carries none.
+fn a_repeated_focus_reports_a_selection_it_found_once() {
+    let (mut app, hwnd, outpost) = start("mockapp-caret-watch-repeat-selection");
+    let (_, _) = focus_notes(&mut app, &outpost, hwnd);
+    app.send("caret doc 0 5");
+    let changes_of = |message: OutpostToCore| match message {
+        OutpostToCore::Event {
+            event:
+                NormalizedEvent::FocusChanged {
+                    text: Some(text), ..
+                },
+            ..
+        } => match *text {
+            FocusText::Caret { changes, .. } => changes.selection_changes,
+            other => panic!("the focus came with {other:?}, not its caret"),
+        },
+        other => panic!("the outpost said {other:?}, not the repeated focus"),
+    };
+    outpost.deliver(focus_fact(&mut app, &outpost, hwnd, "doc"));
+    assert_eq!(changes_of(outpost.next()), [change(true, "alpha")]);
+    outpost.settled();
+    outpost.deliver(focus_fact(&mut app, &outpost, hwnd, "doc"));
+    assert_eq!(changes_of(outpost.next()), []);
+    outpost.settled();
+    drop(outpost);
+    app.quit();
+}
+
 /// A selection a caret key made is answered to the key's watch, which takes
 /// the key's caret event, so no caret report carries it; nor does the
 /// report of a later caret event, the key's answer being the last report.
 fn a_selection_a_key_made_is_reported_to_the_key_alone() {
     let (mut app, hwnd, mut outpost) = start("mockapp-caret-watch-key-selection");
     let (notes, before) = focus_notes(&mut app, &outpost, hwnd);
-    let caret = TextPosition {
-        anchor: before.line.start,
-        offset: before.line.offset,
-    };
-    let key = outpost.ask(Query::Text {
-        node_id: notes,
-        op: TextOp::AwaitCaret(CaretWatch {
-            landing: false,
-            since: Some(caret),
-            pressed_at_ms: 0,
-            unit: TextUnit::Character,
-            compare: None,
-            deletes: false,
-        }),
-    });
+    let key = key_from_last_read(&mut outpost, notes, CaretMotion::NextCharacter);
     outpost.settled();
     app.send("caret doc 0 5");
     app.send("caret-event doc");
-    let reply = caret_reply(answer_to(&outpost, key));
+    let reply = evidence(answer_to(&outpost, key));
     assert_eq!(reply.selection_changes, [change(true, "alpha")]);
     heard_caret_event(&outpost);
     outpost.settled();
@@ -860,7 +916,7 @@ fn a_selection_verbatim_made_is_not_reported_again() {
         },
     });
     assert_eq!(
-        answer_to(&outpost, select),
+        reply_to(&outpost, select),
         TextReply::Selected(vec![change(true, "alpha")])
     );
     outpost.settled();
@@ -870,19 +926,6 @@ fn a_selection_verbatim_made_is_not_reported_again() {
     outpost.settled();
     drop(outpost);
     app.quit();
-}
-
-/// A Shift key's watch from `caret`, as Core sends it: no selection of
-/// its own, the answer comparing with the selection the outpost kept.
-fn shift_key(caret: TextPosition) -> TextOp {
-    TextOp::AwaitCaret(CaretWatch {
-        landing: false,
-        since: Some(caret),
-        pressed_at_ms: 0,
-        unit: TextUnit::Character,
-        compare: None,
-        deletes: false,
-    })
 }
 
 /// A Shift key after a selection Verbatim made, as the review copy's
@@ -908,18 +951,15 @@ fn a_shift_key_after_verbatims_selection_compares_with_it() {
         },
     });
     assert_eq!(
-        answer_to(&outpost, select),
+        reply_to(&outpost, select),
         TextReply::Selected(vec![change(true, "alpha")])
     );
     outpost.settled();
-    let key = outpost.ask(Query::Text {
-        node_id: notes,
-        op: shift_key(at(0)),
-    });
+    let key = key_from_last_read(&mut outpost, notes, CaretMotion::NextCharacter);
     outpost.settled();
     app.send("caret doc 0 6");
     app.send("caret-event doc");
-    let reply = caret_reply(answer_to(&outpost, key));
+    let reply = evidence(answer_to(&outpost, key));
     assert_eq!(
         reply.selection_changes,
         [SelectionChange {
@@ -935,16 +975,13 @@ fn a_shift_key_after_verbatims_selection_compares_with_it() {
         node_id: notes,
         op: TextOp::MoveCaret(TextPoint::At(at(6))),
     });
-    assert_eq!(answer_to(&outpost, moved), TextReply::Done);
+    assert!(matches!(reply_to(&outpost, moved), TextReply::Moved { .. }));
     outpost.settled();
-    let key = outpost.ask(Query::Text {
-        node_id: notes,
-        op: shift_key(at(6)),
-    });
+    let key = key_from_last_read(&mut outpost, notes, CaretMotion::NextCharacter);
     outpost.settled();
     app.send("caret doc 6 10");
     app.send("caret-event doc");
-    let reply = caret_reply(answer_to(&outpost, key));
+    let reply = evidence(answer_to(&outpost, key));
     assert_eq!(
         reply.selection_changes,
         [SelectionChange {
@@ -1215,12 +1252,14 @@ fn an_edit_controls_value_change_raised_during_its_caret_read_is_said_in_general
 /// clears its note (`detectPossibleSelectionChange`), so the next
 /// comparison, as "x" is selected, is specific.
 fn an_edit_controls_value_change_counted_by_a_keys_answer_leaves_the_next_change_specific() {
-    let (mut app, mut outpost, node, before) = focus_edit("mockapp-caret-watch-edit-counted");
+    let (mut app, mut outpost, node, _) = focus_edit("mockapp-caret-watch-edit-counted");
     outpost.hold_worker_on(common::another_applications_window().0 as isize);
-    let key = outpost.ask(Query::Text {
-        node_id: node,
-        op: right_arrow(&before),
-    });
+    let (request, key) = ask_key(
+        &mut outpost,
+        node,
+        CaretMotion::NextCharacter,
+        KeyStart::FromLastRead { withdrawn: None },
+    );
     app.send(r"set-text doc x beta\ngamma\n");
     app.send("caret doc 1");
     app.send("caret-event doc");
@@ -1233,7 +1272,11 @@ fn an_edit_controls_value_change_counted_by_a_keys_answer_leaves_the_next_change
         Heard::Msaa(WinEventKind::TextSelectionChange),
     ]);
     outpost.release_worker();
-    let reply = caret_reply(answer_to(&outpost, key));
+    assert_eq!(
+        reply_to(&outpost, request),
+        TextReply::Key(Box::new(KeyStarted::Watching))
+    );
+    let reply = evidence(answer_to(&outpost, key));
     assert_eq!(
         (
             reply.selection_changes,
@@ -1264,24 +1307,6 @@ fn an_edit_controls_value_change_counted_by_a_keys_answer_leaves_the_next_change
     app.quit();
 }
 
-/// Delete's watch over the selection `before` reports, with the character
-/// at its caret to compare, as Core sends it: no selection of its own, the
-/// answer comparing with the selection the outpost kept.
-fn delete_over(before: &CaretReport, pressed_at_ms: u64) -> TextOp {
-    let at = &before.line.text[before.line.offset as usize..];
-    TextOp::AwaitCaret(CaretWatch {
-        landing: false,
-        since: Some(TextPosition {
-            anchor: before.line.start,
-            offset: before.line.offset,
-        }),
-        pressed_at_ms,
-        unit: TextUnit::Character,
-        compare: Some(at.chars().next().map(String::from).unwrap_or_default()),
-        deletes: true,
-    })
-}
-
 /// The selected "alpha" deleted from a classic edit control with Delete,
 /// its caret event raised before its value change, as the Windows Forms
 /// text box raises them: the answer compares with the selection the
@@ -1290,11 +1315,8 @@ fn delete_over(before: &CaretReport, pressed_at_ms: u64) -> TextOp {
 /// the key's caret event
 /// (`target/e2e-evidence/m42-selection-keys-2026-10-22/textbox-word-delete.txt`).
 fn an_edit_controls_deleting_key_over_a_selection_is_answered_in_general_terms() {
-    let (mut app, mut outpost, node, before) = focus_edit("mockapp-caret-watch-edit-delete");
-    let key = outpost.ask(Query::Text {
-        node_id: node,
-        op: delete_over(&before, 0),
-    });
+    let (mut app, mut outpost, node, _) = focus_edit("mockapp-caret-watch-edit-delete");
+    let key = key_from_last_read(&mut outpost, node, CaretMotion::Delete);
     outpost.settled();
     outpost.hold_worker_on(common::another_applications_window().0 as isize);
     app.send(r"set-text doc  beta\ngamma\n");
@@ -1309,7 +1331,7 @@ fn an_edit_controls_deleting_key_over_a_selection_is_answered_in_general_terms()
         Heard::Msaa(WinEventKind::ValueChange),
     ]);
     outpost.release_worker();
-    let reply = caret_reply(answer_to(&outpost, key));
+    let reply = evidence(answer_to(&outpost, key));
     assert_eq!(
         (
             reply.selection_changes,
@@ -1319,118 +1341,6 @@ fn an_edit_controls_deleting_key_over_a_selection_is_answered_in_general_terms()
         (vec![unselected_in_general()], true, None)
     );
     text_changed(&outpost, node);
-    outpost.settled();
-    drop(outpost);
-    app.quit();
-}
-
-/// The selected "alpha" deleted from a classic edit control with Delete,
-/// the control's value change and then its caret event both handled
-/// before the key's watch arrives: the caret event's report compares with
-/// the selection kept, in general terms, the selection removed, and
-/// replaces it, so the key's answer has no change left to say; Core says
-/// the report's change after the key's own words.
-fn a_caret_report_before_a_keys_watch_leaves_its_answer_no_selection_change() {
-    let (mut app, mut outpost, node, before) =
-        focus_edit("mockapp-caret-watch-edit-delete-reported");
-    let pressed_at_ms = u64::try_from(
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("a clock after the epoch")
-            .as_millis(),
-    )
-    .expect("milliseconds that fit");
-    app.send(r"set-text doc  beta\ngamma\n");
-    // The control raises its value change for the new text itself.
-    app.send("caret doc 0");
-    app.send("caret-event doc");
-    outpost.heard(&[
-        Heard::Msaa(WinEventKind::ValueChange),
-        Heard::Msaa(WinEventKind::TextSelectionChange),
-    ]);
-    text_changed(&outpost, node);
-    assert_eq!(
-        reported_selection(&outpost, node),
-        (vec![unselected_in_general()], true, None)
-    );
-    outpost.settled();
-    let key = outpost.ask(Query::Text {
-        node_id: node,
-        op: delete_over(&before, pressed_at_ms),
-    });
-    let reply = caret_reply(answer_to(&outpost, key));
-    assert_eq!(
-        (
-            reply.selection_changes,
-            reply.content_changed,
-            reply.new_selection
-        ),
-        (Vec::new(), false, None)
-    );
-    outpost.settled();
-    drop(outpost);
-    app.quit();
-}
-
-/// A key that changes nothing over the selected "alpha" in a classic edit
-/// control, as Control+C copies it, its watch arriving only after the
-/// selection was extended to "alpha be", as Shift and a click extend it:
-/// that caret event's report says " be" selected and replaces the
-/// selection the outpost kept, and the caret, the selection's start, stays
-/// where it was. The selection in the report the watch takes its baseline
-/// from, before the key, has ends other than the selection's now, which is
-/// evidence: the key is answered at once, with no change left to say, so
-/// Core says the report's words then, as NVDA says them at once, and not
-/// when the watch reaches its bound.
-fn a_selection_moved_before_a_keys_watch_is_evidence_by_its_ends() {
-    let (mut app, mut outpost, node, before) = focus_edit("mockapp-caret-watch-edit-extended");
-    let pressed_at_ms = u64::try_from(
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("a clock after the epoch")
-            .as_millis(),
-    )
-    .expect("milliseconds that fit");
-    app.send("caret doc 0 8");
-    app.send("caret-event doc");
-    outpost.heard(&[Heard::Msaa(WinEventKind::TextSelectionChange)]);
-    assert_eq!(
-        reported_selection(&outpost, node),
-        (
-            vec![SelectionChange {
-                selected: true,
-                text: " be".to_owned(),
-                characters: 3,
-            }],
-            false,
-            None
-        )
-    );
-    outpost.settled();
-    let key = outpost.ask(Query::Text {
-        node_id: node,
-        op: TextOp::AwaitCaret(CaretWatch {
-            landing: true,
-            since: Some(TextPosition {
-                anchor: before.line.start,
-                offset: before.line.offset,
-            }),
-            pressed_at_ms,
-            unit: TextUnit::Word,
-            compare: None,
-            deletes: false,
-        }),
-    });
-    let reply = caret_reply(answer_to(&outpost, key));
-    assert_eq!(
-        (
-            reply.moved,
-            reply.selection_changes,
-            reply.content_changed,
-            reply.new_selection
-        ),
-        (true, Vec::new(), false, None)
-    );
     outpost.settled();
     drop(outpost);
     app.quit();
@@ -1448,33 +1358,26 @@ fn a_uia_deleting_key_over_a_selection_is_answered_in_general_terms() {
     let (notes, _) = focus_notes(&mut app, &outpost, hwnd);
     app.send("caret doc 0 5");
     app.send("caret-event doc");
-    let before = match outpost.next() {
+    match outpost.next() {
         OutpostToCore::Event {
             event:
                 NormalizedEvent::CaretMoved {
                     node_id,
-                    caret,
                     selection_changes,
                     ..
                 },
             ..
-        } if node_id == notes => {
-            assert_eq!(selection_changes, [change(true, "alpha")]);
-            caret
-        }
+        } if node_id == notes => assert_eq!(selection_changes, [change(true, "alpha")]),
         other => panic!("the outpost said {other:?}, not the document's caret"),
-    };
+    }
     heard_caret_event(&outpost);
     outpost.settled();
-    let key = outpost.ask(Query::Text {
-        node_id: notes,
-        op: delete_over(&before, 0),
-    });
+    let key = key_from_last_read(&mut outpost, notes, CaretMotion::Delete);
     outpost.settled();
     app.send(r"set-text doc  beta\ngamma\n");
     app.send("caret doc 0");
     app.send("caret-event doc");
-    let reply = caret_reply(answer_to(&outpost, key));
+    let reply = evidence(answer_to(&outpost, key));
     assert_eq!(
         (
             reply.selection_changes,
@@ -1516,6 +1419,14 @@ fn main() {
         (
             "a_held_keys_watch_is_judged_from_the_caret_read_before_it",
             a_held_keys_watch_is_judged_from_the_caret_read_before_it,
+        ),
+        (
+            "a_selection_found_by_a_before_read_is_answered_with_its_change",
+            a_selection_found_by_a_before_read_is_answered_with_its_change,
+        ),
+        (
+            "a_repeated_focus_reports_a_selection_it_found_once",
+            a_repeated_focus_reports_a_selection_it_found_once,
         ),
         (
             "a_key_that_moves_nothing_is_answered_with_nothing",
@@ -1588,14 +1499,6 @@ fn main() {
         (
             "an_edit_controls_deleting_key_over_a_selection_is_answered_in_general_terms",
             an_edit_controls_deleting_key_over_a_selection_is_answered_in_general_terms,
-        ),
-        (
-            "a_caret_report_before_a_keys_watch_leaves_its_answer_no_selection_change",
-            a_caret_report_before_a_keys_watch_leaves_its_answer_no_selection_change,
-        ),
-        (
-            "a_selection_moved_before_a_keys_watch_is_evidence_by_its_ends",
-            a_selection_moved_before_a_keys_watch_is_evidence_by_its_ends,
         ),
         (
             "a_uia_deleting_key_over_a_selection_is_answered_in_general_terms",

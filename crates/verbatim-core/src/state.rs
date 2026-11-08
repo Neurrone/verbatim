@@ -10,9 +10,9 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use verbatim_model::{
-    CaretKey, CellPosition, Fetches, HeldAnchors, HookForeground, NodeId, NodeSnapshot, OutpostId,
-    Pid, QueryId, ReaderSettings, ReviewCommand, Selection, SpeechMark, StateSet, TableId,
-    TextAttributes, TextChunk, TextPosition, TextUnit, ToastId, TraceId, WindowFacts,
+    CaretSelection, CellPosition, Fetches, HeldAnchors, HookForeground, NodeId, NodeSnapshot,
+    OutpostId, Pid, ReaderSettings, ReviewCommand, SpeechMark, StateSet, TableId, TextAttributes,
+    TextChunk, TextPosition, TextUnit, ToastId, TraceId, WindowFacts,
 };
 
 use crate::foreground::Foreground;
@@ -76,6 +76,8 @@ pub(crate) struct FocusContext {
     /// afresh, a silent re-take after an outpost is replaced included
     /// (Dickson, 2026-11-08).
     pub(crate) reported_format: TextAttributes,
+    /// The caret of the focus's text, when it has text and it was read.
+    pub(crate) caret: Option<CaretContext>,
 }
 
 /// What Core last spoke of the focus, against which a change of its name,
@@ -216,29 +218,24 @@ pub(crate) struct ReviewPosition {
     pub(crate) column: usize,
 }
 
-/// Core's copy of the focus's caret: the line it is on, with the caret at
-/// the chunk's offset, and the selection (milestone M4). Kept current by
-/// caret events and caret key replies, so a Backspace knows what it
-/// deleted and the review cursor can follow the caret without a round
-/// trip.
+/// Core's copy of the focus's caret, on the focus object so it ends with
+/// the focus: the line it is on, with the caret at the chunk's offset, and
+/// the selection (milestone M4). Kept current by every report, so a
+/// Backspace knows what it deleted and the review cursor can follow the
+/// caret without a round trip.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct CaretContext {
-    pub(crate) node: NodeId,
     pub(crate) line: SharedChunk,
-    pub(crate) selection: Option<Selection>,
-    /// The line the selection starts in, when it starts on a line before
-    /// the caret's (`CaretReport::selection_line`).
-    pub(crate) selection_line: Option<TextChunk>,
+    pub(crate) selection: Option<CaretSelection>,
     /// The line break last seen ending a line of the node's text, such as
     /// a carriage return in Windows 11 Notepad or a carriage return and line
     /// feed in a standard edit control: what a Backspace at the start of a
     /// line deletes, since a text uses one kind of line break throughout,
     /// when the caret's own line has none (the last line).
     pub(crate) line_break: Option<String>,
-    /// When the report this caret came from was observed or read, in
-    /// milliseconds, 0 when unknown. A timed report observed before this one, arriving later,
-    /// does not replace it, so the caret is always the newest known.
-    pub(crate) observed_at_ms: u64,
+    /// When the read this caret came from began, in microseconds: an older
+    /// report arriving later does not replace it.
+    pub(crate) read_at_us: u64,
 }
 
 impl CaretContext {
@@ -248,139 +245,6 @@ impl CaretContext {
             anchor: self.line.start,
             offset: self.line.offset,
         }
-    }
-}
-
-/// How many of the focus's timed caret reports Core keeps, as the outpost
-/// keeps its own: enough to reach back past the reports a fast typist's
-/// keys raise while one key is on its way to Core.
-pub(crate) const CARET_HISTORY: usize = 8;
-
-/// A report of the focus's caret with the time it was observed, in
-/// milliseconds to compare with a caret key's `pressed_at_ms`: an event's
-/// `observed_at_us` in whole milliseconds, or the time the outpost read a
-/// caret key's reply. A caret key's own path to Core (the hook, then the
-/// application, then Core) can be slower than the application's (the
-/// application, then the outpost, then Core), so the report Core holds when
-/// a key arrives may already show what the key did. The newest report observed before the
-/// key was pressed is the caret the key found.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct TimedCaret {
-    pub(crate) observed_at_ms: u64,
-    pub(crate) node: NodeId,
-    pub(crate) line: SharedChunk,
-    pub(crate) selection: Option<Selection>,
-    /// The line the selection starts in, when it starts on a line before
-    /// the caret's (`CaretReport::selection_line`).
-    pub(crate) selection_line: Option<TextChunk>,
-}
-
-/// A caret key passed to the application, waiting for the outpost's
-/// evidence of what it did.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct PendingCaret {
-    pub(crate) node: NodeId,
-    pub(crate) key: CaretKey,
-    /// What a Backspace deleted, worked out from the caret before the key:
-    /// the prediction, used only when the line after the key cannot be
-    /// compared with the line before (`before`).
-    pub(crate) deleted: Option<String>,
-    /// For a Backspace, the caret's line before the key and the caret's
-    /// offset in it, which the line after the key is compared with to find
-    /// what the key really removed.
-    pub(crate) before: Option<(String, u32)>,
-    /// When the next key after this one was pressed (Unix milliseconds),
-    /// once one has been: an answer read at or after then may show that
-    /// key's effect, not this one's, so it only keeps the caret current.
-    pub(crate) later_key_at_ms: Option<u64>,
-    /// Whether text was selected when the key was pressed, by the caret
-    /// Core found the key at: a Backspace over a selection says what was
-    /// before the caret, and a key outside the caret table whose answer
-    /// shows that selection removed says only the selection's change.
-    pub(crate) selected_before: bool,
-    /// The key deletes backward over a selection that starts on an
-    /// earlier line than the caret's, so what comes before its start is
-    /// not known and the key says only the selection's change.
-    pub(crate) before_unknown: bool,
-    /// The selection changes of caret reports that came while the key
-    /// waited for its answer, as they are spoken: the outpost compared them
-    /// with the selection kept for the node, which the key's answer then
-    /// compares with no more, so they are said after the key's own words,
-    /// as NVDA says its caret event's words after the key's script's
-    /// (`editing::selection_changed`).
-    pub(crate) heard: Vec<verbatim_model::UtteranceSegment>,
-}
-
-/// A caret key the keyboard hook held back from the application
-/// (`Input::HeldKey`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct HeldKey {
-    /// The key's trace, which also names it to the shell that passes it on.
-    pub(crate) trace_id: TraceId,
-    pub(crate) key: CaretKey,
-    /// When the hook saw it, on the outposts' clock; 0 when unknown.
-    pub(crate) pressed_at_ms: u64,
-}
-
-/// A held key whose caret is being read before it is passed on.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct HeldRead {
-    pub(crate) node: NodeId,
-    pub(crate) key: HeldKey,
-}
-
-/// A key waiting behind a held key whose caret is being read.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) enum WaitingKey {
-    /// A caret key held back too, whose caret is read in its turn.
-    Held(HeldKey),
-    /// A key the hook deferred behind the held key, which reaches the
-    /// application after it: a caret key judged by where the caret lands,
-    /// text typed, or a key that clears a terminal's line. Handled in its
-    /// turn, as the input it came as.
-    Later(Box<verbatim_model::Input>),
-    /// A review command or a script (`Input::Command`, `Input::Script`)
-    /// pressed while a held key waited: run once the key ahead of it has
-    /// been passed on and its watch answered, or the bound since the pass
-    /// has run out, as NVDA runs scripts one at a time in the order
-    /// queued (`books/dev/src/explanation/design/ownership.md`).
-    Command(Box<verbatim_model::Input>),
-}
-
-/// The caret keys the hook held back and pressed while one's caret is
-/// read, each handled in the order pressed (`books/dev/src/explanation/design/key-holding.md`,
-/// "Keys behind a held key"); the read itself is a query
-/// ([`crate::queries::Then::HeldRead`]).
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct HeldKeys {
-    pub(crate) waiting: std::collections::VecDeque<WaitingKey>,
-    /// When the last held key was passed on, on the outposts' clock: a key
-    /// behind it reaches the application no earlier.
-    pub(crate) passed_at_ms: u64,
-    /// The watch of the held key last passed on, until it is answered: a
-    /// held key behind it has its caret read only then.
-    pub(crate) awaiting_watch: Option<QueryId>,
-    /// The held key whose one deadline the shell keeps
-    /// ([`verbatim_model::Effect::BoundHeldKey`]): for its wait for
-    /// `awaiting_watch`, or for the read of its caret.
-    pub(crate) bounded: Option<TraceId>,
-}
-
-impl SrState {
-    /// Whether a key pressed now waits behind a held key: one's caret is
-    /// being read, or keys wait behind it.
-    pub(crate) fn held_busy(&self) -> bool {
-        self.reading_held().is_some() || !self.held_keys.waiting.is_empty()
-    }
-
-    /// The held key whose caret is being read, and its query.
-    pub(crate) fn reading_held(&self) -> Option<(QueryId, HeldRead)> {
-        self.queries
-            .find(|then| matches!(then, Then::HeldRead(_)))
-            .and_then(|(query_id, then)| match then {
-                Then::HeldRead(reading) => Some((query_id, *reading)),
-                _ => None,
-            })
     }
 }
 
@@ -667,18 +531,8 @@ pub struct SrState {
     pub(crate) navigator: Option<Navigator>,
     /// The reader settings (milestone M4).
     pub(crate) settings: ReaderSettings,
-    /// The focus's caret, when the focus has text.
-    pub(crate) caret: Option<CaretContext>,
-    /// The focus's latest caret reports whose time is known, oldest first,
-    /// all for the node of `caret`: up to [`CARET_HISTORY`], held inline so
-    /// a checkpoint copies them without allocating. A report whose time is
-    /// not known empties it, since its order among them is unknown; a
-    /// caret Core moved itself is kept at time 0, before any key
-    /// (`editing::caret_moved_by_core`).
-    pub(crate) caret_history: [Option<TimedCaret>; CARET_HISTORY],
-    /// The caret keys the keyboard hook held back
-    /// (`books/dev/src/explanation/design/key-holding.md`).
-    pub(crate) held_keys: HeldKeys,
+    /// The caret keys in hand (`crate::key_line`).
+    pub(crate) key_line: crate::key_line::KeyLine,
     /// The key numbers of what recent user inputs caused, by trace, which
     /// Core stamps their speech with (`crate::keys`).
     pub(crate) key_origins: crate::keys::KeyOrigins,
@@ -764,17 +618,9 @@ impl SrState {
         crate::editing::text_focus(self).is_some()
     }
 
-    /// Whether a key or command waits in Core's held-key line: Verbatim is
-    /// not idle while one does.
-    #[must_use]
-    pub fn holds_inputs_back(&self) -> bool {
-        self.held_busy()
-    }
-
     /// How many of Core's queries an outpost has yet to answer that the
-    /// idle barrier waits for, with the report queued for a live re-read: a caret
-    /// key's watch, which waits for the application, and a request Core
-    /// answers from a terminal's memory are not counted.
+    /// idle barrier waits for, with the report queued for a live re-read: a
+    /// request Core answers from a terminal's memory is not counted.
     #[must_use]
     pub fn outstanding_queries(&self) -> usize {
         self.queries
@@ -849,10 +695,19 @@ impl SrState {
         })
     }
 
-    /// Forgets the focus's caret and its timed reports.
+    /// The caret of `node`'s text, while it is the focus's.
+    pub(crate) fn focus_caret(&self, node: NodeId) -> Option<&CaretContext> {
+        self.focus
+            .object()
+            .filter(|focus| focus.snapshot.id == node)
+            .and_then(|focus| focus.caret.as_ref())
+    }
+
+    /// Forgets the focus's caret.
     pub(crate) fn forget_caret(&mut self) {
-        self.caret = None;
-        self.caret_history = Default::default();
+        if let Some(focus) = self.focus.object_mut() {
+            focus.caret = None;
+        }
     }
 
     /// The currently focused node and the application it came from, if
@@ -970,15 +825,13 @@ impl SrState {
         for then in self.queries.continuations() {
             match then {
                 Then::Navigation { from, .. } => insert(*from),
-                Then::Caret(PendingCaret { node, .. })
-                | Then::Text(PendingText { node, .. })
-                | Then::HeldRead(HeldRead { node, .. }) => insert(*node),
+                Then::Key { node } | Then::Text(PendingText { node, .. }) => insert(*node),
                 _ => {}
             }
         }
         // Nodes whose text the state holds positions in or waits on.
-        if let Some(caret) = &self.caret {
-            insert(caret.node);
+        if let Some(node) = self.key_line_node() {
+            insert(node);
         }
         if let Some(marker) = self.start_marker {
             insert(marker.node());
@@ -1002,11 +855,14 @@ impl SrState {
                 .or_default()
                 .insert(position.anchor);
         };
-        if let Some(caret) = &self.caret {
-            insert(caret.node, caret.caret());
-            if let Some(selection) = caret.selection {
-                insert(caret.node, selection.start);
-                insert(caret.node, selection.end);
+        if let Some(focus) = self.focus.object()
+            && let Some(caret) = &focus.caret
+        {
+            let node = focus.snapshot.id;
+            insert(node, caret.caret());
+            if let Some(selection) = &caret.selection {
+                insert(node, selection.range.start);
+                insert(node, selection.range.end);
             }
         }
         if let Some(navigator) = &self.navigator {

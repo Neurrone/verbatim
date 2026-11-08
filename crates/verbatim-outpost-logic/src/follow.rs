@@ -8,7 +8,7 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 use verbatim_model::protocol::{EventTiming, FrontWindow, OutpostToCore, UiaFocusRead};
-use verbatim_model::{CaretReport, NodeId, NodeSnapshot, Role, StateSet, TraceId};
+use verbatim_model::{CaretReport, NodeId, NodeSnapshot, Role, StateSet, TraceId, WatchKind};
 
 use verbatim_reader_rules::Window;
 
@@ -16,7 +16,7 @@ use super::held::{self, Held};
 use super::intake::{Marks, Object, TerminalMark};
 use super::text::{RangeKey, TextChange, TextFacts};
 use super::verdicts::Verdicts;
-use super::watch::{Answer, Checked, Clock, OpenWatch, Watch};
+use super::watch::{Answer, CheckResult, Checked, Clock, KeyWatch, Untagged};
 
 /// The focus-following subscription's event handler groups, as the
 /// reducer names them (`verbatim_uia::Group`, variant for variant).
@@ -454,12 +454,12 @@ pub enum LogicError {
 /// commit: the reducer decides every time.
 #[derive(Clone, Debug)]
 pub enum WatchChange {
-    /// A caret key's first check found nothing: the watch opens, polling
-    /// when its node is the focused console host's text area (`console`),
-    /// and its query is no longer the program's.
+    /// A caret key's before read committed, or a terminal's key's request
+    /// was handled: the watch opens, polling when its node is the focused
+    /// console host's text area (`console`).
     Open {
         /// The watch.
-        open: OpenWatch,
+        key: Box<KeyWatch>,
         /// Whether its node is the focused console host's text area.
         console: bool,
     },
@@ -560,8 +560,6 @@ pub struct FollowState {
     /// the hold before it is handled, so an update observed after the read
     /// that ends the hold begins is never dropped.
     pub absorbed: Option<isize>,
-    /// The caret key's watch for evidence.
-    pub watch: Watch,
     /// The last committed read of a caret.
     pub caret_read: CaretRead,
     /// The foreground window's progress bars subscription.
@@ -621,7 +619,7 @@ pub struct Subscription {
 #[derive(Debug, Default)]
 pub struct Applied {
     /// The caret key's watch taken by [`WatchChange::Take`].
-    pub taken: Option<OpenWatch>,
+    pub taken: Option<KeyWatch>,
     /// Whether [`WatchChange::Open`] opened the watch.
     pub opened: bool,
     /// Whether [`WatchChange::Checked`] found the watch held and found no
@@ -629,6 +627,12 @@ pub struct Applied {
     pub resumed: bool,
     /// The watch's answers to send.
     pub answers: Vec<Answer>,
+    /// The reads of checks that ended no watch, sent as untagged caret
+    /// reports.
+    pub untagged: Vec<Untagged>,
+    /// The node the focus or foreground window moved to, which ends a
+    /// terminal's watch on any other: Core judges a text field's.
+    pub focus_moved: Option<NodeId>,
     /// The subscription's new targets, when it is to move.
     pub subscribe: Option<Subscription>,
     /// The element tokens no longer followed, for the shell to drop.
@@ -641,13 +645,15 @@ pub struct Applied {
 }
 
 impl FollowState {
-    /// Ends a caret key's watch, in any state, on a node other than
-    /// `node`, the new focus or foreground window, as NVDA's wait gives way
-    /// to a focus change.
+    /// Notes that the focus or foreground window moved to `node`, as NVDA's
+    /// wait gives way to a focus change: a terminal's watch on another node
+    /// ends with its commit ([`apply`]).
+    #[expect(
+        clippy::unused_self,
+        reason = "one of the follow state's transitions, called with the rest"
+    )]
     fn end_watch_elsewhere(&mut self, node: NodeId, applied: &mut Applied) {
-        if self.watch.open().is_some_and(|open| open.node_id != node) {
-            applied.answers.extend(self.watch.end("the focus moved"));
-        }
+        applied.focus_moved = Some(node);
     }
 
     /// The focus-following subscription moved from `previous`, its node and
@@ -940,17 +946,15 @@ pub fn apply(facts: &mut Facts, generation: u64, change: &Change, clock: Clock) 
             applied.ranges.extend(text.apply(text_change));
         }
     }
-    let follow_state = &mut facts.follow;
     if let Some(node) = change.replaced
-        && follow_state
-            .watch
-            .open()
-            .is_some_and(|open| open.node_id == node)
+        && facts.text.watch.open().is_some_and(|key| key.node == node)
     {
-        applied
-            .answers
-            .extend(follow_state.watch.end("the focus's element was replaced"));
+        let (answer, ranges) = Arc::make_mut(&mut facts.text)
+            .with_watch(|watch| watch.end("the focus's element was replaced"));
+        applied.answers.extend(answer);
+        applied.ranges.extend(ranges);
     }
+    let follow_state = &mut facts.follow;
     if let Some(focus) = &change.focus {
         follow_state.apply_focus(focus, &mut applied);
     }
@@ -981,27 +985,64 @@ pub fn apply(facts: &mut Facts, generation: u64, change: &Change, clock: Clock) 
     if let Some((node, states)) = change.states {
         let _ = facts.held.replace_states(node, states);
     }
+    if let Some(node) = applied.focus_moved.take()
+        && facts
+            .text
+            .watch
+            .open()
+            .is_some_and(|key| key.kind == WatchKind::Terminal && key.node != node)
+    {
+        let (answer, ranges) =
+            Arc::make_mut(&mut facts.text).with_watch(|watch| watch.end("the focus moved"));
+        applied.answers.extend(answer);
+        applied.ranges.extend(ranges);
+    }
     if let Some(watch) = &change.watch {
-        apply_watch(&mut follow_state.watch, watch, clock, &mut applied);
+        apply_watch(Arc::make_mut(&mut facts.text), watch, clock, &mut applied);
     }
     applied
 }
 
 /// Applies `change`, a commit's change of the caret key's watch, to
-/// `watch` by `clock` ([`apply`]).
-fn apply_watch(watch: &mut Watch, change: &WatchChange, clock: Clock, applied: &mut Applied) {
-    match change {
-        WatchChange::Open { open, console } => {
-            applied.opened = watch.opened(open.clone(), *console, clock);
+/// `text` by `clock` ([`apply`]).
+fn apply_watch(text: &mut TextFacts, change: &WatchChange, clock: Clock, applied: &mut Applied) {
+    let ranges: Vec<(u64, RangeKey)> = match change {
+        WatchChange::Open { key, console } => {
+            applied.opened = text.watch.opened(key.clone(), *console, clock);
+            Vec::new()
         }
-        WatchChange::Take(node) => applied.taken = watch.take(*node),
+        WatchChange::Take(node) => {
+            let (taken, ranges) = text.with_watch(|watch| watch.take(*node));
+            applied.taken = taken;
+            ranges
+        }
         WatchChange::Checked(checked) => {
-            if let Some(answer) = watch.checked(checked, clock) {
-                applied.resumed = answer.is_none() && matches!(checked, Checked::Watching { .. });
-                applied.answers.extend(answer);
+            let (result, ranges) = text.with_watch(|watch| watch.checked(checked.clone(), clock));
+            match result {
+                CheckResult::Answered(answer) => applied.answers.push(answer),
+                CheckResult::Resumed(found) => {
+                    applied.resumed = true;
+                    if let Some(found) = found.filter(|found| found.untagged) {
+                        applied.untagged.push(Untagged {
+                            node: found.node,
+                            found,
+                        });
+                    }
+                }
+                CheckResult::NoWatch(found) => {
+                    if found.untagged {
+                        applied.untagged.push(Untagged {
+                            node: found.node,
+                            found,
+                        });
+                    }
+                }
+                CheckResult::Nothing => {}
             }
+            ranges
         }
-    }
+    };
+    applied.ranges.extend(ranges);
 }
 
 /// Applies `change`, a program's commit of `generation`, to a program's
@@ -1065,30 +1106,45 @@ pub(crate) fn plain_followed(node: NodeId, role: Role) -> Followed {
 
 #[cfg(test)]
 mod tests {
-    use verbatim_model::protocol::RequestId;
-    use verbatim_model::{CallCounts, CaretWatch, TextUnit};
+    use verbatim_model::{
+        CallCounts, CaretMotion, KeyTag, QueryId, TextAnchor, TextChunk, TextUnit, WatchKind,
+    };
 
     use super::*;
+    use crate::{Baseline, KeyWatch, LastRead, Stage, Watch};
 
-    /// A watch for request `request_id` on node 1, waiting.
-    fn waiting(request_id: u64) -> Watch {
-        Watch::Waiting {
-            open: OpenWatch {
-                request_id: RequestId::shell(request_id),
+    /// A watch of key `tag` on node 1, open.
+    fn waiting(tag: u64) -> Watch {
+        Watch::Open {
+            key: Box::new(KeyWatch {
+                tag: KeyTag(QueryId(tag)),
+                node: NodeId::new(1),
+                baseline: Baseline::Edit(LastRead {
+                    caret: 0,
+                    selection: None,
+                    line: TextChunk {
+                        unit: TextUnit::Line,
+                        text: String::new(),
+                        start: TextAnchor(1),
+                        offset: 0,
+                        languages: Vec::new(),
+                        first: false,
+                        last: false,
+                        truncated: false,
+                        formats: Vec::new(),
+                    },
+                    text_changed: false,
+                    read_at_us: 0,
+                }),
+                unit: TextUnit::Character,
+                motion: CaretMotion::NextCharacter,
+                kind: WatchKind::TextField,
+                before_unit: None,
                 trace: TraceId::from_raw(1),
-                node_id: NodeId::new(1),
-                watch: CaretWatch {
-                    since: None,
-                    pressed_at_ms: 0,
-                    unit: TextUnit::Character,
-                    compare: None,
-                    landing: false,
-                    deletes: false,
-                },
                 timing: EventTiming::default(),
                 calls: CallCounts::default(),
-            },
-            bound: 10_000,
+            }),
+            stage: Stage::Awaiting,
         }
     }
 
@@ -1546,7 +1602,7 @@ mod tests {
     #[test]
     fn a_focus_whose_element_was_replaced_ends_the_caret_keys_watch_on_its_node() {
         let mut facts = Facts::default();
-        facts.follow.watch = waiting(7);
+        Arc::make_mut(&mut facts.text).watch = waiting(7);
         // Another node replaced leaves the watch on node 1 alone.
         let elsewhere = Change {
             replaced: Some(NodeId::new(2)),
@@ -1563,12 +1619,12 @@ mod tests {
             .answers
             .iter()
             .map(|answer| match answer {
-                Answer::Ended { open, why } => (open.request_id.number, *why),
+                Answer::Ended { key, why } => (key.tag.0.0, *why),
                 answer => panic!("an end, not {answer:?}"),
             })
             .collect();
         assert_eq!(
-            (ended, facts.follow.watch.is_none()),
+            (ended, facts.text.watch.is_none()),
             (vec![(7, "the focus's element was replaced")], true)
         );
     }

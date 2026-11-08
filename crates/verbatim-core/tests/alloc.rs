@@ -19,9 +19,8 @@ use std::cell::Cell;
 
 use verbatim_core::{SrState, reduce};
 use verbatim_model::{
-    Backend, CaretKey, CaretMotion, CaretReply, CaretReport, Effect, Input, NodeDetails, NodeId,
-    NodeSnapshot, NormalizedEvent, Pid, ReviewCommand, Role, StateSet, TextAnchor, TextChunk,
-    TextReply, TextUnit, TraceId,
+    Backend, CaretKey, CaretMotion, CaretReport, Effect, Input, NodeDetails, NodeId, NodeSnapshot,
+    NormalizedEvent, Pid, ReviewCommand, Role, StateSet, TextAnchor, TextChunk, TextUnit, TraceId,
 };
 
 /// The system allocator, counting the bytes requested on each thread.
@@ -235,7 +234,7 @@ fn caret_moved(line: TextChunk, observed_at_ms: u64) -> Input {
             caret: CaretReport {
                 line,
                 selection: None,
-                selection_line: None,
+                read_at_us: observed_at_ms * 1_000,
             },
             selection_changes: Vec::new(),
             content_changed: false,
@@ -266,30 +265,42 @@ fn text_steps_allocate_the_same_whatever_the_ancestor_chain() {
         },
         pressed_at_ms: 100,
     });
-    let Some(Effect::Text(request)) = effects.first() else {
-        panic!("expected a caret wait, got {effects:?}");
+    let Some(request) = effects.iter().find_map(|effect| match effect {
+        Effect::ForKey(_, inner) => match &**inner {
+            Effect::Text(request) => Some(request),
+            _ => None,
+        },
+        _ => None,
+    }) else {
+        panic!("expected a key request, got {effects:?}");
     };
-    let _ = same(&Input::Answered {
+    let answer = long_line(10, 1);
+    let _ = same(&Input::Event {
         trace_id: TraceId::from_raw(6),
-        query_id: request.query_id,
-        outpost: request.node_id.outpost(),
-        outcome: verbatim_model::protocol::QueryOutcome::Done(
-            verbatim_model::protocol::QueryResult::Text(TextReply::Caret(Box::new(CaretReply {
-                same_line: None,
-                removed: None,
-                moved: true,
-                read_at_ms: 101,
+        observed_at_us: 101_000,
+        source: Pid(1),
+        backend: Backend::Uia,
+        window: None,
+        event: NormalizedEvent::KeyAnswered {
+            node_id: NodeId::new(1),
+            tag: verbatim_model::KeyTag(request.query_id),
+            answer: verbatim_model::KeyAnswer::Evidence(Box::new(verbatim_model::KeyRead {
                 caret: CaretReport {
-                    line: long_line(10, 1),
+                    line: answer.clone(),
                     selection: None,
-                    selection_line: None,
+                    read_at_us: 101_000,
                 },
-                unit: None,
                 selection_changes: Vec::new(),
                 content_changed: false,
                 new_selection: None,
-            }))),
-        ),
+                before_line: answer.clone(),
+                before_selection: None,
+                before_unit: answer.clone(),
+                unit: answer,
+                on_baseline_line: true,
+            })),
+        },
+        purpose: None,
     });
     let _ = same(&Input::Command {
         pressed_at_ms: 0,

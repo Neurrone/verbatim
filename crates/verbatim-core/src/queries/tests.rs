@@ -6,15 +6,16 @@ use std::collections::BTreeMap;
 
 use verbatim_model::protocol::{QueryOutcome, QueryResult};
 use verbatim_model::{
-    Backend, CaretKey, CaretMotion, CaretReply, CaretReport, EarlierElement, Effect, FocusText,
-    Input, KeySeq, NodeDetails, NodeId, NodeSnapshot, NormalizedEvent, OutpostId, Pid, QueryId,
-    ReviewCommand, Role, StateSet, TerminalScope, TerminalSnapshot, TerminalText, TextAnchor,
-    TextChunk, TextOp, TextPoint, TextRead, TextReply, TextRequest, TextUnit, TraceId,
+    Backend, CaretChanges, CaretKey, CaretMotion, CaretReply, CaretReport, EarlierElement, Effect,
+    FocusText, Input, KeyRequest, KeySeq, KeyStart, KeyStarted, KeyTag, NodeDetails, NodeId,
+    NodeSnapshot, NormalizedEvent, OutpostId, Pid, QueryId, ReviewCommand, Role, StateSet,
+    TerminalSnapshot, TerminalText, TextAnchor, TextChunk, TextOp, TextReply, TextUnit, TraceId,
+    WatchKind,
 };
 
 use crate::queries::{self, ModelAsk, Then};
 use crate::reduce;
-use crate::state::{HeldKey, HeldRead, PendingText, SrState, TextFollowUp, WaitingKey};
+use crate::state::SrState;
 
 /// The text box's outpost.
 const EDIT_OUTPOST: OutpostId = OutpostId(1);
@@ -53,7 +54,7 @@ pub(super) fn caret(anchor: u64, offset: u32) -> CaretReport {
     CaretReport {
         line: line("hello world", anchor, offset),
         selection: None,
-        selection_line: None,
+        read_at_us: 0,
     }
 }
 
@@ -114,7 +115,7 @@ pub(super) fn console_read(read: u64, at_ms: u64) -> TerminalSnapshot {
         caret: Some(CaretReport {
             line: line("PS> ", 900, 4),
             selection: None,
-            selection_line: None,
+            read_at_us: at_ms * 1_000,
         }),
     }
 }
@@ -141,10 +142,16 @@ fn text_box_wired() -> (SrState, Wire) {
         Some(FocusText::Caret {
             caret: caret(100, 3),
             selected_text: None,
+            changes: CaretChanges::default(),
         }),
         None,
     )]);
-    assert!(state.caret.is_some(), "the text box has its caret");
+    assert!(
+        state
+            .focus_caret(NodeId::in_outpost(EDIT_OUTPOST, 5))
+            .is_some(),
+        "the text box has its caret"
+    );
     (state, wire)
 }
 
@@ -164,20 +171,17 @@ fn held_key_passed_on_wired() -> (SrState, Wire) {
     let effects = reduce(&mut state, &held);
     wire.apply(&held, &effects);
     let asked = requests(&effects);
-    let [(read, Some(TextOp::ReadCaret))] = asked[..] else {
+    let [(read, Some(op @ TextOp::Key(_)))] = &asked[..] else {
         panic!("one read, not {asked:?}");
     };
     let answer = answered(
-        read,
+        *read,
         EDIT_OUTPOST,
-        QueryOutcome::Done(fitting(EDIT_OUTPOST, &Asked::Text(TextOp::ReadCaret))),
+        QueryOutcome::Done(fitting(EDIT_OUTPOST, &Asked::Text(op.clone()))),
     );
     let effects = reduce(&mut state, &answer);
     wire.apply(&answer, &effects);
-    assert!(
-        state.held_keys.awaiting_watch.is_some(),
-        "its watch is waited on"
-    );
+    assert!(state.holds_inputs_back(), "its watch is waited on");
     (state, wire)
 }
 
@@ -328,7 +332,6 @@ impl Wire {
                         (request.node_id.outpost(), Asked::Text(request.op.clone())),
                     );
                 }
-                Effect::Withdraw { query_id, .. } => self.end(*query_id),
                 _ => {}
             }
         }
@@ -381,12 +384,15 @@ impl Wire {
                 key: key(CaretMotion::NextCharacter),
                 pressed_at_ms: 1_000,
             }],
-            Step::HeldKeyDue => vec![Input::HeldKeyDue { trace_id: HELD }],
+            Step::HeldKeyDue => vec![Input::HeldKeyDue {
+                trace_id: HELD,
+                at_us: 1_500_000,
+            }],
             Step::ReadCurrentLine => vec![command(ReviewCommand::ReviewCurrentLine)],
             Step::Navigate => vec![command(ReviewCommand::Parent)],
             Step::ToFocus => vec![command(ReviewCommand::ToFocus)],
             Step::SayAll => vec![command(ReviewCommand::SayAllFromCaret)],
-            Step::SpeechCut => vec![Input::SpeechCancelled { at_ms: 2_000 }],
+            Step::SpeechCut => vec![Input::SpeechCancelled { at_us: 2_000_000 }],
             Step::Typed => vec![Input::CharacterTyped {
                 trace_id: trace,
                 key_seq: KeySeq::NONE_YET,
@@ -399,6 +405,7 @@ impl Wire {
                 (start == EDIT_OUTPOST).then(|| FocusText::Caret {
                     caret: caret(200, 4),
                     selected_text: None,
+                    changes: CaretChanges::default(),
                 }),
                 Some(EarlierElement::NotFocused),
             )],
@@ -431,9 +438,7 @@ impl Wire {
                         .next_back()
                         .map(|(query_id, (outpost, asked))| (*query_id, *outpost, asked.clone())),
                     Which::LastEnded => self.last_ended.clone(),
-                    Which::NeverAsked => {
-                        Some((QueryId(10_000), start, Asked::Text(TextOp::ReadCaret)))
-                    }
+                    Which::NeverAsked => Some((QueryId(10_000), start, Asked::Text(key_op()))),
                 };
                 chosen
                     .map(|(query_id, outpost, asked)| answer(query_id, outpost, &asked, *outcome))
@@ -500,26 +505,33 @@ pub(super) fn answer(
     }
 }
 
+/// A key's request, as the answers to one are made for.
+pub(super) fn key_op() -> TextOp {
+    TextOp::Key(KeyRequest {
+        tag: KeyTag(QueryId(10_000)),
+        kind: WatchKind::TextField,
+        unit: TextUnit::Character,
+        motion: CaretMotion::NextCharacter,
+        start: KeyStart::ReadFirst,
+    })
+}
+
 /// A result that fits what was asked.
 fn fitting(outpost: OutpostId, asked: &Asked) -> QueryResult {
     let caret_reply = || {
-        TextReply::Caret(Box::new(CaretReply {
-            moved: true,
+        TextReply::Key(Box::new(KeyStarted::Read(Box::new(CaretReply {
             caret: caret(300, 5),
-            read_at_ms: 1_500,
             unit: None,
             selection_changes: Vec::new(),
             content_changed: false,
             new_selection: None,
-            same_line: None,
-            removed: None,
-        }))
+        }))))
     };
     match asked {
         Asked::Navigate => QueryResult::Navigated(Some(node(outpost, 1, Role::Window, "Window"))),
         Asked::Activate => QueryResult::Activated(None),
         Asked::Text(op) => QueryResult::Text(match op {
-            TextOp::AwaitCaret(_) | TextOp::ReadCaret => caret_reply(),
+            TextOp::Key(_) => caret_reply(),
             TextOp::Read(_) => TextReply::Read {
                 moved: 0,
                 chunk: line("hello world", 300, 0),
@@ -628,9 +640,7 @@ fn nodes_held(state: &SrState) -> BTreeMap<OutpostId, std::collections::BTreeSet
     if let Some(navigator) = &state.navigator {
         insert(navigator.object.id);
     }
-    if let Some(caret) = &state.caret {
-        insert(caret.node);
-    }
+    insert_key_line(state, &mut insert);
     if let Some(marker) = state.start_marker {
         insert(marker.node());
     }
@@ -640,13 +650,17 @@ fn nodes_held(state: &SrState) -> BTreeMap<OutpostId, std::collections::BTreeSet
     for (_, open) in state.queries.entries() {
         match &open.then {
             Then::Navigation { from, .. } => insert(*from),
-            Then::Caret(pending) => insert(pending.node),
+            Then::Key { node } => insert(*node),
             Then::Text(pending) => insert(pending.node),
-            Then::HeldRead(reading) => insert(reading.node),
             _ => {}
         }
     }
     held
+}
+
+/// Inserts the node of the key in `state`'s line, which Core holds.
+fn insert_key_line(state: &SrState, insert: &mut impl FnMut(NodeId)) {
+    state.key_line_node().into_iter().for_each(insert);
 }
 
 /// Which kind of continuation `then` is, for the rule that at most one of
@@ -654,9 +668,7 @@ fn nodes_held(state: &SrState) -> BTreeMap<OutpostId, std::collections::BTreeSet
 fn one_of(then: &Then) -> Option<String> {
     match then {
         Then::Navigation { .. } => Some("navigation".to_owned()),
-        Then::Caret(_) => Some("caret".to_owned()),
         Then::Text(_) => Some("text".to_owned()),
-        Then::HeldRead(_) => Some("held read".to_owned()),
         Then::SayAll => Some("say-all".to_owned()),
         Then::Terminal(ask) => Some(format!("terminal {ask:?}")),
         Then::TerminalModel {
@@ -672,55 +684,12 @@ fn one_of(then: &Then) -> Option<String> {
                 ModelAsk::Find { .. } => "find",
             }
         )),
-        Then::Activation | Then::SupersededCaret { .. } | Then::Nothing => None,
+        Then::Activation | Then::Key { .. } | Then::MovedCaret { .. } | Then::Nothing => None,
     }
 }
 
-/// Whether `query_id` is asked inside a key's effects.
-fn under_a_key(effects: &[Effect], query_id: QueryId) -> bool {
-    effects.iter().any(|effect| match effect {
-        Effect::ForKey(_, inner) => match &**inner {
-            Effect::Fetch(query) => query.query_id == query_id,
-            Effect::Text(request) => request.query_id == query_id,
-            Effect::Activate {
-                query_id: asked, ..
-            } => *asked == query_id,
-            _ => false,
-        },
-        _ => false,
-    })
-}
-
-/// Whether `entry`, opened as `open` in the held keys' resume of `before`
-/// with `effects`, runs under the answer's trace `answer` or a key's
-/// inside the effects, or is a read answered from a terminal's memory under
-/// the trace of a key waiting behind the held key.
-fn traced_in_resume(
-    before: &SrState,
-    effects: &[Effect],
-    answer: TraceId,
-    open: QueryId,
-    entry: &queries::Open,
-) -> bool {
-    let trace = entry.trace_id;
-    trace == Some(answer)
-        || under_a_key(effects, open)
-        || entry.asked == queries::Asked::Memory
-            && before
-                .held_keys
-                .waiting
-                .iter()
-                .any(|waiting| match waiting {
-                    WaitingKey::Held(key) => Some(key.trace_id) == trace,
-                    WaitingKey::Later(input) | WaitingKey::Command(input) => {
-                        trace.is_some() && input.trace_id() == trace
-                    }
-                })
-}
-
-/// Checks the table's invariants after `visit`, against the wire's view,
-/// returning whether it was an answer to the held keys' watch alone.
-pub(super) fn check(path: &[usize], visit: &Visit<'_>) -> bool {
+/// Checks the table's invariants after `visit`, against the wire's view.
+pub(super) fn check(path: &[usize], visit: &Visit<'_>) {
     let Visit {
         before,
         input,
@@ -730,11 +699,7 @@ pub(super) fn check(path: &[usize], visit: &Visit<'_>) -> bool {
     } = visit;
     let at = format!("after {path:?}, {input:?}");
     // The idle barrier waits for exactly the reads the wire has open.
-    let reads = wire
-        .open
-        .values()
-        .filter(|(_, asked)| !matches!(asked, Asked::Text(TextOp::AwaitCaret(_))))
-        .count();
+    let reads = wire.open.len();
     assert_eq!(state.outstanding_queries(), reads, "{at}");
     for (query_id, open) in state.queries.entries() {
         // Every query an outpost answers is open on the wire.
@@ -766,14 +731,9 @@ pub(super) fn check(path: &[usize], visit: &Visit<'_>) -> bool {
     }
     // An answer the table does not take, to no open query, from another
     // outpost or to a query Core answers from memory, changes nothing; one
-    // to a query nothing waits for changes nothing but the table, and when
-    // it is the watch the held keys wait on, does only their resume.
-    let mut resumed = false;
+    // to a query nothing waits for changes nothing but the table.
     if let Input::Answered {
-        query_id,
-        outpost,
-        trace_id,
-        ..
+        query_id, outpost, ..
     } = input
     {
         let open = before
@@ -784,49 +744,14 @@ pub(super) fn check(path: &[usize], visit: &Visit<'_>) -> bool {
         let taken = open
             .is_some_and(|open| open.outpost == *outpost && open.asked != queries::Asked::Memory);
         let waited_for = open.is_some_and(|open| open.then != Then::Nothing);
-        let watch = before.held_keys.awaiting_watch == Some(*query_id);
-        if !taken || (!waited_for && !watch) {
+        if !taken || !waited_for {
             let mut after = (*state).clone();
             if taken {
                 after.queries = before.queries.clone();
             }
             assert_eq!(&after, *before, "{at}");
             assert_eq!(*effects, [], "{at}");
-        } else if !waited_for {
-            // The held keys' resume: the watch's entry ends, nothing waits
-            // on it, and each new entry runs under the answer's trace or a
-            // key's inside its effects, or is a read answered from a
-            // terminal's memory, which waits under the trace of the waiting
-            // key that asked for it and leaves no effect naming it. The
-            // fixed tests `a_watch_with_*` state the resume's literal
-            // effects and states.
-            assert!(
-                state.queries.entries().all(|(open, _)| open != *query_id),
-                "{at}"
-            );
-            assert_eq!(state.held_keys.awaiting_watch, None, "{at}");
-            let first = before.queries.next();
-            for (open, entry) in state.queries.entries() {
-                if open.0 >= first {
-                    assert!(
-                        traced_in_resume(before, effects, *trace_id, open, entry),
-                        "{open:?}'s trace {:?}: {at}",
-                        entry.trace_id
-                    );
-                }
-            }
-            resumed = true;
         }
-    }
-    // The watch the held keys wait on is an open watch.
-    if let Some(watch) = state.held_keys.awaiting_watch {
-        assert!(
-            state
-                .queries
-                .entries()
-                .any(|(open, entry)| open == watch && entry.asked == queries::Asked::Watch),
-            "{at}"
-        );
     }
     // At most one open query of each kind.
     let mut kinds = std::collections::BTreeSet::new();
@@ -836,7 +761,6 @@ pub(super) fn check(path: &[usize], visit: &Visit<'_>) -> bool {
         }
     }
     assert_eq!(state.held_nodes(), nodes_held(state), "{at}");
-    resumed
 }
 
 /// A start of the enumeration: the function that makes it, its name, and
@@ -890,7 +814,7 @@ fn every_sequence_keeps_the_query_tables_invariants() {
                 ))
             };
             match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| check(path, &visit))) {
-                Ok(_) => {}
+                Ok(()) => {}
                 Err(payload) => {
                     eprintln!("{}", line());
                     std::panic::resume_unwind(payload);
@@ -1217,199 +1141,6 @@ fn a_dropped_models_review_ends_and_its_fresh_read_is_taken_by_no_model() {
     }
 }
 
-/// A caret key's watch whose text a refocus forgot: its answer is taken by
-/// nothing, and says nothing.
-#[test]
-fn a_refocus_drops_an_earlier_caret_keys_answer() {
-    let mut state = text_box();
-    let key = Input::CaretKey {
-        trace_id: TraceId::from_raw(60),
-        key_seq: KeySeq::NONE_YET,
-        key: CaretKey {
-            motion: CaretMotion::NextCharacter,
-            select: false,
-        },
-        pressed_at_ms: 1_000,
-    };
-    let asked = requests(&reduce(&mut state, &key));
-    let [(watch, Some(TextOp::AwaitCaret(_)))] = asked[..] else {
-        panic!("one watch, not {asked:?}");
-    };
-    assert_eq!(state.outstanding_queries(), 0, "a watch is not waited for");
-    let _ = reduce(
-        &mut state,
-        &focus(
-            node(EDIT_OUTPOST, 5, Role::EditableText, "Notes"),
-            Some(FocusText::Caret {
-                caret: caret(200, 4),
-                selected_text: None,
-            }),
-            Some(EarlierElement::NotFocused),
-        ),
-    );
-    let effects = reduce(
-        &mut state,
-        &answered(
-            watch,
-            EDIT_OUTPOST,
-            QueryOutcome::Done(fitting(EDIT_OUTPOST, &Asked::Text(TextOp::ReadCaret))),
-        ),
-    );
-    assert_eq!(effects, []);
-}
-
-/// At an outpost's end the watch the held keys wait on ends "gone", which
-/// lets the key behind it be read, and an activation asked of it says
-/// "No action".
-#[test]
-fn an_outposts_end_resumes_the_held_keys_and_says_no_action() {
-    let mut state = text_box();
-    let _ = reduce(&mut state, &command(ReviewCommand::Activate));
-    let held = |trace, at| Input::HeldKey {
-        trace_id: TraceId::from_raw(trace),
-        key_seq: KeySeq::NONE_YET,
-        key: CaretKey {
-            motion: CaretMotion::NextCharacter,
-            select: false,
-        },
-        pressed_at_ms: at,
-    };
-    // The first key's read is answered, so it is passed on and its watch
-    // waited on; the second waits behind it.
-    let asked = requests(&reduce(&mut state, &held(80, 1_000)));
-    let [(read, Some(TextOp::ReadCaret))] = asked[..] else {
-        panic!("one read, not {asked:?}");
-    };
-    let _ = reduce(
-        &mut state,
-        &answered(
-            read,
-            EDIT_OUTPOST,
-            QueryOutcome::Done(fitting(EDIT_OUTPOST, &Asked::Text(TextOp::ReadCaret))),
-        ),
-    );
-    assert!(state.held_keys.awaiting_watch.is_some());
-    let _ = reduce(&mut state, &held(81, 1_010));
-    let effects = reduce(
-        &mut state,
-        &Input::OutpostEnded {
-            trace_id: TraceId::from_raw(62),
-            outpost: EDIT_OUTPOST,
-        },
-    );
-    assert_eq!(state.held_keys.awaiting_watch, None);
-    assert!(
-        effects.iter().any(|effect| matches!(
-            effect,
-            Effect::ForKey(_, inner) if **inner == Effect::PassHeldKey(TraceId::from_raw(81))
-        )),
-        "the key behind the watch is passed on: {effects:?}"
-    );
-    assert!(
-        effects.iter().any(|effect| matches!(
-            effect,
-            Effect::Speak(utterance, _) if format!("{:?}", utterance.segments).contains("NoAction")
-        )),
-        "{effects:?}"
-    );
-    assert_eq!(state.outstanding_queries(), 0);
-}
-
-/// A held key's read past Core's deadline is withdrawn: the key is passed
-/// on once, the read is no longer waited for, and its late answer and a
-/// "not started" are dropped.
-#[test]
-fn a_withdrawn_held_read_passes_its_key_once_and_drops_its_late_answers() {
-    let mut state = text_box();
-    let asked = requests(&reduce(
-        &mut state,
-        &Input::HeldKey {
-            trace_id: HELD,
-            key_seq: KeySeq::NONE_YET,
-            key: CaretKey {
-                motion: CaretMotion::NextCharacter,
-                select: false,
-            },
-            pressed_at_ms: 1_000,
-        },
-    ));
-    let [(read, Some(TextOp::ReadCaret))] = asked[..] else {
-        panic!("one read, not {asked:?}");
-    };
-    assert_eq!(state.outstanding_queries(), 1);
-    let effects = reduce(&mut state, &Input::HeldKeyDue { trace_id: HELD });
-    assert_eq!(
-        effects
-            .iter()
-            .filter(|effect| matches!(effect, Effect::PassHeldKey(_)))
-            .count(),
-        1
-    );
-    assert!(effects.contains(&Effect::Withdraw {
-        outpost: EDIT_OUTPOST,
-        query_id: read,
-    }));
-    assert_eq!(state.outstanding_queries(), 0);
-    for outcome in [
-        QueryOutcome::NotStarted,
-        QueryOutcome::Done(fitting(EDIT_OUTPOST, &Asked::Text(TextOp::ReadCaret))),
-    ] {
-        assert_eq!(
-            reduce(&mut state, &answered(read, EDIT_OUTPOST, outcome)),
-            []
-        );
-    }
-}
-
-/// A watch the held keys no longer wait on, its key superseded, does not
-/// resume them when its late answer comes.
-#[test]
-fn a_superseded_watchs_late_answer_does_not_resume_the_held_keys() {
-    let mut state = text_box();
-    let held = |trace, at| Input::HeldKey {
-        trace_id: TraceId::from_raw(trace),
-        key_seq: KeySeq::NONE_YET,
-        key: CaretKey {
-            motion: CaretMotion::NextCharacter,
-            select: false,
-        },
-        pressed_at_ms: at,
-    };
-    let read_answer = || QueryOutcome::Done(fitting(EDIT_OUTPOST, &Asked::Text(TextOp::ReadCaret)));
-    // K1 is passed on; its watch W1 is waited on.
-    let asked = requests(&reduce(&mut state, &held(80, 1_000)));
-    let [(read, _)] = asked[..] else {
-        panic!("one read, not {asked:?}");
-    };
-    let asked = requests(&reduce(
-        &mut state,
-        &answered(read, EDIT_OUTPOST, read_answer()),
-    ));
-    let first_watch = state.held_keys.awaiting_watch.expect("W1 is waited on");
-    assert!(asked.iter().any(|(query, _)| *query == first_watch));
-    // K2 waits for W1 until its bound, then is read and passed on, its
-    // watch W2 waited on.
-    let _ = reduce(&mut state, &held(81, 1_020));
-    let _ = reduce(
-        &mut state,
-        &Input::HeldKeyDue {
-            trace_id: TraceId::from_raw(81),
-        },
-    );
-    let (read, _) = state.reading_held().expect("K2 is read");
-    let _ = reduce(&mut state, &answered(read, EDIT_OUTPOST, read_answer()));
-    let second_watch = state.held_keys.awaiting_watch.expect("W2 is waited on");
-    assert_ne!(second_watch, first_watch);
-    // K3 waits behind W2; W1's late answer resumes nothing.
-    let _ = reduce(&mut state, &held(82, 1_040));
-    let _ = reduce(
-        &mut state,
-        &answered(first_watch, EDIT_OUTPOST, read_answer()),
-    );
-    assert_eq!(state.held_keys.awaiting_watch, Some(second_watch));
-    assert!(!state.held_keys.waiting.is_empty(), "K3 still waits");
-}
-
 /// Core's open queries are kept with the rest of its state, so a dump
 /// replays them.
 #[test]
@@ -1421,208 +1152,4 @@ fn the_open_queries_round_trip_with_the_state() {
     let read: SrState = serde_json::from_str(&json).expect("the state reads");
     assert_eq!(read, state);
     assert_eq!(read.outstanding_queries(), 2);
-}
-
-/// The answer to the held keys' watch, `watch`, from the text box's
-/// outpost: a caret read, as the watch's answer is.
-fn watch_answered(watch: QueryId, outpost: OutpostId) -> Input {
-    answered(
-        watch,
-        outpost,
-        QueryOutcome::Done(fitting(outpost, &Asked::Text(TextOp::ReadCaret))),
-    )
-}
-
-/// The held keys' watch, answered after the focus moved away, which left
-/// nothing waiting for its answer and no key behind it: the held keys
-/// stop waiting on it, and nothing else happens.
-#[test]
-fn a_watch_with_nothing_behind_it_resumes_nothing() {
-    let (mut state, _) = held_key_passed_on_wired();
-    let watch = QueryId(1);
-    assert_eq!(state.held_keys.awaiting_watch, Some(watch));
-    let _ = reduce(
-        &mut state,
-        &focus(node(EDIT_OUTPOST, 6, Role::Button, "OK"), None, None),
-    );
-    let mut expected = state.clone();
-    let effects = reduce(&mut state, &watch_answered(watch, EDIT_OUTPOST));
-    assert_eq!(effects, []);
-    expected.queries.open.remove(&watch);
-    expected.held_keys.awaiting_watch = None;
-    assert_eq!(state, expected);
-}
-
-/// The held keys' watch, answered after a refocus left nothing waiting
-/// for its answer, with a held key behind it: that key's caret is read
-/// now, under its own deadline.
-#[test]
-fn a_watch_with_a_held_key_behind_it_reads_that_keys_caret() {
-    let (mut state, _) = held_key_passed_on_wired();
-    let watch = QueryId(1);
-    let key = HeldKey {
-        trace_id: HELD,
-        key: CaretKey {
-            motion: CaretMotion::NextCharacter,
-            select: false,
-        },
-        pressed_at_ms: 1_000,
-    };
-    let _ = reduce(
-        &mut state,
-        &Input::HeldKey {
-            trace_id: HELD,
-            key_seq: KeySeq::NONE_YET,
-            key: key.key,
-            pressed_at_ms: key.pressed_at_ms,
-        },
-    );
-    let _ = reduce(
-        &mut state,
-        &focus(
-            node(EDIT_OUTPOST, 5, Role::EditableText, "Start"),
-            Some(FocusText::Caret {
-                caret: caret(200, 4),
-                selected_text: None,
-            }),
-            Some(EarlierElement::NotFocused),
-        ),
-    );
-    let mut expected = state.clone();
-    let effects = reduce(&mut state, &watch_answered(watch, EDIT_OUTPOST));
-    let text_box = NodeId::in_outpost(EDIT_OUTPOST, 5);
-    assert_eq!(
-        effects,
-        [
-            Effect::ForKey(HELD, Box::new(Effect::BoundHeldKey(Some((HELD, 150))))),
-            Effect::ForKey(
-                HELD,
-                Box::new(Effect::Text(TextRequest {
-                    query_id: QueryId(2),
-                    node_id: text_box,
-                    op: TextOp::ReadCaret,
-                }))
-            ),
-        ]
-    );
-    expected.queries.open.remove(&watch);
-    expected.queries.open.insert(
-        QueryId(2),
-        queries::Open {
-            outpost: EDIT_OUTPOST,
-            trace_id: Some(HELD),
-            asked: queries::Asked::Read,
-            then: Then::HeldRead(HeldRead {
-                node: text_box,
-                key,
-            }),
-        },
-    );
-    expected.queries.next = 3;
-    expected.held_keys.waiting.clear();
-    expected.held_keys.awaiting_watch = None;
-    expected.held_keys.bounded = Some(HELD);
-    assert_eq!(state, expected);
-}
-
-/// In a console Core reads, the held keys' watch answered with a review
-/// command behind it: the command runs, and its read of the caret's line
-/// is answered from the console's memory after a fresh read, so only the
-/// fresh read is sent, for the command: the review and both of its
-/// queries carry the command's trace, not the watch answer's.
-#[test]
-fn a_watch_with_a_command_behind_it_in_a_console_runs_the_command_from_memory() {
-    let mut state = console();
-    let key_trace = TraceId::from_raw(80);
-    let asked = requests(&reduce(
-        &mut state,
-        &Input::HeldKey {
-            trace_id: key_trace,
-            key_seq: KeySeq::NONE_YET,
-            key: CaretKey {
-                motion: CaretMotion::NextCharacter,
-                select: false,
-            },
-            pressed_at_ms: 500,
-        },
-    ));
-    let [(read, Some(TextOp::ReadCaret))] = asked[..] else {
-        panic!("one read, not {asked:?}");
-    };
-    let _ = reduce(&mut state, &watch_answered(read, CONSOLE_OUTPOST));
-    let watch = QueryId(3);
-    assert_eq!(state.held_keys.awaiting_watch, Some(watch));
-    let _ = reduce(
-        &mut state,
-        &Input::Command {
-            trace_id: TraceId::from_raw(61),
-            key_seq: KeySeq::NONE_YET,
-            command: ReviewCommand::ReviewCurrentLine,
-            pressed_at_ms: 1_510,
-            repeat: 0,
-        },
-    );
-    let mut expected = state.clone();
-    let effects = reduce(&mut state, &watch_answered(watch, CONSOLE_OUTPOST));
-    let console = NodeId::in_outpost(CONSOLE_OUTPOST, 5);
-    assert_eq!(
-        effects,
-        [
-            Effect::ForKey(
-                TraceId::from_raw(61),
-                Box::new(Effect::Text(TextRequest {
-                    query_id: QueryId(5),
-                    node_id: console,
-                    op: TextOp::TerminalReadNow(TerminalScope::Fresh),
-                })),
-            ),
-            Effect::BoundHeldKey(None),
-        ]
-    );
-    let line = TextOp::Read(TextRead {
-        at: TextPoint::Caret,
-        movement: None,
-        unit: TextUnit::Line,
-    });
-    expected.queries.open.remove(&watch);
-    expected.queries.open.insert(
-        QueryId(4),
-        queries::Open {
-            outpost: CONSOLE_OUTPOST,
-            trace_id: Some(TraceId::from_raw(61)),
-            asked: queries::Asked::Memory,
-            then: Then::Text(PendingText {
-                node: console,
-                then: TextFollowUp::Seed {
-                    command: ReviewCommand::ReviewCurrentLine,
-                    repeat: 0,
-                },
-                about: None,
-            }),
-        },
-    );
-    expected.queries.open.insert(
-        QueryId(5),
-        queries::Open {
-            outpost: CONSOLE_OUTPOST,
-            trace_id: Some(TraceId::from_raw(61)),
-            asked: queries::Asked::Read,
-            then: Then::TerminalModel {
-                node: console,
-                generation: 0,
-                ask: ModelAsk::Fresh,
-            },
-        },
-    );
-    expected.queries.next = 6;
-    expected.held_keys.waiting.clear();
-    expected.held_keys.awaiting_watch = None;
-    expected.held_keys.bounded = None;
-    expected.terminals[0].wait_for_text(Some(TraceId::from_raw(61)), QueryId(4), line);
-    // The watch's own answer, the caret the read before the key found,
-    // joins the caret history again.
-    let newest = expected.caret_history.len() - 1;
-    expected.caret_history.rotate_left(1);
-    expected.caret_history[newest] = expected.caret_history[newest - 1].clone();
-    assert_eq!(state, expected);
 }

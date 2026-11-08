@@ -2022,6 +2022,29 @@ impl ReducerThread<'_> {
                     (key, Instant::now() + Duration::from_millis(within_ms))
                 });
             }
+            Effect::WatchOrder { node, tag, order } => {
+                let outpost = node.outpost();
+                let command = CoreToOutpost::Watch { node, tag, order };
+                if let Err(error) = self.context.supervisor.send_to_outpost(outpost, command) {
+                    tracing::debug!(%error, %outpost, "a key's watch order was refused");
+                    // A refused final read still ends with the key's one answer.
+                    if order == verbatim_model::WatchOrder::FinalRead {
+                        self.follow_ups.push(Input::Event {
+                            trace_id,
+                            observed_at_us: verbatim_process::clock::now_us(),
+                            source: Pid(0),
+                            backend: verbatim_model::Backend::Uia,
+                            window: None,
+                            event: verbatim_model::NormalizedEvent::KeyAnswered {
+                                node_id: node,
+                                tag,
+                                answer: verbatim_model::KeyAnswer::Ended,
+                            },
+                            purpose: None,
+                        });
+                    }
+                }
+            }
             Effect::Withdraw { outpost, query_id } => {
                 let command = CoreToOutpost::Cancel {
                     request_id: RequestId::reducer(query_id.0),
@@ -2340,7 +2363,10 @@ impl ReducerThread<'_> {
     fn expire(&mut self, now: Instant) {
         let shared = now_us();
         if let Some((trace_id, _)) = self.held_due.take_if(|(_, due)| *due <= now) {
-            self.apply(Input::HeldKeyDue { trace_id });
+            self.apply(Input::HeldKeyDue {
+                trace_id,
+                at_us: shared,
+            });
         }
         // The terminal's timer, once its due time is past; the step moves
         // the due time past it (`SrState::terminal_timer_due`).

@@ -2678,6 +2678,7 @@ fn a_protected_fields_focus_comes_with_its_caret_and_selected_text() {
     let Some(FocusText::Caret {
         caret,
         selected_text,
+        ..
     }) = &reported.text
     else {
         panic!("the focus came without its caret: {:?}", reported.text);

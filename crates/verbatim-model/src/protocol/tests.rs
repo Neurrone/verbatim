@@ -69,7 +69,12 @@ fn next_core_to_outpost(previous: Option<&CoreToOutpost>) -> Option<CoreToOutpos
             request: 1,
             trace_id: TraceId::from_raw(4),
         },
-        CoreToOutpost::LiveReread { .. } => return None,
+        CoreToOutpost::LiveReread { .. } => CoreToOutpost::Watch {
+            node: crate::NodeId::new(1),
+            tag: crate::KeyTag(crate::QueryId(1)),
+            order: crate::WatchOrder::End,
+        },
+        CoreToOutpost::Watch { .. } => return None,
     })
 }
 
@@ -199,6 +204,7 @@ fn every_variant_has_its_reviewed_kind() {
             "Shutdown: Lifecycle",
             "Assign: Lifecycle",
             "LiveReread: Routed",
+            "Watch: Ask",
         ]
     );
     assert_eq!(
@@ -354,13 +360,17 @@ fn a_message_names_its_nodes_and_its_texts_anchors() {
             text: Some(Box::new(FocusText::Caret {
                 caret: CaretReport {
                     line: chunk(10),
-                    selection: Some(Selection {
-                        start: TextPosition::at(TextAnchor(11)),
-                        end: TextPosition::at(TextAnchor(12)),
+                    selection: Some(crate::CaretSelection {
+                        range: Selection {
+                            start: TextPosition::at(TextAnchor(11)),
+                            end: TextPosition::at(TextAnchor(12)),
+                        },
+                        start_line: Some(Box::new(chunk(13))),
                     }),
-                    selection_line: Some(Box::new(chunk(13))),
+                    read_at_us: 0,
                 },
                 selected_text: None,
+                changes: crate::CaretChanges::default(),
             })),
             earlier: None,
             group: None,

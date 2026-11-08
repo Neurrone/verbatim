@@ -111,7 +111,7 @@ pub struct EventTiming {
     pub dequeued_at_us: u64,
     /// When the evidence that answered a caret key's watch, after its first
     /// check found none, was taken from the outpost's queue
-    /// (`TextOp::AwaitCaret`); 0 for anything else.
+    /// (`TextOp::Key`); 0 for anything else.
     pub awaited_at_us: u64,
     /// When the outpost's worker published the resulting event or reply,
     /// queuing it for the outpost's writer.
@@ -722,6 +722,17 @@ pub enum CoreToOutpost {
         /// The query to withdraw.
         request_id: RequestId,
     },
+    /// Core's order to the watch of the key `tag` on `node`, with no reply
+    /// of its own: ignored when no watch with that tag is open, because
+    /// its answer is already on its way.
+    Watch {
+        /// The key's node.
+        node: NodeId,
+        /// The key's tag.
+        tag: crate::KeyTag,
+        /// The order.
+        order: crate::WatchOrder,
+    },
     /// Liveness probe; answered by [`OutpostToCore::Pong`].
     Ping {
         /// Echoed in the matching pong.
@@ -834,6 +845,7 @@ impl CoreToOutpost {
         match self {
             CoreToOutpost::Query { .. }
             | CoreToOutpost::Cancel { .. }
+            | CoreToOutpost::Watch { .. }
             | CoreToOutpost::IdleQuery { .. } => Kind::Ask,
             CoreToOutpost::NodesHeld { .. } => Kind::Release,
             CoreToOutpost::Assign { .. }
@@ -1606,10 +1618,14 @@ impl Named {
     fn caret(&mut self, caret: &crate::CaretReport) {
         self.chunk(&caret.line);
         if let Some(selection) = &caret.selection {
-            self.anchors.push(selection.start.anchor);
-            self.anchors.push(selection.end.anchor);
+            self.selection(selection);
         }
-        if let Some(line) = &caret.selection_line {
+    }
+
+    fn selection(&mut self, selection: &crate::CaretSelection) {
+        self.anchors.push(selection.range.start.anchor);
+        self.anchors.push(selection.range.end.anchor);
+        if let Some(line) = &selection.start_line {
             self.chunk(line);
         }
     }
@@ -1622,10 +1638,12 @@ impl Named {
 
     fn text_reply(&mut self, reply: &TextReply) {
         match reply {
-            TextReply::Caret(reply) => {
-                self.caret(&reply.caret);
-                if let Some(unit) = &reply.unit {
-                    self.chunk(unit);
+            TextReply::Key(started) => {
+                if let crate::KeyStarted::Read(reply) = &**started {
+                    self.caret(&reply.caret);
+                    if let Some(unit) = &reply.unit {
+                        self.chunk(unit);
+                    }
                 }
             }
             TextReply::Read { chunk, .. } => self.chunk(chunk),
@@ -1641,6 +1659,7 @@ impl Named {
             }
             TextReply::Range { .. }
             | TextReply::Done
+            | TextReply::Moved { .. }
             | TextReply::Selected(_)
             | TextReply::TerminalUnchanged
             | TextReply::TerminalHistory { .. }
@@ -1652,8 +1671,7 @@ impl Named {
             | TextReply::NoText
             | TextReply::AnchorLost
             | TextReply::Gone
-            | TextReply::Unanswered
-            | TextReply::WatchEnded => {}
+            | TextReply::Unanswered => {}
         }
     }
 
@@ -1686,6 +1704,22 @@ impl Named {
             NormalizedEvent::CaretMoved { node_id, caret, .. } => {
                 self.nodes.push(*node_id);
                 self.caret(caret);
+            }
+            NormalizedEvent::KeyAnswered {
+                node_id, answer, ..
+            } => {
+                self.nodes.push(*node_id);
+                if let crate::KeyAnswer::Evidence(read) | crate::KeyAnswer::BoundAnswer(read) =
+                    answer
+                {
+                    self.caret(&read.caret);
+                    self.chunk(&read.before_line);
+                    if let Some(selection) = &read.before_selection {
+                        self.selection(selection);
+                    }
+                    self.chunk(&read.before_unit);
+                    self.chunk(&read.unit);
+                }
             }
             NormalizedEvent::TerminalSnapshot { node_id, snapshot } => {
                 self.nodes.push(*node_id);

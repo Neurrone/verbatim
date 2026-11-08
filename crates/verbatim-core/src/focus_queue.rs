@@ -404,6 +404,26 @@ impl FocusState {
         self.queue.push_back(Queued::Input(Box::new(input)));
     }
 
+    /// Whether an input waits in the queue: a key or command pressed
+    /// behind the focus reports ahead of it.
+    pub(crate) fn input_queued(&self) -> bool {
+        self.queue
+            .iter()
+            .any(|queued| matches!(queued, Queued::Input(_)))
+    }
+
+    /// The traces of the held keys waiting in the queue, in press order,
+    /// as Verbatim exits.
+    pub(crate) fn queued_held_keys(&self) -> impl Iterator<Item = TraceId> + '_ {
+        self.queue.iter().filter_map(|queued| match queued {
+            Queued::Input(input) => match **input {
+                verbatim_model::Input::HeldKey { trace_id, .. } => Some(trace_id),
+                _ => None,
+            },
+            Queued::Report(_) => None,
+        })
+    }
+
     /// What the queue's front needs: a report to decide, or one answered to
     /// execute, taken out of the queue; a report that ended unanswered is
     /// the last queued focus, and the next is looked at.

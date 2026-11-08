@@ -39,7 +39,7 @@ use verbatim_model::{
 };
 use verbatim_text::Segmenter;
 
-use crate::editing::{self, is_grid};
+use crate::editing::is_grid;
 use crate::queries::Then;
 use crate::state::{
     BufferedPiece, QueuedMark, ReviewText, SayAll, SharedChunk, SrState, UnitStart,
@@ -434,16 +434,15 @@ fn passed(state: &mut SrState, mark: SpeechMark, moves: bool) -> Vec<Effect> {
     if let Some(unit) = reached.filter(|_| moves) {
         let position = unit.position();
         if moves_caret {
-            let (_, effect) = state.queries.ask(
-                crate::queries::Asking::Text(node, TextOp::MoveCaret(TextPoint::At(position))),
-                Then::Nothing,
-            );
-            effects.push(effect);
             let line = TextChunk {
                 offset: unit.offset,
                 ..TextChunk::clone(&unit.chunk)
             };
-            editing::caret_moved_by_core(state, node, line);
+            let (_, effect) = state.queries.ask(
+                crate::queries::Asking::Text(node, TextOp::MoveCaret(TextPoint::At(position))),
+                Then::MovedCaret { node, line },
+            );
+            effects.push(effect);
         } else if let Some(navigator) = state
             .navigator
             .as_mut()

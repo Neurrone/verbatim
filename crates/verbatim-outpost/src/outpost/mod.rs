@@ -102,16 +102,12 @@ use commit::{Committed, Effects};
 use outbound::Outbound;
 pub use reducer::Verdicts;
 pub(crate) use reducer::{
-    Anchor, AnswerCut, CaretSeen, CutLine, KeptSelection, NodeAnchors, Probe, Probed, ReportCut,
-    VerdictChange,
+    Anchor, AnswerCut, CutLine, KeptSelection, NodeAnchors, Probe, Probed, ReadSelection,
+    ReportCut, VerdictChange,
 };
-use reducer::{
-    Entry, Facts, FollowState, Item, Object, OpenWatch, Source, UiaEvent, UiaKind, WaitingCaret,
-};
+use reducer::{Entry, Facts, FollowState, Item, KeyWatch, Object, Source, UiaEvent, UiaKind};
 use shell::{Mailbox, Posted, Shell};
 use worker::Charge;
-
-pub(crate) use window::now_ms;
 
 #[cfg(test)]
 mod application_names_tests {
@@ -336,7 +332,6 @@ struct RequestContext<'a> {
 /// What a program's context holds of it ([`RequestContext::program`]).
 struct Program<'a> {
     request: reducer::Request,
-    waiting: Vec<WaitingCaret>,
     charge: Arc<Charge>,
     _context: std::marker::PhantomData<&'a ()>,
 }
@@ -347,7 +342,7 @@ impl<'a> RequestContext<'a> {
     fn for_program(
         context: &'a Context,
         tag: store::Tag,
-        (request, facts, waiting): (reducer::Request, Facts, Vec<WaitingCaret>),
+        (request, facts): (reducer::Request, Facts),
         charge: Arc<Charge>,
     ) -> Self {
         Self {
@@ -358,7 +353,6 @@ impl<'a> RequestContext<'a> {
             joined_cache: RefCell::default(),
             program: Program {
                 request,
-                waiting,
                 charge,
                 _context: std::marker::PhantomData,
             },
@@ -409,12 +403,37 @@ impl<'a> RequestContext<'a> {
         &self.program().charge
     }
 
-    /// The caret events waiting when the program was dispatched.
-    fn waiting(&self) -> &[WaitingCaret] {
-        self.program.waiting.as_slice()
+    /// The facts as the program's copies hold them.
+    /// The caret key's watch open in the program's copy, a clone.
+    fn open_watch(&self) -> Option<KeyWatch> {
+        self.facts().text.watch.open().cloned()
     }
 
-    /// The facts as the program's copies hold them.
+    /// The caret key's watch between checks in the program's copy, a clone.
+    fn open_watch_kept(&self) -> Option<KeyWatch> {
+        self.facts().text.watch.kept().cloned()
+    }
+
+    /// Whether `key` is between checks in the program's copy.
+    fn is_kept(&self, key: &KeyWatch) -> bool {
+        self.facts()
+            .text
+            .watch
+            .kept()
+            .is_some_and(|kept| kept.tag == key.tag)
+    }
+
+    /// Whether the watch the program holds has its final read to make.
+    fn watch_is_final(&self) -> bool {
+        matches!(
+            self.facts().text.watch,
+            reducer::Watch::Checking {
+                after: reducer::AfterCheck::Answer,
+                ..
+            }
+        )
+    }
+
     fn facts(&self) -> Ref<'_, Facts> {
         self.facts.borrow()
     }
@@ -507,7 +526,7 @@ impl<'a> RequestContext<'a> {
     /// and posts them for the reducer, which applies them only while the
     /// request is live. Returns what was done, and the caret key's watch a
     /// [`reducer::WatchChange::Take`] took out.
-    fn commit(&self, effects: Effects) -> (Committed, Option<OpenWatch>) {
+    fn commit(&self, effects: Effects) -> (Committed, Option<KeyWatch>) {
         let program = self.program();
         let mut effects = self.program_text.borrow_mut().seal(effects);
         // Each commit names the program's window and what it found there.
@@ -1558,6 +1577,9 @@ impl Outpost {
             // and answers it "not started" through its token.
             CoreToOutpost::Cancel { request_id } => {
                 context.mailbox.post(Posted::Cancel(*request_id));
+            }
+            CoreToOutpost::Watch { tag, order, .. } => {
+                context.mailbox.post(Posted::WatchOrder(*tag, *order));
             }
             CoreToOutpost::Ping { seq, .. } => {
                 context.outbound.urgent(context.pong(*seq));

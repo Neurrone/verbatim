@@ -52,7 +52,7 @@
 //!   ([`TERMINAL_ANCHORS`]), which no outpost mints.
 //!
 //! - The read before a held key. A terminal's outpost answers Core's read
-//!   of the caret before a held key ([`TextOp::ReadCaret`]) with a
+//!   of the caret before a held key ([`KeyStart::ReadFirst`](verbatim_model::KeyStart::ReadFirst)) with a
 //!   snapshot, which is aligned as a live read is and whose caret answers
 //!   the read ([`before_key`]).
 //!
@@ -65,8 +65,9 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use verbatim_model::{
-    CaretReply, Effect, Input, NodeId, OutpostId, QueryId, TerminalColourRun, TerminalScope,
-    TerminalSnapshot, TerminalText, TextOp, TextPoint, TextReply, TextRequest, TraceId,
+    CaretReply, Effect, Input, KeyStarted, NodeId, OutpostId, QueryId, TerminalColourRun,
+    TerminalScope, TerminalSnapshot, TerminalText, TextOp, TextPoint, TextReply, TextRequest,
+    TraceId,
 };
 use verbatim_text::terminal_reading::{
     ColourRun, KEY_WINDOW_MS, Key, KeyKind, QUIET_MS, Settings, Speech, Step, TerminalReader, Unit,
@@ -292,17 +293,6 @@ impl Terminals {
 }
 
 impl TerminalModel {
-    /// Keeps the text request `op` of query `query_id`, run under `trace`,
-    /// waiting for the model's answer, for a test that states the model it
-    /// expects.
-    #[cfg(test)]
-    pub(crate) fn wait_for_text(&mut self, trace: Option<TraceId>, query_id: QueryId, op: TextOp) {
-        self.reviews.push_back(Waiting {
-            trace,
-            review: Review::Text { query_id, op },
-        });
-    }
-
     fn new(node: NodeId, settings: Settings, generation: u64) -> Self {
         Self {
             node,
@@ -863,7 +853,7 @@ fn take_snapshot(state: &mut SrState, node: NodeId, snapshot: &TerminalSnapshot)
         effects.push(request(state, node, op));
     }
     if let Some(caret) = &snapshot.caret {
-        crate::editing::update_caret(state, node, caret.clone(), at_ms);
+        crate::editing::update_caret(state, node, caret.clone());
     }
     Taken {
         speech: Some(speech_of(step)),
@@ -950,9 +940,8 @@ pub(crate) fn answered_read(
 
 /// The read before a held key in terminal `node`
 /// (`books/dev/src/explanation/design/key-holding.md`), a snapshot: aligned as a live read is,
-/// and its caret given as the answer [`crate::editing::held_read`] takes, as
-/// read when the read ended ([`read_at`]), so the key is taken as pressed
-/// just after it. Without a caret, the read is unanswered.
+/// and its caret given as the answer the key line takes. Without a caret, the
+/// read is unanswered.
 pub(crate) fn before_key(
     state: &mut SrState,
     trace_id: TraceId,
@@ -961,17 +950,13 @@ pub(crate) fn before_key(
 ) -> (Vec<Effect>, TextReply) {
     let effects = snapshot_event(state, trace_id, node, snapshot);
     let reply = match &snapshot.caret {
-        Some(caret) => TextReply::Caret(Box::new(CaretReply {
-            moved: false,
+        Some(caret) => TextReply::Key(Box::new(KeyStarted::Read(Box::new(CaretReply {
             caret: caret.clone(),
-            read_at_ms: read_at(snapshot),
             unit: None,
             selection_changes: Vec::new(),
             content_changed: false,
             new_selection: None,
-            same_line: None,
-            removed: None,
-        })),
+        })))),
         None => TextReply::Unanswered,
     };
     (effects, reply)
@@ -1105,7 +1090,7 @@ pub(crate) fn input_trace(input: &Input) -> Option<TraceId> {
         | Input::Command { trace_id, .. }
         | Input::CaretKey { trace_id, .. }
         | Input::HeldKey { trace_id, .. }
-        | Input::HeldKeyDue { trace_id }
+        | Input::HeldKeyDue { trace_id, .. }
         | Input::CharacterTyped { trace_id, .. }
         | Input::ClearingKey { trace_id, .. }
         | Input::TerminalTimer { trace_id, .. } => Some(*trace_id),

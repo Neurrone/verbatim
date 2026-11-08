@@ -10,19 +10,8 @@ use verbatim_text::terminal_reading::{Settings, Speech, Step};
 use verbatim_text::terminal_rows::Lost;
 
 use super::{Said, SaidItem, rules_key, speech_of};
-use crate::queries::Then;
-use crate::state::{PendingCaret, SrState};
+use crate::state::SrState;
 
-/// The node of the caret key waiting for evidence, if one waits.
-fn waiting_caret(state: &SrState) -> Option<NodeId> {
-    state
-        .queries
-        .find(|then| matches!(then, Then::Caret(_)))
-        .and_then(|(_, then)| match then {
-            Then::Caret(pending) => Some(pending.node),
-            _ => None,
-        })
-}
 use crate::terminal::{Skipped, TerminalItem, TerminalKeyKind, TerminalUnit};
 
 #[test]
@@ -223,7 +212,7 @@ fn a_replaced_element_forgets_its_nodes_caret_and_model(earlier: EarlierElement)
             formats: Vec::new(),
         },
         selection: None,
-        selection_line: None,
+        read_at_us: 1,
     };
     let _ = crate::reduce(
         &mut state,
@@ -232,45 +221,22 @@ fn a_replaced_element_forgets_its_nodes_caret_and_model(earlier: EarlierElement)
             Some(FocusText::Caret {
                 caret,
                 selected_text: None,
+                changes: verbatim_model::CaretChanges::default(),
             }),
             None,
         ),
     );
     state.terminals.add(node, Settings::default());
-    let _ = state.queries.ask(
-        crate::queries::Asking::Text(node, verbatim_model::TextOp::ReadCaret),
-        Then::Caret(PendingCaret {
-            node,
-            key: CaretKey {
-                motion: CaretMotion::PreviousCharacter,
-                select: false,
-            },
-            deleted: None,
-            before: None,
-            later_key_at_ms: None,
-            selected_before: false,
-            before_unknown: false,
-            heard: Vec::new(),
-        }),
-    );
     assert_eq!(
-        (
-            state.caret.as_ref().map(|caret| caret.node),
-            state.terminals.len(),
-            waiting_caret(&state)
-        ),
-        (Some(node), 1, Some(node)),
-        "the first element's caret, model and waiting caret key are kept"
+        (state.focus_caret(node).is_some(), state.terminals.len(),),
+        (true, 1),
+        "the first element's caret and model are kept"
     );
 
     let _ = crate::reduce(&mut state, &terminal_focus(node, None, Some(earlier)));
     assert_eq!(
-        (
-            state.caret.as_ref().map(|caret| caret.node),
-            state.terminals.len(),
-            waiting_caret(&state)
-        ),
-        (None, 0, None)
+        (state.focus_caret(node).is_some(), state.terminals.len(),),
+        (false, 0)
     );
 }
 

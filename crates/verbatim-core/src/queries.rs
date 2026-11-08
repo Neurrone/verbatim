@@ -21,20 +21,17 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use verbatim_model::protocol::{QueryOutcome, QueryResult};
 use verbatim_model::{
-    Effect, FetchResult, NodeId, OutpostId, Query, QueryId, QueryKind, TextOp, TextReply,
-    TextRequest, TraceId,
+    Effect, FetchResult, NodeId, OutpostId, Query, QueryId, QueryKind, TextChunk, TextOp,
+    TextReply, TextRequest, TraceId,
 };
 
-use crate::state::{HeldRead, PendingCaret, PendingText, SrState};
+use crate::state::{PendingText, SrState};
 
 /// Who answers a query.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) enum Asked {
     /// The outpost, to a read the idle barrier waits for.
     Read,
-    /// The outpost, to a caret key's watch, which waits for the
-    /// application and which the idle barrier does not wait for.
-    Watch,
     /// Core, from a terminal's memory: never sent, and never waited for.
     Memory,
 }
@@ -46,13 +43,11 @@ pub(crate) enum Then {
     Navigation { from: NodeId, kind: QueryKind },
     /// An activation of the navigator object, whose outcome is spoken.
     Activation,
-    /// A caret key's watch, waiting for its evidence.
-    Caret(PendingCaret),
-    /// A caret key's watch a later key on the same node superseded, whose
-    /// answer may still carry a change of the selection.
-    SupersededCaret { node: NodeId },
-    /// The read of the caret before a held key.
-    HeldRead(HeldRead),
+    /// A caret key's one request (`crate::key_line`), on `node`.
+    Key { node: NodeId },
+    /// A move of the caret Core made, whose answer gives the stamp of the
+    /// caret it leaves.
+    MovedCaret { node: NodeId, line: TextChunk },
     /// A review or text command's request.
     Text(PendingText),
     /// Say-all's read.
@@ -137,8 +132,7 @@ pub(crate) struct Queries {
 impl Queries {
     /// Records the query `asking` describes, whose answer continues
     /// `then`, and returns its number and the request's effect, which
-    /// names it: a caret key's watch as a [`Asked::Watch`], anything else
-    /// as a [`Asked::Read`].
+    /// names it, as an [`Asked::Read`].
     pub(crate) fn ask(&mut self, asking: Asking, then: Then) -> (QueryId, Effect) {
         let query_id = QueryId(self.next);
         self.next = self.next.saturating_add(1);
@@ -154,11 +148,7 @@ impl Queries {
             ),
             Asking::Text(node_id, op) => (
                 node_id,
-                if matches!(op, TextOp::AwaitCaret(_)) {
-                    Asked::Watch
-                } else {
-                    Asked::Read
-                },
+                Asked::Read,
                 Effect::Text(TextRequest {
                     query_id,
                     node_id,
@@ -225,14 +215,6 @@ impl Queries {
         self.find(which).is_some()
     }
 
-    /// The continuation of the first open query `which` picks, to change.
-    pub(crate) fn find_mut(&mut self, which: impl Fn(&Then) -> bool) -> Option<&mut Then> {
-        self.open
-            .values_mut()
-            .find(|open| open.then != Then::Nothing && which(&open.then))
-            .map(|open| &mut open.then)
-    }
-
     /// Gives open query `query_id` the continuation `then`, returning the
     /// one it had; nothing for a query not open.
     pub(crate) fn replace(&mut self, query_id: QueryId, then: Then) -> Option<Then> {
@@ -255,18 +237,16 @@ impl Queries {
         });
     }
 
-    /// Ends query `query_id` with no answer, as its owner gives up on it,
-    /// returning its continuation and the withdrawal's effect for its
-    /// outpost; nothing for a query already ended.
-    pub(crate) fn withdraw(&mut self, query_id: QueryId) -> Option<(Then, Effect)> {
-        let open = self.open.remove(&query_id)?;
-        Some((
-            open.then,
-            Effect::Withdraw {
-                outpost: open.outpost,
-                query_id,
-            },
-        ))
+    /// Withdraws query `query_id` from its outpost, its entry kept so that
+    /// its one answer still runs its continuation: not started it is
+    /// answered "not started", and already running it answers with what it
+    /// read. Returns the withdrawal's effect.
+    pub(crate) fn withdraw_kept(&self, query_id: QueryId) -> Option<Effect> {
+        let open = self.open.get(&query_id)?;
+        Some(Effect::Withdraw {
+            outpost: open.outpost,
+            query_id,
+        })
     }
 
     /// Ends the queries Core answers from memory among `query_ids`, whose
@@ -284,7 +264,7 @@ impl Queries {
     }
 
     /// How many queries the idle barrier waits for: those an outpost
-    /// answers that are not a caret key's watch.
+    /// answers.
     pub(crate) fn outstanding(&self) -> usize {
         self.open
             .values()
@@ -453,8 +433,7 @@ pub(crate) fn outpost_gone(
     effects
 }
 
-/// Runs `then`, what ended query `query_id` continues, then resumes the
-/// held keys when it was the watch they wait on, however it ended.
+/// Runs `then`, what ended query `query_id` continues.
 pub(crate) fn ended(
     state: &mut SrState,
     trace_id: TraceId,
@@ -462,21 +441,6 @@ pub(crate) fn ended(
     then: Then,
     ending: Ending,
 ) -> Vec<Effect> {
-    // The watch of the held key last passed on has its answer, whatever it
-    // is: the held key waiting behind it may have its caret read now.
-    let resume = state.held_keys.awaiting_watch == Some(query_id);
-    if resume {
-        state.held_keys.awaiting_watch = None;
-    }
-    let mut effects = continued(state, trace_id, then, ending);
-    if resume {
-        effects.extend(crate::editing::held_watch_answered(state));
-    }
-    effects
-}
-
-/// What `then` does with `ending`, its query's answer.
-fn continued(state: &mut SrState, trace_id: TraceId, then: Then, ending: Ending) -> Vec<Effect> {
     match then {
         Then::Navigation { kind, .. } => {
             let result = match ending {
@@ -503,23 +467,25 @@ fn continued(state: &mut SrState, trace_id: TraceId, then: Then, ending: Ending)
             Ending::Outcome(QueryOutcome::Abandoned) => Vec::new(),
             _ => crate::reduce::activation_completed(trace_id, false, None),
         },
-        Then::HeldRead(reading) => {
+        Then::Key { node } => {
             let reply = ending.reply();
-            // In a terminal Core reads, the read before the key is a read
-            // of the terminal, aligned first, whose caret answers it.
+            // In a terminal Core reads, the read before a key is a read of
+            // the terminal, aligned first, whose caret answers it.
             if let TextReply::TerminalSnapshot(snapshot) = &reply {
-                let (mut effects, caret) =
-                    crate::terminal_model::before_key(state, trace_id, reading.node, snapshot);
-                effects.extend(crate::editing::held_read(state, reading, caret));
+                let (mut effects, answer) =
+                    crate::terminal_model::before_key(state, trace_id, node, snapshot);
+                effects.extend(crate::key_line::request_answered(
+                    state, trace_id, query_id, answer,
+                ));
                 return effects;
             }
-            crate::editing::held_read(state, reading, reply)
+            crate::key_line::request_answered(state, trace_id, query_id, reply)
         }
-        Then::Caret(pending) => {
-            crate::editing::caret_reply(state, trace_id, &pending, ending.reply())
-        }
-        Then::SupersededCaret { node } => {
-            crate::editing::superseded_reply(state, trace_id, node, &ending.reply())
+        Then::MovedCaret { node, line } => {
+            if let TextReply::Moved { read_at_us } = ending.reply() {
+                crate::editing::caret_moved_by_core(state, node, line, read_at_us);
+            }
+            Vec::new()
         }
         Then::Text(pending) => {
             let reply = ending.reply();

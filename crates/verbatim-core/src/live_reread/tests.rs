@@ -1222,7 +1222,7 @@ fn a_caret_key_while_a_report_waits_runs_after_the_command_before_it() {
                     &**inner,
                     Effect::Text(verbatim_model::TextRequest {
                         node_id,
-                        op: verbatim_model::TextOp::AwaitCaret(_),
+                        op: verbatim_model::TextOp::Key(_),
                         ..
                     }) if *node_id == id(A, 4)
                 ),
@@ -1236,6 +1236,7 @@ fn a_caret_key_while_a_report_waits_runs_after_the_command_before_it() {
         [
             (TraceId::from_raw(450), false),
             (TraceId::from_raw(450), false),
+            (TraceId::from_raw(460), false),
             (TraceId::from_raw(460), true)
         ]
     );

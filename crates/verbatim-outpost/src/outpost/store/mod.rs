@@ -134,6 +134,10 @@ impl Removed {
 
 /// A program's write to the store's text, made by the shell only when the
 /// reducer accepts the commit that carries it ([`Store::write_text`]).
+#[expect(
+    clippy::large_enum_variant,
+    reason = "a commit's write, which lives as long as the commit"
+)]
 pub(super) enum TextWrite {
     /// A change of a node's text facts, with the UIA ranges its text call
     /// made, under the keys the change names them by, and the anchors it

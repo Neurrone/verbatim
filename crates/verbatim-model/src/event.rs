@@ -419,10 +419,7 @@ pub enum NormalizedEvent {
     /// (the mouse's or the application's), as NVDA reports any selection
     /// change of the focus after its caret event
     /// (`docs/nvda/editable-text-and-terminals.md`, "Selection changes"). A
-    /// caret key's speech comes from the reply to Core's own
-    /// [`TextOp::AwaitCaret`](crate::TextOp::AwaitCaret) request, whose
-    /// watch takes the key's caret event, so no `CaretMoved` is sent for it
-    /// unless the outpost handled the event before the watch arrived.
+    /// caret key's speech comes from its [`NormalizedEvent::KeyAnswered`].
     CaretMoved {
         /// The node whose caret moved.
         node_id: NodeId,
@@ -443,6 +440,17 @@ pub enum NormalizedEvent {
         /// [`CaretReply`](crate::CaretReply)'s `new_selection` says.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         new_selection: Option<SelectionChange>,
+    },
+    /// A caret key's result after its before read
+    /// ([`KeyAnswer`](crate::KeyAnswer)), carrying its tag, in one order
+    /// with every caret report.
+    KeyAnswered {
+        /// The key's node.
+        node_id: NodeId,
+        /// The key's tag.
+        tag: crate::KeyTag,
+        /// The result.
+        answer: crate::KeyAnswer,
     },
     /// The text of a node changed (UIA's text changed event, an edit
     /// control's change notification). Characters typed into a terminal
@@ -510,6 +518,7 @@ impl NormalizedEvent {
             | NormalizedEvent::ValueChanged { node_id, .. }
             | NormalizedEvent::Notification { node_id, .. }
             | NormalizedEvent::CaretMoved { node_id, .. }
+            | NormalizedEvent::KeyAnswered { node_id, .. }
             | NormalizedEvent::TextChanged { node_id }
             | NormalizedEvent::TerminalSnapshot { node_id, .. }
             | NormalizedEvent::ActiveTextPositionChanged { node_id, .. } => {
@@ -899,14 +908,15 @@ pub enum Input {
         #[serde(default)]
         pressed_at_ms: u64,
     },
-    /// The held key's one deadline has passed ([`Effect::BoundHeldKey`]):
-    /// if the held key with this trace ID still waits for the watch of the
-    /// key ahead to be answered, its caret is read now, as if that watch
-    /// had been answered; if its caret is still being read, it is passed on
-    /// without the read.
+    /// The key line's one deadline has passed ([`Effect::BoundHeldKey`]):
+    /// a before read past its 150 ms is given up, and a key past its 100 ms
+    /// bound gets its final read.
     HeldKeyDue {
-        /// The trace ID of the held key whose deadline passed.
+        /// The trace ID of the key whose deadline passed.
         trace_id: TraceId,
+        /// When it passed, in microseconds on the clock every process of a
+        /// run shares.
+        at_us: u64,
     },
     /// Text was typed into the focused application: one character, or
     /// several at once when an input method commits a composition (one key
@@ -954,10 +964,9 @@ pub enum Input {
     /// the keyboard hook does for nearly every key. Say-all stops here, as
     /// NVDA's stops on any key.
     SpeechCancelled {
-        /// When it was cut off, in milliseconds since the Unix epoch, the
-        /// clock outposts stamp events with; 0 when unknown.
-        #[serde(default)]
-        at_ms: u64,
+        /// When it was cut off, in microseconds on the clock every process
+        /// of a run shares.
+        at_us: u64,
     },
     /// The reader settings, at startup and whenever the user changes them.
     Settings(ReaderSettings),
@@ -1395,13 +1404,23 @@ pub enum Effect {
     /// this trace ID on to the application, re-sent as the user pressed
     /// it.
     PassHeldKey(TraceId),
-    /// Sets the held key's one deadline, or clears it with `None`: the held
-    /// key with this trace ID waits for the watch of the key ahead of it,
-    /// or for the read of its caret, at most this many milliseconds from
-    /// now, when the shell enters [`Input::HeldKeyDue`] with its trace ID.
-    /// A later one replaces it (`books/dev/src/explanation/design/key-holding.md`, "Keys behind
-    /// a held key").
+    /// Sets the key line's one deadline, or clears it with `None`: the key
+    /// with this trace ID waits at most this many milliseconds from now,
+    /// when the shell enters [`Input::HeldKeyDue`] with its trace ID. A
+    /// later one replaces it.
     BoundHeldKey(Option<(TraceId, u64)>),
+    /// Core's order to the watch of the key `tag` on `node`
+    /// ([`crate::protocol::CoreToOutpost::Watch`]). The shell turns a
+    /// refused final read into [`crate::KeyAnswer::Ended`] for its tag, so
+    /// the key still has its one answer.
+    WatchOrder {
+        /// The key's node.
+        node: NodeId,
+        /// The key's tag.
+        tag: crate::KeyTag,
+        /// The order.
+        order: crate::WatchOrder,
+    },
     /// Core gave up on its query `query_id` to `outpost`, which it no longer
     /// records, so its outcome is dropped: the shell withdraws it from its
     /// outpost, which answers it "not started" if it has not started.

@@ -707,19 +707,6 @@ impl Intake {
         self.batch_number
     }
 
-    /// The caret events waiting, planned or not, observed at or after
-    /// `since_ms`, in whole milliseconds, by what names their nodes, none
-    /// with no `since_ms`.
-    pub fn waiting_carets(&self, since_ms: Option<u64>) -> Vec<super::WaitingCaret> {
-        let Some(since_ms) = since_ms else {
-            return Vec::new();
-        };
-        self.entries()
-            .filter(|entry| entry.observed_at_us / 1_000 >= since_ms)
-            .filter_map(|entry| super::waiting_caret(&entry.item))
-            .collect()
-    }
-
     /// Whether a value change of edit control `hwnd`'s client area waits,
     /// planned or not: a cut caret read's check ([`super::Cut`]).
     pub fn value_change_waiting(&self, hwnd: isize) -> bool {

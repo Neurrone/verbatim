@@ -17,7 +17,10 @@ use std::time::Duration;
 use verbatim_faults::{Fault, Guard};
 use verbatim_ia2::edit::EditError;
 use verbatim_model::protocol::{DeliveredFact, OutpostToCore, Query, QueryOutcome, QueryResult};
-use verbatim_model::{FocusText, TextAnchor, TextOp, TextReply};
+use verbatim_model::{
+    CaretMotion, FocusText, KeyRequest, KeyStart, KeyStarted, KeyTag, QueryId, TextAnchor, TextOp,
+    TextReply, WatchKind,
+};
 use windows::Win32::Foundation::{CloseHandle, HANDLE, HWND};
 use windows::Win32::System::Memory::{MEM_COMMIT, MEMORY_BASIC_INFORMATION, VirtualQueryEx};
 use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_INFORMATION};
@@ -132,13 +135,15 @@ fn a_slow_edit_control_answers_its_selection() {
         id_object: OBJID_CLIENT.0,
         id_child: 0,
     });
-    // The caret as read, its anchors, which each read mints anew, left out.
+    // The caret as read, its anchors, which each read mints anew, and when
+    // it was read left out.
     let unanchored = |caret: &verbatim_model::CaretReport| {
         let mut caret = caret.clone();
         caret.line.start = TextAnchor(0);
+        caret.read_at_us = 0;
         if let Some(selection) = &mut caret.selection {
-            selection.start.anchor = TextAnchor(0);
-            selection.end.anchor = TextAnchor(0);
+            selection.range.start.anchor = TextAnchor(0);
+            selection.range.end.anchor = TextAnchor(0);
         }
         caret
     };
@@ -156,14 +161,23 @@ fn a_slow_edit_control_answers_its_selection() {
     app.stall(stall);
     let request_id = outpost.ask(Query::Text {
         node_id: focus.node.id,
-        op: TextOp::ReadCaret,
+        op: TextOp::Key(KeyRequest {
+            tag: KeyTag(QueryId(1)),
+            kind: WatchKind::TextField,
+            unit: CaretMotion::NextCharacter.unit(),
+            motion: CaretMotion::NextCharacter,
+            start: KeyStart::ReadFirst,
+        }),
     });
     match outpost.next() {
         OutpostToCore::Reply {
             request_id: answered,
-            outcome: QueryOutcome::Done(QueryResult::Text(TextReply::Caret(reply))),
+            outcome: QueryOutcome::Done(QueryResult::Text(TextReply::Key(started))),
             ..
-        } if answered == request_id => assert_eq!(unanchored(&reply.caret), expected),
+        } if answered == request_id => match *started {
+            KeyStarted::Read(reply) => assert_eq!(unanchored(&reply.caret), expected),
+            other @ KeyStarted::Watching => panic!("the outpost answered {other:?}, not the caret"),
+        },
         other => panic!("the outpost said {other:?}, not the caret"),
     }
     app.stall_ended(stall);

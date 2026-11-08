@@ -5,15 +5,14 @@
 
 use verbatim_core::{SrState, reduce};
 use verbatim_model::{
-    Backend, CaretKey, CaretMotion, CaretReply, CaretReport, CaretWatch, Effect, Input, Message,
-    NodeDetails, NodeId, NodeSnapshot, NormalizedEvent, OutpostId, Phrase, Pid, QueryId,
-    ReaderSettings, ReviewCommand, Role, SegmentContent, Selection, SelectionChange, SelectionText,
-    SpeechMark, SpeechPriority, State, StateSet, TextAnchor, TextChunk, TextMovement, TextOp,
-    TextPoint, TextPosition, TextRead, TextReadAhead, TextReply, TextRequest, TextThrough,
-    TextUnit, TraceId, TypingEcho, Utterance, UtteranceSegment,
+    Backend, CaretKey, CaretMotion, CaretReport, CaretSelection, Effect, Input, KeyAnswer, KeyRead,
+    KeyTag, Message, NodeDetails, NodeId, NodeSnapshot, NormalizedEvent, OutpostId, Phrase, Pid,
+    QueryId, ReaderSettings, ReviewCommand, Role, SegmentContent, Selection, SelectionChange,
+    SelectionText, SpeechMark, SpeechPriority, State, StateSet, TextAnchor, TextChunk,
+    TextMovement, TextOp, TextPoint, TextPosition, TextRead, TextReadAhead, TextReply, TextRequest,
+    TextThrough, TextUnit, TraceId, TypingEcho, Utterance, UtteranceSegment,
 };
 use verbatim_model::{BulletStyle, FocusText, FormatRun, LineStyle, TextAttributes, TextFormat};
-use verbatim_model::{GuiRequest, Script, ShellItemKind};
 
 const OUTPOST: OutpostId = OutpostId(1);
 
@@ -79,15 +78,17 @@ fn line(text: &str, anchor: u64, offset: u32) -> TextChunk {
 }
 
 fn caret_event(state: &mut SrState, number: u64, line: TextChunk) {
+    let caret = CaretReport {
+        line,
+        selection: None,
+        read_at_us: stamp(),
+    };
+    set_baseline(&caret);
     let _ = reduce(
         state,
         &event(NormalizedEvent::CaretMoved {
             node_id: id(number),
-            caret: CaretReport {
-                line,
-                selection: None,
-                selection_line: None,
-            },
+            caret,
             selection_changes: Vec::new(),
             content_changed: false,
             new_selection: None,
@@ -164,7 +165,139 @@ fn command(command: ReviewCommand, repeat: u8) -> Input {
     }
 }
 
-fn completed(query_id: QueryId, reply: TextReply) -> Input {
+fn completed(query_id: QueryId, reply: impl Into<Reply>) -> Input {
+    match reply.into() {
+        Reply::Text(reply) => completed_text(query_id, reply),
+        Reply::Ended => key_answer(query_id, KeyAnswer::Ended),
+        Reply::Key(reply) => {
+            let CaretReply {
+                moved,
+                caret,
+                read_at_ms,
+                unit,
+                selection_changes,
+                content_changed,
+                new_selection,
+                same_line,
+                ..
+            } = *reply;
+            let (before_line, before_selection) = baseline_taken();
+            let mut caret = caret;
+            if read_at_ms != 0 {
+                caret.read_at_us = read_at_ms * 1_000;
+            }
+            set_baseline(&caret);
+            let read = Box::new(KeyRead {
+                unit: unit.unwrap_or_else(|| caret.line.clone()),
+                selection_changes,
+                content_changed,
+                new_selection,
+                before_unit: before_line.clone(),
+                before_line,
+                before_selection,
+                on_baseline_line: same_line.unwrap_or(true),
+                caret,
+            });
+            key_answer(
+                query_id,
+                if moved {
+                    KeyAnswer::Evidence(read)
+                } else {
+                    KeyAnswer::BoundAnswer(read)
+                },
+            )
+        }
+    }
+}
+
+/// A key's tagged answer, on node 5.
+fn key_answer(query_id: QueryId, answer: KeyAnswer) -> Input {
+    event(NormalizedEvent::KeyAnswered {
+        node_id: id(5),
+        tag: KeyTag(query_id),
+        answer,
+    })
+}
+
+/// A reply as a test gives it: a text reply, or a key's result, which the
+/// protocol sends as a tagged report.
+enum Reply {
+    Text(TextReply),
+    Key(Box<CaretReply>),
+    Ended,
+}
+
+impl From<TextReply> for Reply {
+    fn from(reply: TextReply) -> Self {
+        Self::Text(reply)
+    }
+}
+
+/// A key's result as these tests describe it.
+struct CaretReply {
+    moved: bool,
+    caret: CaretReport,
+    read_at_ms: u64,
+    unit: Option<TextChunk>,
+    selection_changes: Vec<SelectionChange>,
+    content_changed: bool,
+    new_selection: Option<SelectionChange>,
+    same_line: Option<bool>,
+}
+
+fn key_reply(reply: Box<CaretReply>) -> Reply {
+    Reply::Key(reply)
+}
+
+std::thread_local! {
+    /// The read the next key is judged from.
+    static BASELINE: std::cell::RefCell<Option<(TextChunk, Option<CaretSelection>)>> =
+        const { std::cell::RefCell::new(None) };
+    /// The next stamp a report takes.
+    static STAMP: std::cell::Cell<u64> = const { std::cell::Cell::new(1_000) };
+}
+
+/// A new, later stamp.
+fn stamp() -> u64 {
+    STAMP.with(|stamp| {
+        let next = stamp.get() + 1;
+        stamp.set(next);
+        next
+    })
+}
+
+fn set_baseline(caret: &CaretReport) {
+    BASELINE.with(|baseline| {
+        *baseline.borrow_mut() = Some((caret.line.clone(), caret.selection.clone()));
+    });
+}
+
+/// The baseline, as the outpost keeps it from the last caret it reported.
+fn baseline_taken() -> (TextChunk, Option<CaretSelection>) {
+    BASELINE.with(|baseline| {
+        baseline
+            .borrow()
+            .clone()
+            .unwrap_or_else(|| (line("", 100, 0), None))
+    })
+}
+
+fn selection_starting_on(selection: Selection, line: Option<Box<TextChunk>>) -> CaretSelection {
+    CaretSelection {
+        range: selection,
+        start_line: line,
+    }
+}
+
+fn caret_selection(selection: Selection) -> CaretSelection {
+    CaretSelection {
+        range: selection,
+        start_line: None,
+    }
+}
+
+/// `completed` for a reply to a text request.
+fn completed_text(query_id: QueryId, reply: TextReply) -> Input {
     text_answer(TraceId::from_raw(4), query_id, reply)
 }
 
@@ -222,16 +355,15 @@ fn message(message: Message) -> UtteranceSegment {
     UtteranceSegment::new(SegmentContent::Message(message))
 }
 
-fn caret_reply(moved: bool, line: TextChunk, unit: Option<TextChunk>) -> TextReply {
-    TextReply::Caret(Box::new(CaretReply {
+fn caret_reply(moved: bool, line: TextChunk, unit: Option<TextChunk>) -> Reply {
+    key_reply(Box::new(CaretReply {
         same_line: None,
-        removed: None,
         moved,
         read_at_ms: 0,
         caret: CaretReport {
             line,
             selection: None,
-            selection_line: None,
+            read_at_us: stamp(),
         },
         unit,
         selection_changes: Vec::new(),
@@ -246,20 +378,6 @@ fn an_arrow_key_watches_for_evidence_then_speaks_the_character_at_the_caret() {
     let effects = reduce(&mut state, &key(CaretMotion::NextCharacter, false));
     let request = request(&effects);
     assert_eq!(request.node_id, id(5));
-    let TextOp::AwaitCaret(watch) = &request.op else {
-        panic!("expected a caret wait, got {:?}", request.op);
-    };
-    assert_eq!(
-        watch.since,
-        Some(TextPosition {
-            anchor: TextAnchor(100),
-            offset: 0
-        })
-    );
-    // When the key was pressed, for the outpost to tell which of its caret
-    // reports came before it.
-    assert_eq!(watch.pressed_at_ms, KEY_PRESSED_AT);
-    assert_eq!(watch.unit, TextUnit::Character);
 
     let effects = reduce(
         &mut state,
@@ -301,20 +419,6 @@ fn a_backspace_in_a_run_of_one_character_watches_its_line() {
     let mut state = editing("******", 5);
     let effects = reduce(&mut state, &key(CaretMotion::Backspace, false));
     let request = request(&effects);
-    assert_eq!(
-        request.op,
-        TextOp::AwaitCaret(CaretWatch {
-            landing: false,
-            since: Some(TextPosition {
-                anchor: TextAnchor(100),
-                offset: 5
-            }),
-            pressed_at_ms: KEY_PRESSED_AT,
-            unit: TextUnit::Character,
-            compare: None,
-            deletes: true,
-        })
-    );
     let effects = reduce(
         &mut state,
         &completed(
@@ -331,44 +435,21 @@ fn a_backspace_in_a_run_of_one_character_watches_its_line() {
 }
 
 #[test]
-fn a_caret_key_that_moves_nothing_is_silent() {
-    // Control+Home at the start of the text: the application moves nothing
-    // and raises nothing, so the outpost's watch ends without evidence,
-    // when the next key replaces it, the focus moves, or its bound passes,
-    // and is answered `WatchEnded`. Nothing is said, unlike NVDA, which
-    // reads the line after its 100 ms wait.
+fn a_caret_key_that_moves_nothing_says_its_unit_at_its_bound() {
+    // Control+Home at the start of the text: the application moves nothing,
+    // so the final read finds no evidence, and the line is said as NVDA's
+    // script says it at its 100 ms.
     let mut state = editing("one two\n", 0);
     let effects = reduce(&mut state, &key(CaretMotion::Top, false));
     let request = request(&effects);
-    assert_eq!(
-        request.op,
-        TextOp::AwaitCaret(CaretWatch {
-            landing: false,
-            since: Some(TextPosition {
-                anchor: TextAnchor(100),
-                offset: 0
-            }),
-            pressed_at_ms: KEY_PRESSED_AT,
-            unit: TextUnit::Line,
-            compare: None,
-            deletes: false,
-        })
-    );
-    let effects = reduce(
-        &mut state,
-        &completed(request.query_id, TextReply::WatchEnded),
-    );
-    assert_eq!(effects, []);
-    // A reply without evidence says nothing either.
-    let effects = reduce(&mut state, &key(CaretMotion::Top, false));
     let effects = reduce(
         &mut state,
         &completed(
-            request_of(&effects),
+            request.query_id,
             caret_reply(false, line("one two\n", 100, 0), None),
         ),
     );
-    assert_eq!(effects, []);
+    assert_eq!(spoken(&effects), vec![UtteranceSegment::text("one two")]);
 }
 
 #[test]
@@ -377,8 +458,8 @@ fn a_caret_keys_watch_ends_with_its_answer_and_with_typing() {
     // second answer to the same request says nothing.
     let mut state = editing("abc\n", 0);
     let query = request_of(&reduce(&mut state, &key(CaretMotion::NextCharacter, false)));
-    let effects = reduce(&mut state, &completed(query, TextReply::WatchEnded));
-    assert_eq!(effects, []);
+    let effects = reduce(&mut state, &completed(query, Reply::Ended));
+    assert_eq!(effects, [Effect::BoundHeldKey(None)]);
     let effects = reduce(
         &mut state,
         &completed(query, caret_reply(true, line("abc\n", 100, 1), None)),
@@ -391,7 +472,12 @@ fn a_caret_keys_watch_ends_with_its_answer_and_with_typing() {
     // for the earlier key, and only keeps the caret current.
     let mut state = editing("abc\n", 0);
     let query = request_of(&reduce(&mut state, &key(CaretMotion::StartOfLine, false)));
-    let _ = reduce(&mut state, &Input::SpeechCancelled { at_ms: 50 });
+    let _ = reduce(
+        &mut state,
+        &Input::SpeechCancelled {
+            at_us: (50) * 1_000,
+        },
+    );
     let effects = reduce(&mut state, &typed("x"));
     assert_eq!(spoken(&effects), vec![character("x")]);
     let effects = reduce(
@@ -400,7 +486,7 @@ fn a_caret_keys_watch_ends_with_its_answer_and_with_typing() {
     );
     assert_eq!(
         effects,
-        [],
+        [Effect::BoundHeldKey(None)],
         "the later key's effect is not the key's answer"
     );
     // Its caret is now the newest, so a Backspace deletes what it shows.
@@ -425,7 +511,12 @@ fn a_caret_keys_watch_ends_with_its_answer_and_with_typing() {
     // An answer read before the later key was pressed is the key's own.
     let mut state = editing("abc\n", 0);
     let query = request_of(&reduce(&mut state, &key(CaretMotion::NextCharacter, false)));
-    let _ = reduce(&mut state, &Input::SpeechCancelled { at_ms: 50 });
+    let _ = reduce(
+        &mut state,
+        &Input::SpeechCancelled {
+            at_us: (50) * 1_000,
+        },
+    );
     let effects = reduce(
         &mut state,
         &completed(query, caret_reply_at(line("abc\n", 100, 1), 40)),
@@ -495,10 +586,6 @@ fn line_word_and_paragraph_keys_speak_their_unit() {
 
     // A provider without paragraphs sends no unit: the line is spoken.
     let effects = reduce(&mut state, &key(CaretMotion::NextParagraph, false));
-    let TextOp::AwaitCaret(watch) = request(&effects).op else {
-        panic!("expected a caret wait");
-    };
-    assert_eq!(watch.unit, TextUnit::Paragraph);
     let effects = reduce(
         &mut state,
         &completed(
@@ -543,16 +630,15 @@ fn shift_movement_speaks_what_was_selected_and_unselected() {
     let mut state = editing("hello, world\n", 5);
     let effects = reduce(&mut state, &key(CaretMotion::NextCharacter, true));
     let request = request(&effects);
-    assert!(matches!(request.op, TextOp::AwaitCaret(_)));
-    let reply = TextReply::Caret(Box::new(CaretReply {
+    assert!(matches!(request.op, TextOp::Key(_)));
+    let reply = key_reply(Box::new(CaretReply {
         same_line: None,
-        removed: None,
         moved: true,
         read_at_ms: 0,
         caret: CaretReport {
             line: line("hello, world\n", 100, 6),
             selection: None,
-            selection_line: None,
+            read_at_us: stamp(),
         },
         unit: None,
         selection_changes: vec![
@@ -609,9 +695,8 @@ fn a_movement_that_leaves_a_selection_speaks_the_unit_then_what_it_unselected() 
     };
     // Shift+Home selects "hello".
     let effects = reduce(&mut state, &key(CaretMotion::StartOfLine, true));
-    let reply = TextReply::Caret(Box::new(CaretReply {
+    let reply = key_reply(Box::new(CaretReply {
         same_line: None,
-        removed: None,
         moved: true,
         read_at_ms: 0,
         caret: CaretReport {
@@ -621,8 +706,8 @@ fn a_movement_that_leaves_a_selection_speaks_the_unit_then_what_it_unselected() 
                 100,
                 0,
             ),
-            selection: Some(selected),
-            selection_line: None,
+            selection: Some(caret_selection(selected)),
+            read_at_us: stamp(),
         },
         unit: None,
         selection_changes: Vec::new(),
@@ -636,9 +721,8 @@ fn a_movement_that_leaves_a_selection_speaks_the_unit_then_what_it_unselected() 
     // text unselected.
     let effects = reduce(&mut state, &key(CaretMotion::NextCharacter, false));
     let asked = request(&effects);
-    let reply = TextReply::Caret(Box::new(CaretReply {
+    let reply = key_reply(Box::new(CaretReply {
         same_line: None,
-        removed: None,
         moved: true,
         read_at_ms: 0,
         caret: CaretReport {
@@ -649,7 +733,7 @@ fn a_movement_that_leaves_a_selection_speaks_the_unit_then_what_it_unselected() 
                 5,
             ),
             selection: None,
-            selection_line: None,
+            read_at_us: stamp(),
         },
         unit: None,
         selection_changes: vec![SelectionChange {
@@ -678,9 +762,8 @@ fn a_movement_that_leaves_a_selection_speaks_the_unit_then_what_it_unselected() 
         0,
     );
     let effects = reduce(&mut state, &key(CaretMotion::NextWord, true));
-    let reply = TextReply::Caret(Box::new(CaretReply {
+    let reply = key_reply(Box::new(CaretReply {
         same_line: None,
-        removed: None,
         moved: true,
         read_at_ms: 0,
         caret: CaretReport {
@@ -690,8 +773,8 @@ fn a_movement_that_leaves_a_selection_speaks_the_unit_then_what_it_unselected() 
                 100,
                 5,
             ),
-            selection: Some(selected),
-            selection_line: None,
+            selection: Some(caret_selection(selected)),
+            read_at_us: stamp(),
         },
         unit: None,
         selection_changes: Vec::new(),
@@ -700,7 +783,7 @@ fn a_movement_that_leaves_a_selection_speaks_the_unit_then_what_it_unselected() 
     }));
     let _ = reduce(&mut state, &completed(request_of(&effects), reply));
     let effects = reduce(&mut state, &key(CaretMotion::Delete, false));
-    assert!(matches!(request(&effects).op, TextOp::AwaitCaret(_)));
+    assert!(matches!(request(&effects).op, TextOp::Key(_)));
 }
 
 /// A caret event for node 5 observed at `observed_at_ms`, in milliseconds
@@ -719,7 +802,7 @@ fn caret_event_at(state: &mut SrState, line: TextChunk, observed_at_ms: u64) -> 
                 caret: CaretReport {
                     line,
                     selection: None,
-                    selection_line: None,
+                    read_at_us: stamp(),
                 },
                 selection_changes: Vec::new(),
                 content_changed: false,
@@ -744,15 +827,14 @@ fn key_at(motion: CaretMotion, pressed_at_ms: u64) -> Input {
 }
 
 /// A caret reply the outpost read at `read_at_ms`.
-fn caret_reply_at(line: TextChunk, read_at_ms: u64) -> TextReply {
-    TextReply::Caret(Box::new(CaretReply {
+fn caret_reply_at(line: TextChunk, read_at_ms: u64) -> Reply {
+    key_reply(Box::new(CaretReply {
         same_line: None,
-        removed: None,
         moved: true,
         caret: CaretReport {
             line,
             selection: None,
-            selection_line: None,
+            read_at_us: stamp(),
         },
         read_at_ms,
         unit: None,
@@ -760,102 +842,6 @@ fn caret_reply_at(line: TextChunk, read_at_ms: u64) -> TextReply {
         content_changed: false,
         new_selection: None,
     }))
-}
-
-#[test]
-fn backspace_deletes_from_the_caret_it_found_though_its_own_caret_event_came_first() {
-    // From a flight recorder, Notepad under load: "xy" typed after "delta
-    // epsilon", then two Backspaces. The second key's path to Core was
-    // slower than Notepad's caret event for what it did.
-    let mut state = SrState::new();
-    focus(&mut state, node(5, Role::EditableText, StateSet::new()));
-    let _ = caret_event_at(&mut state, line("delta epsilonxy", 100, 15), 300);
-    let effects = reduce(&mut state, &key_at(CaretMotion::Backspace, 400));
-    let effects = reduce(
-        &mut state,
-        &completed(
-            request_of(&effects),
-            caret_reply_at(line("delta epsilonx", 100, 14), 420),
-        ),
-    );
-    assert_eq!(spoken(&effects), vec![character("y")]);
-    let _ = caret_event_at(&mut state, line("delta epsilonx", 100, 14), 491);
-    // The second Backspace's own caret event reaches Core before the key.
-    let _ = caret_event_at(&mut state, line("delta epsilon", 100, 13), 611);
-    let effects = reduce(&mut state, &key_at(CaretMotion::Backspace, 603));
-    let asked = request(&effects);
-    let TextOp::AwaitCaret(watch) = &asked.op else {
-        panic!("expected a caret wait, got {:?}", asked.op);
-    };
-    // The caret the key found, not the one it left.
-    assert_eq!(
-        watch.since,
-        Some(TextPosition {
-            anchor: TextAnchor(100),
-            offset: 14
-        })
-    );
-    let effects = reduce(
-        &mut state,
-        &completed(
-            asked.query_id,
-            caret_reply_at(line("delta epsilon", 100, 13), 615),
-        ),
-    );
-    assert_eq!(spoken(&effects), vec![character("x")]);
-
-    // Delete compares the text the key found at the caret: "a", not the
-    // "b" its own caret event already shows.
-    let mut state = SrState::new();
-    focus(&mut state, node(5, Role::EditableText, StateSet::new()));
-    let _ = caret_event_at(&mut state, line("abc", 100, 0), 100);
-    let _ = caret_event_at(&mut state, line("bc", 100, 0), 210);
-    let effects = reduce(&mut state, &key_at(CaretMotion::Delete, 200));
-    let TextOp::AwaitCaret(watch) = request(&effects).op else {
-        panic!("expected a caret wait");
-    };
-    assert_eq!(watch.compare.as_deref(), Some("a"));
-}
-
-#[test]
-fn backspace_deletes_from_the_caret_event_of_the_key_before_it() {
-    // The first Backspace's caret event, observed before the second key was
-    // pressed, is where the second key found the caret, though the first
-    // key's reply, read earlier, still showed "xy".
-    let mut state = SrState::new();
-    focus(&mut state, node(5, Role::EditableText, StateSet::new()));
-    let _ = caret_event_at(&mut state, line("delta epsilonxy", 100, 15), 300);
-    let effects = reduce(&mut state, &key_at(CaretMotion::Backspace, 400));
-    let _ = reduce(
-        &mut state,
-        &completed(
-            request_of(&effects),
-            caret_reply_at(line("delta epsilonxy", 100, 15), 401),
-        ),
-    );
-    let _ = caret_event_at(&mut state, line("delta epsilonx", 100, 14), 491);
-    let effects = reduce(&mut state, &key_at(CaretMotion::Backspace, 603));
-    let effects = reduce(
-        &mut state,
-        &completed(
-            request_of(&effects),
-            caret_reply_at(line("delta epsilon", 100, 13), 615),
-        ),
-    );
-    assert_eq!(spoken(&effects), vec![character("x")]);
-
-    // A report observed in the same millisecond as the key may already show
-    // what it did, so it is not the caret the key found.
-    let _ = caret_event_at(&mut state, line("delta epsilo", 100, 12), 700);
-    let effects = reduce(&mut state, &key_at(CaretMotion::Backspace, 700));
-    let effects = reduce(
-        &mut state,
-        &completed(
-            request_of(&effects),
-            caret_reply_at(line("delta epsilo", 100, 12), 705),
-        ),
-    );
-    assert_eq!(spoken(&effects), vec![character("n")]);
 }
 
 #[test]
@@ -873,57 +859,6 @@ fn a_late_reply_read_before_a_newer_caret_event_leaves_the_caret_newest() {
             caret_reply_at(line("abc", 100, 1), 450),
         ),
     );
-    // A key after both finds the newest caret.
-    let effects = reduce(&mut state, &key_at(CaretMotion::NextCharacter, 600));
-    let TextOp::AwaitCaret(watch) = request(&effects).op else {
-        panic!("expected a caret wait");
-    };
-    assert_eq!(
-        watch.since,
-        Some(TextPosition {
-            anchor: TextAnchor(100),
-            offset: 2
-        })
-    );
-}
-
-#[test]
-fn a_review_command_reads_the_live_caret_though_a_caret_keys_event_comes_late() {
-    // Down Arrow, then the current line read before the application's
-    // caret event for Down Arrow reaches Core.
-    let mut state = reviewing("one\n", 0);
-    let down = reduce(&mut state, &key(CaretMotion::NextLine, false));
-    let effects = reduce(&mut state, &command(ReviewCommand::ReviewCurrentLine, 0));
-    // Core still holds the caret on "one"; the outpost reads where it is.
-    let effects = read_at_caret(&mut state, &effects, line("two\n", 101, 0));
-    assert_eq!(spoken(&effects), vec![UtteranceSegment::text("two")]);
-    // The next command starts from the line that read found.
-    let effects = reduce(
-        &mut state,
-        &command(ReviewCommand::ReviewCurrentCharacter, 0),
-    );
-    assert!(
-        !effects
-            .iter()
-            .any(|effect| matches!(effect, Effect::Text(_)))
-    );
-    assert_eq!(spoken(&effects), vec![character("t")]);
-    // Down Arrow's own event and answer arrive late, and the review
-    // cursor follows the caret again.
-    caret_event(&mut state, 5, line("two\n", 101, 0));
-    let _ = reduce(
-        &mut state,
-        &completed(
-            request_of(&down),
-            caret_reply(true, line("two\n", 101, 0), None),
-        ),
-    );
-    let effects = reduce(
-        &mut state,
-        &command(ReviewCommand::ReviewCurrentCharacter, 0),
-    );
-    let effects = read_at_caret(&mut state, &effects, line("two\n", 101, 0));
-    assert_eq!(spoken(&effects), vec![character("t")]);
 }
 
 #[test]
@@ -1036,10 +971,6 @@ fn backspace_at_a_lines_start_names_the_line_break_it_deleted() {
 fn delete_compares_the_character_and_speaks_the_new_one() {
     let mut state = editing("abc\n", 1);
     let effects = reduce(&mut state, &key(CaretMotion::Delete, false));
-    let TextOp::AwaitCaret(watch) = request(&effects).op else {
-        panic!("expected a caret wait");
-    };
-    assert_eq!(watch.compare.as_deref(), Some("b"));
     let effects = reduce(
         &mut state,
         &completed(
@@ -1048,15 +979,6 @@ fn delete_compares_the_character_and_speaks_the_new_one() {
         ),
     );
     assert_eq!(spoken(&effects), vec![character("c")]);
-
-    // At the line's end the character compared is the line break, as the
-    // outpost reads the character at the caret.
-    let mut state = editing("abc\r", 3);
-    let effects = reduce(&mut state, &key(CaretMotion::Delete, false));
-    let TextOp::AwaitCaret(watch) = request(&effects).op else {
-        panic!("expected a caret wait");
-    };
-    assert_eq!(watch.compare.as_deref(), Some("\r"));
 }
 
 /// A caret report of node 5 with `line` and `selection`, carrying
@@ -1066,15 +988,17 @@ fn selection_event(
     (line, selection): (TextChunk, Option<Selection>),
     (changes, content_changed): (Vec<SelectionChange>, bool),
 ) -> Vec<Effect> {
+    let caret = CaretReport {
+        line,
+        selection: selection.map(caret_selection),
+        read_at_us: stamp(),
+    };
+    set_baseline(&caret);
     reduce(
         state,
         &event(NormalizedEvent::CaretMoved {
             node_id: id(5),
-            caret: CaretReport {
-                line,
-                selection,
-                selection_line: None,
-            },
+            caret,
             selection_changes: changes,
             content_changed,
             new_selection: None,
@@ -1084,16 +1008,15 @@ fn selection_event(
 
 /// The answer to a caret key: `line`, nothing selected, the selection
 /// removed in general terms.
-fn selection_removed_reply(line: TextChunk) -> TextReply {
-    TextReply::Caret(Box::new(CaretReply {
+fn selection_removed_reply(line: TextChunk) -> Reply {
+    key_reply(Box::new(CaretReply {
         same_line: None,
-        removed: None,
         moved: true,
         read_at_ms: 0,
         caret: CaretReport {
             line,
             selection: None,
-            selection_line: None,
+            read_at_us: stamp(),
         },
         unit: None,
         selection_changes: vec![SelectionChange {
@@ -1204,24 +1127,29 @@ fn backspace_over_a_selection_from_an_earlier_line_says_what_was_before_its_star
         (CaretMotion::BackspaceWord, &beta),
     ] {
         let mut state = editing(text, 0);
+        let caret = CaretReport {
+            line: line(text, 100, 0),
+            selection: Some(selection_starting_on(
+                Selection {
+                    start: TextPosition {
+                        anchor: TextAnchor(300),
+                        offset: 11,
+                    },
+                    end: TextPosition {
+                        anchor: TextAnchor(201),
+                        offset: 0,
+                    },
+                },
+                Some(Box::new(line(text, 300, 11))),
+            )),
+            read_at_us: stamp(),
+        };
+        set_baseline(&caret);
         let _ = reduce(
             &mut state,
             &event(NormalizedEvent::CaretMoved {
                 node_id: id(5),
-                caret: CaretReport {
-                    line: line(text, 100, 0),
-                    selection: Some(Selection {
-                        start: TextPosition {
-                            anchor: TextAnchor(300),
-                            offset: 11,
-                        },
-                        end: TextPosition {
-                            anchor: TextAnchor(201),
-                            offset: 0,
-                        },
-                    }),
-                    selection_line: Some(Box::new(line(text, 300, 11))),
-                },
+                caret,
                 selection_changes: Vec::new(),
                 content_changed: false,
                 new_selection: None,
@@ -1321,7 +1249,7 @@ fn a_caret_reports_selection_change_while_a_key_waits_is_said_after_the_keys_wor
         (line("alpha gamma\r\n", 100, 6), None),
         (removed.clone(), true),
     );
-    let effects = reduce(&mut state, &completed(asked, TextReply::WatchEnded));
+    let effects = reduce(&mut state, &completed(asked, Reply::Ended));
     assert_eq!(spoken(&effects), vec![message(Message::SelectionRemoved)]);
 }
 
@@ -1363,11 +1291,23 @@ fn a_caret_reports_held_change_is_said_with_an_answer_not_spoken() {
             (removed.clone(), true),
         );
         if later {
-            let _ = reduce(&mut state, &Input::SpeechCancelled { at_ms: 50 });
+            let _ = reduce(
+                &mut state,
+                &Input::SpeechCancelled {
+                    at_us: (50) * 1_000,
+                },
+            );
         }
         let effects = reduce(
             &mut state,
-            &completed(asked, caret_reply(later, line(after, 100, 6), None)),
+            &completed(
+                asked,
+                if later {
+                    caret_reply_at(line(after, 100, 6), 60)
+                } else {
+                    caret_reply(false, line(after, 100, 6), None)
+                },
+            ),
         );
         assert_eq!(
             spoken(&effects),
@@ -1380,70 +1320,6 @@ fn a_caret_reports_held_change_is_said_with_an_answer_not_spoken() {
             }
         );
     }
-}
-
-/// A key's answer that compared the selection with the one the outpost
-/// kept is the only one to carry that change, which no later answer
-/// carries again: Control+Backspace over the first word, which Notepad
-/// answers with nothing, then Backspace over it, whose effect the first
-/// key's watch may be answered with
-/// (`target/e2e-evidence/m42-selection-fixes-2026-10-22/`). The first
-/// key's answer, superseded by the second key, says nothing itself, and
-/// its change is said after the second key's words. An answer read once a
-/// later key that is not a caret key was pressed says its change too.
-#[test]
-fn a_superseded_answers_selection_change_is_said_after_the_next_keys_words() {
-    let text = "alpha beta gamma\r\n";
-    let first = TextChunk {
-        first: true,
-        ..line(text, 100, 6)
-    };
-    let mut state = editing(text, 0);
-    let _ = selection_event(
-        &mut state,
-        (first, Some(selection_from(0, true))),
-        (Vec::new(), false),
-    );
-    let effects = reduce(&mut state, &key(CaretMotion::BackspaceWord, false));
-    let superseded = request_of(&effects);
-    let effects = reduce(&mut state, &key(CaretMotion::Backspace, false));
-    let answered = request_of(&effects);
-    let effects = reduce(
-        &mut state,
-        &completed(
-            superseded,
-            selection_removed_reply(line("beta gamma\r\n", 100, 0)),
-        ),
-    );
-    assert_eq!(spoken(&effects), []);
-    let effects = reduce(
-        &mut state,
-        &completed(
-            answered,
-            caret_reply(true, line("beta gamma\r\n", 100, 0), None),
-        ),
-    );
-    assert_eq!(
-        spoken(&effects),
-        vec![message(Message::Blank), message(Message::SelectionRemoved)]
-    );
-
-    let mut state = editing(text, 0);
-    let _ = selection_event(
-        &mut state,
-        (line(text, 100, 6), Some(selection_from(6, true))),
-        (Vec::new(), false),
-    );
-    let effects = reduce(&mut state, &key(CaretMotion::Other, false));
-    let _ = reduce(&mut state, &Input::SpeechCancelled { at_ms: 50 });
-    let effects = reduce(
-        &mut state,
-        &completed(
-            request_of(&effects),
-            selection_removed_reply(line("alpha gamma\r\n", 100, 6)),
-        ),
-    );
-    assert_eq!(spoken(&effects), vec![message(Message::SelectionRemoved)]);
 }
 
 #[test]
@@ -1468,12 +1344,6 @@ fn a_newer_key_or_a_focus_change_supersedes_a_waiting_key() {
 fn caret_keys_are_watched_in_a_terminal_and_not_at_all_without_text() {
     let mut state = SrState::new();
     focus(&mut state, node(7, Role::Terminal, StateSet::new()));
-    let TextOp::AwaitCaret(watch) =
-        request(&reduce(&mut state, &key(CaretMotion::PreviousLine, false))).op
-    else {
-        panic!("expected a caret watch");
-    };
-    assert!(watch.since.is_none(), "no caret known yet");
 
     let mut state = SrState::new();
     focus(&mut state, node(8, Role::Button, StateSet::new()));
@@ -3067,7 +2937,7 @@ fn say_all_splits_a_paragraph_into_sentences_and_stops_on_a_key() {
     assert_eq!(third[0].1, "Three!");
     assert_eq!(effects.len(), 2, "{effects:?}");
     // A key stops it, dropping what was waiting; a late mark is ignored.
-    let effects = reduce(&mut state, &Input::SpeechCancelled { at_ms: 0 });
+    let effects = reduce(&mut state, &Input::SpeechCancelled { at_us: 0 });
     assert_eq!(effects, vec![Effect::KeepDisplayOn(false)]);
     assert_eq!(reduce(&mut state, &reached(third[0].0)), vec![]);
 }
@@ -3217,22 +3087,12 @@ fn a_caret_key_after_say_all_starts_from_where_say_all_moved_the_caret() {
     let _ = reduce(
         &mut state,
         &Input::SpeechCancelled {
-            at_ms: KEY_PRESSED_AT - 2,
+            at_us: (KEY_PRESSED_AT - 2) * 1_000,
         },
     );
     let _ = caret_event_at(&mut state, line("Two.\n", 102, 0), KEY_PRESSED_AT);
     let effects = reduce(&mut state, &key(CaretMotion::NextCharacter, false));
-    assert_eq!(
-        request(&effects).op,
-        TextOp::AwaitCaret(CaretWatch {
-            landing: false,
-            since: Some(TextPosition::at(TextAnchor(101))),
-            pressed_at_ms: KEY_PRESSED_AT,
-            unit: TextUnit::Character,
-            compare: None,
-            deletes: false,
-        })
-    );
+    assert!(matches!(request(&effects).op, TextOp::Key(_)));
 }
 
 #[test]
@@ -3263,7 +3123,7 @@ fn say_all_from_the_review_cursor_leaves_the_review_cursor_where_it_stopped() {
     );
     let pieces = say_all_pieces(&effects);
     let _ = reduce(&mut state, &reached(pieces[1].0));
-    let _ = reduce(&mut state, &Input::SpeechCancelled { at_ms: 0 });
+    let _ = reduce(&mut state, &Input::SpeechCancelled { at_us: 0 });
     // The next review command reads the line where reading stopped.
     let effects = reduce(&mut state, &command(ReviewCommand::ReviewCurrentLine, 0));
     assert_eq!(
@@ -3436,7 +3296,7 @@ fn say_all_splits_lines_at_their_last_sentence_end_and_joins_a_sentence_across_l
     // caret stays there, and a key stops say-all with it there.
     let effects = reduce(&mut state, &reached(marks_of(&third[0])[0]));
     assert_eq!(effects, vec![]);
-    let effects = reduce(&mut state, &Input::SpeechCancelled { at_ms: 0 });
+    let effects = reduce(&mut state, &Input::SpeechCancelled { at_us: 0 });
     assert_eq!(effects, vec![Effect::KeepDisplayOn(false)]);
     assert_eq!(reduce(&mut state, &reached(marks_of(&third[0])[1])), vec![]);
 }
@@ -3508,9 +3368,10 @@ fn caret_at_anchor(anchor: u64) -> FocusText {
         caret: CaretReport {
             line: line("gamma\n", anchor, 0),
             selection: None,
-            selection_line: None,
+            read_at_us: stamp(),
         },
         selected_text: None,
+        changes: verbatim_model::CaretChanges::default(),
     }
 }
 
@@ -3617,10 +3478,11 @@ fn caret_read(selection: Option<Selection>, text: &str, selected_text: Option<&s
     FocusText::Caret {
         caret: CaretReport {
             line: line(text, 100, 0),
-            selection,
-            selection_line: None,
+            selection: selection.map(caret_selection),
+            read_at_us: stamp(),
         },
         selected_text: selected_text.map(str::to_owned),
+        changes: verbatim_model::CaretChanges::default(),
     }
 }
 
@@ -3637,8 +3499,8 @@ fn caret_moved(selection: Option<Selection>, text: &str) -> Input {
         node_id: id(5),
         caret: CaretReport {
             line: line(text, 100, 0),
-            selection,
-            selection_line: None,
+            selection: selection.map(caret_selection),
+            read_at_us: stamp(),
         },
         selection_changes: Vec::new(),
         content_changed: false,
@@ -3741,8 +3603,8 @@ fn selection_report(
             node_id: id(5),
             caret: CaretReport {
                 line: line("alpha beta\r", 100, 5),
-                selection,
-                selection_line: None,
+                selection: selection.map(caret_selection),
+                read_at_us: stamp(),
             },
             selection_changes: changes
                 .iter()
@@ -3928,14 +3790,13 @@ fn a_selecting_keys_answer_after_a_text_change_says_the_whole_new_selection() {
     let mut state = editing("hello, world\n", 5);
     let effects = reduce(&mut state, &key(CaretMotion::NextCharacter, true));
     let request = request(&effects);
-    let reply = TextReply::Caret(Box::new(CaretReply {
+    let reply = key_reply(Box::new(CaretReply {
         same_line: None,
-        removed: None,
         moved: true,
         read_at_ms: 0,
         caret: CaretReport {
             line: line("hello, world\n", 100, 6),
-            selection: Some(Selection {
+            selection: Some(caret_selection(Selection {
                 start: TextPosition {
                     anchor: TextAnchor(100),
                     offset: 5,
@@ -3944,8 +3805,8 @@ fn a_selecting_keys_answer_after_a_text_change_says_the_whole_new_selection() {
                     anchor: TextAnchor(100),
                     offset: 6,
                 },
-            }),
-            selection_line: None,
+            })),
+            read_at_us: stamp(),
         },
         unit: None,
         selection_changes: vec![SelectionChange {
@@ -3977,14 +3838,13 @@ fn a_selecting_keys_answer_after_a_text_change_says_the_whole_new_selection() {
 fn a_keys_answer_removing_the_selection_with_its_text_says_only_selection_removed() {
     let mut state = editing("hello world\n", 0);
     let effects = reduce(&mut state, &key(CaretMotion::EndOfLine, true));
-    let reply = TextReply::Caret(Box::new(CaretReply {
+    let reply = key_reply(Box::new(CaretReply {
         same_line: None,
-        removed: None,
         moved: true,
         read_at_ms: 0,
         caret: CaretReport {
             line: line("hello world\n", 100, 0),
-            selection: Some(Selection {
+            selection: Some(caret_selection(Selection {
                 start: TextPosition {
                     anchor: TextAnchor(100),
                     offset: 0,
@@ -3993,8 +3853,8 @@ fn a_keys_answer_removing_the_selection_with_its_text_says_only_selection_remove
                     anchor: TextAnchor(100),
                     offset: 11,
                 },
-            }),
-            selection_line: None,
+            })),
+            read_at_us: stamp(),
         },
         unit: None,
         selection_changes: Vec::new(),
@@ -4003,15 +3863,14 @@ fn a_keys_answer_removing_the_selection_with_its_text_says_only_selection_remove
     }));
     let _ = reduce(&mut state, &completed(request_of(&effects), reply));
     let effects = reduce(&mut state, &key(CaretMotion::Other, false));
-    let reply = TextReply::Caret(Box::new(CaretReply {
+    let reply = key_reply(Box::new(CaretReply {
         same_line: Some(true),
-        removed: None,
         moved: true,
         read_at_ms: 0,
         caret: CaretReport {
             line: line("\n", 101, 0),
             selection: None,
-            selection_line: None,
+            read_at_us: stamp(),
         },
         unit: None,
         selection_changes: vec![SelectionChange {
@@ -4023,7 +3882,7 @@ fn a_keys_answer_removing_the_selection_with_its_text_says_only_selection_remove
         new_selection: None,
     }));
     let effects = reduce(&mut state, &completed(request_of(&effects), reply));
-    assert_eq!(effects.len(), 1, "one effect in {effects:?}");
+    assert_eq!(effects.len(), 2, "the speech and the deadline: {effects:?}");
     assert_eq!(spoken(&effects), vec![message(Message::SelectionRemoved)]);
 }
 
@@ -4036,14 +3895,13 @@ fn a_keys_answer_removing_the_selection_in_specific_terms_does_not_say_the_remov
     let text = "xbeta gammaelta epsilon\n";
     let mut state = editing(text, 0);
     let effects = reduce(&mut state, &key(CaretMotion::EndOfLine, true));
-    let reply = TextReply::Caret(Box::new(CaretReply {
+    let reply = key_reply(Box::new(CaretReply {
         same_line: None,
-        removed: None,
         moved: true,
         read_at_ms: 0,
         caret: CaretReport {
             line: line(text, 100, 0),
-            selection: Some(Selection {
+            selection: Some(caret_selection(Selection {
                 start: TextPosition {
                     anchor: TextAnchor(100),
                     offset: 0,
@@ -4052,8 +3910,8 @@ fn a_keys_answer_removing_the_selection_in_specific_terms_does_not_say_the_remov
                     anchor: TextAnchor(100),
                     offset: 24,
                 },
-            }),
-            selection_line: None,
+            })),
+            read_at_us: stamp(),
         },
         unit: None,
         selection_changes: Vec::new(),
@@ -4062,15 +3920,14 @@ fn a_keys_answer_removing_the_selection_in_specific_terms_does_not_say_the_remov
     }));
     let _ = reduce(&mut state, &completed(request_of(&effects), reply));
     let effects = reduce(&mut state, &key(CaretMotion::Other, false));
-    let reply = TextReply::Caret(Box::new(CaretReply {
+    let reply = key_reply(Box::new(CaretReply {
         same_line: Some(true),
-        removed: None,
         moved: true,
         read_at_ms: 0,
         caret: CaretReport {
             line: line("\n", 100, 0),
             selection: None,
-            selection_line: None,
+            read_at_us: stamp(),
         },
         unit: None,
         selection_changes: Vec::new(),
@@ -4078,7 +3935,7 @@ fn a_keys_answer_removing_the_selection_in_specific_terms_does_not_say_the_remov
         new_selection: None,
     }));
     let effects = reduce(&mut state, &completed(request_of(&effects), reply));
-    assert_eq!(effects, []);
+    assert_eq!(effects, [Effect::BoundHeldKey(None)]);
 }
 
 #[test]
@@ -4373,9 +4230,10 @@ fn a_focus_reports_the_formatting_at_its_line_start_afresh() {
             caret: CaretReport {
                 line,
                 selection: None,
-                selection_line: None,
+                read_at_us: stamp(),
             },
             selected_text: None,
+            changes: verbatim_model::CaretChanges::default(),
         },
     );
     assert_eq!(
@@ -4501,27 +4359,20 @@ fn the_silent_re_take_after_a_replacement_reports_formatting_afresh() {
                 caret: CaretReport {
                     line: bold_line("first bold\n", 200),
                     selection: None,
-                    selection_line: None,
+                    read_at_us: stamp(),
                 },
                 selected_text: None,
+                changes: verbatim_model::CaretChanges::default(),
             }),
         ),
     );
     assert_eq!(effects, Vec::new());
     // The replacement answers the key.
     let effects = reduce(&mut state, &key(CaretMotion::NextLine, false));
-    let answer = Input::Answered {
-        trace_id: TraceId::from_raw(4),
-        query_id: request_of(&effects),
-        outpost: OutpostId(2),
-        outcome: verbatim_model::protocol::QueryOutcome::Done(
-            verbatim_model::protocol::QueryResult::Text(caret_reply(
-                true,
-                bold_line("second line\n", 201),
-                None,
-            )),
-        ),
-    };
+    let answer = completed(
+        request_of(&effects),
+        caret_reply(true, bold_line("second line\n", 201), None),
+    );
     assert_eq!(
         spoken(&reduce(&mut state, &answer)),
         vec![
@@ -4599,7 +4450,10 @@ fn answered_alone(
         &completed(request_of(&effects), caret_reply(true, line, unit)),
     );
     assert!(
-        matches!(effects.as_slice(), [Effect::Speak(..)]),
+        matches!(
+            effects.as_slice(),
+            [Effect::Speak(..), Effect::BoundHeldKey(None)]
+        ),
         "speech alone: {effects:?}"
     );
     spoken(&effects)
@@ -5411,497 +5265,6 @@ fn verbatim_tab_abandoned_says_nothing() {
     assert_eq!(late, []);
 }
 
-/// A caret key the keyboard hook held back, pressed at `pressed_at_ms`.
-fn held_at(trace_id: TraceId, motion: CaretMotion, pressed_at_ms: u64) -> Input {
-    Input::HeldKey {
-        key_seq: verbatim_model::KeySeq::NONE_YET,
-        trace_id,
-        key: CaretKey {
-            motion,
-            select: false,
-        },
-        pressed_at_ms,
-    }
-}
-
-/// The caret read before a held key, read at `read_at_ms`.
-fn read_before(line: TextChunk, read_at_ms: u64) -> TextReply {
-    TextReply::Caret(Box::new(CaretReply {
-        same_line: None,
-        removed: None,
-        moved: false,
-        caret: CaretReport {
-            line,
-            selection: None,
-            selection_line: None,
-        },
-        read_at_ms,
-        unit: None,
-        selection_changes: Vec::new(),
-        content_changed: false,
-        new_selection: None,
-    }))
-}
-
-#[test]
-fn a_held_key_is_passed_on_once_its_caret_is_read_and_judged_from_that_caret() {
-    // Core last heard of the caret at the line's start; the application
-    // has since moved it to "l" without reporting it.
-    let mut state = SrState::new();
-    focus(&mut state, node(5, Role::EditableText, StateSet::new()));
-    let _ = caret_event_at(&mut state, line("Hello", 100, 0), 300);
-    let trace = TraceId::from_raw(12);
-    let effects = reduce(&mut state, &held_at(trace, CaretMotion::NextCharacter, 400));
-    // Nothing is passed on before the caret is read.
-    let asked = request(&effects);
-    assert_eq!(asked.op, TextOp::ReadCaret);
-    assert_eq!(
-        effects[..1],
-        [Effect::ForKey(
-            trace,
-            Box::new(Effect::BoundHeldKey(Some((trace, 150))))
-        )]
-    );
-    let effects = reduce(
-        &mut state,
-        &completed(asked.query_id, read_before(line("Hello", 101, 3), 410)),
-    );
-    // The key is watched from the caret read, taken as pressed just after
-    // the read, and then passed on, so the watch reaches the outpost
-    // before the key reaches the application.
-    assert_eq!(
-        effects[effects.len() - 2..],
-        [Effect::PassHeldKey(trace), Effect::BoundHeldKey(None)]
-    );
-    let TextOp::AwaitCaret(watch) = request(&effects).op else {
-        panic!("expected a caret wait, got {effects:?}");
-    };
-    assert_eq!(
-        watch.since,
-        Some(TextPosition {
-            anchor: TextAnchor(101),
-            offset: 3
-        })
-    );
-    assert_eq!(watch.pressed_at_ms, 411);
-    let effects = reduce(
-        &mut state,
-        &completed(
-            request_of(&effects),
-            caret_reply_at(line("Hello", 101, 4), 420),
-        ),
-    );
-    assert_eq!(spoken(&effects), vec![character("o")]);
-}
-
-#[test]
-fn held_keys_are_passed_on_in_order_whatever_their_reads_answer() {
-    let mut state = editing("Hello", 0);
-    let (first, second) = (TraceId::from_raw(13), TraceId::from_raw(14));
-    let effects = reduce(&mut state, &held_at(first, CaretMotion::NextCharacter, 400));
-    let reading = request(&effects).query_id;
-    // A key pressed while the first one's caret is read waits behind it.
-    let effects = reduce(
-        &mut state,
-        &held_at(second, CaretMotion::NextCharacter, 405),
-    );
-    assert_eq!(effects, []);
-    // A read that failed, or passed its bound, still passes the key on,
-    // watched as a key the hook passed itself, the watch asked for first.
-    // The second key waits for the first key's watch, no longer than 100 ms
-    // after the first key was passed on.
-    let effects = reduce(&mut state, &completed(reading, TextReply::Unanswered));
-    let [
-        Effect::Text(watched),
-        Effect::PassHeldKey(passed),
-        Effect::BoundHeldKey(Some((key, within_ms))),
-    ] = effects.as_slice()
-    else {
-        panic!(
-            "expected the first key's watch, then the key passed on, then the second key's wait: {effects:?}"
-        );
-    };
-    assert_eq!((*passed, *key, *within_ms), (first, second, 95));
-    let TextOp::AwaitCaret(watch) = &watched.op else {
-        panic!("expected the first key's watch: {watched:?}");
-    };
-    assert_eq!(watch.pressed_at_ms, 400);
-    // The next key's caret is read once the first key's watch is answered,
-    // here having ended without evidence.
-    let effects = reduce(
-        &mut state,
-        &completed(watched.query_id, TextReply::WatchEnded),
-    );
-    // The second key's read is made on its own key's behalf, though the
-    // first key's answer asked for it, so its answer and speech are its own.
-    let [Effect::ForKey(_, deadline), Effect::ForKey(key, read)] = effects.as_slice() else {
-        panic!("expected the second key's deadline and its read: {effects:?}");
-    };
-    assert_eq!(**deadline, Effect::BoundHeldKey(Some((*key, 150))));
-    let Effect::Text(read) = &**read else {
-        panic!("expected the second key's read: {read:?}");
-    };
-    assert_eq!(read.op, TextOp::ReadCaret);
-    assert_eq!(*key, second);
-    let effects = reduce(
-        &mut state,
-        &completed(read.query_id, read_before(line("Hello", 101, 1), 430)),
-    );
-    assert_eq!(
-        effects[effects.len() - 2..],
-        [Effect::PassHeldKey(second), Effect::BoundHeldKey(None)]
-    );
-
-    // With no focus whose caret is read, a held key is passed on at once.
-    let mut state = SrState::new();
-    focus(&mut state, node(6, Role::Button, StateSet::new()));
-    let third = TraceId::from_raw(15);
-    let effects = reduce(&mut state, &held_at(third, CaretMotion::NextCharacter, 500));
-    assert_eq!(
-        effects,
-        [Effect::ForKey(third, Box::new(Effect::PassHeldKey(third)))]
-    );
-}
-
-#[test]
-fn keys_pressed_behind_a_held_key_are_handled_after_it_in_order() {
-    // A held Backspace, then, while its caret is read, a typed "c" and a
-    // held Right Arrow: the "c" is echoed only once Backspace was passed
-    // on, on its own trace, and Right Arrow's caret is read once
-    // Backspace's watch has been answered.
-    let mut state = editing("ab", 2);
-    let (backspace, letter, right) = (
-        TraceId::from_raw(16),
-        TraceId::from_raw(17),
-        TraceId::from_raw(18),
-    );
-    let effects = reduce(&mut state, &held_at(backspace, CaretMotion::Backspace, 400));
-    let reading = request(&effects).query_id;
-    let typed_c = Input::CharacterTyped {
-        key_seq: verbatim_model::KeySeq::NONE_YET,
-        trace_id: letter,
-        text: "c".to_owned(),
-        at_ms: 0,
-    };
-    assert_eq!(reduce(&mut state, &typed_c), []);
-    assert_eq!(
-        reduce(&mut state, &held_at(right, CaretMotion::NextCharacter, 403)),
-        []
-    );
-    let effects = reduce(
-        &mut state,
-        &completed(reading, read_before(line("ab", 101, 2), 410)),
-    );
-    let order: Vec<String> = effects
-        .iter()
-        .map(|effect| match effect {
-            Effect::PassHeldKey(key) if *key == backspace => "pass Backspace".to_owned(),
-            Effect::Text(request) if matches!(request.op, TextOp::AwaitCaret(_)) => {
-                "watch Backspace".to_owned()
-            }
-            Effect::ForKey(key, effect) if *key == letter => match &**effect {
-                Effect::Speak(utterance, _) => format!("echo {:?}", utterance.segments),
-                other => format!("letter's {other:?}"),
-            },
-            Effect::ForKey(key, effect) if *key == right => match &**effect {
-                Effect::Text(request) if request.op == TextOp::ReadCaret => {
-                    "read before Right".to_owned()
-                }
-                other => format!("Right's {other:?}"),
-            },
-            other => format!("{other:?}"),
-        })
-        .collect();
-    assert_eq!(
-        order,
-        [
-            "watch Backspace".to_owned(),
-            "pass Backspace".to_owned(),
-            format!("echo {:?}", vec![character("c")]),
-            format!("{:?}", Effect::BoundHeldKey(Some((right, 100)))),
-        ]
-    );
-    let effects = reduce(
-        &mut state,
-        &completed(request_of(&effects), TextReply::WatchEnded),
-    );
-    let [Effect::ForKey(_, deadline), Effect::ForKey(key, read)] = effects.as_slice() else {
-        panic!("expected Right Arrow's deadline and its read: {effects:?}");
-    };
-    assert_eq!(**deadline, Effect::BoundHeldKey(Some((*key, 150))));
-    assert_eq!(*key, right);
-    assert!(matches!(&**read, Effect::Text(request) if request.op == TextOp::ReadCaret));
-}
-
-#[test]
-fn a_held_key_waits_for_the_key_aheads_answer_no_longer_than_the_bound() {
-    // Right Arrow, held, read and passed on at 411: its watch has no
-    // answer yet, as for a key that moved nothing.
-    let mut state = editing("Hello", 3);
-    let (first, second, third) = (
-        TraceId::from_raw(19),
-        TraceId::from_raw(20),
-        TraceId::from_raw(21),
-    );
-    let effects = reduce(&mut state, &held_at(first, CaretMotion::NextCharacter, 400));
-    let effects = reduce(
-        &mut state,
-        &completed(
-            request_of(&effects),
-            read_before(line("Hello", 101, 3), 410),
-        ),
-    );
-    assert_eq!(
-        effects[effects.len() - 2..],
-        [Effect::PassHeldKey(first), Effect::BoundHeldKey(None)]
-    );
-    let first_watch = request_of(&effects);
-    // A second Right Arrow pressed 20 ms later waits for that answer, and
-    // the shell is asked to end the wait 100 ms after the first key was
-    // passed on; a third pressed behind it asks nothing more.
-    let effects = reduce(
-        &mut state,
-        &held_at(second, CaretMotion::NextCharacter, 431),
-    );
-    assert_eq!(effects, [Effect::BoundHeldKey(Some((second, 80)))]);
-    assert_eq!(
-        reduce(&mut state, &held_at(third, CaretMotion::NextCharacter, 441)),
-        []
-    );
-    // The end of a wait for a key that is not waiting changes nothing.
-    assert_eq!(
-        reduce(&mut state, &Input::HeldKeyDue { trace_id: third }),
-        []
-    );
-    // At the bound, the second key's caret is read, on its own trace.
-    let effects = reduce(&mut state, &Input::HeldKeyDue { trace_id: second });
-    let [Effect::ForKey(_, deadline), Effect::ForKey(key, read)] = effects.as_slice() else {
-        panic!("expected the second key's deadline and its read: {effects:?}");
-    };
-    assert_eq!(**deadline, Effect::BoundHeldKey(Some((*key, 150))));
-    assert_eq!(*key, second);
-    let Effect::Text(read) = &**read else {
-        panic!("expected the second key's read: {read:?}");
-    };
-    assert_eq!(read.op, TextOp::ReadCaret);
-    // The first key's watch was marked as having a later key, so its late
-    // answer keeps the caret current and says nothing.
-    let effects = reduce(
-        &mut state,
-        &completed(first_watch, caret_reply_at(line("Hello", 101, 4), 520)),
-    );
-    assert_eq!(effects, []);
-    // The second key is passed on, and the third waits for its watch, the
-    // wait bounded 100 ms from the second's pass-on.
-    let effects = reduce(
-        &mut state,
-        &completed(read.query_id, read_before(line("Hello", 101, 4), 530)),
-    );
-    let [
-        Effect::Text(watched),
-        Effect::PassHeldKey(passed),
-        Effect::BoundHeldKey(Some((key, within_ms))),
-    ] = effects.as_slice()
-    else {
-        panic!("expected the second key's watch and pass-on, then the third's wait: {effects:?}");
-    };
-    assert!(matches!(watched.op, TextOp::AwaitCaret(_)));
-    assert_eq!((*passed, *key, *within_ms), (second, third, 100));
-
-    // A held key pressed once the bound has run out is read at once.
-    let mut state = editing("Hello", 3);
-    let effects = reduce(&mut state, &held_at(first, CaretMotion::NextCharacter, 400));
-    let effects = reduce(
-        &mut state,
-        &completed(
-            request_of(&effects),
-            read_before(line("Hello", 101, 3), 410),
-        ),
-    );
-    assert_eq!(
-        effects[effects.len() - 2..],
-        [Effect::PassHeldKey(first), Effect::BoundHeldKey(None)]
-    );
-    let effects = reduce(
-        &mut state,
-        &held_at(second, CaretMotion::NextCharacter, 511),
-    );
-    let [Effect::ForKey(_, deadline), Effect::ForKey(key, read)] = effects.as_slice() else {
-        panic!("expected the second key's deadline and its read: {effects:?}");
-    };
-    assert_eq!(**deadline, Effect::BoundHeldKey(Some((*key, 150))));
-    assert_eq!(*key, second);
-    assert!(matches!(&**read, Effect::Text(request) if request.op == TextOp::ReadCaret));
-}
-
-#[test]
-fn a_held_keys_read_past_its_deadline_is_given_up_and_the_key_passed_on() {
-    let mut state = editing("Hello", 3);
-    let trace = TraceId::from_raw(22);
-    let effects = reduce(&mut state, &held_at(trace, CaretMotion::NextCharacter, 400));
-    let reading = request(&effects).query_id;
-    // Another key's deadline changes nothing.
-    assert_eq!(
-        reduce(
-            &mut state,
-            &Input::HeldKeyDue {
-                trace_id: TraceId::from_raw(23)
-            }
-        ),
-        []
-    );
-    // At Core's own deadline the read is given up and the key passed on,
-    // watched as a key the hook passed itself, from the hook's time.
-    let effects = reduce(&mut state, &Input::HeldKeyDue { trace_id: trace });
-    let [
-        Effect::Withdraw {
-            outpost,
-            query_id: withdrawn,
-        },
-        Effect::Text(watched),
-        Effect::PassHeldKey(passed),
-    ] = effects.as_slice()
-    else {
-        panic!("expected the read given up, then the key's watch and pass-on: {effects:?}");
-    };
-    assert_eq!((*outpost, *withdrawn, *passed), (OUTPOST, reading, trace));
-    let TextOp::AwaitCaret(watch) = &watched.op else {
-        panic!("expected the key's watch: {watched:?}");
-    };
-    assert_eq!(watch.pressed_at_ms, 400);
-    // The read's late answer is dropped.
-    assert_eq!(
-        reduce(
-            &mut state,
-            &completed(reading, read_before(line("Hello", 101, 3), 600)),
-        ),
-        []
-    );
-}
-
-/// A review command pressed as key `seq`.
-fn command_as(trace_id: TraceId, seq: u64, command: ReviewCommand) -> Input {
-    command_at(trace_id, seq, command, 0)
-}
-
-/// A review command pressed as key `seq` at `pressed_at_ms`.
-fn command_at(trace_id: TraceId, seq: u64, command: ReviewCommand, pressed_at_ms: u64) -> Input {
-    Input::Command {
-        pressed_at_ms,
-        trace_id,
-        key_seq: verbatim_model::KeySeq::new(seq),
-        command,
-        repeat: 0,
-    }
-}
-
-/// Down Arrow, held as key 1 on "line one", then the current-line command
-/// pressed as key 2 while Down Arrow's caret is read: the command waits.
-/// The read's answer passes Down Arrow on, watched, and bounds the
-/// command's wait 100 ms after the pass. Returns the state, the command's
-/// trace and Down Arrow's watch.
-fn command_behind_a_held_key() -> (SrState, TraceId, QueryId) {
-    let mut state = editing("line one\n", 0);
-    let (down, current) = (TraceId::from_raw(24), TraceId::from_raw(25));
-    let mut held = held_at(down, CaretMotion::NextLine, 400);
-    if let Input::HeldKey { key_seq, .. } = &mut held {
-        *key_seq = verbatim_model::KeySeq::new(1);
-    }
-    let effects = reduce(&mut state, &held);
-    let reading = request(&effects).query_id;
-    assert_eq!(
-        reduce(
-            &mut state,
-            &command_as(current, 2, ReviewCommand::ReviewCurrentLine)
-        ),
-        []
-    );
-    let effects = reduce(
-        &mut state,
-        &completed(reading, read_before(line("line one\n", 100, 0), 410)),
-    );
-    let [
-        Effect::Text(watched),
-        Effect::PassHeldKey(passed),
-        Effect::BoundHeldKey(Some((key, within_ms))),
-    ] = effects.as_slice()
-    else {
-        panic!("expected Down Arrow's watch and pass-on, then the command's wait: {effects:?}");
-    };
-    assert!(matches!(watched.op, TextOp::AwaitCaret(_)));
-    assert_eq!((*passed, *key, *within_ms), (down, current, 100));
-    (state, current, watched.query_id)
-}
-
-/// The command's read of the line at the caret, made on its own behalf,
-/// answered with "line two" under the command's trace, as the shell
-/// answers a request it sent under that trace.
-fn answer_the_commands_read(
-    state: &mut SrState,
-    effects: &[Effect],
-    current: TraceId,
-    cleared: bool,
-) {
-    let (Some(Effect::ForKey(key, read)), rest) =
-        (effects.first(), effects.get(1..).unwrap_or(&[]))
-    else {
-        panic!("expected the command's read: {effects:?}");
-    };
-    let wanted: &[Effect] = if cleared {
-        &[Effect::BoundHeldKey(None)]
-    } else {
-        &[]
-    };
-    assert_eq!(rest, wanted, "after the command's read: {effects:?}");
-    assert_eq!(*key, current);
-    let Effect::Text(read) = &**read else {
-        panic!("expected the command's read: {read:?}");
-    };
-    assert_eq!(
-        read.op,
-        TextOp::Read(TextRead {
-            at: TextPoint::Caret,
-            movement: None,
-            unit: TextUnit::Line,
-        })
-    );
-    let effects = reduce(
-        state,
-        &text_answer(
-            current,
-            read.query_id,
-            TextReply::Read {
-                moved: 0,
-                chunk: line("line two\n", 101, 0),
-            },
-        ),
-    );
-    let [Effect::Speak(utterance, key)] = effects.as_slice() else {
-        panic!("expected the line spoken alone: {effects:?}");
-    };
-    assert_eq!(utterance.segments, [UtteranceSegment::text("line two")]);
-    assert_eq!(*key, Some(verbatim_model::KeySeq::new(2)));
-}
-
-#[test]
-fn a_review_command_pressed_while_a_caret_key_is_held_runs_after_its_read_pass_and_watch() {
-    let (mut state, current, watch) = command_behind_a_held_key();
-    // Down Arrow's watch is answered with the caret on "line two": marked
-    // as having a later key, it says nothing, and the command runs.
-    let effects = reduce(
-        &mut state,
-        &completed(watch, caret_reply_at(line("line two\n", 101, 0), 420)),
-    );
-    answer_the_commands_read(&mut state, &effects, current, true);
-}
-
-#[test]
-fn a_command_behind_a_held_key_runs_at_the_bound_without_the_watch() {
-    let (mut state, current, _watch) = command_behind_a_held_key();
-    let effects = reduce(&mut state, &Input::HeldKeyDue { trace_id: current });
-    answer_the_commands_read(&mut state, &effects, current, false);
-}
-
 /// The key numbers each utterance of `effects` carries, in order.
 fn stamps(effects: &[Effect]) -> Vec<Option<verbatim_model::KeySeq>> {
     effects
@@ -5911,6 +5274,218 @@ fn stamps(effects: &[Effect]) -> Vec<Option<verbatim_model::KeySeq>> {
             _ => None,
         })
         .collect()
+}
+
+/// A held key, its trace `trace_id`.
+fn held_at(trace_id: TraceId, motion: CaretMotion, pressed_at_ms: u64) -> Input {
+    Input::HeldKey {
+        trace_id,
+        key_seq: verbatim_model::KeySeq::NONE_YET,
+        key: CaretKey {
+            motion,
+            select: false,
+        },
+        pressed_at_ms,
+    }
+}
+
+/// The answer of a held key's before read, finding `line`.
+fn read_before(line: TextChunk, read_at_ms: u64) -> TextReply {
+    TextReply::Key(Box::new(verbatim_model::KeyStarted::Read(Box::new(
+        verbatim_model::CaretReply {
+            caret: CaretReport {
+                line,
+                selection: None,
+                read_at_us: read_at_ms * 1_000,
+            },
+            unit: None,
+            selection_changes: Vec::new(),
+            content_changed: false,
+            new_selection: None,
+        },
+    ))))
+}
+
+/// The orders to a key's watch among `effects`.
+fn watch_orders(effects: &[Effect]) -> Vec<verbatim_model::WatchOrder> {
+    effects
+        .iter()
+        .filter_map(|effect| match own(effect) {
+            Effect::WatchOrder { order, .. } => Some(*order),
+            _ => None,
+        })
+        .collect()
+}
+
+/// A field on `text` at `offset`, and a held key of `motion` passed on after
+/// its before read, begun at 500 ms, found the same. Returns the state, and
+/// the key's request.
+fn key_passed_on(text: &str, offset: u32, motion: CaretMotion) -> (SrState, QueryId) {
+    let mut state = editing(text, offset);
+    let query = request_of(&reduce(
+        &mut state,
+        &held_at(TraceId::from_raw(2), motion, 499),
+    ));
+    let effects = reduce(
+        &mut state,
+        &completed(query, read_before(line(text, 100, offset), 500)),
+    );
+    assert!(
+        effects
+            .iter()
+            .any(|effect| matches!(own(effect), Effect::PassHeldKey(_))),
+        "passed on: {effects:?}"
+    );
+    (state, query)
+}
+
+/// The key's 100 ms passing, the input the deadline brings.
+fn key_bound_passed() -> Input {
+    Input::HeldKeyDue {
+        trace_id: TraceId::from_raw(2),
+        at_us: 600_001,
+    }
+}
+
+#[test]
+fn a_keys_bound_with_no_evidence_orders_the_final_read() {
+    let (mut state, _) = key_passed_on("abc\n", 0, CaretMotion::NextCharacter);
+    let effects = reduce(&mut state, &key_bound_passed());
+    assert_eq!(
+        watch_orders(&effects),
+        [verbatim_model::WatchOrder::FinalRead]
+    );
+}
+
+#[test]
+fn evidence_before_a_keys_bound_leaves_no_final_read() {
+    let (mut state, query) = key_passed_on("abc\n", 0, CaretMotion::NextCharacter);
+    let effects = reduce(
+        &mut state,
+        &completed(query, caret_reply(true, line("abc\n", 100, 1), None)),
+    );
+    assert_eq!(spoken(&effects), vec![character("b")]);
+    assert_eq!(watch_orders(&reduce(&mut state, &key_bound_passed())), []);
+}
+
+#[test]
+fn a_focus_moving_within_the_bound_ends_the_watch_after_the_units_words() {
+    let (mut state, _) = key_passed_on("abc\n", 0, CaretMotion::NextCharacter);
+    let effects = reduce(
+        &mut state,
+        &focus_event(node(6, Role::Button, StateSet::new()), false, None),
+    );
+    assert_eq!(watch_orders(&effects), [verbatim_model::WatchOrder::End]);
+    assert_eq!(spoken(&effects)[0], character("a"));
+}
+
+#[test]
+fn a_focus_moving_within_a_backspaces_bound_says_the_removed_text() {
+    let (mut state, _) = key_passed_on("abc\n", 2, CaretMotion::Backspace);
+    let effects = reduce(
+        &mut state,
+        &focus_event(node(6, Role::Button, StateSet::new()), false, None),
+    );
+    assert_eq!(watch_orders(&effects), [verbatim_model::WatchOrder::End]);
+    assert_eq!(spoken(&effects)[0], character("b"));
+}
+
+#[test]
+fn a_new_window_taking_the_focus_cuts_the_keys_words() {
+    let (mut state, _) = key_passed_on("abc\n", 0, CaretMotion::NextCharacter);
+    let effects = reduce(
+        &mut state,
+        &focus_event(node(6, Role::Button, StateSet::new()), true, None),
+    );
+    let words = effects
+        .iter()
+        .position(|effect| spoken(std::slice::from_ref(effect)).first() == Some(&character("a")))
+        .expect("the unit is said");
+    let cut = effects
+        .iter()
+        .position(|effect| matches!(own(effect), Effect::StopSpeech))
+        .expect("the new window cuts speech");
+    assert!(words < cut, "{effects:?}");
+}
+
+#[test]
+fn a_focus_moving_while_the_before_read_runs_leaves_the_key_silent() {
+    let mut state = editing("abc\n", 0);
+    let query = request_of(&reduce(
+        &mut state,
+        &held_at(TraceId::from_raw(2), CaretMotion::NextCharacter, 499),
+    ));
+    focus(&mut state, node(6, Role::Button, StateSet::new()));
+    let effects = reduce(
+        &mut state,
+        &completed(query, read_before(line("abc\n", 100, 0), 500)),
+    );
+    assert_eq!(spoken(&effects), []);
+}
+
+#[test]
+fn a_selection_changed_before_a_keys_read_is_said_as_it_is_passed_on() {
+    let mut state = editing("alpha\n", 0);
+    let query = request_of(&reduce(
+        &mut state,
+        &held_at(TraceId::from_raw(2), CaretMotion::NextCharacter, 499),
+    ));
+    let TextReply::Key(mut started) = read_before(line("alpha\n", 100, 0), 500) else {
+        unreachable!("a key's answer");
+    };
+    let verbatim_model::KeyStarted::Read(read) = started.as_mut() else {
+        unreachable!("a read");
+    };
+    read.selection_changes = vec![SelectionChange {
+        selected: true,
+        text: "alpha".to_owned(),
+        characters: 5,
+    }];
+    let effects = reduce(&mut state, &completed(query, TextReply::Key(started)));
+    assert_eq!(
+        spoken(&effects),
+        vec![UtteranceSegment::new(SegmentContent::Phrase(
+            Phrase::Selected(SelectionText::Text("alpha".to_owned()))
+        ))]
+    );
+}
+
+#[test]
+fn a_repeated_focus_says_the_selection_it_found_once() {
+    let mut state = SrState::new();
+    let _ = focus_with_value(&mut state, StateSet::new(), "gamma\n", caret_at_anchor(100));
+    let selected = |anchor| {
+        let FocusText::Caret {
+            caret,
+            selected_text,
+            ..
+        } = caret_at_anchor(anchor)
+        else {
+            unreachable!("a caret");
+        };
+        FocusText::Caret {
+            caret,
+            selected_text,
+            changes: verbatim_model::CaretChanges {
+                selection_changes: vec![SelectionChange {
+                    selected: true,
+                    text: "gamma".to_owned(),
+                    characters: 5,
+                }],
+                ..verbatim_model::CaretChanges::default()
+            },
+        }
+    };
+    assert_eq!(
+        focus_with_value(&mut state, StateSet::new(), "gamma\n", selected(200)),
+        vec![vec![UtteranceSegment::new(SegmentContent::Phrase(
+            Phrase::Selected(SelectionText::Text("gamma".to_owned()))
+        ))]]
+    );
+    assert_eq!(
+        focus_with_value(&mut state, StateSet::new(), "gamma\n", caret_at_anchor(300)),
+        Vec::<Vec<UtteranceSegment>>::new()
+    );
 }
 
 #[test]
@@ -5979,169 +5554,4 @@ fn speech_of_an_unkeyed_input_or_a_forgotten_key_carries_no_number() {
         );
     }
     assert_eq!(stamps(&reduce(&mut state, &copied(first))), [None]);
-}
-
-#[test]
-fn the_time_menu_and_shell_list_scripts_ask_the_shell_and_wait_behind_a_held_key() {
-    let script = |script, repeat| Input::Script {
-        pressed_at_ms: 0,
-        trace_id: TraceId::from_raw(31),
-        key_seq: verbatim_model::KeySeq::NONE_YET,
-        repeat,
-        script,
-    };
-    let mut state = SrState::new();
-    for (input, effect) in [
-        (
-            script(Script::ReportTime, 1),
-            Effect::ReadClock { repeat: 1 },
-        ),
-        (script(Script::ShowMenu, 0), Effect::Show(GuiRequest::Menu)),
-        (
-            script(Script::ShellList, 0),
-            Effect::Show(GuiRequest::ShellList(ShellItemKind::SystemTray)),
-        ),
-        (
-            script(Script::ShellList, 1),
-            Effect::Show(GuiRequest::ShellList(ShellItemKind::Taskbar)),
-        ),
-    ] {
-        assert_eq!(reduce(&mut state, &input), [effect]);
-    }
-    // Each waits behind a held key, and runs once it was passed on and its
-    // watch answered, on its own behalf.
-    for (script, effect) in [
-        (Script::ReportTime, Effect::ReadClock { repeat: 0 }),
-        (Script::ShowMenu, Effect::Show(GuiRequest::Menu)),
-        (
-            Script::ShellList,
-            Effect::Show(GuiRequest::ShellList(ShellItemKind::SystemTray)),
-        ),
-    ] {
-        let mut state = editing("line one\n", 0);
-        let effects = reduce(
-            &mut state,
-            &held_at(TraceId::from_raw(32), CaretMotion::NextLine, 400),
-        );
-        let reading = request(&effects).query_id;
-        let trace_id = TraceId::from_raw(33);
-        let input = Input::Script {
-            pressed_at_ms: 0,
-            trace_id,
-            key_seq: verbatim_model::KeySeq::NONE_YET,
-            repeat: 0,
-            script,
-        };
-        assert_eq!(reduce(&mut state, &input), []);
-        let effects = reduce(
-            &mut state,
-            &completed(reading, read_before(line("line one\n", 100, 0), 410)),
-        );
-        let watch = request_of(&effects);
-        let effects = reduce(
-            &mut state,
-            &completed(watch, caret_reply_at(line("line two\n", 101, 0), 420)),
-        );
-        assert_eq!(
-            effects,
-            [
-                Effect::ForKey(trace_id, Box::new(effect)),
-                Effect::BoundHeldKey(None)
-            ]
-        );
-    }
-}
-
-#[test]
-fn a_command_pressed_while_a_passed_keys_watch_is_open_waits_for_it_within_the_bound() {
-    // Down Arrow, held, read and passed on at 411; its watch is open.
-    let mut state = editing(
-        "line one
-",
-        0,
-    );
-    let down = TraceId::from_raw(34);
-    let effects = reduce(&mut state, &held_at(down, CaretMotion::NextLine, 400));
-    let effects = reduce(
-        &mut state,
-        &completed(
-            request_of(&effects),
-            read_before(
-                line(
-                    "line one
-",
-                    100,
-                    0,
-                ),
-                410,
-            ),
-        ),
-    );
-    assert_eq!(
-        effects[effects.len() - 2..],
-        [Effect::PassHeldKey(down), Effect::BoundHeldKey(None)]
-    );
-    let watch = request_of(&effects);
-    // The current-line command pressed at 420 waits for the watch, no
-    // later than 100 ms after the pass.
-    let current = TraceId::from_raw(35);
-    assert_eq!(
-        reduce(
-            &mut state,
-            &command_at(current, 2, ReviewCommand::ReviewCurrentLine, 420)
-        ),
-        [Effect::BoundHeldKey(Some((current, 91)))]
-    );
-    assert!(state.holds_inputs_back());
-    // The watch's answer, the caret on "line two", says nothing, and the
-    // command then reads the line the key moved to.
-    let effects = reduce(
-        &mut state,
-        &completed(
-            watch,
-            caret_reply_at(
-                line(
-                    "line two
-",
-                    101,
-                    0,
-                ),
-                430,
-            ),
-        ),
-    );
-    answer_the_commands_read(&mut state, &effects, current, true);
-
-    // A command pressed past the bound runs at once.
-    let mut state = editing(
-        "line one
-",
-        0,
-    );
-    let effects = reduce(&mut state, &held_at(down, CaretMotion::NextLine, 400));
-    let _ = reduce(
-        &mut state,
-        &completed(
-            request_of(&effects),
-            read_before(
-                line(
-                    "line one
-",
-                    100,
-                    0,
-                ),
-                410,
-            ),
-        ),
-    );
-    let late = TraceId::from_raw(36);
-    let effects = reduce(
-        &mut state,
-        &command_at(late, 2, ReviewCommand::ReviewCurrentLine, 520),
-    );
-    let [Effect::ForKey(key, read)] = effects.as_slice() else {
-        panic!("expected the command's read at once: {effects:?}");
-    };
-    assert_eq!(*key, late);
-    assert!(matches!(&**read, Effect::Text(_)));
 }

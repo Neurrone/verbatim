@@ -120,7 +120,7 @@ fn caret(offset: u32, changes: &[(bool, &str)]) -> NormalizedEvent {
         caret: CaretReport {
             line: text_line(offset),
             selection: None,
-            selection_line: None,
+            read_at_us: 0,
         },
         selection_changes: changes
             .iter()

@@ -21,7 +21,7 @@
 //!   (`TerminalColours`) and the screen's shape (`TerminalShape`) are
 //!   answered, a colours request with a read with colours at once when a
 //!   read began after the key without them.
-//! - The read before a held key (`ReadCaret`) is a snapshot with the caret.
+//! - The read before a held key (`KeyStart::ReadFirst`) is a snapshot with the caret.
 //! - A caret event waiting ahead of a text change in one batch is planned
 //!   after it, so the terminal is read once, the caret with the text.
 //! - Held with its text changed, a caret event is only noted, and the read
@@ -70,16 +70,15 @@ mod common;
 #[path = "common/harness.rs"]
 mod harness;
 
-use std::time::{Duration, Instant};
-
 use verbatim_ia2::WinEventKind;
 use verbatim_model::protocol::DeliveredFact;
 use verbatim_model::protocol::{
     FocusedControl, OutpostToCore, Query, QueryOutcome, QueryResult, RequestId,
 };
 use verbatim_model::{
-    CaretWatch, FocusText, NodeId, NormalizedEvent, PropertyChange, Role, TerminalScope,
-    TerminalSnapshot, TextOp, TextPosition, TextReply, TextUnit,
+    CaretMotion, FocusText, KeyAnswer, KeyRead, KeyRequest, KeyStart, KeyStarted, KeyTag, NodeId,
+    NormalizedEvent, PropertyChange, QueryId, Role, TerminalScope, TerminalSnapshot, TextOp,
+    TextReply, WatchKind,
 };
 use verbatim_outpost::Heard;
 use verbatim_process::arguments::OutpostOptions;
@@ -298,6 +297,56 @@ fn focus_now(outpost: &mut OutpostUnderTest) -> FocusedControl {
     assert!(first.caret.is_some());
     outpost.settled();
     control
+}
+
+/// A key's request of terminal `node`, with its tag.
+fn key(motion: CaretMotion, start: KeyStart) -> (KeyTag, TextOp) {
+    let tag = KeyTag(QueryId(1));
+    (
+        tag,
+        TextOp::Key(KeyRequest {
+            tag,
+            kind: WatchKind::Terminal,
+            unit: motion.unit(),
+            motion,
+            start,
+        }),
+    )
+}
+
+/// A key's watch of `node` from its last read, its request answered.
+fn watch_key(outpost: &mut OutpostUnderTest, node: NodeId, motion: CaretMotion) -> KeyTag {
+    let (tag, op) = key(motion, KeyStart::FromLastRead { withdrawn: None });
+    let request = ask(outpost, node, op);
+    assert_eq!(
+        answer_to(outpost, request),
+        TextReply::Key(Box::new(KeyStarted::Watching))
+    );
+    tag
+}
+
+/// The tagged answer to key `tag`, which must be the outpost's next message.
+fn key_answer(outpost: &OutpostUnderTest, tag: KeyTag) -> KeyAnswer {
+    match outpost.next() {
+        OutpostToCore::Event {
+            event:
+                NormalizedEvent::KeyAnswered {
+                    tag: answered,
+                    answer,
+                    ..
+                },
+            ..
+        } if answered == tag => answer,
+        other => panic!("the outpost said {other:?}, not the answer to the key"),
+    }
+}
+
+/// The evidence answering key `tag`.
+fn evidence(outpost: &OutpostUnderTest, tag: KeyTag) -> KeyRead {
+    match key_answer(outpost, tag) {
+        KeyAnswer::Evidence(read) => *read,
+        other => panic!("the watch was not answered with the caret: {other:?}"),
+    }
 }
 
 /// Asks the outpost `op` about `node`.
@@ -600,18 +649,7 @@ fn the_console_hosts_system_caret_is_not_its_caret_event() {
 /// then the read.
 fn a_read_covering_a_caret_event_answers_a_watch_with_no_caret() {
     let (mut app, mut outpost, term) = start("mockapp-terminal-covered-caret");
-    let key = ask(
-        &mut outpost,
-        term,
-        TextOp::AwaitCaret(CaretWatch {
-            landing: false,
-            since: None,
-            pressed_at_ms: 0,
-            unit: TextUnit::Character,
-            compare: None,
-            deletes: false,
-        }),
-    );
+    let key = watch_key(&mut outpost, term, CaretMotion::NextCharacter);
     // The watch is open: nothing is said.
     outpost.settled();
     outpost.hold_worker();
@@ -620,15 +658,12 @@ fn a_read_covering_a_caret_event_answers_a_watch_with_no_caret() {
     write_text(&mut app, &["three"]);
     heard_caret_and_text(&outpost);
     outpost.release_worker();
-    let TextReply::Caret(reply) = answer_to(&outpost, key) else {
-        panic!("the watch was not answered with the caret");
-    };
-    assert!(reply.moved);
+    let reply = evidence(&outpost, key);
     assert_eq!(
         (reply.caret.line.text.as_str(), reply.caret.line.offset),
         ("one                 \r\n", 1)
     );
-    assert_eq!(reply.unit.expect("the character").text, "n");
+    assert_eq!(reply.unit.text, "n");
     assert_eq!(text(&reported(&outpost, term)), after(&["three"]));
     outpost.settled();
     drop(outpost);
@@ -784,11 +819,7 @@ fn watch_read_while_the_terminal_writes(name: &str, options: OutpostOptions) {
     app.send(&format!("caret term {}", 2 * row + 7));
     app.send("caret-event term");
     let caret = reported(&outpost, term).caret.expect("the read's caret");
-    let since = TextPosition {
-        anchor: caret.line.start,
-        offset: caret.line.offset,
-    };
-    assert_eq!(since.offset, 7);
+    assert_eq!(caret.line.offset, 7);
     outpost.settled();
     app.send(&format!(
         "set-text term {}",
@@ -796,25 +827,11 @@ fn watch_read_while_the_terminal_writes(name: &str, options: OutpostOptions) {
     ));
     app.send(&format!("caret term {}", 2 * row + 15));
     app.send("write-on-read term x");
-    let key = ask(
-        &mut outpost,
-        term,
-        TextOp::AwaitCaret(CaretWatch {
-            landing: false,
-            since: Some(since),
-            pressed_at_ms: 0,
-            unit: TextUnit::Line,
-            compare: None,
-            deletes: false,
-        }),
-    );
+    let key = watch_key(&mut outpost, term, CaretMotion::NextLine);
     // The read saw the caret move while it read: nothing is said.
     outpost.settled();
     app.send("text-changed term");
-    let TextReply::Caret(reply) = answer_to(&outpost, key) else {
-        panic!("the watch was not answered with the caret");
-    };
-    assert!(reply.moved);
+    let reply = evidence(&outpost, key);
     assert_eq!(
         (reply.caret.line.text.as_str(), reply.caret.line.offset),
         ("ready> echo onex    \r\n", 16)
@@ -968,12 +985,13 @@ fn a_colours_request_after_a_read_without_them_reads_at_once() {
     app.quit();
 }
 
-/// The read before a held key (`ReadCaret`) in a terminal is a read of it,
+/// The read before a held key (`KeyStart::ReadFirst`) in a terminal is a read of it,
 /// whose caret answers the request.
 fn the_read_before_a_held_key_is_a_read_with_its_caret() {
     let (mut app, mut outpost, term) = start("mockapp-terminal-before-key");
     app.send("caret term 1");
-    let before = ask(&mut outpost, term, TextOp::ReadCaret);
+    let (_, op) = key(CaretMotion::NextCharacter, KeyStart::ReadFirst);
+    let before = ask(&mut outpost, term, op);
     let answer = read_answer(&outpost, before);
     assert_eq!(caret_at(&answer), ("one\r\n", 1));
     assert!(answer.caret.is_some());
@@ -984,38 +1002,20 @@ fn the_read_before_a_held_key_is_a_read_with_its_caret() {
 
 /// The console host's text area, with an outpost watching it, and a caret
 /// key's watch on it from the caret as a held key's read before it finds
-/// it, opened and checked once with the caret where it was, for a key
-/// passed on at `pressed_at_ms` (0 when unknown).
-fn console_watch(
-    name: &str,
-    pressed_at_ms: u64,
-) -> (common::MockApp, OutpostUnderTest, NodeId, RequestId) {
+/// it, opened and checked once with the caret where it was.
+fn console_watch(name: &str) -> (common::MockApp, OutpostUnderTest, NodeId, KeyTag) {
     let (app, mut outpost, area) = start_with(
         name,
         "console_terminal.json",
         "text",
         OutpostOptions::default(),
     );
-    let before = ask(&mut outpost, area, TextOp::ReadCaret);
-    let caret = read_answer(&outpost, before)
+    let (tag, op) = key(CaretMotion::NextCharacter, KeyStart::ReadFirst);
+    let before = ask(&mut outpost, area, op);
+    read_answer(&outpost, before)
         .caret
         .expect("the read's caret");
-    let key = ask(
-        &mut outpost,
-        area,
-        TextOp::AwaitCaret(CaretWatch {
-            landing: false,
-            since: Some(TextPosition {
-                anchor: caret.line.start,
-                offset: caret.line.offset,
-            }),
-            pressed_at_ms,
-            unit: TextUnit::Character,
-            compare: None,
-            deletes: false,
-        }),
-    );
-    (app, outpost, area, key)
+    (app, outpost, area, tag)
 }
 
 /// The console host raises its caret event only on its cursor's blink
@@ -1024,16 +1024,13 @@ fn console_watch(
 /// caret the application moves after the watch's first check, with no
 /// event, answers the key, and the terminal is read after it.
 fn a_console_hosts_caret_moved_without_an_event_answers_its_watch() {
-    let (mut app, outpost, area, key) = console_watch("mockapp-console-polled-caret", 0);
+    let (mut app, outpost, area, key) = console_watch("mockapp-console-polled-caret");
     // Held after the watch's first check, the worker's next read is the
     // poll's.
     outpost.hold_worker();
     app.send("caret text 1");
     outpost.release_worker();
-    let TextReply::Caret(reply) = answer_to(&outpost, key) else {
-        panic!("the watch was not answered with the caret");
-    };
-    assert!(reply.moved);
+    let reply = evidence(&outpost, key);
     assert_eq!(
         (reply.caret.line.text.as_str(), reply.caret.line.offset),
         ("one                 \r\n", 1)
@@ -1064,34 +1061,12 @@ fn expect_watch_end(why: &'static str) -> verbatim_faults::Guard {
 
 /// A console host's caret key's watch whose poll finds nothing by its bound,
 /// 50 ms after the key, ends as a watch does at its own bound: answered
-/// `WatchEnded`, and nothing else said, but ended by its poll, not by the
+/// `Ended`, and nothing else said, but ended by its poll, not by the
 /// watch's own bound.
 fn a_console_hosts_watch_ends_when_its_poll_finds_nothing() {
     let ended = expect_watch_end(POLL_ENDED);
-    let (app, outpost, _area, key) = console_watch("mockapp-console-poll-bound", 0);
-    assert_eq!(answer_to(&outpost, key), TextReply::WatchEnded);
-    assert_eq!(ended.fired(), 1, "the watch ended by its poll's bound");
-    drop(ended);
-    outpost.settled();
-    drop(outpost);
-    app.quit();
-}
-
-/// The poll's bound is 50 ms after the key's `pressed_at_ms`, not after the
-/// watch opened: a key passed on two seconds after the test asks has its
-/// watch re-read until 50 ms after that, and ended then, so not before the
-/// key's time, and ended by the poll, not by the watch's own bound.
-fn a_console_hosts_poll_is_bounded_from_the_keys_time() {
-    let ended = expect_watch_end(POLL_ENDED);
-    let asked = Instant::now();
-    let pressed_at_ms = common::outpost::now_ms() + 2_000;
-    let (app, outpost, _area, key) = console_watch("mockapp-console-poll-key-time", pressed_at_ms);
-    assert_eq!(answer_to(&outpost, key), TextReply::WatchEnded);
-    let waited = asked.elapsed();
-    assert!(
-        waited >= Duration::from_secs(2),
-        "the watch ended after {waited:?}, before the key's time"
-    );
+    let (app, outpost, _area, key) = console_watch("mockapp-console-poll-bound");
+    assert_eq!(key_answer(&outpost, key), KeyAnswer::Ended);
     assert_eq!(ended.fired(), 1, "the watch ended by its poll's bound");
     drop(ended);
     outpost.settled();
@@ -1103,7 +1078,7 @@ fn a_console_hosts_poll_is_bounded_from_the_keys_time() {
 /// such as a blink tick left over from an earlier cursor set, leaves the
 /// poll reading: a caret moved after it, with no event, answers the key.
 fn a_console_caret_event_without_a_move_leaves_the_poll_reading() {
-    let (mut app, outpost, area, key) = console_watch("mockapp-console-event-then-move", 0);
+    let (mut app, outpost, area, key) = console_watch("mockapp-console-event-then-move");
     outpost.hold_worker();
     app.send("console-caret 0 0");
     outpost.heard(&[Heard::Msaa(WinEventKind::ConsoleCaret)]);
@@ -1116,10 +1091,7 @@ fn a_console_caret_event_without_a_move_leaves_the_poll_reading() {
     outpost.step_worker(1);
     app.send("caret text 1");
     outpost.release_worker();
-    let TextReply::Caret(reply) = answer_to(&outpost, key) else {
-        panic!("the watch was not answered with the caret");
-    };
-    assert!(reply.moved);
+    let reply = evidence(&outpost, key);
     assert_eq!(
         (reply.caret.line.text.as_str(), reply.caret.line.offset),
         ("one                 \r\n", 1)
@@ -1160,10 +1132,6 @@ fn main() {
         (
             "a_console_hosts_watch_ends_when_its_poll_finds_nothing",
             a_console_hosts_watch_ends_when_its_poll_finds_nothing,
-        ),
-        (
-            "a_console_hosts_poll_is_bounded_from_the_keys_time",
-            a_console_hosts_poll_is_bounded_from_the_keys_time,
         ),
         (
             "a_console_caret_event_without_a_move_leaves_the_poll_reading",

@@ -33,10 +33,10 @@ use crate::focus_rules::{
 };
 use crate::foreground::{Attention, ForegroundFact, LatestFocus};
 use crate::queries::Then;
+use crate::state::PendingText;
 use crate::state::{
     CellMemory, FocusContext, Navigator, NavigatorRead, SpokenRecord, SrState, TextFollowUp,
 };
-use crate::state::{PendingCaret, PendingText};
 use crate::{editing, review, review_text, say_all, shell, terminal, terminal_model, text};
 
 /// The activity id of the shell's window-snap results notification, the one
@@ -127,6 +127,7 @@ fn reduce_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
         Input::OutpostEnded { trace_id, outpost } => {
             let mut effects = outpost_ended(state, *outpost);
             effects.extend(crate::queries::outpost_gone(state, *trace_id, *outpost));
+            effects.extend(crate::key_line::outpost_ended(state, *outpost));
             effects
         }
         // A key, a key command or script, or a menu's or the switcher's
@@ -154,17 +155,19 @@ fn reduce_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
             key,
             pressed_at_ms,
             ..
-        } => editing::held_key(state, *trace_id, *key, *pressed_at_ms),
-        Input::HeldKeyDue { trace_id } => editing::held_key_due(state, *trace_id),
+        } => crate::key_line::held_key(state, *trace_id, *key, *pressed_at_ms),
+        Input::HeldKeyDue { trace_id, at_us } => {
+            crate::key_line::deadline_passed(state, *trace_id, *at_us)
+        }
         Input::TerminalTimer { trace_id, at_ms } => terminal_model::timer(state, *trace_id, *at_ms),
         Input::MarkReached { mark } => {
             let mut effects = say_all::mark_reached(state, *mark);
             effects.extend(terminal::mark_reached(state, *mark));
             effects
         }
-        Input::SpeechCancelled { at_ms } => {
-            editing::later_key(state, *at_ms);
-            let mut effects = terminal::cut(state, *at_ms);
+        Input::SpeechCancelled { at_us } => {
+            crate::key_line::mark_later(state, *at_us);
+            let mut effects = terminal::cut(state, at_us / 1_000);
             effects.extend(say_all::stop(state));
             effects
         }
@@ -219,8 +222,11 @@ pub(crate) fn key_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
     let mut effects = terminal_model::key_input(state, input);
     effects.extend(match input {
         Input::CaretKey {
-            key, pressed_at_ms, ..
-        } => editing::caret_key(state, *key, *pressed_at_ms),
+            trace_id,
+            key,
+            pressed_at_ms,
+            ..
+        } => crate::key_line::unheld_caret_key(state, *trace_id, *key, *pressed_at_ms),
         Input::CharacterTyped { trace_id, text, .. } => {
             editing::character_typed(state, *trace_id, text)
         }
@@ -259,8 +265,8 @@ pub(crate) fn key_trace(input: &Input) -> Option<TraceId> {
     }
 }
 
-/// `input` with a caret key's press taken as no earlier than `at_ms`, when
-/// that is known.
+/// `input` with its press taken as no earlier than `at_ms`: a key behind
+/// a held key reaches the application only after it was passed on.
 pub(crate) fn pressed_no_earlier(input: Input, at_ms: u64) -> Input {
     match input {
         Input::CaretKey {
@@ -268,7 +274,7 @@ pub(crate) fn pressed_no_earlier(input: Input, at_ms: u64) -> Input {
             key_seq,
             key,
             pressed_at_ms,
-        } if pressed_at_ms != 0 => Input::CaretKey {
+        } => Input::CaretKey {
             trace_id,
             key_seq,
             key,
@@ -279,7 +285,7 @@ pub(crate) fn pressed_no_earlier(input: Input, at_ms: u64) -> Input {
             key_seq,
             text,
             at_ms: typed_at_ms,
-        } if typed_at_ms != 0 => Input::CharacterTyped {
+        } => Input::CharacterTyped {
             trace_id,
             key_seq,
             text,
@@ -289,7 +295,7 @@ pub(crate) fn pressed_no_earlier(input: Input, at_ms: u64) -> Input {
             trace_id,
             key_seq,
             at_ms: cleared_at_ms,
-        } if cleared_at_ms != 0 => Input::ClearingKey {
+        } => Input::ClearingKey {
             trace_id,
             key_seq,
             at_ms: cleared_at_ms.max(at_ms),
@@ -500,12 +506,9 @@ fn refused_whole_window(state: &SrState, window: Option<&WindowFacts>, left: boo
 /// focus's text is taken afresh, as a new object's is
 /// (`docs/parity/focus-events.md`, "Duplicate focus suppression").
 fn forget_text_of(state: &mut SrState, node: NodeId) {
-    if state.caret.as_ref().is_some_and(|caret| caret.node == node) {
+    if state.focus_caret(node).is_some() {
         state.forget_caret();
     }
-    state
-        .queries
-        .forget(|then| matches!(then, Then::Caret(pending) if pending.node == node));
     state.drop_models(|model| model.node == node);
 }
 
@@ -748,13 +751,13 @@ fn duplicate_rule_applies(purpose: Option<FocusPurpose>, node: &NodeSnapshot) ->
 
 /// Keeps a duplicate's newer reading, unspoken, on the focus object when it
 /// is the duplicate's node, with its caret.
-fn keep_duplicate(state: &mut SrState, report: &Report, cached: Option<CachedFrom>) {
+fn keep_duplicate(state: &mut SrState, report: &Report, cached: Option<CachedFrom>) -> Vec<Effect> {
     if state
         .focus
         .object()
         .is_none_or(|focus| focus.snapshot.id != report.node.id)
     {
-        return;
+        return Vec::new();
     }
     // The entries below the innermost cached one were read live, and so
     // was a window above the reader's process boundary, which is always
@@ -771,12 +774,20 @@ fn keep_duplicate(state: &mut SrState, report: &Report, cached: Option<CachedFro
         .collect();
     keep_newer_reading(state, &report.node, &live);
     sync_navigator_with_focus(state);
-    editing::keep_focus_caret(
+    editing::keep_focus_caret(state, report.node.id, report.text.as_ref());
+    let Some(FocusText::Caret { changes, caret, .. }) = report.text.as_ref() else {
+        return Vec::new();
+    };
+    let general = changes.content_changed.then_some(editing::General {
+        selection: changes.new_selection.as_ref(),
+        collapsed: caret.selection.is_none(),
+    });
+    editing::selection_changed(
         state,
+        report.trace_id,
         report.node.id,
-        report.text.as_ref(),
-        whole_ms(report.observed_at_us),
-    );
+        (&changes.selection_changes, general),
+    )
 }
 
 /// The ordering stamps, which the stale rule judges: the observation of
@@ -840,7 +851,7 @@ fn focus_ancestors<'a>(
 /// focus (`editing::focus_text`).
 fn reduce_caret_moved(
     state: &mut SrState,
-    (trace_id, observed_at_ms): (TraceId, u64),
+    trace_id: TraceId,
     moved: &NormalizedEvent,
 ) -> Vec<Effect> {
     let NormalizedEvent::CaretMoved {
@@ -855,7 +866,7 @@ fn reduce_caret_moved(
     };
     let node = *node;
     let mut effects = Vec::new();
-    editing::update_caret(state, node, caret.clone(), observed_at_ms);
+    editing::update_caret(state, node, caret.clone());
     let general = content_changed.then_some(editing::General {
         selection: new_selection.as_ref(),
         collapsed: caret.selection.is_none(),
@@ -963,11 +974,7 @@ pub(crate) fn run_queue(state: &mut SrState) -> Vec<Effect> {
 /// the order queued (`books/dev/src/explanation/design/ownership.md`); any
 /// other runs now.
 fn command_arrived(state: &mut SrState, input: &Input) -> Vec<Effect> {
-    if state.held_busy() || state.held_keys.awaiting_watch.is_some() {
-        editing::queue_command(state, input)
-    } else {
-        command_input(state, input)
-    }
+    crate::key_line::command_arrived(state, input)
 }
 
 /// An input that waited behind focus reports, handled in its turn
@@ -989,7 +996,7 @@ fn waited_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
             key,
             pressed_at_ms,
             ..
-        } => editing::held_key(state, *trace_id, *key, *pressed_at_ms),
+        } => crate::key_line::held_key(state, *trace_id, *key, *pressed_at_ms),
         _ => shell::reduce(state, input),
     }
 }
@@ -999,15 +1006,7 @@ fn waited_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
 /// (`books/dev/src/explanation/design/key-holding.md`, "Keys behind a held
 /// key"); any other now.
 fn key_arrived(state: &mut SrState, input: &Input) -> Vec<Effect> {
-    if state.held_busy() {
-        state
-            .held_keys
-            .waiting
-            .push_back(crate::state::WaitingKey::Later(Box::new(input.clone())));
-        Vec::new()
-    } else {
-        key_input(state, input)
-    }
+    crate::key_line::key_arrived(state, input)
 }
 
 /// `effects`, of a key or command handled after the input it reached Core
@@ -1016,7 +1015,10 @@ fn under_key(trace_id: Option<TraceId>, effects: Vec<Effect>) -> Vec<Effect> {
     match trace_id {
         Some(trace_id) => effects
             .into_iter()
-            .map(|effect| Effect::ForKey(trace_id, Box::new(effect)))
+            .map(|effect| match effect {
+                carried @ Effect::ForKey(..) => carried,
+                effect => Effect::ForKey(trace_id, Box::new(effect)),
+            })
             .collect(),
         None => effects,
     }
@@ -1066,7 +1068,7 @@ fn decide_report(
         && !repeats
         && is_duplicate(state, &report.node, report.earlier, left)
     {
-        keep_duplicate(state, report, cached);
+        effects.extend(keep_duplicate(state, report, cached));
         return false;
     }
     // What the plan asks: nothing, a live re-read, or, when one is due but
@@ -1217,9 +1219,12 @@ fn reduce_event(
         NormalizedEvent::ValueChanged { node_id, value } => {
             reduce_value_changed(state, trace_id, *node_id, value.clone())
         }
-        moved @ NormalizedEvent::CaretMoved { .. } => {
-            reduce_caret_moved(state, (trace_id, whole_ms(observed_at_us)), moved)
-        }
+        NormalizedEvent::KeyAnswered {
+            node_id,
+            tag,
+            answer,
+        } => crate::key_line::key_answered(state, trace_id, *node_id, *tag, answer.clone()),
+        moved @ NormalizedEvent::CaretMoved { .. } => reduce_caret_moved(state, trace_id, moved),
         NormalizedEvent::TerminalSnapshot { node_id, snapshot } => {
             terminal_model::snapshot_event(state, trace_id, *node_id, snapshot)
         }
@@ -1344,14 +1349,6 @@ impl FocusReport<'_> {
     }
 }
 
-impl FocusReport<'_> {
-    /// When its outpost observed it, in whole milliseconds, for the caret
-    /// history ([`whole_ms`]).
-    fn observed_at_ms(&self) -> u64 {
-        whole_ms(self.observed_at_us)
-    }
-}
-
 impl Report {
     /// The report as the focus handling reads it, `cached` naming where its
     /// cached ancestors begin.
@@ -1416,6 +1413,21 @@ fn focus_reported(
 /// - A report judged left is executed as a focus from another top-level
 ///   window is (the left mark, `crate::focus_queue`).
 fn execute_report(state: &mut SrState, owned: &Report, left: bool, arrival: u64) -> Vec<Effect> {
+    let node = owned.node.id;
+    let first = crate::key_line::before_focus(state, node);
+    let mut effects = execute_focus(state, owned, (left, arrival), first);
+    effects.extend(crate::key_line::focus_executed(state, node));
+    effects
+}
+
+/// [`execute_report`], the words of a key whose focus moved first said
+/// after the expired speech is dropped and before a new window cuts them.
+fn execute_focus(
+    state: &mut SrState,
+    owned: &Report,
+    (left, arrival): (bool, u64),
+    first: Vec<Effect>,
+) -> Vec<Effect> {
     let report = &owned.view(None);
     let window = owned.window.as_ref();
     let (trace_id, source) = (owned.trace_id, owned.source);
@@ -1458,8 +1470,8 @@ fn execute_report(state: &mut SrState, owned: &Report, left: bool, arrival: u64)
         if state.navigator.is_none() {
             state.navigator = Some(Navigator::on(report.node.clone()));
         }
-        editing::keep_focus_caret(state, report.node.id, report.text, report.observed_at_ms());
-        return Vec::new();
+        editing::keep_focus_caret(state, report.node.id, report.text);
+        return first;
     }
 
     // The review cursor follows focus (roadmap M3): every focus change snaps
@@ -1490,6 +1502,7 @@ fn execute_report(state: &mut SrState, owned: &Report, left: bool, arrival: u64)
         foreground: state.foreground.object(),
         menu_item_of_focus: menu_item_of_focus(previous, report.node),
     })];
+    effects.extend(first);
     // Entering a menu cuts speech too, at its place among the entered
     // containers (`focus_speech`).
     end_text_activity(
@@ -1526,7 +1539,7 @@ fn execute_report(state: &mut SrState, owned: &Report, left: bool, arrival: u64)
         state,
         trace_id,
         report.node,
-        (report.text, report.observed_at_ms()),
+        report.text,
     ));
     effects
 }
@@ -1552,6 +1565,9 @@ fn focus_context(
         trace_id: Some(trace_id),
         observed_at_us: report.observed_at_us,
         reported_format: verbatim_model::TextAttributes::default(),
+        caret: previous
+            .filter(|previous| previous.snapshot.id == report.node.id)
+            .and_then(|previous| previous.caret.clone()),
     }
 }
 
@@ -1784,16 +1800,8 @@ fn end_text_activity(
     if cut || reading {
         effects.push(Effect::StopSpeech);
     }
-    state.queries.forget(|then| matches!(then, Then::Caret(_)));
     state.typed_word.clear();
     crate::terminal::focus_moved(state, node, left);
-    if state
-        .caret
-        .as_ref()
-        .is_some_and(|caret| left || caret.node != node)
-    {
-        state.forget_caret();
-    }
 }
 
 /// The speech for a new focus: the window's title the title rule adds, if
@@ -1975,16 +1983,14 @@ fn outpost_ended(state: &mut SrState, outpost: OutpostId) -> Vec<Effect> {
         effects.extend(say_all::stop(state));
     }
     if state
-        .caret
-        .as_ref()
-        .is_some_and(|caret| caret.node.outpost() == outpost)
+        .focus
+        .object()
+        .is_some_and(|focus| focus.snapshot.id.outpost() == outpost)
     {
         state.forget_caret();
     }
     state.queries.forget(|then| match then {
-        Then::Caret(PendingCaret { node, .. }) | Then::Text(PendingText { node, .. }) => {
-            node.outpost() == outpost
-        }
+        Then::Text(PendingText { node, .. }) => node.outpost() == outpost,
         _ => false,
     });
     terminal_model::outpost_ended(state, outpost);
@@ -2298,8 +2304,7 @@ fn caret_command(state: &mut SrState, trace_id: TraceId, command: ReviewCommand)
         )];
     };
     let node = focus.snapshot.id;
-    let has_text = editing::may_have_text(focus.snapshot.role)
-        || state.caret.as_ref().is_some_and(|caret| caret.node == node);
+    let has_text = editing::may_have_text(focus.snapshot.role) || state.focus_caret(node).is_some();
     if !has_text {
         return vec![editing::speak(
             trace_id,

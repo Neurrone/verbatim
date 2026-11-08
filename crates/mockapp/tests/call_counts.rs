@@ -64,16 +64,16 @@ use verbatim_model::{
     CallCounts, Fetches, FocusText, NodeSnapshot, NormalizedEvent, QueryKind, Role, WindowHandle,
 };
 use verbatim_model::{
-    CaretWatch, LineStyle, SelectionChange, TextAttributes, TextMovement, TextOp, TextPoint,
-    TextPosition, TextRead, TextReadAhead, TextReply, TextThrough, TextUnit, Theme,
+    CaretMotion, KeyRead, LineStyle, SelectionChange, TextAttributes, TextMovement, TextOp,
+    TextPoint, TextPosition, TextRead, TextReadAhead, TextReply, TextThrough, TextUnit, Theme,
 };
 use verbatim_outpost::arbitration::NEGATIVE_VERDICT_LIFETIME;
 use verbatim_outpost::dialog_text::{UiaDialog, dialog_text};
 use verbatim_outpost::text::edit::EditText;
 use verbatim_outpost::text::uia::{UiaPos, UiaText};
 use verbatim_outpost::text::{
-    Anchors, CaretSignal, LastSelection, TextSource, Watched, caret_report, caret_report_since,
-    check_caret, perform,
+    Anchors, CheckKey, KeyChecked, LastRead, ReportAsk, TextSource, caret_report,
+    caret_report_since, check_key, perform,
 };
 use verbatim_process::arguments::OutpostOptions;
 use verbatim_uia::{
@@ -3079,49 +3079,33 @@ fn uia_active_text_position_costs_exactly() {
     app.quit();
 }
 
-/// A check of a caret key's watch, as the worker makes one: when the
-/// request arrives (no caret event) or as a caret event prompts it,
-/// counting the caret's reads.
-#[derive(Default)]
-struct Check {
-    caret_event: bool,
-    reads: u32,
+/// One check of a caret key's watch, as the worker makes one, for Right
+/// Arrow from `baseline`, the node's last read.
+fn check<S: TextSource>(
+    source: &mut S,
+    anchors: &mut verbatim_outpost::text::NodeText<'_, S::Pos>,
+    baseline: &LastRead<S::Pos>,
+) -> KeyChecked {
+    let motion = CaretMotion::NextCharacter;
+    check_key(
+        source,
+        anchors,
+        &CheckKey {
+            baseline,
+            unit: motion.unit(),
+            motion,
+            before_unit: None,
+            read_at_us: 2,
+            final_read: false,
+        },
+    )
 }
 
-impl CaretSignal for Check {
-    fn caret_event(&mut self) -> bool {
-        self.caret_event
-    }
-
-    fn now_ms(&mut self) -> u64 {
-        0
-    }
-
-    fn reading(&mut self) {
-        self.reads += 1;
-    }
-}
-
-/// The caret reply a check of a key's watch answered with.
-fn answered(watched: Watched) -> verbatim_model::CaretReply {
-    match watched {
-        Watched::Answered(TextReply::Caret(reply)) => *reply,
-        other => panic!("a caret reply, not {other:?}"),
-    }
-}
-
-/// Right Arrow's watch, with the caret Core knew before the key.
-fn right_arrow(before: &verbatim_model::CaretReport) -> CaretWatch {
-    CaretWatch {
-        landing: false,
-        pressed_at_ms: 0,
-        since: Some(TextPosition {
-            anchor: before.line.start,
-            offset: before.line.offset,
-        }),
-        unit: TextUnit::Character,
-        compare: None,
-        deletes: false,
+/// The read of a check that found evidence.
+fn answered(checked: KeyChecked) -> KeyRead {
+    match checked {
+        KeyChecked::Read { read, effect: true } => *read,
+        other => panic!("no evidence: {other:?}"),
     }
 }
 
@@ -3136,7 +3120,7 @@ fn right_arrow(before: &verbatim_model::CaretReport) -> CaretWatch {
 /// Then a selection no key made is reported the same way, with how it
 /// changed. Then the caret, moved on with nothing selected, is read as the
 /// outpost reads it before a held caret key is passed on
-/// (`TextOp::ReadCaret`, `books/dev/src/explanation/design/key-holding.md`): the report's read,
+/// (`KeyStart::ReadFirst`, `books/dev/src/explanation/design/key-holding.md`): the report's read,
 /// leaving the kept selection alone. Returns the calls and hits of the
 /// answer, of the report, of the report with a selection change, and of
 /// the read before a held key.
@@ -3149,19 +3133,14 @@ fn measure_caret_move<S: TextSource>(
     let mut store = Anchors::new(Arc::default());
     let mut anchors = store.node(1);
     common::apply(app, hwnd, "caret doc 0");
-    let (before, _) = caret_report(source, &mut anchors, &mut || 0, false).expect("the caret");
+    caret_report(source, &mut anchors, 1, false).expect("the caret");
+    let baseline = anchors.last_read().expect("the baseline");
     common::apply(app, hwnd, "caret doc 1");
     let _ = take();
     let _ = verbatim_uia::calls::take_failed_reads();
-    let reply = answered(check_caret(
-        source,
-        &mut anchors,
-        &right_arrow(&before),
-        &mut Check::default(),
-    ));
+    let reply = answered(check(source, &mut anchors, &baseline));
     let calls = take();
-    assert!(reply.moved);
-    assert_eq!(reply.unit.expect("the character").text, "l");
+    assert_eq!(reply.unit.text, "l");
     let answer = Cost {
         calls,
         hits: common::read_hits(hwnd),
@@ -3174,8 +3153,13 @@ fn measure_caret_move<S: TextSource>(
     let read = caret_report_since(
         source,
         &mut anchors,
-        &mut || 0,
-        (false, None, LastSelection::Compare),
+        3,
+        &ReportAsk {
+            formats: false,
+            since: None,
+            compare: true,
+            unit: None,
+        },
     )
     .expect("the caret");
     let calls = take();
@@ -3194,8 +3178,13 @@ fn measure_caret_move<S: TextSource>(
     let read = caret_report_since(
         source,
         &mut anchors,
-        &mut || 0,
-        (false, None, LastSelection::Compare),
+        4,
+        &ReportAsk {
+            formats: false,
+            since: None,
+            compare: true,
+            unit: None,
+        },
     )
     .expect("the caret");
     let calls = take();
@@ -3219,13 +3208,25 @@ fn measure_caret_move<S: TextSource>(
     let read = caret_report_since(
         source,
         &mut anchors,
-        &mut || 0,
-        (false, None, LastSelection::Ignore),
+        5,
+        &ReportAsk {
+            formats: false,
+            since: None,
+            compare: true,
+            unit: Some(CaretMotion::NextCharacter.unit()),
+        },
     )
     .expect("the caret");
     let calls = take();
     assert_eq!(read.report.line.offset, 3);
-    assert_eq!(read.selection_changes, []);
+    assert_eq!(
+        read.selection_changes,
+        [SelectionChange {
+            selected: false,
+            text: "al".to_owned(),
+            characters: 2,
+        }]
+    );
     let before_key = Cost {
         calls,
         hits: common::read_hits(hwnd),
@@ -3278,7 +3279,7 @@ fn measure_focus_report(
     let _ = verbatim_uia::calls::take();
     let _ = verbatim_uia::calls::take_failed_reads();
     common::reset_hits(hwnd);
-    let (report, _) = caret_report(source, &mut store.node(1), &mut || 0, true).expect("the caret");
+    let (report, _) = caret_report(source, &mut store.node(1), 0, true).expect("the caret");
     let cost = Cost {
         calls: verbatim_uia::calls::take(),
         hits: common::read_hits(hwnd),
@@ -3373,17 +3374,40 @@ fn check_uia_caret_costs(ratchet: &mut Ratchet, remote: bool) {
         ])
     );
     // The caret's read, the evidence, the line and the caret's offset
-    // in it, the character's spelling error and link, which a
-    // character's read never learns are not supported, and the caret read
-    // again and compared, to tell whether it moved while it was read.
+    // in it, whether the key's baseline is on that line (two comparisons),
+    // the character's spelling error and link, which a character's read
+    // never learns are not supported, and the caret read again and
+    // compared, to tell whether it moved while it was read.
     let move_hits = [
         ("ITextProvider::GetSelection", 2),
         ("Clone", 3),
-        ("CompareEndpoints", 4),
+        ("CompareEndpoints", 6),
         ("ExpandToEnclosingUnit", 2),
         ("GetAttributeValue", 2),
         ("GetText", 2),
         ("MoveEndpointByRange", 1),
+    ];
+    // A watch's later check, the first having replaced the node's last
+    // read, also compares the selection with the baseline's.
+    let later_hits = [
+        ("ITextProvider::GetSelection", 2),
+        ("Clone", 3),
+        ("CompareEndpoints", 7),
+        ("ExpandToEnclosingUnit", 2),
+        ("GetAttributeValue", 2),
+        ("GetText", 2),
+        ("MoveEndpointByRange", 1),
+    ];
+    // The report's, with the selection last read, "al", compared and its
+    // change read: its ends, the text it held, and the character at the
+    // caret, the key's unit.
+    let before_key_hits = [
+        ("ITextProvider::GetSelection", 1),
+        ("Clone", 4),
+        ("CompareEndpoints", 2),
+        ("ExpandToEnclosingUnit", 1),
+        ("GetText", 4),
+        ("MoveEndpointByRange", 5),
     ];
     let report_hits = [
         ("ITextProvider::GetSelection", 1),
@@ -3448,7 +3472,19 @@ fn check_uia_caret_costs(ratchet: &mut Ratchet, remote: bool) {
             &before_key,
             calls(1, 0, 0),
             0,
-            &remote_hits(1, &plus_copy(&report_hits)),
+            &[
+                ("ProviderOptions", 2),
+                ("GetPatternProvider", 1),
+                ("GetPropertyValue", 1),
+                ("HostRawElementProvider", 1),
+                ("Navigate", 1),
+                ("ITextProvider::GetSelection", 1),
+                ("Clone", 5),
+                ("CompareEndpoints", 5),
+                ("ExpandToEnclosingUnit", 1),
+                ("GetText", 4),
+                ("MoveEndpointByRange", 6),
+            ],
         );
         // Still one round trip: the program compares the selection with
         // the one last reported, reads the change it finds, reads the new
@@ -3524,13 +3560,26 @@ fn check_uia_caret_costs(ratchet: &mut Ratchet, remote: bool) {
             &later,
             calls(1, 0, 0),
             0,
-            &remote_hits(1, &plus_copy(&move_hits)),
+            &[
+                ("ProviderOptions", 2),
+                ("GetPatternProvider", 1),
+                ("GetPropertyValue", 1),
+                ("HostRawElementProvider", 1),
+                ("Navigate", 1),
+                ("ITextProvider::GetSelection", 2),
+                ("Clone", 4),
+                ("CompareEndpoints", 8),
+                ("ExpandToEnclosingUnit", 2),
+                ("GetAttributeValue", 2),
+                ("GetText", 2),
+                ("MoveEndpointByRange", 2),
+            ],
         );
     } else {
         ratchet.check(
             "UIA caret move, classically",
             &answer,
-            calls(15, 0, 0),
+            calls(17, 0, 0),
             0,
             &move_hits,
         );
@@ -3541,13 +3590,14 @@ fn check_uia_caret_costs(ratchet: &mut Ratchet, remote: bool) {
             0,
             &report_hits,
         );
-        // The caret report's 8, comparing no selection.
+        // The caret report's 8, the selection last read compared and its
+        // change read, and the key's unit.
         ratchet.check(
             "UIA caret read before a held key, classically",
             &before_key,
-            calls(8, 0, 0),
+            calls(17, 0, 0),
             0,
-            &report_hits,
+            &before_key_hits,
         );
         // The caret report's 8 with the selection's caret
         // (`GetCaretRange`); its ends compared with the old caret's (2);
@@ -3623,16 +3673,16 @@ fn check_uia_caret_costs(ratchet: &mut Ratchet, remote: bool) {
         ratchet.check(
             "UIA caret watch finding nothing, classically",
             &nothing,
-            calls(15, 0, 0),
+            calls(17, 0, 0),
             0,
             &move_hits,
         );
         ratchet.check(
             "UIA caret watch answered by a later caret event, classically",
             &later,
-            calls(15, 0, 0),
+            calls(18, 0, 0),
             0,
-            &move_hits,
+            &later_hits,
         );
     }
     app.quit();
@@ -3679,7 +3729,7 @@ fn check_uia_text_costs(ratchet: &mut Ratchet, remote: bool) {
     let mut store = Anchors::new(Arc::default());
     let mut anchors = store.node(1);
     common::apply(&mut app, hwnd, "caret doc 0");
-    let (report, _) = caret_report(&mut source, &mut anchors, &mut || 0, false).expect("the caret");
+    let (report, _) = caret_report(&mut source, &mut anchors, 0, false).expect("the caret");
     let caret = TextPosition {
         anchor: report.line.start,
         offset: report.line.offset,
@@ -3849,7 +3899,7 @@ fn check_uia_text_costs(ratchet: &mut Ratchet, remote: bool) {
         &mut anchors,
         &TextOp::MoveCaret(TextPoint::At(TextPosition::at(chunks[1].start))),
     );
-    assert_eq!(reply, TextReply::Done);
+    assert!(matches!(reply, TextReply::Moved { .. }), "{reply:?}");
     let expected: (CallCounts, &[(&str, u32)]) = if remote {
         (
             calls(1, 0, 0),
@@ -3984,8 +4034,8 @@ fn check_uia_text_costs(ratchet: &mut Ratchet, remote: bool) {
     );
 
     common::apply(&mut app, hwnd, "caret doc 0");
-    let (collapsed, _) =
-        caret_report(&mut source, &mut anchors, &mut || 0, false).expect("the caret");
+    let (collapsed, _) = caret_report(&mut source, &mut anchors, 1, false).expect("the caret");
+    let baseline = anchors.last_read().expect("the baseline");
     let at = TextPosition {
         anchor: collapsed.line.start,
         offset: collapsed.line.offset,
@@ -3993,19 +4043,7 @@ fn check_uia_text_costs(ratchet: &mut Ratchet, remote: bool) {
     common::apply(&mut app, hwnd, "caret doc 0 5");
     let _ = verbatim_uia::calls::take();
     let _ = verbatim_uia::calls::take_failed_reads();
-    let reply = answered(check_caret(
-        &mut source,
-        &mut anchors,
-        &CaretWatch {
-            landing: false,
-            pressed_at_ms: 0,
-            since: Some(at),
-            unit: TextUnit::Character,
-            compare: None,
-            deletes: false,
-        },
-        &mut Check::default(),
-    ));
+    let reply = answered(check(&mut source, &mut anchors, &baseline));
     let cost = Cost {
         calls: verbatim_uia::calls::take(),
         hits: common::read_hits(hwnd),
@@ -4040,7 +4078,7 @@ fn check_uia_text_costs(ratchet: &mut Ratchet, remote: bool) {
                 ("DocumentRange", 1),
                 ("GetCaretRange", 2),
                 ("Clone", 6),
-                ("CompareEndpoints", 10),
+                ("CompareEndpoints", 12),
                 ("ExpandToEnclosingUnit", 2),
                 ("GetAttributeValue", 2),
                 ("GetText", 5),
@@ -4049,13 +4087,13 @@ fn check_uia_text_costs(ratchet: &mut Ratchet, remote: bool) {
         )
     } else {
         (
-            calls(30, 0, 0),
+            calls(32, 0, 0),
             &[
                 ("ITextProvider::GetSelection", 2),
                 ("DocumentRange", 1),
                 ("GetCaretRange", 2),
                 ("Clone", 5),
-                ("CompareEndpoints", 8),
+                ("CompareEndpoints", 10),
                 ("ExpandToEnclosingUnit", 2),
                 ("GetAttributeValue", 2),
                 ("GetText", 5),
@@ -4448,7 +4486,7 @@ fn uia_mixed_stretch_costs_exactly() {
         let _ = verbatim_uia::calls::take_failed_reads();
         common::reset_hits(hwnd);
         let (report, _) =
-            caret_report(&mut source, &mut store.node(1), &mut || 0, true).expect("the caret");
+            caret_report(&mut source, &mut store.node(1), 0, true).expect("the caret");
         let cost = Cost {
             calls: verbatim_uia::calls::take(),
             hits: common::read_hits(hwnd),
@@ -4557,11 +4595,12 @@ fn caret_moves_cost_exactly() {
     // before the key's effect is never paired with a line read after it.
     ratchet.check("Edit control caret move", &answer, calls(0, 0, 6), 0, &[]);
     ratchet.check("Edit control caret report", &report, calls(0, 0, 5), 0, &[]);
-    // The caret report's 5.
+    // The caret report's 5 and the change from the selection last read
+    // (`WM_GETTEXTLENGTH`, `WM_GETTEXT`).
     ratchet.check(
         "Edit control caret read before a held key",
         &before_key,
-        calls(0, 0, 5),
+        calls(0, 0, 7),
         0,
         &[],
     );
@@ -4597,7 +4636,7 @@ fn caret_moves_cost_exactly() {
     let mut store = Anchors::new(Arc::default());
     let mut anchors = store.node(1);
     common::apply(&mut app, hwnd, "caret doc 0");
-    let (report, _) = caret_report(&mut source, &mut anchors, &mut || 0, false).expect("the caret");
+    let (report, _) = caret_report(&mut source, &mut anchors, 0, false).expect("the caret");
     let at = |offset| {
         TextPoint::At(TextPosition {
             anchor: report.line.start,
@@ -4666,14 +4705,16 @@ fn measure_watch<S: TextSource>(
     let mut store = Anchors::new(Arc::default());
     let mut anchors = store.node(1);
     common::apply(app, hwnd, "caret doc 1");
-    let (before, _) = caret_report(source, &mut anchors, &mut || 0, false).expect("the caret");
-    let watch = right_arrow(&before);
+    caret_report(source, &mut anchors, 1, false).expect("the caret");
+    let baseline = anchors.last_read().expect("the baseline");
     let _ = take();
     let _ = verbatim_uia::calls::take_failed_reads();
     common::reset_hits(hwnd);
-    let mut check = Check::default();
-    let watched = check_caret(source, &mut anchors, &watch, &mut check);
-    assert!(matches!(watched, Watched::Watching), "{watched:?}");
+    let checked = check(source, &mut anchors, &baseline);
+    assert!(
+        matches!(checked, KeyChecked::Read { effect: false, .. }),
+        "{checked:?}"
+    );
     let nothing = Cost {
         calls: take(),
         hits: common::read_hits(hwnd),
@@ -4683,11 +4724,8 @@ fn measure_watch<S: TextSource>(
     common::apply(app, hwnd, "caret doc 2");
     let _ = take();
     let _ = verbatim_uia::calls::take_failed_reads();
-    check.caret_event = true;
-    let reply = answered(check_caret(source, &mut anchors, &watch, &mut check));
-    assert!(reply.moved);
-    assert_eq!(reply.unit.expect("the character").text, "p");
-    assert_eq!(check.reads, 2, "one read for each check");
+    let reply = answered(check(source, &mut anchors, &baseline));
+    assert_eq!(reply.unit.text, "p");
     let later = Cost {
         calls: take(),
         hits: common::read_hits(hwnd),
@@ -5134,6 +5172,7 @@ fn text_field_focus_now_costs(ratchet: &mut Ratchet) {
         let Some(FocusText::Caret {
             caret,
             selected_text: None,
+            ..
         }) = now.text.as_deref()
         else {
             panic!(

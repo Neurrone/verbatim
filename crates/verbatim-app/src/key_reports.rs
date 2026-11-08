@@ -174,7 +174,7 @@ pub(crate) fn speech_effect(ports: Ports) -> Box<dyn Fn(KeySpeechEffect, KeySeq)
             ports.post(Post::Cancel(key_seq), Some(key_seq));
             ports.post(
                 Post::Command(ShellCommand::Input(Box::new(Input::SpeechCancelled {
-                    at_ms: crate::latency::now_ms(),
+                    at_us: verbatim_process::clock::now_us(),
                 }))),
                 Some(key_seq),
             );

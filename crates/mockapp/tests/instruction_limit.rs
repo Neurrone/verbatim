@@ -449,6 +449,7 @@ fn caret_query<'a>(
         pattern,
         pattern2,
         since: old,
+        baseline_selection: old.map(|old| (old, old)),
         previous_selection: old.map(|old| (old, old)),
         previous_collapsed: false,
         unit: None,
@@ -507,8 +508,9 @@ fn caret_reads_execute_exactly() {
     // and 4435 and 87 before it read where the selection starts, whose
     // conditions every read with `TextPattern2` runs (2026-10-22), and
     // 4456 before a selection holding nothing on either side was made one
-    // whole change (2026-10-23).
-    assert_eq!([worst, typical], [4462, 97], "caret read worst and typical");
+    // whole change (2026-10-23), and 4462 and 97 before it compared the
+    // selection with a key's baseline (2026-11-09).
+    assert_eq!([worst, typical], [4473, 98], "caret read worst and typical");
 }
 
 /// The caret read where every format stretch is two characters with one
@@ -539,8 +541,9 @@ fn densely_mixed_formatting_executes_exactly() {
     fixture.app.quit();
     // 2148 and 4140 before the read of where a selection starts in the
     // caret's line, whose condition every read with `TextPattern2` runs
-    // (2026-10-22).
-    assert_eq!([sixteen, thirty_two], [2158, 4150], "17 and 33 stretches");
+    // (2026-10-22), and 2158 and 4150 before it compared the selection with
+    // a key's baseline (2026-11-09).
+    assert_eq!([sixteen, thirty_two], [2159, 4151], "17 and 33 stretches");
     match eighty {
         Ok(runs) => assert_eq!(runs, 64),
         Err(error) => panic!("80 characters: {error}"),

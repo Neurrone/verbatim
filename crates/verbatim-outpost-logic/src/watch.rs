@@ -1,119 +1,208 @@
-//! The caret key's watch (`books/dev/src/explanation/design/key-holding.md`): the outpost's open
-//! check for a key's evidence, held as one state. The reducer alone decides
-//! its times, on the run's shared clock; each program's copy applies the
-//! same transitions with no clock, its times left at zero, since no
-//! program reads them.
+//! The caret key's watch (`docs/design/caret-selection-rework.md`): the
+//! outpost's open check for a key's evidence, held as one state beside the
+//! node's last read. A key's baseline is a copy of a last read, pinned here
+//! for the key. The reducer alone decides the times, on the run's shared
+//! clock; each program's copy applies the same transitions with no clock,
+//! its times left at zero, since no program reads them.
 
 use std::time::Duration;
 
-use verbatim_model::protocol::{EventTiming, RequestId};
-use verbatim_model::{CallCounts, CaretWatch, NodeId, TextReply, TraceId};
+use verbatim_model::protocol::EventTiming;
+use verbatim_model::{
+    Backend, CallCounts, CaretMotion, KeyRead, KeyTag, NodeId, TextUnit, TraceId, WatchKind,
+};
 
-/// The longest a caret key's watch stays open without evidence. It only
-/// frees the watch: ending it this way says nothing, as ending it any other
-/// way does. A key whose application raises its evidence later than this
-/// is not spoken. It is [`HANDLING_DEADLINE`](verbatim_model::HANDLING_DEADLINE),
-/// so a key whose application shows its effect within the time a task
-/// allows it is still spoken. It waits on no call.
-pub const CARET_WATCH_BOUND: Duration = verbatim_model::HANDLING_DEADLINE;
+use super::text::{LastRead, RangeKey};
+
+/// How long a terminal's watch stays open without evidence: its handling
+/// deadline, [`HANDLING_DEADLINE`](verbatim_model::HANDLING_DEADLINE). A text
+/// field's watch has no time of its own: Core ends it.
+pub const TERMINAL_WATCH_BOUND: Duration = verbatim_model::HANDLING_DEADLINE;
 
 /// How long after one of the console poll's reads the next is made.
 pub const POLL_INTERVAL: Duration = Duration::from_millis(5);
 
-/// How long after the key was passed on the console poll's last read is
-/// made; a watch that has found no evidence by then ends, as at its own
-/// bound.
+/// How long after the before read ended, or the key's request arrived, the
+/// console poll's last read is made; a watch that has found no evidence by
+/// then ends.
 pub const POLL_BOUND: Duration = Duration::from_millis(50);
 
-/// What a caret key's watch is: what it answers and looks for, and what its
-/// checks have cost so far.
+/// What a read compared with a key's baseline found, by the comparisons only
+/// the provider can make.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each is one comparison the provider makes"
+)]
+pub struct Compared {
+    /// The caret left where it was.
+    pub caret_moved: bool,
+    /// The selection changed.
+    pub selection_moved: bool,
+    /// The characters beside the caret changed.
+    pub beside_changed: bool,
+    /// The unit at the caret changed.
+    pub unit_changed: bool,
+    /// The caret's line changed.
+    pub line_changed: bool,
+}
+
+/// Whether `compared` is evidence of what a key of `motion` did: the caret
+/// having left where it was, the characters beside it changing, the unit at
+/// the caret changing after Delete, the caret's line changing after a key
+/// that deletes, or the selection changing.
+#[must_use]
+pub fn had_effect(compared: Compared, motion: CaretMotion) -> bool {
+    compared.caret_moved
+        || compared.selection_moved
+        || compared.beside_changed
+        || (motion.compares_unit() && compared.unit_changed)
+        || (motion.deletes() && compared.line_changed)
+}
+
+/// A key's baseline: a copy of its node's last read, of its provider.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct OpenWatch {
-    /// The request it answers.
-    pub request_id: RequestId,
+pub enum Baseline {
+    /// Through UIA, its positions the store's keys.
+    Uia(LastRead<RangeKey>),
+    /// Through an edit control's messages, its positions offsets.
+    Edit(LastRead<u32>),
+}
+
+impl Baseline {
+    /// The backend it was read through.
+    #[must_use]
+    pub fn backend(&self) -> Backend {
+        match self {
+            Self::Uia(_) => Backend::Uia,
+            Self::Edit(_) => Backend::Msaa,
+        }
+    }
+}
+
+/// What a key's watch is: what it answers, what it compares with, and what
+/// its checks have cost so far.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct KeyWatch {
+    /// The key's tag.
+    pub tag: KeyTag,
+    /// The node whose caret the key moves.
+    pub node: NodeId,
+    /// What the key is judged from.
+    pub baseline: Baseline,
+    /// The unit to report at the caret.
+    pub unit: TextUnit,
+    /// What the key does, which says what counts as its evidence.
+    pub motion: CaretMotion,
+    /// The kind of watch Core named.
+    pub kind: WatchKind,
+    /// The key's unit at the caret before it, when its before read read it.
+    pub before_unit: Option<verbatim_model::TextChunk>,
     /// The key's trace.
     pub trace: TraceId,
-    /// The node whose caret the key moves.
-    pub node_id: NodeId,
-    /// What the watch looks for, and what it has seen.
-    pub watch: CaretWatch,
     /// The request's timing, which its answer carries.
     pub timing: EventTiming,
     /// The calls its checks have made so far, none of which found evidence.
     pub calls: CallCounts,
 }
 
-/// The caret key's watch, in one of its four states. Times are
-/// microseconds on the run's shared clock; zero in a program's copy.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub enum Watch {
-    /// No watch.
-    #[default]
-    None,
-    /// Waiting for evidence, which its node's events check; it ends at
-    /// `bound` ([`CARET_WATCH_BOUND`] after it opened).
-    Waiting {
-        /// The watch.
-        open: OpenWatch,
-        /// When it ends without evidence.
-        bound: u64,
-    },
-    /// The console host's poll (`books/dev/src/explanation/design/key-holding.md`, "The console
-    /// host's caret poll"): a read due at `next`, the last at `until`.
-    Polling {
-        /// The watch.
-        open: OpenWatch,
-        /// When the next read is due.
-        next: u64,
-        /// When the last read is due.
-        until: u64,
-    },
-    /// The program in flight holds it, by a take or as a poll read the
-    /// reducer dispatched; `resume` is what it goes back to.
-    Checking {
-        /// The watch.
-        open: OpenWatch,
-        /// What it goes back to when the check finds nothing.
-        resume: Resume,
-    },
-}
-
-/// What a watch being checked goes back to when the check finds nothing.
+/// What an open watch is doing between checks.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Resume {
-    /// Waiting, until this bound.
-    Bound(u64),
-    /// Polling, as it stood.
+pub enum Stage {
+    /// A text field: until evidence or Core's word.
+    Awaiting,
+    /// A text field Core has asked the final read of, while another program
+    /// is in flight: the final read runs as soon as none is.
+    FinalDue,
+    /// A terminal: its handling deadline.
+    Terminal {
+        /// When it ends without evidence.
+        ends: u64,
+    },
+    /// The console host's caret poll: a read due at `next`, the last at
+    /// `until`.
     Poll {
         /// When the next read is due.
         next: u64,
         /// When the last read is due.
         until: u64,
     },
+}
+
+/// What a check does when it finds nothing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AfterCheck {
+    /// Goes back to this stage.
+    Resume(Stage),
+    /// Answers: the check is the final read.
+    Answer,
     /// The poll's next step after a poll read: its next read, or its end
     /// once `until` has passed.
-    Read {
+    PollRead {
         /// When the last read is due.
         until: u64,
     },
+}
+
+/// The caret key's watch, in one of its states. Times are microseconds on
+/// the run's shared clock; zero in a program's copy.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum Watch {
+    /// No watch.
+    #[default]
+    None,
+    /// Between checks.
+    Open {
+        /// The watch.
+        key: Box<KeyWatch>,
+        /// What it is doing.
+        stage: Stage,
+    },
+    /// The program in flight holds it.
+    Checking {
+        /// The watch.
+        key: Box<KeyWatch>,
+        /// What it does when the check finds nothing.
+        after: AfterCheck,
+    },
+}
+
+/// A read a check made, with the judgement of it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Found {
+    /// The node read.
+    pub node: NodeId,
+    /// The trace its program ran under, which an untagged report carries.
+    pub trace: TraceId,
+    /// The backend read, which the report carries.
+    pub backend: Backend,
+    /// The read, as a key's result or an untagged report.
+    pub read: Box<KeyRead>,
+    /// Whether the read shows the key had an effect ([`had_effect`]).
+    pub effect: bool,
+    /// Whether a read that ends no watch goes as an untagged caret report:
+    /// a terminal's reading goes by its own path.
+    pub untagged: bool,
+    /// The calls the check made.
+    pub calls: CallCounts,
+    /// When the watch's waiting ended, on the run's shared clock.
+    pub awaited_at_us: u64,
 }
 
 /// What a program's check of the watch it holds found: the one result of
 /// every check.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Checked {
-    /// The key's evidence, as the key's reply, with the calls the check
-    /// made and when the watch's waiting ended.
-    Answered {
-        /// The key's reply.
-        reply: TextReply,
+    /// The read.
+    Found(Found),
+    /// The caret moved while it was read, and the event that follows the
+    /// move checks again.
+    Moving {
         /// The calls the check made.
         calls: CallCounts,
-        /// When the watch's waiting ended, on the run's shared clock.
-        awaited_at_us: u64,
     },
-    /// No evidence, with the calls the check made.
-    Watching {
+    /// The read could not be made.
+    Failed {
         /// The calls the check made.
         calls: CallCounts,
     },
@@ -122,29 +211,36 @@ pub enum Checked {
 /// A watch's one answer, which the reducer sends.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Answer {
-    /// Ended without evidence, `WatchEnded`; `why` is logged.
+    /// Ended with no read to answer from; `why` is logged.
     Ended {
         /// The watch.
-        open: OpenWatch,
+        key: Box<KeyWatch>,
         /// Why it ended.
         why: &'static str,
     },
-    /// Answered with the key's evidence.
+    /// A read found evidence.
     Evidence {
         /// The watch.
-        open: OpenWatch,
-        /// The key's reply.
-        reply: TextReply,
-        /// The calls the answering check made.
-        calls: CallCounts,
-        /// When the watch's waiting ended.
-        awaited_at_us: u64,
+        key: Box<KeyWatch>,
+        /// The read.
+        found: Found,
     },
-    /// The program holding it was abandoned.
-    Abandoned {
+    /// The final read found no evidence.
+    Bound {
         /// The watch.
-        open: OpenWatch,
+        key: Box<KeyWatch>,
+        /// The read.
+        found: Found,
     },
+}
+
+/// A check's read that ends no watch, sent as an untagged caret report.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Untagged {
+    /// The node read.
+    pub node: NodeId,
+    /// The read.
+    pub found: Found,
 }
 
 /// What a due time reached did ([`Watch::reach`]).
@@ -152,10 +248,21 @@ pub enum Answer {
 pub enum Reached {
     /// Nothing is due.
     Nothing,
-    /// The watch ended at its bound.
+    /// The watch ended at its handling deadline.
     Ended(Box<Answer>),
-    /// A poll read is due: the watch is now held for it.
+    /// A read is due: the watch is now held for it.
     Read,
+}
+
+/// What Core's final read found ([`Watch::final_read`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FinalRead {
+    /// The order is for no open watch, and is ignored.
+    Ignored,
+    /// The running check, or the next program, is the final read.
+    Noted,
+    /// A read is to be dispatched now: the watch is held for it.
+    Dispatch,
 }
 
 /// The clock a transition reads: the run's shared clock, in microseconds,
@@ -170,20 +277,18 @@ fn micros(duration: Duration) -> u64 {
 impl Watch {
     /// The watch, in any state but [`Watch::None`].
     #[must_use]
-    pub fn open(&self) -> Option<&OpenWatch> {
+    pub fn open(&self) -> Option<&KeyWatch> {
         match self {
             Self::None => None,
-            Self::Waiting { open, .. }
-            | Self::Polling { open, .. }
-            | Self::Checking { open, .. } => Some(open),
+            Self::Open { key, .. } | Self::Checking { key, .. } => Some(key),
         }
     }
 
-    /// The watch when it is waiting or polling, so a take would take it.
+    /// The watch when it is between checks, so a take would take it.
     #[must_use]
-    pub fn kept(&self) -> Option<&OpenWatch> {
+    pub fn kept(&self) -> Option<&KeyWatch> {
         match self {
-            Self::Waiting { open, .. } | Self::Polling { open, .. } => Some(open),
+            Self::Open { key, .. } => Some(key),
             Self::None | Self::Checking { .. } => None,
         }
     }
@@ -194,131 +299,190 @@ impl Watch {
         matches!(self, Self::None)
     }
 
-    /// When the reducer next acts on the watch: its bound while waiting,
-    /// its next read while polling.
+    /// The UIA ranges the baseline names when the watch is `node`'s.
+    pub fn baseline_keys(&self, node: u64) -> impl Iterator<Item = RangeKey> + '_ {
+        self.open()
+            .filter(|key| key.node.number() == node)
+            .and_then(|key| match &key.baseline {
+                Baseline::Uia(last) => Some(last.positions().copied()),
+                Baseline::Edit(_) => None,
+            })
+            .into_iter()
+            .flatten()
+    }
+
+    /// Whether a final read is due, which the next idle moment runs.
+    #[must_use]
+    pub fn final_due(&self) -> bool {
+        matches!(
+            self,
+            Self::Open {
+                stage: Stage::FinalDue,
+                ..
+            }
+        )
+    }
+
+    /// When the reducer next acts on the watch: a terminal's deadline or a
+    /// poll's next read.
     #[must_use]
     pub fn due(&self) -> Option<u64> {
         match self {
-            Self::Waiting { bound, .. } => Some(*bound),
-            Self::Polling { next, .. } => Some(*next),
+            Self::Open { stage, .. } => match stage {
+                Stage::Awaiting | Stage::FinalDue => None,
+                Stage::Terminal { ends } => Some(*ends),
+                Stage::Poll { next, .. } => Some(*next),
+            },
             Self::None | Self::Checking { .. } => None,
         }
     }
 
-    /// Opens `open` from no watch, polling when its node is the focused
-    /// console host's text area (`console`): the bound is
-    /// [`CARET_WATCH_BOUND`] from now; the poll's last read
-    /// [`POLL_BOUND`] after the key was pressed (after now when the key has
-    /// no time), its next [`POLL_INTERVAL`] from now or at the last,
-    /// whichever is first. Whether it opened: a watch already there is
-    /// left as it is.
-    pub fn opened(&mut self, open: OpenWatch, console: bool, clock: Clock) -> bool {
+    /// Opens `key` from no watch, its stage by its kind and whether its
+    /// node is the focused console host's text area (`console`). Whether
+    /// it opened: a watch already there is left as it is.
+    pub fn opened(&mut self, key: Box<KeyWatch>, console: bool, clock: Clock) -> bool {
         if !self.is_none() {
             return false;
         }
-        *self = if console {
-            let (next, until) = clock.map_or((0, 0), |now| {
-                let pressed_us = open.watch.pressed_at_ms.saturating_mul(1_000);
-                let from = if pressed_us == 0 { now } else { pressed_us };
-                let until = from.saturating_add(micros(POLL_BOUND));
-                (now.saturating_add(micros(POLL_INTERVAL)).min(until), until)
-            });
-            Self::Polling { open, next, until }
-        } else {
-            let bound = clock.map_or(0, |now| now.saturating_add(micros(CARET_WATCH_BOUND)));
-            Self::Waiting { open, bound }
+        let stage = match key.kind {
+            WatchKind::TextField => Stage::Awaiting,
+            WatchKind::Terminal if console => {
+                let (next, until) = clock.map_or((0, 0), |now| {
+                    let until = now.saturating_add(micros(POLL_BOUND));
+                    (now.saturating_add(micros(POLL_INTERVAL)).min(until), until)
+                });
+                Stage::Poll { next, until }
+            }
+            WatchKind::Terminal => Stage::Terminal {
+                ends: clock.map_or(0, |now| now.saturating_add(micros(TERMINAL_WATCH_BOUND))),
+            },
         };
+        *self = Self::Open { key, stage };
         true
     }
 
-    /// Takes a waiting or polling watch on `node` for the program in
-    /// flight to check: it is held, to go back as it stood.
-    pub fn take(&mut self, node: NodeId) -> Option<OpenWatch> {
-        let resume = match self {
-            Self::Waiting { open, bound } if open.node_id == node => Resume::Bound(*bound),
-            Self::Polling { open, next, until } if open.node_id == node => Resume::Poll {
-                next: *next,
-                until: *until,
-            },
-            _ => return None,
-        };
-        let (Self::Waiting { open, .. } | Self::Polling { open, .. }) = std::mem::take(self) else {
+    /// Takes an open watch on `node` for the program in flight to check;
+    /// a final read due makes the check the final read.
+    pub fn take(&mut self, node: NodeId) -> Option<KeyWatch> {
+        if !matches!(self, Self::Open { key, .. } if key.node == node) {
+            return None;
+        }
+        let Self::Open { key, stage } = std::mem::take(self) else {
             return None;
         };
-        *self = Self::Checking {
-            open: open.clone(),
-            resume,
+        let after = if stage == Stage::FinalDue {
+            AfterCheck::Answer
+        } else {
+            AfterCheck::Resume(stage)
         };
-        Some(open)
+        let taken = (*key).clone();
+        *self = Self::Checking { key, after };
+        Some(taken)
     }
 
-    /// The held watch's check found `checked`: answered, it ends with the
-    /// evidence; watching, it goes back as it stood after a take, and after
-    /// a poll read polls again [`POLL_INTERVAL`] from now or at its last
-    /// read, whichever is first, or ends once its last read has passed. The
-    /// calls are added to the watch's. `None` when no watch is held, and
-    /// the result is dropped; otherwise the answer it gives, if any.
-    pub fn checked(&mut self, checked: &Checked, clock: Clock) -> Option<Option<Answer>> {
+    /// The held watch's check found `checked`. A found read with evidence
+    /// answers as evidence; with none, it goes back to its stage, or as
+    /// the bound answer when it is the final read. A check with no watch
+    /// held, or one that failed, gives what it gave. The calls are added to
+    /// the watch's when it stays open.
+    pub fn checked(&mut self, checked: Checked, clock: Clock) -> CheckResult {
         if !matches!(self, Self::Checking { .. }) {
-            return None;
+            return match checked {
+                Checked::Found(found) => CheckResult::NoWatch(found),
+                Checked::Moving { .. } | Checked::Failed { .. } => CheckResult::Nothing,
+            };
         }
-        let Self::Checking { mut open, resume } = std::mem::take(self) else {
-            return None;
+        let Self::Checking { mut key, after } = std::mem::take(self) else {
+            return CheckResult::Nothing;
         };
-        match checked {
-            Checked::Answered {
-                reply,
-                calls,
-                awaited_at_us,
-            } => Some(Some(Answer::Evidence {
-                open,
-                reply: reply.clone(),
-                calls: *calls,
-                awaited_at_us: *awaited_at_us,
-            })),
-            Checked::Watching { calls } => {
-                // Call counts add saturating.
-                std::ops::AddAssign::add_assign(&mut open.calls, *calls);
-                *self = match resume {
-                    Resume::Bound(bound) => Self::Waiting { open, bound },
-                    Resume::Poll { next, until } => Self::Polling { open, next, until },
-                    Resume::Read { until } => match clock {
-                        Some(now) if now >= until => {
-                            return Some(Some(Answer::Ended {
-                                open,
-                                why: "its poll's bound passed",
-                            }));
-                        }
-                        Some(now) => Self::Polling {
-                            open,
-                            next: now.saturating_add(micros(POLL_INTERVAL)).min(until),
-                            until,
-                        },
-                        None => Self::Polling {
-                            open,
-                            next: 0,
-                            until,
-                        },
-                    },
+        let found = match checked {
+            Checked::Found(found) => found,
+            Checked::Moving { calls } => {
+                std::ops::AddAssign::add_assign(&mut key.calls, calls);
+                return match after {
+                    AfterCheck::Resume(stage) => {
+                        *self = Self::Open { key, stage };
+                        CheckResult::Resumed(None)
+                    }
+                    AfterCheck::PollRead { until } => {
+                        let next = clock.map_or(0, |now| {
+                            now.saturating_add(micros(POLL_INTERVAL)).min(until)
+                        });
+                        *self = Self::Open {
+                            key,
+                            stage: Stage::Poll { next, until },
+                        };
+                        CheckResult::Resumed(None)
+                    }
+                    // The final read has no event to wait for, so it never
+                    // reports the caret moving ([`Checked::Moving`]).
+                    AfterCheck::Answer => CheckResult::Answered(Answer::Ended {
+                        key,
+                        why: "the caret moved during its final read",
+                    }),
                 };
-                Some(None)
             }
+            Checked::Failed { .. } => {
+                return CheckResult::Answered(Answer::Ended {
+                    key,
+                    why: "its check failed",
+                });
+            }
+        };
+        if found.effect {
+            return CheckResult::Answered(Answer::Evidence { key, found });
         }
+        // Call counts add saturating.
+        std::ops::AddAssign::add_assign(&mut key.calls, found.calls);
+        let found = match after {
+            AfterCheck::Answer => {
+                return CheckResult::Answered(Answer::Bound { key, found });
+            }
+            AfterCheck::Resume(stage) => {
+                *self = Self::Open { key, stage };
+                found
+            }
+            AfterCheck::PollRead { until } => {
+                match clock {
+                    Some(now) if now >= until => {
+                        return CheckResult::Answered(Answer::Ended {
+                            key,
+                            why: "its poll's bound passed",
+                        });
+                    }
+                    Some(now) => {
+                        *self = Self::Open {
+                            key,
+                            stage: Stage::Poll {
+                                next: now.saturating_add(micros(POLL_INTERVAL)).min(until),
+                                until,
+                            },
+                        };
+                    }
+                    None => {
+                        *self = Self::Open {
+                            key,
+                            stage: Stage::Poll { next: 0, until },
+                        };
+                    }
+                }
+                found
+            }
+        };
+        CheckResult::Resumed(Some(found))
     }
 
     /// Ends the watch, in any state, for `why`.
     pub fn end(&mut self, why: &'static str) -> Option<Answer> {
-        let open = match std::mem::take(self) {
+        let key = match std::mem::take(self) {
             Self::None => return None,
-            Self::Waiting { open, .. }
-            | Self::Polling { open, .. }
-            | Self::Checking { open, .. } => open,
+            Self::Open { key, .. } | Self::Checking { key, .. } => key,
         };
-        Some(Answer::Ended { open, why })
+        Some(Answer::Ended { key, why })
     }
 
-    /// Ends a waiting or polling watch for `why`; a held one is left to
-    /// the program holding it.
+    /// Ends an open watch for `why`; a held one is left to the program
+    /// holding it.
     pub fn end_kept(&mut self, why: &'static str) -> Option<Answer> {
         if self.kept().is_some() {
             self.end(why)
@@ -327,43 +491,83 @@ impl Watch {
         }
     }
 
-    /// Acts on the due time if it has come by `now_us`: a waiting watch
-    /// ends at its bound; a polling watch is held for its next read.
-    pub fn reach(&mut self, now_us: u64) -> Reached {
+    /// Core's end of the watch `tag`: it stops, and sends nothing. Ignored
+    /// for no watch or another's.
+    pub fn end_order(&mut self, tag: KeyTag) {
+        if self.open().is_some_and(|key| key.tag == tag) {
+            *self = Self::None;
+        }
+    }
+
+    /// Core's final read of the watch `tag`: an open watch of a text field
+    /// is held for a read to be dispatched now, or, with a program in flight
+    /// (`busy`), notes the read as due; a check already running becomes the
+    /// final read. Any other is ignored.
+    pub fn final_read(&mut self, tag: KeyTag, busy: bool) -> FinalRead {
         match self {
-            Self::Waiting { bound, .. } if now_us >= *bound => match self.end("its bound passed") {
-                Some(answer) => Reached::Ended(Box::new(answer)),
-                None => Reached::Nothing,
-            },
-            Self::Polling { next, until, .. } if now_us >= *next => {
-                let until = *until;
-                let Self::Polling { open, .. } = std::mem::take(self) else {
+            Self::Open { key, stage } if key.tag == tag && *stage == Stage::Awaiting => {
+                if busy {
+                    *stage = Stage::FinalDue;
+                    FinalRead::Noted
+                } else {
+                    let Self::Open { key, .. } = std::mem::take(self) else {
+                        return FinalRead::Ignored;
+                    };
+                    *self = Self::Checking {
+                        key,
+                        after: AfterCheck::Answer,
+                    };
+                    FinalRead::Dispatch
+                }
+            }
+            Self::Checking { key, after }
+                if key.tag == tag && *after == AfterCheck::Resume(Stage::Awaiting) =>
+            {
+                *after = AfterCheck::Answer;
+                FinalRead::Noted
+            }
+            _ => FinalRead::Ignored,
+        }
+    }
+
+    /// Acts on the due time if it has come by `now_us`: a final read due,
+    /// or a poll's next read, holds the watch for a read; a terminal's
+    /// deadline ends it.
+    pub fn reach(&mut self, now_us: u64) -> Reached {
+        let Self::Open { stage, .. } = self else {
+            return Reached::Nothing;
+        };
+        match *stage {
+            Stage::FinalDue => {
+                let Self::Open { key, .. } = std::mem::take(self) else {
                     return Reached::Nothing;
                 };
                 *self = Self::Checking {
-                    open,
-                    resume: Resume::Read { until },
+                    key,
+                    after: AfterCheck::Answer,
                 };
                 Reached::Read
             }
-            _ => Reached::Nothing,
+            Stage::Terminal { ends } if now_us >= ends => match self.end("its deadline passed") {
+                Some(answer) => Reached::Ended(Box::new(answer)),
+                None => Reached::Nothing,
+            },
+            Stage::Poll { next, until } if now_us >= next => {
+                let Self::Open { key, .. } = std::mem::take(self) else {
+                    return Reached::Nothing;
+                };
+                *self = Self::Checking {
+                    key,
+                    after: AfterCheck::PollRead { until },
+                };
+                Reached::Read
+            }
+            Stage::Awaiting | Stage::Terminal { .. } | Stage::Poll { .. } => Reached::Nothing,
         }
     }
 
-    /// The program holding the watch was abandoned: it ends, answered
-    /// `Abandoned`.
-    pub fn abandoned(&mut self) -> Option<Answer> {
-        if !matches!(self, Self::Checking { .. }) {
-            return None;
-        }
-        let Self::Checking { open, .. } = std::mem::take(self) else {
-            return None;
-        };
-        Some(Answer::Abandoned { open })
-    }
-
-    /// The program in flight ended, having panicked, returned without its
-    /// check's result, or been claimed: a watch it held ends.
+    /// The program holding the watch was abandoned or ended without its
+    /// check's result: the watch ends.
     pub fn program_ended(&mut self) -> Option<Answer> {
         if matches!(self, Self::Checking { .. }) {
             self.end("its check failed")
@@ -373,315 +577,201 @@ impl Watch {
     }
 }
 
+/// What a check's result did ([`Watch::checked`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CheckResult {
+    /// The key is answered.
+    Answered(Answer),
+    /// It found nothing and the watch stays open; a read goes untagged.
+    Resumed(Option<Found>),
+    /// No watch is held: the read goes untagged.
+    NoWatch(Found),
+    /// Nothing to do.
+    Nothing,
+}
+
 #[cfg(test)]
 mod tests {
-    use verbatim_model::TextUnit;
+    use verbatim_model::protocol::EventTiming;
+    use verbatim_model::{QueryId, TextAnchor, TextChunk, TraceId};
 
     use super::*;
 
-    /// A watch for request 7 on node 1, its key pressed at `pressed_ms` on
-    /// the shared clock.
-    fn open(pressed_ms: u64) -> OpenWatch {
-        OpenWatch {
-            request_id: RequestId::shell(7),
+    fn line() -> TextChunk {
+        TextChunk {
+            unit: TextUnit::Line,
+            text: String::new(),
+            start: TextAnchor(1),
+            offset: 0,
+            languages: Vec::new(),
+            first: false,
+            last: false,
+            truncated: false,
+            formats: Vec::new(),
+        }
+    }
+
+    fn key(kind: WatchKind) -> Box<KeyWatch> {
+        Box::new(KeyWatch {
+            tag: KeyTag(QueryId(7)),
+            node: NodeId::new(1),
+            baseline: Baseline::Edit(LastRead {
+                caret: 0,
+                selection: None,
+                line: line(),
+                text_changed: false,
+                read_at_us: 0,
+            }),
+            unit: TextUnit::Character,
+            motion: CaretMotion::NextCharacter,
+            kind,
+            before_unit: None,
             trace: TraceId::from_raw(1),
-            node_id: NodeId::new(1),
-            watch: CaretWatch {
-                since: None,
-                pressed_at_ms: pressed_ms,
-                unit: TextUnit::Character,
-                compare: None,
-                landing: false,
-                deletes: false,
-            },
             timing: EventTiming::default(),
             calls: CallCounts::default(),
+        })
+    }
+
+    fn found(effect: bool) -> Found {
+        Found {
+            node: NodeId::new(1),
+            trace: TraceId::from_raw(1),
+            backend: Backend::Msaa,
+            read: Box::new(KeyRead {
+                caret: verbatim_model::CaretReport {
+                    line: line(),
+                    selection: None,
+                    read_at_us: 0,
+                },
+                selection_changes: Vec::new(),
+                content_changed: false,
+                new_selection: None,
+                before_line: line(),
+                before_selection: None,
+                before_unit: line(),
+                unit: line(),
+                on_baseline_line: true,
+            }),
+            effect,
+            untagged: true,
+            calls: CallCounts::default(),
+            awaited_at_us: 0,
         }
     }
 
-    fn uia(calls: u32) -> CallCounts {
-        CallCounts {
-            uia: calls,
-            ..CallCounts::default()
-        }
-    }
-
     #[test]
-    fn the_poll_ends_its_bound_after_the_key_was_pressed() {
-        let mut watch = Watch::None;
-        // Opened 3 ms after the key was pressed, at 1 s.
-        assert!(watch.opened(open(1_000), true, Some(1_003_000)));
-        assert_eq!(
-            watch,
-            Watch::Polling {
-                open: open(1_000),
-                next: 1_008_000,
-                until: 1_050_000,
-            }
-        );
-    }
-
-    #[test]
-    fn a_poll_without_the_keys_time_ends_its_bound_after_it_opened() {
-        let mut watch = Watch::None;
-        assert!(watch.opened(open(0), true, Some(1_003_000)));
-        assert_eq!(watch.due(), Some(1_008_000));
-        let Watch::Polling { until, .. } = watch else {
-            panic!("a polling watch, not {watch:?}");
+    fn the_judgement_counts_what_the_decisions_define() {
+        let caret = Compared {
+            caret_moved: true,
+            ..Compared::default()
         };
-        assert_eq!(until, 1_053_000);
-    }
-
-    #[test]
-    fn a_watch_opens_only_where_none_is() {
-        let mut watch = Watch::None;
-        assert!(watch.opened(open(0), false, Some(1_000)));
-        assert_eq!(
-            watch,
-            Watch::Waiting {
-                open: open(0),
-                bound: 11_001_000,
-            }
-        );
-        assert!(!watch.opened(open(5), true, Some(2_000)));
-        assert_eq!(watch.due(), Some(11_001_000));
-    }
-
-    #[test]
-    fn a_programs_copy_opens_with_its_times_at_zero() {
-        let mut waiting = Watch::None;
-        waiting.opened(open(1_000), false, None);
-        assert_eq!(
-            waiting,
-            Watch::Waiting {
-                open: open(1_000),
-                bound: 0,
-            }
-        );
-        let mut polling = Watch::None;
-        polling.opened(open(1_000), true, None);
-        assert_eq!(
-            polling,
-            Watch::Polling {
-                open: open(1_000),
-                next: 0,
-                until: 0,
-            }
-        );
-    }
-
-    #[test]
-    fn each_poll_read_is_followed_by_the_next_until_the_last() {
-        let mut watch = Watch::Polling {
-            open: open(1_000),
-            next: 1_045_000,
-            until: 1_050_000,
+        assert!(had_effect(caret, CaretMotion::NextCharacter));
+        let unit = Compared {
+            unit_changed: true,
+            ..Compared::default()
         };
-        assert_eq!(watch.reach(1_044_999), Reached::Nothing);
-        assert_eq!(watch.reach(1_046_000), Reached::Read);
-        assert_eq!(watch.due(), None);
-        // A read at 47 ms finds nothing: the next is the last, at 50 ms,
-        // not 52.
+        assert!(!had_effect(unit, CaretMotion::NextCharacter));
+        assert!(!had_effect(unit, CaretMotion::Backspace));
+        assert!(had_effect(unit, CaretMotion::Delete));
+        let line = Compared {
+            line_changed: true,
+            ..Compared::default()
+        };
+        assert!(!had_effect(line, CaretMotion::NextCharacter));
+        assert!(had_effect(line, CaretMotion::Backspace));
+    }
+
+    #[test]
+    fn a_console_poll_counts_from_its_opening_and_ends_at_its_last_read() {
+        let mut watch = Watch::None;
+        assert!(watch.opened(key(WatchKind::Terminal), true, Some(1_000)));
+        assert_eq!(watch.due(), Some(6_000));
+        assert_eq!(watch.reach(5_999), Reached::Nothing);
+        assert_eq!(watch.reach(6_000), Reached::Read);
         assert_eq!(
-            watch.checked(&Checked::Watching { calls: uia(2) }, Some(1_047_000)),
-            Some(None)
+            watch.checked(Checked::Found(found(false)), Some(8_000)),
+            CheckResult::Resumed(Some(found(false)))
         );
-        assert_eq!(
-            watch,
-            Watch::Polling {
-                open: OpenWatch {
-                    calls: uia(2),
-                    ..open(1_000)
-                },
-                next: 1_050_000,
-                until: 1_050_000,
-            }
-        );
-        assert_eq!(watch.reach(1_050_000), Reached::Read);
-        assert_eq!(
-            watch.checked(&Checked::Watching { calls: uia(2) }, Some(1_050_000)),
-            Some(Some(Answer::Ended {
-                open: OpenWatch {
-                    calls: uia(4),
-                    ..open(1_000)
-                },
-                why: "its poll's bound passed",
-            }))
-        );
+        assert_eq!(watch.due(), Some(13_000));
+        assert_eq!(watch.reach(13_000), Reached::Read);
+        assert!(matches!(
+            watch.checked(Checked::Found(found(false)), Some(51_000)),
+            CheckResult::Answered(Answer::Ended { .. })
+        ));
         assert_eq!(watch, Watch::None);
     }
 
     #[test]
-    fn a_take_of_another_node_leaves_a_waiting_watch_as_it_is() {
-        let waiting = Watch::Waiting {
-            open: open(0),
-            bound: 11_001_000,
-        };
-        let mut watch = waiting.clone();
-        assert_eq!(watch.take(NodeId::new(2)), None);
-        assert_eq!(watch, waiting);
+    fn a_terminals_deadline_ends_its_watch() {
+        let mut watch = Watch::None;
+        watch.opened(key(WatchKind::Terminal), false, Some(0));
+        let ends = micros(TERMINAL_WATCH_BOUND);
+        assert_eq!(watch.reach(ends - 1), Reached::Nothing);
+        assert!(matches!(watch.reach(ends), Reached::Ended(_)));
     }
 
     #[test]
-    fn a_take_found_nothing_puts_the_watch_back_as_it_stood() {
-        let polling = Watch::Polling {
-            open: open(1_000),
-            next: 1_005_000,
-            until: 1_050_000,
-        };
-        let mut watch = polling.clone();
-        assert_eq!(watch.take(NodeId::new(2)), None);
-        assert_eq!(watch, polling);
-        assert_eq!(watch.take(NodeId::new(1)), Some(open(1_000)));
+    fn a_text_fields_watch_has_no_time_of_its_own() {
+        let mut watch = Watch::None;
+        watch.opened(key(WatchKind::TextField), false, Some(0));
         assert_eq!(watch.due(), None);
-        // Found nothing, even at a time past its next read.
-        assert_eq!(
-            watch.checked(&Checked::Watching { calls: uia(1) }, Some(1_040_000)),
-            Some(None)
-        );
-        assert_eq!(
-            watch,
-            Watch::Polling {
-                open: OpenWatch {
-                    calls: uia(1),
-                    ..open(1_000)
-                },
-                next: 1_005_000,
-                until: 1_050_000,
-            }
-        );
+        assert_eq!(watch.reach(u64::MAX), Reached::Nothing);
     }
 
     #[test]
-    fn a_waiting_watch_ends_at_its_bound() {
-        let mut watch = Watch::Waiting {
-            open: open(0),
-            bound: 10_000,
-        };
-        assert_eq!(watch.reach(9_999), Reached::Nothing);
+    fn a_final_read_with_nothing_found_is_the_bound_answer() {
+        let mut watch = Watch::None;
+        watch.opened(key(WatchKind::TextField), false, Some(0));
         assert_eq!(
-            watch.reach(10_000),
-            Reached::Ended(Box::new(Answer::Ended {
-                open: open(0),
-                why: "its bound passed",
-            }))
+            watch.final_read(KeyTag(QueryId(7)), false),
+            FinalRead::Dispatch
         );
-        assert_eq!(watch, Watch::None);
+        assert!(matches!(
+            watch.checked(Checked::Found(found(false)), Some(1)),
+            CheckResult::Answered(Answer::Bound { .. })
+        ));
     }
 
     #[test]
-    fn a_result_with_no_watch_held_is_dropped() {
-        let waiting = Watch::Waiting {
-            open: open(0),
-            bound: 10_000,
-        };
-        let mut watch = waiting.clone();
-        let answered = Checked::Answered {
-            reply: TextReply::Done,
-            calls: uia(1),
-            awaited_at_us: 5,
-        };
-        assert_eq!(watch.checked(&answered, Some(1)), None);
-        assert_eq!(watch, waiting);
-        assert_eq!(watch.abandoned(), None);
-        assert_eq!(watch.program_ended(), None);
-        assert_eq!(watch, waiting);
+    fn a_final_read_with_a_program_in_flight_runs_after_it() {
+        let mut watch = Watch::None;
+        watch.opened(key(WatchKind::TextField), false, Some(0));
+        assert_eq!(watch.final_read(KeyTag(QueryId(7)), true), FinalRead::Noted);
+        assert!(watch.final_due());
+        assert_eq!(watch.reach(1), Reached::Read);
     }
 
-    /// Every transition from every state, enumerated: the module's own
-    /// rules that a query is answered at most once, by a transition that
-    /// leaves no watch, and that a held watch has no due time.
     #[test]
-    fn every_transition_answers_only_as_it_leaves_no_watch() {
-        type Step = fn(&mut Watch) -> Option<Answer>;
-        let states = [
-            Watch::None,
-            Watch::Waiting {
-                open: open(0),
-                bound: 10_000,
-            },
-            Watch::Polling {
-                open: open(0),
-                next: 5_000,
-                until: 50_000,
-            },
-            Watch::Checking {
-                open: open(0),
-                resume: Resume::Bound(10_000),
-            },
-            Watch::Checking {
-                open: open(0),
-                resume: Resume::Poll {
-                    next: 5_000,
-                    until: 50_000,
-                },
-            },
-            Watch::Checking {
-                open: open(0),
-                resume: Resume::Read { until: 50_000 },
-            },
-        ];
-        let steps: [(&str, Step); 11] = [
-            ("open", |watch| {
-                watch.opened(open(0), true, Some(1));
-                None
-            }),
-            ("take", |watch| {
-                watch.take(NodeId::new(1));
-                None
-            }),
-            ("answered", |watch| {
-                watch
-                    .checked(
-                        &Checked::Answered {
-                            reply: TextReply::Done,
-                            calls: uia(1),
-                            awaited_at_us: 1,
-                        },
-                        Some(1),
-                    )
-                    .flatten()
-            }),
-            ("watching early", |watch| {
-                watch
-                    .checked(&Checked::Watching { calls: uia(1) }, Some(1))
-                    .flatten()
-            }),
-            ("watching late", |watch| {
-                watch
-                    .checked(&Checked::Watching { calls: uia(1) }, Some(60_000))
-                    .flatten()
-            }),
-            ("end", |watch| watch.end("why")),
-            ("end kept", |watch| watch.end_kept("why")),
-            ("abandoned", Watch::abandoned),
-            ("program ended", Watch::program_ended),
-            ("reached early", |watch| match watch.reach(1) {
-                Reached::Ended(answer) => Some(*answer),
-                _ => None,
-            }),
-            ("reached late", |watch| match watch.reach(60_000) {
-                Reached::Ended(answer) => Some(*answer),
-                _ => None,
-            }),
-        ];
-        for state in &states {
-            for (name, step) in &steps {
-                let mut watch = state.clone();
-                let answer = step(&mut watch);
-                if answer.is_some() {
-                    assert!(
-                        !state.is_none() && watch.is_none(),
-                        "{name} from {state:?} answered and left {watch:?}"
-                    );
-                }
-                if state.is_none() {
-                    assert!(answer.is_none(), "{name} from no watch answered");
-                }
-                if matches!(watch, Watch::Checking { .. }) {
-                    assert_eq!(watch.due(), None, "{name} from {state:?}");
-                }
-            }
-        }
+    fn a_running_check_becomes_the_final_read() {
+        let mut watch = Watch::None;
+        watch.opened(key(WatchKind::TextField), false, Some(0));
+        assert!(watch.take(NodeId::new(1)).is_some());
+        assert_eq!(watch.final_read(KeyTag(QueryId(7)), true), FinalRead::Noted);
+        assert!(matches!(
+            watch.checked(Checked::Found(found(false)), Some(1)),
+            CheckResult::Answered(Answer::Bound { .. })
+        ));
+    }
+
+    #[test]
+    fn an_order_for_another_tag_is_ignored() {
+        let mut watch = Watch::None;
+        watch.opened(key(WatchKind::TextField), false, Some(0));
+        let open = watch.clone();
+        assert_eq!(
+            watch.final_read(KeyTag(QueryId(8)), false),
+            FinalRead::Ignored
+        );
+        watch.end_order(KeyTag(QueryId(8)));
+        assert_eq!(watch, open);
+    }
+
+    #[test]
+    fn a_checks_read_with_no_watch_held_goes_untagged() {
+        let mut watch = Watch::None;
+        assert_eq!(
+            watch.checked(Checked::Found(found(true)), Some(1)),
+            CheckResult::NoWatch(found(true))
+        );
     }
 }

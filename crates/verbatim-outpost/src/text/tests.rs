@@ -4,7 +4,7 @@
 
 use std::sync::atomic::AtomicU64;
 
-use verbatim_model::CaretMotion;
+use verbatim_model::{CaretMotion, KeyRequest, KeyTag};
 
 use super::*;
 
@@ -212,95 +212,85 @@ impl TextSource for Fake {
     }
 }
 
-/// What a check of a caret key's watch is told: whether a caret event
-/// prompted it, and how many times it read the caret.
-struct FakeSignal {
-    events: bool,
-    reads: usize,
-}
-
-impl FakeSignal {
-    fn new() -> Self {
-        Self {
-            events: false,
-            reads: 0,
-        }
-    }
-}
-
-impl CaretSignal for FakeSignal {
-    fn caret_event(&mut self) -> bool {
-        self.events
-    }
-
-    fn now_ms(&mut self) -> u64 {
-        CHECKED_AT
-    }
-
-    fn reading(&mut self) {
-        self.reads += 1;
-    }
-}
-
-/// When [`report`] reads the caret, in milliseconds since the Unix epoch.
-const REPORTED_AT: u64 = 1_000;
-
-/// When [`watch`]'s key was pressed, after [`report`]'s reads.
-const PRESSED_AT: u64 = 2_000;
-
-/// When a [`FakeSignal`] says a check reads the caret, after the key.
-const CHECKED_AT: u64 = 2_050;
+/// When [`report`] reads the caret, in microseconds.
+const REPORTED_AT: u64 = 1_000_000;
 
 fn store() -> Anchors<usize> {
     Anchors::new(Arc::new(AtomicU64::new(0)))
 }
 
 fn report(source: &mut Fake, anchors: &mut Anchors<usize>) -> CaretReport {
-    report_at(source, anchors, REPORTED_AT)
-}
-
-/// A caret report from a read that finished at `read_at_ms`.
-fn report_at(source: &mut Fake, anchors: &mut Anchors<usize>, read_at_ms: u64) -> CaretReport {
-    caret_report(source, &mut anchors.node(1), &mut || read_at_ms, false)
+    caret_report(source, &mut anchors.node(1), REPORTED_AT, false)
         .expect("the fake answers")
         .0
 }
 
-/// The watch of a key that moves by `unit`.
-fn watch(since: Option<TextPosition>, unit: TextUnit) -> CaretWatch {
-    CaretWatch {
-        landing: false,
-        since,
-        pressed_at_ms: PRESSED_AT,
-        unit,
-        compare: None,
-        deletes: false,
+/// A report that compares its selection with the last read.
+fn compared(source: &mut Fake, anchors: &mut Anchors<usize>) -> ReportedCaret<usize> {
+    caret_report_since(
+        source,
+        &mut anchors.node(1),
+        REPORTED_AT + 1,
+        &ReportAsk {
+            formats: false,
+            since: None,
+            compare: true,
+            unit: None,
+        },
+    )
+    .expect("the fake answers")
+}
+
+/// The ask of a caret read that compares its selection.
+fn comparing<'a>() -> ReportAsk<'a, usize> {
+    ReportAsk {
+        formats: false,
+        since: None,
+        compare: true,
+        unit: None,
     }
 }
 
-/// One check of `watch` on node 1 of `anchors`.
+/// Pins `anchors`' last read for a key.
+fn pinned(anchors: &mut Anchors<usize>) -> LastRead<usize> {
+    anchors
+        .node(1)
+        .last_read()
+        .expect("a read made the baseline")
+}
+
+/// One check of a key of `motion` judged from `baseline`, on node 1.
 fn check(
     source: &mut Fake,
     anchors: &mut Anchors<usize>,
-    watch: &CaretWatch,
-    signal: &mut FakeSignal,
-) -> Watched {
-    check_caret(source, &mut anchors.node(1), watch, signal)
+    baseline: &LastRead<usize>,
+    motion: CaretMotion,
+) -> KeyChecked {
+    check_key(
+        source,
+        &mut anchors.node(1),
+        &CheckKey {
+            baseline,
+            unit: motion.unit(),
+            motion,
+            before_unit: None,
+            read_at_us: REPORTED_AT + 2,
+            final_read: false,
+        },
+    )
 }
 
-fn caret_reply(reply: TextReply) -> CaretReply {
-    match reply {
-        TextReply::Caret(reply) => *reply,
-        other => panic!("a caret reply, not {other:?}"),
+/// The read of a check that found evidence.
+fn answered(checked: KeyChecked) -> Box<KeyRead> {
+    match checked {
+        KeyChecked::Read { read, effect: true } => read,
+        other => panic!("no evidence: {other:?}"),
     }
 }
 
-/// The caret reply a check answered with.
-fn answered(watched: Watched) -> CaretReply {
-    match watched {
-        Watched::Answered(reply) => caret_reply(reply),
-        Watched::Watching => panic!("the check found no evidence"),
-    }
+/// Whether a check found nothing.
+fn nothing(checked: &KeyChecked) -> bool {
+    matches!(checked, KeyChecked::Read { effect: false, .. })
 }
 
 #[test]
@@ -378,288 +368,127 @@ fn an_anchor_is_kept_however_many_are_minted_until_it_is_forgotten() {
 }
 
 #[test]
-fn a_watch_is_not_carried_out_by_perform() {
-    // A caret key's watch is checked, by `check_caret`, never waited on.
+fn a_keys_request_is_not_carried_out_by_perform() {
+    // A key's check is made by `check_key`.
     let mut source = Fake::new("one", 0);
-    let reply = perform(
-        &mut source,
-        &mut store().node(1),
-        &TextOp::AwaitCaret(watch(None, TextUnit::Character)),
-    );
+    let request = KeyRequest {
+        tag: KeyTag(verbatim_model::QueryId(1)),
+        kind: verbatim_model::WatchKind::TextField,
+        unit: TextUnit::Character,
+        motion: CaretMotion::NextCharacter,
+        start: verbatim_model::KeyStart::ReadFirst,
+    };
+    let reply = perform(&mut source, &mut store().node(1), &TextOp::Key(request));
     assert_eq!(reply, TextReply::Unsupported);
     assert_eq!(source.caret_reads, 0);
 }
 
 #[test]
-fn a_caret_that_moved_from_where_core_knew_it_is_evidence_at_once() {
+fn a_caret_that_left_where_the_baseline_had_it_is_evidence_at_once() {
     let mut source = Fake::new("one two\nthree", 0);
     let mut anchors = store();
-    let line = report(&mut source, &mut anchors).line;
-    let since = TextPosition {
-        anchor: line.start,
-        offset: line.offset,
-    };
+    report(&mut source, &mut anchors);
+    let baseline = pinned(&mut anchors);
     source.caret = 4;
-    let mut signal = FakeSignal::new();
-    let reply = answered(check(
+    source.caret_reads = 0;
+    let read = answered(check(
         &mut source,
         &mut anchors,
-        &watch(Some(since), TextUnit::Word),
-        &mut signal,
+        &baseline,
+        CaretMotion::NextWord,
     ));
-    assert!(reply.moved);
-    assert_eq!(signal.reads, 1, "one read answers");
-    assert_eq!(reply.unit.expect("the provider's word").text, "two");
-    assert_eq!(reply.caret.line.text, "one two\n");
-    assert_eq!(reply.caret.line.offset, 4);
+    assert_eq!(source.caret_reads, 2, "the read and its recheck");
+    assert_eq!(read.unit.text, "two");
+    assert_eq!(read.caret.line.text, "one two\n");
+    assert_eq!(read.caret.line.offset, 4);
+    assert_eq!(read.before_line.text, "one two\n");
+    assert!(read.on_baseline_line);
 }
 
 #[test]
-fn with_no_evidence_the_watch_stays_open_after_one_read() {
-    // The key moved nothing yet: the check reads the caret once and says
-    // the watch stays open, waiting for nothing.
+fn with_no_evidence_the_check_reads_the_caret_once() {
     let mut source = Fake::new("only", 2);
     let mut anchors = store();
-    let line = report(&mut source, &mut anchors).line;
-    let since = TextPosition {
-        anchor: line.start,
-        offset: line.offset,
-    };
+    report(&mut source, &mut anchors);
+    let baseline = pinned(&mut anchors);
     source.caret_reads = 0;
-    let mut signal = FakeSignal::new();
-    let watched = check(
+    let checked = check(
         &mut source,
         &mut anchors,
-        &watch(Some(since), TextUnit::Character),
-        &mut signal,
+        &baseline,
+        CaretMotion::NextCharacter,
     );
-    assert!(matches!(watched, Watched::Watching), "{watched:?}");
-    assert_eq!(signal.reads, 1);
+    assert!(nothing(&checked), "{checked:?}");
     assert_eq!(source.caret_reads, 1);
 }
 
 #[test]
 fn a_caret_moved_later_answers_a_later_check() {
-    // The application moves the caret after the watch was opened, and its
-    // caret event has the watch checked again.
     let mut source = Fake::new("one\ntwo", 0);
     let mut anchors = store();
-    let line = report(&mut source, &mut anchors).line;
-    let watch = watch(Some(TextPosition::at(line.start)), TextUnit::Line);
+    report(&mut source, &mut anchors);
+    let baseline = pinned(&mut anchors);
     source.caret_reads = 0;
     source.moves_on_read = Some((2, 4));
-    let mut signal = FakeSignal::new();
-    let watched = check(&mut source, &mut anchors, &watch, &mut signal);
-    assert!(matches!(watched, Watched::Watching), "{watched:?}");
-    signal.events = true;
-    let reply = answered(check(&mut source, &mut anchors, &watch, &mut signal));
-    assert!(reply.moved);
-    assert_eq!(signal.reads, 2, "one read a check");
-    assert_eq!(reply.caret.line.text, "two");
-    assert_eq!(reply.unit, None, "a line is the caret's line");
+    let checked = check(&mut source, &mut anchors, &baseline, CaretMotion::NextLine);
+    assert!(nothing(&checked), "{checked:?}");
+    let read = answered(check(
+        &mut source,
+        &mut anchors,
+        &baseline,
+        CaretMotion::NextLine,
+    ));
+    assert_eq!(read.caret.line.text, "two");
+    assert_eq!(read.unit.unit, TextUnit::Line, "a line is the caret's line");
 }
 
 #[test]
-fn a_changed_line_at_the_same_position_is_evidence() {
-    // The application handled the key before the watch began, and the
-    // position Core knew moved with the edit: only the line's text tells.
+fn a_changed_character_beside_the_caret_is_evidence() {
+    // The position moved with the edit: only the characters beside it tell.
     let mut source = Fake::new("abcx", 4);
     let mut anchors = store();
-    let line = report(&mut source, &mut anchors).line;
-    let since = TextPosition {
-        anchor: line.start,
-        offset: line.offset,
-    };
+    report(&mut source, &mut anchors);
+    let baseline = pinned(&mut anchors);
     source.text = "abcy".encode_utf16().collect();
-    let reply = answered(check(
+    let read = answered(check(
         &mut source,
         &mut anchors,
-        &watch(Some(since), TextUnit::Character),
-        &mut FakeSignal::new(),
+        &baseline,
+        CaretMotion::NextCharacter,
     ));
-    assert!(reply.moved);
-    assert_eq!(reply.caret.line.text, "abcy");
+    assert_eq!(read.caret.line.text, "abcy");
 }
 
 #[test]
-fn a_caret_reported_after_the_one_core_knew_is_the_baseline() {
-    // Core asked with the caret it knew; before the key, the outpost
-    // reported a newer one (an earlier key's late caret event, or a
-    // paste's), which Core had not had yet, and the key has done nothing
-    // yet.
-    let mut source = Fake::new("one two", 0);
-    let mut anchors = store();
-    let line = report_at(&mut source, &mut anchors, PRESSED_AT - 500).line;
-    let known_to_core = TextPosition {
-        anchor: line.start,
-        offset: line.offset,
-    };
-    source.caret = 4;
-    report_at(&mut source, &mut anchors, PRESSED_AT - 1);
-    let watched = check(
-        &mut source,
-        &mut anchors,
-        &watch(Some(known_to_core), TextUnit::Character),
-        &mut FakeSignal::new(),
-    );
-    assert!(
-        matches!(watched, Watched::Watching),
-        "the change Core had not heard of is not the key's: {watched:?}"
-    );
-}
-
-#[test]
-fn a_caret_reported_before_the_outpost_moved_the_caret_is_not_the_baseline() {
-    // Say-all moved the caret to the second line, and Core took the move
-    // as its caret; the key has done nothing yet. The first line's caret,
-    // reported before the move, is not where the key found the caret.
-    let mut source = Fake::new("one\ntwo", 0);
-    let mut anchors = store();
-    let _ = report(&mut source, &mut anchors);
-    let TextReply::Read { chunk: second, .. } = perform(
-        &mut source,
-        &mut anchors.node(1),
-        &TextOp::Read(TextRead {
-            at: TextPoint::Caret,
-            movement: Some(TextMovement {
-                unit: TextUnit::Line,
-                count: 1,
-            }),
-            unit: TextUnit::Line,
-        }),
-    ) else {
-        panic!("the second line is read");
-    };
-    let moved_to = TextPosition::at(second.start);
-    assert_eq!(
-        perform(
-            &mut source,
-            &mut anchors.node(1),
-            &TextOp::MoveCaret(TextPoint::At(moved_to)),
-        ),
-        TextReply::Done
-    );
-    assert_eq!(source.caret, 4);
-    let watched = check(
-        &mut source,
-        &mut anchors,
-        &watch(Some(moved_to), TextUnit::Character),
-        &mut FakeSignal::new(),
-    );
-    assert!(
-        matches!(watched, Watched::Watching),
-        "the outpost's own move is not the key's: {watched:?}"
-    );
-}
-
-#[test]
-fn a_caret_reported_after_the_key_but_before_the_watch_is_not_the_baseline() {
-    // Backspace after typing "x": the application handled the key and its
-    // caret event reached the outpost, which reported the new caret, before
-    // Core's request did. The caret as it was when the key was pressed is
-    // the baseline, so the move is evidence.
-    let mut source = Fake::new("delta epsilonx", 14);
-    let mut anchors = store();
-    let line = report(&mut source, &mut anchors).line;
-    let known_to_core = TextPosition {
-        anchor: line.start,
-        offset: line.offset,
-    };
-    source.text = "delta epsilon".encode_utf16().collect();
-    source.caret = 13;
-    report_at(&mut source, &mut anchors, PRESSED_AT + 5);
-    let reply = answered(check(
-        &mut source,
-        &mut anchors,
-        &watch(Some(known_to_core), TextUnit::Character),
-        &mut FakeSignal::new(),
-    ));
-    assert!(reply.moved, "the key's own caret event is not the baseline");
-    assert_eq!(reply.caret.line.text, "delta epsilon");
-    assert_eq!(reply.caret.line.offset, 13);
-}
-
-#[test]
-fn a_caret_read_in_the_same_millisecond_as_the_key_is_not_the_baseline() {
-    // The read may have finished after the key reached the application.
-    let mut source = Fake::new("one two", 0);
-    let mut anchors = store();
-    let line = report(&mut source, &mut anchors).line;
-    let known_to_core = TextPosition {
-        anchor: line.start,
-        offset: line.offset,
-    };
-    source.caret = 4;
-    report_at(&mut source, &mut anchors, PRESSED_AT);
-    let reply = answered(check(
-        &mut source,
-        &mut anchors,
-        &watch(Some(known_to_core), TextUnit::Character),
-        &mut FakeSignal::new(),
-    ));
-    assert!(reply.moved);
-}
-
-#[test]
-fn a_line_that_changed_away_from_the_caret_or_a_late_event_is_no_evidence() {
-    // The line wrapped anew and the application reported an earlier caret
-    // change late; the caret itself has not moved.
+fn a_line_that_changed_away_from_the_caret_is_no_evidence() {
     let mut source = Fake::new("one two", 4);
     let mut anchors = store();
-    let line = report(&mut source, &mut anchors).line;
-    let since = TextPosition {
-        anchor: line.start,
-        offset: line.offset,
-    };
+    report(&mut source, &mut anchors);
+    let baseline = pinned(&mut anchors);
     source.text = "one two three".encode_utf16().collect();
-    let mut signal = FakeSignal::new();
-    signal.events = true;
-    let watched = check(
+    let checked = check(
         &mut source,
         &mut anchors,
-        &watch(Some(since), TextUnit::Character),
-        &mut signal,
+        &baseline,
+        CaretMotion::NextCharacter,
     );
-    assert!(matches!(watched, Watched::Watching), "{watched:?}");
-}
-
-#[test]
-fn a_caret_event_is_evidence_when_core_did_not_know_the_caret() {
-    let mut source = Fake::new("only", 0);
-    let mut anchors = store();
-    let mut signal = FakeSignal::new();
-    let unknown = watch(None, TextUnit::Character);
-    let watched = check(&mut source, &mut anchors, &unknown, &mut signal);
-    assert!(
-        matches!(watched, Watched::Watching),
-        "no event, no evidence: {watched:?}"
-    );
-    signal.events = true;
-    let reply = answered(check(&mut source, &mut anchors, &unknown, &mut signal));
-    assert!(reply.moved);
-    assert_eq!(reply.unit.expect("the character").text, "o");
+    assert!(nothing(&checked), "{checked:?}");
 }
 
 #[test]
 fn a_delete_that_changes_the_text_at_the_caret_is_evidence() {
     let mut source = Fake::new("abc", 1);
     let mut anchors = store();
-    let line = report(&mut source, &mut anchors).line;
-    let since = TextPosition {
-        anchor: line.start,
-        offset: line.offset,
-    };
+    report(&mut source, &mut anchors);
+    let baseline = pinned(&mut anchors);
     source.text = "ac".encode_utf16().collect();
-    let mut watch = watch(Some(since), CaretMotion::Delete.unit());
-    watch.compare = Some("b".to_owned());
-    let reply = answered(check(
+    let read = answered(check(
         &mut source,
         &mut anchors,
-        &watch,
-        &mut FakeSignal::new(),
+        &baseline,
+        CaretMotion::Delete,
     ));
-    assert!(reply.moved, "the character at the caret changed");
-    assert_eq!(reply.unit.expect("the character").text, "c");
+    assert_eq!(read.unit.text, "c");
 }
 
 #[test]
@@ -669,69 +498,28 @@ fn a_deleting_key_in_a_run_of_one_character_is_evidence_by_its_line() {
     // the line, one star shorter, shows the key did something.
     let mut source = Fake::new("******", 2);
     let mut anchors = store();
-    let line = report(&mut source, &mut anchors).line;
-    let since = TextPosition {
-        anchor: line.start,
-        offset: line.offset,
-    };
+    report(&mut source, &mut anchors);
+    let baseline = pinned(&mut anchors);
     source.text = "*****".encode_utf16().collect();
-    let mut watch = watch(Some(since), CaretMotion::Delete.unit());
-    watch.compare = Some("*".to_owned());
-    let watched = check(&mut source, &mut anchors, &watch, &mut FakeSignal::new());
-    assert!(
-        matches!(watched, Watched::Watching),
-        "no evidence without the key's deleting: {watched:?}"
-    );
-    watch.deletes = true;
-    let reply = answered(check(
+    let checked = check(
         &mut source,
         &mut anchors,
-        &watch,
-        &mut FakeSignal::new(),
+        &baseline,
+        CaretMotion::NextCharacter,
+    );
+    assert!(
+        nothing(&checked),
+        "no evidence but a deleting key's: {checked:?}"
+    );
+    let read = answered(check(
+        &mut source,
+        &mut anchors,
+        &baseline,
+        CaretMotion::Delete,
     ));
     assert_eq!(
-        (
-            reply.moved,
-            reply.caret.line.text.as_str(),
-            reply.caret.line.offset
-        ),
-        (true, "*****", 2)
-    );
-}
-
-#[test]
-fn a_deleting_keys_line_is_not_compared_with_a_paragraph_core_knew() {
-    // After say-all, Core knows the caret in the paragraph it last read,
-    // which wraps onto two lines, and no caret has been reported since.
-    // Backspace has done nothing yet: the paragraph is not the caret's
-    // line, so their differing is not the key's evidence.
-    let mut source = Fake::new("abcdef ghijkl", 9);
-    source.wrap = Some(7);
-    let mut anchors = store();
-    let TextReply::Read { chunk, .. } = read(
-        &mut source,
-        &mut anchors,
-        TextRead {
-            at: TextPoint::Caret,
-            movement: None,
-            unit: TextUnit::Sentence,
-        },
-    ) else {
-        panic!("the paragraph is read");
-    };
-    assert_eq!((chunk.text.as_str(), chunk.offset), ("abcdef ghijkl", 9));
-    let mut watch = watch(
-        Some(TextPosition {
-            anchor: chunk.start,
-            offset: chunk.offset,
-        }),
-        CaretMotion::Backspace.unit(),
-    );
-    watch.deletes = true;
-    let watched = check(&mut source, &mut anchors, &watch, &mut FakeSignal::new());
-    assert!(
-        matches!(watched, Watched::Watching),
-        "nothing changed: {watched:?}"
+        (read.caret.line.text.as_str(), read.caret.line.offset),
+        ("*****", 2)
     );
 }
 
@@ -748,13 +536,7 @@ fn a_comparison_after_the_text_changed_is_in_general_terms_once() {
     source.selection = None;
     source.caret = 1;
     let compare = |source: &mut Fake, anchors: &mut Anchors<usize>| {
-        let read = caret_report_since(
-            source,
-            &mut anchors.node(1),
-            &mut || REPORTED_AT,
-            (false, None, LastSelection::Compare),
-        )
-        .expect("the fake answers");
+        let read = compared(source, anchors);
         (
             read.selection_changes,
             read.content_changed,
@@ -799,12 +581,12 @@ fn a_selecting_keys_answer_after_the_text_changed_is_in_general_terms() {
     assert!(before.selection.is_some());
     anchors.note_content_changed(1);
     source.selection = Some((0, 5));
-    let watch = watch(None, TextUnit::Character);
+    let baseline = pinned(&mut anchors);
     let reply = answered(check(
         &mut source,
         &mut anchors,
-        &watch,
-        &mut FakeSignal::new(),
+        &baseline,
+        CaretMotion::NextCharacter,
     ));
     assert_eq!(
         (
@@ -835,16 +617,16 @@ fn selection_after(old: (usize, usize), new: Option<(usize, usize)>) -> Vec<(boo
     source.selection = (old.0 != old.1).then_some(old);
     let mut anchors = store();
     let _ = report(&mut source, &mut anchors);
+    let pinned_read = pinned(&mut anchors);
     source.selection = new;
     source.caret = new.map_or(old.0, |(start, _)| start);
-    let watch = watch(None, TextUnit::Character);
+    let baseline = pinned_read;
     let reply = answered(check(
         &mut source,
         &mut anchors,
-        &watch,
-        &mut FakeSignal::new(),
+        &baseline,
+        CaretMotion::NextCharacter,
     ));
-    assert!(reply.moved, "a changed selection is evidence");
     reply
         .selection_changes
         .into_iter()
@@ -895,21 +677,27 @@ fn a_selection_around_the_caret_is_one_change_each_way() {
     let mut source = Fake::new("hello world", 5);
     let mut anchors = store();
     let _ = report(&mut source, &mut anchors);
-    let mut answer = |source: &mut Fake| {
-        let watch = watch(None, TextUnit::Character);
-        let reply = answered(check(source, &mut anchors, &watch, &mut FakeSignal::new()));
-        reply
+    let answer = |source: &mut Fake, anchors: &mut Anchors<usize>, baseline: &LastRead<usize>| {
+        answered(check(source, anchors, baseline, CaretMotion::NextCharacter))
             .selection_changes
             .into_iter()
             .map(|change| (change.selected, change.text, change.characters))
             .collect::<Vec<_>>()
     };
+    let baseline = pinned(&mut anchors);
     source.selection = Some((3, 8));
     source.caret = 8;
-    assert_eq!(answer(&mut source), [(true, "lo wo".to_owned(), 5)]);
+    assert_eq!(
+        answer(&mut source, &mut anchors, &baseline),
+        [(true, "lo wo".to_owned(), 5)]
+    );
+    let baseline = pinned(&mut anchors);
     source.selection = None;
     source.caret = 5;
-    assert_eq!(answer(&mut source), [(false, "lo wo".to_owned(), 5)]);
+    assert_eq!(
+        answer(&mut source, &mut anchors, &baseline),
+        [(false, "lo wo".to_owned(), 5)]
+    );
 }
 
 fn read(source: &mut Fake, anchors: &mut Anchors<usize>, read: TextRead) -> TextReply {
@@ -1162,28 +950,22 @@ fn text_cut_short_ends_at_a_whole_character() {
 }
 
 #[test]
-fn a_landing_watch_says_whether_the_caret_stayed_on_its_line() {
+fn a_keys_read_says_whether_the_caret_stayed_on_its_line() {
     for (moved_to, same_line) in [(2, true), (3, true), (6, false)] {
         // The caret at "one"'s start; a key the caret table does not know
         // moves it within the line, to its end, or onto the next.
         let mut source = Fake::new("one\ntwo", 0);
         let mut anchors = store();
-        let line = report(&mut source, &mut anchors).line;
-        let watch = CaretWatch {
-            landing: true,
-            ..watch(
-                Some(TextPosition::at(line.start)),
-                CaretMotion::Other.unit(),
-            )
-        };
+        report(&mut source, &mut anchors);
+        let baseline = pinned(&mut anchors);
         source.caret = moved_to;
-        let reply = answered(check(
+        let read = answered(check(
             &mut source,
             &mut anchors,
-            &watch,
-            &mut FakeSignal::new(),
+            &baseline,
+            CaretMotion::Other,
         ));
-        assert_eq!(reply.same_line, Some(same_line), "moved to {moved_to}");
+        assert_eq!(read.on_baseline_line, same_line, "moved to {moved_to}");
     }
 }
 
@@ -1194,24 +976,20 @@ fn a_caret_read_before_the_key_with_its_line_after_is_no_answer() {
     // the time it is read again. Nothing is answered until the next check.
     let mut source = Fake::new("abcxy", 5);
     let mut anchors = store();
-    let line = report(&mut source, &mut anchors).line;
-    let since = TextPosition {
-        anchor: line.start,
-        offset: line.offset,
-    };
+    report(&mut source, &mut anchors);
+    let baseline = pinned(&mut anchors);
     source.text = "abcx".encode_utf16().collect();
     source.moves_on_read = Some((source.caret_reads + 2, 4));
-    let key = watch(Some(since), TextUnit::Character);
-    let first = check(&mut source, &mut anchors, &key, &mut FakeSignal::new());
-    assert!(matches!(first, Watched::Watching));
-    let reply = answered(check(
+    let first = check(&mut source, &mut anchors, &baseline, CaretMotion::Backspace);
+    assert!(matches!(first, KeyChecked::Moving), "{first:?}");
+    let read = answered(check(
         &mut source,
         &mut anchors,
-        &key,
-        &mut FakeSignal::new(),
+        &baseline,
+        CaretMotion::Backspace,
     ));
-    assert_eq!(reply.caret.line.text, "abcx");
-    assert_eq!(reply.caret.line.offset, 4);
+    assert_eq!(read.caret.line.text, "abcx");
+    assert_eq!(read.caret.line.offset, 4);
 }
 
 #[test]
@@ -1224,24 +1002,20 @@ fn a_selection_read_before_a_cut_with_its_line_after_is_no_answer() {
     let mut source = Fake::new("abc def", 0);
     source.selection = Some((0, 3));
     let mut anchors = store();
-    let line = report(&mut source, &mut anchors).line;
-    let since = TextPosition {
-        anchor: line.start,
-        offset: line.offset,
-    };
+    report(&mut source, &mut anchors);
+    let baseline = pinned(&mut anchors);
     source.text = " def".encode_utf16().collect();
     source.moves_on_read = Some((source.caret_reads + 2, 0));
-    let key = watch(Some(since), TextUnit::Word);
-    let first = check(&mut source, &mut anchors, &key, &mut FakeSignal::new());
-    assert!(matches!(first, Watched::Watching));
-    let reply = answered(check(
+    let first = check(&mut source, &mut anchors, &baseline, CaretMotion::NextWord);
+    assert!(matches!(first, KeyChecked::Moving), "{first:?}");
+    let read = answered(check(
         &mut source,
         &mut anchors,
-        &key,
-        &mut FakeSignal::new(),
+        &baseline,
+        CaretMotion::NextWord,
     ));
-    assert_eq!(reply.caret.line.text, " def");
-    assert_eq!(reply.caret.selection, None);
+    assert_eq!(read.caret.line.text, " def");
+    assert_eq!(read.caret.selection, None);
 }
 
 /// A caret event's report with nothing selected before or after has no
@@ -1256,8 +1030,8 @@ fn a_caret_move_with_no_selection_is_not_cut() {
     let checked = caret_report_checking(
         &mut source,
         &mut anchors.node(1),
-        &mut || REPORTED_AT,
-        (false, None, LastSelection::Compare),
+        REPORTED_AT,
+        &comparing(),
         true,
     )
     .expect("the fake answers");
@@ -1289,8 +1063,8 @@ fn a_selection_typed_over_is_cut_then_finished_in_general_terms() {
     let checked = caret_report_checking(
         &mut source,
         &mut anchors.node(1),
-        &mut || REPORTED_AT,
-        (false, None, LastSelection::Compare),
+        REPORTED_AT,
+        &comparing(),
         true,
     )
     .expect("the fake answers");

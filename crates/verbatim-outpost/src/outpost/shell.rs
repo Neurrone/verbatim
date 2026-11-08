@@ -30,6 +30,7 @@ use verbatim_model::TraceId;
 use verbatim_model::protocol::{
     EventTiming, FrontWindow, OutpostToCore, QueryOutcome, RequestId, Responder,
 };
+use verbatim_model::{KeyTag, WatchOrder};
 use verbatim_uia::{Agile, Kept};
 
 use super::Context;
@@ -63,6 +64,8 @@ pub(super) enum Posted {
     Front(FrontWindow),
     /// Core withdraws a query.
     Cancel(RequestId),
+    /// Core's order to a key's watch.
+    WatchOrder(KeyTag, WatchOrder),
     /// A verdict a program of generation `generation` made, posted alone,
     /// and taken after the mailbox closes, as a commit is.
     Verdict {
@@ -136,6 +139,7 @@ impl Mailbox {
                     | Posted::ForwardingEnded(_)
                     | Posted::Cancel(_)
                     | Posted::Front(_)
+                    | Posted::WatchOrder(..)
                     | Posted::HandlingDeadline(_)
             )
         {
@@ -561,6 +565,7 @@ impl Shell {
             Posted::ForwardingEnded(through) => Input::ForwardingEnded(through),
             Posted::Cancel(request_id) => Input::Cancel(request_id),
             Posted::Front(front) => Input::Front(front),
+            Posted::WatchOrder(tag, order) => Input::WatchOrder { tag, order },
             Posted::Verdict { generation, change } => Input::Verdict { generation, change },
             Posted::Commit { request, effects } => {
                 // A dead generation's or a claimed request's commit gives

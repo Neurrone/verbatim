@@ -84,11 +84,12 @@ pub use terminal::{
     TerminalColourRun, TerminalMatch, TerminalScope, TerminalSnapshot, TerminalText,
 };
 pub use text::{
-    BulletStyle, CaretKey, CaretMotion, CaretReply, CaretReport, CaretWatch, FocusText, FormatRun,
-    HeldAnchors, LanguageRun, LineStyle, MAX_CHUNK_BYTES, MAX_RANGE_BYTES, MAX_READ_AHEAD,
+    BulletStyle, CaretChanges, CaretKey, CaretMotion, CaretReply, CaretReport, CaretSelection,
+    FocusText, FormatRun, HeldAnchors, KeyAnswer, KeyRead, KeyRequest, KeyStart, KeyStarted,
+    KeyTag, LanguageRun, LineStyle, MAX_CHUNK_BYTES, MAX_RANGE_BYTES, MAX_READ_AHEAD,
     MAX_READ_AHEAD_TEXT, MAX_SELECTION_TEXT_BYTES, Selection, SelectionChange, TextAnchor,
     TextAttributes, TextChunk, TextMovement, TextOp, TextPoint, TextPosition, TextRead,
-    TextReadAhead, TextReply, TextRequest, TextThrough, TextUnit,
+    TextReadAhead, TextReply, TextRequest, TextThrough, TextUnit, WatchKind, WatchOrder,
 };
 pub use theme::{
     DEFAULT_GAIN, Fetches, Indication, IndicationCategory, IndicationSetting, MAX_GAIN,

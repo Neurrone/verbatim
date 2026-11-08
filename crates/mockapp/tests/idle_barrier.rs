@@ -18,8 +18,8 @@ use verbatim_model::protocol::{
     CoreToOutpost, DeliveredFact, OutpostToCore, Query, QueryOutcome, QueryResult, RequestId,
 };
 use verbatim_model::{
-    CaretReport, CaretWatch, FocusText, NodeId, NormalizedEvent, TextOp, TextPoint, TextPosition,
-    TextReply, TextUnit,
+    CaretMotion, CaretReport, FocusText, KeyAnswer, KeyRequest, KeyStart, KeyTag, NodeId,
+    NormalizedEvent, QueryId, TextOp, TextPoint, TextReply, WatchKind,
 };
 use verbatim_outpost::Heard;
 use verbatim_process::arguments::OutpostOptions;
@@ -145,23 +145,28 @@ fn notes_focus(
 fn the_answer_waits_for_an_open_caret_watch() {
     let (mut app, hwnd) = start("mockapp-idle-caret-watch");
     let mut outpost = OutpostUnderTest::new(&app);
-    let (notes, before) = notes_focus(&mut app, &outpost, hwnd);
+    let (notes, _) = notes_focus(&mut app, &outpost, hwnd);
     // Right Arrow, which the application has not handled yet: the watch
     // stays open.
+    let tag = KeyTag(QueryId(1));
     let key = outpost.ask(Query::Text {
         node_id: notes,
-        op: TextOp::AwaitCaret(CaretWatch {
-            landing: false,
-            since: Some(TextPosition {
-                anchor: before.line.start,
-                offset: before.line.offset,
-            }),
-            pressed_at_ms: 0,
-            unit: TextUnit::Character,
-            compare: None,
-            deletes: false,
+        op: TextOp::Key(KeyRequest {
+            tag,
+            kind: WatchKind::TextField,
+            unit: CaretMotion::NextCharacter.unit(),
+            motion: CaretMotion::NextCharacter,
+            start: KeyStart::FromLastRead { withdrawn: None },
         }),
     });
+    match outpost.next() {
+        OutpostToCore::Reply {
+            request_id,
+            outcome: QueryOutcome::Done(QueryResult::Text(TextReply::Key(_))),
+            ..
+        } if request_id == key => {}
+        other => panic!("the outpost said {other:?}, not that the key is watched"),
+    }
     outpost.settled();
     outpost
         .outpost
@@ -171,11 +176,15 @@ fn the_answer_waits_for_an_open_caret_watch() {
     app.send("caret doc 1");
     app.send("caret-event doc");
     match outpost.next() {
-        OutpostToCore::Reply {
-            request_id,
-            outcome: QueryOutcome::Done(QueryResult::Text(TextReply::Caret(reply))),
+        OutpostToCore::Event {
+            event:
+                NormalizedEvent::KeyAnswered {
+                    tag: answered,
+                    answer: KeyAnswer::Evidence(_),
+                    ..
+                },
             ..
-        } if request_id == key => assert!(reply.moved),
+        } if answered == tag => {}
         other => panic!("the outpost said {other:?}, not the key's answer"),
     }
     assert_eq!(outpost.next(), OutpostToCore::IdleAnswer { round: 3 });

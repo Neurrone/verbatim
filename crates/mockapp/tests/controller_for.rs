@@ -548,6 +548,7 @@ fn a_text_focus_carries_its_line_ahead_of_a_selection_that_followed_it() {
             let FocusText::Caret {
                 caret,
                 selected_text,
+                ..
             } = *text
             else {
                 unreachable!("matched by the guard");

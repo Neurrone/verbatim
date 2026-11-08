@@ -11,8 +11,9 @@ use verbatim_model::protocol::{
     DeliveredFact, EventTiming, OutpostToCore, Query, QueryOutcome, QueryResult, WinEventStamp,
 };
 use verbatim_model::{
-    Backend, CallCounts, CaretWatch, NodeId, NodeSnapshot, NormalizedEvent, Role, StateSet, TextOp,
-    TextReply, TextUnit, TraceId,
+    Backend, CallCounts, CaretMotion, KeyAnswer, KeyRead, KeyRequest, KeyStart, KeyStarted, KeyTag,
+    NodeId, NodeSnapshot, NormalizedEvent, QueryId, Role, StateSet, TextOp, TextReply, TextUnit,
+    TraceId, WatchKind,
 };
 
 use super::*;
@@ -276,6 +277,17 @@ fn replies(effects: &[Effect]) -> Vec<(u64, &'static str)> {
                 outcome,
                 ..
             } => Some((request_id.number, outcome_name(outcome))),
+            OutpostToCore::Event {
+                event: NormalizedEvent::KeyAnswered { tag, answer, .. },
+                ..
+            } => Some((
+                tag.0.0,
+                match answer {
+                    KeyAnswer::Ended => "watch ended",
+                    KeyAnswer::Evidence(_) => "done",
+                    KeyAnswer::BoundAnswer(_) => "bound",
+                },
+            )),
             _ => None,
         })
         .collect()
@@ -283,7 +295,6 @@ fn replies(effects: &[Effect]) -> Vec<(u64, &'static str)> {
 
 fn outcome_name(outcome: &QueryOutcome) -> &'static str {
     match outcome {
-        QueryOutcome::Done(QueryResult::Text(TextReply::WatchEnded)) => "watch ended",
         QueryOutcome::Done(_) => "done",
         QueryOutcome::Abandoned => "abandoned",
         QueryOutcome::NotStarted => "not started",
@@ -331,7 +342,7 @@ fn reported_caret() -> verbatim_model::CaretReport {
             formats: Vec::new(),
         },
         selection: None,
-        selection_line: None,
+        read_at_us: 1,
     }
 }
 
@@ -768,42 +779,77 @@ fn a_release_waits_for_the_program_in_flight_and_names_no_dead_request_live() {
     assert!(matches!(program(&effects).work, Work::Drop));
 }
 
-/// A caret key's watch for `request_id` on node 1, its key with no time.
-fn open_watch(request_id: u64) -> OpenWatch {
-    OpenWatch {
-        request_id: RequestId::shell(request_id),
+/// A last read of node 1 by the edit control's offsets.
+fn last_read() -> LastRead<u32> {
+    LastRead {
+        caret: 0,
+        selection: None,
+        line: line_chunk(),
+        text_changed: false,
+        read_at_us: 0,
+    }
+}
+
+fn line_chunk() -> verbatim_model::TextChunk {
+    verbatim_model::TextChunk {
+        unit: TextUnit::Line,
+        text: String::new(),
+        start: verbatim_model::TextAnchor(1),
+        offset: 0,
+        languages: Vec::new(),
+        first: false,
+        last: false,
+        truncated: false,
+        formats: Vec::new(),
+    }
+}
+
+/// A caret key's watch for key `key` on node 1, a terminal's.
+fn open_watch(key: u64) -> Box<KeyWatch> {
+    Box::new(KeyWatch {
+        tag: KeyTag(QueryId(key)),
+        node: NodeId::new(1),
+        baseline: Baseline::Edit(last_read()),
+        unit: TextUnit::Character,
+        motion: CaretMotion::NextCharacter,
+        kind: WatchKind::Terminal,
+        before_unit: None,
         trace: TraceId::from_raw(4),
-        node_id: NodeId::new(1),
-        watch: CaretWatch {
-            since: None,
-            pressed_at_ms: 0,
-            unit: TextUnit::Character,
-            compare: None,
-            landing: false,
-            deletes: false,
-        },
         timing: EventTiming::default(),
         calls: CallCounts::default(),
-    }
+    })
 }
 
-/// A caret key's query, request `request_id`, on node 1.
-fn caret_key(request_id: u64) -> Item {
+/// A caret key's query, request `key`, on node 1.
+fn caret_key(key: u64) -> Item {
     Item::Query {
-        request_id: RequestId::shell(request_id),
+        request_id: RequestId::shell(key),
         query: Query::Text {
             node_id: NodeId::new(1),
-            op: TextOp::AwaitCaret(open_watch(request_id).watch),
+            op: TextOp::Key(KeyRequest {
+                tag: KeyTag(QueryId(key)),
+                kind: WatchKind::Terminal,
+                unit: TextUnit::Character,
+                motion: CaretMotion::NextCharacter,
+                start: KeyStart::ReadFirst,
+            }),
         },
     }
 }
 
-/// The change that opens a watch for `request_id`, polling the console's
-/// caret when `console`.
-fn opens(request_id: u64, console: bool) -> Change {
+/// The before read's commit: the answer and the watch for `key`, polling
+/// the console's caret when `console`.
+fn opens(key: u64, console: bool) -> Change {
     Change {
+        result: Some(reply(
+            RequestId::shell(key),
+            TraceId::from_raw(4),
+            QueryOutcome::Done(QueryResult::Text(TextReply::Key(Box::new(
+                KeyStarted::Watching,
+            )))),
+        )),
         watch: Some(WatchChange::Open {
-            open: open_watch(request_id),
+            key: open_watch(key),
             console,
         }),
         ..Change::default()
@@ -818,15 +864,42 @@ fn takes() -> Change {
     }
 }
 
+/// A check's read, judged `effect`, after `uia` calls.
+fn check_read(effect: bool, uia: u32) -> Checked {
+    let chunk = line_chunk();
+    Checked::Found(Found {
+        node: NodeId::new(1),
+        trace: TraceId::from_raw(4),
+        backend: Backend::Msaa,
+        read: Box::new(KeyRead {
+            caret: verbatim_model::CaretReport {
+                line: chunk.clone(),
+                selection: None,
+                read_at_us: 1,
+            },
+            selection_changes: Vec::new(),
+            content_changed: false,
+            new_selection: None,
+            before_line: chunk.clone(),
+            before_selection: None,
+            before_unit: chunk.clone(),
+            unit: chunk,
+            on_baseline_line: true,
+        }),
+        effect,
+        untagged: false,
+        calls: CallCounts {
+            uia,
+            ..CallCounts::default()
+        },
+        awaited_at_us: 0,
+    })
+}
+
 /// The result of a check that found nothing, after `uia` calls.
 fn watching(uia: u32) -> Change {
     Change {
-        watch: Some(WatchChange::Checked(Checked::Watching {
-            calls: CallCounts {
-                uia,
-                ..CallCounts::default()
-            },
-        })),
+        watch: Some(WatchChange::Checked(check_read(false, uia))),
         ..Change::default()
     }
 }
@@ -834,11 +907,7 @@ fn watching(uia: u32) -> Change {
 /// The result of a check that found the key's evidence.
 fn answered() -> Change {
     Change {
-        watch: Some(WatchChange::Checked(Checked::Answered {
-            reply: TextReply::Done,
-            calls: CallCounts::default(),
-            awaited_at_us: 0,
-        })),
+        watch: Some(WatchChange::Checked(check_read(true, 0))),
         ..Change::default()
     }
 }
@@ -858,14 +927,14 @@ fn console_caret() -> Item {
 fn reads(effects: &[Effect]) -> Request {
     let read = program(effects);
     match &read.work {
-        Work::PollRead => read.request,
+        Work::WatchRead => read.request,
         work => panic!("a read of the console poll, not {work:?}"),
     }
 }
 
 /// The reducer's watch.
 fn watch_of(replay: &Replay) -> &Watch {
-    &replay.reducer.facts().follow.watch
+    &replay.reducer.facts().text.watch
 }
 
 /// A replay whose caret key, request 7, opened a polling watch at 2 ms,
@@ -907,10 +976,7 @@ fn the_console_poll_is_dispatched_only_when_nothing_else_is_ready() {
     assert_eq!(handles(name), (2, None));
     // The read was due at 8 ms; it goes once nothing else is ready.
     reads(&replay.finish(name.request, false, 10));
-    assert_eq!(
-        *replay.reducer.queries(),
-        [RequestId::shell(7)].into_iter().collect()
-    );
+    assert!(replay.reducer.queries().is_empty());
 }
 
 #[test]
@@ -946,7 +1012,7 @@ fn a_newer_keys_request_ends_the_old_watch_and_its_poll() {
     let effects = replay.push(caret_key(8), Source::Other, 4);
     assert_eq!(replies(&effects), [(7, "watch ended")]);
     let key = program(&effects);
-    assert_eq!(key.facts.follow.watch, Watch::None);
+    assert_eq!(key.facts.text.watch, Watch::None);
     let next = key.request;
     assert_eq!(*watch_of(&replay), Watch::None);
     let effects = replay.commit(
@@ -1003,22 +1069,19 @@ fn a_poll_read_that_found_nothing_is_followed_by_the_next_at_its_interval() {
     reads(&effects);
     // The read's copy holds the watch, with the calls its checks made.
     assert_eq!(
-        program(&effects).facts.follow.watch,
+        program(&effects).facts.text.watch,
         Watch::Checking {
-            open: OpenWatch {
+            key: Box::new(KeyWatch {
                 calls: CallCounts {
                     uia: 2,
                     ..CallCounts::default()
                 },
                 ..watch_of(&replay).open().expect("the watch, held").clone()
-            },
-            resume: Resume::Read { until: 52_000 },
+            }),
+            after: AfterCheck::PollRead { until: 52_000 },
         }
     );
-    assert_eq!(
-        *replay.reducer.queries(),
-        [RequestId::shell(7)].into_iter().collect()
-    );
+    assert!(replay.reducer.queries().is_empty());
 }
 
 #[test]
@@ -1028,7 +1091,7 @@ fn an_abandoned_poll_answers_its_watchs_query_once() {
     // The read hangs past the handling deadline.
     let effects = replay.tick(7 + 11_000);
     assert!(abandons(&effects));
-    assert_eq!(replies(&effects), [(7, "abandoned")]);
+    assert_eq!(replies(&effects), [(7, "watch ended")]);
     assert_eq!(*watch_of(&replay), Watch::None);
     assert_eq!(replay.reducer.next_timer(now(7 + 11_000)), None);
     // Its late result is refused, and its end answers nothing more.
@@ -1108,7 +1171,10 @@ fn a_takes_check_that_found_nothing_puts_the_polling_watch_back_as_it_stood() {
     );
     replay.commit(update, watching(1), 30);
     match watch_of(&replay) {
-        Watch::Polling { next, until, .. } => assert_eq!((*next, *until), (7_000, 52_000)),
+        Watch::Open {
+            stage: Stage::Poll { next, until },
+            ..
+        } => assert_eq!((*next, *until), (7_000, 52_000)),
         watch => panic!("the poll as it stood, not {watch:?}"),
     }
     // Its read, past due, is made as the update ends.
@@ -1158,7 +1224,7 @@ fn a_release_naming_the_watchs_node_ends_it_and_answers_the_round() {
     replay.finish(key, false, 3);
     // Another node's release leaves the watch open.
     assert_eq!(replies(&release(&mut replay, &[2], 4)), []);
-    assert!(matches!(watch_of(&replay), Watch::Waiting { .. }));
+    assert!(matches!(watch_of(&replay), Watch::Open { .. }));
     assert_eq!(
         sent(&replay.push(round(5), Source::Other, 5)),
         [] as [&OutpostToCore; 0]
@@ -1219,7 +1285,11 @@ fn a_caret_read_after_an_abandoned_text_call_waits_for_nothing() {
             request_id: RequestId::shell(4),
             query: Query::Text {
                 node_id: NodeId::new(1),
-                op: TextOp::ReadCaret,
+                op: TextOp::Read(verbatim_model::TextRead {
+                    at: verbatim_model::TextPoint::Caret,
+                    movement: None,
+                    unit: TextUnit::Line,
+                }),
             },
         },
         Source::Other,
@@ -1859,13 +1929,13 @@ fn report_cut() -> Finish {
             caret: 1,
             selection: None,
             moved: false,
-            read_at_ms: 1,
+            read_at_us: 1,
             last: KeptSelection {
                 ends: (0, 5),
                 collapsed: false,
                 text: None,
-                report: 1,
             },
+            unit: None,
         },
     }
 }
@@ -1892,7 +1962,7 @@ fn finishes(program: &Program) -> (&'static str, bool) {
         Work::Finish { cut, waiting } => {
             let what = match cut.finish {
                 Finish::Report { .. } => "report",
-                Finish::Key { .. } => "key",
+                Finish::Before { .. } => "key",
                 Finish::Watch { .. } => "watch",
             };
             (what, *waiting)
@@ -1955,22 +2025,22 @@ fn a_cut_watch_check_is_finished_within_its_reads_deadline_and_query() {
         read: AnswerCut {
             caret: 1,
             selection: None,
-            read_at_ms: 11,
+            read_at_us: 11,
             line: None,
             unit: TextUnit::Character,
-            same_line: None,
+            on_baseline_line: true,
+            effect: false,
             compared: KeptSelection {
                 ends: (0, 5),
                 collapsed: false,
                 text: None,
-                report: 1,
             },
         },
     });
     let effects = replay.finish_cut(read, finish, 12);
     let finish = program(&effects);
     assert_eq!(finishes(finish), ("watch", false));
-    assert!(matches!(finish.facts.follow.watch, Watch::Checking { .. }));
+    assert!(matches!(finish.facts.text.watch, Watch::Checking { .. }));
     // Its grace has ended: the shell is asked whether the user moved on,
     // and the answer, no, changes nothing.
     assert!(matches!(
@@ -1979,7 +2049,7 @@ fn a_cut_watch_check_is_finished_within_its_reads_deadline_and_query() {
     ));
     let effects = replay.tick(10 + 11_000);
     assert!(abandons(&effects));
-    assert_eq!(replies(&effects), [(7, "abandoned")]);
+    assert_eq!(replies(&effects), [(7, "watch ended")]);
 }
 
 /// What `effects` send as the idle barrier's answer and dispatch, in
@@ -2194,7 +2264,7 @@ fn a_settle_waits_for_a_noted_caret_and_for_no_open_watch() {
     let noted = program(&effects).request;
     let effects = replay.finish(noted, false, 5);
     assert_eq!(settled_and_dispatches(&effects), ["settled 1"]);
-    assert!(matches!(watch_of(&replay), Watch::Waiting { .. }));
+    assert!(matches!(watch_of(&replay), Watch::Open { .. }));
 }
 
 /// The commit that reports node `id` as a focus in top-level window 7,
@@ -2355,7 +2425,7 @@ fn a_check_abandoned_with_the_polling_watch_leaves_no_due_time() {
     replay.commit(update, takes(), 5);
     let effects = replay.tick(4 + 11_000);
     assert!(abandons(&effects));
-    assert_eq!(replies(&effects), [(7, "abandoned")]);
+    assert_eq!(replies(&effects), [(7, "watch ended")]);
     // No due time is left for a watch that is gone.
     assert_eq!(replay.reducer.next_timer(now(4 + 11_000)), None);
     assert!(programs(&replay.tick(4 + 11_001)).is_empty());

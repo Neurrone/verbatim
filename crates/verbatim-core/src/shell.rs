@@ -25,8 +25,10 @@ pub(crate) fn reduce(state: &mut SrState, input: &Input) -> Vec<Effect> {
     match input {
         Input::Started => started(),
         Input::Exiting { replaced } => {
+            let mut effects = crate::key_line::exit(state);
             state.exiting = true;
-            exiting(*replaced)
+            effects.extend(exiting(*replaced));
+            effects
         }
         Input::ErrorLogged => error_logged(),
         Input::ApplicationNotResponding { process, .. } => not_responding(state, *process),

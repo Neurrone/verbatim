@@ -39,7 +39,9 @@ use proptest::strategy::Strategy;
 use proptest::test_runner::{Config, TestError, TestRunner};
 use verbatim_core::focus_rules::HeldNode;
 use verbatim_model::protocol::{AncestorsEnd, UiaAncestorFact, UiaFocusRead, UiaSnapshotFact};
-use verbatim_model::{CaretWatch, TextOp};
+use verbatim_model::{
+    CaretMotion, KeyAnswer, KeyRequest, KeyStart, KeyTag, QueryId, TextOp, WatchKind,
+};
 
 use super::*;
 use crate::intake::OBJID_CLIENT;
@@ -368,21 +370,7 @@ mod seam {
             },
             Commit::Open { request, node } => Change {
                 watch: Some(WatchChange::Open {
-                    open: OpenWatch {
-                        request_id: request.0,
-                        trace: request.1,
-                        node_id: *node,
-                        watch: CaretWatch {
-                            since: None,
-                            pressed_at_ms: 0,
-                            unit: TextUnit::Character,
-                            compare: None,
-                            landing: false,
-                            deletes: false,
-                        },
-                        timing: EventTiming::default(),
-                        calls: CallCounts::default(),
-                    },
+                    key: key_watch(request, *node),
                     console: false,
                 }),
                 ..Change::default()
@@ -1097,7 +1085,7 @@ impl World {
         let entry = match &program.work {
             Work::Entry { entry, .. } => entry,
             Work::Owed(_) => return Kind::Owed,
-            Work::Drop | Work::PollRead | Work::Finish { .. } | Work::FindBar(_) => {
+            Work::Drop | Work::WatchRead | Work::Finish { .. } | Work::FindBar(_) => {
                 return Kind::Other;
             }
         };
@@ -1135,7 +1123,7 @@ impl World {
                 match query {
                     Query::ReadFocus { .. } => Kind::FocusNow(query_id),
                     Query::Text { op, .. } => match op {
-                        TextOp::AwaitCaret(_) => Kind::Key(query_id),
+                        TextOp::Key(_) => Kind::Key(query_id),
                         TextOp::TerminalHold => Kind::Terminal(query_id, TextOpKind::Hold),
                         TextOp::TerminalRead { hold: true } => {
                             Kind::Terminal(query_id, TextOpKind::ReadHold)
@@ -1286,12 +1274,19 @@ impl World {
     }
 
     fn sent(&mut self, message: &OutpostToCore) {
-        if let OutpostToCore::Reply {
-            request_id,
-            outcome,
+        if let OutpostToCore::Event {
+            event:
+                NormalizedEvent::KeyAnswered {
+                    tag,
+                    answer: KeyAnswer::Ended,
+                    ..
+                },
             ..
         } = message
         {
+            self.watch_ended_now.push(RequestId::shell(tag.0.0));
+        }
+        if let OutpostToCore::Reply { request_id, .. } = message {
             let count = self.replies.entry(*request_id).or_default();
             *count += 1;
             assert_eq!(
@@ -1299,12 +1294,6 @@ impl World {
                 "a second reply to {request_id:?} after {:?}",
                 self.trail
             );
-            if matches!(
-                outcome,
-                QueryOutcome::Done(QueryResult::Text(TextReply::WatchEnded))
-            ) {
-                self.watch_ended_now.push(*request_id);
-            }
         }
     }
 
@@ -2230,6 +2219,39 @@ impl World {
     }
 }
 
+/// The watch of a key on `node`, for a commit that opens it.
+fn key_watch(request: &(RequestId, TraceId), node: NodeId) -> Box<KeyWatch> {
+    Box::new(KeyWatch {
+        tag: KeyTag(QueryId(request.0.number)),
+        node,
+        baseline: Baseline::Edit(LastRead {
+            caret: 0,
+            selection: None,
+            line: verbatim_model::TextChunk {
+                unit: TextUnit::Line,
+                text: String::new(),
+                start: verbatim_model::TextAnchor(1),
+                offset: 0,
+                languages: Vec::new(),
+                first: false,
+                last: false,
+                truncated: false,
+                formats: Vec::new(),
+            },
+            text_changed: false,
+            read_at_us: 0,
+        }),
+        unit: TextUnit::Character,
+        motion: CaretMotion::NextCharacter,
+        // A terminal's, whose watch the outpost ends on a focus elsewhere.
+        kind: WatchKind::Terminal,
+        before_unit: None,
+        trace: request.1,
+        timing: EventTiming::default(),
+        calls: CallCounts::default(),
+    })
+}
+
 /// A focus-now query, request `request_id`.
 fn text_query(request_id: u64, node_id: NodeId, op: TextOp) -> Item {
     Item::Query {
@@ -2240,13 +2262,12 @@ fn text_query(request_id: u64, node_id: NodeId, op: TextOp) -> Item {
 
 /// A caret key's operation.
 fn key_op() -> TextOp {
-    TextOp::AwaitCaret(CaretWatch {
-        since: None,
-        pressed_at_ms: 0,
+    TextOp::Key(KeyRequest {
+        tag: KeyTag(QueryId(0)),
+        kind: WatchKind::Terminal,
         unit: TextUnit::Character,
-        compare: None,
-        landing: false,
-        deletes: false,
+        motion: CaretMotion::NextCharacter,
+        start: KeyStart::ReadFirst,
     })
 }
 

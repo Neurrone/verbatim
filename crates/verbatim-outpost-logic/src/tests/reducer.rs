@@ -509,11 +509,9 @@ fn kind_of(program: &Program) -> Kind {
         Work::Entry { entry, .. } => match &entry.item {
             Item::NotedCaret { .. } => Kind::Noted,
             Item::Query {
-                query:
-                    Query::Text {
-                        op: TextOp::AwaitCaret(_),
-                        ..
-                    },
+                query: Query::Text {
+                    op: TextOp::Key(_), ..
+                },
                 ..
             } => Kind::Key,
             Item::Msaa {
@@ -524,27 +522,30 @@ fn kind_of(program: &Program) -> Kind {
         },
         Work::Owed(_) => Kind::Owed,
         Work::Drop | Work::FindBar(_) => Kind::Drop,
-        Work::PollRead => Kind::PollRead,
+        Work::WatchRead => Kind::PollRead,
         Work::Finish { .. } => Kind::Finish,
     }
 }
 
 /// A program's copy of the watch apart from its times.
 fn untimed(watch: &Watch) -> Watch {
+    let stage = |stage: Stage| match stage {
+        Stage::Terminal { .. } => Stage::Terminal { ends: 0 },
+        Stage::Poll { .. } => Stage::Poll { next: 0, until: 0 },
+        other => other,
+    };
     match watch.clone() {
         Watch::None => Watch::None,
-        Watch::Waiting { open, .. } => Watch::Waiting { open, bound: 0 },
-        Watch::Polling { open, .. } => Watch::Polling {
-            open,
-            next: 0,
-            until: 0,
+        Watch::Open { key, stage: at } => Watch::Open {
+            key,
+            stage: stage(at),
         },
-        Watch::Checking { open, resume } => Watch::Checking {
-            open,
-            resume: match resume {
-                Resume::Bound(_) => Resume::Bound(0),
-                Resume::Poll { .. } => Resume::Poll { next: 0, until: 0 },
-                Resume::Read { .. } => Resume::Read { until: 0 },
+        Watch::Checking { key, after } => Watch::Checking {
+            key,
+            after: match after {
+                AfterCheck::Resume(at) => AfterCheck::Resume(stage(at)),
+                AfterCheck::PollRead { .. } => AfterCheck::PollRead { until: 0 },
+                AfterCheck::Answer => AfterCheck::Answer,
             },
         },
     }
@@ -1236,7 +1237,7 @@ impl Run {
                 Kind::Key if flight.query.is_some() => Commit::OpenWatch { console: flag },
                 _ if flight.query.is_some() => Commit::Reply,
                 Kind::Owed => Commit::OwedDone,
-                _ if matches!(self.reducer.facts.follow.watch, Watch::Checking { .. }) => {
+                _ if matches!(self.reducer.facts.text.watch, Watch::Checking { .. }) => {
                     Commit::Checked { answered: flag }
                 }
                 _ => Commit::Report {
@@ -1349,8 +1350,8 @@ impl Run {
         // The program's copy of the watch agrees with the reducer's.
         if !flight.uncompared {
             assert_eq!(
-                untimed(&flight.copy.follow.watch),
-                untimed(&self.reducer.facts.follow.watch),
+                untimed(&flight.copy.text.watch),
+                untimed(&self.reducer.facts.text.watch),
                 "the program's copy and the reducer disagree: {:?}",
                 self.trail
             );
@@ -1367,10 +1368,10 @@ impl Run {
             change: Box::new(change),
         });
         // A watch opened for the program's query answers it from then on.
-        let watch = &self.reducer.facts.follow.watch;
+        let watch = &self.reducer.facts.text.watch;
         match watch_change {
             Some(WatchChange::Open { .. })
-                if watch.open().map(|open| open.request_id.number) == flight.query =>
+                if watch.open().map(|open| open.tag.0.0) == flight.query =>
             {
                 if let Some(flight) = self.model.flight.as_mut() {
                     flight.query = None;
@@ -1477,10 +1478,10 @@ impl Run {
         };
         let cut = (cut && flight.kind == Kind::EditCaret).then(|| self::cut(report_cut()));
         let cutting = cut.is_some() && !panicked;
-        let watch = &self.reducer.facts.follow.watch;
+        let watch = &self.reducer.facts.text.watch;
         let (held, watch) = (
             matches!(watch, Watch::Checking { .. }),
-            watch.open().map(|open| open.request_id.number),
+            watch.open().map(|open| open.tag.0.0),
         );
         if !cutting {
             self.model.flight = None;
@@ -1573,8 +1574,8 @@ impl Run {
         let marks = self.reducer.facts.marks();
         let flight_before = self.model.flight.clone();
         // The query of the watch a program holds.
-        let watch_before = match &self.reducer.facts.follow.watch {
-            watch @ Watch::Checking { .. } => watch.open().map(|open| open.request_id.number),
+        let watch_before = match &self.reducer.facts.text.watch {
+            watch @ Watch::Checking { .. } => watch.open().map(|open| open.tag.0.0),
             _ => None,
         };
         self.expect_hangs(input.as_ref());
@@ -1768,10 +1769,10 @@ impl Run {
         let reducer = &self.reducer;
         // A poll read holds the watch it reads.
         if effects.iter().any(|effect| {
-            matches!(effect, Effect::Dispatch(program) if matches!(program.work, Work::PollRead))
+            matches!(effect, Effect::Dispatch(program) if matches!(program.work, Work::WatchRead))
         }) {
             assert!(
-                matches!(reducer.facts.follow.watch, Watch::Checking { .. }),
+                matches!(reducer.facts.text.watch, Watch::Checking { .. }),
                 "a poll read with no watch to read: {trail:?}"
             );
         }
@@ -1830,7 +1831,7 @@ impl Run {
             );
             if dispatches.iter().all(|&dispatch| dispatch < idle) {
                 assert!(
-                    reducer.facts.follow.watch.is_none()
+                    reducer.facts.text.watch.is_none()
                         && !reducer
                             .flight
                             .running()
@@ -1898,7 +1899,7 @@ impl Run {
                     .any(|(replied, _)| *replied == watch)
             {
                 assert!(
-                    replied.contains(&(watch, "abandoned")),
+                    replied.contains(&(watch, "watch ended")),
                     "an abandonment answers the watch its program held: {trail:?}"
                 );
             }
@@ -1921,11 +1922,11 @@ impl Run {
         }
         // No time for the watch while a program, a release or the close is
         // under way.
-        if !reducer.facts.follow.watch.is_none()
+        if !reducer.facts.text.watch.is_none()
             && (reducer.busy() || reducer.releasing || reducer.stopping)
         {
             let mut without = reducer.clone();
-            without.facts.follow.watch = Watch::None;
+            std::sync::Arc::make_mut(&mut without.facts.text).watch = Watch::None;
             assert_eq!(
                 reducer.next_timer(self.now()),
                 without.next_timer(self.now()),
@@ -1934,7 +1935,7 @@ impl Run {
         }
         // The watch is held only by the program in flight.
         assert!(
-            !matches!(reducer.facts.follow.watch, Watch::Checking { .. }) || reducer.busy(),
+            !matches!(reducer.facts.text.watch, Watch::Checking { .. }) || reducer.busy(),
             "the watch held with no program in flight: {trail:?}"
         );
     }
@@ -2436,10 +2437,10 @@ impl Run {
                     || self
                         .reducer
                         .facts
-                        .follow
+                        .text
                         .watch
                         .open()
-                        .map(|open| open.request_id.number)
+                        .map(|open| open.tag.0.0)
                         == Some(*number),
                 "query {number} taken and left unanswered: {:?}",
                 self.trail

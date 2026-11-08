@@ -554,7 +554,7 @@ mod tests {
                     formats: Vec::new(),
                 },
                 selection: None,
-                selection_line: None,
+                read_at_us: 0,
             },
             selection_changes: changes
                 .iter()

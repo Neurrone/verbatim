@@ -838,6 +838,11 @@ fn a_line_recalled_with_up_arrow_and_entered_is_marked() {
         pressed_at_ms: at_ms,
     });
     session.write("echo one", at_ms + 5);
+    // Its 100 ms pass, as a key that moved no caret's do.
+    session.input(&Input::HeldKeyDue {
+        trace_id: TraceId::from_raw(8),
+        at_us: (at_ms + 100) * 1_000,
+    });
     let (_, input) = typed("\r", at_ms + 1000);
     session.input(&input);
     session.write("\r\none\r\n$ ", at_ms + 1005);
@@ -1291,7 +1296,13 @@ fn the_read_before_a_held_key_is_aligned_and_its_caret_answers_it() {
         },
         pressed_at_ms: 200,
     });
-    assert_eq!(session.requests(), [TextOp::ReadCaret]);
+    assert!(matches!(
+        session.requests().as_slice(),
+        [TextOp::Key(verbatim_model::KeyRequest {
+            start: verbatim_model::KeyStart::ReadFirst,
+            ..
+        })]
+    ));
     // Output the program wrote before the read: the read is aligned as any
     // read, and its output spoken.
     session.outpost.sim.write(b"\r\nfile\r\n$ ");
@@ -1311,24 +1322,20 @@ fn the_read_before_a_held_key_is_aligned_and_its_caret_answers_it() {
         verbatim_model::CaretReport {
             line,
             selection: None,
-            selection_line: None,
+            read_at_us: 300_000,
         },
     );
     assert_eq!(session.heard(), plain(&["file", "$"]));
     // The key is passed on as pressed just after the read began, its
     // colours asked for from then and its watch opened from then.
     let requests = session.requests();
-    assert_eq!(requests.len(), 2, "{requests:?}");
+    assert_eq!(requests.len(), 1, "{requests:?}");
     assert_eq!(
         requests[0],
         TextOp::TerminalColours {
             from_ms: 301,
             until_ms: 601
         }
-    );
-    assert!(
-        matches!(&requests[1], TextOp::AwaitCaret(watch) if watch.pressed_at_ms == 301),
-        "{requests:?}"
     );
 }
 
@@ -1349,7 +1356,13 @@ fn a_key_deferred_behind_a_held_key_reaches_the_rules_at_the_held_keys_pass() {
     });
     let (_, x) = typed("x", 210);
     session.input(&x);
-    assert_eq!(session.requests(), [TextOp::ReadCaret]);
+    assert!(matches!(
+        session.requests().as_slice(),
+        [TextOp::Key(verbatim_model::KeyRequest {
+            start: verbatim_model::KeyStart::ReadFirst,
+            ..
+        })]
+    ));
     let line = verbatim_model::TextChunk {
         unit: verbatim_model::TextUnit::Line,
         text: "$ ".to_owned(),
@@ -1366,11 +1379,11 @@ fn a_key_deferred_behind_a_held_key_reaches_the_rules_at_the_held_keys_pass() {
         verbatim_model::CaretReport {
             line,
             selection: None,
-            selection_line: None,
+            read_at_us: 300_000,
         },
     );
     let requests = session.requests();
-    assert_eq!(requests.len(), 3, "{requests:?}");
+    assert_eq!(requests.len(), 2, "{requests:?}");
     assert_eq!(
         requests[0],
         TextOp::TerminalColours {
@@ -1378,12 +1391,8 @@ fn a_key_deferred_behind_a_held_key_reaches_the_rules_at_the_held_keys_pass() {
             until_ms: 601
         }
     );
-    assert!(
-        matches!(&requests[1], TextOp::AwaitCaret(watch) if watch.pressed_at_ms == 301),
-        "{requests:?}"
-    );
     assert_eq!(
-        requests[2],
+        requests[1],
         TextOp::TerminalColours {
             from_ms: 301,
             until_ms: 601

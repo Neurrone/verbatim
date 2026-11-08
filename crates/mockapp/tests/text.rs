@@ -23,15 +23,15 @@ use std::sync::Arc;
 
 use verbatim_core::{SrState, reduce};
 use verbatim_model::{
-    Backend, CaretWatch, Effect, Input, NodeDetails, NodeId, NodeSnapshot, NormalizedEvent,
-    OutpostId, Pid, ReviewCommand, Role, SegmentContent, SpeechMark, StateSet, TextChunk,
-    TextMovement, TextOp, TextPoint, TextPosition, TextRead, TextReadAhead, TextReply, TextUnit,
-    TraceId,
+    Backend, CaretMotion, Effect, Input, KeyRead, NodeDetails, NodeId, NodeSnapshot,
+    NormalizedEvent, OutpostId, Pid, ReviewCommand, Role, SegmentContent, SpeechMark, StateSet,
+    TextChunk, TextMovement, TextOp, TextPoint, TextPosition, TextRead, TextReadAhead, TextReply,
+    TextUnit, TraceId,
 };
 use verbatim_outpost::text::edit::EditText;
 use verbatim_outpost::text::uia::UiaText;
 use verbatim_outpost::text::{
-    Anchors, CaretSignal, NodeText, TextSource, Watched, caret_report, check_caret, perform,
+    Anchors, CheckKey, KeyChecked, NodeText, TextSource, caret_report, check_key, perform,
 };
 use verbatim_uia::Uia;
 use verbatim_uia::text::Endpoint;
@@ -47,25 +47,29 @@ use windows::Win32::UI::Accessibility::{IUIAutomationElement, TextUnit_Line, Tex
 use windows::Win32::UI::WindowsAndMessaging::FindWindowExW;
 use windows::core::w;
 
-/// A caret key's watch checked once with no caret event: every test moves
-/// mockapp's caret before asking, so the first read is the evidence.
-struct AlreadyMoved;
-
-impl CaretSignal for AlreadyMoved {
-    fn caret_event(&mut self) -> bool {
-        false
-    }
-
-    fn now_ms(&mut self) -> u64 {
-        0
-    }
-}
-
-/// The caret reply a check of a key's watch answered with.
-fn answered(watched: Watched) -> TextReply {
-    match watched {
-        Watched::Answered(reply) => reply,
-        Watched::Watching => panic!("the check found no evidence"),
+/// The read of a caret key's check, made after the caret moved, judged
+/// from the node's last read.
+fn answered<S: TextSource>(
+    source: &mut S,
+    anchors: &mut NodeText<'_, S::Pos>,
+    motion: CaretMotion,
+) -> KeyRead {
+    let baseline = anchors.last_read().expect("a read made the baseline");
+    let checked = check_key(
+        source,
+        anchors,
+        &CheckKey {
+            baseline: &baseline,
+            unit: motion.unit(),
+            motion,
+            before_unit: None,
+            read_at_us: 2,
+            final_read: false,
+        },
+    );
+    match checked {
+        KeyChecked::Read { read, effect: true } => *read,
+        other => panic!("the check found no evidence: {other:?}"),
     }
 }
 
@@ -135,7 +139,7 @@ fn lines_stop_at_the_end<S: TextSource>(
     anchors: &mut NodeText<'_, S::Pos>,
     break_text: &str,
 ) {
-    let (report, _) = caret_report(source, anchors, &mut || 0, false).expect("the caret");
+    let (report, _) = caret_report(source, anchors, 0, false).expect("the caret");
     assert_eq!(report.line.text, format!("alpha beta{break_text}"));
     assert_eq!(report.line.offset, 0);
     assert_eq!(report.selection, None);
@@ -286,48 +290,16 @@ fn a_caret_key_is_answered_with_what_it_did<S: TextSource>(
     second_word: &str,
 ) {
     common::apply(app, hwnd, "caret doc 0");
-    let (before, _) = caret_report(source, anchors, &mut || 0, false).expect("the caret");
+    caret_report(source, anchors, 1, false).expect("the caret");
     common::apply(app, hwnd, "caret doc 6");
-    let reply = answered(check_caret(
-        source,
-        anchors,
-        &CaretWatch {
-            landing: false,
-            pressed_at_ms: 0,
-            since: Some(point_of(&before.line)),
-            unit: TextUnit::Word,
-            compare: None,
-            deletes: false,
-        },
-        &mut AlreadyMoved,
-    ));
-    let TextReply::Caret(reply) = reply else {
-        panic!("a caret reply, not {reply:?}");
-    };
-    assert!(reply.moved);
+    let reply = answered(source, anchors, CaretMotion::NextWord);
     assert_eq!(reply.caret.line.offset, 6);
-    assert_eq!(reply.unit.expect("the word").text, second_word);
+    assert_eq!(reply.unit.text, second_word);
 
     common::apply(app, hwnd, "caret doc 0");
-    let (collapsed, _) = caret_report(source, anchors, &mut || 0, false).expect("the caret");
+    caret_report(source, anchors, 1, false).expect("the caret");
     common::apply(app, hwnd, "caret doc 0 5");
-    let at = point_of(&collapsed.line);
-    let reply = answered(check_caret(
-        source,
-        anchors,
-        &CaretWatch {
-            landing: false,
-            pressed_at_ms: 0,
-            since: Some(at),
-            unit: TextUnit::Character,
-            compare: None,
-            deletes: false,
-        },
-        &mut AlreadyMoved,
-    ));
-    let TextReply::Caret(reply) = reply else {
-        panic!("a caret reply, not {reply:?}");
-    };
+    let reply = answered(source, anchors, CaretMotion::NextCharacter);
     let changes: Vec<(bool, &str, u32)> = reply
         .selection_changes
         .iter()
@@ -407,6 +379,7 @@ struct CaretSummary {
     runs: Vec<(usize, RunAttributes)>,
     changes: Option<Vec<(bool, String)>>,
     texts: (Option<String>, Option<String>),
+    since_place: Option<(i32, i32)>,
     selection_start: Option<usize>,
     selection_line: Option<(String, usize)>,
     start_first: bool,
@@ -437,6 +410,7 @@ fn summary(answer: &CaretAnswer) -> CaretSummary {
             answer.selection_text.as_deref().map(text),
             answer.previous_text.as_deref().map(text),
         ),
+        since_place: answer.since_place,
         selection_start: answer.selection_start,
         selection_line: answer
             .selection_line
@@ -480,6 +454,7 @@ fn remote_and_classic_caret_reads_agree() {
         pattern: &pattern,
         pattern2: pattern2.as_ref(),
         since: None,
+        baseline_selection: None,
         previous_selection: None,
         previous_collapsed: false,
         unit,
@@ -700,6 +675,7 @@ fn a_failing_attribute_is_not_supported() {
         pattern: &pattern,
         pattern2: pattern2.as_ref(),
         since: None,
+        baseline_selection: None,
         previous_selection: None,
         previous_collapsed: false,
         unit: None,
@@ -746,6 +722,7 @@ fn a_mixed_stretch_is_read_by_words_then_characters() {
         pattern: &pattern,
         pattern2: pattern2.as_ref(),
         since: None,
+        baseline_selection: None,
         previous_selection: None,
         previous_collapsed: false,
         unit: None,
@@ -927,6 +904,7 @@ fn remote_and_classic_text_reads_agree() {
         pattern: &pattern,
         pattern2: pattern2.as_ref(),
         since: None,
+        baseline_selection: None,
         previous_selection: None,
         previous_collapsed: false,
         unit: None,
@@ -1404,6 +1382,7 @@ fn every_attribute_is_read_both_ways() {
         pattern: &pattern,
         pattern2: pattern2.as_ref(),
         since: None,
+        baseline_selection: None,
         previous_selection: None,
         previous_collapsed: false,
         unit: None,
@@ -1535,6 +1514,7 @@ fn unsupported_attributes_are_found_both_ways() {
         pattern: &pattern,
         pattern2: pattern2.as_ref(),
         since: None,
+        baseline_selection: None,
         previous_selection: None,
         previous_collapsed: false,
         unit: None,

@@ -132,7 +132,9 @@ impl Merge for OutpostToCore {
             | NormalizedEvent::ActiveTextPositionChanged { node_id, .. } => {
                 (*node_id, Detail::None)
             }
-            NormalizedEvent::Notification { .. } | NormalizedEvent::TerminalSnapshot { .. } => {
+            NormalizedEvent::Notification { .. }
+            | NormalizedEvent::TerminalSnapshot { .. }
+            | NormalizedEvent::KeyAnswered { .. } => {
                 return None;
             }
         };
@@ -140,12 +142,16 @@ impl Merge for OutpostToCore {
     }
 
     /// The idle barrier's answer is merged across by nothing, so it never
-    /// overtakes what was sent before it; a reply only bars a caret report
-    /// with selection changes (Dickson, 2026-10-30).
+    /// overtakes what was sent before it; a reply or a key's tagged report
+    /// only bars a caret report with selection changes (Dickson, 2026-10-30).
     fn barrier(&self) -> Barrier {
         match self {
             OutpostToCore::IdleAnswer { .. } => Barrier::All,
-            OutpostToCore::Reply { .. } => Barrier::Reply,
+            OutpostToCore::Reply { .. }
+            | OutpostToCore::Event {
+                event: NormalizedEvent::KeyAnswered { .. },
+                ..
+            } => Barrier::Reply,
             OutpostToCore::Ready { .. }
             | OutpostToCore::SpareReady { .. }
             | OutpostToCore::Event { .. }
@@ -158,8 +164,9 @@ impl Merge for OutpostToCore {
     }
 
     /// A caret report that carries selection changes is not merged across
-    /// a reply: a change moved behind a reply would reach Core after the
-    /// reply to a key pressed before Core saw it, whose own selection
+    /// a reply or a key's tagged report: a change moved behind one would
+    /// reach Core after the answer to a key pressed before Core saw it,
+    /// whose own selection
     /// changes, compared with the selection Core knew, already include it.
     /// Nor is it merged with a newer report when either says its changes
     /// in general terms ([`crate::CaretReply::content_changed`]): each such

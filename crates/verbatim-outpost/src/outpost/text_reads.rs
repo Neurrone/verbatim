@@ -34,7 +34,7 @@ use windows::core::AgileReference;
 
 use verbatim_ia2::CHILDID_SELF;
 use verbatim_model::{
-    Backend, CaretReply, CaretReport, CaretWatch, NodeId, Role, SelectionChange, TextOp, TextReply,
+    CaretReply, CaretReport, KeyRequest, NodeId, Role, SelectionChange, TextOp, TextReply,
 };
 use verbatim_uia::map::is_terminal_class;
 use verbatim_uia::{Cached, Interning as _, Kept};
@@ -42,15 +42,15 @@ use verbatim_uia_rops::Path;
 
 use crate::text::edit::EditText;
 use crate::text::uia::{TextSupport, UiaPos, UiaText};
-use crate::text::{
-    self, CaretSignal, Checked, LastSelection, NodeTextCopy, Slot, TextError, Watched,
-};
+use crate::text::{self, CheckKey, Checked, KeyChecked, NodeTextCopy, ReportAsk, Slot, TextError};
 use verbatim_reader_rules::CONSOLE_WINDOW_CLASS;
 use verbatim_reader_rules::class::normalize_class_name;
 use verbatim_win32::window::window_class_name;
 
 use super::commit::Effects;
-use super::reducer::{AnswerCut, NodeAnchors, RangeKey, ReportCut, TextChange};
+use super::reducer::{
+    AnswerCut, Baseline, KeyWatch, LastRead, NodeAnchors, RangeKey, ReportCut, TextChange,
+};
 use super::store::TextWrite;
 use super::{Context, RequestContext};
 
@@ -260,72 +260,6 @@ fn support_of(context: &RequestContext<'_>, node_id: NodeId) -> TextSupport {
         return *support;
     }
     context.store.support(node_id)
-}
-
-/// A check of a caret key's watch, as the worker makes it.
-struct Signal<'a> {
-    context: &'a RequestContext<'a>,
-    node_id: NodeId,
-    /// Whether a caret event prompted the check.
-    caret_event: bool,
-    /// Whether a caret event of the node observed since the key was
-    /// pressed waited to be handled when the caret was read: the read
-    /// covers it, so the event, once handled, checks nothing
-    /// (`Context::caret_read_since`), and the read is evidence as the
-    /// event would have been.
-    covered: bool,
-    /// When the caret read began, once it has, on the observation clock:
-    /// committed with what the check sends.
-    read_at: Option<u64>,
-}
-
-impl CaretSignal for Signal<'_> {
-    fn caret_event(&mut self) -> bool {
-        self.caret_event || self.covered
-    }
-
-    fn now_ms(&mut self) -> u64 {
-        super::now_ms()
-    }
-
-    fn reading(&mut self) {
-        if !self.caret_event {
-            self.covered = caret_event_waiting(self.context, self.node_id);
-        }
-        self.read_at = Some(self.context.observed_now());
-    }
-}
-
-/// Whether a caret event of `node_id` observed at or after the key the
-/// watch checked was pressed waits in the intake, as the program's copy
-/// says ([`super::reducer::Program::waiting`]): UIA's caret event from the
-/// node's element, the console's caret event of its window for the console
-/// host's text area, or, for an edit control's client area, the caret's
-/// location change or the text selection change of its window.
-fn caret_event_waiting(context: &RequestContext<'_>, node_id: NodeId) -> bool {
-    use super::reducer::WaitingCaret;
-    let runtime_id = context.store.runtime_id_of(node_id);
-    let (console, edit) = match &runtime_id {
-        Some(_) => (
-            console_focus(context, node_id)
-                .then(|| context.tracked_window())
-                .flatten(),
-            None,
-        ),
-        None => (
-            None,
-            context
-                .store
-                .key_of(node_id)
-                .filter(|&(_, object, child)| object == OBJID_CLIENT.0 && child == CHILDID_SELF)
-                .map(|(hwnd, ..)| hwnd),
-        ),
-    };
-    context.waiting().iter().any(|waiting| match waiting {
-        WaitingCaret::Uia(id) => runtime_id.as_ref() == Some(id),
-        WaitingCaret::Console(hwnd) => console == Some(*hwnd),
-        WaitingCaret::Edit(hwnd) => edit == Some(*hwnd),
-    })
 }
 
 /// A node's text, through its backend.
@@ -573,12 +507,9 @@ pub(super) fn may_have_text(context: &Context, node_id: NodeId, role: Role) -> b
         .is_some_and(|(hwnd, object, child)| edit_version(hwnd, object, child).is_some())
 }
 
-/// Answers one of Core's text requests other than a caret key's watch,
-/// which [`check_watch`] checks.
+/// Answers one of Core's text requests other than a caret key's, which
+/// [`before_read`] and [`check_watch`] answer.
 pub(super) fn answer(context: &RequestContext<'_>, node_id: NodeId, op: &TextOp) -> TextReply {
-    if *op == TextOp::ReadCaret {
-        return caret_before_key(context, node_id);
-    }
     let source = match source(context, node_id) {
         Ok(source) => source,
         Err(reply) => return reply,
@@ -602,178 +533,224 @@ pub(super) fn answer(context: &RequestContext<'_>, node_id: NodeId, op: &TextOp)
     }
 }
 
-/// Reads `node_id`'s caret before a held caret key is passed on
-/// ([`TextOp::ReadCaret`], `books/dev/src/explanation/design/key-holding.md`): the read a caret
-/// event's report makes, one round trip through UIA where the window's
-/// provider runs remote operations (the caret read program), and the edit
-/// control's messages otherwise, with no formatting. It is kept among the
-/// node's caret reports, from which the key's watch takes the newest read
-/// before the key as its baseline, and leaves the selection kept for the
-/// next comparison alone, so the key's answer compares with the same
-/// selection it would have without the read. It is not noted as a read of
-/// the caret that answers a caret event observed before it: that event's
-/// report still compares the selection.
-fn caret_before_key(context: &RequestContext<'_>, node_id: NodeId) -> TextReply {
-    let source = match source(context, node_id) {
-        Ok(source) => source,
-        Err(reply) => return reply,
+/// Reads `node_id`'s caret before a held caret key is passed on, the read
+/// a caret event's report makes with the key's unit at the caret: it
+/// compares the selection with the node's last read and replaces it, and
+/// becomes the key's baseline. With `cuts`, the read of an edit control's
+/// client area is cut where its comparison would ask whether the control's
+/// value change waits, and the cut is returned instead. Also when the read
+/// began, if it was made.
+pub(super) fn before_read(
+    context: &RequestContext<'_>,
+    node_id: NodeId,
+    key: &KeyRequest,
+    cuts: bool,
+) -> BeforeReading {
+    let Ok(source) = source(context, node_id) else {
+        return (Err(NoCaret::NotRead), None);
     };
-    let read_at_ms = std::cell::Cell::new(0);
-    let mut now = || {
-        let now = super::now_ms();
-        read_at_ms.set(now);
-        now
-    };
-    match source {
+    let read_at_us = context.observed_now();
+    let report = match source {
         Source::Uia(mut source) => {
             let mut call = uia_call(context, node_id, &[]);
             let read = text::caret_report_since(
                 &mut source,
                 &mut call.text(),
-                &mut now,
-                (false, None, LastSelection::Ignore),
+                read_at_us,
+                &ReportAsk {
+                    formats: false,
+                    since: None,
+                    compare: true,
+                    unit: Some(key.unit),
+                },
             );
             put_uia(context, node_id, call);
             note_fallback(context, &mut source);
             keep_support(context, node_id, &source);
-            before_reply(read, read_at_ms.get())
+            read.map(|read| Checked::Done(before_reply(read)))
+                .map_err(not_read)
         }
         Source::Edit(mut source) => {
+            let edit = edit_client(context, node_id).filter(|_| cuts);
             let mut call = edit_call(context, node_id, &[]);
-            let read = text::caret_report_since(
+            let report = text::caret_report_checking(
                 &mut source,
                 &mut call.text(),
-                &mut now,
-                (false, None, LastSelection::Ignore),
-            );
+                read_at_us,
+                &ReportAsk {
+                    formats: false,
+                    since: None,
+                    compare: true,
+                    unit: Some(key.unit),
+                },
+                edit.is_some(),
+            )
+            .and_then(|checked| match (checked, edit) {
+                (Checked::Cut(read), Some(edit)) => Ok(Checked::Cut(EditCut {
+                    edit,
+                    length: source.length_read(),
+                    read,
+                })),
+                (Checked::Cut(read), None) => {
+                    text::finish_report(&mut source, &mut call.text(), read, false)
+                        .map(|read| Checked::Done(before_reply(read)))
+                }
+                (Checked::Done(read), _) => Ok(Checked::Done(before_reply(read))),
+            })
+            .map_err(not_read);
             put_edit(context, node_id, call);
-            before_reply(read, read_at_ms.get())
+            if matches!(report, Ok(Checked::Cut(_))) {
+                value_change_cut(context);
+            }
+            report
         }
+    };
+    (report, Some(read_at_us))
+}
+
+/// A before read's answer, or the read cut at its value change check, and
+/// when it began.
+pub(super) type BeforeReading = (
+    Result<Checked<CaretReply, EditCut<ReportCut<u32>>>, NoCaret>,
+    Option<u64>,
+);
+
+/// The answer to a before read, from what it found.
+fn before_reply<P>(read: text::ReportedCaret<P>) -> CaretReply {
+    CaretReply {
+        caret: read.report,
+        unit: read.unit,
+        selection_changes: read.selection_changes,
+        content_changed: read.content_changed,
+        new_selection: read.new_selection,
     }
 }
 
-/// The answer to [`TextOp::ReadCaret`] from its read, which ended at
-/// `read_at_ms`.
-fn before_reply<P>(read: Result<text::ReportedCaret<P>, TextError>, read_at_ms: u64) -> TextReply {
-    match read {
-        Ok(read) => TextReply::Caret(Box::new(CaretReply {
-            moved: false,
-            caret: read.report,
-            read_at_ms,
-            unit: None,
-            selection_changes: Vec::new(),
-            content_changed: false,
-            new_selection: None,
-            same_line: None,
-            removed: None,
-        })),
-        Err(TextError::Gone) => TextReply::Gone,
-        Err(TextError::Failed(reason)) => {
-            tracing::debug!(reason, "the caret before a held key could not be read");
-            TextReply::Unanswered
-        }
+/// Finishes the before read of edit control `node_id` that [`before_read`]
+/// cut: the comparison, in general terms when the control's value change
+/// waited (`waiting`).
+pub(super) fn finish_before(
+    context: &RequestContext<'_>,
+    node_id: NodeId,
+    (length, cut): (Option<u32>, ReportCut<u32>),
+    waiting: bool,
+) -> Result<CaretReply, NoCaret> {
+    let mut source = match edit_source(context, node_id, length) {
+        Ok(source) => source,
+        Err(TextReply::NoText) => return Err(NoCaret::NoText),
+        Err(_) => return Err(NoCaret::NotRead),
+    };
+    let mut call = edit_call(context, node_id, &[]);
+    let report = text::finish_report(&mut source, &mut call.text(), cut, waiting);
+    put_edit(context, node_id, call);
+    match report {
+        Ok(read) => Ok(before_reply(read)),
+        Err(error) => Err(not_read(error)),
     }
+}
+
+/// `key`'s baseline, its UIA positions resolved from the store and the
+/// program's own.
+fn uia_baseline(
+    context: &RequestContext<'_>,
+    node_id: NodeId,
+    last: &LastRead<RangeKey>,
+) -> Option<LastRead<text::uia::UiaPos>> {
+    let mut program_text = context.program_text.borrow_mut();
+    let missing: Vec<RangeKey> = last
+        .positions()
+        .copied()
+        .filter(|key| !program_text.ranges.contains_key(key))
+        .collect();
+    if !missing.is_empty() {
+        program_text
+            .ranges
+            .extend(context.store.ranges(node_id, &missing));
+    }
+    last.clone()
+        .filter_map(|key| program_text.ranges.get(&key).cloned())
 }
 
 /// Checks a caret key's watch on `node_id` with one read of its caret
-/// ([`text::check_caret`]): the answer once there is evidence, or the reply
-/// that ends the request when the node has no text or is gone; otherwise
-/// the watch stays open. `caret_event` says whether a caret event prompted
-/// the check. With `cuts`, the check of an edit control's client area is
-/// cut where its answer would ask whether the control's value change waits
+/// ([`text::check_key`]), the node's text unreadable answering the read
+/// failed. `final_read` says the check is the key's final read. With
+/// `cuts`, the check of an edit control's client area is cut where its
+/// answer would ask whether the control's value change waits
 /// ([`value_change_cut`]), and the cut is returned with the control's
 /// window instead. Also when the caret read began, if it was read, for the
 /// commit of what the check sends.
 pub(super) fn check_watch(
     context: &RequestContext<'_>,
     node_id: NodeId,
-    watch: &CaretWatch,
-    (caret_event, cuts): (bool, bool),
+    key: &KeyWatch,
+    (final_read, cuts): (bool, bool),
 ) -> (WatchCheck, Option<u64>) {
-    let source = match source(context, node_id) {
-        Ok(source) => source,
-        // A UIA element that answered no text pattern, or did not answer:
-        // an application still starting answers so for an element that has
-        // text, and raises a caret event once the key moves its caret, which
-        // only an element with text does; the watch stays open for it.
-        Err(TextReply::NoText | TextReply::Unanswered)
-            if context.store.runtime_id_of(node_id).is_some() =>
-        {
-            return (Checked::Done(Watched::Watching), None);
-        }
-        Err(reply) => return (Checked::Done(Watched::Answered(reply)), None),
+    let Ok(source) = source(context, node_id) else {
+        return (Checked::Done(KeyChecked::Failed), None);
     };
-    let mut signal = Signal {
-        context,
-        node_id,
-        caret_event,
-        covered: false,
-        read_at: None,
-    };
-    let named: Vec<u64> = watch.since.iter().map(|since| since.anchor.0).collect();
-    let checked = match source {
-        Source::Uia(mut source) => {
-            let mut call = uia_call(context, node_id, &named);
-            let watched = text::check_caret(&mut source, &mut call.text(), watch, &mut signal);
+    let read_at_us = context.observed_now();
+    match (source, &key.baseline) {
+        (Source::Uia(mut source), Baseline::Uia(last)) => {
+            let Some(baseline) = uia_baseline(context, node_id, last) else {
+                return (Checked::Done(KeyChecked::Failed), None);
+            };
+            let mut call = uia_call(context, node_id, &[]);
+            let check = CheckKey {
+                baseline: &baseline,
+                unit: key.unit,
+                motion: key.motion,
+                before_unit: key.before_unit.as_ref(),
+                read_at_us,
+                final_read,
+            };
+            let checked = text::check_key(&mut source, &mut call.text(), &check);
             put_uia(context, node_id, call);
             note_fallback(context, &mut source);
             keep_support(context, node_id, &source);
-            Checked::Done(watched)
+            (Checked::Done(checked), Some(read_at_us))
         }
-        Source::Edit(mut source) => {
+        (Source::Edit(mut source), Baseline::Edit(baseline)) => {
             let edit = edit_client(context, node_id).filter(|_| cuts);
-            let mut call = edit_call(context, node_id, &named);
-            let checked = text::check_caret_cut(
-                &mut source,
-                &mut call.text(),
-                watch,
-                (&mut signal, edit.is_some()),
-            );
+            let mut call = edit_call(context, node_id, &[]);
+            let check = CheckKey {
+                baseline,
+                unit: key.unit,
+                motion: key.motion,
+                before_unit: key.before_unit.as_ref(),
+                read_at_us,
+                final_read,
+            };
             let checked =
-                match (checked, edit) {
-                    (Checked::Cut(read), Some(edit)) => Checked::Cut(EditCut {
-                        edit,
-                        length: source.length_read(),
-                        read,
-                    }),
-                    (Checked::Cut(cut), None) => Checked::Done(Watched::Answered(
-                        text::finish_answer(&mut source, &mut call.text(), cut, false),
-                    )),
-                    (Checked::Done(watched), _) => Checked::Done(watched),
-                };
+                text::check_key_cut(&mut source, &mut call.text(), &check, edit.is_some());
+            let checked = match (checked, edit) {
+                (Checked::Cut(read), Some(edit)) => Checked::Cut(EditCut {
+                    edit,
+                    length: source.length_read(),
+                    read,
+                }),
+                (Checked::Cut(cut), None) => Checked::Done(text::finish_key(
+                    &mut source,
+                    &mut call.text(),
+                    &check,
+                    cut,
+                    false,
+                )),
+                (Checked::Done(found), _) => Checked::Done(found),
+            };
             put_edit(context, node_id, call);
             if matches!(checked, Checked::Cut(_)) {
                 value_change_cut(context);
             }
-            checked
+            (checked, Some(read_at_us))
         }
-    };
-    (checked, signal.read_at)
-}
-
-/// [`check_watch`], never cut: the console poll's check, of a UIA text.
-pub(super) fn check_watch_uncut(
-    context: &RequestContext<'_>,
-    node_id: NodeId,
-    watch: &CaretWatch,
-) -> (Watched, Option<u64>) {
-    match check_watch(context, node_id, watch, (false, false)) {
-        (Checked::Done(watched), read_at) => (watched, read_at),
-        (Checked::Cut(cut), read_at) => (
-            Watched::Answered(finish_watch(
-                context,
-                node_id,
-                (cut.length, cut.read),
-                false,
-            )),
-            read_at,
-        ),
+        // A node's provider does not change under its watch.
+        _ => (Checked::Done(KeyChecked::Failed), None),
     }
 }
 
 /// A check of a caret key's watch ([`check_watch`]): what it found, or
 /// the check cut at its value change check.
-pub(super) type WatchCheck = Checked<Watched, EditCut<AnswerCut<u32>>>;
+pub(super) type WatchCheck = Checked<KeyChecked, EditCut<AnswerCut<u32>>>;
 
 /// A read of an edit control's client area cut at its value change check
 /// ([`value_change_cut`]): the control's window, the text's length if the
@@ -800,23 +777,32 @@ fn edit_source(
 }
 
 /// Finishes the check of a caret key's watch on edit control `node_id` that
-/// [`check_watch`] cut: the answer, whose comparison of selections is in
-/// general terms when the control's value change waited (`waiting`), or
-/// the reply that ends the request when the text cannot be read.
+/// [`check_watch`] cut, its comparison of selections in general terms when
+/// the control's value change waited (`waiting`).
 pub(super) fn finish_watch(
     context: &RequestContext<'_>,
     node_id: NodeId,
+    key: &KeyWatch,
     (length, cut): (Option<u32>, AnswerCut<u32>),
     waiting: bool,
-) -> TextReply {
-    let mut source = match edit_source(context, node_id, length) {
-        Ok(source) => source,
-        Err(reply) => return reply,
+) -> KeyChecked {
+    let (Ok(mut source), Baseline::Edit(baseline)) =
+        (edit_source(context, node_id, length), &key.baseline)
+    else {
+        return KeyChecked::Failed;
     };
     let mut call = edit_call(context, node_id, &[]);
-    let watched = text::finish_answer(&mut source, &mut call.text(), cut, waiting);
+    let check = CheckKey {
+        baseline,
+        unit: key.unit,
+        motion: key.motion,
+        before_unit: key.before_unit.as_ref(),
+        read_at_us: cut.read_at_us,
+        final_read: false,
+    };
+    let found = text::finish_key(&mut source, &mut call.text(), &check, cut, waiting);
     put_edit(context, node_id, call);
-    watched
+    found
 }
 
 /// Why there is no caret to report.
@@ -854,7 +840,8 @@ pub(super) type CaretReading = (
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum CaretFor {
     /// The report after a focus, whose line is spoken with its formatting,
-    /// and whose selection the next reports' changes are worked out from.
+    /// and whose comparison with the node's last read Core speaks for a
+    /// repeated focus.
     Focus,
     /// A caret event of a text focus that is not a terminal, with how the
     /// selection changed since the last report, as NVDA's auto-select
@@ -866,7 +853,7 @@ pub(super) enum CaretFor {
     /// A caret event of a terminal, compared with the caret last sent to
     /// Core for it. NVDA's console class replaces the selection detection
     /// (`nvda/source/NVDAObjects/UIA/winConsoleUIA.py` 416), not yet traced,
-    /// so a terminal's report carries no selection changes.
+    /// so a terminal's report compares no selection.
     Terminal,
 }
 
@@ -886,10 +873,9 @@ pub(super) fn report_caret(
         Ok(source) => source,
         Err(reply) => {
             if purpose == CaretFor::Focus {
-                // A new focus's selection is not compared with one from
-                // before it, though its own could not be read.
-                forget_selection(context, node_id, Backend::Uia);
-                forget_selection(context, node_id, Backend::Msaa);
+                // A focus read that fails drops the node's last read, as
+                // NVDA's `initAutoSelectDetection` starts again.
+                forget_last_read(context, node_id);
             }
             let missed = if reply == TextReply::NoText {
                 NoCaret::NoText
@@ -908,21 +894,23 @@ pub(super) fn report_caret(
     } else {
         None
     };
-    let last = match purpose {
-        CaretFor::Focus => LastSelection::Restart,
-        CaretFor::Terminal => LastSelection::Ignore,
-        CaretFor::Event => LastSelection::Compare,
-    };
+    let compare = purpose != CaretFor::Terminal;
     let formats = purpose == CaretFor::Focus;
-    let read_at = Some(context.observed_now());
+    let read_at_us = context.observed_now();
+    let read_at = Some(read_at_us);
     let report = match source {
         Source::Uia(mut source) => {
             let mut call = uia_call(context, node_id, &[]);
             let report = text::caret_report_since(
                 &mut source,
                 &mut call.text(),
-                &mut super::now_ms,
-                (formats, sent.as_ref().map(|(_, point)| point), last),
+                read_at_us,
+                &ReportAsk {
+                    formats,
+                    since: sent.as_ref().map(|(_, point)| point),
+                    compare,
+                    unit: None,
+                },
             )
             .map(|read| {
                 let unchanged = !read.moved
@@ -960,8 +948,13 @@ pub(super) fn report_caret(
             let report = text::caret_report_checking(
                 &mut source,
                 &mut call.text(),
-                &mut super::now_ms,
-                (formats, None, last),
+                read_at_us,
+                &ReportAsk {
+                    formats,
+                    since: None,
+                    compare,
+                    unit: None,
+                },
                 edit.is_some(),
             )
             .and_then(|checked| match (checked, edit) {
@@ -990,6 +983,9 @@ pub(super) fn report_caret(
             report
         }
     };
+    if purpose == CaretFor::Focus && report.is_err() {
+        forget_last_read(context, node_id);
+    }
     (report.map_err(not_read), read_at)
 }
 
@@ -1006,30 +1002,24 @@ fn selection_report<P>(read: text::ReportedCaret<P>) -> (CaretReport, SelectionR
     )
 }
 
-/// Forgets the selection `node_id`, read through `backend`, would have its
-/// next caret report compared with ([`text::NodeText::forget_selection`]),
-/// at a new focus: the report carries no change.
-pub(super) fn forget_selection(context: &RequestContext<'_>, node_id: NodeId, backend: Backend) {
+/// Drops `node_id`'s last read, its focus read having failed.
+fn forget_last_read(context: &RequestContext<'_>, node_id: NodeId) {
     let node = node_id.number();
-    let uia = backend == Backend::Uia;
     let kept = {
         let facts = context.facts();
-        if uia {
-            facts
-                .text
-                .uia(node)
-                .is_some_and(|anchors| anchors.selection.is_some())
-        } else {
-            facts
+        facts
+            .text
+            .uia(node)
+            .is_some_and(|anchors| anchors.last.is_some())
+            || facts
                 .text
                 .edit(node)
-                .is_some_and(|anchors| anchors.selection.is_some())
-        }
+                .is_some_and(|anchors| anchors.last.is_some())
     };
     if kept {
         record(
             context,
-            TextChange::ForgetSelection { node, uia },
+            TextChange::LastReadFailed(node),
             (Vec::new(), Vec::new()),
         );
     }
@@ -1064,7 +1054,8 @@ pub(super) fn note_caret_event_counted(context: &RequestContext<'_>, node_id: No
         .facts()
         .text
         .edit(node)
-        .is_some_and(|anchors| anchors.content_changed && anchors.selection.is_some());
+        .and_then(|anchors| anchors.last.as_ref())
+        .is_some_and(|last| last.text_changed);
     if noted {
         record(
             context,
@@ -1230,11 +1221,10 @@ pub(super) fn terminal_read(
             }
             let caret_read = answer.caret.is_some().then_some(started_us);
             let caret = answer.caret.take().and_then(|answer| {
-                let read_at_ms = super::now_ms();
                 let read = source.caret_read_from(answer).ok()?;
                 let mut call = uia_call(context, node_id, &[]);
                 let report =
-                    crate::text::caret_report_from(&mut source, &mut call.text(), read, read_at_ms);
+                    crate::text::caret_report_from(&mut source, &mut call.text(), read, started_us);
                 put_uia(context, node_id, call);
                 Some(TerminalCaret {
                     report: report.ok()?,
