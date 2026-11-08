@@ -127,25 +127,25 @@ fn reduce_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
             effects.extend(crate::queries::outpost_gone(state, *trace_id, *outpost));
             effects
         }
-        Input::MenuOrSwitchEnded { .. } if state.focus.waiting() => {
+        // A key, a key command or script, or a menu's or the switcher's
+        // end, that reaches Core while focus reports wait is handled after
+        // them, in order, as NVDA queues gestures with events (Dickson,
+        // 2026-11-08).
+        Input::Command { .. }
+        | Input::Script { .. }
+        | Input::CaretKey { .. }
+        | Input::CharacterTyped { .. }
+        | Input::ClearingKey { .. }
+        | Input::HeldKey { .. }
+        | Input::MenuOrSwitchEnded { .. }
+            if state.focus.waiting() =>
+        {
             state.focus.queue_input(input.clone());
             Vec::new()
         }
         Input::Command { .. } | Input::Script { .. } => command_arrived(state, input),
-        // A key pressed while a held key waits reaches the application
-        // after it, so it is handled after it (`books/dev/src/explanation/design/key-holding.md`,
-        // "Keys behind a held key").
-        Input::CaretKey { .. } | Input::CharacterTyped { .. } | Input::ClearingKey { .. }
-            if state.held_busy() =>
-        {
-            state
-                .held_keys
-                .waiting
-                .push_back(crate::state::WaitingKey::Later(Box::new(input.clone())));
-            Vec::new()
-        }
         Input::CaretKey { .. } | Input::CharacterTyped { .. } | Input::ClearingKey { .. } => {
-            key_input(state, input)
+            key_arrived(state, input)
         }
         Input::HeldKey {
             trace_id,
@@ -944,8 +944,8 @@ pub(crate) fn run_queue(state: &mut SrState) -> Vec<Effect> {
     loop {
         match state.focus.front() {
             Front::Wait => break,
-            Front::Execute(report, left, (arrival, ended)) => {
-                effects.extend(execute_report(state, &report, left, (arrival, Some(ended))));
+            Front::Execute(report, left, arrival) => {
+                effects.extend(execute_report(state, &report, left, arrival));
             }
             Front::Decide(entry, cached) => {
                 if decide_report(state, *entry, cached.map(CachedFrom), &mut effects) {
@@ -961,18 +961,13 @@ pub(crate) fn run_queue(state: &mut SrState) -> Vec<Effect> {
     effects
 }
 
-/// A key command or script that reached Core: one that reaches it while
-/// focus reports wait is handled after them, as NVDA queues gestures with
-/// events (Dickson, 2026-11-08), as is a menu's or the switcher's end; one
+/// A key command or script with no focus report waiting ahead of it: one
 /// pressed while a held key waits, or while the watch of the held key last
 /// passed on is open, runs after it, as NVDA runs scripts one at a time in
 /// the order queued (`books/dev/src/explanation/design/ownership.md`); any
 /// other runs now.
 fn command_arrived(state: &mut SrState, input: &Input) -> Vec<Effect> {
-    if state.focus.waiting() {
-        state.focus.queue_input(input.clone());
-        Vec::new()
-    } else if state.held_busy() || state.held_keys.awaiting_watch.is_some() {
+    if state.held_busy() || state.held_keys.awaiting_watch.is_some() {
         editing::queue_command(state, input)
     } else {
         command_input(state, input)
@@ -980,27 +975,54 @@ fn command_arrived(state: &mut SrState, input: &Input) -> Vec<Effect> {
 }
 
 /// An input that waited behind focus reports, handled in its turn
-/// (`crate::focus_queue`): a key command or script acts on the focus
+/// (`crate::focus_queue`): a key, key command or script acts on the focus
 /// executed before it, behind a held key if one waits then, its effects
 /// under its own trace; a menu's or the switcher's end judges the focus
 /// taken since it.
 fn waited_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
     match input {
         Input::Command { .. } | Input::Script { .. } => {
-            let own = if state.held_busy() || state.held_keys.awaiting_watch.is_some() {
-                editing::queue_command(state, input)
-            } else {
-                command_input(state, input)
-            };
-            match input.trace_id() {
-                Some(trace_id) => own
-                    .into_iter()
-                    .map(|effect| Effect::ForKey(trace_id, Box::new(effect)))
-                    .collect(),
-                None => own,
-            }
+            under_key(input.trace_id(), command_arrived(state, input))
         }
+        Input::CaretKey { .. } | Input::CharacterTyped { .. } | Input::ClearingKey { .. } => {
+            under_key(key_trace(input), key_arrived(state, input))
+        }
+        // The held-key line carries a held key's effects under its trace.
+        Input::HeldKey {
+            trace_id,
+            key,
+            pressed_at_ms,
+            ..
+        } => editing::held_key(state, *trace_id, *key, *pressed_at_ms),
         _ => shell::reduce(state, input),
+    }
+}
+
+/// A key with no focus report waiting ahead of it: one pressed while a held
+/// key waits reaches the application after it, so it is handled after it
+/// (`books/dev/src/explanation/design/key-holding.md`, "Keys behind a held
+/// key"); any other now.
+fn key_arrived(state: &mut SrState, input: &Input) -> Vec<Effect> {
+    if state.held_busy() {
+        state
+            .held_keys
+            .waiting
+            .push_back(crate::state::WaitingKey::Later(Box::new(input.clone())));
+        Vec::new()
+    } else {
+        key_input(state, input)
+    }
+}
+
+/// `effects`, of a key or command handled after the input it reached Core
+/// with, carried under its own trace, as the held-key line carries them.
+fn under_key(trace_id: Option<TraceId>, effects: Vec<Effect>) -> Vec<Effect> {
+    match trace_id {
+        Some(trace_id) => effects
+            .into_iter()
+            .map(|effect| Effect::ForKey(trace_id, Box::new(effect)))
+            .collect(),
+        None => effects,
     }
 }
 
@@ -1074,7 +1096,7 @@ fn decide_report(
     };
     if let Some(asked) = asked {
         // No live re-read is asked of an ended outpost generation: the
-        // report ends unanswered (Claude, 2026-11-08).
+        // report ends unanswered (Claude, 2026-11-08, accepted by Dickson).
         match asked {
             Some((reader, effect)) => {
                 effects.push(effect);
@@ -1085,7 +1107,7 @@ fn decide_report(
         }
         false
     } else {
-        effects.extend(execute_report(state, report, left, (entry.arrival, None)));
+        effects.extend(execute_report(state, report, left, entry.arrival));
         false
     }
 }
@@ -1395,12 +1417,7 @@ fn focus_reported(
 ///   title when its line does not already speak it ([`window_title`]).
 /// - A report judged left is executed as a focus from another top-level
 ///   window is (the left mark, `crate::focus_queue`).
-fn execute_report(
-    state: &mut SrState,
-    owned: &Report,
-    left: bool,
-    (arrival, waited): (u64, Option<u64>),
-) -> Vec<Effect> {
+fn execute_report(state: &mut SrState, owned: &Report, left: bool, arrival: u64) -> Vec<Effect> {
     let report = &owned.view(None);
     let window = owned.window.as_ref();
     let (trace_id, source) = (owned.trace_id, owned.source);
@@ -1438,7 +1455,7 @@ fn execute_report(
     {
         // The silent re-read: the replacement outpost reports the focus the
         // user already heard, so take its ids without speaking.
-        state.focus.execute(new_focus, arrival, waited);
+        state.focus.execute(new_focus, arrival);
         record_taken(state, report);
         if state.navigator.is_none() {
             state.navigator = Some(Navigator::on(report.node.clone()));
@@ -1483,7 +1500,7 @@ fn execute_report(
         (foreground_changed, previous_left),
         &mut effects,
     );
-    state.focus.execute(new_focus, arrival, waited);
+    state.focus.execute(new_focus, arrival);
     record_taken(state, report);
     state.navigator = Some(navigator);
     // A nameless whole-window focus, and any focus in the shell's staging

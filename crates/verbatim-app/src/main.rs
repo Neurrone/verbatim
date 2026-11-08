@@ -2033,7 +2033,7 @@ impl ReducerThread<'_> {
                             (
                                 reread.trace_id,
                                 reread.window.map_or(0, |window| {
-                                    isize::try_from(window.0).unwrap_or_default()
+                                    isize::try_from(window.0.cast_signed()).unwrap_or(0)
                                 }),
                             ),
                         );

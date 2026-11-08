@@ -228,15 +228,17 @@ ancestry", then the focus ([How focus
 works](../../books/dev/src/explanation/design/focus.md), "One UI
 Automation focus, end to end").
 
-The left mark (Dickson, 2026-11-02; its end and the title gate Claude's,
-2026-11-08, pending Dickson's acceptance; [ADR 0001:
+The left mark (Dickson, 2026-11-02 and 2026-11-08; the title gate
+Claude's, 2026-11-08, accepted by Dickson; [ADR 0001:
 Focus](../../books/dev/src/reference/adr/0001-focus.md), "The foreground
-and the window title"): the focus listener's foreground change into a
-window unrelated to Core's focus marks that focus left, and Core records
-the window it was left for (`left_for`). While the mark stands, a report
-meets nothing of the left line, so the return to a focus after a visit
-elsewhere is spoken as the switch is. A report from the window the focus
-was left for ends the mark, so Core compares the two lines as they are,
+and the window title"): it lives on the last queued focus. A foreground
+change into a window unrelated to that focus, observed after it or
+reaching Core after it, leaves it for that window, for the reports Core
+judges after the change that were observed after it; a report already
+judged keeps its verdict. A report judged left meets nothing of the left
+line, so the return to a focus after a visit elsewhere is spoken as the
+switch is. A report from the window the focus was left for is not judged
+left, so Core compares the two lines as they are,
 as NVDA compares its focus line with the one before; and the title rule
 below adds no title when the two lines meet at an object they share, as
 NVDA speaks the window in front only when its focus difference level is

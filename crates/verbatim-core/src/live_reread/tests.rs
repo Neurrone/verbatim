@@ -1151,3 +1151,83 @@ fn a_replacement_outposts_report_of_a_left_focus_is_announced() {
         ]
     );
 }
+
+#[test]
+fn a_repeat_from_the_other_reader_behind_an_answered_report_is_a_duplicate() {
+    // F2 waits for the listener's live re-read; the outpost's own read of
+    // F2 reaches Core behind it. The listener answers live and F2 is
+    // spoken: the outpost's report is a duplicate of it, since only a
+    // report that ended unanswered carries the repeat exception.
+    let mut state = pending();
+    let repeat = through_msaa(Report::new(A, button(4, "Two"), chain_of_a(), 410).input());
+    assert_eq!(heard(&crate::reduce(&mut state, &repeat)), []);
+    let mut answer = Report::new(A, button(4, "Two"), chain_of_a(), 400);
+    answer.answers = Some(0);
+    assert_eq!(
+        heard(&crate::reduce(&mut state, &answer.input())),
+        two_spoken()
+    );
+}
+
+/// The caret key `motion` passed to the application, pressed with trace
+/// `trace`.
+fn caret_key(trace: u64) -> Input {
+    Input::CaretKey {
+        trace_id: TraceId::from_raw(trace),
+        key_seq: verbatim_model::KeySeq::none_yet(),
+        key: verbatim_model::CaretKey {
+            motion: verbatim_model::CaretMotion::NextCharacter,
+            select: false,
+        },
+        pressed_at_ms: 0,
+    }
+}
+
+/// The caret key held by the hook, pressed with trace `trace`.
+fn held_key(trace: u64) -> Input {
+    Input::HeldKey {
+        trace_id: TraceId::from_raw(trace),
+        key_seq: verbatim_model::KeySeq::none_yet(),
+        key: verbatim_model::CaretKey {
+            motion: verbatim_model::CaretMotion::NextCharacter,
+            select: false,
+        },
+        pressed_at_ms: 0,
+    }
+}
+
+#[test]
+fn a_caret_key_while_a_report_waits_runs_after_the_command_before_it() {
+    // A command, then a caret key, both while F2 waits: after F2's answer,
+    // the command runs first, then the key, each under its own trace.
+    let mut state = pending();
+    assert_eq!(heard(&crate::reduce(&mut state, &to_focus(450))), []);
+    assert_eq!(heard(&crate::reduce(&mut state, &caret_key(460))), []);
+    let mut answer = Report::new(A, button(4, "Two"), chain_of_a(), 400);
+    answer.answers = Some(0);
+    let mut expected = Vec::from(two_spoken());
+    expected.push(Heard::ForKey(450, vec![moved_to("Two")]));
+    assert_eq!(heard(&crate::reduce(&mut state, &answer.input())), expected);
+}
+
+#[test]
+fn a_held_key_while_a_report_waits_does_not_overtake_the_command_before_it() {
+    // A command, then a key the hook holds, while F2 waits: after F2's
+    // answer the command runs, then the held key is passed on, once, as
+    // the focus has no caret to read.
+    let mut state = pending();
+    assert_eq!(heard(&crate::reduce(&mut state, &to_focus(450))), []);
+    assert_eq!(heard(&crate::reduce(&mut state, &held_key(470))), []);
+    let mut answer = Report::new(A, button(4, "Two"), chain_of_a(), 400);
+    answer.answers = Some(0);
+    let mut expected = Vec::from(two_spoken());
+    expected.push(Heard::ForKey(450, vec![moved_to("Two")]));
+    expected.push(Heard::ForKey(
+        470,
+        vec![Heard::Other(format!(
+            "{:?}",
+            Effect::PassHeldKey(TraceId::from_raw(470))
+        ))],
+    ));
+    assert_eq!(heard(&crate::reduce(&mut state, &answer.input())), expected);
+}

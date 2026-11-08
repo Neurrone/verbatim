@@ -78,10 +78,12 @@ Core judges it in the order the focuses were observed.
   taken, though that application never answered, so its focus never
   came. NVDA is silent there: its last queued focus is still the one
   returned to, so the foreground event is a descendant of it and the UIA
-  focus a duplicate. Core marks its focus left on the focus listener's
-  foreground change into an unrelated window observed after every report
-  it had judged, and takes a left focus reported again as a focus from
-  another window is (`FocusContext::left`): Core's
+  focus a duplicate. Core's left mark lives on its last queued focus
+  (ADR 0001, "The foreground and the window title"): a foreground change
+  into a window unrelated to that focus, observed after it or reaching
+  Core after it, leaves it for the reports Core judges after the change
+  that were observed after it, and such a report is taken as a focus from
+  another window is (`focus_queue::Change`): Core's
   `a_return_after_a_foreground_change_says_what_the_switch_says_without_a_stall`
   and `the_state_after_a_return_is_the_state_after_the_switch_without_a_stall`.
   The same holds after a splash or tray window that takes the foreground

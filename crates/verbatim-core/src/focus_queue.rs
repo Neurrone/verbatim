@@ -55,15 +55,15 @@ pub(crate) struct FocusState {
 }
 
 /// What the last queued focus is ([`FocusState`]), with when it reached
-/// Core, by the queue's count of inputs, and the input that ended its wait
-/// for a live re-read, if it waited.
+/// Core, by the queue's count of inputs, and, for a report that ended
+/// unanswered, the input that ended its wait for its live re-read.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) enum Last {
     /// No report has been decided.
     #[default]
     Nothing,
     /// The focus object is the last queued focus.
-    Executed { arrival: u64, waited: Option<u64> },
+    Executed { arrival: u64 },
     /// A report that ended unanswered is the last queued focus: gone,
     /// refused as background when answered, or its reader ended. It is
     /// never spoken.
@@ -146,8 +146,8 @@ pub(crate) enum EntryState {
         reader: (OutpostId, FocusReaderKind),
         request: u64,
     },
-    /// Its live re-read answered at input `ended`: executed now.
-    Answered { left: bool, ended: u64 },
+    /// Its live re-read answered: executed now.
+    Answered { left: bool },
     /// Its live re-read ended unanswered at input `ended`.
     Unanswered { ended: u64 },
 }
@@ -177,7 +177,10 @@ pub(crate) struct LastQueued<'a> {
     pub(crate) window: Option<&'a WindowFacts>,
     observed_at_us: u64,
     arrival: u64,
-    /// The input that ended its wait for a live re-read, if it waited.
+    /// The input that ended its wait for its live re-read, for a report
+    /// that ended unanswered: a repeat that reached Core before then is no
+    /// duplicate of it, since its reader answered it gone for the repeat.
+    /// A report answered and executed carries no such exception.
     pub(crate) waited: Option<u64>,
 }
 
@@ -187,8 +190,8 @@ pub(crate) enum Front {
     /// with [`FocusState::reread_first`] if it is set aside.
     Decide(Box<Entry>, Option<FirstCachedAncestor>),
     /// A report answered live, taken out: execute it, judged `left` or not,
-    /// its arrival and the input that answered it.
-    Execute(Box<Report>, bool, (u64, u64)),
+    /// with its arrival.
+    Execute(Box<Report>, bool, u64),
     /// An input that waited behind reports, taken out: handle it now.
     Input(Box<verbatim_model::Input>),
     /// Nothing can be decided now.
@@ -207,11 +210,10 @@ impl FocusState {
     }
 
     /// The report that reached Core at input `arrival` was executed as
-    /// `focus`, after a wait for a live re-read ended at `waited`: it is the
-    /// focus object and the last queued focus.
-    pub(crate) fn execute(&mut self, focus: FocusContext, arrival: u64, waited: Option<u64>) {
+    /// `focus`: it is the focus object and the last queued focus.
+    pub(crate) fn execute(&mut self, focus: FocusContext, arrival: u64) {
         self.object = Some(focus);
-        self.decided(Last::Executed { arrival, waited });
+        self.decided(Last::Executed { arrival });
     }
 
     /// `last` is the last queued focus now.
@@ -256,10 +258,9 @@ impl FocusState {
         }
         let arrival = match &mut self.last {
             Last::Nothing => 0,
-            Last::Executed { arrival, waited } => {
+            Last::Executed { arrival } => {
                 let was = *arrival;
                 *arrival = 0;
-                *waited = None;
                 was
             }
             Last::Unanswered {
@@ -281,12 +282,12 @@ impl FocusState {
     pub(crate) fn last_queued(&self) -> Option<LastQueued<'_>> {
         match &self.last {
             Last::Nothing => None,
-            Last::Executed { arrival, waited } => self.object.as_ref().map(|focus| LastQueued {
+            Last::Executed { arrival } => self.object.as_ref().map(|focus| LastQueued {
                 node: &focus.snapshot,
                 window: focus.window.as_ref(),
                 observed_at_us: focus.observed_at_us,
                 arrival: *arrival,
-                waited: *waited,
+                waited: None,
             }),
             Last::Unanswered {
                 report,
@@ -407,15 +408,6 @@ impl FocusState {
     /// the last queued focus, and the next is looked at.
     pub(crate) fn front(&mut self) -> Front {
         loop {
-            let Some(first) = self.queue.front() else {
-                return Front::Wait;
-            };
-            if first
-                .report()
-                .is_some_and(|entry| matches!(entry.state, EntryState::Rereading { .. }))
-            {
-                return Front::Wait;
-            }
             let entry = match self.queue.pop_front() {
                 None => return Front::Wait,
                 Some(Queued::Input(input)) => return Front::Input(input),
@@ -425,15 +417,20 @@ impl FocusState {
                 EntryState::Pending { cached } => {
                     return Front::Decide(Box::new(entry), cached);
                 }
-                EntryState::Answered { left, ended } => {
-                    return Front::Execute(Box::new(entry.report), left, (entry.arrival, ended));
+                EntryState::Answered { left } => {
+                    return Front::Execute(Box::new(entry.report), left, entry.arrival);
                 }
                 EntryState::Unanswered { ended } => self.decided(Last::Unanswered {
                     report: Box::new(entry.report),
                     arrival: entry.arrival,
                     waited: ended,
                 }),
-                EntryState::Rereading { .. } => {}
+                // A report waiting for its live re-read stays at the front,
+                // and everything behind it waits.
+                EntryState::Rereading { .. } => {
+                    self.queue.push_front(Queued::Report(Box::new(entry)));
+                    return Front::Wait;
+                }
             }
         }
     }
@@ -487,12 +484,12 @@ impl FocusState {
     /// The live re-read `request` was answered with `answer`: its report is
     /// executed with the answer's reading and its own verdict.
     pub(crate) fn answered(&mut self, outpost: OutpostId, request: u64, answer: Report) {
-        let ended = self.next_input();
+        self.next_input();
         if let Some(entry) = self.rereading_mut(outpost, request)
             && let EntryState::Rereading { left, .. } = entry.state
         {
             entry.report = answer;
-            entry.state = EntryState::Answered { left, ended };
+            entry.state = EntryState::Answered { left };
         }
     }
 
@@ -540,11 +537,13 @@ impl FocusState {
 
     /// How many reports wait for their live re-reads.
     pub(crate) fn rereading(&self) -> usize {
-        self.queue
-            .iter()
-            .filter_map(Queued::report)
-            .filter(|entry| matches!(entry.state, EntryState::Rereading { .. }))
-            .count()
+        // Only the front can wait for its live re-read.
+        usize::from(
+            self.queue
+                .front()
+                .and_then(Queued::report)
+                .is_some_and(|entry| matches!(entry.state, EntryState::Rereading { .. })),
+        )
     }
 
     /// The changes and the count of inputs, for a test that compares
@@ -650,10 +649,7 @@ impl From<Stored> for FocusState {
                     .into_iter()
                     .collect(),
                 object: Some(earlier.focus),
-                last: Last::Executed {
-                    arrival: 0,
-                    waited: None,
-                },
+                last: Last::Executed { arrival: 0 },
                 queue: VecDeque::new(),
                 inputs: 1,
             },
@@ -713,13 +709,7 @@ mod tests {
         object.insert("left_for".to_owned(), serde_json::json!(30));
         let state: FocusState = serde_json::from_value(earlier).expect("an old dump loads");
         assert_eq!(state.object(), Some(&focus()));
-        assert_eq!(
-            state.last,
-            Last::Executed {
-                arrival: 0,
-                waited: None
-            }
-        );
+        assert_eq!(state.last, Last::Executed { arrival: 0 });
         assert_eq!(
             state.changes,
             [Change {
@@ -739,9 +729,9 @@ mod tests {
             serde_json::json!({"object": null, "last": "Bogus"}),
         )
         .expect_err("a malformed dump is refused");
-        assert!(
-            error.to_string().starts_with("unknown variant `Bogus`"),
-            "{error}"
+        assert_eq!(
+            error.to_string(),
+            "unknown variant `Bogus`, expected one of `Nothing`, `Executed`, `Unanswered`"
         );
     }
 }
