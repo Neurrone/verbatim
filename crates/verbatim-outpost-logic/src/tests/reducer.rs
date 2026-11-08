@@ -17,6 +17,11 @@
 //! held copies a release keeps and the caret watch's transitions are not
 //! modelled: they are the examples of `src/tests.rs`, `hold.rs` and the
 //! watch's enumeration (`tests/generated.rs`).
+//!
+//! Hangs have a reference model of their own ([`Run::expect_hangs`]), which
+//! reads only [`World`], the windows' true condition, and the recorded
+//! decisions on hangs. [`Run::seam_answer`] and the two functions beside it
+//! are the one seam that turns that truth into the reducer's inputs.
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
@@ -39,8 +44,47 @@ const EDIT: isize = 9;
 const GRACE_US: u64 = 500_000;
 
 /// The windows the hang cases name: a program's own, found hung or
-/// answering, one in front, and destroyed.
-const HANGING: [isize; 2] = [0x30, 0x31];
+/// answering, one in front, and destroyed. The first and last share a
+/// thread, and the second has its own ([`World::thread_of`]).
+const HANGING: [isize; 3] = [0x30, 0x31, 0x32];
+
+/// A window's true condition, whatever the reducer has heard of it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Condition {
+    Responsive,
+    Hung,
+    Destroyed,
+}
+
+/// The application as it truly is, changing with no event and surviving a
+/// new outpost generation: which of its two threads are hung, and which of
+/// the hang cases' windows are destroyed.
+#[derive(Clone, Copy, Debug, Default)]
+struct World {
+    frozen: [bool; 2],
+    destroyed: [bool; HANGING.len()],
+}
+
+impl World {
+    /// The thread of `hwnd`: windows on one thread hang together.
+    fn thread_of(hwnd: isize) -> usize {
+        usize::from(hwnd == HANGING[1])
+    }
+
+    fn condition(self, hwnd: isize) -> Condition {
+        let destroyed = HANGING
+            .iter()
+            .position(|&window| window == hwnd)
+            .is_some_and(|index| self.destroyed[index]);
+        if destroyed {
+            Condition::Destroyed
+        } else if self.frozen[Self::thread_of(hwnd)] {
+            Condition::Hung
+        } else {
+            Condition::Responsive
+        }
+    }
+}
 
 /// What an entry is.
 #[derive(Clone, Copy, Debug)]
@@ -81,7 +125,8 @@ enum What {
     Settle,
     /// The nodes Core holds.
     NodesHeld,
-    /// The destroy event of one of the hang cases' windows.
+    /// The destroy event of one of the hang cases' windows, destroyed by
+    /// then if it was not already.
     Destroy(u8),
 }
 
@@ -115,9 +160,10 @@ enum Commit {
     NotedCaret,
     /// The owed work done.
     OwedDone,
-    /// What the program found of one of the hang cases' windows: hung at
-    /// its check before a call, with no call made, its query, if any,
-    /// answered abandoned when it is refused; or answering a call.
+    /// What the program found of one of the hang cases' windows, from
+    /// evidence of an earlier moment, whatever the window's condition now:
+    /// hung at its check before a call, with no call made, its query, if
+    /// any, answered abandoned when it is refused; or answering a call.
     Found {
         window: u8,
         hung: bool,
@@ -134,6 +180,11 @@ enum Commit {
 #[derive(Clone, Copy, Debug)]
 enum Stale {
     Commit,
+    /// A returning worker's commit of what it found of a hang case's window.
+    Found {
+        window: u8,
+        hung: bool,
+    },
     Finished,
     MovedOn,
 }
@@ -170,12 +221,21 @@ enum Action {
     Commit(Commit),
     /// An input of a request no longer live.
     Stale(Stale),
-    /// One of the hang cases' windows is seen hung: with no request (0), as
-    /// the front check finds it, the program in flight's (1), or the newest
-    /// request no longer live (2).
+    /// A check of one of the hang cases' windows finds it hung, if it truly
+    /// is: with no request (0), as the front check finds it, the program in
+    /// flight's (1), or the newest request no longer live (2).
     HangSeen { window: u8, request: u8 },
-    /// One of the hang cases' windows is in front and can be read.
+    /// One of the hang cases' windows is in front and answers, if it truly
+    /// does.
     FrontReadable(u8),
+    /// One of the application's threads hangs, with no event.
+    Freeze(u8),
+    /// One of the application's threads recovers, with no event.
+    Recover(u8),
+    /// One of the hang cases' windows is destroyed, its event yet to come.
+    Vanish(u8),
+    /// A new outpost generation starts, the application as it was.
+    NewOutpost,
     /// The program in flight ends: having reported a focus, panicked, or
     /// cut at its value change check.
     Finished {
@@ -191,24 +251,18 @@ enum Action {
 
 /// The answers the shell gives the asks an action causes.
 #[derive(Clone, Copy, Debug)]
-#[expect(
-    clippy::struct_excessive_bools,
-    reason = "one answer to each kind of ask"
-)]
 struct Asks {
     /// Whether the user has moved on.
     moved_on: bool,
-    /// The window a front check finds: another application's (0), one of
-    /// the hang cases' windows hung (1, 2), or readable (3, 4).
+    /// The window a front check finds: another application's (0), or one
+    /// of the hang cases' windows (1 to 3).
     front: u8,
     /// Whether a release lets go of node 1, the watch's.
     release_node: bool,
     /// Whether a release lets go of objects to drop.
     objects: bool,
-    /// Whether the window checked is found hung.
-    hung: bool,
     /// The window a program with none at dispatch names in its charge:
-    /// none (0), or one of the hang cases' windows (1, 2).
+    /// none (0), or one of the hang cases' windows (1 to 3).
     named: u8,
 }
 
@@ -232,7 +286,7 @@ fn what() -> impl Strategy<Value = What> {
         2 => Just(What::Round),
         2 => Just(What::Settle),
         2 => Just(What::NodesHeld),
-        1 => (0..2u8).prop_map(What::Destroy),
+        1 => (0..3u8).prop_map(What::Destroy),
     ]
 }
 
@@ -249,7 +303,7 @@ fn commit() -> impl Strategy<Value = Commit> {
         2 => any::<bool>().prop_map(|answered| Commit::Checked { answered }),
         1 => Just(Commit::NotedCaret),
         2 => Just(Commit::OwedDone),
-        3 => (0..2u8, any::<bool>(), any::<bool>())
+        3 => (0..3u8, any::<bool>(), any::<bool>())
             .prop_map(|(window, hung, refuse)| Commit::Found { window, hung, refuse }),
         8 => any::<bool>().prop_map(Commit::Own),
     ]
@@ -260,6 +314,7 @@ fn action() -> impl Strategy<Value = Action> {
     let from = prop_oneof![Just(From::Other), Just(From::Hook), Just(From::Listener)];
     let stale = prop_oneof![
         Just(Stale::Commit),
+        (0..3u8, any::<bool>()).prop_map(|(window, hung)| Stale::Found { window, hung }),
         Just(Stale::Finished),
         Just(Stale::MovedOn),
     ];
@@ -286,8 +341,12 @@ fn action() -> impl Strategy<Value = Action> {
         1 => (any::<bool>(), 0..5u8).prop_map(|(dead, change)| Action::Verdict { dead, change }),
         6 => commit().prop_map(Action::Commit),
         2 => stale.prop_map(Action::Stale),
-        2 => (0..2u8, 0..3u8).prop_map(|(window, request)| Action::HangSeen { window, request }),
-        1 => (0..2u8).prop_map(Action::FrontReadable),
+        5 => (0..3u8, 0..3u8).prop_map(|(window, request)| Action::HangSeen { window, request }),
+        1 => (0..3u8).prop_map(Action::FrontReadable),
+        4 => (0..2u8).prop_map(Action::Freeze),
+        3 => (0..2u8).prop_map(Action::Recover),
+        1 => (0..3u8).prop_map(Action::Vanish),
+        1 => Just(Action::NewOutpost),
         5 => (prop::bool::weighted(0.3), prop::bool::weighted(0.1), prop::bool::weighted(0.2))
             .prop_map(|(reported, panicked, cut)| Action::Finished { reported, panicked, cut }),
         6 => advance.prop_map(Action::Advance),
@@ -298,24 +357,16 @@ fn action() -> impl Strategy<Value = Action> {
 fn asks() -> impl Strategy<Value = Asks> {
     use proptest::prelude::*;
     (
-        (prop::bool::weighted(0.3), 0..5u8),
-        (
-            prop::bool::weighted(0.3),
-            any::<bool>(),
-            prop::bool::weighted(0.2),
-            0..3u8,
-        ),
+        (prop::bool::weighted(0.3), 0..4u8),
+        (prop::bool::weighted(0.3), any::<bool>(), 0..4u8),
     )
-        .prop_map(
-            |((moved_on, front), (release_node, objects, hung, named))| Asks {
-                moved_on,
-                front,
-                release_node,
-                objects,
-                hung,
-                named,
-            },
-        )
+        .prop_map(|((moved_on, front), (release_node, objects, named))| Asks {
+            moved_on,
+            front,
+            release_node,
+            objects,
+            named,
+        })
 }
 
 /// What a program does, as the model follows it.
@@ -370,9 +421,6 @@ struct Flight {
     /// committed a check of the watch, its copy may show a poll the reducer
     /// ended by its clock, which the copy does not read.
     uncompared: bool,
-    /// The windows destroyed while it ran, whose hang it names afterwards
-    /// opens nothing.
-    destroyed: BTreeSet<isize>,
 }
 
 /// A pending entry: what it is and where it came from.
@@ -391,9 +439,14 @@ struct Pending {
 )]
 struct Model {
     generation: u64,
-    /// The windows whose hang interval is open, by the reference model of
-    /// hangs ([`Run::hangs`]).
-    hung: BTreeSet<isize>,
+    /// The window whose hang Core was last told of, while that hang lasts,
+    /// by the reference model of hangs ([`Run::expect_hangs`]).
+    told_of: Option<isize>,
+    /// The window of the hang last ended, for what the gate's cases reach.
+    ended_told: Option<isize>,
+    /// Whether the window told of has recovered with no step taken since,
+    /// for what the gate's cases reach.
+    unjudged_recovery: bool,
     /// Every request number issued.
     numbers: BTreeSet<u64>,
     flight: Option<Flight>,
@@ -512,22 +565,28 @@ enum Call {
 type Reached = BTreeMap<&'static str, u64>;
 
 /// The lifecycle states the gate's cases must each reach.
-const LISTED: [&str; 37] = [
+const LISTED: [&str; 43] = [
     "an entry dispatched",
     "a focus group continued",
     "a focus group continued after an abandonment",
     "abandoned at the deadline",
     "abandoned as moved on",
     "abandoned parked on a hung window",
-    "a hang opened by a check",
-    "a hang opened in front",
-    "a hang opened for a request no longer live",
-    "a hang opened by a commit",
-    "a hang ended by an answer",
-    "a hang ended in front",
-    "a hang ended by a destroy event",
-    "a hang after its window's destroy ignored",
-    "a hang in a second window unsounded",
+    "a hang told from a check",
+    "a hang told from the front",
+    "a hang told for a request no longer live",
+    "a hang told from a commit",
+    "a hang told again by a new outpost",
+    "a recovery unseen ended the hang",
+    "a told window's destruction ended the hang",
+    "a second window hung, the same hang",
+    "a later hang in another window told",
+    "a later freeze of the told window told",
+    "a recovery and a freeze with no step between, one hang",
+    "a commit naming a responsive window hung",
+    "a commit naming a destroyed window hung",
+    "a commit naming a told window answered while it hangs",
+    "nothing told after close",
     "a refusal answered abandoned",
     "the front checked",
     "the front checked again while its marker waits",
@@ -556,6 +615,14 @@ const LISTED: [&str; 37] = [
 struct Run {
     reducer: Reducer,
     model: Model,
+    world: World,
+    /// The hangs Core must be told of in the step under way, and those it
+    /// was told of.
+    expected_tells: Vec<isize>,
+    tells: Vec<isize>,
+    /// The hang told of when the last new outpost generation started, if
+    /// its window was still hung.
+    continuing: Option<isize>,
     /// The clocks: the shell's, the observation clock, the shared clock,
     /// in microseconds.
     at: u64,
@@ -578,6 +645,10 @@ impl Run {
         Self {
             reducer: Reducer::new(),
             model: Model::default(),
+            world: World::default(),
+            expected_tells: Vec::new(),
+            tells: Vec::new(),
+            continuing: None,
             at: 1_000,
             observed: 1_000,
             wall: 1_000,
@@ -586,7 +657,6 @@ impl Run {
                 front: 0,
                 release_node: false,
                 objects: false,
-                hung: false,
                 named: 0,
             },
             next: 0,
@@ -628,6 +698,7 @@ impl Run {
 
     /// Takes `action`, then the shell's tick after the drain, unless more
     /// of the drain is to come.
+    #[expect(clippy::too_many_lines, reason = "one arm for each kind of action")]
     fn step(&mut self, action: Action) {
         self.trail.push(format!("{action:?}"));
         let tick = match action {
@@ -683,16 +754,44 @@ impl Run {
                     1 => self.model.flight.as_ref().map(|flight| flight.request),
                     _ => self.model.dead.last().copied(),
                 };
-                let window =
-                    Window::new(HANGING[usize::from(window)]).expect("a hang case's window");
-                self.input(Input::HangSeen { window, request });
+                if let Some(input) = self.seam_check(hang_case(window), request) {
+                    self.input(input);
+                }
                 true
             }
             Action::FrontReadable(window) => {
-                let window =
-                    Window::new(HANGING[usize::from(window)]).expect("a hang case's window");
-                self.input(Input::FrontReadable { window });
+                if let Some(input @ Input::FrontReadable { .. }) =
+                    self.seam_front(hang_case(window))
+                {
+                    self.input(input);
+                }
                 true
+            }
+            Action::Freeze(thread) => {
+                self.world.frozen[usize::from(thread)] = true;
+                if self.model.unjudged_recovery && self.told_window_is(Condition::Hung) {
+                    self.model.unjudged_recovery = false;
+                    self.reach("a recovery and a freeze with no step between, one hang");
+                }
+                false
+            }
+            Action::Recover(thread) => {
+                self.world.frozen[usize::from(thread)] = false;
+                self.model.unjudged_recovery |= self.told_window_is(Condition::Responsive);
+                false
+            }
+            Action::Vanish(window) => {
+                self.world.destroyed[usize::from(window)] = true;
+                false
+            }
+            Action::NewOutpost => {
+                self.continuing = self
+                    .model
+                    .told_of
+                    .filter(|&window| self.world.condition(window) == Condition::Hung);
+                self.reducer = Reducer::new();
+                self.model = Model::default();
+                false
             }
             Action::Finished {
                 reported,
@@ -723,6 +822,21 @@ impl Run {
         if tick {
             self.call(None, Call::Tick);
         }
+        let tells = std::mem::take(&mut self.tells);
+        let expected = std::mem::take(&mut self.expected_tells);
+        assert_eq!(
+            tells, expected,
+            "Core is told of a hang exactly when the world and the recorded rules say: {:?}",
+            self.trail
+        );
+        for &window in &tells {
+            assert_eq!(
+                self.world.condition(window),
+                Condition::Hung,
+                "Core is told only of a window truly hung: {:?}",
+                self.trail
+            );
+        }
         self.compare();
     }
 
@@ -750,6 +864,7 @@ impl Run {
                 }
             }
             What::Destroy(window) => {
+                self.world.destroyed[usize::from(window)] = true;
                 source = source_of(from);
                 Item::Msaa {
                     kind: WinKind::Destroy,
@@ -1170,8 +1285,7 @@ impl Run {
                 hung,
                 refuse,
             } => {
-                let window =
-                    Window::new(HANGING[usize::from(window)]).expect("a hang case's window");
+                let window = hang_case(window);
                 // A refused query is answered abandoned, as its check
                 // before its first call answers it.
                 let result = (hung && refuse)
@@ -1321,6 +1435,16 @@ impl Run {
                     false,
                 )),
             },
+            Stale::Found { window, hung } => Input::Commit {
+                request,
+                change: Box::new(Change {
+                    found: Some((
+                        hang_case(window),
+                        if hung { Found::Hung } else { Found::Answered },
+                    )),
+                    ..Change::default()
+                }),
+            },
             Stale::Finished => Input::Finished {
                 request,
                 reported: true,
@@ -1441,27 +1565,26 @@ impl Run {
             watch @ Watch::Checking { .. } => watch.open().map(|open| open.request_id.number),
             _ => None,
         };
-        let hangs = self.hangs(input.as_ref());
+        self.expect_hangs(input.as_ref());
         self.moving_on = matches!(input, Some(Input::Judged { moved_on: true, .. }));
         let effects = match input {
             Some(input) => self.reducer.input(input, now),
             None => self.reducer.tick(now),
         };
-        let told: Vec<isize> = effects
-            .iter()
-            .filter_map(|effect| match effect {
+        self.tells
+            .extend(effects.iter().filter_map(|effect| match effect {
                 Effect::Send(message) => match &**message {
                     OutpostToCore::NotResponding { window } => Some(*window),
                     _ => None,
                 },
                 _ => None,
-            })
-            .collect();
-        assert_eq!(
-            told, hangs,
-            "Core is told of a hang exactly as it opens: {:?}",
-            self.trail
-        );
+            }));
+        // A cut read's finish continues the program already started.
+        if effects.iter().any(|effect| {
+            matches!(effect, Effect::Dispatch(program) if !matches!(program.work, Work::Finish { .. }))
+        }) {
+            self.judge_told();
+        }
         self.log.push(hash(&format!("{effects:?}")));
         self.check_call(kind, &effects, &marks, flight_before.as_ref(), watch_before);
         // The shell carries out every effect of the call before any answer
@@ -1481,113 +1604,138 @@ impl Run {
         answered
     }
 
-    /// The reference model of each window's hang intervals, moved on by
-    /// `input` before the reducer takes it: an interval opens at the first
-    /// evidence of a hang, a hang seen by a check, of the program in flight,
-    /// of a request no longer live or of the window in front, or an
-    /// accepted commit naming its window hung, and closes only at evidence
-    /// that the window answers, an accepted commit naming it answered or
-    /// the window readable in front, or its destroy event; evidence of a
-    /// hang from the program in flight in a window destroyed since it
-    /// started opens nothing. Core is told of the window whose interval
-    /// opens while no other is open, once per hang of the application; one
-    /// opened while another is open is told nothing. A hang seen by the
-    /// program in flight's check also sets its hang mark.
-    fn hangs(&mut self, input: Option<&Input>) -> Vec<isize> {
-        let mut opened = Vec::new();
-        let mut open =
-            |model: &mut Model, (window, of_flight): (Window, bool), reached: &mut Reached, how| {
-                if of_flight
-                    && model
-                        .flight
-                        .as_ref()
-                        .is_some_and(|flight| flight.destroyed.contains(&window.get()))
-                {
-                    *reached
-                        .entry("a hang after its window's destroy ignored")
-                        .or_default() += 1;
-                } else if model.hung.is_empty() {
-                    model.hung.insert(window.get());
-                    opened.push(window.get());
-                    *reached.entry(how).or_default() += 1;
-                } else if model.hung.insert(window.get()) {
-                    *reached
-                        .entry("a hang in a second window unsounded")
-                        .or_default() += 1;
-                }
-            };
+    /// Whether the window told of, if any, is in `condition`.
+    fn told_window_is(&self, condition: Condition) -> bool {
+        self.model
+            .told_of
+            .is_some_and(|window| self.world.condition(window) == condition)
+    }
+
+    /// Whether `request` is the program in flight's.
+    fn in_flight(&self, request: Request) -> bool {
+        self.model
+            .flight
+            .as_ref()
+            .is_some_and(|flight| flight.request == request)
+    }
+
+    /// The reference model of hangs, from the decisions recorded on them and
+    /// the world's truth alone, moved on by `input` before the reducer takes
+    /// it. Every step taken for the application, which is an entry taken,
+    /// queued or a barrier included, a program started or a commit applied,
+    /// ends the hang told of if its window is not truly hung then. Evidence
+    /// is a check that found a window hung, or an applied commit naming a
+    /// window hung while it truly is; a commit is never taken at its word.
+    /// A window hung is told of when no hang is told, so a second window
+    /// hung during a hang is the same hang. A closed outpost's record has
+    /// ended, and it tells nothing. A check that found the program in
+    /// flight's window hung sets its hang mark.
+    fn expect_hangs(&mut self, input: Option<&Input>) {
+        if self.model.stopping {
+            self.model.told_of = None;
+        }
         match input {
-            Some(Input::HangSeen { window, request }) if !self.reducer.stopping => {
-                let of_flight = request.is_some()
-                    && self.model.flight.as_ref().map(|flight| flight.request) == *request;
-                if of_flight && let Some(flight) = self.model.flight.as_mut() {
-                    flight.hang_mark = true;
-                }
-                let how = match (request, of_flight) {
-                    (None, _) => "a hang opened in front",
-                    (Some(_), true) => "a hang opened by a check",
-                    (Some(_), false) => "a hang opened for a request no longer live",
-                };
-                open(
-                    &mut self.model,
-                    (*window, of_flight),
-                    &mut self.reached,
-                    how,
-                );
-            }
-            Some(Input::FrontReadable { window }) if !self.reducer.stopping => {
-                if self.model.hung.remove(&window.get()) {
-                    self.reach("a hang ended in front");
-                }
-            }
-            Some(Input::Commit { request, change }) if self.reducer.accepts(*request) => {
-                if change.result.as_ref().is_some_and(|result| {
-                    matches!(
-                        result,
-                        OutpostToCore::Reply {
-                            outcome: QueryOutcome::Abandoned,
-                            ..
-                        }
-                    )
-                }) {
+            Some(Input::Entry { .. }) => self.judge_told(),
+            Some(Input::Commit { request, change }) if self.in_flight(*request) => {
+                if matches!(
+                    change.result,
+                    Some(OutpostToCore::Reply {
+                        outcome: QueryOutcome::Abandoned,
+                        ..
+                    })
+                ) {
                     self.reach("a refusal answered abandoned");
                 }
+                self.judge_told();
                 match change.found {
-                    Some((window, Found::Hung)) => open(
-                        &mut self.model,
-                        (window, true),
-                        &mut self.reached,
-                        "a hang opened by a commit",
-                    ),
-                    Some((window, Found::Answered)) if self.model.hung.remove(&window.get()) => {
-                        self.reach("a hang ended by an answer");
+                    Some((window, Found::Hung)) => match self.world.condition(window.get()) {
+                        Condition::Hung => {
+                            self.evidence(window.get(), "a hang told from a commit");
+                        }
+                        Condition::Responsive => {
+                            self.reach("a commit naming a responsive window hung");
+                        }
+                        Condition::Destroyed => {
+                            self.reach("a commit naming a destroyed window hung");
+                        }
+                    },
+                    Some((window, Found::Answered))
+                        if self.model.told_of == Some(window.get())
+                            && self.told_window_is(Condition::Hung) =>
+                    {
+                        self.reach("a commit naming a told window answered while it hangs");
                     }
                     Some((_, Found::Answered)) | None => {}
                 }
             }
-            Some(Input::Entry {
-                entry:
-                    Entry {
-                        item:
-                            Item::Msaa {
-                                kind: WinKind::Destroy,
-                                hwnd,
-                                ..
-                            },
-                        ..
-                    },
-                ..
-            }) => {
-                if let Some(flight) = self.model.flight.as_mut() {
-                    flight.destroyed.insert(*hwnd);
+            Some(Input::HangSeen { window, request }) => {
+                let of_flight = request.is_some_and(|request| self.in_flight(request));
+                if of_flight
+                    && !self.model.stopping
+                    && let Some(flight) = self.model.flight.as_mut()
+                {
+                    flight.hang_mark = true;
                 }
-                if self.model.hung.remove(hwnd) {
-                    self.reach("a hang ended by a destroy event");
-                }
+                let how = match (request, of_flight) {
+                    (None, _) => "a hang told from the front",
+                    (Some(_), true) => "a hang told from a check",
+                    (Some(_), false) => "a hang told for a request no longer live",
+                };
+                self.evidence(window.get(), how);
+            }
+            Some(Input::FrontReadable { window }) if self.model.told_of == Some(window.get()) => {
+                self.judge_told();
             }
             _ => {}
         }
-        opened
+    }
+
+    /// A step was taken for the application: the hang told of ends if its
+    /// window is not truly hung now.
+    fn judge_told(&mut self) {
+        self.model.unjudged_recovery = false;
+        let Some(window) = self.model.told_of else {
+            return;
+        };
+        match self.world.condition(window) {
+            Condition::Hung => {}
+            Condition::Responsive => {
+                self.model.told_of = None;
+                self.model.ended_told = Some(window);
+                self.reach("a recovery unseen ended the hang");
+            }
+            Condition::Destroyed => {
+                self.model.told_of = None;
+                self.model.ended_told = Some(window);
+                self.reach("a told window's destruction ended the hang");
+            }
+        }
+    }
+
+    /// Evidence that `window` is truly hung, reached as `how`.
+    fn evidence(&mut self, window: isize, how: &'static str) {
+        if self.model.stopping {
+            self.reach("nothing told after close");
+            return;
+        }
+        self.judge_told();
+        if let Some(told) = self.model.told_of {
+            if told != window {
+                self.reach("a second window hung, the same hang");
+            }
+            return;
+        }
+        match self.model.ended_told {
+            Some(ended) if ended == window => self.reach("a later freeze of the told window told"),
+            Some(_) => self.reach("a later hang in another window told"),
+            None => {}
+        }
+        if self.continuing == Some(window) {
+            self.reach("a hang told again by a new outpost");
+        }
+        self.model.told_of = Some(window);
+        self.expected_tells.push(window);
+        self.reach(how);
     }
 
     /// Checks one call's effects as a whole, against the state before it:
@@ -2073,51 +2221,62 @@ impl Run {
             window,
             copy: program.facts.clone(),
             uncompared: false,
-            destroyed: BTreeSet::new(),
         });
     }
 
-    /// The shell's answers to `effect`, if it asks, from the action's
-    /// answers, in the order the shell gives them.
-    fn answer(&mut self, effect: &Effect) -> Vec<Input> {
+    /// The seam between the world's truth and the reducer: the shell's
+    /// answers to an effect that asks about a window, which is the only
+    /// place, with [`seam_check`](Self::seam_check) and
+    /// [`seam_front`](Self::seam_front), where the truth becomes inputs.
+    /// The model and the world know nothing of these effects.
+    fn seam_answer(&self, effect: &Effect) -> Option<Vec<Input>> {
         match effect {
             Effect::AskJudge { request, window } => {
                 let named = match self.asks.named {
                     0 => None,
                     named => Window::new(HANGING[usize::from(named - 1)]),
                 };
-                let Some(window) = window.or(named) else {
-                    return vec![Input::Judged {
-                        request: *request,
-                        moved_on: false,
-                    }];
+                let judged = Input::Judged {
+                    request: *request,
+                    moved_on: window.or(named).is_some() && self.asks.moved_on,
                 };
-                let hang = self.asks.hung.then_some(Input::HangSeen {
-                    window,
-                    request: Some(*request),
-                });
-                hang.into_iter()
-                    .chain([Input::Judged {
-                        request: *request,
-                        moved_on: self.asks.moved_on,
-                    }])
-                    .collect()
+                let hang = window
+                    .or(named)
+                    .and_then(|window| self.seam_check(window, Some(*request)));
+                Some(hang.into_iter().chain([judged]).collect())
             }
-            Effect::CheckFront => {
-                let window = |index: u8| {
-                    Window::new(HANGING[usize::from(index % 2)]).expect("a hang case's window")
-                };
-                match self.asks.front {
-                    0 => Vec::new(),
-                    hung @ 1..=2 => vec![Input::HangSeen {
-                        window: window(hung - 1),
-                        request: None,
-                    }],
-                    readable => vec![Input::FrontReadable {
-                        window: window(readable - 3),
-                    }],
-                }
-            }
+            Effect::CheckFront => Some(match self.asks.front {
+                0 => Vec::new(),
+                front => self.seam_front(hang_case(front - 1)).into_iter().collect(),
+            }),
+            _ => None,
+        }
+    }
+
+    /// What a check of `window` for `request` finds: the seam's one
+    /// translation of a window truly hung.
+    fn seam_check(&self, window: Window, request: Option<Request>) -> Option<Input> {
+        (self.world.condition(window.get()) == Condition::Hung)
+            .then_some(Input::HangSeen { window, request })
+    }
+
+    /// What the front check finds of `window` in front: hung, answering, or
+    /// nothing when it is destroyed.
+    fn seam_front(&self, window: Window) -> Option<Input> {
+        match self.world.condition(window.get()) {
+            Condition::Hung => self.seam_check(window, None),
+            Condition::Responsive => Some(Input::FrontReadable { window }),
+            Condition::Destroyed => None,
+        }
+    }
+
+    /// The shell's answers to `effect`, if it asks, from the world through
+    /// the seam and the action's answers, in the order the shell gives them.
+    fn answer(&mut self, effect: &Effect) -> Vec<Input> {
+        if let Some(answers) = self.seam_answer(effect) {
+            return answers;
+        }
+        match effect {
             Effect::Release { .. } => {
                 self.model.releasing = false;
                 self.model.to_drop |= self.asks.objects;
@@ -2365,7 +2524,6 @@ const PLAIN: Asks = Asks {
     front: 0,
     release_node: false,
     objects: false,
-    hung: false,
     named: 0,
 };
 
@@ -2418,6 +2576,11 @@ fn fixed_cases_keep_the_reducers_rules() {
     for case in fixed() {
         assert_eq!(Run::case(&case).log, Run::case(&case).log, "{case:?}");
     }
+}
+
+/// The hang case's window of index `index`.
+fn hang_case(index: u8) -> Window {
+    Window::new(HANGING[usize::from(index)]).expect("a hang case's window")
 }
 
 /// The source an entry from `from` is given as.
