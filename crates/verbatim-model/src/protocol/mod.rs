@@ -1211,15 +1211,16 @@ pub enum OutpostToCore {
         #[serde(default)]
         written_at_us: u64,
     },
-    /// A window of the outpost's application began a hang: the outpost
-    /// judged it hung during a call, or found it hung at a check before
-    /// one, and holds it in its record of hung windows until a call into it
-    /// returns, it is destroyed, or the outpost ends. Sent once per hang of
-    /// the application, as the record goes from empty to holding a window:
-    /// a window met hung while another is recorded sends nothing. Sent in
-    /// order with the outpost's events; Core plays the "not responding"
-    /// sound for it only when the window's application holds attention as
-    /// it arrives.
+    /// A window of the outpost's application began a hang: the outpost's
+    /// one judge of a hung window found it hung, and the outpost remembers
+    /// it as the window told until it is judged not hung, is readable in
+    /// front, is destroyed, or the outpost ends. Sent once per hang of the
+    /// application: a window met hung while the told window is still hung
+    /// sends nothing, and one still hung after the told window recovers is
+    /// a new hang, told when next seen. Sent in order with the outpost's
+    /// events, after the reply of a commit that named the window hung; Core
+    /// plays the "not responding" sound for it only when the window's
+    /// application holds attention as it arrives.
     NotResponding {
         /// The window that stopped responding.
         window: isize,

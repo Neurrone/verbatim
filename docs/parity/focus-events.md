@@ -549,14 +549,16 @@ the deadline (Dickson, 2026-11-04, 2026-11-06 and 2026-11-07; [How focus
 works](../../books/dev/src/explanation/design/focus.md), "Slow and hung
 applications"). The outpost abandons nothing for a hang: work in flight
 waits for the application, ended only by its deadline or the moved-on
-rule. Its hung record, by Windows' own state and local calls, is fed by
-two checks on one timer: every half second from the grace's end, the
-window of its program in flight, and, while a listener read's marker has
-waited half a second, every half second, the window in front, a ghost
-mapped to its hung window. Each hang of the application is told to Core
-once, as its first hung window is recorded, however many of its windows
-the hang is then met in, and the window leaves the record when it is
-found readable, answers, is destroyed, or the outpost ends. Core plays
+rule. By Windows' own state and local calls, two checks on one timer
+find a hang: every half second from the grace's end, the window of its
+program in flight, and, while a listener read's marker has waited half a
+second, every half second, the window in front, a ghost mapped to its
+hung window. Each hang of the application is told to Core once, however
+many of its windows the hang is then met in. The told window is judged
+on each input that takes an entry, applies a commit or starts a program,
+and its hang ends when it is judged not hung, is readable in front, is
+destroyed, or the outpost ends, so a window still hung then, or the told
+window's own later freeze, is a new hang, told again. Core plays
 the "not responding" sound for it only when its application holds
 attention, so a hang first met in the background is never sounded. A
 query whose window is already hung is answered at its check before its

@@ -152,7 +152,7 @@ Rules, each with its reason:
 
 ### Costs
 
-One local window call per reducer input while a hang is told, and none otherwise, so nothing on the normal path; one more when a commit names a window hung. No new timer, no new wake-up and no call into the application. One lock per ping and per parked worker.
+One local window call per reducer input while a hang is told, and none otherwise, so nothing on the normal path. A commit naming a window hung adds one to confirm it, and when another window is told a third, to judge the told window with the named window waiting. No new timer, no new wake-up and no call into the application. One lock per ping and per parked worker.
 
 ### Copies kept, and why
 
