@@ -15,36 +15,31 @@
 
 #![forbid(unsafe_code)]
 
-use verbatim_model::{CaretReport, NodeId, NodeSnapshot, Role, StateSet, TraceId};
+use verbatim_model::{CaretReport, NodeId, StateSet, TraceId};
 use verbatim_uia::{Agile, Kept};
 
 use verbatim_model::protocol::{EventTiming, OutpostToCore};
 
-use super::reducer::{Change, DialogMemo, FocusPath, Group, Object, OwedWork, Report, WatchChange};
+use super::reducer::{
+    Change, DialogMemo, FocusCommit, Followed, Group, LastReported, MarkChange, OwedWork, Report,
+    Subscribed, WatchChange,
+};
 use super::store::TextWrite;
 
-/// Where the focus-following subscription is to be moved for a focus,
-/// computed before the commit.
-pub(super) struct Target {
-    /// What is followed: the node, its group, and the slider followed for
-    /// its value changes; `None` for nothing.
-    pub(super) wanted: Option<(NodeId, Group, Option<NodeId>)>,
-    /// The node's element and the slider's, when they are kept.
-    pub(super) element: Option<Agile<Kept>>,
-    pub(super) slider: Option<Agile<Kept>>,
+/// Where the focus-following subscription follows a focus, computed before
+/// the commit: the focus's element and group, and the slider followed for
+/// its value changes, when it is kept.
+pub(super) struct KeptTarget {
+    /// The group.
+    pub(super) group: Group,
+    /// The node's element.
+    pub(super) element: Agile<Kept>,
+    /// The slider's node and element.
+    pub(super) slider: Option<(NodeId, Agile<Kept>)>,
 }
 
-impl Target {
-    /// The target with no element, as a program's own copy holds it: the
-    /// shell gives its elements their tokens.
-    fn pure(&self) -> super::reducer::Target {
-        super::reducer::Target {
-            wanted: self.wanted,
-            element: None,
-            slider: None,
-        }
-    }
-}
+/// Where the subscription is to be moved for a focus, `None` for nothing.
+pub(super) type Target = Option<KeptTarget>;
 
 /// The element kept for a UIA focus's node that the focus listener's
 /// evidence says is no longer the node's element: the runtime id names a
@@ -60,72 +55,152 @@ pub(super) struct Stale {
     pub(super) element: Option<Agile<Kept>>,
 }
 
-/// A focus becoming the followed one ([`Effects::follow`]).
-#[expect(
-    clippy::struct_excessive_bools,
-    reason = "facts about one focus, each read before the commit"
-)]
-pub(super) struct Follow {
-    /// The focus and its role.
+/// What of a focus's commit only the shell applies ([`FocusEffects`]).
+pub(super) struct FollowWrites {
+    /// The focus's node.
     pub(super) node: NodeId,
-    pub(super) role: Role,
-    /// The object it is, as the intake records the focus.
-    pub(super) object: Option<Object>,
-    /// The window it was reported in.
-    pub(super) window: Option<isize>,
-    /// Its ancestors, outermost first, and itself.
-    pub(super) chain: Vec<NodeSnapshot>,
-    /// The batch its entry belongs to.
-    pub(super) batch: u64,
-    /// Whether it was reached by redirecting a control's own focus event
-    /// to the control's focused child.
-    pub(super) redirected: bool,
-    /// Whether it is a terminal read through UI Automation, and whether its
-    /// window is the console host's.
+    /// Whether it is a terminal read through UI Automation.
     pub(super) terminal: bool,
-    pub(super) console: bool,
     /// For a terminal, the caret read with its report, noted as the caret
     /// last sent to Core.
     pub(super) sent_caret: Option<CaretReport>,
     /// Where the subscription is moved.
     pub(super) target: Target,
-    /// What the focus owes once followed.
-    pub(super) owed: Option<OwedWork>,
-    /// The trace and observation of the event it came from.
-    pub(super) trace: TraceId,
-    pub(super) observed_at_us: u64,
-    /// Whether it is adopted as the followed focus: false for a focus-now
-    /// answer naming the focus already followed, under the same node,
-    /// which keeps the tracking and the intake's marks as they are and is
-    /// only followed again.
-    pub(super) adopt: bool,
-    /// The window text of each window entry of `chain`, read as it is
-    /// reported, for the title check of the outpost's ancestry cache.
-    pub(super) titles: Vec<verbatim_reader_rules::ancestry_cache::SavedTitle>,
-    /// For an MSAA focus report, what a live re-read of it needs.
-    pub(super) msaa_report: Option<super::reducer::MsaaReport>,
 }
 
-impl Follow {
-    /// The reducer's part, its target's elements left to the shell.
-    fn pure(&self) -> super::reducer::Follow {
-        super::reducer::Follow {
-            node: self.node,
-            role: self.role,
-            object: self.object.clone(),
-            window: self.window,
-            chain: self.chain.clone(),
-            batch: self.batch,
-            redirected: self.redirected,
-            terminal: self.terminal,
-            console: self.console,
-            target: self.target.pure(),
-            owed: self.owed.clone(),
-            trace: self.trace,
-            observed_at_us: self.observed_at_us,
-            adopt: self.adopt,
-            titles: self.titles.clone(),
-            msaa_report: self.msaa_report,
+/// A commit's change of what is followed ([`Effects::focus`]): the
+/// reducer's [`FocusCommit`] with what only the shell can apply beside it,
+/// so that the record's subscription is filled in only where the shell gives
+/// its elements their tokens.
+pub(super) enum FocusEffects {
+    /// A focus adopted: its record, with no subscription yet.
+    Adopt {
+        /// The record.
+        followed: Box<Followed>,
+        /// Its report's role and batch.
+        reported: LastReported,
+        /// The dialog memo it leaves.
+        dialog: Option<DialogMemo>,
+        /// What only the shell applies.
+        writes: FollowWrites,
+    },
+    /// A focus-now answer naming the focus already followed.
+    Again {
+        /// What it owes now.
+        owed: Option<OwedWork>,
+        /// The trace of the event it came from.
+        trace: TraceId,
+        /// The event's observation, on the run's shared clock.
+        observed_at_us: u64,
+        /// What only the shell applies.
+        writes: FollowWrites,
+    },
+    /// A foreground report, which follows nothing.
+    Foreground {
+        /// The window's node.
+        node: NodeId,
+        /// Its role and batch.
+        reported: LastReported,
+        /// The dialog memo it leaves.
+        dialog: DialogMemo,
+    },
+}
+
+impl FocusEffects {
+    /// What only the shell applies, for a focus followed.
+    pub(super) fn writes_mut(&mut self) -> Option<&mut FollowWrites> {
+        match self {
+            Self::Adopt { writes, .. } | Self::Again { writes, .. } => Some(writes),
+            Self::Foreground { .. } => None,
+        }
+    }
+
+    /// The commit a program applies to its own copies: no tokens, so no
+    /// subscription.
+    fn local(&self) -> FocusCommit {
+        match self {
+            Self::Adopt {
+                followed,
+                reported,
+                dialog,
+                ..
+            } => FocusCommit::Adopt {
+                followed: followed.clone(),
+                reported: *reported,
+                dialog: dialog.clone(),
+            },
+            Self::Again {
+                owed,
+                trace,
+                observed_at_us,
+                ..
+            } => FocusCommit::Again {
+                target: None,
+                owed: owed.clone(),
+                trace: *trace,
+                observed_at_us: *observed_at_us,
+            },
+            Self::Foreground {
+                node,
+                reported,
+                dialog,
+            } => FocusCommit::Foreground {
+                node: *node,
+                reported: *reported,
+                dialog: dialog.clone(),
+            },
+        }
+    }
+
+    /// What of this only the shell applies, for a refused commit to let go
+    /// of.
+    pub(super) fn into_writes(self) -> Option<FollowWrites> {
+        match self {
+            Self::Adopt { writes, .. } | Self::Again { writes, .. } => Some(writes),
+            Self::Foreground { .. } => None,
+        }
+    }
+
+    /// The reducer's commit, `subscribe` making the follow's writes and
+    /// giving where the subscription follows, by token.
+    pub(super) fn into_commit(
+        self,
+        subscribe: impl FnOnce(FollowWrites) -> Option<Subscribed>,
+    ) -> FocusCommit {
+        match self {
+            Self::Adopt {
+                mut followed,
+                reported,
+                dialog,
+                writes,
+            } => {
+                followed.subscription = subscribe(writes);
+                FocusCommit::Adopt {
+                    followed,
+                    reported,
+                    dialog,
+                }
+            }
+            Self::Again {
+                owed,
+                trace,
+                observed_at_us,
+                writes,
+            } => FocusCommit::Again {
+                target: subscribe(writes),
+                owed,
+                trace,
+                observed_at_us,
+            },
+            Self::Foreground {
+                node,
+                reported,
+                dialog,
+            } => FocusCommit::Foreground {
+                node,
+                reported,
+                dialog,
+            },
         }
     }
 }
@@ -138,19 +213,12 @@ pub(super) struct Effects {
     pub(super) result: Option<OutpostToCore>,
     /// The report to record for Core's judgement.
     pub(super) report: Option<Report>,
-    /// A focus becoming the followed one.
-    pub(super) follow: Option<Follow>,
-    /// A foreground report's role and batch, with a caret key's watch on
-    /// another node than this window's ended.
-    pub(super) foreground: Option<(NodeId, Role, u64)>,
-    /// The dialog memo the report leaves.
-    pub(super) dialog: Option<DialogMemo>,
-    /// The focus path of a UIA focus.
-    pub(super) focus_path: Option<FocusPath>,
+    /// A focus adopted or followed again, or a foreground report.
+    pub(super) focus: Option<FocusEffects>,
     /// The focus's element found after its report, with its slider's when
     /// found: the subscription is moved to them only while that node is
     /// the followed focus.
-    pub(super) element: Option<(NodeId, Target)>,
+    pub(super) element: Option<(NodeId, KeptTarget)>,
     /// A terminal's new entry, the copy its read worked on.
     pub(super) terminal: Option<(NodeId, crate::terminal::Terminal)>,
     /// The caret last sent to Core for a focused terminal.
@@ -162,12 +230,8 @@ pub(super) struct Effects {
     pub(super) caret_read: Option<(NodeId, u64)>,
     /// A change of the caret key's watch.
     pub(super) watch: Option<WatchChange>,
-    /// The intake's marks: the system caret's events dropped until the
-    /// next focus; the console window's updates absorbed; the redirect mark
-    /// cleared.
-    pub(super) drop_system_caret: bool,
-    pub(super) absorb: Option<isize>,
-    pub(super) clear_redirect: bool,
+    /// A change of the marks on the followed focus.
+    pub(super) mark: Option<MarkChange>,
     /// A held node's states, as an MSAA state change read them.
     pub(super) states: Option<(NodeId, StateSet)>,
     /// A UIA focus's stale element, evicted before the focus is followed.
@@ -186,25 +250,19 @@ pub(super) struct Effects {
 
 impl Effects {
     /// The reducer's part of these effects but for their messages, with no
-    /// element token: what a program applies to its own copies.
+    /// element token: what a program applies to its own copies. An element
+    /// found after its report is left out: it has no token, and the
+    /// subscription in a program's copy is not read.
     pub(super) fn local(&self) -> Change {
         Change {
             result: None,
             report: self.report.clone(),
-            follow: self.follow.as_ref().map(Follow::pure),
-            foreground: self.foreground,
-            dialog: self.dialog.clone(),
-            focus_path: self.focus_path.clone(),
-            element: self
-                .element
-                .as_ref()
-                .map(|(node, target)| (*node, target.pure())),
+            focus: self.focus.as_ref().map(FocusEffects::local),
+            element: None,
             owed_done: self.owed_done,
             caret_read: self.caret_read,
             watch: self.watch.clone(),
-            drop_system_caret: self.drop_system_caret,
-            absorb: self.absorb,
-            clear_redirect: self.clear_redirect,
+            mark: self.mark,
             states: self.states,
             noted_caret: self.noted_caret,
             replaced: self.stale.as_ref().map(|stale| stale.node),
@@ -213,26 +271,18 @@ impl Effects {
         }
     }
 
-    /// The reducer's part, whose targets the shell gives their elements'
-    /// tokens, and what only the shell applies.
+    /// The reducer's part, with no focus or element until the shell has
+    /// given them their tokens, and what only the shell applies.
     pub(super) fn split(self) -> (Change, Writes) {
         let change = Change {
-            follow: self.follow.as_ref().map(Follow::pure),
-            element: self
-                .element
-                .as_ref()
-                .map(|(node, target)| (*node, target.pure())),
+            focus: None,
+            element: None,
             report: self.report,
             result: self.result,
-            foreground: self.foreground,
-            dialog: self.dialog,
-            focus_path: self.focus_path,
             owed_done: self.owed_done,
             caret_read: self.caret_read,
             watch: self.watch,
-            drop_system_caret: self.drop_system_caret,
-            absorb: self.absorb,
-            clear_redirect: self.clear_redirect,
+            mark: self.mark,
             states: self.states,
             found: self.found,
             noted_caret: self.noted_caret,
@@ -240,15 +290,8 @@ impl Effects {
             text: Vec::new(),
         };
         let writes = Writes {
-            follow: self.follow.map(|follow| {
-                (
-                    follow.node,
-                    follow.terminal,
-                    follow.sent_caret,
-                    follow.target,
-                )
-            }),
-            element: self.element.map(|(_, target)| target),
+            focus: self.focus,
+            element: self.element,
             terminal: self.terminal,
             sent_caret: self.sent_caret,
             stale: self.stale,
@@ -260,11 +303,10 @@ impl Effects {
 
 /// What of a commit only the shell applies ([`Effects::split`]).
 pub(super) struct Writes {
-    /// The followed focus's node, whether it is a terminal, the caret sent
-    /// with it, and its subscription target's elements.
-    pub(super) follow: Option<(NodeId, bool, Option<CaretReport>, Target)>,
-    /// The elements of a focus's target found after its report.
-    pub(super) element: Option<Target>,
+    /// The focus followed or the foreground reported.
+    pub(super) focus: Option<FocusEffects>,
+    /// The element of a focus found after its report, with its node.
+    pub(super) element: Option<(NodeId, KeptTarget)>,
     /// A terminal's new entry.
     pub(super) terminal: Option<(NodeId, crate::terminal::Terminal)>,
     /// The caret last sent to Core for a focused terminal.

@@ -59,13 +59,13 @@ use verbatim_model::protocol::{
 };
 use verbatim_process::clock::now_us;
 
-use super::commit::{Committed, Effects, Follow, Stale, Target};
+use super::commit::{Committed, Effects, FocusEffects, FollowWrites, KeptTarget, Stale, Target};
 use super::focus_path;
 use super::read::{self, Client, ReadError};
 use super::reducer::{
-    self, Cut, Entry, Evidence, Finish, FocusPath, Front, Handling, Item, Object, OpenWatch, Owed,
-    OwedWork, Program, Report, Request, UiaEvent, UiaKind, VerdictChange, WatchChange, WinKind,
-    Work,
+    self, Cut, Entry, Evidence, Finish, FocusPath, Followed, Front, Handling, Item, LastReported,
+    MarkChange, MsaaReport, Object, OpenWatch, Origin, Owed, OwedProgram, OwedWork, Program,
+    Report, Request, UiaEvent, UiaKind, VerdictChange, WatchChange, WinKind, Work,
 };
 use super::shell::{Garbage, Posted};
 use super::text_reads;
@@ -418,7 +418,7 @@ fn named_window(context: &RequestContext<'_>, work: &Work) -> Option<Window> {
             // A live re-read calls into its report's window, by which the
             // moved-on rule judges it as it judged the report's read.
             Item::Fact(DeliveredFact::MsaaLiveReread { trace_id, .. }, _) => context
-                .follow(|follow| follow.tracking.msaa_report)
+                .follow(followed_msaa_report)
                 .filter(|report| report.trace == *trace_id)
                 .and_then(|report| Window::new(report.event.0))
                 .or_else(|| application_focus_window(context)),
@@ -1373,10 +1373,16 @@ impl Worker<'_> {
     /// updates, about one per line, otherwise woke the worker once each.
     fn absorb_while_held(&self, node_id: NodeId, hwnd: isize) {
         if self.held_with_changes(node_id)
-            && self.context.follow(|follow| follow.watch.kept().is_none())
+            && self.context.follow(|follow| {
+                follow.watch.kept().is_none()
+                    && follow
+                        .followed
+                        .as_ref()
+                        .is_some_and(|followed| followed.node == node_id)
+            })
         {
             self.commit(Effects {
-                absorb: Some(hwnd),
+                mark: Some(MarkChange::Absorb(hwnd)),
                 ..Effects::default()
             });
         }
@@ -1447,13 +1453,14 @@ impl Worker<'_> {
     /// terminal this outpost has not released
     /// ([`focused_terminal`](Self::focused_terminal)).
     fn focused_console_terminal(&self, hwnd: isize) -> Option<NodeId> {
-        let (focus, window) = self
-            .context
-            .follow(|follow| (follow.tracking.focus, follow.tracking.window));
-        if let Some(focus) = focus
-            .filter(|_| window == Some(hwnd))
-            .filter(|&node_id| self.focused_terminal(node_id))
-        {
+        let followed = self.context.follow(|follow| {
+            follow
+                .followed
+                .as_ref()
+                .filter(|followed| followed.window == Some(hwnd))
+                .map(|followed| followed.node)
+        });
+        if let Some(focus) = followed.filter(|&node_id| self.focused_terminal(node_id)) {
             return Some(focus);
         }
         let top_level = verbatim_reader_rules::Window::new(top_level_of(hwnd));
@@ -1811,8 +1818,11 @@ impl Worker<'_> {
     /// that reads it (`books/dev/src/explanation/design/terminal-model.md`, "Reading rules", rule
     /// 15), from the caret read with the terminal's report. The commit of
     /// the attempt's result clears it, read or failed.
-    pub(super) fn attempt_owed(&mut self, owed: Owed) {
-        let node_id = owed.node;
+    pub(super) fn attempt_owed(&mut self, program: OwedProgram) {
+        let OwedProgram {
+            node: node_id,
+            owed,
+        } = program;
         match owed.work {
             OwedWork::FirstRead(caret) => {
                 if !self.focused_terminal(node_id) {
@@ -1851,7 +1861,7 @@ impl Worker<'_> {
         node_id: NodeId,
         role: Role,
         chain: &[NodeSnapshot],
-    ) -> Option<(NodeId, Target)> {
+    ) -> Option<(NodeId, KeptTarget)> {
         let parent = sensitive_slider_of(node_id, chain)?;
         // The listener's read keeps no ancestor's element: the slider is
         // found by its path, one connection call and one remote operation,
@@ -1860,11 +1870,9 @@ impl Worker<'_> {
         let found = self.element_by_focus_path(&runtime_id)?;
         let kept = self.context.nodes().id_for_element(&runtime_id, &found);
         let slider = self.context.store.element_of(kept)?;
-        let (mut target, _) = target_for(self.context, (node_id, role), chain, false);
-        target.wanted = target
-            .wanted
-            .map(|(node, group, _)| (node, group, Some(kept)));
-        target.slider = Some(slider);
+        let (target, _) = target_for(self.context, (node_id, role), chain, false);
+        let mut target = target?;
+        target.slider = Some((kept, slider));
         Some((node_id, target))
     }
 
@@ -1933,7 +1941,7 @@ impl Worker<'_> {
         object: Option<Object>,
         (ancestors, selected_child): read::Enrichment,
     ) {
-        let foreground = source == FocusSource::WholeWindow;
+        let foreground = matches!(source, FocusSource::WholeWindow);
         // A focus in a window of a process Verbatim ignores is not
         // reported, as Core would drop it (`books/dev/src/how-to/e2e.md`).
         if let Some(hwnd) = window
@@ -1949,7 +1957,7 @@ impl Worker<'_> {
         }
         // A dialog the focus has newly entered, or one in front, says its
         // own text as its description.
-        let mut memo = self.context.follow(|follow| follow.tracking.dialog.clone());
+        let mut memo = self.context.follow(|follow| follow.dialog.clone());
         read::describe_dialogs(
             self.context,
             self.client,
@@ -1968,20 +1976,10 @@ impl Worker<'_> {
         } else {
             Evidence::Msaa
         };
-        let msaa_event = self.msaa_event;
         let mut reported = self.focus_to_judge(&node, &ancestors, window, foreground);
         reported.value_from_selection = std::mem::take(&mut self.value_from_selection);
         let answers = self.answers;
-        let first_cached_ancestor = self.first_cached_ancestor(source, &ancestors);
-        let msaa_report =
-            msaa_event
-                .filter(|_| source == FocusSource::MsaaFocus)
-                .map(|(event, simple_child)| reducer::MsaaReport {
-                    trace,
-                    event,
-                    simple_child,
-                    observed_at_us,
-                });
+        let first_cached_ancestor = self.first_cached_ancestor(&source, &ancestors);
         let (text, read_at) = if foreground {
             (None, None)
         } else {
@@ -2016,38 +2014,47 @@ impl Worker<'_> {
             answers,
         };
         let message = self.event_message(trace, observed_at_us, backend, window, event);
+        let origin = source.origin(trace, observed_at_us);
+        self.focus_path = None;
         let mut effects = Effects {
             result: Some(message),
             report: Some(Report::Reported(reported, evidence)),
-            dialog: Some(memo),
             caret_read: read_at.map(|at| (node_id, at)),
-            focus_path: self.focus_path.take(),
             stale: self.stale.take(),
             ..Effects::default()
         };
         // A foreground report is a window, not the control focus is in: it
         // is not followed.
+        let reported = LastReported {
+            role,
+            batch: self.batch,
+        };
         let mut slider = None;
-        if foreground {
-            effects.foreground = Some((node_id, role, self.batch));
-        } else {
-            let (follow, to_find) = follow_of(
-                self.context,
-                FocusMade {
-                    node: (node_id, role),
-                    object,
-                    window,
-                    chain,
-                    batch: self.batch,
-                    event: (trace, observed_at_us),
-                    redirected: std::mem::take(&mut self.redirected),
-                    caret,
-                    msaa_report,
-                },
-            );
-            effects.follow = Some(follow);
-            slider = to_find;
-        }
+        effects.focus = Some(match origin {
+            None => FocusEffects::Foreground {
+                node: node_id,
+                reported,
+                dialog: memo,
+            },
+            Some(origin) => {
+                let (made, to_find) = follow_of(
+                    self.context,
+                    FocusMade {
+                        node: (node_id, role),
+                        object,
+                        window,
+                        chain,
+                        batch: self.batch,
+                        event: (trace, observed_at_us),
+                        redirected: std::mem::take(&mut self.redirected),
+                        caret,
+                        origin,
+                    },
+                );
+                slider = to_find;
+                made.adopted(Some(memo))
+            }
+        });
         if self.commit(effects) != Committed::Applied {
             return;
         }
@@ -2064,7 +2071,7 @@ impl Worker<'_> {
     /// reuses no cache.
     fn first_cached_ancestor(
         &self,
-        source: FocusSource,
+        source: &FocusSource,
         ancestors: &[NodeSnapshot],
     ) -> Option<FirstCachedAncestor> {
         let cached = self.context.take_cached();
@@ -2086,7 +2093,7 @@ impl Worker<'_> {
         self.answers = Some(request);
         let stored = self
             .context
-            .follow(|follow| follow.tracking.msaa_report)
+            .follow(followed_msaa_report)
             .filter(|report| report.trace == trace);
         if let Some(report) = stored {
             let (hwnd, id_object, id_child) = report.event;
@@ -2113,7 +2120,7 @@ impl Worker<'_> {
     /// next.
     fn after_follow(&mut self, node_id: NodeId, role: Role, slider: Option<NodeId>) {
         if slider.is_some() {
-            let chain = self.context.follow(|follow| follow.tracking.chain.clone());
+            let chain = self.context.follow(followed_chain);
             if let Some(element) = self.slider_target(node_id, role, &chain) {
                 self.commit(Effects {
                     element: Some(element),
@@ -2157,8 +2164,11 @@ impl Worker<'_> {
         }
         let (chain, titles) = self.context.follow(|follow| {
             (
-                follow.tracking.chain.clone(),
-                follow.tracking.titles.clone(),
+                followed_chain(follow),
+                follow
+                    .followed
+                    .as_ref()
+                    .map_or_else(Vec::new, |followed| followed.titles.clone()),
             )
         });
         if title_check(&titles, verbatim_win32::window::live_title) == CacheUse::WalkLive {
@@ -2400,7 +2410,12 @@ impl Worker<'_> {
         trace: TraceId,
         observed_at_us: u64,
     ) {
-        if self.context.marks().system_caret_unused {
+        if self.context.follow(|follow| {
+            follow
+                .followed
+                .as_ref()
+                .is_some_and(|followed| followed.system_caret_unused)
+        }) {
             return;
         }
         if let Some(node_id) = self.context.nodes().existing(runtime_id) {
@@ -2673,7 +2688,7 @@ impl Worker<'_> {
         let node = object
             .which_of(&candidates, self.context.nodes())
             .or_else(|| {
-                let followed = self.context.follow(|follow| follow.tracking.focus)?;
+                let followed = self.context.follow(followed_node)?;
                 (candidates.contains(&followed)
                     && object.is_equal_to(followed, self.context.nodes()))
                 .then_some(followed)
@@ -2830,7 +2845,7 @@ impl Worker<'_> {
                         // system caret's events are dropped until the next
                         // focus (`Worker::system_caret_of_uia_focus`).
                         self.commit(Effects {
-                            drop_system_caret: true,
+                            mark: Some(MarkChange::DropSystemCaret),
                             ..Effects::default()
                         });
                     }
@@ -3473,7 +3488,7 @@ impl Worker<'_> {
                 "MSAA focus dropped: already reported from its control's focus"
             );
             self.commit(Effects {
-                clear_redirect: true,
+                mark: Some(MarkChange::ClearRedirect),
                 ..Effects::default()
             });
             return;
@@ -3565,7 +3580,7 @@ impl Worker<'_> {
             Backend::Msaa,
             Some(hwnd),
             node,
-            FocusSource::MsaaFocus,
+            FocusSource::MsaaFocus(msaa_event.0, msaa_event.1),
             object.clone(),
             enrichment,
         );
@@ -3657,7 +3672,8 @@ impl Worker<'_> {
         }
         // Committed with the focus; the entry finds the focus's element by
         // it before then.
-        self.focus_path = Some(FocusPath::of(read));
+        let path = FocusPath::of(read);
+        self.focus_path = Some(path.clone());
         tracing::debug!(
             %trace,
             enrichment_us = reading.elapsed().as_micros(),
@@ -3692,7 +3708,7 @@ impl Worker<'_> {
             Backend::Uia,
             reported,
             node,
-            FocusSource::ListenerRead,
+            FocusSource::ListenerRead(path),
             Some(Object::Uia(runtime_id.clone())),
             (ancestors, selected),
         );
@@ -3701,19 +3717,19 @@ impl Worker<'_> {
             && !self.refused()
             && context.focused() == Some(Object::Uia(runtime_id.clone()))
             && let Some(id) = self.find_focus_element(runtime_id, false)
+            && let Some((role, chain)) = context.follow(|follow| {
+                follow
+                    .followed
+                    .as_ref()
+                    .map(|followed| (followed.role, followed.chain.clone()))
+            })
         {
             // The subscription follows the element, and the slider a thumb
             // is in, in a commit made only while the node is the followed
             // focus.
-            let (role, chain) = context.follow(|follow| {
-                (
-                    follow.tracking.focus_role.unwrap_or(Role::Unknown),
-                    follow.tracking.chain.clone(),
-                )
-            });
             let element = match target_for(context, (id, role), &chain, false) {
                 (_, Some(_)) => self.slider_target(id, role, &chain),
-                (target, None) => Some((id, target)),
+                (target, None) => target.map(|target| (id, target)),
             };
             if element.is_some() {
                 self.commit(Effects {
@@ -3839,8 +3855,9 @@ impl Worker<'_> {
             Some(path) => path.is_cut_at(runtime_id),
             None => context.follow(|follow| {
                 follow
-                    .focus_path
+                    .followed
                     .as_ref()
+                    .and_then(Followed::focus_path)
                     .is_some_and(|path| path.is_cut_at(runtime_id))
             }),
         };
@@ -3907,10 +3924,10 @@ impl Worker<'_> {
         else {
             return;
         };
-        let (batch, role) = self
-            .context
-            .follow(|follow| (follow.tracking.batch, follow.tracking.role));
-        if batch == Some(self.batch) && matches!(role, Some(Role::Menu | Role::MenuItem)) {
+        let last = self.context.follow(|follow| follow.last_reported);
+        if last.is_some_and(|last| {
+            last.batch == self.batch && matches!(last.role, Role::Menu | Role::MenuItem)
+        }) {
             return;
         }
         if !self.accepts(EventName::MenuStart, hwnd) || !self.readable(hwnd) {
@@ -4273,14 +4290,14 @@ impl Worker<'_> {
         let object = object_of(self.context, &node);
         // A control this outpost already has as its focus, under the same
         // node, is not adopted again, only followed.
-        let adopt = self.context.follow(|follow| follow.tracking.focus) != Some(node_id)
-            || !self.is_focus(node_id);
+        let followed = self.context.follow(followed_node);
+        let is_focus = self.is_focus(node_id);
         let chain = ancestors.into_iter().chain(std::iter::once(node)).collect();
         let caret = match text {
             Some(FocusText::Caret { caret, .. }) => Some(caret),
             _ => None,
         };
-        let (mut follow, slider) = follow_of(
+        let (made, slider) = follow_of(
             self.context,
             FocusMade {
                 node: (node_id, role),
@@ -4291,14 +4308,13 @@ impl Worker<'_> {
                 event: (trace, observed_at_us),
                 redirected: false,
                 caret,
-                msaa_report: None,
+                origin: Origin::Answer,
             },
         );
-        follow.adopt = adopt;
         let committed = self.commit(Effects {
             result: Some(result),
             report: Some(Report::Answered(judged)),
-            follow: Some(follow),
+            focus: Some(answered_focus(followed, is_focus, made)),
             caret_read: read_at.map(|at| (node_id, at)),
             ..Effects::default()
         });
@@ -4382,13 +4398,14 @@ fn judged_focus(
 /// What a focus report came from, for [`Worker::emit_focus`]: the focus
 /// reader that read it, when it is one whose walks may reuse an ancestry
 /// cache, and whether it is a whole-window focus.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 enum FocusSource {
     /// The focus listener's read of a UIA focus, its live re-read's answer
-    /// among them.
-    ListenerRead,
-    /// The outpost's own MSAA focus, its live re-read's answer among them.
-    MsaaFocus,
+    /// among them, with the raw-view chain it read.
+    ListenerRead(FocusPath),
+    /// The outpost's own MSAA focus, its live re-read's answer among them,
+    /// with its event's address and whether it is a simple child.
+    MsaaFocus((isize, i32, i32), bool),
     /// A whole-window focus, from a foreground change, which reads no
     /// chain.
     WholeWindow,
@@ -4399,13 +4416,50 @@ enum FocusSource {
 impl FocusSource {
     /// The focus reader whose ancestry cache the report's walk may have
     /// reused, which a live re-read of it is asked of.
-    fn reader(self) -> Option<FocusReaderKind> {
+    fn reader(&self) -> Option<FocusReaderKind> {
         match self {
-            Self::ListenerRead => Some(FocusReaderKind::Listener),
-            Self::MsaaFocus => Some(FocusReaderKind::Outpost),
+            Self::ListenerRead(_) => Some(FocusReaderKind::Listener),
+            Self::MsaaFocus(..) => Some(FocusReaderKind::Outpost),
             Self::WholeWindow | Self::MenuOpening => None,
         }
     }
+
+    /// How a report from this source was read, for the focus it adopts,
+    /// the event `trace` observed at `observed_at_us`; `None` for a
+    /// whole-window focus, which is a foreground report and adopts nothing.
+    fn origin(self, trace: TraceId, observed_at_us: u64) -> Option<Origin> {
+        match self {
+            Self::ListenerRead(path) => Some(Origin::Listener(path)),
+            Self::MsaaFocus(event, simple_child) => Some(Origin::Msaa(MsaaReport {
+                trace,
+                event,
+                simple_child,
+                observed_at_us,
+            })),
+            Self::MenuOpening => Some(Origin::MenuOpening),
+            Self::WholeWindow => None,
+        }
+    }
+}
+
+/// The focus followed's node.
+fn followed_node(follow: &reducer::FollowState) -> Option<NodeId> {
+    follow.followed.as_ref().map(|followed| followed.node)
+}
+
+/// The focus followed's ancestors and itself, outermost first; none when
+/// nothing is followed.
+fn followed_chain(follow: &reducer::FollowState) -> Vec<NodeSnapshot> {
+    follow
+        .followed
+        .as_ref()
+        .map_or_else(Vec::new, |followed| followed.chain.clone())
+}
+
+/// What a live re-read of the focus followed needs, when it is an MSAA
+/// focus.
+fn followed_msaa_report(follow: &reducer::FollowState) -> Option<MsaaReport> {
+    follow.followed.as_ref().and_then(Followed::msaa_report)
 }
 
 /// `message`, carrying `calls` too, made by the read part of a caret read
@@ -4468,16 +4522,64 @@ struct FocusMade {
     redirected: bool,
     /// The caret read with its report, if any.
     caret: Option<CaretReport>,
-    /// For an MSAA focus report, what a live re-read of it needs.
-    msaa_report: Option<reducer::MsaaReport>,
+    /// How it was read.
+    origin: Origin,
 }
 
-/// `made` as the follow its commit applies, computed before the commit
+/// A focus's record and what only the shell applies, before the commit
+/// that follows it ([`follow_of`]).
+struct FollowMade {
+    /// The record, with no subscription yet.
+    followed: Box<Followed>,
+    /// Its report's role and batch.
+    reported: LastReported,
+    /// The trace and observation of the event it came from.
+    event: (TraceId, u64),
+    /// What only the shell applies.
+    writes: FollowWrites,
+}
+
+impl FollowMade {
+    /// The focus adopted, its report leaving the dialog memo `dialog`.
+    fn adopted(self, dialog: Option<reducer::DialogMemo>) -> FocusEffects {
+        FocusEffects::Adopt {
+            followed: self.followed,
+            reported: self.reported,
+            dialog,
+            writes: self.writes,
+        }
+    }
+
+    /// The focus already followed, followed again.
+    fn again(self) -> FocusEffects {
+        let (trace, observed_at_us) = self.event;
+        FocusEffects::Again {
+            owed: self.followed.owed.map(|owed| owed.work),
+            trace,
+            observed_at_us,
+            writes: self.writes,
+        }
+    }
+}
+
+/// The commit of a focus-now answer `made`, given `followed`, the node
+/// followed, and `is_focus`, whether the answer's object is the focus last
+/// reported: a control already followed under the same node is followed
+/// again, and any other adopted.
+fn answered_focus(followed: Option<NodeId>, is_focus: bool, made: FollowMade) -> FocusEffects {
+    if followed == Some(made.followed.node) && is_focus {
+        made.again()
+    } else {
+        made.adopted(None)
+    }
+}
+
+/// `made` as the record its commit adopts, computed before the commit
 /// with local calls only: the subscription's target, whether the focus is
 /// a terminal, and what it owes: a terminal read with its caret owes its
 /// first read. Also the slider to look up after the commit, for a thumb
 /// whose slider's element is not kept.
-fn follow_of(context: &Context, made: FocusMade) -> (Follow, Option<NodeId>) {
+fn follow_of(context: &Context, made: FocusMade) -> (FollowMade, Option<NodeId>) {
     let FocusMade {
         node: (node_id, role),
         object,
@@ -4487,7 +4589,7 @@ fn follow_of(context: &Context, made: FocusMade) -> (Follow, Option<NodeId>) {
         event: (trace, observed_at_us),
         redirected,
         caret,
-        msaa_report,
+        origin,
     } = made;
     // The window text of each window entry of the chain, the outpost's
     // ancestry cache, for its title check: local calls.
@@ -4505,31 +4607,38 @@ fn follow_of(context: &Context, made: FocusMade) -> (Follow, Option<NodeId>) {
     let (target, to_find) = target_for(context, (node_id, role), &chain, terminal && console);
     // A focus whose own element is not kept yet has the slider found with
     // it, once it is.
-    let to_find = to_find.filter(|_| target.element.is_some());
+    let to_find = to_find.filter(|_| target.is_some());
     let owed = caret
         .as_ref()
         .filter(|_| terminal)
-        .map(|caret| OwedWork::FirstRead(caret.clone()));
-    let follow = Follow {
+        .map(|caret| Owed::due(OwedWork::FirstRead(caret.clone()), trace, observed_at_us));
+    let followed = Followed {
         node: node_id,
         role,
         object,
         window,
         chain,
-        batch,
-        redirected,
-        terminal,
-        console,
-        sent_caret: caret.filter(|_| terminal),
-        target,
-        owed,
-        trace,
-        observed_at_us,
-        adopt: true,
         titles,
-        msaa_report,
+        origin,
+        terminal: Followed::terminal_mark(terminal, window),
+        redirected,
+        system_caret_unused: terminal && console,
+        absorbed: None,
+        subscription: None,
+        owed,
     };
-    (follow, to_find)
+    let made = FollowMade {
+        followed: Box::new(followed),
+        reported: LastReported { role, batch },
+        event: (trace, observed_at_us),
+        writes: FollowWrites {
+            node: node_id,
+            terminal,
+            sent_caret: caret.filter(|_| terminal),
+            target,
+        },
+    };
+    (made, to_find)
 }
 
 /// Where the focus-following subscription is moved for the focus
@@ -4578,15 +4687,12 @@ fn target_for(
             .map(|element| (parent, element))
     });
     let to_find = parent.filter(|_| slider.is_none());
-    let wanted = element
-        .as_ref()
-        .map(|_| (node_id, group, slider.as_ref().map(|(id, _)| *id)));
     (
-        Target {
-            wanted,
+        element.map(|element| KeptTarget {
+            group,
             element,
-            slider: slider.map(|(_, element)| element),
-        },
+            slider,
+        }),
         to_find,
     )
 }
@@ -4640,6 +4746,90 @@ fn event_window_facts(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A focus-now answer of node 2 as `follow_of` makes it, with no
+    /// element to follow.
+    fn answer_of_node_2() -> FollowMade {
+        let node = NodeId::new(2);
+        FollowMade {
+            followed: Box::new(Followed {
+                node,
+                role: Role::Button,
+                object: None,
+                window: None,
+                chain: Vec::new(),
+                titles: Vec::new(),
+                origin: Origin::Answer,
+                terminal: reducer::TerminalMark::None,
+                redirected: false,
+                system_caret_unused: false,
+                absorbed: None,
+                subscription: None,
+                owed: None,
+            }),
+            reported: LastReported {
+                role: Role::Button,
+                batch: 1,
+            },
+            event: (TraceId::from_raw(1), 0),
+            writes: FollowWrites {
+                node,
+                terminal: false,
+                sent_caret: None,
+                target: None,
+            },
+        }
+    }
+
+    #[test]
+    fn a_focus_now_answer_is_followed_again_only_on_the_followed_focus() {
+        let again = |commit: &FocusEffects| matches!(commit, FocusEffects::Again { .. });
+        let adopted = |commit: &FocusEffects| matches!(commit, FocusEffects::Adopt { .. });
+        // The focus already followed, under the same node, is only followed
+        // again.
+        assert!(again(&answered_focus(
+            Some(NodeId::new(2)),
+            true,
+            answer_of_node_2()
+        )));
+        // Any other is adopted: another node followed, nothing followed, or
+        // a node whose object is no longer the focus last reported.
+        assert!(adopted(&answered_focus(
+            Some(NodeId::new(3)),
+            true,
+            answer_of_node_2()
+        )));
+        assert!(adopted(&answered_focus(None, false, answer_of_node_2())));
+        assert!(adopted(&answered_focus(
+            Some(NodeId::new(2)),
+            false,
+            answer_of_node_2()
+        )));
+    }
+
+    /// Each kind of focus source adopts with its own origin, and a
+    /// whole-window focus adopts nothing.
+    #[test]
+    fn a_focus_is_adopted_with_the_origin_of_its_source() {
+        let trace = TraceId::from_raw(4);
+        let event = (9, -4, 1);
+        let origin = |source: FocusSource| source.origin(trace, 50);
+        assert_eq!(
+            origin(FocusSource::ListenerRead(FocusPath::default())),
+            Some(Origin::Listener(FocusPath::default()))
+        );
+        assert_eq!(
+            origin(FocusSource::MsaaFocus(event, true)),
+            Some(Origin::Msaa(MsaaReport {
+                trace,
+                event,
+                simple_child: true,
+                observed_at_us: 50,
+            }))
+        );
+        assert_eq!(origin(FocusSource::MenuOpening), Some(Origin::MenuOpening));
+        assert_eq!(origin(FocusSource::WholeWindow), None);
+    }
 
     #[test]
     fn the_system_carets_event_is_tested_as_a_location_change() {

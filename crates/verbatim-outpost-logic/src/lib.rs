@@ -98,8 +98,9 @@ pub use self::entry::{
     Asker, Entry, Front, Item, Source, UiaEvent, UiaKind, WinKind, is_state_property,
 };
 pub use self::follow::{
-    Applied, Change, DialogMemo, Facts, FocusPath, Follow, FollowState, Group, MsaaReport, Owed,
-    OwedWork, Report, Route, Subscription, Target, WatchChange, apply_local,
+    Applied, Change, DialogMemo, Facts, FocusCommit, FocusPath, FollowState, Followed, Group,
+    LastReported, LogicError, MarkChange, MsaaReport, Origin, Owed, OwedProgram, OwedWork, Report,
+    Route, Subscribed, Subscription, Target, WatchChange, apply_local,
 };
 pub use self::held::{Evidence, Focus, Held, InFront};
 pub use self::intake::{Handling, Marks, Object, Planned, TerminalMark};
@@ -163,7 +164,7 @@ pub enum Work {
         group: Option<FocusGroup>,
     },
     /// The work the followed focus owes.
-    Owed(Owed),
+    Owed(OwedProgram),
 
     /// Drops the objects the shell hands it: what a release let go of.
     Drop,
@@ -324,6 +325,9 @@ pub enum Effect {
     Marks(Marks),
     /// The push-time copy of the arbitrator's verdicts, replaced.
     Verdicts(Arc<Verdicts>),
+    /// A commit asked for what cannot occur: applied as nothing, for the
+    /// shell to record as the logic error it is.
+    LogicError(LogicError),
     /// A test's settle, number `0`, was reached: the shell answers whoever
     /// waits on it.
     Settled(u64),
@@ -822,7 +826,7 @@ impl Reducer {
     /// What the shell keeps a copy of, before a transition: the facts'
     /// marks, for the mailbox ([`changed`](Self::changed)).
     fn observed(&self) -> Marks {
-        self.facts.marks.clone()
+        self.facts.marks()
     }
 
     /// Gives the shell what a transition changed of what it keeps a copy
@@ -830,8 +834,9 @@ impl Reducer {
     /// program the transition dispatched, which may read what a cleared
     /// mark would drop, starts only once the mailbox judges by them.
     fn changed(&self, marks: &Marks, effects: &mut Vec<Effect>) {
-        if self.facts.marks != *marks {
-            effects.insert(0, Effect::Marks(self.facts.marks.clone()));
+        let now = self.facts.marks();
+        if now != *marks {
+            effects.insert(0, Effect::Marks(now));
         }
     }
 
@@ -910,7 +915,7 @@ impl Reducer {
         {
             self.queries.insert(request_id);
         }
-        let pushed = self.intake.push(entry, &self.facts.marks, now.at);
+        let pushed = self.intake.push(entry, &self.facts.marks(), now.at);
         if !pushed.unparked.is_empty() {
             effects.push(Effect::Unpark(pushed.unparked));
         }
@@ -1046,6 +1051,11 @@ impl Reducer {
         if !ranges.is_empty() {
             effects.push(Effect::ForgetRanges(ranges));
         }
+        effects.extend(
+            std::mem::take(&mut applied.logic_errors)
+                .into_iter()
+                .map(Effect::LogicError),
+        );
         if let Some(current) = self.current_of(request) {
             // An opened watch's query is no longer the program's; a
             // program holding the watch is waited for until it gives it
@@ -1211,14 +1221,13 @@ impl Reducer {
             ..
         } = abandoned;
         let in_hand = current.in_hand;
-        if self
-            .facts
-            .follow
-            .owed
-            .as_ref()
-            .is_some_and(|owed| owed.attempting == Some(dead))
+        if let Some(followed) = self.facts.follow.followed.as_mut()
+            && followed
+                .owed
+                .as_ref()
+                .is_some_and(|owed| owed.attempting == Some(dead))
         {
-            self.facts.follow.owed = None;
+            followed.owed = None;
         }
         effects.push(Effect::Abandon {
             dead,
@@ -1346,21 +1355,22 @@ impl Reducer {
     /// handled on the way.
     fn pump(&mut self, now: Now, effects: &mut Vec<Effect>) {
         while !self.busy() && !self.stopping && !self.releasing {
-            if let Some(owed) = self
-                .facts
-                .follow
-                .owed
-                .as_mut()
-                .filter(|owed| owed.attempting.is_none())
+            let generation = self.flight.generation();
+            if let Some(followed) = self.facts.follow.followed.as_mut()
+                && let Some(owed) = followed
+                    .owed
+                    .as_mut()
+                    .filter(|owed| owed.attempting.is_none())
             {
-                owed.attempting = Some(self.flight.generation());
+                owed.attempting = Some(generation);
                 let owed = owed.clone();
                 // Whatever the owed read observes must reach it.
                 if owed_clears_absorb(&owed) {
-                    self.facts.marks.absorbed = None;
+                    followed.absorbed = None;
                 }
+                let node = followed.node;
                 self.dispatch(
-                    Work::Owed(owed),
+                    Work::Owed(OwedProgram { node, owed }),
                     (self.handling_deadline(), None, None),
                     None,
                     now,
@@ -1377,7 +1387,7 @@ impl Reducer {
                 self.dispatch(Work::Drop, (deadline, None, None), None, now, effects);
                 continue;
             }
-            let Some((planned, batch)) = self.intake.next(&self.facts.marks) else {
+            let Some((planned, batch)) = self.intake.next(&self.facts.marks()) else {
                 // Nothing else is ready: the watch's due time is acted on.
                 match self.facts.follow.watch.reach(now.wall_us) {
                     Reached::Nothing => return,
@@ -1540,8 +1550,10 @@ impl Reducer {
         let window = intake::window_of(&entry.item);
         // Anything that may end a held terminal's hold reads every update
         // observed after it begins.
-        if clears_absorb(&entry.item) {
-            self.facts.marks.absorbed = None;
+        if clears_absorb(&entry.item)
+            && let Some(followed) = self.facts.follow.followed.as_mut()
+        {
+            followed.absorbed = None;
         }
 
         let group_place = group.as_ref().map(|group| FocusGroup {

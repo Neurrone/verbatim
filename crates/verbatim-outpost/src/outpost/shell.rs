@@ -31,11 +31,11 @@ use verbatim_model::protocol::{EventTiming, OutpostToCore, QueryOutcome, Request
 use verbatim_uia::{Agile, Kept};
 
 use super::Context;
-use super::commit::{Effects, Writes};
+use super::commit::{Effects, FocusEffects, KeptTarget, Writes};
 use super::outbound::Carried;
 use super::reducer::{
     Asker, Change, Cut, Effect, Entry, Group, Input, Item, Marks, Now, Program, Reducer, Request,
-    Source, Subscription, VerdictChange, Verdicts,
+    Source, Subscribed, Subscription, VerdictChange, Verdicts,
 };
 use super::store::{Removed, Store, Tag};
 use super::worker::{self, Charge, Job};
@@ -310,16 +310,37 @@ fn admit(
     None
 }
 
+/// Lets go of the elements of `target` into `garbage`.
+fn let_go_of_target(target: KeptTarget, garbage: &mut Garbage) {
+    garbage.elements.push(target.element);
+    garbage
+        .elements
+        .extend(target.slider.map(|(_, slider)| slider));
+}
+
+/// `target` as the reducer takes it, its elements given their tokens.
+fn tokens_of(target: KeptTarget, elements: &mut Elements, garbage: &mut Garbage) -> Subscribed {
+    Subscribed {
+        group: target.group,
+        element: elements.token(target.element, garbage),
+        slider: target
+            .slider
+            .map(|(node, slider)| (node, elements.token(slider, garbage))),
+    }
+}
+
 /// Lets go of what a refused commit holds into `garbage`.
 fn discard(effects: Effects, garbage: &mut Garbage) {
     let (_, writes) = effects.split();
-    if let Some((_, _, _, target)) = writes.follow {
-        garbage.elements.extend(target.element);
-        garbage.elements.extend(target.slider);
+    if let Some(target) = writes
+        .focus
+        .and_then(FocusEffects::into_writes)
+        .and_then(|writes| writes.target)
+    {
+        let_go_of_target(target, garbage);
     }
-    if let Some(target) = writes.element {
-        garbage.elements.extend(target.element);
-        garbage.elements.extend(target.slider);
+    if let Some((_, target)) = writes.element {
+        let_go_of_target(target, garbage);
     }
     if let Some(stale) = writes.stale {
         garbage.elements.extend(stale.element);
@@ -346,7 +367,7 @@ fn write(
 ) -> Change {
     let (mut change, writes) = effects.split();
     let Writes {
-        follow,
+        mut focus,
         element,
         terminal,
         sent_caret,
@@ -358,51 +379,41 @@ fn write(
         change.text = changes;
         garbage.store.push(removed);
     }
-    let mut follow = follow;
     if let Some(stale) = stale {
         let evicted = stale
             .element
             .and_then(|element| store.evict_element_if(stale.node, &element));
         // The subscription is not moved to the element evicted: the focus's
         // own is found after its report.
-        if let (Some(evicted), Some((node, _, _, target))) = (&evicted, follow.as_mut())
-            && *node == stale.node
-            && target
-                .element
+        if let (Some(evicted), Some(writes)) =
+            (&evicted, focus.as_mut().and_then(FocusEffects::writes_mut))
+            && writes.node == stale.node
+            && writes
+                .target
                 .as_ref()
-                .is_some_and(|element| element.same_as(evicted))
+                .is_some_and(|target| target.element.same_as(evicted))
+            && let Some(target) = writes.target.take()
         {
-            garbage.elements.extend(target.element.take());
-            garbage.elements.extend(target.slider.take());
-            target.wanted = None;
-            if let Some(pure) = change.follow.as_mut() {
-                pure.target.wanted = None;
-            }
+            let_go_of_target(target, garbage);
         }
         garbage.elements.extend(evicted);
         garbage.store.push(store.remove_terminal(stale.node));
     }
-    if let Some((node, terminal, sent, target)) = follow {
-        // A terminal gaining the focus has its caret reported afresh: the
-        // caret read with its report is the one sent.
-        if terminal {
-            store.set_sent_caret(node, sent, true);
-        } else {
-            store.set_sent_caret(node, None, false);
-        }
-        if let Some(pure) = change.follow.as_mut() {
-            pure.target.element = target
-                .element
-                .map(|element| elements.token(element, garbage));
-            pure.target.slider = target.slider.map(|slider| elements.token(slider, garbage));
-        }
-    }
-    if let (Some(target), Some((_, pure))) = (element, change.element.as_mut()) {
-        pure.element = target
-            .element
-            .map(|element| elements.token(element, garbage));
-        pure.slider = target.slider.map(|slider| elements.token(slider, garbage));
-    }
+    change.focus = focus.map(|focus| {
+        focus.into_commit(|writes| {
+            // A terminal gaining the focus has its caret reported afresh:
+            // the caret read with its report is the one sent.
+            if writes.terminal {
+                store.set_sent_caret(writes.node, writes.sent_caret, true);
+            } else {
+                store.set_sent_caret(writes.node, None, false);
+            }
+            writes
+                .target
+                .map(|target| tokens_of(target, elements, garbage))
+        })
+    });
+    change.element = element.map(|(node, target)| (node, tokens_of(target, elements, garbage)));
     if let Some((node, entry)) = terminal {
         garbage.store.push(store.put_terminal(node, entry));
     }
@@ -709,6 +720,9 @@ impl Shell {
                 self.spawn_worker(replacement, false);
             }
             Effect::Marks(marks) => self.context.mailbox.set_marks(marks),
+            Effect::LogicError(error) => {
+                tracing::error!(?error, "a commit asked for what cannot occur");
+            }
             Effect::Verdicts(verdicts) => self.context.mailbox.set_verdicts(verdicts),
             Effect::Settled(id) => {
                 if let Some(done) = self.settles.remove(&id) {

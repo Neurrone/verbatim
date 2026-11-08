@@ -359,23 +359,26 @@ fn focus_change(id: u64, owes: bool) -> Change {
                 first_cached_ancestor: None,
             },
         }),
-        follow: Some(Follow {
-            node: focus.id,
-            role: focus.role,
-            object: Some(Object::Msaa(9, -4, i32::try_from(id).unwrap_or(0))),
-            window: Some(9),
-            chain: vec![focus],
-            batch: 1,
-            redirected: false,
-            terminal: owes,
-            console: false,
-            target: Target::default(),
-            owed: owes.then(|| OwedWork::FirstRead(reported_caret())),
-            trace: TraceId::from_raw(3),
-            observed_at_us: 0,
-            adopt: true,
-            msaa_report: None,
-            titles: Vec::new(),
+        focus: Some(FocusCommit::Adopt {
+            reported: LastReported {
+                role: focus.role,
+                batch: 1,
+            },
+            dialog: None,
+            followed: Box::new(Followed {
+                object: Some(Object::Msaa(9, -4, i32::try_from(id).unwrap_or(0))),
+                window: Some(9),
+                terminal: Followed::terminal_mark(owes, Some(9)),
+                owed: owes.then(|| {
+                    Owed::due(
+                        OwedWork::FirstRead(reported_caret()),
+                        TraceId::from_raw(3),
+                        0,
+                    )
+                }),
+                chain: vec![focus.clone()],
+                ..follow::plain_followed(focus.id, focus.role)
+            }),
         }),
         ..Change::default()
     }
@@ -383,7 +386,13 @@ fn focus_change(id: u64, owes: bool) -> Change {
 
 /// The node the outpost follows.
 fn followed(replay: &Replay) -> Option<NodeId> {
-    replay.reducer.facts().follow.tracking.focus
+    replay
+        .reducer
+        .facts()
+        .follow
+        .followed
+        .as_ref()
+        .map(|followed| followed.node)
 }
 
 /// Whether `effects` abandon the worker in charge.
@@ -446,12 +455,15 @@ fn what_arrives_after_a_focus_marker_waits_for_its_read() {
 #[test]
 fn a_cleared_absorption_reaches_the_mailbox_before_the_read_that_cleared_it() {
     let mut replay = Replay::new();
-    let effects = replay.push(name_change(1), Source::Hook, 1);
+    let request = program(&replay.push(msaa_focus(1, 1), Source::Hook, 1)).request;
+    replay.commit(request, focus_change(1, false), 2);
+    replay.finish(request, false, 2);
+    let effects = replay.push(name_change(1), Source::Hook, 2);
     let request = program(&effects).request;
     let effects = replay.commit(
         request,
         Change {
-            absorb: Some(7),
+            mark: Some(MarkChange::Absorb(7)),
             ..Change::default()
         },
         2,
@@ -676,7 +688,15 @@ fn an_owed_read_abandoned_is_not_attempted_again() {
     let effects = replay.tick(3 + 11_000);
     assert!(abandons(&effects));
     assert!(programs(&effects).is_empty());
-    assert!(replay.reducer.facts().follow.owed.is_none());
+    assert!(
+        replay
+            .reducer
+            .facts()
+            .follow
+            .followed
+            .as_ref()
+            .is_some_and(|followed| followed.owed.is_none())
+    );
     assert_eq!(followed(&replay), Some(NodeId::new(1)));
 }
 

@@ -312,11 +312,10 @@ pub struct Intake {
     closed: bool,
 }
 
-/// What the intake, and the programs it hands entries to, read of the
-/// focus last reported: set in one go by the commit that makes a focus
-/// followed, and changed by later commits. The reducer's facts hold them
-/// ([`super::Facts::marks`]), and the intake is given them where it reads
-/// them.
+/// What the intake and the mailbox read of the focus last reported,
+/// computed from the followed focus's record ([`super::Facts::marks`]): the
+/// intake is given them where it reads them, and the mailbox a copy whenever
+/// the computed value changes.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Marks {
     /// The object last reported as the focus.

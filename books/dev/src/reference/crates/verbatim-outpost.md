@@ -937,7 +937,7 @@ and the inherited pipe handles.
   a process the outpost inherits as ignored (`IGNORE_PIDS_ENV`) is not
   reported, and every focus report carries window facts.
   A child's own focus event from the same `SetFocus` as its control's
-  redirected one is dropped (`Marks::focus_redirected`).
+  redirected one is dropped (`Followed::redirected`).
 - The reports (`reducer::held`;
   `books/dev/src/explanation/design/ownership.md`):
   every focus or foreground report whose focus node the outpost has not
@@ -956,7 +956,7 @@ and the inherited pipe handles.
   reports. The newest is `expected()`. A report of
   the newest report's node whose own evidence says the same element still
   has the focus leaves the states last read as they were. The followed
-  focus (`Tracking::focus`, `focus_role`, `window`, `chain`) is the newest
+  focus (`Followed`'s `node`, `role`, `window`, `chain`) is the newest
   report of a control, which the caret, text and terminal output follow.
 - MSAA name, value, and state changes are read for the nodes the outpost
   has not released, and Core targets what is spoken
@@ -1016,7 +1016,7 @@ and the inherited pipe handles.
   one, while descriptions are read; a dialog a report's line is inside
   carries the text that report gave it, with no call, so Core, which
   speaks it when its own line enters the dialog, always has it. A
-  foreground report's (`Tracking`'s `dialog`) serves the focus that
+  foreground report's (`FollowState::dialog`) serves the focus that
   follows. A UIA dialog the listener read, whose element the outpost does
   not hold, is found by the path of the report being built
   (`Worker::focus_path`, before its commit), so it has its text on the
@@ -1357,8 +1357,9 @@ Caret and text events:
   than the node's last caret read. A held terminal's caret event is noted
   (`Item::NotedCaret`, handed out by `Intake::when_idle`), and the console
   host's updates for it are dropped as pushed
-  (`Marks::absorbed`) while no watch is open, the mark
-  cleared before a terminal request, a caret key, or a new focus.
+  (`Followed::absorbed`) while no watch is open and the terminal is the
+  followed focus, the mark cleared before a terminal request, a caret key,
+  or a new focus.
 - A focus-now answer's control has its caret read with it, is recorded
   among the reports (`reducer::held`), as NVDA's fake focus is, and then
   becomes the followed focus (`Worker::follow_answer`, as `emit_focus`
@@ -1417,7 +1418,7 @@ UIA limiter keys it.
 
 The ancestry cache ([verbatim-core](verbatim-core.md), "The ancestry
 cache"). The followed chain is the outpost's ancestry cache, saved with the
-window text of each window entry (`Tracking::titles`); `Worker::focus_chain`
+window text of each window entry (`Followed::titles`); `Worker::focus_chain`
 gives a walk nothing to stop at when a saved title reads otherwise now, or
 when the read answers a live re-read. Every join to the cache,
 `read::join_cache`, notes the entries it took
@@ -1427,7 +1428,7 @@ entries it emits, after its filters, by its `FocusSource`. A listener read
 carrying `answers` keeps its report's verdict and joins no cache; an MSAA
 live re-read (`CoreToOutpost::LiveReread`, planned as
 `DeliveredFact::MsaaLiveReread`) reacquires the object at the last MSAA
-report's event address (`Tracking::msaa_report`). The reducer records the
+report's event address (`Origin::Msaa`). The reducer records the
 live re-read each program's entry answers (`Current::live_reread`), cleared
 by the commit that sends its report or the listener's `UiaLiveRereadGone`;
 one the program ends, panics or is abandoned without answering, its object

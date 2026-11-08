@@ -1314,9 +1314,14 @@ impl Run {
                 }
             }
             Commit::OwedDone if flight.kind == Kind::Owed => Change {
-                owed_done: Some(NodeId::new(
-                    self.reducer.facts.follow.owed.as_ref()?.node.number(),
-                )),
+                owed_done: self
+                    .reducer
+                    .facts
+                    .follow
+                    .followed
+                    .as_ref()
+                    .filter(|followed| followed.owed.is_some())
+                    .map(|followed| followed.node),
                 ..Change::default()
             },
             Commit::OpenWatch { .. }
@@ -1394,8 +1399,8 @@ impl Run {
     fn commit_model(&mut self, change: &Change) {
         let model = &mut self.model;
         // A followed focus replaces the owed work with its own, if any.
-        if let Some(follow) = &change.follow {
-            model.owed = follow.owed.as_ref().map(|_| {
+        if let Some(FocusCommit::Adopt { followed, .. }) = &change.focus {
+            model.owed = followed.owed.as_ref().map(|_| {
                 model.owed_count += 1;
                 (model.owed_count, None)
             });
@@ -1565,7 +1570,7 @@ impl Run {
     /// the hashes of every call's effects.
     fn call(&mut self, input: Option<Input>, kind: Call) -> Vec<Effect> {
         let now = self.now();
-        let marks = self.reducer.facts.marks.clone();
+        let marks = self.reducer.facts.marks();
         let flight_before = self.model.flight.clone();
         // The query of the watch a program holds.
         let watch_before = match &self.reducer.facts.follow.watch {
@@ -1772,7 +1777,7 @@ impl Run {
         }
         // The marks, when given, first and only when they changed.
         let given: Vec<usize> = positions(effects, |effect| matches!(effect, Effect::Marks(_)));
-        let changed = reducer.facts.marks != *marks;
+        let changed = reducer.facts.marks() != *marks;
         assert_eq!(
             given,
             if changed { vec![0] } else { vec![] },
@@ -1906,8 +1911,9 @@ impl Run {
                     reducer
                         .facts
                         .follow
-                        .owed
+                        .followed
                         .as_ref()
+                        .and_then(|followed| followed.owed.as_ref())
                         .is_none_or(|owed| owed.attempting != Some(*dead)),
                     "owed work names the dead generation as attempting it: {trail:?}"
                 );
@@ -2367,8 +2373,9 @@ impl Run {
             reducer
                 .facts
                 .follow
-                .owed
+                .followed
                 .as_ref()
+                .and_then(|followed| followed.owed.as_ref())
                 .map(|owed| owed.attempting),
             model.owed.map(|(_, attempting)| attempting),
             "the owed work: {trail:?}"

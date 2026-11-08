@@ -429,14 +429,14 @@ impl<'a> RequestContext<'a> {
         Ref::map(self.facts(), |facts| &facts.held)
     }
 
-    /// The intake's marks.
-    fn marks(&self) -> Ref<'_, reducer::Marks> {
-        Ref::map(self.facts(), |facts| &facts.marks)
-    }
-
     /// The object last reported as the focus.
     fn focused(&self) -> Option<Object> {
-        self.marks().focused.clone()
+        self.follow(|follow| {
+            follow
+                .followed
+                .as_ref()
+                .and_then(|followed| followed.object.clone())
+        })
     }
 
     /// Whether a focus event on `object` is the redirected-to child's own,
@@ -444,8 +444,11 @@ impl<'a> RequestContext<'a> {
     /// redirect, and no other focus came between. The mark is left set; the
     /// commit that drops the event clears it.
     fn is_redirected_focus(&self, object: &Object) -> bool {
-        let marks = self.marks();
-        marks.focus_redirected && marks.focused.as_ref() == Some(object)
+        self.follow(|follow| {
+            follow.followed.as_ref().is_some_and(|followed| {
+                followed.redirected && followed.object.as_ref() == Some(object)
+            })
+        })
     }
 
     /// Whether a read of `node`'s caret committed since `observed_us`
@@ -456,7 +459,12 @@ impl<'a> RequestContext<'a> {
 
     /// The window of the last focus this outpost reported.
     fn tracked_window(&self) -> Option<isize> {
-        self.follow(|follow| follow.tracking.window)
+        self.follow(|follow| {
+            follow
+                .followed
+                .as_ref()
+                .and_then(|followed| followed.window)
+        })
     }
 
     /// The route to the element `runtime_id` names, when it is in the chain
@@ -467,8 +475,9 @@ impl<'a> RequestContext<'a> {
     fn focus_route(&self, runtime_id: &[i32]) -> Option<focus_path::Route> {
         let route = self.follow(|follow| {
             follow
-                .focus_path
+                .followed
                 .as_ref()
+                .and_then(reducer::Followed::focus_path)
                 .and_then(|path| path.route_to(runtime_id))
         })?;
         read::serves(self, route.window.get()).then_some(route)

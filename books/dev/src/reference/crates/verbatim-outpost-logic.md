@@ -138,13 +138,36 @@ Public API:
   `Front`, the outpost's one test of an MSAA focus or a foreground change
   against the foreground, which the shell makes from Windows' state as it
   hands the entry to the reducer and the entry carries to its program; the follow
-  state (`Follow`, `FollowState`, `Target`, `Owed`); the caret key's
+  state (`FollowState`, `Followed`, `Origin`, `Subscribed`, `LastReported`,
+  `Owed`, and a commit's `FocusCommit` and `MarkChange`, below); the caret key's
   watch (`Watch`, `OpenWatch`, `Checked`, below); the
   reports Core may hold (`Held`, `Focus`, `Evidence`, `InFront`); the verdicts
   (`Verdicts`, `VerdictChange`, `Probe`, `Probed`); each node's text facts
   (`NodeAnchors`, `Anchor`, `TextChange`, `ReportCut`, `AnswerCut`); and
   `WinKind` and `UiaKind`, its own copies of the backends' event kinds,
   since it names no backend crate.
+
+The followed focus (`src/follow.rs`) is one record, `Followed`: the node,
+its role, object, window, chain and titles, how it was read (`Origin`: the
+listener's read with its focus path, an MSAA focus with what a live re-read
+needs, a focus-now answer, a menu opening), its terminal mark, its redirect,
+system-caret and absorbed marks, its subscription and what it owes. A
+commit's `FocusCommit::Adopt` replaces the record whole, so that no fact of an
+older focus survives beside a newer one; the subscription it replaces keeps
+its group among `kept_groups` until its node is released.
+`FocusCommit::Again`, a focus-now answer on the focus already followed, moves
+the subscription and replaces the owed work and nothing else.
+`FocusCommit::Foreground` writes the role and batch last reported and the
+dialog memo, both outside the record, and follows nothing. A caret key's
+watch on another node than the one an adoption or a foreground report names
+ends. An element found after its report moves the subscription only while
+its node is followed; otherwise its tokens are let go. `MarkChange` is the
+one change of a mark a commit makes. What the mailbox and the intake read is
+computed from the record (`Facts::marks`), and `Effect::Marks` is sent when
+the computed value changes. A commit the state table says cannot occur, a
+`FocusCommit::Again` or a `MarkChange` with nothing followed, changes
+nothing and comes back as `Effect::LogicError`, which the shell logs as an
+error.
 
 The caret key's watch (`src/watch.rs`) is one state in the follow state,
 `Watch`: `None`, `Waiting` until its bound, `Polling` with its next and
@@ -240,6 +263,17 @@ contents beyond whether the record changed, the caret watch's
 transitions, and exact deadlines; and its generator sends a foreground change from the
 listener, never as the hook's held copy.
 
+The followed focus has a generated test of its own
+(`crates/verbatim-outpost-logic/src/tests/followed.rs`): focus events,
+foreground changes, UIA markers and reads, focus-now answers, elements found
+after a newer focus, releases, owed work and held consoles, each step
+compared with a reference model written from the parity documents and the
+recorded decisions: what a program reads, how a later event is planned, the
+subscription and the elements let go, the owed work, the mailbox's drops and
+the caret key's watch. Its scripted programs build their commits at one
+module, `seam`; the worker's choice between adopting and following again is
+pinned by the outpost's `a_focus_now_answer_is_followed_again_only_on_the_followed_focus`.
+
 The intake has a generated test of its own
 (`crates/verbatim-outpost-logic/src/tests/intake_order.rs`, 800 cases,
 about 2.0 s): pushes of every kind of entry it orders, hand-outs, cancels,
@@ -266,7 +300,7 @@ at its newest's place, a menu opening at its batch's end, a read in its
 marker's place, the noted caret and its barrier put ahead), and that an
 open marker holds back everything after it.
 Beside each, an ignored exploration test (`explore_reducer`,
-`explore_intake`, in `src/tests/explore.rs`, the crate's one file that
+`explore_followed`, `explore_intake`, in `src/tests/explore.rs`, the crate's one file that
 reads the environment) runs the same cases under the seed and case count
 in `VERBATIM_EXPLORE_SEED` and `VERBATIM_EXPLORE_CASES`; only the nightly
 workflow (`.github/workflows/explore.yml`) runs them.
