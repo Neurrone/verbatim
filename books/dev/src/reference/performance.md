@@ -931,6 +931,32 @@ shell's window-snap results excepted, so the supervisor starts no outpost
 for one (`policy::may_start_outpost` in the supervisor); the snap results still
 start one.
 
+### A window opened anywhere, UIA
+
+The focus listener's window-opened callback runs on UIA's callback thread,
+once per window opened anywhere on the desktop, and wakes nothing else
+unless the window is a toast (`docs/parity/alerts.md`, "Toasts").
+
+- Minimum and today: no call into an application for a window that is no
+  toast. The control type and automation id come from the event's cache;
+  the window class, a local call, is read only when both pass.
+- A toast: one call on its application's reading thread, for what the
+  cache request leaves out.
+- From the design's costs; not measured.
+
+### A progress bar's change, UIA
+
+A foreground window's progress bar that is not the focus
+(`docs/parity/changes-and-selection.md`, "Progress bars that are not the
+focus"), in the attended application only.
+
+- Per change: one call, the bar's `Place`, which no event's cache holds.
+  The focused bar is read again by its own subscription, and Core's
+  one-percent rule keeps the second silent.
+- Per foreground change: one element lookup in a worker program and one
+  registration, paid by a window with no progress bar too.
+- From the design's costs; not measured.
+
 ### Speech only the reducer makes
 
 Every utterance and earcon comes from the reducer (`books/dev/src/explanation/architecture.md`,

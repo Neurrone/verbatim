@@ -2993,10 +2993,7 @@ fn the_foreground_windows_element_is_found_by_one_program_at_a_time() {
     assert!(matches!(second.work, Work::FindBar(11)));
     assert_eq!(
         replay.reducer.facts().follow.bar,
-        BarWatch::Finding {
-            window: 11,
-            started: true
-        }
+        BarWatch::Finding { window: 11 }
     );
     // Its program ending with no element found ends the watch.
     let request = second.request;

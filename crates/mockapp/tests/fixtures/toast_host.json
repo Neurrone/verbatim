@@ -1,0 +1,7 @@
+{
+  "id": "root",
+  "role": "window",
+  "name": "Download complete",
+  "window_class": "ToastChildWindowClass",
+  "msaa_client": true
+}

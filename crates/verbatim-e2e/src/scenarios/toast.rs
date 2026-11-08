@@ -1,8 +1,8 @@
 //! A Windows toast raised from PowerShell by the toast notification APIs is
 //! spoken, as NVDA reads it from the window-opened event of its
 //! `ToastView` window (`docs/parity/alerts.md`, "Toasts"). Do Not Disturb
-//! would swallow it, so setup turns Do Not Disturb off for the run and
-//! teardown restores what it found (roadmap, M4.2, "Toasts").
+//! would swallow it, so the body turns Do Not Disturb off for the run and
+//! teardown restores what setup found (roadmap, M4.2, "Toasts").
 //!
 //! The expected speech is the design's (`docs/design/m42-parity.md`,
 //! "Toasts"), with this scenario's own title and body, to be confirmed
@@ -73,10 +73,11 @@ fn run(scenario: &mut Scenario, script: &str, args: &[&str]) -> io::Result<()> {
         .collect();
     command.push(script.to_owned());
     command.extend(args.iter().map(|arg| (*arg).to_owned()));
-    scenario.run_handing_off("powershell.exe", &command)
+    scenario.run_to_success("powershell.exe", &command)
 }
 
-/// Turns Do Not Disturb off, recording the state it found.
+/// Records the Do Not Disturb state it finds, for teardown to restore, which
+/// a failure anywhere after this still runs.
 pub(crate) fn setup(scenario: &mut Scenario) -> io::Result<ScenarioState> {
     let script = scenario.harness_file("do-not-disturb", "ps1");
     scenario.write_agent_file(&script, DO_NOT_DISTURB.as_bytes())?;
@@ -85,11 +86,15 @@ pub(crate) fn setup(scenario: &mut Scenario) -> io::Result<ScenarioState> {
     let state = String::from_utf8_lossy(&scenario.wait_for_agent_file(&found, FOUND_TIMEOUT)?)
         .trim()
         .to_owned();
-    run(scenario, &script, &["set", "0"])?;
     Ok(ScenarioState::Names(vec![script, state]))
 }
 
-pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
+pub(crate) fn body(scenario: &mut Scenario, state: &mut ScenarioState) {
+    let ScenarioState::Names(names) = state else {
+        unreachable!("setup records its script and the state it found");
+    };
+    let do_not_disturb = names.first().expect("setup records its script").clone();
+    run(scenario, &do_not_disturb, &["set", "0"]).expect("turns Do Not Disturb off");
     let script = scenario.harness_file("raise-toast", "ps1");
     scenario
         .write_agent_file(&script, RAISE_TOAST.as_bytes())

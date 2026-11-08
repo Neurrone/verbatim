@@ -1885,6 +1885,24 @@ impl Scenario {
         }
     }
 
+    /// Runs `command` with `args` and waits for it to exit with code 0.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the agent cannot start it, it does not exit
+    /// within the window timeout, or it exits with any other code.
+    pub fn run_to_success(&mut self, command: &str, args: &[String]) -> io::Result<()> {
+        self.begin_action(&format!("run {command} {}", args.join(" ")));
+        let launch = self.agent.launch_process(command, args, None, &[], None)?;
+        match self.agent.wait_for_exit(launch.pid, WINDOW_TIMEOUT)? {
+            ProcessState::Exited { exit_code: Some(0) } => Ok(()),
+            state => Err(io::Error::other(format!(
+                "{command} (pid {}) did not succeed: {state:?}",
+                launch.pid
+            ))),
+        }
+    }
+
     /// Waits, on window events, until a window titled with
     /// `title_contains` is in the foreground, and returns it.
     ///

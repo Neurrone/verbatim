@@ -20,7 +20,9 @@ NVDA: a toast's `alert` event is accepted from any application, and
 the `Notification` behavior speaks the object; NVDA drops every WinEvent
 from a native UIA window, and speaks a Windows 10 and later toast on
 UIA's window-opened event instead ([Event handling](../nvda/events.md),
-"Acceptance filtering"). Verbatim: **matched**. The focus listener's
+"Acceptance filtering"). Verbatim: **built, awaiting confirmation**: that a
+Windows 11 toast reaches this path, and its exact words, wait on the
+`toast` scenario's run against NVDA. The focus listener's
 desktop-wide UIA registration includes the window-opened event; its
 callback keeps a window of control type window whose automation id
 contains `ToastView`, from the event's cache, and whose window class is

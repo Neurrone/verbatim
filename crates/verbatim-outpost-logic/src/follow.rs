@@ -40,13 +40,17 @@ pub enum BarWatch {
     /// No window is watched.
     #[default]
     None,
-    /// The element of `window` is being found, by a program started
-    /// (`started`) or still to start.
+    /// The element of `window` is to be found, by a program not yet started.
+    Due {
+        /// The foreground window.
+        window: isize,
+    },
+    /// The element of `window` is being found by the program in flight:
+    /// this state is entered as that program is dispatched and left before
+    /// any other can start, so a program that ends in it is its lookup.
     Finding {
         /// The foreground window.
         window: isize,
-        /// Whether a program has been started for it.
-        started: bool,
     },
     /// The subtree of `window`'s element is subscribed, by its token.
     Subscribed {
@@ -58,22 +62,21 @@ pub enum BarWatch {
 }
 
 impl BarWatch {
-    /// The window watched, while it is subscribed or being found.
+    /// The window watched, while it is subscribed or its element is sought.
     #[must_use]
     pub fn window(self) -> Option<isize> {
         match self {
             BarWatch::None => None,
-            BarWatch::Finding { window, .. } | BarWatch::Subscribed { window, .. } => Some(window),
+            BarWatch::Due { window }
+            | BarWatch::Finding { window }
+            | BarWatch::Subscribed { window, .. } => Some(window),
         }
     }
 
     /// The window whose element a program is to start finding, if one is due.
     pub(crate) fn due(self) -> Option<isize> {
         match self {
-            BarWatch::Finding {
-                window,
-                started: false,
-            } => Some(window),
+            BarWatch::Due { window } => Some(window),
             _ => None,
         }
     }
@@ -731,7 +734,7 @@ impl FollowState {
             kept,
             bar: match self.bar {
                 BarWatch::Subscribed { element, .. } => Some(element),
-                BarWatch::None | BarWatch::Finding { .. } => None,
+                BarWatch::None | BarWatch::Due { .. } | BarWatch::Finding { .. } => None,
             },
         }
     }
@@ -740,23 +743,27 @@ impl FollowState {
     /// `docs/parity/changes-and-selection.md`, "Progress bars that are not
     /// the focus".
     pub fn front(&mut self, front: FrontWindow, applied: &mut Applied) {
-        let finding = |window| BarWatch::Finding {
-            window,
-            started: false,
-        };
         match (self.bar, front) {
-            (BarWatch::None | BarWatch::Finding { .. }, FrontWindow::Left) => {
+            (
+                BarWatch::None | BarWatch::Due { .. } | BarWatch::Finding { .. },
+                FrontWindow::Left,
+            ) => {
                 self.bar = BarWatch::None;
             }
-            (BarWatch::Finding { window: before, .. }, FrontWindow::In(window))
-                if before == window => {}
-            (BarWatch::None | BarWatch::Finding { .. }, FrontWindow::In(window)) => {
-                self.bar = finding(window);
+            (
+                BarWatch::Due { window: before } | BarWatch::Finding { window: before },
+                FrontWindow::In(window),
+            ) if before == window => {}
+            (
+                BarWatch::None | BarWatch::Due { .. } | BarWatch::Finding { .. },
+                FrontWindow::In(window),
+            ) => {
+                self.bar = BarWatch::Due { window };
             }
             (BarWatch::Subscribed { window: before, .. }, FrontWindow::In(window))
                 if before == window => {}
             (BarWatch::Subscribed { element, .. }, FrontWindow::In(window)) => {
-                self.bar = finding(window);
+                self.bar = BarWatch::Due { window };
                 self.withdraw_bar(element, applied);
             }
             (BarWatch::Subscribed { element, .. }, FrontWindow::Left) => {
@@ -776,29 +783,27 @@ impl FollowState {
     /// The element of `window` found by a program, by `element`'s token.
     fn bar_found(&mut self, (window, element): (isize, u64), applied: &mut Applied) {
         match self.bar {
-            BarWatch::Finding {
-                window: finding, ..
-            } if finding == window => {
+            BarWatch::Due { window: sought } | BarWatch::Finding { window: sought }
+                if sought == window =>
+            {
                 self.bar = BarWatch::Subscribed { window, element };
                 applied.subscribe = Some(self.subscription());
             }
             // An earlier lookup's answer, or a window no longer in front.
-            BarWatch::None | BarWatch::Finding { .. } | BarWatch::Subscribed { .. } => {
+            BarWatch::None
+            | BarWatch::Due { .. }
+            | BarWatch::Finding { .. }
+            | BarWatch::Subscribed { .. } => {
                 self.unfollow(std::iter::once(element), applied);
             }
         }
     }
 
-    /// The program finding `window`'s element ended without finding it, or
-    /// was abandoned: only a watch still waiting on that program ends, not
-    /// one for which a new program is still to start.
-    pub fn bar_find_failed(&mut self, window: isize) {
-        if self.bar
-            == (BarWatch::Finding {
-                window,
-                started: true,
-            })
-        {
+    /// A program ended, or was abandoned. One that ends while the watch is
+    /// finding is the lookup ([`BarWatch::Finding`]), and found nothing, as
+    /// its answer would have moved the watch on; any other changes nothing.
+    pub fn bar_program_ended(&mut self) {
+        if matches!(self.bar, BarWatch::Finding { .. }) {
             self.bar = BarWatch::None;
         }
     }
@@ -1359,10 +1364,7 @@ mod tests {
         }
     }
 
-    const FINDING: BarWatch = BarWatch::Finding {
-        window: 10,
-        started: true,
-    };
+    const FINDING: BarWatch = BarWatch::Finding { window: 10 };
     const SUBSCRIBED: BarWatch = BarWatch::Subscribed {
         window: 10,
         element: 7,
@@ -1405,22 +1407,15 @@ mod tests {
         move |follow, applied| follow.bar_found((window, token), applied)
     }
 
-    fn failed(window: isize) -> impl FnOnce(&mut FollowState, &mut Applied) {
-        move |follow, _| follow.bar_find_failed(window)
+    fn ended() -> impl FnOnce(&mut FollowState, &mut Applied) {
+        move |follow, _| follow.bar_program_ended()
     }
 
     #[test]
     fn a_bar_watch_none_finds_an_element_for_a_window_and_ignores_the_rest() {
         assert_eq!(
             after(BarWatch::None, front(FrontWindow::In(10))),
-            (
-                BarWatch::Finding {
-                    window: 10,
-                    started: false
-                },
-                Moved::Not,
-                vec![]
-            )
+            (BarWatch::Due { window: 10 }, Moved::Not, vec![])
         );
         assert_eq!(
             after(BarWatch::None, front(FrontWindow::Left)),
@@ -1431,7 +1426,7 @@ mod tests {
             (BarWatch::None, Moved::Not, vec![7])
         );
         assert_eq!(
-            after(BarWatch::None, failed(10)),
+            after(BarWatch::None, ended()),
             (BarWatch::None, Moved::Not, vec![])
         );
     }
@@ -1444,17 +1439,14 @@ mod tests {
         );
         assert_eq!(after(FINDING, found(11, 8)), (FINDING, Moved::Not, vec![8]));
         assert_eq!(
-            after(FINDING, failed(10)),
+            after(FINDING, ended()),
             (BarWatch::None, Moved::Not, vec![])
         );
-        assert_eq!(after(FINDING, failed(11)), (FINDING, Moved::Not, vec![]));
-        // A lookup asked for again and not yet started waits for its own
-        // program's answer, not an earlier one's.
-        let waiting = BarWatch::Finding {
-            window: 10,
-            started: false,
-        };
-        assert_eq!(after(waiting, failed(10)), (waiting, Moved::Not, vec![]));
+        // A lookup asked for and not yet started waits for its own
+        // program: an earlier program's ending changes nothing, and an
+        // earlier lookup's answer counts only if it is of the same window.
+        let waiting = BarWatch::Due { window: 10 };
+        assert_eq!(after(waiting, ended()), (waiting, Moved::Not, vec![]));
     }
 
     #[test]
@@ -1465,14 +1457,7 @@ mod tests {
         );
         assert_eq!(
             after(FINDING, front(FrontWindow::In(11))),
-            (
-                BarWatch::Finding {
-                    window: 11,
-                    started: false
-                },
-                Moved::Not,
-                vec![]
-            )
+            (BarWatch::Due { window: 11 }, Moved::Not, vec![])
         );
         assert_eq!(
             after(FINDING, front(FrontWindow::Left)),
@@ -1488,14 +1473,7 @@ mod tests {
         );
         assert_eq!(
             after(SUBSCRIBED, front(FrontWindow::In(11))),
-            (
-                BarWatch::Finding {
-                    window: 11,
-                    started: false
-                },
-                Moved::To(None),
-                vec![7]
-            )
+            (BarWatch::Due { window: 11 }, Moved::To(None), vec![7])
         );
         assert_eq!(
             after(SUBSCRIBED, front(FrontWindow::Left)),
@@ -1505,10 +1483,29 @@ mod tests {
             after(SUBSCRIBED, found(10, 8)),
             (SUBSCRIBED, Moved::Not, vec![8])
         );
+        assert_eq!(after(SUBSCRIBED, ended()), (SUBSCRIBED, Moved::Not, vec![]));
+    }
+
+    #[test]
+    fn a_bar_watch_due_moves_with_the_window_and_ends_when_left() {
+        const DUE: BarWatch = BarWatch::Due { window: 10 };
         assert_eq!(
-            after(SUBSCRIBED, failed(10)),
-            (SUBSCRIBED, Moved::Not, vec![])
+            after(DUE, front(FrontWindow::In(10))),
+            (DUE, Moved::Not, vec![])
         );
+        assert_eq!(
+            after(DUE, front(FrontWindow::In(11))),
+            (BarWatch::Due { window: 11 }, Moved::Not, vec![])
+        );
+        assert_eq!(
+            after(DUE, front(FrontWindow::Left)),
+            (BarWatch::None, Moved::Not, vec![])
+        );
+        assert_eq!(
+            after(DUE, found(10, 7)),
+            (SUBSCRIBED, Moved::To(Some(7)), vec![])
+        );
+        assert_eq!(after(DUE, found(11, 8)), (DUE, Moved::Not, vec![8]));
     }
 
     /// Letting go of the bar watch's element follows the same rule as

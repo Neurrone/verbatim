@@ -2915,8 +2915,9 @@ impl Worker<'_> {
     /// can belong to another application. A progress bar the foreground
     /// window's subtree reported may belong to a window of another process,
     /// as a Settings page's content does under its frame: it is judged by
-    /// the window attention names, which also saves the call to find its
-    /// nearest window.
+    /// the window attention names when that window's verdict is UIA, which
+    /// also saves the call to find its nearest window, and otherwise by its
+    /// nearest window, as a classic frame hosting a XAML island needs.
     fn uia_event_window(
         &self,
         event: &UiaEvent,
@@ -2925,7 +2926,8 @@ impl Worker<'_> {
     ) -> Option<isize> {
         let bar_window = (is_progress_change(event) && !of_focus)
             .then(|| self.context.follow(|follow| follow.bar.window()))
-            .flatten();
+            .flatten()
+            .filter(|&window| read::window_uses_uia(self.context, window));
         if event.hwnd != 0 {
             Some(event.hwnd)
         } else if of_focus {

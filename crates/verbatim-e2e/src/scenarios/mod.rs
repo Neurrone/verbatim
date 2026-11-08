@@ -25,6 +25,7 @@ pub(crate) mod demo_terminal_session;
 pub(crate) mod document_keys;
 pub(crate) mod editing;
 pub(crate) mod explorer_folder_window;
+pub(crate) mod foreground_progress_bar;
 pub(crate) mod lock_key_announcements;
 pub(crate) mod measure;
 pub(crate) mod menu_and_settings_dialog;

@@ -563,9 +563,6 @@ struct Current {
     deferred: bool,
     /// What the program has in hand, for the log of its abandonment.
     in_hand: InHand,
-    /// The window whose element it finds, when it is [`Work::FindBar`],
-    /// which its ending answers if it found none.
-    bar_find: Option<isize>,
     /// Whether the user moving on from its window abandons it: not for a
     /// query that is not about the focus, a tree dump or a shell item
     /// query, which is bounded by its deadline alone, as NVDA's watchdog
@@ -1236,9 +1233,7 @@ impl Reducer {
             ..
         } = abandoned;
         let in_hand = current.in_hand;
-        if let Some(window) = current.bar_find {
-            self.facts.follow.bar_find_failed(window);
-        }
+        self.facts.follow.bar_program_ended();
         if let Some(followed) = self.facts.follow.followed.as_mut()
             && followed
                 .owed
@@ -1296,9 +1291,7 @@ impl Reducer {
         let Some(current) = self.flight.end(request) else {
             return;
         };
-        if let Some(window) = current.bar_find {
-            self.facts.follow.bar_find_failed(window);
-        }
+        self.facts.follow.bar_program_ended();
         // A watch the program still holds, because it panicked or returned
         // without its check's result, ends; a query it left unanswered still
         // gets its one reply.
@@ -1404,10 +1397,7 @@ impl Reducer {
                 continue;
             }
             if let Some(window) = self.facts.follow.bar.due() {
-                self.facts.follow.bar = BarWatch::Finding {
-                    window,
-                    started: true,
-                };
+                self.facts.follow.bar = BarWatch::Finding { window };
                 let deadline = self.handling_deadline();
                 self.dispatch(
                     Work::FindBar(window),
@@ -1416,9 +1406,6 @@ impl Reducer {
                     now,
                     effects,
                 );
-                if let Some(current) = self.flight.item_mut() {
-                    current.bar_find = Some(window);
-                }
                 continue;
             }
             if std::mem::take(&mut self.to_drop) {
@@ -1643,7 +1630,6 @@ impl Reducer {
             deferred: false,
             in_hand: InHand::of(&work, window),
             hang_mark: false,
-            bar_find: None,
             moved_on_abandons: !is_query_off_the_focus(&work),
         };
         // A program with no window at dispatch that calls into the

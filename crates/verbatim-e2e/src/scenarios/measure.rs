@@ -375,6 +375,17 @@ fn line_events(name: &str) -> String {
 /// a pipe and its lines setting the events of [`line_events`], and waits
 /// for it to take the foreground. Returns its process id.
 fn open_mockapp(scenario: &mut Scenario, name: &str, fixture: &str) -> u32 {
+    open_mockapp_with(scenario, name, fixture, &[])
+}
+
+/// [`open_mockapp`], its root counting UIA's event registrations, for
+/// mockapp's `await-advised`.
+pub(super) fn open_mockapp_counting(scenario: &mut Scenario, name: &str, fixture: &str) -> u32 {
+    open_mockapp_with(scenario, name, fixture, &["--count-registrations"])
+}
+
+/// [`open_mockapp`] with `extra` on mockapp's command line.
+fn open_mockapp_with(scenario: &mut Scenario, name: &str, fixture: &str, extra: &[&str]) -> u32 {
     let directory = scenario.run_directory().to_owned();
     let title = harness_marker(name);
     let path = scenario.harness_file(name, "json");
@@ -383,7 +394,7 @@ fn open_mockapp(scenario: &mut Scenario, name: &str, fixture: &str) -> u32 {
         .write_agent_file(&path, fixture.replace("{title}", &title).as_bytes())
         .expect("writes mockapp's fixture");
     let events = line_events(name);
-    let args = [
+    let args: Vec<String> = [
         "--fixture",
         &path,
         "--backend",
@@ -394,7 +405,10 @@ fn open_mockapp(scenario: &mut Scenario, name: &str, fixture: &str) -> u32 {
         "--line-events",
         &events,
     ]
-    .map(str::to_owned);
+    .iter()
+    .chain(extra)
+    .map(|arg| (*arg).to_owned())
+    .collect();
     scenario
         .launch_titled_with_stdin(&format!(r"{directory}\mockapp.exe"), &args, &title, &output)
         .expect("opens the mockapp window")
@@ -403,7 +417,7 @@ fn open_mockapp(scenario: &mut Scenario, name: &str, fixture: &str) -> u32 {
 
 /// Writes `command` to the mockapp window `name`, process `pid`, and waits
 /// for mockapp's acknowledgement that it took effect.
-fn apply_to_mockapp(scenario: &mut Scenario, (name, pid): (&str, u32), command: &str) {
+pub(super) fn apply_to_mockapp(scenario: &mut Scenario, (name, pid): (&str, u32), command: &str) {
     let applied = format!("{}applied", line_events(name));
     scenario
         .create_event(&applied)

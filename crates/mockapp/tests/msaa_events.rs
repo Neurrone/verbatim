@@ -771,21 +771,77 @@ fn a_help_balloon_shown_is_spoken() {
 }
 
 /// A show event from a native UIA window is dropped, as NVDA drops every
-/// `WinEvent` of a window it reads through UIA: the same event from the
-/// help balloon's window read through MSAA is spoken
-/// ([`a_help_balloon_shown_is_spoken`]).
+/// `WinEvent` of a window it reads through UIA, though the window's client
+/// object answers MSAA as a help balloon, which is spoken from a window
+/// read through MSAA ([`a_help_balloon_shown_is_spoken`]).
 fn a_show_from_a_native_uia_window_says_nothing() {
+    use windows::Win32::UI::WindowsAndMessaging::OBJID_CLIENT;
     common::init_com();
     let title = common::unique_title("mockapp-uia-show");
-    let app = common::spawn("tree_view.json", "uia", &title);
+    let app = common::spawn("uia_help_balloon_client.json", "uia", &title);
     let hwnd = common::find_window(&title).0 as isize;
     let outpost = OutpostUnderTest::new(&app);
 
     outpost.deliver(DeliveredFact::Show {
         hwnd,
-        id_object: 6,
+        id_object: OBJID_CLIENT.0,
         id_child: 0,
     });
+    outpost.settled();
+    app.quit();
+}
+
+/// The child window of a `ToastChildWindowClass` parent, as mockapp makes it
+/// (`child-window`), with its MSAA alert as the listener forwards it.
+fn toast_alert(app: &mut common::MockApp, title: &str) -> DeliveredFact {
+    use windows::Win32::UI::WindowsAndMessaging::{FindWindowExW, OBJID_CLIENT};
+    let hwnd = common::find_window(title);
+    app.send("child-window");
+    // SAFETY: a local search of the window's children.
+    let child = unsafe { FindWindowExW(Some(hwnd), None, None, None) }
+        .expect("mockapp made the child window");
+    DeliveredFact::Alert {
+        hwnd: child.0 as isize,
+        id_object: OBJID_CLIENT.0,
+        id_child: 0,
+    }
+}
+
+/// An MSAA alert from a child of a `ToastChildWindowClass` parent is
+/// reported, from any application, as a toast's alert is, when its window is
+/// read through MSAA.
+fn an_alert_from_a_toast_window_is_reported() {
+    common::init_com();
+    let title = common::unique_title("mockapp-msaa-toast");
+    let mut app = common::spawn("toast_host.json", "msaa", &title);
+    let outpost = OutpostUnderTest::new(&app);
+
+    let alert = toast_alert(&mut app, &title);
+    outpost.deliver(alert);
+    let NormalizedEvent::Alert { node, origin } = next_event(&outpost) else {
+        panic!("the toast's alert");
+    };
+    assert_eq!(
+        (node.name.as_deref(), origin),
+        (
+            Some("Download complete"),
+            verbatim_model::AlertOrigin::MsaaAlert
+        )
+    );
+    outpost.settled();
+    app.quit();
+}
+
+/// The same alert from a native UIA window, whose client object answers MSAA
+/// as the one above does, is dropped.
+fn an_alert_from_a_native_uia_toast_window_says_nothing() {
+    common::init_com();
+    let title = common::unique_title("mockapp-uia-toast");
+    let mut app = common::spawn("toast_host.json", "uia", &title);
+    let outpost = OutpostUnderTest::new(&app);
+
+    let alert = toast_alert(&mut app, &title);
+    outpost.deliver(alert);
     outpost.settled();
     app.quit();
 }
@@ -1750,6 +1806,14 @@ fn main() {
         (
             "a_show_from_a_native_uia_window_says_nothing",
             a_show_from_a_native_uia_window_says_nothing,
+        ),
+        (
+            "an_alert_from_a_toast_window_is_reported",
+            an_alert_from_a_toast_window_is_reported,
+        ),
+        (
+            "an_alert_from_a_native_uia_toast_window_says_nothing",
+            an_alert_from_a_native_uia_toast_window_says_nothing,
         ),
         (
             "a_progress_bar_off_the_focus_indicates_its_percentage",
