@@ -5,10 +5,10 @@
 use verbatim_core::{ReducerRecorder, SrState, replay};
 use verbatim_model::protocol::{QueryOutcome, QueryResult};
 use verbatim_model::{
-    Backend, Earcon, EarlierElement, Effect, FetchResult, FocusGroup, Input, NodeDetails, NodeId,
-    NodeSnapshot, NormalizedEvent, OutpostId, Phrase, Pid, PropertyChange, QueryId, QueryKind,
-    Role, SegmentContent, SpeechPriority, State, StateSet, TraceId, Utterance, UtteranceSegment,
-    WindowFacts, WindowHandle,
+    AlertOrigin, Backend, Earcon, EarlierElement, Effect, FetchResult, FocusGroup, Input,
+    NodeDetails, NodeId, NodeSnapshot, NormalizedEvent, OutpostId, Phrase, Pid, PropertyChange,
+    QueryId, QueryKind, Role, SegmentContent, SpeechPriority, State, StateSet, ToastId, TraceId,
+    Utterance, UtteranceSegment, WindowFacts, WindowHandle,
 };
 
 /// The outpost standing for application `source` in these tests: one per
@@ -5593,8 +5593,86 @@ fn toast_in(source: Pid, facts: WindowFacts) -> Input {
                 None,
                 StateSet::new(),
             ),
+            origin: AlertOrigin::MsaaAlert,
         },
     )
+}
+
+/// A Windows toast of identity `id`, read from the window-opened event of
+/// another application, observed at `at_us`.
+fn windows_toast(id: u64, at_us: u64) -> Input {
+    observed_at(
+        event_in(
+            Pid(2),
+            Some(window(20)),
+            NormalizedEvent::Alert {
+                node: node(
+                    9,
+                    Role::Window,
+                    Some("Download complete"),
+                    None,
+                    StateSet::new(),
+                ),
+                origin: AlertOrigin::ToastWindowOpened(ToastId(id)),
+            },
+        ),
+        at_us,
+    )
+}
+
+/// The toast's speech, queued, as a toast is spoken.
+fn toast_speech() -> Vec<Heard> {
+    vec![queued(vec![
+        UtteranceSegment::label("Download complete"),
+        role(Role::Window),
+    ])]
+}
+
+/// A toast is spoken and recorded. The same toast within a second is
+/// dropped, leaving the record, so a third is measured from the spoken one:
+/// at exactly one second from it the toast is spoken, even with a dropped
+/// one half a second before.
+#[test]
+fn a_toast_within_a_second_of_the_one_spoken_is_dropped() {
+    let (state, first) = reduce(
+        &switch_to(&SrState::new(), Pid(1)),
+        &windows_toast(1, 1_000_000),
+    );
+    assert_eq!(heard(&first), toast_speech());
+    let (state, repeat) = reduce(&state, &windows_toast(1, 1_500_000));
+    assert_eq!(heard(&repeat), Vec::<Heard>::new());
+    let (_, later) = reduce(&state, &windows_toast(1, 2_000_000));
+    assert_eq!(heard(&later), toast_speech());
+}
+
+/// Another toast within a second is spoken and replaces the record: the
+/// first toast again is not a repeat of the one spoken last.
+#[test]
+fn another_toast_within_a_second_is_spoken_and_replaces_the_record() {
+    let (state, _) = reduce(
+        &switch_to(&SrState::new(), Pid(1)),
+        &windows_toast(1, 1_000_000),
+    );
+    let (state, other) = reduce(&state, &windows_toast(2, 1_100_000));
+    assert_eq!(heard(&other), toast_speech());
+    let (_, first_again) = reduce(&state, &windows_toast(1, 1_200_000));
+    assert_eq!(heard(&first_again), toast_speech());
+}
+
+/// An MSAA alert is spoken and leaves the toast record.
+#[test]
+fn an_msaa_alert_leaves_the_toast_record() {
+    let (state, _) = reduce(
+        &switch_to(&SrState::new(), Pid(1)),
+        &windows_toast(1, 1_000_000),
+    );
+    let (state, alert) = reduce(
+        &state,
+        &observed_at(toast_in(Pid(2), window(20)), 1_100_000),
+    );
+    assert_eq!(heard(&alert), toast_speech());
+    let (_, repeat) = reduce(&state, &windows_toast(1, 1_200_000));
+    assert_eq!(heard(&repeat), Vec::<Heard>::new());
 }
 
 #[test]

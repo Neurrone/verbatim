@@ -770,6 +770,26 @@ fn a_help_balloon_shown_is_spoken() {
     app.quit();
 }
 
+/// A show event from a native UIA window is dropped, as NVDA drops every
+/// `WinEvent` of a window it reads through UIA: the same event from the
+/// help balloon's window read through MSAA is spoken
+/// ([`a_help_balloon_shown_is_spoken`]).
+fn a_show_from_a_native_uia_window_says_nothing() {
+    common::init_com();
+    let title = common::unique_title("mockapp-uia-show");
+    let app = common::spawn("tree_view.json", "uia", &title);
+    let hwnd = common::find_window(&title).0 as isize;
+    let outpost = OutpostUnderTest::new(&app);
+
+    outpost.deliver(DeliveredFact::Show {
+        hwnd,
+        id_object: 6,
+        id_child: 0,
+    });
+    outpost.settled();
+    app.quit();
+}
+
 /// Has mockapp, running the small fixture with its MSAA provider, raise a
 /// focus event on `btn1` (`focus`), and returns the fact the focus
 /// listener forwards for it with the thread that raised it and when, as a
@@ -1726,6 +1746,10 @@ fn main() {
         (
             "a_help_balloon_shown_is_spoken",
             a_help_balloon_shown_is_spoken,
+        ),
+        (
+            "a_show_from_a_native_uia_window_says_nothing",
+            a_show_from_a_native_uia_window_says_nothing,
         ),
         (
             "a_progress_bar_off_the_focus_indicates_its_percentage",

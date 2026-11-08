@@ -359,7 +359,8 @@ subscriptions".
   their reads are counted in `Registration::failed_reads()`.
   `.extended()` marks a part held only by the extended groups,
   `.text_events()` one that delivers text or caret changes, and
-  `.value_only()` one held by the value group alone.
+  `.value_only()` one held by the value group alone, and
+  `.range_value_only()` one held by `Group::RangeValue` alone.
 - A `Group` is NVDA's `Base` (every part not marked extended) or
   `Extended` (every part), or `ExtendedWithoutTextEvents`, every part but
   the text events, for an element whose text and caret changes reach the

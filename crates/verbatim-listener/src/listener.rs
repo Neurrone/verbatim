@@ -134,7 +134,7 @@ use windows::Win32::System::Threading::{
 };
 use windows::Win32::UI::Accessibility::{
     NotificationKind, NotificationProcessing, UIA_MenuOpenedEventId,
-    UIA_SelectionItem_ElementSelectedEventId,
+    UIA_SelectionItem_ElementSelectedEventId, UIA_Window_WindowOpenedEventId,
 };
 
 use verbatim_ia2::{LISTENER_SUBSCRIPTIONS, WinEvent, WinEventKind};
@@ -142,7 +142,7 @@ use verbatim_model::{Notification, OutpostId, Pid, TraceId};
 use verbatim_process::scheduling::{ThreadPriority, prioritize_role};
 use verbatim_process::transport::{Backlog, ChildIo, SendError, Sender, Served, Serving};
 use verbatim_uia::map::{
-    CachedUiaParts, ignores_notifications, notification_kind_from_uia,
+    CachedUiaParts, ignores_notifications, is_toast, notification_kind_from_uia,
     notification_processing_from_uia,
 };
 use verbatim_uia::{
@@ -1706,6 +1706,7 @@ fn install_desktop_subscriptions(
 ) -> Option<Registration> {
     let selection = selection_subscription(outgoing, readers);
     let notifications = notification_subscription(outgoing, readers);
+    let toasts = toast_subscription(outgoing, readers);
     // NVDA's base cache request, as its global group carries, with what
     // refines a role (`ListenerEvent`): UIA fills only these in the
     // application for each event, and for an element selected also what
@@ -1716,6 +1717,7 @@ fn install_desktop_subscriptions(
         Part::shaped::<ListenerSelection>(selection),
         Part::shaped(menu),
         Part::shaped(notifications),
+        Part::shaped(toasts),
     ];
     match Registration::with_parts(parts, Scope::Desktop) {
         Ok(registration) => Some(registration),
@@ -1808,6 +1810,45 @@ fn notification_subscription(
                 }
             },
         ),
+    }
+}
+
+/// The desktop-wide subscription to UIA window openings, kept only for a
+/// Windows toast by NVDA's rule ([`is_toast`]), which goes through its
+/// application's reading thread as a notification does, so that its reading
+/// is ordered with the application's other events and dropped from a hung
+/// window. It runs once per window opened anywhere and wakes nothing else
+/// unless the window is a toast: the rule reads the event's cache and, for a
+/// window whose control type and automation id pass, its window class by a
+/// local call.
+fn toast_subscription(
+    outgoing: &Arc<Outgoing>,
+    readers: &Arc<Readers<UiaFocusReading>>,
+) -> Subscription<Cached<ListenerEvent>> {
+    let outgoing = Arc::clone(outgoing);
+    let readers = Arc::clone(readers);
+    Subscription::Event {
+        event: UIA_Window_WindowOpenedEventId,
+        callback: Arc::new(move |sender: &Cached<ListenerEvent>| {
+            let fields = sender.read();
+            if !is_toast(
+                fields.role.control_type,
+                fields.automation_id.as_deref(),
+                || window_class_name(fields.role.hwnd),
+            ) {
+                return;
+            }
+            if let Some((hwnd, snapshot)) = capture(sender, &fields) {
+                queue_for_reading(
+                    &outgoing,
+                    &readers,
+                    sender,
+                    &fields,
+                    FocusEvent::Toast,
+                    Some(DeliveredFact::UiaToast { hwnd, snapshot }),
+                );
+            }
+        }),
     }
 }
 
@@ -2734,6 +2775,26 @@ mod tests {
         assert_eq!(
             *asked.lock().unwrap_or_else(PoisonError::into_inner),
             [desktop_window(), desktop_window()]
+        );
+    }
+
+    /// A window opened that is not a toast by NVDA's rule costs only the
+    /// callback: no marker is sent and nothing is queued.
+    #[test]
+    fn a_window_opened_that_is_no_toast_is_not_read() {
+        let uia = verbatim_uia::Uia::new().expect("a UIA client");
+        let opened = desktop_sender::<ListenerEvent>(&uia);
+        let asked = Arc::new(Mutex::new(Vec::new()));
+        let (outgoing, readers, sent) = listening(|_| Readability::Hung, &asked);
+        let Subscription::Event { callback, .. } = toast_subscription(&outgoing, &readers) else {
+            unreachable!("the window-opened subscription");
+        };
+        callback(&opened);
+        drop(callback);
+        assert_eq!(facts_once_stopped(&outgoing, readers, &sent), []);
+        assert_eq!(
+            *asked.lock().unwrap_or_else(PoisonError::into_inner),
+            Vec::<isize>::new()
         );
     }
 

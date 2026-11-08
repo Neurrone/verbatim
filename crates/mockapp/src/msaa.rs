@@ -222,6 +222,7 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
             let index = set_value(tree, &id, text).ok_or_else(|| unknown(&id))?;
             notify(hwnd, EVENT_OBJECT_VALUECHANGE, index);
         }
+        Command::SetRange(..) => return Err("set-range is the UIA backend's".to_owned()),
         Command::ClientName(text) => {
             tree.lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)

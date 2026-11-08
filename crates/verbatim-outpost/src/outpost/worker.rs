@@ -44,7 +44,7 @@ use verbatim_model::{
     StateSet, TextOp, TextPoint, TextReply, TraceId, WindowFacts, WindowHandle,
 };
 use verbatim_uia::{
-    Cached, Fill, HelpTextRefresh, Interning as _, Kept, SelectedItem, SuggestionsRefresh,
+    Cached, Fill, HelpTextRefresh, Interning as _, Kept, Place, SelectedItem, SuggestionsRefresh,
     nearest_window_handle,
 };
 use windows::Win32::UI::Accessibility::{
@@ -57,6 +57,7 @@ use verbatim_model::protocol::{
     DeliveredFact, EventTiming, FocusNow, FocusPurpose, FocusedControl, OutpostToCore, Query,
     QueryOutcome, QueryResult, RequestId, UiaFocusRead, UiaSnapshotFact,
 };
+use verbatim_model::{AlertOrigin, ProgressReading, ToastId};
 use verbatim_process::clock::now_us;
 
 use super::commit::{Committed, Effects, FocusEffects, FollowWrites, KeptTarget, Stale, Target};
@@ -349,6 +350,9 @@ fn run_job(context: &Arc<Context>, client: &mut Client, job: Job, charge: &Arc<C
             Worker::new(&request_context, client, 0, EventTiming::default()).attempt_owed(owed);
         }
         Work::Drop => {}
+        Work::FindBar(window) => {
+            Worker::new(&request_context, client, 0, EventTiming::default()).find_bar(window);
+        }
         Work::PollRead => {
             request_context.judge_at(context.observed_now());
             let timing = EventTiming {
@@ -428,7 +432,7 @@ fn named_window(context: &RequestContext<'_>, work: &Work) -> Option<Window> {
         Work::PollRead => context
             .follow(|follow| follow.watch.open().map(|open| open.node_id))
             .and_then(|node| node_window(context, node)),
-        Work::Drop | Work::Finish { .. } => None,
+        Work::Drop | Work::Finish { .. } | Work::FindBar(_) => None,
     }
 }
 
@@ -477,6 +481,7 @@ fn describe(work: &Work) -> String {
         Work::Owed(owed) => format!("owed work of {:?}", owed.node),
         Work::Drop => "drop".to_owned(),
         Work::PollRead => "the console poll's read".to_owned(),
+        Work::FindBar(window) => format!("the foreground window {window:#x}'s element"),
         Work::Finish { cut, .. } => format!("the finish of a caret read of {:?}", cut.node),
     }
 }
@@ -638,6 +643,28 @@ fn event_name_of(kind: WinEventKind) -> Option<EventName> {
     })
 }
 
+/// A toast's identity for Core's repeat rule: a hash of its runtime id, with
+/// `DefaultHasher`'s fixed keys, so a repeat of the same toast hashes alike.
+fn toast_id(runtime_id: &[i32]) -> ToastId {
+    use std::hash::{Hash as _, Hasher as _};
+    let mut hasher = std::hash::DefaultHasher::new();
+    runtime_id.hash(&mut hasher);
+    ToastId(hasher.finish())
+}
+
+/// Whether `event` is a progress bar's range value change, which is reported
+/// as a progress bar's rather than as a value change.
+fn is_progress_change(event: &UiaEvent) -> bool {
+    is_progress_change_of(&event.kind, event.parts.role)
+}
+
+/// Whether a UIA event of `kind` on an element of `role` is a progress bar's
+/// range value change.
+fn is_progress_change_of(kind: &UiaKind, role: Role) -> bool {
+    role == Role::ProgressBar
+        && matches!(kind, UiaKind::Property(id) if *id == UIA_RangeValueValuePropertyId.0)
+}
+
 /// The name NVDA's acceptance test knows a UIA event of `kind` by, or `None`
 /// for one it does not test: a notification and an active text position,
 /// which NVDA's handlers for them never test (`UIAHandler/__init__.py`
@@ -659,7 +686,7 @@ fn uia_event_name(kind: &UiaKind) -> Option<EventName> {
         UiaKind::Selection => Some(EventName::Selection),
         UiaKind::TextSelection => Some(EventName::Caret),
         UiaKind::TextChanged => Some(EventName::TextChange),
-        UiaKind::Notification(_) | UiaKind::ActiveTextPosition(_) => None,
+        UiaKind::Notification(_) | UiaKind::Toast | UiaKind::ActiveTextPosition(_) => None,
     }
 }
 
@@ -2776,30 +2803,15 @@ impl Worker<'_> {
             drop(element);
             return;
         }
-        // The event's window: its own, else the recorded window of the focus
-        // it concerns, else its element's. Never the system's focus window,
-        // which can belong to another application.
         let of_focus = self.context.focused() == Some(Object::Uia(event.parts.runtime_id.clone()));
-        let hwnd = if event.hwnd != 0 {
-            Some(event.hwnd)
-        } else if of_focus {
-            self.context.tracked_window()
-        } else if event.focus_window != 0 && element.is_none() {
-            // A windowless selection's nearest window, which the listener's
-            // reading thread walked up to (`FocusReader::check_fact`).
-            Some(event.focus_window)
-        } else {
-            element
-                .as_ref()
-                .and_then(|element| nearest_window_handle(element.live().element()))
-        };
+        let hwnd = self.uia_event_window(&event, of_focus, element.as_ref());
         // NVDA neither arbitrates nor tests a notification against the
         // foreground: it is spoken only from the focus's application, which
         // Core judges. NVDA's app module does drop one whose element has no
         // window above it, which is not ported yet (roadmap, the audits'
         // items). A terminal's were ignored by the listener
         // (`verbatim_uia::map::ignores_notifications`).
-        if !matches!(event.kind, UiaKind::Notification(_)) {
+        if !matches!(event.kind, UiaKind::Notification(_) | UiaKind::Toast) {
             if let Some(hwnd) = hwnd
                 && read::own_window_verdict(self.context, hwnd) != Some(true)
             {
@@ -2864,10 +2876,16 @@ impl Worker<'_> {
         // child window another process serves
         // (`docs/design/cross-process-calls-study.md`, instance 3).
         let mut node = Self::uia_node(self.context, &event.parts, element.as_ref());
-        if matches!(event.kind, UiaKind::Selection) {
+        if matches!(event.kind, UiaKind::Selection | UiaKind::Toast) {
             crate::gates::leave_out_unreported(&mut node.details, &self.context.fetches());
         }
         let normalized = match event.kind {
+            UiaKind::Property(_) if is_progress_change_of(&event.kind, node.role) => {
+                let Some(bar) = self.progress_reading(element.as_ref(), node) else {
+                    return;
+                };
+                NormalizedEvent::ProgressChanged { bar }
+            }
             UiaKind::Property(id) => {
                 let refreshed = refreshed_for(self.client.uia(), id, element.as_ref());
                 let Some(normalized) = property_event(id, node, refreshed.as_ref()) else {
@@ -2880,11 +2898,71 @@ impl Worker<'_> {
                 node_id: node.id,
                 notification,
             },
+            UiaKind::Toast => NormalizedEvent::Alert {
+                origin: AlertOrigin::ToastWindowOpened(toast_id(&event.parts.runtime_id)),
+                node,
+            },
             UiaKind::TextSelection | UiaKind::TextChanged | UiaKind::ActiveTextPosition(_) => {
                 return;
             }
         };
         self.emit(trace, observed_at_us, Backend::Uia, hwnd, normalized);
+    }
+
+    /// The window of the UIA event `event`, which is of the focus when
+    /// `of_focus`: its own, else the recorded window of the focus it
+    /// concerns, else its element's. Never the system's focus window, which
+    /// can belong to another application. A progress bar the foreground
+    /// window's subtree reported may belong to a window of another process,
+    /// as a Settings page's content does under its frame: it is judged by
+    /// the window attention names, which also saves the call to find its
+    /// nearest window.
+    fn uia_event_window(
+        &self,
+        event: &UiaEvent,
+        of_focus: bool,
+        element: Option<&Cached<Kept>>,
+    ) -> Option<isize> {
+        let bar_window = (is_progress_change(event) && !of_focus)
+            .then(|| self.context.follow(|follow| follow.bar.window()))
+            .flatten();
+        if event.hwnd != 0 {
+            Some(event.hwnd)
+        } else if of_focus {
+            self.context.tracked_window()
+        } else if bar_window.is_some() {
+            bar_window
+        } else if event.focus_window != 0 && element.is_none() {
+            // A windowless selection's nearest window, which the listener's
+            // reading thread walked up to (`FocusReader::check_fact`).
+            Some(event.focus_window)
+        } else {
+            element.and_then(|element| nearest_window_handle(element.live().element()))
+        }
+    }
+
+    /// A UIA progress bar's change as its report uses it: its value and
+    /// states from the event's cache (`node`), and where it is on the screen
+    /// and whether it is off it, one call, as a progress bar's report needs
+    /// them and an event's cache never holds them (`verbatim_uia::Place`).
+    fn progress_reading(
+        &mut self,
+        element: Option<&Cached<Kept>>,
+        node: NodeSnapshot,
+    ) -> Option<ProgressReading> {
+        let element = element?;
+        let uia = self.client.uia()?;
+        let place = uia
+            .request_fixed::<Place>()
+            .and_then(|request| element.live().refresh(&request))
+            .ok()?;
+        let place = place.read();
+        Some(ProgressReading {
+            id: node.id,
+            value: node.value,
+            offscreen: place.offscreen,
+            rect: place.rect,
+        })
     }
 
     /// A UIA text change of the text focus whose runtime id it carries: it
@@ -3204,6 +3282,17 @@ impl Worker<'_> {
                 trace,
                 observed_at_us,
             ),
+            DeliveredFact::UiaToast { hwnd, snapshot } => self.uia_event(
+                UiaEvent {
+                    kind: UiaKind::Toast,
+                    parts: snapshot,
+                    hwnd,
+                    focus_window: 0,
+                    element: None,
+                },
+                trace,
+                observed_at_us,
+            ),
             DeliveredFact::Alert {
                 hwnd,
                 id_object,
@@ -3244,8 +3333,9 @@ impl Worker<'_> {
         // NVDA accepts a show event by its window's class alone, whatever
         // the foreground; the hook that took this one, the outpost's own or
         // the focus listener's, took it only from a tooltip window
-        // (`verbatim_ia2::hook`), so it passes.
-        if !self.readable(hwnd) {
+        // (`verbatim_ia2::hook`), so it passes. Its object from a native UIA
+        // window is dropped, as NVDA drops every `WinEvent` of one.
+        if !self.readable(hwnd) || read::window_uses_uia(self.context, hwnd) {
             return;
         }
         let Some(mut object) = verbatim_ia2::acquire::event_object(hwnd, id_object, id_child)
@@ -3261,7 +3351,10 @@ impl Worker<'_> {
             observed_at_us,
             Backend::Msaa,
             Some(hwnd),
-            NormalizedEvent::Alert { node },
+            NormalizedEvent::Alert {
+                node,
+                origin: AlertOrigin::MsaaAlert,
+            },
         );
     }
 
@@ -3285,7 +3378,9 @@ impl Worker<'_> {
         if super::window::parent_class(hwnd).as_deref() != Some("ToastChildWindowClass") {
             return;
         }
-        if !self.readable(hwnd) {
+        // Its object from a native UIA window is dropped, as NVDA drops
+        // every `WinEvent` of one (`docs/parity/alerts.md`, "Toasts").
+        if !self.readable(hwnd) || read::window_uses_uia(self.context, hwnd) {
             return;
         }
         let Some(node) = verbatim_ia2::acquire::snapshot_from_event(
@@ -3302,8 +3397,35 @@ impl Worker<'_> {
             observed_at_us,
             Backend::Msaa,
             Some(hwnd),
-            NormalizedEvent::Alert { node },
+            NormalizedEvent::Alert {
+                node,
+                origin: AlertOrigin::MsaaAlert,
+            },
         );
+    }
+
+    /// Finds the foreground window's element, for its progress bars
+    /// (`docs/parity/changes-and-selection.md`, "Progress bars that are not
+    /// the focus"): one call. The element is committed, under a token the
+    /// shell gives it; a window with no element commits nothing, and the
+    /// program's ending answers the lookup.
+    fn find_bar(&mut self, window: isize) {
+        let Some(uia) = self.client.uia() else {
+            return;
+        };
+        let element = uia
+            .request_fixed::<Kept>()
+            .and_then(|request| uia.any_window_element::<Kept>(window, &request))
+            .and_then(|element| element.agile());
+        match element {
+            Ok(element) => {
+                self.commit(Effects {
+                    bar_found: Some((window, element)),
+                    ..Effects::default()
+                });
+            }
+            Err(error) => tracing::debug!(%error, window, "the foreground window's element"),
+        }
     }
 
     /// A foreground change: reported at once, named or not, as a focus on

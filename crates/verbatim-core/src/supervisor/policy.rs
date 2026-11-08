@@ -421,6 +421,7 @@ pub fn may_start_outpost(fact: &DeliveredFact) -> bool {
         | DeliveredFact::MsaaFocus { .. }
         | DeliveredFact::Foreground { .. }
         | DeliveredFact::MenuPopup { .. }
+        | DeliveredFact::UiaToast { .. }
         | DeliveredFact::Alert { .. }
         | DeliveredFact::Show { .. } => true,
     }

@@ -4172,9 +4172,50 @@ fn a_return_with_two_focus_events_of_one_element_is_spoken_once() {
     app.quit();
 }
 
+/// The foreground window's progress bars: subscribed by its outpost when
+/// Core says the window is in front, and only a progress bar's range value
+/// change reported, as a progress change, once the role test on the callback
+/// has passed. Withdrawn when attention leaves.
+fn a_foreground_windows_progress_bar_is_reported_until_attention_leaves() {
+    use verbatim_model::protocol::FrontWindow;
+    let title = common::unique_title("mockapp-progress-bar");
+    let mut app = common::spawn("progress.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let outpost = OutpostUnderTest::new(&app);
+    outpost.set_foreground(hwnd);
+
+    outpost.front(FrontWindow::In(hwnd.0 as isize));
+    outpost.settle();
+    // Not a progress bar: dropped on the callback.
+    app.send("set-range level 2");
+    app.send("set-range bar 40");
+    let OutpostToCore::Event { event, .. } = outpost.next() else {
+        panic!("the progress bar's report");
+    };
+    let NormalizedEvent::ProgressChanged { bar } = event else {
+        panic!("a progress change, not {event:?}");
+    };
+    assert_eq!(
+        (bar.value.as_deref(), bar.offscreen),
+        (Some("40"), false),
+        "its value and that it is on the screen"
+    );
+    outpost.settled();
+
+    outpost.front(FrontWindow::Left);
+    outpost.settle();
+    app.send("set-range bar 50");
+    outpost.settled();
+    app.quit();
+}
+
 #[expect(clippy::too_many_lines, reason = "one entry per test")]
 fn main() {
     harness::run_isolated(&[
+        (
+            "a_foreground_windows_progress_bar_is_reported_until_attention_leaves",
+            a_foreground_windows_progress_bar_is_reported_until_attention_leaves,
+        ),
         (
             "a_fake_focus_on_an_msaa_object_without_the_focused_state_answers_nothing",
             a_fake_focus_on_an_msaa_object_without_the_focused_state_answers_nothing,

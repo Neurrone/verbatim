@@ -463,6 +463,15 @@ pub enum DeliveredFact {
         /// The notification.
         notification: Notification,
     },
+    /// A Windows toast opening, as the focus listener's desktop-wide
+    /// window-opened subscription keeps one (`docs/parity/alerts.md`,
+    /// "Toasts"): read on the application's reading thread as a selection is.
+    UiaToast {
+        /// The toast's native window handle.
+        hwnd: isize,
+        /// The toast as its reading thread read it.
+        snapshot: UiaSnapshotFact,
+    },
     /// An MSAA alert (`EVENT_SYSTEM_ALERT`): the raw `WinEvent` address.
     Alert {
         /// The event's window handle.
@@ -592,6 +601,9 @@ impl DeliveredFact {
             DeliveredFact::UiaSelection { snapshot, .. } => {
                 FactKey::UiaSelection(snapshot.runtime_id.clone())
             }
+            DeliveredFact::UiaToast { snapshot, .. } => {
+                FactKey::UiaToast(snapshot.runtime_id.clone())
+            }
             DeliveredFact::Alert {
                 hwnd,
                 id_object,
@@ -625,10 +637,22 @@ pub enum FactKey {
         NotificationProcessing,
         Option<String>,
     ),
+    /// A toast of this runtime id.
+    UiaToast(Vec<i32>),
     /// An MSAA alert at this address, raised by this thread.
     Alert(isize, i32, i32, u32),
     /// A tooltip shown at this address, raised by this thread.
     Show(isize, i32, i32, u32),
+}
+
+/// Where attention is, for one outpost ([`CoreToOutpost::Front`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FrontWindow {
+    /// Its application holds attention, with this foreground window; a
+    /// change between two windows of the application is one more of these.
+    In(isize),
+    /// Its application no longer holds attention.
+    Left,
 }
 
 /// Messages from verbatim.exe to an outpost.
@@ -702,6 +726,12 @@ pub enum CoreToOutpost {
         #[serde(default)]
         sent_at_us: u64,
     },
+    /// Where the user's attention is, as it concerns this outpost's
+    /// application (`docs/parity/changes-and-selection.md`, "Progress bars
+    /// that are not the focus"): sent when attention changes and to an
+    /// outpost that starts while its application is attended; Core owns
+    /// attention, and the outpost judges nothing of it.
+    Front(FrontWindow),
     /// The details the active theme wants read for each node
     /// (`SrState::fetches` in `verbatim-core`): a detail whose indication
     /// is off is not read, which saves its cross-process call. Sent when an
@@ -806,7 +836,7 @@ impl CoreToOutpost {
             | CoreToOutpost::Shutdown
             | CoreToOutpost::ForwardingEnded { .. } => Kind::Lifecycle,
             CoreToOutpost::DeliverFact { .. } | CoreToOutpost::LiveReread { .. } => Kind::Routed,
-            CoreToOutpost::Fetches(_) => Kind::Configuration,
+            CoreToOutpost::Fetches(_) | CoreToOutpost::Front(_) => Kind::Configuration,
         }
     }
 }
@@ -1640,7 +1670,7 @@ impl Named {
                 }
                 self.focus_text(text.as_deref());
             }
-            NormalizedEvent::SelectionChanged { node } | NormalizedEvent::Alert { node } => {
+            NormalizedEvent::SelectionChanged { node } | NormalizedEvent::Alert { node, .. } => {
                 self.node(node);
             }
             NormalizedEvent::ProgressChanged { bar } => self.nodes.push(bar.id),

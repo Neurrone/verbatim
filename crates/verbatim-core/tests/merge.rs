@@ -178,6 +178,7 @@ impl Other {
             Other::Alert => {
                 let message = report(NormalizedEvent::Alert {
                     node: node(9, Role::Alert, "Saved", StateSet::new()),
+                    origin: verbatim_model::AlertOrigin::MsaaAlert,
                 });
                 let input = event_input(SOURCE, message.clone());
                 (message, input)
@@ -494,6 +495,7 @@ fn an_alert_merged_is_the_newer_alert() {
     let alert = |name: &str| {
         report(NormalizedEvent::Alert {
             node: node(7, Role::Alert, name, StateSet::new()),
+            origin: verbatim_model::AlertOrigin::MsaaAlert,
         })
     };
     equivalent(

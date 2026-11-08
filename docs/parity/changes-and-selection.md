@@ -262,11 +262,36 @@ place, and the value is not spoken; an off-screen or invisible progress
 bar, or one whose value is no number, is an ordinary value change.
 Different: a theme that reports the indication as speech speaks it at
 the same one-percent interval, where NVDA's speech mode speaks every
-ten percent. A UIA progress bar is reported only while it is the focus,
-since UIA's property events are followed on the focus alone
-(`docs/parity/backends.md`, "UIA event registration"); a foreground UIA
-progress bar that is not the focus is not yet reported (M4.2).
-Background progress bar reporting, an NVDA option off by default, is not
+ten percent.
+
+Progress bars that are not the focus: NVDA follows every UIA range value
+change desktop-wide and drops all but a progress bar's. Verbatim: **different**,
+by decision (Dickson, 2026-11-09): only the foreground application's
+outpost subscribes, on its top-level window's subtree, so only the
+attended application's changes wake anything. Core tells the outposts
+where attention is (`CoreToOutpost::Front`): `In` with the foreground
+window to the application that gains attention, and to an outpost that
+starts while its application is attended, `Left` to the one that loses it.
+One value in the outpost's reducer, `BarWatch`, follows it: none,
+finding the window's element (a program, one call), or subscribed. A
+change of window while one is found starts another once that program
+ends, and that program's late answer lets its element go; a program that
+ends without finding one, or is abandoned, ends the watch. The
+subscription's element is shared with the focus's token when they are the
+same element, so that neither's letting go drops the other's. The new
+`Group::RangeValue` holds only the range value change, over the window's
+subtree, because the value group also carries the value pattern's changes
+and would wake the outpost for every character typed in a field of that
+window. A range value change from anything but a progress bar is dropped
+on the callback thread, from the event's cached role, with nothing woken.
+A progress bar's change is read for where it is on the screen, one call,
+and reported as a progress change, the outpost's window being the one
+attention names, since a page's content can be another process's window.
+A focused progress bar is reported by both its focus subscription and
+this one, so its value is read twice per change, and Core's one-percent
+rule keeps the second silent; a foreground window whose subtree holds no
+progress bar still pays the one registration. Background progress bar
+reporting, an NVDA option off by default, is not
 yet built (M4.3): background progress bars stay silent, with no setting
 (Dickson, 2026-10-10 and 2026-10-15).
 

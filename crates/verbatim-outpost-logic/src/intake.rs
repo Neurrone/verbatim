@@ -171,6 +171,9 @@ const FOCUS_EVENTS_PER_BATCH: usize = 4;
 /// (NVDA's `MAX_WINEVENTS_PER_THREAD`).
 const EVENTS_PER_THREAD: usize = 10;
 
+/// The kind number of a toast's [`Key::Uia`].
+const TOAST_KEY: u8 = 5;
+
 /// The object and kind an entry concerns, for the one-per-object rule and for
 /// recognizing the focused object.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -931,6 +934,7 @@ fn classify(item: &Item) -> (Option<Key>, Category, isize) {
                 UiaKind::Notification(notification) => {
                     Some(notification_key(&event.parts.runtime_id, notification))
                 }
+                UiaKind::Toast => Some(Key::Uia(TOAST_KEY, 0, event.parts.runtime_id.clone())),
             };
             (key, Category::Uncounted, event.hwnd)
         }
@@ -1026,6 +1030,11 @@ fn classify_fact(fact: &DeliveredFact, raiser: u32) -> (Option<Key>, Category, i
             notification,
         } => (
             Some(notification_key(&snapshot.runtime_id, notification)),
+            Category::Uncounted,
+            *hwnd,
+        ),
+        DeliveredFact::UiaToast { hwnd, snapshot } => (
+            Some(Key::Uia(TOAST_KEY, 0, snapshot.runtime_id.clone())),
             Category::Uncounted,
             *hwnd,
         ),

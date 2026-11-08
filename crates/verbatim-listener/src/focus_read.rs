@@ -146,15 +146,15 @@ use windows::Win32::UI::Accessibility::{
 use verbatim_model::{FOCUS_READ_DEADLINE, NodeDetails, Pid, State, TraceId};
 use verbatim_uia::map::{CachedUiaParts, add_legacy_checked_state, wants_legacy_checked_state};
 use verbatim_uia::{
-    Ancestor, AncestorGates, Cached, ElementExt as _, Fill, FocusInput, ListenerEvent, Node,
-    NodeGates, Shape, Uia,
+    Ancestor, AncestorGates, Cached, ElementExt as _, Fill, FocusInput, ListenerEvent,
+    ListenerSelection, Node, NodeGates, Shape, Uia,
 };
 use verbatim_uia_rops::{Ancestry, FocusAncestry, FocusQuery, Progress, focus_ancestry_classic};
 
 use verbatim_listener_logic::checks::{self, Check, Gathered, Nearest, Step};
 use verbatim_listener_logic::focus::{
     Arrival, FocusEvent, Judged, Meta, NO_WINDOW, NOT_FOCUSED, NOT_THE_LAST_READ,
-    NOTIFICATION_NO_WINDOW, arrival_of,
+    NOTIFICATION_NO_WINDOW, TOAST_NOT_READ, arrival_of,
 };
 use verbatim_listener_logic::schedule::{
     AlarmChange, AppKey, QueuePlace, Request, Schedule, ScheduleEffect, ScheduleInput, Waking,
@@ -874,7 +874,47 @@ impl FocusReader {
                     notification,
                 }))
             }
+            DeliveredFact::UiaToast { hwnd, snapshot } => self.read_toast(sender, hwnd, snapshot),
             other => Judged::Passed(Box::new(other)),
+        }
+    }
+
+    /// The toast whose sender is `sender`, read for what its event's cache
+    /// did not carry (its value, states, description and position in its
+    /// set), one call: the toast's window-opened registration's cache request is kept small,
+    /// as it is filled for every window opened anywhere. Dropped when the
+    /// read fails, as NVDA, having no object for the toast, says nothing.
+    fn read_toast(
+        &self,
+        sender: &Cached<ListenerEvent>,
+        hwnd: isize,
+        snapshot: UiaSnapshotFact,
+    ) -> Judged {
+        let read = self
+            .uia
+            .request_fixed::<ListenerSelection>()
+            .and_then(|request| sender.live().refresh(&request));
+        match read {
+            Ok(toast) => Judged::Passed(Box::new(DeliveredFact::UiaToast {
+                hwnd,
+                snapshot: {
+                    let parts = toast.read().parts(snapshot.runtime_id);
+                    UiaSnapshotFact {
+                        runtime_id: parts.runtime_id,
+                        role: parts.role,
+                        // Its name as the event carried it, as NVDA's
+                        // object for the event reads it.
+                        name: snapshot.name,
+                        value: parts.value,
+                        states: parts.states,
+                        details: parts.details,
+                    }
+                },
+            })),
+            Err(error) => {
+                tracing::debug!(%error, "a toast could not be read");
+                Judged::Dropped(TOAST_NOT_READ)
+            }
         }
     }
 

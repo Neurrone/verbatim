@@ -56,7 +56,8 @@ fn next_core_to_outpost(previous: Option<&CoreToOutpost>) -> Option<CoreToOutpos
             sent_at_us: 0,
         },
         CoreToOutpost::Ping { .. } => CoreToOutpost::Fetches(crate::Fetches::default()),
-        CoreToOutpost::Fetches(_) => CoreToOutpost::NodesHeld {
+        CoreToOutpost::Fetches(_) => CoreToOutpost::Front(FrontWindow::Left),
+        CoreToOutpost::Front(_) => CoreToOutpost::NodesHeld {
             nodes: Vec::new(),
             anchors: Vec::new(),
             acknowledged: 0,
@@ -192,6 +193,7 @@ fn every_variant_has_its_reviewed_kind() {
             "Cancel: Ask",
             "Ping: Lifecycle",
             "Fetches: Configuration",
+            "Front: Configuration",
             "NodesHeld: Release",
             "IdleQuery: Ask",
             "Shutdown: Lifecycle",

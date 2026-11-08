@@ -95,6 +95,8 @@ pub enum UiaKind {
     Selection,
     /// An application-initiated notification.
     Notification(Notification),
+    /// A Windows toast opened (`UIA_Window_WindowOpenedEventId`).
+    Toast,
     /// A text focus's caret or selection changed (`Text_TextSelectionChanged`).
     TextSelection,
     /// A text focus's text changed (`Text_TextChanged`).

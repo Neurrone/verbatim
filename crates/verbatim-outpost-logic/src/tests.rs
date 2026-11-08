@@ -2947,3 +2947,80 @@ fn a_newer_focus_of_the_same_element_never_replaces_a_live_re_read_answer() {
     let newer = program(&replay.finish(answer.request, false, 5)).clone();
     assert_eq!(answers(&newer), None, "then the newer focus");
 }
+
+/// The foreground window's element is found by one program, whose ending
+/// answers it; a window's change while that program runs starts another
+/// once it ends, and its late answer lets its token go.
+#[test]
+fn the_foreground_windows_element_is_found_by_one_program_at_a_time() {
+    use verbatim_model::protocol::FrontWindow;
+    let mut replay = Replay::new();
+    let first = replay.input(Input::Front(FrontWindow::In(10)), 0);
+    let first_program = program(&first);
+    assert!(matches!(first_program.work, Work::FindBar(10)));
+    let request = first_program.request;
+    // While it runs the window changes: no second program yet.
+    let changed = replay.input(Input::Front(FrontWindow::In(11)), 1);
+    assert!(
+        changed
+            .iter()
+            .all(|effect| !matches!(effect, Effect::Dispatch(_)))
+    );
+    // Its answer is of the old window: its token goes.
+    let late = replay.commit(
+        request,
+        Change {
+            bar_found: Some((10, 7)),
+            ..Change::default()
+        },
+        2,
+    );
+    assert!(
+        late.iter()
+            .any(|effect| matches!(effect, Effect::Unfollow(tokens) if tokens == &vec![7]))
+    );
+    let finished = replay.input(
+        Input::Finished {
+            request,
+            reported: false,
+            panicked: false,
+            cut: None,
+        },
+        3,
+    );
+    // The new window's program, and the watch is not ended by the old one.
+    let second = program(&finished);
+    assert!(matches!(second.work, Work::FindBar(11)));
+    assert_eq!(
+        replay.reducer.facts().follow.bar,
+        BarWatch::Finding {
+            window: 11,
+            started: true
+        }
+    );
+    // Its program ending with no element found ends the watch.
+    let request = second.request;
+    replay.input(
+        Input::Finished {
+            request,
+            reported: false,
+            panicked: false,
+            cut: None,
+        },
+        4,
+    );
+    assert_eq!(replay.reducer.facts().follow.bar, BarWatch::None);
+}
+
+/// A lookup program abandoned at its deadline answers the watch too, so
+/// the watch does not wait for ever.
+#[test]
+fn an_abandoned_lookup_of_the_foreground_windows_element_ends_the_watch() {
+    use verbatim_model::protocol::FrontWindow;
+    let mut replay = Replay::new();
+    let _ = replay.input(Input::Front(FrontWindow::In(10)), 0);
+    assert!(replay.reducer.busy());
+    let deadline = u64::try_from(HANDLING_DEADLINE.as_millis()).expect("milliseconds fit");
+    let _ = replay.tick(deadline + 1);
+    assert_eq!(replay.reducer.facts().follow.bar, BarWatch::None);
+}

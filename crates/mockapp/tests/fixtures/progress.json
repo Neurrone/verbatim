@@ -1,0 +1,9 @@
+{
+  "id": "root",
+  "role": "window",
+  "name": "Mockapp Progress Fixture",
+  "children": [
+    { "id": "bar", "role": "progress_bar", "name": "Copying", "value": "10" },
+    { "id": "level", "role": "slider", "name": "Level", "value": "1", "states": ["focusable"] }
+  ]
+}

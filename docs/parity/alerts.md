@@ -20,22 +20,28 @@ NVDA: a toast's `alert` event is accepted from any application, and
 the `Notification` behavior speaks the object; NVDA drops every WinEvent
 from a native UIA window, and speaks a Windows 10 and later toast on
 UIA's window-opened event instead ([Event handling](../nvda/events.md),
-"Acceptance filtering"). Verbatim: **partial**. The listener hooks
-`EVENT_SYSTEM_ALERT` desktop-wide; the outpost reports an alert only from
-a window whose parent has the class `ToastChildWindowClass`, and the
-reducer speaks the object queued from anywhere, never moving focus;
-this is unverified. Different, by route rather than by decision:
-Verbatim subscribes to neither of UIA's window-opened and
-tooltip-opened events, and receives toasts only through the MSAA alert,
-which it takes from any window whose parent is `ToastChildWindowClass`,
-native UIA or not, and speaks whatever the object's role. A UIA
-notification event is not a toast path in either: both speak those only
-from the focus's application. Whether Windows 11 raises that MSAA alert
-for its toasts at all is unverified; if it does not, Verbatim says
-nothing for a toast that NVDA speaks (the "Toasts" item under M4.2 in
-`docs/roadmap.md` captures one live and follows NVDA if so). Help balloons are not
-affected and match. Not yet built (unscheduled): the setting to turn
-toast reporting off.
+"Acceptance filtering"). Verbatim: **matched**. The focus listener's
+desktop-wide UIA registration includes the window-opened event; its
+callback keeps a window of control type window whose automation id
+contains `ToastView`, from the event's cache, and whose window class is
+`Windows.UI.Core.CoreWindow`, by a local call, and runs once per window
+opened anywhere, waking nothing else unless the window is a toast. The
+toast goes through its application's reading thread, where one call reads
+its value, states, description and position, and is reported as
+`NormalizedEvent::Alert` with `AlertOrigin::ToastWindowOpened`, carrying a
+hash of its runtime id. The reducer speaks it queued from anywhere, never
+moving focus, and drops a toast whose id equals the last spoken toast's
+within one second, leaving the record, as NVDA's own record is of the
+last toast it spoke (`Toast_win10`). MSAA alert and show events from a
+native UIA window are dropped, as NVDA drops every WinEvent from one,
+from the arbitrator's verdict for the window, which a window with none
+gets by a probe. A UIA notification event is not a toast path in either:
+both speak those only from the focus's application. The MSAA alert path
+stays for a toast from a window whose parent has the class
+`ToastChildWindowClass`, and help balloons are not affected. Limits: a
+toast whose host is restarted within one second has a new runtime id and
+is spoken. Not yet built (unscheduled): the setting to turn toast
+reporting off.
 
 ### Other alerts
 

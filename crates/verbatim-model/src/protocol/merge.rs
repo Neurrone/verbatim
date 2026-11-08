@@ -124,7 +124,7 @@ impl Merge for OutpostToCore {
             } => (*node_id, Detail::Property(std::mem::discriminant(change))),
             NormalizedEvent::SelectionChanged { node }
             | NormalizedEvent::ControlledSelection { node, .. }
-            | NormalizedEvent::Alert { node } => (node.id, Detail::None),
+            | NormalizedEvent::Alert { node, .. } => (node.id, Detail::None),
             NormalizedEvent::ProgressChanged { bar } => (bar.id, Detail::None),
             NormalizedEvent::ValueChanged { node_id, .. }
             | NormalizedEvent::CaretMoved { node_id, .. }

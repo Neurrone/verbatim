@@ -55,6 +55,7 @@ const LIVE: &[&str] = scenario_tests! {
     crash_recovery
     verbatim_lifecycle
     speak_time_and_date
+    toast
     alt_tab_switcher
     return_after_retirement
     return_from_a_held_application

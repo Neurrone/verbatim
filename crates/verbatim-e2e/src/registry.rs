@@ -183,7 +183,7 @@ use crate::scenarios::{
     terminal_editing, terminal_flood, terminal_key_timing, terminal_lists, terminal_overflow,
     terminal_pager, terminal_progress, terminal_review_grid, terminal_screens,
     terminal_settings_page, terminal_status_bar, terminal_typing, terminal_windows,
-    text_box_say_all, theme_panel, typed_words, verbatim_lifecycle, word_selection,
+    text_box_say_all, theme_panel, toast, typed_words, verbatim_lifecycle, word_selection,
 };
 use crate::speech::{FailurePoint, SpeechFailure};
 
@@ -491,6 +491,18 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         setup: speak_time_and_date::setup,
         body: speak_time_and_date::body,
         teardown: speak_time_and_date::teardown,
+    },
+    ScenarioDef {
+        name: "toast",
+        group: Group::Shell,
+        settings: None,
+        local_only: true,
+        quick_retirement: false,
+        document: None,
+        comparable: Comparable::Yes,
+        setup: toast::setup,
+        body: toast::body,
+        teardown: toast::teardown,
     },
     ScenarioDef {
         name: "alt_tab_switcher",

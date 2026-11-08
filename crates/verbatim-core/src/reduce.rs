@@ -15,11 +15,11 @@ use std::sync::Arc;
 
 use verbatim_model::protocol::FocusPurpose;
 use verbatim_model::{
-    ActionName, Earcon, EarlierElement, Effect, FetchResult, ForegroundWindow, Input, Message,
-    NodeId, NodeSnapshot, NormalizedEvent, Notification, NotificationProcessing, OutpostId, Phrase,
-    Pid, ProgressReading, PropertyChange, QueryKind, ReviewCommand, Role, SegmentContent,
-    SpeechPriority, State, StateSet, TraceId, Utterance, UtteranceSegment, UtteranceSource,
-    WindowFacts,
+    ActionName, AlertOrigin, Earcon, EarlierElement, Effect, FetchResult, ForegroundWindow, Input,
+    Message, NodeId, NodeSnapshot, NormalizedEvent, Notification, NotificationProcessing,
+    OutpostId, Phrase, Pid, ProgressReading, PropertyChange, QueryKind, ReviewCommand, Role,
+    SegmentContent, SpeechPriority, State, StateSet, TraceId, Utterance, UtteranceSegment,
+    UtteranceSource, WindowFacts,
 };
 use verbatim_model::{
     Backend, FirstCachedAncestor, FocusGroup, FocusNow, FocusReaderKind, FocusText, FocusValidity,
@@ -1209,7 +1209,9 @@ fn reduce_event(
             node_id: _,
             notification,
         } => reduce_notification(trace_id, notification),
-        NormalizedEvent::Alert { node, .. } => reduce_alert(trace_id, node),
+        NormalizedEvent::Alert { node, origin } => {
+            reduce_alert(state, (trace_id, observed_at_us), node, *origin)
+        }
         NormalizedEvent::ValueChanged { node_id, value } => {
             reduce_value_changed(state, trace_id, *node_id, value.clone())
         }
@@ -1274,7 +1276,7 @@ fn sync_navigator_with_focus(state: &mut SrState) {
 /// One observed before the newest foreground change is dropped unspoken
 /// ([`observed_before_foreground_change`]).
 fn reduce_background(
-    state: &SrState,
+    state: &mut SrState,
     trace_id: TraceId,
     observed_at_us: u64,
     event: &NormalizedEvent,
@@ -1282,8 +1284,8 @@ fn reduce_background(
     if observed_before_foreground_change(state, observed_at_us) {
         return Vec::new();
     }
-    if let NormalizedEvent::Alert { node, .. } = event {
-        return reduce_alert(trace_id, node);
+    if let NormalizedEvent::Alert { node, origin } = event {
+        return reduce_alert(state, (trace_id, observed_at_us), node, *origin);
     }
     let NormalizedEvent::Notification { notification, .. } = event else {
         return Vec::new();
@@ -2134,7 +2136,26 @@ fn reduce_name_changed(
 /// Speaks a toast: the alerting object announced in full, queued behind
 /// current speech, as NVDA's notification behavior speaks it. A toast never
 /// moves focus or the navigator.
-fn reduce_alert(trace_id: TraceId, node: &NodeSnapshot) -> Vec<Effect> {
+fn reduce_alert(
+    state: &mut SrState,
+    (trace_id, observed_at_us): (TraceId, u64),
+    node: &NodeSnapshot,
+    origin: AlertOrigin,
+) -> Vec<Effect> {
+    if let AlertOrigin::ToastWindowOpened(id) = origin {
+        // A repeat of the last toast within a second is dropped, leaving
+        // the record, as NVDA records only one it speaks
+        // (`docs/parity/alerts.md`, "Toasts").
+        if state.last_toast.is_some_and(|last| {
+            last.id == id && observed_at_us.saturating_sub(last.at_us) < TOAST_REPEAT_US
+        }) {
+            return Vec::new();
+        }
+        state.last_toast = Some(crate::state::LastToast {
+            id,
+            at_us: observed_at_us,
+        });
+    }
     // A toast is never a tree or list item, so the level spoken before it
     // plays no part.
     vec![Effect::Speak(
@@ -2147,6 +2168,10 @@ fn reduce_alert(trace_id: TraceId, node: &NodeSnapshot) -> Vec<Effect> {
         None,
     )]
 }
+
+/// How long after a toast the same toast is dropped as a repeat: one second
+/// (`docs/parity/alerts.md`, "Toasts").
+const TOAST_REPEAT_US: u64 = 1_000_000;
 
 /// Handles a UIA `AutomationNotification` event (`docs/parity/alerts.md`,
 /// "UIA notification events") from the focus's application: announce the

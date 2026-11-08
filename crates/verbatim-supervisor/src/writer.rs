@@ -135,6 +135,7 @@ impl ToChild for CoreToOutpost {
             | CoreToOutpost::Cancel { .. }
             | CoreToOutpost::Ping { .. }
             | CoreToOutpost::Fetches(_)
+            | CoreToOutpost::Front(_)
             | CoreToOutpost::NodesHeld { .. }
             | CoreToOutpost::IdleQuery { .. }
             | CoreToOutpost::Shutdown

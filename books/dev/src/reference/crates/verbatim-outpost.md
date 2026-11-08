@@ -1415,6 +1415,30 @@ notifications. A waiting notification is replaced by a newer one from the
 same element with the same kind, processing, and activity id, as NVDA's
 UIA limiter keys it.
 
+A Windows toast (`DeliveredFact::UiaToast`) goes through the same reading
+thread and is reported as `NormalizedEvent::Alert` with
+`AlertOrigin::ToastWindowOpened`, its identity a hash of its runtime id
+computed here, for Core's repeat rule (`docs/parity/alerts.md`, "Toasts").
+MSAA alert and show events from a native UIA window are dropped by the
+arbitrator's verdict for the window.
+
+### The foreground window's progress bars
+
+Core says where attention is (`CoreToOutpost::Front`), and the reducer's
+`BarWatch` follows it, one value ended with its generation: none, finding
+the window's element, or subscribed. Its table is in
+`docs/parity/changes-and-selection.md`, "Progress bars that are not the
+focus". `Work::FindBar` is one call on a worker (the window's element, by
+`Uia::any_window_element`); a commit's `bar_found` gives the element a token
+in the shell, and a program's ending without one, or its abandonment, is the
+lookup's failure. The window's element is followed with
+`Group::RangeValue` over its subtree, holding only the range value change;
+the callback drops every role but progress bar from the event's cache, and
+a progress bar's change takes the property path, reporting
+`ProgressChanged` after one read of its place on the screen. Its token is
+the shell's one token for the element (`Elements::token`), and
+`follows` includes it, so neither subscription drops the other's.
+
 The ancestry cache ([verbatim-core](verbatim-core.md), "The ancestry
 cache"). The followed chain is the outpost's ancestry cache, saved with the
 window text of each window entry (`Followed::titles`); `Worker::focus_chain`

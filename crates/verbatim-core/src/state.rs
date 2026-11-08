@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use verbatim_model::{
     CaretKey, Fetches, HeldAnchors, HookForeground, NodeId, NodeSnapshot, OutpostId, Pid, QueryId,
     ReaderSettings, ReviewCommand, Selection, SpeechMark, StateSet, TextAttributes, TextChunk,
-    TextPosition, TextUnit, TraceId, WindowFacts,
+    TextPosition, TextUnit, ToastId, TraceId, WindowFacts,
 };
 
 use crate::foreground::Foreground;
@@ -591,6 +591,15 @@ pub(crate) struct SayAll {
     pub(crate) display_held: bool,
 }
 
+/// The last toast spoken (`SrState::last_toast`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LastToast {
+    /// The toast's identity.
+    pub(crate) id: ToastId,
+    /// When it was observed, in microseconds on the run's shared clock.
+    pub(crate) at_us: u64,
+}
+
 /// Reducer state: focus, attention, navigator, and Core's queries.
 ///
 /// The flight recorder clones the state at each checkpoint, once per
@@ -687,6 +696,11 @@ pub struct SrState {
     /// (`docs/nvda/object-model.md`, "How a progress bar reports its
     /// value"), the most recent last, at most [`PROGRESS_BARS_KEPT`].
     pub(crate) progress_reported: Vec<((i32, i32), u32)>,
+    /// The last toast spoken, which a repeat within a second is compared
+    /// with (`docs/parity/alerts.md`, "Toasts"). A toast dropped as a repeat
+    /// leaves it, so a third is measured from the spoken one; only a toast
+    /// is remembered, since only a toast is compared.
+    pub(crate) last_toast: Option<LastToast>,
     /// Verbatim is exiting (`Input::Exiting`): no later input does
     /// anything, so nothing is said after the exit sound, as NVDA says
     /// nothing once it has stopped its handlers.
@@ -849,6 +863,15 @@ impl SrState {
         self.foreground
             .attention()
             .map(|attention| attention.source)
+    }
+
+    /// The application holding attention and its foreground window, the
+    /// source of the outposts' [`FrontWindow`](verbatim_model::protocol::FrontWindow).
+    #[must_use]
+    pub fn attention_window(&self) -> Option<(Pid, isize)> {
+        let attention = self.foreground.attention()?;
+        let window = attention.window.as_ref()?.top_level.0;
+        Some((attention.source, isize::try_from(window).ok()?))
     }
 
     /// The details to fetch, as the active theme decides: a detail whose

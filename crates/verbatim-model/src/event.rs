@@ -399,13 +399,14 @@ pub enum NormalizedEvent {
         /// The notification payload.
         notification: Notification,
     },
-    /// A toast notification (an MSAA `EVENT_SYSTEM_ALERT` from a window whose
-    /// parent has the class `ToastChildWindowClass`): the alerting object,
-    /// spoken queued and accepted from any application (decision D14), as
-    /// NVDA's notification behavior speaks it.
+    /// A toast or other alert: the alerting object, spoken queued and
+    /// accepted from any application (decision D14), as NVDA's notification
+    /// behavior speaks it (`docs/parity/alerts.md`, "Toasts").
     Alert {
         /// The alerting object.
         node: NodeSnapshot,
+        /// What raised it, which says whether a repeat is dropped.
+        origin: AlertOrigin,
     },
     /// The caret or the selection moved in a node with text (UIA's text
     /// selection changed event, an edit control's caret event), carrying
@@ -495,7 +496,7 @@ impl NormalizedEvent {
                     selected.assign_outpost(outpost);
                 }
             }
-            NormalizedEvent::SelectionChanged { node } | NormalizedEvent::Alert { node } => {
+            NormalizedEvent::SelectionChanged { node } | NormalizedEvent::Alert { node, .. } => {
                 node.assign_outpost(outpost);
             }
             NormalizedEvent::ProgressChanged { bar } => {
@@ -517,6 +518,24 @@ impl NormalizedEvent {
         }
     }
 }
+
+/// What raised a [`NormalizedEvent::Alert`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AlertOrigin {
+    /// An MSAA alert, or a help balloon's show event.
+    MsaaAlert,
+    /// A Windows toast's UIA window-opened event, with the toast's identity:
+    /// a toast cannot be told without it, since Core compares it with the
+    /// last toast's to drop a repeat.
+    ToastWindowOpened(ToastId),
+}
+
+/// A toast's identity: a hash of its UIA runtime id, computed by the outpost
+/// that reports it, because the node id a toast is reported under is released
+/// with its node, so a repeat would have a new one, and Core needs only
+/// equality.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ToastId(pub u64);
 
 /// A progress bar as a change of its value reads it, for
 /// [`NormalizedEvent::ProgressChanged`]: only the properties a progress

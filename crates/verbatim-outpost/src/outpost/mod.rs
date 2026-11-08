@@ -1551,6 +1551,9 @@ impl Outpost {
                 (TraceId::mint(), now_us(), EventTiming::default()),
                 Source::Other,
             ),
+            CoreToOutpost::Front(front) => {
+                context.mailbox.post(Posted::Front(*front));
+            }
             // The reducer withdraws the query if it has not dispatched it,
             // and answers it "not started" through its token.
             CoreToOutpost::Cancel { request_id } => {
@@ -1725,6 +1728,31 @@ fn capture_text(context: &Context, event: &Cached<TextEvent>, kind: UiaKind) -> 
     }
 }
 
+/// The subscription to range value changes, for a window whose subtree is
+/// followed for its progress bars: dropped on UIA's callback thread from the
+/// event's cached role, with nothing woken, as no rule speaks a range value
+/// change from anything but a progress bar.
+fn range_value_subscription(context: &Arc<Context>) -> Subscription<Cached<PropertyEvent>> {
+    let context = Arc::clone(context);
+    Subscription::Properties {
+        properties: vec![UIA_RangeValueValuePropertyId],
+        callback: Arc::new(move |event: &Cached<PropertyEvent>, property_id: i32| {
+            if event.read().role.role() != verbatim_model::Role::ProgressBar {
+                return;
+            }
+            context.take_in(
+                Item::Uia(capture_property(&context, event, property_id)),
+                Heard::UiaProperty(property_id),
+                EventTiming {
+                    observed_at_us: context.observed_now(),
+                    ..EventTiming::default()
+                },
+                Source::Other,
+            );
+        }),
+    }
+}
+
 /// Starts the focus-following UIA subscription
 /// (`books/dev/src/reference/adr/0001-focus.md`, "Focus-following subscriptions"): one
 /// registration, on one thread and client, listening
@@ -1768,6 +1796,7 @@ fn register_focus_events(context: &Arc<Context>) -> Option<Registration> {
         properties: vec![UIA_ValueValuePropertyId, UIA_RangeValueValuePropertyId],
         callback: property_callback,
     };
+    let range_values = range_value_subscription(context);
     let text_context = Arc::clone(context);
     let text_callback: verbatim_uia::EventCallback<Cached<TextEvent>> =
         Arc::new(move |event: &Cached<TextEvent>, event_id: i32| {
@@ -1820,6 +1849,7 @@ fn register_focus_events(context: &Arc<Context>) -> Option<Registration> {
     let parts = vec![
         Part::shaped::<PropertyEvent>(properties),
         Part::shaped::<PropertyEvent>(values).value_only(),
+        Part::shaped::<PropertyEvent>(range_values).range_value_only(),
         Part::shaped::<TextEvent>(caret).text_events(),
         Part::shaped::<TextEvent>(text).extended().text_events(),
         Part::shaped::<TextEvent>(position).extended(),

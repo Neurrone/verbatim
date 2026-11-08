@@ -395,6 +395,23 @@ pub fn ignores_notifications(class_name: Option<&str>, automation_id: Option<&st
     is_terminal_class(class_name) || automation_id == Some("Text Area")
 }
 
+/// Whether a window opened is a Windows toast, by NVDA's rule
+/// (`NVDAObjects/UIA/__init__.py` 1282 to 1287): control type window,
+/// automation id containing `ToastView`, and window class
+/// `Windows.UI.Core.CoreWindow`, asked of `window_class` only when the others
+/// pass, as it is a local call the event's cache spares for every other
+/// window.
+#[must_use]
+pub fn is_toast(
+    control_type: Option<i32>,
+    automation_id: Option<&str>,
+    window_class: impl FnOnce() -> String,
+) -> bool {
+    control_type == Some(UIA_WindowControlTypeId.0)
+        && automation_id.is_some_and(|id| id.contains("ToastView"))
+        && window_class() == "Windows.UI.Core.CoreWindow"
+}
+
 /// Whether an element of UIA class `class_name` reports no value. The
 /// Windows shell's file and folder items (UIA class `UIItem`, in File
 /// Explorer and the file dialogs) expose their name again as their value;
@@ -467,6 +484,27 @@ mod tests {
         assert!(!ignores_notifications(
             Some("TextBlock"),
             Some("CalculatorResults")
+        ));
+    }
+
+    /// NVDA's toast rule: each of its three fields, control type window,
+    /// automation id containing `ToastView`, and window class, and the
+    /// class asked only when the first two pass.
+    #[test]
+    fn a_window_opened_is_a_toast_only_by_all_of_nvdas_fields() {
+        let window = Some(UIA_WindowControlTypeId.0);
+        let core = || "Windows.UI.Core.CoreWindow".to_owned();
+        let asked = || -> String { panic!("the window class is a local call only a match asks") };
+        assert!(is_toast(window, Some("MicrosoftToastViewThing"), core));
+        assert!(!is_toast(window, Some("MicrosoftToastViewThing"), || {
+            "ApplicationFrameWindow".to_owned()
+        }));
+        assert!(!is_toast(window, Some("OtherView"), asked));
+        assert!(!is_toast(window, None, asked));
+        assert!(!is_toast(
+            Some(UIA_PaneControlTypeId.0),
+            Some("ToastView"),
+            asked
         ));
     }
 

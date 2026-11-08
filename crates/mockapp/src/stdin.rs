@@ -2,6 +2,7 @@
 //!
 //! Commands are one per line: `focus <id>`, `set-focus <id>`,
 //! `set-name <id> <text>`, `set-title <text>`, `set-value <id> <text>`,
+//! `set-range <id> <text>`,
 //! `set-description <id> <text>`, `set-controller-for <id> [<controlled>]`,
 //! `set-states <id> <state>...`, `select <id>`,
 //! `caret <id> <start> [<end> [end]]`, `caret-event <id>`,
@@ -88,6 +89,10 @@ pub(crate) enum Command {
     SetName(String, String),
     /// `set-value <id> <text>`, same empty-text convention as `SetName`.
     SetValue(String, String),
+    /// `set-range <id> <text>`: sets the node's value and raises a UIA
+    /// range value change, as a progress bar's change is raised; the UIA
+    /// backend only.
+    SetRange(String, String),
     /// `set-description <id> <text>`, same empty-text convention as
     /// `SetName`; raises `EVENT_OBJECT_DESCRIPTIONCHANGE`, or in the UIA
     /// backend a help text change, the description being served as both
@@ -722,6 +727,10 @@ pub(crate) fn parse_command(line: &str) -> Option<Command> {
         "set-value" => {
             let (id, text) = rest.split_once(' ').unwrap_or((rest, ""));
             (!id.is_empty()).then(|| Command::SetValue(id.to_owned(), text.trim().to_owned()))
+        }
+        "set-range" => {
+            let (id, text) = rest.split_once(' ').unwrap_or((rest, ""));
+            (!id.is_empty()).then(|| Command::SetRange(id.to_owned(), text.trim().to_owned()))
         }
         _ => None,
     }

@@ -71,8 +71,9 @@ parses them.
   event, so no client on the machine calls into mockapp in response, for
   tests that count an operation's provider calls exactly and hand the
   focus to the outpost themselves.
-- `set-name <id> <text>` and `set-value <id> <text>` update the scripted
-  tree in place and raise the matching name-changed, value-changed, or
+- `set-name <id> <text>`, `set-value <id> <text>` and, in the UIA
+  backend, `set-range <id> <text>` update the scripted tree in place and
+  raise the matching name-changed, value-changed, range-value-changed or
   property-changed notification; with no text they clear it.
 - `set-description <id> <text>` sets the node's description, served as
   both its full description and its help text, and raises

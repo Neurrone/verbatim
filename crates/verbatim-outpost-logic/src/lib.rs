@@ -86,7 +86,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use verbatim_model::protocol::{
-    DeliveredFact, EventTiming, OutpostToCore, Query, QueryOutcome, QueryResult, RequestId,
+    DeliveredFact, EventTiming, FrontWindow, OutpostToCore, Query, QueryOutcome, QueryResult,
+    RequestId,
 };
 use verbatim_model::{CallCounts, FocusGroup, NodeId, TextOp, TraceId};
 use verbatim_reader_rules::Window;
@@ -98,9 +99,9 @@ pub use self::entry::{
     Asker, Entry, Front, Item, Source, UiaEvent, UiaKind, WinKind, is_state_property,
 };
 pub use self::follow::{
-    Applied, Change, DialogMemo, Facts, FocusCommit, FocusPath, FollowState, Followed, Group,
-    LastReported, LogicError, MarkChange, MsaaReport, Origin, Owed, OwedProgram, OwedWork, Report,
-    Route, Subscribed, Subscription, Target, WatchChange, apply_local,
+    Applied, BarWatch, Change, DialogMemo, Facts, FocusCommit, FocusPath, FollowState, Followed,
+    Group, LastReported, LogicError, MarkChange, MsaaReport, Origin, Owed, OwedProgram, OwedWork,
+    Report, Route, Subscribed, Subscription, Target, WatchChange, apply_local,
 };
 pub use self::held::{Evidence, Focus, Held, InFront};
 pub use self::intake::{Handling, Marks, Object, Planned, TerminalMark};
@@ -171,6 +172,9 @@ pub enum Work {
     /// One read of the console poll of the caret key's watch, which the
     /// program's copy holds (`Watch::Checking`).
     PollRead,
+    /// Finds the element of the foreground window for its progress bars
+    /// ([`BarWatch`]).
+    FindBar(isize),
     /// Finishes the caret read `cut`, cut at its value change check, with
     /// the reducer's decision: whether a value change of its edit control
     /// waited when the read part ended (`waiting`).
@@ -405,6 +409,8 @@ pub enum Input {
     WithoutListener,
     /// The listener's "forwarding ended", through this tick.
     ForwardingEnded(u32),
+    /// Core's word on where attention is.
+    Front(FrontWindow),
     /// Core withdraws query `0` if it has not started.
     Cancel(RequestId),
     /// A verdict a program of generation `generation` probed, or a window
@@ -527,6 +533,7 @@ impl InHand {
             Work::Owed(_) => ("the work the followed focus owes", None),
             Work::Drop => ("the drop of released objects", None),
             Work::PollRead => ("a read of the caret key's console poll", None),
+            Work::FindBar(_) => ("the foreground window's element", None),
             Work::Finish { .. } => ("the finish of a cut caret read", None),
         };
         Self {
@@ -556,6 +563,9 @@ struct Current {
     deferred: bool,
     /// What the program has in hand, for the log of its abandonment.
     in_hand: InHand,
+    /// The window whose element it finds, when it is [`Work::FindBar`],
+    /// which its ending answers if it found none.
+    bar_find: Option<isize>,
     /// Whether the user moving on from its window abandons it: not for a
     /// query that is not about the focus, a tree dump or a shell item
     /// query, which is bounded by its deadline alone, as NVDA's watchdog
@@ -734,6 +744,11 @@ impl Reducer {
                 if let Some(released) = self.hold.forwarding_ended(through) {
                     self.push_all(released, now, &mut effects);
                 }
+            }
+            Input::Front(front) => {
+                let mut applied = Applied::default();
+                self.facts.follow.front(front, &mut applied);
+                self.subscription_effects(applied, now, &mut effects);
             }
             Input::Cancel(request_id) => {
                 if let Some(trace) = self.intake.cancel(request_id) {
@@ -1221,6 +1236,9 @@ impl Reducer {
             ..
         } = abandoned;
         let in_hand = current.in_hand;
+        if let Some(window) = current.bar_find {
+            self.facts.follow.bar_find_failed(window);
+        }
         if let Some(followed) = self.facts.follow.followed.as_mut()
             && followed
                 .owed
@@ -1278,6 +1296,9 @@ impl Reducer {
         let Some(current) = self.flight.end(request) else {
             return;
         };
+        if let Some(window) = current.bar_find {
+            self.facts.follow.bar_find_failed(window);
+        }
         // A watch the program still holds, because it panicked or returned
         // without its check's result, ends; a query it left unanswered still
         // gets its one reply.
@@ -1380,6 +1401,24 @@ impl Reducer {
             }
             if let Some((entry, group)) = self.after.pop_front() {
                 self.start_entry(entry, Handling::Run, group, now, effects);
+                continue;
+            }
+            if let Some(window) = self.facts.follow.bar.due() {
+                self.facts.follow.bar = BarWatch::Finding {
+                    window,
+                    started: true,
+                };
+                let deadline = self.handling_deadline();
+                self.dispatch(
+                    Work::FindBar(window),
+                    (deadline, Window::new(window), None),
+                    None,
+                    now,
+                    effects,
+                );
+                if let Some(current) = self.flight.item_mut() {
+                    current.bar_find = Some(window);
+                }
                 continue;
             }
             if std::mem::take(&mut self.to_drop) {
@@ -1591,7 +1630,11 @@ impl Reducer {
         let waiting = self.waiting(&work);
         let live_reread = match &work {
             Work::Entry { entry, .. } => live_reread_answered_by(&entry.item),
-            Work::Owed(_) | Work::Drop | Work::PollRead | Work::Finish { .. } => None,
+            Work::Owed(_)
+            | Work::Drop
+            | Work::PollRead
+            | Work::Finish { .. }
+            | Work::FindBar(_) => None,
         };
         let current = Current {
             running,
@@ -1600,6 +1643,7 @@ impl Reducer {
             deferred: false,
             in_hand: InHand::of(&work, window),
             hang_mark: false,
+            bar_find: None,
             moved_on_abandons: !is_query_off_the_focus(&work),
         };
         // A program with no window at dispatch that calls into the
@@ -1610,7 +1654,7 @@ impl Reducer {
         // named.
         let rule = match (window, &work) {
             (Some(window), _) => RuleWindow::Known(window),
-            (None, Work::Drop) => RuleWindow::Never,
+            (None, Work::Drop | Work::FindBar(_)) => RuleWindow::Never,
             (None, Work::Entry { .. } | Work::Owed(_) | Work::PollRead | Work::Finish { .. }) => {
                 RuleWindow::Named
             }

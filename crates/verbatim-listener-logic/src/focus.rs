@@ -49,6 +49,9 @@ pub enum FocusEvent {
     /// A notification, judged by its sender's nearest window
     /// (the listener's `FocusReader::check_fact`).
     Notification,
+    /// A Windows toast's window opening, read on its application's reading
+    /// thread (the listener's `FocusReader::check_fact`).
+    Toast,
     /// The desktop window's name change, whose MSAA name csrss's reading
     /// thread reads for the virtual desktop's name. Like a live re-read, it
     /// has no marker an outpost waits on, moves away from no application,
@@ -72,6 +75,9 @@ pub const NEAREST_TIMED_OUT: &str = "its nearest window's lookup timed out, so N
 /// The reason a notification is dropped when its sender has no window
 /// above it.
 pub const NOTIFICATION_NO_WINDOW: &str = "its sender has no window above it";
+
+/// The reason a toast is dropped when its read on the reading thread fails.
+pub const TOAST_NOT_READ: &str = "the toast could not be read";
 
 /// The reason a focus is dropped whose element no longer has the keyboard
 /// focus when it is read, as NVDA drops it.

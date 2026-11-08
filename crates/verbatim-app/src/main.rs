@@ -44,7 +44,9 @@ use verbatim_core::{ReducerRecorder, SrState, reduce};
 use verbatim_gui::{GuiCommand, GuiEvent, GuiHandle, ShellItemKind, run_gui};
 use verbatim_input::{DecisionConfig, GestureMap, KeyboardLayout};
 use verbatim_input_windows::{ForegroundView, InputHook};
-use verbatim_model::protocol::{CoreToOutpost, EventTiming, OutpostToCore, Query, QueryOutcome};
+use verbatim_model::protocol::{
+    CoreToOutpost, EventTiming, FrontWindow, OutpostToCore, Query, QueryOutcome,
+};
 use verbatim_model::protocol::{FocusPurpose, RequestId};
 use verbatim_model::{
     Earcon, Effect, ForegroundWindow, GestureId, GuiRequest, Input, LockKey, OutpostId, Pid,
@@ -1859,6 +1861,7 @@ impl ReducerThread<'_> {
             self.views = views;
         }
         self.send_fetches();
+        self.send_front();
         for (outpost, live) in self.live.iter_mut() {
             let nodes: BTreeSet<u64> = held
                 .get(outpost)
@@ -1916,6 +1919,44 @@ impl ReducerThread<'_> {
                     Err(error) => {
                         tracing::debug!(%error, %outpost, "the fetches were not sent yet");
                     }
+                }
+            }
+        }
+    }
+
+    /// Tells each live outpost where attention is, when that changed for
+    /// it: `In` with the foreground window for the outpost serving the
+    /// application holding attention, a new one included as it starts, and
+    /// `Left` for one that was told `In`
+    /// (`docs/parity/changes-and-selection.md`, "Progress bars that are not
+    /// the focus"). A change between two windows of one application is one
+    /// `In`, as the window told differs.
+    fn send_front(&mut self) {
+        let front = self.state.attention_window();
+        let served = front.and_then(|(application, _)| self.live.newest(application));
+        for (outpost, live) in self.live.iter_mut() {
+            let next = match front {
+                Some((_, window)) if served == Some(*outpost) => Some(FrontWindow::In(window)),
+                _ => live.front_sent.map(|_| FrontWindow::Left),
+            };
+            let Some(next) = next.filter(|next| live.front_sent != Some(*next)) else {
+                continue;
+            };
+            match self
+                .context
+                .supervisor
+                .send_to_outpost(*outpost, CoreToOutpost::Front(next))
+            {
+                Ok(()) => {
+                    live.front_sent = match next {
+                        FrontWindow::In(_) => Some(next),
+                        FrontWindow::Left => None,
+                    };
+                }
+                // A full queue is retried after the next input; a closed
+                // one belongs to an outpost that is ending.
+                Err(error) => {
+                    tracing::debug!(%error, %outpost, "where attention is was not sent yet");
                 }
             }
         }

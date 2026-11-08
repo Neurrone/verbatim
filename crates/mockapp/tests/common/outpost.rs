@@ -847,6 +847,12 @@ impl OutpostUnderTest {
         self.outpost.handle_command(&command);
     }
 
+    /// Tells the outpost, as Core does, where attention is
+    /// ([`CoreToOutpost::Front`]), and returns at once.
+    pub fn front(&self, front: verbatim_model::protocol::FrontWindow) {
+        self.outpost.handle_command(&CoreToOutpost::Front(front));
+    }
+
     /// Makes `hwnd` the window the outpost reads as the foreground from now
     /// on.
     pub fn set_foreground(&self, hwnd: HWND) {

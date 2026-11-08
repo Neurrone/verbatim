@@ -27,7 +27,9 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use verbatim_model::TraceId;
-use verbatim_model::protocol::{EventTiming, OutpostToCore, QueryOutcome, RequestId, Responder};
+use verbatim_model::protocol::{
+    EventTiming, FrontWindow, OutpostToCore, QueryOutcome, RequestId, Responder,
+};
 use verbatim_uia::{Agile, Kept};
 
 use super::Context;
@@ -57,6 +59,8 @@ pub(super) enum Posted {
     WithoutListener,
     /// The listener's "forwarding ended".
     ForwardingEnded(u32),
+    /// Core's word on where attention is.
+    Front(FrontWindow),
     /// Core withdraws a query.
     Cancel(RequestId),
     /// A verdict a program of generation `generation` made, posted alone,
@@ -131,6 +135,7 @@ impl Mailbox {
                     | Posted::WithoutListener
                     | Posted::ForwardingEnded(_)
                     | Posted::Cancel(_)
+                    | Posted::Front(_)
                     | Posted::HandlingDeadline(_)
             )
         {
@@ -342,6 +347,9 @@ fn discard(effects: Effects, garbage: &mut Garbage) {
     if let Some((_, target)) = writes.element {
         let_go_of_target(target, garbage);
     }
+    if let Some((_, element)) = writes.bar_found {
+        garbage.elements.push(element);
+    }
     if let Some(stale) = writes.stale {
         garbage.elements.extend(stale.element);
     }
@@ -367,6 +375,7 @@ fn write(
 ) -> Change {
     let (mut change, writes) = effects.split();
     let Writes {
+        bar_found,
         mut focus,
         element,
         terminal,
@@ -399,6 +408,8 @@ fn write(
         garbage.elements.extend(evicted);
         garbage.store.push(store.remove_terminal(stale.node));
     }
+    change.bar_found =
+        bar_found.map(|(window, element)| (window, elements.token(element, garbage)));
     change.focus = focus.map(|focus| {
         focus.into_commit(|writes| {
             // A terminal gaining the focus has its caret reported afresh:
@@ -549,6 +560,7 @@ impl Shell {
             Posted::WithoutListener => Input::WithoutListener,
             Posted::ForwardingEnded(through) => Input::ForwardingEnded(through),
             Posted::Cancel(request_id) => Input::Cancel(request_id),
+            Posted::Front(front) => Input::Front(front),
             Posted::Verdict { generation, change } => Input::Verdict { generation, change },
             Posted::Commit { request, effects } => {
                 // A dead generation's or a claimed request's commit gives
@@ -951,6 +963,10 @@ impl Shell {
             .slider
             .and_then(reference)
             .map(|element| (element, verbatim_uia::Group::Value));
+        let bar = subscription
+            .bar
+            .and_then(reference)
+            .map(|element| (element, verbatim_uia::Group::RangeValue));
         let newest = subscription
             .newest
             .and_then(|(token, group)| reference(token).map(|element| (element, group)));
@@ -964,12 +980,12 @@ impl Shell {
                 Some((element, group)) => registration.retarget_with(
                     verbatim_uia::Scope::Elements(vec![element]),
                     uia_group(group),
-                    slider.into_iter().chain(kept).collect(),
+                    slider.into_iter().chain(kept).chain(bar).collect(),
                 ),
-                None if !kept.is_empty() => registration.retarget_with(
+                None if !kept.is_empty() || bar.is_some() => registration.retarget_with(
                     verbatim_uia::Scope::Elements(Vec::new()),
                     verbatim_uia::Group::Base,
-                    kept,
+                    kept.into_iter().chain(bar).collect(),
                 ),
                 None => registration.retarget(verbatim_uia::Scope::Nothing),
             }

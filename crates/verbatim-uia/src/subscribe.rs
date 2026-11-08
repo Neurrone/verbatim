@@ -179,15 +179,33 @@ pub enum Group {
     /// Only the parts marked [`Part::value_only`], which no other group
     /// holds: for an element only whose value changes the caller follows.
     Value,
+    /// Only the parts marked [`Part::range_value_only`], which no other
+    /// group holds, registered over the element's whole subtree: for a
+    /// window whose progress bars are followed when none is the focus.
+    RangeValue,
+}
+
+/// The one group a part is kept for alone, if it is: no other group holds
+/// it, and it is in none of the others' reckoning.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum Alone {
+    /// The part is shared by the groups, as its other marks say.
+    #[default]
+    No,
+    /// Only [`Group::Value`] holds it.
+    Value,
+    /// Only [`Group::RangeValue`] holds it.
+    RangeValue,
 }
 
 impl Group {
     /// Whether this group holds a part marked as `extended_only`, as
-    /// `text_events` and as `value_only`.
-    fn holds(self, extended_only: bool, text_events: bool, value_only: bool) -> bool {
+    /// `text_events`, and as kept for one group `alone`.
+    fn holds(self, extended_only: bool, text_events: bool, alone: Alone) -> bool {
         match self {
-            Group::Value => value_only,
-            _ if value_only => false,
+            Group::RangeValue => alone == Alone::RangeValue,
+            Group::Value => alone == Alone::Value,
+            _ if alone != Alone::No => false,
             Group::Base => !extended_only,
             Group::Extended => true,
             Group::ExtendedWithoutTextEvents => !text_events,
@@ -314,8 +332,8 @@ pub struct Part {
     /// Whether the part delivers text or caret changes, which
     /// [`Group::ExtendedWithoutTextEvents`] leaves out.
     text_events: bool,
-    /// Whether only [`Group::Value`] holds the part.
-    value_only: bool,
+    /// The one group that alone holds the part, if one does.
+    alone: Alone,
     /// The patterns the cache request also holds, such as the Text
     /// pattern [`crate::ListenerEvent`] prefetches, as NVDA's base cache
     /// request holds it.
@@ -333,7 +351,7 @@ impl Part {
             properties: S::PROPERTIES,
             extended_only: false,
             text_events: false,
-            value_only: false,
+            alone: Alone::No,
             patterns: S::PATTERNS,
         }
     }
@@ -357,12 +375,22 @@ impl Part {
         }
     }
 
+    /// The part, held by [`Group::RangeValue`] alone, as one that delivers
+    /// the range value changes of a window's subtree.
+    #[must_use]
+    pub fn range_value_only(self) -> Self {
+        Self {
+            alone: Alone::RangeValue,
+            ..self
+        }
+    }
+
     /// The part, held by [`Group::Value`] alone, as one that delivers the
     /// value changes of an element only whose value changes are followed.
     #[must_use]
     pub fn value_only(self) -> Self {
         Self {
-            value_only: true,
+            alone: Alone::Value,
             ..self
         }
     }
@@ -606,9 +634,10 @@ impl Registration {
     }
 
     /// Moves the subscription as [`retarget_to`](Self::retarget_to) does,
-    /// and gives each of `also`, an element alone, the group paired with
-    /// it, such as [`Group::Value`] for a focus's parent whose value
-    /// changes are followed: one more `AddEventHandlerGroup` call for each
+    /// and gives each of `also`, an element alone, or for
+    /// [`Group::RangeValue`] its subtree, the group paired with it, such as
+    /// [`Group::Value`] for a focus's parent whose value changes are
+    /// followed: one more `AddEventHandlerGroup` call for each
     /// that does not already have its group, and its removal when a later
     /// move leaves it out.
     pub fn retarget_with(
@@ -884,7 +913,7 @@ struct Built {
     cache: IUIAutomationCacheRequest,
     extended_only: bool,
     text_events: bool,
-    value_only: bool,
+    alone: Alone,
 }
 
 /// A group built on the registering thread for one registration, for one
@@ -1146,7 +1175,7 @@ impl Follower {
                     handler: Handler::of(part.subscription, failed_reads),
                     extended_only: part.extended_only,
                     text_events: part.text_events,
-                    value_only: part.value_only,
+                    alone: part.alone,
                 })
             })
             .collect::<windows::core::Result<Vec<_>>>()
@@ -1239,10 +1268,14 @@ impl Follower {
     /// (module doc).
     fn move_to(&mut self, client: &Client, target: &Target) {
         let (elements, tree_scope) = self.resolve(client, &target.scope);
-        let also = target
-            .also
-            .iter()
-            .filter_map(|(agile, group)| Some((agile.resolve().ok()?, *group, TreeScope_Element)));
+        let also = target.also.iter().filter_map(|(agile, group)| {
+            let tree_scope = if *group == Group::RangeValue {
+                TreeScope_Subtree
+            } else {
+                TreeScope_Element
+            };
+            Some((agile.resolve().ok()?, *group, tree_scope))
+        });
         let wanted: Vec<(IUIAutomationElement, Group, TreeScope)> = elements
             .into_iter()
             .map(|element| (element, target.group, tree_scope))
@@ -1486,7 +1519,7 @@ impl Follower {
         // SAFETY: a local call on this thread's live client.
         let handlers = unsafe { client.client.CreateEventHandlerGroup() }?;
         for built in &self.built {
-            if group.holds(built.extended_only, built.text_events, built.value_only) {
+            if group.holds(built.extended_only, built.text_events, built.alone) {
                 built.handler.add_to(&handlers, tree_scope, &built.cache)?;
             }
         }
@@ -1650,7 +1683,7 @@ mod handlers {
 
 #[cfg(test)]
 mod tests {
-    use super::{Command, Group, Scope, Target, plan_keep, superseded};
+    use super::{Alone, Command, Group, Scope, Target, plan_keep, superseded};
 
     /// Each group holds the parts it should, as (extended only, text
     /// events): the group without text events holds the base parts and the
@@ -1662,7 +1695,11 @@ mod tests {
             parts
                 .iter()
                 .map(|&(extended_only, text_events)| {
-                    group.holds(extended_only, text_events, value_only)
+                    group.holds(
+                        extended_only,
+                        text_events,
+                        if value_only { Alone::Value } else { Alone::No },
+                    )
                 })
                 .collect()
         };
@@ -1681,6 +1718,19 @@ mod tests {
             assert_eq!(held(group, true), [false; 4], "{group:?} and a value part");
         }
         assert_eq!(held(Group::Value, true), [true; 4]);
+        assert!(Group::RangeValue.holds(false, false, Alone::RangeValue));
+        assert!(!Group::RangeValue.holds(false, false, Alone::No));
+        for group in [
+            Group::Base,
+            Group::Extended,
+            Group::ExtendedWithoutTextEvents,
+            Group::Value,
+        ] {
+            assert!(
+                !group.holds(false, false, Alone::RangeValue),
+                "{group:?} and a range part"
+            );
+        }
     }
 
     /// An element the registering thread has registered on, by name, with

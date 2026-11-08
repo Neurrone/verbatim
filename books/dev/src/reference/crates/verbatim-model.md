@@ -122,6 +122,9 @@ recorder unchanged. What the reducer does with each type is in
     focus's id).
   - `Notification`: UIA's application-initiated announcement, with its
     kind, processing hint, and optional display string and activity id.
+  - `Alert`: a toast or other alert, with its `AlertOrigin`: an MSAA alert,
+    or a Windows toast's window opening carrying its `ToastId`, the hash of its
+    runtime id that Core compares for its repeat rule.
   - The text events, under "The text protocol".
 - `KeySeq`: the number of a user input, ordered by press, which fences
   speech (`books/dev/src/explanation/design/ownership.md`). Only the keyboard hook's
@@ -292,7 +295,8 @@ that carries them on the pipes, `Message`, is
 - One enum per direction and role, so a receiver cannot be sent what it
   does not take: a frame of another direction fails to decode, and its
   child is ended as failed.
-  - `CoreToOutpost`: `DeliverFact` (a routed fact: a UIA focus's
+  - `CoreToOutpost`: `Front` (where attention is: the application's foreground
+    window, or that it left), `DeliverFact` (a routed fact: a UIA focus's
     marker, read, or drop with whether its sender had no window, an MSAA focus or
     menu-popup address, a foreground window, with the listener's trace
     id, its `EventTiming`, whose `observed_at_us` orders the fact, and

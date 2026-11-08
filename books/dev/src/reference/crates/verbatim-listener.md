@@ -283,7 +283,8 @@ section 6.3).
   forwarded as `DeliveredFact::Show`, and the desktop's switch, with the
   desktop window's name change hooked scoped to csrss) and, through one `Registration`, the
   focus handler (`Subscription::Focus`) then element selected, menu opened,
-  and notifications as one group on the desktop root, and says `Ready` only
+  notifications and window openings, kept only for a Windows toast by
+  NVDA's rule (`verbatim_uia::map::is_toast`), as one group on the desktop root, and says `Ready` only
   once all are in, so a menu opened right after start is seen. Range-value changes and live regions are not subscribed:
   values are spoken only for the focus, and live regions are milestone
   M7's.

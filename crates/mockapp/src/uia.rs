@@ -24,13 +24,13 @@ use windows::Win32::UI::Accessibility::{
     UIA_HelpTextPropertyId, UIA_HyperlinkControlTypeId, UIA_ListControlTypeId,
     UIA_ListItemControlTypeId, UIA_MenuBarControlTypeId, UIA_MenuControlTypeId,
     UIA_MenuItemControlTypeId, UIA_NamePropertyId, UIA_PROPERTY_ID, UIA_PaneControlTypeId,
-    UIA_RadioButtonControlTypeId, UIA_SelectionItem_ElementSelectedEventId,
-    UIA_SliderControlTypeId, UIA_SpinnerControlTypeId, UIA_StatusBarControlTypeId,
-    UIA_TabControlTypeId, UIA_TabItemControlTypeId, UIA_Text_TextChangedEventId,
-    UIA_Text_TextSelectionChangedEventId, UIA_TextControlTypeId, UIA_ToolBarControlTypeId,
-    UIA_TreeControlTypeId, UIA_TreeItemControlTypeId, UIA_ValueValuePropertyId,
-    UIA_WindowControlTypeId, UiaRaiseActiveTextPositionChangedEvent, UiaRaiseAutomationEvent,
-    UiaRaiseAutomationPropertyChangedEvent, UiaRaiseNotificationEvent,
+    UIA_ProgressBarControlTypeId, UIA_RadioButtonControlTypeId, UIA_RangeValueValuePropertyId,
+    UIA_SelectionItem_ElementSelectedEventId, UIA_SliderControlTypeId, UIA_SpinnerControlTypeId,
+    UIA_StatusBarControlTypeId, UIA_TabControlTypeId, UIA_TabItemControlTypeId,
+    UIA_Text_TextChangedEventId, UIA_Text_TextSelectionChangedEventId, UIA_TextControlTypeId,
+    UIA_ToolBarControlTypeId, UIA_TreeControlTypeId, UIA_TreeItemControlTypeId,
+    UIA_ValueValuePropertyId, UIA_WindowControlTypeId, UiaRaiseActiveTextPositionChangedEvent,
+    UiaRaiseAutomationEvent, UiaRaiseAutomationPropertyChangedEvent, UiaRaiseNotificationEvent,
 };
 use windows_core::Interface;
 
@@ -179,6 +179,10 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
         Command::SetValue(id, text) => {
             let index = set_value(tree, &id, text).ok_or_else(|| unknown(&id))?;
             raise_property_changed(tree, hwnd, index, UIA_ValueValuePropertyId)?;
+        }
+        Command::SetRange(id, text) => {
+            let index = set_value(tree, &id, text).ok_or_else(|| unknown(&id))?;
+            raise_property_changed(tree, hwnd, index, UIA_RangeValueValuePropertyId)?;
         }
         Command::Select(id) => {
             let index = select_node(tree, &id).ok_or_else(|| unknown(&id))?;
@@ -742,6 +746,7 @@ fn role_to_control_type(role: Role) -> i32 {
         Role::ComboBox => UIA_ComboBoxControlTypeId.0,
         Role::EditableText => UIA_EditControlTypeId.0,
         Role::Slider => UIA_SliderControlTypeId.0,
+        Role::ProgressBar => UIA_ProgressBarControlTypeId.0,
         Role::SpinButton => UIA_SpinnerControlTypeId.0,
         Role::List => UIA_ListControlTypeId.0,
         Role::ListItem => UIA_ListItemControlTypeId.0,
