@@ -277,7 +277,6 @@ mod seam {
                     terminal: Record::terminal_mark(a.terminal, Some(a.window)),
                     redirected: a.redirected,
                     system_caret_unused: a.terminal && a.console,
-                    absorbed: None,
                     subscription: target(a.element, a.slider),
                     owed: owed_of(a.owed),
                 };
