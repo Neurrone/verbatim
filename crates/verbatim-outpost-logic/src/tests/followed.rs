@@ -49,6 +49,10 @@ use crate::intake::OBJID_CLIENT;
 /// copies, so that changing the follow state changes this module alone.
 mod seam {
     use super::*;
+    use crate::{
+        FocusCommit, Followed as Record, LastReported, MarkChange, Origin as RecordOrigin,
+        Subscribed,
+    };
 
     /// How a focus came to be read.
     #[derive(Clone, Debug)]
@@ -150,18 +154,23 @@ mod seam {
 
     /// What a program reads of `facts`.
     pub(super) fn reads(facts: &Facts) -> Reads {
-        let tracking = &facts.follow.tracking;
+        let followed = facts.follow.followed.as_ref();
+        let marks = facts.marks();
         Reads {
-            focused: facts.marks.focused.clone(),
-            node: tracking.focus,
-            role: tracking.focus_role,
-            window: tracking.window,
-            chain: tracking.chain.iter().map(|node| node.id).collect(),
-            redirected: facts.marks.focus_redirected,
-            msaa: tracking.msaa_report.map(|report| report.event),
-            reported_role: tracking.role,
-            reported_batch: tracking.batch,
-            dialog: tracking.dialog.clone(),
+            focused: marks.focused,
+            node: followed.map(|focus| focus.node),
+            role: followed.map(|focus| focus.role),
+            window: followed.and_then(|focus| focus.window),
+            chain: followed.map_or_else(Vec::new, |focus| {
+                focus.chain.iter().map(|node| node.id).collect()
+            }),
+            redirected: marks.focus_redirected,
+            msaa: followed
+                .and_then(Record::msaa_report)
+                .map(|report| report.event),
+            reported_role: facts.follow.last_reported.map(|last| last.role),
+            reported_batch: facts.follow.last_reported.map(|last| last.batch),
+            dialog: facts.follow.dialog.clone(),
         }
     }
 
@@ -170,14 +179,16 @@ mod seam {
     pub(super) fn route_found(facts: &Facts, runtime_id: &[i32]) -> bool {
         facts
             .follow
-            .focus_path
+            .followed
             .as_ref()
+            .and_then(Record::focus_path)
             .is_some_and(|path| path.route_to(runtime_id).is_some())
     }
 
     /// Applies `change`, a commit of `generation`'s, to a program's copy.
     pub(super) fn apply_local(facts: &mut Facts, generation: u64, change: &Change) {
-        let _ = super::apply_local(facts, generation, change);
+        let applied = super::apply_local(facts, generation, change);
+        assert_eq!(applied.logic_errors, [], "a commit that cannot occur");
     }
 
     /// Whether the mailbox's copy `marks` drops `item` on its arrival.
@@ -217,17 +228,24 @@ mod seam {
         }
     }
 
-    /// The subscription's target of `node`.
-    fn target(
-        node: NodeId,
-        element: Option<(Group, u64)>,
-        slider: Option<(NodeId, u64)>,
-    ) -> Target {
-        Target {
-            wanted: element.map(|(group, _)| (node, group, slider.map(|(id, _)| id))),
-            element: element.map(|(_, token)| token),
-            slider: slider.map(|(_, token)| token),
-        }
+    /// Where the subscription follows, by token.
+    fn target(element: Option<(Group, u64)>, slider: Option<(NodeId, u64)>) -> Target {
+        element.map(|(group, element)| Subscribed {
+            group,
+            element,
+            slider,
+        })
+    }
+
+    /// What the focus owes, when it does.
+    fn owed_of(owed: bool) -> Option<Owed> {
+        owed.then(|| {
+            Owed::due(
+                OwedWork::FirstRead(reported_caret()),
+                TraceId::from_raw(1),
+                0,
+            )
+        })
     }
 
     /// The commit `commit` as the reducer takes it.
@@ -238,36 +256,30 @@ mod seam {
     pub(super) fn to_change(commit: &Commit) -> Change {
         match commit {
             Commit::Adopt(a) => {
-                let (msaa_report, focus_path) = match &a.origin {
-                    Origin::Listener(read) => (None, Some(FocusPath::of(read))),
-                    Origin::Msaa(event) => (
-                        Some(MsaaReport {
-                            trace: TraceId::from_raw(1),
-                            event: *event,
-                            simple_child: false,
-                            observed_at_us: 0,
-                        }),
-                        None,
-                    ),
-                    Origin::Answer => (None, None),
+                let origin = match &a.origin {
+                    Origin::Listener(read) => RecordOrigin::Listener(FocusPath::of(read)),
+                    Origin::Msaa(event) => RecordOrigin::Msaa(MsaaReport {
+                        trace: TraceId::from_raw(1),
+                        event: *event,
+                        simple_child: false,
+                        observed_at_us: 0,
+                    }),
+                    Origin::Answer => RecordOrigin::Answer,
                 };
-                let follow = Follow {
+                let followed = Record {
                     node: a.node,
                     role: a.role,
                     object: a.object.clone(),
                     window: Some(a.window),
                     chain: a.chain.iter().map(|id| node(id.number(), a.role)).collect(),
-                    batch: a.batch,
-                    redirected: a.redirected,
-                    terminal: a.terminal,
-                    console: a.console,
-                    target: target(a.node, a.element, a.slider),
-                    owed: a.owed.then(|| OwedWork::FirstRead(reported_caret())),
-                    trace: TraceId::from_raw(1),
-                    observed_at_us: 0,
                     titles: Vec::new(),
-                    msaa_report,
-                    adopt: true,
+                    origin,
+                    terminal: Record::terminal_mark(a.terminal, Some(a.window)),
+                    redirected: a.redirected,
+                    system_caret_unused: a.terminal && a.console,
+                    absorbed: None,
+                    subscription: target(a.element, a.slider),
+                    owed: owed_of(a.owed),
                 };
                 let report = match a.answer {
                     Some(_) => Report::Answered(held_focus(a.node, a.role)),
@@ -276,9 +288,14 @@ mod seam {
                 Change {
                     result: a.answer.map(answered),
                     report: Some(report),
-                    follow: Some(follow),
-                    dialog: a.dialog.clone(),
-                    focus_path,
+                    focus: Some(FocusCommit::Adopt {
+                        followed: Box::new(followed),
+                        reported: LastReported {
+                            role: a.role,
+                            batch: a.batch,
+                        },
+                        dialog: a.dialog.clone(),
+                    }),
                     replaced: a.replaced.then_some(a.node),
                     ..Change::default()
                 }
@@ -293,23 +310,11 @@ mod seam {
             } => Change {
                 result: Some(answered(*answer)),
                 report: Some(Report::Answered(held_focus(*node, *role))),
-                follow: Some(Follow {
-                    node: *node,
-                    role: *role,
-                    object: None,
-                    window: None,
-                    chain: Vec::new(),
-                    batch: 0,
-                    redirected: false,
-                    terminal: false,
-                    console: false,
-                    target: target(*node, *element, *slider),
+                focus: Some(FocusCommit::Again {
+                    target: target(*element, *slider),
                     owed: owed.then(|| OwedWork::FirstRead(reported_caret())),
                     trace: TraceId::from_raw(1),
                     observed_at_us: 0,
-                    titles: Vec::new(),
-                    msaa_report: None,
-                    adopt: false,
                 }),
                 ..Change::default()
             },
@@ -320,8 +325,14 @@ mod seam {
                 dialog,
             } => Change {
                 report: Some(Report::Reported(held_focus(*node, *role), Evidence::Msaa)),
-                foreground: Some((*node, *role, *batch)),
-                dialog: Some(dialog.clone()),
+                focus: Some(FocusCommit::Foreground {
+                    node: *node,
+                    reported: LastReported {
+                        role: *role,
+                        batch: *batch,
+                    },
+                    dialog: dialog.clone(),
+                }),
                 ..Change::default()
             },
             Commit::Element {
@@ -330,7 +341,14 @@ mod seam {
                 element,
                 slider,
             } => Change {
-                element: Some((*node, target(*node, Some((*group, *element)), *slider))),
+                element: Some((
+                    *node,
+                    Subscribed {
+                        group: *group,
+                        element: *element,
+                        slider: *slider,
+                    },
+                )),
                 ..Change::default()
             },
             Commit::OwedDone(node) => Change {
@@ -338,15 +356,15 @@ mod seam {
                 ..Change::default()
             },
             Commit::Absorb(window) => Change {
-                absorb: Some(*window),
+                mark: Some(MarkChange::Absorb(*window)),
                 ..Change::default()
             },
             Commit::DropSystemCaret => Change {
-                drop_system_caret: true,
+                mark: Some(MarkChange::DropSystemCaret),
                 ..Change::default()
             },
             Commit::ClearRedirect => Change {
-                clear_redirect: true,
+                mark: Some(MarkChange::ClearRedirect),
                 ..Change::default()
             },
             Commit::Open { request, node } => Change {
