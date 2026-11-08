@@ -1982,9 +1982,9 @@ mod key_line {
         handled: bool,
         applied: Option<u64>,
         removed: Option<String>,
-        /// The read the key is judged from: its before read, or the last
-        /// read when it was passed on without one.
-        judged: Option<Read>,
+        /// The key's before read; a key given up at the 150 ms bound has
+        /// none, and says nothing at a focus moving first.
+        before: Option<Read>,
         /// No read or bound may start before this: the end of a focus
         /// report's wait it pressed behind.
         floor: u64,
@@ -2018,7 +2018,6 @@ mod key_line {
         ended: bool,
         exited: bool,
         caret: Option<(u64, u32)>,
-        last_read: Option<Read>,
         changes: BTreeMap<String, ChangeRecord>,
         heard_count: usize,
     }
@@ -2067,7 +2066,6 @@ mod key_line {
                 && self.caret.is_none_or(|(began, _)| read.began > began)
             {
                 self.caret = Some((read.began, read.at));
-                self.last_read = Some(read.clone());
             }
             for change in &read.changes {
                 self.changes.insert(
@@ -2094,7 +2092,7 @@ mod key_line {
                 handled: false,
                 applied: None,
                 removed: None,
-                judged: None,
+                before: None,
                 floor: now,
                 evidence: None,
                 resolved: false,
@@ -2116,7 +2114,7 @@ mod key_line {
         }
 
         fn before_read(&mut self, key: usize, read: &Read) {
-            self.keys[key].judged = Some(read.clone());
+            self.keys[key].before = Some(read.clone());
             self.take_read(read);
         }
 
@@ -2134,7 +2132,10 @@ mod key_line {
         /// `key`'s bound passed with no evidence: the words it says. The
         /// read at the bound is taken as the newest caret when `delivered`.
         fn bound(&mut self, key: usize, read: &Read, delivered: bool) -> Option<(usize, String)> {
-            let may = self.may_speak(key, read.began);
+            // Once a later key was pressed the key says nothing at its
+            // bound, whatever its read's stamp, as NVDA's helper returns
+            // while a script waits (`nvda/source/editableText.py` 166).
+            let may = self.may_speak(key, read.began) && self.keys[key].later.is_none();
             if delivered {
                 self.take_read(read);
             }
@@ -2165,7 +2166,7 @@ mod key_line {
                     let within = key.delivered.is_some_and(|at| now < at + 100);
                     if !exited && !key.silent && key.later.is_none() && within {
                         let spoken = key
-                            .judged
+                            .before
                             .as_ref()
                             .and_then(|read| unit_before(key.kind, read));
                         words.extend(spoken.map(|spoken| (index, spoken)));
@@ -2181,7 +2182,6 @@ mod key_line {
         /// The keys Core let go at `now`: each once, in press order, and
         /// never after exit.
         fn delivered(&mut self, passed: &[KeyId], now: u64, trail: &str) {
-            let last = self.last_read.clone();
             let text = self.text();
             assert!(
                 !self.exited || passed.is_empty(),
@@ -2195,7 +2195,6 @@ mod key_line {
                 let key = &mut self.keys[id.0];
                 assert!(key.delivered.is_none(), "{id:?} let go twice: {trail}");
                 key.delivered = Some(now);
-                key.judged = key.judged.take().or(last.clone());
                 // Pressed where nothing can be read, it has no words.
                 key.resolved |= !text || self.ended;
             }
@@ -2430,7 +2429,6 @@ mod key_line {
                 focus_node: Some(FIELD),
                 last_field: Some(FIELD),
                 caret: Some((read.began, read.at)),
-                last_read: Some(read),
                 ..Model::default()
             };
             Self {
@@ -2572,6 +2570,10 @@ mod key_line {
                     );
                     self.model.delivered(&observed.passed, now, &trail);
                     self.model.exited = true;
+                    // Nothing further is heard once the application exits.
+                    for change in self.model.changes.values_mut() {
+                        change.dead |= change.heard == 0;
+                    }
                     self.check(&[], None, &Observed::default());
                 }
             }
@@ -2702,9 +2704,6 @@ mod key_line {
             self.model.last_field = self.model.focus_node.or(self.model.last_field);
             self.model.focus_node = node;
             self.model.caret = read.as_ref().map(|read| (read.began, read.at));
-            if let Some(read) = &read {
-                self.model.last_read = Some(read.clone());
-            }
             let observed = self.core.focus(to, read.as_ref(), now);
             self.check(&expected, Some(to == FocusTo::Window), &observed);
         }
