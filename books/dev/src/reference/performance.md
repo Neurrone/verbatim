@@ -1227,7 +1227,8 @@ speaks a grid item's row and column (`docs/parity/focus-announcement.md`,
   `GetAsyncKeyState` per reported focus change. A cell read for a focus or
   the review also reads its containing grid: one more call in the focus
   listener's classic read, only for a cell, and none in a remote program,
-  whose program grows only for a cell.
+  which asks a selected child or a neighbour whether it is a cell, about
+  ten instructions, and reads the table only of a cell.
 
 ### Core's meeting of chains
 

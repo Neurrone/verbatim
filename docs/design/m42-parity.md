@@ -168,7 +168,7 @@ NVDA reads the counts only for a query, not at a focus (`speech.py` 991 to 993),
 
 The focus's read and the review's read `GridItem.ContainingGrid`, which is an element, and that element's runtime id, in a step of the cell's read that only a cell with the `GridItem` pattern takes, while the theme reports cell coordinates (`nvda/source/NVDAObjects/UIA/__init__.py` 2322 to 2334). The shapes hold only plain properties (`crates/verbatim-uia/src/shape/shapes.rs`), so this is a step of its own in the remote program and one call in a classic read, since UIA keeps the runtime id with the element it returns. A selection the desktop-wide listener hears carries no table, so a selection anywhere pays nothing for this, and it says both coordinates. The focus listener's read is classic and reads whatever the theme, as its other details are, so with the indication off a cell focused still costs that call there.
 
-Costs, measured on mockapp's grid: no more round trips in a remote read, whose program grows only for a cell, and one more call in a classic read, only for a cell.
+Costs, measured on mockapp's grid: no more round trips in a remote read, whose program asks a focus's selected child or a navigation step's neighbour whether it is a cell, about ten instructions, and reads the table only of a cell; and one more call in a classic read, only for a cell.
 
 Limits: row and column spans are not read, as today, so "through" is not said. A hash collision between two tables leaves out a row or column, and needs equal 64-bit hashes of two runtime ids in a row. A selected cell the desktop-wide listener reports says both its row and its column every time, where NVDA leaves out what is unchanged.
 

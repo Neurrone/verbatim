@@ -2419,7 +2419,7 @@ fn uia_navigation_steps_cost_exactly() {
         &[
             ("WM_GETOBJECT", 1),
             ("ProviderOptions", 26),
-            ("GetPatternProvider", 14),
+            ("GetPatternProvider", 15),
             ("GetPropertyValue", 25),
             ("HostRawElementProvider", 9),
             ("Navigate", 9),
@@ -2438,7 +2438,7 @@ fn uia_navigation_steps_cost_exactly() {
         &[
             ("WM_GETOBJECT", 1),
             ("ProviderOptions", 27),
-            ("GetPatternProvider", 14),
+            ("GetPatternProvider", 15),
             ("GetPropertyValue", 25),
             ("HostRawElementProvider", 9),
             ("Navigate", 9),
@@ -2769,7 +2769,7 @@ fn uia_selected_children_cost_exactly() {
         vec![
             ("WM_GETOBJECT", 2),
             ("ProviderOptions", 24),
-            ("GetPatternProvider", 26 + extra_pattern),
+            ("GetPatternProvider", 27 + extra_pattern),
             ("GetPropertyValue", 48),
             ("HostRawElementProvider", 10),
             ("Navigate", 8),
