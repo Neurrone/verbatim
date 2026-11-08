@@ -12,6 +12,7 @@ A change has failed review when any of these holds:
 - a race hidden by a retry, a sleep or a bound added without evidence that the proper fix is not enough;
 - a document that describes a removed mechanism, or a decision attributed to Dickson that he did not take;
 - a removal or a protocol change that a remaining caller, document or wire version still depends on.
+- state in the code that does not match the design's table of states, or a new flag or optional field that encodes a state the table does not list.
 
 ## What a finding must carry
 
