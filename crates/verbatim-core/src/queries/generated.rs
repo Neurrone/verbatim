@@ -1274,9 +1274,10 @@ fn generated_cases_keep_the_reducers_rules() {
 /// ADR 0001 and Dickson's decisions in
 /// `docs/design/caret-selection-rework.md`. After every step, in terms of
 /// keys and speech: every key reaches the application once, in press
-/// order, and within its bounds; nothing is withheld after exit, and nothing
-/// is let go or said after it (whether exit delivers a key still held, or
-/// drops it, no recorded rule says, so neither is required); the caret is
+/// order, and within its bounds; exit delivers every key still held, in
+/// press order, since a key the user pressed is never swallowed, so
+/// nothing is withheld after it, and nothing is let go or said after it;
+/// the caret is
 /// the one read most recently begun among those delivered; each selection
 /// change is heard once and after the words of the key that made it; a key
 /// speaks at most once, and not at all once a later key was pressed, except
@@ -2555,13 +2556,23 @@ mod key_line {
                     if self.model.exited {
                         return;
                     }
-                    self.model.exited = true;
                     self.reach("exit");
-                    if self.model.keys.iter().any(|key| key.delivered.is_none()) {
+                    let held: Vec<KeyId> = (0..self.model.keys.len())
+                        .filter(|&index| self.model.keys[index].delivered.is_none())
+                        .map(KeyId)
+                        .collect();
+                    if !held.is_empty() {
                         self.reach("exit with a key in line");
                     }
                     let observed = self.core.exit(now);
-                    self.check(&[], None, &observed);
+                    let trail = self.trail();
+                    assert_eq!(
+                        observed.passed, held,
+                        "exit delivers every key still held, in press order: {trail}"
+                    );
+                    self.model.delivered(&observed.passed, now, &trail);
+                    self.model.exited = true;
+                    self.check(&[], None, &Observed::default());
                 }
             }
         }
@@ -2810,7 +2821,7 @@ mod key_line {
                 ],
             ),
             (
-                "a key in Core's line at exit is still withheld after it",
+                "a key held at exit is not delivered",
                 vec![right(true), Exit],
             ),
             (
