@@ -20,15 +20,17 @@ built (2026-11-03). The UIA facts build is built (2026-11-06). The slow
 applications build is built (2026-11-07). Next, in this order (Dickson,
 2026-11-05):
 
-1. the focus pipeline rework's third build;
-2. the caret and selection rework, which ends M4;
-3. M4.2;
-4. M5;
-5. M6;
-6. M4.3;
-7. M4.8 (Guardian) and M4.7 (Containment);
-8. M4.9 (Lints and unsafe);
-9. M6.2, with the rest after.
+1. the focus pipeline rework's third build, with Core's focus queue
+   redesign;
+2. the state models below, "State models" (Dickson, 2026-11-08);
+3. the caret and selection rework, which ends M4;
+4. M4.2;
+5. M5;
+6. M6;
+7. M4.3;
+8. M4.8 (Guardian) and M4.7 (Containment);
+9. M4.9 (Lints and unsafe);
+10. M6.2, with the rest after.
 
 The published site's homepage, `books/index.html`, carries one line of
 this status per milestone, and changes with it.
@@ -114,6 +116,29 @@ More follow-ups:
   rewrite it to cite the parity docs.
 - After a voice change, NVDA refreshes the other settings controls from the
   driver (`gui/settingsDialogs.py`, lines 1601 to 1619); Verbatim does not.
+
+### State models
+
+Facts kept in several places or as combinations of flags, found by a
+study of Core, the outposts and the listener on 2026-11-08, each with a
+history of repeated fixes. Each is rebuilt as one explicit state with one
+writer, in this order, after Core's focus queue redesign (Dickson,
+2026-11-08):
+
+- Core's held-key line: one stage, idle, reading a key's caret or
+  awaiting the watch, in place of two optional fields and a search of the
+  query table.
+- The listener's record of an application: keyed by its generation
+  rather than its process number, so a reused number inherits nothing,
+  with one lifecycle value in place of the `threaded`, `ending` and
+  `limit_reached` combinations.
+- The outpost's record of hung windows: one hang being told per
+  application, judged live, in place of the hung set, the destroyed set
+  and the two counters. A later hang in another window of the same
+  application plays the "not responding" sound again (Dickson,
+  2026-11-08).
+- The outpost's followed focus: one record replaced whole when a focus is
+  adopted, in place of its separate optional fields.
 
 ### The ownership refactor
 
