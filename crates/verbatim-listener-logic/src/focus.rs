@@ -100,6 +100,10 @@ pub const NOT_RELATED: &str = "its window is not related to the foreground windo
 /// would drop it once read.
 pub const HIDDEN_FRAME: &str = "Core's hidden frame";
 
+/// The reason a read returning for a process that has exited is dropped: a
+/// new process may have its id by then, and the read must not reach it.
+pub const PROCESS_EXITED: &str = "its process has exited";
+
 /// The reason the console window's own element's focus is dropped.
 pub const CONSOLE_OWN: &str = "the console window's own focus";
 

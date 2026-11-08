@@ -38,7 +38,8 @@ use verbatim_reader_rules::in_flight::{Abandoned, Ask, Decision, InFlight, Reaso
 pub use verbatim_reader_rules::in_flight::Request;
 
 use crate::focus::{
-    ABANDONED_LIMIT, FocusEvent, Judged, MOVED_ON, Meta, NOT_IN_TIME, REPLACED, WAITED_TOO_LONG,
+    ABANDONED_LIMIT, FocusEvent, Judged, MOVED_ON, Meta, NOT_IN_TIME, PROCESS_EXITED, REPLACED,
+    WAITED_TOO_LONG,
 };
 use verbatim_model::protocol::EventTiming;
 
@@ -1136,6 +1137,7 @@ impl<J> Schedule<J> {
             effects.push(ScheduleEffect::LogicError(RETURN_UNHELD));
             return;
         };
+        let exited = matches!(slot, Slot::Exited { .. });
         if let Some(charge) = slot.charge_of(request.generation) {
             let read = matches!(judged, Judged::Read(_));
             let Some(under_way) = charge.flight.end(request) else {
@@ -1146,6 +1148,13 @@ impl<J> Schedule<J> {
             if read && under_way.top.is_some() {
                 slot.app().last_top = under_way.top;
             }
+            // A new process may have the id once the exit has been
+            // answered, and what this one read must not reach it.
+            let judged = if exited && !matches!(judged, Judged::Dropped(_)) {
+                Judged::Dropped(PROCESS_EXITED)
+            } else {
+                judged
+            };
             effects.push(ScheduleEffect::Outcome {
                 pid: app.pid,
                 meta,
@@ -2642,6 +2651,34 @@ mod tests {
         assert_eq!(step(&mut schedule, focus(1, 2), 0), [Seen::Woken(1)]);
         assert!(schedule.focus_pending(None));
         assert!(schedule.focus_pending(Some(Pid(2))));
+    }
+
+    /// What a generation told exited read is dropped: a new process may
+    /// have its id.
+    #[test]
+    fn a_read_returning_after_its_process_exited_is_dropped() {
+        let mut schedule = schedule();
+        let _ = step(&mut schedule, focus(1, 1), 0);
+        let _ = step(&mut schedule, next(1, 1), 0);
+        let app = schedule.current(Pid(1)).expect("running");
+        let _ = step(
+            &mut schedule,
+            ScheduleInput::ApplicationExited { pid: Pid(1) },
+            1,
+        );
+        assert_eq!(
+            step(
+                &mut schedule,
+                ScheduleInput::Returned {
+                    app,
+                    request: request(1, 1),
+                    meta: meta(1, FocusEvent::Focus),
+                    judged: Judged::Read(a_read()),
+                },
+                2,
+            ),
+            [Seen::Outcome(1, 1, PROCESS_EXITED), CANCEL]
+        );
     }
 
     /// Only a read focus gives its application its last top-level window:

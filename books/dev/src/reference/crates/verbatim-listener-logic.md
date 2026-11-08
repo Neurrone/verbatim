@@ -75,7 +75,8 @@ Public API:
   turns back to `Live`); an exited record holds `Draining` (`Idle` or
   `InCharge`), since nothing can wait for it. `ApplicationExited` moves the
   record from `running` to `exited`, its queue dropped at once when no
-  thread is in charge. The generation in charge is the `Charge`'s work in
+  thread is in charge; a read returning for an exited generation is
+  dropped for `PROCESS_EXITED`, as a new process may have its id. The generation in charge is the `Charge`'s work in
   flight alone; every start of a thread, new or reused, takes a new
   generation (`InFlight::succeed`), and `App::counters` carries the numbers
   from one `Charge` to the next. An abandonment has the shell stop watching
