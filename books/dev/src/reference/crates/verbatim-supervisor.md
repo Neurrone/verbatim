@@ -156,6 +156,15 @@ How it works:
   then and ends its record as its exit instead of giving it a generation,
   so no spare is used up and no outpost launched for a process that is
   gone (`crates/verbatim-supervisor/tests/target_gone.rs`).
+- `Owner::forget_app`, the one place the owner learns a held process has
+  exited, tells a running listener (`ApplicationExited`) and keeps the
+  process's handle in the listener's record (`exits_told`) until
+  `ExitHandled`, so no process can take the id before the listener has
+  moved its record. With no listener running, or one still launching, the
+  handle closes at once and nothing is sent; a listener that ends drops
+  the map with its record. An application first seen through facts that
+  start no outpost is held from its first fact (`route_fact`), so the
+  sweep finds its exit; one that cannot be held has `HookRemoved` sent.
 - An outpost whose pipe closes is ended once everything it wrote is handed
   on: with its target if the application exited, otherwise by the failure
   path (`crates/verbatim-supervisor/tests/spares.rs`). Every child is pinged

@@ -126,7 +126,8 @@
 //! A thread keeps its focus before, NVDA's duplicate evidence, for as long
 //! as its application has an outpost: it ends, once it has read every event
 //! waiting, when the listener learns that the application's outpost has
-//! ended ([`Readers::outpost_ended`]), and at the listener's shutdown
+//! ended ([`Readers::outpost_ended`]) or that its process has exited
+//! ([`Readers::application_exited`]), and at the listener's shutdown
 //! (`books/dev/src/reference/crates/verbatim-listener.md`, "How a UIA focus is judged and read").
 //! An event that arrives
 //! after that, for an application still running, starts a new thread.
@@ -156,7 +157,7 @@ use verbatim_listener_logic::focus::{
     NOTIFICATION_NO_WINDOW, arrival_of,
 };
 use verbatim_listener_logic::schedule::{
-    AlarmChange, QueuePlace, Request, Schedule, ScheduleEffect, ScheduleInput, Waking,
+    AlarmChange, AppKey, QueuePlace, Request, Schedule, ScheduleEffect, ScheduleInput, Waking,
 };
 use verbatim_model::protocol::{
     AncestorsEnd, DeliveredFact, UiaAncestorFact, UiaFocusRead, UiaSnapshotFact,
@@ -228,8 +229,9 @@ impl Drop for CallLog {
     }
 }
 
-/// What a read does once it learns its window ([`WatchedRead::learn`]):
-/// tells the schedule, under the readers' lock.
+/// What a read does once it learns its window ([`WatchedRead::learn`]), or
+/// its top-level window ([`WatchedRead::place`]): tells the schedule, under
+/// the readers' lock.
 type OnLearn = Box<dyn Fn(isize) + Send + Sync>;
 
 /// One read as its thread and the readers' shell share it. Each read has
@@ -247,8 +249,9 @@ type OnLearn = Box<dyn Fn(isize) + Send + Sync>;
 /// found it ([`learn`](Self::learn)), which the schedule is told; 0 while
 /// neither is known, and always for a selection or a notification. The
 /// schedule judges from it whether the user has moved on
-/// ([`MOVED_ON_GRACE`](verbatim_reader_rules::MOVED_ON_GRACE)). And the top-level window of that window, once
-/// found, for menu currentness ([`Readers::foreground_changed`]).
+/// ([`MOVED_ON_GRACE`](verbatim_reader_rules::MOVED_ON_GRACE)). The read's
+/// top-level window, once found, the schedule alone keeps, for menu
+/// currentness ([`Readers::foreground_changed`]).
 #[derive(Clone, Default)]
 pub(crate) struct WatchedRead(Arc<Watched>);
 
@@ -256,28 +259,27 @@ pub(crate) struct WatchedRead(Arc<Watched>);
 struct Watched {
     request: Option<Request>,
     window: AtomicIsize,
-    /// The top-level window of the read's window, once the read has found
-    /// it, 0 before.
-    top_level: AtomicIsize,
-    on_learn: Option<OnLearn>,
+    /// What it does on learning its window, and on finding its top-level
+    /// window; `None` for a read never judged.
+    reports: Option<(OnLearn, OnLearn)>,
 }
 
 impl WatchedRead {
     /// The read `request` of window `hwnd`, 0 for one not yet known, which
-    /// does `on_learn` once it learns its window.
-    fn new(request: Request, hwnd: isize, on_learn: Option<OnLearn>) -> Self {
+    /// does the first of `reports` once it learns its window and the second
+    /// once it finds its top-level window.
+    fn new(request: Request, hwnd: isize, reports: Option<(OnLearn, OnLearn)>) -> Self {
         Self(Arc::new(Watched {
             request: Some(request),
             window: AtomicIsize::new(hwnd),
-            on_learn,
-            ..Watched::default()
+            reports,
         }))
     }
 
     /// The read has found that it is of window `hwnd`.
     pub(crate) fn learn(&self, hwnd: isize) {
         self.0.window.store(hwnd, Ordering::SeqCst);
-        if let Some(on_learn) = &self.0.on_learn {
+        if let Some((on_learn, _)) = &self.0.reports {
             on_learn(hwnd);
         }
     }
@@ -292,14 +294,12 @@ impl WatchedRead {
         self.0.window.load(Ordering::SeqCst)
     }
 
-    /// The read has found its window's top-level window, `top`.
+    /// The read has found its window's top-level window, `top`, which the
+    /// schedule is told: once per read.
     fn place(&self, top: isize) {
-        self.0.top_level.store(top, Ordering::SeqCst);
-    }
-
-    /// The top-level window of the read's window, 0 while not found.
-    fn top_level(&self) -> isize {
-        self.0.top_level.load(Ordering::SeqCst)
+        if let Some((_, on_place)) = &self.0.reports {
+            on_place(top);
+        }
     }
 
     /// Whether `other` is this read.
@@ -1335,14 +1335,14 @@ struct ReadersState<J, O> {
     schedule: Schedule<J>,
     owed: HashMap<u64, O>,
     threads: Vec<JoinHandle<()>>,
-    apps: HashMap<Pid, AppShell>,
+    apps: HashMap<AppKey, AppShell>,
     idle_waiters: HashMap<u64, IdleWaiter>,
     next_waiter: u64,
 }
 
-/// What the shell keeps for one application the schedule holds: made when
-/// a thread is put in charge of its events, and dropped whole when the
-/// schedule lets the application go ([`ScheduleEffect::Forget`]), which it
+/// What the shell keeps for one application generation the schedule holds:
+/// made when a thread is put in charge of its events, and dropped whole when
+/// the schedule lets the record go ([`ScheduleEffect::Forget`]), which it
 /// does only once no thread is in charge of its events or abandoned to a
 /// read of them, so no thread waits on its condition variable or returns
 /// to its read; in debug builds every step checks that its keys are the
@@ -1435,22 +1435,22 @@ fn step<R: Reading>(
                 }
             }
             ScheduleEffect::Spawn {
-                pid,
+                app,
                 generation,
                 reuse: true,
             } => {
                 if let Some(thread) = thread.as_mut() {
                     *thread.generation = generation;
                 }
-                state.apps.entry(pid).or_default();
+                state.apps.entry(app).or_default();
             }
             ScheduleEffect::Spawn {
-                pid,
+                app,
                 generation,
                 reuse: false,
-            } => failed.extend(spawn(shared, state, pid, generation)),
-            ScheduleEffect::Wake(Waking::Thread(pid)) => {
-                if let Some(app) = state.apps.get(&pid) {
+            } => failed.extend(spawn(shared, state, app, generation)),
+            ScheduleEffect::Wake(Waking::Thread(key)) => {
+                if let Some(app) = state.apps.get(&key) {
                     app.wake.notify_one();
                 }
             }
@@ -1459,10 +1459,10 @@ fn step<R: Reading>(
                     app.wake.notify_all();
                 }
             }
-            ScheduleEffect::Unwatch { pid } => {
-                let _ = state.apps.get_mut(&pid).and_then(|app| app.watched.take());
+            ScheduleEffect::Unwatch { app } => {
+                let _ = state.apps.get_mut(&app).and_then(|app| app.watched.take());
             }
-            ScheduleEffect::Forget { pid } => drop(state.apps.remove(&pid)),
+            ScheduleEffect::Forget { app } => drop(state.apps.remove(&app)),
             ScheduleEffect::ForgetLast => {
                 if let Some(ThreadSide {
                     reader: Some(reader),
@@ -1485,16 +1485,28 @@ fn step<R: Reading>(
             ScheduleEffect::Job(job) => {
                 // Only a judged read is told its window, so only it is
                 // given what to do then.
-                let (pid, request) = (job.pid, job.request);
+                let (app, request) = (job.app, job.request);
                 let watched = WatchedRead::new(
                     request,
                     job.window.known().map_or(0, Window::get),
-                    (job.window != RuleWindow::Never).then(|| on_learn(shared, pid, request)),
+                    (job.window != RuleWindow::Never).then(|| {
+                        (
+                            on_learn(shared, app, request),
+                            on_place(shared, app, request),
+                        )
+                    }),
                 );
-                state.apps.entry(pid).or_default().watched = Some(watched.clone());
+                state.apps.entry(app).or_default().watched = Some(watched.clone());
                 next = Some((job.meta, job.work, watched, job.queue));
             }
             ask @ ScheduleEffect::Judge { .. } => asks.push(ask),
+            ScheduleEffect::LogicError(error) => {
+                tracing::error!(
+                    error,
+                    "the read scheduler reached a state its rules exclude"
+                );
+                debug_assert!(false, "{error}");
+            }
         }
     }
     if cfg!(debug_assertions) {
@@ -1520,13 +1532,11 @@ fn check_tables<J, O>(state: &ReadersState<J, O>) {
     let mut owed: Vec<u64> = state.owed.keys().copied().collect();
     owed.sort_unstable();
     debug_assert_eq!(owed, state.schedule.markers(), "the owed markers");
-    let mut apps: Vec<Pid> = state.apps.keys().copied().collect();
+    let mut apps: Vec<AppKey> = state.apps.keys().copied().collect();
     apps.sort_unstable();
-    debug_assert_eq!(
-        apps,
-        state.schedule.held().collect::<Vec<_>>(),
-        "the applications' records"
-    );
+    let mut held: Vec<AppKey> = state.schedule.held().collect();
+    held.sort_unstable();
+    debug_assert_eq!(apps, held, "the applications' records");
 }
 
 /// The answer to the schedule's ask `ask`, made under the readers' lock
@@ -1534,7 +1544,7 @@ fn check_tables<J, O>(state: &ReadersState<J, O>) {
 /// window ([`Reading::moved_on`]).
 fn answer<R: Reading>(shared: &Shared<R>, ask: &ScheduleEffect<R::Job>) -> ScheduleInput<R::Job> {
     let ScheduleEffect::Judge {
-        pid,
+        app,
         request,
         window,
     } = *ask
@@ -1542,7 +1552,7 @@ fn answer<R: Reading>(shared: &Shared<R>, ask: &ScheduleEffect<R::Job>) -> Sched
         unreachable!("only a judgement is asked")
     };
     ScheduleInput::Judged {
-        pid,
+        app,
         request,
         verdict: shared
             .reading
@@ -1650,7 +1660,7 @@ impl<R: Reading> Readers<R> {
     /// application with none is answered gone at once, its last read gone
     /// with its thread.
     pub(crate) fn has_reading_thread(&self, pid: Pid) -> bool {
-        self.shared.lock().apps.contains_key(&pid)
+        self.shared.lock().schedule.current(pid).is_some()
     }
 
     /// Ends `pid`'s reading thread, the listener having learned that its
@@ -1663,6 +1673,19 @@ impl<R: Reading> Readers<R> {
             &self.shared,
             &mut state,
             ScheduleInput::OutpostEnded { pid },
+            None,
+        );
+    }
+
+    /// `pid`'s process has exited: its record leaves the running
+    /// applications, so no later event reaches it, and its readers finish
+    /// what they hold. Never waits on a read.
+    pub(crate) fn application_exited(&self, pid: Pid) {
+        let mut state = self.shared.lock();
+        step(
+            &self.shared,
+            &mut state,
+            ScheduleInput::ApplicationExited { pid },
             None,
         );
     }
@@ -1697,20 +1720,11 @@ impl<R: Reading> Readers<R> {
         // A local call, outside the lock.
         let top_level = self.shared.reading.top_level(window);
         let mut state = self.shared.lock();
-        let running_tops = state
-            .apps
-            .iter()
-            .filter_map(|(pid, app)| {
-                let watched = app.watched.as_ref()?;
-                Some((*pid, Window::new(watched.top_level())))
-            })
-            .collect();
         step(
             &self.shared,
             &mut state,
             ScheduleInput::Foreground {
                 top_level: Window::new(top_level),
-                running_tops,
             },
             None,
         );
@@ -1776,22 +1790,22 @@ const READING_THREAD: &str = "verbatim-listener-read";
 /// `ERROR_NOT_ENOUGH_MEMORY`.
 const ERROR_NOT_ENOUGH_MEMORY: i32 = 8;
 
-/// Starts a reading thread in charge of `pid`'s events as `generation`:
+/// Starts a reading thread in charge of `app`'s events as `generation`:
 /// with no thread to be had, the failure, for the caller to step the
 /// schedule with, which drops its waiting events.
 fn spawn<R: Reading>(
     shared: &Arc<Shared<R>>,
     state: &mut ReadersState<R::Job, R::Owed>,
-    pid: Pid,
+    app: AppKey,
     generation: u64,
 ) -> Option<ScheduleInput<R::Job>> {
-    state.apps.entry(pid).or_default();
+    state.apps.entry(app).or_default();
     let reading = Arc::clone(shared);
     // A thread the system cannot start, as one out of memory refuses it.
     #[cfg(test)]
     let refused = verbatim_faults::hit(
         verbatim_faults::Fault::ThreadStart,
-        &(READING_THREAD, pid, generation),
+        &(READING_THREAD, app.pid, generation),
     );
     #[cfg(not(test))]
     let refused = false;
@@ -1800,7 +1814,7 @@ fn spawn<R: Reading>(
     } else {
         thread::Builder::new()
             .name(READING_THREAD.to_owned())
-            .spawn(move || run(&reading, pid, generation))
+            .spawn(move || run(&reading, app, generation))
     };
     match spawned {
         Ok(thread) => {
@@ -1809,19 +1823,19 @@ fn spawn<R: Reading>(
             None
         }
         Err(error) => {
-            tracing::error!(%pid, %error, "a reading thread could not be started");
-            Some(ScheduleInput::SpawnFailed { pid, generation })
+            tracing::error!(pid = %app.pid, %error, "a reading thread could not be started");
+            Some(ScheduleInput::SpawnFailed { app, generation })
         }
     }
 }
 
-/// A reading thread: reads `pid`'s events in order while it is the thread
+/// A reading thread: reads `key`'s events in order while it is the thread
 /// in charge of them, then releases its reader and ends.
-fn run<R: Reading>(shared: &Arc<Shared<R>>, pid: Pid, generation: u64) {
+fn run<R: Reading>(shared: &Arc<Shared<R>>, key: AppKey, generation: u64) {
     let mut generation = generation;
-    let mut reader = shared.reading.reader(pid);
+    let mut reader = shared.reading.reader(key.pid);
     while let Some((mut meta, job, window, queue)) =
-        next_job(shared, pid, &mut reader, &mut generation)
+        next_job(shared, key, &mut reader, &mut generation)
     {
         let judged = shared
             .reading
@@ -1832,12 +1846,11 @@ fn run<R: Reading>(shared: &Arc<Shared<R>>, pid: Pid, generation: u64) {
         shared
             .failed_reads
             .fetch_add(verbatim_uia::calls::take_failed_reads(), Ordering::Relaxed);
-        let top = window.top_level();
         let request = window
             .request()
             .expect("a job's read is made with its request");
         let mut state = shared.lock();
-        if let Some(app) = state.apps.get_mut(&pid)
+        if let Some(app) = state.apps.get_mut(&key)
             && app
                 .watched
                 .as_ref()
@@ -1849,38 +1862,37 @@ fn run<R: Reading>(shared: &Arc<Shared<R>>, pid: Pid, generation: u64) {
             shared,
             &mut state,
             ScheduleInput::Returned {
-                pid,
+                app: key,
                 request,
                 meta,
                 judged,
-                top: Window::new(top),
             },
             Some(ThreadSide {
                 reader: &mut reader,
                 generation: &mut generation,
             }),
         );
-        if !state.schedule.in_charge(pid, generation) {
+        if !state.schedule.in_charge(key, generation) {
             break;
         }
     }
     shared.reading.finish(reader);
 }
 
-/// The next event for the thread `generation` to read for `pid`, waiting
+/// The next event for the thread `generation` to read for `key`, waiting
 /// for one; `None` when the thread is no longer in charge, the readers are
 /// stopping, or the application's outpost has ended and no event is
 /// waiting ([`Readers::outpost_ended`]).
 fn next_job<R: Reading>(
     shared: &Arc<Shared<R>>,
-    pid: Pid,
+    key: AppKey,
     reader: &mut Option<R::Reader>,
     generation: &mut u64,
 ) -> Option<(Meta, R::Job, WatchedRead, QueuePlace)> {
     let mut state = shared.lock();
     loop {
         let input = ScheduleInput::Next {
-            pid,
+            app: key,
             generation: *generation,
         };
         let side = ThreadSide {
@@ -1890,19 +1902,19 @@ fn next_job<R: Reading>(
         if let Some(job) = step(shared, &mut state, input, Some(side)) {
             return Some(job);
         }
-        if !state.schedule.in_charge(pid, *generation) {
+        if !state.schedule.in_charge(key, *generation) {
             return None;
         }
-        let wake = Arc::clone(&state.apps.entry(pid).or_default().wake);
+        let wake = Arc::clone(&state.apps.entry(key).or_default().wake);
         state = wake.wait(state).unwrap_or_else(PoisonError::into_inner);
     }
 }
 
-/// What `pid`'s read `request` does once it learns its window
+/// What `app`'s read `request` does once it learns its window
 /// ([`WatchedRead::learn`]): steps the schedule, whose work in flight then
 /// judges the moved-on rule at the grace's end, or at once when the grace
 /// has passed. One uncontended lock and no wake. Never waits on a read.
-fn on_learn<R: Reading>(shared: &Arc<Shared<R>>, pid: Pid, request: Request) -> OnLearn {
+fn on_learn<R: Reading>(shared: &Arc<Shared<R>>, app: AppKey, request: Request) -> OnLearn {
     let shared = Arc::downgrade(shared);
     Box::new(move |window: isize| {
         let (Some(shared), Some(window)) = (shared.upgrade(), Window::new(window)) else {
@@ -1914,10 +1926,31 @@ fn on_learn<R: Reading>(shared: &Arc<Shared<R>>, pid: Pid, request: Request) -> 
             &shared,
             &mut state,
             ScheduleInput::Learned {
-                pid,
+                app,
                 request,
                 window,
             },
+            None,
+        );
+    })
+}
+
+/// What `app`'s read `request` does once it finds its top-level window
+/// ([`WatchedRead::place`]): steps the schedule. One uncontended lock and
+/// no wake (`books/dev/src/reference/performance.md`). Never waits on a
+/// read.
+fn on_place<R: Reading>(shared: &Arc<Shared<R>>, app: AppKey, request: Request) -> OnLearn {
+    let shared = Arc::downgrade(shared);
+    Box::new(move |top: isize| {
+        let (Some(shared), Some(top)) = (shared.upgrade(), Window::new(top)) else {
+            return;
+        };
+
+        let mut state = shared.lock();
+        step(
+            &shared,
+            &mut state,
+            ScheduleInput::Placed { app, request, top },
             None,
         );
     })
@@ -2629,7 +2662,8 @@ mod tests {
         // The thread in charge of pid 5's events is held in its read, not
         // waiting on it, so this wait takes no wake meant for that thread.
         let state = readers.shared.lock();
-        let wake = Arc::clone(&state.apps.get(&Pid(5)).expect("pid 5 is held").wake);
+        let held = state.schedule.current(Pid(5)).expect("pid 5 runs");
+        let wake = Arc::clone(&state.apps.get(&held).expect("pid 5 is held").wake);
         let (stopped_tx, stopped) = mpsc::channel();
         thread::spawn({
             let readers = Arc::clone(&readers);
@@ -3328,7 +3362,7 @@ mod tests {
                 .apps
                 .keys()
                 .collect::<Vec<_>>(),
-            Vec::<&Pid>::new()
+            Vec::<&AppKey>::new()
         );
         // The application runs on: its next event starts a new thread.
         fixture.push(Pid(5), meta(2), (2, None, Vec::new()));
@@ -3340,6 +3374,37 @@ mod tests {
         assert_ne!(second, first, "a new thread read the next event");
         let _ = fixture.readers.stop();
         assert_eq!(fixture.finished.try_recv().ok(), Some(second));
+    }
+
+    /// An exit moves the record: the thread reading finishes for the exited
+    /// generation, and a new event of the id starts a generation with a
+    /// thread of its own, which never waits behind the old one.
+    #[test]
+    fn an_applications_exit_gives_a_reused_id_a_thread_of_its_own() {
+        let fixture = fixture(Duration::from_secs(60));
+        let (open, gate) = mpsc::channel();
+        fixture.push(Pid(5), meta(1), (1, Some(gate), Vec::new()));
+        let (_, first) = fixture.read_on.recv_timeout(WAIT).expect("a read");
+        fixture.readers.application_exited(Pid(5));
+        fixture.push(Pid(5), meta(2), (2, None, Vec::new()));
+        assert_eq!(
+            fixture.outcomes.recv_timeout(WAIT).expect("an outcome"),
+            (Pid(5), 2, "read"),
+            "read while the exited generation's read is out"
+        );
+        let (_, second) = fixture.read_on.recv_timeout(WAIT).expect("a read");
+        assert_ne!(second, first, "the new generation has its own thread");
+        open.send(()).expect("the held read waits");
+        assert_eq!(
+            fixture.outcomes.recv_timeout(WAIT).expect("an outcome"),
+            (Pid(5), 1, "read")
+        );
+        assert_eq!(
+            fixture.finished.recv_timeout(WAIT).expect("a thread ended"),
+            first,
+            "the exited generation's thread ends with nothing left"
+        );
+        let _ = fixture.readers.stop();
     }
 
     #[test]

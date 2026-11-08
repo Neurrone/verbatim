@@ -1409,6 +1409,11 @@ impl Listener {
                 self.outgoing.hook_removed(*pid);
                 self.readers.outpost_ended(*pid);
             }
+            CoreToListener::ApplicationExited { pid } => {
+                self.readers.application_exited(*pid);
+                self.outgoing
+                    .urgent(ListenerToCore::ExitHandled { pid: *pid });
+            }
             CoreToListener::IdleQuery { round } => self.idle_query(*round),
             CoreToListener::LiveReread {
                 request,

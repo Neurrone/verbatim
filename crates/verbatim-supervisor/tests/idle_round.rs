@@ -180,6 +180,7 @@ fn listener_stand_in(
             }
             CoreToListener::HookInstalled { .. }
             | CoreToListener::HookRemoved { .. }
+            | CoreToListener::ApplicationExited { .. }
             | CoreToListener::LiveReread { .. } => {}
         }
     }

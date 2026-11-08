@@ -73,6 +73,7 @@ const CHECKED: [Checked; 7] = [
             "std::collections::BTreeMap",
             "std::collections::BTreeSet",
             "std::collections::VecDeque",
+            "std::num::NonZeroUsize",
             "std::time::Duration",
             "verbatim_model",
             "verbatim_reader_rules",

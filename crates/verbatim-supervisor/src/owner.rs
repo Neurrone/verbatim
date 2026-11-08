@@ -215,6 +215,10 @@ struct ListenerRecord {
     /// The hand-over's news for it, held while its launch is still at work,
     /// in order, and written once it has a writer.
     pending: Vec<CoreToListener>,
+    /// The processes whose exit it has been told and has not answered, each
+    /// handle held until [`ListenerToCore::ExitHandled`], so no new process
+    /// can have the id until the listener has moved its record.
+    exits_told: BTreeMap<Pid, Target>,
 }
 
 /// The relay's messages to the app, delivered through its sink in the
@@ -791,6 +795,10 @@ impl Owner {
                 self.listener_idle(outpost, round);
                 return;
             }
+            ListenerToCore::ExitHandled { pid } => {
+                self.exit_handled(outpost, pid);
+                return;
+            }
             ListenerToCore::Fault { detail } => {
                 tracing::warn!(detail, "focus listener fault");
                 return;
@@ -1341,10 +1349,49 @@ impl Owner {
     }
 
     /// Forgets `pid`'s process, whose exit the supervisor has learned, and
-    /// closes its handle.
+    /// tells the listener, holding its handle until the listener answers. A
+    /// process it does not hold changes nothing, as `release_target` can
+    /// ask for one.
     fn forget_app(&mut self, pid: Pid) {
-        if self.apps.remove(&pid).is_some() {
-            tracing::debug!(%pid, "an application's process exited; its handle is closed");
+        if let Some(app) = self.apps.remove(&pid) {
+            tracing::debug!(%pid, "an application's process exited");
+            self.tell_exit(pid, app.target);
+        }
+    }
+
+    /// Tells the running listener that `pid`'s process, `target`, has
+    /// exited, keeping `target` open until it answers. With no listener
+    /// running, or one still launching, `target` closes at once and nothing
+    /// is sent, since a new listener has no record of the process.
+    fn tell_exit(&mut self, pid: Pid, target: Target) {
+        let Some(listener) = self.listener.as_mut() else {
+            return;
+        };
+        let Some(child) = listener.child.running() else {
+            return;
+        };
+        match child
+            .writer
+            .push(Outgoing::HandOver(CoreToListener::ApplicationExited {
+                pid,
+            })) {
+            Ok(()) => {
+                listener.exits_told.insert(pid, target);
+            }
+            Err(error) => {
+                tracing::warn!(%error, "an application's exit could not be told to the listener");
+            }
+        }
+    }
+
+    /// The listener `outpost` has moved `pid`'s record: its handle closes.
+    fn exit_handled(&mut self, outpost: OutpostId, pid: Pid) {
+        if let Some(listener) = self
+            .listener
+            .as_mut()
+            .filter(|listener| listener.outpost == outpost)
+        {
+            drop(listener.exits_told.remove(&pid));
         }
     }
 
@@ -1367,6 +1414,7 @@ impl Owner {
             liveness: Liveness::new(now_us()),
             replacement,
             pending: Vec::new(),
+            exits_told: BTreeMap::new(),
         });
         self.launch(outpost, Role::Listener);
     }
@@ -1752,6 +1800,11 @@ impl Owner {
                 // for.
                 if may_start_outpost(&held.fact) {
                     let _ = self.start_outpost(pid, Some(held));
+                } else if self.hold_target(pid).is_err() {
+                    // Held from its first fact, so that the sweep finds its
+                    // exit and tells the listener; one that cannot be held
+                    // ends its reader as any such process does.
+                    self.tell_listener(CoreToListener::HookRemoved { pid, sent_at_us: 0 });
                 }
             }
         }

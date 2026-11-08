@@ -86,7 +86,8 @@ fn next_core_to_listener(previous: Option<&CoreToListener>) -> Option<CoreToList
             pid: Pid(1),
             sent_at_us: 0,
         },
-        CoreToListener::HookRemoved { .. } => CoreToListener::Ping {
+        CoreToListener::HookRemoved { .. } => CoreToListener::ApplicationExited { pid: Pid(1) },
+        CoreToListener::ApplicationExited { .. } => CoreToListener::Ping {
             seq: 1,
             sent_at_us: 0,
         },
@@ -135,7 +136,8 @@ fn next_listener_to_core(previous: Option<&ListenerToCore>) -> Option<ListenerTo
             outpost: OutpostId(1),
             through: 1,
         },
-        ListenerToCore::ForwardingEnded { .. } => ListenerToCore::MenuOrSwitchEnded {
+        ListenerToCore::ForwardingEnded { .. } => ListenerToCore::ExitHandled { pid: Pid(1) },
+        ListenerToCore::ExitHandled { .. } => ListenerToCore::MenuOrSwitchEnded {
             ended_at_us: 1,
             timing: timing(),
         },
@@ -207,6 +209,7 @@ fn every_variant_has_its_reviewed_kind() {
         [
             "HookInstalled: Lifecycle",
             "HookRemoved: Lifecycle",
+            "ApplicationExited: Lifecycle",
             "Ping: Lifecycle",
             "IdleQuery: Ask",
             "Shutdown: Lifecycle",
@@ -244,6 +247,7 @@ fn every_variant_has_its_reviewed_kind() {
             "Ready: Lifecycle",
             "FocusFact: Routed",
             "ForwardingEnded: Lifecycle",
+            "ExitHandled: Lifecycle",
             "MenuOrSwitchEnded: Report",
             "Desktop: Report",
             "Foreground: Report",

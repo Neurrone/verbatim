@@ -63,19 +63,31 @@ Public API:
   `Reason::MovedOn` when the user has left the read's window, or none; a
   read abandoned so is dropped for `MOVED_ON`, and one past its deadline
   for `NOT_IN_TIME`. A read is never abandoned for its window's hang: it
-  waits for the application. An application's `threaded` says a
-  thread is in charge, as the generation its work in flight has in
-  charge; every start of a thread, new or reused, takes a new generation
-  (`InFlight::succeed`). An abandonment has the shell stop watching the
-  read (`Unwatch`). An application whose outpost has ended (`OutpostEnded`)
-  is let go once nothing of it is left, at whichever step leaves it so: no
-  thread in charge, none abandoned and no event waiting; that step emits
-  `Forget(pid)`, after every other effect naming it, so the shell drops its
-  record of the application (`Schedule::let_go`, the one place an
-  application is removed; `Schedule::held` lists those kept). The
-  generated test checks that an action forgets exactly the applications
-  it let go, each once, and that no effect of the step names one after its
-  `Forget`. The schedule owns the watchdog's alarm: after every
+  waits for the application. Records are
+  keyed by application generation (`AppKey`, a process id and which run of
+  it): `Schedule` holds `running`, one record per process id, and `exited`,
+  by `AppKey`. An event (`Push`) looks in `running` alone, so it cannot
+  reach an exited record, and one no record names starts a new generation
+  with no abandoned readers. Each record's reader is one value: `Reader`
+  (`Idle` with at least one reader out, `InCharge` with its `Charge`, or
+  `Starved` at `ABANDONED_LIMIT` with its queue), inside `Life` (`Live`, or
+  `Ending` once `OutpostEnded` asked that it be let go, which any event
+  turns back to `Live`); an exited record holds `Draining` (`Idle` or
+  `InCharge`), since nothing can wait for it. `ApplicationExited` moves the
+  record from `running` to `exited`, its queue dropped at once when no
+  thread is in charge. The generation in charge is the `Charge`'s work in
+  flight alone; every start of a thread, new or reused, takes a new
+  generation (`InFlight::succeed`), and `App::counters` carries the numbers
+  from one `Charge` to the next. An abandonment has the shell stop watching
+  the read (`Unwatch`). A read's top-level window comes by `Placed`, once
+  per read, into its record; a successful return keeps it as the record's
+  last. A record with no thread in charge, no reader out and nothing queued
+  is dropped at the step that reaches that: `Forget(key)`, after every
+  other effect naming it, so the shell drops its record
+  (`Schedule::let_go`, the one place a record is removed; `Schedule::held`
+  lists those kept). A state the rules exclude is `LogicError`, for the
+  shell to log. The generated test compares every step with a reference
+  model of processes and threads. The schedule owns the watchdog's alarm: after every
   step it computes the soonest of each read's next wake and each
   application's end of its wait at the abandoned limit, and emits
   `Alarm(Set(due))` only when that changed, or after a `Tick`, which

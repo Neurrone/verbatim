@@ -294,7 +294,10 @@ Rules that hold for every UIA focus:
 - Beside the calls, local work only and no wake-up: the schedule sets
   the watchdog's alarm to the read's grace end as it starts, and moves it
   back to whatever else is due, or cancels it, as it ends: two timer
-  calls that wake no thread. A read that would reuse its ancestry cache
+  calls that wake no thread. A read that finds its top-level window takes
+  the listener's schedule lock once more, to tell the schedule (`Placed`),
+  and each held process's exit costs two pipe writes, the exit and its
+  answer, and a wake of each side. A read that would reuse its ancestry cache
   first makes the title check, one `InternalGetWindowText` per window
   entry of the cache, local calls with no call into the application and
   no message. A read that returns within its grace

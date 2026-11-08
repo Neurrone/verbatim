@@ -131,7 +131,7 @@ Tests that run an outpost in the test process get an overlapped pipe from the sa
 ### 4.7 Every boundary under the transport
 
 - Listener to verbatim.exe: the listener's producing threads (UIA's callback threads, the per-application reading threads, and the `WinEvent` thread) write inline. The menu-end grace is a threadpool timer whose callback sends, a deliberate 50 ms wait.
-- verbatim.exe to the listener: `HookInstalled`, `HookRemoved`, pings, idle queries and shutdown, written by the relay thread, read by the listener's I/O thread.
+- verbatim.exe to the listener: `HookInstalled`, `HookRemoved`, `ApplicationExited`, pings, idle queries and shutdown, written by the relay thread, read by the listener's I/O thread.
 - verbatim.exe to an outpost: relayed facts written inline by the relay thread in the pass that read them; Core's requests written inline by the reducer. A write that pends is finished by the relay thread, which serves every child's outbound pipe on its port.
 - An outpost to verbatim.exe: the worker's events and replies written inline by the worker; pongs by the I/O thread; `TargetExited` by the target-watch thread. Read in verbatim.exe by the relay thread, which handles pongs, `Ready`, `TargetExited` and the pipe's end itself and posts every other frame whole to the reducer's port.
 - verbatim.exe to a host and back: the synth thread writes commands and reads frames itself, waiting on the read's event and the utterance's cancellation event (section 7).

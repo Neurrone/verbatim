@@ -302,8 +302,8 @@ that carries them on the pipes, `Message`, is
     number, which outposts store, compare and echo and decide nothing by);
     `Cancel` (withdraws a query not started, by its `RequestId`); `Ping`; `Fetches`;
     `NodesHeld`; `IdleQuery`; `Shutdown`; and `Assign`.
-  - `CoreToListener`: `HookInstalled`, `HookRemoved`, `Ping`, `IdleQuery`
-    and `Shutdown`.
+  - `CoreToListener`: `HookInstalled`, `HookRemoved`, `ApplicationExited`
+    (answered by `ExitHandled`), `Ping`, `IdleQuery` and `Shutdown`.
   - `OutpostToCore`: `Ready`, `SpareReady`, `Event` (trace id,
     observation time in microseconds, backend, `WindowFacts`, the
     normalized event, and the application it belongs to when not the
@@ -313,7 +313,7 @@ that carries them on the pipes, `Message`, is
     `TargetExited` and `IdleAnswer`.
   - `ListenerToCore`: `Ready`, `FocusFact` (a `ListenerFact`, a pid and
     the `DeliveredFact` routed to that pid's outpost), `ForwardingEnded`,
-    `MenuOrSwitchEnded`, `Desktop` (a `DesktopNews`, with its timing),
+    `ExitHandled`, `MenuOrSwitchEnded`, `Desktop` (a `DesktopNews`, with its timing),
     `ForegroundWindow`, `Pong`, `Fault` and `IdleAnswer`.
 - Every variant has a `Kind` (`kind()`, an exhaustive match): `Ask`,
   `Answer`, `Report`, `Release`, `Lifecycle`, `Routed` or

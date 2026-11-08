@@ -10,8 +10,9 @@
 //! with no windows that runs until its standard input closes; as a stand-in
 //! for the outpost binary, which says it is ready, answers pings, shuts down
 //! when asked, and crashes (exits with code 3) when sent anything else; and
-//! as a stand-in for the focus listener, which says it is ready and shuts
-//! down when asked. Nothing makes a UI Automation or `WinEvent` call, so the
+//! as a stand-in for the focus listener, which says it is ready, answers an
+//! application's exit, and shuts down when asked, cleanly only if it was
+//! told of one where a test names it ([`EXIT_TOLD`]). Nothing makes a UI Automation or `WinEvent` call, so the
 //! test touches nothing on the desktop. Its own `main` recognizes each
 //! command line.
 
@@ -37,6 +38,10 @@ use verbatim_supervisor::{EventSink, Undelivered};
 
 /// The application's argument.
 const APPLICATION: &str = "--stand-in-application";
+
+/// Set for a test whose listener stand-in shuts down cleanly only if it
+/// was told an application's exit.
+const EXIT_TOLD: &str = "VERBATIM_TEST_EXIT_TOLD";
 
 /// How long a child has to exit after the shutdown message.
 const LIMIT: Duration = Duration::from_secs(5);
@@ -85,6 +90,8 @@ fn stand_in(args: &[String]) -> ! {
             },
         )
         .expect("a message is written");
+        let exit_wanted = std::env::var_os(EXIT_TOLD).is_some();
+        let mut told = false;
         loop {
             match read_message::<_, CoreToListener>(&mut commands) {
                 Ok(Some(CoreToListener::Ping { seq, .. })) => write_message(
@@ -96,7 +103,14 @@ fn stand_in(args: &[String]) -> ! {
                     },
                 )
                 .expect("a message is written"),
-                Ok(Some(CoreToListener::Shutdown) | None) => std::process::exit(0),
+                Ok(Some(CoreToListener::ApplicationExited { pid })) => {
+                    told = true;
+                    write_message(&mut messages, &ListenerToCore::ExitHandled { pid })
+                        .expect("a message is written");
+                }
+                Ok(Some(CoreToListener::Shutdown) | None) => {
+                    std::process::exit(if exit_wanted && !told { 3 } else { 0 })
+                }
                 Ok(Some(_)) => {}
                 Err(error) => panic!("the command pipe failed: {error}"),
             }
@@ -133,6 +147,9 @@ fn next(events: &Delivered) -> OutpostMessage {
 }
 
 fn an_outpost_is_never_started_or_replaced_for_an_application_that_has_exited() {
+    // SAFETY: set before the supervisor starts its first child, and read
+    // only by those children; no other thread reads the environment.
+    unsafe { std::env::set_var(EXIT_TOLD, "1") };
     let (events_tx, events) = unbounded();
     let exe = std::env::current_exe().expect("this test binary's path");
     let supervisor = Supervisor::with_executables(
@@ -220,8 +237,10 @@ fn an_outpost_is_never_started_or_replaced_for_an_application_that_has_exited() 
             killed: 0,
             killed_on_failure: 0,
         },
-        "the listener shut down cleanly and the crashed outpost had exited"
+        "the listener, told of the application's exit, shut down cleanly and the crashed outpost had exited"
     );
+    // SAFETY: as where it is set; no child is left to read it.
+    unsafe { std::env::remove_var(EXIT_TOLD) };
     let rest: Vec<OutpostMessage> = events.try_iter().collect();
     assert!(
         rest.is_empty(),

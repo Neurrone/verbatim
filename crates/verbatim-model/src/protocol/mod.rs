@@ -846,6 +846,14 @@ pub enum CoreToListener {
         #[serde(default)]
         sent_at_us: u64,
     },
+    /// `pid`'s process has exited: the supervisor holds its handle until
+    /// [`ListenerToCore::ExitHandled`] answers, so no new process can have
+    /// its id until the listener has moved its record. Sent once per held
+    /// process that exits.
+    ApplicationExited {
+        /// The process that exited.
+        pid: Pid,
+    },
     /// Liveness probe; answered by [`ListenerToCore::Pong`].
     Ping {
         /// Echoed in the matching pong.
@@ -898,6 +906,7 @@ impl CoreToListener {
             | CoreToListener::HookInstalled { sent_at_us, .. }
             | CoreToListener::HookRemoved { sent_at_us, .. } => *sent_at_us = now(),
             CoreToListener::IdleQuery { .. }
+            | CoreToListener::ApplicationExited { .. }
             | CoreToListener::Shutdown
             | CoreToListener::LiveReread { .. } => {}
         }
@@ -912,6 +921,7 @@ impl CoreToListener {
             | CoreToListener::HookInstalled { sent_at_us, .. }
             | CoreToListener::HookRemoved { sent_at_us, .. } => *sent_at_us,
             CoreToListener::IdleQuery { .. }
+            | CoreToListener::ApplicationExited { .. }
             | CoreToListener::Shutdown
             | CoreToListener::LiveReread { .. } => 0,
         }
@@ -924,6 +934,7 @@ impl CoreToListener {
             CoreToListener::IdleQuery { .. } | CoreToListener::LiveReread { .. } => Kind::Ask,
             CoreToListener::HookInstalled { .. }
             | CoreToListener::HookRemoved { .. }
+            | CoreToListener::ApplicationExited { .. }
             | CoreToListener::Ping { .. }
             | CoreToListener::Shutdown => Kind::Lifecycle,
         }
@@ -1307,6 +1318,13 @@ pub enum ListenerToCore {
         outpost: OutpostId,
         /// The listener's clock when it stopped, on the `WinEvent` clock.
         through: u32,
+    },
+    /// The listener's answer to [`CoreToListener::ApplicationExited`]: it
+    /// has moved `pid`'s record, so the supervisor closes the process's
+    /// handle.
+    ExitHandled {
+        /// The process that exited.
+        pid: Pid,
     },
     /// A menu closed, menu mode ended, or the Alt+Tab switcher closed,
     /// anywhere on the desktop, 50 milliseconds ago. Sent only by the
@@ -1750,7 +1768,8 @@ impl ListenerToCore {
             | ListenerToCore::Foreground { .. } => Kind::Report,
             ListenerToCore::Ready { .. }
             | ListenerToCore::Pong { .. }
-            | ListenerToCore::ForwardingEnded { .. } => Kind::Lifecycle,
+            | ListenerToCore::ForwardingEnded { .. }
+            | ListenerToCore::ExitHandled { .. } => Kind::Lifecycle,
             ListenerToCore::FocusFact { .. } => Kind::Routed,
         }
     }
@@ -1769,6 +1788,7 @@ impl ListenerToCore {
             ListenerToCore::Pong { written_at_us, .. } => *written_at_us = at_us,
             ListenerToCore::Ready { .. }
             | ListenerToCore::ForwardingEnded { .. }
+            | ListenerToCore::ExitHandled { .. }
             | ListenerToCore::Foreground { .. }
             | ListenerToCore::Fault { .. }
             | ListenerToCore::IdleAnswer { .. } => {}

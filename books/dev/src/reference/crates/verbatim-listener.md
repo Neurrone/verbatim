@@ -54,7 +54,8 @@ handler";
   `Agile<ListenerEvent>` for the application's reading thread
   (`focus_read::Readers`): one per application, created on its first event,
   ended once its queue is read after `HookRemoved`
-  (`Readers::outpost_ended`) or at shutdown.
+  (`Readers::outpost_ended`) or after its process exits
+  (`Readers::application_exited`), and at shutdown.
 - The thread judges and reads each event in order
   (`focus_read::FocusReader::read`; `check_fact` for a selection or
   notification). NVDA's checks are the pure step function
@@ -189,20 +190,20 @@ handler";
   events are dropped, which idle waiters run, and where each application
   was last moved away from, is the pure `Schedule::step`, an input in
   (`ScheduleInput`: `Push`, `Next`, `Returned`, `Tick`, `Learned`,
-  `Judged`, `Foreground`, `MsaaFocus`,
-  `OutpostEnded`, `WhenIdle`, `SpawnFailed`, the reading thread's start
+  `Placed`, `Judged`, `Foreground`, `MsaaFocus`,
+  `OutpostEnded`, `ApplicationExited`, `WhenIdle`, `SpawnFailed`, the reading thread's start
   having failed, which a unit test causes through the `ThreadStart` fault
   point ([verbatim-faults](verbatim-faults.md)), `Stop`) and its effects out,
   in order (`ScheduleEffect`: `Outcome`, `Spawn`, `Wake`, `Unwatch`,
-  `ForgetLast`, `Forget`, `Alarm`, `RunIdle`, `Job`, and the ask
-  `Judge`), with time as microseconds from the shell's
+  `ForgetLast`, `Forget`, `Alarm`, `RunIdle`, `Job`, `LogicError` and the
+  ask `Judge`), with time as microseconds from the shell's
   start and no clock, lock or call of its own; each application's read
   under way is its work in flight (`verbatim_reader_rules::in_flight`).
   `focus_read::Readers` is its shell: it keeps the readers' lock, the
   threads, the alarm's timer, the idle waiters' closures, and one record
-  per application the schedule holds (`AppShell`: the condition variable
-  its thread in charge waits on and its read under way, a `WatchedRead`
-  with its `Request`, its window and its top-level window), and applies each step's effects under the lock. A
+  per application generation the schedule holds (`AppShell`, by `AppKey`:
+  the condition variable its thread in charge waits on and its read under
+  way, a `WatchedRead` with its `Request` and its window), and applies each step's effects under the lock. A
   record is made when a thread is put in charge and dropped whole at the
   schedule's `Forget`, which comes only once no thread is in charge of the
   application or abandoned to its read, so no thread waits on it or
@@ -236,9 +237,8 @@ responder out of it.
   last given; a read returns once per job, from the thread given it, and a
   return the schedule does not count as in charge comes only from a thread
   abandoned in its read; a failed start (`SpawnFailed`) comes only for a
-  new thread's generation, never a reused thread's; a foreground event's
-  running applications (`running_tops`) are exactly those with reads under
-  way, the shell's watched reads; a selection
+  new thread's generation, never a reused thread's; a read reports its
+  top-level window (`Placed`) at most once; a selection
   and a notification carry no window for the moved-on rule
   (`RuleWindow::Never`), and only a read judged by the rule is told its
   window, while a focus and a menu opening carry their window
@@ -348,7 +348,9 @@ section 6.3).
   front, until one of that window's events names its thread. The app
   receives it as `OutpostMessage::Foreground` (a `ForegroundReport`).
 - It handles `Ping`, `HookInstalled`, `HookRemoved` (which also ends the
-  application's reading thread), `IdleQuery`, and `Shutdown`. A replacement gets `--hooks-in`
+  application's reading thread), `ApplicationExited` (which moves its
+  record to the exited generations, then answers `ExitHandled`),
+  `IdleQuery`, and `Shutdown`. A replacement gets `--hooks-in`
   (`verbatim_process::arguments::parse_hooks_in`) and does without each thread's last focus,
   at the cost of one fuller ancestor read per application. It makes no
   remote operation, so takes no `--classic-uia`.
