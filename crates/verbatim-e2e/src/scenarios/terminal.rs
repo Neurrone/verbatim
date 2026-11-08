@@ -144,7 +144,9 @@ pub(crate) fn open_windows_terminal(
 /// sets, as a command that changes its title renames the window, where
 /// every other scenario's tab keeps the harness's title
 /// (`--suppressApplicationTitle`). The start script titles it with the
-/// harness's marker, as the tab's own title does.
+/// harness's marker, as the tab's own title does, through the terminal's
+/// title sequence, since an elevated PowerShell prefixes the console's
+/// title with "Administrator: ", as on GitHub's runner.
 ///
 /// # Errors
 ///
@@ -597,6 +599,7 @@ fn start_script(title: &str, directory: &str, go: &str, ready: &str, shell_pid: 
          \x20   $Host.UI.RawUI.BufferSize = New-Object Management.Automation.Host.Size(120, 9001)\r\n\
          }}\r\n\
          $Host.UI.RawUI.WindowTitle = {title}\r\n\
+         if (-not $ConsoleHost) {{ [Console]::Write([char]27 + ']0;' + {title} + [char]7) }}\r\n\
          [IO.File]::WriteAllText({shell_pid}, \"$PID\")\r\n\
          Set-Location -LiteralPath {directory_text}\r\n\
          function global:prompt {{\r\n\

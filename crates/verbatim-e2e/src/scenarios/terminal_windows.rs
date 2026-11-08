@@ -133,7 +133,7 @@ use super::terminal::{self, PROMPT};
 use super::terminal_flood::{FLOOD_STEP, line};
 use super::terminal_key_timing::FILE_SIGNALS;
 use crate::registry::ScenarioState;
-use crate::scenario::Scenario;
+use crate::scenario::{Scenario, harness_marker};
 use crate::speech::Ending;
 
 /// How many numbered words the line before the flood has: about six
@@ -167,17 +167,21 @@ pub(crate) fn setup_windows_terminal(scenario: &mut Scenario) -> io::Result<Scen
     terminal::open_windows_terminal_titled_by_its_shell(
         scenario,
         "two-a",
-        &[("retitle.ps1", &retitle_script())],
+        &[("retitle.ps1", &retitle_script(&harness_marker("two-a")))],
     )
 }
 
-/// `retitle.ps1`, run in the first window: once the second is in front
-/// (the file `away`), the window's title changes to [`retitled`]'s, and
-/// the file `retitled` is written.
-fn retitle_script() -> String {
+/// `retitle.ps1`, run in the first window, titled `title`: once the
+/// second is in front (the file `away`), the window's title changes to
+/// [`retitled`]'s, and the file `retitled` is written. The title is set by
+/// the terminal's title sequence, not the console's title, which an
+/// elevated PowerShell prefixes with "Administrator: ", as on GitHub's
+/// runner, so the window has the same title on every machine.
+fn retitle_script(title: &str) -> String {
+    let retitled = retitled(title).replace('\'', "''");
     format!(
         "{FILE_SIGNALS}Wait-For away\r\n\
-         $Host.UI.RawUI.WindowTitle = 'retitled ' + $Host.UI.RawUI.WindowTitle\r\n\
+         [Console]::Write([char]27 + ']0;{retitled}' + [char]7)\r\n\
          Mark retitled\r\n"
     )
 }
