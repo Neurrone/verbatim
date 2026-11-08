@@ -3,11 +3,11 @@
 //! [`ScheduleInput`]s, and what the schedule tells turned into [`Told`]. A
 //! change to the schedule's inputs, effects or keys changes this file alone.
 //!
-//! An application is named by its process id and process number ([`App`]);
-//! today's schedule keys its records by process id alone, so the number
-//! only says whether a record can be that process's ([`Seam::held`]).
-//! Today the schedule has no input for a process's exit, so an exit is told
-//! as its outpost's end. Effects that only the shell acts on, naming no
+//! An application is named by its process id and process number ([`App`]),
+//! which the seam ties to the schedule's [`AppKey`] by the record the
+//! process's first event made ([`Seam::held`]). A process's exit is told as
+//! `ApplicationExited`; a supervisor's answer that no hook is in, and an
+//! outpost's end, as `OutpostEnded`. Effects that only the shell acts on, naming no
 //! thread and no event (`Unwatch`, `ForgetLast`, `Forget`), are not told.
 
 use std::collections::BTreeMap;
@@ -16,9 +16,9 @@ use verbatim_model::protocol::{EventTiming, UiaFocusRead};
 use verbatim_model::{Pid, TraceId};
 
 use super::super::{
-    AlarmChange, Duration, FocusEvent, Judged, MOVED_ON, Meta, NO_THREAD, NOT_IN_TIME, REPLACED,
-    Reason, Request, RuleWindow, Schedule, ScheduleEffect, ScheduleInput, WAITED_TOO_LONG, Waking,
-    Window,
+    AlarmChange, AppKey, Duration, FocusEvent, Judged, MOVED_ON, Meta, NO_THREAD, NOT_IN_TIME,
+    REPLACED, Reason, Request, RuleWindow, Schedule, ScheduleEffect, ScheduleInput,
+    WAITED_TOO_LONG, Waking, Window,
 };
 use super::Cached;
 
@@ -36,11 +36,11 @@ pub(super) struct App {
 
 /// A reading thread, by the token the schedule gave it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct ThreadToken(u64);
+pub(super) struct ThreadToken(AppKey, u64);
 
 /// A read under way or abandoned, by the token the schedule gave it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct ReadToken(Request);
+pub(super) struct ReadToken(AppKey, Request);
 
 /// How an event's outcome came.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -92,8 +92,8 @@ pub(super) struct Seam {
     schedule: Schedule<u64>,
     now: u64,
     alarm: Option<u64>,
-    /// The newest process of each id that has had an event.
-    newest: BTreeMap<u32, u32>,
+    /// The record each process's events made.
+    keys: BTreeMap<App, AppKey>,
 }
 
 impl Seam {
@@ -103,7 +103,7 @@ impl Seam {
             schedule: Schedule::new(Duration::from_micros(deadline)),
             now: 0,
             alarm: None,
-            newest: BTreeMap::new(),
+            keys: BTreeMap::new(),
         }
     }
 
@@ -133,24 +133,25 @@ impl Seam {
                 how: how(&judged),
             }),
             ScheduleEffect::Spawn {
-                pid,
+                app,
                 generation,
                 reuse,
             } => Some(Told::Start {
-                pid: pid.0,
-                thread: ThreadToken(generation),
+                pid: app.pid.0,
+                thread: ThreadToken(app, generation),
                 reuse,
             }),
-            ScheduleEffect::Wake(Waking::Thread(pid)) => Some(Told::Woken(pid.0)),
+            ScheduleEffect::Wake(Waking::Thread(app)) => Some(Told::Woken(app.pid.0)),
             ScheduleEffect::Job(job) => Some(Told::Job {
-                pid: job.pid.0,
+                pid: job.app.pid.0,
                 marker: job.meta.marker,
-                read: ReadToken(job.request),
+                read: ReadToken(job.app, job.request),
             }),
-            ScheduleEffect::Judge { pid, request, .. } => Some(Told::Judge {
-                pid: pid.0,
-                read: ReadToken(request),
+            ScheduleEffect::Judge { app, request, .. } => Some(Told::Judge {
+                pid: app.pid.0,
+                read: ReadToken(app, request),
             }),
+            ScheduleEffect::LogicError(error) => panic!("a logic error: {error}"),
             ScheduleEffect::RunIdle(waiter) => Some(Told::Ran(waiter)),
             ScheduleEffect::Alarm(AlarmChange::Set(due)) => {
                 self.alarm = due;
@@ -174,8 +175,7 @@ impl Seam {
         element: Option<u8>,
         cached: Cached,
     ) -> Vec<Told> {
-        self.newest.insert(app.pid, app.process);
-        self.step(ScheduleInput::Push {
+        let told = self.step(ScheduleInput::Push {
             pid: Pid(app.pid),
             meta: meta(marker, kind),
             job: marker,
@@ -186,14 +186,18 @@ impl Seam {
                 Cached::Unknown => RuleWindow::Unknown,
                 Cached::Known => RuleWindow::Known(window()),
             },
-        })
+        });
+        if let Some(key) = self.schedule.current(Pid(app.pid)) {
+            self.keys.insert(app, key);
+        }
+        told
     }
 
     /// The thread `thread` of `app` asks for its next event.
-    pub(super) fn next(&mut self, app: App, thread: ThreadToken) -> Vec<Told> {
+    pub(super) fn next(&mut self, _app: App, thread: ThreadToken) -> Vec<Told> {
         self.step(ScheduleInput::Next {
-            pid: Pid(app.pid),
-            generation: thread.0,
+            app: thread.0,
+            generation: thread.1,
         })
     }
 
@@ -201,39 +205,38 @@ impl Seam {
     /// element or not.
     pub(super) fn returned(
         &mut self,
-        app: App,
+        _app: App,
         read: ReadToken,
         marker: u64,
         kind: FocusEvent,
         found: bool,
     ) -> Vec<Told> {
         self.step(ScheduleInput::Returned {
-            pid: Pid(app.pid),
-            request: read.0,
+            app: read.0,
+            request: read.1,
             meta: meta(marker, kind),
             judged: if found {
                 Judged::Read(a_read())
             } else {
                 Judged::Dropped(READ_FAILED)
             },
-            top: None,
         })
     }
 
     /// `app`'s read `read` learns its window.
-    pub(super) fn learned(&mut self, app: App, read: ReadToken) -> Vec<Told> {
+    pub(super) fn learned(&mut self, _app: App, read: ReadToken) -> Vec<Told> {
         self.step(ScheduleInput::Learned {
-            pid: Pid(app.pid),
-            request: read.0,
+            app: read.0,
+            request: read.1,
             window: window(),
         })
     }
 
     /// The window of `app`'s read `read` was judged.
-    pub(super) fn judged(&mut self, app: App, read: ReadToken, moved_on: bool) -> Vec<Told> {
+    pub(super) fn judged(&mut self, _app: App, read: ReadToken, moved_on: bool) -> Vec<Told> {
         self.step(ScheduleInput::Judged {
-            pid: Pid(app.pid),
-            request: read.0,
+            app: read.0,
+            request: read.1,
             verdict: moved_on.then_some(Reason::MovedOn),
         })
     }
@@ -249,22 +252,22 @@ impl Seam {
         self.step(ScheduleInput::OutpostEnded { pid: Pid(app.pid) })
     }
 
-    /// `app`'s process has exited: today, told as its outpost's end.
+    /// `app`'s process has exited.
     pub(super) fn exited(&mut self, app: App) -> Vec<Told> {
-        self.step(ScheduleInput::OutpostEnded { pid: Pid(app.pid) })
+        self.step(ScheduleInput::ApplicationExited { pid: Pid(app.pid) })
     }
 
     /// The supervisor answered a stale event of `app`'s that no outpost's
-    /// hook is in: today, told as its outpost's end.
+    /// hook is in (`HookRemoved`), told as its outpost's end.
     pub(super) fn no_hook(&mut self, app: App) -> Vec<Told> {
         self.step(ScheduleInput::OutpostEnded { pid: Pid(app.pid) })
     }
 
     /// No thread could be started as `thread` for `app`'s events.
-    pub(super) fn spawn_failed(&mut self, app: App, thread: ThreadToken) -> Vec<Told> {
+    pub(super) fn spawn_failed(&mut self, _app: App, thread: ThreadToken) -> Vec<Told> {
         self.step(ScheduleInput::SpawnFailed {
-            pid: Pid(app.pid),
-            generation: thread.0,
+            app: thread.0,
+            generation: thread.1,
         })
     }
 
@@ -274,8 +277,8 @@ impl Seam {
     }
 
     /// Whether `thread` is in charge of `app`'s events.
-    pub(super) fn in_charge(&self, app: App, thread: ThreadToken) -> bool {
-        self.schedule.in_charge(Pid(app.pid), thread.0)
+    pub(super) fn in_charge(&self, _app: App, thread: ThreadToken) -> bool {
+        self.schedule.in_charge(thread.0, thread.1)
     }
 
     /// Whether a focus is pending, for a menu opening of `pid`'s.
@@ -283,11 +286,11 @@ impl Seam {
         self.schedule.focus_pending(pid.map(Pid))
     }
 
-    /// Whether the schedule holds a record that can be `app`'s: one of its
-    /// process id, while no later process of that id has had an event.
+    /// Whether the schedule holds the record `app`'s events made.
     pub(super) fn held(&self, app: App) -> bool {
-        self.newest.get(&app.pid) == Some(&app.process)
-            && self.schedule.held().any(|pid| pid.0 == app.pid)
+        self.keys
+            .get(&app)
+            .is_some_and(|key| self.schedule.held().any(|held| held == *key))
     }
 }
 
