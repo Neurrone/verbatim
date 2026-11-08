@@ -429,7 +429,8 @@ fn is_stale_focus(
 /// focus, end to end"; `docs/parity/focus-events.md`, "Duplicate focus suppression"): a focus whose
 /// element is the same as the last focus Core queued, while that element
 /// still has the keyboard focus, is dropped before anything else judges
-/// it, so it neither moves attention nor orders later focus events. NVDA
+/// it, so it does not move attention, though its observation still orders
+/// later focus events: a focus observed before it is stale. NVDA
 /// has no rule across its backends like it: each backend's own duplicate
 /// test, which the outposts and the focus listener make, is its only one,
 /// and a foreground or menu focus has none.

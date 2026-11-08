@@ -82,11 +82,6 @@ Recorded by Claude, 2026-11-04.
 
 ## File Explorer
 
-- `explorer_folder_window` on GitHub's runner (runs 41157849900 and 41163500778)
-  - How: "Items View list" is not spoken after "Working on it..."; the first utterance heard is "delta not selected 1 of 1". Passes locally.
-  - Cause: the placeholder's UIA read fails on the runner (`UIA_E_ELEMENTNOTAVAILABLE`), so its chain is filled in from window handles, and `ObjectKey::is_same_object` treats two nodes on one window handle as one object whatever their backend, so nothing is entered. NVDA differs on both points.
-  - Fix: built with the focus pipeline rework's third build (42541256, 2026-11-08): a failed read goes on from the parent window, and two objects of different backends are never one, so the scenario returned to GitHub's runner; the entry is deleted once its runs there pass.
-  - Also seen (run 41501468361): File Explorer was blocked for about 5 s. The listener's read of the UIA focus on "Inner" was still in its nearest-window call (1.98 s) at its bound, so it was published with no ancestors and its late result discarded (`crates/verbatim-listener-logic/src/schedule.rs`); the outpost's MSAA focus item took 4.48 s, so its gap record's bound sent the title. "Inner" reached Core with window-handle panes, so "Items View list" and the position were not spoken. NVDA has no such bound: it queues the UIA focus whenever it arrives. Fix: built with the same build (115d825f): a read has no bound and is reported once, whenever it completes.
 - `explorer_folder_window` locally, Explorer's folder window not responding (2026-10-31)
   - How: nothing is spoken after the desktop's "Recycle Bin 1 of 13"; the folder window, opened in a new `explorer.exe` process, never takes the foreground, its UI thread stops answering about 1.5 s after it opens (an arbitration probe of its `ShellTabWindowClass` window times out at 3 s, an MSAA call waits 13 s), and it does not close within 15 s, so the next scenarios fail at launch on the window left open. Once in 13 runs, with the keep-id fix; the next 10 passed.
   - Cause: not found. Verbatim's outpost was the one waiting on Explorer; no Verbatim call was found that Explorer waited on.
