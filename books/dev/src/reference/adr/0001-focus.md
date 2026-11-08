@@ -98,7 +98,7 @@ Chosen: readers keep their caches, and two checks make reuse safe.
 - The title check: before reusing, a focus reader compares each cached window's current text, read locally from Windows' state, with the text it cached, and walks live on any change.
 - Core's check: when Core takes a report, `needs_live_ancestry` decides from Core's own focus ancestry whether any cached ancestor would be spoken, entered or used for the window's title. If so, Core sets the report aside and asks the same focus reader to read the same element again, live (the live re-read).
 
-Reason: whether a cached ancestor would be heard depends only on Core's focus ancestry, so Core is the one place that can tell exactly, and nothing has to tell the readers where the focus has been.
+Reason: whether a cached ancestor would be heard depends only on Core's focus ancestry, so Core is the one place that can tell exactly, and nothing has to tell the readers where the focus has been. Reassessed after its fixes and kept (Dickson, 2026-11-08): a return whose titles are unchanged pays about 0.2 ms more at the median than one walked live, less than the code any way of skipping the cache on a return would add.
 
 Weighed and rejected:
 
