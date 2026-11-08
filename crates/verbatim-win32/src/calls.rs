@@ -25,9 +25,6 @@ use crate::window::{Readability, readability as system_readability};
 pub trait Charge: Send + Sync {
     /// Whether the worker's generation was abandoned.
     fn is_dead(&self) -> bool;
-    /// A counted call is about to be made: the program in hand calls into
-    /// its application.
-    fn calling(&self);
     /// Window `hwnd` was found hung or ghosted at a check before a call into
     /// it, and nothing was sent.
     fn found_hung(&self, hwnd: isize);
@@ -88,7 +85,7 @@ pub fn uninstall() {
 }
 
 /// Consults this thread's gate before a counted call: refused once its
-/// worker was abandoned, and told of the call otherwise.
+/// worker was abandoned.
 ///
 /// # Errors
 ///
@@ -96,11 +93,7 @@ pub fn uninstall() {
 pub fn check() -> Result<(), CallError> {
     GATE.with_borrow(|gate| match gate {
         Some(charge) if charge.is_dead() => Err(CallError::Abandoned),
-        Some(charge) => {
-            charge.calling();
-            Ok(())
-        }
-        None => Ok(()),
+        Some(_) | None => Ok(()),
     })
 }
 
@@ -125,23 +118,19 @@ pub fn message_readability(hwnd: isize) -> Readability {
 #[cfg(test)]
 mod tests {
     use std::sync::Mutex;
-    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     use super::*;
 
     #[derive(Default)]
     struct Recorded {
         dead: AtomicBool,
-        calls: AtomicUsize,
         hung: Mutex<Vec<isize>>,
     }
 
     impl Charge for Recorded {
         fn is_dead(&self) -> bool {
             self.dead.load(Ordering::Relaxed)
-        }
-        fn calling(&self) {
-            self.calls.fetch_add(1, Ordering::Relaxed);
         }
         fn found_hung(&self, hwnd: isize) {
             self.hung.lock().expect("the record").push(hwnd);
@@ -156,22 +145,19 @@ mod tests {
     }
 
     /// A thread's gate refuses every counted call once its worker is
-    /// abandoned, with its own error, and tells its charge of each call it
-    /// lets through and each window it finds hung; another thread's calls
-    /// pass it by.
+    /// abandoned, with its own error, and tells its charge of each window
+    /// it finds hung; another thread's calls pass it by.
     #[test]
     fn a_gate_refuses_every_call_once_its_worker_is_abandoned() {
         std::thread::spawn(|| {
             let charge = Arc::new(Recorded::default());
             install(Arc::clone(&charge) as Arc<dyn Charge>);
             assert_eq!(check(), Ok(()));
-            assert_eq!(charge.calls.load(Ordering::Relaxed), 1);
             assert_eq!(message_readability(7), Readability::Hung);
             assert_eq!(message_readability(8), Readability::Readable);
             assert_eq!(*charge.hung.lock().expect("the record"), [7]);
             charge.dead.store(true, Ordering::Relaxed);
             assert_eq!(check(), Err(CallError::Abandoned));
-            assert_eq!(charge.calls.load(Ordering::Relaxed), 1);
             assert!(is_abandoned(&CallError::Abandoned.into()));
             std::thread::spawn(|| assert_eq!(check(), Ok(())))
                 .join()

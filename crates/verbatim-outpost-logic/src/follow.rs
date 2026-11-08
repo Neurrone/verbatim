@@ -377,20 +377,10 @@ pub struct Change {
     /// rest: a program applies each to its own copies as its text call
     /// makes it, so its own commit carries them only for the reducer.
     pub text: Vec<TextChange>,
-    /// The program's window and what the program found there, when it
-    /// found anything: a window named hung is confirmed live before it
-    /// counts ([`Effect::CheckHung`](crate::Effect::CheckHung)).
-    pub found: Option<(Window, Found)>,
-}
-
-/// What a program found of its window, which its commits name.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Found {
-    /// Its check before a call found the window hung or ghosted, and no
-    /// call was made into it.
-    Hung,
-    /// A counted call into it returned.
-    Answered,
+    /// The window the program's check before a call found hung or ghosted,
+    /// with no call made into it, when it found one: confirmed live before
+    /// it counts ([`Effect::CheckHung`](crate::Effect::CheckHung)).
+    pub found: Option<Window>,
 }
 
 /// What the outpost follows: changed only by a commit the reducer applies,

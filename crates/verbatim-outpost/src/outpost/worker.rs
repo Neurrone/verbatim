@@ -113,17 +113,13 @@ struct ChargeState {
 
 /// The window a program names in its charge before its first call there,
 /// keyed by its request so a judgement never reads an earlier program's,
-/// with what the program found of it: the evidence its commits name for
-/// the reducer's record of hung windows.
+/// with whether the program found it hung, which its commits name.
 #[derive(Clone, Copy, Debug)]
 struct Named {
     request: Request,
     window: verbatim_reader_rules::Window,
     /// Its check before a call found the window hung or ghosted.
     hung: bool,
-    /// A counted call was made since the window was named, and returned,
-    /// since the program goes on only once it has.
-    called: bool,
 }
 
 impl Charge {
@@ -149,7 +145,6 @@ impl Charge {
             request,
             window,
             hung: false,
-            called: false,
         });
     }
 
@@ -161,27 +156,12 @@ impl Charge {
             .map(|named| named.window)
     }
 
-    /// What `request`'s program found of its window: hung at a check, or
-    /// answering a call it made.
-    pub(super) fn found(
-        &self,
-        request: Request,
-    ) -> Option<(verbatim_reader_rules::Window, reducer::Found)> {
-        let named = self.lock().named.filter(|named| named.request == request)?;
-        if named.hung {
-            Some((named.window, reducer::Found::Hung))
-        } else {
-            named
-                .called
-                .then_some((named.window, reducer::Found::Answered))
-        }
-    }
-
-    /// A counted call is made by the program in hand.
-    fn calling(&self) {
-        if let Some(named) = self.lock().named.as_mut() {
-            named.called = true;
-        }
+    /// The window `request`'s program found hung at a check, if any.
+    pub(super) fn found(&self, request: Request) -> Option<verbatim_reader_rules::Window> {
+        self.lock()
+            .named
+            .filter(|named| named.request == request && named.hung)
+            .map(|named| named.window)
     }
 
     /// Window `hwnd` was found hung at a check before a call into it: so
@@ -241,10 +221,6 @@ struct Gate {
 impl verbatim_win32::calls::Charge for Gate {
     fn is_dead(&self) -> bool {
         self.charge.is_dead()
-    }
-
-    fn calling(&self) {
-        self.charge.calling();
     }
 
     fn found_hung(&self, hwnd: isize) {

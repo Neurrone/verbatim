@@ -98,8 +98,8 @@ pub use self::entry::{
     Asker, Entry, Front, Item, Source, UiaEvent, UiaKind, WinKind, is_state_property,
 };
 pub use self::follow::{
-    Applied, Change, DialogMemo, Facts, FocusPath, Follow, FollowState, Found, Group, MsaaReport,
-    Owed, OwedWork, Report, Route, Subscription, Target, WatchChange, apply_local,
+    Applied, Change, DialogMemo, Facts, FocusPath, Follow, FollowState, Group, MsaaReport, Owed,
+    OwedWork, Report, Route, Subscription, Target, WatchChange, apply_local,
 };
 pub use self::held::{Evidence, Focus, Held, InFront};
 pub use self::intake::{Handling, Marks, Object, Planned, TerminalMark};
@@ -1020,7 +1020,7 @@ impl Reducer {
         // may have begun before a hang or a destroy, and failed after it.
         // Asked before the told window's judgement, which ends the input,
         // so an answer that replaces the told window comes first.
-        if let Some((window, Found::Hung)) = change.found
+        if let Some(window) = change.found
             && !self.stopping
         {
             effects.push(Effect::CheckHung { window });

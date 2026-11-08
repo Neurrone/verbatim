@@ -20,9 +20,7 @@ use verbatim_uia::{Agile, Kept};
 
 use verbatim_model::protocol::{EventTiming, OutpostToCore};
 
-use super::reducer::{
-    Change, DialogMemo, FocusPath, Found, Group, Object, OwedWork, Report, WatchChange,
-};
+use super::reducer::{Change, DialogMemo, FocusPath, Group, Object, OwedWork, Report, WatchChange};
 use super::store::TextWrite;
 
 /// Where the focus-following subscription is to be moved for a focus,
@@ -181,9 +179,9 @@ pub(super) struct Effects {
     /// text facts' changes, which it applied to its own copies as it made
     /// them, with the ranges they name, and its patterns and support.
     pub(super) text: Vec<TextWrite>,
-    /// The program's window and what it found there, from its charge, set
-    /// as the commit is posted (`RequestContext::commit`).
-    pub(super) found: Option<(verbatim_reader_rules::Window, Found)>,
+    /// The window the program found hung, from its charge, set as the
+    /// commit is posted (`RequestContext::commit`).
+    pub(super) found: Option<verbatim_reader_rules::Window>,
 }
 
 impl Effects {

@@ -118,9 +118,8 @@ Public API:
   it; a window that recovers and later freezes again is a new hang too. A
   commit naming a window hung is never taken at its word: it is confirmed
   live first (`CheckHung`, whose `HangSeen` carries no request), so a
-  program begun before a window's destruction cannot record it, and a
-  commit naming a window answered is judged as any commit and ends
-  nothing itself. A readable window in front or a destroy event, as it
+  program begun before a window's destruction cannot record it. A commit
+  ends no hang itself. A readable window in front or a destroy event, as it
   first reaches the reducer even as a hook copy the hold keeps back, ends a
   hang told of that window. Nothing is told after `Close`.
 - The hang mark: a `HangSeen` whose request is the program in flight's,

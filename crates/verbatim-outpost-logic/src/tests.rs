@@ -2375,9 +2375,9 @@ const HUNG: Window = match Window::new(0x40) {
     None => panic!("0x40 is not 0"),
 };
 
-/// A commit of what a program found of window `window`, with its query's
-/// reply, if it answers one.
-fn found(window: Window, found: Found, answers: Option<(u64, QueryOutcome)>) -> Change {
+/// A commit naming window `window` hung, with its query's reply, if it
+/// answers one.
+fn found(window: Window, answers: Option<(u64, QueryOutcome)>) -> Change {
     Change {
         result: answers.map(|(request_id, outcome)| {
             reply(
@@ -2386,7 +2386,7 @@ fn found(window: Window, found: Found, answers: Option<(u64, QueryOutcome)>) -> 
                 outcome,
             )
         }),
-        found: Some((window, found)),
+        found: Some(window),
         ..Change::default()
     }
 }
@@ -2428,11 +2428,7 @@ fn a_query_judged_hung_tells_its_windows_hang_once() {
         let refused = program(&replay.push(navigation(request_id), Source::Other, 600)).request;
         let effects = replay.commit(
             refused,
-            found(
-                HUNG,
-                Found::Hung,
-                Some((request_id, QueryOutcome::Abandoned)),
-            ),
+            found(HUNG, Some((request_id, QueryOutcome::Abandoned))),
             601,
         );
         assert_eq!(replies(&effects), [(request_id, "abandoned")]);
@@ -2451,33 +2447,33 @@ fn a_query_judged_hung_tells_its_windows_hang_once() {
 fn a_commit_naming_a_window_hung_is_confirmed_live() {
     let mut replay = Replay::new();
     let stale = program(&replay.push(navigation(1), Source::Other, 1)).request;
-    let effects = replay.commit(stale, found(HUNG, Found::Hung, None), 2);
+    let effects = replay.commit(stale, found(HUNG, None), 2);
     assert_eq!(kinds(&effects), ["check hung"]);
     assert_eq!(not_responding(&effects), Vec::<isize>::new());
     assert_eq!(replay.reducer.hang, Hang::None);
     replay.finish(stale, false, 3);
     replay.answers.hung = true;
     let live = program(&replay.push(navigation(2), Source::Other, 4)).request;
-    let effects = replay.commit(live, found(HUNG, Found::Hung, None), 5);
+    let effects = replay.commit(live, found(HUNG, None), 5);
     assert_eq!(not_responding(&effects), [HUNG.get()]);
     assert_eq!(
-        kinds(&replay.commit(live, found(HUNG, Found::Hung, None), 6)),
+        kinds(&replay.commit(live, found(HUNG, None), 6)),
         ["check hung", "judge told"],
         "the same hang, judged"
     );
 }
 
 /// The told window is judged on each entry taken and each commit, and a
-/// commit naming it answered does not end its hang unless it is found not
-/// hung then; once it is, its next freeze is a new hang.
+/// commit does not end its hang unless it is found not hung then; once it
+/// is, its next freeze is a new hang.
 #[test]
 fn a_told_windows_hang_ends_when_it_is_judged_not_hung() {
     let mut replay = Replay::new();
     replay.answers.hung = true;
     let hang = program(&replay.push(navigation(1), Source::Other, 1)).request;
-    replay.commit(hang, found(HUNG, Found::Hung, None), 2);
+    replay.commit(hang, found(HUNG, None), 2);
     assert_eq!(
-        kinds(&replay.commit(hang, found(HUNG, Found::Answered, None), 3)),
+        kinds(&replay.commit(hang, Change::default(), 3)),
         ["judge told"]
     );
     assert_eq!(replay.reducer.hang, Hang::Told { window: HUNG });
@@ -2487,7 +2483,7 @@ fn a_told_windows_hang_ends_when_it_is_judged_not_hung() {
     assert_eq!(replay.reducer.hang, Hang::None, "judged as the entry came");
     replay.answers.hung = true;
     assert_eq!(
-        not_responding(&replay.commit(next, found(HUNG, Found::Hung, None), 6)),
+        not_responding(&replay.commit(next, found(HUNG, None), 6)),
         [HUNG.get()],
         "a new hang"
     );
@@ -2502,17 +2498,17 @@ fn a_second_hung_window_is_told_only_after_the_told_window_recovers() {
     let mut replay = Replay::new();
     replay.answers.hung = true;
     let first = program(&replay.push(navigation(1), Source::Other, 1)).request;
-    replay.commit(first, found(HUNG, Found::Hung, None), 2);
+    replay.commit(first, found(HUNG, None), 2);
     replay.finish(first, false, 3);
     let second = program(&replay.push(navigation(2), Source::Other, 4)).request;
     assert_eq!(
-        not_responding(&replay.commit(second, found(other, Found::Hung, None), 5)),
+        not_responding(&replay.commit(second, found(other, None), 5)),
         Vec::<isize>::new(),
         "the same hang of the application"
     );
     replay.answers.answering = Some(HUNG);
     assert_eq!(
-        not_responding(&replay.commit(second, found(other, Found::Hung, None), 6)),
+        not_responding(&replay.commit(second, found(other, None), 6)),
         [other.get()],
         "the told window answers and the other is told"
     );
@@ -2584,7 +2580,7 @@ fn nothing_is_told_after_close() {
     let running = program(&replay.push(navigation(1), Source::Other, 1)).request;
     replay.input(Input::Close, 2);
     assert_eq!(
-        kinds(&replay.commit(running, found(HUNG, Found::Hung, None), 3)),
+        kinds(&replay.commit(running, found(HUNG, None), 3)),
         Vec::<&str>::new()
     );
     assert_eq!(replay.reducer.hang, Hang::None);

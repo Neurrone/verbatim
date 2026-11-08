@@ -514,10 +514,9 @@ Inside an outpost (`docs/design/communication.md`, section 6.4;
   query on a hung window parks no worker. A listener read is not tested:
   its program reads the focus, waiting for the application call by call
   within its deadline. A focus read is not refused: its check of the focus
-  window answers no focused control in a window that cannot be read. Each
-  commit names the program's window and what it found
-  (`reducer::Found`): hung at a check, or answered once a counted call was
-  made. The worker installs a call gate on its thread
+  window answers no focused control in a window that cannot be read. A
+  commit names the window its program found hung at a check, if any
+  (`Change::found`). The worker installs a call gate on its thread
   (`verbatim_win32::calls`), bound to its charge, in release builds as in
   debug ones, and uninstalls it as its thread ends: once its generation is abandoned, every counted call fails
   with `CallError::Abandoned` and makes no call, which no caller reads as
