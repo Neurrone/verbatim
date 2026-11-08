@@ -1097,7 +1097,9 @@ impl World {
         let entry = match &program.work {
             Work::Entry { entry, .. } => entry,
             Work::Owed(_) => return Kind::Owed,
-            Work::Drop | Work::PollRead | Work::Finish { .. } => return Kind::Other,
+            Work::Drop | Work::PollRead | Work::Finish { .. } | Work::FindBar(_) => {
+                return Kind::Other;
+            }
         };
         match &entry.item {
             Item::Fact(DeliveredFact::MsaaFocus { id_child, .. }, _) => OBJECTS

@@ -523,7 +523,7 @@ fn kind_of(program: &Program) -> Kind {
             _ => Kind::Entry,
         },
         Work::Owed(_) => Kind::Owed,
-        Work::Drop => Kind::Drop,
+        Work::Drop | Work::FindBar(_) => Kind::Drop,
         Work::PollRead => Kind::PollRead,
         Work::Finish { .. } => Kind::Finish,
     }

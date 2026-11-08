@@ -156,7 +156,7 @@ fn kind_of(program: &Program) -> Kind {
         },
         Work::PollRead => Kind::PollRead,
         Work::Finish { .. } => Kind::Finish,
-        Work::Owed(_) | Work::Drop => Kind::Other,
+        Work::Owed(_) | Work::Drop | Work::FindBar(_) => Kind::Other,
     }
 }
 
