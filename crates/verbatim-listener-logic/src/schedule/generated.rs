@@ -30,18 +30,22 @@
 //! thread until one returns; events wait until the deadline after the second
 //! was abandoned, then all are dropped and each later one as it arrives;
 //! a read is judged from its half second, every half second, once its
-//! window is known, and abandoned at the deadline; an outpost that ends
-//! with its application running keeps the abandoned count; a new generation
-//! starts with none; a process gone drops at once what waits with no thread
-//! and is held no longer than its readers; every event has exactly one
-//! outcome; every idle waiter runs once, when every event queued before it
-//! has its outcome. The thread in charge reads what it was given, its
-//! process gone or not.
+//! window is known, and abandoned at the deadline; a new generation starts
+//! with no abandoned reads; a process gone drops at once what waits with no
+//! thread and is held no longer than its readers; every event has exactly
+//! one outcome; every idle waiter runs once, when every event queued before
+//! it has its outcome. The thread in charge reads what it was given, its
+//! process gone or not. An outpost that ends with its application running
+//! does not stop the thread in charge: its read returns as usual, what
+//! waits is still read, and with nothing left the thread goes; the record
+//! and its abandoned count stay, and a later event of that application is
+//! handled as any other, its thread then waiting as usual. A thread that
+//! cannot start gives each event waiting for it one outcome, the abandoned
+//! count unchanged. A newer event of one kind of one element replaces the
+//! one waiting, which has its one outcome.
 //!
-//! The world has no shutdown, no failed spawn and no event replaced by a
-//! newer one: no recorded rule says what those do. An outpost's end with its
-//! application running comes only when no thread is in charge and nothing
-//! waits, since no recorded rule says what becomes of a thread then.
+//! The world has no shutdown and no foreground or MSAA marks: neither
+//! changes which thread is told what.
 //!
 //! The menu end's grace is tested by every sequence of up to six steps,
 //! below ([`every_short_grace_sequence_keeps_the_graces_rules`]).
@@ -76,7 +80,12 @@ enum Action {
     Start { slot: u8 },
     /// An event of the process at `slot`, or, none running, a stale event
     /// of the one that exited.
-    Event { slot: u8, kind: u8, window: u8 },
+    Event {
+        slot: u8,
+        kind: u8,
+        element: Option<u8>,
+        window: u8,
+    },
     /// The thread in charge of `slot`'s oldest application that may act
     /// asks for its next event.
     Ask { slot: u8 },
@@ -114,11 +123,13 @@ enum Passing {
     Late,
 }
 
-/// The answer the shell gives to every judgement of a step.
+/// The shell's answers to what a step asks of it.
 #[derive(Clone, Copy, Debug)]
 struct Asks {
     /// Whether the user has moved on from the read's window.
     moved_on: bool,
+    /// Whether a new thread the step starts fails to start.
+    spawn_fails: bool,
 }
 
 /// The window an event's cache gives.
@@ -143,8 +154,8 @@ fn action() -> impl Strategy<Value = Action> {
     ];
     prop_oneof![
         3 => slot.clone().prop_map(|slot| Action::Start { slot }),
-        10 => (slot.clone(), 0..4u8, 0..3u8)
-            .prop_map(|(slot, kind, window)| Action::Event { slot, kind, window }),
+        10 => (slot.clone(), 0..4u8, prop::option::weighted(0.6, 0..2u8), 0..3u8)
+            .prop_map(|(slot, kind, element, window)| Action::Event { slot, kind, element, window }),
         8 => slot.clone().prop_map(|slot| Action::Ask { slot }),
         5 => (slot.clone(), 0..4u8, any::<bool>())
             .prop_map(|(slot, which, found)| Action::Return { slot, which, found }),
@@ -159,7 +170,12 @@ fn action() -> impl Strategy<Value = Action> {
 }
 
 fn asks() -> impl Strategy<Value = Asks> {
-    proptest::bool::weighted(0.3).prop_map(|moved_on| Asks { moved_on })
+    (proptest::bool::weighted(0.3), proptest::bool::weighted(0.1)).prop_map(
+        |(moved_on, spawn_fails)| Asks {
+            moved_on,
+            spawn_fails,
+        },
+    )
 }
 
 /// An event, as the model holds it.
@@ -167,6 +183,8 @@ fn asks() -> impl Strategy<Value = Asks> {
 struct Event {
     marker: u64,
     kind: FocusEvent,
+    /// The element it is of, for a newer event's replacing it.
+    element: Option<u8>,
     cached: Cached,
 }
 
@@ -228,6 +246,9 @@ struct Generation {
     /// Whether its process has gone, by its exit or the supervisor's
     /// answer to a stale event.
     gone: bool,
+    /// Whether its outpost has ended with its application running, no
+    /// event having come since.
+    outpost_ended: bool,
 }
 
 /// A generation's key: its slot and process number.
@@ -414,7 +435,13 @@ impl Model {
 }
 
 /// The listed things every gate run must reach.
-const LISTED: [&str; 19] = [
+const LISTED: [&str; 25] = [
+    "a failed start",
+    "an event replaced",
+    "an outpost ended with a thread in charge",
+    "an outpost ended with events waiting",
+    "a later event after its outpost ended",
+    "a thread ended after its outpost ended",
     "an id reused with its readers out",
     "a stale event",
     "the abandoned limit reached",
@@ -476,9 +503,12 @@ impl Run {
         self.trail.push(format!("{action:?} {asks:?}"));
         let acted = match action {
             Action::Start { slot } => self.start(usize::from(slot)),
-            Action::Event { slot, kind, window } => {
-                self.event(usize::from(slot), kind, window, asks)
-            }
+            Action::Event {
+                slot,
+                kind,
+                element,
+                window,
+            } => self.event(usize::from(slot), kind, element, window, asks),
             Action::Ask { slot } => self.ask(usize::from(slot), asks),
             Action::Return { slot, which, found } => {
                 self.read_returns(usize::from(slot), which, found, asks)
@@ -508,7 +538,8 @@ impl Run {
     }
 
     /// A step's told effects against the model's prediction, then the
-    /// tokens bound and the judgements answered.
+    /// tokens bound, each failed start stepped and the judgements answered,
+    /// as the shell does once a step's other effects are applied.
     fn compare(&mut self, mut expected: Expected, told: Vec<Told>, asks: Asks) {
         self.log.push(format!("{told:?}"));
         self.model.commit(&mut expected);
@@ -527,7 +558,7 @@ impl Run {
                 }
                 Told::Start { pid, thread, reuse } => {
                     actual.spawns.entry(pid).or_default().push(reuse);
-                    started.push((pid, thread));
+                    started.push((pid, thread, reuse));
                 }
                 Told::Woken(pid) => woken.push(pid),
                 Told::Job { pid, marker, read } => {
@@ -549,14 +580,26 @@ impl Run {
         );
         self.bind(&expected, &started, &reads);
         self.wake(&woken);
+        if asks.spawn_fails {
+            for (key, (_, thread, reuse)) in expected.spawned.iter().zip(&started) {
+                if !reuse {
+                    self.start_failed(*key, *thread, asks);
+                }
+            }
+        }
         for (pid, read) in judged {
             self.answer(pid, read, asks);
         }
     }
 
     /// Records the tokens the step told, for what the threads will send.
-    fn bind(&mut self, expected: &Expected, started: &[(u32, ThreadToken)], reads: &[ReadToken]) {
-        for (key, (pid, thread)) in expected.spawned.iter().zip(started) {
+    fn bind(
+        &mut self,
+        expected: &Expected,
+        started: &[(u32, ThreadToken, bool)],
+        reads: &[ReadToken],
+    ) {
+        for (key, (pid, thread, _)) in expected.spawned.iter().zip(started) {
             assert_eq!(PIDS[key.0], *pid, "spawned in the model's order");
             let generation = self.model.generations.get_mut(key).expect("spawned");
             generation.thread.as_mut().expect("spawned").id = Some(*thread);
@@ -571,6 +614,20 @@ impl Run {
                 reading.read = Some(*read);
             }
         }
+    }
+
+    /// A new thread for `key`'s events could not start: each event waiting
+    /// has its outcome, and the abandoned count is unchanged.
+    fn start_failed(&mut self, key: Key, thread: ThreadToken, asks: Asks) {
+        let mut expected = Expected::default();
+        let generation = self.model.generations.get_mut(&key).expect("spawned");
+        generation.thread = None;
+        for event in generation.waiting.drain(..) {
+            expected.outcome(key, event.marker, How::NoThread);
+        }
+        self.reach("a failed start");
+        let told = self.seam.spawn_failed(app_of(key), thread);
+        self.compare(expected, told, asks);
     }
 
     /// The woken threads may ask.
@@ -636,7 +693,14 @@ impl Run {
         true
     }
 
-    fn event(&mut self, slot: usize, kind: u8, window: u8, asks: Asks) -> bool {
+    fn event(
+        &mut self,
+        slot: usize,
+        kind: u8,
+        element: Option<u8>,
+        window: u8,
+        asks: Asks,
+    ) -> bool {
         let process = match self.model.running[slot].or(self.model.stale[slot]) {
             Some(process) => process,
             None if self.model.exited_once[slot] => {
@@ -663,6 +727,7 @@ impl Run {
             (_, 0) => Cached::Unknown,
             _ => Cached::Known,
         };
+        let element = element.filter(|_| kind != FocusEvent::Notification);
         self.model.next_marker += 1;
         let marker = self.model.next_marker;
         let place = self.model.places.len() as u64 + 1;
@@ -670,11 +735,27 @@ impl Run {
         let event = Event {
             marker,
             kind,
+            element,
             cached,
         };
         let now = self.model.now;
         let mut expected = Expected::default();
         let generation = self.model.generations.get_mut(&key).expect("its record");
+        let later = std::mem::take(&mut generation.outpost_ended);
+        let replaced: Vec<u64> = generation
+            .waiting
+            .iter()
+            .filter(|waiting| {
+                element.is_some() && waiting.kind == kind && waiting.element == element
+            })
+            .map(|waiting| waiting.marker)
+            .collect();
+        generation
+            .waiting
+            .retain(|waiting| !replaced.contains(&waiting.marker));
+        for replaced in &replaced {
+            expected.outcome(key, *replaced, How::Replaced);
+        }
         generation.waiting.push(event);
         let mut waits = false;
         let mut dropped = false;
@@ -695,13 +776,19 @@ impl Run {
                 waits = true;
             }
         }
+        if later {
+            self.reach("a later event after its outpost ended");
+        }
+        if !replaced.is_empty() {
+            self.reach("an event replaced");
+        }
         if waits {
             self.reach("an event waiting at the limit");
         }
         if dropped {
             self.reach("events dropped as one arrives");
         }
-        let told = self.seam.event(app_of(key), marker, kind, cached);
+        let told = self.seam.event(app_of(key), marker, kind, element, cached);
         self.compare(expected, told, asks);
         true
     }
@@ -731,7 +818,7 @@ impl Run {
         let thread = generation.thread.as_mut().expect("found");
         let token = thread.id.expect("told at its spawn");
         let asked = if generation.waiting.is_empty() {
-            if generation.gone {
+            if generation.gone || generation.outpost_ended {
                 Asked::Ends
             } else {
                 Asked::Waits
@@ -766,6 +853,9 @@ impl Run {
             }
             Asked::Ends => {
                 generation.thread = None;
+                if !generation.gone {
+                    self.reach("a thread ended after its outpost ended");
+                }
                 self.reach("a thread told to end");
             }
         }
@@ -982,19 +1072,26 @@ impl Run {
         self.compare(expected, told, asks);
     }
 
-    /// An outpost ends with its application running: nothing changes for
-    /// the listener's record. The world has this only with no thread in
-    /// charge and nothing waiting.
+    /// An outpost ends with its application running: the thread in charge
+    /// is not stopped and goes once nothing is left, and the record and its
+    /// count stay.
     fn outpost_gone(&mut self, slot: usize, asks: Asks) -> bool {
         let Some(process) = self.model.running[slot] else {
             return false;
         };
         let key = (slot, process);
-        let generation = self.model.generations.get(&key).expect("its record");
-        if generation.thread.is_some() || !generation.waiting.is_empty() {
-            return false;
+        let generation = self.model.generations.get_mut(&key).expect("its record");
+        generation.outpost_ended = true;
+        let threaded = generation.thread.is_some();
+        let waiting = !generation.waiting.is_empty();
+        let counted = !generation.abandoned.is_empty();
+        if threaded {
+            self.reach("an outpost ended with a thread in charge");
         }
-        if !generation.abandoned.is_empty() {
+        if waiting {
+            self.reach("an outpost ended with events waiting");
+        }
+        if counted {
             self.reach("a crash keeping a count");
         }
         let told = self.seam.outpost_gone(app_of(key));
@@ -1101,7 +1198,10 @@ impl Run {
     /// read returns; then every event has had its outcome, every waiter
     /// has run, and nothing is held.
     fn drain(&mut self) {
-        let plain = Asks { moved_on: false };
+        let plain = Asks {
+            moved_on: false,
+            spawn_fails: false,
+        };
         for slot in 0..2u8 {
             self.act(Action::Exit { slot, outpost: 2 }, plain);
         }
@@ -1262,15 +1362,33 @@ fn generated_cases_keep_the_schedules_rules() {
 /// its predecessor's two abandoned reads; a stale event of an exited
 /// process, joining the exited process's record instead of starting a
 /// generation of its own, as an event clears `ending`; and events waiting
-/// at the abandoned limit when the process exits, dropped at once.
+/// at the abandoned limit when the process exits, dropped at once; then
+/// the earlier test's finds: a push replacing the one event an idle waiter
+/// waited for; an ended application whose last abandoned read returned; and
+/// a failed start in a tick that abandons another application's read after
+/// it, with an idle waiter queued before.
 fn fixed() -> Vec<Vec<(Action, Asks)>> {
-    let plain = |action| (action, Asks { moved_on: false });
+    let plain = |action| {
+        (
+            action,
+            Asks {
+                moved_on: false,
+                spawn_fails: false,
+            },
+        )
+    };
     let start = plain(Action::Start { slot: 0 });
-    let focus = plain(Action::Event {
-        slot: 0,
-        kind: 0,
-        window: 0,
-    });
+    let event = |slot, kind, element| {
+        plain(Action::Event {
+            slot,
+            kind,
+            element,
+            window: 0,
+        })
+    };
+    let focus = event(0, 0, None);
+    let menu = event(0, 1, Some(0));
+    let waiter = plain(Action::WhenIdle);
     let ask = plain(Action::Ask { slot: 0 });
     let late = plain(Action::Time(Passing::Late));
     let exit = plain(Action::Exit {
@@ -1283,6 +1401,36 @@ fn fixed() -> Vec<Vec<(Action, Asks)>> {
         ],
         vec![start, focus, exit, focus],
         vec![start, focus, focus, ask, late, ask, focus, late],
+        vec![start, menu, waiter, menu],
+        vec![
+            start,
+            focus,
+            ask,
+            late,
+            plain(Action::OutpostGone { slot: 0 }),
+            plain(Action::Return {
+                slot: 0,
+                which: 0,
+                found: false,
+            }),
+        ],
+        vec![
+            start,
+            plain(Action::Start { slot: 1 }),
+            event(1, 0, None),
+            focus,
+            focus,
+            ask,
+            plain(Action::Ask { slot: 1 }),
+            waiter,
+            (
+                Action::Time(Passing::Late),
+                Asks {
+                    moved_on: false,
+                    spawn_fails: true,
+                },
+            ),
+        ],
     ]
 }
 

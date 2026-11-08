@@ -16,8 +16,9 @@ use verbatim_model::protocol::{EventTiming, UiaFocusRead};
 use verbatim_model::{Pid, TraceId};
 
 use super::super::{
-    AlarmChange, Duration, FocusEvent, Judged, MOVED_ON, Meta, NOT_IN_TIME, Reason, Request,
-    RuleWindow, Schedule, ScheduleEffect, ScheduleInput, WAITED_TOO_LONG, Waking, Window,
+    AlarmChange, Duration, FocusEvent, Judged, MOVED_ON, Meta, NO_THREAD, NOT_IN_TIME, REPLACED,
+    Reason, Request, RuleWindow, Schedule, ScheduleEffect, ScheduleInput, WAITED_TOO_LONG, Waking,
+    Window,
 };
 use super::Cached;
 
@@ -54,6 +55,10 @@ pub(super) enum How {
     MovedOn,
     /// It waited past its application's bound behind abandoned reads.
     WaitedTooLong,
+    /// No thread could be started to read it.
+    NoThread,
+    /// A newer event of its kind and element replaced it.
+    Replaced,
 }
 
 /// What the schedule told, in the world's terms.
@@ -166,6 +171,7 @@ impl Seam {
         app: App,
         marker: u64,
         kind: FocusEvent,
+        element: Option<u8>,
         cached: Cached,
     ) -> Vec<Told> {
         self.newest.insert(app.pid, app.process);
@@ -174,7 +180,7 @@ impl Seam {
             meta: meta(marker, kind),
             job: marker,
             kind,
-            key: None,
+            key: element.map(|element| vec![i32::from(element)]),
             window: match cached {
                 Cached::Never => RuleWindow::Never,
                 Cached::Unknown => RuleWindow::Unknown,
@@ -254,6 +260,14 @@ impl Seam {
         self.step(ScheduleInput::OutpostEnded { pid: Pid(app.pid) })
     }
 
+    /// No thread could be started as `thread` for `app`'s events.
+    pub(super) fn spawn_failed(&mut self, app: App, thread: ThreadToken) -> Vec<Told> {
+        self.step(ScheduleInput::SpawnFailed {
+            pid: Pid(app.pid),
+            generation: thread.0,
+        })
+    }
+
     /// An idle waiter is queued.
     pub(super) fn when_idle(&mut self, waiter: u64) -> Vec<Told> {
         self.step(ScheduleInput::WhenIdle { waiter })
@@ -289,6 +303,8 @@ fn how(judged: &Judged) -> How {
         Judged::Dropped(reason) if *reason == MOVED_ON => How::MovedOn,
         Judged::Dropped(reason) if *reason == WAITED_TOO_LONG => How::WaitedTooLong,
         Judged::Dropped(reason) if *reason == READ_FAILED => How::Failed,
+        Judged::Dropped(reason) if *reason == NO_THREAD => How::NoThread,
+        Judged::Dropped(reason) if *reason == REPLACED => How::Replaced,
         Judged::Dropped(reason) => panic!("an outcome the world cannot cause: {reason}"),
         Judged::Passed(_) => panic!("the world's reads pass nothing on"),
     }
