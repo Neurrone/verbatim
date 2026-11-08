@@ -879,7 +879,7 @@ fn a_repeated_focus_reports_a_selection_it_found_once() {
 /// report of a later caret event, the key's answer being the last report.
 fn a_selection_a_key_made_is_reported_to_the_key_alone() {
     let (mut app, hwnd, mut outpost) = start("mockapp-caret-watch-key-selection");
-    let (notes, before) = focus_notes(&mut app, &outpost, hwnd);
+    let (notes, _) = focus_notes(&mut app, &outpost, hwnd);
     let key = key_from_last_read(&mut outpost, notes, CaretMotion::NextCharacter);
     outpost.settled();
     app.send("caret doc 0 5");
