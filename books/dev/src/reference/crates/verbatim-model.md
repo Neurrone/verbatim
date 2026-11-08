@@ -443,13 +443,16 @@ implements. What each answer says is in `docs/parity/text.md`,
 
 - `FocusChanged`'s `text`, a `FocusText`, read while the outpost handled
   the focus so the caret's line comes in the focus's own message:
-  `Caret { caret, selected_text }`, `NoText` (Core speaks the value), or
+  `Caret { caret, selected_text, changes }`, `changes` being how the
+  selection differs from the node's last read, for a repeated focus,
+  `NoText` (Core speaks the value), or
   `NotRead` (Core speaks neither).
 - `CaretMoved { node_id, caret, selection_changes, content_changed,
   new_selection }`: the caret or selection moved in a node with text. A
   `CaretReport` is the line at the caret, with its `offset` at the caret,
-  and the `Selection` (`None` when nothing is selected), whose start is in
-  that line or in `selection_line`, the earlier line it starts in. Sent on
+  the `CaretSelection` (`None` when nothing is selected), whose start is in
+  that line or in `start_line`, the earlier line it starts in, and
+  `read_at_us`, when the read began on the shared clock. Sent on
   every caret or selection change in the focus, coalesced so a burst
   sends only the latest with the selection changes of every report it
   replaces. `selection_changes` is how the selection changed from the one
@@ -487,24 +490,20 @@ carries a `TextReply`. A newer request for the same purpose
 supersedes an older one, whose answer Core drops. The operations
 (`TextOp`):
 
-- `AwaitCaret(CaretWatch)`: Core has just passed a caret key. Watch for
-  evidence without waiting for it, and answer `TextReply::Caret` with a
-  `CaretReply` once it comes (`moved` true). Evidence is a caret event; the
-  caret no longer where it was when the key was pressed (the outpost's
-  newest caret read before `pressed_at_ms`, else Core's `since`); the text
-  of `unit` at the caret differing from `compare` (for Delete); for a
-  watch marked `deletes`, the caret's line differing from the line the
-  outpost last reported before the key; or the selection no longer the
-  one the outpost kept. The outpost checks when the request arrives and
-  whenever the application reports a caret, text, or selection change. A
-  watch marked `landing` is answered with `same_line`; in a terminal it
-  may carry `removed`, text removed from a typed line that had wrapped. A
-  watch that ends with no evidence (replaced by the next watch, the focus
-  moving, or a bound on its age passing) is answered
-  `TextReply::WatchEnded`. The reply carries the caret, `read_at_ms` in
-  milliseconds on the clock of `observed_at_us` (0 when unknown), the
-  requested `unit` at the caret (`None` for `Line` or a unit the provider
-  lacks), and `selection_changes`.
+- `Key(KeyRequest { tag, kind, unit, motion, start })`: a caret key's one
+  request. `KeyStart::ReadFirst` reads the caret first, as the before read
+  of a held key, and answers `TextReply::Key` with `KeyStarted::Read`; in
+  a focused terminal it answers with a `TerminalSnapshot`, whose caret
+  answers it. `KeyStart::FromLastRead { withdrawn }` answers
+  `KeyStarted::Watching`, judged from the node's last read, with no read
+  of its own; `TextReply::Unanswered` when there is none. Either way the
+  outpost then watches for evidence that the key took effect, and reports
+  it as `NormalizedEvent::KeyAnswered` with the request's tag.
+  `CoreToOutpost::Watch` orders a watch: `WatchOrder::FinalRead` asks for
+  one last read, answered `Evidence` or `BoundAnswer`, and
+  `WatchOrder::End` ends it silently. `kind` says whether the node is a
+  text field, whose watch only Core ends, or a terminal, whose watch ends
+  at the outpost's own deadline or console poll.
 - Selection changes: each `SelectionChange` is `selected` or not, its
   `text` cut to `MAX_SELECTION_TEXT_BYTES` (4 KB), and its full count of
   `characters`. When the old and new selections neither overlap nor
@@ -514,12 +513,6 @@ supersedes an older one, whose answer Core drops. The operations
   the compared selection was reported, `content_changed` is set, the
   changes carry no text, and `new_selection` carries the whole new
   selection's text.
-- `ReadCaret`: the caret before a held caret key
-  (`books/dev/src/explanation/design/key-holding.md`). Answered `TextReply::Caret` with `moved`
-  false, the caret's line, selection and `selection_line`, no unit, no
-  changes, and `read_at_ms`; the read joins the node's caret reports, and
-  the kept selection is left as it was. In a focused terminal it is
-  answered with a `TerminalSnapshot`, whose caret answers it.
 - `Read(TextRead { at, movement, unit })`: start at `at`, move by
   `movement` (a `TextMovement`: a unit and a signed count), landing on
   that unit's start, then read the `unit` containing the point reached.

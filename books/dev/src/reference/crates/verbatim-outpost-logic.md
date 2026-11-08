@@ -172,27 +172,23 @@ changes. A commit the state table says cannot occur, a
 followed, changes nothing and comes back as `Effect::LogicError`, which the shell logs as an
 error.
 
-The caret key's watch (`src/watch.rs`) is one state in the follow state,
-`Watch`: `None`, `Waiting` until its bound, `Polling` with its next and
-last read, or `Checking` while the program in flight holds it, with what
-it goes back to. The reducer alone decides its times, on the run's shared
-clock (`Now::wall_us`); a program's copy applies the same transitions
-with no clock, its times zero. Its transitions are made at five points:
-a caret key's dispatch ends the watch it replaces before the copy is
-taken; a commit opens it (`WatchChange::Open`), takes it
-(`WatchChange::Take`) or gives the check's result
-(`WatchChange::Checked`), the reducer then sending the key's reply; an
-abandonment answers a held watch `Abandoned`; a program that ends still
-holding it ends it; and with no program in flight, no release pending
-and nothing else ready, its due time ends a waiting watch at its bound
-or dispatches a poll read (`Work::PollRead`). A report on another node or
-a replaced node ends it in any state, and a release of its node ends it.
-A committed foreground fact on another node ends it at once, even while
-the program in flight holds it, and that program's later check is
-ignored, since `WatchChange::Checked` applies only to a watch that is
-`Checking` (Claude, 2026-11-03, accepted by Dickson the same day). The
-reducer otherwise changes the watch only at a dispatch, at an
-abandonment, or with no program in flight.
+The caret key's watch (`src/watch.rs`) is one state in the text facts,
+`Watch`: `None`, `Open` with its key and stage (`Awaiting`, `FinalDue`,
+`Terminal` with its end, or `Poll` with its next and last read), or
+`Checking` while the program in flight holds it, with what comes after
+the check (`Resume`, `Answer`, `PollRead`). A watch without a baseline
+cannot exist: `KeyWatch` holds its `Baseline`, the `LastRead` pinned when
+the key's request arrived. Evidence is judged here (`had_effect`, from the
+`Compared` facts the worker read), and the worker compares only positions.
+A text field's watch has no time of its own; Core orders it
+(`Input::WatchOrder`). The reducer alone decides a terminal's and a poll's
+times, on the run's shared clock (`Now::wall_us`); a program's copy
+applies the same transitions with no clock. A commit opens the watch
+(`WatchChange::Open`), takes it (`WatchChange::Take`) or gives the check's
+result (`WatchChange::Checked`), the reducer then sending the key's answer;
+an abandonment or a program that ends still holding it ends it, as does
+the release of its node. A report on another node ends a terminal's or a
+poll's watch; a text field's waits for Core's order.
 `next_timer` gives its due time only when it would be acted on.
 
 `cargo xtask ci` reads every file of the crate by the pure rule
@@ -201,19 +197,14 @@ abandonment, or with no program in flight.
 Tests: the reducer's unit tests drive it through `input` and `tick`, its
 asks answered by recorded answers as the shell answers them
 (`crates/verbatim-outpost-logic/src/tests.rs`, and each
-module's own), so every ordering of inputs is a replay. The watch has a
-generated test (`crates/verbatim-outpost-logic/src/tests/generated.rs`):
-every sequence of up to six steps of the inputs that move it, enumerated
-without randomness (about 1.5 s in a debug build), with no model of
-the watch's lifecycle, and checked after each step for four invariants: each key's
-query answered at most once, and by the sequence's end answered once or
-left to the outpost's end, no
-time for the watch while a program or a release is in flight, the
-program's copy equal to the reducer's watch apart from times at each
-accepted commit, and no idle answer while the watch is open or the
-program in flight deferred; and a due time is acted on as soon as
-nothing else is ready. The bound, the poll's timings and each reply's
-reason are the examples of `watch.rs` and the replay tests.
+module's own), so every ordering of inputs is a replay. The key's lifecycle has a
+generated test against a reference model
+(`crates/verbatim-outpost-logic/src/tests/generated.rs`): an application
+moving the caret and selection with independently timed events, and
+Core's orders at any step, each key's answer compared with whether the
+application's state differs from its state at the key's arrival, and
+each key answered once. The poll's timings and each reply's reason are
+the examples of `watch.rs` and the replay tests.
 The reducer has a generated test against a reference model
 (`crates/verbatim-outpost-logic/src/tests/reducer.rs`): lists of actions
 weighted toward the lifecycle, run through proptest's `TestRunner::run`

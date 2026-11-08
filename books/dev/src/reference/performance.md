@@ -1082,12 +1082,14 @@ character with nothing selected, then "al" selected from the caret.
 ### The caret read before a held key
 
 A caret key pressed while the focus has text is held by the hook until
-the outpost has read the caret (`TextOp::ReadCaret`,
-`books/dev/src/explanation/design/key-holding.md`); the read is a caret report's that compares
-no selection (`caret_moves_cost_exactly`).
+the outpost has read the caret (`KeyStart::ReadFirst`,
+`books/dev/src/explanation/design/key-holding.md`); the read is a caret report's, comparing the
+selection with the node's last read and reading the key's unit
+(`caret_moves_cost_exactly`).
 
-- Minimum and today: 1 UIA call remotely, 8 classically, 5 window
-  messages in a Win32 edit control; met. A possible reduction: skip the
+- Minimum and today: 1 UIA call remotely, 8 classically with no selection
+  to compare and 17 with one's change to read, 5 window messages in a
+  Win32 edit control and 7 with a change to read; met. A possible reduction: skip the
   watch's first check when the read was a few milliseconds before.
 - Wake-ups: two more of the hook's thread per held key, and the read's
   round trip: roughly 8 to 13 wake-ups and 0.7 to 1.5 ms of processor time
@@ -1098,8 +1100,8 @@ no selection (`caret_moves_cost_exactly`).
   calls and one message to Core, which publishes the hook's view with one
   lock-free store; the hook's thread is not woken.
 - A held key costs the reducer at most one wake-up for its one deadline
-  (`Effect::BoundHeldKey`), at the 100 ms bound of its wait for the key
-  ahead's watch or the 150 ms bound of its read, one of its existing
+  (`Effect::BoundHeldKey`), at the 100 ms bound after it is passed on or
+  the 150 ms bound of its read, one of its existing
   deadlines, and none when the wait or the read ends sooner; the last of 15 auto-repeats of a key that moves
   nothing reached the text box 1.05 to 1.06 s after the release
   (`measure_held_repeat_text_box`).

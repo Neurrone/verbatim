@@ -685,8 +685,7 @@ Inside an outpost (`docs/design/communication.md`, section 6.4;
   (`verbatim_model::protocol::Responder`) in the shell, keyed by request
   id, consumed by the one answer the reducer sends: the reply, `Abandoned`
   at the deadline, `Failed` for a program that ended without answering,
-  `NotStarted` for a `Cancel` before dispatch, `WatchEnded` for a caret
-  key's watch. A token dropped unanswered answers `Failed`. In debug builds
+  `NotStarted` for a `Cancel` before dispatch. A token dropped unanswered answers `Failed`. In debug builds
   the shell asserts after each transition that its tokens are the queries
   the reducer records.
 - Time limits in an entry ([ADR 0001: Focus](../adr/0001-focus.md), "Time
@@ -728,7 +727,7 @@ and the inherited pipe handles.
   text's length, so a location there is answered `OffsetLocation`, and a
   rich edit's is answered `Location`, as NVDA reads a rich edit through
   its text object model).
-  `caret_report`, `caret_report_since` (with `LastSelection` and
+  `caret_report`, `caret_report_since` (with `ReportAsk` and
   `ReportedCaret`), and `caret_report_checking` read the caret for
   `CaretMoved`. `Anchors` keeps a backend's anchors by node for a reader
   that holds them for the whole read, a test or mockapp, until
@@ -740,10 +739,10 @@ and the inherited pipe handles.
   so a call's result names a position it was given by the same key and
   only one it made is given a new one (`NodeTextCopy::finish`);
   `named_anchors(op)` lists the anchors of the positions an operation
-  names, which a copy must hold. `check_caret` checks a caret key's
-  watch with one read and answers `Watched::Answered` or
-  `Watched::Watching`; `CaretSignal` is what the check knows besides the
-  text, with a clock for tests.
+  names, which a copy must hold. `check_key` checks a caret key's watch
+  with one read against its pinned baseline (`CheckKey`, `LastRead`) and
+  answers `KeyChecked`: the read and whether it shows an effect, that the
+  caret moved while it was read, or that it failed.
 - `dialog_text(&dialog)` gathers a dialog's own text by NVDA's rules
   (`docs/nvda/object-model.md`, "A dialog's own text") over a
   `DialogParent` whose children are `DialogObject`s: MSAA through
@@ -1168,51 +1167,45 @@ the answers, within two seconds (`text`, the worker's `text_reads`).
   hues (`text/color.rs`, ported from NVDA's `colors.py`), `BulletStyle`,
   and links.
 
-A caret key's watch (`AwaitCaret`) looks for the evidence NVDA's caret
-scripts wait for, without waiting:
+A caret key's one request (`TextOp::Key`) opens a watch that looks for
+the evidence NVDA's caret scripts wait for, without waiting:
 
-- The reducer ends the watch the key replaces as it dispatches the key's
-  program. The program checks the new watch with one read
-  (`text_reads::check_watch`, `text::check_caret`): on evidence it answers
-  at once with the caret's line, the unit, and the selection's changes;
-  otherwise it commits `WatchChange::Open` with whether the node is the
-  focused console host's text area, and the reducer holds the watch
-  (`reducer::Watch`, at most one, in the follow state). Each later caret
-  event, text change, or text selection change of the node checks it
-  again, unless observed before the caret was last read; the answering
-  event's own report is not sent. A read that covers a waiting caret event
-  observed after the key's press counts it (`text_reads::Signal`), as the
-  program's copy of the waiting caret events says. A check takes the watch
-  (`WatchChange::Take`, the watch `Checking` in the reducer and the
-  program's copy) and commits what it found (`WatchChange::Checked`): the
-  reducer sends the key's reply, built from the watch's timing and calls,
-  or puts the watch back as it stood.
-- The reducer decides every time of the watch, on the run's shared clock
-  (`Now::wall_us`), and the worker reads no clock for it. A watch ends
-  with `TextReply::WatchEnded`, which Core does not speak, when the next
-  key's dispatch replaces it, a focus on another node or a replaced node is
-  reported, its node is released, its holder panics or returns without a
-  result, or at
-  `CARET_WATCH_BOUND` (`HANDLING_DEADLINE`, 11 s, after it opened, so a
-  key whose application shows its effect within the time a task allows it
-  is still spoken, for a watch that does not
-  poll), acted on by the reducer with no program. The reducer gives the
-  shell why each watch ended without evidence (`Effect::WatchEnded`),
-  which the shell logs and, under the `faults` feature, passes to the
-  observation point `CaretWatchEnded`
+- The baseline is pinned when the request arrives (`Reducer::pinned`), so
+  a read that replaces the node's last read cannot move it. A
+  `KeyStart::ReadFirst` request reads the caret first and answers it; a
+  `KeyStart::FromLastRead` request is handled in its turn and answers that
+  the watch is open, or `Unanswered` with no last read, so a key with no
+  last read has no watch.
+- The watch is `TextFacts::watch` (`Watch::None`, `Open` with its stage,
+  or `Checking` while a program holds it, with what comes after). A text
+  field's stage has no time of its own: Core ends it, by the final read
+  (`WatchOrder::FinalRead`), the watch's end (`WatchOrder::End`) or the
+  next key's request. A terminal's ends at `TERMINAL_WATCH_BOUND`
+  (`Stage::Terminal`), a console host's by its poll (`Stage::Poll`).
+- Each caret event, text change or selection change of the node checks
+  the watch (`text_reads::check_watch`, `text::check_key`) with one read
+  and, in a program, one round trip: evidence is judged by
+  `verbatim_outpost_logic::had_effect` from the `Compared` facts, and
+  answered `KeyAnswered` with `KeyAnswer::Evidence`. A check that finds
+  none reports the read as an untagged caret report and leaves the watch
+  open. The final read answers `Evidence` or `KeyAnswer::BoundAnswer`.
+  A watch ended by its node's release or its element's replacement
+  answers `KeyAnswer::Ended`.
+- The reducer decides every time of a terminal's watch, on the run's
+  shared clock (`Now::wall_us`), and the worker reads no clock for it.
+  The reducer gives the shell why a watch ended without evidence
+  (`Effect::WatchEnded`), which the shell logs and, under the `faults`
+  feature, passes to the observation point `CaretWatchEnded`
   ([verbatim-faults](verbatim-faults.md)), on which mockapp's
   `terminal_reading` tests tell a watch ended by its poll from one ended
-  at its bound. A holder abandoned at
-  its deadline answers `Abandoned`. So a key that moves nothing is silent
-  (`docs/parity/text.md`, "TextInfo-equivalent layer").
+  at its bound.
 - The console host's caret poll (`reducer::Watch::Polling`, a documented
   workaround; `books/dev/src/explanation/design/key-holding.md`, "The console host's caret
   poll"): the console host raises caret events only on its cursor's blink
   timer, so in its focused text area a watch the first check leaves open
   re-reads the caret every 5 ms until a check finds evidence or 50 ms after
-  the key's `pressed_at_ms`, and ends `WatchEnded` when that last re-read
-  finds nothing. A watch without `pressed_at_ms` is bounded 50 ms after it
-  opened. Each re-read is a program of its own (`Work::PollRead`,
+  it opened, and ends `KeyAnswer::Ended` when that last re-read finds
+  nothing. Each re-read is a program of its own (`Work::PollRead`,
   `Worker::poll_read`), which the reducer dispatches when its next read is
   due, no program is in flight, no release is pending and nothing else is
   ready, so a program that arrives during the poll waits for at most the
@@ -1231,20 +1224,16 @@ scripts wait for, without waiting:
   come after the key and before its move. A program's result names no
   node or request: the reducer takes it only from the program in flight
   holding the watch, so an abandoned read's late result is refused.
-- Evidence is the caret away from where it was known to be; the characters
-  either side of it changed (only those, since a line can rewrap without a
-  key); the text at the caret changed after Delete; the caret's line
-  changed after a deleting key (the watch's `deletes`, for a run of one
-  character such as a password mask); the selection changed; or the
-  selection of the report the caret was known from differs from now, since
-  a caret event's report can replace the kept selection before the watch
-  arrives (compared only when that report was not already compared, by its
-  number). A caret event alone is evidence only when nothing knew the caret.
-- The baseline is the newest caret the outpost reported from a read that
-  finished before the key's `pressed_at_ms` (the keyboard hook's stamp, in
-  milliseconds on the clock of `observed_at_us`), else Core's; never a
-  read at or after the key, which may already show its effect. The last eight reports per node
-  are remembered, forgotten when the outpost moves the caret itself.
+- Evidence is the caret away from the baseline's; the characters either
+  side of it changed (only those, since a line can rewrap without a key);
+  the text at the caret changed after Delete; the caret's line changed
+  after a deleting key (for a run of one character such as a password
+  mask); or the selection differs from the baseline's or the node's last
+  read's.
+- The baseline is the node's last read as the key's request arrived, or
+  the before read of a held key; never a read begun after the key, which
+  may already show its effect. A node has one last read, kept while Core
+  holds the node, and a read by Verbatim's own move replaces it.
 - Before answering, the caret is read again (`CaretRequest::recheck`;
   `CaretRead::moved_while_read` at the end of the same program), and a
   caret that moved meanwhile answers nothing, since its line may be from
@@ -1258,21 +1247,20 @@ scripts wait for, without waiting:
   raises only UIA's text selection changed. A Common Controls 6 edit
   control raises `EVENT_OBJECT_TEXTSELECTIONCHANGED` on every caret move;
   the classic edit control raises nothing for an unfocused one.
-- The caret before a held key (`TextOp::ReadCaret`,
+- The before read of a held key (`KeyStart::ReadFirst`,
   `books/dev/src/explanation/design/key-holding.md`) is read as a caret event's report, without
-  formatting or touching the kept selection (`LastSelection::Ignore`),
-  answered as a `CaretReply` with `moved` false, and joins the remembered
-  reports as the held key's baseline.
+  formatting, with the key's unit: it compares the selection with the
+  node's last read, replaces it, and answers as a `CaretReply`, and the
+  read becomes the key's baseline.
 
 Selections no key made (`docs/parity/text.md`, "TextInfo-equivalent
 layer"):
 
-- Each node keeps the selection of its last caret report, but a
-  terminal's, which keeps none. The reducer holds it among the node's text
-  facts (`reducer::NodeAnchors`, in `reducer::TextFacts`): its anchors and
-  the chunks' text, the positions reported, the last eight carets reported
-  and the count of reports, the kept selection with its text, and the note
-  that the text changed. A position is an edit control's offset, or the
+- Each node keeps its one last read (`LastRead`): the caret, its line and
+  the selection with its text, and when the read began, but a terminal's,
+  which keeps no selection. The reducer holds it among the node's text
+  facts (`reducer::NodeAnchors`, in `reducer::TextFacts`), with its
+  anchors, the positions reported, and the note that the text changed. A position is an edit control's offset, or the
   key under which the store keeps a UIA range, so the facts hold no
   application object and an edit control's offsets cross between programs
   as they are. They change only by a program's commits
@@ -1281,15 +1269,14 @@ layer"):
   change noted; a node's text forgotten), and the reducer has the store
   let go of each UIA range no fact names any more
   (`Effect::ForgetRanges`). A caret event's report of a focus
-  that is not a terminal (`text_reads::CaretFor::Event`) compares with it
-  (`LastSelection::Compare`) and sends `selection_changes`; through UIA in
+  that is not a terminal (`text_reads::CaretFor::Event`) compares with it and sends `selection_changes`; through UIA in
   the same round trip, comparing nothing when both are empty
   (`CaretRequest::previous_collapsed`). It is forgotten at a new focus, and
   replaced by what the outpost made when it selects or moves the caret for
   Core (`NodeText::keep_selection`, `RangeRead::selection_after`). Each
   change is compared once, by whichever read sees it first.
 - A report's selection starts where Core can read before it: in the caret's
-  line, or an earlier line sent as `CaretReport::selection_line`; through
+  line, or an earlier line sent as `CaretSelection::start_line`; through
   UIA, where the caret can be the selection's other end, the caret read
   finds the start (`CaretRead::selection_start`).
 - A comparison is in general terms (`text::content_changed`,
@@ -1307,7 +1294,7 @@ layer"):
   waits once the caret is read, for the Windows Forms text box. That check
   is the reducer's, so the read is cut in two programs there
   (`text::Checked::Cut`, `text::caret_report_checking`,
-  `text::check_caret_cut`), only for an edit control's client area with a
+  `text::check_key_cut`), only for an edit control's client area with a
   selection in the compared one or the new one: the read part syncs with
   the `WinEvent` thread (`text_reads::value_change_cut`, `Nudger::sync`,
   which raises a `verbatim_ia2::SyncMarker` event, since a posted message

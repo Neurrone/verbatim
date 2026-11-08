@@ -487,6 +487,11 @@ The `CaretAnswer`:
   write between its calls.
 - `selection_text` and `previous_text`: the selection's text when its
   ends changed, and the old ends' text now, each only when asked.
+- `since_place`: where `since` lies against the caret's line, its order
+  against the line's start and against its end, so a key's baseline being
+  on that line costs no further round trip.
+- `baseline_moved`: with `baseline_selection`, the selection is not a
+  key's baseline's, compared when a read since replaced the node's last.
 - `selection_start`, `selection_line` and `start_first`: where the
   selection starts, since `TextPattern2`'s caret can be its other end, so
   a Backspace over the selection can say what comes before it, as NVDA's

@@ -662,10 +662,10 @@ Each file's module comment says exactly what it asserts; in outline:
   back while a caret key's watch is open.
 - `caret_watch.rs`, over `caret_watch.json` (a UIA document and a
   button), through the outpost harness: a focus delivered while a caret
-  key's watch is open is reported first and the watch ends, answered
-  `WatchEnded`; a caret moved and reported after the watch opened answers
-  it; a key that moves nothing says nothing, and a caret event that shows
-  no change leaves its watch open; a focus-now query's document is the
+  key's watch is open is reported first; a caret moved and reported after
+  the watch opened answers it; a caret event that shows no change leaves
+  its watch open and is reported; a selection made with no event is found
+  by a before read and by a repeated focus, once; a focus-now query's document is the
   outpost's focus, so a caret event no key caused is reported; and
   Verbatim+Tab's query's (`FocusPurpose::Report`, through
   `OutpostUnderTest::focus_now_for`) is neither adopted nor followed, its

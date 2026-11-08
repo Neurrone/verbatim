@@ -850,55 +850,61 @@ report for. The first review command reads the line at the caret, and a
 `NoText` answer makes the object flat text. Any other object is flat text
 without asking.
 
-### Held caret keys
+### The key line
 
-(`books/dev/src/explanation/design/key-holding.md`, "Core".) An `Input::HeldKey`, a caret key
-the hook held back because `holds_caret_keys` was true, asks the focus's
-outpost to read the caret (`TextOp::ReadCaret`) and keeps the key
-(`HeldKeys`). The answer becomes the focus's caret, and the key is
-handled as an `Input::CaretKey` pressed one millisecond after the read
-ended, then passed on (`Effect::PassHeldKey`) after its watch is asked
-for, so the watch reaches the outpost before the key reaches the
-application. Any other answer, or the read's deadline passing, passes the
-key on with the hook's time; with no focus whose caret is read, it is
+(`books/dev/src/explanation/design/key-holding.md`, "Core"; `src/key_line.rs`.)
+Every caret key goes through `SrState::key_line`, one state: `Idle`, or
+`Busy` with the current key, the keys and commands waiting behind it, and
+the selection changes heard while it runs. The current key is `Reading`,
+a held key whose before read is in flight, or `Watched`, a key that has
+been passed on, whose fields say what it was judged from (`Before`), its
+tag, when it was passed, whether a later key was marked, and whether the
+line is `Holding` or `Released`.
+
+An `Input::HeldKey`, a caret key the hook held back because
+`holds_caret_keys` was true, asks the focus's outpost for one request,
+`TextOp::Key` with `KeyStart::ReadFirst`. The answer, `KeyStarted::Read`,
+becomes the focus's caret, its selection changes are said, and the key
+is passed on (`Effect::PassHeldKey`) one microsecond after the read
+began. An `Input::CaretKey`, one the hook did not hold, asks `TextOp::Key`
+with `KeyStart::FromLastRead`, and its watch is judged from the node's
+last read; that request goes first, so the watch reaches the outpost
+before anything the key does. With no focus whose caret is read the key is
 passed at once.
+
+The line has one deadline, set by `Effect::BoundHeldKey` and entering as
+`Input::HeldKeyDue`: `HELD_READ_BOUND_MS` (150 ms) after a before read is
+asked, and `KEY_BOUND_MS` (100 ms) after a key is passed on. Evidence
+clears it. A before read past its bound is withdrawn and the key is passed
+on, watched from the last read. A watched key past its bound orders the
+outpost's final read (`CoreToOutpost::Watch`, `WatchOrder::FinalRead`,
+carried by `Effect::WatchOrder`) and the line becomes `Released`, so what
+waits behind it runs. A terminal's watch has no final read: its deadline
+only releases the line, and the outpost's own stage ends the watch.
 
 A held key that reaches Core while focus reports wait joins the focus
 queue first and is taken in its turn, as NVDA runs its caret script in
-its queue (ADR 0001, "One ordered focus queue"); that wait is bounded by
-the live re-read ahead of it, by its reader's moved-on rule and read
-deadline. Once taken, a held key has one deadline, which Core keeps for
-the key named in `HeldKeys::bounded`: `KEY_AHEAD_BOUND_MS` (100 ms) after the key ahead was
-passed on while the key waits for that key's watch, and
-`HELD_READ_BOUND_MS` (150 ms) after its read is asked while the read is
-in flight. `Effect::BoundHeldKey` sets the shell's one slot, or clears it
-when the wait or the read ends sooner, and `Input::HeldKeyDue` enters
-when it passes (`editing::held_key_due`): a key still waiting is read; a
-key still being read is passed on without the read, and the read is
-withdrawn (`Effect::Withdraw`), so it is no longer waited for and its
-late answer finds nothing and is dropped.
+its queue (ADR 0001, "One ordered focus queue").
 
-Every key input that comes while a held key waits waits behind it
-(`WaitingKey`) and is handled in order (`editing::next_held`): a held
-key's read is asked for once the watch of the key ahead has been answered
-(`HeldKeys::awaiting_watch`) or `KEY_AHEAD_BOUND_MS` (100 ms) after that
-key was passed on, the held key's deadline. Other
-keys are handled as the input they came as (`reduce::key_input`). The
-watch of the key just passed is marked `later_key`, so its answer only
-keeps the caret current and says its selection's change. Each waiting
-key's effects carry its own trace (`Effect::ForKey`).
+Keys and commands that arrive while the line is `Reading` or `Holding`
+wait behind it (`WaitingKey`) and run in order. At a key's pass, typed
+keys at the front of what waits run at once, as NVDA's typed keys are not
+held behind a script, timed no earlier than the pass; anything left
+behind marks a later key (`later_key_at_us`). Each waiting key's effects
+carry its own trace (`Effect::ForKey`).
 
 A review command or a script (`Input::Command`, `Input::Script`) pressed
-while a held key waits, or while the watch of the held key last passed
-on is open, waits behind it too (`editing::queue_command`,
-`WaitingKey::Command`), as NVDA runs scripts one at a time in the order
-queued: until the key ahead has had its caret read and been passed on,
-and until that key's watch is answered or 100 ms after the pass,
-whichever is first, the bound counted from the command's own press
-(`pressed_at_ms`); `HeldKeyDue` with its trace ends the wait. The
-key ahead, its watch marked `later_key`, says nothing, and the command
-reads the line the key moved to, where NVDA reads the line before it
-(`books/dev/src/explanation/design/ownership.md`).
+while the line is `Reading` or `Holding` waits behind the key, at most the
+key's bound. The key ahead says nothing once a later key is marked, and
+the command reads the line the key moved to, where NVDA reads the line
+before it (`books/dev/src/explanation/design/ownership.md`).
+
+A focus on another node ends a watched key. In a text field, within the
+bound and with no later key, it first says the before read's unit, or
+Backspace's removed text (`editing::focus_first_words`), and orders
+`WatchOrder::End`; a key whose before read is still running says nothing.
+An outpost that ends leaves a key with no answer, which ends silently. At
+exit every key still held is passed on in press order.
 
 ## Key numbers
 
@@ -919,26 +925,20 @@ it. `KeySeq::NONE_YET` is not recorded.
 ### Caret keys
 
 (`docs/nvda/editable-text-and-terminals.md`; `docs/parity/text.md`,
-"TextInfo-equivalent layer".) An `Input::CaretKey` on a focus with text
-asks its outpost to watch for evidence (`TextOp::AwaitCaret`) with the
-caret Core last knew, when the key was pressed, the unit to report, the
-character or word at the caret for Delete, and whether the key deletes.
-The outpost answers once evidence comes, or `TextReply::WatchEnded`
-without it, for which Core says nothing, as for a reply with `moved`
-false. Backspace over a selection predicts the text before the
-selection's start (`CaretReport::selection_line`; with the start in
-neither line, `PendingCaret::before_unknown` says only the selection's
-change).
+"TextInfo-equivalent layer".) A key's result comes as a
+`NormalizedEvent::KeyAnswered` with the key's tag: `KeyAnswer::Evidence`
+with a `KeyRead` when the outpost saw the key take effect,
+`KeyAnswer::BoundAnswer` with a `KeyRead` when the final read found no
+effect, and `KeyAnswer::Ended` when the watch ended with nothing to say.
+A `KeyRead` carries the caret and the selection changes, and what the
+key's baseline held: the line, the selection, and the unit at the caret.
 
-The caret before the key comes from the history: Core keeps the focus's
-last 8 caret reports (`CARET_HISTORY`, inline in the state) with their
-observation times, and takes the newest observed strictly before the
-key's `pressed_at_ms`, since the application's caret event can reach
-Core before the key does. With no time for the key, or no timed report,
-the caret Core holds stands in; a caret Core moved itself, as say-all
-does, is kept at time 0. The caret Core holds is the newest by observed
-time, not the last to arrive. A newer caret key or typed character
-supersedes one still watched, and a focus change drops it.
+Each focus object holds one caret (`FocusContext::caret`). Core takes
+every report as the newest caret by when its read began
+(`CaretReport::read_at_us`), so a key's answer and an ordinary report
+need no comparison of arrival. A later key marked before an answer's read
+began leaves that answer's words unsaid, and the caret and the selection
+changes are still taken. A bound answer with any later key says nothing.
 
 The answer updates the caret and speaks, queued:
 
@@ -955,8 +955,8 @@ The answer updates the caret and speaks, queued:
 - Delete and Control+Delete: the character or word now at the caret.
 - Any other passed key that types nothing (`CaretMotion::Other`, from the
   hook's `KeyReport::Passed`, and the clearing keys): text it removed, a
-  new line (`CaretReply::same_line`, answered for a watch marked
-  `landing`), or by where the caret landed on an unchanged line. A key
+  new line (`KeyRead::on_baseline_line`), or by where the caret landed on
+  an unchanged line. A key
   that removed a selection says only the selection's change
   (`editing::removes_selection`).
 - With Shift, and Control+A: what became selected and unselected
@@ -964,14 +964,11 @@ The answer updates the caret and speaks, queued:
   a change in general terms (`content_changed`) speaks the whole new
   selection.
 - A selection no key made arrives as a `CaretMoved`'s selection change
-  and is spoken the same way (`editing::selection_changed`). While a caret
-  key's answer is awaited for the node, its words are held with the key
-  (`PendingCaret::heard`) and spoken after the key's; a superseded key's
-  selection change is said with the later key's
-  (`Then::SupersededCaret`, `editing::superseded_reply`). The
-  superseded slot holds one key, so in a burst of three keys where the
-  first answer arrives after the third press, the first answer's
-  selection change is not said; speech is cut at each press, as with NVDA.
+  and is spoken the same way (`editing::selection_changed`), also when it
+  arrives with a before read or a repeated focus
+  (`FocusText::Caret`'s `changes`). While a key's watch is open for the
+  node, its words are held with the key (`Busy::heard`) and spoken after
+  the key's.
 
 ### Formatting
 
