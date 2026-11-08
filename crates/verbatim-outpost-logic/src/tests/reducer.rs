@@ -56,6 +56,13 @@ enum Condition {
     Destroyed,
 }
 
+/// What a commit says of a window, from evidence of an earlier moment.
+#[derive(Clone, Copy, Debug)]
+enum Named {
+    Hung,
+    Answered,
+}
+
 /// The application as it truly is, changing with no event and surviving a
 /// new outpost generation: which of its two threads are hung, and which of
 /// the hang cases' windows are destroyed.
@@ -623,6 +630,8 @@ struct Run {
     /// The hang told of when the last new outpost generation started, if
     /// its window was still hung.
     continuing: Option<isize>,
+    /// What the commit being given names of a window, if anything.
+    commit_names: Option<(Window, Named)>,
     /// The clocks: the shell's, the observation clock, the shared clock,
     /// in microseconds.
     at: u64,
@@ -649,6 +658,7 @@ impl Run {
             expected_tells: Vec::new(),
             tells: Vec::new(),
             continuing: None,
+            commit_names: None,
             at: 1_000,
             observed: 1_000,
             wall: 1_000,
@@ -1299,7 +1309,7 @@ impl Run {
                     });
                 Change {
                     result,
-                    found: Some((window, if hung { Found::Hung } else { Found::Answered })),
+                    found: self.seam_found(window, hung),
                     ..Change::default()
                 }
             }
@@ -1438,10 +1448,7 @@ impl Run {
             Stale::Found { window, hung } => Input::Commit {
                 request,
                 change: Box::new(Change {
-                    found: Some((
-                        hang_case(window),
-                        if hung { Found::Hung } else { Found::Answered },
-                    )),
+                    found: self.seam_found(hang_case(window), hung),
                     ..Change::default()
                 }),
             },
@@ -1634,6 +1641,9 @@ impl Run {
         if self.model.stopping {
             self.model.told_of = None;
         }
+        let names = self
+            .commit_names
+            .take_if(|_| matches!(input, Some(Input::Commit { .. })));
         match input {
             Some(Input::Entry { .. }) => self.judge_told(),
             Some(Input::Commit { request, change }) if self.in_flight(*request) => {
@@ -1647,8 +1657,8 @@ impl Run {
                     self.reach("a refusal answered abandoned");
                 }
                 self.judge_told();
-                match change.found {
-                    Some((window, Found::Hung)) => match self.world.condition(window.get()) {
+                match names {
+                    Some((window, Named::Hung)) => match self.world.condition(window.get()) {
                         Condition::Hung => {
                             self.evidence(window.get(), "a hang told from a commit");
                         }
@@ -1659,13 +1669,13 @@ impl Run {
                             self.reach("a commit naming a destroyed window hung");
                         }
                     },
-                    Some((window, Found::Answered))
+                    Some((window, Named::Answered))
                         if self.model.told_of == Some(window.get())
                             && self.told_window_is(Condition::Hung) =>
                     {
                         self.reach("a commit naming a told window answered while it hangs");
                     }
-                    Some((_, Found::Answered)) | None => {}
+                    Some((_, Named::Answered)) | None => {}
                 }
             }
             Some(Input::HangSeen { window, request }) => {
@@ -2259,6 +2269,23 @@ impl Run {
             }
             _ => None,
         }
+    }
+
+    /// What a commit carries to say `window` was found hung, when `hung`,
+    /// or answered: the seam's one use of the reducer's type for it, noting
+    /// what the commit names for the model.
+    #[expect(
+        clippy::unnecessary_wraps,
+        reason = "the shape of `Change::found`, which callers assign whole"
+    )]
+    fn seam_found(&mut self, window: Window, hung: bool) -> Option<(Window, Found)> {
+        let (named, found) = if hung {
+            (Named::Hung, Found::Hung)
+        } else {
+            (Named::Answered, Found::Answered)
+        };
+        self.commit_names = Some((window, named));
+        Some((window, found))
     }
 
     /// What a check of `window` for `request` finds: the seam's one
