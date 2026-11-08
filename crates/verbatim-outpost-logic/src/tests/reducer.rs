@@ -2272,20 +2272,12 @@ impl Run {
     }
 
     /// What a commit carries to say `window` was found hung, when `hung`,
-    /// or answered: the seam's one use of the reducer's type for it, noting
-    /// what the commit names for the model.
-    #[expect(
-        clippy::unnecessary_wraps,
-        reason = "the shape of `Change::found`, which callers assign whole"
-    )]
-    fn seam_found(&mut self, window: Window, hung: bool) -> Option<(Window, Found)> {
-        let (named, found) = if hung {
-            (Named::Hung, Found::Hung)
-        } else {
-            (Named::Answered, Found::Answered)
-        };
+    /// and nothing when it answered: the seam's one use of the reducer's
+    /// type for it, noting what the commit names for the model.
+    fn seam_found(&mut self, window: Window, hung: bool) -> Option<Window> {
+        let named = if hung { Named::Hung } else { Named::Answered };
         self.commit_names = Some((window, named));
-        Some((window, found))
+        hung.then_some(window)
     }
 
     /// What a check of `window` for `request` finds: the seam's one
