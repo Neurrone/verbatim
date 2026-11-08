@@ -1,229 +1,449 @@
 # The caret and selection rework
 
-Status: scope, decisions and order of work agreed by Dickson on 2026-10-25 and 2026-10-29, consolidated for building; to be built in a session of its own. The ownership refactor is built since it was written ([the milestone rules](ownership-milestone-rules.md), "The caret and selection rework"): `CoreFocus` is gone and a repeat is read in full and judged only in Core, so this rework no longer relies on unread repeats; the last read per node and the pinned baseline become reducer state released by the release rule; caret and text events are read for every node the outpost has not released, with Core deciding which is spoken; the key request is a stream responder with its 100 ms and 1-second bounds as reducer timers; and the barrier on replies replaces the clause against merging a caret report across a reply. The rework builds on the outpost's followed focus (`books/dev/src/reference/crates/verbatim-outpost.md`) (`docs/roadmap.md`, M4, "The caret and selection rework"). The study that led here, with its inventory of twenty-five mechanisms, their commits and the model as built at c0f80a7e, is kept in git: it last appears in full in this document at 07db29a8.
+Status: scope and decisions agreed by Dickson on 2026-10-25, 2026-10-29, 2026-11-08 and 2026-11-09; approved by Dickson on 2026-11-09. It includes the held-key line, one of the state models in `docs/roadmap.md`.
 
 ## In short
 
-The shape stays: a caret key is held while the focus's outpost reads the caret, as NVDA's caret scripts read the caret before sending the key; the outpost then watches the application's events for evidence of what the key did and answers with facts compared inside the provider; Core chooses every word. What goes is a second layer, built before key holding closed the race it answered on 2026-10-22, which kept the caret and selection in nine places, two of whose disagreements are known defects: Control+A followed by a repeated focus says nothing, and a superseded key's answer leaves Core's caret stale.
+A caret key is still held while the focus's outpost reads the caret, as NVDA's caret scripts read the caret before sending the key. The outpost then watches for evidence of what the key did, and Core chooses every word.
 
-The rework keeps one last read per text node in the outpost, makes one request per key that reads the caret before it and opens the watch, and has Core take every read as the newest caret by one stamp. It also closes the differences from NVDA in what keys say: a key that moves nothing speaks its unit, at once where the caret is at the edge of the text and otherwise after 100 ms, and a move that arrives later is still spoken; Alt+Up and Alt+Down move by sentence where the application does not; and five editing chords are silent.
+What changes is the state around that. Each text node has one last read, in the outpost. Each key has one lifecycle value, in Core, which also owns the key's 100 ms. The outpost's only part in a key's life is the watch: one value that holds the baseline and looks for evidence in the application's events until it finds some or Core tells it to stop. A key gets exactly one result after its before read: evidence, the read at 100 ms, or the end of its watch. Everything else that kept the caret, selection or key progress is removed.
 
-## Decisions (Dickson)
-
-- One baseline (2026-10-25). One last read per text node, held by the outpost and replaced by every read, is the only baseline. A key makes one request that reads the caret before the key and opens the watch with that read as the key's baseline. Every read reports facts. Core takes every report and every answer, late or superseded, as the newest caret by one stamp, the time the read began, and speaks from it.
-- The second layer goes (2026-10-25): Core's history of eight caret reports and its prediction of what Backspace and Delete remove; the outpost's history of eight reads; the time-zero record of Core's own caret move; the "since" check limited to a line; report numbers; the three modes of the selection baseline; the separate watch request and its first check; and the single superseded slot. Until uiAccess (M8.6), a caret key pressed while an elevated window is in front is judged from the last read when its request arrives, a known defect fixed there.
-- A node's last read lives while Core holds the node (`NodesHeld`), and Core's choice between a new and a repeated focus decides what is spoken: Core speaks a repeated focus's changes and ignores a new focus's (2026-10-25; amended 2026-10-29 for the focus pipeline rework's removal of `CoreFocus`).
-- A key that moves nothing speaks as NVDA's script does (2026-10-29), replacing the decision of 2026-10-08 that made it silent, whose reason, a 100 ms wait that held the outpost's worker, the watch removed. A movement key and Delete speak their unit; Backspace and Control+Backspace that remove nothing say nothing, as NVDA's backspace script returns when the caret did not move (`_backspaceScriptHelper`, `nvda/source/editableText.py` 293 to 320); a Shift key that changes nothing says nothing, as NVDA's selection script reports only a change.
-- The edge of the text (2026-10-29). Where the before read shows nothing selected and the caret where the key's direction is used up, Core speaks the key at once from that read, and keys behind it do not wait for it: the line keys on the first or last line of a text with more than one line, the character and word keys and Delete at the text's start or end. A one-line field is left out of the line keys' rule, because its Up and Down Arrow often change its text, as a combo box's edit or a search box with suggestions does. An auto-repeat of such a key is not spoken at once but at its bound answer, which the next repeat silences, so only the last repeat speaks, as in NVDA (Dickson, 2026-10-29).
-- The 100 ms bound is the watch's (2026-10-29): when a key has no evidence 100 ms after it, NVDA's wait (`caretMoveTimeoutMs`), the watch reads the caret once more and answers with that read, and Core speaks from it, as NVDA speaks the caret its last poll found.
-- Later evidence (2026-10-29), beyond NVDA, which drops it: a key's answer arriving after Core spoke for the key, within the watch's bound, cuts speech and is spoken, unless a later key was pressed, the focus moved, or the answer shows the same unit text at the same place as was spoken.
-- The watch's bound is 1 second (2026-10-29), so that a caret move made by something else after a key that moved nothing is not taken as that key's.
-- Alt+Up and Alt+Down Arrow match NVDA (2026-10-29): where the application leaves the caret where it was, Verbatim moves the caret by sentence itself and speaks the sentence, sentences found within each paragraph by Unicode's sentence boundaries (UAX #29); in a field read through UI Automation, which has no sentence unit, NVDA's move fails and its script says nothing, and so does Verbatim's. A rich edit control is read as a plain edit control is, its paragraph the line as shown for every unit, so its sentences stop at a wrapped line's end, where NVDA uses the control's own sentences over its own paragraphs through its object model; this is a recorded difference until M6.5 reads that model for paragraphs, sentences and say-all together, so that one control never has two meanings of a paragraph (Dickson, 2026-10-29).
-- Control+Z, Control+Y, Control+X, Control+V and Escape in a text field match NVDA, which binds no script to them (2026-10-25): they open no watch and nothing is said for the key; a selection change the application's caret event shows is spoken as any report's is. Other keys outside the caret table keep the decision of 2026-10-08: they speak by their evidence.
-- Terminals are out of scope except where the mechanism is shared (2026-10-25 and 2026-10-29): the unmoved-key rules, the edge of the text, later evidence and sentence moving do not apply to a terminal, whose reading rules say what a key did, and terminals keep today's handling of the five editing chords.
-- The judgement of whether a key's evidence has arrived stays in the outpost, named in D14 as the one read-time decision outside Core, because it bounds reads on text changes (2026-10-25).
-- One time stamp per caret report (2026-10-25), in microseconds, as the focus pipeline rework stamps every observation.
-- The outbound queue's clause against merging a caret report across a reply is removed with no new test (2026-10-29): its stated reason, Core comparing its own copy of the selection, ended with 505e3ad8.
+This fixes two known defects: Control+A followed by a repeated focus says nothing, and a superseded key's answer leaves Core's caret stale. Keys that move nothing now speak as NVDA's do, Alt+Up and Alt+Down move by sentence, and five editing chords become silent.
 
 ## Terms
 
-- Core is Verbatim's main process; the reducer is the part that decides what is spoken. An outpost is the helper process for one application that makes its UIA or MSAA calls and reports facts. A round trip is one cross-process call into the application; a remote program is a small UIA program run inside the application, so that many reads cost one round trip.
-- A held key is a caret-table key the keyboard hook swallows while the focus has text, until Core has had the caret read and passes it on.
+- Core is Verbatim's main process, and its reducer decides what is spoken. An outpost is the helper process that makes one application's UIA or MSAA calls. A remote program is a small UIA program run inside the application, so that many reads cost one round trip.
+- A held key is a caret-table key the keyboard hook swallows while the focus has text, until Core passes it on.
 - The before read is the read of the caret made for a held key before it is passed on.
-- The watch is the outpost's open check for a key's evidence: after the before read, on each caret, text or selection event of the node it reads again, until a read shows evidence that the key took effect, and answers with that read. Evidence is the caret having left where it was, the characters beside it changing, the unit at the caret changing after Delete, the caret's line changing after a key that deletes, or the selection changing.
-- The last read is the one record per text node the outpost holds: the caret and selection as provider positions, the selection's text up to 513 UTF-16 units, the caret's line text and the caret's offset in it, the note that the text changed, and the time the read began. A key's baseline is a copy of the last read pinned when its request arrives.
+- The last read is the outpost's one record per text node: caret, selection with its text up to 513 UTF-16 units, the caret's line and offset in it, the note that the text changed, and the time the read began.
+- A baseline is a copy of the last read pinned for one key.
+- The watch is the outpost's open check for one key's evidence. Evidence is the caret having left where it was, the characters beside it changing, the unit at the caret changing after Delete, the caret's line changing after a key that deletes, or the selection changing.
+- The key's bound is 100 ms after Core passed the key on, or after the key reached Core for a key that was not held. It is Core's one deadline for the key.
+- The final read is the read the outpost makes when Core tells it the key's bound has passed. The bound answer is that read's result when it finds no evidence.
+- A tagged report is a key's answer to Core after its before read, `NormalizedEvent::KeyAnswered`, carrying the key's tag.
+- A key tag (`KeyTag`) is the `QueryId` Core gave the key's request, carried in the request. Core knows it when it asks, each request has its own, and none is reused, so an answer belongs to one request and no other.
 - General terms are NVDA's words when the text changed since the selection was last compared: the whole new selection "selected", "selected instead", or "selection removed".
-- An anchor is a number the outpost gives the start of each chunk of text it sends; a position Core holds is an anchor plus an offset.
-- The key's bound is the watch's first bound, 100 ms after the before read ended, which is within a few milliseconds of Core passing the key on; for a key that was not held, 100 ms after its request arrived.
-- The bound answer is the watch's answer at the key's bound when no evidence came: the caret read then, marked as having no evidence.
-- The edge facts are four facts of a read: whether the caret's line is the text's first line, whether it is the last, whether the caret is at the text's start, and whether it is at the end.
 
-## The constraints that force the shape
+## Decisions
 
-- A key's effect can be seen only after the application handles it, and the application says so early, late, twice or never; Windows gives no signal that an application has handled a key, and a message sent to its thread as a marker can be handled before the key, since sent messages go before queued input. NVDA bookmarks the caret, sends the key and polls; Verbatim holds the key, reads, sends, and watches events.
-- Two paths race: the key reaches Core through the hook, the application's event reaches the outpost directly. Holding closes the race for every held key, because the before read precedes the key and the watch is open in the outpost before the key is sent. An event-based path for applications whose events are reliable would reopen it, since the race is in the ordering, not in missing events.
-- UIA text ranges are live: a position known before an edit moves with it, so the characters beside the caret and, for deleting keys, the line must be compared as well as the caret.
-- Reads are not atomic: the application can act between the caret's read and its line's, so a read checks the caret again before it is believed.
-- Only the process that holds the provider's ranges can order two positions or read the text between them, so every comparison and every change text is made in the outpost, inside the read's round trip.
-- Whether the text changed since the selection was taken is not observable in one read of a classic edit control: hence the note, set by the value change, and the check for a waiting value change behind a sync with the WinEvent thread.
-- Speech is cut at every key press, and NVDA's caret script says nothing once another script is queued.
-- A caret event alone speaks no line, in NVDA or in Verbatim (`reduce_caret_moved`, `crates/verbatim-core/src/reduce.rs`): only a key's answer says a unit, so a move after a key is spoken only while the watch ties it to that key.
+Dickson's, each with its date:
 
-## The design
+- One baseline (2026-10-25). One last read per text node, replaced by every read, is the only baseline.
+- The newest caret by one stamp (2026-10-25). Core takes every report as the newest caret by the time its read began, in microseconds.
+- A node's last read lives while Core holds the node, and Core's choice between a new and a repeated focus decides what is spoken: a repeated focus's changes are spoken, a new focus's are not (2026-10-25, amended 2026-10-29).
+- A key that moves nothing speaks as NVDA's script does (2026-10-29). A movement key and Delete speak their unit. Backspace and Control+Backspace say nothing (`nvda/source/editableText.py` 313 to 315). A Shift key that changes nothing says nothing, since auto-detection reports only a change at the caret event (`editableText.py` 451).
+- The 100 ms bound is Core's (2026-11-09), NVDA's `caretMoveTimeoutMs` (`nvda/source/config/configSpec.py` 364), counted from when the key is passed on, as NVDA counts from after sending the key (`editableText.py` 188 to 189). Only Core knows that moment. Core arms it as one of the reducer thread's deadlines, evidence cancels it, and when it passes Core sends the outpost the final read. The outpost keeps the judgement of evidence, the terminal's handling deadline and the console host's poll, because those run on the outpost's own reads.
+- The bound answer ends the watch (2026-11-08). There is no edge-of-text rule and no later evidence, because NVDA has neither (`editableText.py` 86 to 87, 150 to 163). A move later than 100 ms is not spoken.
+- A focus that moves within the 100 ms matches NVDA's source (2026-11-08), as "A focus that moves first" describes.
+- Backspace and Control+Backspace with a focus that moves first match NVDA (2026-11-09), which reads the deleted text before the key and speaks it because its wait counts a pending focus as a move (`editableText.py` 97 to 99, 300 to 320). Example: Backspace over "x" in a chat box with the focus moving 40 ms later is heard as "x", "Edit message edit".
+- A held key whose before read passes 150 ms is passed on, and a watch opens judged from the last read, as for a key that was not held (2026-11-08).
+- A key's results after its before read are tagged `KeyAnswered` events, and the request answers once (2026-11-08, its shape 2026-11-09), so that they travel in one order with every caret report and no several-answer responder exists. This replaces the stream responder in `docs/design/ownership-milestone-rules.md`.
+- A key whose before read is running when the focus moves to another node says nothing, a difference from NVDA, whose script speaks the old field's unit before the focus (`editableText.py` 97 to 99, 165 to 192), because in Verbatim the focus has already been spoken and the unit would follow it (2026-11-09).
+- A sentence move whose final read or later step passes its 150 ms is dropped: nothing is said and the caret stays, a difference from NVDA, which blocks until it can read and then moves (`editableText.py` 245 to 262), so that keys behind it are not held longer (2026-11-09).
+- A command pressed within 100 ms of a caret key that was not held waits for it, at most those 100 ms, the one added delay in this design, ending with uiAccess (M8.6) (2026-11-09).
+- Alt+Up and Alt+Down match NVDA (2026-10-29): sentences by UAX #29 within each paragraph; in UIA text, which has no sentence unit, nothing is said (`editableText.py` 263; `nvda/source/UIAHandler/__init__.py` 158 to 176). A rich edit control is read as a plain edit control until M6.5.
+- Control+Z, Control+Y, Control+X, Control+V and Escape in a text field open no watch and say nothing for the key, as NVDA binds no script to them (2026-10-25; absent from `editableText.py` 387 to 413). Their selection changes are spoken from the application's caret event. Other keys outside the caret table speak by their evidence (2026-10-08).
+- Terminals keep their reading rules and today's handling of the five chords (2026-10-25 and 2026-10-29).
+- The judgement of evidence stays in the outpost, named in D14 (2026-10-25), because it bounds reads on text changes.
+- Until uiAccess (M8.6), a caret key in an elevated window is judged from the last read (2026-10-25).
 
-### Where each part runs
+Claude's, each with its reason:
 
-- The hook (`verbatim-input-windows`) holds the caret table's keys and defers every key behind a held key, as today, and reports a key of the editing chords' list with its gesture, where it now reports any other passed key with none (`KeyReport::Passed`).
-- `verbatim-input` keeps the caret table and gains the closed list of the five editing chords, beside the clearing keys.
-- The shell (`verbatim-app`) turns a reported chord into its own input to Core, Escape as well as the clearing key it is today, and registers a key's request as one with several answers (below).
-- The model (`verbatim-model`) carries the request's answers, the edge facts, the bound answer's mark, the answer's fact that the unit is unchanged, the move's stamp in `MoveCaret`'s and `Select`'s answers.
-- The outpost (`verbatim-outpost`, `src/text/` and `src/outpost/`) holds the last read per node and each key's pinned baseline, makes every read, compares inside each read, judges evidence, runs the watch with its 100 ms and 1-second bounds, the 100 ms taken from its configuration so that tests can turn it off, and reads the edge facts in the before read.
-- The remote caret program (`verbatim-uia-rops`, `src/caret.rs`) gains the edge facts.
-- Core (`verbatim-core`, `src/editing.rs` and `src/state.rs`) holds one caret per focus, decides every word, applies the edge rule, speaks a bound answer and later evidence, and decides a move by sentence. It arms no new timer: the key's bound is the watch's, and the held key's one deadline, Core's bound on the wait for the key ahead and on the before read (`KEY_AHEAD_BOUND_MS` and `HELD_READ_BOUND_MS`, `Effect::BoundHeldKey`), is unchanged.
-- Sentences are found as say-all finds them today: the outpost answers a sentence read with the paragraph (`Sentences::ByParagraph`) or as unsupported (`Sentences::Unsupported`, UIA), and Core splits the paragraph with `verbatim-text`'s sentences (`Segmenter::sentences`, UAX #29 through ICU4X; `docs/parity/speech-audio.md`). A rich edit control answers as a plain edit control does.
+- No value-change sync on the before read: NVDA checks a waiting value change only at the caret event (`nvda/source/NVDAObjects/window/edit.py` 1068 to 1081), and the sync would add a wake before each key.
+- Core alone says whether a key's node is a terminal, from its role, and the key request names that kind, because the outpost's own test (the window class, or a UIA console focus) disagrees with the role on an MSAA console. A terminal never compares selections, and Core never sends its watch a final read.
+- A bound read that fails or is abandoned says nothing, as `_caretScriptPostMovedHelper` returns when it cannot read (`editableText.py` 168 to 172).
+- A focus read that fails drops the node's last read, as `initAutoSelectDetection` starts again (`editableText.py` 421 to 424).
+- A watch ended by the node's release or its element's replacement says nothing, because the object it was for has gone.
+- A deadline due during a burst of queued work is acted on when the reducer drains it, as every reducer deadline is today.
+- A key outside the caret table that the hook reports, which today is a clearing key reported as `CaretMotion::Other`, has the same 100 ms bound and says nothing at it, so that one lifecycle covers every key. An effect later than that is not spoken.
+- Each step of a sentence move reuses the held key's 150 ms deadline, because no second timer kind is needed.
+- The key's bound and the wait of the key behind are one deadline, 100 ms after the pass, because they are the same interval from the same moment, and two would be a copied fact.
+- A key that was not held holds its line as a passed key does, so that one lifecycle covers every key. Keys the hook passes run at once, as today.
+- The final read has no reply of its own, and the key's one result is the reply. A final read or a watch's end arriving with no open watch for its tag is ignored, because that watch's result is already on its way.
+- A check already running when the final read arrives is the final read, as NVDA's last poll is a read begun before its timeout (`editableText.py` 123 to 151).
+- `Input::SpeechCancelled` carries microseconds, so that it compares with a read's stamp directly.
+- A tagged report is never merged and bars merging across it: its `merge_key` is `None`, as a focus report answering a live re-read has, and its barrier is `Barrier::Reply`. It is the key's only result, and an older report with selection changes merged across it would reach Core after it.
+- A bound read that finds evidence answers as evidence, as NVDA's loop tests each read, its last included (`editableText.py` 123 to 151).
+- The first test of a key's later keys is by stamp only: time zero meaning unknown goes.
 
-### One request per key, and the last read
+## Where each part runs
 
-A held key's request reads the caret before the key with the key's unit and the edge facts, answers at once with that read, and opens the watch with the read pinned as the key's baseline. Its later answers are, in order: the watch's answer, either evidence before the key's bound or the bound answer; then, after a bound answer only, either later evidence within the second or the watch's end. The watch's end can also come at any time before the bound answer, when the next key on the node or a focus elsewhere ends it, or the console host's poll ends it, and then no bound answer follows. Every answer but the first carries the facts below, and the request ends at its evidence, its later evidence or its end. The shell's request registry takes such a request as one entry: counted as outstanding until its first answer, and passive after it, as a watch is today; its first answer is bounded by Core alone, the held key's one deadline 150 ms after the request is asked (`HELD_READ_BOUND_MS`), at which Core passes the key on and withdraws the request (`Effect::WithdrawText`), so that the idle barrier's wait on an open watch stays in the outpost. The outpost replaces the node's last read with every read it makes: a focus read, a caret event's read, a before read, a watch's check, and Verbatim's own selection or caret move. A focus read compares with the node's last read when one exists and reports the changes with the focus; the last read lives while Core holds the node and is released with it. A repeat the focus pipeline rework sends unread is not read and leaves the last read as it was.
+- The hook (`verbatim-input-windows`) holds and defers keys as today, and reports a key of the editing chords' list with its gesture.
+- `verbatim-input` keeps the caret table and gains the chords' closed list.
+- The shell (`verbatim-app`) turns a reported chord into its own input to Core.
+- The model (`verbatim-model`) replaces `TextOp::ReadCaret` and `TextOp::AwaitCaret` with one key request, adds `CoreToOutpost::Watch` for the final read and the watch's end, and adds `NormalizedEvent::KeyAnswered`, under "The messages".
+- The outpost's reducer (`verbatim-outpost-logic`) holds the last reads, the pinned baseline and the watch in `TextFacts`, so one place names every range the store must keep, and owns the terminal's handling deadline and the console host's poll as reducer times.
+- The outpost's programs (`verbatim-outpost`) make every read and comparison, committing through `TextChange` as today.
+- Core (`verbatim-core`) holds the key line, the key's bound and one caret on the focus object, and decides every word and the sentence move.
+- Sentences are found as say-all finds them: the outpost answers with the paragraph or as unsupported, and `verbatim-text` splits it.
 
-Every read reports facts: whether the caret and selection differ from the key's baseline (evidence), how the selection changed from the last read (the words), whether the text changed since (general terms), the caret's line and the key's unit as they are now and as they were in the baseline, whether the caret is on the baseline's line, and whether the unit is the baseline's unit, the same text starting at the same offset of that line. Through UIA these are compared in the one remote program, the baseline's selection being one more pair of ends; in a classic edit control by the edit control's messages, as today.
+## The state
 
-### What Core does with a read
+### Core
 
-Core keeps one caret per focus, the newest by its read's start, so a late answer never moves the review cursor back. Verbatim's own caret move and selection are stamped too: `MoveCaret` and `Select` answer with the time the move began, which the outpost also gives the last read it makes of the move, and Core takes the caret it moved to, the line it already holds, with that stamp, in place of the time-zero record; say-all's move is one. Core speaks from every read it accepts: a report's selection changes at once, or held in `heard` while a key waits on the node and said after the key's words, a key that Core has already spoken for not counting as waiting; a before read's changes at once, before the key's words; a key's answer's words, then its changes; a late or superseded answer as a report. What Backspace removed is the difference between the answer's before and after lines (`removal`); Delete's unit is the before unit against the after unit; "something was selected before" is the baseline's selection. `later_key`, the landing rule, the Backspace-over-selection rule and `removes_selection` are unchanged.
+```rust
+enum KeyLine {
+    Idle,
+    Busy {
+        current: CurrentKey,
+        waiting: VecDeque<WaitingKey>, // behind the current key, in press order
+        heard: Vec<UtteranceSegment>,  // selection changes held for the next words
+    },
+}
 
-### When no evidence comes
+enum CurrentKey {
+    Reading { query: QueryId, node: NodeId, key: HeldKey },
+    Watched(Watched),
+    MovingBySentence { node: NodeId, key: KeyInfo, later_key_at_us: Option<u64>, step: SentenceStep },
+}
 
-Core speaks for a key once, from the first of its edge decision, its evidence and its bound answer; any answer after that is later evidence.
+struct Watched {
+    tag: KeyTag,
+    node: NodeId,
+    key: KeyInfo,
+    kind: WatchKind,     // TextField or Terminal, named in the key request
+    passed_at_us: u64,
+    before: Before,
+    later_key_at_us: Option<u64>,
+    line: Line,
+}
 
-- The edge of the text. When the before read shows nothing selected, Core decides from its edge facts whether the key's direction is used up: in a text with more than one line, Up Arrow, Page Up, Control+Home and Control+Up Arrow on the first line, and Down Arrow, Page Down, Control+End and Control+Down Arrow on the last; in any text, Left Arrow and Control+Left Arrow at the text's start, Right Arrow, Control+Right Arrow, Delete and Control+Delete at its end, and Backspace and Control+Backspace at its start. It then speaks the key at once from the before read, the unit for a movement key or Delete and nothing for Backspace, passes the key on, and does not hold the keys behind it for its answer. An auto-repeat, a press of the key with no release since its last press, which the decision machine already tracks (its record of the keys down), is not spoken at once: it is spoken at its bound answer, so each repeat's answer is silenced by the next repeat's cut of speech (`later_key`) and only the last repeat speaks, as NVDA's scripts give way to the next; the repeats still do not wait for each other. Home and End are not in the list, since an editor's smart Home moves the caret from a line's start, nor is any Shift key. Nothing can lie past the edge; an application that moves the caret within the line, Up Arrow on the first line going to its start, or changes the text, is covered by later evidence.
-- The key's bound. When the watch has found no evidence at the key's bound, it reads the caret and sends the bound answer, and stays open. Core speaks the key from that read, as NVDA speaks the caret its last poll found after its 100 ms wait: the unit for a movement key, Delete or Control+Delete, nothing for Backspace or Control+Backspace or a Shift key, and for Alt+Up or Alt+Down the sentence move below. The bound answer also ends the wait of the keys behind the key, as an answer does today, and Core's bound on that wait (`KEY_AHEAD_BOUND_MS`, 100 ms after the key was passed on) is unchanged, so it usually ends first: the key behind is then read, and its request ends the watch before the bound answer's read. Nothing heard changes, since the key behind already marked the key a later key when it cut speech, and the key behind's own read becomes Core's caret. Core says nothing for a bound answer when a later key was pressed (`later_key`), as NVDA's script gives way to the next, or when the focus has left the node; it takes its caret either way. The bound costs one read and one wake of the worker, which already wakes at the watch's bound, for a key with no evidence at 100 ms, and nothing for a key answered sooner.
-- Later evidence. An answer that arrives after Core spoke for the key cuts speech and is spoken as a timely answer is, unless a later key was pressed, the focus left the node, or the answer reports the unit unchanged from what was spoken, the same text at the same place, a fact the outpost reports, since Core cannot compare positions across chunks. Its selection changes are spoken as a report's in every case. For a key spoken at the edge, the watch's answers are all later evidence, its bound answer included.
-- The watch ends at the next key on the node, a focus on another node, Verbatim's own caret move or selection on the node, or 1 second after the before read ended (`CARET_WATCH_BOUND`); then it frees itself silently, and later caret moves only update Core's caret. The console host's caret poll counts its 50 ms from the end of the before read, a few milliseconds before the key reaches the console, so it may make one read before the key's effect can show.
-- An editing chord opens no watch and does not end the earlier key's: an answer that watch gives after the chord only keeps the caret current and speaks its selection changes, since the chord's cut of speech marks a later key (`later_key`, through `Input::SpeechCancelled`).
-- A before read that fails, answered `Unanswered`, ends the key's request with no watch; the key is passed on and says nothing, as NVDA's caret script sends the key and returns when it cannot read the caret (`nvda/source/editableText.py` 181 to 186).
-- A key that was not held, a caret key in an elevated window until M8.6, is judged the same way from the last read when its request arrives, with its bound counted from the request's arrival.
+enum Before { Read { unit: TextChunk, line: TextChunk, removed: Option<String> }, NotRead }
+
+enum Line {
+    Holding,    // the bound has not passed; keys behind wait
+    Released,   // the bound has passed; keys go ahead
+}
+
+enum SentenceStep {
+    FinalRead { tag: KeyTag },  // the final read was asked; keys behind wait for its result
+    ReadingParagraph { query: QueryId, paragraph: ParagraphAt },
+    Moving { query: QueryId, sentence: String },
+}
+```
+
+An idle line with keys waiting cannot be written. Four rules cover every ending, so the table does not repeat them:
+
+- To end the current key: clear its deadline, say what is left in `heard`, and advance. With no key left the line is `Idle`.
+- To advance: take `waiting` in order, running typed keys and commands as the inputs they came as, until a held key is reached, which becomes current. A key still `Released` stays current until a held key replaces it; `heard` stays with the line.
+- At the pass, when a key becomes `Watched` with `Holding`: typed keys at the front of `waiting` run at once, stopping at the first command or held key, as NVDA's typed keys are not held behind a script, and a non-empty `waiting` marks `later_key_at_us` with the pass.
+- Saying selection changes always says `heard` first, and a key's words come before both.
+
+`heard` belongs to the line, so it outlives a key that is replaced.
+
+`Line::Holding` means the 100 ms has not passed, and a held key or command behind waits for this key's result until it does. `Line::Released` means they go ahead. A sentence key whose 100 ms passes leaves `Watched` for `MovingBySentence` in step `FinalRead`, because the keys behind must see the sentence move, so they wait on for the final read's result, bounded by `HELD_READ_BOUND_MS`; no other key can be in that step. The state decides the one deadline: it is armed in `Reading` (150 ms), `Watched` with `Holding` (100 ms) and `MovingBySentence` (150 ms), and in no other state. Entering a state sets it, so it needs no identifier beyond the current key.
+
+The caret moves onto the focus object as `{line, selection, line_break, read_at_us}`, so it ends with the focus. Its stamp is mandatory. `selection` is optional and holds the selection's start's own line when that differs from the caret's, so a selection line with no selection cannot be written, on the wire (`CaretReport`) as in Core.
+
+The focus queue stays in front: a key that reaches Core while focus reports wait goes into `state.focus` and enters `KeyLine` in its turn.
+
+`held_nodes` names `current`'s node directly.
+
+### The outpost
+
+```rust
+struct LastRead<P> {
+    caret: P,
+    selection: Option<(P, P, String)>,
+    line: TextChunk,
+    offset: u32,
+    text_changed: bool,
+    read_at_us: u64,
+}
+
+struct NodeRecord<P> {
+    anchors: NodeAnchors<P>,     // as today, less their reports
+    last: Option<LastRead<P>>,   // none until a read commits
+}
+
+enum NodeText {
+    Uia(NodeRecord<RangeKey>),
+    EditControl(NodeRecord<u32>),  // a classic Win32 edit control, read by its window messages
+}
+
+struct TextFacts {
+    nodes: BTreeMap<u64, NodeText>,  // one record per node, of one provider
+    watch: Watch,
+}
+
+enum Watch {
+    None,
+    Open { key: KeyWatch, stage: Stage },
+    Checking { key: KeyWatch, after: AfterCheck },
+}
+
+enum Stage {
+    Awaiting,                           // a text field: until evidence or Core's word
+    Terminal { ends: u64 },             // a terminal: the handling deadline
+    Poll { next: u64, until: u64 },     // the console host's caret poll
+}
+
+enum AfterCheck { Resume(Stage), Answer }
+
+struct KeyWatch {
+    tag: KeyTag,
+    node: NodeId,
+    baseline: Baseline,
+    unit: TextUnit,
+    motion: CaretMotion,  // which evidence counts, in place of two flags
+}
+```
+
+`AfterCheck::Answer` is the final read: evidence if it finds any, and otherwise the bound answer. `Baseline` holds a `LastRead` for UIA or an edit control. A key with no last read has no watch, so a watch without a baseline cannot exist.
+
+A text field's watch has no time of its own: Core ends it, by the final read, the watch's end or the next key request. A terminal's and a poll's times are reducer times, and no thread or timer is added in the outpost.
+
+### The messages
+
+```rust
+struct KeyRequest {
+    tag: KeyTag,
+    kind: WatchKind,
+    unit: TextUnit,
+    motion: CaretMotion,
+    start: KeyStart,
+}
+
+enum KeyStart {
+    ReadFirst,
+    FromLastRead { withdrawn: Option<KeyTag> },  // no before read, or one given up
+}
+
+enum KeyStarted { Read(CaretReply), Watching }   // the request's one answer, or `Unanswered`
+
+enum WatchOrder { FinalRead, End }               // CoreToOutpost::Watch { node, tag, order }, no reply
+
+// NormalizedEvent::KeyAnswered { node_id, tag, answer }
+enum KeyAnswer {
+    Evidence(KeyRead),
+    BoundAnswer(KeyRead),
+    Ended,
+}
+
+struct KeyRead { caret: CaretReport, selection_changes: Vec<SelectionChange>, before_line: TextChunk, before_unit: TextChunk, unit: TextChunk, on_baseline_line: bool }
+```
+
+A key's answer is its own event rather than a field of `CaretMoved`, so a watch's end needs no caret, and baseline facts exist only on a `KeyRead`. Core receives the outcome as a type and judges no flags. An answer whose tag is not the current key's is an ordinary report if it has a read, and otherwise ignored.
+
+`CoreToOutpost::Watch` is a new message, because `Effect::Text` asks a query whose refusal is its reply. It goes in the writer's class of queries (`Outgoing::Other`, `crates/verbatim-supervisor/src/writer.rs`), which is never merged and never dropped as oldest, and is refused when 64 commands wait or the generation has ended. The shell turns a refused final read into `KeyAnswer::Ended` for its tag, so the key still has its one answer. A refused end changes nothing Core depends on.
+
+### The states and the rules that read them
+
+Core. "Ends", "advance", "the pass" and "says changes" are the four rules above. A key's node is `node`; "another node" is any other.
+
+| State | Rule | What it does |
+|---|---|---|
+| Idle | held key arrives | Becomes `Reading`, arms 150 ms, sends the key request with `ReadFirst`. |
+| Idle | a caret key the hook passed, table or `CaretMotion::Other` | Becomes `Watched`, `NotRead`, `Holding`, arms 100 ms; request with `FromLastRead`. |
+| Idle | typed character, clearing key's forgetting of typing, or command | Runs at once. |
+| Idle | editing chord in a text field | Cuts speech and does nothing else. |
+| Idle | caret report | Takes the caret if newest by stamp and the node is the focus; says changes. |
+| Idle | focus executes | As today. |
+| Busy | caret report, or an answer not this key's with a read | Takes the caret if newest. In `Watched` its changes go to `heard`; otherwise says changes, since no key is in the application's hands. |
+| Busy | focus on the key's own node executes | A repeat's changes go to `heard`, a new focus's are ignored. Nothing else changes for the key. |
+| Busy | exit | Passes every held key on. |
+| Reading | any key or command arrives | Joins `waiting`. |
+| Reading | before read answered | Takes the caret, says changes, passes the key on; `Watched`, `Read`, `Holding`, arms 100 ms; the pass. With a focus on another node since, instead: passes the key on, sends `End`, says nothing for it, ends, because its words would follow the focus's. |
+| Reading | `Unanswered` | Passes the key on, says nothing for it, ends. |
+| Reading | deadline fires | Withdraws the request, passes the key on; `Watched`, `NotRead`, `Holding`, arms 100 ms, request with `FromLastRead` naming the withdrawn one; the pass. With a focus on another node since, instead: withdraws, passes the key on, says nothing for it, ends, sending no request. |
+| Reading | focus on another node executes | Stays `Reading`, judged at its answer or deadline as above. |
+| Reading | the node's outpost ends | Passes the key on, says nothing for it, ends. |
+| Watched | held key or command arrives, `Holding` | Joins `waiting`; marks `later_key_at_us`. |
+| Watched | held key or command arrives, `Released` | A key becomes current, its request ending this watch. A command runs and this key stays. |
+| Watched | typed character or editing chord | Runs at once if `waiting` is empty, else joins it. Its cut of speech marks `later_key_at_us`. |
+| Watched | a caret key the hook passed | With `waiting` empty, replaces the current key as `Watched`, `NotRead`, `Holding`, arms 100 ms, its request ending this watch. Otherwise joins `waiting`. |
+| Watched | `Evidence`, this tag, no later key or read before it | Takes the caret; says the key's words, then changes; ends. In a terminal it takes the caret, and the reading rules speak. |
+| Watched | `Evidence`, this tag, later key marked and read at or after it | Takes the caret; says changes; ends. |
+| Watched | `BoundAnswer`, this tag | Takes the caret. With no later key says the unit for a movement key or Delete, nothing for Backspace, a Shift key or a key outside the table. Says changes; ends. |
+| Watched | `Ended`, this tag, or `Unanswered` to `FromLastRead` | Ends. |
+| Watched | deadline fires, `Holding`, `TextField`, not a sentence key | Sends `FinalRead`, unless advancing would take a held key at once, whose request ends the watch. Becomes `Released`; advance. |
+| Watched | deadline fires, `Holding`, a sentence key | Sends `FinalRead`; `MovingBySentence` in step `FinalRead`; arms 150 ms. |
+| Watched | deadline fires, `Holding`, `Terminal` | Becomes `Released`; advance. The outpost's stage ends a terminal's watch. |
+| Watched | speech cut | Marks `later_key_at_us` if not yet marked. |
+| Watched | focus on another node executes, `TextField` | As "A focus that moves first". Sends `End` if `Holding`; ends. |
+| Watched | focus on another node executes, `Terminal` | Ends. The outpost ends its watch by its own focus rule. |
+| Watched | the node's outpost ends | Says nothing for the key; ends. |
+| MovingBySentence | any key or command arrives | Joins `waiting`; marks `later_key_at_us`. |
+| MovingBySentence, `FinalRead` | `BoundAnswer`, this tag | Takes the caret. In text with sentences, whether or not a later key is marked, goes to `ReadingParagraph`; otherwise says changes and ends. |
+| MovingBySentence, `FinalRead` | `Evidence`, this tag | Takes the caret, since the application moved it. Says the line unless a later key is marked, then changes; ends. |
+| MovingBySentence, `FinalRead` | `Ended`, this tag | Ends. |
+| MovingBySentence | paragraph answered | Finds the sentence; reads the next or previous paragraph if the sentence is in it, or sends `MoveCaret`. |
+| MovingBySentence | move answered | Takes the caret with the move's stamp. Says the sentence unless a later key is marked; ends. |
+| MovingBySentence | deadline fires, or an answer fails | Ends, and the sentence does not move. In step `FinalRead` the next key's request ends the watch. |
+| MovingBySentence | focus on another node executes | Withdraws the query, says nothing for the key; ends. |
+| MovingBySentence | the node's outpost ends | Says nothing for the key; ends. |
+
+The outpost:
+
+| State | Rule | What it does |
+|---|---|---|
+| Last read absent | any read of the node commits | Becomes present. |
+| Last read absent | a `ReadFirst` request arrives | The before read runs and becomes the baseline; if it fails, the answer is `Unanswered` and no watch opens. |
+| Last read absent | a `FromLastRead` request arrives | Answers `Unanswered`; no watch opens. |
+| Last read present | any read of the node commits | Is replaced; comparisons for that read use the old one. |
+| Last read present | a key request's read fails | Answers `Unanswered`, no watch opens, and the last read stays, as only a failed focus read restarts a node's record. |
+| Last read present | focus read fails | Becomes absent. |
+| Last read present | release | The record and its ranges are dropped. |
+| None | `ReadFirst` request arrives | Reads, answers `Read`, pins the baseline, becomes `Open`. The kind names `Awaiting` or a terminal's stage, the outpost choosing `Poll` for the console host. |
+| None | `FromLastRead` request arrives | If it names a withdrawn request not yet started, cancels it. Pins the last read, answers `Watching`, becomes `Open`. |
+| None or Open | a withdrawn request's read, already started, commits | Replaces the last read and goes as an untagged report, so what it compared is said. It opens no watch and leaves an open one as it is. |
+| Open | the node's event | Becomes `Checking`, resuming its stage. |
+| Open, `Awaiting` | `FinalRead` for its tag | Becomes `Checking` with `Answer`. |
+| Open, `Terminal` | due | Sends `Ended`, becomes `None`. |
+| Open, `Poll` | next due | Becomes `Checking`, resuming the poll. |
+| Open, `Poll` | until passed | Sends `Ended`, becomes `None`. |
+| Open or Checking | next key request, or Verbatim's caret move or selection on the node | Sends `Ended`, becomes `None`. A running check's read replaces the last read and goes untagged; the request runs after it, since programs run one at a time. A move becomes the last read. |
+| Open or Checking | release, or the element replaced | Sends `Ended`, becomes `None`. A running check's read is dropped with the node's record, and on a replaced element it is untagged. |
+| Open or Checking | `End` for its tag | Becomes `None`, and sends nothing, since Core has ended the key. A running check's read goes untagged. |
+| Open or Checking, of `Awaiting` | focus elsewhere | Nothing: Core judges the focus and sends `End`. |
+| Open or Checking, `Terminal` or `Poll` | focus elsewhere | Sends `Ended`, becomes `None`. |
+| None, or a watch with another tag | `FinalRead` or `End` | Ignored: that watch's answer is on its way, or the key was replaced. |
+| Checking | check finds evidence | Sends `Evidence`, becomes `None`. |
+| Checking, `Resume` | check finds nothing | Goes back to its stage. |
+| Checking, `Resume(Awaiting)` | `FinalRead` for its tag | Becomes `Checking` with `Answer`: the running check is the final read. |
+| Checking, `Answer` | check finds nothing | Sends `BoundAnswer`, becomes `None`. |
+| Checking | check fails or is abandoned | Sends `Ended`, becomes `None`. |
+
+A watch Core has not ended gets exactly one answer: `Evidence`, `BoundAnswer` or `Ended`. A check's read that ends no watch is untagged. An ending outpost's keys are ended by Core's own record of that generation.
+
+Core ends a text field's watch on every path, since the watch has no time of its own: the bound by the final read, a focus on another node by `End` (in `Reading`, at the read's answer), and the next key on that outpost by that key's request. A key on another node can only follow a focus on it, so the same `End` covers it. Verbatim's own caret move, release and a replaced element end the watch in the outpost. Core's exit and an ending outpost end it with the process.
+
+## How a key runs
+
+A held key's request reads the caret with the key's unit, answers once with that read, and opens the watch with the read pinned. An unheld key's request, or the request sent when a before read passes 150 ms, pins the last read instead. The outpost replaces a node's last read with every read: a focus read, a caret event's read, a before read, a watch's check, and Verbatim's own selection or caret move.
+
+Every read reports how the selection changed from the last read and whether the text changed. A read that is a key's result goes as `KeyAnswered`, under "The messages". Through UIA these are compared in one remote program, and in a classic edit control by the edit control's messages.
+
+Core takes every report with an accepted stamp as the newest caret, so a late answer never moves the review cursor back. Verbatim's own `MoveCaret` and `Select` answer with the time the move began, which the outpost gives the last read of the move too. A focus read compares with the node's last read when one exists, and reports the changes with the focus; Core speaks them for a repeat and ignores them for a new focus.
+
+What Backspace removed is the difference between the result's before and after lines (`removal`). A line joined to the one above says the break in `line_break`. Backspace over a selection says what was before its start, taken from the result's before line by `deleted_text`, which now runs on the result and keeps no state. A caret that moved forward with nothing removed says "blank", as NVDA's empty deleted text does (`editableText.py` 311 to 320): the classic edit control's Control+Backspace inserts a character, so at the text's start the capture is "blank". Delete's unit is the before unit against the after unit. "Something was selected before" is the baseline's selection. `later_key`, the landing rule and `removes_selection` are unchanged.
+
+A tagged report whose tag is not the current key's is an ordinary report. A superseded key therefore needs no slot, and away-and-back cases cannot speak a stale answer. Tagged reports are never merged and bar merging across them, so a newer report cannot replace a key's only result or overtake it.
+
+### A focus that moves first
+
+NVDA's wait ends as soon as a focus is pending (`editableText.py` 97 to 99), and its helper then reads the old field's caret and speaks its unit (165 to 178). Focus speech is queued rather than interrupting (`nvda/source/NVDAObjects/__init__.py` 1365 to 1369). Only caret speech's own `reason` is outside the focus-loss cancellation (`nvda/source/eventHandler.py` 299 to 300). Speech is cut only when the focus differs just below the desktop, where the foreground event cancels it (`eventHandler.py` 402 to 413, `NVDAObjects/__init__.py` 1387).
+
+So when Core executes a focus on another node while the current key is `Watched` as `TextField`, with no later key and no result yet, Core first speaks what NVDA's script would, from the before read, and then executes the focus by its usual rules. It needs no extra read and adds nothing to the focus path, because a moved caret would have been evidence. This holds whichever process reports the focus, since Core alone decides it.
+
+- Same window: Up Arrow in an empty chat box, focus moves to the editing field 40 ms later. Heard: "blank", "Edit message edit".
+- A new top-level window, in this process or another: "blank" is queued and cut in the same step, as NVDA's foreground event cuts it. Heard: the new window and focus only.
+- `before` is `NotRead`, because the key was unheld or its read was slow: nothing is said for the key, Backspace included.
+- Backspace or Control+Backspace with `before` `Read`, only while the line is `Holding`, since past the 100 ms NVDA's wait has timed out and it says nothing (`editableText.py` 313 to 315): `removed`, which the before read's answer computes by the stateless `deleted_text`, from the selection's start when something is selected, as NVDA's caret is the selection's start (`nvda/source/NVDAObjects/window/edit.py` 464; `nvda/source/NVDAObjects/UIA/__init__.py` 497 to 498) and its script speaks what it read before the key (`editableText.py` 300 to 320). Backspace over "x": "x", "Edit message edit".
+- Backspace or Control+Backspace at the start of a line that is not the text's first: the line break's name, as an ordinary Backspace there says it, NVDA's move having reached the break (`editableText.py` 302 to 309). Where neither that read nor the focus's caret knows the line break, nothing is said for the key.
+- Backspace or Control+Backspace at the text's start: "blank", "Edit message edit", as NVDA's move returns 0, its deleted text is empty (307 to 311), its wait counts the focus as a move, and it spells the empty text (320), which the capture of "blank" shows.
+- A later key: nothing is said, as NVDA's helper returns while a script waits (`editableText.py` 166).
+- Alt+Up or Alt+Down: the line, as NVDA passes the line unit when the caret "moved" (`editableText.py` 255 to 262).
+
+Core sends `End` for this key, so the watch closes at once.
 
 ### Moving by sentence
 
-Alt+Up and Alt+Down Arrow are held as today. When a key's answer shows the application moved the caret, Core speaks the line, as NVDA speaks its line unit then. At a bound answer, in a text whose sentences Verbatim finds, Core moves by sentence:
+Alt+Up and Alt+Down are held as today. When the key's evidence shows the application moved the caret, Core speaks the line, as NVDA does. At a bound answer in text with sentences, Core moves by sentence.
 
-- Core asks the outpost for the sentence read at the caret, as say-all does. A plain or rich edit control answers with its line as shown, wrapped lines each their own, as NVDA's edit control takes a paragraph to be its line (`nvda/source/NVDAObjects/window/edit.py` 623 to 647); for a rich edit control NVDA uses the control's own sentences over its own paragraphs through its object model whenever it can get that model (`ITextDocumentTextInfo` for any `editAPIVersion` other than 0, 1041 to 1045), a recorded difference until M6.5. UIA text answers that it has no sentences, so the key says nothing.
-- Core splits the paragraph with `verbatim-text`'s sentences, UAX #29's default rules with no locale tailoring, as NVDA's ICU call does (`nvda/source/textUtils/icu.py` 153 to 181).
-- Alt+Down moves to the start of the next sentence in the caret's paragraph, or, from its last sentence, to the first sentence of the next paragraph; Alt+Up moves to the start of the previous sentence, from a paragraph's first sentence the last sentence of the paragraph before. Core has the outpost read the next or previous paragraph's sentences when it needs them. Where each key lands from the middle of a sentence and at the text's ends is taken from NVDA's captures in the order of work's first step.
-- Core has the outpost move the caret (`MoveCaret`), which ends the key's watch and becomes the node's last read, and speaks the sentence. The keys behind wait until the move is answered, as they wait for a key's answer, so that their before read sees the moved caret.
-
-### The editing chords
-
-Control+Z, Control+Y, Control+X, Control+V and Escape, when the focus is a text field that is not a terminal, open no watch and speak nothing for the key, the hook reporting them as the chords' list names them; the application's caret event, if any, is a report whose selection changes are spoken, in general terms where the text changed, as NVDA's caret event speaks them. In a terminal they are handled as today. Every other key outside the caret table speaks by its evidence, unchanged.
-
-### Terminals
-
-Terminals share the key protocol and nothing else changes for them. The before read in a focused terminal stays a read of the terminal, so its reading rules compare the screen just before the key; the watch's answer still triggers a terminal read and still releases the keys behind it; its answer only keeps Core's caret current. A bound answer in a terminal is such an answer, and the console host's poll still ends its watch at the poll's last read, as today. The unmoved-key rules, the edge of the text, later evidence and sentence moving are skipped for a terminal by its role. The one stamp changes only the time on Core's caret, which no terminal rule reads.
-
-### Mechanisms removed, kept and added
-
-Removed in Core: `caret_history`, `CARET_HISTORY`, `TimedCaret`, `caret_before`, `caret_moved_by_core`'s time-zero record, `PendingCaret::{deleted, before, selected_before, before_unknown}` with `deleted_text` and `compared_text`, `superseded_caret` and `superseded_reply`, and `CaretWatch::{since, compare}`. Removed in the outpost: `CaretSeen`, `REMEMBERED_CARETS` and the search by press time, `KeptSelection::report` and `NodeAnchors::reports`, `LastSelection` and `CaretFor::Focus`'s restart, `Baseline::{selected, known_line}` with `compared_already`, `Signal::covered`, the separate `AwaitCaret` request and the watch's first check, `forget_selection` at a focus, `MoveCaret`'s clearing of the history, and the outbound queue's clause against merging a caret report across a reply with its test.
-
-Kept: holding, deferral, the wait for the key ahead and its 100 ms bound; the recheck of non-atomic reads; general terms with the note and the WinEvent sync; event coverage (`caret_read_since`); the caret read on every caret event, which is how a program's or the mouse's selection is found; `heard` and `later_key`; the console host's caret poll, counted from the before read's end; Core's bound on the wait for the key ahead (`KEY_AHEAD_BOUND_MS`, the held key's one deadline in Core), unchanged.
-
-Added: the edge facts in the before read; the edge rule's handling of auto-repeat; the watch's bound answer and the request with several answers; later evidence; the stamp in `MoveCaret`'s and `Select`'s answers; the sentence move; the editing chords' list and their report from the hook; the last read's life following `NodesHeld`.
-
-### Costs
-
-- Calls: a held key through UIA makes two round trips, the before read and the answering check, instead of three; classically two reads of 8 and 15 calls instead of 8, 15 and 15; in a classic edit control 5 and 6 window messages instead of 5, 5 and 6, plus at most two for the edge facts (the line count and the text's length). Through UIA the edge facts are the document range's two ends compared with the caret and its line inside the program.
-- Wake-ups: one request fewer per held key (one pipe write in Core, one wake of the outpost's pipe reader, one worker item) and the first check's round trip gone, against the measured 8 to 13 wake-ups and 0.7 to 1.5 ms of processor time per held key. A key with no evidence at 100 ms costs one more read, one more answer and the wake-ups that carry it; a key answered sooner costs nothing more, and Core arms no timer. A sentence move costs one read of a paragraph at most and one caret move.
-- Latency: key to first sound unchanged for a key that moves; at the edge of the text it falls from never to the before read's time; elsewhere a key that moves nothing speaks at 100 ms, as NVDA does.
-- Bytes: the answer carries the before line, usually under a hundred bytes and capped at the chunk's 64 KB.
-- Memory: one last read and one pinned baseline per node, against eight reads and a kept selection in the outpost and eight timed reports in Core.
-- Remote operations: the caret program's worst case, 4,462 instructions measured, stays under 5,000 with the edge facts and the baseline's selection.
+- A key already waiting when the sentence key would start passes it on and does nothing else, as NVDA's helper does (`editableText.py` 241 to 244).
+- Alt+Down moves to the next sentence's start, and from the caret's paragraph's last sentence to the next paragraph's first. From the text's last sentence it moves to the text's end, says "blank", as captured; at the text's end NVDA's move returns 0 and the empty text at the caret is read, also "blank" (`nvda/source/textInfos/offsets.py` 879 to 885; `editableText.py` 258 to 262).
+- Alt+Up steps back one offset and takes that sentence's start, so from the middle of a sentence it lands at the current sentence's start (`offsets.py` 852 to 856); from a paragraph's first sentence it takes the previous paragraph's last. At the text's start it stays and reads the first sentence, as captured.
+- The keys behind wait for the move, so that their before read sees it. A key pressed within the 100 ms is such a key: the sentence still moves, silently, as in NVDA (`editableText.py` 94 to 95, 253 to 255, 166).
+- `MoveCaret` becomes the node's last read.
 
 ### Exact speech
 
-Captured from NVDA (`target/e2e-evidence/m42-text-captures-2026-10-23/`, `docs/parity/text.md`): Home at the start of a line reads the character after the caret; Control+Home at the start of the text reads the first line; Down Arrow on the last line reads that line; Control+Up and Control+Down Arrow in the Windows Forms text box, which does not move its caret, read the line; Alt+Down on "alpha beta gamma" in the text box says "delta epsilon"; in Notepad, Alt+Down moves nothing and NVDA's script says nothing, though its capture then says "Non Client Input Sink Window" from something other than the script, which the first step traces before Notepad's expectation is written; Control+Z, Control+Y, Control+X, Control+V and Escape say nothing for the key; Down and Up Arrow in Settings' one-line search box with suggestions open read the box's line as well as the suggestion. The expectations change accordingly: in the `caret_keys` scenarios, Control+Z's "x" and Control+V's "mangoalpha beta gamma" become silence, while "selection removed" after Control+V and Enter over a selection stays, being a report's change under the decision of 2026-10-22; in `settings_search_suggestions`, the declared difference for Down and Up Arrow goes, with the order of the line and the suggestion taken from NVDA's capture.
+Keys that move nothing, at the bound answer:
 
-Expected by NVDA's script and captured in the first step before any expectation is written: Up Arrow and Page Up on the first line and Page Down on the last read the line; Left Arrow at the text's start reads its first character; Right Arrow, Delete and Control+Delete at the text's end, and Control+Right Arrow there, read the unit at the caret, "blank" where there is none; Control+Left Arrow at the start reads the first word; Backspace and Control+Backspace at the start say nothing; Alt+Up from the middle of a sentence, and Alt+Up and Alt+Down at the text's ends, in the text box.
+- Up, Down, Page Up, Page Down, Control+Home, Control+End: the line (`editableText.py` 268, gesture table 387 to 413).
+- Left, Right, Home, End: the character at the caret, "blank" where there is none.
+- Control+Left and Control+Right: the word. Control+Up and Control+Down: the paragraph.
+- Delete, Shift+Delete and Control+Delete: the unit at the caret (`editableText.py` 329 to 342, gesture table 405, 409).
+- Backspace, Shift+Backspace and Control+Backspace: nothing (313 to 315), where the caret stays.
+- Shift keys: nothing. Alt+Up and Alt+Down: a sentence move or, in UIA, nothing.
 
-### Edge cases and limitations
+Already recorded in `docs/parity/text.md` (lines 103 to 116, 220 to 226, 334 to 344, 365 to 375): Home at a line's start, Control+Home at the text's start, Down Arrow on the last line, Control+Up and Control+Down in the text box, Alt+Down "delta epsilon" in the text box, Escape, Control+Z and paste.
 
-- A slow move: an application that moves the caret more than 100 ms after the key first has the old unit spoken, then, within the watch's second, the cut and the new unit. After the second, the move only updates the caret.
-- A caret move made by something else within a second of a key that moved nothing is spoken as that key's, unless another key came between.
-- Up Arrow in an empty chat box that opens the last message for editing speaks "blank" and then the new focus, as NVDA, whose pending focus makes its script read the old field's caret.
-- A key held with auto-repeat at the edge of the text speaks only at its last repeat, 100 ms after it, and holds none behind it; elsewhere a repeat of a key that moves nothing waits about 100 ms for the one ahead, as today. In NVDA, too, only the last repeat speaks, since each of its scripts returns while another waits (`nvda/source/editableText.py` 94 to 95).
-- The keys behind an edge key are not held for its answer, so a key pressed within a few milliseconds may have its before read taken before the edge key's effect, such as Notepad moving the caret to the first line's start on Up Arrow; its evidence and words are then judged against the caret before that move.
-- Any key press that cuts speech marks a later key (`later_key`, through `Input::SpeechCancelled`), a typed character included, so a letter typed within 100 ms of a key that moves nothing leaves that key's bound answer silent. NVDA's script gives way only to another script (`isScriptWaiting`), but a typed character's cancel is queued behind the running script, since NVDA's core pump does not re-enter (`nvda/source/inputCore.py` 584 to 605, `nvda/source/core.py` 1005 to 1007), so the unit NVDA speaks at 100 ms is cut as it starts: what is heard is the same.
-- A one-line field's Up and Down Arrow, and Home and End anywhere, speak at the bound when they move nothing, 100 ms after the key, as NVDA does.
-- The end-to-end harness's idle barrier waits on an open watch, so a step whose key moves nothing away from the edge waits up to 1 second.
-- An elevated window's keys are not held until M8.6, so their before read is the last read when the request arrives, and one whose own event was read first may find no evidence and speak at its bound from the caret after the key.
+Captured from NVDA at its pinned build, in the Windows Forms text box and Notepad, with the lines "Apple pie is good.", "Banana bread is warm. Cherry tart is sweet." and "Date cake is rich.". `docs/parity/text.md` records these results in the first build.
+
+- Up Arrow and Page Up on the first line, Page Down and Down Arrow on the last, and Up and Down Arrow in a one-line text: the line, in both.
+- Left Arrow at the text's start: "A". Control+Left Arrow there: "Apple". In both.
+- Right Arrow and Delete at the text's end: "blank", in both.
+- Control+Right Arrow and Control+Delete at the text's end: "blank" in the text box, "dot" in Notepad, whose word unit at the end gives the final full stop.
+- Backspace at the text's start: nothing, in both. Control+Backspace there: nothing in Notepad, "blank" in the text box.
+- Control+Z, Control+Y, Control+X, Control+V and Escape: nothing for the key, in both; a selection the application's caret event shows is spoken, as "zz selected" after Control+Z in the text box.
+- Text box, Alt+Up from within "Banana bread is warm.": that sentence. Alt+Down from it: "Cherry tart is sweet.". Alt+Up at the text's start: "Apple pie is good.". Alt+Down there: "Banana bread is warm.". Alt+Up from the text's end: "Date cake is rich.". Alt+Down from that last sentence: "blank".
+- Notepad, Alt+Down: NVDA's script says nothing, because UIA has no sentence unit (`editableText.py` 263). What follows comes from the application's own Alt handling, which opened its menus and differed from run to run, so no scenario expects anything after it.
+- Settings' search box with suggestions open: Down, Down, Up and Up Arrow each say the box's text and then the suggestion: "dis", "Storage settings  2 of 25"; "dis", "Language settings  3 of 25"; "dis", "Storage settings  2 of 25"; "dis", "Display settings  1 of 25".
+
+## Limits
+
+- A move more than 100 ms after its key is not spoken: the old unit is, as in NVDA. It still updates the caret.
+- A key's evidence in flight when a focus from another process reaches Core is spoken as a key that moved nothing, the before read's unit.
+- A focus executing while a key is still being read leaves that key silent, since its words would follow the focus's.
+- A duplicate focus report does not stand for a focus that moves first: NVDA would speak the unit at once, and Verbatim speaks it at the bound.
+- A key within a few milliseconds of an earlier key can be read before the earlier key's effect, as today.
+- A key in an elevated window, until M8.6, is judged from the last read; one whose own event was read first may find no evidence and speak at its bound from the caret after the key.
+- A rich edit control's sentences stop at a wrapped line's end until M6.5.
+- A letter typed within 100 ms of a key that moves nothing leaves the key silent, as NVDA's speech for it is cut as it starts (`nvda/source/inputCore.py` 584 to 605).
+- NVDA speaks as soon as a control raises a caret event, moved or not, about 8 ms after the key in the text box (`editableText.py` 104 to 120). Verbatim judges by position, so the same words come at 100 ms.
+- Control+Backspace with a focus that moves first, from within a word, says the part of the word before the caret, where NVDA says the whole word, because `deleted_text` takes what the key would remove.
+- A Control+Backspace that inserts a character says "blank" wherever it is. NVDA says "blank" only at the text's start, and elsewhere the word before the caret, because it reads that before the key (`editableText.py` 300 to 320).
+- A final read or end refused because 64 commands wait leaves the outpost's watch open until the next key request or the node's release. It costs one read per event of that node meanwhile, and only when the pipe is already that far behind.
+
+## Removed and kept
+
+Removed in Core: `caret_history`, `CARET_HISTORY`, `TimedCaret`, `caret_before`, `caret_moved_by_core`'s time-zero record, `forget_caret`, `PendingCaret`, `HeldKeys::{passed_at_ms, awaiting_watch, bounded}`, `Then::{HeldRead, Caret, SupersededCaret}`, `superseded_reply`, `CaretContext::node`, `compared_text`, the scans `reading_held` and `find(Then::Caret)`, the effects scan in `pass_held`, and time zero as unknown.
+
+Removed in the outpost: `CaretSeen`, `REMEMBERED_CARETS` and the search by press time, `KeptSelection::report`, `NodeAnchors::reports`, `LastSelection`, `ForgetSelection`, `CaretFor::Focus`'s restart, `Baseline::{selected, known_line}`, `compared_already`, `Signal::covered`, `CaretWatch::{since, pressed_at_ms, compare}`, the separate `AwaitCaret` request and its first check, and `MoveCaret`'s clearing of the history.
+
+Kept: holding, deferral, the 100 ms wait for the key ahead (`KEY_AHEAD_BOUND_MS`), now also the key's bound, the 150 ms before read (`HELD_READ_BOUND_MS`), the recheck of non-atomic reads, general terms with the note and the WinEvent sync at the caret event, event coverage (`caret_read_since`), the read on every caret event, `heard` and `later_key`, `deleted_text` as a function of the result's before line, the console host's poll counted from the before read's end, and the terminal watch's handling deadline.
+
+The barrier on replies and on tagged reports replaces the clause against merging a caret report across a reply.
+
+## Costs
+
+- Calls: a held key through UIA makes two round trips instead of three; classically two reads of 8 and 15 calls instead of 8, 15 and 15; in a classic edit control 5 and 6 messages instead of 5, 5 and 6.
+- Wake-ups: one request fewer per held key, against the measured 8 to 13 wake-ups and 0.7 to 1.5 ms of processor time. The deadline is one of the reducer thread's, so it adds no wake-up source. A key answered by evidence costs nothing more. A key that moves nothing costs one wake of Core, one message, and one read and report more.
+- Latency: key to first sound is unchanged for a key that moves. A key that moves nothing speaks at 100 ms, as NVDA does, where today it is silent.
+- Remote operations: the caret program stays under 5,000 instructions with the baseline's selection.
+- Memory: one last read per node and one pinned baseline per outpost, against eight reads and a kept selection in the outpost and eight timed reports in Core.
+- Bytes: the result carries the before line, usually under a hundred bytes.
 
 ## Order of work
 
-1. Captures: NVDA, with its submodule pin equal to the installed build, pressing in Notepad and the Windows Forms text box the keys listed above as not yet captured, Down and Up Arrow in Settings' search box with suggestions open, and Alt+Down in Notepad with the source of "Non Client Input Sink Window" traced.
-2. Pin today's defects with tests: Control+A followed by a repeated focus is announced; a superseded key's answer becomes Core's caret; a caret event's report and a key's answer are ordered by one stamp.
-3. The last read and one request per key, the last read living while Core holds the node.
-4. Remove the second layer listed above.
-5. Keys that move nothing: the edge facts, the edge rule, the watch's bound answer, later evidence, and the watch's 1-second bound; the `settings_search_suggestions` expectations change.
-6. The keys as NVDA: the editing chords from the hook to Core, and the sentence move; the `caret_keys` expectations change.
-7. One stamp, `MoveCaret`'s and `Select`'s stamped answers, and the merge clause's removal.
-8. The measurements and scenarios below, including `text_box_selection_keys` at Control+Delete over "alpha ", which failed in some runs when the watch answered from its first check, ten times.
-9. The documents: D14 names the evidence judgement and the baseline; the key-holding design, `docs/parity/text.md` ("A caret key that moves nothing", "Keys outside the caret table") and `docs/parity/input.md`, and the crate guides for `verbatim-core`, `verbatim-outpost`, `verbatim-input`, `verbatim-text` and `verbatim-uia-rops` describe the result.
+1. The captures are taken; their results are under "Exact speech".
+2. The key lifecycle build. Generated models and worlds first, by an agent other than the builder, committed failing on known defects, and run against a prototype of the new reducers before the build is approved, every seed passing. Then `KeyLine`, the outpost's `Watch` and `LastRead`, the one key request, tagged reports, the stamp, the bound answer, the focus rule, the slow-read path, and the removals. The `caret_keys` and `settings_search_suggestions` expectations for unmoved keys change here.
+3. The keys as NVDA build. The editing chords from the hook to Core, the sentence move and its generated-test addition. The remaining expectations change here.
+4. Finish. Measurements, the listed scenarios, and the documents: D14, the key-holding explanation, the parity ledgers, the crate guides, the milestone rule, `docs/roadmap.md`'s entries.
 
-## Tests and measurements
+## Tests
 
-Every test follows `books/dev/src/reference/testing.md`. The outpost takes the key's bound from its configuration, 100 ms in production, so that a test of evidence turns the bound off and a test of the bound waits for the bound answer: no test depends on whether evidence or the bound comes first. A before read that fails, answered `Unanswered`, ends the key's request with no watch, and the key, passed on, says nothing, as NVDA's caret script sends the key and returns when it cannot read the caret (`nvda/source/editableText.py` 181 to 186).
+Every test follows `books/dev/src/reference/testing.md`. The bound is an input to Core and a message to the outpost, so no test of it waits on real time.
 
-New tests, one per behaviour that no existing test covers once it is rewritten:
+Generated tests, for ordering and lifecycle only.
 
-- mockapp: a focus reported twice with Control+A between, Core dropping the second, "N characters selected" said once.
-- Core: three keys whose first answer arrives after the third press, the first's change said (the two-key form passes with the single slot).
-- mockapp: a mouse selection made after the last report and before the before read, said before the key's words.
-- Core: Up Arrow with the before read on the first line of two, nothing selected, speaks the line at once and holds no key behind it; with a selection, or in a one-line text, it waits for the watch.
-- Core: Left Arrow at the text's start speaks its character at once; Backspace there says nothing at once and holds no key behind it.
-- Core: an auto-repeat of Up Arrow on the first line of two says nothing at once, and only the last repeat speaks the line, at its bound answer.
-- Core: an answer after Core spoke for the key, on another line, cuts speech and speaks the line; one reporting the same unit text at the same place, an edge key's bound answer included, says nothing more; with a later key pressed or the focus moved it only takes the caret.
-- Core: a report arriving while an edge key's watch is open is spoken at once.
-- Core: a key that moves nothing with a caret key held behind it says nothing when its bound answer comes first, and the key behind's read becomes Core's caret; the end of the wait coming first is `a_held_key_waits_for_the_key_aheads_answer_no_longer_than_the_bound`.
-- The outpost: a key's bound answer, where the application moved the caret with no event, carries the moved caret.
-- The outpost: the watch ends 1 second after the before read ended, and Verbatim's own caret move ends it.
-- The outpost: `MoveCaret` answers with the move's stamp.
-- The outpost and mockapp: the edge facts, through the remote program, the classic UIA reads and a classic edit control, on the first, a middle and the last line, at the text's start and end, and with the text ending in a line break.
-- mockapp: Up and Down Arrow in a one-line combo box edit that replaces its text read the new text once.
-- The hook: a key of the editing chords' list is reported with its gesture, and Escape as well as its clearing key.
-- Core: Alt+Down at a bound answer in a plain edit control's text moves the caret to the next sentence and speaks it; Alt+Up from a line's first sentence moves to the previous line's last; through UIA it says nothing; a key behind waits for the move.
-- Core: Control+Z in a text field opens no watch and says nothing; in a terminal it is handled as today.
-- Core: a before read answered `Unanswered` ends the key's request with no watch, and the key says nothing.
-- Scenario steps: in `notepad_caret_keys`, Up and Down Arrow in a document of one line read the line, and Up Arrow on the first line and Down Arrow on the last line of a longer one read it at once; in `text_box_caret_keys`, Alt+Down by sentence, with its expectations from the first step's captures.
+Both models are written from the parity docs (`docs/parity/text.md`, `docs/nvda/editable-text-and-terminals.md`) and Dickson's dated decisions above, not from Claude's decisions or the design's states, by an agent other than the builder.
 
-Existing tests the rework removes, since each pins a mechanism the rework removes:
+The Core model is a record per key press. Its world is an editor whose events come early, late, twice or never, with distinct traces, several keys, slow answers, focus reports with keys queued behind them, reports behind focus, the outpost ending and exit. After each step it checks: every key reaches the application once, in press order, and within its bounds; nothing is withheld after exit; the caret is the one read most recently begun among those delivered; each selection change is heard once and after the words of the key that made it; a key speaks at most once, and not at all once a later key was pressed, except for that key's selection changes. It replaces the skipped comparison in `crates/verbatim-core/src/queries/generated.rs`. Of that file's three loose focus checks, the focus-taken and left-mark checks go, since `live_reread/generated.rs` models both; the foreground check's assertion stays.
 
-- `crates/verbatim-core/tests/text.rs`: `backspace_deletes_from_the_caret_it_found_though_its_own_caret_event_came_first` and `backspace_deletes_from_the_caret_event_of_the_key_before_it` (Core's history searched by press time); `a_keys_answer_removing_the_selection_with_its_text_says_only_selection_removed` and `a_keys_answer_removing_the_selection_in_specific_terms_does_not_say_the_removed_text` (Control+X as a key outside the table; as a chord, what is left is covered by `a_selection_unselected_after_a_text_change_with_nothing_selected_says_selection_removed` and `a_caret_report_with_no_selection_change_says_nothing`).
-- `crates/verbatim-outpost/src/text/tests.rs`: `a_watch_is_not_carried_out_by_perform` (the separate watch request); `a_caret_reported_after_the_one_core_knew_is_the_baseline`, `a_caret_reported_after_the_key_but_before_the_watch_is_not_the_baseline` and `a_caret_read_in_the_same_millisecond_as_the_key_is_not_the_baseline` (the outpost's history searched by press time); `a_caret_reported_before_the_outpost_moved_the_caret_is_not_the_baseline` (`MoveCaret` clearing the history); `a_caret_event_is_evidence_when_core_did_not_know_the_caret` (a watch with no baseline); `a_deleting_keys_line_is_not_compared_with_a_paragraph_core_knew` (`Baseline::known_line` from Core's `since`).
-- `crates/verbatim-outpost/src/outpost/outbound.rs`: `a_caret_report_with_selection_changes_is_not_moved_past_a_reply` (the merge clause).
-- `crates/verbatim-outpost-logic/src/follow.rs`: `the_poll_ends_its_bound_after_the_key_was_passed_on` (the poll counted from the pass).
-- `crates/mockapp/tests/caret_watch.rs`: `a_caret_report_before_a_keys_watch_leaves_its_answer_no_selection_change` (the press-time search and `compared_already`).
-- `crates/mockapp/tests/terminal_reading.rs`: `a_read_covering_a_caret_event_answers_a_watch_with_no_caret` (a watch with no baseline, and `Signal::covered`).
+The outpost model holds, per node, the application's caret and selection at each moment and the newest read taken of them, and per key the state at the key's arrival. Its world is an application moving the caret and selection with independently timed events, with Core's orders arriving at any step, programs finishing or abandoned, release, replaced elements and a focus elsewhere. After each step it checks: a key answers that it had an effect exactly when the application's state differs from its state at arrival, as the decisions define evidence; a key Core has not called off is answered once and a key Core called off gets no answer after the call-off is handled; the before read's answer precedes any other. It replaces the four invariants in `crates/verbatim-outpost-logic/src/tests/generated.rs`.
 
-Existing tests rewritten to a new expectation:
+Hand-written tests cover words and single rules only:
 
-- `crates/verbatim-core/tests/text.rs`: `a_caret_key_that_moves_nothing_is_silent`, which becomes the bound answer speaking Control+Home's line, "one two", and the edge speaking it at once in a text of several lines; `a_caret_key_after_say_all_starts_from_where_say_all_moved_the_caret`, where `MoveCaret`'s stamped answer makes Core's caret the second line and an earlier-stamped report does not replace it. The bound answer's mark is added to three tests whose expectation it extends: `a_caret_keys_watch_ends_with_its_answer_and_with_typing` (a later key, nothing said, the caret taken), `a_newer_key_or_a_focus_change_supersedes_a_waiting_key` (the focus moved, nothing said) and `backspace_speaks_what_it_deleted_once_the_caret_moved` (Backspace with no evidence, nothing said).
-- `crates/verbatim-outpost-logic/src/follow.rs`: `a_polling_watch_wakes_the_reducer_at_its_next_read`, waking at the key's bound and then at 1 second; `a_poll_without_the_keys_time_ends_its_bound_after_it_opened`, the poll's last read always 50 ms after the before read ended.
-- `crates/verbatim-app/src/requests.rs`: `a_passive_request_is_not_outstanding_but_gets_its_outcome`, a key's request outstanding until its first answer or Core's deadline for the held key gives it up, passive after it, and still receiving its later answers.
-- `crates/mockapp/tests/caret_watch.rs`: `a_key_that_moves_nothing_is_answered_with_nothing`, the before read and then a marked bound answer, the watch open until the next key ends it; `a_text_pattern_missing_at_the_focus_is_read_at_the_next_caret_event`, the key's request ending `Unanswered` with no watch and the next caret event's report read; `a_selection_moved_before_a_keys_watch_is_evidence_by_its_ends`, a selection change after the before read being evidence by its ends against the pinned baseline.
-- `crates/mockapp/tests/call_counts.rs`: `caret_moves_cost_exactly`, the before read 1 call remotely, 8 classically and 5 messages plus at most 2 for the edge facts, the answering check 1, 15 and 6, and no first check.
-- `crates/mockapp/tests/terminal_reading.rs`: `a_watch_read_while_the_terminal_writes_waits_for_its_change` and `a_classic_watch_read_while_the_terminal_writes_waits_for_its_change`, the write landing in the before read, whose recheck decides the baseline; `a_console_hosts_watch_ends_when_its_poll_finds_nothing`, the poll ending the watch 50 ms after it opened, the key having no time, with no bound answer, for the poll's reason, which the outpost's `CaretWatchEnded` observation point gives (`books/dev/src/reference/crates/verbatim-faults.md`), not the watch's own 10-second bound; `a_console_hosts_poll_is_bounded_from_the_keys_time`, the poll counted from the key's time, a key passed two seconds after the test asks ending its watch no sooner, for the poll's reason.
-- Scenarios: in `text_box_caret_keys` and `notepad_caret_keys`, Control+Z after the typed "x" and the last Control+V become silent, with no difference declared; in `text_box_paragraph_keys`, the three Control+Down and three Control+Up Arrow that move nothing each say "First paragraph opens here.", Control+Up at once on the first line and Control+Down at its bound, their declared differences gone; in `text_box_editing` and `notepad_editing`, whose body `demo_notepad_editing` reuses, the first Control+Home at the top says "alpha beta gamma" at once, its declared difference gone; in `settings_search_suggestions`, Down, Down and Up Arrow each also read the box's line at the bound, in the order of NVDA's capture, the declared difference gone. Steps whose words stay but now come from a caret event's report rather than a watch's answer, "alpha  selected" after Control+Z in `text_box_caret_keys` and "selection removed" after Control+X and Control+V in `caret_keys`, `selection_keys` and `editing`, pass only if the application raises that event, which NVDA's words depend on too.
+- Core: the deadline input with no evidence sends `FinalRead`, and evidence first clears the deadline so that no `FinalRead` is sent, with no real time. A focus that moves first sends `End`.
+- Core: `removal`, segments, the speech per key class at evidence and at the bound, a caret that moved forward with nothing removed saying "blank", the focus-moves-first rule per case above, the chords, and sentence landing.
+- The outpost: selection-change text, general terms, cut reads, and the remote and classic reads' agreement.
+- mockapp: Control+A followed by a repeated focus says the count once; a mouse selection before a before read is said first; the call counts and instruction limit.
+- The hook: a chord is reported with its gesture.
 
-Existing tests updated with the same expectation, for the request's new shape or a constant: the single request with several answers in place of `TextOp::ReadCaret` and `TextOp::AwaitCaret`; the pinned baseline in place of `CaretWatch::{since, compare}`; the answer carrying the before line and unit; the one stamp in microseconds; and the stamp in `MoveCaret`'s and `Select`'s answers.
+Removed: every test pinning a removed mechanism, and every hand-written interleaving test the generated models replace, including those for superseded keys and for waiting on the key ahead. Tests that change only for the request's new shape are updated. A builder that finds another test breaking reports it.
 
-- `crates/verbatim-core/tests/text.rs`: `an_arrow_key_watches_for_evidence_then_speaks_the_character_at_the_caret`, `a_backspace_in_a_run_of_one_character_watches_its_line`, `line_word_and_paragraph_keys_speak_their_unit`, `shift_movement_speaks_what_was_selected_and_unselected`, `a_movement_that_leaves_a_selection_speaks_the_unit_then_what_it_unselected`, `a_late_reply_read_before_a_newer_caret_event_leaves_the_caret_newest`, `backspace_at_a_lines_start_names_the_line_break_it_deleted`, `delete_compares_the_character_and_speaks_the_new_one`, `backspace_over_a_selection_says_what_was_before_its_start_then_the_selection_change`, `backspace_over_a_selection_from_an_earlier_line_says_what_was_before_its_start`, `a_superseded_answers_selection_change_is_said_after_the_next_keys_words` (its change now through `heard` as a report's), `caret_keys_are_watched_in_a_terminal_and_not_at_all_without_text`, `select_then_copy_selects_from_the_start_marker_says_so_copies_and_clears_the_marker`, `a_selecting_keys_answer_after_a_text_change_says_the_whole_new_selection`, `a_held_key_is_passed_on_once_its_caret_is_read_and_judged_from_that_caret`, `held_keys_are_passed_on_in_order_whatever_their_reads_answer`, `keys_pressed_behind_a_held_key_are_handled_after_it_in_order` and `a_held_key_waits_for_the_key_aheads_answer_no_longer_than_the_bound`, with the helpers `caret_reply`, `caret_reply_at`, `read_before`, `selection_removed_reply` and `selected_from_the_marker`.
-- `crates/verbatim-core/tests/terminal_reading.rs`: `the_read_before_a_held_key_is_aligned_and_its_caret_answers_it` and `a_key_deferred_behind_a_held_key_reaches_the_rules_at_the_held_keys_pass`, with `crates/verbatim-core/tests/terminal_support/mod.rs`'s request capture in `take` and `release_held`.
-- `crates/verbatim-core/tests/alloc.rs`: `text_steps_allocate_the_same_whatever_the_ancestor_chain`.
-- `crates/verbatim-outpost/src/text/tests.rs`: `a_caret_that_moved_from_where_core_knew_it_is_evidence_at_once`, `with_no_evidence_the_watch_stays_open_after_one_read`, `a_caret_moved_later_answers_a_later_check`, `a_changed_line_at_the_same_position_is_evidence`, `a_line_that_changed_away_from_the_caret_or_a_late_event_is_no_evidence`, `a_delete_that_changes_the_text_at_the_caret_is_evidence`, `a_deleting_key_in_a_run_of_one_character_is_evidence_by_its_line`, `a_comparison_after_the_text_changed_is_in_general_terms_once`, `a_selecting_keys_answer_after_the_text_changed_is_in_general_terms`, `selecting_and_unselecting_report_what_changed_on_each_side`, `a_selection_around_the_caret_is_one_change_each_way`, `a_landing_watch_says_whether_the_caret_stayed_on_its_line`, `a_caret_read_before_the_key_with_its_line_after_is_no_answer` and `a_selection_read_before_a_cut_with_its_line_after_is_no_answer` (its comment to call it a caret event's read, since Control+X opens no watch).
-- `crates/verbatim-outpost-logic/src/follow.rs`: `a_read_for_a_replaced_watch_leaves_the_newer_one_on_its_node_alone`, `a_read_at_the_bound_is_the_watchs_last` and `each_read_is_followed_by_the_next_until_the_bound`.
-- `crates/mockapp/tests/caret_watch.rs`: `a_focus_change_during_a_caret_watch_is_handled_at_once`, `a_caret_move_raised_later_answers_the_watch`, `a_held_keys_watch_is_judged_from_the_caret_read_before_it`, `a_selection_a_key_made_is_reported_to_the_key_alone`, `a_selection_verbatim_made_is_not_reported_again`, `a_shift_key_after_verbatims_selection_compares_with_it`, `an_edit_controls_deleting_key_over_a_selection_is_answered_in_general_terms` and `a_uia_deleting_key_over_a_selection_is_answered_in_general_terms`, each with the bound turned off.
-- `crates/mockapp/tests/call_counts.rs`: `uia_text_requests_cost_exactly`.
-- `crates/mockapp/tests/idle_barrier.rs`: `the_answer_waits_for_an_open_caret_watch`, with the bound turned off.
-- `crates/mockapp/tests/terminal.rs`: `backspace_says_what_it_deleted_without_caret_events_remote` and `backspace_says_what_it_deleted_without_caret_events_classic`, through `Session::effect` answering the single key request.
-- `crates/mockapp/tests/terminal_reading.rs`: `the_read_before_a_held_key_is_a_read_with_its_caret`, `a_console_hosts_caret_moved_without_an_event_answers_its_watch` and `a_console_caret_event_without_a_move_leaves_the_poll_reading`, through `console_watch`.
-- `crates/mockapp/tests/text.rs`: `uia_text_reads_moves_and_answers_caret_keys`, `edit_control_text_reads_moves_and_answers_caret_keys` and `version_6_edit_control_text_reads_moves_and_answers_caret_keys`, through their helper `a_caret_key_is_answered_with_what_it_did`, and `remote_and_classic_caret_reads_agree`, whose `CaretQuery` gains the baseline's selection and the edge facts.
-- `crates/mockapp/tests/instruction_limit.rs`: `caret_reads_execute_exactly`, its worst case with the edge facts and the baseline's selection pinned anew and under 5,000.
+Scenarios: `notepad_caret_keys`, `text_box_caret_keys`, `text_box_paragraph_keys`, `text_box_editing`, `notepad_editing`, `text_box_selection_keys` including Control+Delete over "alpha " ten times, `settings_search_suggestions`, `wpf_password` and `terminal_key_timing`.
 
-Any other test that breaks is a gap in this list, which the builder reports rather than deciding alone.
-
-Measurements and scenarios:
-
-1. Call counts (`crates/mockapp/tests/call_counts.rs`): the before read 1 remotely, 8 classically, 5 messages plus the edge facts' at most two; the answering check 1, 15, 6; no first check.
-2. Instruction counts (`instruction_limit.rs`): the caret program with a previous selection, a word unit and the edge facts, worst case under 5,000.
-3. The stale caret workloads (`measure_stale_caret_text_box`, `measure_stale_caret_notepad`, `measure_stale_caret_conhost`): 0 of 60 misjudged.
-4. Wake-ups and processor time (`cargo xtask trace scenario` at info level) over `measure_keys_text_box`, `measure_keys_windows_terminal` and a Notepad key workload, before and after; key to first sound P50 and P95 unchanged.
-5. Scenarios: every `text_box_*` and `notepad_*`, `wpf_password`, `settings_search_suggestions` and `settings_search_suggestions_reentered`, and `terminal_key_timing` with the `windows_terminal_` and `conhost_` key scenarios, since the key protocol is shared with terminals.
+Measurements: call counts; instruction counts; the stale caret workloads, 0 of 60 misjudged; wake-ups and processor time over `measure_keys_text_box`, `measure_keys_windows_terminal` and a Notepad key workload before and after; key to first sound P50 and P95 unchanged.
 
 ## Why this design
 
-- Leaving the model as it is keeps ten patches, seven of them for a race holding closed, nine places of state, two known losses and three round trips per held key.
-- The minimum step, the baseline's life following Core's focus and superseded answers updating Core's caret, fixes the two losses but leaves the histories, the modes, two requests and two clocks.
-- Core sending its selection with every request partly reverts 505e3ad8, gives caret events, the path for mouse and program selections, nothing to carry it, and brings back two baselines.
+- Keeping the second layer leaves nine places of state, two known defects and three round trips per held key.
+- Core sending its selection with every request brings back two baselines and gives caret events nothing to carry it.
 - Core comparing raw ends cannot order positions across chunks or read the text between them.
-- The outpost reporting every read's facts and Core judging evidence, D14's literal form, needs a message per key or reads twice per typed character, since the outpost must know when a key is answered to stop reading on text changes; it is revisited if uiAccess brings a cheap signal.
-- A second path that trusts events where they are reliable reintroduces the two paths' race, since the race is in ordering, and the reconstruction of "before" from time stamps that this rework removes.
-- A signal that the application has handled a key exists only in process; D2 makes an in-process helper a speed-up, never a requirement, so it could at most shorten the key's bound later. A shorter bound tuned per application is a heuristic.
+- The outpost reporting every read's facts and Core judging evidence needs a message per key or reads twice per typed character, since the outpost must know when a key is answered to stop reading on text changes.
+- A second path that trusts events where they are reliable brings back the race between the hook and the application's events, which is one of ordering.
+- A several-answer request keeps a passive stage in Core's query table and carries results apart from the caret reports they must be ordered with.
