@@ -374,7 +374,7 @@ fn line_events(name: &str) -> String {
 /// from `fixture` with `{title}` replaced by that title, its standard input
 /// a pipe and its lines setting the events of [`line_events`], and waits
 /// for it to take the foreground. Returns its process id.
-fn open_mockapp(scenario: &mut Scenario, name: &str, fixture: &str) -> u32 {
+pub(super) fn open_mockapp(scenario: &mut Scenario, name: &str, fixture: &str) -> u32 {
     open_mockapp_with(scenario, name, fixture, &[])
 }
 

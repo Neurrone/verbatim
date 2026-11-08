@@ -25,19 +25,28 @@ use windows::Win32::UI::Accessibility::{
     IUIAutomationElementArray, IUIAutomationInvokePattern, IUIAutomationSelectionItemPattern,
     IUIAutomationSelectionPattern, IUIAutomationTextPattern, IUIAutomationTextRange,
     IUIAutomationTextRangeArray, IUIAutomationTogglePattern, IUIAutomationTreeWalker, TreeScope,
-    UIA_CONTROLTYPE_ID, UIA_PATTERN_ID, UIA_PROPERTY_ID, UIA_TEXTATTRIBUTE_ID,
+    UIA_CONTROLTYPE_ID, UIA_GridItemContainingGridPropertyId, UIA_PATTERN_ID, UIA_PROPERTY_ID,
+    UIA_TEXTATTRIBUTE_ID,
 };
 use windows::core::Interface;
 
-use verbatim_model::CallKind;
+use verbatim_model::{CallKind, TableId};
 
 use crate::calls::count;
-use crate::com::variant_i32;
+use crate::com::{runtime_id, variant_element, variant_i32};
 
 /// Safe live reads and calls on a UIA element ([`IUIAutomationElement`]),
 /// each a cross-process call to the application's provider, counted once.
 /// The element's cache is read through a shape alone ([`crate::Cached`]).
 pub trait ElementExt {
+    /// The grid a grid's item is in (`GridItem`'s `ContainingGrid`), read
+    /// live, `Ok(None)` when it names none. Cross-process.
+    ///
+    /// # Errors
+    ///
+    /// The COM error if the provider fails the read.
+    fn current_containing_grid(&self) -> windows::core::Result<Option<IUIAutomationElement>>;
+
     /// The control type, read live. Cross-process.
     ///
     /// # Errors
@@ -129,6 +138,46 @@ pub trait ElementExt {
     ) -> windows::core::Result<Option<IUIAutomationElement>>;
 }
 
+/// The string a remote program makes of a runtime id (its `Stringify`
+/// instruction, verified on Windows 11 26200): the integers in decimal,
+/// separated by commas, in square brackets, such as `[42,14681214,4,5]`.
+#[must_use]
+pub fn runtime_id_key(runtime_id: &[i32]) -> String {
+    let parts: Vec<String> = runtime_id.iter().map(i32::to_string).collect();
+    format!("[{}]", parts.join(","))
+}
+
+/// The identity of the table whose runtime id's key is `key`
+/// ([`runtime_id_key`]), so that a remote program's and a classic read's
+/// answers for one grid are equal, and `DefaultHasher`'s fixed keys make
+/// the focus listener's and an outpost's equal too.
+#[must_use]
+pub fn table_id(key: &str) -> TableId {
+    use std::hash::{Hash as _, Hasher as _};
+    let mut hasher = std::hash::DefaultHasher::new();
+    key.hash(&mut hasher);
+    TableId(hasher.finish())
+}
+
+/// The table of the grid's item `element`, read the classic way: its
+/// `ContainingGrid`, one call into the application, and that element's
+/// runtime id, which UIA keeps with it. `None` when it names no grid, or
+/// the read fails, by UIA's timeout or any other error, which speaks the
+/// cell as one whose table is not known.
+#[must_use]
+pub fn containing_grid(element: &IUIAutomationElement) -> Option<TableId> {
+    match element.current_containing_grid() {
+        Ok(grid) => grid
+            .map(|grid| runtime_id(&grid))
+            .filter(|runtime_id| !runtime_id.is_empty())
+            .map(|runtime_id| table_id(&runtime_id_key(&runtime_id))),
+        Err(error) => {
+            tracing::debug!(%error, "a cell's containing grid could not be read");
+            None
+        }
+    }
+}
+
 /// No match is a null element, which `windows` reports as an error carrying
 /// no failure code.
 fn found(
@@ -157,6 +206,14 @@ impl ElementExt for IUIAutomationElement {
         // property id is a plain value.
         let value = unsafe { self.GetCurrentPropertyValueEx(property, true) }?;
         Ok(variant_i32(&value))
+    }
+
+    fn current_containing_grid(&self) -> windows::core::Result<Option<IUIAutomationElement>> {
+        count(CallKind::Uia)?;
+        // SAFETY: `self` is a live element (see the module comment); the
+        // property id is a plain value.
+        let value = unsafe { self.GetCurrentPropertyValue(UIA_GridItemContainingGridPropertyId) }?;
+        Ok(variant_element(&value))
     }
 
     fn current_bool(&self, property: UIA_PROPERTY_ID) -> windows::core::Result<bool> {

@@ -663,6 +663,10 @@ pub enum FrontWindow {
 /// line, or, for a spare started before it had one, by
 /// [`CoreToOutpost::Assign`].
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "a message is built once and moved, never stored in bulk"
+)]
 pub enum CoreToOutpost {
     /// Delivers a focus fact the focus listener captured, for this outpost's
     /// target application (decision D13), threading the listener's

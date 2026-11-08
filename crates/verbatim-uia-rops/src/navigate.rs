@@ -14,12 +14,13 @@
 
 use windows::Win32::UI::Accessibility::UIA_NativeWindowHandlePropertyId;
 
+use verbatim_model::TableId;
 use verbatim_uia::{Cached, Direction, Fill, Kept, Node, Uia};
 
 use crate::builder::{Builder, kind};
 use crate::caret::gone_or_timed_out;
 use crate::error::Error;
-use crate::focus::{Path, RemoteCache, absent_record};
+use crate::focus::{Path, RemoteCache, absent_record, read_table, reads_cell, table_answered};
 use crate::instruction::TypeTest;
 use crate::opcode::NavigationDirection;
 
@@ -40,6 +41,10 @@ pub struct StepQuery<'a> {
 pub struct Step {
     /// The neighbor, filled by the query's fill; `None` at a tree edge.
     pub neighbor: Option<Cached<Node>>,
+    /// The table of the neighbor, when it is a cell read with the theme's
+    /// cell coordinates; `None` also when it names no grid or the read
+    /// failed.
+    pub neighbor_table: Option<TableId>,
     /// The native window handle of the element, or of its nearest raw-view
     /// ancestor that has one, as `verbatim_uia::nearest_window_handle`
     /// finds it; `None` when none has one.
@@ -77,7 +82,7 @@ pub fn navigation_step(
 /// The step in one round trip: the element's own window from its cache,
 /// else each raw-view ancestor's `NativeWindowHandle` until one has one,
 /// then `Navigate` in the query's direction and the neighbor's cache filled
-/// inside the provider.
+/// inside the provider, with its table when it is a cell.
 ///
 /// `uia` is unused; it is in the signature so that this and
 /// [`navigation_step_classic`] are interchangeable ([`NavigationStepFn`]).
@@ -121,6 +126,7 @@ pub fn navigation_step_remote(_uia: &Uia, query: &StepQuery<'_>) -> Result<Step,
         let absent = cache.populate(b, neighbor);
         b.set(neighbor_absent, absent);
     });
+    let table = reads_cell(query.fill).then(|| read_table(&mut b, neighbor));
     let outcome = b.finish().execute()?;
     let window = outcome.get(window)?;
     let absent = absent_record(outcome.get(neighbor_absent)?);
@@ -128,6 +134,7 @@ pub fn navigation_step_remote(_uia: &Uia, query: &StepQuery<'_>) -> Result<Step,
         neighbor: outcome
             .get(neighbor)?
             .map(|neighbor| query.fill.claim(neighbor, absent)),
+        neighbor_table: table_answered(&outcome, table)?,
         window: (window != 0).then_some(window as isize),
     })
 }
@@ -165,5 +172,10 @@ pub fn navigation_step_classic(uia: &Uia, query: &StepQuery<'_>) -> Result<Step,
         Err(error) if verbatim_uia::element_is_gone(&error) => return Err(Error::Uia(error)),
         Err(_) => None,
     };
-    Ok(Step { neighbor, window })
+    let neighbor_table = neighbor.as_ref().and_then(Cached::table);
+    Ok(Step {
+        neighbor,
+        neighbor_table,
+        window,
+    })
 }

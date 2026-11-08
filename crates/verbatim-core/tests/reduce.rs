@@ -5,10 +5,10 @@
 use verbatim_core::{ReducerRecorder, SrState, replay};
 use verbatim_model::protocol::{QueryOutcome, QueryResult};
 use verbatim_model::{
-    AlertOrigin, Backend, Earcon, EarlierElement, Effect, FetchResult, FocusGroup, Input,
-    NodeDetails, NodeId, NodeSnapshot, NormalizedEvent, OutpostId, Phrase, Pid, PropertyChange,
-    QueryId, QueryKind, Role, SegmentContent, SpeechPriority, State, StateSet, ToastId, TraceId,
-    Utterance, UtteranceSegment, WindowFacts, WindowHandle,
+    AlertOrigin, Backend, CellPosition, Earcon, EarlierElement, Effect, FetchResult, FocusGroup,
+    Input, NodeDetails, NodeId, NodeSnapshot, NormalizedEvent, OutpostId, Phrase, Pid,
+    PropertyChange, QueryId, QueryKind, Role, SegmentContent, SpeechPriority, State, StateSet,
+    TableId, ToastId, TraceId, Utterance, UtteranceSegment, WindowFacts, WindowHandle,
 };
 
 /// The outpost standing for application `source` in these tests: one per
@@ -1927,8 +1927,11 @@ fn details_speak_in_nvda_property_order() {
         rect: None,
         top_level_client: false,
         class_name: None,
-        row: Some(3),
-        column: Some(1),
+        cell: Some(CellPosition {
+            row: 3,
+            column: 1,
+            table: None,
+        }),
         parent_automation_id: None,
         window: None,
         above_boundary: false,
@@ -1961,13 +1964,158 @@ fn details_speak_in_nvda_property_order() {
 #[test]
 fn a_nameless_cell_says_its_row_and_column_without_its_role() {
     let mut cell = node(400, Role::Cell, None, None, StateSet::new());
-    cell.details.row = Some(4);
-    cell.details.column = Some(2);
+    cell.details.cell = Some(CellPosition {
+        row: 4,
+        column: 2,
+        table: None,
+    });
     assert_eq!(
         focus_segments(cell),
         vec![
             UtteranceSegment::new(SegmentContent::Row(4)),
             UtteranceSegment::new(SegmentContent::Column(2)),
+        ]
+    );
+}
+
+/// A list item named `name` at the table's `row` and `column`, in `table`
+/// if it has one, as the focus listener reads a grid's item.
+fn cell_in(id: u64, name: &str, (row, column): (u32, u32), table: Option<u64>) -> NodeSnapshot {
+    let mut cell = node(id, Role::ListItem, Some(name), None, StateSet::new());
+    cell.details.cell = Some(CellPosition {
+        row,
+        column,
+        table: table.map(TableId),
+    });
+    cell
+}
+
+/// Reports `cells` focused in order, each after the last has been spoken,
+/// and answers what each said of its row and column, from `state`.
+fn rows_and_columns_said(
+    state: &mut SrState,
+    cells: &[NodeSnapshot],
+) -> Vec<Vec<UtteranceSegment>> {
+    cells
+        .iter()
+        .enumerate()
+        .map(|(index, cell)| {
+            let (next, effects) = reduce(
+                state,
+                &focus_event(TraceId::from_raw(173), Pid(1), cell.clone()),
+            );
+            *state = next;
+            // A later focus cuts the speech of the one before.
+            let segments = match (index, heard(&effects).as_slice()) {
+                (
+                    0,
+                    [
+                        Heard::Expire(_),
+                        Heard::Say(SpeechPriority::Queued, segments),
+                    ],
+                )
+                | (
+                    1..,
+                    [
+                        Heard::Expire(_),
+                        Heard::Stop,
+                        Heard::Say(SpeechPriority::Queued, segments),
+                    ],
+                ) => segments.clone(),
+                (_, other) => panic!("expected the focus's one queued utterance, got {other:?}"),
+            };
+            segments
+                .iter()
+                .filter(|segment| {
+                    matches!(
+                        segment.content,
+                        SegmentContent::Row(_) | SegmentContent::Column(_)
+                    )
+                })
+                .cloned()
+                .collect()
+        })
+        .collect()
+}
+
+fn row_said(row: u32) -> UtteranceSegment {
+    UtteranceSegment::new(SegmentContent::Row(row))
+}
+
+fn column_said(column: u32) -> UtteranceSegment {
+    UtteranceSegment::new(SegmentContent::Column(column))
+}
+
+/// Within one table, a cell says only what changed, as NVDA was captured
+/// saying on the Alt+Tab switcher (`docs/parity/focus-announcement.md`,
+/// "Table cell coordinates").
+#[test]
+fn a_cell_in_the_remembered_table_says_only_the_row_or_column_that_changed() {
+    let mut state = SrState::new();
+    let said = rows_and_columns_said(
+        &mut state,
+        &[
+            cell_in(1, "One", (1, 2), Some(7)),
+            cell_in(2, "Two", (1, 3), Some(7)),
+            cell_in(3, "Three", (2, 3), Some(7)),
+            cell_in(4, "Four", (2, 3), Some(7)),
+        ],
+    );
+    assert_eq!(
+        said,
+        vec![
+            vec![row_said(1), column_said(2)],
+            vec![column_said(3)],
+            vec![row_said(2)],
+            vec![],
+        ]
+    );
+}
+
+/// A cell of another table says both, even at the row and column last
+/// spoken, and that table becomes the one remembered.
+#[test]
+fn a_cell_in_another_table_says_both_and_is_remembered() {
+    let mut state = SrState::new();
+    let said = rows_and_columns_said(
+        &mut state,
+        &[
+            cell_in(1, "One", (2, 3), Some(7)),
+            cell_in(2, "Other", (2, 3), Some(8)),
+            cell_in(3, "Beside", (2, 4), Some(8)),
+            cell_in(1, "One", (2, 4), Some(7)),
+        ],
+    );
+    assert_eq!(
+        said,
+        vec![
+            vec![row_said(2), column_said(3)],
+            vec![row_said(2), column_said(3)],
+            vec![column_said(4)],
+            vec![row_said(2), column_said(4)],
+        ]
+    );
+}
+
+/// A cell whose table is not known always says both and leaves the table
+/// remembered as it was, so the next cell of that table is still in it.
+#[test]
+fn a_cell_with_no_table_says_both_and_keeps_the_table_remembered() {
+    let mut state = SrState::new();
+    let said = rows_and_columns_said(
+        &mut state,
+        &[
+            cell_in(1, "One", (1, 2), Some(7)),
+            cell_in(2, "Unknown", (1, 2), None),
+            cell_in(3, "Two", (1, 3), Some(7)),
+        ],
+    );
+    assert_eq!(
+        said,
+        vec![
+            vec![row_said(1), column_said(2)],
+            vec![row_said(1), column_said(2)],
+            vec![column_said(3)],
         ]
     );
 }
@@ -7689,8 +7837,11 @@ fn task_switching_item(id: u64, name: &str, parent_automation_id: Option<&str>) 
     let mut item = node_of_class(id, Role::ListItem, Some(name), "ListViewItem");
     item.details.position_in_set = Some(2);
     item.details.set_size = Some(10);
-    item.details.row = Some(1);
-    item.details.column = Some(2);
+    item.details.cell = Some(CellPosition {
+        row: 1,
+        column: 2,
+        table: None,
+    });
     item.details.parent_automation_id = parent_automation_id.map(str::to_owned);
     item
 }

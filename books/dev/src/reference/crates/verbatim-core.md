@@ -398,7 +398,8 @@ code is in `reduce.rs` unless named.
   level, each absent when the backend reported nothing. `spoken_states`,
   `negated_states` and `STATE_ORDER` with a `StateReason` of focus, query,
   or change pick the states; `Reason` and `speaks_role` decide the role;
-  `last_tree_level` puts a changed tree level first. An edit field,
+  `last_tree_level` puts a changed tree level first, and `cell_memory`
+  leaves out a row or column unchanged within one table. An edit field,
   document, or terminal says its text at the caret from `FocusChanged`'s
   `text` as a second queued utterance (`editing::focus_text`). Per
   decision D12 the name travels as a `Label` span and the value as a

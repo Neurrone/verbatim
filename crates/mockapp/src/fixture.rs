@@ -11,7 +11,10 @@
 //! string (MSAA's `accDefaultAction`, which `accDoDefaultAction` then
 //! performs), an optional `controller_for`
 //! (the `id` of the node this one controls, served as UIA's
-//! `ControllerFor` relation, as a search box names its suggestion list) —
+//! `ControllerFor` relation, as a search box names its suggestion list),
+//! an optional `cell` (`row` and `column`, zero-based as UIA's `GridItem`
+//! pattern has them, and `grid`, the `id` of the node that is its
+//! `ContainingGrid`) —
 //! and `children` (an array of nested nodes). The root node conceptually corresponds to the host
 //! window itself.
 
@@ -37,6 +40,8 @@ pub(crate) enum FixtureError {
     DuplicateId(String),
     /// A `controller_for` named an `id` no node declares.
     UnknownControlled { id: String, controlled: String },
+    /// A `cell`'s `grid` named an `id` no node declares.
+    UnknownGrid { id: String, grid: String },
 }
 
 impl fmt::Display for FixtureError {
@@ -54,11 +59,25 @@ impl fmt::Display for FixtureError {
             Self::UnknownControlled { id, controlled } => {
                 write!(f, "node {id:?} controls unknown node {controlled:?}")
             }
+            Self::UnknownGrid { id, grid } => {
+                write!(f, "cell {id:?} is in unknown grid {grid:?}")
+            }
         }
     }
 }
 
 impl std::error::Error for FixtureError {}
+
+/// Where a node is in a grid (`cell` in a fixture).
+#[derive(Clone, Debug, Deserialize)]
+pub(crate) struct FixtureCell {
+    /// The zero-based row.
+    pub(crate) row: u32,
+    /// The zero-based column.
+    pub(crate) column: u32,
+    /// The `id` of its containing grid.
+    pub(crate) grid: String,
+}
 
 /// The raw JSON shape, deserialized before role and state names are
 /// validated against the normalized vocabulary.
@@ -92,6 +111,8 @@ struct RawNode {
     level: Option<u32>,
     #[serde(default)]
     controller_for: Option<String>,
+    #[serde(default)]
+    cell: Option<FixtureCell>,
     #[serde(default)]
     text: Option<String>,
     #[serde(default)]
@@ -230,6 +251,8 @@ pub(crate) struct FixtureNode {
     pub(crate) level: Option<u32>,
     /// The `id` of the node this one controls (UIA `ControllerFor`).
     pub(crate) controller_for: Option<String>,
+    /// Where it is in a grid (UIA `GridItem`).
+    pub(crate) cell: Option<FixtureCell>,
     /// The node's text, served through UIA's text pattern, or for the MSAA
     /// backend by a real Win32 edit control (milestone M4).
     pub(crate) text: Option<String>,
@@ -384,7 +407,8 @@ fn parse(text: &str) -> Result<FixtureNode, FixtureError> {
     Ok(root)
 }
 
-/// Checks that every `controller_for` names a node the fixture declares.
+/// Checks that every `controller_for` and `cell`'s `grid` names a node the
+/// fixture declares.
 fn check_controlled(
     node: &FixtureNode,
     ids: &std::collections::HashSet<String>,
@@ -393,6 +417,12 @@ fn check_controlled(
         return Err(FixtureError::UnknownControlled {
             id: node.id.clone(),
             controlled: controlled.clone(),
+        });
+    }
+    if let Some(cell) = node.cell.as_ref().filter(|cell| !ids.contains(&cell.grid)) {
+        return Err(FixtureError::UnknownGrid {
+            id: node.id.clone(),
+            grid: cell.grid.clone(),
         });
     }
     node.children
@@ -440,6 +470,7 @@ fn convert(
         set_size: raw.set_size,
         level: raw.level,
         controller_for: raw.controller_for,
+        cell: raw.cell,
         text: raw.text,
         spelling_errors: raw.spelling_errors,
         bold: raw.bold,

@@ -33,7 +33,9 @@ use crate::focus_rules::{
 };
 use crate::foreground::{Attention, ForegroundFact, LatestFocus};
 use crate::queries::Then;
-use crate::state::{FocusContext, Navigator, NavigatorRead, SpokenRecord, SrState, TextFollowUp};
+use crate::state::{
+    CellMemory, FocusContext, Navigator, NavigatorRead, SpokenRecord, SrState, TextFollowUp,
+};
 use crate::state::{PendingCaret, PendingText};
 use crate::{editing, review, review_text, say_all, shell, terminal, terminal_model, text};
 
@@ -1812,6 +1814,7 @@ fn focus_speech(
     (title, entered, desktop_name): (Option<&NodeSnapshot>, Vec<&NodeSnapshot>, Option<Effect>),
 ) -> Vec<Effect> {
     let last_level = &mut state.last_tree_level;
+    let cell_memory = &mut state.cell_memory;
     let reads_text = editing::may_have_text(report.node.role);
     let mut effects = Vec::new();
     if let Some(title) = title {
@@ -1819,7 +1822,7 @@ fn focus_speech(
             Utterance {
                 trace_id,
                 priority: SpeechPriority::Queued,
-                segments: node_segments(title, Reason::Focus, &mut None),
+                segments: unremembered_segments(title, Reason::Focus),
                 source: Some(source_of(title)),
                 say_all: false,
                 validity: Some(FocusValidity {
@@ -1871,14 +1874,19 @@ fn focus_speech(
     let mut segments = if reads_text && report.node.value.is_some() {
         let mut node = report.node.clone();
         node.value = None;
-        node_segments(&node, Reason::Focus, last_level)
+        node_segments(&node, Reason::Focus, last_level, cell_memory)
     } else {
-        node_segments(report.node, Reason::Focus, last_level)
+        node_segments(report.node, Reason::Focus, last_level, cell_memory)
     };
     // A selection container introduces its selected item right after
     // itself — the roadmap's "announce a focused list's selected item".
     if let Some(selected) = report.selected_child {
-        segments.extend(node_segments(selected, Reason::Focus, last_level));
+        segments.extend(node_segments(
+            selected,
+            Reason::Focus,
+            last_level,
+            cell_memory,
+        ));
     }
     effects.push(Effect::Speak(
         Utterance {
@@ -2163,7 +2171,7 @@ fn reduce_alert(
             trace_id,
             SpeechPriority::Queued,
             node,
-            (Reason::Focus, &mut None),
+            (Reason::Focus, &mut None, &mut CellMemory::default()),
         ),
         None,
     )]
@@ -2408,7 +2416,7 @@ fn announce_navigator(
     object: &NodeSnapshot,
     reason: Reason,
 ) -> Vec<Effect> {
-    let levels = (reason, &mut state.last_tree_level);
+    let levels = (reason, &mut state.last_tree_level, &mut state.cell_memory);
     let utterance = if editing::may_have_text(object.role) && object.value.is_some() {
         let mut announced = object.clone();
         announced.value = None;
@@ -2535,7 +2543,11 @@ pub(crate) fn announce_query(
         let ancestors = Arc::clone(&focus.spoken().ancestors);
         focus.spoken = SpokenRecord::of(object, ancestors);
     }
-    let levels = (Reason::Query, &mut state.last_tree_level);
+    let levels = (
+        Reason::Query,
+        &mut state.last_tree_level,
+        &mut state.cell_memory,
+    );
     if editing::may_have_text(object.role) && object.value.is_some() {
         let mut announced = object.clone();
         announced.value = None;
@@ -2788,7 +2800,12 @@ fn reduce_selection_changed(
         Utterance {
             trace_id,
             priority: SpeechPriority::Queued,
-            segments: node_segments(node, Reason::Focus, &mut state.last_tree_level),
+            segments: node_segments(
+                node,
+                Reason::Focus,
+                &mut state.last_tree_level,
+                &mut state.cell_memory,
+            ),
             source: Some(source_of(node)),
             say_all: false,
             validity: None,
@@ -2820,7 +2837,11 @@ fn reduce_controlled_selection(
             trace_id,
             SpeechPriority::Interrupt,
             node,
-            (Reason::Focus, &mut state.last_tree_level),
+            (
+                Reason::Focus,
+                &mut state.last_tree_level,
+                &mut state.cell_memory,
+            ),
         ),
         None,
     )]
@@ -3454,7 +3475,7 @@ fn is_presentable_container(node: &NodeSnapshot) -> bool {
 /// focus, whole ([`is_sensitive_slider`]).
 fn container_segments(node: &NodeSnapshot) -> Vec<UtteranceSegment> {
     if is_sensitive_slider(node) {
-        return node_segments(node, Reason::Focus, &mut None);
+        return unremembered_segments(node, Reason::Focus);
     }
     let mut entered = node.clone();
     entered.value = None;
@@ -3462,8 +3483,15 @@ fn container_segments(node: &NodeSnapshot) -> Vec<UtteranceSegment> {
     if entered.role != Role::List {
         entered.details.keyboard_shortcut = None;
     }
-    // An entered container speaks no level, so none is remembered.
-    node_segments(&entered, Reason::Focus, &mut None)
+    // An entered container speaks no level and is read without a cell, so
+    // nothing is remembered.
+    unremembered_segments(&entered, Reason::Focus)
+}
+
+/// [`node_segments`] for what remembers nothing it says: a window's title or
+/// an entered container.
+fn unremembered_segments(node: &NodeSnapshot, reason: Reason) -> Vec<UtteranceSegment> {
+    node_segments(node, reason, &mut None, &mut CellMemory::default())
 }
 
 /// Why a node is being spoken, which decides whether its role is
@@ -3521,8 +3549,7 @@ fn reports_text_itself(role: Role) -> bool {
 fn speaks_role(node: &NodeSnapshot, reason: Reason) -> bool {
     let something_else = node.name.as_deref().is_some_and(|name| !name.is_empty())
         || node.value.as_deref().is_some_and(|value| !value.is_empty())
-        || node.details.row.is_some()
-        || node.details.column.is_some();
+        || node.details.cell.is_some();
     !(reason == Reason::Focus && something_else && is_silent_on_focus(node.role))
 }
 
@@ -3536,11 +3563,13 @@ fn speaks_role(node: &NodeSnapshot, reason: Reason) -> bool {
 ///
 /// A tree or list item's level goes first instead when it differs from
 /// `last_level`, the last level put first, which it then becomes ("Where
-/// the level goes" in `docs/nvda/speech.md`).
+/// the level goes" in `docs/nvda/speech.md`). A cell's row or column is left
+/// out when unchanged within one table ([`CellMemory::said`]).
 fn node_segments(
     node: &NodeSnapshot,
     reason: Reason,
     last_level: &mut Option<u32>,
+    cell_memory: &mut CellMemory,
 ) -> Vec<UtteranceSegment> {
     let mut segments = Vec::new();
     if let Some(name) = &node.name {
@@ -3569,11 +3598,14 @@ fn node_segments(
             shortcut.clone(),
         )));
     }
-    if let Some(row) = node.details.row {
-        segments.push(UtteranceSegment::new(SegmentContent::Row(row)));
-    }
-    if let Some(column) = node.details.column {
-        segments.push(UtteranceSegment::new(SegmentContent::Column(column)));
+    if let Some(cell) = &node.details.cell {
+        let (row, column) = cell_memory.said(cell);
+        if let Some(row) = row {
+            segments.push(UtteranceSegment::new(SegmentContent::Row(row)));
+        }
+        if let Some(column) = column {
+            segments.push(UtteranceSegment::new(SegmentContent::Column(column)));
+        }
     }
     if let Some(position) = node.details.position_in_set {
         segments.push(UtteranceSegment::new(SegmentContent::Position {
@@ -3599,12 +3631,12 @@ fn announce_node(
     trace_id: TraceId,
     priority: SpeechPriority,
     node: &NodeSnapshot,
-    (reason, last_level): (Reason, &mut Option<u32>),
+    (reason, last_level, cell_memory): (Reason, &mut Option<u32>, &mut CellMemory),
 ) -> Utterance {
     Utterance {
         trace_id,
         priority,
-        segments: node_segments(node, reason, last_level),
+        segments: node_segments(node, reason, last_level, cell_memory),
         source: Some(source_of(node)),
         say_all: false,
         validity: None,

@@ -11,6 +11,7 @@ use verbatim_ia2::CHILDID_SELF;
 use verbatim_ia2::equality::Candidates;
 use verbatim_model::{
     ActionName, Backend, NodeDetails, NodeId, NodeSnapshot, QueryKind, Role, State, StateSet,
+    TableId,
 };
 use verbatim_uia::Interning as _;
 use verbatim_uia::map::with_legacy_checked_state;
@@ -887,7 +888,8 @@ pub(super) struct NotFocused;
 /// and one cut at the depth limit is completed by plain windows from that
 /// nearest window ([`complete`]). The automation id of the element's
 /// raw-view parent, the first ancestor read, is put in
-/// `parent_automation_id` when the walk read it. Neither has a time limit
+/// `parent_automation_id` when the walk read it, and the table of an
+/// element that is a cell in `table`. Neither has a time limit
 /// but its program's deadline. A focus lost on the chain's way
 /// ([`FocusLost`]) is answered as an `Err` inside the `Ok`.
 #[expect(
@@ -898,7 +900,11 @@ fn uia_remote_enrichment(
     context: &RequestContext<'_>,
     (uia, request): (&Uia, &Request<Ancestor>),
     element: &Cached<Node>,
-    (previous, parent_automation_id): (&[NodeSnapshot], &mut Option<String>),
+    (previous, parent_automation_id, table): (
+        &[NodeSnapshot],
+        &mut Option<String>,
+        &mut Option<TableId>,
+    ),
     window: Option<isize>,
 ) -> Option<Result<Result<Enrichment, FocusLost>, NotFocused>> {
     if !context.tries_remote(window) {
@@ -927,6 +933,7 @@ fn uia_remote_enrichment(
         // of a combo box for it.
         value_available: Some(element.read().states.value_available),
         plain: Some(&|hwnd| context.window_unreadable(hwnd).is_some()),
+        is_cell: Some(element.read().is_cell()),
         progress: None,
     };
     // The program cannot judge a window between its steps, so a focus
@@ -955,6 +962,7 @@ fn uia_remote_enrichment(
     if let Some(parent) = ancestry.ancestors.first() {
         *parent_automation_id = parent.read().automation_id;
     }
+    *table = ancestry.element_table;
     if let Path::Fallback(error) = &path {
         tracing::warn!(?window, %error, "a remote operation failed; read the classic way");
         if let (verbatim_uia_rops::Error::Import(_), Some(window)) = (error, window) {
@@ -982,10 +990,11 @@ fn uia_remote_enrichment(
         }
     }
     let registry = context.nodes();
-    let selected = ancestry
-        .selected_child
-        .as_ref()
-        .map(|child| child.snapshot(registry));
+    let selected = ancestry.selected_child.as_ref().map(|child| {
+        let mut child = child.snapshot(registry);
+        child.details.set_table(ancestry.selected_table);
+        child
+    });
     let nearest = ancestry.window.or(window).unwrap_or(0);
     let read_by_msaa = |hwnd: isize| uia_walk_leaves(context, nearest, hwnd);
     let is_known = |id: NodeId| previous.iter().any(|node| node.id == id);
@@ -1489,24 +1498,30 @@ fn uia_focused_control(
         // still this query's answer, read the classic way. Its parent's
         // automation id, for the same rules, comes with its ancestors.
         let mut parent_automation_id = None;
-        let (ancestors, selected_child) = match uia_remote_enrichment(
+        let mut table = None;
+        let remote = uia_remote_enrichment(
             context,
             (uia, &ancestor_request),
             &element,
-            (&[], &mut parent_automation_id),
+            (&[], &mut parent_automation_id, &mut table),
             Some(hwnd),
-        ) {
-            Some(Ok(enrichment)) => enrichment,
-            Some(Err(NotFocused)) | None => uia_enrichment(
+        );
+        let enrichment = if let Some(Ok(enrichment)) = remote {
+            enrichment
+        } else {
+            table = element.table();
+            uia_enrichment(
                 context,
                 (uia, &nodes, &ancestor_request),
                 (&element, hwnd),
                 (node.role, &mut parent_automation_id),
                 &[],
-            ),
-        }
-        .map_err(|FocusLost| FocusReadMiss::Failed(None))?;
+            )
+        };
+        let (ancestors, selected_child) =
+            enrichment.map_err(|FocusLost| FocusReadMiss::Failed(None))?;
         node.details.parent_automation_id = parent_automation_id;
+        node.details.set_table(table);
         // A combo box without the `Value` pattern, or a looping selector:
         // its first selected item is its value.
         let mut selected_child = selected_child;
@@ -1913,9 +1928,11 @@ fn uia_remote_step(
             context.read_classically(top_level_of(hwnd));
         }
     }
-    let neighbor = step
-        .neighbor
-        .map(|neighbor| neighbor.snapshot(context.nodes()));
+    let neighbor = step.neighbor.map(|neighbor| {
+        let mut neighbor = neighbor.snapshot(context.nodes());
+        neighbor.details.set_table(step.neighbor_table);
+        neighbor
+    });
     Ok(Some((neighbor, step.window)))
 }
 

@@ -82,7 +82,7 @@ pub use com::{
     variant_element, variant_f64, variant_i32, variant_i32_array, variant_optional_bool,
     variant_string,
 };
-pub use element::{ElementExt, WalkerExt, elements_of};
+pub use element::{ElementExt, WalkerExt, containing_grid, elements_of, runtime_id_key, table_id};
 pub use focus::FocusCallback;
 pub use nearest::{nearest_window_handle, nearest_window_lookup};
 pub use probe::{RawProbe, UIA_RAW_PROBE_TIMEOUT_MS, raw_probe, raw_probe_verdict};

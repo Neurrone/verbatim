@@ -72,6 +72,9 @@ complete name tables. The fields:
 - `controller_for`: the `id` of a node this one controls, served on the
   UIA backend as the `ControllerFor` relation, as a search box names its
   suggestion list.
+- `cell`: `row` and `column`, zero-based, and `grid`, the `id` of the node
+  that is its `ContainingGrid`, served on the UIA backend by the `GridItem`
+  pattern.
 - `automation_id`: the node's UIA automation id.
 - `text`: the node's text, with bare line feeds. On the UIA backend the
   node serves the text pattern over it (`uia::text`, below). On the MSAA

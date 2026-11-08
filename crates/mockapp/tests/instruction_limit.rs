@@ -268,6 +268,7 @@ fn focus_and_navigation_execute_exactly() {
         nearest_window: None,
         before_call: None,
         value_available: None,
+        is_cell: None,
         plain: None,
         progress: None,
     };
@@ -350,6 +351,7 @@ fn reads_and_paths_execute_exactly() {
         nearest_window: None,
         before_call: None,
         value_available: None,
+        is_cell: None,
         plain: None,
         progress: None,
     };

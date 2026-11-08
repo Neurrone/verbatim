@@ -340,15 +340,16 @@ impl ReadProgress {
     fn take_in(&mut self, read: Progress<'_>) {
         match read {
             Progress::PreviousFocused(focused) => self.same_as_last = Some(focused),
-            Progress::Element(fresh) => {
+            Progress::Element(fresh, table) => {
                 let read = fresh.read();
-                self.fresh = Some((
-                    read.node.parts(fresh.runtime_id()),
-                    read.node.value_from_selection(),
-                ));
+                let mut parts = read.node.parts(fresh.runtime_id());
+                parts.details.set_table(table);
+                self.fresh = Some((parts, read.node.value_from_selection()));
             }
-            Progress::SelectedChild(child) => {
-                self.selected_child = Some(fact_of(child.read().node.parts(child.runtime_id())));
+            Progress::SelectedChild(child, table) => {
+                let mut parts = child.read().node.parts(child.runtime_id());
+                parts.details.set_table(table);
+                self.selected_child = Some(fact_of(parts));
             }
             Progress::Ancestor(ancestor) => {
                 if self.ancestors.is_empty() {
@@ -760,6 +761,8 @@ impl FocusReader {
                     }),
                     // Read from the element's fresh copy.
                     value_available: None,
+                    // Read from the element's fresh copy.
+                    is_cell: None,
                     // A ghost's or a hung application's window that a step
                     // reaches ends the walk, by the system's judgement: local
                     // calls.

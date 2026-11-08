@@ -1224,7 +1224,10 @@ speaks a grid item's row and column (`docs/parity/focus-announcement.md`,
   neighbour) hold the `GridItem` pattern's availability, row and column
   (`verbatim_uia::Cell`), which costs mockapp 3 `GetPatternProvider` calls
   per such element; no read of many elements asks for them. One
-  `GetAsyncKeyState` per reported focus change.
+  `GetAsyncKeyState` per reported focus change. A cell read for a focus or
+  the review also reads its containing grid: one more call in the focus
+  listener's classic read, only for a cell, and none in a remote program,
+  whose program grows only for a cell.
 
 ### Core's meeting of chains
 

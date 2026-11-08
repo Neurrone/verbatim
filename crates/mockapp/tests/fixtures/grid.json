@@ -1,0 +1,44 @@
+{
+  "id": "root",
+  "role": "window",
+  "name": "Grids",
+  "children": [
+    {
+      "id": "grid-a",
+      "role": "list",
+      "name": "Grid A",
+      "states": ["focusable"],
+      "children": [
+        {
+          "id": "first",
+          "role": "list_item",
+          "name": "First",
+          "states": ["focusable", "selectable", "selected"],
+          "cell": { "row": 0, "column": 1, "grid": "grid-a" }
+        },
+        {
+          "id": "second",
+          "role": "list_item",
+          "name": "Second",
+          "states": ["focusable"],
+          "cell": { "row": 0, "column": 2, "grid": "grid-a" }
+        }
+      ]
+    },
+    {
+      "id": "grid-b",
+      "role": "list",
+      "name": "Grid B",
+      "children": [
+        {
+          "id": "other",
+          "role": "list_item",
+          "name": "Other",
+          "states": ["focusable"],
+          "cell": { "row": 0, "column": 2, "grid": "grid-b" }
+        }
+      ]
+    },
+    { "id": "plain", "role": "button", "name": "Plain", "states": ["focusable"] }
+  ]
+}

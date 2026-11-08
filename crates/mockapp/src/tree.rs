@@ -11,7 +11,18 @@ use std::sync::{Arc, Mutex};
 
 use verbatim_model::{Role, State, StateSet};
 
-use crate::fixture::FixtureNode;
+use crate::fixture::{FixtureCell, FixtureNode};
+
+/// Where a node is in a grid.
+#[derive(Clone, Copy)]
+pub(crate) struct GridCell {
+    /// The zero-based row.
+    pub(crate) row: u32,
+    /// The zero-based column.
+    pub(crate) column: u32,
+    /// The index of its containing grid.
+    pub(crate) grid: usize,
+}
 
 /// One node's live data.
 #[derive(Clone)]
@@ -44,6 +55,10 @@ pub(crate) struct NodeData {
     pub(crate) level: Option<u32>,
     /// The node this one controls (UIA `ControllerFor`).
     pub(crate) controller_for: Option<usize>,
+    /// Where it is in a grid (UIA `GridItem`).
+    pub(crate) cell: Option<GridCell>,
+    /// The fixture's `cell`, until every id has its index.
+    fixture_cell: Option<FixtureCell>,
     /// The node's text as UTF-16, served through UIA's text pattern.
     pub(crate) text: Option<Vec<u16>>,
     /// The text's selection, start and end as UTF-16 offsets; the caret is
@@ -181,6 +196,15 @@ impl Tree {
         // already checked that each names a node.
         for (index, controlled) in controllers {
             nodes[index].controller_for = by_fixture_id.get(&controlled).copied();
+        }
+        for node in &mut nodes {
+            node.cell = node.fixture_cell.take().and_then(|cell| {
+                Some(GridCell {
+                    row: cell.row,
+                    column: cell.column,
+                    grid: by_fixture_id.get(&cell.grid).copied()?,
+                })
+            });
         }
         let focused = nodes
             .iter()
@@ -321,6 +345,9 @@ impl Tree {
             if node.controller_for == Some(index) {
                 node.controller_for = Some(copy);
             }
+            if let Some(cell) = node.cell.as_mut().filter(|cell| cell.grid == index) {
+                cell.grid = copy;
+            }
         }
         if self.focused == Some(index) {
             self.focused = Some(copy);
@@ -371,6 +398,8 @@ fn insert(
         set_size: node.set_size,
         level: node.level,
         controller_for: None,
+        cell: None,
+        fixture_cell: node.cell,
         text: node.text.map(|text| text.encode_utf16().collect()),
         selection: (0, 0),
         caret_at_end: false,
@@ -443,6 +472,7 @@ mod tests {
             set_size: None,
             level: None,
             controller_for: None,
+            cell: None,
             text: None,
             spelling_errors: Vec::new(),
             bold: Vec::new(),

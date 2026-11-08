@@ -869,7 +869,9 @@ and the inherited pipe handles.
   (`NodeDetails::class_name`) and its parent's automation id
   (`NodeDetails::parent_automation_id`) for Core's per-application rules.
   A node read alone carries grid row and column when the theme reports cell
-  coordinates (`gates::node_gates`).
+  coordinates (`gates::node_gates`), and a focus, its selected child and a
+  navigation step's neighbour their table (`NodeDetails::cell`), read in
+  the remote program where one runs (`FocusQuery::is_cell`).
 
 ### Reading the focus
 

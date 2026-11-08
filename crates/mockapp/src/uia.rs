@@ -794,9 +794,10 @@ mod props {
         ToggleState_Indeterminate, ToggleState_On, UIA_AccessKeyPropertyId,
         UIA_ClassNamePropertyId, UIA_ControlTypePropertyId, UIA_ControllerForPropertyId,
         UIA_E_ELEMENTNOTAVAILABLE, UIA_ExpandCollapseExpandCollapseStatePropertyId,
-        UIA_FullDescriptionPropertyId, UIA_HasKeyboardFocusPropertyId, UIA_HelpTextPropertyId,
-        UIA_IsContentElementPropertyId, UIA_IsEnabledPropertyId,
-        UIA_IsExpandCollapsePatternAvailablePropertyId, UIA_IsKeyboardFocusablePropertyId,
+        UIA_FullDescriptionPropertyId, UIA_GridItemColumnPropertyId, UIA_GridItemRowPropertyId,
+        UIA_HasKeyboardFocusPropertyId, UIA_HelpTextPropertyId, UIA_IsContentElementPropertyId,
+        UIA_IsEnabledPropertyId, UIA_IsExpandCollapsePatternAvailablePropertyId,
+        UIA_IsGridItemPatternAvailablePropertyId, UIA_IsKeyboardFocusablePropertyId,
         UIA_IsOffscreenPropertyId, UIA_IsPasswordPropertyId,
         UIA_IsSelectionItemPatternAvailablePropertyId, UIA_IsTogglePatternAvailablePropertyId,
         UIA_LevelPropertyId, UIA_NamePropertyId, UIA_NativeWindowHandlePropertyId, UIA_PROPERTY_ID,
@@ -1084,6 +1085,16 @@ mod props {
             bool_variant(selection_available(node.states))
         } else if id == UIA_SelectionItemIsSelectedPropertyId.0 {
             bool_variant(node.states.contains(State::Selected))
+        } else if id == UIA_IsGridItemPatternAvailablePropertyId.0 {
+            bool_variant(node.cell.is_some())
+        } else if id == UIA_GridItemRowPropertyId.0 {
+            node.cell.map_or_else(empty_variant, |cell| {
+                i32_variant(i32::try_from(cell.row).unwrap_or(0))
+            })
+        } else if id == UIA_GridItemColumnPropertyId.0 {
+            node.cell.map_or_else(empty_variant, |cell| {
+                i32_variant(i32::try_from(cell.column).unwrap_or(0))
+            })
         } else if id == UIA_FullDescriptionPropertyId.0 || id == UIA_HelpTextPropertyId.0 {
             node.description
                 .as_deref()
@@ -1309,16 +1320,17 @@ mod handler {
     use windows::Win32::System::Com::SAFEARRAY;
     use windows::Win32::System::Variant::VARIANT;
     use windows::Win32::UI::Accessibility::{
-        IExpandCollapseProvider, IExpandCollapseProvider_Impl, IInvokeProvider,
-        IInvokeProvider_Impl, IRawElementProviderAdviseEvents,
-        IRawElementProviderAdviseEvents_Impl, IRawElementProviderFragment,
-        IRawElementProviderFragment_Impl, IRawElementProviderFragmentRoot,
-        IRawElementProviderFragmentRoot_Impl, IRawElementProviderSimple,
-        IRawElementProviderSimple_Impl, ISelectionItemProvider, ISelectionItemProvider_Impl,
-        ISelectionProvider, ISelectionProvider_Impl, ISelectionProvider2, ISelectionProvider2_Impl,
-        IToggleProvider, IToggleProvider_Impl, NavigateDirection, ProviderOptions,
-        ProviderOptions_ServerSideProvider, ProviderOptions_UseComThreading, UIA_EVENT_ID,
-        UIA_ExpandCollapsePatternId, UIA_InvokePatternId, UIA_PATTERN_ID, UIA_PROPERTY_ID,
+        IExpandCollapseProvider, IExpandCollapseProvider_Impl, IGridItemProvider,
+        IGridItemProvider_Impl, IInvokeProvider, IInvokeProvider_Impl,
+        IRawElementProviderAdviseEvents, IRawElementProviderAdviseEvents_Impl,
+        IRawElementProviderFragment, IRawElementProviderFragment_Impl,
+        IRawElementProviderFragmentRoot, IRawElementProviderFragmentRoot_Impl,
+        IRawElementProviderSimple, IRawElementProviderSimple_Impl, ISelectionItemProvider,
+        ISelectionItemProvider_Impl, ISelectionProvider, ISelectionProvider_Impl,
+        ISelectionProvider2, ISelectionProvider2_Impl, IToggleProvider, IToggleProvider_Impl,
+        NavigateDirection, ProviderOptions, ProviderOptions_ServerSideProvider,
+        ProviderOptions_UseComThreading, UIA_EVENT_ID, UIA_ExpandCollapsePatternId,
+        UIA_GridItemPatternId, UIA_InvokePatternId, UIA_PATTERN_ID, UIA_PROPERTY_ID,
         UIA_SelectionItemPatternId, UIA_SelectionPattern2Id, UIA_SelectionPatternId,
         UIA_TextPattern2Id, UIA_TextPatternId, UIA_TogglePatternId, UIA_ValuePatternId, UiaRect,
     };
@@ -1626,7 +1638,7 @@ mod handler {
         index: usize,
         pattern_id: UIA_PATTERN_ID,
     ) -> WinResult<IUnknown> {
-        let (role, states, has_value, invokable) = {
+        let (role, states, has_value, invokable, cell) = {
             let guard = tree
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -1636,8 +1648,18 @@ mod handler {
                 node.states,
                 node.value.is_some(),
                 node.default_action.is_some(),
+                node.cell,
             )
         };
+        if let (true, Some(cell)) = (pattern_id == UIA_GridItemPatternId, cell) {
+            let provider: IUnknown = GridItemProvider {
+                tree: tree.clone(),
+                hwnd,
+                cell,
+            }
+            .into();
+            return Ok(provider);
+        }
         if pattern_id == UIA_InvokePatternId && invokable {
             let provider: IUnknown = InvokeProvider.into();
             return Ok(provider);
@@ -1711,6 +1733,34 @@ mod handler {
             top: 0.0,
             width: 0.0,
             height: 0.0,
+        }
+    }
+
+    /// The `GridItemPattern` provider for a node whose fixture gives it a
+    /// `cell`, one row and column wide.
+    #[implement(IGridItemProvider, Agile = false)]
+    struct GridItemProvider {
+        tree: SharedTree,
+        hwnd: HWND,
+        cell: crate::tree::GridCell,
+    }
+
+    impl IGridItemProvider_Impl for GridItemProvider_Impl {
+        fn Row(&self) -> WinResult<i32> {
+            Ok(i32::try_from(self.cell.row).unwrap_or(0))
+        }
+        fn Column(&self) -> WinResult<i32> {
+            Ok(i32::try_from(self.cell.column).unwrap_or(0))
+        }
+        fn RowSpan(&self) -> WinResult<i32> {
+            Ok(1)
+        }
+        fn ColumnSpan(&self) -> WinResult<i32> {
+            Ok(1)
+        }
+        fn ContainingGrid(&self) -> WinResult<IRawElementProviderSimple> {
+            hits::hit(hits::Method::ContainingGrid);
+            props::child_provider(&self.tree, self.hwnd, self.cell.grid).ok_or_else(Error::empty)
         }
     }
 

@@ -454,6 +454,37 @@ pub struct Rect {
     pub height: i32,
 }
 
+/// A table's identity: a hash of its UI Automation runtime id, computed
+/// once by the process that reads the cell, because Core needs only equality
+/// and a retained node would have to be held.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TableId(pub u64);
+
+/// Where a node is in a grid, when it is a grid's cell
+/// (`docs/parity/focus-announcement.md`, "Table cell coordinates").
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CellPosition {
+    /// The one-based row.
+    pub row: u32,
+    /// The one-based column.
+    pub column: u32,
+    /// The table it is in, `None` when none was read: an item selected
+    /// anywhere, heard by the focus listener, or a table that could not be
+    /// read. Left out of the message when `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub table: Option<TableId>,
+}
+
+impl NodeDetails {
+    /// Records the table of the cell the node is. A table is read only of
+    /// a node with a cell, so a node without one takes none.
+    pub fn set_table(&mut self, table: Option<TableId>) {
+        if let Some(cell) = &mut self.cell {
+            cell.table = table;
+        }
+    }
+}
+
 /// The optional per-node properties beyond name, role, value, and states —
 /// grouped so [`NodeSnapshot`] literals name one field and so later
 /// milestones grow this struct instead of the snapshot itself.
@@ -496,17 +527,13 @@ pub struct NodeDetails {
     /// the message, so that they carry no string.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub class_name: Option<String>,
-    /// The one-based row of the grid cell the node is, when it is one
-    /// (UIA's `GridItem` pattern, its zero-based `Row` plus one), read only
-    /// for a node read alone, never among many, and only when the theme
-    /// reports cell coordinates (`docs/parity/focus-announcement.md`, "Table
-    /// cell coordinates"). Left out of the message when `None`.
+    /// Where the node is in a grid, when it is a grid's cell (UIA's
+    /// `GridItem` pattern), read only for a node read alone, never among
+    /// many, and only when the theme reports cell coordinates
+    /// (`docs/parity/focus-announcement.md`, "Table cell coordinates"). Left
+    /// out of the message when `None`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub row: Option<u32>,
-    /// The one-based column of the grid cell the node is, read with
-    /// [`row`](Self::row).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub column: Option<u32>,
+    pub cell: Option<CellPosition>,
     /// The UI Automation `AutomationId` of the node's raw-view parent,
     /// carried only on the snapshot of a UI Automation focus, as
     /// [`class_name`](Self::class_name) is, for Core's rules for an

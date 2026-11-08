@@ -10,9 +10,9 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use verbatim_model::{
-    CaretKey, Fetches, HeldAnchors, HookForeground, NodeId, NodeSnapshot, OutpostId, Pid, QueryId,
-    ReaderSettings, ReviewCommand, Selection, SpeechMark, StateSet, TextAttributes, TextChunk,
-    TextPosition, TextUnit, ToastId, TraceId, WindowFacts,
+    CaretKey, CellPosition, Fetches, HeldAnchors, HookForeground, NodeId, NodeSnapshot, OutpostId,
+    Pid, QueryId, ReaderSettings, ReviewCommand, Selection, SpeechMark, StateSet, TableId,
+    TextAttributes, TextChunk, TextPosition, TextUnit, ToastId, TraceId, WindowFacts,
 };
 
 use crate::foreground::Foreground;
@@ -591,6 +591,32 @@ pub(crate) struct SayAll {
     pub(crate) display_held: bool,
 }
 
+/// The table, row and column last spoken of a cell, each valid alone
+/// (`SrState::cell_memory`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CellMemory {
+    table: Option<TableId>,
+    row: Option<u32>,
+    column: Option<u32>,
+}
+
+impl CellMemory {
+    /// The row and column to say of `cell`, each `None` when it is unchanged
+    /// within one table, and remembers it. A cell with no table says both
+    /// and leaves the table remembered as it was.
+    pub(crate) fn said(&mut self, cell: &CellPosition) -> (Option<u32>, Option<u32>) {
+        let same_table = cell.table.is_some() && cell.table == self.table;
+        let row = (!same_table || self.row != Some(cell.row)).then_some(cell.row);
+        let column = (!same_table || self.column != Some(cell.column)).then_some(cell.column);
+        if cell.table.is_some() {
+            self.table = cell.table;
+        }
+        self.row = Some(cell.row);
+        self.column = Some(cell.column);
+        (row, column)
+    }
+}
+
 /// The last toast spoken (`SrState::last_toast`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LastToast {
@@ -691,6 +717,10 @@ pub struct SrState {
     /// the same level speaks last instead ("Where the level goes" in
     /// `docs/nvda/speech.md`).
     pub(crate) last_tree_level: Option<u32>,
+    /// The table, row and column last spoken of a cell, which the next cell
+    /// in that table leaves out when unchanged
+    /// (`docs/parity/focus-announcement.md`, "Table cell coordinates").
+    pub(crate) cell_memory: CellMemory,
     /// The percentage each progress bar last indicated, in hundredths, by
     /// the centre of its location on the screen, as NVDA remembers it
     /// (`docs/nvda/object-model.md`, "How a progress bar reports its

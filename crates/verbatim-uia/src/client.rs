@@ -848,7 +848,7 @@ impl Uia {
     ) -> windows::core::Result<Option<NodeSnapshot>> {
         Ok(self
             .selected(container, request)?
-            .map(|selected| selected.snapshot(registry)))
+            .map(|selected| selected.snapshot_in_table(registry)))
     }
 
     /// The first element of `container`'s current selection, its cache
@@ -946,7 +946,7 @@ impl Uia {
             _ => return Err(windows::core::Error::from(E_INVALIDARG)),
         };
         match element.walk(&walker, direction, request) {
-            Ok(neighbor) => Ok(Some(neighbor.snapshot(registry))),
+            Ok(neighbor) => Ok(Some(neighbor.snapshot_in_table(registry))),
             // A dead element is reported as such; any other failure reads as
             // no neighbor, as NVDA's tree-walker failures do, and so does the
             // null element `windows` reports for a genuine edge.

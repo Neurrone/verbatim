@@ -177,6 +177,7 @@ fn query<'a>(
         nearest_window: None,
         before_call: None,
         value_available: None,
+        is_cell: None,
         plain: None,
         progress: None,
     }
@@ -1564,6 +1565,7 @@ fn a_failed_remote_program_continues_from_the_parent_window_live() {
     );
 }
 
+#[expect(clippy::too_many_lines, reason = "the list of this binary's tests")]
 fn main() {
     harness::run_isolated(&[
         (
@@ -1662,5 +1664,97 @@ fn main() {
             "a_selection_read_that_times_out_or_finds_the_list_gone_fails",
             a_selection_read_that_times_out_or_finds_the_list_gone_fails,
         ),
+        (
+            "a_cells_table_is_read_alike_by_the_program_and_the_classic_way",
+            a_cells_table_is_read_alike_by_the_program_and_the_classic_way,
+        ),
     ]);
+}
+
+/// A cell's table is answered alike by the program and the classic walk,
+/// for the focus, its selected child and a navigation step's neighbour; a
+/// grid's other cell is in the same table and another grid's is not, and
+/// nothing is read of an element that is no cell or when the theme leaves
+/// cell coordinates out.
+fn a_cells_table_is_read_alike_by_the_program_and_the_classic_way() {
+    use verbatim_uia::NodeGates;
+
+    let mut fixture = Fixture::with("mockapp-grid-tables", "grid.json");
+    let both = |fixture: &Fixture, input: &Cached<FocusInput>, is_cell: bool| {
+        let query = FocusQuery {
+            is_cell: Some(is_cell),
+            ..query(input, &[], &fixture.fill)
+        };
+        let remote = focused(focus_ancestry_remote(&fixture.uia, &query), "remote");
+        let classic = focused(focus_ancestry_classic(&fixture.uia, &query), "classic");
+        assert_eq!(remote.element_table, classic.element_table);
+        assert_eq!(remote.selected_table, classic.selected_table);
+        remote
+    };
+    let first = fixture.focus("first", "First");
+    let first_table = both(&fixture, &first, true)
+        .element_table
+        .expect("a cell has a table");
+    let second = fixture.focus("second", "Second");
+    assert_eq!(
+        both(&fixture, &second, true).element_table,
+        Some(first_table)
+    );
+    let other = fixture.focus("other", "Other");
+    let other_table = both(&fixture, &other, true).element_table;
+    assert!(other_table.is_some());
+    assert_ne!(other_table, Some(first_table));
+
+    let plain = fixture.focus("plain", "Plain");
+    assert_eq!(both(&fixture, &plain, false).element_table, None);
+
+    // The list's selected item is a cell read with it.
+    let list = fixture.focus("grid-a", "Grid A");
+    assert_eq!(
+        both(&fixture, &list, false).selected_table,
+        Some(first_table)
+    );
+
+    // The theme leaves cell coordinates out: the program reads no table.
+    let off = Fill::new(
+        &fixture
+            .uia
+            .request::<Ancestor>(verbatim_uia::AncestorGates {
+                node: NodeGates {
+                    cell: None,
+                    ..Node::all_on()
+                },
+                ..Ancestor::all_on()
+            })
+            .expect("the cache request"),
+    );
+    let second = fixture.focus("second", "Second");
+    let query_off = FocusQuery {
+        element_fill: &off,
+        is_cell: Some(true),
+        ..query(&second, &[], &fixture.fill)
+    };
+    assert_eq!(
+        focused(focus_ancestry_remote(&fixture.uia, &query_off), "remote").element_table,
+        None
+    );
+
+    // A neighbour's table, each way.
+    let from: Cached<verbatim_uia::Kept> = fixture.find_node("First").narrow();
+    let nodes = Fill::new(
+        &fixture
+            .uia
+            .request::<Node>(Node::all_on())
+            .expect("the node's cache request"),
+    );
+    let step = StepQuery {
+        element: &from,
+        direction: NavigationDirection::NextSibling,
+        fill: &nodes,
+    };
+    let remote = navigation_step_remote(&fixture.uia, &step).expect("the program");
+    let classic = navigation_step_classic(&fixture.uia, &step).expect("the classic step");
+    assert_eq!(remote.neighbor_table, Some(first_table));
+    assert_eq!(classic.neighbor_table, Some(first_table));
+    fixture.app.quit();
 }

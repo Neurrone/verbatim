@@ -96,8 +96,8 @@ pub use theme::{
     is_plain_file_name,
 };
 pub use tree::{
-    Backend, NodeDetails, NodeSnapshot, ObjectKey, Rect, Role, State, StateSet, TreeNode,
-    WindowIdentity,
+    Backend, CellPosition, NodeDetails, NodeSnapshot, ObjectKey, Rect, Role, State, StateSet,
+    TableId, TreeNode, WindowIdentity,
 };
 
 use std::fmt;

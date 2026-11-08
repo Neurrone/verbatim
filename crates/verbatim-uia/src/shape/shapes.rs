@@ -1,6 +1,8 @@
 //! The shapes, and the mapping each group does from what it reads.
 
-use verbatim_model::{Backend, NodeDetails, NodeSnapshot, Role, State, StateSet, WindowHandle};
+use verbatim_model::{
+    Backend, CellPosition, NodeDetails, NodeSnapshot, Role, State, StateSet, TableId, WindowHandle,
+};
 use windows::Win32::UI::Accessibility::{
     IUIAutomationSelectionPattern, IUIAutomationTextPattern, UIA_AcceleratorKeyPropertyId,
     UIA_AccessKeyPropertyId, UIA_AutomationIdPropertyId, UIA_BoundingRectanglePropertyId,
@@ -24,6 +26,7 @@ use windows::Win32::UI::Accessibility::{
 };
 
 use super::{Cached, Covers, Reader, Shape, Ungated, uia_shape};
+use crate::element::containing_grid;
 use crate::map::{
     CachedUiaParts, RawUiaStates, keyboard_shortcut, role_of, states_from_uia, strip_bidi_controls,
     value_from,
@@ -367,6 +370,7 @@ impl ListenerSelection {
         let mut name = self.event.name.clone();
         let mut value = self.value.value(self.event.role.class_name.as_deref());
         let mut details = NodeDetails {
+            cell: self.cell.position(),
             description: self.description.description(),
             keyboard_shortcut: self.shortcut.shortcut(),
             position_in_set: self.position.position_in_set,
@@ -375,10 +379,6 @@ impl ListenerSelection {
             window: self.event.role.window(),
             ..NodeDetails::default()
         };
-        if let Some((row, column)) = self.cell.coordinates() {
-            details.row = Some(row);
-            details.column = Some(column);
-        }
         strip_bidi_controls([&mut name, &mut value, &mut details.description]);
         CachedUiaParts {
             runtime_id,
@@ -575,10 +575,11 @@ uia_shape! {
 
 impl Cell {
     /// Its one-based row and column, as NVDA numbers them for speech (the
-    /// pattern's zero-based values plus one), `None` for an element
-    /// without the `GridItem` pattern or with a negative row or column.
+    /// pattern's zero-based values plus one), with no table yet, `None` for
+    /// an element without the `GridItem` pattern or with a negative row or
+    /// column.
     #[must_use]
-    pub fn coordinates(&self) -> Option<(u32, u32)> {
+    pub fn position(&self) -> Option<CellPosition> {
         if !self.grid_item {
             return None;
         }
@@ -587,7 +588,11 @@ impl Cell {
                 .ok()
                 .and_then(|value| value.checked_add(1))
         };
-        Some((one_based(self.row)?, one_based(self.column)?))
+        Some(CellPosition {
+            row: one_based(self.row)?,
+            column: one_based(self.column)?,
+            table: None,
+        })
     }
 }
 
@@ -632,6 +637,12 @@ uia_shape! {
 }
 
 impl Node {
+    /// Whether it was read as a grid's cell, so its table may be read.
+    #[must_use]
+    pub fn is_cell(&self) -> bool {
+        self.cell.as_ref().and_then(Cell::position).is_some()
+    }
+
     /// The node's parts, with runtime id `runtime_id`: a detail its gate
     /// left unfetched is `None`, as one the element does not report, and a
     /// node whose place was not fetched has no rectangle and is not off
@@ -656,16 +667,11 @@ impl Node {
             rect: self.place.as_ref().and_then(|place| place.rect),
             top_level_client: false,
             class_name: None,
-            row: None,
-            column: None,
+            cell: self.cell.as_ref().and_then(Cell::position),
             parent_automation_id: None,
             window: self.role.window(),
             above_boundary: false,
         };
-        if let Some((row, column)) = self.cell.as_ref().and_then(Cell::coordinates) {
-            details.row = Some(row);
-            details.column = Some(column);
-        }
         strip_bidi_controls([&mut name, &mut value, &mut details.description]);
         let offscreen = self.place.as_ref().is_some_and(|place| place.offscreen);
         CachedUiaParts {
@@ -712,6 +718,26 @@ impl Cached<Node> {
     #[must_use]
     pub fn snapshot(&self, registry: &dyn Interning) -> NodeSnapshot {
         snapshot_of(&self.read(), &self.narrow(), registry)
+    }
+
+    /// The table of the cell this node is, `None` for a node that is no
+    /// cell ([`containing_grid`]): one call into the application for a cell
+    /// and none otherwise.
+    #[must_use]
+    pub fn table(&self) -> Option<TableId> {
+        self.read()
+            .is_cell()
+            .then(|| containing_grid(self.live().element()))
+            .flatten()
+    }
+
+    /// [`snapshot`](Self::snapshot) of a node read alone, with the table of
+    /// the cell it is ([`table`](Self::table)).
+    #[must_use]
+    pub fn snapshot_in_table(&self, registry: &dyn Interning) -> NodeSnapshot {
+        let mut snapshot = self.snapshot(registry);
+        snapshot.details.set_table(self.table());
+        snapshot
     }
 }
 

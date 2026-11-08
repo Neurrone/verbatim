@@ -84,14 +84,13 @@ pub fn leave_out_unreported(details: &mut NodeDetails, fetches: &Fetches) {
         details.level = None;
     }
     if !fetches.cell_coordinates {
-        details.row = None;
-        details.column = None;
+        details.cell = None;
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use verbatim_model::{Fetches, NodeDetails};
+    use verbatim_model::{CellPosition, Fetches, NodeDetails};
     use verbatim_uia::{AncestorGates, Node, NodeGates, Shape};
 
     use super::{ancestor_gates, focus_gates, leave_out_unreported, many_node_gates, node_gates};
@@ -195,8 +194,11 @@ mod tests {
             position_in_set: Some(2),
             set_size: Some(3),
             level: Some(1),
-            row: Some(4),
-            column: Some(5),
+            cell: Some(CellPosition {
+                row: 4,
+                column: 5,
+                table: None,
+            }),
             ..NodeDetails::default()
         };
         let left = |off: fn(&mut Fetches)| {
@@ -239,8 +241,7 @@ mod tests {
         assert_eq!(
             left(|fetches| fetches.cell_coordinates = false),
             NodeDetails {
-                row: None,
-                column: None,
+                cell: None,
                 ..read.clone()
             }
         );

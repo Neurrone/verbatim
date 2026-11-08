@@ -234,6 +234,11 @@ the element does not have the focus, and otherwise an `Ancestry`:
   the classic walk, whose caller makes one live read. A menu item that no
   pattern makes checkable, as a Windows Forms one, says it is checked only
   there.
+- `element_table` and `selected_table`: the table of the element and of its
+  selected child, when each is a cell read with the theme's cell
+  coordinates, a step of the program (`read_table`) and one call of the
+  classic walk. `FocusQuery::is_cell` says whether the element is a cell
+  when the caller's cache knows, so the program grows only for one.
 
 Only reaching the top ends a walk as known. In the classic view a
 top-level window's parent is the desktop root, so the classic walk stops
@@ -576,8 +581,8 @@ raw-view step (parent, next or previous sibling, first child) from
 (decision 2 of `books/dev/src/explanation/design/uia-shapes.md`), and finds that element's
 nearest window, as the outpost's navigation needs to correct the
 neighbor's backend. The answer, a `Step`, holds the neighbor as a
-`Cached<Node>` filled by `StepQuery::fill`, with its absent record, and
-the window. The classic implementation is `nearest_window_handle` and a
+`Cached<Node>` filled by `StepQuery::fill`, with its absent record, its
+table when it is a cell (`neighbor_table`), and the window. The classic implementation is `nearest_window_handle` and a
 tree walker step, one call each; a step from a gone element is an error,
 any other failure no neighbor. A program reports a top-level window's
 parent as null where a tree walker reports the desktop, so the outpost

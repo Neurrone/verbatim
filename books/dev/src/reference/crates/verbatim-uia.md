@@ -575,8 +575,10 @@ patterns its request holds.
   availability; `value(class_name)`), `States` (every state property but
   `IsOffscreen`; `states(role, offscreen)`), `Description`, `Shortcut`,
   `Position`, `Place` (`BoundingRectangle` and `IsOffscreen`), and `Cell`
-  (a grid item's availability, row and column; `coordinates()`,
-  one-based). A read of many elements never holds `Place`, as NVDA's base
+  (a grid item's availability, row and column; `position()`, one-based,
+  with no table, which `Cached<Node>::table` or the program's step reads:
+  `containing_grid`, one call, hashed by `table_id` over `runtime_id_key`
+  so that a program's answer and a classic read's are equal). A read of many elements never holds `Place`, as NVDA's base
   cache holds neither, because for some elements, a top-level window's
   title bar among them, UIA answers either only by sending the
   application's UI thread `WM_GETTITLEBARINFOEX` (decision 9 of

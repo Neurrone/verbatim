@@ -106,7 +106,8 @@ the row, and an object whose table is not known always says both.
 Turning off the "Cell coordinates" document formatting option, on by
 default, leaves the numbers unsaid (`reportTableCellCoords`,
 `config/configSpec.py` 271). The Windows 11 Alt+Tab switcher's items are
-cells of a one-row grid, so each says "row 1" and its column.
+cells of a grid, so the first says its row and column and the next only
+what changed.
 
 ### Which states are spoken, and in what order
 

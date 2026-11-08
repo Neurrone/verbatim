@@ -1839,6 +1839,7 @@ fn uia_walk_from_a_window_element_held_without_its_handle_stops_below_the_bounda
             nearest_window: Some(hwnd.0 as isize),
             before_call: None,
             value_available: None,
+            is_cell: None,
             plain: None,
             progress: None,
         },
@@ -2865,6 +2866,7 @@ fn uia_selected_children_cost_exactly() {
                     nearest_window: None,
                     before_call: None,
                     value_available: None,
+                    is_cell: None,
                     plain: None,
                     progress: None,
                 },
@@ -5279,5 +5281,134 @@ fn main() {
             "text_field_focuses_cost_exactly",
             text_field_focuses_cost_exactly,
         ),
+        ("a_cells_table_costs_exactly", a_cells_table_costs_exactly),
     ]);
+}
+
+/// What reading a cell's table costs: classically one call, only for a
+/// cell, and in the focus's program no call beyond the program's own.
+#[expect(
+    clippy::too_many_lines,
+    reason = "the classic and the program's pinned provider hits, listed in full"
+)]
+fn a_cells_table_costs_exactly() {
+    let title = common::unique_title("mockapp-counts-grid");
+    let mut app = common::spawn("grid.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let under_test = UiaUnderTest::new(hwnd);
+    let nodes = under_test
+        .uia
+        .request::<Node>(Node::all_on())
+        .expect("a cache request");
+    let ancestors = Fill::new(
+        &under_test
+            .uia
+            .request::<Ancestor>(common::ancestor_gates())
+            .expect("a cache request"),
+    );
+    let element_fill = Fill::new(
+        &under_test
+            .uia
+            .request::<Ancestor>(Ancestor::all_on())
+            .expect("a cache request"),
+    );
+    let mut ratchet = Ratchet::default();
+
+    common::apply(&mut app, hwnd, "set-focus first");
+    let cell = Live::new(under_test.element("First").clone())
+        .refresh(&nodes)
+        .expect("the cell's cache");
+    let (table, cost) = under_test.measure(hwnd, |_| cell.table());
+    assert!(table.is_some(), "a cell has a table");
+    ratchet.check(
+        "UIA table of a cell, classically",
+        &cost,
+        calls(1, 0, 0),
+        0,
+        &[
+            ("ProviderOptions", 4),
+            ("GetPatternProvider", 1),
+            ("GetPropertyValue", 1),
+            ("HostRawElementProvider", 3),
+            ("Navigate", 1),
+            ("GetRuntimeId", 1),
+            ("ContainingGrid", 1),
+            ("FragmentRoot", 2),
+        ],
+    );
+
+    let plain = Live::new(under_test.element("Plain").clone())
+        .refresh(&nodes)
+        .expect("the button's cache");
+    let (table, cost) = under_test.measure(hwnd, |_| plain.table());
+    assert_eq!(table, None);
+    ratchet.check("UIA table of no cell", &cost, calls(0, 0, 0), 0, &[]);
+
+    let input = cell.narrow();
+    let program = |is_cell| {
+        under_test.measure(hwnd, |under_test| {
+            focus_ancestry(
+                &under_test.uia,
+                &FocusQuery {
+                    element: &input,
+                    known: &[],
+                    previous: None,
+                    depth_limit: 64,
+                    fill: &ancestors,
+                    element_fill: &element_fill,
+                    require_focus: true,
+                    refresh: false,
+                    nearest_window: None,
+                    before_call: None,
+                    value_available: None,
+                    is_cell: Some(is_cell),
+                    plain: None,
+                    progress: None,
+                },
+                true,
+            )
+            .expect("the focus ancestry")
+        })
+    };
+    let (_, without) = program(false);
+    let (answer, with) = program(true);
+    let FocusAncestry::Focused(ancestry) = answer.0 else {
+        panic!("the cell has the focus");
+    };
+    assert!(ancestry.element_table.is_some(), "the program read it");
+    ratchet.check(
+        "UIA focus program of no cell",
+        &without,
+        calls(1, 0, 0),
+        0,
+        &[
+            ("WM_GETOBJECT", 2),
+            ("ProviderOptions", 29),
+            ("GetPatternProvider", 22),
+            ("GetPropertyValue", 48),
+            ("HostRawElementProvider", 11),
+            ("Navigate", 9),
+            ("GetRuntimeId", 4),
+            ("FragmentRoot", 4),
+        ],
+    );
+    ratchet.check(
+        "UIA focus program of a cell",
+        &with,
+        calls(1, 0, 0),
+        0,
+        &[
+            ("WM_GETOBJECT", 2),
+            ("ProviderOptions", 32),
+            ("GetPatternProvider", 24),
+            ("GetPropertyValue", 49),
+            ("HostRawElementProvider", 13),
+            ("Navigate", 10),
+            ("GetRuntimeId", 5),
+            ("ContainingGrid", 1),
+            ("FragmentRoot", 5),
+        ],
+    );
+    ratchet.finish();
+    app.quit();
 }

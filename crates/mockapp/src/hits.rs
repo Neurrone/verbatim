@@ -211,6 +211,8 @@ pub(crate) enum Method {
     Navigate,
     /// `IRawElementProviderFragment::GetRuntimeId`.
     GetRuntimeId,
+    /// `IGridItemProvider::ContainingGrid`.
+    ContainingGrid,
     /// `IRawElementProviderFragment::BoundingRectangle`.
     BoundingRectangle,
     /// `IRawElementProviderFragment::GetEmbeddedFragmentRoots`.
@@ -361,7 +363,7 @@ static HITS: [AtomicU32; COUNT] = [const { AtomicU32::new(0) }; COUNT];
 impl Method {
     /// Every counted method, in counter order: a method's index here is the
     /// `wParam` that reads it.
-    pub(crate) const ALL: [Method; 76] = [
+    pub(crate) const ALL: [Method; 77] = [
         Method::GetObject,
         Method::ProviderOptions,
         Method::GetPatternProvider,
@@ -369,6 +371,7 @@ impl Method {
         Method::HostRawElementProvider,
         Method::Navigate,
         Method::GetRuntimeId,
+        Method::ContainingGrid,
         Method::BoundingRectangle,
         Method::GetEmbeddedFragmentRoots,
         Method::SetFocus,
@@ -454,6 +457,7 @@ impl Method {
             Method::HostRawElementProvider => "HostRawElementProvider",
             Method::Navigate => "Navigate",
             Method::GetRuntimeId => "GetRuntimeId",
+            Method::ContainingGrid => "ContainingGrid",
             Method::BoundingRectangle => "BoundingRectangle",
             Method::GetEmbeddedFragmentRoots => "GetEmbeddedFragmentRoots",
             Method::SetFocus => "SetFocus",

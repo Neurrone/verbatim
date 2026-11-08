@@ -52,6 +52,7 @@ pub(crate) mod speak_time_and_date;
 pub(crate) mod spelling_errors;
 pub(crate) mod switch_to_onecore;
 pub(crate) mod system_information_tree;
+pub(crate) mod table_cells;
 pub(crate) mod terminal;
 pub(crate) mod terminal_commands;
 pub(crate) mod terminal_editing;

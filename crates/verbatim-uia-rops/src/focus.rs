@@ -5,26 +5,28 @@
 
 use windows::Win32::UI::Accessibility::{
     IUIAutomationElement, UIA_ComboBoxControlTypeId, UIA_E_ELEMENTNOTAVAILABLE,
-    UIA_HasKeyboardFocusPropertyId, UIA_IsValuePatternAvailablePropertyId,
+    UIA_GridItemContainingGridPropertyId, UIA_HasKeyboardFocusPropertyId,
+    UIA_IsGridItemPatternAvailablePropertyId, UIA_IsValuePatternAvailablePropertyId,
     UIA_LegacyIAccessibleStatePropertyId, UIA_ListControlTypeId, UIA_MenuItemControlTypeId,
     UIA_NativeWindowHandlePropertyId, UIA_PATTERN_ID, UIA_PROPERTY_ID, UIA_RuntimeIdPropertyId,
     UIA_Selection2FirstSelectedItemPropertyId, UIA_SelectionSelectionPropertyId,
     UIA_TabControlTypeId,
 };
 
+pub use verbatim_uia::runtime_id_key;
 use verbatim_uia::{
     Absent, Ancestor, Cached, Direction, ElementExt, Fill, FocusInput, LEFT_OUT_WHEN_UNSUPPORTED,
-    Shape, Uia,
+    Shape, Uia, containing_grid,
 };
 
-use verbatim_model::EarlierElement;
+use verbatim_model::{EarlierElement, TableId};
 
 use crate::builder::{Builder, Reg, kind};
 use crate::caret::gone_or_timed_out;
 use crate::error::Error;
 use crate::instruction::TypeTest;
 use crate::opcode::{Comparison, NavigationDirection};
-use crate::operation::Value;
+use crate::operation::{Outcome, Value};
 
 /// What [`focus_ancestry`] and its two implementations are asked.
 #[derive(Clone, Copy)]
@@ -101,6 +103,13 @@ pub struct FocusQuery<'a> {
     /// between its steps and does not read this: a caller with such a
     /// window above the focus runs the classic walk instead.
     pub plain: Option<&'a dyn Fn(isize) -> bool>,
+    /// Whether the element is a grid's cell, when the caller's cache of it
+    /// says: its table is then read only for a cell
+    /// ([`Ancestry::element_table`]). `None` has the classic walk take it
+    /// from the element read afresh, and the program ask it inside the
+    /// provider, with [`FocusQuery::refresh`]; without that, no table is
+    /// read.
+    pub is_cell: Option<bool>,
     /// Told what the classic walk reads as it reads it ([`Progress`]), so
     /// a caller keeps what was read should a later call of the walk fail.
     /// `None` tells nobody. The remote program is one call and does not
@@ -115,10 +124,12 @@ pub enum Progress<'a> {
     /// Whether [`FocusQuery::previous`] has the keyboard focus, read live
     /// ([`Ancestry::previous_focused`]).
     PreviousFocused(EarlierElement),
-    /// The element with its cache filled afresh ([`Ancestry::element`]).
-    Element(&'a Cached<Ancestor>),
-    /// The first selected child ([`Ancestry::selected_child`]).
-    SelectedChild(&'a Cached<Ancestor>),
+    /// The element with its cache filled afresh ([`Ancestry::element`]),
+    /// and its table ([`Ancestry::element_table`]).
+    Element(&'a Cached<Ancestor>, Option<TableId>),
+    /// The first selected child ([`Ancestry::selected_child`]), and its
+    /// table ([`Ancestry::selected_table`]).
+    SelectedChild(&'a Cached<Ancestor>, Option<TableId>),
     /// The next ancestor kept, nearest first ([`Ancestry::ancestors`]).
     Ancestor(&'a Cached<Ancestor>),
 }
@@ -203,6 +214,13 @@ pub struct Ancestry {
     /// classic walk, which leaves the read to its caller, one live call
     /// made only when the caller needs it.
     pub legacy_state: Option<Option<i32>>,
+    /// The table of the focused element, when it is a cell read with the
+    /// theme's cell coordinates; `None` also when it names no grid or the
+    /// read failed.
+    pub element_table: Option<TableId>,
+    /// The table of [`Ancestry::selected_child`], as
+    /// [`Ancestry::element_table`] is of the element.
+    pub selected_table: Option<TableId>,
 }
 
 impl Ancestry {
@@ -313,16 +331,6 @@ fn is_element_gone(error: &Error) -> bool {
     error
         .hresult()
         .is_some_and(|code| code.0.cast_unsigned() == UIA_E_ELEMENTNOTAVAILABLE)
-}
-
-/// The string the remote program makes of a runtime id (its `Stringify`
-/// instruction, verified on Windows 11 26200): the integers in decimal,
-/// separated by commas, in square brackets, such as `[42,14681214,4,5]`.
-/// The known runtime ids go into the program as these keys.
-#[must_use]
-pub fn runtime_id_key(runtime_id: &[i32]) -> String {
-    let parts: Vec<String> = runtime_id.iter().map(i32::to_string).collect();
-    format!("[{}]", parts.join(","))
 }
 
 /// Whether the focused element's selected child is read with it, by its
@@ -464,7 +472,8 @@ fn ends_at_the_top(runtime_id: &[i32], hwnd: isize) -> bool {
 /// checks, ported from NVDA's focus handler"), then, with
 /// [`FocusQuery::refresh`], fills the element's own cache afresh, then,
 /// for a menu item, reads its legacy MSAA state
-/// ([`Ancestry::legacy_state`]), then reads a list's or tab control's
+/// ([`Ancestry::legacy_state`]), then, for a cell, reads its table
+/// ([`Ancestry::element_table`]), then reads a list's or tab control's
 /// selected child, or a combo box's when it has no `Value` pattern, then walks
 /// raw-view parents, filling each one's cache inside the provider, until
 /// the top-level window, a known ancestor, or the depth limit, and finds
@@ -551,6 +560,10 @@ pub fn focus_ancestry_remote(_uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
         (legacy_state, supported)
     });
 
+    let reads_table = reads_cell(query.element_fill);
+    let element_table = (reads_table && query.is_cell.unwrap_or(query.refresh))
+        .then(|| read_table(&mut b, element));
+
     let selected = b.new_null_element();
     let selected = b.add_to_results(selected);
     let selected_absent = b.new_int(0);
@@ -621,6 +634,9 @@ pub fn focus_ancestry_remote(_uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
             |_, _| {},
         );
     }
+
+    let selected_table =
+        (reads_table && wants_selected_child(&input)).then(|| read_table(&mut b, selected));
 
     let known = b.new_string_map();
     for (index, runtime_id) in query.known.iter().enumerate() {
@@ -773,7 +789,66 @@ pub fn focus_ancestry_remote(_uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
             }
             None => None,
         },
+        element_table: table_answered(&outcome, element_table)?,
+        selected_table: table_answered(&outcome, selected_table)?,
     }))
+}
+
+/// Whether a fill reads a cell's row and column, so that its table is read
+/// too: only while the theme reports cell coordinates.
+pub(crate) fn reads_cell<S: Shape>(fill: &Fill<S>) -> bool {
+    fill.properties()
+        .contains(&UIA_IsGridItemPatternAvailablePropertyId)
+}
+
+/// Emits the program's step that reads the table of `element`, a grid's item
+/// or not, and answers the register holding the key of its containing
+/// grid's runtime id, empty when it has none ([`table_answered`]). A failure
+/// inside the step leaves it empty and fails nothing else, as the classic
+/// read's does ([`verbatim_uia::containing_grid`]).
+pub(crate) fn read_table(b: &mut Builder, element: Reg<kind::Element>) -> Reg<kind::Str> {
+    let key = b.new_string("");
+    let key = b.add_to_results(key);
+    b.try_catch(
+        |b| {
+            let null = b.is_null(element);
+            let some = b.not(null);
+            b.if_(some, |b| {
+                let cell = b
+                    .property(element, UIA_IsGridItemPatternAvailablePropertyId.0)
+                    .assume::<kind::Bool>();
+                b.if_(cell, |b| {
+                    let grid = b.property(element, UIA_GridItemContainingGridPropertyId.0);
+                    let is_element = b.is(TypeTest::Element, grid);
+                    b.if_(is_element, |b| {
+                        let grid = grid.assume::<kind::Element>();
+                        let null = b.is_null(grid);
+                        let some = b.not(null);
+                        b.if_(some, |b| {
+                            let runtime_id = b.property(grid, UIA_RuntimeIdPropertyId.0);
+                            let read = b.stringify(runtime_id);
+                            b.set(key, read);
+                        });
+                    });
+                });
+            });
+        },
+        |_, _| {},
+    );
+    key
+}
+
+/// The table a [`read_table`] step found, `None` when the step was not
+/// emitted or found none.
+pub(crate) fn table_answered(
+    outcome: &Outcome,
+    key: Option<Reg<kind::Str>>,
+) -> Result<Option<TableId>, Error> {
+    let Some(key) = key else {
+        return Ok(None);
+    };
+    let key = outcome.get(key)?;
+    Ok((!key.is_empty()).then(|| verbatim_uia::table_id(&key)))
 }
 
 /// The absent record a program returned for an element, as its bits.
@@ -972,8 +1047,21 @@ pub fn focus_ancestry_classic(uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
     } else {
         None
     };
+    // A cell's table, one call and only for a cell, which the caller's
+    // cache or the element read afresh says.
+    let is_cell = query.is_cell.unwrap_or_else(|| {
+        element
+            .as_ref()
+            .is_some_and(|element| element.read().node.is_cell())
+    });
+    let element_table = is_cell
+        .then(|| {
+            before_call("the cell's containing grid");
+            containing_grid(live.element())
+        })
+        .flatten();
     if let Some(element) = &element {
-        progress(Progress::Element(element));
+        progress(Progress::Element(element, element_table));
     }
     // The selected child is optional: one whose read timed out, or whose
     // container or item is gone, is left out, and the focus and its
@@ -991,8 +1079,15 @@ pub fn focus_ancestry_classic(uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
         Ok(false) => None,
         Err(error) => optional(Err(error))?,
     };
+    let selected_table = selected_child
+        .as_ref()
+        .filter(|child| child.read().node.is_cell())
+        .and_then(|child| {
+            before_call("the cell's containing grid");
+            containing_grid(child.live().element())
+        });
     if let Some(child) = &selected_child {
-        progress(Progress::SelectedChild(child));
+        progress(Progress::SelectedChild(child, selected_table));
     }
     // The desktop root is served in this process, so reading it is local.
     before_call("the desktop root and the tree walker");
@@ -1009,6 +1104,8 @@ pub fn focus_ancestry_classic(uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
         previous_focused,
         element,
         legacy_state: None,
+        element_table,
+        selected_table,
     };
     let mut current = live.clone();
     let mut current_window = input.hwnd;

@@ -261,20 +261,36 @@ selected child and a navigation step's neighbour, never among many
 (`verbatim_uia::Cell`), and only while the theme reports the cell
 coordinates indication (`cell-coordinates`, on by default, as NVDA's
 "Cell coordinates" option is); the snapshot carries them one-based
-(`NodeDetails::row` and `NodeDetails::column`), and Core speaks them in
-NVDA's place, where they also stand in for a name in deciding whether a
-role is spoken. Pinned by Core's unit tests
+(`NodeDetails::cell`), and Core speaks them in NVDA's place, where they
+also stand in for a name in deciding whether a role is spoken. A focus,
+its selected child and a navigation step's neighbour also read the
+cell's table, the runtime id of its `ContainingGrid` (`TableId`), and
+Core remembers the table, row and column last spoken (`CellMemory`): a
+row or column unchanged within one table is left out, entering another
+table says both, and a cell with no table says both and leaves the
+table remembered as it was. NVDA was captured on 2026-11-09 on the
+Alt+Tab switcher, opening at row 1, column 2: "Windows Power Shell  row
+1  column 2  2 of 16"; Right to the next item: "Windows Power Shell
+column 3  3 of 16"; Right: "capwin 5  column 4  4 of 16"; Down: "Windows
+Power Shell  row 2  8 of 16"; Up: "capwin 5  row 1  4 of 16"; a second
+opening repeats "row 1  column 2", since the switcher's grid is a new
+one each time. Pinned by Core's unit tests
 (`details_speak_in_nvda_property_order`,
 `a_nameless_cell_says_its_row_and_column_without_its_role`,
 `a_task_switching_item_reached_with_alt_held_says_only_itself`) and the
-theme's (`a_cells_row_and_column_render_their_localized_phrases`).
-**partial**: matched for the first item the Alt+Tab switcher opens on
-(`docs/parity/windows-and-processes.md`, "The Alt+Tab switcher's pane").
-Cases that differ: Verbatim speaks both numbers on every focus, where
-NVDA leaves out an unchanged row or column within one table, which needs
-the containing grid's identity, not read, so a second Tab with Alt held
-says "row 1" again where NVDA says only the column, to be matched in
-M4.2 (Dickson, 2026-11-01);
+theme's (`a_cells_row_and_column_render_their_localized_phrases`), the
+memory's by `a_cell_in_the_remembered_table_says_only_the_row_or_column_that_changed`,
+`a_cell_in_another_table_says_both_and_is_remembered` and
+`a_cell_with_no_table_says_both_and_keeps_the_table_remembered`.
+**partial**: matched for the items of the Alt+Tab switcher and mockapp's
+grids (`docs/parity/windows-and-processes.md`, "The Alt+Tab switcher's
+pane"; the `table_cells` scenario). Cases that differ: NVDA reads the
+table of a selected cell too, while a selection the desktop-wide
+listener hears carries no table, so such a cell says both its row and
+its column every time; Report Current Object does not say an object's
+row and column counts, "with 3 rows and 2 columns", nor forget the
+table as NVDA does after them, which waits on the review cursor's live
+read of the object;
 NVDA speaks a cell's coordinates text in place of its numbers when the
 cell gives one, and its row and column header texts before its row and
 column (from UI Automation's `TableItem` pattern, by default) and "through"

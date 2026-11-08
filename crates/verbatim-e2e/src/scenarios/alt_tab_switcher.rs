@@ -94,9 +94,10 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     // first, until the first window's item again.
     for step in 1..=count {
         scenario.send_keys(&["tab"]).expect("sends Tab");
-        scenario
-            .speech()
-            .expect(&[&said(&items[(1 + step) % count])]);
+        scenario.speech().expect(&[&said_after(
+            &items[step % count],
+            &items[(1 + step) % count],
+        )]);
     }
 
     scenario.release_key("alt").expect("releases Alt");
@@ -106,8 +107,23 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     super::text_box::expect_announced(scenario, FIRST, BOX_NAME, FIRST_LINE);
 }
 
-/// What Verbatim says of `item` reached with Alt held: its window's title,
-/// row, column and position in the list.
+/// What Verbatim says of `item` reached with Alt held from `previous`, in
+/// the same list: its window's title, its row or column only where it
+/// differs, and its position in the list.
+fn said_after(previous: &SwitcherItem, item: &SwitcherItem) -> String {
+    let mut said = vec![item.name.clone()];
+    if item.row != previous.row {
+        said.push(format!("row {}", item.row));
+    }
+    if item.column != previous.column {
+        said.push(format!("column {}", item.column));
+    }
+    said.push(format!("{} of {}", item.position, item.set_size));
+    said.join(" ")
+}
+
+/// What Verbatim says of `item` when the list is entered: its window's
+/// title, row, column and position in the list.
 fn said(item: &SwitcherItem) -> String {
     format!(
         "{} row {} column {} {} of {}",
