@@ -454,7 +454,7 @@ impl Run {
                         (
                             QueryId(1_000_000),
                             *outpost,
-                            tests::Asked::Text(verbatim_model::TextOp::ReadCaret),
+                            tests::Asked::Text(tests::key_op()),
                         )
                     }),
                     // From another live generation, or one never started.
@@ -499,7 +499,7 @@ impl Run {
                         text: "a".to_owned(),
                         at_ms: now / 1_000,
                     },
-                    _ => Input::SpeechCancelled { at_ms: now / 1_000 },
+                    _ => Input::SpeechCancelled { at_us: now },
                 };
                 let effects = self.input(&input);
                 // Speech cut off asks nothing.
@@ -599,6 +599,7 @@ impl Run {
         let text = (number == 5).then(|| FocusText::Caret {
             caret: tests::caret(100, 3),
             selected_text: None,
+            changes: verbatim_model::CaretChanges::default(),
         });
         let top = self.model.front.map_or(WINDOWS[0], |(window, _)| window);
         Input::Event {
@@ -813,9 +814,10 @@ impl Run {
         );
         assert!(
             state
-                .caret
-                .as_ref()
-                .is_none_or(|caret| caret.node.outpost() != outpost),
+                .focus
+                .object()
+                .filter(|focus| focus.caret.is_some())
+                .is_none_or(|focus| focus.snapshot.id.outpost() != outpost),
             "{trail:?}"
         );
         assert!(
@@ -1367,10 +1369,11 @@ mod key_line {
 
         use verbatim_model::protocol::{QueryOutcome, QueryResult};
         use verbatim_model::{
-            Backend, CaretKey, CaretMotion, CaretReply, CaretReport, Effect, FirstCachedAncestor,
-            FocusReaderKind, FocusText, ForegroundWindow, Input, KeySeq, Message, NodeId,
-            NormalizedEvent, OutpostId, Phrase, QueryId, Role, SegmentContent, SelectionChange,
-            SelectionText, TextOp, TextReply, TraceId, Utterance,
+            Backend, CaretChanges, CaretKey, CaretMotion, CaretReply, CaretReport, Effect,
+            FirstCachedAncestor, FocusReaderKind, FocusText, ForegroundWindow, Input, KeyAnswer,
+            KeyRead, KeySeq, KeyStart, KeyStarted, KeyTag, Message, NodeId, NormalizedEvent,
+            OutpostId, Phrase, QueryId, Role, SegmentContent, SelectionChange, SelectionText,
+            TextOp, TextReply, TraceId, Utterance, WatchOrder,
         };
 
         use super::super::tests;
@@ -1426,7 +1429,7 @@ mod key_line {
             CaretReport {
                 line: tests::line(&read.line, ANCHOR, read.at),
                 selection: None,
-                selection_line: None,
+                read_at_us: read.began * 1_000,
             }
         }
 
@@ -1441,18 +1444,31 @@ mod key_line {
                 .collect()
         }
 
-        fn reply(read: &Read, moved: bool) -> TextReply {
-            TextReply::Caret(Box::new(CaretReply {
-                moved,
+        /// The answer of `read` as a key's before read.
+        fn before_reply(read: &Read) -> TextReply {
+            TextReply::Key(Box::new(KeyStarted::Read(Box::new(CaretReply {
                 caret: report(read),
-                read_at_ms: read.began,
                 unit: None,
                 selection_changes: changes(read),
                 content_changed: false,
                 new_selection: None,
-                same_line: None,
-                removed: None,
-            }))
+            }))))
+        }
+
+        /// `read` as a key's result, its baseline `baseline`.
+        fn key_read(read: &Read, baseline: &Read) -> KeyRead {
+            let line = tests::line(&baseline.line, ANCHOR, baseline.at);
+            KeyRead {
+                caret: report(read),
+                selection_changes: changes(read),
+                content_changed: false,
+                new_selection: None,
+                before_line: line.clone(),
+                before_selection: None,
+                before_unit: line.clone(),
+                unit: tests::line(&read.line, ANCHOR, read.at),
+                on_baseline_line: true,
+            }
         }
 
         fn heard(utterance: &Utterance) -> Heard {
@@ -1490,8 +1506,16 @@ mod key_line {
             trace: u64,
             /// Each key's before read: its request and the node it reads.
             reading: BTreeMap<KeyId, (QueryId, u64)>,
-            /// Each key's watch for evidence: its request and node.
+            /// Each key's watch for evidence: its tag and node.
             watching: BTreeMap<KeyId, (QueryId, u64)>,
+            /// The keys whose final read Core has sent.
+            final_reads: std::collections::BTreeSet<usize>,
+            /// The read each key is judged from.
+            baselines: BTreeMap<KeyId, Read>,
+            /// Each key's kind.
+            kinds: BTreeMap<KeyId, Kind>,
+            /// The newest read given to Core, for a key with no before read.
+            last: Read,
             /// The shell's one held-key deadline: its key and due time.
             due: Option<(TraceId, u64)>,
             /// The report set aside for a live re-read, and its request.
@@ -1507,6 +1531,10 @@ mod key_line {
                     trace: 1,
                     reading: BTreeMap::new(),
                     watching: BTreeMap::new(),
+                    final_reads: std::collections::BTreeSet::new(),
+                    baselines: BTreeMap::new(),
+                    kinds: BTreeMap::new(),
+                    last: read.clone(),
                     due: None,
                     waiting: None,
                     log: Vec::new(),
@@ -1576,6 +1604,7 @@ mod key_line {
                             Box::new(FocusText::Caret {
                                 caret: report(read),
                                 selected_text: None,
+                                changes: CaretChanges::default(),
                             })
                         }),
                         earlier: None,
@@ -1594,8 +1623,7 @@ mod key_line {
                 let effects = reduce(&mut self.state, input);
                 self.log.push(format!("{effects:?}"));
                 let mut observed = Observed::default();
-                let mut awaited = None;
-                self.observe(&effects, None, now, &mut awaited, &mut observed);
+                self.observe(&effects, None, now, &mut observed);
                 observed
             }
 
@@ -1604,40 +1632,47 @@ mod key_line {
                 effects: &[Effect],
                 key: Option<TraceId>,
                 now: u64,
-                awaited: &mut Option<(QueryId, u64)>,
                 out: &mut Observed,
             ) {
                 for effect in effects {
                     match effect {
                         Effect::ForKey(key, inner) => {
-                            self.observe(
-                                std::slice::from_ref(&**inner),
-                                Some(*key),
-                                now,
-                                awaited,
-                                out,
-                            );
+                            self.observe(std::slice::from_ref(&**inner), Some(*key), now, out);
                         }
                         Effect::PassHeldKey(trace) => {
-                            let passed = key_of(*trace);
-                            if let Some(watch) = awaited.take() {
-                                self.watching.insert(passed, watch);
-                            }
-                            out.passed.push(passed);
+                            out.passed.push(key_of(*trace));
                         }
                         Effect::BoundHeldKey(bound) => {
                             self.due = bound.map(|(trace, ms)| (trace, now + ms));
                         }
                         Effect::Text(request) => {
-                            let asked = (request.query_id, request.node_id.number());
-                            match (&request.op, key) {
-                                (TextOp::ReadCaret, Some(key)) => {
-                                    self.reading.insert(key_of(key), asked);
+                            if let (TextOp::Key(key_request), Some(key)) = (&request.op, key) {
+                                let asked = (request.query_id, request.node_id.number());
+                                let key = key_of(key);
+                                match key_request.start {
+                                    KeyStart::ReadFirst => {
+                                        self.reading.insert(key, asked);
+                                    }
+                                    KeyStart::FromLastRead { .. } => {
+                                        self.baselines.insert(key, self.last.clone());
+                                        self.watching.insert(key, asked);
+                                    }
                                 }
-                                (TextOp::AwaitCaret(_), Some(key)) => {
-                                    self.watching.insert(key_of(key), asked);
+                            }
+                        }
+                        Effect::WatchOrder { tag, order, .. } => {
+                            let owner = self
+                                .watching
+                                .iter()
+                                .find(|(_, (query, _))| KeyTag(*query) == *tag)
+                                .map(|(key, _)| *key);
+                            match (order, owner) {
+                                (WatchOrder::FinalRead, Some(key)) => {
+                                    self.final_reads.insert(key.0);
                                 }
-                                (TextOp::AwaitCaret(_), None) => *awaited = Some(asked),
+                                (WatchOrder::End, Some(key)) => {
+                                    self.watching.remove(&key);
+                                }
                                 _ => {}
                             }
                         }
@@ -1667,7 +1702,8 @@ mod key_line {
 
             pub(super) fn press(&mut self, key: KeyId, kind: Kind, now: u64) -> Observed {
                 // The hook cuts speech for a key before it reports the key.
-                let cut = self.give(&Input::SpeechCancelled { at_ms: now }, now);
+                let cut = self.give(&Input::SpeechCancelled { at_us: now * 1_000 }, now);
+                self.kinds.insert(key, kind);
                 let held = self.state.holds_caret_keys() || self.state.holds_inputs_back();
                 let (trace_id, key_seq, key_of_press) =
                     (key_trace(key), KeySeq::NONE_YET, caret_key(kind));
@@ -1696,46 +1732,110 @@ mod key_line {
 
             /// The outpost answers `key`'s before read.
             pub(super) fn before_read(&mut self, key: KeyId, read: &Read, now: u64) -> Observed {
-                let Some((query_id, _)) = self.reading.remove(&key) else {
+                let Some((query_id, node)) = self.reading.remove(&key) else {
                     return Observed::default();
                 };
-                self.answered(query_id, reply(read, false), now)
-            }
-
-            fn answered(&mut self, query_id: QueryId, reply: TextReply, now: u64) -> Observed {
+                self.baselines.insert(key, read.clone());
+                self.last = read.clone();
+                // The watch opens with the answer; Core ends it again if the
+                // focus moved meanwhile.
+                self.watching.insert(key, (query_id, node));
                 let input = Input::Answered {
                     trace_id: self.next_trace(),
                     query_id,
                     outpost: OUTPOST,
-                    outcome: QueryOutcome::Done(QueryResult::Text(reply)),
+                    outcome: QueryOutcome::Done(QueryResult::Text(before_reply(read))),
+                };
+                self.give(&input, now)
+            }
+
+            /// The key's result, as the outpost reports it.
+            fn answer(
+                &mut self,
+                node: u64,
+                query_id: QueryId,
+                read: &Read,
+                answer: KeyAnswer,
+                now: u64,
+            ) -> Observed {
+                let input = Input::Event {
+                    trace_id: self.next_trace(),
+                    observed_at_us: read.began * 1_000,
+                    source: APPLICATION,
+                    backend: Backend::Uia,
+                    window: None,
+                    event: NormalizedEvent::KeyAnswered {
+                        node_id: self::node(node),
+                        tag: KeyTag(query_id),
+                        answer,
+                    },
+                    purpose: None,
                 };
                 self.give(&input, now)
             }
 
             /// The outpost's watch finds `key`'s evidence.
             pub(super) fn evidence(&mut self, key: KeyId, read: &Read, now: u64) -> Observed {
-                let Some((query_id, _)) = self.watching.remove(&key) else {
+                let Some((query_id, node)) = self.watching.remove(&key) else {
                     return Observed::default();
                 };
-                self.answered(query_id, reply(read, true), now)
+                let baseline = self.baselines.get(&key).unwrap_or(&self.last).clone();
+                self.last = read.clone();
+                let result = KeyAnswer::Evidence(Box::new(key_read(read, &baseline)));
+                self.answer(node, query_id, read, result, now)
             }
 
-            /// `key`'s 100 ms have passed with no evidence, and the outpost
-            /// reads the caret again at the bound. Today nothing tells
-            /// Core: its watch stays open, it answers nothing at the
-            /// bound, and the read reaches no one, so this gives no input
-            /// and says the read was not delivered.
-            #[expect(
-                clippy::unused_self,
-                reason = "the seam's shape, which the rework's Core input fills"
-            )]
+            /// `key`'s 100 ms have passed with no evidence: Core's deadline
+            /// fires, Core sends the final read, and the outpost answers
+            /// from `read`, as evidence if it shows the key's effect.
+            /// Whether the read reached Core.
             pub(super) fn bound_passed(
                 &mut self,
-                _key: KeyId,
-                _read: &Read,
-                _now: u64,
+                key: KeyId,
+                read: &Read,
+                now: u64,
             ) -> (Observed, bool) {
-                (Observed::default(), false)
+                let mut observed = Observed::default();
+                if let Some((trace, due)) = self
+                    .due
+                    .filter(|(trace, due)| *due <= now && key_of(*trace) == key)
+                {
+                    self.due = None;
+                    let input = Input::HeldKeyDue {
+                        trace_id: trace,
+                        at_us: due * 1_000,
+                    };
+                    observed = observed.and(self.give(&input, due));
+                }
+                if !self.final_reads.remove(&key.0) {
+                    return (observed, false);
+                }
+                let Some((query_id, node)) = self.watching.remove(&key) else {
+                    return (observed, false);
+                };
+                let baseline = self.baselines.get(&key).unwrap_or(&self.last).clone();
+                self.last = read.clone();
+                // A forward caret is no effect of a key that deletes back:
+                // in this world it is an earlier key's.
+                let back = matches!(
+                    self.kinds.get(&key),
+                    Some(Kind::Backspace | Kind::WordBackspace)
+                );
+                let moved = if back {
+                    read.at < baseline.at
+                } else {
+                    read.at != baseline.at || read.line != baseline.line
+                };
+                let read_result = Box::new(key_read(read, &baseline));
+                let result = if moved {
+                    KeyAnswer::Evidence(read_result)
+                } else {
+                    KeyAnswer::BoundAnswer(read_result)
+                };
+                (
+                    observed.and(self.answer(node, query_id, read, result, now)),
+                    true,
+                )
             }
 
             /// A caret event for `node`.
@@ -1760,17 +1860,24 @@ mod key_line {
                     },
                     purpose: None,
                 };
+                self.last = read.clone();
                 self.give(&input, now)
             }
 
             /// Time reaches `now`: any held-key deadline due fires.
             pub(super) fn time(&mut self, now: u64) -> Observed {
                 let mut observed = Observed::default();
+                // A deadline due meanwhile fires now: the world's time moves
+                // by steps.
                 while let Some((trace_id, due)) = self.due
                     && due <= now
                 {
                     self.due = None;
-                    let more = self.give(&Input::HeldKeyDue { trace_id }, due);
+                    let input = Input::HeldKeyDue {
+                        trace_id,
+                        at_us: now * 1_000,
+                    };
+                    let more = self.give(&input, now);
                     observed = observed.and(more);
                 }
                 observed
@@ -1835,9 +1942,10 @@ mod key_line {
             /// The caret position Core holds for its focus.
             pub(super) fn caret_at(&self) -> Option<u32> {
                 self.state
-                    .caret
-                    .as_ref()
-                    .filter(|caret| self.state.focus_matches(caret.node))
+                    .focus
+                    .object()
+                    .filter(|focus| focus.alive)
+                    .and_then(|focus| focus.caret.as_ref())
                     .map(|caret| caret.line.offset)
             }
 
