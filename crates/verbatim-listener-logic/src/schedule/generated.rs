@@ -44,8 +44,10 @@
 //! thread, its readers and its events; every event has exactly
 //! one outcome; every idle waiter runs once, when every event queued before
 //! it has its outcome. The thread in charge reads what it was given, its
-//! process gone or not. An outpost that ends with its application running
-//! does not stop the thread in charge: its read returns as usual, what
+//! process gone or not, but a read returning for a generation the listener
+//! was told exited is dropped, found or not, with its one outcome: the
+//! process is gone, and its id may now be another's. An outpost that ends
+//! with its application running does not stop the thread in charge: its read returns as usual, what
 //! waits is still read, and with nothing left the thread goes; the record
 //! and its abandoned count stay, and a later event of that application is
 //! handled as any other, its thread then waiting as usual. A thread that
@@ -951,7 +953,11 @@ impl Run {
                 panic!("a read's return with none under way");
             };
             thread.doing = Doing::Asking;
-            let how = if found { How::Read } else { How::Failed };
+            let how = if found && !generation.gone {
+                How::Read
+            } else {
+                How::Failed
+            };
             expected.outcome(key, reading.event.marker, how);
             (reading.read.expect("told at its job"), reading.event)
         };
