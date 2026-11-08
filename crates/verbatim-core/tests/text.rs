@@ -4439,6 +4439,139 @@ fn bold_starts_and_ends_and_a_font_change_is_named() {
     );
 }
 
+/// `text` as a line all in bold.
+fn bold_line(text: &str, anchor: u64) -> TextChunk {
+    let end = u32::try_from(text.len()).expect("short");
+    let bold = TextAttributes {
+        bold: Some(true),
+        ..TextAttributes::default()
+    };
+    formatted(line(text, anchor, 0), vec![(0, end, bold)])
+}
+
+/// A focus event for `node`, whole-window or not, with `text`.
+fn focus_event(node: NodeSnapshot, whole_window: bool, text: Option<FocusText>) -> Input {
+    event(NormalizedEvent::FocusChanged {
+        node,
+        whole_window,
+        ancestors: Vec::new(),
+        selected_child: None,
+        text: text.map(Box::new),
+        earlier: None,
+        group: None,
+        answers: None,
+        first_cached_ancestor: None,
+    })
+}
+
+/// The formatting is kept on the focus object, so the silent re-take
+/// after an outpost is replaced, a new focus object, starts afresh and the
+/// next line says its bold again (Dickson, 2026-11-08).
+#[test]
+fn the_silent_re_take_after_a_replacement_reports_formatting_afresh() {
+    let mut state = editing("first\n", 0);
+    assert_eq!(
+        answered(
+            &mut state,
+            CaretMotion::NextLine,
+            bold_line("first bold\n", 101),
+            None
+        ),
+        vec![
+            format(TextFormat::Bold),
+            UtteranceSegment::text("first bold")
+        ]
+    );
+    let _ = reduce(
+        &mut state,
+        &Input::OutpostEnded {
+            trace_id: TraceId::from_raw(90),
+            outpost: OUTPOST,
+        },
+    );
+    let effects = reduce(
+        &mut state,
+        &focus_event(
+            NodeSnapshot {
+                id: NodeId::in_outpost(OutpostId(2), 2),
+                ..node(5, Role::EditableText, StateSet::new())
+            },
+            false,
+            Some(FocusText::Caret {
+                caret: CaretReport {
+                    line: bold_line("first bold\n", 200),
+                    selection: None,
+                    selection_line: None,
+                },
+                selected_text: None,
+            }),
+        ),
+    );
+    assert_eq!(effects, Vec::new());
+    // The replacement answers the key.
+    let effects = reduce(&mut state, &key(CaretMotion::NextLine, false));
+    let answer = Input::Answered {
+        trace_id: TraceId::from_raw(4),
+        query_id: request_of(&effects),
+        outpost: OutpostId(2),
+        outcome: verbatim_model::protocol::QueryOutcome::Done(
+            verbatim_model::protocol::QueryResult::Text(caret_reply(
+                true,
+                bold_line("second line\n", 201),
+                None,
+            )),
+        ),
+    };
+    assert_eq!(
+        spoken(&reduce(&mut state, &answer)),
+        vec![
+            format(TextFormat::Bold),
+            UtteranceSegment::text("second line")
+        ]
+    );
+}
+
+/// A nameless whole-window focus is a new focus object too: when the focus
+/// returns to the text as one, its next line says its bold again, as
+/// NVDA's per-object cache starts empty with each new object (Dickson,
+/// 2026-11-08).
+#[test]
+fn a_nameless_whole_window_focus_reports_formatting_afresh() {
+    let mut state = editing("first\n", 0);
+    assert_eq!(
+        answered(
+            &mut state,
+            CaretMotion::NextLine,
+            bold_line("first bold\n", 101),
+            None
+        ),
+        vec![
+            format(TextFormat::Bold),
+            UtteranceSegment::text("first bold")
+        ]
+    );
+    let nameless = |number| NodeSnapshot {
+        name: None,
+        ..node(number, Role::EditableText, StateSet::new())
+    };
+    for number in [7, 5] {
+        let effects = reduce(&mut state, &focus_event(nameless(number), true, None));
+        assert_eq!(spoken(&effects), Vec::new());
+    }
+    assert_eq!(
+        answered(
+            &mut state,
+            CaretMotion::NextLine,
+            bold_line("second line\n", 102),
+            None
+        ),
+        vec![
+            format(TextFormat::Bold),
+            UtteranceSegment::text("second line")
+        ]
+    );
+}
+
 /// `chunk` with formatting: each stretch a byte range and its attributes.
 fn formatted(mut chunk: TextChunk, stretches: Vec<(u32, u32, TextAttributes)>) -> TextChunk {
     chunk.formats = stretches

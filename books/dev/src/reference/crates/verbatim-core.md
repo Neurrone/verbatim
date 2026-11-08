@@ -348,7 +348,7 @@ inputs start from, then one compact-JSON `RecordedInput` per line.
 base, inputs)` writes one; `read_dump(reader)` reads one back as
 `DumpContents` (header, base state, the inputs that parsed completely, and
 whether the file ended mid-line). It reads only `DUMP_FORMAT_VERSION`
-(8), and keeps no fallbacks for dumps older code wrote: a dump either
+(9), and keeps no fallbacks for dumps older code wrote: a dump either
 loads or reports its own error.
 
 `DumpReadError` distinguishes a missing header, a malformed header, an
@@ -976,8 +976,11 @@ The answer updates the caret and speaks, queued:
 
 (`docs/nvda/document-formatting.md`.) A caret key's unit, and a new
 focus's first line, carry the formatting the outpost read
-(`TextChunk::formats`). The state keeps the formatting last reported and
-its node (`reported_format`); the unit is spoken with the formatting at
+(`TextChunk::formats`). The focus object keeps the formatting last
+reported in its text (`FocusContext::reported_format`), as NVDA keeps its
+per-object cache on the object, so each focus taken starts afresh, the
+silent re-take after an outpost is replaced included, and a node other
+than the focus has none; the unit is spoken with the formatting at
 its start that differs from that (`text::format_changes`, in NVDA's
 order), a list item's bullet when the unit is a line or say-all chunk,
 then its text with each later change placed where it happens

@@ -809,14 +809,14 @@ pub(crate) fn caret_reply(
                 let segments =
                     other_key_segments(pending.before.as_ref(), &caret.line, same_line, grid)
                         .unwrap_or_else(|| line_segments(&caret.line, grid, &mut reported));
-                state.reported_format = Some((pending.node, reported));
+                keep_reported_format(state, pending.node, reported);
                 segments
             }
             motion => {
                 let mut reported = reported_format(state, pending.node);
                 let segments =
                     unit_segments(&caret, unit.as_ref(), (motion.unit(), grid), &mut reported);
-                state.reported_format = Some((pending.node, reported));
+                keep_reported_format(state, pending.node, reported);
                 segments
             }
         }
@@ -1051,15 +1051,28 @@ fn deleted_segments(deleted: &str, motion: CaretMotion) -> Vec<UtteranceSegment>
     }
 }
 
-/// The formatting last reported in `node`'s text, NVDA's per-object cache:
-/// nothing yet for a node other than the one last spoken in.
+/// The formatting last reported in `node`'s text, NVDA's per-object cache,
+/// kept on the focus object: nothing yet for a node other than the focus.
 fn reported_format(state: &SrState, node: NodeId) -> TextAttributes {
     state
-        .reported_format
-        .as_ref()
-        .filter(|(reported, _)| *reported == node)
-        .map(|(_, attributes)| attributes.clone())
+        .focus
+        .object()
+        .filter(|focus| focus.snapshot.id == node)
+        .map(|focus| focus.reported_format.clone())
         .unwrap_or_default()
+}
+
+/// Keeps `reported` as the formatting last reported in `node`'s text, on
+/// the focus object when `node` is the focus; a node no longer the focus
+/// keeps nothing, as its object is gone.
+fn keep_reported_format(state: &mut SrState, node: NodeId, reported: TextAttributes) {
+    if let Some(focus) = state
+        .focus
+        .object_mut()
+        .filter(|focus| focus.snapshot.id == node)
+    {
+        focus.reported_format = reported;
+    }
 }
 
 /// The speech for a chunk's content with the formatting the outpost sent
@@ -1464,7 +1477,7 @@ fn caret_line(state: &mut SrState, node: NodeId) -> Option<Vec<UtteranceSegment>
         .is_some_and(|focus| is_grid(focus.snapshot.role));
     let mut reported = reported_format(state, node);
     let segments = line_segments(&caret.line, grid, &mut reported);
-    state.reported_format = Some((node, reported));
+    keep_reported_format(state, node, reported);
     Some(segments)
 }
 

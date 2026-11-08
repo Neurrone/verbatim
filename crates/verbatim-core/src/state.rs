@@ -69,6 +69,13 @@ pub(crate) struct FocusContext {
     /// itself focused, and a state change of an ancestor with an entry; a
     /// repeat never does.
     pub(crate) spoken: SpokenRecord,
+    /// The formatting last reported in the focus's text (milestone M4 item
+    /// 7): NVDA's per-object cache, kept on the focus object as NVDA keeps
+    /// it, from which only changes are spoken
+    /// (`docs/nvda/document-formatting.md`). Each focus taken starts
+    /// afresh, a silent re-take after an outpost is replaced included
+    /// (Dickson, 2026-11-08).
+    pub(crate) reported_format: TextAttributes,
 }
 
 /// What Core last spoke of the focus, against which a change of its name,
@@ -671,10 +678,6 @@ pub struct SrState {
     /// review answers, in a range no outpost mints from
     /// (`crate::terminal_model::TERMINAL_ANCHORS`).
     pub(crate) next_terminal_anchor: u64,
-    /// The formatting last reported in a node's text (milestone M4 item 7):
-    /// NVDA's per-object cache, from which only changes are spoken
-    /// (`docs/nvda/document-formatting.md`). A new focus starts afresh.
-    pub(crate) reported_format: Option<(NodeId, TextAttributes)>,
     /// The last tree or list item level spoken first, which an item at
     /// the same level speaks last instead ("Where the level goes" in
     /// `docs/nvda/speech.md`).

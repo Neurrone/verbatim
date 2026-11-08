@@ -37,8 +37,9 @@ use crate::state::SrState;
 /// Version 7: the header records the commit the writing build was made
 /// from and whether its working tree had uncommitted changes. Version 8:
 /// the foreground record keeps no applied stamp, and the focus's spoken
-/// record is always present. Only the current version is read.
-pub const DUMP_FORMAT_VERSION: u32 = 8;
+/// record is always present. Version 9: the formatting last reported is
+/// the focus object's. Only the current version is read.
+pub const DUMP_FORMAT_VERSION: u32 = 9;
 
 /// The commit a header records when the writing build's commit is not
 /// known: a build made without git.

@@ -136,6 +136,14 @@ Reason: one state value per lifecycle, with NVDA's two facts kept apart, removes
 
 Weighed and rejected: one waiting report, replaced by any newer report accepted, because NVDA executes the older report first and its entered containers are heard; and judging the reports in observation order across the applications' channels, which is the reorder buffer the arrival-order decision rejects, and which still could not reorder speech already queued for a later report.
 
+### The formatting last reported goes with the focus object (Dickson, 2026-11-08)
+
+The problem: Core kept the formatting last reported, with its node, apart from the focus, and cleared it only when a spoken focus was taken, so whether formatting was said again depended on which kind of focus came between.
+
+Chosen: the formatting last reported is part of the focus object, and each focus taken, a new object, starts with none, as NVDA keeps its cache on the object (`speech.py` 1494 to 1512) and creates a new object for each focus event. The silent re-take after an outpost is replaced is a new object too, so the next line says its formatting again, as it did before. A focus in a shell staging window and a nameless whole-window focus, which are not spoken, also start afresh, so a return to the text through either says its formatting again.
+
+Rejected: keeping the formatting across the silent re-take, which would say less after a replacement than before it; and keeping a separate record with its own clearing rule, a second fact about the focus.
+
 ### Report focus (Dickson, 2026-11-07)
 
 Verbatim+Tab asks the application for its focus live, so it reports the real focus even when it moved without an event, and speaks the answer without taking it as Core's focus. The query goes to the process of the foreground thread's focus window, so Settings answers from its content's process rather than its frame's. NVDA+Tab reports NVDA's own focus object with live properties; its history records no reason. Weighed: taking a different answer as Core's focus, silently or as a new focus; rejected, because a real focus event of the same element on its way would then be dropped as a duplicate.

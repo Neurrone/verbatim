@@ -254,12 +254,6 @@ const ENDED_MAY_REMAIN: &[(&str, &str)] = &[
          focus events by time as the newest does; let go once two newer ordinary \
          stamps of other generations cover them",
     ),
-    (
-        "reported_format[].outpost",
-        "the formatting last reported in the focus's text, read only for that \
-         node, which no generation reports once its own ended; the next focus \
-         taken clears it",
-    ),
 ];
 
 /// The window facts of a focus in top-level window `top`.

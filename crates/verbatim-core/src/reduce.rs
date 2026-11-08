@@ -1510,8 +1510,6 @@ fn execute_report(state: &mut SrState, owned: &Report, left: bool, arrival: u64)
         return effects;
     }
 
-    // A new focus is a new object, whose formatting has not been reported.
-    state.reported_format = None;
     // NVDA says the window in front only when the focus line changed just
     // below the desktop; lines that meet at an object they share, such as a
     // window and the one it owns across processes, add no title.
@@ -1549,6 +1547,7 @@ fn focus_context(
         reported_focused: report.node.states.contains(State::Focused),
         trace_id: Some(trace_id),
         observed_at_us: report.observed_at_us,
+        reported_format: verbatim_model::TextAttributes::default(),
     }
 }
 
