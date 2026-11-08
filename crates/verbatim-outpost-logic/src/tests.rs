@@ -18,6 +18,7 @@ use verbatim_model::{
 use super::*;
 
 mod explore;
+mod followed;
 mod generated;
 mod intake_order;
 mod reducer;
