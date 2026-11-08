@@ -2249,6 +2249,14 @@ impl Run {
                 0 => Vec::new(),
                 front => self.seam_front(hang_case(front - 1)).into_iter().collect(),
             }),
+            Effect::JudgeTold { window, waiting } => Some(vec![Input::ToldJudged {
+                window: *window,
+                waiting: *waiting,
+                hung: self.world.condition(window.get()) == Condition::Hung,
+            }]),
+            Effect::CheckHung { window } => {
+                Some(self.seam_check(*window, None).into_iter().collect())
+            }
             _ => None,
         }
     }
