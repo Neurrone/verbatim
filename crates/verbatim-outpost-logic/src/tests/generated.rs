@@ -7,13 +7,19 @@
 //! `docs/nvda/editable-text-and-terminals.md` and Dickson's dated decisions
 //! on the caret and selection rework, never from the code's fields. It holds
 //! each node's text state at every moment, the newest read committed of it,
-//! and each key's state at its arrival, and checks, after every step:
+//! and each key's baseline, and checks, after every step:
 //!
 //! - a key answers that it had an effect exactly when the state its read
-//!   found differs from the state at the key's arrival, by the decisions'
-//!   evidence: the caret having left where it was, the characters beside it
-//!   changing, the unit at the caret changing after Delete, the caret's line
-//!   changing after a key that deletes, or the selection changing;
+//!   found differs from its baseline, by the decisions' evidence: the caret
+//!   having left where it was, the characters beside it changing, the unit
+//!   at the caret changing after Delete, the caret's line changing after a
+//!   key that deletes, or the selection changing. A held key's baseline is
+//!   the state when its before read ran; a key with no before read, not held
+//!   or given up on, is judged from what the node's newest committed read
+//!   found when its request arrived, so a change between that read and the
+//!   key counts as the key's, the recorded limit;
+//! - a key with no before read and no last read claims no effect: its one
+//!   answer is an "ended" answer, that it could not be watched;
 //! - an "ended" answer after Core's final read says no effect, compared
 //!   with the state at that step like a read's answer;
 //! - a key Core has not called off is answered once, and a key it called off
@@ -21,7 +27,8 @@
 //! - a key ended by a newer key, a focus elsewhere, a replaced element or a
 //!   check that ended without its result gets exactly one "ended" answer,
 //!   never one from a read made after that; an "ended" answer with none of
-//!   those causes, other than Core's final read, is a failure;
+//!   those causes, no last read to judge from or Core's final read, is a
+//!   failure;
 //! - a held key's before read's answer comes before any other of its key;
 //! - one last read per node, the newest committed, gone at the node's
 //!   release or the element's replacement.
@@ -98,26 +105,52 @@ impl KeyKind {
     }
 }
 
-/// Whether `now` shows an effect of a key of `kind` that arrived at `arrival`
+/// Whether a key is held for its before read.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Holding {
+    /// Not held, as in an elevated window: judged from the last read.
+    NotHeld,
+    /// Held, its baseline its before read.
+    Held,
+    /// Held, but its before read passed 150 ms and it was given up on:
+    /// judged from the last read.
+    GivenUp,
+}
+
+impl Holding {
+    fn of(how: u8) -> Self {
+        match how % 3 {
+            0 => Self::NotHeld,
+            1 => Self::Held,
+            _ => Self::GivenUp,
+        }
+    }
+}
+
+/// Whether `now` shows an effect of a key of `kind` whose baseline is `baseline`
 /// (the decisions' definition of evidence).
-fn had_effect(kind: KeyKind, arrival: TextState, now: TextState) -> bool {
-    now.caret != arrival.caret
-        || now.beside != arrival.beside
-        || now.selection != arrival.selection
-        || (kind == KeyKind::Delete && now.unit != arrival.unit)
-        || (kind.deletes() && now.line != arrival.line)
+fn had_effect(kind: KeyKind, baseline: TextState, now: TextState) -> bool {
+    now.caret != baseline.caret
+        || now.beside != baseline.beside
+        || now.selection != baseline.selection
+        || (kind == KeyKind::Delete && now.unit != baseline.unit)
+        || (kind.deletes() && now.line != baseline.line)
 }
 
 /// What a step of the seam reports back.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Seen {
     /// A read of a node committed, with its number.
-    ReadCommitted { node: u64, read: u64 },
+    ReadCommitted {
+        node: u64,
+        read: u64,
+        state: TextState,
+    },
     /// A key's request began to be handled.
     KeyHandled { key: u64 },
     /// A key's before read answered: today's reducer has no such answer.
     #[expect(dead_code, reason = "the rework's seam reports it")]
-    BeforeAnswered { key: u64 },
+    BeforeAnswered { key: u64, state: TextState },
     /// A key answered from a read: the read, and whether it says the key had
     /// an effect.
     Answered { key: u64, read: u64, effect: bool },
@@ -233,6 +266,8 @@ mod seam {
         taken: bool,
         /// The key whose check this program holds, ended if it ends first.
         held: Option<u64>,
+        /// An event's program has read and not yet committed.
+        read: Option<(u64, TextState)>,
     }
 
     /// The reducer under test with the programs the world runs for it.
@@ -283,6 +318,11 @@ mod seam {
             self.flight
                 .as_ref()
                 .is_some_and(|flight| !flight.done && matches!(flight.kind, Kind::Event { .. }))
+        }
+
+        /// The seam's clock, which read numbers are taken from.
+        pub(super) fn clock(&self) -> u64 {
+            self.at
         }
 
         /// The key whose check the program in flight holds.
@@ -350,6 +390,7 @@ mod seam {
                             done: false,
                             taken: false,
                             held,
+                            read: None,
                         });
                     }
                     Effect::Abandon { .. } => self.flight = None,
@@ -413,9 +454,9 @@ mod seam {
             key: u64,
             node: u64,
             kind: KeyKind,
-            held: bool,
+            holding: Holding,
         ) -> Vec<Seen> {
-            if held {
+            if holding == Holding::Held {
                 cannot_express("a held key's before read");
             }
             self.tick_clock();
@@ -559,10 +600,9 @@ mod seam {
             })
         }
 
-        fn take_read(&mut self, node: u64, state: TextState) -> u64 {
+        fn take_read(&mut self, state: TextState) -> u64 {
             let read = self.at;
             self.reads.insert(read, state);
-            self.core_knows.insert(node, read);
             read
         }
 
@@ -584,8 +624,8 @@ mod seam {
         }
 
         /// The program in flight makes its next step: an event's takes its
-        /// node's watch, then reads `app`; the rest read at once. It commits
-        /// what the step found.
+        /// node's watch, reads `app`, then commits, a step each; the rest
+        /// read and commit at once.
         pub(super) fn run(&mut self, app: &impl Fn(u64) -> TextState) -> Vec<Seen> {
             self.tick_clock();
             let Some(flight) = self.flight.as_mut().filter(|flight| !flight.done) else {
@@ -601,9 +641,10 @@ mod seam {
             match kind {
                 Kind::Key { key, node, watch } => {
                     let state = app(node);
-                    let read = self.take_read(node, state);
+                    let read = self.take_read(state);
+                    self.core_knows.insert(node, read);
                     let report = self.report(node, read, state);
-                    let mut seen = vec![Seen::ReadCommitted { node, read }];
+                    let mut seen = vec![Seen::ReadCommitted { node, read, state }];
                     let change = if self.judge(node, &watch, state, false) {
                         self.pending_read = Some(read);
                         Change {
@@ -665,13 +706,21 @@ mod seam {
                     return seen;
                 }
             }
+            // The read and its commit are steps apart, so a key can arrive
+            // between them.
+            let pending = self.flight.as_ref().and_then(|flight| flight.read);
+            let Some((read, state)) = pending else {
+                let state = app(node);
+                let read = self.take_read(state);
+                self.flight.as_mut().expect("the event's program").read = Some((read, state));
+                return seen;
+            };
             let flight = self.flight.as_mut().expect("the event's program");
             flight.done = true;
             flight.held = None;
-            let state = app(node);
-            let read = self.take_read(node, state);
+            self.core_knows.insert(node, read);
             let report = self.report(node, read, state);
-            seen.push(Seen::ReadCommitted { node, read });
+            seen.push(Seen::ReadCommitted { node, read, state });
             let watch = self.held_watch(node).map(|(watch, _)| {
                 if self.judge(node, &watch, state, true) {
                     self.pending_read = Some(read);
@@ -773,8 +822,9 @@ use seam::Seam;
 /// One step of a case, each made valid when it is applied.
 #[derive(Clone, Copy, Debug)]
 enum Action {
-    /// A key's request; its node, and whether it deletes, by the numbers.
-    Press { kind: u8, node: u8, held: bool },
+    /// A key's request; its node, whether it deletes and how it is held,
+    /// by the numbers.
+    Press { kind: u8, node: u8, how: u8 },
     /// Core's final read of the key numbered by the index.
     FinalRead(u8),
     /// Core calls the key numbered by the index off.
@@ -816,7 +866,9 @@ enum Action {
 struct KeyRecord {
     node: u64,
     kind: KeyKind,
-    arrival: TextState,
+    /// What it is judged from; `None` before a held key's before read, and
+    /// for a key with no before read and no last read.
+    baseline: Option<TextState>,
     /// Whether the key's before read is answered before any other.
     held: bool,
     answers: u32,
@@ -825,7 +877,7 @@ struct KeyRecord {
     /// Its request began to be handled.
     handled: bool,
     /// What ended it, a newer key, a focus elsewhere, a replaced element or
-    /// a check ended without its result, with the newest read then.
+    /// a check ended without its result, with the seam's clock then.
     ended: Option<u64>,
 }
 
@@ -838,8 +890,6 @@ struct World {
     released: BTreeSet<u64>,
     /// What each committed read found, by its number, in order.
     reads: BTreeMap<u64, TextState>,
-    /// The number of the newest read committed of any node.
-    newest_read: u64,
     /// A number for the next change the application makes.
     change: u32,
     log: Vec<String>,
@@ -858,7 +908,6 @@ impl World {
             newest: BTreeMap::new(),
             released: BTreeSet::new(),
             reads: BTreeMap::new(),
-            newest_read: 0,
             change: 0,
             log: Vec::new(),
         }
@@ -886,14 +935,14 @@ impl World {
     /// Records `cause` as what ended every key it names, of those handled
     /// and not yet answered.
     fn ended_by(&mut self, cause: impl Fn(u64, &KeyRecord) -> bool) {
-        let newest_read = self.newest_read;
+        let clock = self.seam.clock();
         for (key, record) in &mut self.keys {
             if record.handled
                 && record.answers == 0
                 && record.ended.is_none()
                 && cause(*key, record)
             {
-                record.ended = Some(newest_read);
+                record.ended = Some(clock);
             }
         }
     }
@@ -917,20 +966,28 @@ impl World {
     fn step(&mut self, action: Action) {
         self.log.push(format!("{action:?}"));
         let (seen, compared_key) = match action {
-            Action::Press { kind, node, held } => {
+            Action::Press { kind, node, how } => {
                 let node = node_number(node);
                 if self.released.contains(&node) {
                     return;
                 }
                 let key = u64::try_from(self.keys.len()).expect("few keys") + 1;
                 let kind = KeyKind::of(kind);
+                let holding = Holding::of(how);
+                // A held key's baseline comes with its before read.
+                let baseline = match holding {
+                    Holding::Held => None,
+                    Holding::NotHeld | Holding::GivenUp => {
+                        self.newest.get(&node).map(|read| self.reads[read])
+                    }
+                };
                 self.keys.insert(
                     key,
                     KeyRecord {
                         node,
                         kind,
-                        arrival: self.app(node),
-                        held,
+                        baseline,
+                        held: holding == Holding::Held,
                         answers: 0,
                         before_seen: false,
                         called_off: false,
@@ -938,7 +995,7 @@ impl World {
                         ended: None,
                     },
                 );
-                (self.seam.press(key, node, kind, held), None)
+                (self.seam.press(key, node, kind, holding), None)
             }
             Action::FinalRead(index) => {
                 if self.seam.busy() {
@@ -1065,17 +1122,16 @@ impl World {
         for item in seen {
             self.log.push(format!("{item:?}"));
             match *item {
-                Seen::ReadCommitted { node, read } => {
-                    self.reads.insert(read, self.app(node));
+                Seen::ReadCommitted { node, read, state } => {
+                    self.reads.insert(read, state);
                     self.newest.insert(node, read);
-                    self.newest_read = read;
                 }
                 Seen::KeyHandled { key } => {
                     // A newer key ends the keys older than it.
                     self.ended_by(|older, _| older < key);
                     self.keys.get_mut(&key).expect("a key").handled = true;
                 }
-                Seen::BeforeAnswered { key } => {
+                Seen::BeforeAnswered { key, state } => {
                     let record = self.keys.get_mut(&key).expect("a key");
                     assert!(
                         record.answers == 0 && !record.before_seen,
@@ -1083,6 +1139,7 @@ impl World {
                         self.log
                     );
                     record.before_seen = true;
+                    record.baseline = Some(state);
                 }
                 Seen::Answered { key, read, effect } => {
                     let record = self.count_answer(key);
@@ -1091,17 +1148,26 @@ impl World {
                         "key {key} answered from read {read}, made after it was ended: {:?}",
                         self.log
                     );
+                    let Some(baseline) = record.baseline else {
+                        panic!(
+                            "key {key} has no last read to judge from, yet answered from read {read}: {:?}",
+                            self.log
+                        );
+                    };
                     let state = self.reads[&read];
-                    let expected = had_effect(record.kind, record.arrival, state);
+                    let expected = had_effect(record.kind, baseline, state);
                     assert_eq!(
                         effect, expected,
-                        "key {key}'s answer says effect {effect}, but its state then {state:?} against its arrival {:?} says {expected}: {:?}",
-                        record.arrival, self.log
+                        "key {key}'s answer says effect {effect}, but its state then {state:?} against its baseline {baseline:?} says {expected}: {:?}",
+                        self.log
                     );
                 }
                 Seen::Ended { key } => {
                     let record = self.count_answer(key);
-                    if record.ended.is_none() {
+                    // With no last read the key could not be watched, and
+                    // this is its one answer; otherwise something ended it,
+                    // or Core's final read found no effect.
+                    if let (None, Some(baseline)) = (record.ended, record.baseline) {
                         assert_eq!(
                             compared_key,
                             Some(key),
@@ -1110,9 +1176,8 @@ impl World {
                         );
                         let state = self.app(record.node);
                         assert!(
-                            !had_effect(record.kind, record.arrival, state),
-                            "key {key}'s final read says no effect, but its state {state:?} differs from its arrival {:?}: {:?}",
-                            record.arrival,
+                            !had_effect(record.kind, baseline, state),
+                            "key {key}'s final read says no effect, but its state {state:?} differs from its baseline {baseline:?}: {:?}",
                             self.log
                         );
                     }
@@ -1203,10 +1268,10 @@ fn action() -> impl Strategy<Value = Action> {
     use proptest::prelude::*;
     let node = 0_u8..2;
     prop_oneof![
-        (0_u8..3, node.clone(), any::<bool>()).prop_map(|(kind, node, held)| Action::Press {
+        (0_u8..3, node.clone(), 0_u8..3).prop_map(|(kind, node, how)| Action::Press {
             kind,
             node,
-            held
+            how
         }),
         (0_u8..4).prop_map(Action::FinalRead),
         (0_u8..4).prop_map(Action::End),
@@ -1262,7 +1327,7 @@ fn fixed_report(case: &[Action], again: &str) -> String {
         .collect();
     format!(
         "the smallest failing case, as a line for `fixed()` in crates/verbatim-outpost-logic/src/tests/generated.rs:\n        vec![{}],\n\
-         the fixed cases alone: cargo test -p verbatim-outpost-logic --lib -- --exact tests::generated::fixed_cases_answer_each_key_by_its_arrival\n\
+         the fixed cases alone: cargo test -p verbatim-outpost-logic --lib -- --exact tests::generated::fixed_cases_answer_each_key_by_its_baseline\n\
          the run that found it again: {again}",
         steps.join(", ")
     )
@@ -1272,10 +1337,10 @@ fn fixed_report(case: &[Action], again: &str) -> String {
 /// Core's orders arriving at any step, keep what a key's answer and the last
 /// read exist to decide, compared with the reference model after every step.
 #[test]
-fn generated_cases_answer_each_key_by_its_arrival() {
+fn generated_cases_answer_each_key_by_its_baseline() {
     run_generated(
         super::explore::config(SEED, CASES),
-        "cargo test -p verbatim-outpost-logic --lib -- --exact tests::generated::generated_cases_answer_each_key_by_its_arrival",
+        "cargo test -p verbatim-outpost-logic --lib -- --exact tests::generated::generated_cases_answer_each_key_by_its_baseline",
     );
 }
 
@@ -1285,72 +1350,67 @@ fn generated_cases_answer_each_key_by_its_arrival() {
 /// own code; the held key and call-off cases fail where the seam says
 /// today's code cannot express them.
 fn fixed() -> Vec<Vec<Action>> {
+    let press = |how| Action::Press {
+        kind: 0,
+        node: 1,
+        how,
+    };
     vec![
-        // The history search: the application moved the caret after the last
-        // report and before the key arrived, with no event raised; the
-        // baseline, the report read before the key, is not the state at
-        // arrival, so a key that moved nothing is answered as having moved.
+        // The history search: a read begun before the key and committed after
+        // its request arrived is taken as the baseline, where the newest
+        // committed read when it arrived is, so the change between the two
+        // reads, the key's by the recorded limit, is not an effect.
         vec![
             Action::Event { node: 1 },
+            Action::Run,
             Action::Run,
             Action::Finish,
             Action::Move { node: 1 },
-            Action::Press {
-                kind: 0,
-                node: 1,
-                held: false,
-            },
+            Action::Event { node: 1 },
+            Action::Run,
+            press(0),
+            Action::Run,
+            Action::Finish,
             Action::Run,
             Action::Finish,
         ],
-        // The first check: a key with no baseline finds nothing at its first
-        // check, and the next caret event of the node, raised for nothing,
-        // is taken as evidence.
+        // The first check: a key with no last read finds nothing at its
+        // first check, and the next caret event of the node, raised for
+        // nothing, is taken as evidence.
         vec![
-            Action::Press {
-                kind: 0,
-                node: 1,
-                held: false,
-            },
+            press(0),
             Action::Run,
             Action::Finish,
             Action::Event { node: 1 },
+            Action::Run,
             Action::Run,
             Action::Run,
             Action::Finish,
         ],
         // The final read: the application changed the characters beside the
-        // caret with no event, and the watch's bound answers no effect.
+        // caret after a key with a last read, raising no event, and the
+        // watch's bound answers no effect.
         vec![
-            Action::Press {
-                kind: 0,
-                node: 1,
-                held: false,
-            },
+            Action::Event { node: 1 },
+            Action::Run,
+            Action::Run,
+            Action::Finish,
+            press(0),
+            Action::Run,
+            Action::Finish,
             Action::EditBeside { node: 1 },
         ],
         // A held key's before read: the seam cannot express it today.
-        vec![Action::Press {
-            kind: 0,
-            node: 1,
-            held: true,
-        }],
+        vec![press(1)],
         // Core calling a key off: the seam cannot express it today.
-        vec![
-            Action::Press {
-                kind: 0,
-                node: 1,
-                held: false,
-            },
-            Action::End(0),
-        ],
+        vec![press(0), Action::End(0)],
     ]
 }
 
 /// The found cases keep the key's answers. Every case is run, whichever
 /// fail first, so a run names each that fails.
 #[test]
-fn fixed_cases_answer_each_key_by_its_arrival() {
+fn fixed_cases_answer_each_key_by_its_baseline() {
     let failing: Vec<usize> = fixed()
         .iter()
         .enumerate()
