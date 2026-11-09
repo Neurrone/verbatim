@@ -355,6 +355,7 @@ impl Seam {
                 query_id: QueryId(request_id.number),
                 outpost,
                 outcome,
+                at_us: self.now,
             },
             OutpostToCore::Event {
                 trace_id,
@@ -586,10 +587,16 @@ impl Seam {
             flight.node.number(),
             &found,
         )];
-        if let (ReadKind::Final(..), Some((_, Some(until_us)))) = (&flight.kind, note) {
+        if let ReadKind::Final(request_id, ..) = &flight.kind
+            && let Some(live) = flight
+                .facts
+                .text
+                .live_note(flight.node.number(), flight.began)
+                .filter(|live| live.final_read == Some(*request_id))
+        {
             changes.push(TextChange::NoteCleared {
                 node: flight.node.number(),
-                until_us,
+                until_us: live.until_us,
             });
         }
         if let Some((fetch, Some(until_us))) = fetch
