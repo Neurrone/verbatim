@@ -2471,13 +2471,11 @@ fn a_console_note_is_polled_when_nothing_else_is_ready_and_stops_at_its_end() {
         replay.reducer.next_timer(now(7)),
         Some(Duration::from_millis(11))
     );
-    // Past the poll's bound its last read is made, and the note stops polling.
+    // The read due at the poll's bound is made, and the one reached after
+    // that bound is not: the note stops polling.
     let effects = replay.tick(51);
     let read = program(&effects).request;
-    let effects = replay.finish(read, false, 52);
-    // The poll's last read, due at its end, was reached by the earlier one.
-    let last = program(&effects).request;
-    assert!(programs(&replay.finish(last, false, 53)).is_empty());
+    assert!(programs(&replay.finish(read, false, 52)).is_empty());
     assert_eq!(replay.reducer.next_timer(now(53)), None);
     assert!(matches!(
         note_at(&replay, 53).map(|note| note.reads),
