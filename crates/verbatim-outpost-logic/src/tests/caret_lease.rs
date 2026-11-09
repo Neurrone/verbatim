@@ -5,12 +5,6 @@
 //! from the parity documents and Dickson's dated decisions ([`model`]).
 //! All contact with production types is in [`seam`], which the builder
 //! changes alone.
-//!
-//! The world leaves out what the documents leave open, which a decision
-//! would let it generate: a focus moving to the other field past a key's
-//! 100 ms before its final read reports, a focus moving while a key waits
-//! behind another, a selection no key made over an open Backspace, and a
-//! Backspace or Delete over a selection, whose words are general terms.
 
 use std::cell::RefCell;
 use std::collections::BTreeSet;
@@ -80,8 +74,12 @@ impl Run {
                 Seen::Passed(id) => self.model.passed(id, self.now).map(|()| {
                     self.world.give(self.pressed[id]);
                 }),
-                Seen::Committed(field, text) => {
-                    self.model.committed(field, &text);
+                Seen::Committed(field, text, before_read) => {
+                    self.model.committed(field, &text, before_read);
+                    Ok(())
+                }
+                Seen::BeforeReadAsked => {
+                    self.model.before_read_asked();
                     Ok(())
                 }
                 Seen::Report {
@@ -132,6 +130,7 @@ impl Run {
                 self.keys += 1;
                 let which = KEYS[usize::from(key) % KEYS.len()];
                 self.pressed.push(which);
+                let held = held || self.model.key_waits();
                 self.model.press(which, held, self.now);
                 let seen = self.seam.press(id, which, held, self.now);
                 self.take_seen(seen);
@@ -143,10 +142,8 @@ impl Run {
                 }
             }
             Action::Select => {
-                if self.model.selecting_decided() {
-                    self.world.select();
-                    self.world.note(self.now);
-                }
+                self.world.select();
+                self.world.note(self.now);
             }
             Action::Event => {
                 let seen = self.seam.caret_event(self.world.focus, self.now);
@@ -170,14 +167,12 @@ impl Run {
                 } else {
                     self.world.focus
                 };
-                if !other || self.model.focus_moves_decided(self.now) {
-                    let began = self.now - u64::from(ago) * 10_000;
-                    let text = self.world.text_at(to, began);
-                    self.world.focus = to;
-                    self.model.focus(to, !other, &text, began, self.now);
-                    let seen = self.seam.focus(to, &text, began, self.now);
-                    self.take_seen(seen);
-                }
+                let began = self.now - u64::from(ago) * 10_000;
+                let text = self.world.text_at(to, began);
+                self.world.focus = to;
+                self.model.focus(to, &text, began, self.now);
+                let seen = self.seam.focus(to, &text, began, self.now);
+                self.take_seen(seen);
             }
             Action::Tick(ms) => {
                 self.now += u64::from(ms) * 1_000;

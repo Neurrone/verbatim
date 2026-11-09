@@ -85,8 +85,11 @@ impl Text {
 pub fn selection_changes(old: &Text, new: &Text) -> Vec<(bool, String)> {
     let (old_start, old_end) = old.ends();
     let (new_start, new_end) = new.ends();
-    let piece =
-        |text: &Text, from: usize, to: usize| -> String { text.letters[from..to].iter().collect() };
+    // Where the text changed an end can lie past the other text's end.
+    let piece = |text: &Text, from: usize, to: usize| -> String {
+        let to = to.min(text.letters.len());
+        text.letters[from.min(to)..to].iter().collect()
+    };
     let mut changes = Vec::new();
     if new_end < old_start || new_start > old_end {
         if old_start != old_end {
@@ -234,10 +237,16 @@ impl World {
                 field.caret += 1;
                 field.selection = Some((start, field.caret));
             }
-            Key::Delete if field.caret < last && field.selection.is_none() => {
+            Key::Delete | Key::Backspace if field.selection.is_some() => {
+                let (start, end) = field.ends();
+                field.letters.drain(start..end);
+                field.caret = start;
+                field.selection = None;
+            }
+            Key::Delete if field.caret < last => {
                 field.letters.remove(field.caret);
             }
-            Key::Backspace if field.caret > 0 && field.selection.is_none() => {
+            Key::Backspace if field.caret > 0 => {
                 field.caret -= 1;
                 field.letters.remove(field.caret);
             }

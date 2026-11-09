@@ -34,8 +34,11 @@ pub enum Seen {
     Heard(Heard),
     /// Key `0` reached the application.
     Passed(usize),
-    /// A read committed, of the field named, with what it saw.
-    Committed(usize, Text),
+    /// A read committed, of the field named, with what it saw, and whether
+    /// it is a held key's before read.
+    Committed(usize, Text, bool),
+    /// Core asked the read before a held key.
+    BeforeReadAsked,
     /// A report reached Core, of the read committed just before.
     Report {
         /// What it saw.
@@ -90,6 +93,9 @@ pub struct Seam {
     keys: BTreeMap<TraceId, usize>,
     /// The fields' caret reports' numbers.
     reports: u64,
+    /// The letters of each node's last committed read, which main's programs
+    /// compare as the node's value change's note.
+    letters: BTreeMap<u64, Vec<char>>,
     now: Us,
     next_trace: u64,
     /// What this seam could not express.
@@ -180,6 +186,10 @@ fn heard(utterance: &verbatim_model::Utterance) -> Heard {
         .map(|segment| match &segment.content {
             SegmentContent::Text(text) | SegmentContent::Character(text) => text.clone(),
             SegmentContent::Message(Message::Blank) => "blank".to_owned(),
+            SegmentContent::Message(Message::SelectionRemoved) => "selection removed".to_owned(),
+            SegmentContent::Phrase(Phrase::SelectedInstead(text)) => {
+                format!("{} selected instead", selection_words(text))
+            }
             SegmentContent::Phrase(Phrase::Selected(text)) => {
                 format!("{} selected", selection_words(text))
             }
@@ -212,6 +222,7 @@ impl Seam {
             due: None,
             keys: BTreeMap::new(),
             reports: 0,
+            letters: BTreeMap::new(),
             now: 1_000_000,
             next_trace: 10_000,
             unexpressed: BTreeSet::new(),
@@ -375,6 +386,9 @@ impl Seam {
                 self.due = bound.map(|(trace, ms)| (trace, self.now + ms * 1_000));
             }
             CoreEffect::Text(request) => {
+                if request.op == TextOp::ReadCaret {
+                    seen.push(Seen::BeforeReadAsked);
+                }
                 let item = Item::Query {
                     request_id: RequestId::shell(request.query_id.0),
                     query: Query::Text {
@@ -487,7 +501,21 @@ impl Seam {
             return seen;
         }
         let field = flight.field;
-        let last = last_selection(&flight, text);
+        let last = last_selection(&flight, text, self.letters.get(&flight.node.number()));
+        self.letters
+            .insert(flight.node.number(), text.letters.clone());
+        let content_changed = last.letters != text.letters;
+        let new_selection = text
+            .selection
+            .filter(|_| content_changed)
+            .map(|(start, end)| {
+                let letters: String = text.letters[start..end].iter().collect();
+                SelectionChange {
+                    selected: true,
+                    characters: u32::try_from(end - start).expect("a short line"),
+                    text: letters,
+                }
+            });
         let change = committed_read(&flight, text, self.reports + 1);
         self.reports += 1;
         let report = caret_report(text, field);
@@ -505,15 +533,17 @@ impl Seam {
                 read_at_ms: flight.began / 1_000,
                 unit: None,
                 selection_changes: changes,
-                content_changed: false,
-                new_selection: None,
+                content_changed,
+                new_selection: new_selection.clone(),
                 same_line: None,
                 removed: None,
             }))
         };
         match &flight.kind {
             ReadKind::Before(request_id, trace) => {
-                seen.push(Seen::Committed(field, text.clone()));
+                seen.push(Seen::Committed(field, text.clone(), true));
+                // The report reaches Core before the pass it causes.
+                seen.push(reported);
                 self.commit(
                     flight.request,
                     Change {
@@ -532,10 +562,9 @@ impl Seam {
                     },
                     &mut seen,
                 );
-                seen.push(reported);
             }
             ReadKind::Key(request_id, trace, watch) => {
-                seen.push(Seen::Committed(field, text.clone()));
+                seen.push(Seen::Committed(field, text.clone(), false));
                 if has_evidence(watch, &last, text, &report) {
                     self.commit(
                         flight.request,
@@ -579,7 +608,7 @@ impl Seam {
                 }
             }
             ReadKind::Event => {
-                seen.push(Seen::Committed(field, text.clone()));
+                seen.push(Seen::Committed(field, text.clone(), false));
                 let open = self.outpost.facts.follow.watch.kept().cloned();
                 match open.filter(|open| open.node_id == flight.node) {
                     Some(open) => {
@@ -635,8 +664,8 @@ impl Seam {
                                         node_id: flight.node,
                                         caret: report,
                                         selection_changes: changes,
-                                        content_changed: false,
-                                        new_selection: None,
+                                        content_changed,
+                                        new_selection: new_selection.clone(),
                                     },
                                 }),
                                 ..Change::default()
@@ -742,6 +771,7 @@ impl Seam {
         self.flight = None;
         self.generation += 1;
         self.outpost = Reducer::new();
+        self.letters.clear();
         self.enter_core(&input, &mut seen);
         seen
     }
@@ -779,13 +809,16 @@ fn field_of_node(node: NodeId) -> usize {
 
 /// What the read in flight compares its selection with: the node's kept
 /// selection in its copy of the facts, or none.
-fn last_selection(flight: &Flight, text: &Text) -> Text {
+fn last_selection(flight: &Flight, text: &Text, letters: Option<&Vec<char>>) -> Text {
     let kept = flight
         .facts
         .text
         .edit(flight.node.number())
         .and_then(|anchors| anchors.selection.clone());
     let mut last = text.clone();
+    if let Some(letters) = letters {
+        last.letters.clone_from(letters);
+    }
     match kept {
         Some(kept) => {
             let (start, end) = kept.ends;

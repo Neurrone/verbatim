@@ -27,16 +27,73 @@
 //! - A focus moving first within the 100 ms speaks the key's unit from the
 //!   read before it, Backspace what that read shows it removes, with no
 //!   before read nothing (2026-11-08, 2026-11-09); a key whose before read
-//!   is still running says nothing (2026-11-09).
+//!   is still running says nothing (2026-11-09). After the 100 ms and
+//!   before the key has spoken, the key says nothing, its held selection
+//!   changes still coming first (Dickson's answer, 2026-11-09).
+//! - A key waiting behind another when the focus moves still reaches the
+//!   application in press order, and says nothing for itself if its node
+//!   is no longer the focus when it is judged, at its pass (Dickson's
+//!   answer, 2026-11-09).
+//! - A selection no key made during a Backspace's wait is held as any
+//!   other (Dickson's answer, 2026-11-09). Such a read is the key's
+//!   evidence (2026-11-09), and Backspace says nothing when nothing was
+//!   removed (`docs/parity/text.md`, "What Backspace and Delete say").
+//! - Backspace over a selection says what comes before the selection's
+//!   start, Delete its unit, and the change follows, in general terms
+//!   when the text changed: "selection removed" when nothing is selected
+//!   now (`docs/parity/text.md`, "Selection over changed text in a
+//!   classic edit control").
 
 use std::collections::BTreeMap;
 
 use super::world::{Key, Text, Us, selection_changes};
 
+/// The words for the selection's change from `last` to `text`, in general
+/// terms when the text changed between them.
+fn change_words(last: &Text, text: &Text) -> Vec<String> {
+    let changes = selection_changes(last, text);
+    if last.letters == text.letters {
+        return changes
+            .into_iter()
+            .map(|(selected, letters)| {
+                let word = if selected { "selected" } else { "unselected" };
+                format!("{letters} {word}")
+            })
+            .collect();
+    }
+    let whole: Option<String> = text
+        .selection
+        .map(|(start, end)| text.letters[start..end].iter().collect());
+    let mut words = Vec::new();
+    if changes.iter().any(|(selected, _)| *selected)
+        && let Some(whole) = &whole
+    {
+        words.push(format!("{whole} selected"));
+    }
+    if changes.iter().any(|(selected, _)| !*selected) {
+        words.push(whole.map_or_else(
+            || "selection removed".to_owned(),
+            |whole| format!("{whole} selected instead"),
+        ));
+    }
+    words
+}
+
 /// The 100 ms bound, from when the key is passed on (2026-11-09).
 pub const BOUND_US: Us = 100_000;
 /// How long a held key's before read may run (2026-11-08).
 pub const BEFORE_READ_US: Us = 150_000;
+
+/// How far a key's before read has gone.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BeforeRead {
+    /// Core has not asked it.
+    NotAsked,
+    /// Core has asked it, and it has not committed.
+    Asked,
+    /// It committed.
+    Committed,
+}
 
 /// A key pressed, as the model follows it.
 #[derive(Clone, Debug)]
@@ -44,13 +101,15 @@ struct Press {
     key: Key,
     held: bool,
     pressed: Us,
+    /// The field with the focus at its press; `None` when there was none
+    /// or its outpost has ended.
+    node: Option<usize>,
+    /// Its before read.
+    before: BeforeRead,
     passed: Option<Us>,
     /// The node's last read when the key was passed on: what it is
     /// compared with.
     baseline: Option<Text>,
-    /// A read of the focused node committed between the press and the
-    /// pass: its before read.
-    before_read: bool,
     /// Heard, silenced or ended: its words are said or owed no more.
     done: bool,
 }
@@ -86,15 +145,18 @@ pub struct Model {
     /// Whether the newest read differed from the one before it.
     shows_change: bool,
     /// The selection changes the newest read shows.
-    changes: Vec<(bool, String)>,
+    changes: Vec<String>,
     /// The selection changes waiting for the words of the key that made
     /// them.
-    held: Vec<(bool, String)>,
+    held: Vec<String>,
     expected: Vec<Heard>,
     /// The newest caret: when its read began, and the caret.
     newest: Option<(Us, usize)>,
     /// The field with the focus.
     focus: Option<usize>,
+    /// Its outpost has not ended since it was reported. A new generation's
+    /// report of the same field is that focus again.
+    alive: bool,
     exited: bool,
 }
 
@@ -112,36 +174,12 @@ impl Model {
             .position(|press| press.passed.is_some() && !press.done)
     }
 
-    /// Whether a focus moving to the other field is a case the rules
-    /// decide: no key waits behind another, and no open key is past its
-    /// bound with its final read not reported.
+    /// Whether a key has not yet reached the application: a key pressed
+    /// now waits behind it, as the hook defers it
+    /// (`docs/parity/text.md`, "Holding caret keys").
     #[must_use]
-    pub fn focus_moves_decided(&self, now: Us) -> bool {
-        let unpassed: Vec<usize> = (0..self.keys.len())
-            .filter(|&id| self.keys[id].passed.is_none())
-            .collect();
-        if unpassed.len() > 1 {
-            return false;
-        }
-        if let Some(&id) = unpassed.first()
-            && id > 0
-            && self.keys[id - 1]
-                .passed
-                .is_none_or(|at| now < at + BOUND_US)
-        {
-            return false;
-        }
-        self.open()
-            .is_none_or(|open| self.keys[open].passed.is_none_or(|at| now <= at + BOUND_US))
-    }
-
-    /// Whether a selection no key made is decided: never over an open
-    /// Backspace, for which the documents give no words when nothing was
-    /// removed.
-    #[must_use]
-    pub fn selecting_decided(&self) -> bool {
-        self.open()
-            .is_none_or(|open| self.keys[open].key != Key::Backspace)
+    pub fn key_waits(&self) -> bool {
+        self.keys.iter().any(|press| press.passed.is_none())
     }
 
     /// A key is pressed at `now`; any earlier key's words are silenced.
@@ -153,9 +191,10 @@ impl Model {
             key,
             held,
             pressed: now,
+            node: self.focus.filter(|_| self.alive),
+            before: BeforeRead::NotAsked,
             passed: None,
             baseline: None,
-            before_read: false,
             done: false,
         });
     }
@@ -175,30 +214,51 @@ impl Model {
         let baseline = self
             .focus
             .and_then(|field| self.last_read.get(&field).cloned());
+        let focus = self.focus;
         let press = &mut self.keys[id];
         press.passed = Some(now);
         press.baseline = baseline;
+        if press.node.is_none() || press.node != focus {
+            press.done = true;
+            self.say_held_when_no_key_waits();
+        }
         Ok(())
+    }
+
+    /// Core asked a before read, of the oldest key not yet passed on.
+    pub fn before_read_asked(&mut self) {
+        if let Some(press) = self.keys.iter_mut().find(|press| press.passed.is_none()) {
+            press.before = BeforeRead::Asked;
+        }
+    }
+
+    /// With no key left to wait for, the held selection changes are said.
+    fn say_held_when_no_key_waits(&mut self) {
+        if self.keys.iter().all(|press| press.passed.is_some()) && self.open().is_none() {
+            let held = std::mem::take(&mut self.held);
+            self.say_changes(&held);
+        }
     }
 
     /// A read of `field` committed, having seen `text`: the node's last
     /// read is replaced, and whether it shows a change is noted.
-    pub fn committed(&mut self, field: usize, text: &Text) {
+    /// `before_read` when it is a held key's before read.
+    pub fn committed(&mut self, field: usize, text: &Text, before_read: bool) {
         let (shows, changes) = self.last_read.get(&field).map_or_else(
             || (false, Vec::new()),
             |last| {
                 let shows = last.caret != text.caret
                     || last.selection != text.selection
                     || neighbours(last) != neighbours(text);
-                (shows, selection_changes(last, text))
+                (shows, change_words(last, text))
             },
         );
         self.shows_change = shows;
         self.changes = changes;
-        if self.focus == Some(field) {
-            for press in self.keys.iter_mut().filter(|press| press.passed.is_none()) {
-                press.before_read = true;
-            }
+        if before_read
+            && let Some(press) = self.keys.iter_mut().find(|press| press.passed.is_none())
+        {
+            press.before = BeforeRead::Committed;
         }
         self.last_read.insert(field, text.clone());
     }
@@ -208,6 +268,12 @@ impl Model {
         self.note_caret(report.began, report.text.caret);
         let changes = std::mem::take(&mut self.changes);
         let Some(open) = self.open() else {
+            if !self.held.is_empty() && self.keys.iter().any(|press| press.passed.is_none()) {
+                self.held.extend(changes);
+                return;
+            }
+            let held = std::mem::take(&mut self.held);
+            self.say_changes(&held);
             self.say_changes(&changes);
             return;
         };
@@ -238,19 +304,18 @@ impl Model {
         }
     }
 
-    fn say_changes(&mut self, changes: &[(bool, String)]) {
-        for (selected, letters) in changes {
-            let word = if *selected { "selected" } else { "unselected" };
-            self.expected
-                .push(Heard::Words(format!("{letters} {word}")));
+    fn say_changes(&mut self, changes: &[String]) {
+        for words in changes {
+            self.expected.push(Heard::Words(words.clone()));
         }
     }
 
     /// A focus is reported at `now` on `field`, a read of `text` that
-    /// began at `began`; `repeat` when it is the focused field again.
-    pub fn focus(&mut self, field: usize, repeat: bool, text: &Text, began: Us, now: Us) {
-        self.committed(field, text);
-        if repeat {
+    /// began at `began`: a repeat when it is the focused field again.
+    pub fn focus(&mut self, field: usize, text: &Text, began: Us, now: Us) {
+        self.committed(field, text, false);
+        self.alive = true;
+        if self.focus == Some(field) {
             self.report(
                 &Report {
                     text: text.clone(),
@@ -267,14 +332,19 @@ impl Model {
         if let Some(open) = self.open() {
             self.keys[open].done = true;
             let press = self.keys[open].clone();
-            if press.before_read
+            if press.before == BeforeRead::Committed
                 && press.passed.is_some_and(|at| now <= at + BOUND_US)
                 && let Some(words) = focus_first_words(press.key, press.baseline.as_ref())
             {
                 self.expected.push(Heard::Words(words));
             }
         }
-        for press in self.keys.iter_mut().filter(|press| press.passed.is_none()) {
+        // A key waiting behind another is judged at its pass.
+        for press in self
+            .keys
+            .iter_mut()
+            .filter(|press| press.passed.is_none() && press.before != BeforeRead::NotAsked)
+        {
             press.done = true;
         }
         let held = std::mem::take(&mut self.held);
@@ -289,14 +359,21 @@ impl Model {
         self.note_caret(began, text.caret);
         self.expected.push(Heard::Focus);
         self.focus = Some(field);
+        self.alive = true;
     }
 
-    /// The outpost ended: its reads never report, and a key waiting on them
-    /// ends with nothing said; a held key still passes on.
+    /// The outpost ended: its nodes are gone with their last reads, its
+    /// reads never report, and a key waiting on them ends with nothing
+    /// said; a held key still passes on, its node gone.
     pub fn outpost_ended(&mut self) {
-        for press in self.keys.iter_mut().filter(|press| press.passed.is_some()) {
-            press.done = true;
+        for press in &mut self.keys {
+            if press.passed.is_some() {
+                press.done = true;
+            }
+            press.node = None;
         }
+        self.alive = false;
+        self.last_read.clear();
     }
 
     /// The clock reached `now`.
@@ -401,6 +478,13 @@ fn unit(key: Key, text: &Text) -> Option<String> {
 fn evidence_words(key: Key, baseline: Option<&Text>, text: &Text) -> Option<String> {
     if key == Key::Backspace {
         let baseline = baseline?;
+        if let Some((start, _)) = baseline.selection {
+            return Some(
+                start
+                    .checked_sub(1)
+                    .map_or_else(|| "blank".to_owned(), |at| baseline.letters[at].to_string()),
+            );
+        }
         let gone = baseline.letters.len().checked_sub(text.letters.len())?;
         (gone > 0).then(|| {
             baseline.letters[text.caret..text.caret + gone]
@@ -419,7 +503,8 @@ fn focus_first_words(key: Key, before: Option<&Text>) -> Option<String> {
     if key == Key::Backspace {
         Some(
             before
-                .caret
+                .ends()
+                .0
                 .checked_sub(1)
                 .map_or_else(|| "blank".to_owned(), |at| before.letters[at].to_string()),
         )
