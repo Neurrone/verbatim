@@ -60,6 +60,19 @@
 //!   its words is held and said after them, whether or not another key
 //!   waits behind it; before a key has been released it is said at once
 //!   (the coordinator's ruling, 2026-11-09).
+//! - Control+Backspace over text speaks as Backspace does, with the word
+//!   before the caret or the selection's start in place of its character
+//!   (`docs/parity/text.md`, "Selection over changed text in a classic edit
+//!   control").
+//! - A key pressed behind a focus report that waits for its live re-read
+//!   runs after that report is the focus, and is judged on it, as a script
+//!   runs after the focus event ahead of it (ADR 0001, "One ordered focus
+//!   queue"); its bound starts when the report stops waiting. A caret event
+//!   of another node while a report waits is a report of no focus.
+//! - A key pressed on a focus with no text has nothing to read and says
+//!   nothing (`docs/parity/text.md`, "Holding caret keys").
+//! - A focus in another top-level window cuts speech just before it
+//!   (`docs/parity/focus-events.md`), after a key's words.
 //! - Backspace speaks only when its caret moved
 //!   (`nvda/source/editableText.py` 313 to 320): with the caret not moved
 //!   it says nothing for the key and the change is heard; with the caret
@@ -70,7 +83,7 @@
 //!   now (`docs/parity/text.md`, "Selection over changed text in a
 //!   classic edit control").
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use super::world::{Key, Text, Us, selection_changes};
 
@@ -105,6 +118,8 @@ fn change_words(last: &Text, text: &Text) -> Vec<String> {
     words
 }
 
+/// The number of the button, among the fields a focus can be on.
+const BUTTON: usize = 2;
 /// The 100 ms bound, from when the key is passed on (2026-11-09).
 pub const BOUND_US: Us = 100_000;
 /// How long a held key's before read may run (2026-11-08).
@@ -126,7 +141,6 @@ enum BeforeRead {
 struct Press {
     key: Key,
     held: bool,
-    pressed: Us,
     /// The field with the focus at its press; `None` when there was none
     /// or its outpost has ended.
     node: Option<usize>,
@@ -138,6 +152,11 @@ struct Press {
     baseline: Option<Text>,
     /// Heard, silenced or ended: its words are said or owed no more.
     done: bool,
+    /// It waits behind a focus report and has not been run.
+    queued: bool,
+    /// No bound runs before this: the press, or the end of the wait it
+    /// was queued behind.
+    floor: Us,
     /// A later key, pressed at this time, silenced it: its selection
     /// changes wait for that key's words, and only a read begun before
     /// this time can still speak for it.
@@ -175,6 +194,8 @@ pub enum Heard {
     Words(String),
     /// A focus's own speech.
     Focus,
+    /// Speech was cut.
+    Cut,
 }
 
 /// The reference model.
@@ -195,8 +216,14 @@ pub struct Model {
     expected: Vec<Heard>,
     /// The newest caret: when its read began, and the caret.
     newest: Option<(Us, usize)>,
-    /// The field with the focus.
+    /// The field with the focus, or [`BUTTON`].
     focus: Option<usize>,
+    /// The field a focus report waiting for its live re-read is for.
+    waiting: Option<usize>,
+    /// The focus is in another top-level window.
+    other_window: bool,
+    /// The shapes this case reached.
+    pub reached: BTreeSet<&'static str>,
     /// Its outpost has not ended since it was reported. A new generation's
     /// report of the same field is that focus again.
     alive: bool,
@@ -213,6 +240,36 @@ impl Model {
     #[must_use]
     pub fn caret(&self) -> Option<usize> {
         self.newest.map(|(_, caret)| caret)
+    }
+
+    /// Whether a focus report waits for its live re-read.
+    #[must_use]
+    pub const fn report_waits(&self) -> bool {
+        self.waiting.is_some()
+    }
+
+    /// Whether the focus's outpost has not ended.
+    #[must_use]
+    pub const fn outpost_alive(&self) -> bool {
+        self.alive
+    }
+
+    /// Whether the focus is field `field`.
+    #[must_use]
+    pub fn focus_is(&self, field: usize) -> bool {
+        self.focus == Some(field)
+    }
+
+    /// The field a waiting focus report is for.
+    #[must_use]
+    pub const fn waiting_field(&self) -> Option<usize> {
+        self.waiting
+    }
+
+    /// Whether the focus is in another top-level window.
+    #[must_use]
+    pub const fn in_other_window(&self) -> bool {
+        self.other_window
     }
 
     /// The key still open: passed on and not done.
@@ -238,15 +295,27 @@ impl Model {
             press.done = true;
             press.silenced_at = Some(now);
         }
+        let queued = self.waiting.is_some();
+        if queued {
+            self.reached.insert("a key behind a focus report");
+        }
+        let node = self
+            .waiting
+            .or(self.focus)
+            .filter(|field| self.alive && *field != BUTTON);
+        if node.is_none() {
+            self.reached.insert("a key on a focus with no text");
+        }
         self.keys.push(Press {
             key,
             held,
-            pressed: now,
-            node: self.focus.filter(|_| self.alive),
+            node,
             before: BeforeRead::NotAsked,
             passed: None,
             baseline: None,
             done: false,
+            queued,
+            floor: now,
             silenced_at: None,
         });
     }
@@ -287,6 +356,7 @@ impl Model {
 
     /// Core asked a final read, for the key open now.
     pub fn final_read_asked(&mut self) {
+        self.reached.insert("a key's bound passed");
         let open = self.open();
         self.final_reads.push_back(open);
     }
@@ -373,11 +443,13 @@ impl Model {
         };
         let changes = std::mem::take(&mut self.changes);
         if self.focus != self.committed_field {
+            self.reached.insert("a report behind the focus");
             return;
         }
         self.note_caret(report.began, report.text.caret);
         let Some(open) = self.open() else {
             if let Some(id) = self.silenced_evidence(report) {
+                self.reached.insert("a silenced key's words");
                 let press = &self.keys[id];
                 let words = evidence_words(press.key, press.baseline.as_ref(), &report.text);
                 self.keys[id].silenced_at = None;
@@ -456,6 +528,7 @@ impl Model {
             self.newest = None;
         }
         self.alive = true;
+        self.waiting_ends(now);
         if self.focus == Some(field) {
             self.report(
                 &Report {
@@ -470,6 +543,13 @@ impl Model {
         }
         self.changes.clear();
         self.newest = Some((began, text.caret));
+        let cut = std::mem::take(&mut self.other_window);
+        self.focus_moves(field, now, cut);
+    }
+
+    /// The focus moves at `now` to a focus reported on `to`, `cut` when
+    /// into another top-level window: what is owed of the old one.
+    fn focus_moves(&mut self, to: usize, now: Us, cut: bool) {
         if let Some(open) = self.open() {
             self.keys[open].done = true;
             let press = self.keys[open].clone();
@@ -477,6 +557,8 @@ impl Model {
                 && press.passed.is_some_and(|at| now <= at + BOUND_US)
                 && let Some(words) = focus_first_words(press.key, press.baseline.as_ref())
             {
+                self.reached
+                    .insert("a focus moving first says a key's words");
                 self.expected.push(Heard::Words(words));
             }
         }
@@ -490,8 +572,41 @@ impl Model {
         }
         let held = std::mem::take(&mut self.held);
         self.say_changes(&held);
+        if cut {
+            self.expected.push(Heard::Cut);
+        }
         self.expected.push(Heard::Focus);
-        self.focus = Some(field);
+        self.focus = Some(to);
+    }
+
+    /// A report on the button is the focus at `now`, `new_window` when in
+    /// another top-level window.
+    pub fn focus_button(&mut self, new_window: bool, now: Us) {
+        self.changes.clear();
+        self.newest = None;
+        if new_window {
+            self.other_window = true;
+        }
+        self.focus_moves(BUTTON, now, new_window);
+    }
+
+    /// A focus report on `field` waits for its live re-read: its read is
+    /// the node's last read, and nothing else has happened.
+    pub fn focus_waits(&mut self, field: usize, text: &Text) {
+        self.reached.insert("a focus report waiting");
+        self.committed(field, text, false);
+        self.changes.clear();
+        self.waiting = Some(field);
+    }
+
+    /// The wait for a live re-read ended at `now`: the keys behind it run.
+    fn waiting_ends(&mut self, now: Us) {
+        if self.waiting.take().is_some() {
+            for press in self.keys.iter_mut().filter(|press| press.queued) {
+                press.queued = false;
+                press.floor = now;
+            }
+        }
     }
 
     /// The first focus of a case: nothing compared and no key open.
@@ -506,7 +621,10 @@ impl Model {
     /// The outpost ended: its nodes are gone with their last reads, its
     /// reads never report, and a key waiting on them ends with nothing
     /// said; a held key still passes on, its node gone.
-    pub fn outpost_ended(&mut self) {
+    pub fn outpost_ended(&mut self, now: Us) {
+        self.reached.insert("an outpost ended");
+        self.waiting_ends(now);
+        self.other_window = false;
         for press in &mut self.keys {
             if press.passed.is_some() {
                 press.done = true;
@@ -539,6 +657,9 @@ impl Model {
 
     /// Verbatim exited.
     pub fn exit(&mut self) {
+        if self.keys.iter().any(|press| press.passed.is_none()) {
+            self.reached.insert("exit with a key in line");
+        }
         self.exited = true;
     }
 
@@ -571,6 +692,7 @@ impl Model {
                 return Err(format!("key {id} withheld after exit"));
             }
             if press.held
+                && !press.queued
                 && let Some(latest) = self.latest_pass(id)
                 && now >= latest
             {
@@ -591,7 +713,7 @@ impl Model {
             Some(ahead) => Some(self.keys[ahead].passed?),
             None => None,
         };
-        let from = ahead.map_or(press.pressed, |at| press.pressed.max(at + BOUND_US));
+        let from = ahead.map_or(press.floor, |at| press.floor.max(at + BOUND_US));
         Some(from + BEFORE_READ_US)
     }
 }
@@ -617,24 +739,20 @@ fn unit(key: Key, text: &Text) -> Option<String> {
         } else {
             text.line()
         }),
-        Key::ShiftRight | Key::Backspace => None,
+        Key::ShiftRight | Key::Backspace | Key::WordBackspace => None,
     }
 }
 
 /// A key's words when `text` is its evidence: its unit, or for Backspace
 /// what `text` shows removed against `baseline`.
 fn evidence_words(key: Key, baseline: Option<&Text>, text: &Text) -> Option<String> {
-    if key == Key::Backspace {
+    if matches!(key, Key::Backspace | Key::WordBackspace) {
         let baseline = baseline?;
         if baseline.letters.len() == text.letters.len() {
             return (baseline.caret != text.caret).then(|| "blank".to_owned());
         }
         if let Some((start, _)) = baseline.selection {
-            return Some(
-                start
-                    .checked_sub(1)
-                    .map_or_else(|| "blank".to_owned(), |at| baseline.letters[at].to_string()),
-            );
+            return Some(before_start(key, baseline, start));
         }
         let gone = baseline.letters.len().checked_sub(text.letters.len())?;
         (gone > 0).then(|| {
@@ -647,18 +765,25 @@ fn evidence_words(key: Key, baseline: Option<&Text>, text: &Text) -> Option<Stri
     }
 }
 
+/// What Backspace or Control+Backspace removes before `start` of `text`:
+/// the character there, or for Control+Backspace all before it, "blank" at
+/// the text's start.
+fn before_start(key: Key, text: &Text, start: usize) -> String {
+    if start == 0 {
+        return "blank".to_owned();
+    }
+    if key == Key::WordBackspace {
+        return text.letters[..start].iter().collect();
+    }
+    text.letters[start - 1].to_string()
+}
+
 /// A key's words when the focus moves first: the unit at its before read,
 /// Backspace the letter before the caret, "blank" at the text's start.
 fn focus_first_words(key: Key, before: Option<&Text>) -> Option<String> {
     let before = before?;
-    if key == Key::Backspace {
-        Some(
-            before
-                .ends()
-                .0
-                .checked_sub(1)
-                .map_or_else(|| "blank".to_owned(), |at| before.letters[at].to_string()),
-        )
+    if matches!(key, Key::Backspace | Key::WordBackspace) {
+        Some(before_start(key, before, before.ends().0))
     } else {
         unit(key, before)
     }

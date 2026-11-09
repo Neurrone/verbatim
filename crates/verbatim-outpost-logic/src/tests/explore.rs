@@ -73,7 +73,7 @@ fn explore_followed() {
 #[ignore = "exploration: run by the nightly workflow with its own seed (books/dev/src/reference/testing.md, Exploration tests)"]
 fn explore_caret_lease() {
     let (config, again) = explored("explore_caret_lease");
-    super::caret_lease::run_generated(config, &again);
+    let _ = super::caret_lease::run_generated(config, &again);
 }
 
 #[test]

@@ -16,11 +16,12 @@ use verbatim_core::{SrState, reduce};
 use verbatim_model::protocol::{EventTiming, OutpostToCore, Query, QueryOutcome, QueryResult};
 use verbatim_model::{
     Backend, CaretChanges, CaretKey, CaretMotion, CaretRead, CaretReply, CaretReport,
-    CaretSelection, Change as FactsChange, Compared, Effect as CoreEffect, FocusText,
-    Input as CoreInput, KeySeq, Message, NodeDetails, NodeId, NodeSnapshot, NormalizedEvent,
-    OutpostId, Phrase, Pid, QueryId, ReadFacts, ReadPurpose, Role, SegmentContent, Selection,
-    SelectionChange, SelectionText, StateSet, TextAnchor, TextChunk, TextOp, TextPosition,
-    TextReply, TextUnit, TraceId, had_effect,
+    CaretSelection, Change as FactsChange, Compared, Effect as CoreEffect, FirstCachedAncestor,
+    FocusReaderKind, FocusText, ForegroundWindow, Input as CoreInput, KeySeq, Message, NodeDetails,
+    NodeId, NodeSnapshot, NormalizedEvent, OutpostId, Phrase, Pid, QueryId, ReadFacts, ReadPurpose,
+    Role, SegmentContent, Selection, SelectionChange, SelectionText, StateSet, TextAnchor,
+    TextChunk, TextOp, TextPosition, TextReply, TextUnit, TraceId, WindowFacts, WindowHandle,
+    had_effect,
 };
 
 use super::super::*;
@@ -97,6 +98,8 @@ pub struct Seam {
     /// Core gave up the before read with this query id: it answers as an
     /// ordinary report.
     given_up: Option<u64>,
+    /// The live re-read asked of the report waiting, by its request.
+    reread: Option<u64>,
     /// When this outpost generation began: none of its reads began earlier.
     generation_began: Us,
     now: Us,
@@ -176,6 +179,7 @@ fn motion(key: Key) -> CaretKey {
         Key::ShiftRight => (CaretMotion::NextCharacter, true),
         Key::Delete => (CaretMotion::Delete, false),
         Key::Backspace => (CaretMotion::Backspace, false),
+        Key::WordBackspace => (CaretMotion::BackspaceWord, false),
     };
     CaretKey { motion, select }
 }
@@ -230,6 +234,7 @@ impl Seam {
             final_outstanding: false,
             focus_reported: false,
             given_up: None,
+            reread: None,
             generation_began: 0,
             now: 1_000_000,
             next_trace: 10_000,
@@ -381,6 +386,8 @@ impl Seam {
         match effect {
             CoreEffect::ForKey(_, inner) => self.core_effect(*inner, seen),
             CoreEffect::Speak(utterance, _) => seen.push(Seen::Heard(heard(&utterance))),
+            CoreEffect::StopSpeech => seen.push(Seen::Heard(Heard::Cut)),
+            CoreEffect::LiveReread(reread) => self.reread = Some(reread.request),
             CoreEffect::PassHeldKey(trace) => {
                 if let Some(&id) = self.keys.get(&trace) {
                     seen.push(Seen::Passed(id));
@@ -450,6 +457,8 @@ impl Seam {
         let trace = TraceId::from_raw(1_000 + id as u64);
         self.keys.insert(trace, id);
         let mut seen = Vec::new();
+        // The hook cuts speech for a key before it reports the key.
+        self.enter_core(&CoreInput::SpeechCancelled { at_us: now }, &mut seen);
         let pressed_at_ms = now / 1_000;
         if held {
             let input = CoreInput::HeldKey {
@@ -706,10 +715,122 @@ impl Seam {
         seen
     }
 
-    /// A focus on `field`, reported at `now` from a read begun at `began`.
-    pub fn focus(&mut self, field: usize, text: &Text, began: Us, now: Us) -> Vec<Seen> {
+    /// A focus on `field`, reported at `now` from a read begun at `began`,
+    /// back into the first window from another when `back`.
+    pub fn focus(
+        &mut self,
+        field: usize,
+        text: &Text,
+        began: Us,
+        now: Us,
+        back: bool,
+    ) -> Vec<Seen> {
+        let shape = Shape {
+            top: back.then_some(WINDOWS[0]),
+            ..Shape::default()
+        };
+        self.focus_report(field, text, began, now, shape)
+    }
+
+    /// A focus on `field`, entering a cached container, set aside for its
+    /// live re-read.
+    pub fn focus_waits(&mut self, field: usize, text: &Text, began: Us, now: Us) -> Vec<Seen> {
+        let shape = Shape {
+            pane: true,
+            cached: Some(1),
+            ..Shape::default()
+        };
+        let seen = self.focus_report(field, text, began, now, shape);
+        if self.reread.is_none() {
+            self.unexpressed.insert("a focus report that waits");
+        }
+        seen
+    }
+
+    /// The live re-read's answer: the report that waited is the focus.
+    pub fn focus_answer(&mut self, field: usize, text: &Text, began: Us, now: Us) -> Vec<Seen> {
+        let Some(request) = self.reread.take() else {
+            self.unexpressed.insert("a focus report that waits");
+            return Vec::new();
+        };
+        let shape = Shape {
+            pane: true,
+            answers: Some(request),
+            ..Shape::default()
+        };
+        self.focus_report(field, text, began, now, shape)
+    }
+
+    /// A focus on a button, reported at `now`, in another top-level window
+    /// when `new_window`.
+    pub fn focus_button(&mut self, new_window: bool, now: Us) -> Vec<Seen> {
+        self.now = now;
+        let mut seen = Vec::new();
+        if new_window {
+            self.foreground(WINDOWS[1], &mut seen);
+        }
+        let input = CoreInput::Event {
+            trace_id: self.trace(),
+            observed_at_us: now,
+            source: Pid(1),
+            backend: Backend::Msaa,
+            window: new_window.then(|| facts_in(WINDOWS[1])),
+            event: NormalizedEvent::FocusChanged {
+                ancestors: vec![if new_window {
+                    snapshot(self.generation, 2, Role::Window, "Second")
+                } else {
+                    snapshot(self.generation, 1, Role::Window, "Window")
+                }],
+                node: snapshot(self.generation, 7, Role::Button, "Button"),
+                whole_window: false,
+                selected_child: None,
+                text: None,
+                earlier: None,
+                group: None,
+                answers: None,
+                first_cached_ancestor: None,
+            },
+            purpose: None,
+        };
+        self.enter_core(&input, &mut seen);
+        if !new_window {
+            drop_cut(&mut seen);
+        }
+        seen.dedup_by(same_focus);
+        seen
+    }
+
+    fn foreground(&mut self, window: WindowHandle, seen: &mut Vec<Seen>) {
+        let change = ForegroundWindow {
+            window,
+            root_owner: window,
+            process: Pid(1),
+            observed_at_us: self.now.saturating_sub(1),
+            own: false,
+            thread: 1,
+            console: false,
+            integrity: None,
+            own_integrity: None,
+        };
+        self.enter_core(&CoreInput::Foreground(change), seen);
+    }
+
+    /// A focus on `field`, reported at `now` from a read begun at `began`,
+    /// shaped as `shape` says.
+    fn focus_report(
+        &mut self,
+        field: usize,
+        text: &Text,
+        began: Us,
+        now: Us,
+        shape: Shape,
+    ) -> Vec<Seen> {
         self.now = now;
         self.focus_reported = true;
+        let mut ancestors = vec![snapshot(self.generation, 1, Role::Window, "Window")];
+        if shape.pane {
+            ancestors.push(snapshot(self.generation, 9, Role::Pane, "Tools"));
+        }
         let node = snapshot(
             self.generation,
             5 + field as u64,
@@ -745,14 +866,18 @@ impl Seam {
                 until_us,
             });
         }
+        let mut seen = Vec::new();
+        if let Some(top) = shape.top {
+            self.foreground(top, &mut seen);
+        }
         let input = CoreInput::Event {
             trace_id: self.trace(),
             observed_at_us: began.max(self.generation_began),
             source: Pid(1),
             backend: Backend::Msaa,
-            window: None,
+            window: shape.top.map(facts_in),
             event: NormalizedEvent::FocusChanged {
-                ancestors: vec![snapshot(self.generation, 1, Role::Window, "Window")],
+                ancestors,
                 node,
                 whole_window: false,
                 selected_child: None,
@@ -768,20 +893,19 @@ impl Seam {
                 })),
                 earlier: None,
                 group: None,
-                answers: None,
-                first_cached_ancestor: None,
+                answers: shape.answers,
+                first_cached_ancestor: shape.cached.map(|index| FirstCachedAncestor {
+                    index,
+                    reader: FocusReaderKind::Listener,
+                }),
             },
             purpose: None,
         };
-        let mut seen = Vec::new();
         self.enter_core(&input, &mut seen);
-        // One focus is one thing heard, whatever utterances say it.
-        seen.dedup_by(|later, earlier| {
-            matches!(
-                (later, earlier),
-                (Seen::Heard(Heard::Focus), Seen::Heard(Heard::Focus))
-            )
-        });
+        if shape.top.is_none() {
+            drop_cut(&mut seen);
+        }
+        seen.dedup_by(same_focus);
         seen
     }
 
@@ -826,6 +950,7 @@ impl Seam {
         self.outpost = Reducer::new();
         self.final_outstanding = false;
         self.focus_reported = false;
+        self.reread = None;
         self.generation_began = self.now;
         self.enter_core(&input, &mut seen);
         seen
@@ -835,6 +960,7 @@ impl Seam {
     pub fn exit(&mut self) -> Vec<Seen> {
         let mut seen = Vec::new();
         self.enter_core(&CoreInput::Exiting { replaced: false }, &mut seen);
+        drop_cut(&mut seen);
         seen
     }
 
@@ -842,6 +968,55 @@ impl Seam {
     pub fn core_caret(&mut self) -> Option<usize> {
         self.core.focus_caret_offset().map(|offset| offset as usize)
     }
+}
+
+/// How a focus report is shaped, past its node and its read.
+#[derive(Clone, Copy, Debug, Default)]
+struct Shape {
+    /// The top-level window it is in, with the foreground change that
+    /// reached Core before it; `None` for no window facts.
+    top: Option<WindowHandle>,
+    /// It enters a container the focus reader took from its cache.
+    pane: bool,
+    /// The index of the innermost cached ancestor among its ancestors.
+    cached: Option<u32>,
+    /// The live re-read it answers.
+    answers: Option<u64>,
+}
+
+/// The two top-level windows focuses are reported in.
+const WINDOWS: [WindowHandle; 2] = [WindowHandle(0x100), WindowHandle(0x200)];
+
+/// The window facts of a window in the top-level window `top`, in front.
+fn facts_in(top: WindowHandle) -> WindowFacts {
+    WindowFacts {
+        top_level: top,
+        root_owner: top,
+        topmost: false,
+        under_active_window: None,
+        in_foreground: true,
+        foreground_window: top,
+        class: String::new(),
+        application: String::new(),
+        alt_held: false,
+        foreground_is_shell: false,
+    }
+}
+
+/// Forgets speech cut where the model has no rule for it: on a step that
+/// is not a focus in another window, such as exit or a new outpost
+/// generation's first focus, whose nodes all have new ids.
+fn drop_cut(seen: &mut Vec<Seen>) {
+    seen.retain(|seen| !matches!(seen, Seen::Heard(Heard::Cut)));
+}
+
+/// Whether `later` and `earlier` are one focus's speech: one focus is one
+/// thing heard, whatever utterances say it.
+fn same_focus(later: &mut Seen, earlier: &mut Seen) -> bool {
+    matches!(
+        (later, earlier),
+        (Seen::Heard(Heard::Focus), Seen::Heard(Heard::Focus))
+    )
 }
 
 fn field_of(hwnd: isize) -> usize {

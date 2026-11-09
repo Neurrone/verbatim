@@ -25,16 +25,19 @@ pub enum Key {
     Delete,
     /// Backspace.
     Backspace,
+    /// Control+Backspace.
+    WordBackspace,
 }
 
 /// The keys in the order a generated action names them.
-pub const KEYS: [Key; 6] = [
+pub const KEYS: [Key; 7] = [
     Key::Right,
     Key::Left,
     Key::Down,
     Key::ShiftRight,
     Key::Delete,
     Key::Backspace,
+    Key::WordBackspace,
 ];
 
 /// A text field's content, as a read sees it.
@@ -126,13 +129,24 @@ pub enum Action {
     Select,
     /// The application raises a caret event for the focused field.
     Event,
+    /// The application raises a caret event for the field the focus left,
+    /// or for the one it is moving to while that focus's report waits.
+    EventBehind,
     /// The read in flight ends, seeing the application as it is now.
     Finish,
     /// The read in flight is abandoned, never ending.
     Abandon,
     /// A focus is reported, on the other field or again on this one, read
-    /// `ago` tens of milliseconds ago.
+    /// `ago` tens of milliseconds ago; from the button, on the field left.
     Focus { other: bool, ago: u8 },
+    /// A focus is reported on a button, which has no text, in this window
+    /// or in another top-level window.
+    FocusButton { new_window: bool },
+    /// A focus is reported on the other field from the first, entering a
+    /// container read from a cache, so that it waits for a live re-read.
+    FocusWaits { ago: u8 },
+    /// The live re-read answers: the report that waited is the focus.
+    FocusAnswer,
     /// The clock moves on `ms` milliseconds.
     Tick(u8),
     /// The outpost's process ends.
@@ -141,15 +155,20 @@ pub enum Action {
     Exit,
 }
 
-/// The application's two fields and which has the focus, the keys it has
-/// been given and not yet acted on, and each field's past, so a focus can
-/// report a read made earlier.
+/// The application's two fields, which has the focus or last had it, the
+/// keys it has been given and not yet acted on, and each field's past, so a
+/// focus can report a read made earlier.
 #[derive(Clone, Debug)]
 pub struct World {
     /// The two fields.
     pub fields: [Text; 2],
-    /// The field with the focus.
+    /// The field with the focus, or which last had it when the button has
+    /// the focus.
     pub focus: usize,
+    /// The button has the focus.
+    pub on_button: bool,
+    /// The field the focus moved away from most recently.
+    pub left: Option<usize>,
     given: VecDeque<Key>,
     past: Vec<(Us, usize, Text)>,
 }
@@ -161,6 +180,8 @@ impl World {
         Self {
             fields: [Text::new("abcdef"), Text::new("uvwxyz")],
             focus: 0,
+            on_button: false,
+            left: None,
             given: VecDeque::new(),
             past: Vec::new(),
         }
@@ -209,7 +230,7 @@ impl World {
         let Some(key) = self.given.pop_front() else {
             return;
         };
-        if effect {
+        if effect && !self.on_button {
             self.act(key);
         }
     }
@@ -250,6 +271,18 @@ impl World {
                 field.caret -= 1;
                 field.letters.remove(field.caret);
             }
+            // One word to the field's line, so the word is all before the
+            // caret.
+            Key::WordBackspace if field.selection.is_some() => {
+                let (start, end) = field.ends();
+                field.letters.drain(start..end);
+                field.caret = start;
+                field.selection = None;
+            }
+            Key::WordBackspace if field.caret > 0 => {
+                field.letters.drain(..field.caret);
+                field.caret = 0;
+            }
             _ => {}
         }
     }
@@ -259,6 +292,9 @@ impl World {
     /// letter after it, which moves the caret, or collapses the selection,
     /// with no key.
     pub fn select(&mut self) {
+        if self.on_button {
+            return;
+        }
         let field = &mut self.fields[self.focus];
         if field.selection.take().is_some() {
             return;
