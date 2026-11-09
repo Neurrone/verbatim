@@ -567,6 +567,12 @@ impl Seam {
             flight.node.number(),
             &found,
         )];
+        if let (ReadKind::Final(..), Some((_, Some(until_us)))) = (&flight.kind, note) {
+            changes.push(TextChange::NoteCleared {
+                node: flight.node.number(),
+                until_us,
+            });
+        }
         if let Some((fetch, Some(until_us))) = fetch
             && found.shows_effect(fetch.motion)
         {
@@ -719,17 +725,7 @@ impl Seam {
             .text
             .live_note(node_id.number(), began)
             .map(|note| (note.fetch, note.until_us));
-        // The worker is serial, so a focus read cannot overlap the key's final
-        // read; what the world reports here is what that read would then show
-        // the key, so it carries the final read's fetch.
-        let final_fetch = self.flight.as_ref().and_then(|flight| match flight.kind {
-            ReadKind::Final(_, _, read) if flight.node == node_id => Some(NoteFetch {
-                unit: read.fetch.unit,
-                motion: read.fetch.motion,
-            }),
-            _ => None,
-        });
-        let fetch = note.map(|(fetch, _)| fetch).or(final_fetch);
+        let fetch = note.map(|(fetch, _)| fetch);
         let found = self.found(node_id, text, began, now, fetch);
         let committed = committed_read(
             self.outpost
