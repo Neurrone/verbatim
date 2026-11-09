@@ -204,7 +204,7 @@ So Verbatim+F11 works like this:
   - tutorial drafts: a rules-only fix, Calculator's result, a global module with a list dialog, packaging by zip;
   - how-to outlines.
 
-  Examples become compiled crates in `extensions/`, included into the book with `{{#include}}`. The design records are updated in a separate commit.
+  Examples become compiled crates in the `extensions` workspace (planned), included into the book with `{{#include}}`. The design records are updated in a separate commit.
 
 ## Section 4, imports (Dickson, 2026-11-09)
 
