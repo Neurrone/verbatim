@@ -404,6 +404,14 @@ impl FocusState {
         self.queue.push_back(Queued::Input(Box::new(input)));
     }
 
+    /// The inputs waiting in the queue, in order.
+    pub(crate) fn queued_inputs(&self) -> impl Iterator<Item = &verbatim_model::Input> + '_ {
+        self.queue.iter().filter_map(|queued| match queued {
+            Queued::Input(input) => Some(&**input),
+            Queued::Report(_) => None,
+        })
+    }
+
     /// Whether an input waits in the queue: a key or command pressed
     /// behind the focus reports ahead of it.
     pub(crate) fn input_queued(&self) -> bool {

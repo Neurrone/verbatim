@@ -492,7 +492,7 @@ fn watch_from_last_read(
 /// The rule at a key's pass: typed keys at the front of what waits run at
 /// once, as NVDA's typed keys are not held behind a script, stopping at the
 /// first command or held key, and anything left behind it marks a later
-/// key at the pass.
+/// key at the time it was pressed.
 fn pass_rule(state: &mut SrState) -> Vec<Effect> {
     let mut effects = Vec::new();
     loop {
@@ -515,13 +515,38 @@ fn pass_rule(state: &mut SrState) -> Vec<Effect> {
         }
     }
     let queued = state.focus.input_queued();
+    let queued_at = state.focus.queued_inputs().find_map(input_pressed_at_us);
     if let Some(busy) = state.busy_mut()
         && (queued || !busy.waiting.is_empty())
-        && let Some(passed) = busy.current.passed_mut()
     {
-        passed.later_key_at_us.get_or_insert(passed.passed_at_us);
+        let waiting_at = busy.waiting.front().and_then(waiting_pressed_at_us);
+        if let Some(passed) = busy.current.passed_mut() {
+            let at = waiting_at.into_iter().chain(queued_at).min();
+            passed
+                .later_key_at_us
+                .get_or_insert(at.unwrap_or(passed.passed_at_us));
+        }
     }
     effects
+}
+
+/// When what waits as `waiting` was pressed, in microseconds.
+fn waiting_pressed_at_us(waiting: &WaitingKey) -> Option<u64> {
+    match waiting {
+        WaitingKey::Held(held) => Some(held.pressed_at_ms.saturating_mul(1_000)),
+        WaitingKey::Later(input) | WaitingKey::Command(input) => input_pressed_at_us(input),
+    }
+}
+
+/// When the key or command `input` was pressed, in microseconds.
+fn input_pressed_at_us(input: &Input) -> Option<u64> {
+    match input {
+        Input::HeldKey { pressed_at_ms, .. }
+        | Input::CaretKey { pressed_at_ms, .. }
+        | Input::Command { pressed_at_ms, .. }
+        | Input::Script { pressed_at_ms, .. } => Some(pressed_at_ms.saturating_mul(1_000)),
+        _ => None,
+    }
 }
 
 /// Whether `input` is a caret key the hook passed.
@@ -994,12 +1019,9 @@ fn result(
 /// Whether a result of the key `passed` speaks. Evidence read before the
 /// later key is this key's; a bound answer with any later key says nothing,
 /// as NVDA's helper returns while a script waits (`editableText.py` 166).
-/// A read begun before the pass counts from the pass, so that a key with
-/// another behind it at its pass says nothing even when its read was given
-/// up and ended after the pass.
 fn result_speaks(passed: &PassedKey, read: &CaretReply, is_evidence: bool) -> bool {
     match passed.later_key_at_us {
-        Some(later) => is_evidence && read.caret.read_at_us.max(passed.passed_at_us) < later,
+        Some(later) => is_evidence && read.caret.read_at_us < later,
         None => true,
     }
 }
@@ -1109,8 +1131,18 @@ fn first_words(state: &SrState, watched: &Watched) -> Vec<UtteranceSegment> {
     editing::focus_first_words(state, passed.key.key, (unit, line, removed.as_deref()))
 }
 
-/// A focus of node `node` has executed.
+/// A focus of node `node` has executed. A key still being read that the
+/// focus has left is no longer pressed on it, even if the focus comes back
+/// before its read answers.
 pub(crate) fn focus_executed(state: &mut SrState, node: NodeId) -> Vec<Effect> {
+    if let Some(busy) = state.busy_mut()
+        && let CurrentKey::Reading {
+            node: read, key, ..
+        } = &mut busy.current
+        && *read != node
+    {
+        key.pressed_on = None;
+    }
     let Some(passed) = state.current().and_then(CurrentKey::passed).cloned() else {
         return Vec::new();
     };

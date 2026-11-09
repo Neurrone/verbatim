@@ -483,6 +483,20 @@ fn backspace_segments(
     let line_break = state
         .focus_caret(node)
         .and_then(|caret| caret.line_break.as_deref());
+    // The text unchanged: with the caret not moved the key says nothing and
+    // the selection's change is heard, and with it moved it says "blank". A
+    // selection from an earlier line can leave the caret's line the same
+    // though it was removed.
+    let from_earlier_line = evidence
+        .previous_selection
+        .is_some_and(|selection| selection.start_line.is_some());
+    if !from_earlier_line && read.caret.line.text == evidence.previous_line.text {
+        return if read.caret.line.offset == evidence.previous_line.offset {
+            Vec::new()
+        } else {
+            text::character_segments(None, None)
+        };
+    }
     if evidence.previous_selection.is_some() {
         let Some((line, offset)) =
             selection_start(evidence.previous_line, evidence.previous_selection).flatten()

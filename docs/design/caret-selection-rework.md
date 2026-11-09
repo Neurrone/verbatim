@@ -147,7 +147,7 @@ Four rules cover every ending, so the tables do not repeat them:
 
 - To end the current key: clear its deadline, say what is left in `heard`, and advance. With no key left the line is `Idle`.
 - To advance: take `waiting` in order, running typed keys and commands as the inputs they came as, until a held key or a caret key the hook passed is reached, which becomes current.
-- At the pass, when a key becomes `Watched`: typed keys at the front of `waiting` run at once, stopping at the first command or held key, as NVDA's typed keys are not held behind a script, and a non-empty `waiting` marks `later_key_at_us` with the pass.
+- At the pass, when a key becomes `Watched`: typed keys at the front of `waiting` run at once, stopping at the first command or held key, as NVDA's typed keys are not held behind a script, and a key still waiting, in `waiting` or behind a focus report, marks `later_key_at_us` with when it was pressed, so a key whose before read was given up says nothing for a read begun after that press.
 - Saying selection changes always says `heard` first, and a key's words come before both.
 
 The caret lives on the focus object as `{line, selection, line_break, read_at_us}`, so it ends with the focus. Its stamp is mandatory. `selection` is optional and holds the selection's start's own line when that differs from the caret's, so a selection line with no selection cannot be written, on the wire as in Core.
@@ -236,7 +236,7 @@ Core. "Ends", "advance", "the pass" and "says changes" are the four rules above.
 | Watched | typed character or editing chord | Runs at once if `waiting` is empty, else joins it. Its cut of speech marks `later_key_at_us`. |
 | Watched | a caret key the hook passed | With `waiting` empty, replaces the current key as `Watched`, `NotRead`, arms 100 ms, sends `KeyNote`. Otherwise joins `waiting`. |
 | Watched | evidence, no later key or read begun before it | Takes the caret; says a `Field` key's words, then changes; ends. A `Terminal` key has no words of its own: the reading rules speak. |
-| Watched | evidence, later key marked and read begun at or after it | Takes the caret; says changes; ends. A read begun before the pass counts from the pass, so a key with another behind it at its pass says nothing, including one whose before read was given up. |
+| Watched | evidence, later key marked and read begun at or after it | Takes the caret; says changes; ends. |
 | `Watched::Field` | deadline fires, not a sentence key | Advances; if this key is still current, asks `ReadCaret` for `Final` and becomes `FinalReading`. |
 | `Watched::Field` | deadline fires, a sentence key | Asks `ReadCaret` for `Final`; `MovingBySentence` in step `FinalRead`; arms 150 ms. |
 | `Watched::Terminal` | deadline fires | Ends. |
