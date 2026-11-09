@@ -1326,15 +1326,15 @@ fn the_read_before_a_held_key_is_aligned_and_its_caret_answers_it() {
         },
     );
     assert_eq!(session.heard(), plain(&["file", "$"]));
-    // The key is passed on as pressed just after the read began, its
-    // colours asked for from then and its watch opened from then.
+    // The key is passed on as the answer reaches Core, its colours asked
+    // for from then.
     let requests = session.requests();
     assert_eq!(requests.len(), 1, "{requests:?}");
     assert_eq!(
         requests[0],
         TextOp::TerminalColours {
-            from_ms: 301,
-            until_ms: 601
+            from_ms: 300,
+            until_ms: 600
         }
     );
 }
@@ -1387,15 +1387,15 @@ fn a_key_deferred_behind_a_held_key_reaches_the_rules_at_the_held_keys_pass() {
     assert_eq!(
         requests[0],
         TextOp::TerminalColours {
-            from_ms: 301,
-            until_ms: 601
+            from_ms: 300,
+            until_ms: 600
         }
     );
     assert_eq!(
         requests[1],
         TextOp::TerminalColours {
-            from_ms: 301,
-            until_ms: 601
+            from_ms: 300,
+            until_ms: 600
         }
     );
 }

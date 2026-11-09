@@ -636,14 +636,19 @@ impl Session {
         let (_, mut snapshot) = self.outpost.read(None, at_ms);
         snapshot.caret = Some(caret);
         self.outpost.answered(&snapshot);
-        let effects = self.completed(query_id, TextReply::TerminalSnapshot(Box::new(snapshot)));
+        let reply = TextReply::TerminalSnapshot(Box::new(snapshot));
+        let effects = self.completed_at(query_id, reply, at_ms * 1_000);
         self.run(effects);
         self.settle();
     }
 
     fn completed(&mut self, query_id: QueryId, reply: TextReply) -> Vec<Effect> {
+        self.completed_at(query_id, reply, 0)
+    }
+
+    fn completed_at(&mut self, query_id: QueryId, reply: TextReply, at_us: u64) -> Vec<Effect> {
         self.step(Input::Answered {
-            at_us: 0,
+            at_us,
             trace_id: TraceId::from_raw(2),
             query_id,
             outpost: OUTPOST,
