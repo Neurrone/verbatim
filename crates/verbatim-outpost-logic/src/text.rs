@@ -368,6 +368,14 @@ pub enum TextChange {
         /// The end of the note the read was made under, which names it.
         until_us: u64,
     },
+    /// The key's final read committed: the note ending at `until_us`, when
+    /// it is still the node's, is cleared.
+    NoteCleared {
+        /// The node's number.
+        node: u64,
+        /// The end of the note the read was made under, which names it.
+        until_us: u64,
+    },
     /// The console host's before read committed, ending at `read_ended_at_us`:
     /// the note ending at `until_us`, when still the node's, polls for
     /// [`POLL_BOUND`] from then.
@@ -393,6 +401,7 @@ impl TextChange {
             | Self::ContentCounted(node)
             | Self::Forget(node)
             | Self::NoteEffect { node, .. }
+            | Self::NoteCleared { node, .. }
             | Self::NotePoll { node, .. } => *node,
         }
     }
@@ -794,6 +803,11 @@ impl TextFacts {
                     note.reads = NoteReads::CaretOnly;
                 }
             }
+            TextChange::NoteCleared { until_us, .. } => {
+                if self.note_named(node, *until_us).is_some() {
+                    self.clear_note(node);
+                }
+            }
             TextChange::NotePoll {
                 until_us,
                 read_ended_at_us,
@@ -976,6 +990,58 @@ mod tests {
         assert_eq!(
             facts.live_note(1, 2_000).map(|note| note.reads),
             Some(NoteReads::CaretOnly)
+        );
+    }
+
+    /// A caret report with the note's facts attached at its commit: the
+    /// character from the line, the comparison by the text, and the note
+    /// narrowed by the effect; a key that reads another unit gets none.
+    #[test]
+    fn a_read_dispatched_before_its_note_gets_facts_at_commit() {
+        let report = |offset: u32| CaretReport {
+            line: TextChunk {
+                text: "abc".to_owned(),
+                offset,
+                ..last_read(0, None).line
+            },
+            selection: None,
+            read_at_us: 9,
+        };
+        let mut facts = TextFacts::default();
+        let mut part = NodeAnchors::default();
+        part.last = Some(LastRead {
+            line: report(0).line,
+            ..last_read(0, None)
+        });
+        facts.apply(&TextChange::Uia {
+            node: 1,
+            part,
+            copied: BTreeSet::new(),
+        });
+        assert_eq!(facts.facts_at_commit(1, (&report(1), false), 0), None);
+        facts.set_note(1, fetch(CaretMotion::NextCharacter), 0, false);
+        let found = facts
+            .facts_at_commit(1, (&report(1), false), 5)
+            .expect("the facts");
+        assert_eq!(found.unit.map(|unit| unit.text), Some("b".to_owned()));
+        assert!(matches!(
+            found.change,
+            Change::Compared { compared, .. } if compared.caret_moved
+        ));
+        assert_eq!(found.read_ended_at_us, 5);
+        assert_eq!(
+            facts.live_note(1, 5).map(|note| note.reads),
+            Some(NoteReads::CaretOnly)
+        );
+        let mut word = fetch(CaretMotion::NextWord);
+        word.unit = TextUnit::Word;
+        facts.set_note(1, word, 6, false);
+        assert_eq!(
+            facts
+                .facts_at_commit(1, (&report(2), false), 7)
+                .expect("the facts")
+                .unit,
+            None
         );
     }
 

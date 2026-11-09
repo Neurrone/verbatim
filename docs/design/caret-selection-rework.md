@@ -73,7 +73,7 @@ Claude's, each with its reason:
 - A note that has passed its end counts as absent where it is read, so no timer ends it and no wake is added.
 - A terminal's note lasts 300 ms, as a text field's does, because its key ends at its 100 ms bound: longer would fetch for no one, and a report with facts cannot be merged, which streaming redraws would pay for. The console host, which raises no prompt caret event, polls during its note (`NoteReads::Poll`), with today's 5 ms interval and 50 ms end (`POLL_BOUND`). This is the one thing the note holds beyond the unit, motion and end.
 - A terminal's key ends at its 100 ms bound, with no final read: keys behind go ahead, and what the terminal did reaches Core as ordinary reports.
-- A final read clears the note on arrival, so a text field reads text changes no longer than today, and it goes ahead of queued reads as the watch's final read does.
+- A final read clears the note when it commits, so that a read in flight at its arrival still gets its facts (Dickson's decision of 2026-11-09), and it goes ahead of queued reads, so text changes are read no longer than today.
 - A key with no previous read to compare with has no evidence, and at its bound says its unit, as any bound answer does.
 - A deadline due during a burst of queued work is acted on when the reducer drains it, as every reducer deadline is today.
 - A key outside the caret table that the hook reports, which today is a clearing key reported as `CaretMotion::Other`, has the same 100 ms bound and says nothing at it, so that one lifecycle covers every key. An effect later than that is not spoken.
@@ -259,7 +259,7 @@ The outpost, per node. A note past its end counts as absent.
 | Any | release, or the element replaced | The record and its ranges are dropped, the note with them. |
 | Note absent or live | `ReadCaret` for `BeforeKey` arrives | The note is set or replaced at arrival, `CaretAndText`. On the console host, the before read's commit makes it `Poll`, ending 50 ms after that read ended (`POLL_BOUND`), so a slow read does not use up the poll. |
 | Note absent or live | `KeyNote` arrives | The note is set or replaced at arrival: `Poll` on the console host, ending 50 ms after arrival; `CaretAndText` otherwise. |
-| Note absent or live | `ReadCaret` for `Final` arrives | The note is cleared at arrival; the read fetches the request's unit, ahead of queued reads. |
+| Note absent or live | `ReadCaret` for `Final` arrives | The read fetches the request's unit, ahead of queued reads; the note is cleared when it commits. |
 | Note absent | the node's caret event | Reads, as today, with no unit and no `ReadFacts`. |
 | Note absent | the node's text-change event | No read. |
 | Note live | the node's caret event | Reads, fetching the unit, with `ReadFacts`. |

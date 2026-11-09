@@ -1014,6 +1014,19 @@ pub(super) fn note_effect(context: &RequestContext<'_>, node_id: NodeId, until_u
     );
 }
 
+/// Clears the note of `node_id` ending at `until_us`, its key's final read
+/// having committed.
+pub(super) fn clear_note(context: &RequestContext<'_>, node_id: NodeId, until_us: u64) {
+    record(
+        context,
+        TextChange::NoteCleared {
+            node: node_id.number(),
+            until_us,
+        },
+        (Vec::new(), Vec::new()),
+    );
+}
+
 /// Starts the console poll of the note of `node_id` ending at `until_us`,
 /// from `read_ended_at_us`, its before read's end.
 pub(super) fn note_poll(

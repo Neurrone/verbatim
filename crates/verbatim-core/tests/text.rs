@@ -5748,6 +5748,34 @@ fn a_report_read_after_the_pass_showing_a_change_is_the_keys_evidence() {
 }
 
 #[test]
+fn evidence_with_no_unit_waits_for_the_final_reads_unit() {
+    let (mut state, _) = key_passed_on("abc\n", 0, CaretMotion::NextLine);
+    let moved = event(NormalizedEvent::CaretMoved {
+        node_id: id(5),
+        caret: CaretReport {
+            line: line("next\n", 101, 0),
+            selection: None,
+            read_at_us: 900_000,
+        },
+        selection_changes: Vec::new(),
+        content_changed: false,
+        new_selection: None,
+        facts: Some(Box::new(ReadFacts {
+            unit: None,
+            ..key_facts(
+                line("next\n", 101, 0),
+                true,
+                (line("abc\n", 100, 0), None),
+                true,
+            )
+        })),
+    });
+    assert_eq!(spoken(&reduce(&mut state, &moved)), []);
+    let effects = bound_answer(&mut state, line("next\n", 101, 0));
+    assert_eq!(spoken(&effects), vec![UtteranceSegment::text("next")]);
+}
+
+#[test]
 fn a_final_read_showing_an_effect_is_the_keys_evidence() {
     let (mut state, _) = key_passed_on("abc\n", 0, CaretMotion::NextCharacter);
     let due = reduce(&mut state, &key_bound_passed());

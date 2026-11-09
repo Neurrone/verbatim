@@ -901,8 +901,9 @@ impl Reducer {
     }
 
     /// A read of the caret for a key, as it arrives: a before read sets
-    /// the node's note and is queued; a final read clears it and goes
-    /// ahead of queued reads, as nothing of it can wait behind them.
+    /// the node's note and is queued; a final read goes ahead of queued
+    /// reads, as nothing of it can wait behind them, and the note stays
+    /// until it commits, so a read in flight still gets its facts.
     /// Whether the entry was taken here.
     fn key_arrived(&mut self, entry: &Entry, now: Now) -> bool {
         let Item::Query {
@@ -919,14 +920,17 @@ impl Reducer {
         if self.stopping {
             return false;
         }
-        let node = node_id.number();
         match read.purpose {
             ReadPurpose::BeforeKey => {
-                Arc::make_mut(&mut self.facts.text).set_note(node, read.fetch, now.wall_us, false);
+                Arc::make_mut(&mut self.facts.text).set_note(
+                    node_id.number(),
+                    read.fetch,
+                    now.wall_us,
+                    false,
+                );
                 false
             }
             ReadPurpose::Final => {
-                Arc::make_mut(&mut self.facts.text).clear_note(node);
                 self.queries.insert(*request_id);
                 self.after.push_back((entry.clone(), None));
                 true

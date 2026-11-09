@@ -2413,7 +2413,7 @@ fn note_at(replay: &Replay, at_ms: u64) -> Option<KeyNote> {
 }
 
 #[test]
-fn a_before_read_sets_the_note_as_it_arrives_and_a_final_read_clears_it_ahead_of_the_queue() {
+fn a_before_read_sets_the_note_as_it_arrives_and_a_final_read_goes_ahead_of_the_queue() {
     let mut replay = Replay::new();
     let effects = replay.push(name_change(1), Source::Hook, 1);
     let busy = program(&effects).request;
@@ -2435,7 +2435,10 @@ fn a_before_read_sets_the_note_as_it_arrives_and_a_final_read_clears_it_ahead_of
         programs(&replay.push(read_caret(6, ReadPurpose::BeforeKey), Source::Other, 3)).is_empty()
     );
     assert!(programs(&replay.push(read_caret(7, ReadPurpose::Final), Source::Other, 4)).is_empty());
-    assert_eq!(note_at(&replay, 4), None, "the final read clears it");
+    assert!(
+        note_at(&replay, 4).is_some(),
+        "the final read clears it when it commits, not as it arrives"
+    );
     // The final read goes ahead of the queued read.
     let effects = replay.finish(busy, false, 5);
     let next = program(&effects);
