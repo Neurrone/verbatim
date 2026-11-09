@@ -24,7 +24,14 @@
 //!   made it and before a focus that moves away (2026-11-09).
 //! - A repeated focus's selection changes are spoken; a new focus's are
 //!   not (2026-10-25, amended 2026-10-29).
-//! - The caret is the one whose read began most recently (2026-10-25).
+//! - The caret is the focus object's, the one whose read began most
+//!   recently (2026-10-25), and ends with that focus.
+//! - A report of a node no longer the focus says nothing and is not a
+//!   key's evidence, since a caret event is taken only for the focus
+//!   (`docs/parity/text.md`).
+//! - A later key silences only reads begun at or after its press; a read
+//!   begun before it still speaks for the key it silenced
+//!   (`docs/parity/text.md`, "Caret keys and what each speaks").
 //! - A focus moving first within the 100 ms speaks the key's unit from the
 //!   read before it, Backspace what that read shows it removes, with no
 //!   before read nothing (2026-11-08, 2026-11-09); a key whose before read
@@ -118,8 +125,10 @@ struct Press {
     baseline: Option<Text>,
     /// Heard, silenced or ended: its words are said or owed no more.
     done: bool,
-    /// A later key silenced it, whose words its selection changes wait for.
-    silenced: bool,
+    /// A later key, pressed at this time, silenced it: its selection
+    /// changes wait for that key's words, and only a read begun before
+    /// this time can still speak for it.
+    silenced_at: Option<Us>,
 }
 
 /// What a report told Core, for [`Model::report`].
@@ -150,6 +159,8 @@ pub struct Model {
     keys: Vec<Press>,
     /// Each node's one last read, replaced by every read.
     last_read: BTreeMap<usize, Text>,
+    /// The field of the newest read committed.
+    committed_field: Option<usize>,
     /// Whether the newest read differed from the one before it.
     shows_change: bool,
     /// The selection changes the newest read shows.
@@ -196,7 +207,7 @@ impl Model {
         // (`nvda/source/editableText.py` 166).
         for press in self.keys.iter_mut().filter(|press| !press.done) {
             press.done = true;
-            press.silenced = true;
+            press.silenced_at = Some(now);
         }
         self.keys.push(Press {
             key,
@@ -207,7 +218,7 @@ impl Model {
             passed: None,
             baseline: None,
             done: false,
-            silenced: false,
+            silenced_at: None,
         });
     }
 
@@ -251,7 +262,8 @@ impl Model {
         self.keys.iter().enumerate().any(|(id, press)| {
             press.passed.is_some()
                 && (!press.done
-                    || (press.silenced && self.keys[id + 1..].iter().any(|later| !later.done)))
+                    || (press.silenced_at.is_some()
+                        && self.keys[id + 1..].iter().any(|later| !later.done)))
         })
     }
 
@@ -276,6 +288,7 @@ impl Model {
                 (shows, change_words(last, text))
             },
         );
+        self.committed_field = Some(field);
         self.shows_change = shows;
         self.changes = changes;
         if before_read
@@ -288,9 +301,24 @@ impl Model {
 
     /// A report of a read reached Core at `now`.
     pub fn report(&mut self, report: &Report, now: Us) {
-        self.note_caret(report.began, report.text.caret);
         let changes = std::mem::take(&mut self.changes);
+        if self.focus != self.committed_field {
+            return;
+        }
+        self.note_caret(report.began, report.text.caret);
         let Some(open) = self.open() else {
+            if let Some(id) = self.silenced_evidence(report) {
+                let press = &self.keys[id];
+                let words = evidence_words(press.key, press.baseline.as_ref(), &report.text);
+                self.keys[id].silenced_at = None;
+                if let Some(words) = words {
+                    self.expected.push(Heard::Words(words));
+                }
+                let held = std::mem::take(&mut self.held);
+                self.say_changes(&held);
+                self.say_changes(&changes);
+                return;
+            }
             if self.key_is_out() {
                 self.held.extend(changes);
                 return;
@@ -321,6 +349,21 @@ impl Model {
         self.say_changes(&changes);
     }
 
+    /// The newest silenced key `report` is still evidence for: its read
+    /// began before the later key was pressed and ended after this key's
+    /// pass, and it shows a change.
+    fn silenced_evidence(&self, report: &Report) -> Option<usize> {
+        if !self.shows_change {
+            return None;
+        }
+        self.keys.iter().rposition(|press| {
+            press.node.is_some()
+                && press.node == self.focus
+                && press.silenced_at.is_some_and(|at| report.began < at)
+                && press.passed.is_some_and(|at| report.ended >= at)
+        })
+    }
+
     fn note_caret(&mut self, began: Us, caret: usize) {
         if self.newest.is_none_or(|(at, _)| began >= at) {
             self.newest = Some((began, caret));
@@ -337,6 +380,9 @@ impl Model {
     /// began at `began`: a repeat when it is the focused field again.
     pub fn focus(&mut self, field: usize, text: &Text, began: Us, now: Us) {
         self.committed(field, text, false);
+        if !self.alive {
+            self.newest = None;
+        }
         self.alive = true;
         if self.focus == Some(field) {
             self.report(
@@ -351,7 +397,7 @@ impl Model {
             return;
         }
         self.changes.clear();
-        self.note_caret(began, text.caret);
+        self.newest = Some((began, text.caret));
         if let Some(open) = self.open() {
             self.keys[open].done = true;
             let press = self.keys[open].clone();
@@ -450,10 +496,12 @@ impl Model {
             if self.exited {
                 return Err(format!("key {id} withheld after exit"));
             }
-            if press.held && now >= self.latest_pass(id) {
+            if press.held
+                && let Some(latest) = self.latest_pass(id)
+                && now >= latest
+            {
                 return Err(format!(
-                    "key {id} not passed on by its bound {}, at {now}",
-                    self.latest_pass(id)
+                    "key {id} not passed on by its bound {latest}, at {now}"
                 ));
             }
         }
@@ -462,12 +510,15 @@ impl Model {
 
     /// The latest key `id` may be passed on: its before read's limit after
     /// the key ahead's 100 ms (`docs/parity/text.md`, "Holding caret keys";
-    /// 2026-11-08).
-    fn latest_pass(&self, id: usize) -> Us {
+    /// 2026-11-08); `None` while the key ahead has no pass to count from.
+    fn latest_pass(&self, id: usize) -> Option<Us> {
         let press = &self.keys[id];
-        let ahead = id.checked_sub(1).and_then(|ahead| self.keys[ahead].passed);
+        let ahead = match id.checked_sub(1) {
+            Some(ahead) => Some(self.keys[ahead].passed?),
+            None => None,
+        };
         let from = ahead.map_or(press.pressed, |at| press.pressed.max(at + BOUND_US));
-        from + BEFORE_READ_US
+        Some(from + BEFORE_READ_US)
     }
 }
 
