@@ -262,7 +262,7 @@ So Verbatim+F11 works like this:
   - Install and Cancel.
 - Rules versus hooks is not shown to users; it goes in developer-mode details.
 - Wording:
-  - native code: "Contains native code that runs outside Verbatim's sandbox.";
+  - native code: "Contains native code that runs outside Verbatim's extension sandbox.", where the extension sandbox is the Wasm boundary and the restricted host process is described separately as process isolation;
   - data sent out: "Can send what it reads from <application> to <host>.";
   - braille: "Connects to <braille display>.";
   - the synthesizer line has no "receives the text" clause.
