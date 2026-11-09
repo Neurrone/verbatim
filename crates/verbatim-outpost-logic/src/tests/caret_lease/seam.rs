@@ -108,6 +108,8 @@ pub struct Seam {
     /// Each node's note as the reducer held it after every input, by when
     /// it became so: what a read begun earlier can have seen of it.
     note_log: BTreeMap<u64, Vec<(Us, Option<KeyNote>)>>,
+    /// The commit of a focus report, for the program dispatched to make it.
+    focusing: Option<Box<Change>>,
     /// The field whose release was asked for, until the shell's answer.
     releasing: Option<usize>,
     /// The field whose element is replaced by the next name change.
@@ -257,6 +259,7 @@ impl Seam {
             generation: 1,
             flight: None,
             note_log: BTreeMap::new(),
+            focusing: None,
             releasing: None,
             replacing: None,
             console_front: false,
@@ -386,6 +389,15 @@ impl Seam {
             Item::Msaa {
                 kind: WinKind::NameChange,
                 ..
+            } if self.focusing.is_some() => {
+                if let Some(change) = self.focusing.take() {
+                    self.commit(program.request, *change, seen);
+                }
+                None
+            }
+            Item::Msaa {
+                kind: WinKind::NameChange,
+                ..
             } => {
                 if let Some(field) = self.replacing.take() {
                     let node = node_of(self.generation, field);
@@ -482,6 +494,7 @@ impl Seam {
                 trace_id,
                 observed_at_us,
                 backend,
+                window,
                 event,
                 ..
             } => CoreInput::Event {
@@ -489,7 +502,7 @@ impl Seam {
                 observed_at_us,
                 source: Pid(1),
                 backend,
-                window: None,
+                window,
                 event,
                 purpose: None,
             },
@@ -1143,17 +1156,8 @@ impl Seam {
             .note_seen(node_id.number(), began)
             .map(|note| (note.fetch, note.until_us));
         let fetch = live.map(|(fetch, _)| fetch);
-        let mut found = self.found(node_id, text, began, now, fetch);
-        // A focus read that began before its node's note gets the note's
-        // facts at its commit, as the reducer attaches them.
-        if found.facts.is_none() {
-            found.facts = Arc::make_mut(&mut self.outpost.facts.text).facts_at_commit(
-                node_id.number(),
-                (&found.report, !found.changes.is_empty()),
-                now,
-            );
-        }
-        let committed = committed_read(
+        let found = self.found(node_id, text, began, now, fetch);
+        let mut changes = vec![committed_read(
             self.outpost
                 .facts
                 .text
@@ -1161,12 +1165,11 @@ impl Seam {
                 .map(|anchors| anchors.part(&[])),
             node_id.number(),
             &found,
-        );
-        Arc::make_mut(&mut self.outpost.facts.text).apply(&committed);
+        )];
         if let Some((fetch, until_us)) = live
             && found.shows_effect(fetch.motion)
         {
-            Arc::make_mut(&mut self.outpost.facts.text).apply(&TextChange::NoteEffect {
+            changes.push(TextChange::NoteEffect {
                 node: node_id.number(),
                 until_us,
             });
@@ -1175,12 +1178,13 @@ impl Seam {
         if let Some(top) = shape.top {
             self.foreground(top, &mut seen);
         }
-        let input = CoreInput::Event {
+        let message = OutpostToCore::Event {
             trace_id: self.trace(),
             observed_at_us: began.max(self.generation_began),
-            source: Pid(1),
             backend: Backend::Msaa,
             window: shape.top.map(facts_in),
+            application: None,
+            timing: EventTiming::default(),
             event: NormalizedEvent::FocusChanged {
                 ancestors,
                 node,
@@ -1204,14 +1208,53 @@ impl Seam {
                     reader: FocusReaderKind::Listener,
                 }),
             },
-            purpose: None,
         };
-        self.enter_core(&input, &mut seen);
+        let change = Change {
+            text: changes,
+            caret_read: Some((node_id, began)),
+            result: Some(message),
+            ..Change::default()
+        };
+        self.commit_focus(field, change, &mut seen);
         if shape.top.is_none() {
             drop_cut(&mut seen);
         }
         seen.dedup_by(same_focus);
         seen
+    }
+
+    /// `change`, a focus report, reaches the reducer as a program's commit:
+    /// the program in flight's, or one dispatched for it.
+    fn commit_focus(&mut self, field: usize, change: Change, seen: &mut Vec<Seen>) {
+        let running = |seam: &Self| {
+            seam.flight
+                .as_ref()
+                .map(|flight| flight.request)
+                .filter(|&request| seam.outpost.accepts(request))
+        };
+        if let Some(request) = running(self) {
+            self.commit_beside(request, change, seen);
+            return;
+        }
+        self.focusing = Some(Box::new(change));
+        self.push_msaa(WinKind::NameChange, field, seen);
+        if let (Some(change), Some(request)) = (self.focusing.take(), running(self)) {
+            self.commit_beside(request, *change, seen);
+        }
+    }
+
+    /// `change` commits under `request`, a read still in flight: the world
+    /// raises a focus while a read runs, which one program at a time cannot
+    /// do, so the commit must not count as that program's own answer.
+    fn commit_beside(&mut self, request: Request, change: Change, seen: &mut Vec<Seen>) {
+        let running = self
+            .outpost
+            .current_of(request)
+            .and_then(|current| current.running.take());
+        self.commit(request, change, seen);
+        if let Some(current) = self.outpost.current_of(request) {
+            current.running = running;
+        }
     }
 
     /// The clock reaches `now`, Core's held-key deadline firing when due.
