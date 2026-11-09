@@ -292,7 +292,7 @@ impl Seam {
                     },
             } => Some((
                 *node_id,
-                if read.purpose == ReadPurpose::BeforeKey {
+                if read.purpose == ReadPurpose::BeforeFieldKey {
                     ReadKind::Before(*request_id, entry.trace, *read)
                 } else {
                     ReadKind::Final(*request_id, entry.trace, *read)
@@ -399,8 +399,9 @@ impl Seam {
             CoreEffect::KeyNote(note) => {
                 self.outpost_in(
                     Input::KeyNote {
-                        note,
-                        console: false,
+                        node: note.node(),
+                        fetch: note.fetch(),
+                        on: NoteOn::Field,
                     },
                     seen,
                 );
@@ -412,7 +413,7 @@ impl Seam {
             CoreEffect::Text(request) => {
                 match request.op {
                     TextOp::ReadCaret(CaretRead {
-                        purpose: ReadPurpose::BeforeKey,
+                        purpose: ReadPurpose::BeforeFieldKey,
                         ..
                     }) => seen.push(Seen::BeforeReadAsked),
                     TextOp::ReadCaret(CaretRead {

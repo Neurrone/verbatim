@@ -930,7 +930,7 @@ impl Run {
             What::CaretKey => {
                 let number = self.fresh();
                 query = Some(number);
-                read_caret(number, ReadPurpose::BeforeKey)
+                read_caret(number, ReadPurpose::BeforeFieldKey)
             }
             What::Step => {
                 let number = self.fresh();

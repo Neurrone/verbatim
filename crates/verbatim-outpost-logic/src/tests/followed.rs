@@ -2127,7 +2127,7 @@ fn text_query(request_id: u64, node_id: NodeId, op: TextOp) -> Item {
 fn key_op() -> TextOp {
     TextOp::ReadCaret(CaretRead {
         fetch: fetch(),
-        purpose: ReadPurpose::BeforeKey,
+        purpose: ReadPurpose::BeforeFieldKey,
     })
 }
 
