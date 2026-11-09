@@ -6,7 +6,7 @@
 //! controls"; NVDA's captures of 2026-11-09).
 
 use crate::registry::ScenarioState;
-use crate::scenario::Scenario;
+use crate::scenario::{Scenario, harness_marker};
 
 use super::measure::{apply_to_mockapp, open_mockapp};
 
@@ -54,8 +54,10 @@ const FIXTURE: &str = r#"{
 pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     let pid = open_mockapp(scenario, NAME, FIXTURE);
     let window = (NAME, pid);
-    // The search box's own announcement is not what this scenario tests.
-    scenario.speech().take_until_idle(None);
+    let title = harness_marker(NAME);
+    scenario
+        .speech()
+        .expect(&[&format!("{title} window"), "Search box edit"]);
 
     // A selection raised on the controlled list itself.
     apply_to_mockapp(scenario, window, "select results");
@@ -64,11 +66,13 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     // The relation switched to a second list: its item is the event's own
     // element.
     apply_to_mockapp(scenario, window, "set-controller-for search recent");
+    scenario.speech().expect(&["sound: suggestions-opened"]);
     apply_to_mockapp(scenario, window, "select recent1");
     scenario.speech().expect(&["Elsewhere"]);
 
     // An ordinary selection after the list's items are replaced.
     apply_to_mockapp(scenario, window, "set-controller-for search results");
+    scenario.speech().expect(&["sound: suggestions-opened"]);
     apply_to_mockapp(scenario, window, "replace-items results");
     apply_to_mockapp(scenario, window, "select sound");
     scenario.speech().expect(&["Sound settings 1 of 2"]);
