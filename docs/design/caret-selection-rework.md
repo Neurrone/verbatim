@@ -386,7 +386,7 @@ Captured from NVDA at its pinned build, in the Windows Forms text box and Notepa
 - A note outlives a key whose focus moved, for at most 300 ms, costing one read per event of that node meanwhile.
 - A change made by something else within the key's 100 ms counts as the key's, as today.
 - A caret event's or a focus's read dispatched before its key's note arrived is compared at its commit by the reducer, which needs no call: it counts as the key's evidence, a character or line key speaks at that report from the line every read carries, and a word key, whose unit it did not fetch, takes it as evidence and speaks at its bound from the final read's unit.
-- Slow before reads, repeated focuses and reads after an effect compare the caret by its line's text and offset, adding no call, so a move between two lines of the same text at the same offset is not seen there: a Down Arrow between identical lines caught only by one of those reads speaks at its bound, 100 ms later than today. Every other read compares positions.
+- Slow before reads, repeated focuses and reads after an effect compare the caret by its line's text and offset, adding no call, so a move between two lines of the same text at the same offset is not seen there: a Down Arrow between identical lines caught only by one of those reads speaks at its bound, 100 ms later than today. Every other read compares positions. A key's read made call by call also tells whether the caret stayed on the last read's line from that line's text, so a key outside the caret table between two lines of the same text speaks by its landing instead of the line.
 
 ## Removed and kept
 

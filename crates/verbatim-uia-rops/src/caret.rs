@@ -1917,10 +1917,6 @@ fn classic_walk(
 /// # Errors
 ///
 /// [`Error::Uia`] when a call fails.
-#[expect(
-    clippy::too_many_lines,
-    reason = "the program's read, one call after another, in its order"
-)]
 pub fn caret_read_classic(query: &CaretQuery<'_>) -> Result<CaretAnswer, Error> {
     let (caret, collapsed_caret, selection) = classic_caret(query)?;
     // A collapsed caret is its own point; the program copies it either way,
