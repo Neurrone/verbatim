@@ -110,3 +110,6 @@ harness, NVDA captures and troubleshooting.
   - [m5-extensions-work.md](design/m5-extensions-work.md) and
     [m6-native-synth-work.md](design/m6-native-synth-work.md) — the order
     of work and the tests for M5 and M6.
+  - [m5-build-a.md](design/m5-build-a.md) — M5's build A: snapshot
+    properties, application identity, rules as data, the loader, the
+    extension lifecycle, configuration at a version and the log.

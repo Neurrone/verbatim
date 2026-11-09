@@ -4,7 +4,7 @@ The order of work for M5, the tests that prove each step, and what each step lea
 
 Vocabulary used below, defined in the design: a module is an app module, a global module or a synthesizer; an extension is a bundle of modules, and Verbatim's built-ins are one internal extension; a rule is a matcher plus an action applied as data; a hook is a function a module exports and Verbatim calls; a host is the process running one extension; a lane is one thread in it, one per outpost it serves and one per global module; the loader is the Core thread that reads, validates and compiles extensions.
 
-Each step is reviewed as `REVIEW.md` says: one adversarial review of the step's whole implementation, fixes in one commit, one re-review, stop. The end-to-end scenarios named under each step run before the step is called done; the full suite runs once at the end of the loader step and once at the end of the install step, because those two change how Verbatim starts.
+The steps are built as four builds: A, steps 1 to 3, designed in [m5-build-a.md](m5-build-a.md); B, steps 4 to 6; C, step 7; D, steps 8 and 9 (Dickson, 2026-11-09). Each step is reviewed as `REVIEW.md` says: one adversarial review of the step's whole implementation, fixes in one commit, one re-review, stop. The end-to-end scenarios named under each step run before the step is called done; the full suite runs once at the end of the loader step and once at the end of the install step, because those two change how Verbatim starts.
 
 ## Order of work
 
