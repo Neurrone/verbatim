@@ -4056,6 +4056,41 @@ fn the_desktop_window_is_named_by_core() {
 }
 
 #[test]
+fn report_current_object_on_the_desktop_window_keeps_its_name() {
+    let source = Pid(1);
+    let root = node(10, Role::Window, Some("App"), None, StateSet::new());
+    let state = focused(source, root);
+    let (state, effects) = reduce(
+        &state,
+        &command(TraceId::from_raw(128), ReviewCommand::Parent, 0),
+    );
+    let query = only_fetch(&effects);
+    let mut desktop = node(11, Role::Window, None, None, StateSet::new());
+    desktop.details.desktop_window = true;
+    let (state, _) = reduce(&state, &fetched(129, &query, FetchResult::Node(desktop)));
+    let (mut next, read) = asked_object_read(&state, ReviewCommand::ReportObject, 0);
+    let live = node(
+        11,
+        Role::Pane,
+        Some("Program Manager"),
+        None,
+        StateSet::new(),
+    );
+    let effects = object_read_answered(
+        &mut next,
+        &read,
+        QueryOutcome::Done(QueryResult::Node(live)),
+    );
+    assert_eq!(
+        said(&effects),
+        vec![
+            UtteranceSegment::new(SegmentContent::Message(verbatim_model::Message::Desktop)),
+            role(Role::Window)
+        ]
+    );
+}
+
+#[test]
 fn every_navigation_direction_speaks_its_own_edge_message() {
     use verbatim_model::Message;
     let cases = [

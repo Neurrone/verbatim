@@ -755,7 +755,11 @@ fn object_read(
         Ending::Outcome(QueryOutcome::Done(QueryResult::Node(object))) => {
             let flat = crate::review::text_of(&object);
             if let Some(navigator) = state.navigator.as_mut() {
-                navigator.object = object;
+                // The desktop window keeps the name Core gives it, which a
+                // live read of the window does not carry.
+                if !navigator.object.details.desktop_window {
+                    navigator.object = object;
+                }
                 if !flat.is_char_boundary(navigator.review_offset) {
                     navigator.review_offset = 0;
                 }
