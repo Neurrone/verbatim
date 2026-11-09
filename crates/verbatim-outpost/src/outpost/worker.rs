@@ -39,10 +39,10 @@ use std::time::Instant;
 use verbatim_ia2::acquire::Purpose;
 use verbatim_ia2::{CHILDID_SELF, WinEventKind};
 use verbatim_model::{
-    Backend, CallCounts, CaretChanges, CaretReply, CaretReport, EarlierElement,
-    FirstCachedAncestor, FocusGroup, FocusReaderKind, FocusText, CaretRead, Change, ReadPurpose, had_effect,
-    NodeId, NodeSnapshot, NormalizedEvent, PropertyChange, Role, State, StateSet,
-    TextOp, TextPoint, TextReply, TraceId, WindowFacts, WindowHandle,
+    Backend, CallCounts, CaretChanges, CaretRead, CaretReply, CaretReport, Change, EarlierElement,
+    FirstCachedAncestor, FocusGroup, FocusReaderKind, FocusText, NodeId, NodeSnapshot,
+    NormalizedEvent, PropertyChange, ReadPurpose, Role, State, StateSet, TextOp, TextPoint,
+    TextReply, TraceId, WindowFacts, WindowHandle, had_effect,
 };
 use verbatim_uia::{
     Cached, Fill, HelpTextRefresh, Interning as _, Kept, Place, SelectedItem, SuggestionsRefresh,
@@ -69,6 +69,7 @@ use super::reducer::{
     MarkChange, MsaaReport, Object, Origin, Owed, OwedProgram, OwedWork, Program, Report, Request,
     UiaEvent, UiaKind, VerdictChange, WinKind, Work,
 };
+use super::reducer::{KeyNote, NoteFetch, NoteReads};
 use super::shell::{Garbage, Posted};
 use super::text_reads;
 use super::window::{alt_is_held, console_client, window_facts};
@@ -76,7 +77,6 @@ use super::{Context, RequestContext};
 use crate::arbitration::Judgement as _;
 use crate::terminal::reading::{Action, Event, Reading};
 use crate::text::{Checked, KeyChecked};
-use super::reducer::{KeyNote, NoteFetch, NoteReads};
 use verbatim_core::focus_rules::{self, ChangeKind, HeldNode};
 use verbatim_reader_rules::Window;
 use verbatim_reader_rules::acceptance::{self, EventName};
@@ -937,7 +937,7 @@ impl Worker<'_> {
         request_id: RequestId,
         trace: TraceId,
         node_id: NodeId,
-        read: &CaretRead,
+        read: CaretRead,
     ) {
         match read.purpose {
             ReadPurpose::BeforeKey => self.before_read(request_id, trace, node_id, read),
@@ -952,7 +952,7 @@ impl Worker<'_> {
         request_id: RequestId,
         trace: TraceId,
         node_id: NodeId,
-        asked: &CaretRead,
+        asked: CaretRead,
     ) {
         let (read, read_at) = text_reads::before_read(self.context, node_id, asked, true);
         let caret_read = read_at.map(|at| (node_id, at));
@@ -963,7 +963,6 @@ impl Worker<'_> {
                 Finish::Before {
                     request_id,
                     trace,
-                    asked: *asked,
                     read: cut.read,
                 },
             ),
@@ -986,7 +985,7 @@ impl Worker<'_> {
         request_id: RequestId,
         trace: TraceId,
         node_id: NodeId,
-        asked: &CaretRead,
+        asked: CaretRead,
     ) {
         let note = NoteFetch {
             unit: asked.fetch.unit,
@@ -996,14 +995,18 @@ impl Worker<'_> {
         let caret_read = read_at.map(|at| (node_id, at));
         let reply = match checked {
             Checked::Done(KeyChecked::Read { read, .. }) => TextReply::Caret(read),
-            // The caret is read once more, and a final read has nothing to
-            // answer from if it fails.
-            Checked::Done(KeyChecked::Moving | KeyChecked::Failed) => TextReply::Unanswered,
-            // A final read is never cut.
-            Checked::Cut(_) => TextReply::Unanswered,
+            // A final read that fails has nothing to answer from; it is
+            // never cut.
+            Checked::Done(KeyChecked::Moving | KeyChecked::Failed) | Checked::Cut(_) => {
+                TextReply::Unanswered
+            }
         };
         let result = with_calls(
-            self.reply_message(request_id, trace, QueryOutcome::Done(QueryResult::Text(reply))),
+            self.reply_message(
+                request_id,
+                trace,
+                QueryOutcome::Done(QueryResult::Text(reply)),
+            ),
             take_calls(),
         );
         self.commit(Effects {
@@ -1246,7 +1249,8 @@ impl Worker<'_> {
             return;
         };
         let trace = TraceId::mint();
-        let (checked, read_at) = text_reads::note_read(self.context, node_id, note.fetch, (false, false));
+        let (checked, read_at) =
+            text_reads::note_read(self.context, node_id, note.fetch, (false, false));
         let caret_read = read_at.map(|at| (node_id, at));
         let Checked::Done(found) = checked else {
             return;
@@ -1336,8 +1340,12 @@ impl Worker<'_> {
     /// Reports the caret of `node_id`, read with the key's unit and facts
     /// for its note: a caret event after the key's effect.
     fn caret_with_facts(&mut self, node_id: NodeId, event: (TraceId, u64), fetch: NoteFetch) {
-        let (report, read_at) =
-            text_reads::report_caret(self.context, node_id, text_reads::CaretFor::Event, Some(fetch));
+        let (report, read_at) = text_reads::report_caret(
+            self.context,
+            node_id,
+            text_reads::CaretFor::Event,
+            Some(fetch),
+        );
         self.report_read(node_id, event, report, read_at);
     }
 
@@ -1430,15 +1438,11 @@ impl Worker<'_> {
             Finish::Before {
                 request_id,
                 trace,
-                asked: _,
                 read,
             } => match text_reads::finish_before(self.context, node_id, (length, read), waiting) {
-                Ok(reply) => self.before_answered(
-                    (request_id, trace),
-                    node_id,
-                    reply,
-                    (caret_read, calls),
-                ),
+                Ok(reply) => {
+                    self.before_answered((request_id, trace), node_id, reply, (caret_read, calls));
+                }
                 Err(_) => self.key_unanswered(request_id, trace, caret_read, calls),
             },
             Finish::Note {
@@ -1681,7 +1685,7 @@ impl Worker<'_> {
             node_id,
             terminal,
             owed,
-            (None, action == Action::Reply),
+            (None, action == Action::Reply, false),
             trace,
         );
     }
@@ -1711,7 +1715,7 @@ impl Worker<'_> {
         node_id: NodeId,
         mut terminal: crate::terminal::Terminal,
         owed: Option<(RequestId, TraceId)>,
-        (scope, waited): (Option<verbatim_model::TerminalScope>, bool),
+        (scope, waited, before_key): (Option<verbatim_model::TerminalScope>, bool, bool),
         trace: TraceId,
     ) {
         let read = match self.client.uia() {
@@ -1722,7 +1726,7 @@ impl Worker<'_> {
                     uia,
                     node_id,
                     &mut terminal,
-                    (scope, waited),
+                    (scope, waited, before_key),
                 );
                 // Each read, end to end, and how long its event waited in
                 // the queue: during a flood the reads follow one another, so
@@ -1766,7 +1770,9 @@ impl Worker<'_> {
         // first, as the caret may have moved since the change that caused
         // the read.
         if let Some(caret) = caret {
-            self.read_under_note(node_id, NoteTrigger::Now, (trace, answer.started_us));
+            if !before_key {
+                self.read_under_note(node_id, NoteTrigger::Now, (trace, answer.started_us));
+            }
             if self.refused() {
                 return;
             }
@@ -1864,7 +1870,7 @@ impl Worker<'_> {
             node_id,
             terminal,
             Some(request),
-            (Some(scope), false),
+            (Some(scope), false, false),
             request.1,
         );
     }
@@ -2671,7 +2677,11 @@ impl Worker<'_> {
                         // The read that covers it made the comparison NVDA
                         // makes at this event, which clears the note.
                         text_reads::note_caret_event_counted(self.context, node_id);
-                    } else if !self.read_under_note(node_id, NoteTrigger::Now, (trace, observed_at_us)) {
+                    } else if !self.read_under_note(
+                        node_id,
+                        NoteTrigger::Now,
+                        (trace, observed_at_us),
+                    ) {
                         self.caret_of(node_id, trace, observed_at_us);
                     }
                 } else if let Some(node_id) = self.noted_edit(hwnd) {
@@ -3109,7 +3119,7 @@ impl Worker<'_> {
     }
 
     /// A UIA text change of the text focus whose runtime id it carries: it
-    /// checks a caret key's watch open on the node, then is reported, or,
+    /// reads under a key's note live on the node, then is reported, or,
     /// for a terminal, has its new output read.
     fn text_changed(
         &mut self,
@@ -4239,10 +4249,6 @@ impl Worker<'_> {
     /// read before a held key, a read Core asks for at once, rows of the
     /// history, the colours after a key, the screen's shape, and Core's
     /// on-demand reading. Returns whether it answered.
-    #[expect(
-        clippy::too_many_lines,
-        reason = "one arm per terminal request, each a call or two"
-    )]
     fn terminal_query(
         &mut self,
         request_id: RequestId,
@@ -4254,15 +4260,14 @@ impl Worker<'_> {
         let focused = self.focused_terminal(node_id);
         match op {
             // The read before a held key is a read of the terminal, whose
-            // caret answers the request; its watch opens from that read.
+            // caret answers the request; its note was set as the request arrived.
             TextOp::ReadCaret(CaretRead {
                 purpose: ReadPurpose::BeforeKey,
                 ..
             }) if focused => {
                 let terminal = self.terminal_copy(node_id);
-                let ended_at = now_us();
-                self.read_terminal(node_id, terminal, Some(request), (None, false), trace);
-                self.note_console_poll(node_id, ended_at);
+                self.read_terminal(node_id, terminal, Some(request), (None, false, true), trace);
+                self.note_console_poll(node_id, now_us());
                 return true;
             }
             TextOp::TerminalReadNow(scope) => {
@@ -4308,7 +4313,7 @@ impl Worker<'_> {
                         // The last read ended at or after the key without
                         // the colours: one is taken at once with them, sent
                         // as a live read ("Colours").
-                        self.read_terminal(node_id, terminal, None, (None, false), trace);
+                        self.read_terminal(node_id, terminal, None, (None, false, false), trace);
                     } else {
                         self.commit(Effects {
                             terminal: Some((node_id, terminal)),
@@ -4360,8 +4365,7 @@ impl Worker<'_> {
         false
     }
 
-    /// A query from Core, answered with exactly one reply: at once, or, for
-    /// a caret key's watch kept open, when its evidence comes or it ends.
+    /// A query from Core, answered with exactly one reply.
     fn query(&mut self, request_id: RequestId, query: &Query, trace: TraceId) {
         // The check before the query's first call: a query whose named
         // window is hung or ghosted is answered abandoned with no call, its
@@ -4396,7 +4400,7 @@ impl Worker<'_> {
             op: TextOp::ReadCaret(read),
         } = query
         {
-            self.key_read(request_id, trace, *node_id, read);
+            self.key_read(request_id, trace, *node_id, *read);
             return;
         }
         let context = self.context;
@@ -4754,9 +4758,10 @@ impl NoteTrigger {
         match (self, reads) {
             (Self::Text, NoteReads::CaretOnly) => None,
             (Self::Caret | Self::Now, NoteReads::CaretOnly) => Some(ReadShape::Reported),
-            (Self::Caret | Self::Text | Self::Now, NoteReads::CaretAndText | NoteReads::Poll { .. }) => {
-                Some(ReadShape::Compared)
-            }
+            (
+                Self::Caret | Self::Text | Self::Now,
+                NoteReads::CaretAndText | NoteReads::Poll { .. },
+            ) => Some(ReadShape::Compared),
         }
     }
 }
@@ -4770,7 +4775,6 @@ enum ReadShape {
     /// key has shown its effect.
     Reported,
 }
-
 
 /// `message`, carrying `calls` too, made by the read part of a caret read
 /// cut in two programs ([`Work::Finish`]).

@@ -857,35 +857,33 @@ Every caret key goes through `SrState::key_line`, one state: `Idle`, or
 the selection changes heard while it runs. The current key is `Reading`,
 a held key whose before read is in flight, or `Watched`, a key that has
 been passed on, whose fields say what it was judged from (`Before`), its
-tag, when it was passed, whether a later key was marked, and whether the
-line is `Holding` or `Released`.
+when it was passed, and whether a later key was marked; and
+`FinalReading` is a key past its bound whose final read is asked.
 
 An `Input::HeldKey`, a caret key the hook held back because
-`holds_caret_keys` was true, asks the focus's outpost for one request,
-`TextOp::Key` with `KeyStart::ReadFirst`. The answer, `KeyStarted::Read`,
-becomes the focus's caret, its selection changes are said, and the key
-is passed on (`Effect::PassHeldKey`) one microsecond after the read
-began. An `Input::CaretKey`, one the hook did not hold, asks `TextOp::Key`
-with `KeyStart::FromLastRead`, and its watch is judged from the node's
-last read; that request goes first, so the watch reaches the outpost
-before anything the key does. With no focus whose caret is read the key is
-passed at once.
+`holds_caret_keys` was true, asks the focus's outpost to read the caret,
+`TextOp::ReadCaret` with `ReadPurpose::BeforeKey`, which also sets the
+node's note. The answer becomes the focus's caret, its selection changes
+are said, and the key is passed on (`Effect::PassHeldKey`) one microsecond
+after the read ended. An `Input::CaretKey`, one the hook did not hold,
+sends the one-way `Effect::KeyNote`, and is judged from the node's last
+read; the note goes first, so it reaches the outpost before anything the
+key does. With no focus whose caret is read the key is passed at once.
 
 The line has one deadline, set by `Effect::BoundHeldKey` and entering as
 `Input::HeldKeyDue`: `HELD_READ_BOUND_MS` (150 ms) after a before read is
 asked, and `KEY_BOUND_MS` (100 ms) after a key is passed on. Evidence
 clears it. A before read past its bound is withdrawn and the key is passed
-on, watched from the last read. A watched key past its bound orders the
-the line becomes `Released`, so what waits behind it runs, and, if the key
-is still current, orders the outpost's final read (`CoreToOutpost::Watch`,
-`WatchOrder::FinalRead`, carried by `Effect::WatchOrder`). A terminal's watch has no final read: its deadline
-only releases the line, and the outpost's own stage ends the watch.
+on, watched from the last read. A passed-on key past its bound has what waits behind it run and, if it
+is still current, asks one final read (`TextOp::ReadCaret` with
+`ReadPurpose::Final`), becoming `FinalReading`. A terminal's key has no
+final read: its deadline ends it.
 
 A held key that reaches Core while focus reports wait joins the focus
 queue first and is taken in its turn, as NVDA runs its caret script in
 its queue (ADR 0001, "One ordered focus queue").
 
-Keys and commands that arrive while the line is `Reading` or `Holding`
+Keys and commands that arrive while the key is `Reading` or `Watched`
 wait behind it (`WaitingKey`) and run in order. At a key's pass, typed
 keys at the front of what waits run at once, as NVDA's typed keys are not
 held behind a script, timed no earlier than the pass; anything left
@@ -893,7 +891,7 @@ behind marks a later key (`later_key_at_us`). Each waiting key's effects
 carry its own trace (`Effect::ForKey`).
 
 A review command or a script (`Input::Command`, `Input::Script`) pressed
-while the line is `Reading` or `Holding` waits behind the key, at most the
+while the key is `Reading` or `Watched` waits behind the key, at most the
 key's bound. The key ahead says nothing once a later key is marked, and
 the command reads the line the key moved to, where NVDA reads the line
 before it (`books/dev/src/explanation/design/ownership.md`).
@@ -925,13 +923,15 @@ it. `KeySeq::NONE_YET` is not recorded.
 ### Caret keys
 
 (`docs/nvda/editable-text-and-terminals.md`; `docs/parity/text.md`,
-"TextInfo-equivalent layer".) A key's result comes as a
-`NormalizedEvent::KeyAnswered` with the key's tag: `KeyAnswer::Evidence`
-with a `KeyRead` when the outpost saw the key take effect,
-`KeyAnswer::BoundAnswer` with a `KeyRead` when the final read found no
-effect, and `KeyAnswer::Ended` when the watch ended with nothing to say.
-A `KeyRead` carries the caret and the selection changes, and what the
-key's baseline held: the line, the selection, and the unit at the caret.
+"TextInfo-equivalent layer".) A report carrying
+`ReadFacts` that ended at or after the key was passed on, on the key's
+node, and shows the key's effect by `had_effect` is the key's evidence; a
+report with no effect, or one of another node, is ordinary, and its
+selection changes are held for after the key's words. At its bound Core
+asks one final read: if it shows an effect that is the evidence too, and
+otherwise the read is the bound answer, which says the key's unit as NVDA
+does for a key that moved nothing. The previous line and selection the
+key's words need travel in `Change::Compared`.
 
 Each focus object holds one caret (`FocusContext::caret`). Core takes
 every report as the newest caret by when its read began

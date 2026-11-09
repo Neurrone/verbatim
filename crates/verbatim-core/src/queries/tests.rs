@@ -7,9 +7,9 @@ use std::collections::BTreeMap;
 use verbatim_model::protocol::{QueryOutcome, QueryResult};
 use verbatim_model::{
     Backend, CaretChanges, CaretKey, CaretMotion, CaretReply, CaretReport, EarlierElement, Effect,
-    FocusText, Input, KeySeq, NodeDetails, NodeId,
-    NodeSnapshot, NormalizedEvent, OutpostId, Pid, QueryId, ReviewCommand, Role, StateSet,
-    TerminalSnapshot, TerminalText, TextAnchor, TextChunk, TextOp, TextReply, TextUnit, TraceId,
+    FocusText, Input, KeySeq, NodeDetails, NodeId, NodeSnapshot, NormalizedEvent, OutpostId, Pid,
+    QueryId, ReviewCommand, Role, StateSet, TerminalSnapshot, TerminalText, TextAnchor, TextChunk,
+    TextOp, TextReply, TextUnit, TraceId,
 };
 
 use crate::queries::{self, ModelAsk, Then};

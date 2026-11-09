@@ -88,9 +88,7 @@ use verbatim_model::protocol::{
     DeliveredFact, EventTiming, FrontWindow, OutpostToCore, Query, QueryOutcome, QueryResult,
     RequestId,
 };
-use verbatim_model::{
-    CallCounts, CaretRead, FocusGroup, NodeId, NoteRequest, ReadPurpose, TextOp, TraceId,
-};
+use verbatim_model::{CallCounts, FocusGroup, NodeId, NoteRequest, ReadPurpose, TextOp, TraceId};
 use verbatim_reader_rules::Window;
 use verbatim_reader_rules::in_flight::{Abandoned, Ask, Decision, InFlight, RuleWindow};
 
@@ -229,8 +227,6 @@ pub enum Finish {
         request_id: RequestId,
         /// The query's trace.
         trace: TraceId,
-        /// The read asked.
-        asked: CaretRead,
         /// What the read part found.
         read: ReportCut<u32>,
     },
@@ -739,7 +735,7 @@ impl Reducer {
             Input::Front(front) => {
                 let mut applied = Applied::default();
                 self.facts.follow.front(front, &mut applied);
-                self.subscription_effects(applied, &mut effects);
+                Self::subscription_effects(applied, &mut effects);
             }
             Input::Cancel(request_id) => {
                 if let Some(trace) = self.intake.cancel(request_id) {
@@ -1102,7 +1098,7 @@ impl Reducer {
                 .into_iter()
                 .map(Effect::LogicError),
         );
-        self.subscription_effects(applied, effects);
+        Self::subscription_effects(applied, effects);
     }
 
     /// Records a verdict of a program of `generation`'s: one from the
@@ -1138,7 +1134,7 @@ impl Reducer {
 
     /// The shell's part of an [`Applied`]: the subscription moved and the
     /// elements no longer followed dropped.
-    fn subscription_effects(&mut self, applied: Applied, effects: &mut Vec<Effect>) {
+    fn subscription_effects(applied: Applied, effects: &mut Vec<Effect>) {
         let Applied {
             subscribe,
             unfollowed,
@@ -1169,7 +1165,7 @@ impl Reducer {
         }
         let mut applied = Applied::default();
         self.facts.follow.release_groups(nodes, &mut applied);
-        self.subscription_effects(applied, effects);
+        Self::subscription_effects(applied, effects);
         self.to_drop |= objects;
     }
 
@@ -1370,9 +1366,13 @@ impl Reducer {
                 // Nothing else is ready: the console poll's due time is
                 // acted on, its read waited for by the idle answer since
                 // after it the program reads the terminal.
-                let due = (self.facts.text.poll_due().is_some_and(|due| due <= now.wall_us))
-                    .then(|| Arc::make_mut(&mut self.facts.text).reach_poll(now.wall_us))
-                    .flatten();
+                let due = (self
+                    .facts
+                    .text
+                    .poll_due()
+                    .is_some_and(|due| due <= now.wall_us))
+                .then(|| Arc::make_mut(&mut self.facts.text).reach_poll(now.wall_us))
+                .flatten();
                 let Some(node) = due else { return };
                 self.dispatch(
                     Work::NoteRead(NodeId::new(node)),
@@ -1546,8 +1546,8 @@ impl Reducer {
 
     /// Dispatches `work` under `deadline`, concerning `window`, if any,
     /// and answering `running`, as a try of `group` when it is one. Verbatim
-    /// moving the caret or selecting on a terminal ends its open watch,
-    /// before its copy is taken.
+    /// moving the caret or selecting on a node clears its note, before its
+    /// copy is taken.
     fn dispatch(
         &mut self,
         work: Work,
@@ -1585,9 +1585,10 @@ impl Reducer {
         let rule = match (window, &work) {
             (Some(window), _) => RuleWindow::Known(window),
             (None, Work::Drop | Work::FindBar(_)) => RuleWindow::Never,
-            (None, Work::Entry { .. } | Work::Owed(_) | Work::NoteRead(_) | Work::Finish { .. }) => {
-                RuleWindow::Named
-            }
+            (
+                None,
+                Work::Entry { .. } | Work::Owed(_) | Work::NoteRead(_) | Work::Finish { .. },
+            ) => RuleWindow::Named,
         };
         let request = self
             .flight

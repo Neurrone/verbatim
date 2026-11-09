@@ -65,9 +65,8 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use verbatim_model::{
-    CaretReply, Effect, Input, NodeId, OutpostId, QueryId, TerminalColourRun,
-    TerminalScope, TerminalSnapshot, TerminalText, TextOp, TextPoint, TextReply, TextRequest,
-    TraceId,
+    CaretReply, Effect, Input, NodeId, OutpostId, QueryId, TerminalColourRun, TerminalScope,
+    TerminalSnapshot, TerminalText, TextOp, TextPoint, TextReply, TextRequest, TraceId,
 };
 use verbatim_text::terminal_reading::{
     ColourRun, KEY_WINDOW_MS, Key, KeyKind, QUIET_MS, Settings, Speech, Step, TerminalReader, Unit,

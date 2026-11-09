@@ -1,6 +1,6 @@
 //! What the outpost follows, and what a program's commit changes of it
 //! (`books/dev/src/explanation/design/ownership.md`): the follow state, the focus line's paths, the caret key's
-//! watch and owed work, all reducer state with no application object. A
+//! note and owed work, all reducer state with no application object. A
 //! program is given a copy ([`Facts`]) and applies its own commits to it
 //! with the same function the reducer applies them with ([`apply`]), so
 //! what it reads after a commit is what the reducer will hold.
@@ -8,9 +8,7 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 use verbatim_model::protocol::{EventTiming, FrontWindow, OutpostToCore, UiaFocusRead};
-use verbatim_model::{
-    CaretReport, NodeId, NodeSnapshot, Role, StateSet, TraceId,
-};
+use verbatim_model::{CaretReport, NodeId, NodeSnapshot, Role, StateSet, TraceId};
 
 use verbatim_reader_rules::Window;
 
@@ -535,7 +533,7 @@ pub struct FollowState {
     /// held terminal's window, which need not be the followed focus's, as
     /// a terminal stays held after the focus moves elsewhere in its console.
     /// A program marks it while the terminal's reading is held with its text
-    /// changed and no caret key's watch is open, when it would do nothing
+    /// changed and no key's note lives on it, when it would do nothing
     /// for an update; an adoption clears it, as does anything that may end
     /// the hold before it is handled, so an update observed after the read
     /// that ends the hold begins is never dropped.

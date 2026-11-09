@@ -14,7 +14,7 @@
 //!    of the application, the intake's order with NVDA's limiter rules
 //!    among them, and keeps the outpost's timers: a worker's deadline and
 //!    its half-second check, the check of the window in front while a
-//!    listener read's marker waits, and the caret key's watch.
+//!    listener read's marker waits, and a key's note's reads.
 //! 3. The workers ([`worker`]): the threads that call into the application,
 //!    one generation in charge at a time, each running one program at a
 //!    time on copies, posting its commits to the mailbox. A worker whose
@@ -1253,8 +1253,8 @@ impl Outpost {
     /// published before it has been written to the pipe. A test that
     /// measures what the outpost's handling cost the application, or that
     /// asserts the outpost said nothing more, waits on this for its
-    /// evidence. Unlike Core's idle round, it waits for no open caret
-    /// watch or held copies of the hook's, and it divides
+    /// evidence. Unlike Core's idle round, it waits for no key's note
+    /// or held copies of the hook's, and it divides
     /// batches as the round does. Returns once the outpost shuts down.
     pub fn settle(&self) {
         let (done_tx, done_rx) = std::sync::mpsc::channel();
@@ -1757,7 +1757,7 @@ fn range_value_subscription(context: &Arc<Context>) -> Subscription<Cached<Prope
 /// group, given only the parent of a focus that is a `SensitiveSlider`'s
 /// thumb, holds its value changes alone. Selections and notifications come
 /// desktop-wide from the listener instead. A caret or text change also has
-/// the worker check a caret key's watch.
+/// the worker read under a key's note.
 ///
 /// One group carries a cache request per handler, so each event's element
 /// arrives with what its handling reads: a property change with what the

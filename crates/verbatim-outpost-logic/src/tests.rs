@@ -11,8 +11,8 @@ use verbatim_model::protocol::{
     DeliveredFact, EventTiming, OutpostToCore, Query, QueryOutcome, QueryResult, WinEventStamp,
 };
 use verbatim_model::{
-    Backend, CallCounts, CaretMotion, CaretRead, KeyFetch, NodeKind, NoteRequest, ReadPurpose,
-    NodeId, NodeSnapshot, NormalizedEvent, Role, StateSet, TextOp, TextReply, TextUnit,
+    Backend, CallCounts, CaretMotion, CaretRead, KeyFetch, NodeId, NodeKind, NodeSnapshot,
+    NormalizedEvent, NoteRequest, ReadPurpose, Role, StateSet, TextOp, TextReply, TextUnit,
     TraceId,
 };
 
@@ -2264,7 +2264,10 @@ fn every_entry_is_given_the_handling_deadline_but_focus_now_and_a_listener_reads
     );
     assert_eq!(deadline(msaa_focus(1, 5)), HANDLING_DEADLINE);
     assert_eq!(deadline(name_change(1)), HANDLING_DEADLINE);
-    assert_eq!(deadline(read_caret(4, ReadPurpose::BeforeKey)), HANDLING_DEADLINE);
+    assert_eq!(
+        deadline(read_caret(4, ReadPurpose::BeforeKey)),
+        HANDLING_DEADLINE
+    );
     assert_eq!(
         deadline(query(Query::ShellItems {
             kind: verbatim_model::ShellItemKind::Taskbar,
@@ -2405,11 +2408,7 @@ fn fetch() -> KeyFetch {
 
 /// The note on node 1, as the reducer holds it at `at_ms`.
 fn note_at(replay: &Replay, at_ms: u64) -> Option<KeyNote> {
-    replay
-        .reducer
-        .facts()
-        .text
-        .live_note(1, at_ms * 1_000)
+    replay.reducer.facts().text.live_note(1, at_ms * 1_000)
 }
 
 #[test]
@@ -2417,7 +2416,9 @@ fn a_before_read_sets_the_note_as_it_arrives_and_a_final_read_clears_it_ahead_of
     let mut replay = Replay::new();
     let effects = replay.push(name_change(1), Source::Hook, 1);
     let busy = program(&effects).request;
-    assert!(programs(&replay.push(read_caret(5, ReadPurpose::BeforeKey), Source::Other, 2)).is_empty());
+    assert!(
+        programs(&replay.push(read_caret(5, ReadPurpose::BeforeKey), Source::Other, 2)).is_empty()
+    );
     assert_eq!(
         note_at(&replay, 2),
         Some(KeyNote {
@@ -2429,7 +2430,9 @@ fn a_before_read_sets_the_note_as_it_arrives_and_a_final_read_clears_it_ahead_of
             reads: NoteReads::CaretAndText,
         })
     );
-    assert!(programs(&replay.push(read_caret(6, ReadPurpose::BeforeKey), Source::Other, 3)).is_empty());
+    assert!(
+        programs(&replay.push(read_caret(6, ReadPurpose::BeforeKey), Source::Other, 3)).is_empty()
+    );
     assert!(programs(&replay.push(read_caret(7, ReadPurpose::Final), Source::Other, 4)).is_empty());
     assert_eq!(note_at(&replay, 4), None, "the final read clears it");
     // The final read goes ahead of the queued read.

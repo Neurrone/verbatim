@@ -58,11 +58,6 @@ pub enum Fault {
     /// timeout, as its time past the timeout shows, since such a call
     /// reports success. Subject: the registration's id.
     RegistrationCallPassedTimeout,
-    /// An observation point ([`reach`]): an outpost's caret key's watch
-    /// ended without evidence (`verbatim-outpost`'s shell, carrying out the
-    /// reducer's `WatchEnded`). Subject: why it ended, the reducer's
-    /// `&'static str`.
-    CaretWatchEnded,
     /// An observation point ([`reach`]): `verbatim-ia2` is about to send a
     /// window message to an application, once its checks have passed.
     /// Subject: `(window, message, timeout, buffer)`, an
@@ -272,9 +267,11 @@ mod tests {
     #[test]
     #[should_panic(expected = "fired 2 times, not 1")]
     fn an_observation_point_reached_past_its_times_fails_the_test() {
-        let guard = arm(Fault::CaretWatchEnded, |_: &&'static str| true, 1);
-        reach(Fault::CaretWatchEnded, &"first");
-        reach(Fault::CaretWatchEnded, &"second");
+        type Sent = (isize, u32, Option<u32>, Option<usize>);
+        const SENT: Sent = (0, 0, None, None);
+        let guard = arm(Fault::WindowMessageSent, |_: &Sent| true, 1);
+        reach(Fault::WindowMessageSent, &SENT);
+        reach(Fault::WindowMessageSent, &SENT);
         assert_eq!(guard.fired(), 2);
     }
 

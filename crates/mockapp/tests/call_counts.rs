@@ -72,8 +72,8 @@ use verbatim_outpost::dialog_text::{UiaDialog, dialog_text};
 use verbatim_outpost::text::edit::EditText;
 use verbatim_outpost::text::uia::{UiaPos, UiaText};
 use verbatim_outpost::text::{
-    Anchors, CheckKey, FetchAsk, KeyChecked, NoteFetch, LastRead, ReportAsk, TextSource, caret_report,
-    caret_report_since, check_key, perform,
+    Anchors, CheckKey, FetchAsk, KeyChecked, LastRead, NoteFetch, ReportAsk, TextSource,
+    caret_report, caret_report_since, check_key, perform,
 };
 use verbatim_process::arguments::OutpostOptions;
 use verbatim_uia::{
@@ -3125,6 +3125,10 @@ fn answered(checked: KeyChecked) -> CaretReply {
 /// leaving the kept selection alone. Returns the calls and hits of the
 /// answer, of the report, of the report with a selection change, and of
 /// the read before a held key.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one sequence of reads, measured in the order they are made"
+)]
 fn measure_caret_move<S: TextSource>(
     app: &mut common::MockApp,
     hwnd: HWND,
@@ -3394,17 +3398,6 @@ fn check_uia_caret_costs(ratchet: &mut Ratchet, remote: bool) {
         ("GetText", 2),
         ("MoveEndpointByRange", 1),
     ];
-    // A watch's later check, the first having replaced the node's last
-    // read, also compares the selection with the baseline's.
-    let later_hits = [
-        ("ITextProvider::GetSelection", 2),
-        ("Clone", 3),
-        ("CompareEndpoints", 7),
-        ("ExpandToEnclosingUnit", 2),
-        ("GetAttributeValue", 2),
-        ("GetText", 2),
-        ("MoveEndpointByRange", 1),
-    ];
     // The report's, with the selection last read, "al", compared and its
     // change read: its ends, the text it held, and the character at the
     // caret, the key's unit.
@@ -3575,7 +3568,7 @@ fn check_uia_caret_costs(ratchet: &mut Ratchet, remote: bool) {
                 ("Navigate", 1),
                 ("ITextProvider::GetSelection", 2),
                 ("Clone", 4),
-                ("CompareEndpoints", 8),
+                ("CompareEndpoints", 6),
                 ("ExpandToEnclosingUnit", 2),
                 ("GetAttributeValue", 2),
                 ("GetText", 2),
@@ -3687,9 +3680,9 @@ fn check_uia_caret_costs(ratchet: &mut Ratchet, remote: bool) {
         ratchet.check(
             "UIA caret watch answered by a later caret event, classically",
             &later,
-            calls(18, 0, 0),
+            calls(17, 0, 0),
             0,
-            &later_hits,
+            &move_hits,
         );
     }
     app.quit();

@@ -24,8 +24,8 @@ pub enum Reading {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Event {
     /// The terminal's text changed, or something else asks for a read: its
-    /// caret moved in Windows Terminal, or a caret key's watch found its
-    /// evidence.
+    /// caret moved in Windows Terminal, or a key's read under its note
+    /// found its evidence.
     TextChanged,
     /// Core's queue is full ([`verbatim_model::TextOp::TerminalHold`]).
     Hold,

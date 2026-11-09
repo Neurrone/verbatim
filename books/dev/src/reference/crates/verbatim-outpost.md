@@ -1167,94 +1167,32 @@ the answers, within two seconds (`text`, the worker's `text_reads`).
   hues (`text/color.rs`, ported from NVDA's `colors.py`), `BulletStyle`,
   and links.
 
-A caret key's one request (`TextOp::Key`) opens a watch that looks for
-the evidence NVDA's caret scripts wait for, without waiting:
+A caret key is read and reported for Core, which alone judges it
+(`docs/design/caret-selection-rework.md`):
 
-- A text field's `KeyStart::FromLastRead` request opens its watch as it
-  arrives, from the node's last read then, and answers that the watch is
-  open, or `Unanswered` with no last read, so a key with no last read has
-  no watch. A `KeyStart::ReadFirst` request, and a terminal's, set
-  `Watch::Reading` as they arrive; the program reads the caret, answers,
-  and opens the watch, which only that state allows, so a key given up or
-  replaced while its read runs opens none. Either ends the watch before
-  it.
-- The watch is `TextFacts::watch` (`Watch::None`, `Open` with its stage,
-  or `Checking` while a program holds it, with what comes after). A text
-  field's stage has no time of its own: Core ends it, by the final read
-  (`WatchOrder::FinalRead`), the watch's end (`WatchOrder::End`) or the
-  next key's request. A final read ordered while a check runs follows it
-  when it finds nothing. A terminal's ends at `TERMINAL_WATCH_BOUND`
-  (`Stage::Terminal`), a console host's by its poll (`Stage::Poll`).
-- Each caret event, text change or selection change of the node checks
-  the watch (`text_reads::check_watch`, `text::check_key`) with one read
-  and, in a program, one round trip: evidence is judged by
-  `verbatim_outpost_logic::had_effect` from the `Compared` facts, and
-  answered `KeyAnswered` with `KeyAnswer::Evidence`. A check that finds
-  none reports the read as an untagged caret report and leaves the watch
-  open. The final read answers `Evidence` or `KeyAnswer::BoundAnswer`.
-  A watch ended by its node's release or its element's replacement
-  answers `KeyAnswer::Ended`.
-- The reducer decides every time of a terminal's watch, on the run's
-  shared clock (`Now::wall_us`), and the worker reads no clock for it.
-  The reducer gives the shell why a watch ended without evidence
-  (`Effect::WatchEnded`), which the shell logs and, under the `faults`
-  feature, passes to the observation point `CaretWatchEnded`
-  ([verbatim-faults](verbatim-faults.md)), on which mockapp's
-  `terminal_reading` tests tell a watch ended by its poll from one ended
-  at its bound.
-- The console host's caret poll (`reducer::Watch::Polling`, a documented
-  workaround; `books/dev/src/explanation/design/key-holding.md`, "The console host's caret
-  poll"): the console host raises caret events only on its cursor's blink
-  timer, so in its focused text area a watch the first check leaves open
-  re-reads the caret every 5 ms until a check finds evidence or 50 ms after
-  it opened, and ends `KeyAnswer::Ended` when that last re-read finds
-  nothing. Each re-read is a program of its own (`Work::PollRead`,
-  `Worker::poll_read`), which the reducer dispatches when its next read is
-  due, no program is in flight, no release is pending and nothing else is
-  ready, so a program that arrives during the poll waits for at most the
-  one read in flight. The read runs under `HANDLING_DEADLINE` and the watch's
-  trace, holds the watch, and commits the evidence, then reads the
-  terminal, or that it found nothing, after which the reducer sets the
-  next read 5 ms on, or at the last, or ends the watch past its last read.
-  A read is work the idle answer waits for, as a program holding the watch
-  is, since after its answer it reads the terminal under the key's trace.
-  A held watch has no due time, so a check abandoned or failed leaves
-  none. Each re-read wakes the shell for its timer, the worker, and the
-  shell for its commit and its end: wake-ups in all processes per input-hook wake, debug builds, test audio mode, one 12-second trace window each (2026-10-31): `measure_keys_conhost` 17.9 before and 18.1 after; `measure_keys_conhost_unmoved`, keys that move nothing, 14.6 before and 17.5 after, the outpost's share 6.6 and 8.0; `measure_keys_notepad` 32.5 before and 33.5 after.
-  A console caret event for the watched node does not stop the poll when
-  its check finds no evidence, because a blink tick left over from an
-  earlier cursor set, such as `PSReadLine`'s set that moves nothing, can
-  come after the key and before its move. A program's result names no
-  node or request: the reducer takes it only from the program in flight
-  holding the watch, so an abandoned read's late result is refused.
-- Evidence is the caret away from the baseline's; the characters either
-  side of it changed (only those, since a line can rewrap without a key);
-  the text at the caret changed after Delete; the caret's line changed
-  after a deleting key (for a run of one character such as a password
-  mask); or the selection differs from the baseline's or the node's last
-  read's.
-- The baseline is the node's last read as the key's request arrived, or
-  the before read of a held key; never a read begun after the key, which
-  may already show its effect. A node has one last read, kept while Core
-  holds the node, and a read by Verbatim's own move replaces it.
-- Before answering, the caret is read again (`CaretRequest::recheck`;
-  `CaretRead::moved_while_read` at the end of the same program), and a
-  caret that moved meanwhile answers nothing, since its line may be from
-  after a write; the following event checks again. Selection changes come
-  from comparing endpoints (`CaretRead::changes`).
-- Evidence by application: the Windows Forms text box raises a caret
-  location change, then `EVENT_OBJECT_TEXTSELECTIONCHANGED` (and a value
-  change for Delete); Windows 11 Notepad raises
-  `EVENT_OBJECT_TEXTSELECTIONCHANGED` and UIA's text selection changed;
-  the console host raises caret events on its blink timer; Windows Terminal
-  raises only UIA's text selection changed. A Common Controls 6 edit
-  control raises `EVENT_OBJECT_TEXTSELECTIONCHANGED` on every caret move;
-  the classic edit control raises nothing for an unfocused one.
-- The before read of a held key (`KeyStart::ReadFirst`,
-  `books/dev/src/explanation/design/key-holding.md`) is read as a caret event's report, without
-  formatting, with the key's unit: it compares the selection with the
-  node's last read, replaces it, and answers as a `CaretReply`, and the
-  read becomes the key's baseline.
+- A key's reads come from a note on its node (`reducer::KeyNote`), set as a
+  before read's request (`TextOp::ReadCaret` with `ReadPurpose::BeforeKey`)
+  or a one-way `CoreToOutpost::KeyNote` arrives and ended by the clock, the
+  key's final read or Verbatim's own move; it knows nothing of the key's
+  progress. A note past its end counts as absent where it is read.
+- While a note lives, each caret event and text change of the node is read
+  with one read (`text_reads::note_read`, `text::check_key`), which fetches
+  the key's unit, compares with the node's last read and reports it as
+  `CaretMoved` carrying `ReadFacts`. A read showing the key's effect
+  narrows the note to `CaretOnly`, which ends the extra reads of text
+  changes while caret-event reads keep their facts until the note ends. A
+  terminal's read under a note reports only an effect, and its own reading
+  rules say the rest.
+- The final read, `ReadPurpose::Final`, answers Core with the same
+  comparison. Core reports nothing for a key's progress: it passes the key
+  on, counts its bound, and judges each report's facts.
+- The console host's caret poll (`NoteReads::Poll`; a documented workaround,
+  `books/dev/src/explanation/design/key-holding.md`, "The console host's
+  caret poll"): the console host raises caret events only on its cursor's
+  blink timer, so in its focused text area the note's reads run every 5 ms
+  for 50 ms from when the before read ended or the note arrived, until a
+  read shows the key's effect.
+
 
 Selections no key made (`docs/parity/text.md`, "TextInfo-equivalent
 layer"):

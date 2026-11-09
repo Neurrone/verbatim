@@ -589,7 +589,11 @@ impl TextFacts {
     /// the poll's last read, the note goes on without polling.
     pub fn reach_poll(&mut self, now_us: u64) -> Option<u64> {
         let number = self.polling?;
-        let Some(note) = self.nodes.get_mut(&number).and_then(|entry| entry.note.as_mut()) else {
+        let Some(note) = self
+            .nodes
+            .get_mut(&number)
+            .and_then(|entry| entry.note.as_mut())
+        else {
             self.polling = None;
             return None;
         };
@@ -819,6 +823,90 @@ mod tests {
             read_at_us: 0,
             unit: None,
         }
+    }
+
+    /// A note's fetch.
+    fn fetch(motion: CaretMotion) -> KeyFetch {
+        KeyFetch {
+            unit: TextUnit::Character,
+            motion,
+            kind: verbatim_model::NodeKind::TextField,
+        }
+    }
+
+    /// A note lives from its request's arrival for 300 ms, and is the
+    /// node's until then, whatever else happens to the node's text.
+    #[test]
+    fn a_note_ends_by_the_clock() {
+        let mut facts = TextFacts::default();
+        facts.set_note(1, fetch(CaretMotion::NextCharacter), 1_000, false);
+        let until = 301_000;
+        assert_eq!(
+            facts.live_note(1, until - 1).map(|note| note.until_us),
+            Some(until)
+        );
+        assert_eq!(facts.live_note(1, until), None);
+        assert_eq!(facts.live_note(2, 1_000), None);
+        assert_eq!(facts.live_notes(until - 1).count(), 1);
+        assert_eq!(facts.live_notes(until).count(), 0);
+    }
+
+    /// A read's effect narrows the note it was made under, and a later
+    /// note replacing it keeps its own reads.
+    #[test]
+    fn an_effect_narrows_only_the_note_it_was_read_under() {
+        let mut facts = TextFacts::default();
+        facts.set_note(1, fetch(CaretMotion::NextCharacter), 1_000, false);
+        let until = facts.live_note(1, 1_000).expect("the note").until_us;
+        facts.set_note(1, fetch(CaretMotion::Delete), 2_000, false);
+        // An effect read under the older note does not touch the newer one.
+        facts.apply(&TextChange::NoteEffect {
+            node: 1,
+            until_us: until,
+        });
+        assert_eq!(
+            facts.live_note(1, 2_000).map(|note| note.reads),
+            Some(NoteReads::CaretAndText)
+        );
+        let until = facts.live_note(1, 2_000).expect("the note").until_us;
+        facts.apply(&TextChange::NoteEffect {
+            node: 1,
+            until_us: until,
+        });
+        assert_eq!(
+            facts.live_note(1, 2_000).map(|note| note.reads),
+            Some(NoteReads::CaretOnly)
+        );
+    }
+
+    /// A note goes with its node's record.
+    #[test]
+    fn a_note_is_dropped_with_its_node() {
+        let mut facts = TextFacts::default();
+        facts.set_note(1, fetch(CaretMotion::NextCharacter), 0, false);
+        facts.apply(&TextChange::Forget(1));
+        assert_eq!(facts.live_note(1, 0), None);
+        facts.set_note(2, fetch(CaretMotion::NextCharacter), 0, false);
+        facts.release(&BTreeSet::from([2]), &BTreeSet::new());
+        assert_eq!(facts.live_note(2, 0), None);
+    }
+
+    /// The console's before read starts the poll from its end, and the
+    /// poll's next due time moves on 5 ms each time it is reached.
+    #[test]
+    fn a_console_note_polls_from_its_before_reads_end() {
+        let mut facts = TextFacts::default();
+        facts.set_note(1, fetch(CaretMotion::NextCharacter), 0, false);
+        let until_us = facts.live_note(1, 0).expect("the note").until_us;
+        facts.apply(&TextChange::NotePoll {
+            node: 1,
+            until_us,
+            read_ended_at_us: 10_000,
+        });
+        assert_eq!(facts.poll_due(), Some(15_000));
+        assert_eq!(facts.reach_poll(14_999), None);
+        assert_eq!(facts.reach_poll(15_000), Some(1));
+        assert_eq!(facts.poll_due(), Some(20_000));
     }
 
     /// A text call's part is taken in without an anchor it copied that was

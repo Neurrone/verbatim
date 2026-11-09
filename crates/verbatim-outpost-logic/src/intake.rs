@@ -31,7 +31,7 @@
 //! - The console updates of one window may be absorbed: dropped as they are
 //!   pushed, without waking the worker, while the worker has marked that
 //!   window's console terminal as held with its text changed and no caret
-//!   key's watch open ([`Marks::absorbed`]). The worker does
+//!   key's note live ([`Marks::absorbed`]). The worker does
 //!   nothing for such an update, and the read that ends the hold covers
 //!   every update observed before it, as NVDA's console handler skips an
 //!   update while one is already pending.
@@ -332,7 +332,7 @@ pub struct Marks {
     pub focus_redirected: bool,
     /// The console window whose updates are dropped as they are pushed: a
     /// program marks it while its focused console terminal's reading is
-    /// held with its text changed and no caret key's watch is open, when
+    /// held with its text changed and no key's note lives on it, when
     /// it would do nothing for an update; it is cleared before anything
     /// that changes that is handled, so an update observed after the read
     /// that ends the hold begins is never dropped, and by a new focus.

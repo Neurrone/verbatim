@@ -9,9 +9,9 @@ use std::collections::VecDeque;
 
 use serde::{Deserialize, Serialize};
 use verbatim_model::{
-    CaretKey, CaretMotion, CaretRead, CaretReply, CaretReport, Change, Effect, Input,
-    KeyFetch, NodeId, NodeKind, NoteRequest, QueryId, ReadFacts, ReadPurpose, SelectionChange,
-    TextChunk, TextOp, TextReply, TraceId, UtteranceSegment, had_effect,
+    CaretKey, CaretMotion, CaretRead, CaretReply, CaretReport, Change, Effect, Input, KeyFetch,
+    NodeId, NodeKind, NoteRequest, QueryId, ReadFacts, ReadPurpose, SelectionChange, TextChunk,
+    TextOp, TextReply, TraceId, UtteranceSegment, had_effect,
 };
 
 use crate::editing::{self, is_grid, text_focus};
@@ -181,8 +181,9 @@ impl SrState {
     pub(crate) fn key_line_node(&self) -> Option<NodeId> {
         match self.current()? {
             CurrentKey::Reading { node, .. } => Some(*node),
-            CurrentKey::Watched(watched) => Some(watched.node),
-            CurrentKey::FinalReading { watched, .. } => Some(watched.node),
+            CurrentKey::Watched(watched) | CurrentKey::FinalReading { watched, .. } => {
+                Some(watched.node)
+            }
         }
     }
 }
@@ -271,11 +272,10 @@ pub(crate) fn held_key(
         key,
         pressed_at_ms,
     };
-    let joins = match state.current() {
-        None => false,
-        Some(CurrentKey::Reading { .. } | CurrentKey::Watched(_)) => true,
-        Some(CurrentKey::FinalReading { .. }) => false,
-    };
+    let joins = matches!(
+        state.current(),
+        Some(CurrentKey::Reading { .. } | CurrentKey::Watched(_))
+    );
     if joins {
         mark_later(state, pressed_at_ms.saturating_mul(1_000));
         if let Some(busy) = state.busy_mut() {
@@ -311,11 +311,10 @@ pub(crate) fn key_arrived(state: &mut SrState, input: &Input) -> Vec<Effect> {
 /// A review command or script: one that finds a key in the line that still
 /// holds it waits behind it, and any other runs now.
 pub(crate) fn command_arrived(state: &mut SrState, input: &Input) -> Vec<Effect> {
-    let joins = match state.current() {
-        None => false,
-        Some(CurrentKey::Reading { .. } | CurrentKey::Watched(_)) => true,
-        Some(CurrentKey::FinalReading { .. }) => false,
-    };
+    let joins = matches!(
+        state.current(),
+        Some(CurrentKey::Reading { .. } | CurrentKey::Watched(_))
+    );
     if !joins {
         return crate::reduce::command_input(state, input);
     }
@@ -390,12 +389,12 @@ fn watch_from_last_read(
     state: &mut SrState,
     held: HeldKey,
     node: NodeId,
-    (passed_at_us, bound_ms, note): (u64, u64, bool),
+    (passed_at_us, bound_ms, sends_note): (u64, u64, bool),
 ) -> Vec<Effect> {
     let kind = node_kind(state);
     let mut effects = key_taking_effect(state, held.key, node);
     effects.push(Effect::BoundHeldKey(Some((held.trace_id, bound_ms))));
-    if note {
+    if sends_note {
         let request = NoteRequest {
             node,
             fetch: fetch_of(state, held.key),
@@ -816,15 +815,14 @@ fn bound_passed(state: &mut SrState) -> Vec<Effect> {
         watched.passed_at_us,
         watched.kind,
     );
-    let passed_at_ms = Some(passed_at_us.div_ceil(1_000));
-    let mut effects = advance(state, passed_at_ms);
-    let still_current =
-        matches!(state.current(), Some(CurrentKey::Watched(watched)) if watched.key.trace_id == trace_id);
+    let pass_ms = Some(passed_at_us.div_ceil(1_000));
+    let mut effects = advance(state, pass_ms);
+    let still_current = matches!(state.current(), Some(CurrentKey::Watched(watched)) if watched.key.trace_id == trace_id);
     if !still_current {
         return effects;
     }
     if kind == NodeKind::Terminal {
-        effects.extend(end_current(state, trace_id, passed_at_ms));
+        effects.extend(end_current(state, trace_id, pass_ms));
         return effects;
     }
     let read = CaretRead {
@@ -881,12 +879,9 @@ fn result(
         None => true,
     };
     let words = match (watched.kind, speaks, evidence) {
-        (NodeKind::TextField, true, Some(evidence)) => editing::evidence_words(
-            state,
-            watched.node,
-            watched.key.key,
-            (read, evidence),
-        ),
+        (NodeKind::TextField, true, Some(evidence)) => {
+            editing::evidence_words(state, watched.node, watched.key.key, (read, evidence))
+        }
         (NodeKind::TextField, true, None) => {
             editing::bound_words(state, watched.node, watched.key.key, read)
         }
@@ -999,7 +994,11 @@ pub(crate) fn changes_heard(
     let Some(busy) = state.busy_mut() else {
         return editing::speak_each(trace_id, segments);
     };
-    if busy.current.watched().is_some_and(|watched| watched.node == node) {
+    if busy
+        .current
+        .watched()
+        .is_some_and(|watched| watched.node == node)
+    {
         busy.heard.extend(segments);
         return Vec::new();
     }

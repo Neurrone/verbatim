@@ -31,7 +31,8 @@ use verbatim_model::{
 use verbatim_outpost::text::edit::EditText;
 use verbatim_outpost::text::uia::UiaText;
 use verbatim_outpost::text::{
-    Anchors, CheckKey, KeyChecked, NodeText, NoteFetch, TextSource, caret_report, check_key, perform,
+    Anchors, CheckKey, KeyChecked, NodeText, NoteFetch, TextSource, caret_report, check_key,
+    perform,
 };
 use verbatim_uia::Uia;
 use verbatim_uia::text::Endpoint;

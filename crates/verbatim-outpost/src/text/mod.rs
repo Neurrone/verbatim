@@ -23,9 +23,9 @@
 //! - A unit the source does not have is answered
 //!   [`TextReply::UnsupportedUnit`], and movement stops at the document's
 //!   ends, reporting how far it really went.
-//! - A caret key's check ([`check_key`]) reads the caret once and compares
-//!   what it read with the key's baseline, a copy of the node's last read;
-//!   the judgement of evidence itself is `verbatim_outpost_logic::had_effect`.
+//! - A key's read ([`check_key`]) reads the caret once and compares what it
+//!   read with the node's last read; Core judges evidence from it by
+//!   `verbatim_model::had_effect`.
 
 #![forbid(unsafe_code)]
 
@@ -39,10 +39,11 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
 use verbatim_model::{
-    CaretReply, CaretReport, CaretSelection, Change, Compared, FormatRun, LanguageRun, MAX_CHUNK_BYTES, MAX_RANGE_BYTES, ReadFacts, had_effect,
-    MAX_READ_AHEAD, MAX_READ_AHEAD_TEXT, MAX_SELECTION_TEXT_BYTES, Selection, SelectionChange,
-    TextAnchor, TextAttributes, TextChunk, TextMovement, TextOp, TextPoint, TextPosition, TextRead,
-    TextReadAhead, TextReply, TextThrough, TextUnit,
+    CaretReply, CaretReport, CaretSelection, Change, Compared, FormatRun, LanguageRun,
+    MAX_CHUNK_BYTES, MAX_RANGE_BYTES, MAX_READ_AHEAD, MAX_READ_AHEAD_TEXT,
+    MAX_SELECTION_TEXT_BYTES, ReadFacts, Selection, SelectionChange, TextAnchor, TextAttributes,
+    TextChunk, TextMovement, TextOp, TextPoint, TextPosition, TextRead, TextReadAhead, TextReply,
+    TextThrough, TextUnit, had_effect,
 };
 
 use crate::outpost::{
@@ -88,8 +89,8 @@ pub struct CaretRequest<'a, P> {
     pub previous: Option<&'a (P, P)>,
     /// `previous` held nothing: with nothing selected now either, there is
     /// no change to tell, so the selection is not compared (a caret
-    /// report's comparison; a caret key's watch, for which a caret that
-    /// moved is a selection that moved, leaves it false).
+    /// report's comparison; a key's read, for which a caret that moved is a
+    /// selection that moved, leaves it false).
     pub previous_collapsed: bool,
     /// A key's baseline's selection's ends (both the caret when nothing
     /// was selected), when the baseline is not the node's last read: to
@@ -1297,9 +1298,8 @@ pub(crate) fn caret_report_checking<S: TextSource>(
     } else {
         None
     };
-    // A read for a key compares with the node's last read, whose caret the
-    // read's one trip can also say it has left; read by parts that would be
-    // a call more, so it is compared by the text.
+    // A read for a key compares with the node's last read by the text it
+    // read, adding no call to a report's.
     let previous = fetch.and_then(|_| anchors.last_read());
     // NVDA reads and clears the note at every comparison, and keeps it
     // while there is no selection to compare with
@@ -1307,7 +1307,7 @@ pub(crate) fn caret_report_checking<S: TextSource>(
     // to 451).
     let noted = last.is_some() && anchors.take_content_changed();
     let request = CaretRequest {
-        since: since.or(previous.as_ref().map(|last| &last.caret)),
+        since,
         previous: last.as_ref().filter(|_| !noted).map(|last| &last.ends),
         previous_collapsed: last.as_ref().is_some_and(|last| last.collapsed),
         baseline_selection: None,
@@ -1461,7 +1461,7 @@ fn reported<S: TextSource>(
                 Some(last) => report_change(
                     &report.line,
                     (unit.as_ref(), fetch.note),
-                    (moved, !selection_changes.is_empty()),
+                    !selection_changes.is_empty(),
                     last,
                 ),
             };
@@ -1492,22 +1492,21 @@ fn keep_unit<P>(anchors: &mut NodeText<'_, P>, unit: Option<&TextChunk>) {
     }
 }
 
-/// How a report made for a key compares with `last`, the node's last read:
-/// the line and the characters beside the caret compared by their text, the
-/// caret having moved as the read says or by the text and offset read by
-/// parts (a read by parts adding no call), and on the same line as far as
-/// its text tells.
+/// How a report made for a key compares with `last`, the node's last read,
+/// by the text and offset each read holds, adding no call: a move between
+/// two lines of the same text at the same offset is not seen, and the caret
+/// is on the same line as far as its text tells.
 fn report_change<P>(
     line: &TextChunk,
     (unit, note): (Option<&TextChunk>, NoteFetch),
-    (moved, selection_moved): (bool, bool),
+    selection_moved: bool,
     last: LastRead<P>,
 ) -> Change {
     let line_changed = line.text != last.line.text;
     let unit_changed = note.motion.compares_unit()
-        && unit_text(&note, unit, line) != before_unit_text(&last, note.unit);
+        && unit_text(note, unit, line) != before_unit_text(&last, note.unit);
     let compared = Compared {
-        caret_moved: moved || line_changed || line.offset != last.line.offset,
+        caret_moved: line_changed || line.offset != last.line.offset,
         selection_moved,
         beside_changed: beside(&line.text, line.offset as usize)
             != beside(&last.line.text, last.line.offset as usize),
@@ -1524,7 +1523,7 @@ fn report_change<P>(
 
 /// The text of the key's unit a report read, the line's character at the
 /// caret for a character or where no unit was read.
-fn unit_text(note: &NoteFetch, unit: Option<&TextChunk>, line: &TextChunk) -> String {
+fn unit_text(note: NoteFetch, unit: Option<&TextChunk>, line: &TextChunk) -> String {
     match unit {
         Some(chunk) if note.unit != TextUnit::Character => chunk.text.clone(),
         _ => verbatim_text::grapheme_at(&line.text, line.offset as usize)
@@ -1613,7 +1612,10 @@ pub fn same_caret(a: &CaretReport, b: &CaretReport) -> bool {
 }
 
 /// The report for a caret read another program already made, begun at
-/// `read_at_us` (a terminal's, read with its new output).
+/// `read_at_us` (a terminal's, read with its new output). With
+/// `keeps_last_read` the node's last read stays as it was, while a key's
+/// note lives: this read carries no facts, so replacing the one baseline
+/// would consume the key's effect unreported.
 ///
 /// # Errors
 ///
@@ -1622,9 +1624,10 @@ pub fn caret_report_from<S: TextSource>(
     source: &mut S,
     anchors: &mut NodeText<'_, S::Pos>,
     read: CaretRead<S::Pos>,
-    read_at_us: u64,
+    (read_at_us, keeps_last_read): (u64, bool),
 ) -> TextResult<CaretReport> {
-    report_for(
+    let kept = keeps_last_read.then(|| anchors.anchors.last.clone());
+    let report = report_for(
         source,
         anchors,
         (&read.state, read_at_us),
@@ -1633,7 +1636,11 @@ pub fn caret_report_from<S: TextSource>(
             Some(read.selection_start),
         ),
         None,
-    )
+    );
+    if let Some(kept) = kept {
+        anchors.anchors.last = kept;
+    }
+    report
 }
 
 /// The line containing the caret, and the caret's UTF-16 offset in it.
@@ -1923,10 +1930,6 @@ pub(crate) fn check_key_cut<S: TextSource>(
 }
 
 /// [`check_key_cut`]'s read and comparisons.
-#[expect(
-    clippy::too_many_lines,
-    reason = "one read and its comparisons, in the order they are made"
-)]
 fn key_read<S: TextSource>(
     source: &mut S,
     anchors: &mut NodeText<'_, S::Pos>,

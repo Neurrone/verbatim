@@ -21,9 +21,7 @@ Public API:
   wait for the calls in progress; `RegistrationCallPassedTimeout` (the
   registration's id), each of `verbatim-uia`'s registration calls whose
   time passed UIA's connection timeout, since such a call reports
-  success; and `CaretWatchEnded` (the reducer's reason, a `&'static
-  str`), where an outpost's shell carries out a caret key's watch ending
-  without evidence; and `WindowMessageSent` (`(window, message, timeout,
+  success; and `WindowMessageSent` (`(window, message, timeout,
   buffer)`, an `(isize, u32, Option<u32>, Option<usize>)`), where
   `verbatim-ia2` is about to send a window message, with the time limit it
   is sent with, `None` for none, and the address of the buffer it carries

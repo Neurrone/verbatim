@@ -34,9 +34,9 @@ use verbatim_model::protocol::{
     DeliveredFact, OutpostToCore, Query, QueryOutcome, QueryResult, RequestId,
 };
 use verbatim_model::{
-    CaretMotion, CaretRead, CaretReply, CaretReport, Change, FocusText, KeyFetch, NodeId,
-    NodeKind, NormalizedEvent, NoteRequest, ReadPurpose, SelectionChange, TextOp, TextPoint,
-    TextPosition, TextReply,
+    CaretMotion, CaretRead, CaretReply, CaretReport, Change, FocusText, KeyFetch, NodeId, NodeKind,
+    NormalizedEvent, NoteRequest, ReadPurpose, SelectionChange, TextOp, TextPoint, TextPosition,
+    TextReply,
 };
 use verbatim_outpost::Heard;
 use verbatim_uia::{Cached, ListenerEvent, Uia};

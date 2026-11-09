@@ -700,11 +700,7 @@ Each file's module comment says exactly what it asserts; in outline:
   foreground reports, each on-demand reading request and its answer, caret
   events with and without text changes, the console host's caret, the
   hooks' change events through MSAA, the whole document and history
-  blocks, colours requests, and the read before a held key. A console
-  host's caret watch ended by its poll is told from one ended at its own
-  bound by the reason the outpost's observation point `CaretWatchEnded`
-  gives, so the binary requires the `faults` feature and runs in `cargo
-  xtask faults`.
+  blocks, colours requests, and the read before a held key.
 - `remote_ops.rs` runs `verbatim-uia-rops`'s remote and classic focus
   ancestry over `ancestry.json` (a five-level chain, a list and a tab
   control with selected children) and asserts they return the same

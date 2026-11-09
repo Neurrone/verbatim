@@ -490,20 +490,18 @@ carries a `TextReply`. A newer request for the same purpose
 supersedes an older one, whose answer Core drops. The operations
 (`TextOp`):
 
-- `Key(KeyRequest { tag, kind, unit, motion, start })`: a caret key's one
-  request. `KeyStart::ReadFirst` reads the caret first, as the before read
-  of a held key, and answers `TextReply::Key` with `KeyStarted::Read`; in
-  a focused terminal it answers with a `TerminalSnapshot`, whose caret
-  answers it. `KeyStart::FromLastRead` answers `KeyStarted::Watching`,
-  judged from the node's last read as the request arrives, with no read
-  of its own; `TextReply::Unanswered` when there is none. Either way the
-  outpost then watches for evidence that the key took effect, and reports
-  it as `NormalizedEvent::KeyAnswered` with the request's tag.
-  `CoreToOutpost::Watch` orders a watch: `WatchOrder::FinalRead` asks for
-  one last read, answered `Evidence` or `BoundAnswer`, and
-  `WatchOrder::End` ends it silently. `kind` says whether the node is a
-  text field, whose watch only Core ends, or a terminal, whose watch ends
-  at the outpost's own deadline or console poll.
+- `ReadCaret(CaretRead { fetch, purpose })`: one read of the caret for a
+  key, answered `TextReply::Caret` (a `CaretReply` carrying `ReadFacts`),
+  or, in a focused terminal, a `TerminalSnapshot` whose caret answers it.
+  `ReadPurpose::BeforeKey` is a held key's before read, whose arrival sets
+  the node's note; `ReadPurpose::Final` is the key's final read past its
+  bound, whose arrival clears it. `KeyFetch` names the unit, the motion and
+  whether the node is a text field or a terminal. A key with no before read
+  sends `CoreToOutpost::KeyNote` instead. A read made under a note, or
+  asked for one, reports `ReadFacts` on its `CaretMoved` or reply: the
+  unit, how it compared with the node's last read (`Change::NoPrevious` or
+  `Change::Compared`, whose `Compared` is judged by `had_effect`), and when
+  it ended. Core alone decides whether those facts are a key's evidence.
 - Selection changes: each `SelectionChange` is `selected` or not, its
   `text` cut to `MAX_SELECTION_TEXT_BYTES` (4 KB), and its full count of
   `characters`. When the old and new selections neither overlap nor

@@ -37,6 +37,7 @@ pub(crate) fn config(seed: u64, cases: u32) -> Config {
 /// # Panics
 ///
 /// When either is missing or not a number.
+#[cfg(any())]
 #[expect(
     clippy::disallowed_methods,
     reason = "the exploration tests alone read their seed and case count from the environment, and the gate never runs them"

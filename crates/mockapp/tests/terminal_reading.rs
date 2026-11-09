@@ -71,9 +71,9 @@ use verbatim_model::protocol::{
     FocusedControl, OutpostToCore, Query, QueryOutcome, QueryResult, RequestId,
 };
 use verbatim_model::{
-    CaretMotion, CaretRead, CaretReply, Change, FocusText, KeyFetch, NodeId, NodeKind, NoteRequest, ReadPurpose,
-    NormalizedEvent, PropertyChange, Role, TerminalScope, TerminalSnapshot, TextOp,
-    TextReply,
+    CaretMotion, CaretRead, CaretReply, Change, FocusText, KeyFetch, NodeId, NodeKind,
+    NormalizedEvent, NoteRequest, PropertyChange, ReadPurpose, Role, TerminalScope,
+    TerminalSnapshot, TextOp, TextReply,
 };
 use verbatim_outpost::Heard;
 use verbatim_process::arguments::OutpostOptions;

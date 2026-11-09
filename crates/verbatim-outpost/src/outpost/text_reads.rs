@@ -33,14 +33,18 @@ use windows::Win32::UI::WindowsAndMessaging::OBJID_CLIENT;
 use windows::core::AgileReference;
 
 use verbatim_ia2::CHILDID_SELF;
-use verbatim_model::{CaretRead, CaretReply, CaretReport, NodeId, ReadFacts, Role, SelectionChange, TextOp, TextReply};
+use verbatim_model::{
+    CaretRead, CaretReply, CaretReport, NodeId, ReadFacts, Role, SelectionChange, TextOp, TextReply,
+};
 use verbatim_uia::map::is_terminal_class;
 use verbatim_uia::{Cached, Interning as _, Kept};
 use verbatim_uia_rops::Path;
 
 use crate::text::edit::EditText;
 use crate::text::uia::{TextSupport, UiaPos, UiaText};
-use crate::text::{self, CheckKey, Checked, FetchAsk, KeyChecked, NodeTextCopy, ReportAsk, Slot, TextError};
+use crate::text::{
+    self, CheckKey, Checked, FetchAsk, KeyChecked, NodeTextCopy, ReportAsk, Slot, TextError,
+};
 use verbatim_reader_rules::CONSOLE_WINDOW_CLASS;
 use verbatim_reader_rules::class::normalize_class_name;
 use verbatim_win32::window::window_class_name;
@@ -548,7 +552,7 @@ fn fetch_ask(note: NoteFetch) -> FetchAsk {
 pub(super) fn before_read(
     context: &RequestContext<'_>,
     node_id: NodeId,
-    read: &CaretRead,
+    read: CaretRead,
     cuts: bool,
 ) -> BeforeReading {
     let note = NoteFetch {
@@ -576,7 +580,9 @@ pub(super) fn before_read(
             put_uia(context, node_id, call);
             note_fallback(context, &mut source);
             keep_support(context, node_id, &source);
-            read.and_then(before_reply).map(Checked::Done).map_err(not_read)
+            read.and_then(before_reply)
+                .map(Checked::Done)
+                .map_err(not_read)
         }
         Source::Edit(mut source) => {
             let edit = edit_client(context, node_id).filter(|_| cuts);
@@ -847,6 +853,10 @@ pub(super) enum CaretFor {
 /// place, the read says, with the same line. Also when the read began, on
 /// the observation clock, when it was made: it covers the caret events
 /// observed before then only once its commit notes it.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one read by its source, as a purpose and a note ask"
+)]
 pub(super) fn report_caret(
     context: &RequestContext<'_>,
     node_id: NodeId,
@@ -1197,7 +1207,7 @@ pub(super) fn terminal_read(
     uia: &verbatim_uia::Uia,
     node_id: NodeId,
     terminal: &mut crate::terminal::Terminal,
-    (scope, waited): (Option<verbatim_model::TerminalScope>, bool),
+    (scope, waited, before_key): (Option<verbatim_model::TerminalScope>, bool, bool),
 ) -> Option<(
     crate::terminal::ReadAnswer,
     Option<TerminalCaret>,
@@ -1250,8 +1260,20 @@ pub(super) fn terminal_read(
             let caret = answer.caret.take().and_then(|answer| {
                 let read = source.caret_read_from(answer).ok()?;
                 let mut call = uia_call(context, node_id, &[]);
-                let report =
-                    crate::text::caret_report_from(&mut source, &mut call.text(), read, started_us);
+                // A before read is the key's baseline; any other read under
+                // a note carries no facts and leaves the baseline alone.
+                let noted = !before_key
+                    && context
+                        .facts()
+                        .text
+                        .live_note(node_id.number(), verbatim_process::clock::now_us())
+                        .is_some();
+                let report = crate::text::caret_report_from(
+                    &mut source,
+                    &mut call.text(),
+                    read,
+                    (started_us, noted),
+                );
                 put_uia(context, node_id, call);
                 Some(TerminalCaret {
                     report: report.ok()?,

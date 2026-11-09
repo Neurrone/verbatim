@@ -100,14 +100,15 @@ enum Detail {
 /// Whether `event` carries a key's facts: a merged report would lose its
 /// comparison.
 fn carries_key_facts(event: &NormalizedEvent) -> bool {
-    match event {
-        NormalizedEvent::CaretMoved { facts, .. } => facts.is_some(),
-        NormalizedEvent::FocusChanged { text, .. } => matches!(
-            text.as_deref(),
-            Some(crate::FocusText::Caret { facts: Some(_), .. })
-        ),
-        _ => false,
-    }
+    matches!(event, NormalizedEvent::CaretMoved { facts: Some(_), .. })
+        || matches!(
+            event,
+            NormalizedEvent::FocusChanged { text, .. }
+                if matches!(
+                    text.as_deref(),
+                    Some(crate::FocusText::Caret { facts: Some(_), .. })
+                )
+        )
 }
 
 impl Merge for OutpostToCore {

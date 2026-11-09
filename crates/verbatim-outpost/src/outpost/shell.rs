@@ -32,8 +32,8 @@ use verbatim_model::protocol::{
 };
 use verbatim_model::{NodeKind, NoteRequest};
 use verbatim_reader_rules::CONSOLE_WINDOW_CLASS;
-use verbatim_win32::window::window_class_name;
 use verbatim_uia::{Agile, Kept};
+use verbatim_win32::window::window_class_name;
 
 use super::Context;
 use super::commit::{Effects, FocusEffects, KeptTarget, Writes};

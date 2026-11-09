@@ -6,11 +6,12 @@
 use verbatim_core::{SrState, reduce};
 use verbatim_model::{
     Backend, CaretKey, CaretMotion, CaretRead, CaretReport, CaretSelection, Change, Compared,
-    Effect, Input, Message, ReadFacts, ReadPurpose, NodeDetails, NodeId, NodeSnapshot, NormalizedEvent, OutpostId, Phrase, Pid,
-    QueryId, ReaderSettings, ReviewCommand, Role, SegmentContent, Selection, SelectionChange,
-    SelectionText, SpeechMark, SpeechPriority, State, StateSet, TextAnchor, TextChunk,
-    TextMovement, TextOp, TextPoint, TextPosition, TextRead, TextReadAhead, TextReply, TextRequest,
-    TextThrough, TextUnit, TraceId, TypingEcho, Utterance, UtteranceSegment,
+    Effect, Input, Message, NodeDetails, NodeId, NodeSnapshot, NormalizedEvent, OutpostId, Phrase,
+    Pid, QueryId, ReadFacts, ReadPurpose, ReaderSettings, ReviewCommand, Role, SegmentContent,
+    Selection, SelectionChange, SelectionText, SpeechMark, SpeechPriority, State, StateSet,
+    TextAnchor, TextChunk, TextMovement, TextOp, TextPoint, TextPosition, TextRead, TextReadAhead,
+    TextReply, TextRequest, TextThrough, TextUnit, TraceId, TypingEcho, Utterance,
+    UtteranceSegment,
 };
 use verbatim_model::{BulletStyle, FocusText, FormatRun, LineStyle, TextAttributes, TextFormat};
 
@@ -5372,12 +5373,12 @@ fn held_at(trace_id: TraceId, motion: CaretMotion, pressed_at_ms: u64) -> Input 
 
 /// The answer of a held key's before read, finding `line`.
 fn read_before(line: TextChunk, read_at_ms: u64) -> TextReply {
-    let read_at_us = read_at_ms * 1_000;
+    let micros = read_at_ms * 1_000;
     TextReply::Caret(Box::new(verbatim_model::CaretReply {
         caret: CaretReport {
             line: line.clone(),
             selection: None,
-            read_at_us,
+            read_at_us: micros,
         },
         selection_changes: Vec::new(),
         content_changed: false,
@@ -5385,7 +5386,7 @@ fn read_before(line: TextChunk, read_at_ms: u64) -> TextReply {
         facts: ReadFacts {
             unit: line,
             change: Change::NoPrevious,
-            read_ended_at_us: read_at_us,
+            read_ended_at_us: micros,
         },
     }))
 }
@@ -5666,4 +5667,109 @@ fn speech_of_an_unkeyed_input_or_a_forgotten_key_carries_no_number() {
         );
     }
     assert_eq!(stamps(&reduce(&mut state, &copied(first))), [None]);
+}
+
+/// A report of node 5 with facts showing `moved`, read ending at
+/// `ended_at_us`.
+fn report_ended(line: TextChunk, moved: bool, ended_at_us: u64) -> Input {
+    event(NormalizedEvent::CaretMoved {
+        node_id: id(5),
+        caret: CaretReport {
+            line: line.clone(),
+            selection: None,
+            read_at_us: ended_at_us,
+        },
+        selection_changes: Vec::new(),
+        content_changed: false,
+        new_selection: None,
+        facts: Some(Box::new(ReadFacts {
+            read_ended_at_us: ended_at_us,
+            ..key_facts(line.clone(), moved, (line, None), true)
+        })),
+    })
+}
+
+#[test]
+fn a_report_read_before_the_key_was_passed_on_is_not_its_evidence() {
+    let (mut state, _) = key_passed_on("abc\n", 0, CaretMotion::NextCharacter);
+    // The before read ended at 500 ms; this read ended at 400 ms.
+    let effects = reduce(
+        &mut state,
+        &report_ended(line("abc\n", 100, 1), true, 400_000),
+    );
+    assert_eq!(spoken(&effects), []);
+    assert!(state.holds_inputs_back(), "the key still waits");
+}
+
+#[test]
+fn a_report_read_after_the_key_was_passed_on_with_no_effect_is_not_its_evidence() {
+    let (mut state, _) = key_passed_on("abc\n", 0, CaretMotion::NextCharacter);
+    let effects = reduce(
+        &mut state,
+        &report_ended(line("abc\n", 100, 0), false, 900_000),
+    );
+    assert_eq!(spoken(&effects), []);
+    assert!(state.holds_inputs_back(), "the key still waits");
+}
+
+#[test]
+fn a_report_of_another_node_is_not_the_keys_evidence() {
+    let (mut state, _) = key_passed_on("abc\n", 0, CaretMotion::NextCharacter);
+    let moved = event(NormalizedEvent::CaretMoved {
+        node_id: id(6),
+        caret: CaretReport {
+            line: line("x\n", 100, 1),
+            selection: None,
+            read_at_us: 900_000,
+        },
+        selection_changes: Vec::new(),
+        content_changed: false,
+        new_selection: None,
+        facts: Some(Box::new(key_facts(
+            line("x\n", 100, 1),
+            true,
+            (line("x\n", 100, 0), None),
+            true,
+        ))),
+    });
+    assert_eq!(spoken(&reduce(&mut state, &moved)), []);
+    assert!(state.holds_inputs_back(), "the key still waits");
+}
+
+#[test]
+fn a_report_read_after_the_pass_showing_a_change_is_the_keys_evidence() {
+    let (mut state, _) = key_passed_on("abc\n", 0, CaretMotion::NextCharacter);
+    let effects = reduce(
+        &mut state,
+        &report_ended(line("abc\n", 100, 1), true, 900_000),
+    );
+    assert_eq!(spoken(&effects), vec![character("b")]);
+    assert!(!state.holds_inputs_back(), "the key ended");
+}
+
+#[test]
+fn a_final_read_showing_an_effect_is_the_keys_evidence() {
+    let (mut state, _) = key_passed_on("abc\n", 0, CaretMotion::NextCharacter);
+    let due = reduce(&mut state, &key_bound_passed());
+    let reply = TextReply::Caret(Box::new(verbatim_model::CaretReply {
+        caret: CaretReport {
+            line: line("abc\n", 100, 2),
+            selection: None,
+            read_at_us: 700_000,
+        },
+        selection_changes: Vec::new(),
+        content_changed: false,
+        new_selection: None,
+        facts: ReadFacts {
+            read_ended_at_us: 700_000,
+            ..key_facts(
+                line("abc\n", 100, 2),
+                true,
+                (line("abc\n", 100, 0), None),
+                true,
+            )
+        },
+    }));
+    let effects = reduce(&mut state, &completed_text(request_of(&due), reply));
+    assert_eq!(spoken(&effects), vec![character("c")]);
 }

@@ -23,7 +23,7 @@
 //!
 //! Holding the whole stream, not only the forwarded kinds, keeps the hook's
 //! own order, which the intake's ordering of a run, its caret event after
-//! a terminal's update, and the caret key's watch read: holding only the
+//! a terminal's update, and the read under a key's note: holding only the
 //! forwarded kinds would let a caret or value change pass a focus raised
 //! before it. The cost is paid only at an outpost's start: the hook's
 //! stream waits a median of 20.6 ms, at most 591.3 ms over 126 starts

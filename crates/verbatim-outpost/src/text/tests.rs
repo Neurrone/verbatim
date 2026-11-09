@@ -1,10 +1,12 @@
 //! The text protocol over an in-memory source: chunks, positions and
-//! anchors, the checks of a caret key's watch, selection changes, and
+//! anchors, a key's reads compared with the last read, selection changes, and
 //! reads.
 
 use std::sync::atomic::AtomicU64;
 
-use verbatim_model::{CaretMotion, CaretRead, CaretReply, Change, KeyFetch, NodeKind, ReadFacts, ReadPurpose};
+use verbatim_model::{
+    CaretMotion, CaretRead, CaretReply, Change, KeyFetch, NodeKind, ReadFacts, ReadPurpose,
+};
 
 use super::*;
 
@@ -420,7 +422,11 @@ fn a_keys_request_is_not_carried_out_by_perform() {
         },
         purpose: ReadPurpose::BeforeKey,
     };
-    let reply = perform(&mut source, &mut store().node(1), &TextOp::ReadCaret(request));
+    let reply = perform(
+        &mut source,
+        &mut store().node(1),
+        &TextOp::ReadCaret(request),
+    );
     assert_eq!(reply, TextReply::Unsupported);
     assert_eq!(source.caret_reads, 0);
 }
@@ -1122,8 +1128,8 @@ fn a_selection_typed_over_is_cut_then_finished_in_general_terms() {
         (cut.caret, cut.selection, cut.last.ends, cut.last.collapsed),
         (1, None, (0, 5), false)
     );
-    let read =
-        finish_report(&mut source, &mut anchors.node(1), cut, true, || 0).expect("the fake answers");
+    let read = finish_report(&mut source, &mut anchors.node(1), cut, true, || 0)
+        .expect("the fake answers");
     assert_eq!(
         (
             read.selection_changes,
