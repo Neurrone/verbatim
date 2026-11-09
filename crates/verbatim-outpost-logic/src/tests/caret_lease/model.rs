@@ -73,10 +73,12 @@
 //!   nothing (`docs/parity/text.md`, "Holding caret keys").
 //! - A focus in another top-level window cuts speech just before it
 //!   (`docs/parity/focus-events.md`), after a key's words.
-//! - A key that ends with the key after it queued behind a waiting focus
-//!   report says its held selection changes at that ending, and a before
-//!   read abandoned with no key left says what was held (the coordinator's
-//!   ruling, 2026-11-09).
+//! - A silenced key's held selection changes are said when the key ends,
+//!   in the order they happened, whether or not a key is queued behind it
+//!   (Dickson's ruling, 2026-11-09), so being replaced says what it held.
+//!   Every way a key ends says what is held, the outpost's ending included,
+//!   and a before read abandoned with no key left says what was held (the
+//!   coordinator's ruling, 2026-11-09).
 //! - What Backspace removed is the difference between its before line and
 //!   its after line, carets included (`docs/design/caret-selection-rework.md`,
 //!   `removal`), so an older baseline gives what that difference gives.
@@ -89,7 +91,9 @@
 //! - At exit nothing further is heard: held keys are delivered, held
 //!   selection changes are not said (the coordinator's ruling, 2026-11-09).
 //! - A released node's last read is gone, and a replaced element ends the
-//!   window of the keys on its node (the coordinator's ruling, 2026-11-09).
+//!   evidence window of the keys on its node; Core is not told of it, so
+//!   held changes are still said when the key ends (the coordinator's
+//!   ruling, 2026-11-09).
 //! - A terminal's keys say nothing for themselves, the terminal rules
 //!   speaking, and the console host is polled for 50 ms after its before
 //!   read's end (`docs/design/caret-selection-rework.md`).
@@ -481,6 +485,7 @@ impl Model {
                 "key {id} passed on, but the oldest not yet passed is {oldest:?}"
             ));
         }
+        let replacing = self.replaces_silenced(id);
         let baseline = self
             .focus
             .and_then(|field| self.last_read.get(&field).cloned());
@@ -502,15 +507,38 @@ impl Model {
             press.done = true;
             self.say_held_when_no_key_is_out();
         }
+        if replacing {
+            self.say_held();
+        }
         Ok(())
+    }
+
+    /// Whether key `id` becoming current replaces a silenced key that is
+    /// still out, ending it.
+    fn replaces_silenced(&self, id: usize) -> bool {
+        id.checked_sub(1).is_some_and(|ahead| {
+            self.keys[ahead].passed.is_some()
+                && self.keys[ahead].silenced_at.is_some()
+                && !self.replaced(ahead)
+        })
+    }
+
+    /// What is held is said.
+    fn say_held(&mut self) {
+        let held = std::mem::take(&mut self.held);
+        self.say_changes(&held);
     }
 
     /// Core asked a before read, of the oldest key not yet passed on.
     pub fn before_read_asked(&mut self, now: Us) {
         if let Some(id) = self.keys.iter().position(|press| press.passed.is_none()) {
+            let replacing = self.replaces_silenced(id);
             self.keys[id].before = BeforeRead::Asked;
             self.keys[id].window = Some((now, now + KEY_WINDOW_US));
             self.before_reads.push_back(id);
+            if replacing {
+                self.say_held();
+            }
         }
     }
 
@@ -543,7 +571,7 @@ impl Model {
                 {
                     self.keys[asker].done = true;
                     self.say_held_when_no_key_is_out();
-                } else if let Some(id) = self.silenced_before_a_queued_key() {
+                } else if let Some(id) = self.silenced_key() {
                     self.keys[id].silenced_at = None;
                     self.say_held_when_no_key_is_out();
                 }
@@ -638,7 +666,7 @@ impl Model {
                 self.say_changes(&changes);
                 return;
             }
-            if let Some(id) = self.silenced_before_a_queued_key()
+            if let Some(id) = self.silenced_key()
                 && self.ends_silenced_key(id, report)
             {
                 self.keys[id].silenced_at = None;
@@ -693,19 +721,15 @@ impl Model {
                 && press.node == self.focus
                 && press.silenced_at.is_some_and(|at| report.began < at)
                 && press.passed.is_some_and(|at| report.ended >= at)
-                && counts_for(press, report)
+                && (report.final_read || counts_for(press, report))
         })
     }
 
-    /// The silenced key, passed on and still current, whose later key is
-    /// queued behind a waiting focus report, so nothing in the line follows
-    /// it.
-    fn silenced_before_a_queued_key(&self) -> Option<usize> {
+    /// The newest silenced key, passed on and not yet replaced.
+    fn silenced_key(&self) -> Option<usize> {
         (0..self.keys.len()).rev().find(|&id| {
             let press = &self.keys[id];
-            press.passed.is_some()
-                && press.silenced_at.is_some()
-                && self.keys.get(id + 1).is_some_and(|later| later.queued)
+            press.passed.is_some() && press.silenced_at.is_some() && !self.replaced(id)
         })
     }
 
@@ -843,6 +867,7 @@ impl Model {
             }
             press.node = None;
         }
+        self.say_held();
         self.alive = false;
         self.last_read.clear();
         self.before_reads.clear();
