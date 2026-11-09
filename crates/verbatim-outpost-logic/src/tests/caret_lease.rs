@@ -104,6 +104,7 @@ impl Run {
                     Ok(())
                 }
                 Seen::FinalReadAsked => {
+                    self.model.final_read_asked();
                     self.final_asked = true;
                     Ok(())
                 }

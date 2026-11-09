@@ -29,6 +29,9 @@
 //!   (`nvda/source/editableText.py` 181 to 186), an abandoned final read
 //!   says nothing for the key (168 to 172), and no later evidence is that
 //!   key's (the coordinator's ruling, 2026-11-09).
+//! - A final read's reply is never credited to a key that replaced its
+//!   asker, held or not: it is an ordinary report, its selection changes
+//!   heard (the coordinator's ruling, 2026-11-09).
 //! - The caret is the focus object's, the one whose read began most
 //!   recently (2026-10-25), and ends with that focus.
 //! - A report of a node no longer the focus says nothing and is not a
@@ -158,10 +161,6 @@ pub enum ReadRole {
     /// A held key's before read.
     Before,
     /// Core's final read of a key.
-    #[expect(
-        dead_code,
-        reason = "main's Core asks no final read; the builder's seam makes this"
-    )]
     Final,
     /// Any other read.
     Other,
@@ -201,6 +200,9 @@ pub struct Model {
     alive: bool,
     /// The keys whose before reads are asked and not ended, oldest first.
     before_reads: VecDeque<usize>,
+    /// The key each final read asked and not ended was asked for, oldest
+    /// first; `None` when no key was open.
+    final_reads: VecDeque<Option<usize>>,
     exited: bool,
 }
 
@@ -281,6 +283,12 @@ impl Model {
         }
     }
 
+    /// Core asked a final read, for the key open now.
+    pub fn final_read_asked(&mut self) {
+        let open = self.open();
+        self.final_reads.push_back(open);
+    }
+
     /// The read in flight ended without a result, for `role`: the key it
     /// served ends silently.
     pub fn abandoned(&mut self, role: ReadRole) {
@@ -293,8 +301,10 @@ impl Model {
                 }
             }
             ReadRole::Final => {
-                if let Some(open) = self.open() {
-                    self.keys[open].done = true;
+                if let Some(Some(asker)) = self.final_reads.pop_front()
+                    && self.open() == Some(asker)
+                {
+                    self.keys[asker].done = true;
                     self.say_held_when_no_key_is_out();
                 }
             }
@@ -354,13 +364,19 @@ impl Model {
 
     /// A report of a read reached Core at `now`.
     pub fn report(&mut self, report: &Report, now: Us) {
+        let asker = if report.final_read {
+            self.final_reads.pop_front().flatten()
+        } else {
+            None
+        };
+        let credited = |id: usize| !report.final_read || asker == Some(id);
         let changes = std::mem::take(&mut self.changes);
         if self.focus != self.committed_field {
             return;
         }
         self.note_caret(report.began, report.text.caret);
         let Some(open) = self.open() else {
-            if let Some(id) = self.silenced_evidence(report) {
+            if let Some(id) = self.silenced_evidence(report).filter(|&id| credited(id)) {
                 let press = &self.keys[id];
                 let words = evidence_words(press.key, press.baseline.as_ref(), &report.text);
                 self.keys[id].silenced_at = None;
@@ -381,6 +397,10 @@ impl Model {
             self.say_changes(&changes);
             return;
         };
+        if !credited(open) {
+            self.held.extend(changes);
+            return;
+        }
         let press = &self.keys[open];
         let passed = press.passed.unwrap_or(now);
         let evidence = report.ended >= passed && self.shows_change;
@@ -499,6 +519,7 @@ impl Model {
         self.alive = false;
         self.last_read.clear();
         self.before_reads.clear();
+        self.final_reads.clear();
     }
 
     /// The clock reached `now`.
