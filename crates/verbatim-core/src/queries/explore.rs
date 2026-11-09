@@ -60,5 +60,6 @@ fn explored() -> (Config, String) {
 #[ignore = "exploration: run by the nightly workflow with its own seed (books/dev/src/reference/testing.md, Exploration tests)"]
 fn explore_reducer() {
     let (config, again) = explored();
-    let _ = super::generated::run_generated(config, &again);
+    let _ = super::generated::run_generated(config.clone(), &again);
+    let _ = super::generated::run_press_generated(config, &again);
 }

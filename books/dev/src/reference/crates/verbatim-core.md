@@ -263,6 +263,20 @@ newer model of the same terminal replaced it, a foreground change at the
 newest focus's stamp, and the terminal's timer fired once a changing
 row armed it.
 
+Beside it, the same file has a generated test of review presses among
+held and passed keys, typing and focus reports, whose reference model is
+written from `docs/parity/review.md` and `docs/design/m42-parity.md`
+(`generated_presses_keep_the_line_rules`, 300 cases). Its world presses
+review commands, and answers their reads early, late, gone or never, with
+the line's deadline, an outpost's end and exit among them. After every
+input it checks that every press is answered at most once and in press
+order among all input, that a press waiting when the navigator moves acts
+on the navigator as it is when its turn comes, the 150 ms bound of a
+press with something behind it, the navigator against the model, that a
+press that gives way leaves the position, and that exit passes every held
+key on. A key in front of a press is opaque to this model, what it does
+after its turn starts being the joint test's.
+
 ## The request table
 
 `RequestTable<A>` records every query the shell sends an outpost for its
