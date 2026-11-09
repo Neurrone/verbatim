@@ -31,7 +31,7 @@ The breaker does not catch an extension that answers in time but answers badly, 
 
 ## Resource limits
 
-Your extension has generous limits on memory, processor time and the size of its data folder, and rates and sizes for what it speaks, shows and logs. They exist so that a runaway loop or a leak costs your extension, not the user's computer.
+Your extension has generous limits on memory and on the time your code runs, so that a runaway loop or a leak costs your extension, not the user's computer. What you speak, show and log is not limited, so do not speak in a loop: nothing stops it but the user turning your extension off.
 
 ## Seeing what your extension costs
 
@@ -47,4 +47,4 @@ Each event that passed through your hook carries its time in Verbatim's latency 
 
 ## What a hook costs the user
 
-An installed extension runs in a process of its own, so each hook costs a round trip between processes on the event's path, and each read your hook makes costs another. A module made only of rules costs nothing of the kind. Prefer rules where they can express what you need, register hooks only for the events and controls you handle, and read what you need in as few calls as you can.
+Every extension, Verbatim's built-ins included, runs in a process of its own, so each hook costs a round trip between processes on the event's path, and each read your hook makes costs another. A module made only of rules costs nothing of the kind. Prefer rules where they can express what you need, register hooks only for the events and controls you handle, and read what you need in as few calls as you can.
