@@ -1051,21 +1051,33 @@ fn a_read_terminal_message_reads_the_terminal() {
     app.quit();
 }
 
-/// The console's caret event for a watched node whose check finds no move,
+/// The console's caret event for a noted node whose read finds no move,
 /// such as a blink tick left over from an earlier cursor set, leaves the
-/// poll reading: a caret moved after it, with no event, answers the key.
+/// poll reading: a caret moved after it, with no event, is the key's
+/// evidence. The worker is held before the before read, because the poll's
+/// 50 ms run from its end.
 fn a_console_caret_event_without_a_move_leaves_the_poll_reading() {
-    let (mut app, outpost, area) = console_watch("mockapp-console-event-then-move");
+    let (mut app, mut outpost, area) = start_with(
+        "mockapp-console-event-then-move",
+        "console_terminal.json",
+        "text",
+        OutpostOptions::default(),
+    );
     outpost.hold_worker();
+    let before = ask(&mut outpost, area, before_read(CaretMotion::NextCharacter));
     app.send("console-caret 0 0");
     outpost.heard(&[Heard::Msaa(WinEventKind::ConsoleCaret)]);
-    // A foreground change behind the event holds the worker again once it
-    // has handled the event, whose check finds the caret where it was, and
-    // whose read of the terminal finds nothing new to report.
+    // A foreground change behind them holds the worker again once it has
+    // made the before read and handled the event, whose read finds the
+    // caret where it was and whose read of the terminal finds nothing new
+    // to report.
     outpost.deliver(DeliveredFact::Foreground {
         hwnd: common::another_applications_window().0 as isize,
     });
     outpost.step_worker(1);
+    read_answer(&outpost, before)
+        .caret
+        .expect("the read's caret");
     app.send("caret text 1");
     outpost.release_worker();
     let reply = evidence(&outpost);
