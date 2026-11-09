@@ -24,6 +24,11 @@
 //!   made it and before a focus that moves away (2026-11-09).
 //! - A repeated focus's selection changes are spoken; a new focus's are
 //!   not (2026-10-25, amended 2026-10-29).
+//! - A read that fails or is abandoned ends its key silently: an abandoned
+//!   before read passes the key on and the key says nothing
+//!   (`nvda/source/editableText.py` 181 to 186), an abandoned final read
+//!   says nothing for the key (168 to 172), and no later evidence is that
+//!   key's (the coordinator's ruling, 2026-11-09).
 //! - The caret is the focus object's, the one whose read began most
 //!   recently (2026-10-25), and ends with that focus.
 //! - A report of a node no longer the focus says nothing and is not a
@@ -60,7 +65,7 @@
 //!   now (`docs/parity/text.md`, "Selection over changed text in a
 //!   classic edit control").
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 
 use super::world::{Key, Text, Us, selection_changes};
 
@@ -147,6 +152,21 @@ pub struct Report {
     pub final_read: bool,
 }
 
+/// What a read that ended without a result was for a key.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReadRole {
+    /// A held key's before read.
+    Before,
+    /// Core's final read of a key.
+    #[expect(
+        dead_code,
+        reason = "main's Core asks no final read; the builder's seam makes this"
+    )]
+    Final,
+    /// Any other read.
+    Other,
+}
+
 /// Something heard, in order.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Heard {
@@ -179,6 +199,8 @@ pub struct Model {
     /// Its outpost has not ended since it was reported. A new generation's
     /// report of the same field is that focus again.
     alive: bool,
+    /// The keys whose before reads are asked and not ended, oldest first.
+    before_reads: VecDeque<usize>,
     exited: bool,
 }
 
@@ -253,8 +275,30 @@ impl Model {
 
     /// Core asked a before read, of the oldest key not yet passed on.
     pub fn before_read_asked(&mut self) {
-        if let Some(press) = self.keys.iter_mut().find(|press| press.passed.is_none()) {
-            press.before = BeforeRead::Asked;
+        if let Some(id) = self.keys.iter().position(|press| press.passed.is_none()) {
+            self.keys[id].before = BeforeRead::Asked;
+            self.before_reads.push_back(id);
+        }
+    }
+
+    /// The read in flight ended without a result, for `role`: the key it
+    /// served ends silently.
+    pub fn abandoned(&mut self, role: ReadRole) {
+        match role {
+            ReadRole::Before => {
+                if let Some(id) = self.before_reads.pop_front()
+                    && self.keys[id].passed.is_none()
+                {
+                    self.keys[id].done = true;
+                }
+            }
+            ReadRole::Final => {
+                if let Some(open) = self.open() {
+                    self.keys[open].done = true;
+                    self.say_held_when_no_key_is_out();
+                }
+            }
+            ReadRole::Other => {}
         }
     }
 
@@ -300,9 +344,10 @@ impl Model {
         self.shows_change = shows;
         self.changes = changes;
         if before_read
-            && let Some(press) = self.keys.iter_mut().find(|press| press.passed.is_none())
+            && let Some(id) = self.before_reads.pop_front()
+            && self.keys[id].passed.is_none()
         {
-            press.before = BeforeRead::Committed;
+            self.keys[id].before = BeforeRead::Committed;
         }
         self.last_read.insert(field, text.clone());
     }
@@ -453,6 +498,7 @@ impl Model {
         }
         self.alive = false;
         self.last_read.clear();
+        self.before_reads.clear();
     }
 
     /// The clock reached `now`.

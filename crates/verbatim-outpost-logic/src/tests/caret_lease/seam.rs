@@ -24,7 +24,7 @@ use verbatim_model::{
 };
 
 use super::super::*;
-use super::model::Heard;
+use super::model::{Heard, ReadRole};
 use super::world::{Key, Text, Us, selection_changes};
 
 /// What crossing the seam brought back, in order.
@@ -50,6 +50,8 @@ pub enum Seen {
         /// Whether it is Core's final read of a key.
         final_read: bool,
     },
+    /// The read in flight ended without a result.
+    Abandoned(ReadRole),
     /// Core asked its final read.
     FinalReadAsked,
 }
@@ -673,12 +675,16 @@ impl Seam {
     /// The read in flight is abandoned: its deadline passes.
     pub fn abandon(&mut self) -> Vec<Seen> {
         let mut seen = Vec::new();
-        if self.flight.take().is_none() {
+        let Some(flight) = self.flight.take() else {
             return seen;
-        }
+        };
         let Some(deadline) = self.outpost.flight.deadline() else {
             return seen;
         };
+        seen.push(Seen::Abandoned(match flight.kind {
+            ReadKind::Before(..) => ReadRole::Before,
+            ReadKind::Key(..) | ReadKind::Event => ReadRole::Other,
+        }));
         let now = Now {
             at: Duration::from_micros(deadline),
             observed_us: self.now,

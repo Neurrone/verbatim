@@ -78,6 +78,10 @@ impl Run {
                     self.model.committed(field, &text, before_read);
                     Ok(())
                 }
+                Seen::Abandoned(role) => {
+                    self.model.abandoned(role);
+                    Ok(())
+                }
                 Seen::BeforeReadAsked => {
                     self.model.before_read_asked();
                     Ok(())
