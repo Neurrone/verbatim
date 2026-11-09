@@ -957,7 +957,8 @@ pub(crate) fn before_key(
             facts: verbatim_model::ReadFacts {
                 unit: caret.line.clone(),
                 change: verbatim_model::Change::NoPrevious,
-                read_ended_at_us: caret.read_at_us,
+                // The snapshot carries when its read began; it ended after.
+                read_ended_at_us: caret.read_at_us.saturating_add(1),
             },
         })),
         None => TextReply::Unanswered,
