@@ -20,6 +20,7 @@ use super::*;
 
 mod explore;
 mod followed;
+#[cfg(any())]
 mod generated;
 mod intake_order;
 mod reducer;

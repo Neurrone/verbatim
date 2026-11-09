@@ -1220,11 +1220,8 @@ fn a_caret_key_while_a_report_waits_runs_after_the_command_before_it() {
                 *trace,
                 matches!(
                     &**inner,
-                    Effect::Text(verbatim_model::TextRequest {
-                        node_id,
-                        op: verbatim_model::TextOp::Key(_),
-                        ..
-                    }) if *node_id == id(A, 4)
+                    Effect::KeyNote(verbatim_model::NoteRequest { node, .. })
+                        if *node == id(A, 4)
                 ),
             )),
             _ => None,

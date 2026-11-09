@@ -239,6 +239,7 @@ fn caret_moved(line: TextChunk, observed_at_ms: u64) -> Input {
             selection_changes: Vec::new(),
             content_changed: false,
             new_selection: None,
+            facts: None,
         },
         purpose: None,
     }
@@ -265,15 +266,13 @@ fn text_steps_allocate_the_same_whatever_the_ancestor_chain() {
         },
         pressed_at_ms: 100,
     });
-    let Some(request) = effects.iter().find_map(|effect| match effect {
-        Effect::ForKey(_, inner) => match &**inner {
-            Effect::Text(request) => Some(request),
-            _ => None,
-        },
-        _ => None,
-    }) else {
-        panic!("expected a key request, got {effects:?}");
-    };
+    assert!(
+        effects.iter().any(|effect| matches!(
+            effect,
+            Effect::ForKey(_, inner) if matches!(**inner, Effect::KeyNote(_))
+        )),
+        "expected a key's note, got {effects:?}"
+    );
     let answer = long_line(10, 1);
     let _ = same(&Input::Event {
         trace_id: TraceId::from_raw(6),
@@ -281,23 +280,28 @@ fn text_steps_allocate_the_same_whatever_the_ancestor_chain() {
         source: Pid(1),
         backend: Backend::Uia,
         window: None,
-        event: NormalizedEvent::KeyAnswered {
+        event: NormalizedEvent::CaretMoved {
             node_id: NodeId::new(1),
-            tag: verbatim_model::KeyTag(request.query_id),
-            answer: verbatim_model::KeyAnswer::Evidence(Box::new(verbatim_model::KeyRead {
-                caret: CaretReport {
-                    line: answer.clone(),
-                    selection: None,
-                    read_at_us: 101_000,
+            caret: CaretReport {
+                line: answer.clone(),
+                selection: None,
+                read_at_us: 101_000,
+            },
+            selection_changes: Vec::new(),
+            content_changed: false,
+            new_selection: None,
+            facts: Some(Box::new(verbatim_model::ReadFacts {
+                unit: answer.clone(),
+                change: verbatim_model::Change::Compared {
+                    compared: verbatim_model::Compared {
+                        caret_moved: true,
+                        ..verbatim_model::Compared::default()
+                    },
+                    previous_line: answer,
+                    previous_selection: None,
+                    on_previous_line: true,
                 },
-                selection_changes: Vec::new(),
-                content_changed: false,
-                new_selection: None,
-                before_line: answer.clone(),
-                before_selection: None,
-                before_unit: answer.clone(),
-                unit: answer,
-                on_baseline_line: true,
+                read_ended_at_us: u64::MAX / 2,
             })),
         },
         purpose: None,

@@ -132,6 +132,7 @@ fn caret(offset: u32, changes: &[(bool, &str)]) -> NormalizedEvent {
             .collect(),
         content_changed: false,
         new_selection: None,
+        facts: None,
     }
 }
 

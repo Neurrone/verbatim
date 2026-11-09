@@ -7,10 +7,9 @@ use std::collections::BTreeMap;
 use verbatim_model::protocol::{QueryOutcome, QueryResult};
 use verbatim_model::{
     Backend, CaretChanges, CaretKey, CaretMotion, CaretReply, CaretReport, EarlierElement, Effect,
-    FocusText, Input, KeyRequest, KeySeq, KeyStart, KeyStarted, KeyTag, NodeDetails, NodeId,
+    FocusText, Input, KeySeq, NodeDetails, NodeId,
     NodeSnapshot, NormalizedEvent, OutpostId, Pid, QueryId, ReviewCommand, Role, StateSet,
     TerminalSnapshot, TerminalText, TextAnchor, TextChunk, TextOp, TextReply, TextUnit, TraceId,
-    WatchKind,
 };
 
 use crate::queries::{self, ModelAsk, Then};
@@ -143,6 +142,7 @@ fn text_box_wired() -> (SrState, Wire) {
             caret: caret(100, 3),
             selected_text: None,
             changes: CaretChanges::default(),
+            facts: None,
         }),
         None,
     )]);
@@ -171,7 +171,7 @@ fn held_key_passed_on_wired() -> (SrState, Wire) {
     let effects = reduce(&mut state, &held);
     wire.apply(&held, &effects);
     let asked = requests(&effects);
-    let [(read, Some(op @ TextOp::Key(_)))] = &asked[..] else {
+    let [(read, Some(op @ TextOp::ReadCaret(_)))] = &asked[..] else {
         panic!("one read, not {asked:?}");
     };
     let answer = answered(
@@ -406,6 +406,7 @@ impl Wire {
                     caret: caret(200, 4),
                     selected_text: None,
                     changes: CaretChanges::default(),
+                    facts: None,
                 }),
                 Some(EarlierElement::NotFocused),
             )],
@@ -507,31 +508,36 @@ pub(super) fn answer(
 
 /// A key's request, as the answers to one are made for.
 pub(super) fn key_op() -> TextOp {
-    TextOp::Key(KeyRequest {
-        tag: KeyTag(QueryId(10_000)),
-        kind: WatchKind::TextField,
-        unit: TextUnit::Character,
-        motion: CaretMotion::NextCharacter,
-        start: KeyStart::ReadFirst,
+    TextOp::ReadCaret(verbatim_model::CaretRead {
+        fetch: verbatim_model::KeyFetch {
+            unit: TextUnit::Character,
+            motion: CaretMotion::NextCharacter,
+            kind: verbatim_model::NodeKind::TextField,
+        },
+        purpose: verbatim_model::ReadPurpose::BeforeKey,
     })
 }
 
 /// A result that fits what was asked.
 fn fitting(outpost: OutpostId, asked: &Asked) -> QueryResult {
     let caret_reply = || {
-        TextReply::Key(Box::new(KeyStarted::Read(Box::new(CaretReply {
+        TextReply::Caret(Box::new(CaretReply {
             caret: caret(300, 5),
-            unit: None,
             selection_changes: Vec::new(),
             content_changed: false,
             new_selection: None,
-        }))))
+            facts: verbatim_model::ReadFacts {
+                unit: line("hello world", 300, 5),
+                change: verbatim_model::Change::NoPrevious,
+                read_ended_at_us: 1,
+            },
+        }))
     };
     match asked {
         Asked::Navigate => QueryResult::Navigated(Some(node(outpost, 1, Role::Window, "Window"))),
         Asked::Activate => QueryResult::Activated(None),
         Asked::Text(op) => QueryResult::Text(match op {
-            TextOp::Key(_) => caret_reply(),
+            TextOp::ReadCaret(_) => caret_reply(),
             TextOp::Read(_) => TextReply::Read {
                 moved: 0,
                 chunk: line("hello world", 300, 0),

@@ -69,12 +69,15 @@ fn next_core_to_outpost(previous: Option<&CoreToOutpost>) -> Option<CoreToOutpos
             request: 1,
             trace_id: TraceId::from_raw(4),
         },
-        CoreToOutpost::LiveReread { .. } => CoreToOutpost::Watch {
+        CoreToOutpost::LiveReread { .. } => CoreToOutpost::KeyNote(crate::NoteRequest {
             node: crate::NodeId::new(1),
-            tag: crate::KeyTag(crate::QueryId(1)),
-            order: crate::WatchOrder::End,
-        },
-        CoreToOutpost::Watch { .. } => return None,
+            fetch: crate::KeyFetch {
+                unit: crate::TextUnit::Word,
+                motion: crate::CaretMotion::NextWord,
+                kind: crate::NodeKind::TextField,
+            },
+        }),
+        CoreToOutpost::KeyNote(_) => return None,
     })
 }
 
@@ -204,7 +207,7 @@ fn every_variant_has_its_reviewed_kind() {
             "Shutdown: Lifecycle",
             "Assign: Lifecycle",
             "LiveReread: Routed",
-            "Watch: Ask",
+            "KeyNote: Ask",
         ]
     );
     assert_eq!(
@@ -371,6 +374,7 @@ fn a_message_names_its_nodes_and_its_texts_anchors() {
                 },
                 selected_text: None,
                 changes: crate::CaretChanges::default(),
+                facts: None,
             })),
             earlier: None,
             group: None,

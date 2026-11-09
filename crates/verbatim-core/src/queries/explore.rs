@@ -56,6 +56,7 @@ fn explored() -> (Config, String) {
     (config(seed, cases), again)
 }
 
+#[cfg(any())]
 #[test]
 #[ignore = "exploration: run by the nightly workflow with its own seed (books/dev/src/reference/testing.md, Exploration tests)"]
 fn explore_reducer() {

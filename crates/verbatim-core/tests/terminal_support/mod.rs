@@ -694,8 +694,8 @@ impl Session {
                         {
                             self.held = Some((query_id, scope));
                         }
-                        TextOp::Key(verbatim_model::KeyRequest {
-                            start: verbatim_model::KeyStart::ReadFirst,
+                        TextOp::ReadCaret(verbatim_model::CaretRead {
+                            purpose: verbatim_model::ReadPurpose::BeforeKey,
                             ..
                         }) => self.caret_read = Some(query_id),
                         op @ TextOp::TerminalColours { .. } if self.hold_colours => {
@@ -708,7 +708,7 @@ impl Session {
                 // shell's; the focus's own effects are not these tests'.
                 Effect::PassHeldKey(_)
                 | Effect::BoundHeldKey(_)
-                | Effect::WatchOrder { .. }
+                | Effect::KeyNote(_)
                 | Effect::DropExpiredSpeech(_)
                 | Effect::Fetch(_)
                 | Effect::PlayEarcon(_) => {}

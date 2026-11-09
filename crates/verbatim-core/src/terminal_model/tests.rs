@@ -222,6 +222,7 @@ fn a_replaced_element_forgets_its_nodes_caret_and_model(earlier: EarlierElement)
                 caret,
                 selected_text: None,
                 changes: verbatim_model::CaretChanges::default(),
+                facts: None,
             }),
             None,
         ),

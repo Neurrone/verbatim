@@ -1036,6 +1036,28 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_judgement_counts_what_the_decisions_define() {
+        let caret = Compared {
+            caret_moved: true,
+            ..Compared::default()
+        };
+        assert!(had_effect(caret, CaretMotion::NextCharacter));
+        let unit = Compared {
+            unit_changed: true,
+            ..Compared::default()
+        };
+        assert!(!had_effect(unit, CaretMotion::NextCharacter));
+        assert!(!had_effect(unit, CaretMotion::Backspace));
+        assert!(had_effect(unit, CaretMotion::Delete));
+        let line = Compared {
+            line_changed: true,
+            ..Compared::default()
+        };
+        assert!(!had_effect(line, CaretMotion::NextCharacter));
+        assert!(had_effect(line, CaretMotion::Backspace));
+    }
+
+    #[test]
     fn a_chunk_finds_the_language_at_an_offset() {
         let chunk = TextChunk {
             unit: TextUnit::Line,

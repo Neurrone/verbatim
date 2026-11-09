@@ -1137,6 +1137,7 @@ fn focus_edit(name: &str) -> (common::MockApp, OutpostUnderTest, NodeId, CaretRe
                     selection_changes,
                     content_changed,
                     new_selection,
+                    facts: None,
                 },
             ..
         } if node_id == node => {

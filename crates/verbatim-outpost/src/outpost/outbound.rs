@@ -566,6 +566,7 @@ mod tests {
                 .collect(),
             content_changed: false,
             new_selection: None,
+            facts: None,
         })
     }
 
