@@ -79,6 +79,8 @@ struct Flight {
     kind: ReadKind,
     facts: Facts,
     began: Us,
+    /// The note its copy of the facts held as it was dispatched.
+    note: Option<KeyNote>,
 }
 
 /// Core's reducer and the outpost's together, with a stand-in for the
@@ -89,6 +91,9 @@ pub struct Seam {
     answers: Answers,
     generation: u64,
     flight: Option<Flight>,
+    /// Each node's note as the reducer held it after every input, by when
+    /// it became so: what a read begun earlier can have seen of it.
+    note_log: BTreeMap<u64, Vec<(Us, Option<KeyNote>)>>,
     /// Core's held-key deadline: the key and when it falls due.
     due: Option<(TraceId, Us)>,
     keys: BTreeMap<TraceId, usize>,
@@ -231,6 +236,7 @@ impl Seam {
             answers: Answers::default(),
             generation: 1,
             flight: None,
+            note_log: BTreeMap::new(),
             due: None,
             keys: BTreeMap::new(),
             final_outstanding: 0,
@@ -264,7 +270,32 @@ impl Seam {
         let now = self.outpost_now();
         let effects = self.outpost.input(input, now);
         let effects = with_answers(&mut self.outpost, &mut self.answers, effects, now);
+        self.record_notes();
         self.after_outpost(effects, seen);
+    }
+
+    /// Notes the reducer's note of each field node, when it changed.
+    fn record_notes(&mut self) {
+        for field in [0, 1] {
+            let node = node_of(self.generation, field).number();
+            let note = self.outpost.facts.text.live_note(node, self.now);
+            let log = self.note_log.entry(node).or_default();
+            if log.last().map(|(_, was)| was) != Some(&note) {
+                log.push((self.now, note));
+            }
+        }
+    }
+
+    /// The note of `node` a read begun at `at` saw: the one the reducer
+    /// held then, if it had not ended.
+    fn note_seen(&self, node: u64, at: Us) -> Option<KeyNote> {
+        self.note_log
+            .get(&node)?
+            .iter()
+            .rev()
+            .find(|(when, _)| *when <= at)?
+            .1
+            .filter(|note| note.until_us > at)
     }
 
     /// Follows the outpost's effects: its messages reach Core, and its
@@ -315,6 +346,7 @@ impl Seam {
             node,
             field: field_of_node(node),
             kind,
+            note: program.facts.text.live_note(node.number(), self.now),
             facts: program.facts.clone(),
             began: self.now,
         });
@@ -562,11 +594,7 @@ impl Seam {
             return seen;
         }
         let field = flight.field;
-        let note = flight
-            .facts
-            .text
-            .live_note(flight.node.number(), flight.began)
-            .map(|note| (note.fetch, Some(note.until_us)));
+        let note = flight.note.map(|note| (note.fetch, Some(note.until_us)));
         let fetch = match &flight.kind {
             ReadKind::Before(_, _, read) | ReadKind::Final(_, _, read) => Some((
                 NoteFetch {
@@ -858,10 +886,7 @@ impl Seam {
         // the key's facts, and it replaces the node's last read.
         let node_id = node.id;
         let live = self
-            .outpost
-            .facts
-            .text
-            .live_note(node_id.number(), began)
+            .note_seen(node_id.number(), began)
             .map(|note| (note.fetch, note.until_us));
         let fetch = live.map(|(fetch, _)| fetch);
         let found = self.found(node_id, text, began, now, fetch);
@@ -960,6 +985,7 @@ impl Seam {
             outpost: OutpostId(self.generation),
         };
         self.flight = None;
+        self.note_log.clear();
         self.generation += 1;
         self.outpost = Reducer::new();
         self.final_outstanding = 0;

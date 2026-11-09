@@ -96,14 +96,14 @@ impl Run {
                     ended,
                     final_read,
                 } => {
-                    let under_note = self.model.read_in_flight_under_note();
+                    let dispatched_in_window = self.model.read_in_flight_in_window();
                     self.model.report(
                         &Report {
                             text,
                             began,
                             ended,
                             final_read,
-                            under_note,
+                            dispatched_in_window,
                         },
                         self.now,
                     );
@@ -323,7 +323,7 @@ struct Outcome {
 }
 
 /// The shapes the gate's cases must reach.
-const REACHED: [&str; 9] = [
+const REACHED: [&str; 10] = [
     "a key's bound passed",
     "a focus moving first says a key's words",
     "a key behind a focus report",
@@ -333,6 +333,7 @@ const REACHED: [&str; 9] = [
     "exit with a key in line",
     "an outpost ended",
     "a key on a focus with no text",
+    "an answer to a key superseded by a later one",
 ];
 
 /// The smallest failing case as a line for [`fixed`], and how to run it.

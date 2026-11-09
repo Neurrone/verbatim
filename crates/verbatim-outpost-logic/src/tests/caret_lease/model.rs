@@ -80,11 +80,12 @@
 //! - What Backspace removed is the difference between its before line and
 //!   its after line, carets included (`docs/design/caret-selection-rework.md`,
 //!   `removal`), so an older baseline gives what that difference gives.
-//! - A read counts as evidence when it was dispatched while its node's
-//!   note lived, however late it ends, or committed before the note ended;
-//!   a read dispatched outside the note and committing past its end is an
-//!   ordinary report (the coordinator's ruling, 2026-11-09). A final read
-//!   clears the note as it commits (2026-11-09).
+//! - A read of a key's node counts for that key when it was dispatched or
+//!   committed while the key was within its window, from Core's asking
+//!   its before read or its pass, however late the read ends; outside the
+//!   window it is an ordinary report (the coordinator's ruling,
+//!   2026-11-09). The key's final read ends its window as it commits
+//!   (2026-11-09).
 //! - At exit nothing further is heard: held keys are delivered, held
 //!   selection changes are not said (the coordinator's ruling, 2026-11-09).
 //! - Backspace speaks only when its caret moved
@@ -136,8 +137,9 @@ fn change_words(last: &Text, text: &Text) -> Vec<String> {
 const BUTTON: usize = 2;
 /// The 100 ms bound, from when the key is passed on (2026-11-09).
 pub const BOUND_US: Us = 100_000;
-/// How long a key's note lives from its setting.
-const NOTE_US: Us = 300_000;
+/// How long a key's reads count for it, from its before read's asking
+/// or its pass (the coordinator's ruling, 2026-11-09).
+const KEY_WINDOW_US: Us = 300_000;
 /// How long a held key's before read may run (2026-11-08).
 pub const BEFORE_READ_US: Us = 150_000;
 
@@ -166,9 +168,9 @@ struct Press {
     /// The node's last read when the key was passed on: what it is
     /// compared with.
     baseline: Option<Text>,
-    /// When its note ends: 300 ms after Core asked its before read, or
-    /// after the pass of a key with none.
-    note_until: Option<Us>,
+    /// Its window: from when Core asked its before read, or its pass with
+    /// none, to the end of that period.
+    window: Option<(Us, Us)>,
     /// Heard, silenced or ended: its words are said or owed no more.
     done: bool,
     /// It waits behind a focus report and has not been run.
@@ -182,6 +184,14 @@ struct Press {
     silenced_at: Option<Us>,
 }
 
+/// A final read asked: the key open when it was asked, if any, and the
+/// key it was asked for, the newest passed on.
+#[derive(Clone, Copy, Debug)]
+struct FinalAsk {
+    open: Option<usize>,
+    key: Option<usize>,
+}
+
 /// What a report told Core, for [`Model::report`].
 #[derive(Clone, Debug)]
 pub struct Report {
@@ -193,8 +203,9 @@ pub struct Report {
     pub ended: Us,
     /// Whether it is Core's final read of a key.
     pub final_read: bool,
-    /// Whether its read was dispatched while its node's note lived.
-    pub under_note: bool,
+    /// Whether its read was dispatched while a key of its node was within
+    /// its window.
+    pub dispatched_in_window: bool,
 }
 
 /// What a read that ended without a result was for a key.
@@ -251,12 +262,11 @@ pub struct Model {
     alive: bool,
     /// The keys whose before reads are asked and not ended, oldest first.
     before_reads: VecDeque<usize>,
-    /// The key each final read asked and not ended was asked for, oldest
-    /// first; `None` when no key was open.
-    final_reads: VecDeque<Option<usize>>,
-    /// The keys whose notes lived on its node when the read in flight was
-    /// dispatched.
-    read_notes: Vec<usize>,
+    /// The final reads asked and not ended, oldest first.
+    final_reads: VecDeque<FinalAsk>,
+    /// Whether a key of the node was within its window when the read in
+    /// flight was dispatched.
+    read_dispatched_in_window: bool,
     exited: bool,
 }
 
@@ -267,29 +277,26 @@ impl Model {
         self.newest.map(|(_, caret)| caret)
     }
 
-    /// A read of `field` was dispatched at `at`: whether its node's note
-    /// lives now is a fact of that read.
+    /// A read of `field` was dispatched at `at`: whether a key of its node
+    /// is within its window then is a fact of that read.
     pub fn read_dispatched(&mut self, field: usize, at: Us) {
-        self.read_notes = (0..self.keys.len())
-            .filter(|&id| self.key_note_lives_at(id, field, at))
-            .collect();
+        self.read_dispatched_in_window = self.in_window_at(field, at);
     }
 
-    /// Whether the read in flight was dispatched under a live note.
+    /// Whether the read in flight was dispatched in a key's window.
     #[must_use]
-    pub fn read_in_flight_under_note(&self) -> bool {
-        !self.read_notes.is_empty()
+    pub const fn read_in_flight_in_window(&self) -> bool {
+        self.read_dispatched_in_window
     }
 
-    /// Whether `field`'s note lives at `at`.
-    fn note_lives_at(&self, field: usize, at: Us) -> bool {
-        (0..self.keys.len()).any(|id| self.key_note_lives_at(id, field, at))
-    }
-
-    /// Whether key `id`'s note, on `field`, lives at `at`.
-    fn key_note_lives_at(&self, id: usize, field: usize, at: Us) -> bool {
-        let press = &self.keys[id];
-        press.node == Some(field) && press.note_until.is_some_and(|until| at < until)
+    /// Whether a key of `field` is within its window at `at`.
+    fn in_window_at(&self, field: usize, at: Us) -> bool {
+        self.keys.iter().any(|press| {
+            press.node == Some(field)
+                && press
+                    .window
+                    .is_some_and(|(from, until)| from <= at && at < until)
+        })
     }
 
     /// Whether a focus report waits for its live re-read.
@@ -363,7 +370,7 @@ impl Model {
             before: BeforeRead::NotAsked,
             passed: None,
             baseline: None,
-            note_until: None,
+            window: None,
             done: false,
             queued,
             floor: now,
@@ -392,7 +399,7 @@ impl Model {
         let press = &mut self.keys[id];
         press.passed = Some(now);
         press.baseline = baseline;
-        press.note_until.get_or_insert(now + NOTE_US);
+        press.window.get_or_insert((now, now + KEY_WINDOW_US));
         if press.node.is_none() || press.node != focus {
             press.done = true;
             self.say_held_when_no_key_is_out();
@@ -404,7 +411,7 @@ impl Model {
     pub fn before_read_asked(&mut self, now: Us) {
         if let Some(id) = self.keys.iter().position(|press| press.passed.is_none()) {
             self.keys[id].before = BeforeRead::Asked;
-            self.keys[id].note_until = Some(now + NOTE_US);
+            self.keys[id].window = Some((now, now + KEY_WINDOW_US));
             self.before_reads.push_back(id);
         }
     }
@@ -413,7 +420,8 @@ impl Model {
     pub fn final_read_asked(&mut self) {
         self.reached.insert("a key's bound passed");
         let open = self.open();
-        self.final_reads.push_back(open);
+        let key = self.keys.iter().rposition(|press| press.passed.is_some());
+        self.final_reads.push_back(FinalAsk { open, key });
     }
 
     /// The read in flight ended without a result, for `role`: the key it
@@ -431,7 +439,7 @@ impl Model {
                 }
             }
             ReadRole::Final => {
-                let asker = self.final_reads.pop_front().flatten();
+                let asker = self.final_reads.pop_front().and_then(|ask| ask.open);
                 if let Some(asker) = asker
                     && self.open() == Some(asker)
                 {
@@ -498,19 +506,21 @@ impl Model {
 
     /// A report of a read reached Core at `now`.
     pub fn report(&mut self, report: &Report, now: Us) {
-        let asker = if report.final_read {
-            self.final_reads.pop_front().flatten()
-        } else {
-            None
-        };
-        let changes = std::mem::take(&mut self.changes);
-        if report.final_read {
-            // Only the notes it was dispatched under: a later key's is not
-            // cleared by an earlier key's final read.
-            for id in std::mem::take(&mut self.read_notes) {
-                self.keys[id].note_until = None;
+        let ask = report
+            .final_read
+            .then(|| self.final_reads.pop_front())
+            .flatten();
+        let asker = ask.and_then(|ask| ask.open);
+        // The final read ends the window of the key it was asked for, and
+        // no later key's.
+        if let Some(key) = ask.and_then(|ask| ask.key) {
+            if self.keys[key].silenced_at.is_some() {
+                self.reached
+                    .insert("an answer to a key superseded by a later one");
             }
+            self.keys[key].window = None;
         }
+        let changes = std::mem::take(&mut self.changes);
         if self.focus != self.committed_field {
             self.reached.insert("a report behind the focus");
             return;
@@ -552,7 +562,7 @@ impl Model {
         let passed = press.passed.unwrap_or(now);
         let evidence = report.ended >= passed
             && self.shows_change
-            && (report.final_read || note_lives(press, report));
+            && (report.final_read || counts_for(press, report));
         if !evidence && asker != Some(open) {
             self.held.extend(changes);
             return;
@@ -585,7 +595,7 @@ impl Model {
                 && press.node == self.focus
                 && press.silenced_at.is_some_and(|at| report.began < at)
                 && press.passed.is_some_and(|at| report.ended >= at)
-                && note_lives(press, report)
+                && counts_for(press, report)
         })
     }
 
@@ -608,7 +618,7 @@ impl Model {
         report.final_read
             || (self.shows_change
                 && press.passed.is_some_and(|at| report.ended >= at)
-                && note_lives(press, report))
+                && counts_for(press, report))
     }
 
     fn note_caret(&mut self, began: Us, caret: usize) {
@@ -639,7 +649,7 @@ impl Model {
                     began,
                     ended: now,
                     final_read: false,
-                    under_note: self.note_lives_at(field, began),
+                    dispatched_in_window: self.in_window_at(field, began),
                 },
                 now,
             );
@@ -848,10 +858,13 @@ fn unit(key: Key, text: &Text) -> Option<String> {
     }
 }
 
-/// Whether `report`'s read counts under a note: dispatched while its
-/// node's note lived, or committed by the end of `press`'s.
-fn note_lives(press: &Press, report: &Report) -> bool {
-    report.under_note || press.note_until.is_some_and(|until| report.ended <= until)
+/// Whether `report`'s read counts for `press`: dispatched in a key's
+/// window on its node, or committed by the end of `press`'s window.
+fn counts_for(press: &Press, report: &Report) -> bool {
+    report.dispatched_in_window
+        || press
+            .window
+            .is_some_and(|(from, until)| from <= report.ended && report.ended <= until)
 }
 
 /// What the difference from `before` to `after` shows removed at their
