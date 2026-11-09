@@ -681,9 +681,13 @@ impl Seam {
         let Some(deadline) = self.outpost.flight.deadline() else {
             return seen;
         };
+        if matches!(flight.kind, ReadKind::Final(..)) {
+            self.final_outstanding = false;
+        }
         seen.push(Seen::Abandoned(match flight.kind {
             ReadKind::Before(..) => ReadRole::Before,
-            ReadKind::Key(..) | ReadKind::Event => ReadRole::Other,
+            ReadKind::Final(..) => ReadRole::Final,
+            ReadKind::Event => ReadRole::Other,
         }));
         let now = Now {
             at: Duration::from_micros(deadline),
