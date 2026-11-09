@@ -132,6 +132,12 @@ pub enum Action {
     /// The application raises a caret event for the field the focus left,
     /// or for the one it is moving to while that focus's report waits.
     EventBehind,
+    /// The application raises a text change event for the focused field.
+    TextChange,
+    /// Core no longer holds the field the focus left.
+    Release,
+    /// The focused field's element is replaced under its node.
+    Replace,
     /// The read in flight ends, seeing the application as it is now.
     Finish,
     /// The read in flight is abandoned, never ending.
@@ -147,6 +153,8 @@ pub enum Action {
     FocusWaits { ago: u8 },
     /// The live re-read answers: the report that waited is the focus.
     FocusAnswer,
+    /// A focus is reported on a terminal, the console host's when `console`.
+    FocusTerminal { console: bool },
     /// The clock moves on `ms` milliseconds.
     Tick(u8),
     /// The outpost's process ends.

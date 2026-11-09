@@ -88,6 +88,11 @@
 //!   (2026-11-09).
 //! - At exit nothing further is heard: held keys are delivered, held
 //!   selection changes are not said (the coordinator's ruling, 2026-11-09).
+//! - A released node's last read is gone, and a replaced element ends the
+//!   window of the keys on its node (the coordinator's ruling, 2026-11-09).
+//! - A terminal's keys say nothing for themselves, the terminal rules
+//!   speaking, and the console host is polled for 50 ms after its before
+//!   read's end (`docs/design/caret-selection-rework.md`).
 //! - Backspace speaks only when its caret moved
 //!   (`nvda/source/editableText.py` 313 to 320): with the caret not moved
 //!   it says nothing for the key and the change is heard; with the caret
@@ -135,6 +140,12 @@ fn change_words(last: &Text, text: &Text) -> Vec<String> {
 
 /// The number of the button, among the fields a focus can be on.
 const BUTTON: usize = 2;
+/// The number of the terminal among them.
+pub const TERMINAL: usize = 3;
+/// The number of the console host's terminal among them.
+pub const CONSOLE: usize = 4;
+/// How long after a console host's read a poll may read (the design).
+const CONSOLE_POLL_US: Us = 50_000;
 /// The 100 ms bound, from when the key is passed on (2026-11-09).
 pub const BOUND_US: Us = 100_000;
 /// How long a key's reads count for it, from its before read's asking
@@ -267,6 +278,12 @@ pub struct Model {
     /// Whether a key of the node was within its window when the read in
     /// flight was dispatched.
     read_dispatched_in_window: bool,
+    /// When the console host's last before read ended.
+    console_read_ended: Option<Us>,
+    /// Whether the read due at the console poll's bound has been read.
+    console_last_poll_read: bool,
+    /// The clock before the step under way.
+    clock_before: Us,
     exited: bool,
 }
 
@@ -297,6 +314,78 @@ impl Model {
                     .window
                     .is_some_and(|(from, until)| from <= at && at < until)
         })
+    }
+
+    /// The one last read of `field`.
+    #[must_use]
+    pub fn last_read_of(&self, field: usize) -> Option<&Text> {
+        self.last_read.get(&field)
+    }
+
+    /// Whether Core no longer holds `field`: nothing refers to it.
+    #[must_use]
+    pub fn can_release(&self, field: usize) -> bool {
+        self.focus != Some(field)
+            && self.waiting != Some(field)
+            && self
+                .keys
+                .iter()
+                .all(|press| press.node != Some(field) || (press.done && press.passed.is_some()))
+    }
+
+    /// Core let go of `field`: its last read is gone.
+    pub fn released(&mut self, field: usize) {
+        self.reached.insert("a node released");
+        self.last_read.remove(&field);
+    }
+
+    /// `field`'s element was replaced at `at`: its keys' windows end.
+    pub fn element_replaced(&mut self, field: usize, at: Us) {
+        self.reached.insert("an element replaced");
+        for press in self
+            .keys
+            .iter_mut()
+            .filter(|press| press.node == Some(field))
+        {
+            end_window(press, at);
+        }
+    }
+
+    /// A terminal's before read ended at `at`.
+    pub fn terminal_read_ended(&mut self, field: usize, at: Us) {
+        if field == CONSOLE {
+            self.console_read_ended = Some(at);
+            self.console_last_poll_read = false;
+        }
+    }
+
+    /// A console poll read of `field` at `at`.
+    ///
+    /// # Errors
+    ///
+    /// When it is not the console's, or comes past the poll's 50 ms.
+    pub fn poll_read(&mut self, field: usize, at: Us) -> Result<(), String> {
+        self.reached.insert("a console polled");
+        let bound = self.console_read_ended.map(|from| from + CONSOLE_POLL_US);
+        // The clock moves in steps: one due within its bound is read at the
+        // step that reaches it.
+        // The last, due at the bound itself, is read one step later still.
+        let due = bound.is_some_and(|bound| self.clock_before <= bound);
+        let last = !due && !self.console_last_poll_read;
+        self.console_last_poll_read |= last;
+        if field != CONSOLE || !(due || last) {
+            return Err(format!(
+                "a console poll read of {field} at {at}, bound {bound:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// A focus is reported at `now` on the terminal `field`.
+    pub fn focus_terminal(&mut self, field: usize, now: Us) {
+        self.changes.clear();
+        self.newest = None;
+        self.focus_moves(field, now, false);
     }
 
     /// Whether a focus report waits for its live re-read.
@@ -362,6 +451,8 @@ impl Model {
             .filter(|field| self.alive && *field != BUTTON);
         if node.is_none() {
             self.reached.insert("a key on a focus with no text");
+        } else if node.is_some_and(|field| field >= TERMINAL) {
+            self.reached.insert("a key on a terminal");
         }
         self.keys.push(Press {
             key,
@@ -400,7 +491,14 @@ impl Model {
         press.passed = Some(now);
         press.baseline = baseline;
         press.window.get_or_insert((now, now + KEY_WINDOW_US));
-        if press.node.is_none() || press.node != focus {
+        if press.node.is_none()
+            || press.node != focus
+            || press.node.is_some_and(|field| field >= TERMINAL)
+        {
+            if press.node == Some(CONSOLE) && press.before == BeforeRead::NotAsked {
+                self.console_read_ended = Some(now);
+                self.console_last_poll_read = false;
+            }
             press.done = true;
             self.say_held_when_no_key_is_out();
         }
@@ -518,7 +616,7 @@ impl Model {
                 self.reached
                     .insert("an answer to a key superseded by a later one");
             }
-            self.keys[key].window = None;
+            end_window(&mut self.keys[key], report.ended);
         }
         let changes = std::mem::take(&mut self.changes);
         if self.focus != self.committed_field {
@@ -751,6 +849,11 @@ impl Model {
         self.final_reads.clear();
     }
 
+    /// The clock is at `now` before a step moves it.
+    pub const fn clock_step(&mut self, now: Us) {
+        self.clock_before = now;
+    }
+
     /// The clock reached `now`.
     ///
     /// # Errors
@@ -858,13 +961,20 @@ fn unit(key: Key, text: &Text) -> Option<String> {
     }
 }
 
+/// `press`'s window ends at `at`, if it had not by then.
+fn end_window(press: &mut Press, at: Us) {
+    if let Some((_, until)) = &mut press.window {
+        *until = at.min(*until);
+    }
+}
+
 /// Whether `report`'s read counts for `press`: dispatched in a key's
 /// window on its node, or committed by the end of `press`'s window.
 fn counts_for(press: &Press, report: &Report) -> bool {
     report.dispatched_in_window
         || press
             .window
-            .is_some_and(|(from, until)| from <= report.ended && report.ended <= until)
+            .is_some_and(|(from, until)| from <= report.ended && report.ended < until)
 }
 
 /// What the difference from `before` to `after` shows removed at their

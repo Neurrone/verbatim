@@ -90,6 +90,19 @@ impl Run {
                     self.model.read_dispatched(field, at);
                     Ok(())
                 }
+                Seen::Released(field) => {
+                    self.model.released(field);
+                    Ok(())
+                }
+                Seen::Replaced(field, at) => {
+                    self.model.element_replaced(field, at);
+                    Ok(())
+                }
+                Seen::TerminalRead(field, at) => {
+                    self.model.terminal_read_ended(field, at);
+                    Ok(())
+                }
+                Seen::PollRead(field, at) => self.model.poll_read(field, at),
                 Seen::Report {
                     text,
                     began,
@@ -123,6 +136,15 @@ impl Run {
 
     /// Compares the facts with the model after a step.
     fn compare(&mut self) {
+        for field in 0..2 {
+            let read = self.seam.last_read(field);
+            if read.as_ref() != self.model.last_read_of(field) {
+                self.failure.get_or_insert(format!(
+                    "field {field}'s last read is {read:?}, the newest committed is {:?}",
+                    self.model.last_read_of(field)
+                ));
+            }
+        }
         let caret = self.seam.core_caret();
         if let Err(failure) = self.model.check(&self.heard, self.now, caret) {
             self.failure.get_or_insert(failure);
@@ -163,11 +185,33 @@ impl Run {
                 }
             }
             Action::EventBehind => self.event_behind(),
+            Action::TextChange => {
+                if !self.world.on_button {
+                    let seen = self.seam.text_change(self.world.focus, self.now);
+                    self.take_seen(seen);
+                }
+            }
+            Action::Release => {
+                if let Some(field) = self.world.left.filter(|&left| self.model.can_release(left)) {
+                    let seen = self.seam.release(field, self.now);
+                    self.take_seen(seen);
+                }
+            }
+            Action::Replace => {
+                if !self.world.on_button && self.model.focus_is(self.world.focus) {
+                    let seen = self.seam.replace(self.world.focus, self.now);
+                    self.take_seen(seen);
+                }
+            }
             Action::Finish => {
                 if self.seam.read_in_flight() {
                     let field = self.seam.reading_field();
-                    let text = self.world.fields[field].clone();
-                    let seen = self.seam.read_done(&text, self.now);
+                    let seen = if field >= model::TERMINAL {
+                        self.seam.terminal_read_done(self.now)
+                    } else {
+                        let text = self.world.fields[field].clone();
+                        self.seam.read_done(&text, self.now)
+                    };
                     self.take_seen(seen);
                 }
             }
@@ -179,7 +223,9 @@ impl Run {
             Action::FocusButton { new_window } => self.focus_button(new_window),
             Action::FocusWaits { ago } => self.focus_waits(ago),
             Action::FocusAnswer => self.focus_answer(),
+            Action::FocusTerminal { console } => self.focus_terminal(console),
             Action::Tick(ms) => {
+                self.model.clock_step(self.now);
                 self.now += u64::from(ms) * 1_000;
                 let seen = self.seam.tick(self.now);
                 self.take_seen(seen);
@@ -249,6 +295,22 @@ impl Run {
         self.take_seen(seen);
     }
 
+    fn focus_terminal(&mut self, console: bool) {
+        if self.model.report_waits() || !self.model.outpost_alive() || self.world.on_button {
+            return;
+        }
+        self.world.left = Some(self.world.focus);
+        self.world.on_button = true;
+        let field = if console {
+            model::CONSOLE
+        } else {
+            model::TERMINAL
+        };
+        self.model.focus_terminal(field, self.now);
+        let seen = self.seam.focus_terminal(console, self.now);
+        self.take_seen(seen);
+    }
+
     fn focus_waits(&mut self, ago: u8) {
         if self.model.report_waits()
             || !self.model.outpost_alive()
@@ -285,6 +347,10 @@ fn action() -> impl Strategy<Value = Action> {
         2 => Just(Action::Select),
         5 => Just(Action::Event),
         1 => Just(Action::EventBehind),
+        3 => Just(Action::TextChange),
+        1 => Just(Action::Release),
+        1 => Just(Action::Replace),
+        1 => any::<bool>().prop_map(|console| Action::FocusTerminal { console }),
         6 => Just(Action::Finish),
         1 => Just(Action::Abandon),
         2 => (any::<bool>(), 0..4u8).prop_map(|(other, ago)| Action::Focus { other, ago }),
@@ -323,7 +389,7 @@ struct Outcome {
 }
 
 /// The shapes the gate's cases must reach.
-const REACHED: [&str; 10] = [
+const REACHED: [&str; 14] = [
     "a key's bound passed",
     "a focus moving first says a key's words",
     "a key behind a focus report",
@@ -334,6 +400,10 @@ const REACHED: [&str; 10] = [
     "an outpost ended",
     "a key on a focus with no text",
     "an answer to a key superseded by a later one",
+    "a node released",
+    "an element replaced",
+    "a key on a terminal",
+    "a console polled",
 ];
 
 /// The smallest failing case as a line for [`fixed`], and how to run it.

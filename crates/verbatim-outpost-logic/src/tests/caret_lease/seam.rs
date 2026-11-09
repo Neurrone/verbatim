@@ -24,8 +24,10 @@ use verbatim_model::{
     had_effect,
 };
 
+use verbatim_model::{NoteRequest, TerminalSnapshot, TerminalText};
+
 use super::super::*;
-use super::model::{Heard, ReadRole};
+use super::model::{CONSOLE, Heard, ReadRole, TERMINAL};
 use super::world::{Key, Text, Us, selection_changes};
 
 /// What crossing the seam brought back, in order.
@@ -42,6 +44,14 @@ pub enum Seen {
     BeforeReadAsked(Us),
     /// A read of the field named was dispatched, at this time.
     Dispatched(usize, Us),
+    /// Core let go of the field named.
+    Released(usize),
+    /// The field named had its element replaced, at this time.
+    Replaced(usize, Us),
+    /// A terminal's before read of the field named ended, at this time.
+    TerminalRead(usize, Us),
+    /// A console poll read the field named, at this time.
+    PollRead(usize, Us),
     /// A report reached Core, of the read committed just before.
     Report {
         /// What it saw.
@@ -68,6 +78,8 @@ enum ReadKind {
     Final(RequestId, TraceId, CaretRead),
     /// The application's caret event.
     Event,
+    /// The read before a held key in a terminal.
+    TerminalBefore(RequestId, TraceId),
 }
 
 /// The program in flight, and its copy of the facts, as dispatched.
@@ -94,6 +106,12 @@ pub struct Seam {
     /// Each node's note as the reducer held it after every input, by when
     /// it became so: what a read begun earlier can have seen of it.
     note_log: BTreeMap<u64, Vec<(Us, Option<KeyNote>)>>,
+    /// The field whose release was asked for, until the shell's answer.
+    releasing: Option<usize>,
+    /// The field whose element is replaced by the next name change.
+    replacing: Option<usize>,
+    /// Whether the foreground window is the console host's.
+    console_front: bool,
     /// Core's held-key deadline: the key and when it falls due.
     due: Option<(TraceId, Us)>,
     keys: BTreeMap<TraceId, usize>,
@@ -237,6 +255,9 @@ impl Seam {
             generation: 1,
             flight: None,
             note_log: BTreeMap::new(),
+            releasing: None,
+            replacing: None,
+            console_front: false,
             due: None,
             keys: BTreeMap::new(),
             final_outstanding: 0,
@@ -305,12 +326,34 @@ impl Seam {
             match effect {
                 Effect::Send(message) => self.enter_core_message(*message, seen),
                 Effect::Dispatch(program) => self.take_program(&program, seen),
+                Effect::Release { .. } => {
+                    let released: BTreeSet<u64> = self
+                        .releasing
+                        .take()
+                        .map(|field| node_of(self.generation, field).number())
+                        .into_iter()
+                        .collect();
+                    if let Some(&node) = released.iter().next() {
+                        seen.push(Seen::Released(usize::from(node != 5)));
+                    }
+                    self.outpost_in(
+                        Input::Released {
+                            nodes: released,
+                            anchors: BTreeSet::new(),
+                            objects: false,
+                        },
+                        seen,
+                    );
+                }
                 _ => {}
             }
         }
     }
 
     fn take_program(&mut self, program: &Program, seen: &mut Vec<Seen>) {
+        if let Work::NoteRead(node) = &program.work {
+            seen.push(Seen::PollRead(field_of_node(*node), self.now));
+        }
         let Work::Entry { entry, .. } = &program.work else {
             self.finish(program.request, seen);
             return;
@@ -325,12 +368,49 @@ impl Seam {
                     },
             } => Some((
                 *node_id,
-                if read.purpose == ReadPurpose::BeforeFieldKey {
-                    ReadKind::Before(*request_id, entry.trace, *read)
-                } else {
-                    ReadKind::Final(*request_id, entry.trace, *read)
+                match read.purpose {
+                    ReadPurpose::BeforeFieldKey => {
+                        ReadKind::Before(*request_id, entry.trace, *read)
+                    }
+                    ReadPurpose::BeforeTerminalKey => {
+                        ReadKind::TerminalBefore(*request_id, entry.trace)
+                    }
+                    ReadPurpose::Final => ReadKind::Final(*request_id, entry.trace, *read),
                 },
             )),
+            Item::Msaa {
+                kind: WinKind::NameChange,
+                ..
+            } => {
+                if let Some(field) = self.replacing.take() {
+                    let node = node_of(self.generation, field);
+                    seen.push(Seen::Replaced(field, self.now));
+                    self.commit(
+                        program.request,
+                        Change {
+                            replaced: Some(node),
+                            ..Change::default()
+                        },
+                        seen,
+                    );
+                }
+                None
+            }
+            Item::Msaa {
+                kind: WinKind::ValueChange,
+                hwnd,
+                ..
+            } => {
+                // The worker reads a text change only under a note that
+                // has seen no effect.
+                let node = node_of(self.generation, field_of(*hwnd));
+                program
+                    .facts
+                    .text
+                    .live_note(node.number(), self.now)
+                    .is_some_and(|note| !note.reads.effect_seen())
+                    .then_some((node, ReadKind::Event))
+            }
             Item::Msaa { hwnd, .. } => {
                 Some((node_of(self.generation, field_of(*hwnd)), ReadKind::Event))
             }
@@ -437,7 +517,13 @@ impl Seam {
                     Input::KeyNote {
                         node: note.node(),
                         fetch: note.fetch(),
-                        on: NoteOn::Field,
+                        on: match note {
+                            NoteRequest::Field { .. } => NoteOn::Field,
+                            NoteRequest::Terminal { .. } if self.console_front => {
+                                NoteOn::ConsoleHost
+                            }
+                            NoteRequest::Terminal { .. } => NoteOn::Terminal,
+                        },
                     },
                     seen,
                 );
@@ -449,7 +535,7 @@ impl Seam {
             CoreEffect::Text(request) => {
                 match request.op {
                     TextOp::ReadCaret(CaretRead {
-                        purpose: ReadPurpose::BeforeFieldKey,
+                        purpose: ReadPurpose::BeforeFieldKey | ReadPurpose::BeforeTerminalKey,
                         ..
                     }) => seen.push(Seen::BeforeReadAsked(self.now)),
                     TextOp::ReadCaret(CaretRead {
@@ -554,6 +640,165 @@ impl Seam {
         self.final_outstanding > 0
     }
 
+    /// The application raised a text change event for `field`.
+    pub fn text_change(&mut self, field: usize, now: Us) -> Vec<Seen> {
+        self.now = now;
+        let mut seen = Vec::new();
+        if !self.focus_reported {
+            return seen;
+        }
+        self.push_msaa(WinKind::ValueChange, field, &mut seen);
+        seen
+    }
+
+    /// Core no longer holds `field`.
+    pub fn release(&mut self, field: usize, now: Us) -> Vec<Seen> {
+        self.now = now;
+        self.releasing = Some(field);
+        let mut seen = Vec::new();
+        let entry = Entry {
+            item: Item::NodesHeld {
+                nodes: Vec::new(),
+                anchors: Vec::new(),
+                acknowledged: 0,
+            },
+            trace: self.trace(),
+            observed_at_us: now,
+            timing: EventTiming::default(),
+            front: crate::Front::Untested,
+        };
+        self.outpost_in(
+            Input::Entry {
+                entry,
+                source: Source::Other,
+            },
+            &mut seen,
+        );
+        seen
+    }
+
+    /// `field`'s element is replaced under its node.
+    pub fn replace(&mut self, field: usize, now: Us) -> Vec<Seen> {
+        self.now = now;
+        self.replacing = Some(field);
+        let mut seen = Vec::new();
+        self.push_msaa(WinKind::NameChange, field, &mut seen);
+        seen
+    }
+
+    /// An MSAA event of `kind` for `field` reaches the outpost.
+    fn push_msaa(&mut self, kind: WinKind, field: usize, seen: &mut Vec<Seen>) {
+        let entry = Entry {
+            item: Item::Msaa {
+                kind,
+                hwnd: window_of(field),
+                id_object: -8,
+                id_child: 0,
+                raiser: 3,
+            },
+            trace: self.trace(),
+            observed_at_us: self.now,
+            timing: EventTiming::default(),
+            front: crate::Front::Untested,
+        };
+        self.outpost_in(
+            Input::Entry {
+                entry,
+                source: Source::Other,
+            },
+            seen,
+        );
+    }
+
+    /// The terminal before read in flight ended at `now`.
+    pub fn terminal_read_done(&mut self, now: Us) -> Vec<Seen> {
+        self.now = now;
+        let flight = self.flight.take().expect("a read in flight");
+        let mut seen = Vec::new();
+        let ReadKind::TerminalBefore(request_id, trace_id) = flight.kind else {
+            return seen;
+        };
+        if !self.outpost.accepts(flight.request) {
+            return seen;
+        }
+        seen.push(Seen::TerminalRead(flight.field, now));
+        let text = flight
+            .note
+            .filter(|_| self.console_front)
+            .into_iter()
+            .map(|note| TextChange::NotePoll {
+                node: flight.node.number(),
+                until_us: note.until_us,
+                read_ended_at_us: now,
+            });
+        let change = Change {
+            text: text.collect(),
+            result: Some(OutpostToCore::Reply {
+                trace_id,
+                request_id,
+                outcome: QueryOutcome::Done(QueryResult::Text(TextReply::TerminalSnapshot(
+                    Box::new(terminal_snapshot(now)),
+                ))),
+                timing: EventTiming::default(),
+            }),
+            ..Change::default()
+        };
+        self.commit(flight.request, change, &mut seen);
+        self.finish(flight.request, &mut seen);
+        seen
+    }
+
+    /// A focus on a terminal, the console host's when `console`.
+    pub fn focus_terminal(&mut self, console: bool, now: Us) -> Vec<Seen> {
+        self.now = now;
+        self.focus_reported = true;
+        let mut seen = Vec::new();
+        self.set_console(console, &mut seen);
+        let input = CoreInput::Event {
+            trace_id: self.trace(),
+            observed_at_us: now,
+            source: Pid(1),
+            backend: Backend::Msaa,
+            window: None,
+            event: NormalizedEvent::FocusChanged {
+                ancestors: vec![snapshot(self.generation, 1, Role::Window, "Window")],
+                node: snapshot(
+                    self.generation,
+                    if console { 11 } else { 10 },
+                    Role::Terminal,
+                    "Terminal",
+                ),
+                whole_window: false,
+                selected_child: None,
+                text: None,
+                earlier: None,
+                group: None,
+                answers: None,
+                first_cached_ancestor: None,
+            },
+            purpose: None,
+        };
+        self.enter_core(&input, &mut seen);
+        drop_cut(&mut seen);
+        seen.dedup_by(same_focus);
+        seen
+    }
+
+    /// The foreground window becomes the console host's or stops being it.
+    fn set_console(&mut self, console: bool, seen: &mut Vec<Seen>) {
+        if self.console_front != console {
+            self.console_front = console;
+            self.foreground(WINDOWS[0], seen);
+        }
+    }
+
+    /// Field `field`'s last read as the reducer holds it.
+    #[must_use]
+    pub fn last_read(&self, field: usize) -> Option<Text> {
+        self.last_read_of(node_of(self.generation, field))
+            .map(|(text, _)| text)
+    }
+
     /// Whether a read is in flight.
     #[must_use]
     pub fn read_in_flight(&self) -> bool {
@@ -604,6 +849,7 @@ impl Seam {
                 None,
             )),
             ReadKind::Event => note,
+            ReadKind::TerminalBefore(..) => unreachable!("answered by terminal_read_done"),
         };
         let found = self.found(flight.node, text, flight.began, now, fetch.map(|(f, _)| f));
         let mut changes = vec![committed_read(
@@ -657,6 +903,7 @@ impl Seam {
                     timing: EventTiming::default(),
                 }
             }
+            ReadKind::TerminalBefore(..) => unreachable!("answered by terminal_read_done"),
             ReadKind::Event => OutpostToCore::Event {
                 trace_id: self.trace(),
                 observed_at_us: flight.began,
@@ -745,7 +992,12 @@ impl Seam {
             self.final_outstanding -= 1;
         }
         seen.push(Seen::Abandoned(match flight.kind {
-            ReadKind::Before(id, ..) if Some(id.number) == self.given_up => ReadRole::Other,
+            ReadKind::Before(id, ..) | ReadKind::TerminalBefore(id, _)
+                if Some(id.number) == self.given_up =>
+            {
+                ReadRole::Other
+            }
+            ReadKind::TerminalBefore(..) => ReadRole::Before,
             ReadKind::Before(..) => ReadRole::Before,
             ReadKind::Final(..) => ReadRole::Final,
             ReadKind::Event => ReadRole::Other,
@@ -852,7 +1104,7 @@ impl Seam {
             observed_at_us: self.now.saturating_sub(1),
             own: false,
             thread: 1,
-            console: false,
+            console: self.console_front,
             integrity: None,
             own_integrity: None,
         };
@@ -1062,7 +1314,35 @@ fn field_of(hwnd: isize) -> usize {
 }
 
 fn field_of_node(node: NodeId) -> usize {
-    usize::from(node.number() != 5)
+    match node.number() {
+        5 => 0,
+        10 => TERMINAL,
+        11 => CONSOLE,
+        _ => 1,
+    }
+}
+
+/// A terminal's snapshot, unchanged from any other, with no caret.
+fn terminal_snapshot(now: Us) -> TerminalSnapshot {
+    TerminalSnapshot {
+        text: TerminalText::unpadded("PS> "),
+        screen: TerminalText::unpadded("PS> "),
+        from_start: false,
+        shrank: false,
+        at_document_start: true,
+        alternate: false,
+        first_row: TerminalText::unpadded("PS> "),
+        caret_rows_to_end: 1,
+        caret_line: TerminalText::unpadded("PS> "),
+        caret_column: 4,
+        above: 0,
+        started_ms: now / 1_000,
+        ended_ms: now / 1_000,
+        waited: false,
+        read: 1,
+        colours: None,
+        caret: None,
+    }
 }
 
 /// What a read found, compared with the node's last read.
