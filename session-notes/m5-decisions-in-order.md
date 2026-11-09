@@ -1,0 +1,195 @@
+# M5: the decisions Dickson owns, in order
+
+Each decision needs the ones above it settled first. Once all are answered, Claude restates the design (the work plan's step 0b): the host's design, the states-and-rules tables, then one adversarial review. After that a fresh session can build step 1. Decisions outside Dickson's areas, such as the epoch strategy and the compute bound, are Claude's and are recorded in the design.
+
+## A. Process and thread layout
+
+1. **Where built-ins run.**
+   - Options: in the outposts and Core (today's D6), or as one internal extension in a host process of its own.
+   - Recommendation: one host. No Wasm runtime would remain in Core or any outpost, and the hook path becomes one path for every module.
+   - Everything below depends on this.
+2. **One host program or two.** The extension host and `verbatim-synth-host` (D18) could be one program or two.
+   - Recommendation: one program. A synthesizer is a module kind, and M6's Wasm tone synthesizer already runs in the synthesizer host.
+3. **Threads in a host.**
+   - Recommendation: one thread per outpost the host serves, plus one for global modules.
+   - Why: a hook waiting on a hung application's read, for up to 10 seconds, then never holds up another application's hooks.
+4. **Routes.**
+   - Recommendation: reads go from a host straight to the claiming outpost, over a pipe the supervisor makes. Speech, logs and every action that depends on attention go through Core.
+   - This is also a trust boundary: the outpost judges a request by the pipe it arrived on.
+5. **The built-in host's lifetime.** The taskbar and global modules make it needed almost always.
+   - Options: start it with Verbatim and keep it running, or start it on demand.
+   - Recommendation: start it with Verbatim.
+
+## B. Scope
+
+6. **Global modules in M5.** The tray list waits for a choice in the list dialog and then clicks the item. M5's surface has no prompt with a later answer, no click and no clock.
+   - Option (a): add three narrow imports to M5: a list prompt answered through a later call, a click on a node the module holds, and a clock. Every press of Verbatim+F11 then costs a round trip to the host and the host's reads of Explorer.
+   - Option (b): keep the tray list, taskbar list and time in core code until M13, reversing the 2026-10-31 decision.
+   - Recommendation: (a), unless you would rather keep M5 smaller.
+
+## C. Public contract
+
+7. **The M5 world.** `extensions.md` section 4 is pinned. Decision 6(a) adds three imports to it. Confirm the surface is otherwise complete for the inbox built-ins listed in M5.
+
+## D. What users hear
+
+8. **The breaker for built-ins.** Today three failures in a minute turn off the whole extension.
+   - Recommendation: count per module for built-ins.
+   - Speech for a Calculator hook that traps three times in a minute:
+     - Per module: "Built-in module Calculator was turned off after repeated failures". Explorer and Terminal keep working.
+     - Per extension: "Built-in modules were turned off after repeated failures". Every inbox application falls back to core behaviour.
+9. **The helper's message box** when Verbatim is not running: "Cannot install the Verbatim extension from {path}. Verbatim must be running to install extensions." This matches NVDA's `nvda_slave.pyw`, lines 110 to 117.
+
+## E. Performance budgets
+
+10. **The cost of a hook.** Under decision 1 every built-in hook costs one round trip, about tens of microseconds, and two wake-ups, plus two wake-ups per read. This lands on:
+    - every Terminal `TermControl` focus event (the twin rule);
+    - Explorer's code hooks;
+    - every Calculator display update.
+
+    Decide whether that is accepted, to be measured in step 4.
+11. **The built-in host's memory.** It has none of its own, while every outpost has a memory cap. Recommendation: set one in step 0b from a measured start-up figure.
+
+## F. Trust boundary
+
+12. **Built-ins' compiled code.** X5 says built-ins arrive compiled in the administrator-owned installation, which a portable copy does not have.
+    - Recommendation: until M8.7, the built-in host compiles built-ins at load into the cache beside the executable. A planted file there reaches only the contained built-in host.
+
+## Not blocking M5
+
+- **The order of M8.6 and M8.7.** M8.6's UIAccess needs a signed copy in a trusted location (R5), which is an installed copy, yet M8.7, which builds the installed copy, comes after it.
+- **Roaming or Local** for the installed copy's per-user files. This is decided in M8.7.
+
+## Answers so far (Dickson, 2026-11-09)
+
+- 1 agreed: built-ins run as one internal extension in a host of their own.
+- 2 open: the built-in engines (eSpeak NG, OneCore) stay native engines, each in its own process, as D18 has them. The question left is whether that process and an extension's host are one executable with two modes or two executables.
+- 3 agreed, generalised to lanes: a host has one thread per lane, a lane being anything that can wait on its own. That means each outpost it serves, each global module, the extension's speech-text stages (one lane, called in chain order), each synthesizer, each braille driver, and each recogniser. Calls within a lane are serial. M5 builds the outpost and global-module lanes only.
+- 4 agreed: a guest's read import becomes a read request sent from the host to the outpost.
+- 5 agreed: the built-in host always runs.
+- 6: must be fixed in M5. The API proposal is below. The tray list is designed against the planned MSAA reading of the taskbar's `Windows.UI.Input.InputSite.WindowClass` window (roadmap M5), not today's UIA code, which does not work on build 26200.
+- 8 agreed: per module.
+- 9, 11 and 12 agreed.
+- Roadmap: M8.6 is now the installer and M8.7 UIAccess (working tree, uncommitted).
+
+## Decision 6: the proposed additions to the M5 world
+
+For global modules only, each gated in Core:
+
+- **Declaration** `reads = ["explorer.exe"]` in a global module's manifest: the applications it may read. The install dialog shows "Reads the controls and text of File Explorer". This is the global modules' read boundary, which `extensions.md` section 4.6 requires.
+- **Import** `find-window(application, class-path, backend) -> option<node>`: a top-level window of the named application whose class is the first entry, then each later entry a descendant window class. It returns a node in that application's outpost, read through the named backend. Navigation from the node then stops at that application's boundary, as for app modules. It is refused for an application not in `reads`.
+- **Import** `clock() -> {time, date}`: the local time without seconds and the long date, formatted by the user's regional settings, as `crates/verbatim-app/src/datetime.rs` formats them today. To check in step 4: whether the host's less privileged container can read the regional settings. If it cannot, Core formats them.
+- **Import** `list-prompt(title, label, items, buttons) -> prompt-id`: Core shows the M3 list dialog. It is allowed only during an `on-command` hook, with one prompt per module at a time.
+- **Hook** `on-prompt-answer(prompt-id, answer)`: the answer is either a chosen item index with a button index, or cancelled.
+- **Import** `click(node, kind) -> result<_, gone | unclickable>`: the kind is left, left double or right. Core asks the node's outpost where the element is now, then moves the pointer and clicks. This works from a held node, so it needs no re-matching by name. It is allowed only during `on-prompt-answer` or `on-command`.
+- **Node handles kept between hooks:** a host reports the nodes it holds, as Core does, so the outpost keeps their elements alive until the answer arrives.
+
+So Verbatim+F11 works like this:
+
+1. `on-command` runs `find-window("explorer.exe", ["Shell_TrayWnd", "Windows.UI.Input.InputSite.WindowClass"], msaa)`.
+2. It reads `children()` and their names, keeping the nodes.
+3. It calls `list-prompt`.
+4. When the answer comes, `on-prompt-answer` calls `click` on the chosen node, and speaks the existing "gone" or "can't be clicked" message when the click fails.
+
+## Round 3 (Dickson, 2026-11-09)
+
+- 10 agreed: the hook's round trip and wake-ups are accepted, measured in step 4.
+- Clock formatting does not belong in Core. If the host's less privileged container cannot read the regional settings, the built-in host falls back to the ordinary AppContainer, with the failing call named, as `extensions.md` section 13.3 allows for engines.
+- No second prompt while one waits. Proposed rule, to confirm:
+  - `list-prompt` while the module's prompt is open fails with `already-open`, and Core brings the open dialog to the front.
+  - A press within the repeat interval (the double press for the taskbar) uses `replace-prompt(prompt-id, spec)`, which changes the open dialog's list in place.
+- The click gate is to be decided (reason given in chat).
+- Synthesizer placement is restated in chat.
+- The surface walkthrough goes one section at a time. Section 1, the declarations, found these gaps:
+  - no `global` module kind;
+  - no author or description, which the install dialog shows;
+  - no matcher on hook registrations;
+  - no rule for when an app module's command is active;
+  - the browse-mode default has no effect until M7;
+  - sleep-mode declarations must feed the core sleep list;
+  - speak-on-demand depends on a speech mode Verbatim may not have.
+
+## Round 4 (Dickson, 2026-11-09)
+
+- Clicks and prompts have no gates for now. The rule of one prompt per module at a time stays.
+- `verbatim-minimum` is dropped, since `api` covers it. Proposed: drop `verbatim-tested` too.
+- App-module commands are active only while a claimed application is in front.
+- Proposed, to replace the two-mode host: eSpeak NG and OneCore become built-in extensions holding native synthesizer modules, using the same C ABI as Eloquence. Every host process is then one extension's host. The built-ins are three extensions: app and other modules, eSpeak NG, and OneCore.
+- Open:
+  - ordering among third-party extensions, and gesture conflicts at install (M8.1);
+  - the word "module";
+  - the name of the "global" kind, and `applications` against `reads`;
+  - the command categories;
+  - native code beyond synthesizers.
+
+## Round 5 (Dickson, 2026-11-09)
+
+- Option 2 for native code is agreed: a Wasm module may call a native library shipped in its own extension, inside the extension's host. Full native modules stay only for roles with a small interface (synthesizer, braille driver).
+- Agreed: two modules of one extension may not claim the same application. This is refused by the packaging tool, at install and at load.
+- Command categories are optional. The speak-on-demand flag is left out.
+- The terms "module" and "global" are kept.
+- NVDA facts for the ordering decision:
+  - One app module per process, found by name on the `appModules` package path.
+  - Each add-on's folder is inserted at the front of that path (`addonHandler/__init__.py`, line 731), in `os.listdir` order (line 441). So the add-on whose folder comes last wins, and the others' modules for that application are silently not loaded.
+  - An add-on extends the built-in module only by importing it through `nvdaBuiltin`.
+  - NVDA's own synthesizers are ordinary `synthDrivers` modules on the same path, found by the same `pkgutil.iter_modules` (`synthDriverHandler.py`, line 462). Their only special case is the fallback list `["oneCore", "espeak", "silence"]` (line 501).
+
+## Round 6 (Dickson, 2026-11-09)
+
+- At most one installed extension may have an app module for a given application, on top of the built-in. A second is refused at install.
+- The developer folder overrides as NVDA's scratchpad does (`addonHandler/packaging.py`, lines 37 to 63): its module replaces the installed one for that application only, and removing it restores the installed one. The differences from NVDA:
+  - reload is automatic in developer mode;
+  - the override is shown in the Extensions dialog and the log;
+  - the built-in stays underneath.
+
+  The existing reload sentence is enough. A second developer module claiming the same application fails to load and is spoken. Installs ignore the developer folder.
+- Reordering is removed from the design. Within an application, the order is: the developer module, or else the installed one, then the built-in, then core behaviour.
+- The extension is the unit that is enforced: pipes are made per host, and the union of its modules' `applications` and `reads` is shown at install.
+- Disabling applies to a whole extension. The breaker is per module for built-ins only, since they have no disable switch, and per extension for installed ones.
+
+## Section 2, rules (Dickson, 2026-11-09)
+
+- The `executable` matcher is dropped. Veto rules match only properties in the listener's cache, refused at load otherwise. Global modules have no rules. Regular expressions use the `regex` crate with a size limit.
+- To confirm: window rules may use `not`, with exact strings, for NVDA's Explorer exception (`appModules/explorer.py`, lines 462 to 480).
+- Proposed event kinds for rules and hooks: `focus`, `name-change`, `value-change`, `states-change`, `description-change`, `suggestions-change`, `selection`, `progress`, `controlled-selection`, `notification`, `alert`, `caret`, `text-change`, `active-text-position`. These are the normalized events of `verbatim-model`'s `NormalizedEvent`, with its property changes split out. Terminal reads are not exposed. Others are added with `@since` when a module needs one.
+- Agreed: one matcher grammar in `verbatim-ext-api` for window, event and node rules, hook registrations and the find reads.
+  - Forms: exact, a list meaning any of, several keys meaning all of, `any`, `not`, `prefix`, `regex`.
+  - Legality per subject: window and event rules take exact strings and need a positive property at the top level, so they can still be looked up by hash; node rules and hooks take every form; veto rules take only the listener's cached properties.
+- Agreed: the event kind list.
+- Section 2 is complete.
+
+## Section 3, hooks (Dickson, 2026-11-09)
+
+- `on-load` and `on-unload` are dropped, since no M5 module uses them. `adopt` is gone.
+- Terminal: every `TermControl` focus whose runtime id starts 14 is dropped by a veto rule, with no hook. Recorded in the roadmap's M5 entry (working tree). `is-same-focus` is dropped.
+- Hooks so far:
+  - `on-focus`: pass, drop, replace or rewrite;
+  - `on-event`: pass, drop or rewrite;
+  - `on-node`: batched, on every emitted snapshot;
+  - `status-bar`: the highest layer returning a node wins;
+  - `on-command`;
+  - `on-prompt-answer`.
+- Event kinds for M5, cut to those with an M5 user: `selection`, `name-change`, `value-change`, `notification`, with focus going through `on-focus`. Other kinds are added by each port, with its reader change.
+
+## Commands, list dialogs and the tray list (Dickson, 2026-11-09)
+
+- Gestures in the manifest are a string for a single press, or `{ keys = "...", presses = N }`, with `presses` defaulting to 1. A repeat count is part of the binding. A press runs the command bound to its count, or else the highest count bound below it.
+- `on-command(command-id, trigger)`, with no repeat count. `trigger` is `{ declared: option<gesture>, pressed: gesture }`, with each gesture structured as modifiers plus a main key.
+  - Changing a binding keeps its declared identity.
+  - A gesture the user adds to a command has `declared` none.
+  - It is included in M5.
+- The per-binding argument is not needed: `trigger.declared` covers it.
+- The list dialog:
+  - `show-list-dialog(spec) -> dialog-id`, where `spec` has a title, a label, items, and buttons with access keys and one default. Verbatim always adds Cancel.
+  - The hook `on-list-dialog(dialog-id, answer)`.
+  - One dialog per module, and any number across modules. A second call replaces the module's dialog in place (title, label, items, buttons; selects the first item and focuses the list) and brings it to the front.
+  - Its windows appear in Alt+Tab, as NVDA's tray list does.
+  - The record lives in the owning lane's record.
+- The derived hold: a dialog opened by a command is held until that press's multi-press window closes, if the same keys have a command bound to a higher count. A dialog from the higher-count command replaces it. The input code stamps each press with when its window closes.
+- The tray list follows `ruifontes/systrayList` (commit ff65fd6, 2026-05-10):
+  - `find-window("explorer.exe", ["Shell_TrayWnd", "Windows.UI.Input.InputSite.WindowClass"], msaa)`, where later entries are descendants at any depth;
+  - the tray is that window's children after the first;
+  - the taskbar is the first child's children after the Start button;
+  - Left Double Click is the default button.
+- Windows version: `windows-version() -> {major, minor, build, revision}`, a silent fact. Matchers gain `windows-build` and `windows-revision`, with `at-least` and `below`, compiled at load.
+- Clicks and prompts: no gates for now.
