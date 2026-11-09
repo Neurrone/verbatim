@@ -657,8 +657,7 @@ security model's A3); and a memory cap on the host.
   carrying only the adapter loader and the protocol, cross-built for
   `i686-pc-windows-msvc` by `cargo xtask`, serves 32-bit engines. An x64
   adapter on ARM64 is unsupported until an x64 cross-build is added.
-- The AppContainer in its less privileged form wherever the engine allows,
-  each hosted engine declaring the strictest level it works under, the
+- The ordinary AppContainer for every host (Dickson, 2026-11-09), the
   container's access entries set by the contained launch itself, and a
   probe child asserting every denial.
 - The Eloquence adapter, written from IBM's documented SDK as

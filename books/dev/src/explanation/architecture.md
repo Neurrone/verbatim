@@ -882,8 +882,7 @@ language tagging, synth driver, PCM, the mixer (D17), and the
     through an adapter DLL implementing Verbatim's C ABI, the
     `SynthDriver` trait as C exports, so the host has no engine-specific
     code; the 32-bit x86 host is a reduced build carrying only the
-    adapter loader, and the AppContainer's level is chosen per engine,
-    the less privileged form wherever the engine allows
+    adapter loader, and every host runs in the ordinary AppContainer
     ([design](https://github.com/Neurrone/verbatim/blob/main/docs/design/extensions.md), [plan](https://github.com/Neurrone/verbatim/blob/main/docs/design/m6-native-synth-work.md)).
 - **Audio**: a mixer with one audio thread that converts every source to
   the device's format, sums them, and tracks playback position per

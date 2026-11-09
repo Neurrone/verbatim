@@ -298,3 +298,4 @@ So Verbatim+F11 works like this:
 - eSpeak NG and OneCore become built-in extensions, each a native synthesizer module in its own host (M6). Whether the less privileged AppContainer is worth keeping is still open.
 - "Loaded <module>" is accepted for a newly added module.
 - The TOML spellings of rule actions are accepted.
+- Every extension host runs in the ordinary AppContainer; the less privileged form is not used (Dickson, 2026-11-09).
