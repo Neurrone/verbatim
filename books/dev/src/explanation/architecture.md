@@ -495,9 +495,7 @@ later one as it arrives, until a thread returns. When the listener is
 replaced, the supervisor tells every outpost to wait on none of its
 markers. [ADR 0001](../reference/adr/0001-focus.md) gives the options
 weighed and the reasons, and [How focus works](design/focus.md) the whole
-path of a focus. [ADR 0002](../reference/adr/0002-state-models.md) keeps
-the decisions behind the listener's record of an application, the
-outpost's record of hung windows and its followed focus.
+path of a focus.
 
 Which backend speaks for a window is a per-window verdict the app outpost
 keeps, which each fact consults independently whenever it arrives, so

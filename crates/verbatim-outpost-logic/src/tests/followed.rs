@@ -5,7 +5,7 @@
 //!
 //! The model is written from `docs/parity/focus-events.md`,
 //! `docs/parity/terminals.md`, ADR 0001 ("Focus-following subscriptions") and
-//! Dickson's approved followed-focus rules (`books/dev/src/reference/adr/0002-state-models.md`,
+//! Dickson's approved followed-focus rules (`docs/design/state-models.md`,
 //! "The outpost's followed focus": its table, rules and limits), never from
 //! the code's fields: a list of the focuses the outpost adopted in the order
 //! it read them, the elements of every report not yet released, the work

@@ -85,6 +85,8 @@ harness, NVDA captures and troubleshooting.
     verdict on the rule that only an application's own outpost calls it.
   - [caret-selection-rework.md](design/caret-selection-rework.md) — one
     caret baseline and one request per key.
+  - [state-models.md](design/state-models.md) — one explicit state each
+    for the listener's record, hung windows and the followed focus.
   - [m42-parity.md](design/m42-parity.md) — the toasts session and the
     review cursor on objects that no longer exist.
   - [windows-terminal-twin-focus.md](design/windows-terminal-twin-focus.md)

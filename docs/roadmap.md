@@ -15,21 +15,22 @@ there too, and M4.1's open follow-ups are under M4, "Follow-ups from
 M4.1". M4.5 (logic foundations) and M4.6 (generated tests) are complete. The process and thread
 layout was weighed again and kept: an outpost process per application
 and a separate focus listener (D9, D13; Dickson, 2026-11-02). The focus
-pipeline rework is built, its third build with Core's focus queue
-(2026-11-08). The owner endings build is
+pipeline rework's second build is built (2026-11-02). The owner endings build is
 built (2026-11-03). The UIA facts build is built (2026-11-06). The slow
-applications build is built (2026-11-07). The state models are built
-(2026-11-09), but for the held-key line, which the caret and selection
-rework builds. Next, in this order (Dickson, 2026-11-05):
+applications build is built (2026-11-07). Next, in this order (Dickson,
+2026-11-05):
 
-1. the caret and selection rework, which ends M4;
-2. M4.2;
-3. M5;
-4. M6;
-5. M4.3;
-6. M4.8 (Guardian) and M4.7 (Containment);
-7. M4.9 (Lints and unsafe);
-8. M6.2, with the rest after.
+1. the focus pipeline rework's third build, with Core's focus queue
+   redesign;
+2. the state models below, "State models" (Dickson, 2026-11-08);
+3. the caret and selection rework, which ends M4;
+4. M4.2;
+5. M5;
+6. M6;
+7. M4.3;
+8. M4.8 (Guardian) and M4.7 (Containment);
+9. M4.9 (Lints and unsafe);
+10. M6.2, with the rest after.
 
 The published site's homepage, `books/index.html`, carries one line of
 this status per milestone, and changes with it.
@@ -121,13 +122,13 @@ More follow-ups:
 Facts kept in several places or as combinations of flags, found by a
 study of Core, the outposts and the listener on 2026-11-08, each with a
 history of repeated fixes. Each is rebuilt as one explicit state with one
-writer (Dickson, 2026-11-08). The listener's record of an application, the
-outpost's record of hung windows and the outpost's followed focus are
-built ([completed milestones](roadmap-done.md)); the held-key line below
-is built with the caret and selection rework. Symbols are named rather
-than lines, which move.
+writer, in this order, now that Core's focus queue is built (Dickson,
+2026-11-08). Symbols are named rather than lines, which move.
 
 - Core's held-key line. Today: `HeldKeys` in `crates/verbatim-core/src/state.rs` (`waiting`, `passed_at_ms`, `awaiting_watch`, `bounded`), with the key being read found by searching the query table for `Then::HeldRead`; the stage is written at about nine places in `editing.rs` and `queries.rs`, `awaiting_watch` is found by scanning the effects just made for an `AwaitCaret`, and `bounded` is set apart from the stage its deadline belongs to. Fix history: 8658fc10 then 8893fd97 (a deadline set after the read was asked left a timer), 0bd0d8ed then c635a70f (keys held after exit), b748ab99 and 71b7ab52 (a trace lost on resuming). NVDA has no line: a caret script runs alone and waits in `_hasCaretMoved`, later scripts queued behind it. Proposed: one stage, idle, reading a key's caret (its query, key and due time) or awaiting a watch (its query, when passed on, due time), beside `waiting`, with `caret_key` returning the watch's query instead of a scan. Keys now also wait behind focus reports in Core's focus queue (ADR 0001), which the stage must keep. Its generated test is not fit (study of 2026-11-08): `crates/verbatim-core/src/queries/generated.rs` leaves the line out and checks only its awaited watch, skips its state comparison exactly when an answer is to the held keys' watch, generates one key with one shared trace, never a deadline, `BoundHeldKey`, `WithdrawText` or exit, and its resume check was loosened in 71b7ab52 to let the code pass; none of the listed defects was within its reach. The rebuild gives the stage an independent model and a world with distinct traces, several keys, deadlines and their effects, exit, and keys behind focus reports, and removes the skipped comparison. Of that file's three loose focus checks, the focus-taken and left-mark checks go, since `live_reread/generated.rs` models both; the foreground check's assertion that a foreground change changes nothing outside the foreground record stays, as no other generated test makes it.
+- The listener's record of an application. Today: `App` in `crates/verbatim-listener-logic/src/schedule.rs` (`threaded`, `flight`, `abandoned`, `limit_reached`, `ending`, `left_at`, `last_top`), "spent" derived from four of them; `ending` copies the supervisor's fact and any later event clears it; records are keyed by process id alone, so a reused id inherits an ended process's abandoned count and `limit_reached` (found by reading, not reproduced); the last top-level window is kept three times (`last_top`, the running read's `top_level` in `crates/verbatim-listener/src/focus_read.rs`, `FocusReader.last`). Fix history: e282e7ea, 8fa9c917, f67f1dc9, 6c9a1a93, 1c5e1a6d. Proposed: records keyed by application generation, one lifecycle value (live with its reader idle, in charge or starved since a time, or ending) holding the abandoned count. Its generated test, `crates/verbatim-listener-logic/src/schedule/generated.rs`, is partly fit: it found e282e7ea's and 6c9a1a93's defects and would catch 1c5e1a6d's, but it follows the outcomes the schedule emits, clears `ending` on any event as the code does, and keys records by a fixed process id with no exit or reuse, so the inherited count cannot arise. The rebuild models records by generation with one lifecycle value from the recorded decisions, and adds process exit, process id reuse and the supervisor's end to the world.
+- The outpost's record of hung windows. Today: the reducer's `hung` set and the program in flight's `destroyed` set and `hang_mark` (`crates/verbatim-outpost-logic/src/lib.rs`), the `abandoned` and `abandoned_on_hung` counters read by two separate loads (`crates/verbatim-outpost/src/outpost/mod.rs`), and the supervisor's `Parked` (`crates/verbatim-core/src/supervisor/policy.rs`); `NotResponding` is sent only as the set goes from empty to holding a window, and a window leaves it only when named answered, found readable or destroyed, so a background window that recovers unseen silences a later hang in another window (found by reading). Fix history: 91589a28, d7b2962d, c39da5ff, a2e2508d, 3e8c5725, b94fa1d8. NVDA keeps no record: it asks `isHungAppWindow` where it needs it. Proposed: one hang being told per application, its window judged live at each half-second check and ended when that window answers or is destroyed, and each parked worker counted once in the pong. A later hang in another window of the same application plays the "not responding" sound again (Dickson, 2026-11-08). Its test, `Run::hangs` in `crates/verbatim-outpost-logic/src/tests/reducer.rs`, is not fit: its model copies the code's sets, encodes the second-window rule Dickson reversed, was changed in the same commits as the code (a2e2508d, d7b2962d), has no step where a background window recovers unseen, and leaves out the counters and `Parked`. The rebuild needs an independent model of one hang per application judged at each check, with steps for a window answering unseen and a second hang.
+- The outpost's followed focus. Today: `Tracking` (nine optional fields, `crates/verbatim-outpost-logic/src/follow.rs`), `Marks` (`intake.rs`), `FollowState` (`followed`, `followed_element`, `followed_slider`, `kept_groups`, `focus_path`, `owed`) and the newest held report, rewritten together at adoption but `focus_path`, the foreground role and batch, and element retargets written by separate parts of a commit, a commit being about fifteen independent optional fields. Fix history: 2bd69a85, 62ee398b, f6b84c89. Proposed: one followed record replaced whole when a focus is adopted, with only the foreground role and batch outside it; check first which facts the outpost still needs now that Core's focus is a queue. No generated test covers it: `reducer.rs` builds the followed change with the test's own helper and never compares `Tracking`, `focus_path`, `kept_groups`, the `followed_` fields or `entered_in_front`, and checks the marks only for placement. The rebuild settles first which facts survive the focus queue, then models one followed record replaced whole at adoption, with a world of separate commit parts.
 
 ### The ownership refactor
 
@@ -268,7 +269,7 @@ Events and controls:
 
 - The classic .NET Framework Windows Forms combo box rule, element-selected events from the `ComboLBox` window reported as the combo box's value change (`NVDAObjects/UIA/__init__.py`, lines 2734 to 2744 and 2779 to 2790), is deferred until Verbatim reads such a combo box in an application (Dickson, 2026-10-20).
 - The rule for a `Windows.UI.Core` combo box with the `Value` pattern (lines 2795 to 2798) is not built, since every Settings combo box checked lacks the pattern (`docs/parity/changes-and-selection.md`, "A combo box's value from its selected item").
-- The events NVDA registers desktop-wide that Verbatim lacks are deferred until each is supported (Dickson, 2026-10-20; `docs/parity/backends.md`, "UIA event registration"); a foreground UIA progress bar that is not the focus is built (M4.2), background progress bars in M4.3.
+- The events NVDA registers desktop-wide that Verbatim lacks are deferred until each is supported (Dickson, 2026-10-20; `docs/parity/backends.md`, "UIA event registration"); a foreground UIA progress bar that is not the focus is in M4.2, background progress bars in M4.3.
 - Table cells: header texts, spans, a cell's own coordinates text, or MSAA and IAccessible2 cells.
 - On this Windows 11 build `TrayNotifyWnd`'s UIA subtree is empty, so the tray list (`crates/verbatim-outpost/src/outpost/shell_items.rs`) is empty unless the overflow flyout is open; and a double press of Verbatim+F11 opens the tray list rather than the taskbar list.
 - The shell items' `refind` (`crates/verbatim-gui/src/shell_items.rs`) takes a candidate by its runtime id alone, without its name, so a runtime id the shell has reused for another button clicks that button.
@@ -284,15 +285,16 @@ Text and selection:
 Small differences from NVDA found during M4, each closed against a live
 NVDA capture.
 
-- Built (2026-11-09): a foreground UIA progress bar that is not the focus
-  is reported, as NVDA does (Dickson, 2026-10-10, as a separate fix);
-  background progress bars are not yet reported (M4.3).
-- Built (2026-11-09): toasts ([parity](parity/alerts.md), "Toasts"), read
-  as NVDA reads them, through UIA's window-opened event (a
-  `Windows.UI.Core.CoreWindow` whose automation id contains `ToastView`,
-  from a desktop-wide window-opened subscription in the listener), with
-  NVDA's rule dropping MSAA alert and show events from native UIA
-  windows. Its end-to-end scenario, `toast`, raises a
+- A foreground UIA progress bar that is not the focus is reported, as
+  NVDA does (Dickson, 2026-10-10, as a separate fix); background progress
+  bars are not yet reported (M4.3).
+- Toasts ([parity](parity/alerts.md), "Toasts"): Verbatim reads them only
+  through an MSAA alert, NVDA through UIA's window-opened event. Capture a
+  Windows 11 toast live with NVDA and with Verbatim; if Verbatim is silent,
+  follow NVDA (a `Windows.UI.Core.CoreWindow` whose automation id contains
+  `ToastView`, from a desktop-wide window-opened subscription in the
+  listener), then adopt NVDA's rule dropping MSAA alert and show events
+  from native UIA windows. Its end-to-end scenario, `toast`, raises a
   toast of its own: it turns Windows' Do Not Disturb off for the run and
   restores what it found at the end, so a machine with it on keeps it on
   (Dickson, 2026-11-03).
@@ -328,16 +330,16 @@ NVDA capture.
   capture. Such answers are more frequent since the outpost's runtime-id
   search was removed (719b4ed4, 2026-10-29), so a node with no kept
   element and no focus route answers gone.
-- Built, without the counts (2026-11-09): table cells, an unchanged row
-  or column within one table left out, as NVDA leaves it out, which needs
-  the containing grid's identity read with each cell (Dickson, 2026-11-01;
+- Table cells: an unchanged row or column within one table left out, as
+  NVDA leaves it out, which needs the containing grid's identity read
+  with each cell (Dickson, 2026-11-01;
   [focus announcement](parity/focus-announcement.md), "Table cell
-  coordinates"). Report Current Object's row and column counts, and
-  their forgetting of the table, arrive with the review cursor build.
+  coordinates").
 
 The remaining work is two sessions (Dickson, 2026-10-21): one takes
-the differences in a list the focus controls; the other takes the review
-cursor on objects that no longer exist, with the table cells' counts.
+toasts, the foreground UIA progress bar, and the differences in a list
+the focus controls; the other takes the review cursor on objects that no
+longer exist. The table cells go with the first session.
 
 Exit: each entry is matched (verified) by a scenario, with a declared
 deviation where Dickson chose one, checked with compare mode.

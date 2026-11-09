@@ -3,7 +3,7 @@
 //! held behind an application's abandoned reads" and "A slow read the user
 //! has moved on from" (`docs/parity/focus-events.md`) and the recorded
 //! decisions (`docs/roadmap.md`, "State models"; the limits of
-//! `books/dev/src/reference/adr/0002-state-models.md`). Neither looks at the schedule's rules:
+//! `docs/design/state-models.md`). Neither looks at the schedule's rules:
 //! the model predicts what each step tells, and every prediction is compared
 //! with what the schedule told through [`seam`], the one place that names the
 //! schedule's types.
