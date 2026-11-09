@@ -265,9 +265,6 @@ mod seam {
         reads: BTreeMap<u64, TextState>,
         /// The read the commit being made rests on, and what it found.
         pending_read: Option<(u64, TextState)>,
-        /// The keys Core has called off before their watch opened: Core
-        /// sends the end once the key's before read has answered.
-        pending_end: BTreeSet<u64>,
         /// The held keys whose before read has not answered.
         held: BTreeSet<u64>,
         /// The keys with no before read whose request is not yet handled.
@@ -287,7 +284,6 @@ mod seam {
                 flight: None,
                 reads: BTreeMap::new(),
                 pending_read: None,
-                pending_end: BTreeSet::new(),
                 held: BTreeSet::new(),
                 unhandled: BTreeSet::new(),
             }
@@ -344,23 +340,7 @@ mod seam {
             let now = now(self.at);
             let effects = self.reducer.input(input, now);
             let effects = with_answers(&mut self.reducer, &mut self.answers, effects, now);
-            let mut seen = self.effects(effects);
-            // A call-off waits for the watch of the key it names to open.
-            if let Some(key) = self
-                .reducer
-                .facts
-                .text
-                .watch
-                .open()
-                .map(|open| open.tag.0.0)
-                && self.pending_end.remove(&key)
-            {
-                seen.extend(self.drive(Input::WatchOrder {
-                    tag: tag(key),
-                    order: WatchOrder::End,
-                }));
-            }
-            seen
+            self.effects(effects)
         }
 
         fn push(&mut self, item: Item) -> Vec<Seen> {
@@ -447,13 +427,7 @@ mod seam {
                     } else {
                         // A request that opened no watch: failed, not
                         // started or with no last read. A held key's
-                        // before read's answer comes first. Core calls a
-                        // key off only once its request has answered: the
-                        // call-off was for this one.
-                        if self.pending_end.remove(&key) {
-                            self.held.remove(&key);
-                            return;
-                        }
+                        // before read's answer comes first.
                         if self.held.remove(&key) {
                             seen.push(Seen::BeforeAnswered {
                                 key,
@@ -468,11 +442,6 @@ mod seam {
                     ..
                 } => {
                     let key = tag.0.0;
-                    // Core calls a key off only once its request has
-                    // answered: the call-off was for this one.
-                    if self.pending_end.remove(&key) {
-                        return;
-                    }
                     seen.push(match answer {
                         KeyAnswer::Evidence(_) | KeyAnswer::BoundAnswer(_) => {
                             let (read, _) = self.pending_read.take().expect("its read");
@@ -568,28 +537,13 @@ mod seam {
             })
         }
 
-        /// Core calls a key off: once its before read has answered, when it
-        /// has not yet.
+        /// Core calls a key off.
         pub(super) fn call_off(&mut self, key: u64) -> Vec<Seen> {
             self.tick_clock();
-            if self.watch_open(key) {
-                self.drive(Input::WatchOrder {
-                    tag: tag(key),
-                    order: WatchOrder::End,
-                })
-            } else {
-                self.pending_end.insert(key);
-                Vec::new()
-            }
-        }
-
-        fn watch_open(&self, key: u64) -> bool {
-            self.reducer
-                .facts
-                .text
-                .watch
-                .open()
-                .is_some_and(|open| open.tag == tag(key))
+            self.drive(Input::WatchOrder {
+                tag: tag(key),
+                order: WatchOrder::End,
+            })
         }
 
         /// A caret event of `node` arrives.
@@ -1128,9 +1082,6 @@ impl World {
                 (self.seam.press(key, node, kind, holding), None)
             }
             Action::FinalRead(index) => {
-                if self.seam.busy() {
-                    return;
-                }
                 let Some(key) = self.key_number(index) else {
                     return;
                 };
