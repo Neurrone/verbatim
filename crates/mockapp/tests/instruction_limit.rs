@@ -449,7 +449,6 @@ fn caret_query<'a>(
         pattern,
         pattern2,
         since: old,
-        baseline_selection: old.map(|old| (old, old)),
         previous_selection: old.map(|old| (old, old)),
         previous_collapsed: false,
         unit: None,

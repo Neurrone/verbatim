@@ -324,7 +324,6 @@ impl UiaText {
         Ok(CaretRead {
             state: CaretState { caret, selection },
             moved: answer.moved,
-            baseline_moved: false,
             selection_moved: answer.selection_moved,
             line: unit_read(answer.line)?,
             unit: None,
@@ -622,13 +621,6 @@ impl TextSource for UiaText {
             )),
             None => None,
         };
-        let baseline = match request.baseline_selection {
-            Some((start, end)) => Some((
-                (start.range()?, start.endpoint),
-                (end.range()?, end.endpoint),
-            )),
-            None => None,
-        };
         // A unit this text does not have is not read.
         let unit = request.unit.and_then(|unit| self.unit(unit));
         let attributes = attributes_for(self.fetches).without(self.support.unsupported);
@@ -644,9 +636,6 @@ impl TextSource for UiaText {
                 .as_ref()
                 .map(|(start, end)| (end_of(start), end_of(end))),
             previous_collapsed: request.previous_collapsed,
-            baseline_selection: baseline
-                .as_ref()
-                .map(|(start, end)| (end_of(start), end_of(end))),
             unit,
             formats: request.formats.map(|span| match span {
                 FormatSpan::Character => verbatim_uia_rops::FormatSpan::Character,
@@ -693,7 +682,6 @@ impl TextSource for UiaText {
         Ok(Some(CaretRead {
             state: CaretState { caret, selection },
             moved: answer.moved,
-            baseline_moved: answer.baseline_moved,
             since_place: answer
                 .since_place
                 .map(|(start, end)| (start.cmp(&0), end.cmp(&0))),

@@ -364,6 +364,7 @@ Captured from NVDA at its pinned build, in the Windows Forms text box and Notepa
 - A Control+Backspace that inserts a character says "blank" wherever it is. NVDA says "blank" only at the text's start, and elsewhere the word before the caret, because it reads that before the key (`editableText.py` 300 to 320).
 - A note outlives a key whose focus moved, for at most 300 ms, costing one read per event of that node meanwhile.
 - A change made by something else within the key's 100 ms counts as the key's, as today.
+- Slow before reads, repeated focuses and reads after an effect compare the caret by its line's text and offset, adding no call, so a move between two lines of the same text at the same offset is not seen there: a Down Arrow between identical lines caught only by one of those reads speaks at its bound, 100 ms later than today. Every other read compares positions.
 
 ## Removed and kept
 

@@ -231,10 +231,6 @@ pub struct CaretQuery<'a> {
     /// [`CaretAnswer::selection_moved`] is false. A caret key's watch, for
     /// which a caret that moved is a selection that moved, leaves it false.
     pub previous_collapsed: bool,
-    /// A key's baseline's selection's ends, when the baseline is not the
-    /// last read, to say whether the selection differs from it
-    /// ([`CaretAnswer::baseline_moved`]).
-    pub baseline_selection: Option<(RangeEnd<'a>, RangeEnd<'a>)>,
     /// A unit to read at the caret besides the line: a word, a paragraph,
     /// or a page.
     pub unit: Option<TextUnit>,
@@ -347,9 +343,6 @@ pub struct CaretAnswer {
     pub collapsed: bool,
     /// The selection, when text is selected.
     pub selection: Option<IUIAutomationTextRange>,
-    /// Whether the selection is not [`CaretQuery::baseline_selection`];
-    /// false without one.
-    pub baseline_moved: bool,
     /// Whether the caret is not where [`CaretQuery::since`] says; false
     /// without one.
     pub moved: bool,
@@ -475,7 +468,6 @@ impl CaretLineRegisters {
                 Some(moved) => outcome.get(moved)?,
                 None => false,
             },
-            baseline_moved: false,
             since_place: None,
             selection_moved: false,
             line: self.line.read(outcome)?,
@@ -571,7 +563,6 @@ fn caret_line_read_classic(query: &CaretLineQuery<'_>) -> Result<CaretAnswer, Er
         since: None,
         previous_selection: None,
         previous_collapsed: false,
-        baseline_selection: None,
         unit: None,
         formats: None,
         attributes: Attributes::NONE,
@@ -1048,12 +1039,6 @@ fn build(b: &mut Builder, query: &CaretQuery<'_>) -> ReadRegisters {
             b.import_text_range(end.range),
         )
     });
-    let baseline_imported = query.baseline_selection.map(|(start, end)| {
-        (
-            b.import_text_range(start.range),
-            b.import_text_range(end.range),
-        )
-    });
     let c = Constants {
         start: b.int(endpoint_number(Endpoint::Start)),
         end: b.int(endpoint_number(Endpoint::End)),
@@ -1079,28 +1064,6 @@ fn build(b: &mut Builder, query: &CaretQuery<'_>) -> ReadRegisters {
         let order = b.text_range_compare_endpoints(point, c.start, known, endpoint);
         let differs = b.not_equal(order, c.zero);
         b.set(moved, differs);
-    }
-    let baseline_moved = b.new_bool(false);
-    let baseline_moved = b.add_to_results(baseline_moved);
-    if let (Some((old_start, old_end)), Some((start_range, end_range))) =
-        (query.baseline_selection, baseline_imported)
-    {
-        let start_endpoint = b.int(endpoint_number(old_start.endpoint));
-        let end_endpoint = b.int(endpoint_number(old_end.endpoint));
-        let (now, start, end) = (selection, c.start, c.end);
-        let compare = |b: &mut Builder, range: Reg<kind::TextRange>, last: Reg<kind::Int>| {
-            let first = b.text_range_compare_endpoints(range, start, start_range, start_endpoint);
-            let first = b.not_equal(first, c.zero);
-            let second = b.text_range_compare_endpoints(range, last, end_range, end_endpoint);
-            let second = b.not_equal(second, c.zero);
-            let either = b.or(first, second);
-            b.set(baseline_moved, either);
-        };
-        b.if_else(
-            has_selection,
-            |b| compare(b, now, end),
-            |b| compare(b, point, start),
-        );
     }
     let selection_moved = b.new_bool(false);
     let selection_moved = b.add_to_results(selection_moved);
@@ -1291,7 +1254,6 @@ fn build(b: &mut Builder, query: &CaretQuery<'_>) -> ReadRegisters {
     ReadRegisters {
         caret: registers,
         moved,
-        baseline_moved,
         since_place,
         selection_moved,
         changes,
@@ -1319,7 +1281,6 @@ struct ProgramKey {
     since: Option<i32>,
     previous_selection: Option<(i32, i32)>,
     previous_collapsed: bool,
-    baseline_selection: Option<(i32, i32)>,
     unit: Option<i32>,
     formats: Option<FormatSpan>,
     attributes: Attributes,
@@ -1343,12 +1304,6 @@ impl ProgramKey {
                 )
             }),
             previous_collapsed: query.previous_collapsed,
-            baseline_selection: query.baseline_selection.map(|(start, end)| {
-                (
-                    endpoint_number(start.endpoint),
-                    endpoint_number(end.endpoint),
-                )
-            }),
             unit: query.unit.map(|unit| unit.0),
             formats: query.formats,
             attributes: query.attributes,
@@ -1373,10 +1328,6 @@ fn imports(query: &CaretQuery<'_>) -> Vec<Import> {
         imports.push(Import::TextRange(start.range.clone()));
         imports.push(Import::TextRange(end.range.clone()));
     }
-    if let Some((start, end)) = query.baseline_selection {
-        imports.push(Import::TextRange(start.range.clone()));
-        imports.push(Import::TextRange(end.range.clone()));
-    }
     imports
 }
 
@@ -1385,7 +1336,6 @@ fn imports(query: &CaretQuery<'_>) -> Vec<Import> {
 struct ReadRegisters {
     caret: CaretRegisters,
     moved: Reg<kind::Bool>,
-    baseline_moved: Reg<kind::Bool>,
     since_place: Option<(Reg<kind::Int>, Reg<kind::Int>)>,
     selection_moved: Reg<kind::Bool>,
     changes: Option<(Reg<kind::Array>, Reg<kind::Array>)>,
@@ -1463,7 +1413,6 @@ pub fn caret_read_remote(query: &CaretQuery<'_>) -> Result<CaretAnswer, Error> {
                 selection,
             },
         moved,
-        baseline_moved,
         since_place,
         selection_moved,
         changes,
@@ -1519,7 +1468,6 @@ pub fn caret_read_remote(query: &CaretQuery<'_>) -> Result<CaretAnswer, Error> {
         collapsed: outcome.get(collapsed)?,
         selection,
         moved: outcome.get(moved)?,
-        baseline_moved: outcome.get(baseline_moved)?,
         since_place: match since_place {
             Some((to_start, to_end)) => Some((outcome.get(to_start)?, outcome.get(to_end)?)),
             None => None,
@@ -1986,17 +1934,6 @@ pub fn caret_read_classic(query: &CaretQuery<'_>) -> Result<CaretAnswer, Error> 
         Some(since) => point.compare_endpoints(Endpoint::Start, since.range, since.endpoint)? != 0,
         None => false,
     };
-    let baseline_moved = match query.baseline_selection {
-        Some((old_start, old_end)) => {
-            let (range, start, end) = match &selection {
-                Some(selection) => (selection, Endpoint::Start, Endpoint::End),
-                None => (&point, Endpoint::Start, Endpoint::Start),
-            };
-            range.compare_endpoints(start, old_start.range, old_start.endpoint)? != 0
-                || range.compare_endpoints(end, old_end.range, old_end.endpoint)? != 0
-        }
-        None => false,
-    };
     let selection_moved = match query.previous_selection {
         Some(_) if query.previous_collapsed && selection.is_none() => false,
         Some((old_start, old_end)) => {
@@ -2083,7 +2020,6 @@ pub fn caret_read_classic(query: &CaretQuery<'_>) -> Result<CaretAnswer, Error> 
         collapsed: collapsed_caret,
         selection,
         moved,
-        baseline_moved,
         since_place,
         selection_moved,
         line,

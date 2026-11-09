@@ -864,8 +864,7 @@ An `Input::HeldKey`, a caret key the hook held back because
 `holds_caret_keys` was true, asks the focus's outpost to read the caret,
 `TextOp::ReadCaret` with `ReadPurpose::BeforeKey`, which also sets the
 node's note. The answer becomes the focus's caret, its selection changes
-are said, and the key is passed on (`Effect::PassHeldKey`) one microsecond
-after the read ended. An `Input::CaretKey`, one the hook did not hold,
+are said, and the key is passed on (`Effect::PassHeldKey`) as the read ended. An `Input::CaretKey`, one the hook did not hold,
 sends the one-way `Effect::KeyNote`, and is judged from the node's last
 read; the note goes first, so it reaches the outpost before anything the
 key does. With no focus whose caret is read the key is passed at once.

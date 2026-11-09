@@ -92,10 +92,6 @@ pub struct CaretRequest<'a, P> {
     /// report's comparison; a key's read, for which a caret that moved is a
     /// selection that moved, leaves it false).
     pub previous_collapsed: bool,
-    /// A key's baseline's selection's ends (both the caret when nothing
-    /// was selected), when the baseline is not the node's last read: to
-    /// say whether the selection differs from it.
-    pub baseline_selection: Option<&'a (P, P)>,
     /// A unit to read at the caret besides its line: a word, a paragraph, a
     /// page.
     pub unit: Option<TextUnit>,
@@ -127,9 +123,6 @@ pub struct CaretRead<P> {
     pub state: CaretState<P>,
     /// The caret is not where [`CaretRequest::since`] says.
     pub moved: bool,
-    /// With [`CaretRequest::baseline_selection`], the selection is not what
-    /// it says.
-    pub baseline_moved: bool,
     /// Where [`CaretRequest::since`] lies against the caret's line: its
     /// order against the line's start and against its end; `None` when
     /// the source did not compare them.
@@ -1310,7 +1303,6 @@ pub(crate) fn caret_report_checking<S: TextSource>(
         since,
         previous: last.as_ref().filter(|_| !noted).map(|last| &last.ends),
         previous_collapsed: last.as_ref().is_some_and(|last| last.collapsed),
-        baseline_selection: None,
         unit: fetch.and_then(|fetch| extra_unit(source, fetch.note.unit)),
         formats: formats.then_some(FormatSpan::Line),
         recheck: false,
@@ -1945,7 +1937,6 @@ fn key_read<S: TextSource>(
         since: Some(&last.caret),
         previous: Some(&compared.ends),
         previous_collapsed: compared.collapsed,
-        baseline_selection: None,
         unit: extra,
         formats: format_span(key.note.unit),
         recheck: true,
