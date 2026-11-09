@@ -1432,6 +1432,31 @@ impl Scenario {
         closing: Closing,
         ready: Option<&str>,
     ) -> io::Result<WindowInfo> {
+        self.bring_forward_once(launch, title, closing, ready, false)
+    }
+
+    /// [`Self::bring_forward`] for a Windows Terminal window, waiting until
+    /// it is titled exactly `title`: on an elevated runner the console host
+    /// behind the tab first prefixes the title with "Administrator: ", and
+    /// the shell's own title reaches the window a moment after `ready` is
+    /// written.
+    fn bring_forward_titled(
+        &mut self,
+        launch: AgentLaunch,
+        title: &str,
+        ready: Option<&str>,
+    ) -> io::Result<WindowInfo> {
+        self.bring_forward_once(launch, title, Closing::ByOwner, ready, true)
+    }
+
+    fn bring_forward_once(
+        &mut self,
+        launch: AgentLaunch,
+        title: &str,
+        closing: Closing,
+        ready: Option<&str>,
+        exact_title: bool,
+    ) -> io::Result<WindowInfo> {
         self.launched.push(Launched {
             pid: launch.pid,
             title: Some(title.to_owned()),
@@ -1492,6 +1517,20 @@ impl Scenario {
             self.launch_evidence.push(evidence.clone());
             return Err(WindowWaitFailure::error(message, evidence));
         }
+        if exact_title {
+            let (titled, desktop) = self.agent.wait_for_window(
+                WindowCondition::TitledExactly {
+                    title: title.to_owned(),
+                },
+                WINDOW_TIMEOUT,
+            )?;
+            if !titled {
+                return Err(io::Error::other(format!(
+                    "no window was titled exactly {title:?} within {WINDOW_TIMEOUT:?}: {}",
+                    describe_foreground(&desktop)
+                )));
+            }
+        }
         let outcome = self.agent.set_foreground(window.window)?;
         if !outcome.in_front() {
             return Err(io::Error::other(format!(
@@ -1528,7 +1567,7 @@ impl Scenario {
         self.begin_action(&launch_action(command, title));
         let launch = self.agent.launch_minimized(command, args)?;
         let launched = launch.pid;
-        let window = self.bring_forward(launch, title, Closing::ByOwner, ready)?;
+        let window = self.bring_forward_titled(launch, title, ready)?;
         if window.pid != launched {
             return Err(io::Error::other(format!(
                 "the window titled {title:?} belongs to {} (pid {}), not to the process the harness launched, pid {launched}: {}",

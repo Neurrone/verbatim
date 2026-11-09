@@ -172,6 +172,9 @@ pub fn holds(condition: &WindowCondition) -> bool {
         WindowCondition::Present { title_contains } => shown_top_level_windows()
             .into_iter()
             .any(|window| window_text(window).contains(title_contains.as_str())),
+        WindowCondition::TitledExactly { title } => shown_top_level_windows()
+            .into_iter()
+            .any(|window| window_text(window) == *title),
         WindowCondition::Absent { title_contains } => !shown_top_level_windows()
             .into_iter()
             .any(|window| window_text(window).contains(title_contains.as_str())),

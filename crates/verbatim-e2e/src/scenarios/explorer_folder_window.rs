@@ -41,17 +41,19 @@
 //! `focus_read.rs`). When File Explorer removes it after the listener's
 //! nearest-window walk, the listener's walk of it fails and goes on from
 //! the window, so it is reported without the list and spoken before what
-//! the item's focus brings: "Items View list", and on the opening the window's title
-//! before it; when the read succeeds, its ancestry ends in the list, so
+//! the item's focus brings: "Items View list". On the opening the window is
+//! new, so either its title comes with the placeholder's own report, before
+//! the placeholder, or the placeholder is spoken first when its report has no
+//! ancestry at all. When the read succeeds, its ancestry ends in the list, so
 //! that speech comes first and the placeholder between it and the item.
 //! NVDA's own handling depends on the same kind of timing and speaks a
 //! placeholder whose element is gone by its main thread's handling
 //! without its list (`docs/parity/focus-events.md`, "A focus whose
 //! element is gone before its read"), so each of the three steps accepts
-//! the placeholder at either position, an explicit exception to the
-//! one-outcome rule (Dickson, 2026-10-21). The two optional places would
-//! also accept the placeholder said at both, so each step asserts that it
-//! was said at most once. The item is still required: a run where the
+//! the placeholder before each piece of context or before the item, an
+//! explicit exception to the one-outcome rule (Dickson, 2026-10-21). The
+//! optional places would also accept the placeholder said at several, so
+//! each step asserts that it was said at most once. The item is still required: a run where the
 //! placeholder keeps the focus fails.
 
 use std::io;
@@ -98,14 +100,15 @@ pub(crate) fn body(scenario: &mut Scenario, state: &mut ScenarioState) {
 
 /// The speech of a folder load: `context`, the window's title on the
 /// opening and "Items View list", then `item`, with File Explorer's
-/// placeholder optional before `context` or between it and the item, and
+/// placeholder optional before each of `context` and before the item, and
 /// said at most once in all.
 fn expect_after_load(scenario: &mut Scenario, context: &[&str], item: &str) {
     let placeholder = "Working on it...";
     let before = scenario.speech().optional_outcomes().len();
-    let mut expected = vec![optional(placeholder)];
-    expected.extend(context.iter().copied().map(heard));
-    expected.extend([optional(placeholder), heard(item)]);
+    let mut expected = Vec::new();
+    for part in context.iter().copied().chain([item]) {
+        expected.extend([optional(placeholder), heard(part)]);
+    }
     scenario.speech().expect_sequence(&expected);
     let said: usize = scenario.speech().optional_outcomes()[before..]
         .iter()

@@ -1254,6 +1254,12 @@ pub enum WindowCondition {
         /// Text the title contains.
         title_contains: String,
     },
+    /// A visible top-level window, as for [`WindowCondition::Present`], is
+    /// titled exactly `title`.
+    TitledExactly {
+        /// The whole title.
+        title: String,
+    },
     /// No visible top-level window is titled with `title_contains`, cloaked
     /// ones aside, as for [`WindowCondition::Present`].
     Absent {

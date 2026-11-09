@@ -729,12 +729,11 @@ pub(crate) fn require_launch_blank_after_repeat(outcomes: &[OptionalOutcome], te
 /// element the outpost cannot find, without it, and it comes before or
 /// after the announcement heard in full. The repeats are optional
 /// utterances (`books/dev/src/reference/testing.md`, "Optional utterances"): before the
-/// announcement, "<title> terminal" up to [`SECOND_WINDOW_REPEATS`] times,
-/// each repeat cutting off the one before it; after it, until the first
-/// prompt, up to as many times "<title> terminal" each optionally followed
-/// by "blank". The terminal is said at most [`SECOND_WINDOW_REPEATS`]
-/// times more in all, and a "blank" after the announcement only after a
-/// repeat of the terminal. The required sequence stays exact: the window,
+/// announcement and after it, until the first prompt, up to
+/// [`SECOND_WINDOW_REPEATS`] times "<title> terminal", each repeat cutting
+/// off the one before it and optionally followed by "blank". The terminal is said at most [`SECOND_WINDOW_REPEATS`]
+/// times more in all, and an optional "blank" only after a repeat of the
+/// terminal. The required sequence stays exact: the window,
 /// the terminal heard in full, "blank", and then the prompt.
 pub(crate) fn expect_second_windows_terminal_prompt_read(
     scenario: &mut Scenario,
@@ -743,7 +742,7 @@ pub(crate) fn expect_second_windows_terminal_prompt_read(
     let title = title(state);
     let terminal = format!("{title} terminal");
     let before = scenario.speech().optional_outcomes().len();
-    let after: Vec<Expected> = (0..SECOND_WINDOW_REPEATS)
+    let repeats: Vec<Expected> = (0..SECOND_WINDOW_REPEATS)
         .flat_map(|_| {
             [
                 optional_up_to(&terminal, SECOND_WINDOW_REPEATS),
@@ -751,17 +750,10 @@ pub(crate) fn expect_second_windows_terminal_prompt_read(
             ]
         })
         .collect();
-    prompt_read(
-        scenario,
-        state,
-        &[
-            heard(&format!("{title} window")),
-            optional_up_to(&terminal, SECOND_WINDOW_REPEATS),
-            heard(&terminal),
-            heard("blank"),
-        ],
-        &after,
-    );
+    let mut announcement = vec![heard(&format!("{title} window"))];
+    announcement.extend(repeats.iter().cloned());
+    announcement.extend([heard(&terminal), heard("blank")]);
+    prompt_read(scenario, state, &announcement, &repeats);
     let outcomes = &scenario.speech().optional_outcomes()[before..];
     // In compare mode no optional utterance is matched or recorded.
     if outcomes.is_empty() {
@@ -776,12 +768,11 @@ pub(crate) fn expect_second_windows_terminal_prompt_read(
         repeats <= SECOND_WINDOW_REPEATS,
         "{terminal:?} was said {repeats} times more than once as the window opened, where at most {SECOND_WINDOW_REPEATS} are accepted"
     );
-    // The optional utterances after the announcement come in pairs, the
-    // terminal and then its line.
-    for pair in outcomes[1..].chunks(2) {
+    // The optional utterances come in pairs, the terminal and then its line.
+    for pair in outcomes.chunks(2) {
         assert!(
             pair[1].endings.is_empty() || !pair[0].endings.is_empty(),
-            "\"blank\" was said after the window's announcement with no repeat of {terminal:?} before it"
+            "\"blank\" was said as the window opened with no repeat of {terminal:?} before it"
         );
     }
 }
