@@ -1383,6 +1383,60 @@ fn typing_past_the_right_margin_after_a_pause_is_echoed() {
 }
 
 #[test]
+fn a_typed_lines_wrap_shown_over_two_reads_says_nothing_for_the_empty_row() {
+    // "The caret's line": the console host's provider shows the wrap in two
+    // reads, the caret on the empty next row in both: the first's text
+    // holds only the typed row, the second's the empty row too, which is
+    // not new output (conhost_typing). The next character goes on that row.
+    let typed_row = format!("$ {}", "a".repeat(18));
+    let read = |document: &str, column: usize, at_ms: u64| Read {
+        text: ReadText::unpadded(document),
+        screen: format!("{document:40}\r\n{:20}", ""),
+        first_row: typed_row.clone(),
+        caret_rows_to_end: 1,
+        caret_line: format!("{:20}", ""),
+        ..screen_read(&[""], 20, 0, column, at_ms)
+    };
+    let colours = vec![
+        vec![ColourRun {
+            column: 0,
+            length: 20,
+            foreground: 0x00C0_C0C0,
+            background: 0,
+        }];
+        3
+    ];
+    let take = |reader: &mut TerminalReader, read: &Read| Step {
+        outcome: None,
+        followed: false,
+        ..reader.read(read, false, Some(&colours))
+    };
+    let mut reader = TerminalReader::new(Settings::default());
+    let start = screen_read(&[&typed_row[..19], "", ""], 20, 0, 19, 100);
+    assert_eq!(take(&mut reader, &start), quiet(None));
+    let key = |text: &str, at_ms| Key {
+        kind: KeyKind::Typed(text.to_owned()),
+        at_ms,
+    };
+    reader.key(key("a", 1000));
+    assert_eq!(
+        take(&mut reader, &read(&typed_row, 0, 1002)),
+        says(vec![Speech::Gained {
+            row: 0,
+            text: "a".to_owned()
+        }])
+    );
+    let shown = format!("{typed_row:40}");
+    assert_eq!(take(&mut reader, &read(&shown, 0, 1015)), quiet(None));
+    reader.key(key("x", 1100));
+    let typed = format!("{typed_row}x{:19}", "");
+    assert_eq!(
+        take(&mut reader, &read(&typed, 1, 1102)),
+        says(vec![echo(0, "x")])
+    );
+}
+
+#[test]
 fn a_read_inside_a_programs_redraw_speaks_the_line_its_cursor_passes() {
     // A key the program reads unshown rewrites row 2, and a read lands
     // before the program parks its cursor back on the status row: within

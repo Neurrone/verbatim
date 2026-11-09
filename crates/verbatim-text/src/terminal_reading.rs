@@ -500,6 +500,9 @@ enum Move {
     Still,
     /// Along the same line.
     Along,
+    /// Not at all: the empty row below the typed line appeared where the
+    /// caret already was, the last read's text having stopped above it.
+    RowShown,
     /// Onto another line that was already there.
     Onto,
     /// Onto a new line.
@@ -518,6 +521,8 @@ impl Move {
         {
             return if before.row == caret.row && before.typing == caret.column {
                 Self::Still
+            } else if Self::row_shown(caret, before, outcome, rows) {
+                Self::RowShown
             } else {
                 Self::Along
             };
@@ -535,6 +540,19 @@ impl Move {
             .zip(items_in(rows, line_rows))
             .all(|(kind, row)| row.is_blank() || *kind == NewRow::New);
         if fresh { Self::New } else { Self::Onto }
+    }
+
+    /// Whether the caret's row is an empty row new in this read, directly
+    /// below the row the last read found the caret on, at the same column
+    /// of it, with the line's text unchanged ("The caret's line").
+    fn row_shown(caret: &Caret, before: &Caret, outcome: &Outcome, rows: &[Row]) -> bool {
+        caret.row == before.row.saturating_add(1)
+            && caret.text == before.text
+            && outcome.rows.get(caret.row) == Some(&NewRow::New)
+            && rows.get(caret.row).is_some_and(Row::is_blank)
+            && rows.get(before.row).is_some_and(|row| {
+                caret.column == before.column.saturating_add(row.text.chars().count())
+            })
     }
 }
 
@@ -1726,8 +1744,9 @@ impl TerminalReader {
         // held on the last cell of a row the typing filled, its wrap
         // pending, which the next character follows.
         let mut column = caret.column;
-        if movement == Move::New {
-            // A new line at the caret is output (Enter, a new prompt).
+        if matches!(movement, Move::New | Move::RowShown) {
+            // A new line at the caret is output (Enter, a new prompt); an
+            // empty row appearing where the caret already is says nothing.
             return CaretAnswer::default();
         }
         if !matches!(movement, Move::Still | Move::Along) {

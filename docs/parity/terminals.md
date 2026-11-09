@@ -174,7 +174,8 @@ Control+C, Control+D, and Control+Pause. Verbatim: **different** (rule
   padding until something follows it, or a character typed over inline
   prediction that showed it already) is echoed when the caret moves over
   it; typing that wrapped past the right margin is echoed, not spoken as
-  a new line. Each key a script reads without showing it is not echoed,
+  a new line, whether the new row comes in the read that shows the
+  character or a later one. Each key a script reads without showing it is not echoed,
   where NVDA echoes it ("space").
 - Held typing is forgotten on Enter and Tab, and on Escape, Control+C,
   Control+D, and Control+Break. Escape forgetting held typing is

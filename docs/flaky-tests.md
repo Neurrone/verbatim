@@ -83,10 +83,6 @@ Recorded by Claude, 2026-11-04.
   - How: missed a typed "o" in 2 of 6 runs on the base build.
   - Cause: not found.
   - Fix: [M6.4 terminal residuals](roadmap.md#m64--terminal-residuals).
-- `conhost_typing`, a wrapped line's new row spoken (run 41859263092, 2026-11-04)
-  - How: after the 108th "a" of `echo aaa…xyz` filled the 120-column row, "blank" was spoken and credited to the key, so the harness found an unmatched "blank" before typing "x".
-  - Cause: the console host's provider showed the wrap in two snapshots 13 ms apart, both with the caret at the start of the empty next row: the first's text held only the typed row, so the typed "a" was echoed; the second's held the empty row too, and Core took that row's appearance as a new line of output (flight recorder lines 697 and 699). The rule that typing wrapped past the right margin is echoed, not spoken as a new line, holds only when the row comes in the same snapshot as the character.
-  - Fix: [M6.4 terminal residuals](roadmap.md#m64--terminal-residuals): an empty row appearing below the typed line, where the caret already is, is not new output (Dickson, 2026-11-04).
 
 ## File Explorer
 
