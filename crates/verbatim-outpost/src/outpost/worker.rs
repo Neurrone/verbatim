@@ -999,7 +999,9 @@ impl Worker<'_> {
             unit: asked.fetch.unit,
             motion: asked.fetch.motion,
         };
-        let live = self.live_note(node_id);
+        let live = self
+            .live_note(node_id)
+            .filter(|live| live.final_read == Some(request_id));
         let (checked, read_at) = text_reads::note_read(self.context, node_id, note, (true, false));
         if let Some(live) = live {
             text_reads::clear_note(self.context, node_id, live.until_us);

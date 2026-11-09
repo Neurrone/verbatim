@@ -123,7 +123,8 @@ fn reduce_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
             query_id,
             outpost,
             outcome,
-        } => crate::queries::answered(state, *trace_id, *query_id, *outpost, outcome),
+            at_us,
+        } => crate::queries::answered(state, *trace_id, *query_id, *outpost, outcome, *at_us),
         Input::OutpostEnded { trace_id, outpost } => {
             let mut effects = outpost_ended(state, *outpost);
             effects.extend(crate::queries::outpost_gone(state, *trace_id, *outpost));

@@ -31,6 +31,7 @@ const OUTPOST: OutpostId = OutpostId(1);
 /// `trace_id`.
 fn answered(trace_id: TraceId, query_id: QueryId, reply: TextReply) -> Input {
     Input::Answered {
+        at_us: 0,
         trace_id,
         query_id,
         outpost: OUTPOST,

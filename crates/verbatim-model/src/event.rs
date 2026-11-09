@@ -790,6 +790,10 @@ pub enum Input {
         outpost: OutpostId,
         /// What became of the query.
         outcome: crate::protocol::QueryOutcome,
+        /// When the shell gave this to Core, in microseconds on the run's
+        /// shared clock: the moment a held key whose read this answers is
+        /// passed on.
+        at_us: u64,
     },
     /// An outpost generation ended: it exited, was killed, or was retired.
     /// Every node id it issued is dead from now on, and every query the

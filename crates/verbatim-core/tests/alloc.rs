@@ -174,6 +174,7 @@ fn a_navigation_step_allocates_the_same_whatever_the_ancestor_chain() {
         panic!("expected a navigation fetch, got {small_effects:?}");
     };
     let completion = Input::Answered {
+        at_us: 0,
         trace_id: TraceId::from_raw(3),
         query_id: query.query_id,
         outpost: query.node_id.outpost(),

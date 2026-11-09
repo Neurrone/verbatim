@@ -98,6 +98,7 @@ pub(crate) fn reply_input(
     id: RequestId,
     outpost: OutpostId,
     outcome: QueryOutcome,
+    at_us: u64,
 ) -> Routed {
     match id.asker {
         Requester::Reducer => {
@@ -114,6 +115,7 @@ pub(crate) fn reply_input(
                 query_id: QueryId(id.number),
                 outpost,
                 outcome,
+                at_us,
             })
         }
         Requester::Shell => Routed::Shell(outcome),
@@ -448,13 +450,15 @@ mod tests {
                 trace_id,
                 RequestId::reducer(7),
                 OutpostId(2),
-                QueryOutcome::Gone
+                QueryOutcome::Gone,
+                5
             ),
             Routed::Reducer(Input::Answered {
                 trace_id,
                 query_id: QueryId(7),
                 outpost: OutpostId(2),
                 outcome: QueryOutcome::Gone,
+                at_us: 5,
             })
         );
         assert_eq!(
@@ -462,7 +466,8 @@ mod tests {
                 trace_id,
                 RequestId::shell(7),
                 OutpostId(2),
-                QueryOutcome::Gone
+                QueryOutcome::Gone,
+                5
             ),
             Routed::Shell(QueryOutcome::Gone)
         );

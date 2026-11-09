@@ -367,6 +367,7 @@ pub(crate) fn answered(
     query_id: QueryId,
     outpost: OutpostId,
     outcome: &QueryOutcome,
+    at_us: u64,
 ) -> Vec<Effect> {
     if state
         .queries
@@ -385,6 +386,7 @@ pub(crate) fn answered(
         query_id,
         open.then,
         Ending::Outcome(outcome.clone()),
+        at_us,
     )
 }
 
@@ -399,7 +401,15 @@ pub(crate) fn answer_from_memory(
     let Some(open) = state.queries.open.remove(&query_id) else {
         return Vec::new();
     };
-    ended(state, trace_id, query_id, open.then, Ending::Reply(reply))
+    // No key's read is answered from memory, so no pass is made from this.
+    ended(
+        state,
+        trace_id,
+        query_id,
+        open.then,
+        Ending::Reply(reply),
+        0,
+    )
 }
 
 /// Ends every query still open at `outpost`, whose end Core has handled,
@@ -427,6 +437,8 @@ pub(crate) fn outpost_gone(
                 query_id,
                 open.then,
                 Ending::Outcome(QueryOutcome::Gone),
+                // A gone read passes on no key with a time of its own.
+                0,
             ));
         }
     }
@@ -440,6 +452,7 @@ pub(crate) fn ended(
     query_id: QueryId,
     then: Then,
     ending: Ending,
+    at_us: u64,
 ) -> Vec<Effect> {
     match then {
         Then::Navigation { kind, .. } => {
@@ -479,10 +492,11 @@ pub(crate) fn ended(
                     trace_id,
                     (query_id, node),
                     answer,
+                    at_us,
                 ));
                 return effects;
             }
-            crate::key_line::request_answered(state, trace_id, (query_id, node), reply)
+            crate::key_line::request_answered(state, trace_id, (query_id, node), reply, at_us)
         }
         Then::MovedCaret { node, line } => {
             if let TextReply::Moved { read_at_us } = ending.reply() {

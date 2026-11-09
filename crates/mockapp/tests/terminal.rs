@@ -285,6 +285,7 @@ trait IntoInput {
 impl IntoInput for TextReply {
     fn into_input(self, query_id: verbatim_model::QueryId, outpost: OutpostId) -> Input {
         Input::Answered {
+            at_us: 0,
             trace_id: TraceId::mint(),
             query_id,
             outpost,

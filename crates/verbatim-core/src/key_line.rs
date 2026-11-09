@@ -310,6 +310,7 @@ fn start_held(state: &mut SrState, held: HeldKey) -> Vec<Effect> {
         effects.push(Effect::PassHeldKey(held.trace_id));
         return effects;
     };
+    let heard = replaced_key_heard(state, held.trace_id);
     let read = CaretRead {
         fetch: fetch_of(held.key),
         purpose: if focus_is_terminal(state) {
@@ -331,10 +332,13 @@ fn start_held(state: &mut SrState, held: HeldKey) -> Vec<Effect> {
         },
     );
     // The deadline first, so a read the shell answers at once ends it.
-    vec![
-        Effect::BoundHeldKey(Some((held.trace_id, HELD_READ_BOUND_MS))),
-        effect,
-    ]
+    let mut effects = heard;
+    effects.push(Effect::BoundHeldKey(Some((
+        held.trace_id,
+        HELD_READ_BOUND_MS,
+    ))));
+    effects.push(effect);
+    effects
 }
 
 /// A caret key the keyboard hook held back: it starts its turn at once, or
@@ -467,7 +471,8 @@ fn watch_from_last_read(
     node: NodeId,
     (passed_at_us, bound_ms, sends_note): (u64, u64, bool),
 ) -> Vec<Effect> {
-    let mut effects = key_taking_effect(state, held.key, node);
+    let mut effects = replaced_key_heard(state, held.trace_id);
+    effects.extend(key_taking_effect(state, held.key, node));
     effects.push(Effect::BoundHeldKey(Some((held.trace_id, bound_ms))));
     if sends_note {
         let fetch = fetch_of(held.key);
@@ -642,15 +647,30 @@ fn end_current(state: &mut SrState, trace_id: TraceId, passed_at_ms: Option<u64>
     };
     let Busy { waiting, heard, .. } = *busy;
     let mut effects = vec![Effect::BoundHeldKey(None)];
-    let run = run_waiting(state, waiting, passed_at_ms);
-    // Changes held while a key was out wait for the words of the key that
-    // follows it (Dickson, 2026-11-09), with none left they are said.
-    match state.busy_mut() {
-        Some(busy) => busy.heard.splice(0..0, heard).for_each(drop),
-        None => effects.extend(editing::speak_each(trace_id, heard)),
-    }
-    effects.extend(run);
+    // Said in the order they happened, before anything that waited behind
+    // the key (Dickson, 2026-11-09).
+    effects.extend(editing::speak_each(trace_id, heard));
+    effects.extend(run_waiting(state, waiting, passed_at_ms));
     effects
+}
+
+/// The selection changes held for a key that `trace_id`'s key replaces,
+/// said as that key ends (Dickson, 2026-11-09).
+fn replaced_key_heard(state: &mut SrState, trace_id: TraceId) -> Vec<Effect> {
+    let Some(busy) = state.busy_mut() else {
+        return Vec::new();
+    };
+    let replaced = match &busy.current {
+        CurrentKey::Reading { key, .. } => key.trace_id,
+        passed_on => match passed_on.passed() {
+            Some(passed) => passed.key.trace_id,
+            None => return Vec::new(),
+        },
+    };
+    if replaced == trace_id {
+        return Vec::new();
+    }
+    editing::speak_each(trace_id, std::mem::take(&mut busy.heard))
 }
 
 /// The press time of a caret key the hook passed.
@@ -668,10 +688,11 @@ pub(crate) fn request_answered(
     trace_id: TraceId,
     (query, node): (QueryId, NodeId),
     reply: TextReply,
+    at_us: u64,
 ) -> Vec<Effect> {
     match state.current() {
         Some(CurrentKey::Reading { query: asked, .. }) if *asked == query => {
-            before_read_answered(state, trace_id, reply)
+            before_read_answered(state, trace_id, reply, at_us)
         }
         Some(CurrentKey::FinalReading { query: asked, .. }) if *asked == query => {
             final_read_answered(state, trace_id, reply)
@@ -792,8 +813,14 @@ pub(crate) fn repeat_evidence(
 
 /// The before read of the current key answered: the caret taken and the
 /// key passed on, or, with nothing read or the focus moved on, the key
-/// passed on saying nothing.
-fn before_read_answered(state: &mut SrState, trace_id: TraceId, reply: TextReply) -> Vec<Effect> {
+/// passed on saying nothing. The pass is `passed_at_us`, when Core passes it
+/// on: a read that ended before that is not the key's.
+fn before_read_answered(
+    state: &mut SrState,
+    trace_id: TraceId,
+    reply: TextReply,
+    passed_at_us: u64,
+) -> Vec<Effect> {
     let Some(CurrentKey::Reading { node, key, .. }) = state.current().cloned() else {
         return Vec::new();
     };
@@ -821,7 +848,6 @@ fn before_read_answered(state: &mut SrState, trace_id: TraceId, reply: TextReply
     }
     let (changes, general) = editing::changes_of_reply(&read);
     let before = editing::before_of_read(state, node, held.key.motion, &read);
-    let passed_at_us = read.facts.read_ended_at_us;
     editing::update_caret(state, node, read.caret);
     let mut effects =
         editing::selection_changed(state, trace_id, node, (&changes, general.as_general()));

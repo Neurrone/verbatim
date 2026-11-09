@@ -1364,6 +1364,7 @@ fn states_changed_for_non_focused_node_is_ignored() {
 fn fetch_completed_for_unknown_query_id_is_ignored() {
     let state = SrState::new();
     let completed = Input::Answered {
+        at_us: 0,
         trace_id: TraceId::from_raw(46),
         query_id: QueryId(9999),
         outpost: OutpostId(1),
@@ -2530,6 +2531,7 @@ fn fetched(trace: u64, query: &verbatim_model::Query, result: FetchResult) -> In
         _ => QueryOutcome::Abandoned,
     };
     Input::Answered {
+        at_us: 0,
         trace_id: TraceId::from_raw(trace),
         query_id: query.query_id,
         outpost: query.node_id.outpost(),
@@ -7149,6 +7151,7 @@ fn an_activation_says_its_action_activate_or_no_action() {
         reduce(
             &state,
             &Input::Answered {
+                at_us: 0,
                 trace_id: TraceId::from_raw(193),
                 query_id,
                 outpost: outpost_of(source),

@@ -643,6 +643,7 @@ impl Session {
 
     fn completed(&mut self, query_id: QueryId, reply: TextReply) -> Vec<Effect> {
         self.step(Input::Answered {
+            at_us: 0,
             trace_id: TraceId::from_raw(2),
             query_id,
             outpost: OUTPOST,

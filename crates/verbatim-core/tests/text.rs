@@ -370,7 +370,14 @@ fn completed_text(query_id: QueryId, reply: TextReply) -> Input {
 /// The outpost's answer `reply` to the text request `query_id`, traced
 /// `trace_id`.
 fn text_answer(trace_id: TraceId, query_id: QueryId, reply: TextReply) -> Input {
+    // Core passes a held key on as the answer reaches it, which here is as
+    // its read ended.
+    let at_us = match &reply {
+        TextReply::Caret(read) => read.facts.read_ended_at_us,
+        _ => 0,
+    };
     Input::Answered {
+        at_us,
         trace_id,
         query_id,
         outpost: OUTPOST,
@@ -4722,6 +4729,7 @@ fn navigate_to(state: &mut SrState, object: NodeSnapshot) -> Vec<Effect> {
     reduce(
         state,
         &Input::Answered {
+            at_us: 0,
             trace_id: TraceId::from_raw(11),
             query_id: query.query_id,
             outpost: query.node_id.outpost(),

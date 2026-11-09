@@ -89,7 +89,8 @@ use verbatim_model::protocol::{
     RequestId,
 };
 use verbatim_model::{
-    CallCounts, FocusGroup, KeyFetch, NodeId, NormalizedEvent, ReadPurpose, TextOp, TraceId,
+    CallCounts, FocusGroup, FocusText, KeyFetch, NodeId, NormalizedEvent, ReadPurpose, TextOp,
+    TraceId,
 };
 use verbatim_reader_rules::Window;
 use verbatim_reader_rules::in_flight::{Abandoned, Ask, Decision, InFlight, RuleWindow};
@@ -922,6 +923,11 @@ impl Reducer {
             ReadPurpose::BeforeFieldKey => NoteOn::Field,
             ReadPurpose::BeforeTerminalKey => NoteOn::Terminal,
             ReadPurpose::Final => {
+                Arc::make_mut(&mut self.facts.text).final_read_arrived(
+                    node_id.number(),
+                    *request_id,
+                    now.wall_us,
+                );
                 self.queries.insert(*request_id);
                 self.after.push_back((entry.clone(), None));
                 return true;
@@ -1106,32 +1112,43 @@ impl Reducer {
     /// call, so it is attached here, before the commit replaces the last
     /// read, and the read can be its key's evidence.
     fn attach_note_facts(&mut self, message: &mut OutpostToCore, now: Now) {
-        let OutpostToCore::Event {
-            event:
-                NormalizedEvent::CaretMoved {
-                    node_id,
+        let OutpostToCore::Event { event, .. } = message else {
+            return;
+        };
+        let (node, caret, selection_changes, facts) = match event {
+            NormalizedEvent::CaretMoved {
+                node_id,
+                caret,
+                selection_changes,
+                facts,
+                ..
+            } => (*node_id, &*caret, &*selection_changes, facts),
+            NormalizedEvent::FocusChanged { node, text, .. } => {
+                let Some(FocusText::Caret {
                     caret,
-                    selection_changes,
+                    changes,
                     facts,
                     ..
-                },
-            ..
-        } = message
-        else {
-            return;
+                }) = text.as_deref_mut()
+                else {
+                    return;
+                };
+                (node.id, &*caret, &changes.selection_changes, facts)
+            }
+            _ => return,
         };
         if facts.is_some()
             || self
                 .facts
                 .text
-                .live_note(node_id.number(), now.wall_us)
+                .live_note(node.number(), now.wall_us)
                 .is_none()
         {
             return;
         }
         *facts = Arc::make_mut(&mut self.facts.text)
             .facts_at_commit(
-                node_id.number(),
+                node.number(),
                 (caret, !selection_changes.is_empty()),
                 now.wall_us,
             )

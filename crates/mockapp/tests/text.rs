@@ -1094,6 +1094,7 @@ fn say_all_step<S: TextSource>(
                     }
                     let reply = perform(source, anchors, &request.op);
                     inputs.push(Input::Answered {
+                        at_us: 0,
                         trace_id: TraceId::mint(),
                         query_id: request.query_id,
                         outpost: request.node_id.outpost(),

@@ -1754,7 +1754,7 @@ impl ReducerThread<'_> {
         outpost: OutpostId,
         outcome: QueryOutcome,
     ) {
-        match requests::reply_input(trace_id, id, outpost, outcome) {
+        match requests::reply_input(trace_id, id, outpost, outcome, now_us()) {
             requests::Routed::Reducer(input) => self.apply(input),
             requests::Routed::Shell(outcome) => {
                 if let Some((asker, outcome)) = self.requests.finish(id, outpost, outcome) {
@@ -2805,6 +2805,7 @@ mod tests {
             RequestId::reducer(7),
             outpost,
             QueryOutcome::Abandoned,
+            0,
         ) else {
             panic!("a reply to Core's query goes to the reducer");
         };

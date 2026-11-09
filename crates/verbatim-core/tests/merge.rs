@@ -193,6 +193,7 @@ impl Other {
                     timing: EventTiming::default(),
                 };
                 let input = Input::Answered {
+                    at_us: 0,
                     trace_id,
                     query_id: QueryId(77),
                     outpost: OUTPOST,

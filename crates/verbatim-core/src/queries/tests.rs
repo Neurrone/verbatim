@@ -463,7 +463,10 @@ impl Wire {
     pub(super) fn apply(&mut self, input: &Input, effects: &[Effect]) {
         match input {
             Input::Answered {
-                query_id, outpost, ..
+                at_us: 0,
+                query_id,
+                outpost,
+                ..
             } if self
                 .open
                 .get(query_id)
@@ -499,6 +502,7 @@ pub(super) fn answer(
         Outcome::Done => QueryOutcome::Done(fitting(outpost, asked)),
     };
     Input::Answered {
+        at_us: 0,
         trace_id: TraceId::from_raw(70),
         query_id,
         outpost,
@@ -883,6 +887,7 @@ fn command(command: ReviewCommand) -> Input {
 /// The outpost's answer `outcome` to `query_id`, from `outpost`.
 fn answered(query_id: QueryId, outpost: OutpostId, outcome: QueryOutcome) -> Input {
     Input::Answered {
+        at_us: 0,
         trace_id: TraceId::from_raw(70),
         query_id,
         outpost,
