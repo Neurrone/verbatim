@@ -223,7 +223,7 @@ fn key_facts(
     on_previous_line: bool,
 ) -> ReadFacts {
     ReadFacts {
-        unit,
+        unit: Some(unit),
         change: Change::Compared {
             compared: Compared {
                 caret_moved: moved,
@@ -5384,7 +5384,7 @@ fn read_before(line: TextChunk, read_at_ms: u64) -> TextReply {
         content_changed: false,
         new_selection: None,
         facts: ReadFacts {
-            unit: line,
+            unit: Some(line),
             change: Change::NoPrevious,
             read_ended_at_us: micros,
         },

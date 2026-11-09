@@ -659,7 +659,7 @@ fn a_read_covering_a_caret_event_answers_a_watch_with_no_caret() {
         (reply.caret.line.text.as_str(), reply.caret.line.offset),
         ("one                 \r\n", 1)
     );
-    assert_eq!(reply.facts.unit.text, "n");
+    assert_eq!(reply.facts.unit.as_ref().expect("a unit").text, "n");
     assert_eq!(text(&reported(&outpost, term)), after(&["three"]));
     outpost.settled();
     drop(outpost);

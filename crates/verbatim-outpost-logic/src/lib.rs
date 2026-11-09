@@ -88,7 +88,9 @@ use verbatim_model::protocol::{
     DeliveredFact, EventTiming, FrontWindow, OutpostToCore, Query, QueryOutcome, QueryResult,
     RequestId,
 };
-use verbatim_model::{CallCounts, FocusGroup, NodeId, NoteRequest, ReadPurpose, TextOp, TraceId};
+use verbatim_model::{
+    CallCounts, FocusGroup, NodeId, NormalizedEvent, NoteRequest, ReadPurpose, TextOp, TraceId,
+};
 use verbatim_reader_rules::Window;
 use verbatim_reader_rules::in_flight::{Abandoned, Ask, Decision, InFlight, RuleWindow};
 
@@ -759,7 +761,7 @@ impl Reducer {
             Input::Commit { request, change } => {
                 if self.accepts(request) {
                     taken = true;
-                    self.commit(request, &change, &mut effects);
+                    self.commit(request, &change, now, &mut effects);
                 }
             }
             Input::Finished {
@@ -1053,11 +1055,12 @@ impl Reducer {
 
     /// Applies the commit of `request`'s program: its report recorded for
     /// Core's judgement, then its messages sent, then the rest.
-    fn commit(&mut self, request: Request, change: &Change, effects: &mut Vec<Effect>) {
+    fn commit(&mut self, request: Request, change: &Change, now: Now, effects: &mut Vec<Effect>) {
         if let Some(report) = &change.report {
             follow::record(&mut self.facts.held, report);
         }
-        if let Some(message) = change.result.clone() {
+        if let Some(mut message) = change.result.clone() {
+            self.attach_note_facts(&mut message, now);
             if let Some(current) = self.current_of(request) {
                 current.running = None;
                 if current.live_reread.is_some()
@@ -1099,6 +1102,43 @@ impl Reducer {
                 .map(Effect::LogicError),
         );
         Self::subscription_effects(applied, effects);
+    }
+
+    /// A caret event's report with no facts whose node has a live note: its
+    /// read was dispatched before the note arrived. The comparison needs no
+    /// call, so it is attached here, before the commit replaces the last
+    /// read, and the read can be its key's evidence.
+    fn attach_note_facts(&mut self, message: &mut OutpostToCore, now: Now) {
+        let OutpostToCore::Event {
+            event:
+                NormalizedEvent::CaretMoved {
+                    node_id,
+                    caret,
+                    selection_changes,
+                    facts,
+                    ..
+                },
+            ..
+        } = message
+        else {
+            return;
+        };
+        if facts.is_some()
+            || self
+                .facts
+                .text
+                .live_note(node_id.number(), now.wall_us)
+                .is_none()
+        {
+            return;
+        }
+        *facts = Arc::make_mut(&mut self.facts.text)
+            .facts_at_commit(
+                node_id.number(),
+                (caret, !selection_changes.is_empty()),
+                now.wall_us,
+            )
+            .map(Box::new);
     }
 
     /// Records a verdict of a program of `generation`'s: one from the

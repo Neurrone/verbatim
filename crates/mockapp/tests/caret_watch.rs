@@ -304,7 +304,7 @@ fn a_caret_move_raised_later_answers_the_watch() {
     let reply = evidence(key_report(&outpost));
     assert_eq!(reply.caret.line.text, "alpha beta\n");
     assert_eq!(reply.caret.line.offset, 1);
-    assert_eq!(reply.facts.unit.text, "l");
+    assert_eq!(reply.facts.unit.as_ref().expect("a unit").text, "l");
     assert_eq!(reply.selection_changes, []);
     heard_caret_event(&outpost);
     outpost.settled();
@@ -339,7 +339,7 @@ fn a_held_keys_watch_is_judged_from_the_caret_read_before_it() {
     app.send("caret-event doc");
     let reply = evidence(key_report(&outpost));
     assert_eq!(reply.caret.line.offset, 4);
-    assert_eq!(reply.facts.unit.text, "a");
+    assert_eq!(reply.facts.unit.as_ref().expect("a unit").text, "a");
     heard_caret_event(&outpost);
     outpost.settled();
     drop(outpost);

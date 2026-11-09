@@ -291,7 +291,7 @@ fn text_steps_allocate_the_same_whatever_the_ancestor_chain() {
             content_changed: false,
             new_selection: None,
             facts: Some(Box::new(verbatim_model::ReadFacts {
-                unit: answer.clone(),
+                unit: Some(answer.clone()),
                 change: verbatim_model::Change::Compared {
                     compared: verbatim_model::Compared {
                         caret_moved: true,

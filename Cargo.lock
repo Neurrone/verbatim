@@ -2171,6 +2171,7 @@ dependencies = [
  "verbatim-core",
  "verbatim-model",
  "verbatim-reader-rules",
+ "verbatim-text",
  "workspace-hack",
 ]
 

@@ -3145,7 +3145,7 @@ fn measure_caret_move<S: TextSource>(
     let _ = verbatim_uia::calls::take_failed_reads();
     let reply = answered(check(source, &mut anchors, &baseline));
     let calls = take();
-    assert_eq!(reply.facts.unit.text, "l");
+    assert_eq!(reply.facts.unit.as_ref().expect("a unit").text, "l");
     let answer = Cost {
         calls,
         hits: common::read_hits(hwnd),
@@ -4725,7 +4725,7 @@ fn measure_watch<S: TextSource>(
     let _ = take();
     let _ = verbatim_uia::calls::take_failed_reads();
     let reply = answered(check(source, &mut anchors, &baseline));
-    assert_eq!(reply.facts.unit.text, "p");
+    assert_eq!(reply.facts.unit.as_ref().expect("a unit").text, "p");
     let later = Cost {
         calls: take(),
         hits: common::read_hits(hwnd),

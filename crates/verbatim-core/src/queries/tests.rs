@@ -527,7 +527,7 @@ fn fitting(outpost: OutpostId, asked: &Asked) -> QueryResult {
             content_changed: false,
             new_selection: None,
             facts: verbatim_model::ReadFacts {
-                unit: line("hello world", 300, 5),
+                unit: Some(line("hello world", 300, 5)),
                 change: verbatim_model::Change::NoPrevious,
                 read_ended_at_us: 1,
             },

@@ -292,7 +292,7 @@ pub(crate) fn before_of_read(
         deleted_text(start_line, offset, line_break, motion, grid)
     });
     BeforeRead {
-        unit: reply.facts.unit.clone(),
+        unit: reply.facts.unit.clone().unwrap_or_else(|| line.clone()),
         line: line.clone(),
         removed,
     }
@@ -362,7 +362,7 @@ pub(crate) fn evidence_words(
             keep_reported_format(state, node, reported);
             segments
         }
-        motion => unit_of(state, node, motion, &read.caret.line, &read.facts.unit),
+        motion => unit_of(state, node, motion, &read.caret.line, unit_read(read)),
     }
 }
 
@@ -387,7 +387,30 @@ pub(crate) fn bound_words(
     {
         return Vec::new();
     }
-    unit_of(state, node, key.motion, &read.caret.line, &read.facts.unit)
+    unit_of(state, node, key.motion, &read.caret.line, unit_read(read))
+}
+
+/// The unit `read` found; the line where it fetched none.
+fn unit_read(read: &CaretReply) -> &TextChunk {
+    read.facts.unit.as_ref().unwrap_or(&read.caret.line)
+}
+
+/// Whether the words of a key with evidence read its unit: a Shift key, a
+/// key that deletes backward and a key outside the table say what the
+/// comparison shows instead.
+pub(crate) fn words_read_the_unit(key: CaretKey) -> bool {
+    !selects(key) && !key.motion.deletes_back() && key.motion != CaretMotion::Other
+}
+
+/// The words of a key whose evidence had no unit, from a later read that
+/// fetched it: its unit, as its evidence would have said.
+pub(crate) fn unit_words(
+    state: &mut SrState,
+    node: NodeId,
+    key: CaretKey,
+    read: &CaretReply,
+) -> Vec<UtteranceSegment> {
+    unit_of(state, node, key.motion, &read.caret.line, unit_read(read))
 }
 
 /// The words of a key whose focus moved first, from its before read.

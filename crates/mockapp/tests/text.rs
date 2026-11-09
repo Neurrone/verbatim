@@ -295,7 +295,7 @@ fn a_caret_key_is_answered_with_what_it_did<S: TextSource>(
     common::apply(app, hwnd, "caret doc 6");
     let reply = answered(source, anchors, CaretMotion::NextWord);
     assert_eq!(reply.caret.line.offset, 6);
-    assert_eq!(reply.facts.unit.text, second_word);
+    assert_eq!(reply.facts.unit.as_ref().expect("a unit").text, second_word);
 
     common::apply(app, hwnd, "caret doc 0");
     caret_report(source, anchors, 1, false).expect("the caret");

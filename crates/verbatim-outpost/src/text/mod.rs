@@ -1458,7 +1458,7 @@ fn reported<S: TextSource>(
                 ),
             };
             Some(ReadFacts {
-                unit: unit.unwrap_or_else(|| report.line.clone()),
+                unit: Some(unit.unwrap_or_else(|| report.line.clone())),
                 change,
                 read_ended_at_us: (fetch.ended)(),
             })
@@ -2360,7 +2360,7 @@ fn key_result<S: TextSource>(
             content_changed,
             new_selection,
             facts: ReadFacts {
-                unit: unit_chunk,
+                unit: Some(unit_chunk),
                 change: Change::Compared {
                     compared: comparison,
                     previous_selection: previous.selection.map(|selection| selection.report),

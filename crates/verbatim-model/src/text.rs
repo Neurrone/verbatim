@@ -542,9 +542,11 @@ pub enum Change {
 /// (`docs/design/caret-selection-rework.md`).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReadFacts {
-    /// The key's unit at the caret; the line where the text has no such unit
-    /// or the unit is the line.
-    pub unit: TextChunk,
+    /// The key's unit at the caret, the line where the text has no such unit
+    /// or the unit is the line; `None` for a read dispatched before its
+    /// key's note arrived, which fetched no unit.
+    #[serde(default)]
+    pub unit: Option<TextChunk>,
     /// How the read compared with the node's last read.
     pub change: Change,
     /// When the read ended, in microseconds on the clock every process of a

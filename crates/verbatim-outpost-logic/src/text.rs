@@ -17,7 +17,10 @@ use std::sync::Arc;
 
 use std::time::Duration;
 
-use verbatim_model::{CaretMotion, CaretSelection, KeyFetch, TextChunk, TextUnit};
+use verbatim_model::{
+    CaretMotion, CaretReport, CaretSelection, Change, Compared, KeyFetch, ReadFacts, TextChunk,
+    TextUnit, had_effect,
+};
 
 /// The key the store keeps a UIA position's range under.
 pub type RangeKey = u64;
@@ -456,6 +459,28 @@ pub struct KeyNote {
     pub reads: NoteReads,
 }
 
+/// The character at `line`'s caret; empty at its end.
+fn character_at(line: &TextChunk) -> &str {
+    verbatim_text::grapheme_at(&line.text, line.offset as usize)
+        .and_then(|range| line.text.get(range))
+        .unwrap_or_default()
+}
+
+/// The characters just before and at `line`'s caret.
+fn beside(line: &TextChunk) -> (&str, &str) {
+    let offset = line.offset as usize;
+    let before = line
+        .text
+        .get(..offset)
+        .and_then(|text| {
+            verbatim_text::graphemes(text)
+                .pop()
+                .and_then(|range| text.get(range))
+        })
+        .unwrap_or_default();
+    (before, character_at(line))
+}
+
 /// `duration` in microseconds.
 fn micros(duration: Duration) -> u64 {
     u64::try_from(duration.as_micros()).unwrap_or(u64::MAX)
@@ -525,6 +550,81 @@ impl TextFacts {
             .get(&node)?
             .note
             .filter(|note| note.until_us > now_us)
+    }
+
+    /// Node `node`'s last read's line and selection.
+    fn last_line(&self, node: u64) -> Option<(TextChunk, Option<CaretSelection>)> {
+        let selection = |report: CaretSelection| report;
+        match self.nodes.get(&node)?.record.as_ref()? {
+            NodeRecord::Uia(anchors) => anchors.last.as_ref().map(|last| {
+                let report = last.selection.as_ref().map(|s| selection(s.report.clone()));
+                (last.line.clone(), report)
+            }),
+            NodeRecord::Edit(anchors) => anchors.last.as_ref().map(|last| {
+                let report = last.selection.as_ref().map(|s| selection(s.report.clone()));
+                (last.line.clone(), report)
+            }),
+        }
+    }
+
+    /// What a caret event's read, dispatched before node `node`'s live note
+    /// arrived and so made with no facts, found: the comparison with the
+    /// node's last read by the text both hold, as a report's is, which
+    /// needs no call, and the key's character cut from the line; any other
+    /// unit it did not fetch. `None` with no note to judge by, or one that
+    /// has seen its effect. `selection_moved` is whether the report's
+    /// selection changed. A read that shows the effect narrows the note.
+    pub fn facts_at_commit(
+        &mut self,
+        node: u64,
+        (caret, selection_moved): (&CaretReport, bool),
+        now_us: u64,
+    ) -> Option<ReadFacts> {
+        let note = self.live_note(node, now_us)?;
+        if note.reads == NoteReads::CaretOnly {
+            return None;
+        }
+        let line = &caret.line;
+        let unit = (note.fetch.unit == TextUnit::Character).then(|| TextChunk {
+            unit: TextUnit::Character,
+            text: character_at(line).to_owned(),
+            offset: 0,
+            languages: Vec::new(),
+            formats: Vec::new(),
+            ..line.clone()
+        });
+        let change = self
+            .last_line(node)
+            .map_or(Change::NoPrevious, |(was, selection)| {
+                let line_changed = line.text != was.text;
+                let compared = Compared {
+                    caret_moved: line_changed || line.offset != was.offset,
+                    selection_moved,
+                    beside_changed: beside(line) != beside(&was),
+                    unit_changed: note.fetch.unit == TextUnit::Character
+                        && character_at(line) != character_at(&was),
+                    line_changed,
+                };
+                Change::Compared {
+                    compared,
+                    previous_selection: selection,
+                    previous_line: was,
+                    on_previous_line: !line_changed,
+                }
+            });
+        if matches!(change, Change::Compared { compared, .. } if had_effect(compared, note.fetch.motion))
+            && let Some(narrowed) = self
+                .nodes
+                .get_mut(&node)
+                .and_then(|entry| entry.note.as_mut())
+        {
+            narrowed.reads = NoteReads::CaretOnly;
+        }
+        Some(ReadFacts {
+            unit,
+            change,
+            read_ended_at_us: now_us,
+        })
     }
 
     /// The live notes, by node.

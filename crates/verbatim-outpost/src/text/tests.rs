@@ -316,7 +316,7 @@ impl Evidence {
             selection_changes,
             content_changed,
             new_selection,
-            unit,
+            unit: unit.expect("a unit"),
             before_line: previous_line,
             on_baseline_line: on_previous_line,
         }

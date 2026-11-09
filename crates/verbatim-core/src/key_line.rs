@@ -102,6 +102,9 @@ struct Watched {
     before: Before,
     /// When a later key was pressed, once one has been.
     later_key_at_us: Option<u64>,
+    /// A report with no unit was its evidence: its words wait for the final
+    /// read's unit.
+    awaiting_unit: bool,
 }
 
 /// What the key's before read found.
@@ -414,6 +417,7 @@ fn watch_from_last_read(
             passed_at_us,
             before: Before::NotRead,
             later_key_at_us: None,
+            awaiting_unit: false,
         })),
     );
     effects
@@ -757,6 +761,7 @@ fn before_read_answered(state: &mut SrState, trace_id: TraceId, reply: TextReply
                 removed: before.removed,
             },
             later_key_at_us: None,
+            awaiting_unit: false,
         })),
     );
     effects.push(for_key(held.trace_id, Effect::PassHeldKey(held.trace_id)));
@@ -872,6 +877,39 @@ fn final_read_answered(state: &mut SrState, trace_id: TraceId, reply: TextReply)
     result(state, trace_id, &watched, &read, evidence)
 }
 
+/// `read` as the evidence of a key whose words read a unit it did not
+/// fetch, a read dispatched before the key's note arrived: its caret and
+/// its changes are taken, and the key waits for the final read at its
+/// bound, which fetches the unit, adding no call.
+fn awaiting_its_unit(
+    state: &mut SrState,
+    trace_id: TraceId,
+    watched: &Watched,
+    read: &CaretReply,
+    (speaks, evidence): (bool, Option<Evidence<'_>>),
+) -> Option<Vec<Effect>> {
+    if evidence.is_none()
+        || !speaks
+        || read.facts.unit.is_some()
+        || !editing::words_read_the_unit(watched.key.key)
+    {
+        return None;
+    }
+    let (changes, general) = editing::changes_of_reply(read);
+    let segments = editing::selection_segments(&changes, general.as_general());
+    editing::update_caret(state, watched.node, read.caret.clone());
+    let _ = trace_id;
+    let busy = state.busy_mut()?;
+    busy.heard.extend(segments);
+    match &mut busy.current {
+        CurrentKey::Watched(watched) | CurrentKey::FinalReading { watched, .. } => {
+            watched.awaiting_unit = true;
+        }
+        CurrentKey::Reading { .. } => {}
+    }
+    Some(Vec::new())
+}
+
 /// A read that is the current key's result: takes the caret, says the key's
 /// words, then what the line heard, then this read's changes, and ends the
 /// key; `evidence` when it is the key's evidence, else the bound answer.
@@ -890,7 +928,13 @@ fn result(
         Some(later) => evidence.is_some() && read_at_us < later,
         None => true,
     };
+    if let Some(effects) = awaiting_its_unit(state, trace_id, watched, read, (speaks, evidence)) {
+        return effects;
+    }
     let words = match (watched.kind, speaks, evidence) {
+        (NodeKind::TextField, true, None) if watched.awaiting_unit => {
+            editing::unit_words(state, watched.node, watched.key.key, read)
+        }
         (NodeKind::TextField, true, Some(evidence)) => {
             editing::evidence_words(state, watched.node, watched.key.key, (read, evidence))
         }

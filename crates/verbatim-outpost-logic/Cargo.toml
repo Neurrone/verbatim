@@ -9,6 +9,7 @@ license.workspace = true
 [dependencies]
 verbatim-core.workspace = true
 verbatim-model.workspace = true
+verbatim-text.workspace = true
 verbatim-reader-rules.workspace = true
 workspace-hack = { version = "0.1", path = "../workspace-hack" }
 

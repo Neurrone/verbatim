@@ -1632,7 +1632,9 @@ impl Named {
     }
 
     fn facts(&mut self, facts: &crate::ReadFacts) {
-        self.chunk(&facts.unit);
+        if let Some(unit) = &facts.unit {
+            self.chunk(unit);
+        }
         if let crate::Change::Compared {
             previous_line,
             previous_selection,
