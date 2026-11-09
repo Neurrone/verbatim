@@ -179,6 +179,7 @@ These are `local_only` in the registry. The `e2e` job leaves them out of its gro
 
 ## `table_cells`'s first focus
 
-- `table_cells` locally (one failure in 13 runs, 2026-11-09)
-  - How: the window was spoken, then nothing; Core received a UI Automation focus on the window and none on the first cell.
-  - Cause: not established. `mockapp` raises its first focus once, after activation (`crates/mockapp/src/window.rs`, `activated`), and `open_mockapp` waits only for the title; the one failure left no artifacts.
+- `table_cells` locally (one failure in 10 runs, 2026-11-09, after the fix below; 2 of 16 before it)
+  - How: the window is spoken, then nothing; Core received a UI Automation focus on the window and none on the first cell.
+  - Cause: a focus event raised before a UI Automation client has reached the window's provider goes nowhere, shown by the listener's log of `msaa_flood_then_focus`, where the window's was the only focus event received. mockapp now raises its first focus once a client has asked for its root provider (`crates/mockapp/src/window.rs`, `client_contacted`), which took that scenario and `foreground_progress_bar` to 10 of 10. The remaining failure is not explained.
+  - Fix: none yet for the remainder.
