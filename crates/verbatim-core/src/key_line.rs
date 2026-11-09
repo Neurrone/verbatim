@@ -965,7 +965,7 @@ fn final_read_answered(state: &mut SrState, trace_id: TraceId, reply: TextReply)
     field_result(state, trace_id, &field, &read, evidence)
 }
 
-/// `read` as the evidence of a key whose words read a unit it did not
+/// `read` as the evidence of a word key whose words read a unit it did not
 /// fetch, a read dispatched before the key's note arrived: its caret and
 /// its changes are taken, and the key waits for the final read at its
 /// bound, which fetches the unit, adding no call.

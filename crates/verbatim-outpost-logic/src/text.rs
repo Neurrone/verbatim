@@ -628,8 +628,8 @@ impl TextFacts {
     /// What a caret event's read, dispatched before node `node`'s live note
     /// arrived and so made with no facts, found: the comparison with the
     /// node's last read by the text both hold, as a report's is, which
-    /// needs no call, and the key's character cut from the line; any other
-    /// unit it did not fetch. `None` with no note to judge by, or one that
+    /// needs no call, and the key's character cut from the line or its line;
+    /// a word it did not fetch. `None` with no note to judge by, or one that
     /// has seen its effect. `selection_moved` is whether the report's
     /// selection changed. A read that shows the effect narrows the note.
     pub fn facts_at_commit(
@@ -643,14 +643,18 @@ impl TextFacts {
             return None;
         }
         let line = &caret.line;
-        let unit = (note.fetch.unit == TextUnit::Character).then(|| TextChunk {
-            unit: TextUnit::Character,
-            text: character_at(line).to_owned(),
-            offset: 0,
-            languages: Vec::new(),
-            formats: Vec::new(),
-            ..line.clone()
-        });
+        let unit = match note.fetch.unit {
+            TextUnit::Character => Some(TextChunk {
+                unit: TextUnit::Character,
+                text: character_at(line).to_owned(),
+                offset: 0,
+                languages: Vec::new(),
+                formats: Vec::new(),
+                ..line.clone()
+            }),
+            TextUnit::Line => Some(line.clone()),
+            _ => None,
+        };
         let change = self
             .last_line(node)
             .map_or(Change::NoPrevious, |(was, selection)| {
@@ -1095,6 +1099,16 @@ mod tests {
                 .expect("the facts")
                 .unit,
             None
+        );
+        let mut line = fetch(CaretMotion::NextLine);
+        line.unit = TextUnit::Line;
+        facts.set_note(1, line, 8, NoteOn::Field);
+        assert_eq!(
+            facts
+                .facts_at_commit(1, (&report(2), false), 9)
+                .expect("the facts")
+                .unit,
+            Some(report(2).line)
         );
     }
 
