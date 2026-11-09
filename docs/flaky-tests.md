@@ -95,6 +95,11 @@ Recorded by Claude, 2026-11-04.
   - Cause: not found. Verbatim's outpost was the one waiting on Explorer; no Verbatim call was found that Explorer waited on.
   - Fix: none yet.
 
+- `explorer_folder_window` opening its folder window (locally, 2026-11-09, at f51b89bb 1 of 3 runs and at 9e4fc9ea 0 of 3 run alone and 6 of 6 run straight after a batch of other scenarios; GitHub run 42602389212)
+  - How: the new window's first focus is sometimes on its `ShellTabWindowClass` child, named without " - File Explorer", rather than on `CabinetWClass`, or the speech that follows differs; the scenario then fails on its opening utterances.
+  - Cause: not found. The order of Explorer's first focus events changes with what ran before; no Verbatim code on the path differs between those runs.
+  - Fix: none yet.
+
 ## Terminal scenarios, single failures on GitHub's runner
 
 - `conhost_long_lines` (run 41333390347)
