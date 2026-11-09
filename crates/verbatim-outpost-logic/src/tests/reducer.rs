@@ -13,10 +13,9 @@
 //! settles and idle rounds with the replies and answers each got; the
 //! hook's copies held, of which a release gives back some in their order
 //! of arrival; owed work and stopping; and the three clocks, each
-//! advancing on its own. Which deadline each kind of program gets, which
-//! held copies a release keeps and the caret watch's transitions are not
-//! modelled: they are the examples of `src/tests.rs`, `hold.rs` and the
-//! watch's enumeration (`tests/generated.rs`).
+//! advancing on its own. Which deadline each kind of program gets and which
+//! held copies a release keeps are not modelled: they are the examples of
+//! `src/tests.rs` and `hold.rs`.
 //!
 //! Hangs have a reference model of their own ([`Run::expect_hangs`]), which
 //! reads only [`World`], the windows' true condition, and the recorded
@@ -155,14 +154,6 @@ enum Commit {
     /// A focus in a top-level window (0, 1) or none (2), a whole-window one
     /// or not, adopted and followed, owing a terminal's first read or not.
     Report { top: u8, whole: bool, owes: bool },
-    /// A caret key's program opens its watch, polling or not.
-    OpenWatch { console: bool },
-    /// The watch on node 1 is taken.
-    Take,
-    /// A take of node 2, which no watch is on.
-    TakeOther,
-    /// The held watch's check found its evidence or nothing.
-    Checked { answered: bool },
     /// A held terminal's caret noted.
     NotedCaret,
     /// The owed work done.
@@ -176,10 +167,9 @@ enum Commit {
         hung: bool,
         refuse: bool,
     },
-    /// What the program's kind commits as its result: a caret key's
-    /// program opens its watch, polling or not, a query's program
-    /// replies, the owed work is done, a program holding the watch checks
-    /// it, and an event's program reports a focus.
+    /// What the program's kind commits as its result: a query's program
+    /// replies, the owed work is done, and an event's program reports a
+    /// focus, owing a terminal's first read or not.
     Own(bool),
 }
 
@@ -264,7 +254,7 @@ struct Asks {
     /// The window a front check finds: another application's (0), or one
     /// of the hang cases' windows (1 to 3).
     front: u8,
-    /// Whether a release lets go of node 1, the watch's.
+    /// Whether a release lets go of node 1.
     release_node: bool,
     /// Whether a release lets go of objects to drop.
     objects: bool,
@@ -304,10 +294,6 @@ fn commit() -> impl Strategy<Value = Commit> {
         3 => Just(Commit::Reply),
         4 => (0..3u8, any::<bool>(), any::<bool>())
             .prop_map(|(top, whole, owes)| Commit::Report { top, whole, owes }),
-        3 => any::<bool>().prop_map(|console| Commit::OpenWatch { console }),
-        5 => Just(Commit::Take),
-        3 => Just(Commit::TakeOther),
-        2 => any::<bool>().prop_map(|answered| Commit::Checked { answered }),
         1 => Just(Commit::NotedCaret),
         2 => Just(Commit::OwedDone),
         3 => (0..3u8, any::<bool>(), any::<bool>())
@@ -381,8 +367,6 @@ fn asks() -> impl Strategy<Value = Asks> {
 enum Kind {
     /// An entry's program: an event, a focus, or a query.
     Entry,
-    /// A caret key's program, which may open the watch.
-    Key,
     /// The edit control's caret event, which may be cut.
     EditCaret,
     /// A noted caret's read.
@@ -391,8 +375,6 @@ enum Kind {
     Owed,
     /// A release's drop.
     Drop,
-    /// A read of the console poll.
-    PollRead,
     /// The finish of a cut read.
     Finish,
 }
@@ -424,11 +406,6 @@ struct Flight {
     window: bool,
     /// Its copy of the facts, with its own commits applied.
     copy: Facts,
-    /// Whether its copy of the watch is compared no more: after it has
-    /// committed a check of the watch, its copy may show a poll the reducer
-    /// ended by its clock, which the copy does not read, and after a key's
-    /// request arrived, which changes the watch as it arrives.
-    uncompared: bool,
 }
 
 /// A pending entry: what it is and where it came from.
@@ -509,12 +486,6 @@ fn kind_of(program: &Program) -> Kind {
     match &program.work {
         Work::Entry { entry, .. } => match &entry.item {
             Item::NotedCaret { .. } => Kind::Noted,
-            Item::Query {
-                query: Query::Text {
-                    op: TextOp::Key(_), ..
-                },
-                ..
-            } => Kind::Key,
             Item::Msaa {
                 kind: WinKind::Caret,
                 ..
@@ -523,40 +494,8 @@ fn kind_of(program: &Program) -> Kind {
         },
         Work::Owed(_) => Kind::Owed,
         Work::Drop | Work::FindBar(_) => Kind::Drop,
-        Work::WatchRead => Kind::PollRead,
+        Work::NoteRead(_) => unreachable!("this world sets no console key's note"),
         Work::Finish { .. } => Kind::Finish,
-    }
-}
-
-/// The change that takes the watch of `tag` on node 1.
-fn takes_tag(tag: KeyTag) -> Change {
-    Change {
-        watch: Some(WatchChange::Take(NodeId::new(1), tag)),
-        ..Change::default()
-    }
-}
-
-/// A program's copy of the watch apart from its times.
-fn untimed(watch: &Watch) -> Watch {
-    let stage = |stage: Stage| match stage {
-        Stage::Terminal { .. } => Stage::Terminal { ends: 0 },
-        Stage::Poll { .. } => Stage::Poll { next: 0, until: 0 },
-        other => other,
-    };
-    match watch.clone() {
-        other @ (Watch::None | Watch::Reading { .. }) => other,
-        Watch::Open { key, stage: at } => Watch::Open {
-            key,
-            stage: stage(at),
-        },
-        Watch::Checking { key, after } => Watch::Checking {
-            key,
-            after: match after {
-                AfterCheck::Resume(at) => AfterCheck::Resume(stage(at)),
-                AfterCheck::PollRead { .. } => AfterCheck::PollRead { until: 0 },
-                AfterCheck::Answer => AfterCheck::Answer,
-            },
-        },
     }
 }
 
@@ -582,7 +521,7 @@ enum Call {
 type Reached = BTreeMap<&'static str, u64>;
 
 /// The lifecycle states the gate's cases must each reach.
-const LISTED: [&str; 43] = [
+const LISTED: [&str; 40] = [
     "an entry dispatched",
     "a focus group continued",
     "a focus group continued after an abandonment",
@@ -614,9 +553,6 @@ const LISTED: [&str; 43] = [
     "owed work abandoned",
     "a release answered",
     "a drop dispatched",
-    "the watch opened",
-    "the watch taken",
-    "the watch polled",
     "a query cancelled",
     "a late shell query answered",
     "an idle round answered",
@@ -996,12 +932,9 @@ impl Run {
                 }
             }
             What::CaretKey => {
-                if let Some(flight) = self.model.flight.as_mut() {
-                    flight.uncompared = true;
-                }
                 let number = self.fresh();
                 query = Some(number);
-                caret_key(number)
+                read_caret(number, ReadPurpose::BeforeKey)
             }
             What::Step => {
                 let number = self.fresh();
@@ -1246,12 +1179,8 @@ impl Run {
     fn change(&mut self, commit: Commit, flight: &Flight) -> Option<Change> {
         let commit = match commit {
             Commit::Own(flag) => match flight.kind {
-                Kind::Key if flight.query.is_some() => Commit::OpenWatch { console: flag },
                 _ if flight.query.is_some() => Commit::Reply,
                 Kind::Owed => Commit::OwedDone,
-                _ if matches!(self.reducer.facts.text.watch, Watch::Checking { .. }) => {
-                    Commit::Checked { answered: flag }
-                }
                 _ => Commit::Report {
                     top: 0,
                     whole: false,
@@ -1284,18 +1213,6 @@ impl Run {
                 let top = TOPS.get(usize::from(top)).copied();
                 report(self.fresh(), top, self.observed, whole, owes)
             }
-            Commit::OpenWatch { console } if flight.kind == Kind::Key => {
-                opens(flight.query?, console)
-            }
-            Commit::Take if matches!(flight.kind, Kind::Entry | Kind::EditCaret) => {
-                takes_tag(flight.copy.text.watch.kept()?.tag)
-            }
-            Commit::TakeOther if matches!(flight.kind, Kind::Entry | Kind::EditCaret) => Change {
-                watch: Some(WatchChange::Take(NodeId::new(2), KeyTag(QueryId(0)))),
-                ..Change::default()
-            },
-            Commit::Checked { answered: true } => answered(),
-            Commit::Checked { answered: false } => watching(1),
             Commit::NotedCaret => Change {
                 noted_caret: Some((
                     NodeId::new(3),
@@ -1339,11 +1256,7 @@ impl Run {
                     .map(|followed| followed.node),
                 ..Change::default()
             },
-            Commit::OpenWatch { .. }
-            | Commit::Take
-            | Commit::TakeOther
-            | Commit::OwedDone
-            | Commit::Own(_) => {
+            Commit::OwedDone | Commit::Own(_) => {
                 return None;
             }
         })
@@ -1361,42 +1274,15 @@ impl Run {
             "a commit of the program in flight is accepted: {:?}",
             self.trail
         );
-        // The program's copy of the watch agrees with the reducer's.
-        if !flight.uncompared {
-            assert_eq!(
-                untimed(&flight.copy.text.watch),
-                untimed(&self.reducer.facts.text.watch),
-                "the program's copy and the reducer disagree: {:?}",
-                self.trail
-            );
-        }
         self.commit_model(&change);
         if let Some(flight) = self.model.flight.as_mut() {
             let _ = apply_local(&mut flight.copy, flight.request.generation, &change);
-            flight.uncompared |= matches!(change.watch, Some(WatchChange::Checked(_)));
         }
         let result = change.result.is_some();
-        let watch_change = change.watch.clone();
         let effects = self.input(Input::Commit {
             request: flight.request,
             change: Box::new(change),
         });
-        // A watch opened for the program's query answers it from then on.
-        let watch = &self.reducer.facts.text.watch;
-        match watch_change {
-            Some(WatchChange::Open { .. })
-                if watch.open().map(|open| open.tag.0.0) == flight.query =>
-            {
-                if let Some(flight) = self.model.flight.as_mut() {
-                    flight.query = None;
-                }
-                self.reach("the watch opened");
-            }
-            Some(WatchChange::Take(..)) if matches!(watch, Watch::Checking { .. }) => {
-                self.reach("the watch taken");
-            }
-            _ => {}
-        }
         // Its messages first, but for the marks.
         if result {
             let first = effects
@@ -1492,11 +1378,6 @@ impl Run {
         };
         let cut = (cut && flight.kind == Kind::EditCaret).then(|| self::cut(report_cut()));
         let cutting = cut.is_some() && !panicked;
-        let watch = &self.reducer.facts.text.watch;
-        let (held, watch) = (
-            matches!(watch, Watch::Checking { .. }),
-            watch.open().map(|open| open.tag.0.0),
-        );
         if !cutting {
             self.model.flight = None;
             self.model.dead.push(flight.request);
@@ -1521,8 +1402,7 @@ impl Run {
             );
             self.reach("a cut read finished");
         } else {
-            // The watch's answer and the query's reply, as failed, come
-            // before the next program.
+            // The query's reply, as failed, comes before the next program.
             let dispatched = effects
                 .iter()
                 .position(|effect| matches!(effect, Effect::Dispatch(_)))
@@ -1532,13 +1412,6 @@ impl Run {
                 assert!(
                     before.contains(&(query, "failed")),
                     "query {query} answered as failed at its program's end: {:?}",
-                    self.trail
-                );
-            }
-            if let (true, Some(watch)) = (held, watch) {
-                assert!(
-                    before.contains(&(watch, "watch ended")),
-                    "the held watch ends with its program: {:?}",
                     self.trail
                 );
             }
@@ -1587,11 +1460,6 @@ impl Run {
         let now = self.now();
         let marks = self.reducer.facts.marks();
         let flight_before = self.model.flight.clone();
-        // The query of the watch a program holds.
-        let watch_before = match &self.reducer.facts.text.watch {
-            watch @ Watch::Checking { .. } => watch.open().map(|open| open.tag.0.0),
-            _ => None,
-        };
         self.expect_hangs(input.as_ref());
         self.moving_on = matches!(input, Some(Input::Judged { moved_on: true, .. }));
         let effects = match input {
@@ -1613,7 +1481,7 @@ impl Run {
             self.judge_told();
         }
         self.log.push(hash(&format!("{effects:?}")));
-        self.check_call(kind, &effects, &marks, flight_before.as_ref(), watch_before);
+        self.check_call(kind, &effects, &marks, flight_before.as_ref());
         // The shell carries out every effect of the call before any answer
         // comes back.
         for effect in &effects {
@@ -1777,19 +1645,9 @@ impl Run {
         effects: &[Effect],
         marks: &Marks,
         flight: Option<&Flight>,
-        watch_before: Option<u64>,
     ) {
         let trail = &self.trail;
         let reducer = &self.reducer;
-        // A poll read holds the watch it reads.
-        if effects.iter().any(|effect| {
-            matches!(effect, Effect::Dispatch(program) if matches!(program.work, Work::WatchRead))
-        }) {
-            assert!(
-                matches!(reducer.facts.text.watch, Watch::Checking { .. }),
-                "a poll read with no watch to read: {trail:?}"
-            );
-        }
         // The marks, when given, first and only when they changed.
         let given: Vec<usize> = positions(effects, |effect| matches!(effect, Effect::Marks(_)));
         let changed = reducer.facts.marks() != *marks;
@@ -1831,9 +1689,8 @@ impl Run {
             );
         }
         // The idle answer only with no deferred work: the program in flight
-        // and the watch as they stand after the call, unless a program was
-        // dispatched after the answer, for an entry that came after its
-        // round.
+        // as it stands after the call, unless a program was dispatched after
+        // the answer, for an entry that came after its round.
         if let Some(&idle) = positions(effects, |effect| {
             matches!(effect, Effect::Send(message) if matches!(**message, OutpostToCore::IdleAnswer { .. }))
         })
@@ -1845,12 +1702,11 @@ impl Run {
             );
             if dispatches.iter().all(|&dispatch| dispatch < idle) {
                 assert!(
-                    reducer.facts.text.watch.is_none()
-                        && !reducer
-                            .flight
-                            .running()
-                            .is_some_and(|(_, current)| current.deferred),
-                    "an idle answer with the watch open or a deferred program: {trail:?}"
+                    !reducer
+                        .flight
+                        .running()
+                        .is_some_and(|(_, current)| current.deferred),
+                    "an idle answer with a deferred program: {trail:?}"
                 );
             }
         }
@@ -1891,8 +1747,8 @@ impl Run {
                 }
             }
         }
-        // An abandonment answers the watch its program held and the query
-        // it answered before anything is dispatched.
+        // An abandonment answers the query its program answered before
+        // anything is dispatched.
         if let Some(abandoned) = effects
             .iter()
             .position(|effect| matches!(effect, Effect::Abandon { .. }))
@@ -1903,18 +1759,6 @@ impl Run {
                 assert!(
                     replied.contains(&(query, "abandoned")),
                     "an abandonment answers its program's query: {trail:?}"
-                );
-            }
-            // Unless the publication the abandonment waited for ended it
-            // first, in the same call.
-            if let Some(watch) = watch_before
-                && !replies(&effects[..abandoned])
-                    .iter()
-                    .any(|(replied, _)| *replied == watch)
-            {
-                assert!(
-                    replied.contains(&(watch, "watch ended")),
-                    "an abandonment answers the watch its program held: {trail:?}"
                 );
             }
             assert!(
@@ -1934,24 +1778,6 @@ impl Run {
                 );
             }
         }
-        // No time for the watch while a program, a release or the close is
-        // under way.
-        if !reducer.facts.text.watch.is_none()
-            && (reducer.busy() || reducer.releasing || reducer.stopping)
-        {
-            let mut without = reducer.clone();
-            std::sync::Arc::make_mut(&mut without.facts.text).watch = Watch::None;
-            assert_eq!(
-                reducer.next_timer(self.now()),
-                without.next_timer(self.now()),
-                "the watch timed while busy, releasing or stopping: {trail:?}"
-            );
-        }
-        // The watch is held only by the program in flight.
-        assert!(
-            !matches!(reducer.facts.text.watch, Watch::Checking { .. }) || reducer.busy(),
-            "the watch held with no program in flight: {trail:?}"
-        );
     }
 
     /// Carries out `effect` in the model, checking it against the model.
@@ -2169,7 +1995,7 @@ impl Run {
         let window = !matches!(kind, Kind::Drop);
         let mut group = None;
         match kind {
-            Kind::Entry | Kind::Key | Kind::EditCaret => {
+            Kind::Entry | Kind::EditCaret => {
                 let Work::Entry {
                     entry,
                     group: group_place,
@@ -2227,7 +2053,6 @@ impl Run {
                 self.model.to_drop = false;
                 self.reach("a drop dispatched");
             }
-            Kind::PollRead => self.reach("the watch polled"),
             Kind::Finish => unreachable!("handled above"),
         }
         let deadline = self
@@ -2251,7 +2076,6 @@ impl Run {
             deadline,
             window,
             copy: program.facts.clone(),
-            uncompared: false,
         });
     }
 
@@ -2443,19 +2267,10 @@ impl Run {
         for number in &self.model.arrived {
             let replied = self.model.replies.get(number).copied().unwrap_or(0);
             let left = self.reducer.queries().contains(&RequestId::shell(*number));
-            // Only a query never taken from the intake, or the watch's, is
-            // left to the shell's token at the close.
+            // Only a query never taken from the intake is left to the
+            // shell's token at the close.
             assert!(
-                !left
-                    || !self.model.taken.contains(number)
-                    || self
-                        .reducer
-                        .facts
-                        .text
-                        .watch
-                        .open()
-                        .map(|open| open.tag.0.0)
-                        == Some(*number),
+                !left || !self.model.taken.contains(number),
                 "query {number} taken and left unanswered: {:?}",
                 self.trail
             );
@@ -2539,7 +2354,7 @@ fn fixed_report(case: &[(Action, Asks)], again: &str) -> String {
 
 /// The gate's seed and case count.
 const SEED: u64 = 20_261_102;
-const CASES: u32 = 1_500;
+const CASES: u32 = 3_000;
 
 /// Generated cases of entries of every kind from every source, commits,
 /// hangs seen by a check, in front or of a request no longer live, readable
@@ -2576,46 +2391,18 @@ const PLAIN: Asks = Asks {
     named: 0,
 };
 
-/// An entry of `what` from the listener's facts or Core, alone in its
-/// drain.
-const fn arrives(what: What) -> (Action, Asks) {
-    (
-        Action::Entry {
-            what,
-            from: From::Other,
-            more: false,
-        },
-        PLAIN,
-    )
-}
-
 /// The cases the generated tests found, each the smallest a failure
 /// shrank to, kept as lists of actions: a probe that left the verdicts as
 /// they were sent as a change
-/// (`books/dev/src/reference/crates/verbatim-outpost-logic.md`); and from
-/// the mutation baseline, a take of a node no watch is on while one waits.
+/// (`books/dev/src/reference/crates/verbatim-outpost-logic.md`).
 fn fixed() -> Vec<Vec<(Action, Asks)>> {
     let uia = |dead| Action::Verdict { dead, change: 0 };
-    let finished = Action::Finished {
-        reported: false,
-        panicked: false,
-        cut: false,
-    };
-    vec![
-        vec![
-            arrives(What::CaretKey),
-            (Action::Commit(Commit::Own(false)), PLAIN),
-            (finished, PLAIN),
-            arrives(What::NameChange(0)),
-            (Action::Commit(Commit::TakeOther), PLAIN),
-        ],
-        vec![
-            (uia(false), PLAIN),
-            (Action::Close, PLAIN),
-            (uia(false), PLAIN),
-            (uia(false), PLAIN),
-        ],
-    ]
+    vec![vec![
+        (uia(false), PLAIN),
+        (Action::Close, PLAIN),
+        (uia(false), PLAIN),
+        (uia(false), PLAIN),
+    ]]
 }
 
 /// Every fixed case keeps the reducer's rules, and gives the same effects
@@ -2670,6 +2457,23 @@ fn focus_read(marker: u64) -> DeliveredFact {
             cached_from: None,
         }),
         focus: true,
+    }
+}
+
+/// The window facts of a window of top-level window `top_level`.
+fn facts_in(top_level: isize) -> verbatim_model::WindowFacts {
+    let handle = verbatim_model::WindowHandle(u64::from_ne_bytes(top_level.to_ne_bytes()));
+    verbatim_model::WindowFacts {
+        top_level: handle,
+        root_owner: handle,
+        topmost: false,
+        under_active_window: None,
+        in_foreground: true,
+        foreground_window: handle,
+        class: String::new(),
+        application: String::new(),
+        alt_held: false,
+        foreground_is_shell: false,
     }
 }
 

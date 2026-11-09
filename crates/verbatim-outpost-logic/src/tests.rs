@@ -19,10 +19,8 @@ use super::*;
 
 mod caret_lease;
 mod explore;
-#[cfg(any())]
 mod followed;
 mod intake_order;
-#[cfg(any())]
 mod reducer;
 
 /// The answers the shell gives the reducer's asks, as a test records them:

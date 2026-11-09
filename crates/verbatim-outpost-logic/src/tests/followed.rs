@@ -9,13 +9,12 @@
 //! "The outpost's followed focus": its table, rules and limits), never from
 //! the code's fields: a list of the focuses the outpost adopted in the order
 //! it read them, the elements of every report not yet released, the work
-//! owed, the caret key's watch and the held console. It checks what the
-//! record exists to decide: a later event of the newest focus is planned and
+//! owed and the held console. It checks what the record exists to decide: a later event of the newest focus is planned and
 //! read as that focus's and an event of an older focus is not; every
 //! unreleased element is followed exactly once with its group; each token is
 //! let go exactly once; owed work is done or dropped once; a held console's
 //! updates are dropped only while the terminal is held and its first read is
-//! not under way; a caret key's watch ends when the focus moves elsewhere.
+//! not under way.
 //!
 //! The world makes the real shapes: focus events and foreground changes in
 //! the orders they arrive, a UIA focus's marker and read, a program whose
@@ -27,10 +26,7 @@
 //! outside this crate, so the commit sites and the worker's choice between
 //! adopting and only following again cannot be reached here: the scripted
 //! programs build their commits at one seam, the module [`seam`], and a
-//! hand-written test at the worker's level pins that choice. The caret key's
-//! watch is opened waiting only, and no deadline jump reaches its bound: the
-//! watch's own poll and bound are the examples of `watch.rs` and of
-//! `tests/generated.rs`.
+//! hand-written test at the worker's level pins that choice.
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -39,9 +35,6 @@ use proptest::strategy::Strategy;
 use proptest::test_runner::{Config, TestError, TestRunner};
 use verbatim_core::focus_rules::HeldNode;
 use verbatim_model::protocol::{AncestorsEnd, UiaAncestorFact, UiaFocusRead, UiaSnapshotFact};
-use verbatim_model::{
-    CaretMotion, KeyAnswer, KeyRequest, KeyStart, KeyTag, QueryId, TextOp, WatchKind,
-};
 
 use super::*;
 use crate::intake::OBJID_CLIENT;
@@ -129,12 +122,6 @@ mod seam {
         DropSystemCaret,
         /// The redirect mark is cleared.
         ClearRedirect,
-        /// A caret key's first check found nothing: its watch opens, waiting,
-        /// on `node`.
-        Open {
-            request: (RequestId, TraceId),
-            node: NodeId,
-        },
         /// A query answered, with nothing else committed.
         Answer((RequestId, TraceId)),
     }
@@ -368,13 +355,6 @@ mod seam {
                 mark: Some(MarkChange::ClearRedirect),
                 ..Change::default()
             },
-            Commit::Open { request, node } => Change {
-                watch: Some(WatchChange::Open {
-                    key: key_watch(request, *node),
-                    console: false,
-                }),
-                ..Change::default()
-            },
             Commit::Answer(query) => Change {
                 result: Some(answered(*query)),
                 ..Change::default()
@@ -427,12 +407,6 @@ struct Model {
     /// The dialog memo the last report left.
     dialog: DialogMemo,
     owed: Option<OwedModel>,
-    /// The caret key's watch: its node and its query.
-    watch: Option<(NodeId, RequestId)>,
-    /// The newest key's request: only its program opens a watch.
-    reading: Option<RequestId>,
-    /// The queries whose watch ended in this step.
-    ended_now: Vec<RequestId>,
     /// The console window whose updates are dropped on arrival.
     absorbed: Option<isize>,
     /// Whether the system caret's events are dropped on arrival.
@@ -528,34 +502,6 @@ impl Model {
         self.newest().is_some_and(|focus| focus.object == *object)
     }
 
-    /// Ends the watch when its node is not `node` (or `node` is `None`).
-    fn end_watch_elsewhere(&mut self, node: Option<NodeId>) {
-        if let Some((watch_node, request)) = self.watch
-            && Some(watch_node) != node
-        {
-            self.watch = None;
-            self.ended_now.push(request);
-        }
-    }
-
-    /// A program's commit opens the watch of `request`, the newest key's;
-    /// an older key's, which a newer request replaced, ends.
-    fn open_watch(&mut self, node: NodeId, request: RequestId) {
-        if self.reading == Some(request) {
-            self.reading = None;
-            self.watch = Some((node, request));
-        } else {
-            self.ended_now.push(request);
-        }
-    }
-
-    /// Ends the watch.
-    fn end_watch(&mut self) {
-        if let Some((_, request)) = self.watch.take() {
-            self.ended_now.push(request);
-        }
-    }
-
     /// Applies an accepted commit.
     fn commit(&mut self, commit: &Commit) {
         match commit {
@@ -594,10 +540,6 @@ impl Model {
                 if let Some(dialog) = &a.dialog {
                     self.dialog.clone_from(dialog);
                 }
-                self.end_watch_elsewhere(Some(a.node));
-                if a.replaced {
-                    self.end_watch_elsewhere(None);
-                }
                 self.absorbed = None;
                 self.system_caret_unused = a.terminal && a.console;
             }
@@ -617,14 +559,13 @@ impl Model {
                 self.owed = owed.then_some(OwedModel::Due);
             }
             Commit::Foreground {
-                node,
                 role,
                 batch,
                 dialog,
+                ..
             } => {
                 self.reported = Some((*role, *batch));
                 self.dialog.clone_from(dialog);
-                self.end_watch_elsewhere(Some(*node));
             }
             Commit::Element {
                 node,
@@ -652,7 +593,6 @@ impl Model {
                     focus.redirected = false;
                 }
             }
-            Commit::Open { request, node } => self.open_watch(*node, request.0),
             Commit::Answer(_) => {}
         }
     }
@@ -698,12 +638,6 @@ impl Model {
             && let Some(focus) = self.focuses.last_mut()
         {
             focus.slider = None;
-        }
-        if self
-            .watch
-            .is_some_and(|(node, _)| released.contains(&node.number()))
-        {
-            self.end_watch();
         }
     }
 }
@@ -970,7 +904,6 @@ struct World {
     let_go: BTreeSet<u64>,
     /// Tokens let go in this step.
     let_go_now: BTreeSet<u64>,
-    watch_ended_now: Vec<RequestId>,
     replies: BTreeMap<RequestId, u32>,
     flight: Option<Flight>,
     dead: Option<Request>,
@@ -981,8 +914,6 @@ struct World {
     application_focus: Option<usize>,
     /// The console terminal's reading.
     terminal: Terminal,
-    /// When the caret key's watch opened, on the clock in milliseconds.
-    watch_opened_at: u64,
     /// The shapes this case has reached.
     reached: BTreeSet<&'static str>,
 }
@@ -1007,7 +938,6 @@ impl World {
             subscription: Followed::default(),
             let_go: BTreeSet::new(),
             let_go_now: BTreeSet::new(),
-            watch_ended_now: Vec::new(),
             replies: BTreeMap::new(),
             flight: None,
             dead: None,
@@ -1016,7 +946,6 @@ impl World {
             pending_release: None,
             application_focus: None,
             terminal: Terminal::Live,
-            watch_opened_at: 0,
             reached: BTreeSet::new(),
         }
     }
@@ -1094,7 +1023,7 @@ impl World {
         let entry = match &program.work {
             Work::Entry { entry, .. } => entry,
             Work::Owed(_) => return Kind::Owed,
-            Work::Drop | Work::WatchRead | Work::Finish { .. } | Work::FindBar(_) => {
+            Work::Drop | Work::NoteRead(_) | Work::Finish { .. } | Work::FindBar(_) => {
                 return Kind::Other;
             }
         };
@@ -1132,7 +1061,7 @@ impl World {
                 match query {
                     Query::ReadFocus { .. } => Kind::FocusNow(query_id),
                     Query::Text { op, .. } => match op {
-                        TextOp::Key(_) => Kind::Key(query_id),
+                        TextOp::ReadCaret(_) => Kind::Key(query_id),
                         TextOp::TerminalHold => Kind::Terminal(query_id, TextOpKind::Hold),
                         TextOp::TerminalRead { hold: true } => {
                             Kind::Terminal(query_id, TextOpKind::ReadHold)
@@ -1283,18 +1212,6 @@ impl World {
     }
 
     fn sent(&mut self, message: &OutpostToCore) {
-        if let OutpostToCore::Event {
-            event:
-                NormalizedEvent::KeyAnswered {
-                    tag,
-                    answer: KeyAnswer::Ended,
-                    ..
-                },
-            ..
-        } = message
-        {
-            self.watch_ended_now.push(RequestId::shell(tag.0.0));
-        }
         if let OutpostToCore::Reply { request_id, .. } = message {
             let count = self.replies.entry(*request_id).or_default();
             *count += 1;
@@ -1381,7 +1298,6 @@ impl World {
             Commit::Absorb(_) => "a held console absorbed",
             Commit::DropSystemCaret => "the system caret dropped",
             Commit::ClearRedirect => "the redirect mark cleared",
-            Commit::Open { .. } => "a caret key's watch opened",
             Commit::Answer(_) => "a query answered",
         };
         self.reached.insert(shape);
@@ -1431,8 +1347,6 @@ impl World {
         self.trail.push(action);
         self.at += 1;
         let before = self.model.followed().tokens();
-        self.watch_ended_now.clear();
-        self.model.ended_now.clear();
         self.model.offered.clear();
         self.let_go_now.clear();
         match action {
@@ -1507,10 +1421,7 @@ impl World {
                 let node = self.key_node();
                 if let Some(node) = node {
                     let id = self.fresh_request();
-                    // A key's request replaces the watch as it arrives.
-                    self.model.end_watch();
-                    self.model.reading = Some(RequestId::shell(id));
-                    self.push(text_query(id, node, key_op(id)));
+                    self.push(text_query(id, node, key_op()));
                 }
             }
             Action::Terminal(op) => {
@@ -1684,20 +1595,6 @@ impl World {
             Kind::Key(query) => {
                 if b {
                     self.commit(&Commit::Answer(query));
-                } else {
-                    let node = if a {
-                        self.older_node()
-                            .or_else(|| self.model.newest().map(|focus| focus.node))
-                    } else {
-                        self.model.newest().map(|focus| focus.node)
-                    };
-                    if let Some(node) = node {
-                        self.watch_opened_at = self.at;
-                        self.commit(&Commit::Open {
-                            request: query,
-                            node,
-                        });
-                    }
                 }
             }
             Kind::Terminal(query, op) => {
@@ -1719,7 +1616,7 @@ impl World {
                     .model
                     .newest()
                     .is_some_and(|focus| focus.window == CONSOLE_WINDOW && focus.terminal);
-                if held_changed && console_focus && self.model.watch.is_none() {
+                if held_changed && console_focus {
                     self.commit(&Commit::Absorb(CONSOLE_WINDOW));
                 }
             }
@@ -1892,12 +1789,6 @@ impl World {
         let Some(flight) = self.flight.as_ref() else {
             return;
         };
-        // The focus read deadline adds two seconds; no jump reaches the
-        // caret key's bound, whose own expiry the watch's examples cover.
-        let slow = matches!(flight.kind, Kind::UiaRead(..) | Kind::FocusNow(_));
-        if self.model.watch.is_some() && (slow || self.watch_opened_at + 10_000 < self.at + 3_000) {
-            return;
-        }
         let request = flight.request;
         loop {
             let due = self
@@ -1975,16 +1866,9 @@ impl World {
             )
             .collect();
         assert_eq!(self.let_go_now, let_go, "the tokens let go after {trail:?}");
-        assert_eq!(
-            self.watch_ended_now, self.model.ended_now,
-            "the watches ended after {trail:?}"
-        );
         self.check_mailbox("the end of the step");
         if !self.let_go_now.is_empty() {
             self.reached.insert("a token let go");
-        }
-        if !self.watch_ended_now.is_empty() {
-            self.reached.insert("a caret key's watch ended");
         }
         if !expected.kept.is_empty() {
             self.reached.insert("an older focus's element kept");
@@ -2231,39 +2115,6 @@ impl World {
     }
 }
 
-/// The watch of a key on `node`, for a commit that opens it.
-fn key_watch(request: &(RequestId, TraceId), node: NodeId) -> Box<KeyWatch> {
-    Box::new(KeyWatch {
-        tag: KeyTag(QueryId(request.0.number)),
-        node,
-        baseline: Baseline::Edit(LastRead {
-            caret: 0,
-            selection: None,
-            line: verbatim_model::TextChunk {
-                unit: TextUnit::Line,
-                text: String::new(),
-                start: verbatim_model::TextAnchor(1),
-                offset: 0,
-                languages: Vec::new(),
-                first: false,
-                last: false,
-                truncated: false,
-                formats: Vec::new(),
-            },
-            text_changed: false,
-            read_at_us: 0,
-        }),
-        unit: TextUnit::Character,
-        motion: CaretMotion::NextCharacter,
-        // A terminal's, whose watch the outpost ends on a focus elsewhere.
-        kind: WatchKind::Terminal,
-        before_unit: None,
-        trace: request.1,
-        timing: EventTiming::default(),
-        calls: CallCounts::default(),
-    })
-}
-
 /// A focus-now query, request `request_id`.
 fn text_query(request_id: u64, node_id: NodeId, op: TextOp) -> Item {
     Item::Query {
@@ -2273,13 +2124,10 @@ fn text_query(request_id: u64, node_id: NodeId, op: TextOp) -> Item {
 }
 
 /// A caret key's operation.
-fn key_op(id: u64) -> TextOp {
-    TextOp::Key(KeyRequest {
-        tag: KeyTag(QueryId(id)),
-        kind: WatchKind::Terminal,
-        unit: TextUnit::Character,
-        motion: CaretMotion::NextCharacter,
-        start: KeyStart::ReadFirst,
+fn key_op() -> TextOp {
+    TextOp::ReadCaret(CaretRead {
+        fetch: fetch(),
+        purpose: ReadPurpose::BeforeKey,
     })
 }
 
@@ -2320,7 +2168,7 @@ fn action() -> impl Strategy<Value = Action> {
 }
 
 /// The shapes every run of the generated cases reaches.
-const REACHED: [&str; 20] = [
+const REACHED: [&str; 19] = [
     "a thumb adopted with its slider",
     "an element replaced under its node",
     "a terminal adopted, owing its first read",
@@ -2338,7 +2186,6 @@ const REACHED: [&str; 20] = [
     "a held console absorbed",
     "a held console's update dropped",
     "a token let go",
-    "a caret key's watch ended",
     "an older focus's element kept",
     "an abandoned worker's commit refused",
 ];
@@ -2348,12 +2195,12 @@ const SEED: u64 = 20_261_109;
 const CASES: u32 = 2_048;
 
 /// Runs the generated cases `config` draws, each twice from a new reducer,
-/// shrinking a failure to its smallest case.
+/// shrinking a failure to its smallest case; what the cases reached.
 ///
 /// # Panics
 ///
 /// On a failing case, naming the smallest.
-pub(super) fn run_generated(config: Config, again: &str) {
+pub(super) fn run_generated(config: Config, again: &str) -> BTreeSet<&'static str> {
     let reached = RefCell::new(BTreeSet::new());
     let mut runner = TestRunner::new(config);
     let strategy = proptest::collection::vec(action(), 1..80);
@@ -2365,17 +2212,7 @@ pub(super) fn run_generated(config: Config, again: &str) {
         Ok(())
     });
     match result {
-        Ok(()) => {
-            let reached = reached.into_inner();
-            let missing: Vec<&&str> = REACHED
-                .iter()
-                .filter(|shape| !reached.contains(**shape))
-                .collect();
-            assert!(
-                missing.is_empty(),
-                "shapes the cases did not reach: {missing:?}"
-            );
-        }
+        Ok(()) => reached.into_inner(),
         Err(TestError::Fail(reason, case)) => panic!("{reason}\n{}", fixed_report(&case, again)),
         Err(error) => panic!("{error}"),
     }
@@ -2399,12 +2236,20 @@ fn fixed_report(case: &[Action], again: &str) -> String {
 
 /// Cases of a world of real applications' focus events, keys and terminals
 /// keep what the followed focus exists to decide, compared with the
-/// reference model after every step.
+/// reference model after every step, and reach every listed shape.
 #[test]
 fn generated_cases_keep_the_followed_focus_rules() {
-    run_generated(
+    let reached = run_generated(
         super::explore::config(SEED, CASES),
         "cargo test -p verbatim-outpost-logic --lib -- --exact tests::followed::generated_cases_keep_the_followed_focus_rules",
+    );
+    let missing: Vec<&&str> = REACHED
+        .iter()
+        .filter(|shape| !reached.contains(**shape))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "shapes the cases did not reach: {missing:?}"
     );
 }
 

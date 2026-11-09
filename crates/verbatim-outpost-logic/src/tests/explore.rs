@@ -55,7 +55,6 @@ fn explored(test: &str) -> (Config, String) {
     (config(seed, cases), again)
 }
 
-#[cfg(any())]
 #[test]
 #[ignore = "exploration: run by the nightly workflow with its own seed (books/dev/src/reference/testing.md, Exploration tests)"]
 fn explore_reducer() {
@@ -63,12 +62,11 @@ fn explore_reducer() {
     let _ = super::reducer::run_generated(config, &again);
 }
 
-#[cfg(any())]
 #[test]
 #[ignore = "exploration: run by the nightly workflow with its own seed (books/dev/src/reference/testing.md, Exploration tests)"]
 fn explore_followed() {
     let (config, again) = explored("explore_followed");
-    super::followed::run_generated(config, &again);
+    let _ = super::followed::run_generated(config, &again);
 }
 
 #[test]
