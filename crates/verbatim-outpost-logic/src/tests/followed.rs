@@ -429,6 +429,8 @@ struct Model {
     owed: Option<OwedModel>,
     /// The caret key's watch: its node and its query.
     watch: Option<(NodeId, RequestId)>,
+    /// The newest key's request: only its program opens a watch.
+    reading: Option<RequestId>,
     /// The queries whose watch ended in this step.
     ended_now: Vec<RequestId>,
     /// The console window whose updates are dropped on arrival.
@@ -536,6 +538,17 @@ impl Model {
         }
     }
 
+    /// A program's commit opens the watch of `request`, the newest key's;
+    /// an older key's, which a newer request replaced, ends.
+    fn open_watch(&mut self, node: NodeId, request: RequestId) {
+        if self.reading == Some(request) {
+            self.reading = None;
+            self.watch = Some((node, request));
+        } else {
+            self.ended_now.push(request);
+        }
+    }
+
     /// Ends the watch.
     fn end_watch(&mut self) {
         if let Some((_, request)) = self.watch.take() {
@@ -639,7 +652,7 @@ impl Model {
                     focus.redirected = false;
                 }
             }
-            Commit::Open { request, node } => self.watch = Some((*node, request.0)),
+            Commit::Open { request, node } => self.open_watch(*node, request.0),
             Commit::Answer(_) => {}
         }
     }
@@ -656,11 +669,7 @@ impl Model {
                 self.owed = Some(OwedModel::Attempted);
                 self.absorbed = None;
             }
-            Kind::Key(..) => {
-                self.end_watch();
-                self.absorbed = None;
-            }
-            Kind::Terminal(..) => self.absorbed = None,
+            Kind::Key(..) | Kind::Terminal(..) => self.absorbed = None,
             _ => {}
         }
         if !matches!(kind, Kind::Owed) {
@@ -1498,7 +1507,10 @@ impl World {
                 let node = self.key_node();
                 if let Some(node) = node {
                     let id = self.fresh_request();
-                    self.push(text_query(id, node, key_op()));
+                    // A key's request replaces the watch as it arrives.
+                    self.model.end_watch();
+                    self.model.reading = Some(RequestId::shell(id));
+                    self.push(text_query(id, node, key_op(id)));
                 }
             }
             Action::Terminal(op) => {
@@ -2261,9 +2273,9 @@ fn text_query(request_id: u64, node_id: NodeId, op: TextOp) -> Item {
 }
 
 /// A caret key's operation.
-fn key_op() -> TextOp {
+fn key_op(id: u64) -> TextOp {
     TextOp::Key(KeyRequest {
-        tag: KeyTag(QueryId(0)),
+        tag: KeyTag(QueryId(id)),
         kind: WatchKind::Terminal,
         unit: TextUnit::Character,
         motion: CaretMotion::NextCharacter,

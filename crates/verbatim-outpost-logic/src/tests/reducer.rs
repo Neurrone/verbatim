@@ -426,7 +426,8 @@ struct Flight {
     copy: Facts,
     /// Whether its copy of the watch is compared no more: after it has
     /// committed a check of the watch, its copy may show a poll the reducer
-    /// ended by its clock, which the copy does not read.
+    /// ended by its clock, which the copy does not read, and after a key's
+    /// request arrived, which changes the watch as it arrives.
     uncompared: bool,
 }
 
@@ -527,6 +528,14 @@ fn kind_of(program: &Program) -> Kind {
     }
 }
 
+/// The change that takes the watch of `tag` on node 1.
+fn takes_tag(tag: KeyTag) -> Change {
+    Change {
+        watch: Some(WatchChange::Take(NodeId::new(1), tag)),
+        ..Change::default()
+    }
+}
+
 /// A program's copy of the watch apart from its times.
 fn untimed(watch: &Watch) -> Watch {
     let stage = |stage: Stage| match stage {
@@ -535,7 +544,7 @@ fn untimed(watch: &Watch) -> Watch {
         other => other,
     };
     match watch.clone() {
-        Watch::None => Watch::None,
+        other @ (Watch::None | Watch::Reading { .. }) => other,
         Watch::Open { key, stage: at } => Watch::Open {
             key,
             stage: stage(at),
@@ -987,6 +996,9 @@ impl Run {
                 }
             }
             What::CaretKey => {
+                if let Some(flight) = self.model.flight.as_mut() {
+                    flight.uncompared = true;
+                }
                 let number = self.fresh();
                 query = Some(number);
                 caret_key(number)
@@ -1275,9 +1287,11 @@ impl Run {
             Commit::OpenWatch { console } if flight.kind == Kind::Key => {
                 opens(flight.query?, console)
             }
-            Commit::Take if matches!(flight.kind, Kind::Entry | Kind::EditCaret) => takes(),
+            Commit::Take if matches!(flight.kind, Kind::Entry | Kind::EditCaret) => {
+                takes_tag(flight.copy.text.watch.kept()?.tag)
+            }
             Commit::TakeOther if matches!(flight.kind, Kind::Entry | Kind::EditCaret) => Change {
-                watch: Some(WatchChange::Take(NodeId::new(2))),
+                watch: Some(WatchChange::Take(NodeId::new(2), KeyTag(QueryId(0)))),
                 ..Change::default()
             },
             Commit::Checked { answered: true } => answered(),
@@ -1378,7 +1392,7 @@ impl Run {
                 }
                 self.reach("the watch opened");
             }
-            Some(WatchChange::Take(_)) if matches!(watch, Watch::Checking { .. }) => {
+            Some(WatchChange::Take(..)) if matches!(watch, Watch::Checking { .. }) => {
                 self.reach("the watch taken");
             }
             _ => {}
