@@ -1141,7 +1141,16 @@ impl Seam {
             .note_seen(node_id.number(), began)
             .map(|note| (note.fetch, note.until_us));
         let fetch = live.map(|(fetch, _)| fetch);
-        let found = self.found(node_id, text, began, now, fetch);
+        let mut found = self.found(node_id, text, began, now, fetch);
+        // A focus read that began before its node's note gets the note's
+        // facts at its commit, as the reducer attaches them.
+        if found.facts.is_none() {
+            found.facts = Arc::make_mut(&mut self.outpost.facts.text).facts_at_commit(
+                node_id.number(),
+                (&found.report, !found.changes.is_empty()),
+                now,
+            );
+        }
         let committed = committed_read(
             self.outpost
                 .facts
