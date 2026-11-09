@@ -80,9 +80,11 @@
 //! - What Backspace removed is the difference between its before line and
 //!   its after line, carets included (`docs/design/caret-selection-rework.md`,
 //!   `removal`), so an older baseline gives what that difference gives.
-//! - A read committed after its key's note ended, past the key's bound, is
-//!   an ordinary report and not that key's evidence (the coordinator's
-//!   ruling, 2026-11-09).
+//! - A read counts as evidence when it was dispatched while its node's
+//!   note lived, however late it ends, or committed before the note ended;
+//!   a read dispatched outside the note and committing past its end is an
+//!   ordinary report (the coordinator's ruling, 2026-11-09). A final read
+//!   clears the note as it commits (2026-11-09).
 //! - At exit nothing further is heard: held keys are delivered, held
 //!   selection changes are not said (the coordinator's ruling, 2026-11-09).
 //! - Backspace speaks only when its caret moved
@@ -191,6 +193,8 @@ pub struct Report {
     pub ended: Us,
     /// Whether it is Core's final read of a key.
     pub final_read: bool,
+    /// Whether its read was dispatched while its node's note lived.
+    pub under_note: bool,
 }
 
 /// What a read that ended without a result was for a key.
@@ -250,6 +254,9 @@ pub struct Model {
     /// The key each final read asked and not ended was asked for, oldest
     /// first; `None` when no key was open.
     final_reads: VecDeque<Option<usize>>,
+    /// The keys whose notes lived on its node when the read in flight was
+    /// dispatched.
+    read_notes: Vec<usize>,
     exited: bool,
 }
 
@@ -258,6 +265,31 @@ impl Model {
     #[must_use]
     pub fn caret(&self) -> Option<usize> {
         self.newest.map(|(_, caret)| caret)
+    }
+
+    /// A read of `field` was dispatched at `at`: whether its node's note
+    /// lives now is a fact of that read.
+    pub fn read_dispatched(&mut self, field: usize, at: Us) {
+        self.read_notes = (0..self.keys.len())
+            .filter(|&id| self.key_note_lives_at(id, field, at))
+            .collect();
+    }
+
+    /// Whether the read in flight was dispatched under a live note.
+    #[must_use]
+    pub fn read_in_flight_under_note(&self) -> bool {
+        !self.read_notes.is_empty()
+    }
+
+    /// Whether `field`'s note lives at `at`.
+    fn note_lives_at(&self, field: usize, at: Us) -> bool {
+        (0..self.keys.len()).any(|id| self.key_note_lives_at(id, field, at))
+    }
+
+    /// Whether key `id`'s note, on `field`, lives at `at`.
+    fn key_note_lives_at(&self, id: usize, field: usize, at: Us) -> bool {
+        let press = &self.keys[id];
+        press.node == Some(field) && press.note_until.is_some_and(|until| at < until)
     }
 
     /// Whether a focus report waits for its live re-read.
@@ -472,6 +504,13 @@ impl Model {
             None
         };
         let changes = std::mem::take(&mut self.changes);
+        if report.final_read {
+            // Only the notes it was dispatched under: a later key's is not
+            // cleared by an earlier key's final read.
+            for id in std::mem::take(&mut self.read_notes) {
+                self.keys[id].note_until = None;
+            }
+        }
         if self.focus != self.committed_field {
             self.reached.insert("a report behind the focus");
             return;
@@ -600,6 +639,7 @@ impl Model {
                     began,
                     ended: now,
                     final_read: false,
+                    under_note: self.note_lives_at(field, began),
                 },
                 now,
             );
@@ -808,9 +848,10 @@ fn unit(key: Key, text: &Text) -> Option<String> {
     }
 }
 
-/// Whether `report`'s read committed while `press`'s note lived.
+/// Whether `report`'s read counts under a note: dispatched while its
+/// node's note lived, or committed by the end of `press`'s.
 fn note_lives(press: &Press, report: &Report) -> bool {
-    press.note_until.is_some_and(|until| report.ended < until)
+    report.under_note || press.note_until.is_some_and(|until| report.ended <= until)
 }
 
 /// What the difference from `before` to `after` shows removed at their
@@ -821,7 +862,10 @@ fn removed_between(before: &Text, after: &Text) -> Option<String> {
     let (was, now) = (&before.letters, &after.letters);
     let (from, to) = (after.caret, before.caret);
     if from > to {
-        return Some("blank".to_owned());
+        // Text gained before the caret is a joined line, whose break this
+        // one-line world has no name for; otherwise nothing was removed.
+        let joined = now.len().checked_sub(was.len()) == Some(from) && now.ends_with(was);
+        return (!joined).then(|| "blank".to_owned());
     }
     let kept_before = was.get(..from) == now.get(..from);
     if from == to {

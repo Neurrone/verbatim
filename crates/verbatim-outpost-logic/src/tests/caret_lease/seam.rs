@@ -38,8 +38,10 @@ pub enum Seen {
     /// A read committed, of the field named, with what it saw, and whether
     /// it is a held key's before read.
     Committed(usize, Text, bool),
-    /// Core asked the read before a held key.
-    BeforeReadAsked,
+    /// Core asked the read before a held key, at this time.
+    BeforeReadAsked(Us),
+    /// A read of the field named was dispatched, at this time.
+    Dispatched(usize, Us),
     /// A report reached Core, of the read committed just before.
     Report {
         /// What it saw.
@@ -307,6 +309,7 @@ impl Seam {
             self.finish(program.request, seen);
             return;
         };
+        seen.push(Seen::Dispatched(field_of_node(node), self.now));
         self.flight = Some(Flight {
             request: program.request,
             node,
@@ -415,7 +418,7 @@ impl Seam {
                     TextOp::ReadCaret(CaretRead {
                         purpose: ReadPurpose::BeforeFieldKey,
                         ..
-                    }) => seen.push(Seen::BeforeReadAsked),
+                    }) => seen.push(Seen::BeforeReadAsked(self.now)),
                     TextOp::ReadCaret(CaretRead {
                         purpose: ReadPurpose::Final,
                         ..

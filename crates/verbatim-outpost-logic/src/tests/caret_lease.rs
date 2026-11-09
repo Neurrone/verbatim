@@ -82,8 +82,12 @@ impl Run {
                     self.model.abandoned(role);
                     Ok(())
                 }
-                Seen::BeforeReadAsked => {
-                    self.model.before_read_asked(self.now);
+                Seen::BeforeReadAsked(at) => {
+                    self.model.before_read_asked(at);
+                    Ok(())
+                }
+                Seen::Dispatched(field, at) => {
+                    self.model.read_dispatched(field, at);
                     Ok(())
                 }
                 Seen::Report {
@@ -92,12 +96,14 @@ impl Run {
                     ended,
                     final_read,
                 } => {
+                    let under_note = self.model.read_in_flight_under_note();
                     self.model.report(
                         &Report {
                             text,
                             began,
                             ended,
                             final_read,
+                            under_note,
                         },
                         self.now,
                     );
@@ -393,12 +399,23 @@ fn every_generated_case_keeps_the_recorded_rules() {
     );
 }
 
-/// The failures found, each kept as its actions: a key held at exit, and a
-/// key behind a waiting focus report, whose bound starts when the wait ends.
+/// The failures found, each kept as its actions: a key held at exit, a read
+/// dispatched under its note and ending past the note's end, which is the
+/// key's evidence, and a key behind a waiting focus report, whose bound
+/// starts when the wait ends.
 fn fixed() -> Vec<Vec<Action>> {
     let press = Action::Press { key: 0, held: true };
     vec![
         vec![press, Action::Exit],
+        vec![
+            press,
+            Action::FocusWaits { ago: 0 },
+            Action::Select,
+            Action::Tick(60),
+            Action::Tick(120),
+            Action::Tick(120),
+            Action::Finish,
+        ],
         vec![
             Action::FocusWaits { ago: 0 },
             press,
