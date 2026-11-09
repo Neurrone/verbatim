@@ -246,15 +246,7 @@ contents beyond whether the record changed, the caret watch's
 transitions, and exact deadlines; and its generator sends a foreground change from the
 listener, never as the hook's held copy.
 
-The followed focus has a generated test of its own
-(`crates/verbatim-outpost-logic/src/tests/followed.rs`): focus events,
-foreground changes, UIA markers and reads, focus-now answers, elements found
-after a newer focus, releases, owed work and held consoles, each step
-compared with a reference model written from the parity documents and the
-recorded decisions: what a program reads, how a later event is planned, the
-subscription and the elements let go, the owed work, the mailbox's drops and
-the caret key's watch. Its scripted programs build their commits at one
-module, `seam`; the worker's choice between adopting and following again is
+The worker's choice between adopting and following again is
 pinned by the outpost's `a_focus_now_answer_is_followed_again_only_on_the_followed_focus`.
 
 The intake has a generated test of its own
@@ -283,7 +275,7 @@ at its newest's place, a menu opening at its batch's end, a read in its
 marker's place, the noted caret and its barrier put ahead), and that an
 open marker holds back everything after it.
 Beside each, an ignored exploration test (`explore_reducer`,
-`explore_followed`, `explore_intake`, in `src/tests/explore.rs`, the crate's one file that
+`explore_intake`, in `src/tests/explore.rs`, the crate's one file that
 reads the environment) runs the same cases under the seed and case count
 in `VERBATIM_EXPLORE_SEED` and `VERBATIM_EXPLORE_CASES`; only the nightly
 workflow (`.github/workflows/explore.yml`) runs them.

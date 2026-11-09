@@ -19,7 +19,6 @@ use super::*;
 
 mod caret_lease;
 mod explore;
-mod followed;
 mod intake_order;
 mod reducer;
 

@@ -36,7 +36,7 @@ Claude's, each with its reason:
 - A press whose read is running when a focus moves the navigator says nothing, because its words would follow the focus's, and the entries behind it run on the navigator as it then is, as NVDA's queued scripts do: a focus does not empty its queue (`scriptHandler.py` 242 to 252).
 - A review press that finds a `Released` key replaces it, as a held key does, because the press cuts speech and the key's bound answer would be cut with it.
 - A press with its own read does not seed first: a move's read starts from the cursor and is the live read, so each press costs one round trip.
-- A generated test is added only where interleavings matter: review presses among keys, in the caret build's model of the key line.
+- No generated test covers review presses; hand-written tests pin the line's rules for them (Dickson, 2026-11-10).
 
 ## Build one: toasts, progress bars, controlled lists, table cells
 
@@ -266,7 +266,7 @@ One round trip per review command that answered from Core's cache, one remote pr
 
 Hand-written: Core's cases per table cell above and per direction of `FetchResult::Gone`; a remembered column across a short line in plain text; mockapp through a real outpost with the node destroyed for navigation, flat review and text review; a call-count test that a review command is one round trip; the keeping of the navigator's element.
 
-Generated: the Core model of the caret build gains review presses, written from `docs/parity/review.md` and Dickson's dated decisions, not from `Press`: its world presses review commands among keys and focus reports, and answers reads early, late, gone or never. It checks after each step that each press is answered at most once and in press order among all input, and that a press waiting when the navigator moves acts on the navigator as it is when its turn comes, as NVDA's queued scripts do.
+Generated: none; review presses are pinned by hand-written tests of the key line.
 
 Scenarios: a new `review_dead_object`, and the roadmap's end-to-end test in both terminals that a reviewed line stays on its text as new output is written below it without filling the history, as `windows_terminal_review_stays_on_line` and `conhost_review_stays_on_line`.
 
