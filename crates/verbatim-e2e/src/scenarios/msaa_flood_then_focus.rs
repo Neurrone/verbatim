@@ -9,9 +9,7 @@
 use crate::registry::ScenarioState;
 use crate::scenario::{Scenario, harness_marker};
 
-use super::measure::{
-    apply_to_mockapp, await_mockapp, open_mockapp, open_msaa_mockapp, send_to_mockapp,
-};
+use super::measure::{await_mockapp, open_mockapp, open_msaa_mockapp, send_to_mockapp};
 
 pub(crate) use super::{no_setup as setup, no_teardown as teardown};
 
@@ -27,6 +25,7 @@ const FIXTURE: &str = r#"{
   "id": "root",
   "role": "window",
   "name": "{title}",
+  "focus_on_activate": true,
   "children": [
     {
       "id": "go",
@@ -43,30 +42,25 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     // MSAA mockapp raises no focus for its button as it opens.
     let title = harness_marker(FLOODING);
     scenario.speech().expect(&[&format!("{title} window")]);
-    let first = (FIRST, open_mockapp(scenario, FIRST, FIXTURE));
-    apply_to_mockapp(scenario, first, "focus go");
+    open_mockapp(scenario, FIRST, FIXTURE);
     expect_window(scenario, FIRST);
-    let second = (SECOND, open_mockapp(scenario, SECOND, FIXTURE));
-    apply_to_mockapp(scenario, second, "focus go");
+    open_mockapp(scenario, SECOND, FIXTURE);
     expect_window(scenario, SECOND);
 
-    flood_and_move_to(scenario, flooding, "new-values", first);
-    flood_and_move_to(scenario, flooding, "repeated-values", second);
-    flood_and_move_to(scenario, flooding, "new-shows", first);
+    flood_and_move_to(scenario, flooding, "new-values", FIRST);
+    flood_and_move_to(scenario, flooding, "repeated-values", SECOND);
+    flood_and_move_to(scenario, flooding, "new-shows", FIRST);
 }
 
 /// Starts a flood of `kind` from `flooding`, brings the window `to`
 /// forward while it runs, and asserts its focus; then waits for the flood
 /// to end.
-fn flood_and_move_to(scenario: &mut Scenario, flooding: (&str, u32), kind: &str, to: (&str, u32)) {
+fn flood_and_move_to(scenario: &mut Scenario, flooding: (&str, u32), kind: &str, to: &str) {
     send_to_mockapp(scenario, flooding, &format!("flood {FLOOD} {kind}"));
     scenario
-        .bring_window_forward(&harness_marker(to.0))
+        .bring_window_forward(&harness_marker(to))
         .expect("brings the window forward");
-    // A real window raises a focus as it is activated; mockapp raises one
-    // when told.
-    apply_to_mockapp(scenario, to, "focus go");
-    expect_window(scenario, to.0);
+    expect_window(scenario, to);
     await_mockapp(scenario, flooding);
 }
 

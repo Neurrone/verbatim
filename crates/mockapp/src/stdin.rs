@@ -26,7 +26,8 @@
 //! `client-identity`, `disable-client`, `acc-focus-window <hwnd>`,
 //! `child-window`, `child-client-identity`, `form-client`, `window-focus`,
 //! `fail-window-element`, `hold`,
-//! `release`, `await-advised <event id> <count>`, and `quit`.
+//! `release`, `await-advised <event id> <count>`,
+//! `await-advised-at-least <event id> <count>`, and `quit`.
 //! Parsing runs on a dedicated thread (reading stdin blocks, and the window
 //! thread must keep pumping its message loop); parsed commands are handed
 //! to the window thread over a channel, woken by a lightweight posted
@@ -445,6 +446,10 @@ pub(crate) enum Command {
     /// `rejected:` with the count seen. Applied and acknowledged on the
     /// stdin thread, since UIA reports registrations on the window thread.
     AwaitAdvised(i32, i64),
+    /// `await-advised-at-least <event id> <count>`: waits until the event
+    /// has at least that many live registrations, for a scenario that needs
+    /// a client listening whichever others also are.
+    AwaitAdvisedAtLeast(i32, i64),
     /// `quit`.
     Quit,
     /// A line that is no command, rejected on the window thread, so its
@@ -615,6 +620,13 @@ pub(crate) fn parse_command(line: &str) -> Option<Command> {
         "freeze" => Some(Command::Freeze),
         "hold-message" => crate::held_message::message_named(rest).map(Command::HoldMessage),
         "release" => Some(Command::Release),
+        "await-advised-at-least" => {
+            let (event, count) = rest.split_once(' ')?;
+            Some(Command::AwaitAdvisedAtLeast(
+                event.parse().ok()?,
+                count.trim().parse().ok()?,
+            ))
+        }
         "await-advised" => {
             let (event, count) = rest.split_once(' ')?;
             Some(Command::AwaitAdvised(
@@ -788,6 +800,14 @@ pub(crate) fn run(sink: &Sender<Command>, wake: impl Fn()) {
             Some(Command::Release) => {
                 crate::hits::release();
                 crate::window::acknowledge("applied");
+            }
+            Some(Command::AwaitAdvisedAtLeast(event, count)) => {
+                match crate::hits::await_advised_at_least(event, count, AWAIT_ADVISED_LIMIT) {
+                    Ok(()) => crate::window::acknowledge("applied"),
+                    Err(seen) => crate::window::acknowledge(&format!(
+                        "rejected: event {event} has {seen} live registrations, fewer than {count}"
+                    )),
+                }
             }
             Some(Command::AwaitAdvised(event, count)) => {
                 match crate::hits::await_advised(event, count, AWAIT_ADVISED_LIMIT) {

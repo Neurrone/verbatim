@@ -308,7 +308,11 @@ unsafe extern "system" fn wnd_proc(
             // and never cleared, so any `WM_GETOBJECT` reaching this window
             // has a valid context pointer.
             if let Some(context) = unsafe { context_for(hwnd) } {
-                return handle_get_object(hwnd, wparam, lparam, context);
+                let answer = handle_get_object(hwnd, wparam, lparam, context);
+                if i32::try_from(lparam.0) == Ok(UiaRootObjectId) {
+                    client_contacted(hwnd);
+                }
+                return answer;
             }
         }
         // Counted, then answered by the default procedure below, which
@@ -433,12 +437,45 @@ fn activated(hwnd: HWND) {
         && context.focus_on_activate
         && context.backend == Some(Backend::Uia)
     {
-        posted.push(WM_APP_FOCUS_ON_ACTIVATE);
+        let contact = CONTACT.get();
+        if contact == Contact::Made {
+            posted.push(WM_APP_FOCUS_ON_ACTIVATE);
+        } else {
+            CONTACT.set(Contact::AwaitedByFocus);
+        }
     }
     for message in posted {
         // SAFETY: posting a payload-free message to this window.
         unsafe {
             let _ = PostMessageW(Some(hwnd), message, WPARAM(0), LPARAM(0));
+        }
+    }
+}
+
+/// Whether a UIA client has reached this window's provider yet: a focus
+/// event raised before one has goes nowhere, so the first activation's
+/// waits for it, as an application's focus follows the client's contact.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Contact {
+    /// No client yet.
+    None,
+    /// No client yet, and an activation's focus waits for one.
+    AwaitedByFocus,
+    /// A client has asked for the root provider.
+    Made,
+}
+
+thread_local! {
+    static CONTACT: std::cell::Cell<Contact> = const { std::cell::Cell::new(Contact::None) };
+}
+
+/// A client asked for `hwnd`'s root provider: raises the focus that waited
+/// for it, once the answer has been returned.
+fn client_contacted(hwnd: HWND) {
+    if CONTACT.replace(Contact::Made) == Contact::AwaitedByFocus {
+        // SAFETY: posting a payload-free message to this window.
+        unsafe {
+            let _ = PostMessageW(Some(hwnd), WM_APP_FOCUS_ON_ACTIVATE, WPARAM(0), LPARAM(0));
         }
     }
 }

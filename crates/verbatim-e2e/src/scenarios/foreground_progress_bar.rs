@@ -46,7 +46,7 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     apply_to_mockapp(
         scenario,
         window,
-        &format!("await-advised {PROPERTY_CHANGED} 2"),
+        &format!("await-advised-at-least {PROPERTY_CHANGED} 1"),
     );
 
     apply_to_mockapp(scenario, window, "set-range bar 40");

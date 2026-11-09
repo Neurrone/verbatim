@@ -715,6 +715,27 @@ pub(crate) fn await_advised(
     if seen == count { Ok(()) } else { Err(seen) }
 }
 
+/// Waits until `event` has at least `count` live registrations, or
+/// `timeout`; the count it found when it did not.
+pub(crate) fn await_advised_at_least(
+    event: i32,
+    count: i64,
+    timeout: std::time::Duration,
+) -> Result<(), i64> {
+    let advised = ADVISED
+        .0
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let (advised, _) = ADVISED
+        .1
+        .wait_timeout_while(advised, timeout, |advised| {
+            advised.get(&event).copied().unwrap_or(0) < count
+        })
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let seen = advised.get(&event).copied().unwrap_or(0);
+    if seen >= count { Ok(()) } else { Err(seen) }
+}
+
 /// Makes every provider call from now on wait `ms` milliseconds before it
 /// is answered; 0 answers at once again.
 pub(crate) fn set_delay(ms: u64) {
