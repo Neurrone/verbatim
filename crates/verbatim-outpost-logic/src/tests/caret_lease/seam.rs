@@ -736,7 +736,6 @@ impl Seam {
     /// live re-read.
     pub fn focus_waits(&mut self, field: usize, text: &Text, began: Us, now: Us) -> Vec<Seen> {
         let shape = Shape {
-            pane: true,
             cached: Some(1),
             ..Shape::default()
         };
@@ -754,7 +753,6 @@ impl Seam {
             return Vec::new();
         };
         let shape = Shape {
-            pane: true,
             answers: Some(request),
             ..Shape::default()
         };
@@ -828,7 +826,8 @@ impl Seam {
         self.now = now;
         self.focus_reported = true;
         let mut ancestors = vec![snapshot(self.generation, 1, Role::Window, "Window")];
-        if shape.pane {
+        // The second field is in a container the first is not.
+        if field == 1 {
             ancestors.push(snapshot(self.generation, 9, Role::Pane, "Tools"));
         }
         let node = snapshot(
@@ -976,8 +975,6 @@ struct Shape {
     /// The top-level window it is in, with the foreground change that
     /// reached Core before it; `None` for no window facts.
     top: Option<WindowHandle>,
-    /// It enters a container the focus reader took from its cache.
-    pane: bool,
     /// The index of the innermost cached ancestor among its ancestors.
     cached: Option<u32>,
     /// The live re-read it answers.

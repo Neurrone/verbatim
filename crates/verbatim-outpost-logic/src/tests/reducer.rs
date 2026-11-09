@@ -381,10 +381,6 @@ enum Kind {
 
 /// The program in flight, as the model follows it.
 #[derive(Clone, Debug)]
-#[expect(
-    clippy::struct_excessive_bools,
-    reason = "independent facts of the program's, each changed by its own inputs"
-)]
 struct Flight {
     request: Request,
     kind: Kind,

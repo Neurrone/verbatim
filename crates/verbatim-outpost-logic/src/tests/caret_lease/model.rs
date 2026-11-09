@@ -200,6 +200,7 @@ pub enum Heard {
 
 /// The reference model.
 #[derive(Clone, Debug, Default)]
+#[expect(clippy::struct_excessive_bools, reason = "each is a fact of the case")]
 pub struct Model {
     keys: Vec<Press>,
     /// Each node's one last read, replaced by every read.

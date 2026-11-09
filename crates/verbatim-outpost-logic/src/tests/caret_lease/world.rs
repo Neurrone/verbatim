@@ -258,7 +258,7 @@ impl World {
                 field.caret += 1;
                 field.selection = Some((start, field.caret));
             }
-            Key::Delete | Key::Backspace if field.selection.is_some() => {
+            Key::Delete | Key::Backspace | Key::WordBackspace if field.selection.is_some() => {
                 let (start, end) = field.ends();
                 field.letters.drain(start..end);
                 field.caret = start;
@@ -273,12 +273,6 @@ impl World {
             }
             // One word to the field's line, so the word is all before the
             // caret.
-            Key::WordBackspace if field.selection.is_some() => {
-                let (start, end) = field.ends();
-                field.letters.drain(start..end);
-                field.caret = start;
-                field.selection = None;
-            }
             Key::WordBackspace if field.caret > 0 => {
                 field.letters.drain(..field.caret);
                 field.caret = 0;
