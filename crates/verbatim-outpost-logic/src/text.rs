@@ -629,9 +629,9 @@ impl TextFacts {
     /// arrived and so made with no facts, found: the comparison with the
     /// node's last read by the text both hold, as a report's is, which
     /// needs no call, and the key's character cut from the line or its line;
-    /// a word it did not fetch. `None` with no note to judge by, or one that
-    /// has seen its effect. `selection_moved` is whether the report's
-    /// selection changed. A read that shows the effect narrows the note.
+    /// a word it did not fetch. `None` with no note to judge by.
+    /// `selection_moved` is whether the report's selection changed. A read
+    /// that shows the effect narrows the note.
     pub fn facts_at_commit(
         &mut self,
         node: u64,
@@ -639,9 +639,6 @@ impl TextFacts {
         now_us: u64,
     ) -> Option<ReadFacts> {
         let note = self.live_note(node, now_us)?;
-        if note.reads.effect_seen() {
-            return None;
-        }
         let line = &caret.line;
         let unit = match note.fetch.unit {
             TextUnit::Character => Some(TextChunk {
