@@ -227,3 +227,14 @@ So Verbatim+F11 works like this:
 - `windows-version()`, `clock()` and `node.process()`, which replaces the module-level process facts.
 - `log`, capped.
 - The settings view is dropped. No M5 module needs it, and neither does M6, since synthesizers receive their own settings through the synthesizer interface.
+
+## Sections 5 and 6 (Dickson, 2026-11-09)
+
+- Reserved gestures are dropped. Conflicts are surfaced instead:
+  - In M5 the install dialog lists each gesture the extension shares with one already bound, by core, a built-in or another installed extension.
+  - In M8.1 the same screen offers to rebind it.
+  - Precedence is unchanged: the highest layer wins where it applies.
+  - This replaces the reserved-gestures rule of `extensions.md` section 4.6.
+- Installed extensions may ship global modules in M5. The M13 item reduces to reading every application.
+- The install dialog's wording is to be reviewed separately with Dickson; he does not accept the current wording.
+- Open: the limit values in section 5's table.
