@@ -345,13 +345,13 @@ pub(crate) fn evidence_words(
         CaretMotion::Backspace | CaretMotion::BackspaceWord => {
             backspace_segments(state, node, key.motion, (read, evidence), grid)
         }
-        // The selection removed with its text, as by a cut: said by its
-        // change alone, after, never the removed text, as NVDA's caret
-        // event says it (`docs/parity/text.md`, "TextInfo-equivalent layer").
-        // NVDA has no script for these keys, and says only its caret
-        // event's words.
+        // A selection removed with its text, as by a cut, or restored, as
+        // by an undo: said by its change alone, after, never the text, as
+        // NVDA's caret event says it (`docs/parity/text.md`,
+        // "TextInfo-equivalent layer"). NVDA has no script for these keys,
+        // and says only its caret event's words.
         CaretMotion::Other
-            if evidence.previous_selection.is_some() && read.caret.selection.is_none() =>
+            if evidence.previous_selection.is_some() || read.caret.selection.is_some() =>
         {
             Vec::new()
         }

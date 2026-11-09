@@ -99,8 +99,8 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
         .expect_sequence(&[heard(&said(first, 1)), heard("sound: suggestions-opened")]);
 
     // Down Arrow, which moves no caret in the one-line box, moves the
-    // selection; NVDA also says the box's line for the key, where
-    // Verbatim says nothing for a caret key that moves nothing.
+    // selection; NVDA queues the box's line for the key and cuts it off
+    // with the suggestion, which Verbatim says alone.
     for (key, said) in [
         ("downarrow", said(second, 2)),
         ("downarrow", said(third, 3)),

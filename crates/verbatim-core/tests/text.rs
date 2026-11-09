@@ -1334,6 +1334,75 @@ fn a_caret_reports_selection_change_while_a_key_waits_is_said_after_the_keys_wor
     assert_eq!(spoken(&effects), vec![message(Message::SelectionRemoved)]);
 }
 
+/// An undo that restores a selection, a key outside the caret table, says
+/// the selection alone and not the line it changed, as NVDA's caret event
+/// says it (`docs/parity/text.md`, "TextInfo-equivalent layer").
+#[test]
+fn an_undo_restoring_a_selection_says_only_the_selection() {
+    let after_cut = "beta gamma\r\n";
+    let restored = "alpha beta gamma\r\n";
+    let mut state = editing(after_cut, 0);
+    let effects = reduce(&mut state, &key(CaretMotion::Other, false));
+    let reply = key_reply(Box::new(CaretReply {
+        same_line: Some(false),
+        moved: true,
+        read_at_ms: 0,
+        caret: CaretReport {
+            line: line(restored, 100, 0),
+            selection: Some(caret_selection(selection_from(6, true))),
+            read_at_us: stamp(),
+        },
+        unit: None,
+        selection_changes: vec![SelectionChange {
+            selected: true,
+            text: "alpha ".to_owned(),
+            characters: 6,
+        }],
+        content_changed: true,
+        new_selection: Some(SelectionChange {
+            selected: true,
+            text: "alpha ".to_owned(),
+            characters: 6,
+        }),
+    }));
+    let effects = reduce(&mut state, &completed(request_of(&effects), reply));
+    assert_eq!(
+        spoken(&effects),
+        vec![UtteranceSegment::new(SegmentContent::Phrase(
+            Phrase::Selected(SelectionText::Text("alpha ".to_owned()))
+        ))]
+    );
+}
+
+/// Down Arrow in a search box moves its suggestions' selection: the key
+/// ends as the suggestion is said, and its bound says no line.
+#[test]
+fn a_suggestion_selected_for_a_key_ends_it_with_no_line() {
+    let mut state = editing("sound
+", 5);
+    let effects = reduce(&mut state, &key(CaretMotion::NextLine, false));
+    let _ = request(&effects);
+    let effects = reduce(
+        &mut state,
+        &event(NormalizedEvent::ControlledSelection {
+            controller: id(5),
+            node: node(6, Role::ListItem, StateSet::new()),
+        }),
+    );
+    assert!(
+        effects.contains(&Effect::BoundHeldKey(None)),
+        "the key ended: {effects:?}"
+    );
+    let due = reduce(
+        &mut state,
+        &Input::HeldKeyDue {
+            trace_id: TraceId::from_raw(2),
+            at_us: READ_ENDED_AT_US,
+        },
+    );
+    assert_eq!(due, []);
+}
+
 /// A caret report's selection change held while a key waited is said
 /// when the key's answer says the caret did not move, and when the answer
 /// was read once a later key was pressed, which is not this key's to

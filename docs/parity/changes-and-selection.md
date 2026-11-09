@@ -198,9 +198,11 @@ Different:
   which Settings has not set yet ("list item 1 of 22"), and by Verbatim
   with the name read when the selection is handled ("Sound settings 1 of
   22"), since NVDA's word tells the user nothing (Dickson, 2026-10-20).
-- For each arrow NVDA also says the search box's line, which Verbatim
-  leaves unsaid for a caret key that moves nothing ([text](text.md),
-  "A caret key that moves nothing").
+- For each arrow NVDA queues the search box's line ("A caret key that
+  moves nothing" in [text](text.md)) and cuts it off with the suggestion
+  as it reports it, about 100 ms after the key, once its script ends.
+  Verbatim says the suggestion when its event arrives, and ends the key
+  with no line.
 - A selection of an element outside every element the relation names,
   while the first of them has a selection, is reported by Verbatim as
   that selection and not reported as a suggestion by NVDA (pinned in

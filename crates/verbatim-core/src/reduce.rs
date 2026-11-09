@@ -2846,7 +2846,7 @@ fn reduce_controlled_selection(
         return Vec::new();
     }
     state.navigator = Some(Navigator::on(node.clone()));
-    vec![Effect::Speak(
+    let mut effects = vec![Effect::Speak(
         announce_node(
             trace_id,
             SpeechPriority::Interrupt,
@@ -2858,7 +2858,9 @@ fn reduce_controlled_selection(
             ),
         ),
         None,
-    )]
+    )];
+    effects.extend(crate::key_line::controlled_selection(state, controller));
+    effects
 }
 
 /// Shared handling for `ValueChanged` and `PropertyChanged(Value(..))`: both

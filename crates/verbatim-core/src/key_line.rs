@@ -654,6 +654,21 @@ fn end_current(state: &mut SrState, trace_id: TraceId, passed_at_ms: Option<u64>
     effects
 }
 
+/// A list `controller` controls moved its selection, as a search box's
+/// suggestions do for Down Arrow: a key passed on from `controller` ends
+/// with no words of its own, as NVDA's line for the key is cut off by the
+/// selection's report (`docs/parity/changes-and-selection.md`).
+pub(crate) fn controlled_selection(state: &mut SrState, controller: NodeId) -> Vec<Effect> {
+    let Some(passed) = state.current().and_then(CurrentKey::passed) else {
+        return Vec::new();
+    };
+    if passed.node != controller {
+        return Vec::new();
+    }
+    let (trace_id, passed_ms) = (passed.key.trace_id, passed.passed_at_us.div_ceil(1_000));
+    end_current(state, trace_id, Some(passed_ms))
+}
+
 /// The selection changes held for a key that `trace_id`'s key replaces,
 /// said as that key ends (Dickson, 2026-11-09).
 fn replaced_key_heard(state: &mut SrState, trace_id: TraceId) -> Vec<Effect> {
