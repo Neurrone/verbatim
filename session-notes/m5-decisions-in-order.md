@@ -249,3 +249,26 @@ So Verbatim+F11 works like this:
   - the breaker: 3 failures in 1 minute;
   - no caps on speak, browseable messages, tones, logs, list dialogs or packages for now. This amends the "bounded output" rule.
 - Added to M6.3: measure a 100,000-character utterance on OneCore and eSpeak NG, then split long utterances into pieces in the speech pipeline (NVDA issue 11843, never diagnosed by NVDA).
+
+## The install dialog (Dickson, 2026-11-09)
+
+- Layout, in tab order:
+  - the line "Only install extensions from people you trust.";
+  - read-only fields for name, version and author;
+  - a read-only multi-line description;
+  - an "Applications" list view (columns: Application, What it does), one row per application, merging claims, `reads` and clicks, plus an "Everywhere" row for global commands and a row for a synthesizer ("Adds the speech synthesizer <name>");
+  - a "Commands" list view (columns: Command, Gesture, Where, Conflict; M8.1 adds Change gesture);
+  - a "Before you install" list, shown only when it has items;
+  - Install and Cancel.
+- Rules versus hooks is not shown to users; it goes in developer-mode details.
+- Wording:
+  - native code: "Contains native code that runs outside Verbatim's sandbox.";
+  - data sent out: "Can send what it reads from <application> to <host>.";
+  - braille: "Connects to <braille display>.";
+  - the synthesizer line has no "receives the text" clause.
+- "Needs files you add yourself" is removed, along with the manifest's `user-files`. A user packages files that cannot be distributed (such as Eloquence's) into the `.vext` themselves.
+- A refusal replaces the contents with one message and a Close button:
+  - "Can't install X: it changes Notepad, and so does Y, which is already installed. Uninstall Y first.";
+  - "Can't install X: it needs a feature Verbatim doesn't offer extensions (<interface>).";
+  - "Can't install X: it contains two parts that both change Notepad."
+- The Extensions dialog's details reuse the same lists.
