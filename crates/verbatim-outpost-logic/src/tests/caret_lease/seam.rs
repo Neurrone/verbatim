@@ -850,13 +850,13 @@ impl Seam {
         // A focus read is a read of the node: under a live note it carries
         // the key's facts, and it replaces the node's last read.
         let node_id = node.id;
-        let note = self
+        let live = self
             .outpost
             .facts
             .text
             .live_note(node_id.number(), began)
             .map(|note| (note.fetch, note.until_us));
-        let fetch = note.map(|(fetch, _)| fetch);
+        let fetch = live.map(|(fetch, _)| fetch);
         let found = self.found(node_id, text, began, now, fetch);
         let committed = committed_read(
             self.outpost
@@ -868,7 +868,7 @@ impl Seam {
             &found,
         );
         Arc::make_mut(&mut self.outpost.facts.text).apply(&committed);
-        if let Some((fetch, until_us)) = note
+        if let Some((fetch, until_us)) = live
             && found.shows_effect(fetch.motion)
         {
             Arc::make_mut(&mut self.outpost.facts.text).apply(&TextChange::NoteEffect {
