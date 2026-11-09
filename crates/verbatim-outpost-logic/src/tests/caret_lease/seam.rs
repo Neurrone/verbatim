@@ -92,6 +92,9 @@ pub struct Seam {
     /// This outpost generation has reported a focus: until it has, it has
     /// no focus whose caret events it reads.
     focus_reported: bool,
+    /// Core gave up the before read with this query id: it answers as an
+    /// ordinary report.
+    given_up: Option<u64>,
     /// When this outpost generation began: none of its reads began earlier.
     generation_began: Us,
     now: Us,
@@ -224,6 +227,7 @@ impl Seam {
             keys: BTreeMap::new(),
             final_outstanding: false,
             focus_reported: false,
+            given_up: None,
             generation_began: 0,
             now: 1_000_000,
             next_trace: 10_000,
@@ -393,6 +397,7 @@ impl Seam {
                 );
             }
             CoreEffect::Withdraw { query_id, .. } => {
+                self.given_up = Some(query_id.0);
                 self.outpost_in(Input::Cancel(RequestId::shell(query_id.0)), seen);
             }
             CoreEffect::Text(request) => {
@@ -568,7 +573,8 @@ impl Seam {
                 until_us,
             });
         }
-        let before = matches!(flight.kind, ReadKind::Before(..));
+        let before =
+            matches!(flight.kind, ReadKind::Before(id, ..) if Some(id.number) != self.given_up);
         seen.push(Seen::Committed(field, text.clone(), before));
         let final_read = matches!(flight.kind, ReadKind::Final(..));
         // The report reaches Core before anything it causes.
