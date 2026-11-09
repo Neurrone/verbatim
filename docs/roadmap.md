@@ -653,10 +653,15 @@ security model's A3); and a memory cap on the host.
   world with a tone synthesizer component, hosted by the same
   `verbatim-synth-host`, so Wasm and native engines share one host from
   the start.
-- The host loads adapters matched by architecture; a reduced x86 host
-  carrying only the adapter loader and the protocol, cross-built for
-  `i686-pc-windows-msvc` by `cargo xtask`, serves 32-bit engines. An x64
-  adapter on ARM64 is unsupported until an x64 cross-build is added.
+- The host loads adapters matched by architecture, read from each DLL's
+  file header rather than declared in the manifest, which only lists the
+  DLLs; Core picks the best build the machine can run, its own
+  architecture, then x64, then x86, and an extension with none is refused
+  at install (Dickson, 2026-11-09). A reduced x86 host carrying only the
+  adapter loader and the protocol, cross-built for `i686-pc-windows-msvc`
+  by `cargo xtask`, serves 32-bit engines on x64 and ARM64. ARM64
+  installations are to run x64 engines too, through a full x64 host under
+  emulation, not built in M6 (Dickson, 2026-11-09).
 - The ordinary AppContainer for every host (Dickson, 2026-11-09), the
   container's access entries set by the contained launch itself, and a
   probe child asserting every denial.

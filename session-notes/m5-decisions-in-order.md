@@ -299,3 +299,7 @@ So Verbatim+F11 works like this:
 - "Loaded <module>" is accepted for a newly added module.
 - The TOML spellings of rule actions are accepted.
 - Every extension host runs in the ordinary AppContainer; the less privileged form is not used (Dickson, 2026-11-09).
+- A native module's DLLs are listed in the manifest, and each DLL's architecture is read from its file header, never declared. Verbatim picks its own architecture, then x64, then x86, and refuses an install with none runnable.
+- ARM64 installations support x86 engines through the 32-bit host, and x64 engines later through a full x64 host under emulation (estimated a day or two, not in M6).
+- DLLs remain the form for native synthesizers, the built-ins included. The executable-over-pipe alternative was considered and rejected, since engine authors expect DLLs and the host handles the process work.
+- wasmi was considered and rejected: no component model as of 2.0.0. Pulley within wasmtime is the interpreter option.
