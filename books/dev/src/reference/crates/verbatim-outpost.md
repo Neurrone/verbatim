@@ -740,7 +740,7 @@ and the inherited pipe handles.
   only one it made is given a new one (`NodeTextCopy::finish`);
   `named_anchors(op)` lists the anchors of the positions an operation
   names, which a copy must hold. `check_key` checks a caret key's watch
-  with one read against its pinned baseline (`CheckKey`, `LastRead`) and
+  with one read against its baseline (`CheckKey`, `LastRead`) and
   answers `KeyChecked`: the read and whether it shows an effect, that the
   caret moved while it was read, or that it failed.
 - `dialog_text(&dialog)` gathers a dialog's own text by NVDA's rules
@@ -1170,17 +1170,20 @@ the answers, within two seconds (`text`, the worker's `text_reads`).
 A caret key's one request (`TextOp::Key`) opens a watch that looks for
 the evidence NVDA's caret scripts wait for, without waiting:
 
-- The baseline is pinned when the request arrives (`Reducer::pinned`), so
-  a read that replaces the node's last read cannot move it. A
-  `KeyStart::ReadFirst` request reads the caret first and answers it; a
-  `KeyStart::FromLastRead` request is handled in its turn and answers that
-  the watch is open, or `Unanswered` with no last read, so a key with no
-  last read has no watch.
+- A text field's `KeyStart::FromLastRead` request opens its watch as it
+  arrives, from the node's last read then, and answers that the watch is
+  open, or `Unanswered` with no last read, so a key with no last read has
+  no watch. A `KeyStart::ReadFirst` request, and a terminal's, set
+  `Watch::Reading` as they arrive; the program reads the caret, answers,
+  and opens the watch, which only that state allows, so a key given up or
+  replaced while its read runs opens none. Either ends the watch before
+  it.
 - The watch is `TextFacts::watch` (`Watch::None`, `Open` with its stage,
   or `Checking` while a program holds it, with what comes after). A text
   field's stage has no time of its own: Core ends it, by the final read
   (`WatchOrder::FinalRead`), the watch's end (`WatchOrder::End`) or the
-  next key's request. A terminal's ends at `TERMINAL_WATCH_BOUND`
+  next key's request. A final read ordered while a check runs follows it
+  when it finds nothing. A terminal's ends at `TERMINAL_WATCH_BOUND`
   (`Stage::Terminal`), a console host's by its poll (`Stage::Poll`).
 - Each caret event, text change or selection change of the node checks
   the watch (`text_reads::check_watch`, `text::check_key`) with one read

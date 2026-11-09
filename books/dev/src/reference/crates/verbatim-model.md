@@ -494,8 +494,8 @@ supersedes an older one, whose answer Core drops. The operations
   request. `KeyStart::ReadFirst` reads the caret first, as the before read
   of a held key, and answers `TextReply::Key` with `KeyStarted::Read`; in
   a focused terminal it answers with a `TerminalSnapshot`, whose caret
-  answers it. `KeyStart::FromLastRead { withdrawn }` answers
-  `KeyStarted::Watching`, judged from the node's last read, with no read
+  answers it. `KeyStart::FromLastRead` answers `KeyStarted::Watching`,
+  judged from the node's last read as the request arrives, with no read
   of its own; `TextReply::Unanswered` when there is none. Either way the
   outpost then watches for evidence that the key took effect, and reports
   it as `NormalizedEvent::KeyAnswered` with the request's tag.

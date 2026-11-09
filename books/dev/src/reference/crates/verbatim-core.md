@@ -162,12 +162,11 @@ what its answer continues (`Then`).
   `Input::OutpostEnded`, where every entry still open there ends "gone" in
   number order, under its own trace or the end's (`outpost_gone`); its
   owner's withdrawal, the held key's read at its deadline
-  (`Queries::withdraw`, `Effect::Withdraw`); and Core's answer from
+  (`Queries::withdraw_kept`, `Effect::Withdraw`); and Core's answer from
   memory (`answer_from_memory`), or the removal of the terminal's model,
   which ends its reviews' entries with nothing run
   (`SrState::drop_models`, the only way a model goes). An answer with no
-  entry is dropped. An ending whose number is the watch the held keys wait
-  on (`HeldKeys::awaiting_watch`) resumes them, however it ended.
+  entry is dropped.
 - The outcome becomes the result the entry's kind takes: a navigation's
   `FetchResult` (`Gone` for a gone node, `Unanswered` for any failure), an
   activation's action, said "No action" for a failure and nothing for an
@@ -877,9 +876,9 @@ The line has one deadline, set by `Effect::BoundHeldKey` and entering as
 asked, and `KEY_BOUND_MS` (100 ms) after a key is passed on. Evidence
 clears it. A before read past its bound is withdrawn and the key is passed
 on, watched from the last read. A watched key past its bound orders the
-outpost's final read (`CoreToOutpost::Watch`, `WatchOrder::FinalRead`,
-carried by `Effect::WatchOrder`) and the line becomes `Released`, so what
-waits behind it runs. A terminal's watch has no final read: its deadline
+the line becomes `Released`, so what waits behind it runs, and, if the key
+is still current, orders the outpost's final read (`CoreToOutpost::Watch`,
+`WatchOrder::FinalRead`, carried by `Effect::WatchOrder`). A terminal's watch has no final read: its deadline
 only releases the line, and the outpost's own stage ends the watch.
 
 A held key that reaches Core while focus reports wait joins the focus
@@ -903,7 +902,8 @@ A focus on another node ends a watched key. In a text field, within the
 bound and with no later key, it first says the before read's unit, or
 Backspace's removed text (`editing::focus_first_words`), and orders
 `WatchOrder::End`; a key whose before read is still running says nothing.
-An outpost that ends leaves a key with no answer, which ends silently. At
+What the key's watch heard is said too, before the focus. An outpost that
+ends leaves a key with no answer, which says nothing but what it heard. At
 exit every key still held is passed on in press order.
 
 ## Key numbers

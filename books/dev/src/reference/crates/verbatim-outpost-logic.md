@@ -173,12 +173,17 @@ followed, changes nothing and comes back as `Effect::LogicError`, which the shel
 error.
 
 The caret key's watch (`src/watch.rs`) is one state in the text facts,
-`Watch`: `None`, `Open` with its key and stage (`Awaiting`, `FinalDue`,
+`Watch`: `None`, `Reading` from when a key's request that a program opens
+arrives until its commit, `Open` with its key and stage (`Awaiting`, `FinalDue`,
 `Terminal` with its end, or `Poll` with its next and last read), or
 `Checking` while the program in flight holds it, with what comes after
 the check (`Resume`, `Answer`, `PollRead`). A watch without a baseline
-cannot exist: `KeyWatch` holds its `Baseline`, the `LastRead` pinned when
-the key's request arrived. Evidence is judged here (`had_effect`, from the
+cannot exist: `KeyWatch` holds its `Baseline`, a copy of the `LastRead`.
+A text field's request from the last read opens its watch as it arrives,
+never entering the intake; a commit opens a watch only from `Reading` of
+its tag, and `Cancel` or a replacing request clears `Reading`.
+`WatchChange::Take` names its tag, so a program's check from an older copy
+cannot answer a newer watch. Evidence is judged here (`had_effect`, from the
 `Compared` facts the worker read), and the worker compares only positions.
 A text field's watch has no time of its own; Core orders it
 (`Input::WatchOrder`). The reducer alone decides a terminal's and a poll's
