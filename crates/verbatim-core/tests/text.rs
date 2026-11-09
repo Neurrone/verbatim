@@ -1378,8 +1378,10 @@ fn an_undo_restoring_a_selection_says_only_the_selection() {
 /// ends as the suggestion is said, and its bound says no line.
 #[test]
 fn a_suggestion_selected_for_a_key_ends_it_with_no_line() {
-    let mut state = editing("sound
-", 5);
+    let mut state = editing(
+        "sound
+", 5,
+    );
     let effects = reduce(&mut state, &key(CaretMotion::NextLine, false));
     let _ = request(&effects);
     let effects = reduce(
