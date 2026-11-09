@@ -87,6 +87,8 @@ harness, NVDA captures and troubleshooting.
     caret baseline and one request per key.
   - [state-models.md](design/state-models.md) — one explicit state each
     for the listener's record, hung windows and the followed focus.
+  - [progress-bars.md](design/progress-bars.md) — every progress bar,
+    foreground and background, owned by the listener.
   - [m42-parity.md](design/m42-parity.md) — the toasts session and the
     review cursor on objects that no longer exist.
   - [windows-terminal-twin-focus.md](design/windows-terminal-twin-focus.md)
