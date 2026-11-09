@@ -602,10 +602,6 @@ impl TextSource for UiaText {
         Sentences::Unsupported
     }
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "one read and each answer it gives, in the order of the request"
-    )]
     fn caret_read(
         &mut self,
         request: &CaretRequest<'_, UiaPos>,

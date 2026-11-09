@@ -114,10 +114,6 @@ pub struct CaretRequest<'a, P> {
 }
 
 /// The answer to a [`CaretRequest`].
-#[expect(
-    clippy::struct_excessive_bools,
-    reason = "each says one independent thing about the read"
-)]
 pub struct CaretRead<P> {
     /// The caret and the selection.
     pub state: CaretState<P>,

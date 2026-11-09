@@ -517,16 +517,21 @@ pub struct KeyNote {
     pub reads: NoteReads,
 }
 
+/// `line`'s caret as a byte offset; past any text when it does not fit.
+fn caret_offset(line: &TextChunk) -> usize {
+    usize::try_from(line.offset).unwrap_or(usize::MAX)
+}
+
 /// The character at `line`'s caret; empty at its end.
 fn character_at(line: &TextChunk) -> &str {
-    verbatim_text::grapheme_at(&line.text, line.offset as usize)
+    verbatim_text::grapheme_at(&line.text, caret_offset(line))
         .and_then(|range| line.text.get(range))
         .unwrap_or_default()
 }
 
 /// The characters just before and at `line`'s caret.
 fn beside(line: &TextChunk) -> (&str, &str) {
-    let offset = line.offset as usize;
+    let offset = caret_offset(line);
     let before = line
         .text
         .get(..offset)
@@ -638,9 +643,9 @@ impl TextFacts {
         (caret, selection_moved): (&CaretReport, bool),
         now_us: u64,
     ) -> Option<ReadFacts> {
-        let note = self.live_note(node, now_us)?;
+        let key_fetch = self.live_note(node, now_us)?.fetch;
         let line = &caret.line;
-        let unit = match note.fetch.unit {
+        let unit = match key_fetch.unit {
             TextUnit::Character => Some(TextChunk {
                 unit: TextUnit::Character,
                 text: character_at(line).to_owned(),
@@ -660,7 +665,7 @@ impl TextFacts {
                     caret_moved: line_changed || line.offset != was.offset,
                     selection_moved,
                     beside_changed: beside(line) != beside(&was),
-                    unit_changed: note.fetch.unit == TextUnit::Character
+                    unit_changed: key_fetch.unit == TextUnit::Character
                         && character_at(line) != character_at(&was),
                     line_changed,
                 };
@@ -671,7 +676,7 @@ impl TextFacts {
                     on_previous_line: !line_changed,
                 }
             });
-        if matches!(change, Change::Compared { compared, .. } if had_effect(compared, note.fetch.motion))
+        if matches!(change, Change::Compared { compared, .. } if had_effect(compared, key_fetch.motion))
             && let Some(narrowed) = self
                 .nodes
                 .get_mut(&node)
@@ -1062,11 +1067,13 @@ mod tests {
             read_at_us: 9,
         };
         let mut facts = TextFacts::default();
-        let mut part = NodeAnchors::default();
-        part.last = Some(LastRead {
-            line: report(0).line,
-            ..last_read(0, None)
-        });
+        let part = NodeAnchors {
+            last: Some(LastRead {
+                line: report(0).line,
+                ..last_read(0, None)
+            }),
+            ..NodeAnchors::default()
+        };
         facts.apply(&TextChange::Uia {
             node: 1,
             part,
