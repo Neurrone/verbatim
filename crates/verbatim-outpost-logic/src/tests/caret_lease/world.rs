@@ -254,13 +254,20 @@ impl World {
         }
     }
 
-    /// The application or the mouse selects the letter after the caret, or
-    /// collapses the selection, with no key.
+    /// The application or the mouse selects the letter before the caret,
+    /// which leaves the caret where it is, or at the text's start the
+    /// letter after it, which moves the caret, or collapses the selection,
+    /// with no key.
     pub fn select(&mut self) {
         let field = &mut self.fields[self.focus];
-        if field.selection.take().is_none() && field.caret < field.letters.len() {
-            field.selection = Some((field.caret, field.caret + 1));
-            field.caret += 1;
+        if field.selection.take().is_some() {
+            return;
+        }
+        if field.caret > 0 {
+            field.selection = Some((field.caret - 1, field.caret));
+        } else if !field.letters.is_empty() {
+            field.selection = Some((0, 1));
+            field.caret = 1;
         }
     }
 }

@@ -34,10 +34,15 @@
 //!   application in press order, and says nothing for itself if its node
 //!   is no longer the focus when it is judged, at its pass (Dickson's
 //!   answer, 2026-11-09).
-//! - A selection no key made during a Backspace's wait is held as any
-//!   other (Dickson's answer, 2026-11-09). Such a read is the key's
-//!   evidence (2026-11-09), and Backspace says nothing when nothing was
-//!   removed (`docs/parity/text.md`, "What Backspace and Delete say").
+//! - A selection change arriving while a key is between its release and
+//!   its words is held and said after them, whether or not another key
+//!   waits behind it; before a key has been released it is said at once
+//!   (Dickson's answer, 2026-11-09).
+//! - Backspace speaks only when its caret moved
+//!   (`nvda/source/editableText.py` 313 to 320): with the caret not moved
+//!   it says nothing for the key and the change is heard; with the caret
+//!   moved and nothing removed it says "blank" (Dickson's answer,
+//!   2026-11-09).
 //! - Backspace over a selection says what comes before the selection's
 //!   start, Delete its unit, and the change follows, in general terms
 //!   when the text changed: "selection removed" when nothing is selected
@@ -112,6 +117,8 @@ struct Press {
     baseline: Option<Text>,
     /// Heard, silenced or ended: its words are said or owed no more.
     done: bool,
+    /// A later key silenced it, whose words its selection changes wait for.
+    silenced: bool,
 }
 
 /// What a report told Core, for [`Model::report`].
@@ -186,6 +193,7 @@ impl Model {
     pub fn press(&mut self, key: Key, held: bool, now: Us) {
         if let Some(open) = self.open() {
             self.keys[open].done = true;
+            self.keys[open].silenced = true;
         }
         self.keys.push(Press {
             key,
@@ -196,6 +204,7 @@ impl Model {
             passed: None,
             baseline: None,
             done: false,
+            silenced: false,
         });
     }
 
@@ -220,7 +229,7 @@ impl Model {
         press.baseline = baseline;
         if press.node.is_none() || press.node != focus {
             press.done = true;
-            self.say_held_when_no_key_waits();
+            self.say_held_when_no_key_is_out();
         }
         Ok(())
     }
@@ -232,9 +241,20 @@ impl Model {
         }
     }
 
-    /// With no key left to wait for, the held selection changes are said.
-    fn say_held_when_no_key_waits(&mut self) {
-        if self.keys.iter().all(|press| press.passed.is_some()) && self.open().is_none() {
+    /// Whether a key is between its release and its words: released with
+    /// its words owed, or silenced with the key that silenced it, or one
+    /// after that, not yet done.
+    fn key_is_out(&self) -> bool {
+        self.keys.iter().enumerate().any(|(id, press)| {
+            press.passed.is_some()
+                && (!press.done
+                    || (press.silenced && self.keys[id + 1..].iter().any(|later| !later.done)))
+        })
+    }
+
+    /// With no key out, the held selection changes are said.
+    fn say_held_when_no_key_is_out(&mut self) {
+        if !self.key_is_out() {
             let held = std::mem::take(&mut self.held);
             self.say_changes(&held);
         }
@@ -268,7 +288,7 @@ impl Model {
         self.note_caret(report.began, report.text.caret);
         let changes = std::mem::take(&mut self.changes);
         let Some(open) = self.open() else {
-            if !self.held.is_empty() && self.keys.iter().any(|press| press.passed.is_none()) {
+            if self.key_is_out() {
                 self.held.extend(changes);
                 return;
             }
@@ -478,6 +498,9 @@ fn unit(key: Key, text: &Text) -> Option<String> {
 fn evidence_words(key: Key, baseline: Option<&Text>, text: &Text) -> Option<String> {
     if key == Key::Backspace {
         let baseline = baseline?;
+        if baseline.letters.len() == text.letters.len() {
+            return (baseline.caret != text.caret).then(|| "blank".to_owned());
+        }
         if let Some((start, _)) = baseline.selection {
             return Some(
                 start
