@@ -90,8 +90,8 @@ pub struct Seam {
     /// Core's held-key deadline: the key and when it falls due.
     due: Option<(TraceId, Us)>,
     keys: BTreeMap<TraceId, usize>,
-    /// Core has asked a final read that has not been answered.
-    final_outstanding: bool,
+    /// The final reads Core has asked that have not been answered.
+    final_outstanding: u32,
     /// This outpost generation has reported a focus: until it has, it has
     /// no focus whose caret events it reads.
     focus_reported: bool,
@@ -231,7 +231,7 @@ impl Seam {
             flight: None,
             due: None,
             keys: BTreeMap::new(),
-            final_outstanding: false,
+            final_outstanding: 0,
             focus_reported: false,
             given_up: None,
             reread: None,
@@ -420,7 +420,7 @@ impl Seam {
                         purpose: ReadPurpose::Final,
                         ..
                     }) => {
-                        self.final_outstanding = true;
+                        self.final_outstanding += 1;
                         seen.push(Seen::FinalReadAsked);
                     }
                     _ => {}
@@ -510,6 +510,12 @@ impl Seam {
             &mut seen,
         );
         seen
+    }
+
+    /// Whether a final read Core asked has not been answered.
+    #[must_use]
+    pub fn final_read_outstanding(&self) -> bool {
+        self.final_outstanding > 0
     }
 
     /// Whether a read is in flight.
@@ -624,7 +630,7 @@ impl Seam {
             },
         };
         if final_read {
-            self.final_outstanding = false;
+            self.final_outstanding -= 1;
         }
         self.commit(
             flight.request,
@@ -698,7 +704,7 @@ impl Seam {
             return seen;
         };
         if matches!(flight.kind, ReadKind::Final(..)) {
-            self.final_outstanding = false;
+            self.final_outstanding -= 1;
         }
         seen.push(Seen::Abandoned(match flight.kind {
             ReadKind::Before(id, ..) if Some(id.number) == self.given_up => ReadRole::Other,
@@ -929,9 +935,6 @@ impl Seam {
             );
         }
         self.now = now;
-        if self.final_outstanding {
-            seen.push(Seen::FinalReadAsked);
-        }
         let outpost_now = self.outpost_now();
         let effects = self.outpost.tick(outpost_now);
         let effects = with_answers(&mut self.outpost, &mut self.answers, effects, outpost_now);
@@ -949,7 +952,7 @@ impl Seam {
         self.flight = None;
         self.generation += 1;
         self.outpost = Reducer::new();
-        self.final_outstanding = false;
+        self.final_outstanding = 0;
         self.focus_reported = false;
         self.reread = None;
         self.generation_began = self.now;
