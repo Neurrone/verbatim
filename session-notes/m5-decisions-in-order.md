@@ -322,3 +322,14 @@ So Verbatim+F11 works like this:
   - build A: `verbatim-inspect matcher`, `dump-tree --properties` and `match '<matcher>'`;
   - build B: `watch-events --explain`, a module template, and `dump-tree` fixtures for the test helper.
 - A developer-folder DLL is shadow-copied into the cache. A changed DLL restarts the developer folder's host.
+
+## Build A review decisions (Dickson, 2026-11-09)
+
+- `accept` is judged once in the listener and carried in the forwarded fact, with routing fixed to keep it and the generation.
+- Verbatim's own identity is stated by Core: the supervisor records `verbatim` for Core's own process at start-up, and Core's first configuration to the listener names it. The listener records it rather than resolving it, and resolves every other process.
+- The start-up failure sentence stays unscheduled until M8.6's toasts.
+- Lifecycle cells:
+  - a reload clears the breaker's turned-off set;
+  - late effects from a `Loading` extension are dropped;
+  - newer rules replace ones held in `RulesReady`;
+  - a failed newer version leaves the previous version everywhere, as `extensions.md` 2.2 says.
