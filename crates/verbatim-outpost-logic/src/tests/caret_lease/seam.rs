@@ -3,24 +3,24 @@
 //! through [`Seam`], which speaks the world's words in and out. The caret
 //! rework's builder changes this file alone, in its own commit.
 //!
-//! Written for main's types at 28ee6a5a, which have no Core-owned bound, no
-//! final read and no last read in the rework's sense: [`Seam::read_done`]
-//! stands in for the outpost's programs (`crates/verbatim-outpost`), which
-//! make every read and comparison as `Change`s, and answers them with main's
-//! `AwaitCaret` watch, whose judgement moves to Core in the rework.
-//! [`cannot_express`] marks what main's types cannot show, so the test fails
-//! rather than passing vacuously; the builder replaces each.
+//! [`Seam::read_done`] stands in for the outpost's programs
+//! (`crates/verbatim-outpost`), which make every read and comparison as
+//! `TextChange`s, and report them as `CaretMoved` or a reply carrying
+//! `ReadFacts`, as `docs/design/caret-selection-rework.md` lays out. A read
+//! reads the note in its program's copy, and compares with the node's last
+//! read as it commits.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use verbatim_core::{SrState, reduce};
 use verbatim_model::protocol::{EventTiming, OutpostToCore, Query, QueryOutcome, QueryResult};
 use verbatim_model::{
-    Backend, CallCounts, CaretKey, CaretMotion, CaretReply, CaretReport, Effect as CoreEffect,
-    FocusText, Input as CoreInput, KeySeq, Message, NodeDetails, NodeId, NodeSnapshot,
-    NormalizedEvent, OutpostId, Phrase, Pid, QueryId, Role, SegmentContent, Selection,
+    Backend, CaretChanges, CaretKey, CaretMotion, CaretRead, CaretReply, CaretReport,
+    CaretSelection, Change as FactsChange, Compared, Effect as CoreEffect, FocusText,
+    Input as CoreInput, KeySeq, Message, NodeDetails, NodeId, NodeSnapshot, NormalizedEvent,
+    OutpostId, Phrase, Pid, QueryId, ReadFacts, ReadPurpose, Role, SegmentContent, Selection,
     SelectionChange, SelectionText, StateSet, TextAnchor, TextChunk, TextOp, TextPosition,
-    TextReply, TextUnit, TraceId,
+    TextReply, TextUnit, TraceId, had_effect,
 };
 
 use super::super::*;
@@ -51,20 +51,16 @@ pub enum Seen {
         final_read: bool,
     },
     /// Core asked its final read.
-    #[expect(
-        dead_code,
-        reason = "main's Core asks no final read; the builder's seam makes this"
-    )]
     FinalReadAsked,
 }
 
-/// What a read in flight is, as a program of main's outpost.
+/// What a read in flight is, as a program of the outpost.
 #[derive(Clone, Debug)]
 enum ReadKind {
     /// The read before a held key.
-    Before(RequestId, TraceId),
-    /// A key's watch being opened.
-    Key(RequestId, TraceId, verbatim_model::CaretWatch),
+    Before(RequestId, TraceId, CaretRead),
+    /// A key's final read.
+    Final(RequestId, TraceId, CaretRead),
     /// The application's caret event.
     Event,
 }
@@ -91,11 +87,8 @@ pub struct Seam {
     /// Core's held-key deadline: the key and when it falls due.
     due: Option<(TraceId, Us)>,
     keys: BTreeMap<TraceId, usize>,
-    /// The fields' caret reports' numbers.
-    reports: u64,
-    /// The letters of each node's last committed read, which main's programs
-    /// compare as the node's value change's note.
-    letters: BTreeMap<u64, Vec<char>>,
+    /// Core has asked a final read that has not been answered.
+    final_outstanding: bool,
     now: Us,
     next_trace: u64,
     /// What this seam could not express.
@@ -123,8 +116,8 @@ fn snapshot(generation: u64, number: u64, role: Role, name: &str) -> NodeSnapsho
     }
 }
 
-/// `text`'s caret as a report of field `field` in generation `generation`.
-fn caret_report(text: &Text, field: usize) -> CaretReport {
+/// `text`'s caret as a report of field `field`, its read begun at `began`.
+fn caret_report(text: &Text, field: usize, began: Us) -> CaretReport {
     let anchor = TextAnchor(100 + field as u64);
     let position = |offset: usize| TextPosition {
         anchor,
@@ -142,11 +135,14 @@ fn caret_report(text: &Text, field: usize) -> CaretReport {
             truncated: false,
             formats: Vec::new(),
         },
-        selection: text.selection.map(|(start, end)| Selection {
-            start: position(start),
-            end: position(end),
+        selection: text.selection.map(|(start, end)| CaretSelection {
+            range: Selection {
+                start: position(start),
+                end: position(end),
+            },
+            start_line: None,
         }),
-        selection_line: None,
+        read_at_us: began,
     }
 }
 
@@ -221,8 +217,7 @@ impl Seam {
             flight: None,
             due: None,
             keys: BTreeMap::new(),
-            reports: 0,
-            letters: BTreeMap::new(),
+            final_outstanding: false,
             now: 1_000_000,
             next_trace: 10_000,
             unexpressed: BTreeSet::new(),
@@ -275,19 +270,15 @@ impl Seam {
                 query:
                     Query::Text {
                         node_id,
-                        op: TextOp::ReadCaret,
-                    },
-            } => Some((*node_id, ReadKind::Before(*request_id, entry.trace))),
-            Item::Query {
-                request_id,
-                query:
-                    Query::Text {
-                        node_id,
-                        op: TextOp::AwaitCaret(watch),
+                        op: TextOp::ReadCaret(read),
                     },
             } => Some((
                 *node_id,
-                ReadKind::Key(*request_id, entry.trace, watch.clone()),
+                if read.purpose == ReadPurpose::BeforeKey {
+                    ReadKind::Before(*request_id, entry.trace, *read)
+                } else {
+                    ReadKind::Final(*request_id, entry.trace, *read)
+                },
             )),
             Item::Msaa { hwnd, .. } => {
                 Some((node_of(self.generation, field_of(*hwnd)), ReadKind::Event))
@@ -385,9 +376,32 @@ impl Seam {
             CoreEffect::BoundHeldKey(bound) => {
                 self.due = bound.map(|(trace, ms)| (trace, self.now + ms * 1_000));
             }
+            CoreEffect::KeyNote(note) => {
+                self.outpost_in(
+                    Input::KeyNote {
+                        note,
+                        console: false,
+                    },
+                    seen,
+                );
+            }
+            CoreEffect::Withdraw { query_id, .. } => {
+                self.outpost_in(Input::Cancel(RequestId::shell(query_id.0)), seen);
+            }
             CoreEffect::Text(request) => {
-                if request.op == TextOp::ReadCaret {
-                    seen.push(Seen::BeforeReadAsked);
+                match request.op {
+                    TextOp::ReadCaret(CaretRead {
+                        purpose: ReadPurpose::BeforeKey,
+                        ..
+                    }) => seen.push(Seen::BeforeReadAsked),
+                    TextOp::ReadCaret(CaretRead {
+                        purpose: ReadPurpose::Final,
+                        ..
+                    }) => {
+                        self.final_outstanding = true;
+                        seen.push(Seen::FinalReadAsked);
+                    }
+                    _ => {}
                 }
                 let item = Item::Query {
                     request_id: RequestId::shell(request.query_id.0),
@@ -483,16 +497,26 @@ impl Seam {
         self.flight.as_ref().map_or(0, |flight| flight.field)
     }
 
+    /// The node's last read, as the outpost's reducer holds it now, in the
+    /// world's words.
+    fn last_read_of(&self, node: NodeId) -> Option<(Text, LastRead<u32>)> {
+        let last = self.outpost.facts.text.edit(node.number())?.last.clone()?;
+        let text = Text {
+            letters: last.line.text.chars().collect(),
+            caret: last.caret as usize,
+            selection: last
+                .selection
+                .as_ref()
+                .map(|selection| (selection.start as usize, selection.end as usize)),
+        };
+        Some((text, last))
+    }
+
     /// The read in flight ended at `now`, seeing `text`.
     ///
     /// # Panics
     ///
     /// With no read in flight.
-    #[expect(
-        clippy::too_many_lines,
-        clippy::single_match_else,
-        reason = "one arm for each kind of read, as main's programs take them"
-    )]
     pub fn read_done(&mut self, text: &Text, now: Us) -> Vec<Seen> {
         self.now = now;
         let flight = self.flight.take().expect("a read in flight");
@@ -501,184 +525,133 @@ impl Seam {
             return seen;
         }
         let field = flight.field;
-        let last = last_selection(&flight, text, self.letters.get(&flight.node.number()));
-        self.letters
-            .insert(flight.node.number(), text.letters.clone());
-        let content_changed = last.letters != text.letters;
-        let new_selection = text
-            .selection
-            .filter(|_| content_changed)
-            .map(|(start, end)| {
-                let letters: String = text.letters[start..end].iter().collect();
-                SelectionChange {
-                    selected: true,
-                    characters: u32::try_from(end - start).expect("a short line"),
-                    text: letters,
-                }
+        let note = flight
+            .facts
+            .text
+            .live_note(flight.node.number(), flight.began)
+            .map(|note| (note.fetch, Some(note.until_us)));
+        let fetch = match &flight.kind {
+            ReadKind::Before(_, _, read) | ReadKind::Final(_, _, read) => Some((
+                NoteFetch {
+                    unit: read.fetch.unit,
+                    motion: read.fetch.motion,
+                },
+                None,
+            )),
+            ReadKind::Event => note,
+        };
+        let found = self.found(flight.node, text, flight.began, now, fetch.map(|(f, _)| f));
+        let mut changes = vec![committed_read(
+            flight
+                .facts
+                .text
+                .edit(flight.node.number())
+                .map(|anchors| anchors.part(&[])),
+            flight.node.number(),
+            &found,
+        )];
+        if let Some((fetch, Some(until_us))) = fetch
+            && found.shows_effect(fetch.motion)
+        {
+            changes.push(TextChange::NoteEffect {
+                node: flight.node.number(),
+                until_us,
             });
-        let change = committed_read(&flight, text, self.reports + 1);
-        self.reports += 1;
-        let report = caret_report(text, field);
-        let changes = report_changes(selection_changes(&last, text));
-        let reported = Seen::Report {
+        }
+        let before = matches!(flight.kind, ReadKind::Before(..));
+        seen.push(Seen::Committed(field, text.clone(), before));
+        let final_read = matches!(flight.kind, ReadKind::Final(..));
+        // The report reaches Core before anything it causes.
+        seen.push(Seen::Report {
             text: text.clone(),
             began: flight.began,
             ended: now,
-            final_read: false,
-        };
-        let reply = |moved: bool, changes: Vec<SelectionChange>| {
-            TextReply::Caret(Box::new(CaretReply {
-                moved,
-                caret: report.clone(),
-                read_at_ms: flight.began / 1_000,
-                unit: None,
-                selection_changes: changes,
-                content_changed,
-                new_selection: new_selection.clone(),
-                same_line: None,
-                removed: None,
-            }))
-        };
-        match &flight.kind {
-            ReadKind::Before(request_id, trace) => {
-                seen.push(Seen::Committed(field, text.clone(), true));
-                // The report reaches Core before the pass it causes.
-                seen.push(reported);
-                self.commit(
-                    flight.request,
-                    Change {
-                        text: vec![change],
-                        caret_read: Some((flight.node, flight.began)),
-                        result: Some(OutpostToCore::Reply {
-                            trace_id: *trace,
-                            request_id: *request_id,
-                            outcome: QueryOutcome::Done(QueryResult::Text(reply(
-                                false,
-                                Vec::new(),
-                            ))),
-                            timing: EventTiming::default(),
-                        }),
-                        ..Change::default()
-                    },
-                    &mut seen,
-                );
-            }
-            ReadKind::Key(request_id, trace, watch) => {
-                seen.push(Seen::Committed(field, text.clone(), false));
-                if has_evidence(watch, &last, text, &report) {
-                    self.commit(
-                        flight.request,
-                        Change {
-                            text: vec![change],
-                            caret_read: Some((flight.node, flight.began)),
-                            result: Some(OutpostToCore::Reply {
-                                trace_id: *trace,
-                                request_id: *request_id,
-                                outcome: QueryOutcome::Done(QueryResult::Text(reply(
-                                    true, changes,
-                                ))),
-                                timing: EventTiming::default(),
-                            }),
-                            ..Change::default()
-                        },
-                        &mut seen,
-                    );
-                    seen.push(reported);
-                } else {
-                    self.commit(
-                        flight.request,
-                        Change {
-                            text: vec![change],
-                            caret_read: Some((flight.node, flight.began)),
-                            watch: Some(WatchChange::Open {
-                                open: OpenWatch {
-                                    request_id: *request_id,
-                                    trace: *trace,
-                                    node_id: flight.node,
-                                    watch: watch.clone(),
-                                    timing: EventTiming::default(),
-                                    calls: CallCounts::default(),
-                                },
-                                console: false,
-                            }),
-                            ..Change::default()
-                        },
-                        &mut seen,
-                    );
+            final_read,
+        });
+        let result = match flight.kind {
+            ReadKind::Before(request_id, trace, _) | ReadKind::Final(request_id, trace, _) => {
+                OutpostToCore::Reply {
+                    trace_id: trace,
+                    request_id,
+                    outcome: QueryOutcome::Done(QueryResult::Text(TextReply::Caret(Box::new(
+                        found.reply(),
+                    )))),
+                    timing: EventTiming::default(),
                 }
             }
-            ReadKind::Event => {
-                seen.push(Seen::Committed(field, text.clone(), false));
-                let open = self.outpost.facts.follow.watch.kept().cloned();
-                match open.filter(|open| open.node_id == flight.node) {
-                    Some(open) => {
-                        self.commit(
-                            flight.request,
-                            Change {
-                                watch: Some(WatchChange::Take(flight.node)),
-                                caret_read: Some((flight.node, flight.began)),
-                                ..Change::default()
-                            },
-                            &mut seen,
-                        );
-                        let checked = if has_evidence(&open.watch, &last, text, &report) {
-                            Checked::Answered {
-                                reply: reply(true, changes),
-                                calls: CallCounts::default(),
-                                awaited_at_us: now,
-                            }
-                        } else {
-                            Checked::Watching {
-                                calls: CallCounts::default(),
-                            }
-                        };
-                        let answered = matches!(checked, Checked::Answered { .. });
-                        self.commit(
-                            flight.request,
-                            Change {
-                                text: vec![change],
-                                watch: Some(WatchChange::Checked(checked)),
-                                ..Change::default()
-                            },
-                            &mut seen,
-                        );
-                        if answered {
-                            seen.push(reported);
-                        }
-                    }
-                    None => {
-                        let trace_id = self.trace();
-                        self.commit(
-                            flight.request,
-                            Change {
-                                text: vec![change],
-                                caret_read: Some((flight.node, flight.began)),
-                                result: Some(OutpostToCore::Event {
-                                    trace_id,
-                                    observed_at_us: flight.began,
-                                    backend: Backend::Msaa,
-                                    window: None,
-                                    application: None,
-                                    timing: EventTiming::default(),
-                                    event: NormalizedEvent::CaretMoved {
-                                        node_id: flight.node,
-                                        caret: report,
-                                        selection_changes: changes,
-                                        content_changed,
-                                        new_selection: new_selection.clone(),
-                                    },
-                                }),
-                                ..Change::default()
-                            },
-                            &mut seen,
-                        );
-                        seen.push(reported);
-                    }
-                }
-            }
+            ReadKind::Event => OutpostToCore::Event {
+                trace_id: self.trace(),
+                observed_at_us: flight.began,
+                backend: Backend::Msaa,
+                window: None,
+                application: None,
+                timing: EventTiming::default(),
+                event: found.event(flight.node),
+            },
+        };
+        if final_read {
+            self.final_outstanding = false;
         }
+        self.commit(
+            flight.request,
+            Change {
+                text: changes,
+                caret_read: Some((flight.node, flight.began)),
+                result: Some(result),
+                ..Change::default()
+            },
+            &mut seen,
+        );
         self.finish(flight.request, &mut seen);
         seen
+    }
+
+    /// What a read of `node`, seeing `text`, begun at `began` and ended at
+    /// `now`, finds compared with the node's last read, its facts when it
+    /// was made for `fetch`.
+    fn found(
+        &self,
+        node: NodeId,
+        text: &Text,
+        began: Us,
+        now: Us,
+        fetch: Option<NoteFetch>,
+    ) -> Found {
+        let field = field_of_node(node);
+        let report = caret_report(text, field, began);
+        let last = self.last_read_of(node);
+        let was = last.as_ref().map(|(was, _)| was);
+        let changes = was.map_or_else(Vec::new, |was| report_changes(selection_changes(was, text)));
+        let content_changed = was.is_some_and(|was| was.letters != text.letters);
+        let new_selection = text
+            .selection
+            .filter(|_| content_changed)
+            .map(|(start, end)| SelectionChange {
+                selected: true,
+                characters: u32::try_from(end - start).expect("a short line"),
+                text: text.letters[start..end].iter().collect(),
+            });
+        let facts = fetch.map(|fetch| ReadFacts {
+            unit: unit_chunk(text, &report, fetch.unit),
+            change: last.map_or(FactsChange::NoPrevious, |(was, last)| {
+                FactsChange::Compared {
+                    compared: compared(&was, text),
+                    previous_selection: last.selection.map(|selection| selection.report),
+                    previous_line: last.line,
+                    on_previous_line: true,
+                }
+            }),
+            read_ended_at_us: now,
+        });
+        Found {
+            text: text.clone(),
+            began,
+            report,
+            changes,
+            content_changed,
+            new_selection,
+            facts,
+        }
     }
 
     /// The read in flight is abandoned: its deadline passes.
@@ -710,6 +683,34 @@ impl Seam {
             Role::EditableText,
             "Field",
         );
+        // A focus read is a read of the node: under a live note it carries
+        // the key's facts, and it replaces the node's last read.
+        let node_id = node.id;
+        let note = self
+            .outpost
+            .facts
+            .text
+            .live_note(node_id.number(), began)
+            .map(|note| (note.fetch, note.until_us));
+        let found = self.found(node_id, text, began, now, note.map(|(fetch, _)| fetch));
+        let committed = committed_read(
+            self.outpost
+                .facts
+                .text
+                .edit(node_id.number())
+                .map(|anchors| anchors.part(&[])),
+            node_id.number(),
+            &found,
+        );
+        Arc::make_mut(&mut self.outpost.facts.text).apply(&committed);
+        if let Some((fetch, until_us)) = note
+            && found.shows_effect(fetch.motion)
+        {
+            Arc::make_mut(&mut self.outpost.facts.text).apply(&TextChange::NoteEffect {
+                node: node_id.number(),
+                until_us,
+            });
+        }
         let input = CoreInput::Event {
             trace_id: self.trace(),
             observed_at_us: began,
@@ -722,8 +723,14 @@ impl Seam {
                 whole_window: false,
                 selected_child: None,
                 text: Some(Box::new(FocusText::Caret {
-                    caret: caret_report(text, field),
+                    caret: found.report,
                     selected_text: None,
+                    changes: CaretChanges {
+                        selection_changes: found.changes,
+                        content_changed: found.content_changed,
+                        new_selection: found.new_selection,
+                    },
+                    facts: found.facts.map(Box::new),
                 })),
                 earlier: None,
                 group: None,
@@ -752,7 +759,16 @@ impl Seam {
             && at <= now
         {
             self.due = None;
-            self.enter_core(&CoreInput::HeldKeyDue { trace_id: trace }, &mut seen);
+            self.enter_core(
+                &CoreInput::HeldKeyDue {
+                    trace_id: trace,
+                    at_us: now,
+                },
+                &mut seen,
+            );
+        }
+        if self.final_outstanding {
+            seen.push(Seen::FinalReadAsked);
         }
         let outpost_now = self.outpost_now();
         let effects = self.outpost.tick(outpost_now);
@@ -771,7 +787,7 @@ impl Seam {
         self.flight = None;
         self.generation += 1;
         self.outpost = Reducer::new();
-        self.letters.clear();
+        self.final_outstanding = false;
         self.enter_core(&input, &mut seen);
         seen
     }
@@ -783,20 +799,12 @@ impl Seam {
         seen
     }
 
-    /// Core's caret, or `None` with what could not be expressed recorded.
+    /// Core's caret.
     pub fn core_caret(&mut self) -> Option<usize> {
-        self.unexpressed.insert(cannot_express(
-            "Core's caret: SrState does not expose it outside its crate",
-        ));
-        None
+        self.core
+            .focus_caret_offset()
+            .map(|offset| offset as usize)
     }
-}
-
-/// Marks what main's types cannot show the test: the test fails on it at
-/// its end, so it never passes vacuously. The builder replaces each.
-#[must_use]
-pub fn cannot_express(what: &'static str) -> &'static str {
-    what
 }
 
 fn field_of(hwnd: isize) -> usize {
@@ -807,68 +815,106 @@ fn field_of_node(node: NodeId) -> usize {
     usize::from(node.number() != 5)
 }
 
-/// What the read in flight compares its selection with: the node's kept
-/// selection in its copy of the facts, or none.
-fn last_selection(flight: &Flight, text: &Text, letters: Option<&Vec<char>>) -> Text {
-    let kept = flight
-        .facts
-        .text
-        .edit(flight.node.number())
-        .and_then(|anchors| anchors.selection.clone());
-    let mut last = text.clone();
-    if let Some(letters) = letters {
-        last.letters.clone_from(letters);
+/// What a read found, compared with the node's last read.
+struct Found {
+    text: Text,
+    began: Us,
+    report: CaretReport,
+    changes: Vec<SelectionChange>,
+    content_changed: bool,
+    new_selection: Option<SelectionChange>,
+    facts: Option<ReadFacts>,
+}
+
+impl Found {
+    /// Whether it shows the effect of a key of `motion`, as the outpost
+    /// narrows a note by.
+    fn shows_effect(&self, motion: CaretMotion) -> bool {
+        matches!(
+            self.facts.as_ref().map(|facts| &facts.change),
+            Some(FactsChange::Compared { compared, .. }) if had_effect(*compared, motion)
+        )
     }
-    match kept {
-        Some(kept) => {
-            let (start, end) = kept.ends;
-            last.selection = (!kept.collapsed).then_some((start as usize, end as usize));
-            if kept.collapsed {
-                last.caret = start as usize;
-            }
+
+    /// The reply to a key's read: made for a key, so it has facts.
+    fn reply(self) -> CaretReply {
+        CaretReply {
+            caret: self.report,
+            selection_changes: self.changes,
+            content_changed: self.content_changed,
+            new_selection: self.new_selection,
+            facts: self.facts.expect("a key's read has facts"),
         }
-        None => last.selection = None,
     }
-    last
+
+    /// The report of a caret event.
+    fn event(self, node_id: NodeId) -> NormalizedEvent {
+        NormalizedEvent::CaretMoved {
+            node_id,
+            caret: self.report,
+            selection_changes: self.changes,
+            content_changed: self.content_changed,
+            new_selection: self.new_selection,
+            facts: self.facts.map(Box::new),
+        }
+    }
 }
 
-/// The read's commit of the node's text facts: its selection the one the
-/// next report compares with.
-fn committed_read(flight: &Flight, text: &Text, report: u64) -> TextChange {
-    let node = flight.node.number();
-    let (mut part, copied) = flight
-        .facts
-        .text
-        .edit(node)
-        .map(|anchors| anchors.part(&[]))
-        .unwrap_or_default();
-    let (start, end) = text.ends();
-    part.selection = Some(KeptSelection {
-        ends: (
-            u32::try_from(start).expect("a short line"),
-            u32::try_from(end).expect("a short line"),
-        ),
-        collapsed: text.selection.is_none(),
-        text: None,
-        report,
+/// The comparisons the outpost makes of `text` with `was`.
+fn compared(was: &Text, text: &Text) -> Compared {
+    let beside = |text: &Text| {
+        (
+            text.caret
+                .checked_sub(1)
+                .and_then(|at| text.letters.get(at).copied()),
+            text.at_caret(),
+        )
+    };
+    Compared {
+        caret_moved: was.caret != text.caret,
+        selection_moved: was.selection != text.selection,
+        beside_changed: beside(was) != beside(text),
+        unit_changed: was.at_caret() != text.at_caret(),
+        line_changed: was.letters != text.letters,
+    }
+}
+
+/// The key's unit at the caret: the character there, or the line.
+fn unit_chunk(text: &Text, report: &CaretReport, unit: TextUnit) -> TextChunk {
+    if unit != TextUnit::Character {
+        return report.line.clone();
+    }
+    TextChunk {
+        unit: TextUnit::Character,
+        text: text.at_caret().map(String::from).unwrap_or_default(),
+        offset: 0,
+        ..report.line.clone()
+    }
+}
+
+/// The read's commit of the node's text facts, on `part`, what its program
+/// copied: its report the node's last read.
+fn committed_read(
+    part: Option<(NodeAnchors<u32>, BTreeSet<u64>)>,
+    node: u64,
+    found: &Found,
+) -> TextChange {
+    let (mut part, copied) = part.unwrap_or_default();
+    let selection = found.text.selection.zip(found.report.selection.clone()).map(
+        |((start, end), report)| ReadSelection {
+            start: u32::try_from(start).expect("a short line"),
+            end: u32::try_from(end).expect("a short line"),
+            text: None,
+            report,
+        },
+    );
+    part.last = Some(LastRead {
+        caret: u32::try_from(found.text.caret).expect("a short line"),
+        selection,
+        line: found.report.line.clone(),
+        text_changed: false,
+        read_at_us: found.began,
+        unit: found.facts.as_ref().map(|facts| facts.unit.clone()),
     });
-    part.reports = report;
     TextChange::Edit { node, part, copied }
-}
-
-/// Main's evidence, in the watch's terms: the caret left where Core knew it,
-/// the selection changed, or the text the key compares changed.
-fn has_evidence(
-    watch: &verbatim_model::CaretWatch,
-    last: &Text,
-    text: &Text,
-    report: &CaretReport,
-) -> bool {
-    let moved = watch
-        .since
-        .is_none_or(|since| since.offset != report.line.offset);
-    let compared_changed = watch.compare.as_deref().is_some_and(|compare| {
-        text.at_caret().map(|letter| letter.to_string()).as_deref() != Some(compare)
-    });
-    moved || compared_changed || last.ends() != text.ends()
 }
