@@ -89,8 +89,6 @@ harness, NVDA captures and troubleshooting.
     for the listener's record, hung windows and the followed focus.
   - [m42-parity.md](design/m42-parity.md) — the toasts session and the
     review cursor on objects that no longer exist.
-  - [windows-terminal-twin-focus.md](design/windows-terminal-twin-focus.md)
-    — the rule for Windows Terminal's second terminal identity.
   - [extensions.md](design/extensions.md) — the extension system,
     published once M5 builds it.
   - [security-model.md](design/security-model.md) — the threat model

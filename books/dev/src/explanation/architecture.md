@@ -45,15 +45,16 @@ screen reader in both rendered and source form.
 - **D6, extensions are Wasm components or contained native code.** Their WIT-defined API is
   deny-by-default, with capabilities derived from a component's imports,
   never declared; wasmtime is the runtime, named only by `verbatim-ext`.
-  Every installed extension, of every kind and native code included, runs
-  in a contained host process of its own; built-in modules run in the
-  outposts and Core unless they hold native code or import the network,
-  and never in the listener (section 7;
+  Every extension, of every kind and native code included, runs in a
+  contained host process of its own; Verbatim's built-ins are one such
+  extension, in a host started with Verbatim and always running, so no
+  Wasm runtime is in Core, the listener or an outpost (section 7;
   [design](https://github.com/Neurrone/verbatim/blob/main/docs/design/extensions.md)).
   Why: unlike NVDA's Python add-ons, the surface is enumerable from the
-  binary, and an extension's crash, hang or escape from the runtime
-  reaches only its own container. Decided 2026-07-13. Amended 2026-10-24,
-  2026-10-31 and 2026-11-06 (Dickson).
+  binary, an extension's crash, hang or escape from the runtime reaches
+  only its own container, and one way of running modules serves built-ins
+  and third parties alike. Decided 2026-07-13. Amended 2026-10-24,
+  2026-10-31, 2026-11-06 and 2026-11-09 (Dickson).
 - **D7, braille last.** Braille is implemented last, with its traits and
   pipeline seams present from the start. Why: no hardware is available
   for development. Decided 2026-07-13.
@@ -185,11 +186,10 @@ Verbatim runs as four kinds of process:
    - the GUI thread (wxWidgets through the D4 C++ layer);
    - the relay thread, which reads every child's pipe on one completion
      port and finishes the writes to them that pended;
-   - the global modules' threads (wasmtime with epoch preemption), planned
-     for M5, where built-in global modules and speech-text stages run;
-     built-in app modules run in outposts and each installed extension in
-     a contained host process of its own (D6); `verbatim-ext` is a
-     skeleton today.
+   - the extension loader thread, planned for M5, which reads, validates
+     and compiles extensions and reports each result to the reducer,
+     which owns which version of each extension is active (D6);
+     `verbatim-ext` is a skeleton today.
 2. **Outpost processes (`verbatim-outpost.exe`), one per target application**
    (D9), each containing an event thread (WinEvent message loop and UIA
    callbacks), one worker, the only thread that calls into the
@@ -203,11 +203,14 @@ Verbatim runs as four kinds of process:
    reads, with their watchdog, and an I/O thread that reads Core's
    commands; like an outpost's, every other thread writes its own
    messages.
-4. **Extension host processes** (D6, D18), one per installed extension in
-   use, one per built-in engine and one per built-in that imports the
-   network, each in a kill-on-close job; a synthesizer's host streams PCM
-   to Core over a pipe. Every installed extension's host is contained in
-   an AppContainer from M5, and native synthesizers' from M6.
+4. **Extension host processes** (D6, D18), one per extension in use,
+   Verbatim's built-ins being one extension whose host always runs, and
+   one per built-in engine, each in a kill-on-close job, with one thread
+   per lane: each outpost the host serves, and each global module. A
+   host's reads go to the claiming outpost over a pipe the supervisor
+   makes; a synthesizer's host streams PCM to Core over a pipe. Every
+   extension's host is contained in an AppContainer from M5, and native
+   synthesizers' from M6.
 
 A supervisor in Core spawns outposts, tracks their health, and kills and
 respawns any that stop responding. Because Windows has no parent-child
@@ -913,9 +916,8 @@ language tagging, synth driver, PCM, the mixer (D17), and the
 
 - Runtime: wasmtime with the component model (per D6, replaceable); host API
   defined in WIT (`verbatim:ext`). Epoch-based preemption means a runaway Wasm
-  extension is interrupted, never hangs its host. Built-in app modules run
-  on outpost workers and built-in global modules on Core threads of their
-  own; each installed extension runs in a contained host process of its
+  extension is interrupted, never hangs its host. Every extension,
+  Verbatim's built-ins included, runs in a contained host process of its
   own (D6;
   [security model](https://github.com/Neurrone/verbatim/blob/main/docs/design/security-model.md), X4).
 - Capability-gated, deny-by-default: a component's capabilities are
@@ -937,7 +939,9 @@ language tagging, synth driver, PCM, the mixer (D17), and the
   deadlines; a slow extension degrades itself, not Verbatim.
 - Until the extension host runs modules, an application's own rules
   ported from NVDA's app modules live in Core, never in the listener or an
-  outpost (D6).
+  outpost (D6). Once it does, rules are data the listener and the outposts
+  apply from tables Core publishes at a version, and module code runs
+  only in extension hosts.
 - Iteration-friendly by design: extensions hot-reload without restarting
   Verbatim; first-party app modules live in this repo and dogfood the API.
   NVDA add-on binary compatibility is a non-goal, but the host API is grown

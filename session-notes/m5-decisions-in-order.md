@@ -272,3 +272,17 @@ So Verbatim+F11 works like this:
   - "Can't install X: it needs a feature Verbatim doesn't offer extensions (<interface>).";
   - "Can't install X: it contains two parts that both change Notepad."
 - The Extensions dialog's details reuse the same lists.
+
+## Write-up (2026-11-09)
+
+- The guide was committed (ffd2d33). The design records were restated:
+  - `extensions.md`, whose surface now points at the guide;
+  - the M5 work plan;
+  - D6 and the process list;
+  - the security model's X4, X5, X6, A9 and its 2026-11-09 decision entry;
+  - the roadmap's M5, M8.1 and M13 entries.
+- The twin-focus design was deleted, its references now pointing at the roadmap and the experiment.
+- Still open for Dickson:
+  - whether eSpeak NG and OneCore become built-in extensions;
+  - the developer folder's "Loaded <module>" sentence;
+  - the TOML spellings of rule actions, which are provisional until the schema is generated.

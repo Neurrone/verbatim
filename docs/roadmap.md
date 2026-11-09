@@ -449,8 +449,10 @@ wake-ups and processor time are measured before and after.
 ## M5 — Extensions v1
 
 The design is [extensions](design/extensions.md); the order of work, with the
-tests that prove each step, is [the M5 work plan](design/m5-extensions-work.md).
-This entry keeps the scope and the exit criteria. M4.4, which gave the
+tests that prove each step, is [the M5 work plan](design/m5-extensions-work.md);
+the surface as extension authors see it is the Extensions guide's reference
+(`books/extensions/src/reference/readme.md`), settled with Dickson on
+2026-11-09. This entry keeps the scope and the exit criteria. M4.4, which gave the
 messages the extension surface exposes their final home, is done.
 
 Before step 1, the design is restated against the outpost's reducer,
@@ -462,50 +464,81 @@ package reader get generated tests of their own.
 - Modules as folders: a module is a `module.toml` beside a Wasm component;
   a built-in is a module folder under `extensions/builtin/` (planned), never listed
   and never disabled by the user; an extension is a `.vext` bundle of
-  modules, installed by a request to the running Verbatim through a small
-  helper executable and the control plane (NVDA's `nvda_slave.exe`
+  modules, a zip its author makes by hand, as NVDA's add-ons are, with no
+  packaging tool; installed by a request to the running Verbatim through a
+  small helper executable and the control plane (NVDA's `nvda_slave.exe`
   pattern), never by a flag on `verbatim.exe`, whose single-instance
-  takeover would kill the running instance.
+  takeover would kill the running instance, or from the Extensions
+  dialog's Install from file button. At most one installed extension
+  claims an application, above the built-in, and no two modules of one
+  extension claim the same one; a second is refused at install, so
+  installed extensions need no order among themselves (Dickson,
+  2026-11-09).
 - Rules as data: a matcher and an action with a required id and an explicit
   backend, scoped to the sender's application identity, applied by the
   outpost before any hook runs, refused at load when two rules of one module
   contradict.
 - The component host on wasmtime with the component model (D6, decided
-  2026-10-22): epoch deadlines kept by the worker's own timer, never the
-  reducer's alarm, within the program's deadline the reducer keeps
-  (Dickson, 2026-10-31), with each hook's deadline judged by its own
-  store, since the epoch is the engine's (the work plan's step 0b), node reading as bindings over the outpost's own readers, speech
-  enforced by attention, hooks `on-load`, `on-unload`, `on-event` with
-  `pass`, `drop`, `replace`, `rewrite` and `adopt`, `on-node`, `status-bar`
-  and `on-command`. The `ci-arm64` job ratifies Cranelift on ARM64 and
+  2026-10-22), in extension host processes only: every built-in runs as
+  one internal extension in a host process of its own, started with
+  Verbatim and always running, so no Wasm runtime is in Core, the
+  listener or an outpost (Dickson, 2026-11-09). A host runs one thread
+  per lane: each outpost it serves, each global module; its reads are
+  requests straight to the claiming outpost, its speech and every action
+  that depends on attention go through Core's reducer. Each hook's
+  deadline is judged by its own store, since the epoch is the engine's;
+  the outpost's worker answers the host's reads while it waits on a
+  hook. Speech is enforced by attention. The hooks are `on-focus`,
+  `on-event`, `on-node` (one call per emitted batch), `status-bar`,
+  `on-command(command, trigger)` and `on-list-dialog`, and the WIT files
+  are the single source of the host's and the guests' bindings and of
+  the API reference pages, which `cargo xtask ci` checks are current
+  (Dickson, 2026-11-09). The `ci-arm64` job ratifies Cranelift on ARM64 and
   measures host-call overhead against the hook deadlines; Pulley is
   switched on only if that ratification or a Cranelift fault requires it.
   A hook's time is a stage in the latency timeline and two rows in the
   performance ledger.
 - Capabilities derived from the component's imports, never declared; the
-  install and Extensions dialogs show flows and the lines of the
-  [extensions design](design/extensions.md), section 9.3.
+  install and Extensions dialogs are laid out as lists to tab through
+  (applications, commands with their conflicts, and warnings only when
+  there are any), worded as the Extensions guide's capabilities page says
+  (Dickson, 2026-11-09).
 - The breaker: three failures to respond within a minute disable an
-  extension for the session, spoken with its name, for built-ins and
-  installed extensions alike ([security model](design/security-model.md),
+  installed extension for the session, spoken with its name, and a
+  built-in module alone, since built-ins have no switch of their own
+  (Dickson, 2026-11-09) ([security model](design/security-model.md),
   A9); resource figures per extension in developer mode (A6).
 - Binding by application identity (executable, console client, hosted app,
-  WebView2 parent) resolved by the supervisor, one built-in module
-  instance per outpost and one host process per installed extension, of
-  every kind, with developer-folder modules run the same way
-  ([security model](design/security-model.md), X4); hot reload of developer
-  and built-in module folders in developer mode
-  by validate-then-swap, the folder watch starting from the `notify` crate
+  WebView2 parent) resolved by the supervisor, one host process per
+  extension, of every kind, with developer-folder modules run the same way
+  ([security model](design/security-model.md), X4); a developer-folder
+  module replaces an installed extension's module for the application it
+  claims while it is there, as NVDA's scratchpad does (Dickson,
+  2026-11-09). Loading, enabling and hot reload done on a loader thread
+  of Core's, which reads, validates and compiles, while the reducer owns
+  each extension's active version and publishes the rule tables and the
+  hook registrations to the listener and the outposts, and the gesture
+  map to the hook thread, at a version (Dickson, 2026-11-09); hot reload
+  of developer and built-in module folders in developer mode by
+  validate-then-swap, the folder watch starting from the `notify` crate
   with `notify-debouncer-full`, adopted only once its source and its idle
   wake-ups are checked.
+- Gestures that change while Verbatim runs (Dickson, 2026-11-09): the
+  keyboard hook thread's gesture map published at a version, so module
+  commands follow install, enable and reload; a binding names a number
+  of presses, every press fires at once, and a list dialog a command
+  opens is held for its press's multi-press window when the same keys
+  are bound to a higher count, so a double press never shows the first
+  dialog. Gesture conflicts are listed in the install dialog rather than
+  refused, replacing the reserved gestures.
 - Global modules (Dickson, 2026-10-31, reversing the decision of
   2026-10-22 that left them out): the tray list, the taskbar list and
-  reading the current time move from core code to global modules. A
-  global module runs on a Core thread of its own, never the reducer's;
-  its reads of an application go to the owning outpost as queries in
-  Core's request table, as a module command's do, and its speech is an
-  effect Core's reducer judges. Designed in step 0b, with the thread and
-  hop each adds measured, and a clock import for reading the time.
+  reading the current time move from core code to global modules, which
+  run in their extension's host on a lane of their own, read only the
+  applications their manifest's `reads` names, and may be shipped by
+  installed extensions too (Dickson, 2026-11-09); the surface gains a
+  clock, the Windows version, a list dialog shown by Core with its answer
+  hook, and a click on a node the module holds.
 - The minimal log ring, the log viewer window and the Verbatim+F1 focus
   report, pulled forward from M9 because module failures and rule
   provenance need somewhere to be read.
@@ -530,9 +563,7 @@ package reader get generated tests of their own.
   Task Manager (proven by `mockapp` until M8.7 lets it be read end to
   end), Settings, Start and search, Quick Settings and Open With; sleep mode
   as a core per-application list rather than five modules.
-- Windows Terminal's second terminal identity
-  ([design](design/windows-terminal-twin-focus.md), whose twin test this
-  replaces) as a focus veto rule of the Terminal built-in, never core code
+- Windows Terminal's second terminal identity as a focus veto rule of the Terminal built-in, never core code
   and with no hook (Dickson, 2026-11-09): the listener drops every focus
   event from a `TermControl` whose UIA runtime id starts 14, so only the
   usual identity starting 42 is announced and followed. In every one of
@@ -572,14 +603,16 @@ package reader get generated tests of their own.
   unless the overflow flyout is open. NVDA's `systrayList` add-on reads
   the MSAA children of the taskbar's
   `Windows.UI.Input.InputSite.WindowClass` window instead, the taskbar's
-  buttons under its first child, and clicks an item at its location. An
+  buttons under its first child, and clicks an item at its location
+  (`ruifontes/systrayList`, read on 2026-11-09). An
   end-to-end scenario, `tray_list_and_task_bar`, lists Verbatim's own
   tray icon and opens its menu with Enter, then lists the taskbar on a
   second press.
 
-Out of M5 by decision (Dickson, 2026-10-22): module settings and storage
-and the timer and asynchronous imports (M13), the utterance,
-settings-changed and response hooks, updating or reordering installed
+Out of M5 by decision (Dickson, 2026-10-22, amended 2026-11-09): module
+settings and storage, the settings view and the timer and asynchronous
+imports (M13), `on-load` and `on-unload`, the utterance, settings-changed
+and response hooks other than the list dialog's, updating installed
 extensions,
 scripted modules and the interpreter console (M10), and the
 `verbatim:synth` world with its tone synthesizer (M6, where the host work
@@ -597,7 +630,7 @@ continuously alongside every later milestone.
 This milestone comes right after M5 and before browse mode so that
 Eloquence can be delivered through the extension mechanism and
 Verbatim can become Dickson's daily screen reader sooner (Dickson,
-2026-10-15). The design is section 13 of [extensions](design/extensions.md)
+2026-10-15). The design is section 12 of [extensions](design/extensions.md)
 and D18; the order of work, with its tests, is
 [the M6 work plan](design/m6-native-synth-work.md).
 
@@ -1063,7 +1096,7 @@ Exit: every item above is built with its test passing, and wake-ups and processo
 
 Security work other milestones carry, each with its test:
 
-- M5: the extension surface's rules ([extensions](design/extensions.md), section 4.6), each with a test, every navigation import at every boundary included; installed extensions in hosts of their own, with the round trip measured (X4), and a probe inside the host whose every attempt to write outside its data folder, follow a planted junction or hard link out of it, open a socket without importing a network interface, start a process or read the clipboard fails; the breaker (A9); compiled code mapped only from where ordinary processes cannot write (X5); starting with every extension off (A8); the user endpoint taking requests and never commands, one install dialog at a time (C1, C9), tested by a second request refused while the dialog is open; extension installation that writes only inside its own folder (X13), tested by the malicious package corpus; module log caps.
+- M5: the extension surface's rules ([extensions](design/extensions.md), section 4), each with a test, every navigation import at every boundary included; installed extensions in hosts of their own, with the round trip measured (X4), and a probe inside the host whose every attempt to write outside its data folder, follow a planted junction or hard link out of it, open a socket without importing a network interface, start a process or read the clipboard fails; the breaker (A9); compiled code mapped only from where ordinary processes cannot write (X5); starting with every extension off (A8); the user endpoint taking requests and never commands, one install dialog at a time (C1, C9), tested by a second request refused while the dialog is open; extension installation that writes only inside its own folder (X13), tested by the malicious package corpus.
 - M6: the synthesizer container, confirmed before any native code loads, read-only, limited at creation, with the host's messages checked (X6), tested by a probe child asserting every denial on x64 and ARM64 and a host started with the wrong token loading nothing; the synthesizer fallback after repeated crashes and the idle-spin check (A3, A7), tested by an engine that crashes on a string and one that spins; x86 emulation in the container measured.
 - M6.3: speech moved to another audio device while the default refuses Verbatim (A5), tested with the default held in exclusive mode; a cut string known to speech (U4).
 - M6.5: typed characters judged against the focus they were typed in (L9), tested by a password field that closes on its last character.
@@ -1157,9 +1190,13 @@ are.
 - Layered commands (Dickson, 2026-11-02): a command layer in the input
   crate's decision machine, active after its prefix key until one of its
   commands runs or Escape is pressed, named by input help; extensions
-  declare layers as data from M13. 24 NVDA add-ons use one, and the
-  decision machine's gesture map is fixed while Verbatim runs today.
-- Input help mode; the gesture-remapping configuration GUI.
+  declare layers as data from M13. 24 NVDA add-ons use one; the gesture
+  map published at a version arrives in M5.
+- Input help mode; the gesture-remapping configuration GUI, where
+  changing a binding keeps the binding a module declared, so its
+  `trigger` still names it, and the install dialog's list of an
+  extension's conflicting gestures offers to rebind each (Dickson,
+  2026-11-09).
 - Modifiers left held after the secure desktop, since their releases
   never reach the hook (NVDA clears its modifier record when the secure
   desktop opens; the signal of a desktop switch is designed in the focus
@@ -1401,7 +1438,7 @@ proven the surface on the built-in app modules, which is M5's goal
 extension API growth rule asks.
 
 - Acting in the module's own application, bounded by the application
-  boundary of the extensions design (section 4.6) and allowed only while
+  boundary of the extensions design (section 4) and allowed only while
   the application holds attention: node actions (invoke, focus, select,
   expand or collapse, toggle, scroll, and named accessible actions);
   sending keys and inserting text, typed by Core so no extension holds an
@@ -1415,7 +1452,7 @@ extension API growth rule asks.
   module's application; declared read-only window messages to the
   module's own application.
 - Output: packaged sounds, tone sequences with pan, a capped PCM lane, and
-  speaking a node or saying all of its subtree.
+  saying all of a node's subtree (speaking a node arrives in M5).
 - Module settings shown by Core, a secret store outside the settings file,
   shipped with the network imports, and the data folder each extension
   reads and writes, with its size cap
@@ -1428,11 +1465,11 @@ extension API growth rule asks.
   on an update that adds a flow (a new exit, host or device, or a new
   source in an extension that has an exit); clipboard reads and a
   clipboard-changed event from Windows' clipboard
-  listener, never polled; the mouse; global modules with their read
-  boundary; reading speech history, shown at install as receiving all the
+  listener, never polled; the mouse beyond M5's click; global modules
+  reading every application; reading speech history, shown at install as receiving all the
   text Verbatim speaks.
 - The speech-text stage module kind (Dickson, 2026-11-02): an ordered chain
-  in Core's speech queue, each stage a module in its extension's host, or for a built-in on a Core thread,
+  in Core's speech queue, each stage a module in its extension's host, on a lane of its own,
   that takes an utterance's text segments and language tags and returns new
   ones, for translation, untagged-language detection and text rewrites.
   The original text is never spoken: a stage that fails or misses its
