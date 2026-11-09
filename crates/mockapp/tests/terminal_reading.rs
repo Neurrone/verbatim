@@ -1054,6 +1054,46 @@ fn a_read_terminal_message_reads_the_terminal() {
     app.quit();
 }
 
+/// A key's read of its terminal reads the caret under the key's note
+/// first, reporting the key's effect, and then the screen, both under the
+/// key's trace, as Core asks it at the key's pass.
+fn a_read_terminal_message_reads_the_caret_first_under_the_keys_trace() {
+    let (mut app, mut outpost, term) = start("mockapp-terminal-read-caret-first");
+    let before = ask(&mut outpost, term, before_read(CaretMotion::NextCharacter));
+    read_answer(&outpost, before)
+        .caret
+        .expect("the read's caret");
+    app.send("caret term 1");
+    let trace = verbatim_model::TraceId::from_raw(7);
+    outpost
+        .outpost
+        .handle_command(&verbatim_model::protocol::CoreToOutpost::ReadTerminal {
+            node: term,
+            trace_id: trace,
+        });
+    match outpost.next() {
+        OutpostToCore::Event {
+            trace_id,
+            event: NormalizedEvent::CaretMoved { facts: Some(_), .. },
+            ..
+        } => assert_eq!(trace_id, trace),
+        other => panic!("the outpost said {other:?}, not the key's report"),
+    }
+    match outpost.next() {
+        OutpostToCore::Event {
+            trace_id,
+            event: NormalizedEvent::TerminalSnapshot { node_id, .. },
+            ..
+        } => {
+            assert_eq!((node_id, trace_id), (term, trace));
+        }
+        other => panic!("the outpost said {other:?}, not the terminal's read"),
+    }
+    outpost.settled();
+    drop(outpost);
+    app.quit();
+}
+
 /// The console's caret event for a noted node whose read finds no move,
 /// such as a blink tick left over from an earlier cursor set, leaves the
 /// poll reading: a caret moved after it, with no event, is the key's
@@ -1124,6 +1164,10 @@ fn main() {
         (
             "a_read_terminal_message_reads_the_terminal",
             a_read_terminal_message_reads_the_terminal,
+        ),
+        (
+            "a_read_terminal_message_reads_the_caret_first_under_the_keys_trace",
+            a_read_terminal_message_reads_the_caret_first_under_the_keys_trace,
         ),
         (
             "a_console_caret_event_without_a_move_leaves_the_poll_reading",
