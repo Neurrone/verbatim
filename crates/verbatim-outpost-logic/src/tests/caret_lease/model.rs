@@ -15,7 +15,8 @@
 //!   Core's final read reports: a movement key and Delete their unit,
 //!   Backspace and a Shift key nothing (2026-10-29). An effect later than
 //!   that is not spoken (2026-11-08).
-//! - A key pressed later silences an earlier key's words, and the
+//! - A key pressed later silences an earlier key's words, however early
+//!   it was pressed, even before the earlier key was passed on, and the
 //!   selection changes held for it wait for the later key's words
 //!   (`docs/parity/text.md`, "Holding caret keys" and "Selection over
 //!   changed text in a classic edit control").
@@ -191,9 +192,11 @@ impl Model {
 
     /// A key is pressed at `now`; any earlier key's words are silenced.
     pub fn press(&mut self, key: Key, held: bool, now: Us) {
-        if let Some(open) = self.open() {
-            self.keys[open].done = true;
-            self.keys[open].silenced = true;
+        // Passed on or not: NVDA's helper returns while a script waits
+        // (`nvda/source/editableText.py` 166).
+        for press in self.keys.iter_mut().filter(|press| !press.done) {
+            press.done = true;
+            press.silenced = true;
         }
         self.keys.push(Press {
             key,
