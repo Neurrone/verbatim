@@ -1548,9 +1548,7 @@ impl Outpost {
                 context.mailbox.post(Posted::Cancel(*request_id));
             }
             CoreToOutpost::ReadTerminal { node, trace_id } => context.push(
-                Item::ReadTerminal {
-                    node_id: node.unstamped(),
-                },
+                read_terminal_item(*node),
                 (*trace_id, now_us(), EventTiming::default()),
                 Source::Other,
             ),
@@ -1648,6 +1646,14 @@ mod hook_stamp_tests {
             (timing.observed_at_us, timing.raised_ms_ago),
             (7_000_000, Some(3))
         );
+    }
+}
+
+/// The read Core asked of `node`, which it names stamped with this outpost's
+/// generation, under the number the outpost knows it by.
+fn read_terminal_item(node: NodeId) -> Item {
+    Item::ReadTerminal {
+        node_id: node.unstamped(),
     }
 }
 
