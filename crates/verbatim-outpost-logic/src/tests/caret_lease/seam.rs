@@ -89,6 +89,11 @@ pub struct Seam {
     keys: BTreeMap<TraceId, usize>,
     /// Core has asked a final read that has not been answered.
     final_outstanding: bool,
+    /// This outpost generation has reported a focus: until it has, it has
+    /// no focus whose caret events it reads.
+    focus_reported: bool,
+    /// When this outpost generation began: none of its reads began earlier.
+    generation_began: Us,
     now: Us,
     next_trace: u64,
     /// What this seam could not express.
@@ -218,6 +223,8 @@ impl Seam {
             due: None,
             keys: BTreeMap::new(),
             final_outstanding: false,
+            focus_reported: false,
+            generation_began: 0,
             now: 1_000_000,
             next_trace: 10_000,
             unexpressed: BTreeSet::new(),
@@ -462,6 +469,9 @@ impl Seam {
     pub fn caret_event(&mut self, field: usize, now: Us) -> Vec<Seen> {
         self.now = now;
         let mut seen = Vec::new();
+        if !self.focus_reported {
+            return seen;
+        }
         let entry = Entry {
             item: Item::Msaa {
                 kind: WinKind::Caret,
@@ -632,7 +642,7 @@ impl Seam {
                 text: text.letters[start..end].iter().collect(),
             });
         let facts = fetch.map(|fetch| ReadFacts {
-            unit: unit_chunk(text, &report, fetch.unit),
+            unit: Some(unit_chunk(text, &report, fetch.unit)),
             change: last.map_or(FactsChange::NoPrevious, |(was, last)| {
                 FactsChange::Compared {
                     compared: compared(&was, text),
@@ -677,6 +687,7 @@ impl Seam {
     /// A focus on `field`, reported at `now` from a read begun at `began`.
     pub fn focus(&mut self, field: usize, text: &Text, began: Us, now: Us) -> Vec<Seen> {
         self.now = now;
+        self.focus_reported = true;
         let node = snapshot(
             self.generation,
             5 + field as u64,
@@ -692,7 +703,18 @@ impl Seam {
             .text
             .live_note(node_id.number(), began)
             .map(|note| (note.fetch, note.until_us));
-        let found = self.found(node_id, text, began, now, note.map(|(fetch, _)| fetch));
+        // The worker is serial, so a focus read cannot overlap the key's final
+        // read; what the world reports here is what that read would then show
+        // the key, so it carries the final read's fetch.
+        let final_fetch = self.flight.as_ref().and_then(|flight| match flight.kind {
+            ReadKind::Final(_, _, read) if flight.node == node_id => Some(NoteFetch {
+                unit: read.fetch.unit,
+                motion: read.fetch.motion,
+            }),
+            _ => None,
+        });
+        let fetch = note.map(|(fetch, _)| fetch).or(final_fetch);
+        let found = self.found(node_id, text, began, now, fetch);
         let committed = committed_read(
             self.outpost
                 .facts
@@ -713,7 +735,7 @@ impl Seam {
         }
         let input = CoreInput::Event {
             trace_id: self.trace(),
-            observed_at_us: began,
+            observed_at_us: began.max(self.generation_began),
             source: Pid(1),
             backend: Backend::Msaa,
             window: None,
@@ -791,6 +813,8 @@ impl Seam {
         self.generation += 1;
         self.outpost = Reducer::new();
         self.final_outstanding = false;
+        self.focus_reported = false;
+        self.generation_began = self.now;
         self.enter_core(&input, &mut seen);
         seen
     }
@@ -917,7 +941,7 @@ fn committed_read(
         line: found.report.line.clone(),
         text_changed: false,
         read_at_us: found.began,
-        unit: found.facts.as_ref().map(|facts| facts.unit.clone()),
+        unit: found.facts.as_ref().and_then(|facts| facts.unit.clone()),
     });
     TextChange::Edit { node, part, copied }
 }
