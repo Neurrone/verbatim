@@ -998,9 +998,12 @@ fn result(
 /// Whether a result of the key `passed` speaks. Evidence read before the
 /// later key is this key's; a bound answer with any later key says nothing,
 /// as NVDA's helper returns while a script waits (`editableText.py` 166).
+/// A read begun before the pass counts from the pass, so that a key with
+/// another behind it at its pass says nothing even when its read was given
+/// up and ended after the pass.
 fn result_speaks(passed: &PassedKey, read: &CaretReply, is_evidence: bool) -> bool {
     match passed.later_key_at_us {
-        Some(later) => is_evidence && read.caret.read_at_us < later,
+        Some(later) => is_evidence && read.caret.read_at_us.max(passed.passed_at_us) < later,
         None => true,
     }
 }
