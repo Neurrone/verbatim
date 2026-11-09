@@ -1989,13 +1989,14 @@ fn key_read<S: TextSource>(
             .line
             .take()
             .ok_or_else(|| TextError::Failed("the caret's line was not read".to_owned()))?;
-        let same = if let Some((to_start, to_end)) = read.since_place {
-            within_line(to_start, to_end, &unit)
-        } else {
-            let to_start = source.compare(&last.caret, &unit.start)?;
-            let to_end = source.compare(&last.caret, &unit.end)?;
-            within_line(to_start, to_end, &unit)
-        };
+        // Where the read compared them in one go it says; read call by
+        // call the line's text tells with no call, a limit of the design's
+        // for two identical lines side by side.
+        let same = read
+            .since_place
+            .map_or(!line_changed, |(to_start, to_end)| {
+                within_line(to_start, to_end, &unit)
+            });
         read.line = Some((unit, offset));
         same
     };

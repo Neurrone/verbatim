@@ -1044,7 +1044,10 @@ fn a_read_terminal_message_reads_the_terminal() {
     app.send(&format!("set-text term {}", terminal_text(&rows)));
     outpost
         .outpost
-        .handle_command(&verbatim_model::protocol::CoreToOutpost::ReadTerminal(term));
+        .handle_command(&verbatim_model::protocol::CoreToOutpost::ReadTerminal {
+            node: term,
+            trace_id: verbatim_model::TraceId::from_raw(7),
+        });
     assert_eq!(text(&reported(&outpost, term)), after(&["three"]));
     outpost.settled();
     drop(outpost);

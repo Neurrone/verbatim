@@ -934,9 +934,14 @@ impl Worker<'_> {
             Item::Query { request_id, query } => self.query(request_id, &query, trace),
             // Read now that nothing else waits, unless a read since saw it.
             Item::NotedCaret { node_id } => self.caret_of(node_id, trace, observed_at_us),
+            // The key's read: the caret under its note first, whose report
+            // compares it with the read before the key, then the screen,
+            // whatever read came before.
             Item::ReadTerminal { node_id } => {
                 if self.focused_terminal(node_id) {
-                    self.terminal_output(node_id, trace, observed_at_us);
+                    tracing::debug!(%trace, ?node_id, "a key's read of its terminal");
+                    self.read_under_note(node_id, NoteTrigger::Now, (trace, observed_at_us));
+                    self.terminal_output(node_id, trace, 0);
                 }
             }
             // The reducer's own: never a program's.

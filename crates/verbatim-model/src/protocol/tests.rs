@@ -76,8 +76,11 @@ fn next_core_to_outpost(previous: Option<&CoreToOutpost>) -> Option<CoreToOutpos
                 motion: crate::CaretMotion::NextWord,
             },
         }),
-        CoreToOutpost::KeyNote(_) => CoreToOutpost::ReadTerminal(crate::NodeId::new(1)),
-        CoreToOutpost::ReadTerminal(_) => return None,
+        CoreToOutpost::KeyNote(_) => CoreToOutpost::ReadTerminal {
+            node: crate::NodeId::new(1),
+            trace_id: crate::TraceId::from_raw(1),
+        },
+        CoreToOutpost::ReadTerminal { .. } => return None,
     })
 }
 

@@ -2033,7 +2033,7 @@ impl ReducerThread<'_> {
             }
             Effect::ReadTerminal(node) => {
                 let outpost = node.outpost();
-                let command = CoreToOutpost::ReadTerminal(node);
+                let command = CoreToOutpost::ReadTerminal { node, trace_id };
                 if let Err(error) = self.context.supervisor.send_to_outpost(outpost, command) {
                     // The next event's read covers it: nothing waits.
                     tracing::debug!(%error, %outpost, "a terminal's read was refused");

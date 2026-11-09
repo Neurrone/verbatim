@@ -728,7 +728,12 @@ pub enum CoreToOutpost {
     /// Read this terminal now: a caret key was passed on in a terminal that
     /// is not the console host. No reply and no lifecycle; a late or refused
     /// one leaves the read to the next event.
-    ReadTerminal(NodeId),
+    ReadTerminal {
+        /// The terminal.
+        node: NodeId,
+        /// The trace of the key it is read for.
+        trace_id: TraceId,
+    },
     /// Liveness probe; answered by [`OutpostToCore::Pong`].
     Ping {
         /// Echoed in the matching pong.
@@ -842,7 +847,7 @@ impl CoreToOutpost {
             CoreToOutpost::Query { .. }
             | CoreToOutpost::Cancel { .. }
             | CoreToOutpost::KeyNote(_)
-            | CoreToOutpost::ReadTerminal(_)
+            | CoreToOutpost::ReadTerminal { .. }
             | CoreToOutpost::IdleQuery { .. } => Kind::Ask,
             CoreToOutpost::NodesHeld { .. } => Kind::Release,
             CoreToOutpost::Assign { .. }

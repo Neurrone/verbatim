@@ -3385,14 +3385,13 @@ fn check_uia_caret_costs(ratchet: &mut Ratchet, remote: bool) {
         ])
     );
     // The caret's read, the evidence, the line and the caret's offset
-    // in it, whether the key's baseline is on that line (two comparisons),
-    // the character's spelling error and link, which a character's read
+    // in it, the character's spelling error and link, which a character's read
     // never learns are not supported, and the caret read again and
     // compared, to tell whether it moved while it was read.
     let move_hits = [
         ("ITextProvider::GetSelection", 2),
         ("Clone", 3),
-        ("CompareEndpoints", 6),
+        ("CompareEndpoints", 4),
         ("ExpandToEnclosingUnit", 2),
         ("GetAttributeValue", 2),
         ("GetText", 2),
@@ -3579,7 +3578,7 @@ fn check_uia_caret_costs(ratchet: &mut Ratchet, remote: bool) {
         ratchet.check(
             "UIA caret move, classically",
             &answer,
-            calls(17, 0, 0),
+            calls(15, 0, 0),
             0,
             &move_hits,
         );
@@ -3673,14 +3672,14 @@ fn check_uia_caret_costs(ratchet: &mut Ratchet, remote: bool) {
         ratchet.check(
             "UIA caret watch finding nothing, classically",
             &nothing,
-            calls(17, 0, 0),
+            calls(15, 0, 0),
             0,
             &move_hits,
         );
         ratchet.check(
             "UIA caret watch answered by a later caret event, classically",
             &later,
-            calls(17, 0, 0),
+            calls(15, 0, 0),
             0,
             &move_hits,
         );
@@ -4087,13 +4086,13 @@ fn check_uia_text_costs(ratchet: &mut Ratchet, remote: bool) {
         )
     } else {
         (
-            calls(32, 0, 0),
+            calls(30, 0, 0),
             &[
                 ("ITextProvider::GetSelection", 2),
                 ("DocumentRange", 1),
                 ("GetCaretRange", 2),
                 ("Clone", 5),
-                ("CompareEndpoints", 10),
+                ("CompareEndpoints", 8),
                 ("ExpandToEnclosingUnit", 2),
                 ("GetAttributeValue", 2),
                 ("GetText", 5),
