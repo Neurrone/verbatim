@@ -32,13 +32,14 @@ use std::num::NonZeroUsize;
 use std::time::Duration;
 
 use verbatim_model::Pid;
-use verbatim_reader_rules::Window;
 use verbatim_reader_rules::in_flight::{Abandoned, Ask, Decision, InFlight, Reason, RuleWindow};
+use verbatim_reader_rules::{NewestPerThread, Window};
 
 pub use verbatim_reader_rules::in_flight::Request;
 
 use crate::focus::{
-    ABANDONED_LIMIT, BAR_VERDICTS_KEPT, BarObject, BarVerdict, FocusEvent, Judged, MOVED_ON, Meta,
+    ABANDONED_LIMIT, BAR_FOCUS_CAME, BAR_LIMITED, BAR_READ_DEADLINE, BAR_READS_ABANDONED_LIMIT,
+    BAR_READS_OUT, BARS_PER_APPLICATION, BarRaiser, FocusEvent, Judged, MOVED_ON, Meta,
     NOT_IN_TIME, PROCESS_EXITED, REPLACED, WAITED_TOO_LONG,
 };
 use verbatim_model::protocol::EventTiming;
@@ -83,6 +84,21 @@ pub enum ScheduleInput<J> {
         /// moved-on rule judges its read by.
         window: RuleWindow,
     },
+    /// A classic value change of `pid`'s, `meta`, arrived: as
+    /// [`Self::Push`] of [`FocusEvent::ClassicBar`], never judged by the
+    /// moved-on rule, and limited per application ([`BarRaiser`]).
+    PushBar {
+        /// The event's process.
+        pid: Pid,
+        /// What the callback knew of it.
+        meta: Meta,
+        /// What its read takes.
+        job: J,
+        /// The object it is of, for NVDA's limiter.
+        key: Vec<i32>,
+        /// The thread that raised it.
+        raiser: BarRaiser,
+    },
     /// The reading thread `generation` of `app` asks for its next event.
     Next {
         /// The thread's application.
@@ -122,17 +138,6 @@ pub enum ScheduleInput<J> {
         request: Request,
         /// Its top-level window.
         top: Window,
-    },
-    /// A reading thread found what `object` of `pid`'s is: remembered in the
-    /// running application's record (a process that exited has none), so
-    /// the hook decides its later changes with no call.
-    BarLearned {
-        /// The process.
-        pid: Pid,
-        /// The object.
-        object: BarObject,
-        /// What it is.
-        verdict: BarVerdict,
     },
     /// The shell's answer to [`ScheduleEffect::Judge`]: why the read is
     /// abandoned, [`Reason::MovedOn`] when the user has left its window for
@@ -316,6 +321,9 @@ struct Queued<J> {
     kind: FocusEvent,
     key: Option<Vec<i32>>,
     window: RuleWindow,
+    /// For a classic value change, the thread that raised it: what the
+    /// limits count.
+    raiser: Option<BarRaiser>,
     meta: Meta,
     job: J,
 }
@@ -344,22 +352,6 @@ struct App {
     /// continues from, read only when one starts, so a thread that has lost
     /// charge can never match a later one of its record.
     counters: InFlight<UnderWay>,
-    /// What the objects whose values changed were found to be, the oldest
-    /// first, at most [`BAR_VERDICTS_KEPT`]. Gone with the record, as a
-    /// record with nothing left is dropped.
-    bar_verdicts: VecDeque<(BarObject, BarVerdict)>,
-}
-
-impl App {
-    /// Remembers what `object` was found to be, forgetting the oldest
-    /// answer past [`BAR_VERDICTS_KEPT`].
-    fn remember_bar(&mut self, object: BarObject, verdict: BarVerdict) {
-        self.bar_verdicts.retain(|(known, _)| *known != object);
-        self.bar_verdicts.push_back((object, verdict));
-        if self.bar_verdicts.len() > BAR_VERDICTS_KEPT {
-            self.bar_verdicts.pop_front();
-        }
-    }
 }
 
 /// A thread in charge, fewer than [`ABANDONED_LIMIT`] abandoned.
@@ -636,6 +628,13 @@ pub struct Schedule<J> {
     idle_waiters: VecDeque<(u64, u64)>,
     /// When the watchdog's alarm is set to go off.
     alarm_due: Option<u64>,
+    /// How many of each process's reads of classic value changes are
+    /// abandoned and still in their calls, up to
+    /// [`BAR_READS_ABANDONED_LIMIT`]. Kept by process id, not in a record,
+    /// since a record with nothing left to do is let go while such a call
+    /// is still out, and a process with no outpost has no record between
+    /// its events.
+    bars_out: BTreeMap<Pid, usize>,
 }
 
 /// Microseconds in `duration`.
@@ -657,6 +656,7 @@ impl<J> Schedule<J> {
             queued: 0,
             idle_waiters: VecDeque::new(),
             alarm_due: None,
+            bars_out: BTreeMap::new(),
         }
     }
 
@@ -715,18 +715,6 @@ impl<J> Schedule<J> {
             pid,
             generation: running.generation,
         })
-    }
-
-    /// What the running application `pid` remembers `object` to be, for
-    /// the listener's hook to drop a known non-bar with no call; `None`
-    /// with nothing remembered, or no record.
-    #[must_use]
-    pub fn bar_verdict(&self, pid: Pid, object: BarObject) -> Option<BarVerdict> {
-        let verdicts = &self.running.get(&pid)?.app.bar_verdicts;
-        verdicts
-            .iter()
-            .find(|(known, _)| *known == object)
-            .map(|&(_, verdict)| verdict)
     }
 
     /// The charge of `app`, when it has a thread in charge.
@@ -792,7 +780,26 @@ impl<J> Schedule<J> {
                 kind,
                 key,
                 window,
-            } => self.push(&mut effects, now, (pid, meta, job), (kind, key, window)),
+            } => self.push(
+                &mut effects,
+                now,
+                (pid, meta, job),
+                (kind, key, window),
+                None,
+            ),
+            ScheduleInput::PushBar {
+                pid,
+                meta,
+                job,
+                key,
+                raiser,
+            } => self.push(
+                &mut effects,
+                now,
+                (pid, meta, job),
+                (FocusEvent::ClassicBar, Some(key), RuleWindow::Never),
+                Some(raiser),
+            ),
             ScheduleInput::Next { app, generation } => {
                 self.next(&mut effects, now, app, generation);
             }
@@ -836,15 +843,6 @@ impl<J> Schedule<J> {
             }
             ScheduleInput::Foreground { top_level } => self.foreground(top_level),
             ScheduleInput::MsaaFocus { pid } => self.moved_away_from_all_but(pid),
-            ScheduleInput::BarLearned {
-                pid,
-                object,
-                verdict,
-            } => {
-                if let Some(running) = self.running.get_mut(&pid) {
-                    running.app.remember_bar(object, verdict);
-                }
-            }
             ScheduleInput::OutpostEnded { pid } => self.outpost_ended(&mut effects, pid),
             ScheduleInput::ApplicationExited { pid } => self.application_exited(&mut effects, pid),
             ScheduleInput::WhenIdle { waiter } => {
@@ -943,12 +941,23 @@ impl<J> Schedule<J> {
         now: u64,
         (pid, meta, job): (Pid, Meta, J),
         (kind, key, window): (FocusEvent, Option<Vec<i32>>, RuleWindow),
+        raiser: Option<BarRaiser>,
     ) {
         if self.stopping {
             effects.push(ScheduleEffect::Outcome {
                 pid,
                 meta,
                 judged: Judged::Dropped(SHUTTING_DOWN),
+            });
+            return;
+        }
+        // No thread is started and nothing queued while its application's
+        // abandoned value change reads are at their limit.
+        if raiser.is_some() && self.bars_out.get(&pid) >= Some(&BAR_READS_ABANDONED_LIMIT) {
+            effects.push(ScheduleEffect::Outcome {
+                pid,
+                meta,
+                judged: Judged::Dropped(BAR_READS_OUT),
             });
             return;
         }
@@ -964,27 +973,8 @@ impl<J> Schedule<J> {
             if running.life.ending() && !bar {
                 running.life.change(Life::Live);
             }
-            let app = AppKey {
-                pid,
-                generation: running.generation,
-            };
-            if let Some(key) = &key
-                && let Some(queue) = running.life.reader_mut().queue_mut()
-            {
-                let mut kept = VecDeque::with_capacity(queue.len());
-                for waiting in queue.drain(..) {
-                    if waiting.kind == kind && waiting.key.as_ref() == Some(key) {
-                        effects.push(ScheduleEffect::Outcome {
-                            pid: app.pid,
-                            meta: waiting.meta,
-                            judged: Judged::Dropped(REPLACED),
-                        });
-                        replaced = true;
-                    } else {
-                        kept.push_back(waiting);
-                    }
-                }
-                *queue = kept;
+            if let Some(queue) = running.life.reader_mut().queue_mut() {
+                replaced = drop_superseded(queue, (kind, key.as_ref(), raiser), pid, effects);
             }
         }
         // The event replaced may be the last an idle waiter waited for.
@@ -1004,6 +994,7 @@ impl<J> Schedule<J> {
             kind,
             key,
             window,
+            raiser,
             meta,
             job,
         };
@@ -1128,6 +1119,12 @@ impl<J> Schedule<J> {
                 place: queued.place,
                 top: None,
             };
+            // A value change's read has its own short deadline.
+            let deadline = if queued.kind == FocusEvent::ClassicBar {
+                micros(BAR_READ_DEADLINE)
+            } else {
+                deadline
+            };
             let request = charge.flight.start(read, deadline, queued.window, now);
             effects.push(ScheduleEffect::Job(Job {
                 app,
@@ -1193,6 +1190,16 @@ impl<J> Schedule<J> {
         judged: Judged,
     ) {
         let stopping = self.stopping;
+        // An abandoned value change's read counts only among its own, and
+        // its record may have been let go while its call was out.
+        if meta.kind == FocusEvent::ClassicBar
+            && self
+                .slot(app)
+                .is_none_or(|mut slot| slot.charge_of(request.generation).is_none())
+        {
+            self.bar_read_returned(effects, app.pid);
+            return;
+        }
         let Some(mut slot) = self.slot(app) else {
             effects.push(ScheduleEffect::LogicError(RETURN_UNHELD));
             return;
@@ -1388,6 +1395,10 @@ impl<J> Schedule<J> {
             ..
         } = abandoned;
         effects.push(ScheduleEffect::Unwatch { app });
+        if under_way.kind == FocusEvent::ClassicBar {
+            self.abandon_bar_read(effects, app, reason, under_way.meta);
+            return;
+        }
         let Some(mut slot) = self.slot(app) else {
             effects.push(ScheduleEffect::LogicError(ABANDONED_UNHELD));
             return;
@@ -1477,6 +1488,73 @@ impl<J> Schedule<J> {
             });
         }
         self.wake_idle_waiters(effects);
+    }
+
+    /// `app`'s read of a classic value change was abandoned: it is counted
+    /// among its application's own abandoned bar reads, never towards
+    /// [`ABANDONED_LIMIT`], so it cannot starve a focus. A new thread takes
+    /// what waits, or the record goes if it has nothing left. At
+    /// [`BAR_READS_ABANDONED_LIMIT`] the value changes waiting are dropped.
+    fn abandon_bar_read(
+        &mut self,
+        effects: &mut Vec<ScheduleEffect<J>>,
+        app: AppKey,
+        reason: Reason,
+        meta: Meta,
+    ) {
+        let out = self.bars_out.entry(app.pid).or_default();
+        *out = out.saturating_add(1);
+        let at_limit = *out >= BAR_READS_ABANDONED_LIMIT;
+        tracing::warn!(%app.pid, abandoned = *out, ?reason, "a value change's read did not return in time; its thread is abandoned");
+        effects.push(ScheduleEffect::Outcome {
+            pid: app.pid,
+            meta,
+            judged: Judged::Dropped(match reason {
+                Reason::MovedOn => MOVED_ON,
+                Reason::Deadline => NOT_IN_TIME,
+            }),
+        });
+        let Some(mut slot) = self.slot(app) else {
+            effects.push(ScheduleEffect::LogicError(ABANDONED_UNHELD));
+            return;
+        };
+        let lets_go = slot.lets_go();
+        let Some(charge) = slot.charge() else {
+            effects.push(ScheduleEffect::LogicError(ABANDONED_UNCHARGED));
+            return;
+        };
+        if at_limit {
+            retain_queued(
+                &mut charge.queue,
+                effects,
+                app.pid,
+                BAR_READS_OUT,
+                |waiting| waiting.raiser.is_none(),
+            );
+        }
+        if charge.queue.is_empty() && lets_go {
+            self.charge_over(effects, app);
+        } else {
+            let generation = charge.flight.succeed();
+            effects.push(ScheduleEffect::Spawn {
+                app,
+                generation,
+                reuse: false,
+            });
+        }
+        self.wake_idle_waiters(effects);
+    }
+
+    /// One of `pid`'s abandoned reads of a classic value change returned.
+    fn bar_read_returned(&mut self, effects: &mut Vec<ScheduleEffect<J>>, pid: Pid) {
+        let Some(out) = self.bars_out.get_mut(&pid) else {
+            effects.push(ScheduleEffect::LogicError(NONE_ABANDONED));
+            return;
+        };
+        *out = out.saturating_sub(1);
+        if *out == 0 {
+            self.bars_out.remove(&pid);
+        }
     }
 
     /// Drops every event of the application running under `pid` waiting
@@ -1688,6 +1766,105 @@ fn abandonment(app: AppKey, count: usize, reason: Reason) -> &'static str {
             NOT_IN_TIME
         }
     }
+}
+
+/// Drops the waiting events `keep` refuses, in order, each answered as
+/// dropped for `reason`: whether any was.
+fn retain_queued<J>(
+    queue: &mut VecDeque<Queued<J>>,
+    effects: &mut Vec<ScheduleEffect<J>>,
+    pid: Pid,
+    reason: &'static str,
+    mut keep: impl FnMut(&Queued<J>) -> bool,
+) -> bool {
+    let before = queue.len();
+    let mut kept = VecDeque::with_capacity(before);
+    for waiting in queue.drain(..) {
+        if keep(&waiting) {
+            kept.push_back(waiting);
+        } else {
+            effects.push(ScheduleEffect::Outcome {
+                pid,
+                meta: waiting.meta,
+                judged: Judged::Dropped(reason),
+            });
+        }
+    }
+    *queue = kept;
+    queue.len() != before
+}
+
+/// What a newly arrived event, of `kind` and element `key`, drops of what
+/// waits: NVDA's limiter's one waiting event per element and kind, the
+/// limits on classic value changes, and, for a focus, the application's
+/// waiting classic value changes. Whether any was dropped.
+fn drop_superseded<J>(
+    queue: &mut VecDeque<Queued<J>>,
+    (kind, key, raiser): (FocusEvent, Option<&Vec<i32>>, Option<BarRaiser>),
+    pid: Pid,
+    effects: &mut Vec<ScheduleEffect<J>>,
+) -> bool {
+    let mut dropped = false;
+    if key.is_some() {
+        dropped |= retain_queued(queue, effects, pid, REPLACED, |waiting| {
+            waiting.kind != kind || waiting.key.as_ref() != key
+        });
+    }
+    if let Some(raiser) = raiser {
+        dropped |= limit_bars(queue, raiser, pid, effects);
+    }
+    if kind == FocusEvent::Focus {
+        dropped |= retain_queued(queue, effects, pid, BAR_FOCUS_CAME, |waiting| {
+            waiting.raiser.is_none()
+        });
+    }
+    dropped
+}
+
+/// Applies the limits to `queue` as a classic value change of `raiser`
+/// arrives behind it, walked with no stored count: the newest
+/// [`verbatim_reader_rules::EVENTS_PER_THREAD`] of each thread stay, the
+/// newcomer among them, then the oldest are dropped down to
+/// [`BARS_PER_APPLICATION`]. The focused object's are always kept, as NVDA's
+/// limiter keeps them. Whether any was dropped.
+fn limit_bars<J>(
+    queue: &mut VecDeque<Queued<J>>,
+    raiser: BarRaiser,
+    pid: Pid,
+    effects: &mut Vec<ScheduleEffect<J>>,
+) -> bool {
+    let mut per_thread = NewestPerThread::default();
+    let _ = per_thread.within(raiser.raised_by);
+    let mut keep: Vec<bool> = queue
+        .iter()
+        .rev()
+        .map(|waiting| {
+            waiting.raiser.is_none_or(|waiter| {
+                let within = per_thread.within(waiter.raised_by);
+                within || waiter.focused
+            })
+        })
+        .collect();
+    keep.reverse();
+    let bars = queue
+        .iter()
+        .zip(&keep)
+        .filter(|(waiting, kept)| **kept && waiting.raiser.is_some())
+        .count();
+    let mut over = bars.saturating_add(1).saturating_sub(BARS_PER_APPLICATION);
+    for (waiting, kept) in queue.iter().zip(keep.iter_mut()) {
+        if over > 0 && *kept && waiting.raiser.is_some_and(|waiter| !waiter.focused) {
+            *kept = false;
+            over = over.saturating_sub(1);
+        }
+    }
+    if keep.iter().all(|kept| *kept) {
+        return false;
+    }
+    let mut keep = keep.into_iter();
+    retain_queued(queue, effects, pid, BAR_LIMITED, |_| {
+        keep.next() == Some(true)
+    })
 }
 
 /// One abandoned reader fewer, its count kept at least one: whether that
@@ -1938,6 +2115,43 @@ mod tests {
             kind,
             key: None,
             window: RuleWindow::Known(WINDOW),
+        }
+    }
+
+    /// A read of a classic value change's deadline, in microseconds.
+    const BAR_DEADLINE: u64 = 1_000_000;
+
+    /// A classic value change of `pid`'s, marked `marker`, of an object of
+    /// its own, raised by `thread`.
+    fn bar(pid: u32, marker: u64, raised_by: u32) -> ScheduleInput<u64> {
+        ScheduleInput::PushBar {
+            pid: Pid(pid),
+            meta: meta(marker, FocusEvent::ClassicBar),
+            job: marker,
+            key: vec![i32::try_from(marker).expect("small")],
+            raiser: BarRaiser {
+                raised_by,
+                focused: false,
+            },
+        }
+    }
+
+    /// An abandoned read of the classic value change marked `marker`
+    /// returned, of generation `app_generation` of its application.
+    fn bar_returned(
+        pid: u32,
+        app_generation: u64,
+        request: Request,
+        marker: u64,
+    ) -> ScheduleInput<u64> {
+        ScheduleInput::Returned {
+            app: AppKey {
+                pid: Pid(pid),
+                generation: app_generation,
+            },
+            request,
+            meta: meta(marker, FocusEvent::ClassicBar),
+            judged: Judged::Dropped("a bar's read"),
         }
     }
 
@@ -2658,7 +2872,7 @@ mod tests {
     #[test]
     fn a_bars_record_is_let_go_when_idle_and_a_focus_keeps_it() {
         let mut schedule = schedule();
-        let _ = step(&mut schedule, push(1, 1, FocusEvent::ClassicBar), 0);
+        let _ = step(&mut schedule, bar(1, 1, 7), 0);
         let _ = step(&mut schedule, next(1, 1), 0);
         let _ = step(&mut schedule, returned(1, request(1, 1), 1), 1);
         assert_eq!(step(&mut schedule, next(1, 1), 1), [Seen::Forget(1)]);
@@ -2689,74 +2903,288 @@ mod tests {
             ScheduleInput::OutpostEnded { pid: Pid(1) },
             2,
         );
-        let _ = step(&mut schedule, push(1, 2, FocusEvent::ClassicBar), 2);
+        let _ = step(&mut schedule, bar(1, 2, 7), 2);
         let _ = step(&mut schedule, next(1, 1), 2);
         let _ = step(&mut schedule, returned(1, request(1, 2), 2), 3);
         assert_eq!(step(&mut schedule, next(1, 1), 3), [Seen::Forget(1)]);
     }
 
-    /// What a read found an object to be stays with the running record,
-    /// answered by the hook with no call, the oldest forgotten past the cap.
+    /// A bar's read is abandoned at its own short deadline, and a bar-only
+    /// application's record goes with it, the abandoned call returning to
+    /// no record and no logic error.
     #[test]
-    fn a_records_bar_verdicts_are_kept_to_the_cap() {
+    fn a_bar_read_is_abandoned_at_its_deadline_and_returns_to_no_record() {
+        let mut schedule = schedule();
+        let _ = step(&mut schedule, bar(1, 1, 7), 0);
+        let _ = step(&mut schedule, next(1, 1), 0);
+        assert_eq!(
+            step(&mut schedule, ScheduleInput::Tick, BAR_DEADLINE - 1),
+            [Seen::Alarm(AlarmChange::Set(Some(BAR_DEADLINE)))]
+        );
+        assert_eq!(
+            step(&mut schedule, ScheduleInput::Tick, BAR_DEADLINE),
+            [
+                Seen::Unwatch(1),
+                Seen::Outcome(1, 1, NOT_IN_TIME),
+                Seen::Forget(1)
+            ]
+        );
+        assert_eq!(
+            step(
+                &mut schedule,
+                bar_returned(1, 1, request(1, 1), 1),
+                BAR_DEADLINE + 1
+            ),
+            []
+        );
+        assert!(schedule.held().next().is_none(), "let go");
+    }
+
+    /// A bar's read abandoned beside a focus's abandoned read does not
+    /// count towards the focus's limit: a new thread still takes over.
+    #[test]
+    fn a_bar_read_is_not_counted_towards_a_focuss_limit() {
         let mut schedule = schedule();
         let _ = step(&mut schedule, focus(1, 1), 0);
-        let object = |child| BarObject {
-            window: 0x10,
-            object: -4,
-            child,
-        };
-        let learn = |schedule: &mut Schedule<u64>, child, verdict| {
-            let _ = step(
-                schedule,
-                ScheduleInput::BarLearned {
-                    pid: Pid(1),
-                    object: object(child),
-                    verdict,
-                },
-                1,
-            );
-        };
-        learn(&mut schedule, 0, BarVerdict::NotABar);
-        learn(&mut schedule, 1, BarVerdict::Bar);
+        let _ = step(&mut schedule, next(1, 1), 0);
+        let _ = step(&mut schedule, bar(1, 2, 7), 0);
         assert_eq!(
-            schedule.bar_verdict(Pid(1), object(0)),
-            Some(BarVerdict::NotABar)
+            step(&mut schedule, ScheduleInput::Tick, DEADLINE),
+            [
+                Seen::Unwatch(1),
+                Seen::Outcome(1, 1, NOT_IN_TIME),
+                Seen::Spawn(1, 3, false)
+            ]
+        );
+        let _ = step(&mut schedule, next(1, 3), DEADLINE);
+        assert_eq!(
+            step(&mut schedule, ScheduleInput::Tick, DEADLINE + BAR_DEADLINE),
+            [
+                Seen::Unwatch(1),
+                Seen::Outcome(1, 2, NOT_IN_TIME),
+                Seen::Spawn(1, 5, false)
+            ]
         );
         assert_eq!(
-            schedule.bar_verdict(Pid(1), object(1)),
-            Some(BarVerdict::Bar)
-        );
-        assert_eq!(schedule.bar_verdict(Pid(2), object(0)), None, "no record");
-        for child in 2..=i32::try_from(BAR_VERDICTS_KEPT).expect("small") {
-            learn(&mut schedule, child, BarVerdict::NotABar);
-        }
-        assert_eq!(
-            schedule.bar_verdict(Pid(1), object(0)),
-            None,
-            "the oldest went"
-        );
-        assert_eq!(
-            schedule.bar_verdict(Pid(1), object(1)),
-            Some(BarVerdict::Bar)
+            step(&mut schedule, focus(1, 3), DEADLINE + BAR_DEADLINE),
+            [Seen::Woken(1)],
+            "a thread is in charge, not starved"
         );
     }
 
-    /// A bar's read abandoned at the deadline counts in its own
-    /// application's record, so a stuck window holds up only itself, and
-    /// the record goes once the abandoned read returns.
+    /// With two of an application's abandoned bar reads still in their
+    /// calls, its waiting value changes and its further ones are dropped
+    /// with no thread started, and that clears as a call returns.
     #[test]
-    fn an_abandoned_bar_read_counts_in_its_record_and_is_let_go() {
+    fn two_abandoned_bar_reads_stop_its_value_changes_until_one_returns() {
         let mut schedule = schedule();
-        let _ = step(&mut schedule, push(1, 1, FocusEvent::ClassicBar), 0);
+        let _ = step(&mut schedule, focus(1, 9), 0);
+        let _ = step(&mut schedule, next(1, 1), 0);
+        let _ = step(&mut schedule, returned(1, request(1, 1), 9), 0);
+        let _ = step(&mut schedule, next(1, 1), 0);
+        let _ = step(&mut schedule, bar(1, 1, 7), 0);
+        let _ = step(&mut schedule, bar(1, 2, 7), 0);
         let _ = step(&mut schedule, next(1, 1), 0);
         assert_eq!(
-            step(&mut schedule, ScheduleInput::Tick, DEADLINE),
-            [Seen::Unwatch(1), Seen::Outcome(1, 1, NOT_IN_TIME)]
+            step(&mut schedule, ScheduleInput::Tick, BAR_DEADLINE),
+            [
+                Seen::Unwatch(1),
+                Seen::Outcome(1, 1, NOT_IN_TIME),
+                Seen::Spawn(1, 3, false)
+            ]
+        );
+        let _ = step(&mut schedule, next(1, 3), BAR_DEADLINE);
+        let _ = step(&mut schedule, bar(1, 3, 7), BAR_DEADLINE);
+        assert_eq!(
+            step(&mut schedule, ScheduleInput::Tick, 2 * BAR_DEADLINE),
+            [
+                Seen::Unwatch(1),
+                Seen::Outcome(1, 2, NOT_IN_TIME),
+                Seen::Outcome(1, 3, BAR_READS_OUT),
+                Seen::Spawn(1, 5, false)
+            ]
         );
         assert_eq!(
-            step(&mut schedule, returned(1, request(1, 1), 1), DEADLINE + 1),
-            [Seen::ForgetLast, Seen::Forget(1)]
+            step(&mut schedule, bar(1, 4, 7), 2 * BAR_DEADLINE),
+            [Seen::Outcome(1, 4, BAR_READS_OUT)],
+            "no thread started and nothing queued"
+        );
+        assert_eq!(
+            step(
+                &mut schedule,
+                bar_returned(1, 1, request(1, 2), 1),
+                2 * BAR_DEADLINE
+            ),
+            [],
+            "one abandoned call returned"
+        );
+        assert_eq!(
+            step(&mut schedule, bar(1, 5, 7), 2 * BAR_DEADLINE),
+            [Seen::Woken(1)],
+            "queued again"
+        );
+    }
+
+    /// The count of abandoned bar reads outlives a bar-only application's
+    /// record, which goes between its events.
+    #[test]
+    fn the_count_of_abandoned_bar_reads_outlives_a_bar_only_record() {
+        let mut schedule = schedule();
+        let _ = step(&mut schedule, bar(1, 1, 7), 0);
+        let _ = step(&mut schedule, next(1, 1), 0);
+        let _ = step(&mut schedule, ScheduleInput::Tick, BAR_DEADLINE);
+        assert_eq!(
+            step(&mut schedule, bar(1, 2, 7), BAR_DEADLINE),
+            [Seen::Spawn(1, 1, false)]
+        );
+        let _ = step(&mut schedule, next(1, 1), BAR_DEADLINE);
+        let _ = step(&mut schedule, ScheduleInput::Tick, 2 * BAR_DEADLINE);
+        assert_eq!(
+            step(&mut schedule, bar(1, 3, 7), 2 * BAR_DEADLINE),
+            [Seen::Outcome(1, 3, BAR_READS_OUT)]
+        );
+        assert!(schedule.held().next().is_none(), "no record started");
+    }
+
+    /// A thread's waiting value changes keep its newest ten: the read
+    /// under way is not counted, the eleventh waiting drops the oldest, and
+    /// another thread counts apart.
+    #[test]
+    fn a_threads_waiting_value_changes_keep_the_newest_ten() {
+        let mut schedule = schedule();
+        let _ = step(&mut schedule, bar(1, 1, 7), 0);
+        let _ = step(&mut schedule, next(1, 1), 0);
+        for marker in 2..=11 {
+            assert_eq!(
+                step(&mut schedule, bar(1, marker, 7), 0),
+                [Seen::Woken(1)],
+                "{marker}"
+            );
+        }
+        assert_eq!(
+            step(&mut schedule, bar(1, 12, 7), 0),
+            [Seen::Outcome(1, 2, BAR_LIMITED), Seen::Woken(1)]
+        );
+        assert_eq!(step(&mut schedule, bar(1, 13, 8), 0), [Seen::Woken(1)]);
+        assert_eq!(
+            schedule.markers(),
+            [1, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+            "the newest stay"
+        );
+    }
+
+    /// The limit is an application's own: another application's value
+    /// changes on the same thread number are not counted with them.
+    #[test]
+    fn the_limit_is_per_application() {
+        let mut schedule = schedule();
+        let _ = step(&mut schedule, bar(1, 1, 7), 0);
+        let _ = step(&mut schedule, next(1, 1), 0);
+        for marker in 2..=11 {
+            let _ = step(&mut schedule, bar(1, marker, 7), 0);
+        }
+        assert_eq!(
+            step(&mut schedule, bar(2, 20, 7), 0),
+            [Seen::Spawn(2, 1, false)]
+        );
+    }
+
+    /// The focused object's value change is kept past the limit, as NVDA
+    /// keeps it, while it still counts towards the others'.
+    #[test]
+    fn the_focused_objects_value_change_is_kept_past_the_limit() {
+        let mut schedule = schedule();
+        let _ = step(&mut schedule, bar(1, 1, 7), 0);
+        let _ = step(&mut schedule, next(1, 1), 0);
+        let focused = ScheduleInput::PushBar {
+            pid: Pid(1),
+            meta: meta(2, FocusEvent::ClassicBar),
+            job: 2,
+            key: vec![2],
+            raiser: BarRaiser {
+                raised_by: 7,
+                focused: true,
+            },
+        };
+        let _ = step(&mut schedule, focused, 0);
+        for marker in 3..=12 {
+            assert_eq!(
+                step(&mut schedule, bar(1, marker, 7), 0),
+                [Seen::Woken(1)],
+                "{marker}"
+            );
+        }
+        assert_eq!(
+            step(&mut schedule, bar(1, 13, 7), 0),
+            [Seen::Outcome(1, 3, BAR_LIMITED), Seen::Woken(1)]
+        );
+    }
+
+    /// Value changes from a pool of raising threads, each within its own
+    /// limit, are bounded by the application's cap, the oldest dropped.
+    #[test]
+    fn an_applications_waiting_value_changes_are_capped_across_threads() {
+        let mut schedule = schedule();
+        let _ = step(&mut schedule, bar(1, 1, 7), 0);
+        let _ = step(&mut schedule, next(1, 1), 0);
+        for marker in 2..=65 {
+            let raised_by = u32::try_from(marker).expect("small");
+            assert_eq!(
+                step(&mut schedule, bar(1, marker, raised_by), 0),
+                [Seen::Woken(1)],
+                "{marker}"
+            );
+        }
+        assert_eq!(
+            step(&mut schedule, bar(1, 66, 66), 0),
+            [Seen::Outcome(1, 2, BAR_LIMITED), Seen::Woken(1)]
+        );
+    }
+
+    /// A focus push drops its application's waiting classic value changes
+    /// and nothing else, so a focus does not wait behind them.
+    #[test]
+    fn a_focus_drops_its_applications_waiting_value_changes() {
+        let mut schedule = schedule();
+        let _ = step(&mut schedule, focus(1, 1), 0);
+        let _ = step(&mut schedule, next(1, 1), 0);
+        let _ = step(&mut schedule, bar(1, 2, 7), 0);
+        let _ = step(&mut schedule, bar(1, 3, 7), 0);
+        let _ = step(&mut schedule, push(1, 4, FocusEvent::UiaBar), 0);
+        assert_eq!(
+            step(&mut schedule, focus(1, 5), 0),
+            [
+                Seen::Outcome(1, 2, BAR_FOCUS_CAME),
+                Seen::Outcome(1, 3, BAR_FOCUS_CAME),
+                Seen::Woken(1)
+            ]
+        );
+    }
+
+    /// An idle waiter waiting only on a value change the limit drops runs
+    /// when it is dropped.
+    #[test]
+    fn the_limit_wakes_an_idle_waiter() {
+        let mut schedule = schedule();
+        let _ = step(&mut schedule, bar(1, 1, 7), 0);
+        let _ = step(&mut schedule, next(1, 1), 0);
+        let _ = step(&mut schedule, returned(1, request(1, 1), 1), 0);
+        let _ = step(&mut schedule, bar(1, 2, 7), 0);
+        let _ = step(&mut schedule, ScheduleInput::WhenIdle { waiter: 42 }, 0);
+        for marker in 3..=11 {
+            assert_eq!(
+                step(&mut schedule, bar(1, marker, 7), 0),
+                [Seen::Woken(1)],
+                "{marker}"
+            );
+        }
+        assert_eq!(
+            step(&mut schedule, bar(1, 12, 7), 0),
+            [
+                Seen::Outcome(1, 2, BAR_LIMITED),
+                Seen::RunIdle(42),
+                Seen::Woken(1)
+            ]
         );
     }
 

@@ -16,10 +16,11 @@ use verbatim_model::{Role, State, StateSet};
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Accessibility::{IAccessible, NotifyWinEvent};
 use windows::Win32::UI::WindowsAndMessaging::{
-    CONSOLE_CARET_VISIBLE, EVENT_CONSOLE_CARET, EVENT_OBJECT_DESCRIPTIONCHANGE, EVENT_OBJECT_FOCUS,
-    EVENT_OBJECT_LOCATIONCHANGE, EVENT_OBJECT_NAMECHANGE, EVENT_OBJECT_SELECTION,
-    EVENT_OBJECT_SHOW, EVENT_OBJECT_STATECHANGE, EVENT_OBJECT_TEXTSELECTIONCHANGED,
-    EVENT_OBJECT_VALUECHANGE, OBJID_CARET, OBJID_CLIENT,
+    CONSOLE_CARET_VISIBLE, CreateWindowExW, EVENT_CONSOLE_CARET, EVENT_OBJECT_DESCRIPTIONCHANGE,
+    EVENT_OBJECT_FOCUS, EVENT_OBJECT_LOCATIONCHANGE, EVENT_OBJECT_NAMECHANGE,
+    EVENT_OBJECT_SELECTION, EVENT_OBJECT_SHOW, EVENT_OBJECT_STATECHANGE,
+    EVENT_OBJECT_TEXTSELECTIONCHANGED, EVENT_OBJECT_VALUECHANGE, OBJID_CARET, OBJID_CLIENT,
+    WINDOW_EX_STYLE, WINDOW_STYLE,
 };
 
 use crate::stdin::Command;
@@ -413,9 +414,7 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
         Command::Popup(_) => {
             return Err("popup is not supported on the msaa backend".into());
         }
-        Command::Flood(..) => {
-            return Err("flood is not supported on the msaa backend".into());
-        }
+        Command::Flood(count, interval, kind) => flood(tree, hwnd, count, interval, kind)?,
         Command::Stall(..)
         | Command::OnActivate(_)
         | Command::SetTitle(_)
@@ -491,6 +490,106 @@ fn set_value(tree: &SharedTree, id: &str, text: String) -> Option<usize> {
     let index = guard.index_of(id)?;
     guard.nodes[index].value = (!text.is_empty()).then_some(text);
     Some(index)
+}
+
+/// The object id the `n`th event of a flood on new objects names, none of
+/// which the window answers for.
+fn new_object(n: u32) -> i32 {
+    i32::try_from(n.saturating_add(1000)).unwrap_or(i32::MAX)
+}
+
+/// `flood`: raises `count` events of `kind`, paced as UIA's `flood` is.
+fn flood(
+    tree: &SharedTree,
+    hwnd: HWND,
+    count: u32,
+    interval: std::time::Duration,
+    kind: crate::stdin::FloodKind,
+) -> Result<(), String> {
+    use crate::stdin::FloodKind;
+    if matches!(kind, FloodKind::Name | FloodKind::Text) {
+        return Err(format!(
+            "flood {kind:?} is not supported on the msaa backend"
+        ));
+    }
+    let nodes = tree
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .nodes
+        .len();
+    // A show event is taken only from a tooltip window's objects, so the
+    // flood's come from one of its own, hidden.
+    let target = if kind == FloodKind::NewShows {
+        hidden_tooltip()?
+    } else {
+        hwnd
+    };
+    let started = std::time::Instant::now();
+    for raised in 0..count {
+        if !interval.is_zero() {
+            crate::window::wait_pumping(started + interval * raised)
+                .map_err(|error| format!("the wait between two events failed: {error}"))?;
+        }
+        let (event, object) = match kind {
+            FloodKind::NewValues => (EVENT_OBJECT_VALUECHANGE, new_object(raised)),
+            FloodKind::RepeatedValues => (
+                EVENT_OBJECT_VALUECHANGE,
+                objid_for(usize::try_from(raised).unwrap_or(usize::MAX) % nodes.max(1)),
+            ),
+            FloodKind::NewShows => (EVENT_OBJECT_SHOW, new_object(raised)),
+            FloodKind::Name | FloodKind::Text => unreachable!("refused above"),
+        };
+        // SAFETY: `hwnd` is the mockapp window's own live handle.
+        unsafe {
+            NotifyWinEvent(event, target, object, CHILDID_SELF);
+        }
+    }
+    Ok(())
+}
+
+thread_local! {
+    /// The hidden tooltip window [`hidden_tooltip`] made, kept for the
+    /// process, so a show event's class is still there when the hook
+    /// reads it.
+    static TOOLTIP: std::cell::Cell<Option<HWND>> = const { std::cell::Cell::new(None) };
+}
+
+/// The hidden window of the standard tooltip class, the one class whose
+/// show events the hook takes, made once.
+fn hidden_tooltip() -> Result<HWND, String> {
+    use windows::Win32::UI::Controls::{
+        ICC_WIN95_CLASSES, INITCOMMONCONTROLSEX, InitCommonControlsEx,
+    };
+    if let Some(window) = TOOLTIP.with(std::cell::Cell::get) {
+        return Ok(window);
+    }
+    let controls = INITCOMMONCONTROLSEX {
+        dwSize: u32::try_from(std::mem::size_of::<INITCOMMONCONTROLSEX>()).unwrap_or(0),
+        dwICC: ICC_WIN95_CLASSES,
+    };
+    // SAFETY: `controls` is a live, correctly sized structure.
+    let _ = unsafe { InitCommonControlsEx(&raw const controls) };
+    // SAFETY: a plain window of a registered system class, kept until the
+    // process ends.
+    let window = unsafe {
+        CreateWindowExW(
+            WINDOW_EX_STYLE(0),
+            windows::core::w!("tooltips_class32"),
+            None,
+            WINDOW_STYLE(0),
+            0,
+            0,
+            0,
+            0,
+            None,
+            None,
+            None,
+            None,
+        )
+    }
+    .map_err(|error| format!("the tooltip window could not be created: {error}"))?;
+    TOOLTIP.with(|tooltip| tooltip.set(Some(window)));
+    Ok(window)
 }
 
 fn notify(hwnd: HWND, event: u32, index: usize) {

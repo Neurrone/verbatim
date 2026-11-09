@@ -146,6 +146,60 @@ pub fn classify_with(
     }
 }
 
+/// A check NVDA makes on a window that has a UIA provider before using it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PostProbeCheck {
+    /// A console: its provider is used only when its text reports
+    /// formatting, which the consoles of current Windows do and older
+    /// consoles, with incomplete providers, do not.
+    Console,
+    /// A list view: its provider is used only when it comes from Windows
+    /// Forms, whose list views have no MSAA implementation; elsewhere the
+    /// MSAA implementation is the more complete one.
+    WindowsFormsListView,
+}
+
+/// The check NVDA makes on a window of these classes after its probe finds a
+/// provider, if it makes one. NVDA's Word, Excel, and Chromium exceptions
+/// apply only when it has injected its in-process helper, so they wait for
+/// Verbatim's (decision D2, M7).
+#[must_use]
+pub fn post_probe_check(classes: &WindowClasses) -> Option<PostProbeCheck> {
+    match classes.normalized.as_str() {
+        "ConsoleWindowClass" => Some(PostProbeCheck::Console),
+        "SysListView32" => Some(PostProbeCheck::WindowsFormsListView),
+        _ => None,
+    }
+}
+
+/// Whether a window of raw class `raw` comes from Windows Forms, whose
+/// window classes all begin `WindowsForms10.`. It agreed with the UIA
+/// framework id `WinForm` on every one of over 170 windows of Windows Forms,
+/// WPF, Qt, Firefox and Win32 applications
+/// (`books/dev/src/explanation/design/listener-without-connections.md`, section 3, step 5).
+#[must_use]
+pub fn has_windows_forms_class(raw: &str) -> bool {
+    raw.starts_with("WindowsForms10.")
+}
+
+/// The answer to `check` for a window of classes `classes`: `Some(true)`
+/// when its provider is used, `Some(false)` when it is excluded, `None` when
+/// the application did not answer. A console asks `console`; a list view is
+/// answered from its class name alone, with no call into the application,
+/// by an outpost and the listener alike
+/// (`books/dev/src/explanation/design/listener-without-connections.md`, section 3, step 5).
+#[must_use]
+pub fn provider_usable(
+    check: PostProbeCheck,
+    classes: &WindowClasses,
+    console: impl FnOnce() -> Option<bool>,
+) -> Option<bool> {
+    match check {
+        PostProbeCheck::Console => console(),
+        PostProbeCheck::WindowsFormsListView => Some(has_windows_forms_class(&classes.raw)),
+    }
+}
+
 /// The class names arbitration decides on, which the caller reads with
 /// inexpensive local calls safe on any thread
 /// (`verbatim_win32::window::window_classes`).
@@ -242,6 +296,10 @@ pub const BAD_UIA_CLASSES: &[&str] = &[
 
 #[cfg(test)]
 mod tests {
+    use super::{
+        PostProbeCheck, WindowClasses, has_windows_forms_class, post_probe_check, provider_usable,
+    };
+
     /// The normalised name decides, so a Windows Forms bar's long class name
     /// and the common control's are the same; an edit control's is not.
     #[test]
@@ -343,5 +401,71 @@ mod tests {
             "MozillaContentWindowClass",
         ];
         assert_eq!(BAD_UIA_CLASSES, expected.as_slice());
+    }
+
+    #[test]
+    fn consoles_and_list_views_are_checked_after_the_probe() {
+        assert_eq!(
+            post_probe_check(&WindowClasses::new(
+                "ConsoleWindowClass",
+                "ConsoleWindowClass"
+            )),
+            Some(PostProbeCheck::Console)
+        );
+        assert_eq!(
+            post_probe_check(&WindowClasses::new(
+                "WindowsForms10.SysListView32.app.0.2bf8098_r6_ad1",
+                "x"
+            )),
+            Some(PostProbeCheck::WindowsFormsListView)
+        );
+        assert_eq!(
+            post_probe_check(&WindowClasses::new("Notepad", "Notepad")),
+            None
+        );
+    }
+
+    #[test]
+    fn a_list_view_is_windows_forms_by_its_class_name() {
+        assert!(has_windows_forms_class(
+            "WindowsForms10.SysListView32.app.0.2bf8098_r6_ad1"
+        ));
+        assert!(!has_windows_forms_class("SysListView32"));
+    }
+
+    #[test]
+    fn a_list_views_provider_is_judged_by_its_class_alone() {
+        let console_never_asked = || -> Option<bool> { panic!("a list view asked the console") };
+        let forms = WindowClasses::new("WindowsForms10.SysListView32.app.0.2bf8098_r6_ad1", "x");
+        let comctl = WindowClasses::new("SysListView32", "x");
+        assert_eq!(
+            provider_usable(
+                PostProbeCheck::WindowsFormsListView,
+                &forms,
+                console_never_asked
+            ),
+            Some(true)
+        );
+        assert_eq!(
+            provider_usable(
+                PostProbeCheck::WindowsFormsListView,
+                &comctl,
+                console_never_asked
+            ),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn a_consoles_provider_is_judged_by_its_console_check() {
+        let classes = WindowClasses::new("ConsoleWindowClass", "ConsoleWindowClass");
+        assert_eq!(
+            provider_usable(PostProbeCheck::Console, &classes, || None),
+            None
+        );
+        assert_eq!(
+            provider_usable(PostProbeCheck::Console, &classes, || Some(false)),
+            Some(false)
+        );
     }
 }

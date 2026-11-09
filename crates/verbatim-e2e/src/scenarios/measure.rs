@@ -375,17 +375,28 @@ fn line_events(name: &str) -> String {
 /// a pipe and its lines setting the events of [`line_events`], and waits
 /// for it to take the foreground. Returns its process id.
 pub(super) fn open_mockapp(scenario: &mut Scenario, name: &str, fixture: &str) -> u32 {
-    open_mockapp_with(scenario, name, fixture, &[])
+    open_mockapp_with(scenario, name, fixture, "uia", &[])
+}
+
+/// [`open_mockapp`], for mockapp's MSAA backend.
+pub(super) fn open_msaa_mockapp(scenario: &mut Scenario, name: &str, fixture: &str) -> u32 {
+    open_mockapp_with(scenario, name, fixture, "msaa", &[])
 }
 
 /// [`open_mockapp`], its root counting UIA's event registrations, for
 /// mockapp's `await-advised`.
 pub(super) fn open_mockapp_counting(scenario: &mut Scenario, name: &str, fixture: &str) -> u32 {
-    open_mockapp_with(scenario, name, fixture, &["--count-registrations"])
+    open_mockapp_with(scenario, name, fixture, "uia", &["--count-registrations"])
 }
 
-/// [`open_mockapp`] with `extra` on mockapp's command line.
-fn open_mockapp_with(scenario: &mut Scenario, name: &str, fixture: &str, extra: &[&str]) -> u32 {
+/// [`open_mockapp`] on `backend`, with `extra` on mockapp's command line.
+fn open_mockapp_with(
+    scenario: &mut Scenario,
+    name: &str,
+    fixture: &str,
+    backend: &str,
+    extra: &[&str],
+) -> u32 {
     let directory = scenario.run_directory().to_owned();
     let title = harness_marker(name);
     let path = scenario.harness_file(name, "json");
@@ -398,7 +409,7 @@ fn open_mockapp_with(scenario: &mut Scenario, name: &str, fixture: &str, extra: 
         "--fixture",
         &path,
         "--backend",
-        "uia",
+        backend,
         "--title",
         &title,
         "--show",
@@ -417,7 +428,15 @@ fn open_mockapp_with(scenario: &mut Scenario, name: &str, fixture: &str, extra: 
 
 /// Writes `command` to the mockapp window `name`, process `pid`, and waits
 /// for mockapp's acknowledgement that it took effect.
-pub(super) fn apply_to_mockapp(scenario: &mut Scenario, (name, pid): (&str, u32), command: &str) {
+pub(super) fn apply_to_mockapp(scenario: &mut Scenario, window: (&str, u32), command: &str) {
+    send_to_mockapp(scenario, window, command);
+    await_mockapp(scenario, window);
+}
+
+/// Writes `command` to the mockapp window `name`, process `pid`, leaving
+/// its acknowledgement to [`await_mockapp`], so a scenario acts while the
+/// command runs.
+pub(super) fn send_to_mockapp(scenario: &mut Scenario, (name, pid): (&str, u32), command: &str) {
     let applied = format!("{}applied", line_events(name));
     scenario
         .create_event(&applied)
@@ -425,8 +444,17 @@ pub(super) fn apply_to_mockapp(scenario: &mut Scenario, (name, pid): (&str, u32)
     scenario
         .write_stdin(pid, command)
         .expect("writes the command to mockapp");
+}
+
+/// Waits for mockapp's acknowledgement of the command [`send_to_mockapp`]
+/// wrote.
+pub(super) fn await_mockapp(scenario: &mut Scenario, (name, pid): (&str, u32)) {
     scenario
-        .wait_for_event(&applied, pid, WINDOW_TIMEOUT)
+        .wait_for_event(
+            &format!("{}applied", line_events(name)),
+            pid,
+            WINDOW_TIMEOUT,
+        )
         .expect("mockapp applies the command");
 }
 

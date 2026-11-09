@@ -123,6 +123,7 @@ use std::io;
 use std::os::windows::io::OwnedHandle;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::mpsc::Sender as FoundSender;
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -153,10 +154,11 @@ use verbatim_uia::{
 };
 
 use crate::focus_read::{FocusReader, Readers, Reading, WatchedRead};
+use crate::value_change::{Found, Judgement, ValueChange, ValueChangeKnowledge, probed_of};
 use verbatim_ia2::event_thread::{EventHandlers, EventThread, MakeHandlers, Nudger};
 use verbatim_listener_logic::focus::{
-    BAR_READ, BarObject, BarVerdict, ClassicBarRead, FocusEvent, Judged, Meta, arrival_of,
-    classic_value_change,
+    BAR_READ, BarObject, BarRaiser, BarVerdict, ClassicBarRead, FocusEvent, Judged, Meta,
+    WindowAnswer, arrival_of, classic_value_change,
 };
 use verbatim_listener_logic::foreground::{ForegroundWatch, Front, Step};
 use verbatim_listener_logic::schedule::{GraceEffect, GraceInput, GraceState, QueuePlace};
@@ -169,6 +171,10 @@ use verbatim_process::clock::now_us;
 use verbatim_process::held::IgnoredProcesses;
 use verbatim_process::message::{decode_message, put_message};
 use verbatim_reader_rules::CONSOLE_WINDOW_CLASS;
+use verbatim_reader_rules::class::{
+    ClassVerdict, PostProbeCheck, class_verdict, has_windows_forms_class, post_probe_check,
+};
+use verbatim_reader_rules::verdicts::Probe;
 use verbatim_win32::window::{Readability, WindowReadabilityReader, window_class_name};
 
 /// How long after a menu or the Alt+Tab switcher closes the listener waits
@@ -993,15 +999,18 @@ pub(crate) enum UiaJob {
     DesktopName((isize, i32, i32), Responder<String>),
     /// A value change the hook let through ([`value_change_event`]), to be
     /// read as `read` says; a bar's change is sent to Core through
-    /// `report`, what a read found the object to be through `learn`, and
-    /// with them `key`, the limiter's key, so a newer change of the object
-    /// replaces one still waiting.
+    /// `report`, what a read found the object to be through `learn`, what
+    /// a [`ClassicBarRead::Probe`] found its window to be through `window`,
+    /// and with them `key`, the limiter's key, so a newer change of the
+    /// object replaces one still waiting, and `raiser`, the limits' count.
     ClassicBar {
         object: BarObject,
         read: ClassicBarRead,
         key: [i32; 4],
+        raiser: BarRaiser,
         report: Responder<BarChange>,
         learn: Responder<BarVerdict>,
+        window: Responder<WindowAnswer>,
     },
     /// A UIA progress bar's range value changed: `percent` from its event's
     /// cache; its place and window are read here
@@ -1044,10 +1053,11 @@ impl Reading for UiaFocusReading {
             read,
             report,
             learn,
+            window,
             ..
         } = job
         {
-            read_classic_bar(object, read, report, learn);
+            read_classic_bar(object, read, report, learn, window);
             return Judged::Dropped(BAR_READ);
         }
         let Some(reader) = reader else {
@@ -1131,6 +1141,13 @@ impl Reading for UiaFocusReading {
             UiaJob::DesktopName(..) => FocusEvent::DesktopName,
             UiaJob::ClassicBar { .. } => FocusEvent::ClassicBar,
             UiaJob::UiaBar { .. } => FocusEvent::UiaBar,
+        }
+    }
+
+    fn bar<'a>(&self, job: &'a Self::Job) -> Option<(BarRaiser, &'a [i32])> {
+        match job {
+            UiaJob::ClassicBar { key, raiser, .. } => Some((*raiser, key.as_slice())),
+            _ => None,
         }
     }
 
@@ -1314,9 +1331,12 @@ impl Listener {
             let watch = Rc::new(RefCell::new(ForegroundWatch::default()));
             let start_watch = Rc::clone(&watch);
             let desktop_readers = Arc::clone(&readers);
+            // What the event thread knows of windows and objects, for its
+            // value changes, on this thread alone.
+            let knowledge = RefCell::new(ValueChangeKnowledge::new());
             EventHandlers {
                 win_event: Box::new(move |event: WinEvent| {
-                    if routed_elsewhere(&outgoing, &desktop_readers, event) {
+                    if routed_elsewhere(&outgoing, &desktop_readers, &knowledge, event) {
                         return;
                     }
                     if matches!(
@@ -2029,16 +2049,18 @@ fn report_bar(outgoing: &Arc<Outgoing>, meta: Meta) -> Responder<BarChange> {
 /// A classic value change, for the listener's progress bar path (the
 /// hook's filter, `docs/design/progress-bars.md`, "Rules"), with no call
 /// into the application: its window is routed as [`forward_msaa_event`]
-/// routes it, and a hung window, an ignored process, a window of a listed
-/// class that is hidden and a known non-bar are dropped here; the rest
-/// queued on the window's application's reading thread, one held per
-/// object, a newer change replacing it, with no marker, so that no outpost
-/// is started or asked and no fact is made of the event.
+/// routes it, and a hung window, an ignored process, a hidden window of a
+/// listed class, and what `knowledge` says is dropped are dropped here with
+/// no lock; the rest queued on the window's application's reading thread,
+/// one held per object, a newer change replacing it, with no marker, so
+/// that no outpost is started or asked and no fact is made of the event.
 fn value_change_event(
     outgoing: &Arc<Outgoing>,
     readers: &Arc<Readers<UiaFocusReading>>,
+    knowledge: &mut ValueChangeKnowledge,
     event: WinEvent,
 ) {
+    knowledge.drain();
     let WinEvent {
         hwnd,
         id_object,
@@ -2049,7 +2071,7 @@ fn value_change_event(
     if hwnd == 0 {
         return;
     }
-    let owner = window_pid(hwnd);
+    let (owner_thread, owner) = verbatim_win32::window::window_owner(hwnd);
     if owner == 0 {
         return;
     }
@@ -2069,12 +2091,36 @@ fn value_change_event(
         object: id_object,
         child: id_child,
     };
+    let at_us = outgoing.now();
     let listed = verbatim_reader_rules::class::is_progress_bar_class(
         &verbatim_reader_rules::class::normalize_class_name(&class),
     );
-    let visible = !listed || verbatim_win32::window::window_is_visible(hwnd);
-    let Some(read) = classic_value_change(listed, visible, readers.bar_verdict(pid, object)) else {
-        return;
+    let (read, window) = if listed {
+        let visible = verbatim_win32::window::window_is_visible(hwnd);
+        let Some(read) = classic_value_change(true, visible, None) else {
+            return;
+        };
+        (read, nothing_asked())
+    } else {
+        match knowledge.judge(&ValueChange {
+            pid,
+            object,
+            owner: owner_thread,
+            at_us,
+        }) {
+            Judgement::Dropped => return,
+            Judgement::Read(read) => (read, nothing_asked()),
+            Judgement::Ask(job) => (
+                ClassicBarRead::Probe,
+                window_answer(
+                    outgoing,
+                    knowledge.sender(),
+                    pid,
+                    (hwnd, owner_thread, at_us),
+                    job,
+                ),
+            ),
+        }
     };
     let meta = outgoing.received(FocusEvent::ClassicBar);
     readers.push(
@@ -2084,11 +2130,52 @@ fn value_change_event(
             object,
             read,
             key: bar_key(object),
+            raiser: BarRaiser {
+                raised_by: thread,
+                focused: knowledge.is_focused(object),
+            },
             report: report_bar(outgoing, meta),
-            learn: learn_bar(readers, pid, object),
+            learn: learn_bar(knowledge.sender(), pid, object, owner_thread),
+            window,
         },
         MarkerOwed::nothing(),
     );
+}
+
+/// What answers a job that asks no window: it is dropped unanswered.
+fn nothing_asked() -> Responder<WindowAnswer> {
+    Responder::new(|_: Option<WindowAnswer>| {})
+}
+
+/// What job number `job`'s window answer goes through, for window `hwnd`,
+/// owned by thread `owner`, its keep judged from `from_us`: the event
+/// thread's record takes the answer, with its keep ended from the probe's
+/// end, or, dropped unanswered on any path that ends the job, learns that
+/// the window is no longer being asked.
+fn window_answer(
+    outgoing: &Arc<Outgoing>,
+    found: FoundSender<Found>,
+    pid: Pid,
+    (hwnd, owner, from_us): (isize, u32, u64),
+    job: u64,
+) -> Responder<WindowAnswer> {
+    let clock = outgoing.clock;
+    Responder::new(move |answer: Option<WindowAnswer>| {
+        let found_now = match answer {
+            Some(answer) => Found::Window {
+                pid,
+                job,
+                probe: Probe {
+                    hwnd,
+                    owner,
+                    from_us,
+                    probed: probed_of(answer, (clock.0)()),
+                },
+            },
+            None => Found::NotAsked { pid, hwnd, job },
+        };
+        let _ = found.send(found_now);
+    })
 }
 
 /// The limiter's key for a classic value change: its window and object.
@@ -2102,29 +2189,37 @@ fn bar_key(object: BarObject) -> [i32; 4] {
     ]
 }
 
-/// What the application's record is told an object was found to be.
+/// What the event thread's record is told an object was found to be.
 fn learn_bar(
-    readers: &Arc<Readers<UiaFocusReading>>,
+    found: FoundSender<Found>,
     pid: Pid,
     object: BarObject,
+    owner: u32,
 ) -> Responder<BarVerdict> {
-    let readers = Arc::clone(readers);
     Responder::new(move |verdict: Option<BarVerdict>| {
         if let Some(verdict) = verdict {
-            readers.learn_bar(pid, object, verdict);
+            let _ = found.send(Found::Object {
+                pid,
+                object,
+                owner,
+                verdict,
+            });
         }
     })
 }
 
 /// Reads one classic value change on its application's reading thread, as
-/// `read` says, sends a bar's change through `report`, and what a read
-/// found the object to be through `learn`. Public so that mockapp's tests
-/// read mockapp's own windows as the listener reads them.
+/// `read` says, sends a bar's change through `report`, what a read found
+/// the object to be through `learn`, and what a [`ClassicBarRead::Probe`]
+/// found its window to be through `window`, dropped unanswered when the
+/// probe learned nothing. Public so that mockapp's tests read mockapp's own
+/// windows as the listener reads them.
 pub fn read_classic_bar(
     object: BarObject,
     read: ClassicBarRead,
     report: Responder<BarChange>,
     learn: Responder<BarVerdict>,
+    window: Responder<WindowAnswer>,
 ) {
     if read == ClassicBarRead::Listed {
         if let Some(percent) = verbatim_ia2::classic_bar_percent(object.window)
@@ -2138,12 +2233,21 @@ pub fn read_classic_bar(
         }
         return;
     }
-    // A native UIA window's bar comes through the group, as NVDA's own
-    // hook drops this event (`internalWinEventHandler.py` 570 to 583).
-    if read == ClassicBarRead::Unknown && verbatim_uia::raw_probe(object.window).has_provider() {
-        learn.answer(BarVerdict::NotABar);
-        return;
-    }
+    // A window's answer: a native UIA window's bar comes through the group,
+    // as NVDA's own hook drops this event (`internalWinEventHandler.py` 570
+    // to 583).
+    let read = if read == ClassicBarRead::Probe {
+        let Some(answer) = window_judged(object.window) else {
+            return;
+        };
+        window.answer(answer);
+        if answer == WindowAnswer::Uia {
+            return;
+        }
+        ClassicBarRead::Unknown
+    } else {
+        read
+    };
     let Some(mut bar) =
         verbatim_ia2::acquire::event_object(object.window, object.object, object.child)
     else {
@@ -2170,6 +2274,37 @@ pub fn read_classic_bar(
             in_foreground: in_foreground(object.window),
         });
     }
+}
+
+/// What NVDA's test of `hwnd`'s backend answers, on a reading thread: by
+/// its class lists, then the raw probe and the checks after it, as the
+/// outposts' arbitrator judges it. `None` when the probe learned nothing.
+/// A console with a provider is answered [`WindowAnswer::Uia`] with no check
+/// of its provider: `crate::value_change` says why.
+fn window_judged(hwnd: isize) -> Option<WindowAnswer> {
+    let classes = verbatim_win32::window::window_classes(hwnd);
+    match class_verdict(&classes) {
+        ClassVerdict::Uia => return Some(WindowAnswer::Uia),
+        ClassVerdict::NonUia => return Some(WindowAnswer::Excluded),
+        ClassVerdict::Unknown => {}
+    }
+    let probed = verbatim_uia::raw_probe(hwnd);
+    if probed == verbatim_uia::RawProbe::Abandoned {
+        return None;
+    }
+    if probed == verbatim_uia::RawProbe::TimedOut {
+        return Some(WindowAnswer::TimedOut);
+    }
+    if !probed.has_provider() {
+        return Some(WindowAnswer::NotUia);
+    }
+    Some(match post_probe_check(&classes) {
+        Some(PostProbeCheck::Console) | None => WindowAnswer::Uia,
+        Some(PostProbeCheck::WindowsFormsListView) if has_windows_forms_class(&classes.raw) => {
+            WindowAnswer::Uia
+        }
+        Some(PostProbeCheck::WindowsFormsListView) => WindowAnswer::Excluded,
+    })
 }
 
 /// The centre of `window` on the screen, a local call; `None` for a window
@@ -2276,14 +2411,26 @@ fn forward_msaa_event(outgoing: &Outgoing, event: WinEvent) -> Forwarded {
 }
 
 /// A value change or one of the desktop's events, each taken by its own
-/// path: whether `event` was one of these, already handled.
+/// path: whether `event` was one of these, already handled. An MSAA focus
+/// is noted for the value changes' limits and goes on as ever.
 fn routed_elsewhere(
     outgoing: &Arc<Outgoing>,
     readers: &Arc<Readers<UiaFocusReading>>,
+    knowledge: &RefCell<ValueChangeKnowledge>,
     event: WinEvent,
 ) -> bool {
     match event.kind {
-        WinEventKind::ValueChange => value_change_event(outgoing, readers, event),
+        WinEventKind::Focus => {
+            knowledge.borrow_mut().focus_moved(BarObject {
+                window: event.hwnd,
+                object: event.id_object,
+                child: event.id_child,
+            });
+            return false;
+        }
+        WinEventKind::ValueChange => {
+            value_change_event(outgoing, readers, &mut knowledge.borrow_mut(), event);
+        }
         WinEventKind::DesktopSwitch | WinEventKind::DesktopName => {
             desktop_event(outgoing, readers, event);
         }
@@ -2934,7 +3081,12 @@ mod tests {
         let asked = Arc::new(Mutex::new(Vec::new()));
         let (outgoing, readers, _events) = listening(|_| Readability::Hung, &asked);
         let hwnd = desktop_window();
-        value_change_event(&outgoing, &readers, value_change(hwnd));
+        value_change_event(
+            &outgoing,
+            &readers,
+            &mut ValueChangeKnowledge::new(),
+            value_change(hwnd),
+        );
         assert_eq!(
             asked
                 .lock()
@@ -2984,7 +3136,12 @@ mod tests {
             UiaFocusReading::new(),
             verbatim_model::FOCUS_READ_DEADLINE,
         ));
-        value_change_event(&outgoing, &readers, value_change(hwnd));
+        value_change_event(
+            &outgoing,
+            &readers,
+            &mut ValueChangeKnowledge::new(),
+            value_change(hwnd),
+        );
         assert!(
             !readers.has_reading_thread(Pid(window_pid(hwnd))),
             "no read was queued"
@@ -2992,6 +3149,40 @@ mod tests {
         readers.stop();
         // SAFETY: the window this test made, on its own thread.
         unsafe { DestroyWindow(window) }.expect("the window is destroyed");
+    }
+
+    /// What a job that asks a window answers through: dropped unanswered,
+    /// as on every path that ends a job with no probe, the window is asked
+    /// no more and nothing is recorded; answered, its answer is kept.
+    #[test]
+    fn a_jobs_window_answer_clears_asking_on_every_ending() {
+        const WINDOW: isize = 0x10;
+        let (outgoing, _reader) = outgoing_with(EVENT_PIPE_BUFFER, IgnoredProcesses::default());
+        let outgoing = Arc::new(outgoing);
+        let mut knowledge = ValueChangeKnowledge::new();
+        let change = |at_us| ValueChange {
+            pid: Pid(1),
+            object: BarObject {
+                window: WINDOW,
+                object: 5,
+                child: 0,
+            },
+            owner: 7,
+            at_us,
+        };
+        let answer = |knowledge: &ValueChangeKnowledge, job| {
+            window_answer(&outgoing, knowledge.sender(), Pid(1), (WINDOW, 7, 0), job)
+        };
+
+        assert_eq!(knowledge.judge(&change(0)), Judgement::Ask(1));
+        assert_eq!(knowledge.judge(&change(1)), Judgement::Dropped, "asked");
+        drop(answer(&knowledge, 1));
+        knowledge.drain();
+        assert_eq!(knowledge.judge(&change(2)), Judgement::Ask(2), "cleared");
+
+        answer(&knowledge, 2).answer(WindowAnswer::Uia);
+        knowledge.drain();
+        assert_eq!(knowledge.judge(&change(3)), Judgement::Dropped, "kept");
     }
 
     /// A value change at the client of `hwnd`, as the global hook delivers it.

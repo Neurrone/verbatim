@@ -162,13 +162,17 @@ parses them.
   `slow <ms>` does for every provider call; filling an element's cache
   makes such requests and a walk to its nearest window does not. 0
   answers them at once again.
-- `flood <count> <interval_ms> [name|text]` (UIA only) raises `count`
-  events from the window thread, each `interval_ms` after the one before,
+- `flood <count> <interval_ms> [name|text|new-values|repeated-values|new-shows]`
+  raises `count` events from the window thread, each `interval_ms` after the one before,
   paced from the first so a late wait is made up; the interval may be a
   decimal, such as `0.1` for 10,000 events a second. `name` (the default)
   renames the root node `Flood 1`, `Flood 2` and so on, raising each name
   change; `text` raises UIA's text changed event from the fixture's first
-  text node. Between two events the window thread answers calls into the
+  text node, both on the UIA backend. On the MSAA backend, `new-values`
+  raises a value change on a new object each time, `repeated-values` one
+  cycling through the fixture's nodes, and `new-shows` a show event on a new
+  object each time, from a hidden tooltip window, the class the hook takes
+  show events from. Between two events the window thread answers calls into the
   window, as an application's message loop does, but applies no other
   command; with an interval of 0 the events go back to back and no call
   is answered until the last, so every event's cache, which UIA fills

@@ -6,11 +6,8 @@
 //!
 //! A program records the verdicts it probes in its commits, posted as each
 //! probe returns, and applies each to its own copy, so it uses them for the
-//! rest of its walk. The reducer records a probe only from the worker
-//! generation in charge, but a probe that timed out, and a destroyed
-//! window's forgetting, from any generation, so a window is not probed
-//! again more often than NVDA probes it
-//! (`books/dev/src/reference/adr/0001-focus.md`, "One judge per fact").
+//! rest of its walk. The focus listener's event thread keeps one record per
+//! application, for its value changes.
 //!
 //! What a verdict is, how its keep is judged by the observation of the
 //! event it judges, and why each window keeps its previous verdict are the
@@ -19,6 +16,10 @@
 //! a reused handle is told apart by, is read by the caller and passed in.
 
 use std::collections::BTreeMap;
+
+/// How long a probe that found no provider is kept, from its end, in
+/// microseconds: NVDA's `isUIAWindow` cache period.
+pub const NEGATIVE_VERDICT_LIFETIME_US: u64 = 500_000;
 
 /// A kept probe result.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -64,22 +65,6 @@ pub enum VerdictChange {
     /// The window was destroyed: its verdicts are forgotten, as its handle
     /// may be reused by an unrelated window.
     Forget(isize),
-}
-
-impl VerdictChange {
-    /// Whether the reducer records it from a generation no longer in
-    /// charge: a probe that timed out, and a destroyed window's forgetting.
-    #[must_use]
-    pub fn kept_from_any_generation(&self) -> bool {
-        matches!(
-            self,
-            Self::Forget(_)
-                | Self::Probed(Probe {
-                    probed: Probed::TimedOut(_),
-                    ..
-                })
-        )
-    }
 }
 
 /// One kept verdict on a window.
@@ -145,6 +130,42 @@ impl Verdicts {
         self.windows
             .get(&hwnd)
             .is_some_and(|window| window.current.owner == owner && window.current.probed.lasts())
+    }
+
+    /// The newest verdict of `hwnd`, now owned by thread `owner`, whether
+    /// or not its keep has ended: what the listener's event thread uses
+    /// while it asks the window again.
+    #[must_use]
+    pub fn newest(&self, hwnd: isize, owner: u32) -> Option<Probed> {
+        self.windows
+            .get(&hwnd)
+            .filter(|window| window.current.owner == owner)
+            .map(|window| window.current.probed)
+    }
+
+    /// How many windows have a verdict kept.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.windows.len()
+    }
+
+    /// Whether no window has a verdict kept.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.windows.is_empty()
+    }
+
+    /// Forgets the window whose newest verdict's probe began first, for a
+    /// record kept to a cap.
+    pub fn evict_oldest(&mut self) {
+        let oldest = self
+            .windows
+            .iter()
+            .min_by_key(|(_, window)| window.current.from_us)
+            .map(|(hwnd, _)| *hwnd);
+        if let Some(hwnd) = oldest {
+            self.windows.remove(&hwnd);
+        }
     }
 
     /// Applies `change`; whether the record changed. A probe judging from

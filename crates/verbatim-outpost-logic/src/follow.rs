@@ -15,7 +15,7 @@ use verbatim_reader_rules::Window;
 use super::held::{self, Held};
 use super::intake::{Marks, Object, TerminalMark};
 use super::text::{RangeKey, TextChange, TextFacts};
-use super::verdicts::Verdicts;
+use verbatim_reader_rules::verdicts::Verdicts;
 
 /// The focus-following subscription's event handler groups, as the
 /// reducer names them (`verbatim_uia::Group`, variant for variant).

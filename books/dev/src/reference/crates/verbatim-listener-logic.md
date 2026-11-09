@@ -40,9 +40,19 @@ Public API:
   was queued (`Arrival`, `arrival_of`), and what became of it (`Judged`,
   with `into_fact`). `classic_value_change`, `BarObject`, `BarVerdict` and
   `ClassicBarRead` are the listener's hook's table for a classic value
-  change; the schedule keeps each record's memo of objects' verdicts
-  (`bar_verdict`, `ScheduleInput::BarLearned`), capped at
-  `BAR_VERDICTS_KEPT`, and a bar's record is let go when idle. Every reason an event is dropped is a constant here
+  change, `BAR_VERDICTS_KEPT` its memo's cap (the memo is the listener's
+  event thread's), and `WindowAnswer` what a job found a window to be. A
+  classic value change comes as `ScheduleInput::PushBar`, with its raising
+  thread and whether it is the focused object (`BarRaiser`): at arrival
+  its application's waiting value changes keep the newest
+  `EVENTS_PER_THREAD` of each thread and at most `BARS_PER_APPLICATION`
+  (64) in all, the focused object's always kept, and a focus push drops
+  them. Its read has its own deadline (`BAR_READ_DEADLINE`, 1 s) and an
+  abandoned one does not count towards `ABANDONED_LIMIT`: the schedule
+  keeps a separate count per process (`BAR_READS_ABANDONED_LIMIT`, 2), at
+  which the application's value changes are dropped with no thread
+  started, clearing as each abandoned call returns. A bar's record is let
+  go when idle. Every reason an event is dropped is a constant here
   (`NOT_IN_TIME`, `MOVED_ON`, `WAITED_TOO_LONG`, `REPLACED`, `NO_WINDOW`,
   `NOT_FOCUSED`, `MSAA_CLASS`, `NEAREST_TIMED_OUT` and the rest). A
   nearest window's lookup that fails with UIA's timeout

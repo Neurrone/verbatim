@@ -57,6 +57,7 @@ const LIVE: &[&str] = scenario_tests! {
     speak_time_and_date
     toast
     foreground_progress_bar
+    msaa_flood_then_focus
     table_cells
     alt_tab_switcher
     return_after_retirement

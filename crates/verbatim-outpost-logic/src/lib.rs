@@ -8,7 +8,7 @@
 //!
 //! It holds the intake's order ([`intake`]), the reports Core may hold ([`held`]), the follow state ([`follow`]),
 //! the hand-over's hold ([`hold`]), the arbitrator's verdicts
-//! ([`verdicts`]), the record of hung windows, the program in flight with the worker generation in
+//! ([`Verdicts`]), the record of hung windows, the program in flight with the worker generation in
 //! charge, its deadline and its moved-on rule, kept by the work in flight
 //! both readers share ([`verbatim_reader_rules::in_flight`]), with its
 //! hang mark beside it, the queries not yet answered, and the idle
@@ -78,7 +78,6 @@ mod intake;
 #[cfg(test)]
 mod tests;
 mod text;
-mod verdicts;
 
 use std::collections::{BTreeSet, VecDeque};
 use std::sync::Arc;
@@ -110,7 +109,7 @@ pub use self::text::{
     NodeAnchors, NoteFetch, NoteOn, NoteReads, POLL_BOUND, POLL_INTERVAL, RangeKey, ReadSelection,
     ReportCut, TerminalReads, TextChange, TextFacts,
 };
-pub use self::verdicts::{Probe, Probed, VerdictChange, Verdicts};
+pub use verbatim_reader_rules::verdicts::{Probe, Probed, VerdictChange, Verdicts};
 
 /// The deadline of every program but a focus read and a listener read's
 /// report: one UIA request and a margin
@@ -260,6 +259,30 @@ pub struct Program {
     pub facts: Facts,
     /// What it does.
     pub work: Work,
+}
+
+/// The rule of whose probe an outpost's reducer records from a worker
+/// generation no longer in charge: a probe that timed out, and a destroyed
+/// window's forgetting, so a window is not probed again more often than
+/// NVDA probes it (`books/dev/src/reference/adr/0001-focus.md`, "One judge
+/// per fact"). The outposts' own, so it is not on the shared type.
+pub trait KeptFromAnyGeneration {
+    /// Whether the reducer records it from a generation no longer in
+    /// charge.
+    fn kept_from_any_generation(&self) -> bool;
+}
+
+impl KeptFromAnyGeneration for VerdictChange {
+    fn kept_from_any_generation(&self) -> bool {
+        matches!(
+            self,
+            Self::Forget(_)
+                | Self::Probed(Probe {
+                    probed: Probed::TimedOut(_),
+                    ..
+                })
+        )
+    }
 }
 
 /// What the reducer asks of the shell, in order.

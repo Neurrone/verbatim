@@ -12,7 +12,8 @@
 //! `books/dev/src/explanation/design/listener-without-connections.md`, decision 2). A window
 //! with a provider is still set aside
 //! for MSAA when its provider is one NVDA does not use: an old console's,
-//! or a list view's outside Windows Forms ([`post_probe_check`]), which
+//! or a list view's outside Windows Forms
+//! ([`verbatim_reader_rules::class::post_probe_check`]), which
 //! both read from the window's class name, a local call.
 //! Class-list checks are fast local window calls; the probe blocks on the
 //! target's message pump and runs only on a deadline-guarded worker.
@@ -86,16 +87,14 @@ use crate::outpost::{Probe as KeptProbe, Probed, VerdictChange};
 use verbatim_process::clock::{Clock, ObservationClock};
 use verbatim_reader_rules::class::{
     BAD_UIA_CLASSES, ClassVerdict, GOOD_UIA_CLASSES, WindowClasses, classify_with,
+    post_probe_check, provider_usable,
 };
+use verbatim_reader_rules::verdicts::NEGATIVE_VERDICT_LIFETIME_US;
 use verbatim_win32::window::window_thread;
 
 /// How long a probe that found no UIA provider is trusted before the window
 /// is probed again: NVDA's `isUIAWindow` cache period.
 pub const NEGATIVE_VERDICT_LIFETIME: Duration = Duration::from_millis(500);
-
-/// [`NEGATIVE_VERDICT_LIFETIME`] in microseconds, as a keep's end is
-/// stamped.
-const NEGATIVE_VERDICT_LIFETIME_US: u64 = 500_000;
 
 /// A window's backend as [`decide`] judges it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -318,58 +317,6 @@ fn kept(hwnd: isize, from_us: u64, probed: Probed) -> VerdictChange {
     })
 }
 
-/// A check NVDA makes on a window that has a UIA provider before using it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PostProbeCheck {
-    /// A console: its provider is used only when its text reports
-    /// formatting, which the consoles of current Windows do and older
-    /// consoles, with incomplete providers, do not.
-    Console,
-    /// A list view: its provider is used only when it comes from Windows
-    /// Forms, whose list views have no MSAA implementation; elsewhere the
-    /// MSAA implementation is the more complete one.
-    WindowsFormsListView,
-}
-
-/// The check NVDA makes on a window of these classes after its probe finds a
-/// provider, if it makes one. NVDA's Word, Excel, and Chromium exceptions
-/// apply only when it has injected its in-process helper, so they wait for
-/// Verbatim's (decision D2, M7).
-#[must_use]
-pub fn post_probe_check(classes: &WindowClasses) -> Option<PostProbeCheck> {
-    match classes.normalized.as_str() {
-        "ConsoleWindowClass" => Some(PostProbeCheck::Console),
-        "SysListView32" => Some(PostProbeCheck::WindowsFormsListView),
-        _ => None,
-    }
-}
-
-/// Whether a window of raw class `raw` comes from Windows Forms, whose
-/// window classes all begin `WindowsForms10.`. It agreed with the UIA
-/// framework id `WinForm` on every one of over 170 windows of Windows Forms,
-/// WPF, Qt, Firefox and Win32 applications
-/// (`books/dev/src/explanation/design/listener-without-connections.md`, section 3, step 5).
-fn has_windows_forms_class(raw: &str) -> bool {
-    raw.starts_with("WindowsForms10.")
-}
-
-/// The answer to `check` for a window of classes `classes`: `Some(true)`
-/// when its provider is used, `Some(false)` when it is excluded, `None` when
-/// the application did not answer. A console asks `console`; a list view is
-/// answered from its class name alone, with no call into the application,
-/// by an outpost and the listener alike
-/// (`books/dev/src/explanation/design/listener-without-connections.md`, section 3, step 5).
-fn provider_usable(
-    check: PostProbeCheck,
-    classes: &WindowClasses,
-    console: impl FnOnce() -> Option<bool>,
-) -> Option<bool> {
-    match check {
-        PostProbeCheck::Console => console(),
-        PostProbeCheck::WindowsFormsListView => Some(has_windows_forms_class(&classes.raw)),
-    }
-}
-
 /// [`decide`] for an outpost's worker, `true` for UIA: a window whose probe
 /// timed out is read through MSAA, and kept as a "no" for
 /// [`NEGATIVE_VERDICT_LIFETIME`] from the probe's end.
@@ -391,7 +338,7 @@ pub(crate) fn uses_uia(
 /// it. The probe is the raw probe ([`verbatim_uia::raw_probe`]), and no
 /// connection follows it. A console window with a provider is used only
 /// when `console` answers that its text reports formatting
-/// ([`PostProbeCheck::Console`]), which an outpost reads by the window's
+/// ([`verbatim_reader_rules::class::PostProbeCheck::Console`]), which an outpost reads by the window's
 /// handle ([`verbatim_uia::console_reports_formatting`]).
 fn decide(
     arbitrator: &Lock<Arbitrator>,
@@ -525,6 +472,7 @@ fn lock(arbitrator: &Lock<Arbitrator>) -> LockGuard<'_, Arbitrator> {
 #[cfg(test)]
 mod tests {
     use std::cell::{Cell, RefCell};
+    use verbatim_outpost_logic::KeptFromAnyGeneration as _;
 
     use super::*;
 
@@ -893,63 +841,6 @@ mod tests {
         );
         assert_eq!(
             arb.verdict(&Verdicts::default(), 1, &top("TRichEdit")),
-            Some(false)
-        );
-    }
-
-    #[test]
-    fn consoles_and_list_views_are_checked_after_the_probe() {
-        assert_eq!(
-            post_probe_check(&top("ConsoleWindowClass")),
-            Some(PostProbeCheck::Console)
-        );
-        assert_eq!(
-            post_probe_check(&top("WindowsForms10.SysListView32.app.0.2bf8098_r6_ad1")),
-            Some(PostProbeCheck::WindowsFormsListView)
-        );
-        assert_eq!(post_probe_check(&top("Notepad")), None);
-    }
-
-    #[test]
-    fn a_list_view_is_windows_forms_by_its_class_name() {
-        assert!(has_windows_forms_class(
-            "WindowsForms10.SysListView32.app.0.2bf8098_r6_ad1"
-        ));
-        assert!(!has_windows_forms_class("SysListView32"));
-    }
-
-    #[test]
-    fn a_list_views_provider_is_judged_by_its_class_alone() {
-        let console_never_asked = || -> Option<bool> { panic!("a list view asked the console") };
-        let forms = WindowClasses::new("WindowsForms10.SysListView32.app.0.2bf8098_r6_ad1", "x");
-        let comctl = WindowClasses::new("SysListView32", "x");
-        assert_eq!(
-            provider_usable(
-                PostProbeCheck::WindowsFormsListView,
-                &forms,
-                console_never_asked
-            ),
-            Some(true)
-        );
-        assert_eq!(
-            provider_usable(
-                PostProbeCheck::WindowsFormsListView,
-                &comctl,
-                console_never_asked
-            ),
-            Some(false)
-        );
-    }
-
-    #[test]
-    fn a_consoles_provider_is_judged_by_its_console_check() {
-        let classes = WindowClasses::new("ConsoleWindowClass", "ConsoleWindowClass");
-        assert_eq!(
-            provider_usable(PostProbeCheck::Console, &classes, || None),
-            None
-        );
-        assert_eq!(
-            provider_usable(PostProbeCheck::Console, &classes, || Some(false)),
             Some(false)
         );
     }

@@ -281,16 +281,42 @@ call, as it does UIA's proxy for a classic window, and the reading thread
 of the bar's application reads its place and its nearest window, once per
 change and memoised by runtime id, and sends a`BarChange`. A classic
 window's `EVENT_OBJECT_VALUECHANGE` reaches the global hook. A window of
-a class NVDA names as a bar, visible, is read by its window messages; any
-other object through `ClassicBarRead`: known not to be a bar in
-its application's capped memo it is dropped with no call, known to be
-one its value is read through MSAA, and otherwise one read asks whether
-its window has a native provider, then its role, and remembers the answer
-in the memo. Neither path makes a marker, starts an outpost or asks
-one; a read is bounded and abandoned as any read is. A process with no
-outpost has its record made for the bar and let go when idle, since no
-supervisor exit would end it; `HookRemoved` ends a record as ever. An
-outpost's own hook keeps the value change for text and reports no bar.
+a class NVDA names as a bar, visible, is read by its window messages. Any
+other is judged on the event thread by `value_change.rs`, the one record of
+what each application's windows and objects were found to be, which
+nothing else reads or writes, so an event dropped there takes no lock and
+makes no call. A window with a provider NVDA uses is dropped; a window with
+no answer has one job that judges it (its class lists, then the raw probe
+and the checks after it, as the outposts' arbitrator does) and reads the
+event's object if it has none; a change arriving while that first answer is
+awaited is dropped, as Dickson decided. A kept "no" past its 500 ms is
+asked again, and its old answer used meanwhile. A window with no provider
+goes on to the object's memo: known not to be a bar it is dropped with no
+call, known to be one its value is read through MSAA, and otherwise its role
+is read first. A reading thread's answers come back over an unbounded
+channel, drained at the start of each value change's callback. A job
+carries a token whose drop tells the record the window is no longer being
+asked, so a job dropped on any path answers it. The record holds up to 64
+applications, the least recently used forgotten first, as no exit is
+reported for a process with no outpost, and an answer is kept with its
+window's owning thread, so a reused handle has none. The last MSAA focus's
+object is exempt from the limits below, as NVDA's is.
+
+Limits: a console window with a provider is answered as using UIA with no
+check, because the check needs a UIA connection or a held element and the
+listener makes no connection and holds none on this path, so an old
+console with an incomplete provider differs from NVDA's test
+(`nvda/source/UIAHandler/__init__.py` 1344 to 1345); its value changes
+reach no bar. A classic value change's read has a deadline of 1 second and
+does not count towards `ABANDONED_LIMIT`, so it cannot starve a focus; it
+has its own count of abandoned reads still in their calls, at most
+`BAR_READS_ABANDONED_LIMIT` (2) per application: at 2, the application's
+waiting and further classic value changes are dropped with no thread
+started, clearing as each abandoned call returns. Neither path makes a
+marker, starts an outpost or asks one. A process with no outpost has its
+record made for the bar and let go when idle, since no supervisor exit
+would end it; `HookRemoved` ends a record as ever. An outpost's own hook
+keeps the value change for text and reports no bar.
 
 ## Public API
 

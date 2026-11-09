@@ -637,6 +637,11 @@ fn flood(
     use crate::stdin::FloodKind;
     let index = match kind {
         FloodKind::Name => 0,
+        FloodKind::NewValues | FloodKind::RepeatedValues | FloodKind::NewShows => {
+            return Err(format!(
+                "flood {kind:?} is not supported on the uia backend"
+            ));
+        }
         FloodKind::Text => tree
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -660,6 +665,9 @@ fn flood(
                 raise_property_changed(tree, hwnd, index, UIA_NamePropertyId)?;
             }
             FloodKind::Text => raise_text_changed(tree, hwnd, index)?,
+            FloodKind::NewValues | FloodKind::RepeatedValues | FloodKind::NewShows => {
+                unreachable!("refused above")
+            }
         }
     }
     Ok(())

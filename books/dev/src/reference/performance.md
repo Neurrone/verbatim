@@ -370,15 +370,19 @@ Each `EVENT_OBJECT_VALUECHANGE` wakes the listener's WinEvent thread
 once, a typed character in a classic edit control included, as NVDA's one
 hook does, for a few local calls; a bar then adds one wake of a reading
 thread and three window messages, or about four MSAA calls when it is
-known only by its role. The first change of any other object costs one
-wake of a reading thread and one read, the raw probe and `accRole`, once
-per object while its application's memo holds it: and the memo ends with
-its record, so a process with no outpost, whose record ends when idle,
-repays that read for every change (`docs/design/progress-bars.md`,
-"Costs"). Each UIA range value change anywhere wakes the listener's UIA
-thread, and a progress bar's adds a reading thread and its place's read.
-The wake-up and processor time figures are from the design's first
-step, still to be measured.
+known only by its role. Any other value change is judged on the
+WinEvent thread from what it knows of each window and object, taking no
+lock and making no call into the application when dropped; one that is
+queued takes the readers' lock once. A window's first answer costs one
+wake of a reading thread and one read, its class lists and the raw probe,
+and is asked again every 500 ms while a change comes for a window with
+none; each object costs one role read, the memo capped per application
+and the record kept across an idle process. An application's waiting
+classic value changes are at most 10 per raising thread and 64 in all, so
+a flood of new objects does not grow the queue. Each UIA range value
+change anywhere wakes the listener's UIA thread, and a progress bar's adds
+a reading thread and its place's read. The wake-up and processor time
+figures are from the design's first step, still to be measured.
 
 ### The listener's reads in a window the outpost judges MSAA
 

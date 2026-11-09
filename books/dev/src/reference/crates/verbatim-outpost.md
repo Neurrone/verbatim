@@ -292,8 +292,7 @@ whichever hook took it, is `verbatim_ia2::fact_of_win_event`
 `Arbitrator` is NVDA's per-window backend decision (`_isUIAWindowHelper`),
 each outpost's one verdict per window. It holds the configuration: the
 class lists and the clocks. The verdicts probes
-found are the reducer's state, `Verdicts` (`verbatim-outpost-logic`'s
-`verdicts.rs`),
+found are the reducer's state, `Verdicts` (`verbatim-reader-rules`),
 which callers give it. `verdict(&verdicts, hwnd, &WindowClasses)` answers
 from the good class list, the Windows 11 shell rule, the bad class list,
 the override, or a kept probe, and `None` when only the probe can decide;
@@ -311,7 +310,7 @@ the same tables and code, which the arbitrator's own lists are built from.
   `WindowClasses` (`verbatim_reader_rules::class`): the raw class, the
   class normalized as NVDA does (`normalize_class_name`), and the root
   ancestor's class.
-- `post_probe_check` names NVDA's check before using a provider: a list
+- `post_probe_check` (`verbatim-reader-rules`) names NVDA's check before using a provider: a list
   view's Windows Forms origin, or a console's formatted text, read from
   the window. A provider that fails is recorded as excluded
   (`Probed::Excluded`), MSAA for the window's lifetime.

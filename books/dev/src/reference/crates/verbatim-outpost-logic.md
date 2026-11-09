@@ -142,7 +142,9 @@ Public API:
   `Owed`, and a commit's `FocusCommit` and `MarkChange`, below); the caret key's
   watch (`Watch`, `OpenWatch`, `Checked`, below); the
   reports Core may hold (`Held`, `Focus`, `Evidence`, `InFront`); the verdicts
-  (`Verdicts`, `VerdictChange`, `Probe`, `Probed`); each node's text facts
+  (`Verdicts`, `VerdictChange`, `Probe`, `Probed`, from `verbatim-reader-rules`, and
+  `KeptFromAnyGeneration`, this crate's rule of which a generation no
+  longer in charge may record); each node's text facts
   (`NodeAnchors`, `Anchor`, `TextChange`, `ReportCut`, `AnswerCut`); and
   `WinKind` and `UiaKind`, its own copies of the backends' event kinds,
   since it names no backend crate.

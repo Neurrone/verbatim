@@ -27,7 +27,21 @@ Public API:
   arbitrator gives the same verdict through `classify_with`, which takes
   the arbitrator's own lists, built from `GOOD_UIA_CLASSES` and
   `BAD_UIA_CLASSES` with its configured additions. `SHELL_ROOT_CLASSES`
-  are the shell's top-level windows.
+  are the shell's top-level windows. `post_probe_check`, `PostProbeCheck`,
+  `provider_usable` and `has_windows_forms_class` are NVDA's checks of a
+  window with a provider before it is used, the outposts' arbitrator's
+  whole test and the listener's value changes' (the listener answering a
+  console with a provider `Uia` with no check, a limit its guide states).
+- `verdicts` — the kept verdicts on a window's provider: `Verdicts`,
+  `Probe`, `Probed`, `VerdictChange`. An outpost's reducer holds them as an
+  immutable snapshot, and the listener's event thread keeps a record per
+  application of them. `kept_at` answers for an event's observation, the
+  verdict before the newest for one observed before the newest's probe
+  began, `newest` the latest whether or not its keep has ended, and
+  `len` and `evict_oldest` keep a record to a cap.
+- `NewestPerThread`, `EVENTS_PER_THREAD` — NVDA's limit of 10 events per
+  raising thread, walked from the newest: both the outposts' batch and the
+  listener's waiting classic value changes use it.
 - `Window` — a window's handle that is never 0. The protocol and the
   system's calls carry a handle as an `isize`, 0 for none; the logic
   crates parse one where it enters them, `Window::new(handle)` giving

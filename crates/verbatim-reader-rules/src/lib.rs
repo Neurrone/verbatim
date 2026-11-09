@@ -2,7 +2,9 @@
 //! apply before reading: NVDA's class verdict and the class name
 //! normalization it is judged on ([`class`]), NVDA's acceptance test
 //! ([`acceptance`]), the title check before a focus reader reuses its
-//! ancestry cache ([`ancestry_cache`]), a window's handle that is never 0 ([`Window`]), and
+//! ancestry cache ([`ancestry_cache`]), a window's handle that is never 0 ([`Window`]), the
+//! kept verdicts on a window's provider ([`verdicts`]), NVDA's limit on a
+//! thread's events ([`NewestPerThread`]), and
 //! the constants both readers wait and judge by. A
 //! rule both apply is defined here once, since the two readers' crates may
 //! not depend on each other and no test could tie two copies (decision
@@ -53,8 +55,11 @@ pub mod acceptance;
 pub mod ancestry_cache;
 pub mod class;
 pub mod in_flight;
+mod newest_per_thread;
+pub mod verdicts;
 mod window;
 
+pub use newest_per_thread::{EVENTS_PER_THREAD, NewestPerThread};
 pub use window::Window;
 
 /// The console host's window class. A console window's provider is the

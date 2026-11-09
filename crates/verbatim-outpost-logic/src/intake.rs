@@ -155,7 +155,7 @@ use std::time::Duration;
 
 use verbatim_model::protocol::{DeliveredFact, RequestId, WinEventStamp};
 use verbatim_model::{NotificationKind, NotificationProcessing, TraceId};
-use verbatim_reader_rules::{MOVED_ON_GRACE, Window};
+use verbatim_reader_rules::{MOVED_ON_GRACE, NewestPerThread, Window};
 
 use super::entry::{Asker, Entry, Item, UiaKind, WinKind, is_state_property};
 
@@ -166,10 +166,6 @@ pub const OBJID_CLIENT: i32 = -4;
 /// How many MSAA focus events a batch keeps (NVDA's limiter's
 /// `maxFocusItems`).
 const FOCUS_EVENTS_PER_BATCH: usize = 4;
-
-/// How many other MSAA events a batch keeps per thread that raised them
-/// (NVDA's `MAX_WINEVENTS_PER_THREAD`).
-const EVENTS_PER_THREAD: usize = 10;
 
 /// The kind number of a toast's [`Key::Uia`].
 const TOAST_KEY: u8 = 5;
@@ -1115,7 +1111,7 @@ fn raiser_of(item: &Item) -> u32 {
 /// too, which tests its window as it starts it.
 fn admit(waiting: Vec<Waiting>, focused: Option<&Object>) -> Vec<Waiting> {
     let mut focus_kept: usize = 0;
-    let mut per_thread: BTreeMap<u32, usize> = BTreeMap::new();
+    let mut per_thread = NewestPerThread::default();
     // Newest first, then turned back to oldest first.
     let mut keep: Vec<bool> = waiting
         .iter()
@@ -1134,9 +1130,8 @@ fn admit(waiting: Vec<Waiting>, focused: Option<&Object>) -> Vec<Waiting> {
                         // with both its focus events and its other events
                         // (`orderedWinEventLimiter.py`, `addEvent`), so newer
                         // focus events do not crowd it out.
-                        let count = per_thread.entry(item.raiser).or_default();
-                        *count = count.saturating_add(1);
-                        among_focus || *count <= EVENTS_PER_THREAD
+                        let within = per_thread.within(item.raiser);
+                        among_focus || within
                     } else {
                         among_focus
                     }
@@ -1144,9 +1139,7 @@ fn admit(waiting: Vec<Waiting>, focused: Option<&Object>) -> Vec<Waiting> {
                 Category::Other => {
                     // The focused object's events count, and are kept beyond
                     // the limit, as NVDA's `alwaysAllowedObjects`.
-                    let count = per_thread.entry(item.raiser).or_default();
-                    *count = count.saturating_add(1);
-                    *count <= EVENTS_PER_THREAD || of_focus
+                    per_thread.within(item.raiser) || of_focus
                 }
             }
         })

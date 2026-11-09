@@ -155,8 +155,8 @@ use verbatim_uia_rops::{Ancestry, FocusAncestry, FocusQuery, Progress, focus_anc
 
 use verbatim_listener_logic::checks::{self, Check, Gathered, Nearest, Step};
 use verbatim_listener_logic::focus::{
-    Arrival, BarObject, BarVerdict, FocusEvent, Judged, Meta, NO_WINDOW, NOT_FOCUSED,
-    NOT_THE_LAST_READ, NOTIFICATION_NO_WINDOW, TOAST_NOT_CORE_WINDOW, TOAST_NOT_READ, arrival_of,
+    Arrival, BarRaiser, FocusEvent, Judged, Meta, NO_WINDOW, NOT_FOCUSED, NOT_THE_LAST_READ,
+    NOTIFICATION_NO_WINDOW, TOAST_NOT_CORE_WINDOW, TOAST_NOT_READ, arrival_of,
 };
 use verbatim_listener_logic::schedule::{
     AlarmChange, AppKey, QueuePlace, Request, Schedule, ScheduleEffect, ScheduleInput, Waking,
@@ -1400,6 +1400,12 @@ pub(crate) trait Reading: Send + Sync + 'static {
     fn moved_on(&self, window: isize) -> bool {
         front_is_another_thread_of_its_application(window)
     }
+    /// For a classic value change's job, the thread that raised it and the
+    /// object it is of: the limits it is queued under
+    /// ([`Readers::push`]). `None`, the default, for any other.
+    fn bar<'a>(&self, _job: &'a Self::Job) -> Option<(BarRaiser, &'a [i32])> {
+        None
+    }
     /// Whether `window`, an event's sender's cached window, can be read,
     /// by the listener's window readability reader, the one its reading
     /// threads and its UIA callbacks are given, for the callbacks' test as
@@ -1739,12 +1745,19 @@ impl<R: Reading> Readers<R> {
             .filter(|(key_kind, _)| *key_kind == kind)
             .map(|(_, key)| key.to_vec());
         let window = shared.reading.window(&job);
-        let mut state = shared.lock();
-        state.owed.insert(meta.marker, owed);
-        step(
-            shared,
-            &mut state,
-            ScheduleInput::Push {
+        let bar = shared
+            .reading
+            .bar(&job)
+            .map(|(raiser, key)| (raiser, key.to_vec()));
+        let input = match bar {
+            Some((raiser, key)) => ScheduleInput::PushBar {
+                pid,
+                meta,
+                job,
+                key,
+                raiser,
+            },
+            None => ScheduleInput::Push {
                 pid,
                 meta,
                 job,
@@ -1752,8 +1765,10 @@ impl<R: Reading> Readers<R> {
                 key,
                 window: RuleWindow::from_cached(window),
             },
-            None,
-        );
+        };
+        let mut state = shared.lock();
+        state.owed.insert(meta.marker, owed);
+        step(shared, &mut state, input, None);
     }
 
     /// Whether a focus event is waiting for its read or being read, for a
@@ -1849,30 +1864,6 @@ impl<R: Reading> Readers<R> {
             &self.shared,
             &mut state,
             ScheduleInput::MsaaFocus { pid },
-            None,
-        );
-    }
-
-    /// What the running application `pid`'s record remembers `object` to
-    /// be, for the listener's hook; nothing when it has no record. One
-    /// uncontended lock and no call into the application.
-    pub(crate) fn bar_verdict(&self, pid: Pid, object: BarObject) -> Option<BarVerdict> {
-        self.shared.lock().schedule.bar_verdict(pid, object)
-    }
-
-    /// What a reading thread found `object` of `pid`'s to be, for `pid`'s
-    /// record to remember ([`Schedule::bar_verdict`]). One uncontended lock
-    /// and no call into the application.
-    pub(crate) fn learn_bar(&self, pid: Pid, object: BarObject, verdict: BarVerdict) {
-        let mut state = self.shared.lock();
-        step(
-            &self.shared,
-            &mut state,
-            ScheduleInput::BarLearned {
-                pid,
-                object,
-                verdict,
-            },
             None,
         );
     }

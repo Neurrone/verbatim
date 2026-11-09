@@ -29,6 +29,7 @@ pub(crate) mod foreground_progress_bar;
 pub(crate) mod lock_key_announcements;
 pub(crate) mod measure;
 pub(crate) mod menu_and_settings_dialog;
+pub(crate) mod msaa_flood_then_focus;
 pub(crate) mod notepad_say_all;
 pub(crate) mod notepad_spelling_errors;
 pub(crate) mod object_navigation_in_settings;

@@ -4,6 +4,8 @@
 //! and where it was queued ([`Arrival`]), what became of it ([`Judged`]),
 //! and the reasons an event is dropped.
 
+use std::time::Duration;
+
 use verbatim_model::TraceId;
 use verbatim_model::protocol::{DeliveredFact, EventTiming, UiaFocusRead};
 
@@ -135,7 +137,7 @@ pub const MSAA_CLASS: &str =
 
 /// One object a value change was raised for: a window, and the object and
 /// child ids that name it in that window.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct BarObject {
     /// The window, which may be a bar's own or its container's.
     pub window: isize,
@@ -174,6 +176,10 @@ pub enum ClassicBarRead {
     /// An object the record has no answer for: its role is read, and a bar
     /// has its percentage read too.
     Unknown,
+    /// A window with no answer: it is judged first, by its class and its
+    /// probe, and with no provider NVDA uses this object is read as
+    /// [`Self::Unknown`].
+    Probe,
 }
 
 /// What the listener's hook does with one `EVENT_OBJECT_VALUECHANGE`, with no
@@ -195,6 +201,62 @@ pub fn classic_value_change(
         Some(BarVerdict::Bar) => Some(ClassicBarRead::KnownBar),
         None => Some(ClassicBarRead::Unknown),
     }
+}
+
+/// How long a read of a classic value change is given before its thread
+/// is abandoned: shorter than a focus's deadline, so that a slow
+/// application's reading thread is held by its value changes for no more
+/// than this ahead of a focus.
+pub const BAR_READ_DEADLINE: Duration = Duration::from_secs(1);
+
+/// How many of an application's reads of classic value changes may be
+/// abandoned and still in their calls. At this many, its further value
+/// changes are dropped with no thread started until a call returns, so a
+/// slow application holds a bounded number of threads. Counted apart from
+/// [`ABANDONED_LIMIT`], so they never starve a focus.
+pub const BAR_READS_ABANDONED_LIMIT: usize = 2;
+
+/// The most classic value changes an application's queue holds, from all
+/// its raising threads together, the oldest dropped first: the limit per
+/// thread does not bound a pool of raising threads.
+pub const BARS_PER_APPLICATION: usize = 64;
+
+/// Why a waiting classic value change is dropped by the limit per thread
+/// or the cap per application.
+pub const BAR_LIMITED: &str = "newer value changes of its thread or application came";
+
+/// Why a waiting classic value change is dropped when a focus of its
+/// application arrives, which is not to wait behind it.
+pub const BAR_FOCUS_CAME: &str = "a focus of its application came";
+
+/// Why a classic value change is dropped while its application's abandoned
+/// reads are at [`BAR_READS_ABANDONED_LIMIT`].
+pub const BAR_READS_OUT: &str = "its application's abandoned value change reads have not returned";
+
+/// The thread that raised a classic value change, and whether it is of
+/// the object with the MSAA focus, whose events the limit always keeps.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BarRaiser {
+    /// The raising thread.
+    pub raised_by: u32,
+    /// Whether the object has the MSAA focus.
+    pub focused: bool,
+}
+
+/// What a value change's window was found to be
+/// (`ClassicBarRead::Probe`), as a window's outcome maps in the outposts'
+/// arbitrator.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WindowAnswer {
+    /// A provider NVDA uses, for the window's lifetime.
+    Uia,
+    /// MSAA for its lifetime: a provider NVDA does not use, or a class on
+    /// NVDA's MSAA list.
+    Excluded,
+    /// No provider, for now.
+    NotUia,
+    /// The probe was not answered in time: no provider, for now.
+    TimedOut,
 }
 
 /// What a read of a classic value change, or a UIA bar's, is dropped for.

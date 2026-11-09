@@ -765,6 +765,40 @@ fn msaa_set_value_raises_a_value_change_win_event() {
     app.quit();
 }
 
+/// The MSAA flood raises a value change on a new object each time, then
+/// on the fixture's own objects, then a show on a new object each time,
+/// from a tooltip window whose handle the test cannot name.
+fn msaa_flood_raises_each_kind_on_its_objects() {
+    common::init_com();
+    let title = common::unique_title("mockapp-events-msaa-flood");
+    let mut app = common::spawn("small.json", "msaa", &title);
+    let hwnd = common::find_window(&title);
+    let (_hook, events) = hook(app.pid());
+
+    app.send("flood 2 0 new-values");
+    app.send("flood 1 0 repeated-values");
+    app.send("flood 2 0 new-shows");
+    let events = pump_until(&events, 5);
+    let of_kind = |&(kind, _, object, child): &SeenWinEvent| (kind, object, child);
+    assert_eq!(
+        events.iter().map(of_kind).collect::<Vec<_>>(),
+        [
+            (WinEventKind::ValueChange, 1000, 0),
+            (WinEventKind::ValueChange, 1001, 0),
+            (WinEventKind::ValueChange, 1, 0),
+            (WinEventKind::Show, 1000, 0),
+            (WinEventKind::Show, 1001, 0),
+        ]
+    );
+    assert_eq!(
+        events[..3].iter().map(|event| event.1).collect::<Vec<_>>(),
+        [hwnd.0 as isize; 3],
+        "the value changes are the window's own"
+    );
+
+    app.quit();
+}
+
 fn msaa_select_raises_a_selection_win_event() {
     common::init_com();
     let title = common::unique_title("mockapp-events-msaa-select");
@@ -945,10 +979,12 @@ fn classic_read(
 ) -> (
     Option<verbatim_model::Percent>,
     Option<verbatim_listener_logic::focus::BarVerdict>,
+    Option<verbatim_listener_logic::focus::WindowAnswer>,
 ) {
     use verbatim_model::protocol::Responder;
     let (reports, changed) = mpsc::channel();
     let (verdicts, learned) = mpsc::channel();
+    let (windows, answered) = mpsc::channel();
     verbatim_listener::listener::read_classic_bar(
         object,
         read,
@@ -964,8 +1000,19 @@ fn classic_read(
                 }
             },
         ),
+        Responder::new(
+            move |answer: Option<verbatim_listener_logic::focus::WindowAnswer>| {
+                if let Some(answer) = answer {
+                    let _ = windows.send(answer);
+                }
+            },
+        ),
     );
-    (changed.try_recv().ok(), learned.try_recv().ok())
+    (
+        changed.try_recv().ok(),
+        learned.try_recv().ok(),
+        answered.try_recv().ok(),
+    )
 }
 
 /// A classic bar known only by its role, in a window with no outpost, is
@@ -983,18 +1030,19 @@ fn a_classic_bar_is_read_by_its_role_with_no_outpost() {
                 object: windows::Win32::UI::WindowsAndMessaging::OBJID_CLIENT.0,
                 child: 1,
             },
-            verbatim_listener_logic::focus::ClassicBarRead::Unknown,
+            verbatim_listener_logic::focus::ClassicBarRead::Probe,
         ),
         (
             verbatim_model::Percent::parse("40"),
-            Some(verbatim_listener_logic::focus::BarVerdict::Bar)
+            Some(verbatim_listener_logic::focus::BarVerdict::Bar),
+            Some(verbatim_listener_logic::focus::WindowAnswer::NotUia)
         )
     );
     app.quit();
 }
 
 /// A native UIA window's classic value change is no bar's: the raw probe
-/// answers before any MSAA call, and the record is told so.
+/// answers before any MSAA call, and the window's answer says so.
 fn a_native_uia_windows_value_change_is_remembered_as_no_bar() {
     common::init_com();
     let title = common::unique_title("mockapp-classic-native");
@@ -1007,11 +1055,12 @@ fn a_native_uia_windows_value_change_is_remembered_as_no_bar() {
                 object: windows::Win32::UI::WindowsAndMessaging::OBJID_CLIENT.0,
                 child: 0,
             },
-            verbatim_listener_logic::focus::ClassicBarRead::Unknown,
+            verbatim_listener_logic::focus::ClassicBarRead::Probe,
         ),
         (
             None,
-            Some(verbatim_listener_logic::focus::BarVerdict::NotABar)
+            None,
+            Some(verbatim_listener_logic::focus::WindowAnswer::Uia)
         )
     );
     app.quit();
@@ -1085,6 +1134,10 @@ fn main() {
         (
             "msaa_set_value_raises_a_value_change_win_event",
             msaa_set_value_raises_a_value_change_win_event,
+        ),
+        (
+            "msaa_flood_raises_each_kind_on_its_objects",
+            msaa_flood_raises_each_kind_on_its_objects,
         ),
         (
             "msaa_select_raises_a_selection_win_event",

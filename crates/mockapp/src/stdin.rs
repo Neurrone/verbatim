@@ -12,7 +12,7 @@
 //! `notify <text>`, `stall <ms> [<at> <command>]`, `on-activate <command>`,
 //! `island <command>`,
 //! `slow <ms>`, `slow-patterns <ms>`, `refuse-text <on|off>`,
-//! `flood <count> <interval_ms> [name|text]`,
+//! `flood <count> <interval_ms> [name|text|new-values|repeated-values|new-shows]`,
 //! `answer-property <property id> <fail|empty|usual>`,
 //! `answer-parent <id> <fail|none|usual> [<after>]`,
 //! `slow-parent <id> <ms> [<after>]`, `slow-acc-parent <id> <ms>`,
@@ -73,6 +73,14 @@ pub(crate) enum FloodKind {
     /// UIA's text changed event from the fixture's first text node, its
     /// text left as it is.
     Text,
+    /// MSAA: a value change on a new object each time, as a console
+    /// raises them, objects the window does not answer for.
+    NewValues,
+    /// MSAA: value changes cycling through the fixture's nodes, objects
+    /// the window answers for.
+    RepeatedValues,
+    /// MSAA: a show event on a new object each time.
+    NewShows,
 }
 
 /// One parsed stdin command.
@@ -209,7 +217,8 @@ pub(crate) enum Command {
     /// (`GetPatternProvider`), which filling an element's cache makes and a
     /// walk to its nearest window does not; 0 answers them at once again.
     SlowPatterns(u64),
-    /// `flood <count> <interval_ms> [name|text]`: raises `count` events of
+    /// `flood <count> <interval_ms> [name|text|new-values|repeated-values|new-shows]`:
+    /// raises `count` events of
     /// the kind named (`name` when it is left out) from the window thread,
     /// the `n`th, counting from 0, `n` intervals after the first, as an
     /// application whose content changes many times a second does; the
@@ -217,7 +226,7 @@ pub(crate) enum Command {
     /// the window thread answers calls into the window, but applies no
     /// other command; 0 raises them back to back, answering no call until
     /// the last is raised. Acknowledged once the last event is raised.
-    /// UIA-only.
+    /// `name` and `text` are UIA-only, the others MSAA-only.
     Flood(u32, std::time::Duration, FloodKind),
     /// `refuse-text on` or `refuse-text off`: while on, every request for a
     /// node's text pattern fails (`E_FAIL`) rather than answering, as a
@@ -492,6 +501,9 @@ fn flood(rest: &str) -> Option<Command> {
     let kind = match parts.next() {
         None | Some("name") => FloodKind::Name,
         Some("text") => FloodKind::Text,
+        Some("new-values") => FloodKind::NewValues,
+        Some("repeated-values") => FloodKind::RepeatedValues,
+        Some("new-shows") => FloodKind::NewShows,
         Some(_) => return None,
     };
     parts
@@ -1009,6 +1021,18 @@ mod tests {
             parse_command("flood 5 10 text"),
             Some(Command::Flood(5, interval, FloodKind::Text))
                 if interval == std::time::Duration::from_millis(10)
+        ));
+        assert!(matches!(
+            parse_command("flood 5 0 new-values"),
+            Some(Command::Flood(5, interval, FloodKind::NewValues)) if interval.is_zero()
+        ));
+        assert!(matches!(
+            parse_command("flood 5 0 repeated-values"),
+            Some(Command::Flood(5, interval, FloodKind::RepeatedValues)) if interval.is_zero()
+        ));
+        assert!(matches!(
+            parse_command("flood 5 0 new-shows"),
+            Some(Command::Flood(5, interval, FloodKind::NewShows)) if interval.is_zero()
         ));
         assert!(parse_command("flood 5").is_none());
         assert!(parse_command("flood 5 -1").is_none());
