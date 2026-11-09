@@ -299,10 +299,10 @@ impl Seam {
     fn record_notes(&mut self) {
         for field in [0, 1] {
             let node = node_of(self.generation, field).number();
-            let note = self.outpost.facts.text.live_note(node, self.now);
+            let held = self.outpost.facts.text.live_note(node, self.now);
             let log = self.note_log.entry(node).or_default();
-            if log.last().map(|(_, was)| was) != Some(&note) {
-                log.push((self.now, note));
+            if log.last().map(|(_, was)| was) != Some(&held) {
+                log.push((self.now, held));
             }
         }
     }
@@ -997,8 +997,7 @@ impl Seam {
             {
                 ReadRole::Other
             }
-            ReadKind::TerminalBefore(..) => ReadRole::Before,
-            ReadKind::Before(..) => ReadRole::Before,
+            ReadKind::TerminalBefore(..) | ReadKind::Before(..) => ReadRole::Before,
             ReadKind::Final(..) => ReadRole::Final,
             ReadKind::Event => ReadRole::Other,
         }));
