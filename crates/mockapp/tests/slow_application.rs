@@ -12,8 +12,8 @@
 //!   shell's items each wait past the short limit they once had, and answer
 //!   in full. Each hold ends after evidence that the old limit has passed:
 //!   the outpost's frozen clock moved past a limit that ran on it, or the
-//!   end of a stall of twice a limit that ran in real time, so each test fails with its old limit
-//!   restored.
+//!   end of a stall longer than a limit that ran in real time, so each test fails with its old
+//!   limit restored.
 //! - The shell's items are answered complete or not at all: a walk whose
 //!   window's lookup UIA ends with its timeout fails whole.
 //! - A window that hangs while the outpost waits on it is told to Core once
@@ -229,11 +229,13 @@ fn a_slow_path_walk_answers_its_node() {
 }
 
 /// A UIA dialog the focus enters, a top-level window of a dialog's class,
-/// whose text gathering waits on mockapp's window thread stalled for twice
-/// the bounded client's old wait of a second, real time, is reported with
-/// its text once mockapp answers: the text is gathered inside the
+/// whose text gathering waits on mockapp's window thread stalled for longer
+/// than the bounded client's old wait of a second, real time, is reported
+/// with its text once mockapp answers: the text is gathered inside the
 /// focus's program, on the worker's own client, whose calls the report
-/// counts.
+/// counts. The stall ends well within UIA's connection timeout, which ends
+/// the lookup of the dialog's window from the timeout's own length to about
+/// 200 milliseconds past it, so a stall that long can lose the text.
 fn a_slow_dialog_text_is_reported_with_the_focus() {
     common::init_com();
     let title = common::unique_title("mockapp-slow-dialog");
@@ -252,7 +254,7 @@ fn a_slow_dialog_text_is_reported_with_the_focus() {
     app.send("set-focus no");
     let fact = outpost.listener_fact(&common::listener_focus(&uia, hwnd.0 as isize));
 
-    let stall = Duration::from_secs(2);
+    let stall = verbatim_uia::UIA_CONNECTION_TIMEOUT * 3 / 4;
     app.stall(stall);
     outpost.deliver(fact);
     let reported = outpost.reported_focus();
