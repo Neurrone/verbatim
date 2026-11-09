@@ -380,7 +380,6 @@ struct CaretSummary {
     runs: Vec<(usize, RunAttributes)>,
     changes: Option<Vec<(bool, String)>>,
     texts: (Option<String>, Option<String>),
-    since_place: Option<(i32, i32)>,
     selection_start: Option<usize>,
     selection_line: Option<(String, usize)>,
     start_first: bool,
@@ -411,7 +410,6 @@ fn summary(answer: &CaretAnswer) -> CaretSummary {
             answer.selection_text.as_deref().map(text),
             answer.previous_text.as_deref().map(text),
         ),
-        since_place: answer.since_place,
         selection_start: answer.selection_start,
         selection_line: answer
             .selection_line
