@@ -548,8 +548,14 @@ fn end_current(state: &mut SrState, trace_id: TraceId, passed_at_ms: Option<u64>
     };
     let Busy { waiting, heard, .. } = *busy;
     let mut effects = vec![Effect::BoundHeldKey(None)];
-    effects.extend(editing::speak_each(trace_id, heard));
-    effects.extend(run_waiting(state, waiting, passed_at_ms));
+    let run = run_waiting(state, waiting, passed_at_ms);
+    // Changes held while a key was out wait for the words of the key that
+    // follows it (Dickson, 2026-11-09), with none left they are said.
+    match state.busy_mut() {
+        Some(busy) => busy.heard.splice(0..0, heard).for_each(drop),
+        None => effects.extend(editing::speak_each(trace_id, heard)),
+    }
+    effects.extend(run);
     effects
 }
 
@@ -718,7 +724,7 @@ fn before_read_answered(state: &mut SrState, trace_id: TraceId, reply: TextReply
     let read = *read;
     let (changes, general) = editing::changes_of_reply(&read);
     let before = editing::before_of_read(state, node, held.key.motion, &read);
-    let passed_at_us = read.facts.read_ended_at_us.saturating_add(1);
+    let passed_at_us = read.facts.read_ended_at_us;
     editing::update_caret(state, node, read.caret);
     let mut effects =
         editing::selection_changed(state, trace_id, node, (&changes, general.as_general()));
@@ -894,11 +900,15 @@ fn result(
     if !words.is_empty() {
         effects.push(editing::speak(trace_id, words));
     }
-    if let Some(busy) = state.busy_mut() {
-        let heard = std::mem::take(&mut busy.heard);
-        effects.extend(editing::speak_each(trace_id, heard));
+    if speaks {
+        if let Some(busy) = state.busy_mut() {
+            let heard = std::mem::take(&mut busy.heard);
+            effects.extend(editing::speak_each(trace_id, heard));
+        }
+        effects.extend(editing::speak_each(trace_id, segments));
+    } else if let Some(busy) = state.busy_mut() {
+        busy.heard.extend(segments);
     }
-    effects.extend(editing::speak_each(trace_id, segments));
     effects.extend(end_current(
         state,
         watched.key.trace_id,
@@ -994,11 +1004,9 @@ pub(crate) fn changes_heard(
     let Some(busy) = state.busy_mut() else {
         return editing::speak_each(trace_id, segments);
     };
-    if busy
-        .current
-        .watched()
-        .is_some_and(|watched| watched.node == node)
-    {
+    let held = busy.current.watched().is_some_and(|watched| watched.node == node)
+        || (matches!(busy.current, CurrentKey::Reading { .. }) && !busy.heard.is_empty());
+    if held {
         busy.heard.extend(segments);
         return Vec::new();
     }

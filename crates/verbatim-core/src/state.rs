@@ -703,6 +703,15 @@ impl SrState {
             .and_then(|focus| focus.caret.as_ref())
     }
 
+    /// The caret Core holds on the focus, its offset in its line.
+    #[must_use]
+    pub fn focus_caret_offset(&self) -> Option<u32> {
+        self.focus
+            .object()
+            .and_then(|focus| focus.caret.as_ref())
+            .map(|caret| caret.line.offset)
+    }
+
     /// Forgets the focus's caret.
     pub(crate) fn forget_caret(&mut self) {
         if let Some(focus) = self.focus.object_mut() {
