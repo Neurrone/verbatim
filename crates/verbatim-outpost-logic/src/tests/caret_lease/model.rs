@@ -29,9 +29,11 @@
 //!   (`nvda/source/editableText.py` 181 to 186), an abandoned final read
 //!   says nothing for the key (168 to 172), and no later evidence is that
 //!   key's (the coordinator's ruling, 2026-11-09).
-//! - A final read's reply is never credited to a key that replaced its
-//!   asker, held or not: it is an ordinary report, its selection changes
-//!   heard (the coordinator's ruling, 2026-11-09).
+//! - A final read that shows no change answers only the key that asked
+//!   it, never one that replaced its asker, held or not (the coordinator's
+//!   ruling, 2026-11-09). One that shows a change is an ordinary report,
+//!   so that key's evidence when it ended after that key's pass
+//!   (2026-11-09).
 //! - The caret is the focus object's, the one whose read began most
 //!   recently (2026-10-25), and ends with that focus.
 //! - A report of a node no longer the focus says nothing and is not a
@@ -369,14 +371,13 @@ impl Model {
         } else {
             None
         };
-        let credited = |id: usize| !report.final_read || asker == Some(id);
         let changes = std::mem::take(&mut self.changes);
         if self.focus != self.committed_field {
             return;
         }
         self.note_caret(report.began, report.text.caret);
         let Some(open) = self.open() else {
-            if let Some(id) = self.silenced_evidence(report).filter(|&id| credited(id)) {
+            if let Some(id) = self.silenced_evidence(report) {
                 let press = &self.keys[id];
                 let words = evidence_words(press.key, press.baseline.as_ref(), &report.text);
                 self.keys[id].silenced_at = None;
@@ -397,14 +398,10 @@ impl Model {
             self.say_changes(&changes);
             return;
         };
-        if !credited(open) {
-            self.held.extend(changes);
-            return;
-        }
         let press = &self.keys[open];
         let passed = press.passed.unwrap_or(now);
         let evidence = report.ended >= passed && self.shows_change;
-        if !evidence && !report.final_read {
+        if !evidence && asker != Some(open) {
             self.held.extend(changes);
             return;
         }
