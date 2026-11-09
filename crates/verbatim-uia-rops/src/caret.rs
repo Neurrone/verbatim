@@ -1987,19 +1987,6 @@ pub fn caret_read_classic(query: &CaretQuery<'_>) -> Result<CaretAnswer, Error> 
         _ => None,
     };
     let line = unit_at(&point, TextUnit_Line, query.max_text)?;
-    let since_place = query
-        .since
-        .map(|since| {
-            Ok::<_, Error>((
-                since
-                    .range
-                    .compare_endpoints(since.endpoint, &line.range, Endpoint::Start)?,
-                since
-                    .range
-                    .compare_endpoints(since.endpoint, &line.range, Endpoint::End)?,
-            ))
-        })
-        .transpose()?;
     let (selection_start, selection_line, start_first) = match &selection {
         None => (None, None, false),
         Some(selection) => classic_start(query, selection, &line)?,
@@ -2020,7 +2007,8 @@ pub fn caret_read_classic(query: &CaretQuery<'_>) -> Result<CaretAnswer, Error> 
         collapsed: collapsed_caret,
         selection,
         moved,
-        since_place,
+        // Call by call the caller tells from the line's text, with no call.
+        since_place: None,
         selection_moved,
         line,
         unit,

@@ -3400,6 +3400,16 @@ fn check_uia_caret_costs(ratchet: &mut Ratchet, remote: bool) {
     // The report's, with the selection last read, "al", compared and its
     // change read: its ends, the text it held, and the character at the
     // caret, the key's unit.
+    // Remotely, whether the key's baseline is on the line too.
+    let remote_move_hits = [
+        ("ITextProvider::GetSelection", 2),
+        ("Clone", 3),
+        ("CompareEndpoints", 6),
+        ("ExpandToEnclosingUnit", 2),
+        ("GetAttributeValue", 2),
+        ("GetText", 2),
+        ("MoveEndpointByRange", 1),
+    ];
     let before_key_hits = [
         ("ITextProvider::GetSelection", 1),
         ("Clone", 4),
@@ -3456,7 +3466,7 @@ fn check_uia_caret_costs(ratchet: &mut Ratchet, remote: bool) {
             &answer,
             calls(1, 0, 0),
             0,
-            &remote_hits(1, &plus_copy(&move_hits)),
+            &remote_hits(1, &plus_copy(&remote_move_hits)),
         );
         ratchet.check(
             "UIA caret report, remotely",
@@ -3552,7 +3562,7 @@ fn check_uia_caret_costs(ratchet: &mut Ratchet, remote: bool) {
             &nothing,
             calls(1, 0, 0),
             0,
-            &remote_hits(1, &plus_copy(&move_hits)),
+            &remote_hits(1, &plus_copy(&remote_move_hits)),
         );
         ratchet.check(
             "UIA caret watch answered by a later caret event, remotely",
