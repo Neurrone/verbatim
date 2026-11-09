@@ -681,7 +681,7 @@ impl Seam {
             self.generation,
             5 + field as u64,
             Role::EditableText,
-            "Field",
+            if field == 0 { "First" } else { "Second" },
         );
         // A focus read is a read of the node: under a live note it carries
         // the key's facts, and it replaces the node's last read.
@@ -755,18 +755,21 @@ impl Seam {
     pub fn tick(&mut self, now: Us) -> Vec<Seen> {
         self.now = now;
         let mut seen = Vec::new();
-        if let Some((trace, at)) = self.due
+        // A deadline fires when it falls due, so one it sets runs from then.
+        while let Some((trace, at)) = self.due
             && at <= now
         {
             self.due = None;
+            self.now = at;
             self.enter_core(
                 &CoreInput::HeldKeyDue {
                     trace_id: trace,
-                    at_us: now,
+                    at_us: at,
                 },
                 &mut seen,
             );
         }
+        self.now = now;
         if self.final_outstanding {
             seen.push(Seen::FinalReadAsked);
         }
@@ -801,9 +804,7 @@ impl Seam {
 
     /// Core's caret.
     pub fn core_caret(&mut self) -> Option<usize> {
-        self.core
-            .focus_caret_offset()
-            .map(|offset| offset as usize)
+        self.core.focus_caret_offset().map(|offset| offset as usize)
     }
 }
 
@@ -900,14 +901,16 @@ fn committed_read(
     found: &Found,
 ) -> TextChange {
     let (mut part, copied) = part.unwrap_or_default();
-    let selection = found.text.selection.zip(found.report.selection.clone()).map(
-        |((start, end), report)| ReadSelection {
+    let selection = found
+        .text
+        .selection
+        .zip(found.report.selection.clone())
+        .map(|((start, end), report)| ReadSelection {
             start: u32::try_from(start).expect("a short line"),
             end: u32::try_from(end).expect("a short line"),
             text: None,
             report,
-        },
-    );
+        });
     part.last = Some(LastRead {
         caret: u32::try_from(found.text.caret).expect("a short line"),
         selection,
