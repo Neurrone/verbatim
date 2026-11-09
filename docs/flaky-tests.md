@@ -27,6 +27,13 @@ Scenarios: the `windows_terminal_` scenarios generally, for example `windows_ter
 - Cause: Windows Terminal raises focus from a second runtime identity ([UIA faults](../books/dev/src/reference/uia-bugs.md), "Windows Terminal raises focus from a second runtime identity"); Verbatim's rule dropping those repeats is not built, and the scenario accepts one repeat of the terminal.
 - Fix: [M5](roadmap.md#m5--extensions-v1), the Terminal built-in's rule for the second terminal identity.
 
+## Settings' suggestions list replaced as it opens
+
+- Scenarios: `settings_search_suggestions` (local only), 2 of 13 runs on 2026-11-09.
+- How: "Suggestions available" plays to completion where the scenario expects the first suggestion to cut it off.
+- Cause: Settings replaces the list's items as it opens, after raising the selection, so the selected element is in none of the elements the focus controls, and nothing is said, as `docs/parity/changes-and-selection.md` records.
+- Fix: none in Verbatim.
+
 ## Settings' page focus never delivered by UI Automation
 
 - `settings_system_page` on GitHub's runner (run 42492633218, 2026-11-08)
