@@ -339,6 +339,9 @@ fn run_job(context: &Arc<Context>, client: &mut Client, job: Job, charge: &Arc<C
             request_context.judge_at(judged_at(context, &entry));
             let mut worker = Worker::new(&request_context, client, batch, timing);
             worker.group = group;
+            if let Handling::FinalRead { note_until } = handling {
+                worker.final_note_until = note_until;
+            }
             if handling == Handling::Menu {
                 worker.menu_opened(&entry);
             } else {
@@ -826,6 +829,9 @@ struct Worker<'a> {
     owed_attempt: Option<NodeId>,
     /// A caret read made for owed work, committed with what follows it.
     pending_caret_read: Option<(NodeId, u64)>,
+    /// The end of the note this entry's final read clears, the one that
+    /// lived as it arrived.
+    final_note_until: Option<u64>,
     /// The caret read the entry's handling cut at its value change check,
     /// which ends the program: the reducer decides the check and
     /// dispatches its finish ([`Work::Finish`]).
@@ -872,6 +878,7 @@ impl<'a> Worker<'a> {
             owed_attempt: None,
             pending_caret_read: None,
             cut: None,
+            final_note_until: None,
             redirected: false,
             value_from_selection: false,
             answers: None,
@@ -999,12 +1006,9 @@ impl Worker<'_> {
             unit: asked.fetch.unit,
             motion: asked.fetch.motion,
         };
-        let live = self
-            .live_note(node_id)
-            .filter(|live| live.final_read == Some(request_id));
         let (checked, read_at) = text_reads::note_read(self.context, node_id, note, (true, false));
-        if let Some(live) = live {
-            text_reads::clear_note(self.context, node_id, live.until_us);
+        if let Some(until_us) = self.final_note_until {
+            text_reads::clear_note(self.context, node_id, until_us);
         }
         let caret_read = read_at.map(|at| (node_id, at));
         let reply = match checked {

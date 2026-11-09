@@ -603,7 +603,7 @@ pub struct Reducer {
     flight: InFlight<Current>,
     /// The tries left of a focus group whose try was abandoned, to run
     /// before anything else.
-    after: VecDeque<(Entry, Option<GroupTry>)>,
+    after: VecDeque<(Entry, Handling, Option<GroupTry>)>,
     /// Whether a release let go of objects for a worker to drop.
     to_drop: bool,
     /// The queries recorded and not yet answered.
@@ -923,13 +923,14 @@ impl Reducer {
             ReadPurpose::BeforeFieldKey => NoteOn::Field,
             ReadPurpose::BeforeTerminalKey => NoteOn::Terminal,
             ReadPurpose::Final => {
-                Arc::make_mut(&mut self.facts.text).final_read_arrived(
-                    node_id.number(),
-                    *request_id,
-                    now.wall_us,
-                );
+                let note_until = self
+                    .facts
+                    .text
+                    .live_note(node_id.number(), now.wall_us)
+                    .map(|note| note.until_us);
                 self.queries.insert(*request_id);
-                self.after.push_back((entry.clone(), None));
+                self.after
+                    .push_back((entry.clone(), Handling::FinalRead { note_until }, None));
                 return true;
             }
         };
@@ -1329,7 +1330,7 @@ impl Reducer {
     fn continue_group(&mut self, mut group: GroupTry) {
         if let Some(entry) = group.older.pop_front() {
             group.rank = group.rank.saturating_add(1);
-            self.after.push_back((entry, Some(group)));
+            self.after.push_back((entry, Handling::Run, Some(group)));
         }
     }
 
@@ -1395,8 +1396,8 @@ impl Reducer {
                 );
                 continue;
             }
-            if let Some((entry, group)) = self.after.pop_front() {
-                self.start_entry(entry, Handling::Run, group, now, effects);
+            if let Some((entry, handling, group)) = self.after.pop_front() {
+                self.start_entry(entry, handling, group, now, effects);
                 continue;
             }
             if let Some(window) = self.facts.follow.bar.due() {

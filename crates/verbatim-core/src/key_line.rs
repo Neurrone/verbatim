@@ -930,8 +930,8 @@ fn before_read_given_up(state: &mut SrState, trace_id: TraceId, at_us: u64) -> V
     effects
 }
 
-/// The current key's bound passed with no evidence: what waits goes ahead,
-/// then a terminal's key ends and a text field's key that is still current
+/// The current key's bound passed with no evidence: a terminal's key ends;
+/// for a text field's what waits goes ahead, and the key, if still current,
 /// has its final read asked.
 fn bound_passed(state: &mut SrState) -> Vec<Effect> {
     let Some(CurrentKey::Watched(watched)) = state.current().cloned() else {
@@ -941,15 +941,16 @@ fn bound_passed(state: &mut SrState) -> Vec<Effect> {
         watched.passed().key.trace_id,
         Some(watched.passed().passed_at_us.div_ceil(1_000)),
     );
+    // A terminal's key ends here, so what the line heard comes before what
+    // waited behind it.
+    let Watched::Field(field) = watched else {
+        return end_current(state, trace_id, pass_ms);
+    };
     let mut effects = advance(state, pass_ms);
     let still_current = matches!(state.current(), Some(CurrentKey::Watched(watched)) if watched.passed().key.trace_id == trace_id);
     if !still_current {
         return effects;
     }
-    let Watched::Field(field) = watched else {
-        effects.extend(end_current(state, trace_id, pass_ms));
-        return effects;
-    };
     let node = field.passed.node;
     let read = CaretRead {
         fetch: fetch_of(field.passed.key.key),

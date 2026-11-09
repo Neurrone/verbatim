@@ -468,9 +468,9 @@ Inside an outpost (`docs/design/communication.md`, section 6.4;
   Core's request ids are unique for the outpost's life; entries queued
   behind the close still reach the reducer; the shell gives the reducer
   only a commit it accepts; a program that answers a query commits that
-  query's reply as its one message; no program arms a walk; only a caret
-  key's program opens the watch, and a program commits
-  a check of it only while it holds it; only the owed
+  query's reply as its one message; no program arms a walk; a read under
+  a key's note commits its effect only to the note named by that note's
+  end; only the owed
   work commits it done; and only a caret read of an edit control's client
   area is cut at its value change check.
 - Locks (`outpost::lock`): every lock the crate declares is a
@@ -1159,9 +1159,9 @@ the answers, within two seconds (`text`, the worker's `text_reads`).
   from it. Edit controls are read message by message.
 - The caret read (`TextSource::caret_read`, `verbatim_uia_rops::caret_read`)
   reads, in one remote operation where possible, the caret and selection,
-  whether they moved, the caret's line and the watch's unit with offsets,
+  whether they moved, the caret's line and the key's unit with offsets,
   and the formatting to be spoken: for the report after a focus and a caret
-  key's answer (not a paragraph or page), never a typed character's. It
+  key's report (not a paragraph or page), never a typed character's. It
   travels as `FormatRun`s: bold at weight 700 or more, underline and
   strikethrough as `LineStyle`, size as "11.0 pt", colors by NVDA's named
   hues (`text/color.rs`, ported from NVDA's `colors.py`), `BulletStyle`,

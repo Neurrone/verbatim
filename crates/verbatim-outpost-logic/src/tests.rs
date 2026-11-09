@@ -2424,7 +2424,6 @@ fn a_before_read_sets_the_note_as_it_arrives_and_a_final_read_goes_ahead_of_the_
             },
             until_us: 302_000,
             reads: NoteReads::Field(FieldReads::CaretAndText),
-            final_read: None,
         })
     );
     assert!(

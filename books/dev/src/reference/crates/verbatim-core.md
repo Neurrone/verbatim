@@ -900,9 +900,9 @@ before it (`books/dev/src/explanation/design/ownership.md`).
 
 A focus on another node ends a watched key. In a text field, within the
 bound and with no later key, it first says the before read's unit, or
-Backspace's removed text (`editing::focus_first_words`), and orders
-`WatchOrder::End`; a key whose before read is still running says nothing.
-What the key's watch heard is said too, before the focus. An outpost that
+Backspace's removed text (`editing::focus_first_words`), and ends; a key
+whose before read is still running says nothing. What the line heard is
+said too, before the focus. An outpost that
 ends leaves a key with no answer, which says nothing but what it heard. At
 exit every key still held is passed on in press order.
 

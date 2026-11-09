@@ -285,6 +285,12 @@ pub enum Handling {
     /// As one entry of a focus group, which is reported or not, of this
     /// rank in it, 0 for the newest.
     Tried(u32),
+    /// As a key's final read, clearing the note named by this end, the one
+    /// that lived when the read arrived, so a later key's note is safe.
+    FinalRead {
+        /// The end of the note it clears, if one lived.
+        note_until: Option<u64>,
+    },
 }
 
 impl Planned {

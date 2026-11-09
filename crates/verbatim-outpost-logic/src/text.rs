@@ -17,8 +17,6 @@ use std::sync::Arc;
 
 use std::time::Duration;
 
-use verbatim_model::protocol::RequestId;
-
 use verbatim_model::{
     CaretMotion, CaretReport, CaretSelection, Change, Compared, KeyFetch, ReadFacts, TextChunk,
     TextUnit, had_effect,
@@ -517,10 +515,6 @@ pub struct KeyNote {
     pub until_us: u64,
     /// What it reads.
     pub reads: NoteReads,
-    /// The final read that arrived while it lived, which clears it when it
-    /// commits; an earlier key's final read, finding this note's successor,
-    /// clears nothing.
-    pub final_read: Option<RequestId>,
 }
 
 /// `line`'s caret as a byte offset; past any text when it does not fit.
@@ -735,21 +729,7 @@ impl TextFacts {
             },
             until_us,
             reads,
-            final_read: None,
         });
-    }
-
-    /// A final read `request` of node `node` arrived at `now_us`: the note
-    /// living now is the one it clears.
-    pub fn final_read_arrived(&mut self, node: u64, request: RequestId, now_us: u64) {
-        if let Some(note) = self
-            .nodes
-            .get_mut(&node)
-            .and_then(|entry| entry.note.as_mut())
-            .filter(|note| note.until_us > now_us)
-        {
-            note.final_read = Some(request);
-        }
     }
 
     /// Clears node `node`'s note, when it has one.
