@@ -82,7 +82,7 @@ enum CurrentKey {
         key: HeldKey,
     },
     /// Passed on, within its bound.
-    Watched(Box<Watched>),
+    Watched(Watched),
     /// A text field's key past its bound: its final read is asked, and what
     /// was behind it has gone ahead.
     FinalReading {
@@ -96,7 +96,7 @@ enum CurrentKey {
 /// no before unit and no final read, its reading rules speaking for it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 enum Watched {
-    Field(FieldKey),
+    Field(Box<FieldKey>),
     Terminal(PassedKey),
 }
 
@@ -157,11 +157,11 @@ fn watched_on_focus(state: &SrState, passed: PassedKey, before: Before) -> Watch
     if focus_is_terminal(state) {
         Watched::Terminal(passed)
     } else {
-        Watched::Field(FieldKey {
+        Watched::Field(Box::new(FieldKey {
             passed,
             before,
             awaiting_unit: false,
-        })
+        }))
     }
 }
 
@@ -182,7 +182,7 @@ fn terminal_read_now(state: &SrState, node: NodeId, trace_id: TraceId) -> Option
         .is_some_and(|window| window.console);
     let terminal = matches!(
         state.current(),
-        Some(CurrentKey::Watched(watched)) if matches!(**watched, Watched::Terminal(_))
+        Some(CurrentKey::Watched(watched)) if matches!(watched, Watched::Terminal(_))
     );
     (terminal && !console).then(|| for_key(trace_id, Effect::ReadTerminal(node)))
 }
@@ -253,7 +253,7 @@ impl CurrentKey {
     fn passed_mut(&mut self) -> Option<&mut PassedKey> {
         match self {
             Self::Reading { .. } => None,
-            Self::Watched(watched) => Some(match &mut **watched {
+            Self::Watched(watched) => Some(match watched {
                 Watched::Field(field) => &mut field.passed,
                 Watched::Terminal(passed) => passed,
             }),
@@ -266,8 +266,8 @@ impl CurrentKey {
     fn watched(&self) -> Option<Watched> {
         match self {
             Self::Reading { .. } => None,
-            Self::Watched(watched) => Some((**watched).clone()),
-            Self::FinalReading { field, .. } => Some(Watched::Field((**field).clone())),
+            Self::Watched(watched) => Some(watched.clone()),
+            Self::FinalReading { field, .. } => Some(Watched::Field(field.clone())),
         }
     }
 }
@@ -485,7 +485,7 @@ fn watch_from_last_read(
         later_key_at_us: None,
     };
     let watched = watched_on_focus(state, passed, Before::NotRead);
-    set_current(state, CurrentKey::Watched(Box::new(watched)));
+    set_current(state, CurrentKey::Watched(watched));
     effects
 }
 
@@ -846,7 +846,7 @@ fn before_read_answered(state: &mut SrState, trace_id: TraceId, reply: TextReply
         removed: before.removed,
     };
     let watched = watched_on_focus(state, passed, before);
-    set_current(state, CurrentKey::Watched(Box::new(watched)));
+    set_current(state, CurrentKey::Watched(watched));
     effects.push(for_key(held.trace_id, Effect::PassHeldKey(held.trace_id)));
     effects.extend(terminal_read_now(state, node, held.trace_id));
     effects.extend(pass_rule(state));
@@ -920,7 +920,7 @@ fn bound_passed(state: &mut SrState) -> Vec<Effect> {
     if !still_current {
         return effects;
     }
-    let Watched::Field(field) = *watched else {
+    let Watched::Field(field) = watched else {
         effects.extend(end_current(state, trace_id, pass_ms));
         return effects;
     };
@@ -935,11 +935,11 @@ fn bound_passed(state: &mut SrState) -> Vec<Effect> {
     );
     if let Some(busy) = state.busy_mut()
         && let CurrentKey::Watched(watched) = &busy.current
-        && let Watched::Field(field) = &**watched
+        && let Watched::Field(field) = watched
     {
         busy.current = CurrentKey::FinalReading {
             query,
-            field: Box::new(field.clone()),
+            field: field.clone(),
         };
     }
     effects.push(for_key(trace_id, effect));
@@ -989,7 +989,7 @@ fn awaiting_its_unit(
     busy.heard.extend(segments);
     match &mut busy.current {
         CurrentKey::Watched(watched) => {
-            if let Watched::Field(field) = &mut **watched {
+            if let Watched::Field(field) = watched {
                 field.awaiting_unit = true;
             }
         }
@@ -1113,22 +1113,25 @@ pub(crate) fn before_focus(state: &mut SrState, node: NodeId) -> Vec<Effect> {
 /// The words of `watched` when a focus on another node comes first, from
 /// a text field's before read.
 fn first_words(state: &SrState, watched: &Watched) -> Vec<UtteranceSegment> {
-    let Watched::Field(FieldKey {
-        passed,
-        before: Before::Read {
-            unit,
-            line,
-            removed,
-        },
-        ..
-    }) = watched
+    let Watched::Field(field) = watched else {
+        return Vec::new();
+    };
+    let Before::Read {
+        unit,
+        line,
+        removed,
+    } = &field.before
     else {
         return Vec::new();
     };
-    if passed.later_key_at_us.is_some() {
+    if field.passed.later_key_at_us.is_some() {
         return Vec::new();
     }
-    editing::focus_first_words(state, passed.key.key, (unit, line, removed.as_deref()))
+    editing::focus_first_words(
+        state,
+        field.passed.key.key,
+        (unit, line, removed.as_deref()),
+    )
 }
 
 /// A focus of node `node` has executed. A key still being read that the
