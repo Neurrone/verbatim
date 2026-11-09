@@ -265,8 +265,8 @@ while focus is in Notepad's text area.
 7. **The reducer acts on it** (`navigate_completed`), unless a newer
    navigation turned the entry to nothing. A node moves the navigator and
    is announced; no neighbor speaks NVDA's edge message ("No next" and the
-   like, `edge_message_of`); gone re-seeds the navigator from the focus;
-   unanswered says nothing.
+   like, `edge_message_of`); gone speaks the same message and leaves the
+   navigator where it is; unanswered says nothing.
 8. **Speech**, queued, as in walkthrough 3.
 
 Other commands follow the same path. Verbatim+numpad5 (report the current
