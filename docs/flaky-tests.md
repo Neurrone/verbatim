@@ -169,8 +169,8 @@ These are `local_only` in the registry. The `e2e` job leaves them out of its gro
 
 - `alt_tab_switcher` locally (10 of 10 runs failed at 6e6c1efa and at bce10932, 2026-11-09)
   - How: the agent's `SwitcherItems` found no item with the focus within 30 s.
-  - Cause: on this Windows build the switcher, class `XamlExplorerHostIslandWindow`, is open with the selection drawn on its first item, while UI Automation focus stays on the host's empty `InputSite` pane; `switcher_items` (`crates/verbatim-agent/src/focus.rs`) accepts only focus on an element whose parent is `SwitchItemListControl`.
-  - Fix: the harness should wait for that list to exist, not for an item to have the focus. Verbatim is not involved.
+  - Cause: on this Windows build the switcher, class `XamlExplorerHostIslandWindow`, is open with the selection drawn on its first item, while UI Automation focus stays on the host's empty `InputSite` pane; `switcher_items` (`crates/verbatim-agent/src/focus.rs`) accepts only focus on an element whose parent is `SwitchItemListControl`, and a search of the one switcher window's descendants, in the control view and the raw view, finds no such list for 30 s.
+  - Fix: none yet. Why UI Automation exposes no list here is not established. Verbatim is not involved, since the check is the agent's own read.
 
 ## `table_cells`'s first focus
 
