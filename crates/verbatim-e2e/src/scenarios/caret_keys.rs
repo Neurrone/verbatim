@@ -381,14 +381,13 @@ pub(crate) fn notepad_body(scenario: &mut Scenario, _state: &mut ScenarioState) 
     press_deviating(scenario, "enter", &["selection removed"]);
     press(scenario, "downarrow", &["kiwi"]);
 
-    // "kiwi", a line break and "mango" pasted at a line's start, which
-    // says nothing, as NVDA (`15c-notepad-docA-paste-two-lines.txt`).
+    // The two-line paste is `text_box_caret_keys`' step: here the save that
+    // ends the scenario would follow it within the paste's own caret
+    // report, and be taken for the key that moved the caret.
     select_kiwi_mango(scenario, "kiwi  selected");
     press_silent(scenario, "control+c");
     press(scenario, "downarrow", &[FIRST, "kiwi mango unselected"]);
     press(scenario, "home", &["a"]);
-    press_silent(scenario, "control+v");
-    scenario.expect_nothing_more();
     scenario
         .save_document(NAME, WINDOW_TIMEOUT)
         .expect("saves the document");
