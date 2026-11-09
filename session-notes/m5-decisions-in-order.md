@@ -193,3 +193,15 @@ So Verbatim+F11 works like this:
   - Left Double Click is the default button.
 - Windows version: `windows-version() -> {major, minor, build, revision}`, a silent fact. Matchers gain `windows-build` and `windows-revision`, with `at-least` and `below`, compiled at load.
 - Clicks and prompts: no gates for now.
+
+## Tooling and the guide (Dickson, 2026-11-09)
+
+- WIT-first: the `.wit` files in `verbatim-ext-api` are the single source. Host bindings come from `wasmtime::component::bindgen!`, guest bindings from `wit-bindgen`, and the API reference pages from an xtask that parses the WIT with `wit-parser`, checked as current by `cargo xtask ci`. The manifest reference and a JSON Schema are generated from the `serde` types by `schemars`, with the same check. Reference pages are hand-written for review now and replaced by generated ones in M5.
+- Packaging: no packaging tool. Authors zip the extension folder and rename it `.vext`, as NVDA add-ons are made, and the guide documents it. Checks of capabilities and refusals happen at install.
+- The extensions guide is updated at the end of the session:
+  - reference pages for the manifests, matchers, rules, hooks, events, commands and gestures, and imports;
+  - updates to capabilities, limits and concepts;
+  - tutorial drafts: a rules-only fix, Calculator's result, a global module with a list dialog, packaging by zip;
+  - how-to outlines.
+
+  Examples become compiled crates in `extensions/`, included into the book with `{{#include}}`. The design records are updated in a separate commit.
