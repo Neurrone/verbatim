@@ -787,7 +787,7 @@ impl TextFacts {
             self.polling = None;
             return None;
         };
-        if note.until_us <= now_us {
+        if note.until_us <= now_us || until_us < now_us {
             note.reads = NoteReads::Terminal(TerminalReads::CaretAndText);
             self.polling = None;
             return None;
