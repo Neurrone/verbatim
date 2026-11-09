@@ -361,8 +361,7 @@ pub(crate) fn unheld_caret_key(
         key,
         pressed_at_ms,
     };
-    let mut effects =
-        watch_from_last_read(state, held, node, None, pressed_at_ms.saturating_mul(1_000));
+    let mut effects = watch_from_last_read(state, held, node, pressed_at_ms.saturating_mul(1_000));
     effects.extend(pass_rule(state));
     effects
 }
@@ -374,7 +373,6 @@ fn watch_from_last_read(
     state: &mut SrState,
     held: HeldKey,
     node: NodeId,
-    withdrawn: Option<KeyTag>,
     passed_at_us: u64,
 ) -> Vec<Effect> {
     let tag = next_tag(state);
@@ -384,7 +382,7 @@ fn watch_from_last_read(
         kind,
         unit: held.key.motion.unit(),
         motion: held.key.motion,
-        start: KeyStart::FromLastRead { withdrawn },
+        start: KeyStart::FromLastRead,
     };
     let (_, effect) = state
         .queries
@@ -510,23 +508,16 @@ fn advance(state: &mut SrState, at_ms: Option<u64>) -> Vec<Effect> {
     run_waiting(state, waiting, at_ms)
 }
 
-/// Ends the current key: clears its deadline, says what is left in `heard`
-/// unless the focus has moved (`say_heard`), and advances. With no key left
+/// Ends the current key: clears its deadline, says what is left in `heard`,
+/// and advances. With no key left
 /// the line is `Idle`.
-fn end_current(
-    state: &mut SrState,
-    trace_id: TraceId,
-    say_heard: bool,
-    passed_at_ms: Option<u64>,
-) -> Vec<Effect> {
+fn end_current(state: &mut SrState, trace_id: TraceId, passed_at_ms: Option<u64>) -> Vec<Effect> {
     let KeyLine::Busy(busy) = std::mem::take(&mut state.key_line) else {
         return Vec::new();
     };
     let Busy { waiting, heard, .. } = *busy;
     let mut effects = vec![Effect::BoundHeldKey(None)];
-    if say_heard {
-        effects.extend(editing::speak_each(trace_id, heard));
-    }
+    effects.extend(editing::speak_each(trace_id, heard));
     effects.extend(run_waiting(state, waiting, passed_at_ms));
     effects
 }
@@ -536,7 +527,7 @@ fn end_current(
 pub(crate) fn request_answered(
     state: &mut SrState,
     trace_id: TraceId,
-    query: QueryId,
+    (query, node): (QueryId, NodeId),
     reply: TextReply,
 ) -> Vec<Effect> {
     match state.current() {
@@ -549,26 +540,27 @@ pub(crate) fn request_answered(
             }
             let key = watched.key.trace_id;
             let at_ms = Some(watched.passed_at_us.div_ceil(1_000));
-            end_current(state, key, true, at_ms)
+            end_current(state, key, at_ms)
         }
-        _ => stale_read(state, trace_id, reply),
+        _ => stale_read(state, trace_id, node, reply),
     }
 }
 
 /// A key request's answer that is no longer the current key's: with a read
 /// it is an ordinary report.
-fn stale_read(state: &mut SrState, trace_id: TraceId, reply: TextReply) -> Vec<Effect> {
+fn stale_read(
+    state: &mut SrState,
+    trace_id: TraceId,
+    node: NodeId,
+    reply: TextReply,
+) -> Vec<Effect> {
     let TextReply::Key(started) = reply else {
         return Vec::new();
     };
     let KeyStarted::Read(read) = *started else {
         return Vec::new();
     };
-    let node = state.key_line_node();
-    match node {
-        Some(node) => ordinary_report(state, trace_id, node, *read),
-        None => Vec::new(),
-    }
+    ordinary_report(state, trace_id, node, *read)
 }
 
 /// `read` of `node` as a report no key's answer is: the caret is taken if
@@ -601,7 +593,7 @@ fn before_read_answered(state: &mut SrState, trace_id: TraceId, reply: TextReply
         // Nothing was read: the key is passed on, and says nothing.
         let mut effects = crate::say_all::stop(state);
         effects.push(Effect::PassHeldKey(held.trace_id));
-        effects.extend(end_current(state, held.trace_id, true, None));
+        effects.extend(end_current(state, held.trace_id, None));
         return effects;
     };
     if !state.focus_matches(node) {
@@ -614,7 +606,7 @@ fn before_read_answered(state: &mut SrState, trace_id: TraceId, reply: TextReply
             tag: KeyTag(query),
             order: WatchOrder::End,
         });
-        effects.extend(end_current(state, held.trace_id, false, None));
+        effects.extend(end_current(state, held.trace_id, None));
         return effects;
     }
     let read = *read;
@@ -688,7 +680,7 @@ fn before_read_given_up(state: &mut SrState, trace_id: TraceId, at_us: u64) -> V
     if !state.focus_matches(node) {
         effects.extend(crate::say_all::stop(state));
         effects.push(Effect::PassHeldKey(trace_id));
-        effects.extend(end_current(state, trace_id, false, None));
+        effects.extend(end_current(state, trace_id, None));
         return effects;
     }
     let tk = crate::terminal::caret_key_kind(key.key);
@@ -698,35 +690,19 @@ fn before_read_given_up(state: &mut SrState, trace_id: TraceId, at_us: u64) -> V
         at_us / 1_000,
         trace_id,
     ));
-    effects.extend(watch_from_last_read(
-        state,
-        key,
-        node,
-        Some(KeyTag(query)),
-        at_us,
-    ));
+    effects.extend(watch_from_last_read(state, key, node, at_us));
     effects.push(for_key(trace_id, Effect::PassHeldKey(trace_id)));
     effects.extend(pass_rule(state));
     effects
 }
 
-/// Whether advancing would take a held key at once, whose request ends the
-/// watch.
-fn next_key_ends_watch(waiting: &VecDeque<WaitingKey>) -> bool {
-    waiting.iter().any(|item| match item {
-        WaitingKey::Held(_) => true,
-        WaitingKey::Later(input) => is_caret_key(input),
-        WaitingKey::Command(_) => false,
-    })
-}
-
-/// The current key's bound passed with no evidence: the final read, unless
-/// the next key ends its watch, and what waits goes ahead.
+/// The current key's bound passed with no evidence: what waits goes ahead,
+/// and the final read follows if the key is still current, as a key that
+/// replaced it ended its watch with its request.
 fn bound_passed(state: &mut SrState) -> Vec<Effect> {
     let Some(busy) = state.busy_mut() else {
         return Vec::new();
     };
-    let replaced = next_key_ends_watch(&busy.waiting);
     let CurrentKey::Watched(watched) = &mut busy.current else {
         return Vec::new();
     };
@@ -738,8 +714,10 @@ fn bound_passed(state: &mut SrState) -> Vec<Effect> {
         watched.passed_at_us,
         watched.kind,
     );
-    let mut effects = Vec::new();
-    if kind == WatchKind::TextField && !replaced {
+    let mut effects = advance(state, Some(passed_at_us.div_ceil(1_000)));
+    let still_current =
+        matches!(state.current(), Some(CurrentKey::Watched(watched)) if watched.tag == tag);
+    if kind == WatchKind::TextField && still_current {
         effects.push(for_key(
             trace_id,
             Effect::WatchOrder {
@@ -749,7 +727,6 @@ fn bound_passed(state: &mut SrState) -> Vec<Effect> {
             },
         ));
     }
-    effects.extend(advance(state, Some(passed_at_us.div_ceil(1_000))));
     effects
 }
 
@@ -782,7 +759,7 @@ pub(crate) fn key_answered(
     let key_trace = watched.key.trace_id;
     let passed_at_ms = Some(watched.passed_at_us.div_ceil(1_000));
     match answer {
-        KeyAnswer::Ended => end_current(state, key_trace, true, passed_at_ms),
+        KeyAnswer::Ended => end_current(state, key_trace, passed_at_ms),
         KeyAnswer::Evidence(read) => result(state, trace_id, &watched, *read, true),
         KeyAnswer::BoundAnswer(read) => result(state, trace_id, &watched, *read, false),
     }
@@ -830,7 +807,6 @@ fn result(
     effects.extend(end_current(
         state,
         watched.key.trace_id,
-        true,
         Some(watched.passed_at_us.div_ceil(1_000)),
     ));
     effects
@@ -840,12 +816,31 @@ fn result(
 /// current key, from its before read, as NVDA's script speaks them before
 /// the focus; empty unless the focus moves off the key's node within its
 /// bound, with no later key.
-pub(crate) fn before_focus(state: &SrState, node: NodeId) -> Vec<Effect> {
-    let Some(CurrentKey::Watched(watched)) = state.current() else {
-        return Vec::new();
+pub(crate) fn before_focus(state: &mut SrState, node: NodeId) -> Vec<Effect> {
+    let (trace_id, words) = match state.current() {
+        Some(CurrentKey::Watched(watched)) if watched.node != node => {
+            (watched.key.trace_id, first_words(state, watched))
+        }
+        Some(CurrentKey::Reading {
+            node: read, key, ..
+        }) if *read != node => (key.trace_id, Vec::new()),
+        _ => return Vec::new(),
     };
-    if watched.node == node
-        || watched.kind != WatchKind::TextField
+    let mut effects = Vec::new();
+    if !words.is_empty() {
+        effects.push(editing::speak(trace_id, words));
+    }
+    if let Some(busy) = state.busy_mut() {
+        let heard = std::mem::take(&mut busy.heard);
+        effects.extend(editing::speak_each(trace_id, heard));
+    }
+    effects
+}
+
+/// The words of `watched` when a focus on another node comes first, from
+/// its before read.
+fn first_words(state: &SrState, watched: &Watched) -> Vec<UtteranceSegment> {
+    if watched.kind != WatchKind::TextField
         || watched.line != Line::Holding
         || watched.later_key_at_us.is_some()
     {
@@ -859,13 +854,7 @@ pub(crate) fn before_focus(state: &SrState, node: NodeId) -> Vec<Effect> {
     else {
         return Vec::new();
     };
-    let words =
-        editing::focus_first_words(state, watched.key.key, (unit, line, removed.as_deref()));
-    if words.is_empty() {
-        Vec::new()
-    } else {
-        vec![editing::speak(watched.key.trace_id, words)]
-    }
+    editing::focus_first_words(state, watched.key.key, (unit, line, removed.as_deref()))
 }
 
 /// A focus of node `node` has executed.
@@ -891,7 +880,6 @@ pub(crate) fn focus_executed(state: &mut SrState, node: NodeId) -> Vec<Effect> {
     effects.extend(end_current(
         state,
         trace,
-        false,
         Some(watched.passed_at_us.div_ceil(1_000)),
     ));
     effects
@@ -909,7 +897,7 @@ pub(crate) fn outpost_ended(
     if watched.node.outpost() != outpost {
         return Vec::new();
     }
-    end_current(state, watched.key.trace_id, false, None)
+    end_current(state, watched.key.trace_id, None)
 }
 
 /// Selection changes `segments` of a report on `node`: the line holds them

@@ -5391,6 +5391,39 @@ fn a_focus_moving_within_a_backspaces_bound_says_the_removed_text() {
 }
 
 #[test]
+fn a_focus_moving_first_says_what_the_watch_heard_before_the_focus() {
+    let (mut state, _) = key_passed_on("\n", 0, CaretMotion::PreviousLine);
+    let heard = reduce(&mut state, &selection_report(0, None, &[(true, "x")]));
+    assert_eq!(spoken(&heard), []);
+    let effects = reduce(
+        &mut state,
+        &focus_event(node(6, Role::Button, StateSet::new()), false, None),
+    );
+    assert_eq!(
+        spoken(&effects)[..2],
+        [
+            message(Message::Blank),
+            UtteranceSegment::new(SegmentContent::Phrase(Phrase::Selected(
+                SelectionText::Character("x".to_owned())
+            )))
+        ]
+    );
+}
+
+#[test]
+fn a_keys_final_read_follows_what_waits_and_a_key_taking_the_line_has_none() {
+    let (mut state, _) = key_passed_on("abc\n", 0, CaretMotion::NextCharacter);
+    assert_eq!(
+        reduce(
+            &mut state,
+            &held_at(TraceId::from_raw(3), CaretMotion::NextCharacter, 510),
+        ),
+        []
+    );
+    assert_eq!(watch_orders(&reduce(&mut state, &key_bound_passed())), []);
+}
+
+#[test]
 fn a_new_window_taking_the_focus_cuts_the_keys_words() {
     let (mut state, _) = key_passed_on("abc\n", 0, CaretMotion::NextCharacter);
     let effects = reduce(

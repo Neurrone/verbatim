@@ -8,7 +8,7 @@
 //! request's effect, or by [`Queries::ask_memory`] for one only Core
 //! answers. It ends exactly once, by one of four transitions: the outpost's
 //! answer ([`answered`]), its outpost's end ([`outpost_gone`]), its owner's
-//! withdrawal ([`Queries::withdraw`]), or Core's answer from a terminal's
+//! withdrawal ([`Queries::withdraw_kept`]), or Core's answer from a terminal's
 //! memory ([`answer_from_memory`]), or the removal of that terminal's model
 //! for one Core answers. Its continuation runs then, once, routed by the
 //! entry. A query superseded or cleared is turned to [`Then::Nothing`]
@@ -475,11 +475,14 @@ pub(crate) fn ended(
                 let (mut effects, answer) =
                     crate::terminal_model::before_key(state, trace_id, node, snapshot);
                 effects.extend(crate::key_line::request_answered(
-                    state, trace_id, query_id, answer,
+                    state,
+                    trace_id,
+                    (query_id, node),
+                    answer,
                 ));
                 return effects;
             }
-            crate::key_line::request_answered(state, trace_id, query_id, reply)
+            crate::key_line::request_answered(state, trace_id, (query_id, node), reply)
         }
         Then::MovedCaret { node, line } => {
             if let TextReply::Moved { read_at_us } = ending.reply() {
