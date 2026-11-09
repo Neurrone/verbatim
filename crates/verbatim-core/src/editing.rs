@@ -291,9 +291,18 @@ pub(crate) fn before_of_read(
         };
         deleted_text(start_line, offset, line_break, motion, grid)
     });
+    // Backspace's words if the focus moves first start from the selection's
+    // start, NVDA's caret.
+    let start_line = match selection_start(line, reply.caret.selection.as_ref()) {
+        Some(Some((found, offset))) if motion.deletes_back() => TextChunk {
+            offset,
+            ..found.clone()
+        },
+        _ => line.clone(),
+    };
     BeforeRead {
         unit: reply.facts.unit.clone().unwrap_or_else(|| line.clone()),
-        line: line.clone(),
+        line: start_line,
         removed,
     }
 }
