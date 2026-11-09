@@ -844,7 +844,7 @@ impl Outgoing {
     /// `observed_at_us`: when it is the user's desktop again, by NVDA's
     /// test ([`verbatim_win32::window::input_desktop_opens`]), Core is told
     /// 200 ms later, on the menu end's timer ([`DESKTOP_RETURN_DELAY`]). A
-    /// switch to the secure desktop is not told (M8.6).
+    /// switch to the secure desktop is not told (M8.7).
     fn desktop_switched(&self, observed_at_us: u64, users: bool) {
         if !users {
             tracing::debug!("the input desktop switched away from the user's desktop");

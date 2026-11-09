@@ -600,11 +600,11 @@ Windows Terminal's XAML raises some focus events for its terminal from a second 
 
 #### Not affected
 
-No registration prevents the second window's second identity: its rate was the same with NVDA's whole global group (`docs/design/windows-terminal-twin-focus.md`, "Rates").
+No registration prevents the second window's second identity: its rate was the same with NVDA's whole global group ([the experiment](https://github.com/Neurrone/verbatim/blob/main/experiments/windows-terminal-raises-focus-from-a-second-runtime-identity/readme.md), "Results").
 
 #### Workarounds that worked
 
-- The listener registers in NVDA's order (`crates/verbatim-uia/src/subscribe.rs`), drops a focus with no window above it, and drops one whose plain keyboard focus read answers no (see "A remote operation's keyboard focus read can differ from a plain read"). A rule that recognizes the second identity as the twin of the current focus is designed for a Windows Terminal app module in M5 (`docs/design/windows-terminal-twin-focus.md`); until then the scenarios accept one repeated "terminal" as an optional utterance (`books/dev/src/reference/testing.md`).
+- The listener registers in NVDA's order (`crates/verbatim-uia/src/subscribe.rs`), drops a focus with no window above it, and drops one whose plain keyboard focus read answers no (see "A remote operation's keyboard focus read can differ from a plain read"). A focus veto in the Windows Terminal built-in drops every focus from a `TermControl` whose runtime id starts 14, planned for M5 ([the roadmap](https://github.com/Neurrone/verbatim/blob/main/docs/roadmap.md), M5); until then the scenarios accept one repeated "terminal" as an optional utterance (`books/dev/src/reference/testing.md`).
 
 #### Workarounds that didn't work
 
@@ -622,7 +622,7 @@ No test reproduces it; mockapp has no second identity. The identity judge in its
 
 #### Evidence
 
-[`experiments/windows-terminal-raises-focus-from-a-second-runtime-identity/`](https://github.com/Neurrone/verbatim/blob/main/experiments/windows-terminal-raises-focus-from-a-second-runtime-identity/readme.md): the identity judge and its three 150-round runs; `docs/design/windows-terminal-twin-focus.md`; the handler's registration order in [verbatim-uia](crates/verbatim-uia.md), "Event registrations".
+[`experiments/windows-terminal-raises-focus-from-a-second-runtime-identity/`](https://github.com/Neurrone/verbatim/blob/main/experiments/windows-terminal-raises-focus-from-a-second-runtime-identity/readme.md): the identity judge and its three 150-round runs; the handler's registration order in [verbatim-uia](crates/verbatim-uia.md), "Event registrations".
 
 ### UI Automation's copy of an element's runtime id lapses
 

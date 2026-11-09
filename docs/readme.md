@@ -91,8 +91,6 @@ harness, NVDA captures and troubleshooting.
     foreground and background, owned by the listener.
   - [m42-parity.md](design/m42-parity.md) — the toasts session and the
     review cursor on objects that no longer exist.
-  - [windows-terminal-twin-focus.md](design/windows-terminal-twin-focus.md)
-    — the rule for Windows Terminal's second terminal identity.
   - [extensions.md](design/extensions.md) — the extension system,
     published once M5 builds it.
   - [security-model.md](design/security-model.md) — the threat model
@@ -114,3 +112,6 @@ harness, NVDA captures and troubleshooting.
   - [m5-extensions-work.md](design/m5-extensions-work.md) and
     [m6-native-synth-work.md](design/m6-native-synth-work.md) — the order
     of work and the tests for M5 and M6.
+  - [m5-build-a.md](design/m5-build-a.md) — M5's build A: snapshot
+    properties, application identity, rules as data, the loader, the
+    extension lifecycle, configuration at a version and the log.

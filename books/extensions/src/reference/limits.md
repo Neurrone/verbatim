@@ -1,13 +1,13 @@
 # Limits
 
-The rules behind these limits are explained in [Reliability](../explanation/reliability.md). A limit marked "not set" has its value chosen from measurements of Verbatim's own modules before extensions ship.
+The rules behind these limits are explained in [Reliability](../explanation/reliability.md). A limit marked "measured" has its value set from measurements of Verbatim's own modules before extensions ship.
 
 ## Deadlines
 
 | Limit | Value |
 |---|---|
-| Time to handle one event, reads included | 10 seconds, shared with Verbatim's own reading |
-| Time in your own code per call, reads excluded | Not set |
+| Time to handle one event, reads included | 11 seconds, shared with Verbatim's own reading |
+| Time in your own code per call, reads excluded | Measured; deliberately loose until then |
 | Deadline per speech-text stage | Not set |
 
 ## The breaker
@@ -21,17 +21,16 @@ The rules behind these limits are explained in [Reliability](../explanation/reli
 
 | Limit | Value |
 |---|---|
-| Memory per extension | Not set |
-| Processor time per extension | Not set |
+| Memory for each module instance | 64 MiB, measured |
+| Memory for the extension's process | 256 MiB, measured |
 | Data folder size | Not set |
-| Speech, browseable messages and log lines | Rates and sizes not set |
-| Tones | Duration and frequency capped, values not set |
+
+There are no limits on how much or how often you speak, show messages, play tones or log, or on list dialogs, as in NVDA. A long message costs only the time it takes to speak.
 
 ## Packages
 
 | Limit | Value |
 |---|---|
-| Files in a `.vext` | 256 |
-| Size of one file | 16 MiB; a raised limit for speech-text stages that carry a language model is not set |
-| Size unpacked | 64 MiB |
 | File names | Plain names only: no `..`, drive, absolute path, link, colon, reserved Windows device name, or trailing dot or space |
+
+There are no limits on the number or size of files in a `.vext`.

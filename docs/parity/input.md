@@ -76,7 +76,7 @@ must skip the guard as NVDA's does. Limitation: no mask is sent to an
 elevated window, nor would one sent reach it, since Windows drops input
 Verbatim sends to a window of higher integrity without uiAccess, so Alt
 released after a Verbatim command there still opens the menu bar; the
-fix is uiAccess (M8.6). A Verbatim gesture pressed with such a modifier
+fix is uiAccess (M8.7). A Verbatim gesture pressed with such a modifier
 stuck down, as after the secure desktop, sends a harmless mask.
 
 ### Gesture map / rebindable input, input help mode

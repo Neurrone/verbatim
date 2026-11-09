@@ -1,388 +1,151 @@
 # Extensions: the design
 
-The design of Verbatim's extension system, the equivalent of NVDA's app modules, add-ons and synth drivers, settled on 2026-10-22. It is implemented by M5 ([work plan](m5-extensions-work.md)) and, for native speech engines, M6 ([work plan](m6-native-synth-work.md)). D6 in the architecture is the decision of record; this document is its detail. Where a sentence carries a name and a date, it is a decision Dickson took and is not reopened without new evidence.
+The design of Verbatim's extension system, the equivalent of NVDA's app modules, add-ons and synth drivers, settled on 2026-10-22 and restated with Dickson on 2026-11-09. It is implemented by M5 ([work plan](m5-extensions-work.md)) and, for native speech engines, M6 ([work plan](m6-native-synth-work.md)). D6 in the architecture is the decision of record; this document is its detail. Where a sentence carries a name and a date, it is a decision Dickson took and is not reopened without new evidence.
+
+The surface as extension authors see it, every manifest key, matcher form, rule action, hook, event kind, import and install dialog line, is the Extensions guide's reference (`books/extensions/src/reference/readme.md`), and the WIT files in `verbatim-ext-api` once they exist, from which that reference is generated. This document does not restate it: it records how the surface is implemented and why.
 
 ## 1. Terminology
 
-- An **extension** is the installable unit: one `.vext` file, a zip holding an extension manifest, locale files and one or more module folders. NVDA's add-on.
-- A **module** is one contribution inside an extension, of a **kind**: an **app module**, bound to one or more applications and active while such an application has an outpost, or a **synthesizer**, NVDA's synth driver. One extension may hold several modules; NVDA add-ons commonly ship several app modules. Global modules, NVDA's global plugins, and braille drivers are later kinds.
-- A **built-in** is a module folder that ships with Verbatim under `extensions/builtin/` (planned), Verbatim's analogue of NVDA's `appModules/` directory. It is loaded by the same host as an installed module but is never bundled, listed, installed or disabled by the user.
-- A **declaration** is data in a module's manifest that the host merges into its own tables at load.
-- A **rule** is a declaration of the form "match this, do that": a matcher and an action the host applies itself, without calling the module.
-- A **hook** is a function a module exports and the host calls, with a deadline: a built-in's on the thread that holds the event, an installed extension's in its own host (section 6).
-- A **capability** is a group of host functions a module imports. It is derived from the component's imports and never declared.
-- The **application identity** of an outpost is the name a module claims to bind to it: the executable name, replaced for the hosts described in section 3.
-- The **host** is the Verbatim code that loads modules and gives them their API; it runs in each installed extension's own host process, and for built-ins in the outposts and in Core, never in the listener (section 6).
-- The **adapter** is the engine-specific DLL a native synthesizer extension ships, implementing Verbatim's C ABI and loading the engine; the **synthesizer host** is `verbatim-synth-host`, one process per built-in engine (D18); an installed synthesizer runs in its extension's own host (section 6).
+- An **extension** is the installable unit: one `.vext` file, a zip its author makes by hand holding an extension manifest, locale files and one or more module folders. NVDA's add-on.
+- A **module** is one contribution inside an extension, of a **kind**: an **app module**, bound to one or more applications and active while such an application has an outpost; a **global module**, bound to none, one instance for the session, reading only the applications its manifest's `reads` names; or a **synthesizer**. Speech-text stages, recognisers and braille drivers are later kinds.
+- A **built-in** is a module folder that ships with Verbatim under `extensions/builtin/` (planned). The built-ins together are one internal extension, loaded and run as an installed one is, but never listed, installed or disabled by the user.
+- A **rule** is a matcher and an action Verbatim applies itself, without calling the module; a **hook** is a function a module exports and Verbatim calls, with a deadline.
+- A **capability** is a WIT interface a component imports, derived from its imports and never declared.
+- The **host** is the process running one extension's modules, `--extension <id>`; a **lane** is one thread in it, one per outpost it serves and one per global module.
+- The **loader** is a thread of Core's that reads, validates and compiles extensions and reports each result to the reducer.
+- A **generation** is one publication by Core's reducer of the merged rule tables, hook registrations and gesture map of every active extension; every judgement a reader makes names the generation it was made under.
+- A **hook call** is one call of one hook in one layer, named by an id the outpost or Core mints; a read the hook makes names its call.
 
 ## 2. Extensions, modules and built-ins
 
 ### 2.1 One folder layout
 
-A module is always a folder containing `module.toml` and, unless the module is rules only, a component named after the module id:
+A module is always a folder containing `module.toml` and, unless the module is rules only, a component named in it. A built-in is that folder under `extensions/builtin/` (planned) with no extension manifest of its own, its strings in Verbatim's own Fluent resources. An installed extension is a `.vext` zip with `manifest.toml` at its root, a `locale/` folder and its module folders; there is no packaging tool, and the guide documents the zip (Dickson, 2026-11-09). Install extracts it to `extensions/<extension id>/` under the configuration root, the user's profile for an installed copy and beside the executable for a portable one, first into a hidden staging folder beside its destination, renamed into place only once every file is written and checked ([security model](security-model.md), X13). The loader has one code path for a module folder wherever it finds it.
 
-```
-calculator/
-  module.toml
-  calculator.wasm
-```
+### 2.2 Loading, the developer folder and hot reload
 
-The manifest names the component with its `component` key; the name is a convention. The two kinds of module differ only in what surrounds the folder:
+The loader thread does all file and processor work: it reads folders and `.vext` files, parses and validates manifests and rules with `verbatim-ext-api`, reads each component's imports to derive its capabilities, and compiles the merged rule tables with `verbatim-reader-rules`, then has the extension's host compile and pre-link its components. The supervisor starts the host for that compile when it is not running and ends it after, and a host that ends during the compile answers the loader "failed: host ended". For each extension the loader reports two results, each final and never a step in between: its rules, validated and compiled into tables, and then its code, compiled and pre-linked; either can instead be failed with its reason. The rules come first because compiling the built-ins on a cold cache takes seconds, and no application may be read without its rules meanwhile. Conflicts are decided by the loader from the whole set of manifests a scan found, never by the order results arrive: of two installed extensions claiming one application (a folder copied by hand) or two developer-folder modules claiming one, the later in ordinal order of their ids fails; a module found once Verbatim is running fails when it conflicts with one already loaded.
 
-- A built-in is that folder under `extensions/builtin/` (planned) and nothing else: no extension manifest, no locale files, because its strings live in Verbatim's own Fluent resources and its capabilities are read from the component's imports like everyone else's (Dickson, 2026-10-22).
-- An installed extension is the `.vext` zip: a `manifest.toml` at the root with the extension's id, display name, version, API version and the list of module folders; a `locale/<lang>/*.ftl` folder for its strings, loaded with `verbatim-i18n`'s runtime loader with English as the fallback; and the module folders. Install extracts it to `extensions/<extension id>/` under the configuration root, the user's profile for an installed copy and beside the executable for a portable or development one, writing only inside that folder ([security model](security-model.md), X13); the end-to-end suite stages it fresh per run. It is extracted first into a hidden staging folder beside its destination, `extensions/.<extension id>.install`, and renamed into place only once every file is written and checked, as theme import does, so a failure part way installs nothing and the loader never sees a partial or mixed version; the staging folder sits beside the destination rather than in `%TEMP%` because a rename is one step only on the same volume, a moved file keeps the permissions of the folder it was created in, and `%TEMP%` is cleared by cleanup tools. The administrator's copy for secure screens stages the same way inside its administrator-owned folder.
+The reducer owns each extension's lifecycle as one state value, in the table below. Its inputs are the loader's results, the user's enable and disable, the breaker's verdicts and the supervisor's reports of a host's end. From every extension's state it publishes a generation: rule tables and hook registrations to the listener and the outposts, the gesture map to the keyboard hook thread, and to each host its extension's version. A spare outpost's assignment carries the current generation, so its first event is judged under the tables. Each reader takes a new generation at a boundary in its intake, and every judgement names its generation. One focus can pass the listener's veto under one generation and the outpost's rules and hooks under the next; each judgement stands under its own, and Core acts on a judgement from a generation it has moved past by its kind: a veto's drop stands, since a dropped event cannot be read again; an effect of a module whose extension is now `Disabled` or `Failed`, or of a built-in module now turned off, is dropped; anything else is used. A lane drops an instance of an old version at the first call naming a newer one, which needs no acknowledgement since a lane serves one outpost. A reload that fails at any step leaves the previous version everywhere.
 
-The loader has one code path for a module folder wherever it finds it, under `builtin/`, under an installed extension, or in the developer folder, so a developer can copy a module folder out of a built-in to work on it, or wrap it into a `.vext` to ship it, without changing a file inside the folder. The zip reader reuses the theme packager's limits (256 files, 16 MiB per file, 64 MiB unpacked).
+| State | Data | Published | Left by |
+|---|---|---|---|
+| `Loading` | none | nothing of this extension | its rules result, to `RulesReady` or `Failed` |
+| `RulesReady` | version, tables | its tables, and none of its hook registrations | its code result, to `Active` or `Failed` |
+| `Active` | version, tables, hook registrations; for the built-in extension, the set of its modules the breaker turned off | its tables, and the hook registrations of every module not turned off | a reload, which keeps both new results until both arrive and then publishes them together, or keeps this version if either failed; the user's disable or the breaker, to `Disabled` |
+| `Failed` | reason | nothing of this extension | a reload in developer mode, to `Loading` |
+| `Disabled` | by the user or by the breaker | nothing of this extension | the user's enable, to `Loading` |
 
-### 2.2 Built-ins
+The rules that read it: Core holds the listener's `Ready`, and so input, until the built-in extension has left `Loading`, so the first focus is judged with the built-ins' rules; the breaker turns off a built-in module by adding it to `Active`'s set and an installed extension or developer-folder module by `Disabled`; an effect is judged against the state of its module's extension as above; `RulesReady` is reached only at a first load, since a reload publishes rules and hooks of one version together.
 
-Source lives in this repository under `extensions/builtin/<module>/`, one Cargo package per module with code, built by `cargo xtask build-extensions` into unpacked folders under `target/debug/extensions/builtin/`, beside the other deployed data folders, which `cargo xtask ci`, the end-to-end job and the `ci-arm64` job all run. Built-ins are not embedded into `verbatim.exe`, so that a folder stays editable and reloadable during development and the executable stays small.
+The developer folder is watched, with the built-in folder, only in developer mode, and works as one extension, as the built-ins do (Dickson, 2026-11-09): its module folders, with a `locale/` folder for their strings and no extension manifest, are loaded as one internal extension, run in one host of its own, and counted by the breaker per module, as built-ins are. Its modules claim applications as an installed extension's do, so no two of them claim one application. A developer-folder module that claims an application an installed extension claims replaces that extension's module for that application only, while it is there, as NVDA's scratchpad does (`addonHandler/packaging.py`, `addDirsToPythonPackagePath`), so an author can work on the next version of an installed extension (Dickson, 2026-11-09). A developer-folder DLL is loaded from a copy in the compiled-code cache, named by its content, never from the folder, so a build can overwrite it; since a DLL cannot be unloaded safely, a changed DLL restarts the developer folder's host with the new copy (Dickson, 2026-11-09). Speech says "Loaded <module>" for a module that appears, "Reloaded <module>" for one that changed, or "Reload of <module> failed" with the first line of the reason (Dickson, 2026-11-09).
 
-Built-ins are not in the extensions list and cannot be disabled by the user (Dickson, 2026-10-22): they are part of Verbatim, and a user who hears Explorer behave oddly reports a Verbatim bug. With the developer setting on, `verbatim-inspect` and the Extensions dialog show them read-only with their derived capabilities and activity, so the layering of section 7 stays auditable. Their capabilities are granted without a prompt because they ship in the release, and enforced exactly as a third party's are.
+A built-in failing to load is a defect or a damaged install, logged and spoken at once, unscheduled, as "Built-in module <folder name> failed to load", or "Built-in modules failed to load" when the built-in folder cannot be read; installed extensions' failures are one sentence, "<n> extensions failed to load", with each marked failed in the Extensions dialog. These sentences become Windows toasts with M8.6 (Dickson, 2026-11-09).
 
-### 2.3 Loading, the developer folder, hot reload and failures
+The Extensions dialog, in the Verbatim menu before Preferences (Dickson, 2026-11-09), has, in tab order: a list view of the installed extensions with the columns Name, Version, Author and Status (Enabled; Disabled; Turned off after repeated failures; Failed to load; Partly loaded; Overridden for <application> by the developer folder); the selected extension's description; its Applications, Commands and warnings lists, as the install dialog shows them; and the buttons Install from file, Enable or Disable as the selection's state needs, Uninstall, and Close. Enable, Disable and Uninstall take effect at once, Uninstall after the question "Uninstall <extension name>?". In developer mode the list also shows the developer folder's modules, read only, with their rules, hooks and imports; built-ins are never listed.
 
-A component is compiled once into a content-named file, and the process that runs it maps that file, never the source, so a source file can be overwritten while its module runs. Wasmtime trusts the code it maps, so compiled code is mapped only from where ordinary processes cannot write it or by a process it cannot harm: built-ins arrive compiled in the administrator-owned installation, an installed extension's compiled code is loaded only by that extension's own host (section 6), and the developer folder's modules, watched only in developer mode, compile at load and run in a host of their own as an installed extension's do, so their author sees their users' limits ([security model](security-model.md), X5).
+### 2.3 Secure mode
 
-The developer folder holds unpacked module folders, is created if missing, and its modules sit above installed extensions in the ordering. Core watches it, and the built-in directory, only while developer mode is on, so no program can load a module without the install dialog by dropping it there, with directory-change notifications and a debounce, so that `cargo xtask build-extensions` writing over `target/debug/extensions/builtin/calculator/calculator.wasm` reloads the running development Verbatim. A reload validates the new version fully first (manifest, API version, rules against their subject and backend, imports against the world, compilation), rebuilds the merged rule tables, and swaps the new version in between two events, dropping the old instance and its state: a built-in folder's module in each hosting outpost's worker, and a developer-folder module in its own host, whose outposts take the swap in their intake's order as they do for a built-in. The watch covers the whole module folder, so a `module.toml` change reloads the same way, one path for any change; a folder appearing in the developer folder loads a new module and a folder removed unloads one. Speech says "Reloaded <module>", or "Reload of <module> failed" with the first line of the reason while the previous version keeps running; the full reason goes to the log. Installed extensions do not hot reload; install and remove are explicit operations on the same validate-then-swap path. Without the developer setting a changed built-in takes effect at the next start.
-
-At startup every module loads independently; a failure never stops another module or Verbatim. A built-in failing is a defect or a damaged install, since the build validates built-ins against the world: it is logged as an error and spoken once as "Built-in module <name> failed to load", and Verbatim runs with core behaviour for that application. Installed extensions' failures are one spoken sentence, "<n> extensions failed to load", with each marked failed in the Extensions dialog with its reason and a partly loaded extension shown as such. The developer folder speaks each failure by module name. A duplicate module id fails the later one.
-
-### 2.4 Secure mode
-
-Secure mode (M8.6) loads only a machine-wide copy of the extensions the user allowlisted for secure screens, an allowlist of plain data and never whole folders, made by an elevated step into a folder the installer has made readable for the extension hosts' containers, as NVDA copies selected add-ons into its system configuration; it loads them read-only with installation, the developer folder and the console disabled (Dickson, 2026-10-22: synthesizers, and optionally app modules, must work at sign-in and in elevated contexts). The lock screen, the sign-in and credential prompts, the UAC consent prompt and Windows Security count as secure screens for extensions wherever they run, so a module claims them only if the user allowlisted it; their processes are listed in the loader. The copy is machine-wide, so the administrator who last made it chooses for every user's sign-in and UAC screens, which the copying step says.
-
-Allowlisting an extension for secure screens is the user's deliberate consent, and the allowlist dialog shows the extension's flows as the install dialog does (section 9.3), naming the secure screens as their source; no further rule refuses an extension with exits there (Dickson, 2026-11-06). An extension on a secure screen writes only a scratch folder, deleted when Verbatim exits.
+Secure mode (M8.7) loads only a machine-wide copy of the extensions the user allowlisted for secure screens, an allowlist of plain data, made by an elevated step into a folder the installer made readable for the hosts' containers, as NVDA copies selected add-ons into its system configuration (`config/__init__.py`, `_setSystemConfig`); installation, the developer folder and the console are disabled there. Allowlisting is the user's consent, and the allowlist dialog shows the extension's warnings as the install dialog does (Dickson, 2026-11-06). An extension on a secure screen writes only a scratch folder, deleted when Verbatim exits.
 
 ## 3. Binding a module to an application
 
-A module binds by application identity, which the supervisor resolves when an outpost launches, as a fixed core table and never through a module, since a module cannot run before the binding that loads it:
+Application identity comes from a fixed core table: the executable name; for a console window, the console client's executable; for `wwahost.exe`, the hosted application's name from its application user model id; for `msedgewebview2.exe`, the parent process's executable. The listener resolves it once per process, with one image-name query from a process handle it holds, so window and event rules apply before any outpost exists, and sends it with the first fact for that process; the supervisor uses that identity rather than resolving its own (section 14). The listener's cache is keyed by the process id with the process's creation time, and an entry is dropped when its process exits, so a reused process id never carries another executable's identity. A module's `applications` list is NVDA's alias table in the module's own manifest.
 
-- the outpost's executable name, normally;
-- for a console window, the console client's executable, which Windows names as the window's owner and which the outpost already attributes (`console_client`), following NVDA's per-object process rule;
-- for `wwahost.exe`, the hosted application's name from the process's application user model id, and for `msedgewebview2.exe`, the parent process's executable, as NVDA's `getAppNameFromHost` does in `wwahost.py` and `msedgewebview2.py`.
+At most one installed extension claims an application, above the built-in, and no two modules of one extension claim the same one; a second is refused at install, so installed extensions need no order among themselves (Dickson, 2026-11-09). A host runs one instance per process of a claimed application, on the lane of that process's outpost, as NVDA keeps one `AppModule` per process; the instance's memory is its state, lost on reload or fault. When an outpost is replaced for the same process, the instance moves to the new outpost's lane with its lane record, and the nodes it held come back `gone`, since they were the old outpost's. A global module has one instance on a lane of its own, and its reads reach only the applications in `reads`; a read that only Core can route goes through Core's reducer (section 14).
 
-Settings needs no special rule: its content elements already report `SystemSettings.exe` and run in their own outpost beside ApplicationFrameHost's frame. A console host's outpost loads a module claiming a client identity the first time it reports one. The listener learns a process's identity the same way, with one cached local image-name query per process id, so rules can be scoped before any outpost exists.
+## 4. The surface, as implemented
 
-A module's `applications` list is NVDA's alias table written in the module's own manifest: `appModules/__init__.py` maps `calculatorapp` to `calculator`, `code - insiders` to `code` and `dbeaver` to `eclipse`, for executables renamed across Windows versions, insiders builds, bitness variants and forks. There is one module instance per outpost, as NVDA keeps one `AppModule` per process in its running table, so two processes of one application are two instances with separate state in both readers. The state a module keeps between hooks is its instance's own memory, which lives for the outpost's lifetime and is lost on reload or fault. A module may claim Verbatim's own executables like any other (section 4.5).
+The surface is the guide's reference. These are the implementation rules behind it.
 
-## 4. The surface
-
-Everything a module may declare, match, export or call in M5. Anything not here is refused at load, and an addition needs a use the list lacks. Each item exists because an NVDA module or a Verbatim rule uses it; the NVDA inventory behind the list is appendix A.
-
-### 4.1 Declarations
-
-- Extension identity: id, display name, version, API version (section 11). The extension is the unit of install, capabilities, version and ordering.
-- Modules: id, kind (`app` or `synthesizer`), the component file.
-- The applications an app module claims, by identity (section 3).
-- Commands: id, default gestures, description, category, pass-through flag, speak-on-demand flag (NVDA `@script`). Module gestures are rebindable at run time with an open command id.
-- Sleep mode and browse-mode default for the claimed applications (NVDA `sleepMode`, `disableBrowseModeByDefault`; browse mode is M7).
-- Locale files for installed extensions; none for built-ins.
-
-Not declared: capabilities (section 9), module settings and a key-value store (dropped for M5, Dickson 2026-10-22; no inventoried module needs them).
-
-### 4.2 Rules
-
-Every match-based declaration is a rule with a `subject`, so the manifest has one shape for "match this, do that" (Dickson, 2026-10-22):
-
-- `window`: matched by window class, root window class and executable, before a backend is chosen. Actions: `backend` (NVDA's `isGoodUIAWindow` and `isBadUIAWindow`), `silent` focus and foreground, taken as any focus, cutting speech, with nothing said (Explorer's staging windows), `normalize-class` (NVDA's `windowClassMap`).
-- `event`: matched by kind, window class and activity id in the acceptance filter. Actions: `accept`, which speaks the event regardless of the focused application and makes the supervisor start an outpost for the sender when it has none, since an accepted event needs one and nothing else does (Explorer's snap results; NVDA's `requestEvents`); `drop`.
-- `node`: matched against the node's cached snapshot once the outpost has it, with a mandatory `backend`.
-
-Window and event rules accept exact strings only and compile into the hash tables the listener and the outposts consult today; only node rules may use prefix or regular-expression matching. The subject fixes the legal properties and actions, checked at load.
-
-Node matcher properties, all read from the cached snapshot or facts about the outpost, never fetched:
-
-- Any backend: executable, normalized window class, role, states, name (exact, prefix or regular expression).
-- UIA: automation id, UIA class name, control type, framework.
-- MSAA: control id (`GetDlgCtrlID` on the node's window, NVDA's `windowControlID`, one new user32 call per MSAA snapshot recorded in the performance ledger), raw MSAA role.
-- IA2 (M7): IA2 role, object attributes by key.
-- Combinators: a list of values means any of them; `all`, `any`, `not`. A scope names which event kinds, or node creation, the rule applies to.
-
-Every rule names its `backend`, and a rule naming a property of another backend is refused at load, so the backend is explicit (Dickson, 2026-10-22). A rule matches one node, so no condition spans backends; a fix needed under both is two rules. Every rule has a required `id`, unique within its module and validated at load, so the log, the provenance and the console name it as `<module>/<rule id>`, which survives reordering; the loader keeps each rule's manifest line for error messages. Every rule, of any subject, is scoped to the sender's application identity, which must be one the module claims, as NVDA's `isGoodUIAWindow` runs only for the module's own process.
-
-Actions, one or more per rule:
-
-- Set role; set name, value or description from a literal or from another property; clear name, value or description; apply a named text transform (strip ampersand, strip bidirectional marks, trim).
-- Add or remove states; set the check state (unchecked, checked or mixed) or the expansion state (expanded or collapsed), each one field of the model, so two exclusive states can never hold at once (Dickson, 2026-10-28).
-- Presentation: layout, hidden from navigation and announcement (NVDA `presType_layout`), or content; suppress position information.
-- Drop the event; drop notifications for the node.
-- Veto the focus event (NVDA `shouldAllowIAccessibleFocusEvent`).
-- Redirect the focus to the parent, the first child, or a descendant by automation id (NVDA `focusRedirect`).
-
-Conflicts (Dickson, 2026-10-22): within one module, rules apply in manifest order and the later wins a contested property, both recorded in the provenance; two window or event rules of one module naming the same exact class or activity id with different actions are refused at load with both ids named; two node rules of one module that set the same property of one node to different values log a warning naming both ids, once per pair per session, since their overlap is not decidable at load. Across layers the higher layer winning is the designed override (section 7). A drop from any layer stands and ends the event's processing.
-
-### 4.3 Hooks
-
-Functions a module exports; the host calls them with a deadline (section 8), a built-in's on the thread holding the event and an installed extension's in its own host, the outpost's worker waiting for its answer (section 6).
-
-- `on-load`, `on-unload`: the outpost's start and end.
-- `on-event(node, event)`, registered per event kind and matcher, returning `pass`, `drop`, `replace(node)`, `rewrite(property changes)` or `adopt` (NVDA's `event_*` with `nextHandler`). `adopt` means the sender is the current focus's element: the outpost keeps the current node, announces nothing and follows the sender; it exists for the Windows Terminal twin rule (section 6).
-- `on-node(node)`, returning property changes, when a rule cannot express the fix (NVDA `event_NVDAObject_init`, `chooseNVDAObjectOverlayClasses`).
-- `status-bar(focus)`, returning a node or nothing (NVDA `_get_statusBar`).
-- `on-command(command id, gesture, repeat count)` (NVDA `script_*`), resolved in Core by the ordering rule and run through the module's outpost, one Core-to-outpost-to-Core round trip per module command, and for an installed extension a further round trip to its host, since Core-side hooks may not read.
-- A synthesizer module exports the `SynthDriver` contract instead (section 13).
-
-Deferred past M5 (Dickson, 2026-10-22): an utterance hook (no NVDA app module rewrites speech, and it would run on every utterance), a settings-changed hook (modules read settings when they need them, as NVDA's do), and the timer and response completions of asynchronous imports (no M5 module uses one).
-
-### 4.4 Imports
-
-Functions a module calls, grouped by capability.
-
-- **Node reading**, for an app module's own application, synchronous on the outpost worker: the node's own properties, including the backend-specific ones above and, for UIA, the runtime id; `parent`, `children`, `first-child`, `last-child`, `next-sibling`, `previous-sibling`; `find-descendant(matcher, depth limit)` and `find-ancestor(matcher)`, each one remote operation where the backend allows; `window()` for the node's window root; `text()` for a text control's whole value; `focus()` and `foreground()` for the outpost's current nodes. The shape is one for every backend; the host chooses remote operations or classic calls, each node carries its backend, and a find whose matcher names another backend's property returns an error.
-
-  These imports are thin bindings over the outpost's own reading functions, never a second query implementation, so a module sees exactly what its outpost sees by construction (Dickson, 2026-10-22). Accessibility trees cross process boundaries: a frame host's tree contains the hosted application's elements, parent walks reach the desktop and every top-level window, a console window's text lives in `conhost.exe`. The outpost's readers stop at the boundary by the outpost's own resolved identity, as the focus walk does today; readers that lack the stop gain it once, for the outpost's own reads as much as for modules. So `parent()` answers none at the boundary, `find-descendant` skips a foreign subtree, and `window()` answers none for another application's window, with no call added, since the process id is a cached UIA property or a window-handle lookup under MSAA.
-- **Output**, effects to Core, never awaited: `speak(message)`, `cancel-speech()`, `tone(hz, ms)`, `browseable-message(title, text)`. Enforced by attention: `cancel-speech` is honoured only while the module's application holds attention, and a module whose application does not speaks at queued priority, as D14 treats background events.
-- **Commands**: `pass-through()` for a key the binding did not declare as passed; the repeat count arrives as an argument.
-- **Process facts**, read-only from the supervisor: executable, path, product version, bitness, console client.
-- **Settings**: a read-only view of every reader setting (Dickson, 2026-10-22).
-- **Log**: `log(level, message)` under the module's id.
-
-Deferred past M5 (M13): timer, the network imports to named hosts or a host the user enters, files in the extension's data folder, clipboard, mouse, and their completion hooks; a global module's reading of every application.
-
-### 4.5 Refused
-
-Raw UIA or COM, in-process helper calls, the display model, cross-process memory, threads, the registry, the file system outside the extension's own data folder (M13), process creation, any read from Core-side hooks, every WASI interface outside the file and network imports M13 designs (the extension world imports none today: guests build for `wasm32-unknown-unknown` and are wrapped into components with no adapter, so a Rust guest carries no WASI import; the synthesizer world's permitted set is settled in M6). A module may claim Verbatim's own executables, layered over Verbatim's built-in as section 7 orders any other, as NVDA lets an add-on replace its own app module (Dickson, 2026-11-06). A module of any kind may carry native code instead of a component, in its extension's own host, where the container rather than the import list bounds what it reaches (section 13); reading another process's memory, as some NVDA modules do, stays out of reach, since the container cannot open other processes.
-
-### 4.6 Security rules of the surface
-
-The surface's rules, each checked at load or enforced by the host, with a test (Dickson, 2026-10-31, amended 2026-11-06). Some serve the security model's goals ([security model](security-model.md), section 2.1) and the rest correctness and availability; each says which.
-
-- **Every navigation import stops at the application's boundary,** a correctness rule: a module acts on its own application and never another by accident, and the install dialog's "reads the named applications" stays distinct from "reads every application". Every import that returns a node, `next-sibling`, `previous-sibling` and `children` included, returns none for a node outside the module's application, checked by the node's process in one place in the bindings, since a top-level window's siblings are other applications' windows and a window's children can belong to another process; `focus()` and `foreground()` answer none when the focus or the foreground is another application's.
-- **Reserved gestures.** A module may not bind cancelling speech, sleep mode, the Verbatim menu, quitting, the screen curtain and its status, or, from M12, ending a remote session.
-- **Bounded output,** for availability and the disk: `speak` and `browseable-message` have per-module rates and sizes, `tone` caps its duration and frequency, and `log` caps its line size and rate, since it reaches disk. `browseable-message` shows plain text, or HTML only after an allowlist sanitizer with no scripts, external resources or links that start programs.
-- **Unforgeable node handles.** A node a module holds is a component-model resource owned by its instance, and `replace(node)` accepts only such a node.
-- **No secrets in the settings view.** Remote's pairing keys and trusted certificates, and any future token, live outside the settings store.
-- **Linear-time matchers.** Node rules' regular expressions use the `regex` crate with a size limit, and `find-descendant` is bounded by node count as well as depth.
-- **Global modules' read boundary is part of their design**, which states which applications a global module may read, how that is shown at install, and whether installed extensions may provide one.
-- **Flows are shown, and widening one is approved again.** An import that sends data out (the network imports, clipboard writes) is shown in one sentence with the content the extension reads, and an update that adds a flow, a new exit, host or device, or a new source (content the extension receives, section 9.3) in an extension that has an exit, is installed only after the user approves it again; a new source with no exit cannot leak and is not asked about.
+- **One matcher grammar,** one type, parser and evaluator in `verbatim-ext-api`, serving rules, hook registrations and the find reads; legality per use is a check at load. Window and event rules need a property named directly at the top level, so they compile to hash tables and stay one probe per event.
+- **Rules are placed by the loader from the properties they name:** a focus veto naming only what the listener's event shape (`ListenerEvent`) caches runs in the listener before its read, and also in the outpost on every focus the outpost reads itself (the read after a menu or the task switcher ends, a replacement outpost's current focus, the read after the listener is replaced); any other focus veto runs in the outpost on the read node. An event drop runs in the first reader that has its properties, and otherwise in Core; node rules and redirects run in the outpost's worker as it emits a snapshot; window `backend` where a reader first reads the window; `normalize-class` in every reader that evaluates `window-class`, the listener included, so a rule naming a normalized class matches wherever it is placed; `silent` and `accept` in Core's reducer.
+- **Hooks are called by the outpost's reducer, and no worker waits on a host.** The outpost reads the host pipe as it reads Core's, and every message on it, a host's readiness, a verdict, a read or an effect, is a reducer input naming its hook call. `on-node` runs as the outpost emits a batch, after the node rules; `on-focus` after the listener's read, the node rules and `on-node`; `on-event` after the rules. Each read is an ordinary program for the worker in charge, named by its call and bounded by its call's deadline, so an abandoned read is answered `deadline` by the outpost's one-answer rule; reads are dispatched in arrival order whichever call they name, since holding another call's read behind a pending hook deadlocks a click made from a list dialog's answer against a hook queued on the same lane. Core's queries are dispatched meanwhile too. The chain's resolution between layers is a pure function in `verbatim-outpost-logic`, called by the reducer on each verdict. `status-bar` and an app module's `on-command` are resolved by Core's reducer and run through the outpost in key order; a global module's `on-command` and every `on-list-dialog` go from Core's reducer straight to the host, and their reads are bounded by the handling deadline counted from the call.
+- **Reads** are bindings over the outpost's own readers, so a module sees what its outpost sees; every navigation stops at the application's boundary, checked by the node's process in one place, and the outpost judges each request by the pipe it arrived on, so the extension is the unit whose reach is enforced. For `on-focus`, `properties()` and the ancestor reads are answered from the chain the listener's read carried, and the outpost finds its own element by the chain's runtime ids only at the first read that needs a live call, so a hook that reads nothing more adds no re-find before the report.
+- **Effects** made during a hook the outpost called (speech, `speak-node`, `cancel-speech`, tones and browseable messages) travel back with its verdict on the host pipe, and the outpost forwards them to Core inside the event's report, in call order, so a module's speech and the event it was spoken for reach Core in one message, in NVDA's order; Core judges them by attention. Effects of a hook Core called, a global module's `on-command` and every `on-list-dialog`, go from the host to Core, their only sender, and so do logs. Every `on-command` call carries its press's key number (`KeySeq`), and every effect of the call is stamped with it, so Core's fence on expired gesture speech drops the speech of a press a later key superseded; during `on-command`, `cancel-speech` acts while its press is the newest key, for a global module as for an app module. `speak-node` carries the snapshot of the node the host holds, so a later release cannot empty it. A list dialog is recorded in the owning lane's record and shown by the GUI thread. For a click, the host reads the node's place from its outpost, a read like any other, and sends Core the click with the rectangle read; Core moves the pointer and clicks from a shell thread, as the tray list does today, and never queries an outpost on a module's behalf.
+- **Commands:** a binding names a number of presses, and every press fires at once. The keyboard hook thread alone judges whether the same keys are bound to a higher count, from the gesture map it resolved the press with, and only then stamps the raised gesture with `hold_until`, when its multi-press window closes; it also names the application whose binding it resolved, and Core routes an app module's `on-command` to that application's outpost without judging the foreground again. A list dialog a command opens is `Held` in its lane's record until the later of `hold_until` and the answer of every later press of the same keys raised before then, so a double press never shows the first dialog, however slow the first command (Dickson, 2026-11-09). `trigger.declared` names the binding a press resolved to, which a user's change of gesture keeps.
+- **Node handles** are component-model resources owned by the instance; the host reports the nodes it holds, so the outpost keeps their elements alive, and an outpost is not retired as idle while a host holds any of its nodes.
+- **Gesture conflicts** are listed in the install dialog, not refused (Dickson, 2026-11-09).
 - Accepted: a module may remove the protected state, where an application sets it wrongly; the provenance names the module that did.
 
-## 5. An example manifest
-
-An installed extension with two app modules, each item an NVDA fix verified in the pinned source (`explorer.py` for `isGoodUIAWindow` and the staging windows, `taskmgr.py`).
-
-```toml
-[extension]
-id = "example.windows-fixes"
-name = "windows-fixes-name"            # Fluent message id, from locale/
-version = "1.2.0"
-api = "0.1"
-modules = ["explorer", "taskmgr"]
-```
+The outpost's reducer holds, for each host it serves, the host's pipe as `Waiting` until the host reports that its lane and the instance are ready, then `Ready`, and the hook state as one value: `NoHook`, or `AwaitingHook { lane, call, layer, deadline }`. Each cell says what the rule does in that state.
 
-`explorer/module.toml`, rules only, so the folder has no component:
+| Rule | `NoHook` | `AwaitingHook` |
+|---|---|---|
+| An event from the intake | judged; a registered hook whose host's pipe is `Ready` starts a call, to `AwaitingHook`; one whose pipe is `Waiting`, or whose extension is still `RulesReady`, waits for it, bounded by the host's measured start-up time within the event's deadline, then counts as `pass`, which is logged (Dickson, 2026-11-09) | held, as behind a marker |
+| A verdict naming the current call | none can arrive | the chain function gives the next layer's call, staying `AwaitingHook`, or the outcome, reported with the calls' effects in call order, to `NoHook` |
+| A verdict naming an ended call | dropped as late | dropped as late |
+| A read naming a call of this outpost's that has ended | answered `deadline` | answered `deadline` |
+| Any other read, of this outpost's call or of one Core made | dispatched as a program named by the call | dispatched as a program named by the call |
+| Core's query | dispatched | dispatched |
+| The deadline | no timer | every call of the chain not yet answered counts as `pass` or no change, the outcome is reported, to `NoHook` |
+| The host's pipe breaks | its pipe returns to `Waiting` until the restarted host reports ready | the current call, when it is that host's, counts as `pass` or no change and the chain goes on; its pipe returns to `Waiting` |
 
-```toml
-kind = "app"
-applications = ["explorer.exe"]
+A lane's list dialog record is keyed by the instance that showed it: `None`, `Held { id, spec, until, presses waited on }` or `Open { id }`.
 
-[[rules]]
-id = "shell-roots-are-uia"
-subject = "window"
-match = { root-class = ["Shell_TrayWnd", "Shell_InputSwitchTopLevelWindow",
-                        "XamlExplorerHostIslandWindow", "TopLevelWindowForOverflowXamlIsland"],
-          class-not = ["Start"] }
-action = { backend = "uia" }
+| Rule | `None` | `Held` | `Open` |
+|---|---|---|---|
+| `show-list-dialog` during an `on-command` whose press carries `hold_until` | to `Held`, waiting on no press | spec replaced, stays `Held` | replaced in place and brought to the front |
+| `show-list-dialog` during an `on-command` with no `hold_until` | shown, to `Open` | spec replaced, stays `Held` | replaced in place and brought to the front |
+| A later press of the same keys raised before `until` | nothing | added to the presses waited on | nothing |
+| A waited press's `on-command` answers | nothing | removed from the presses waited on; when none is left and `until` has passed, shown, to `Open`; a waited press that ran another module's command withdraws the held dialog unseen, `on-list-dialog(cancelled)` to its instance, to `None` (Dickson, 2026-11-09) | nothing |
+| The alarm at `until` | no alarm | when no press is waited on, shown, to `Open` | no alarm |
+| The user answers | none can arrive | none can arrive | `on-list-dialog` to the instance, its one answer, to `None` |
+| The instance ends: a swap to a new version, the host's end, the breaker, its application process's end | nothing | discarded with no answer, to `None` | closed with no answer, to `None` |
 
-[[rules]]
-id = "staging-windows-are-silent"
-subject = "window"
-match = { class = ["ForegroundStaging", "LauncherTipWnd", "ApplicationManager_DesktopShellWindow"] }
-action = { silent = ["focus", "foreground"] }
+## 5. Where modules run
 
-[[rules]]
-id = "snap-results-are-spoken"
-subject = "event"
-match = { kind = "notification", activity-id = "Windows.Shell.SnapComponent.SnapHotKeyResults" }
-action = "accept"
-```
+- **Every extension's host,** the built-ins' included, runs that extension's modules on its lanes and makes no call into any application. It runs in an AppContainer, with a memory cap, and a processor rate cap unless it holds a synthesizer ([security model](security-model.md), X4, A7). The built-in host is started with Verbatim and always runs, since the taskbar and global modules need it (Dickson, 2026-11-09); when it ends, the supervisor restarts it with the outposts' backoff, and its memory cap is set from a measurement taken with many outposts open, since it runs one instance per outpost per module.
+- **The outposts** apply node rules, call hooks from their reducer and answer hosts' reads on their worker; they load no runtime.
+- **The listener** applies window rules, focus vetoes and event drops as data, and runs no module code.
+- **Core** owns the extension lifecycle, publishes the tables and the gesture map, judges and performs effects, and shows dialogs; it runs no module code and links no Wasm runtime.
+- **eSpeak NG and OneCore** are built-in extensions of their own, each a native synthesizer module in its own host behind `verbatim_synth_v1` (Dickson, 2026-11-09; section 12).
 
-`taskmgr/module.toml`, one window rule and one node rule:
+Core's reducer stays pure: a module's speech is an ordinary effect, and a module command and a dialog's answer are recorded inputs, so the flight recorder's replay needs no module.
 
-```toml
-kind = "app"
-applications = ["taskmgr.exe"]
+## 6. Ordering, provenance and conflicts
 
-[[rules]]
-id = "task-list-is-msaa"
-subject = "window"
-match = { class = ["SysListView32"] }
-action = { backend = "msaa" }
+For one application there are at most three layers: a developer-folder module or the one installed extension, then the built-in, then core behaviour. Within one event, every layer's rules apply first, lowest layer first, so the highest layer's action wins a contested property; then hooks run from the highest layer down, each seeing the node as the rules and the hooks above left it: `pass` and `rewrite` continue the chain, `drop` and `replace` end it, and `on-node` and `rewrite` changes accumulate in that order, so a drop is never undone by a later layer (Dickson, 2026-10-22 and 2026-10-28). On a focus, the `on-node` chain runs as the batch is emitted, before the `on-focus` chain. For commands, the highest layer that binds a gesture gets it; the user's own gesture map sits above every layer once it exists. The outpost records for each overridden field which layer and rule set it, and the focus report shows it.
 
-[[rules]]
-id = "row-icon-is-layout"
-subject = "node"
-backend = "uia"
-match = { automation-id = ["TmRowIcon"] }
-action = { presentation = "layout" }
-```
+## 7. Performance
 
-A module with code adds `component = "calculator.wasm"`, its hook registrations, and its commands:
+A rules-only module costs what the constant tables cost today: rules are merged once at load into the tables the listener and the outposts consult, keyed by identity. A hook costs a round trip between processes and two wake-ups on the event's path, and each read two more, accepted for built-ins as for installed extensions (Dickson, 2026-11-09), measured in step 4 against D15. Per event, the time inside module code, split into guest and host-call time, is a stage of the latency timeline, and the call ledger carries two rows ratcheted against `mockapp`: a rules-only module leaves every count unchanged, and a module with one descendant read adds exactly one UIA call.
 
-```toml
-kind = "app"
-applications = ["calculatorapp.exe"]
-component = "calculator.wasm"
+Wasmtime's epoch interruption bounds a hook's own execution; since the epoch is the engine's and one host runs many lanes, each store's deadline callback checks its own hook's time before it traps. The compute bound is loose until step 8 sets it from the built-ins' measured guest time; the total bound is the event's remaining handling deadline (`verbatim_model::HANDLING_DEADLINE`, 11 seconds: UIA's 10-second transaction timeout and a margin), enforced by refusing a read once spent. A trap counts as `pass` or no change, the instance is re-created, and the breaker (A9) counts it. A store limit counts as a trap does. The host's end counts against an installed extension or a developer-folder module with a call in flight, which is exact since each has a host of its own, and against no built-in module, since a process-wide fault or the host's memory cap names none; every outpost counts a hook in flight on the broken pipe as `pass` or no change. `on-node` is called once per emitted batch, so its round trip under an event flood is measured in step 4.
 
-[[hooks]]
-hook = "on-event"
-kinds = ["name-change", "notification"]
-backend = "uia"
+## 8. Capabilities
 
-[[commands]]
-id = "calculator-result"
-gestures = ["enter", "numpadEnter", "escape", "delete", "numpadDelete"]
-description = "calculator-result-description"
-pass-through = true
-```
+Capabilities are derived from the component's imports for built-ins and installed extensions alike, and the install and Extensions dialogs are built from them, as the guide's capabilities page lays out and words them (Dickson, 2026-11-09). An install request reaches the running Verbatim through the user endpoint from a small helper executable registered for `.vext` by the installer (M8.6), which shows a message box that Verbatim must be running when nothing answers, as NVDA's `nvda_slave.pyw` does; the Extensions dialog's Install from file button needs no association, and is how a portable copy installs.
 
-A built-in's `module.toml` is identical; only the extension manifest and the locale folder are absent.
+## 9. The runtime and the guest workflow
 
-## 6. Where modules run
+The runtime is wasmtime with the component model (Dickson, 2026-10-22), chosen by a requirements comparison: Windows x64 and ARM64, the component model and WIT, interruption of running code, memory limits, precompiled artifacts; wasmer dropped its Windows native compilers, wasmi and WAMR have no component model, WasmEdge is x64 only. Cranelift compiles on both architectures; Pulley is switched on for ARM64 only if `ci-arm64` ratification or a Cranelift fault requires it; Winch is excluded because it cannot be epoch-interrupted. `verbatim-ext` is the only crate that names the runtime.
 
-The host runs in these processes:
+The WIT files in `verbatim-ext-api` are the single source (Dickson, 2026-11-09): `wasmtime::component::bindgen!` generates the host's traits, `wit-bindgen` the guests' bindings, and an xtask step parsing them with `wit-parser` generates the guide's API reference pages, which `cargo xtask ci` checks are current; the manifest reference and a JSON Schema are generated from the manifests' `serde` types with `schemars`, with the same check. The conversions between Verbatim's internal types and the WIT types are exhaustive matches, so a new internal variant fails to compile until someone decides how modules see it. Guests build for `wasm32-unknown-unknown` with no WASI adapter, in a workspace separate from the host's; the guide's examples are crates there, included into the book, so its code is compiled and tested.
 
-- **An installed extension's own host** runs all that extension's modules, of every kind, one process per installed extension, started while the extension is needed (an app module's when an outpost starts for an application it claims) and ended when it is not ([security model](security-model.md), X4 and its section 6.9). It runs in an AppContainer granted the extension's folders, the network only if the extension imports a network interface, and the devices Core opens for it, with one process in its job and a memory cap, and a processor rate cap unless the extension holds a synthesizer, whose real-time audio a hard cap would make stutter ([security model](security-model.md), A7), and makes no call into any application: its hooks' reads are requests to the claiming outpost over a pipe, and the outpost answers them within the module's application (section 4.6) and its derived capabilities, judged by the pipe the request arrived on, never by a module id the host sends. A hook run this way costs a round trip and two wake-ups on the event's path, and each read it makes two more; while the hook runs, the outpost's worker answers the host's reads, a waiting state the host's design counts with its other lifecycle states; M5 measures both. Developer-folder modules run the same way.
-- **Outposts** host each built-in app module's element-level code (a built-in holding native code or importing the network runs in a host of its own instead): rules applied where the outpost emits a snapshot, and hooks that see a node with its cached properties and can read further through the worker. The instance is created when the outpost starts for an application the module claims and ends with the outpost, which is NVDA's per-process `AppModule` lifetime. Only outposts for applications with a module load a runtime at all, so a plain application costs nothing new, and the outpost's existing deadline, watchdog and kill-and-replace ladder cover module faults.
-- **Core** resolves commands by the ordering rule, executes modules' output effects, and hosts the call console (section 12). It runs no hook that reads.
-- **The listener** runs no module code, ever: its callbacks may not block (D13), its judgement is per application on reading threads, and loading a runtime there would cost every application's memory for the few that have modules. It applies window and event rules as data from the merged tables.
-- **The synthesizer host** (D18) is the host of an extension holding a synthesizer, and of the built-in engines (section 13).
-- **The injection helper** (M7) runs no module code.
+## 10. Versioning
 
-Core's reducer stays pure: no module hook runs on the reducer thread. A module's speech is an ordinary effect, and a module command is an input Core recorded, so the flight recorder's replay needs no module.
+A WIT package carries a semantic version, and every interface a component imports is named with it in the binary; the linker resolves an import by exact name first and otherwise by track, several tracks living side by side for a deprecation period, and `wasm-tools component semver-check` proves each new version compatible. The manifest's `api` names the version an extension was built against and must agree with the binary's imports, which are the authority. There is no `verbatim-minimum` or `verbatim-tested`: NVDA needs its version fields because its API breaks each year, and the API's tracks already say what an extension needs (Dickson, 2026-11-09).
 
-The Windows Terminal second identity ([design](windows-terminal-twin-focus.md)) is a module, not core code (Dickson, 2026-10-22: application-specific logic is not hard-coded in Verbatim). Its `on-event` hook in the Terminal built-in, registered for UIA focus events on `TermControl`, runs in Terminal's outpost after the listener's read; the event reaches it only after the listener's `CompareElements` judgement has found the sender and the current focus different, so no same-element import is needed. It reads the runtime id, class name, control type and framework from the node, compares `node.window()` with `focus().window()`, and answers `drop` for a 14 sender twinning a current 42 focus or `adopt` for a 42 sender twinning a current 14 focus. The extra cost falls only on the rare twin, measured in the design. The evidence the roadmap asks for, that the runtime id's last part is never reused within a process, is collected first.
+## 11. The console
 
-Firefox and Chromium read through IA2 out of process first (M7); a browser's module runs in its outpost like any other and never inside the browser.
+In M5, `verbatim-inspect call` invokes any function of the world by name with WAVE-encoded arguments through a host's dynamic call path, relayed by Core's developer endpoint. The interpreter console and scripted modules are M10's; with no runtime in Core, the console runs in a host of its own, and its design, settled in M10, starts from that.
 
-## 7. Ordering, provenance and conflicts
+## 12. Synthesizers and native code
 
-Every module that claims an application is attached to that application's outpost, one instance each, in the outpost for a built-in and in its extension's host for an installed module, in one explicit order: developer-folder modules first, then installed extensions, in the order of the extensions list, which is installation order with the newest highest until reordering exists; then built-ins, so an installed extension's module overrides Verbatim's own for the same application by design; then core behaviour. Two modules of one extension on one application are ordered by their position in its manifest. NVDA's effective order, from the pinned source, is that the more general plugin wins and the order among plugins is undefined; Verbatim's is explicit and shown in the Extensions dialog.
+Native code comes in two forms (Dickson, 2026-11-09): a library a Wasm module of any kind calls through a narrow import that passes bytes to a named function in a DLL its extension ships, in the extension's host, which covers NVDA add-ons calling a vendor SDK; and a whole native module for a kind with a small interface, implementing that kind's C ABI, first the synthesizer's, `verbatim_synth_v1`, the `SynthDriver` trait as C exports (version, create, destroy, describe, set a setting, speak a sequence through PCM, mark and is-cancelled callbacks, cancel). A native module's manifest lists its DLLs, and Verbatim reads each one's architecture from its file header rather than from a declaration, choosing the best build the machine can run: its own architecture, then x64, then x86; an extension with none is refused at install. ARM64 installations run x86 engines through the 32-bit host and are to run x64 ones through a full x64 host under emulation, built later (Dickson, 2026-11-09). An engine's files that may not be distributed, such as Eloquence's, are added by the user to the extension's folder before zipping it; there is no `user-files` list (Dickson, 2026-11-09). The x86 host for 32-bit engines carries no Wasm runtime, so an extension whose native code is built only for x86 holds no other module. Native code runs in its extension's host, contained as section 5 says, and the install dialog warns that it "Contains native code that runs outside Verbatim's extension sandbox", the extension sandbox being the Wasm boundary.
 
-Within one event (Dickson, 2026-10-22): every layer's rules apply first, lowest layer first so the highest layer's action wins a contested property, with every layer recorded in the provenance; then hooks run from the highest layer down, each seeing the node as the rules and the hooks above left it, `pass` continuing the chain and `drop`, `adopt` or `replace` ending it, `on-node` rewrites accumulating in that order. This is NVDA's `nextHandler` chain with the order made explicit and the layer that stopped it logged. So in both the highest layer has the final say, its rules applying last and its hooks running first, and a drop is never undone by a later layer (Dickson, 2026-10-28). A layer's rule matchers see the node as the rules of the layers below it left it. For commands, the highest layer that binds the gesture gets it; the user's own gesture map sits above every layer once it exists.
+eSpeak NG and OneCore are built-in extensions, each one native synthesizer module behind `verbatim_synth_v1`, in a host of its own, so that every host process is one extension's host and `verbatim-synth-host` loses its engine mode (Dickson, 2026-11-09, built in M6). They stay separate processes because an engine's crash must not stop the other, which the fallback to the other engine needs (A3).
 
-Every property the reducer speaks has one base source and may be overridden by layers. The outpost records for each overridden field which layer and rule set it, and the focus dump shows each property as its value and its source: "role: edit, set by notepad/goto-line-is-edit, was dialog from UIA". Every dropped event names the layer and rule that dropped it in the log. Conflicts are shown, never hidden: provenance names every layer that set a field, the log names the dropping layer, and the Extensions dialog's command list marks the winner of a contested gesture. In M5 the user's lever is uninstalling; reordering comes later.
+## 13. Porting NVDA's app modules
 
-## 8. Performance
+The porting track runs from M5 onward. In M5, every Windows inbox application: Explorer, Windows Terminal (a focus veto dropping every `TermControl` focus whose runtime id starts 14, with no hook; Dickson, 2026-11-09), Notepad, Calculator, Task Manager (proven by `mockapp` until UIAccess), Settings, Start and search, Quick Settings and Open With, and the tray list, taskbar list and time as global modules. Sleep mode becomes a core per-application list seeded with the five executables NVDA's sleep-only modules name. A module is done when its NVDA behaviours are captured on the VM with the pinned build, one end-to-end scenario per behaviour asserts the captured utterance, its own tests pass, and the parity ledger lists each behaviour with the scenario that pins it. After M5 the order of the track is appendix A's tiers.
 
-### 8.1 Declarations before hooks
+## 14. Routing and identity
 
-A module that only declares costs the same per event as the constant tables cost today: the host merges every active module's rules into the tables it consults already, once at load, keyed by identity, so a lookup stays one hash probe. Node rules are checked only for events from the module's own application and only against properties the outpost already has in its cache. Hooks are called only where a module registered interest by event kind and matcher. Of NVDA's 78 app modules, about fifty need only rules (appendix A).
-
-So that rules can match and `verbatim-inspect` can show them, the snapshot's details always carry the UIA class name, automation id and framework, which the outposts already cache, the window class of the node's window from the window cache, and for MSAA nodes the control id (Dickson, 2026-10-22: the information is useful on its own). Core keeps the application identity per outpost beside the attention record.
-
-### 8.2 What a hook costs
-
-The call from host to guest is tens of nanoseconds and marshalling a snapshot is under a microsecond; the cost that matters is a thread hop, which the communication design counts in tens of microseconds. So a built-in's hooks run on the thread that already holds the event, the outpost's worker, inside its existing deadline and watchdog. An installed extension's hooks pay the hop instead, a round trip and two wake-ups per hook and two more per read (section 6), the price of running its code, native code included, outside every process of Verbatim's; the worker waits within the same deadline. Per event, the time inside module code (guest time and host-call time, with the reads made) is a stage of the latency timeline, so a slow event is attributed to the module rather than to the outpost read; a rules-only module adds no stage. The host records per-module hook counts and times, visible in `verbatim-inspect`, and the call ledger carries two permanent rows ratcheted against `mockapp`: a rules-only module leaves every count unchanged, and a module with one descendant read adds exactly one UIA call and nothing else.
-
-### 8.3 Budgets and faults
-
-NVDA's `watchdog.py` has no per-handler budget: module code runs on its main thread, the watchdog waits half a second and then up to ten seconds, then cancels only COM calls and `SendMessage`; pure Python is never interrupted, and the whole reader freezes meanwhile. Verbatim uses wasmtime's epoch interruption and a per-store resource limiter for linear memory, tables and stack, inside the job object cap of the process running the module, the outpost's for a built-in and the host's for an installed extension. Native code has no epoch: a native module that overruns is judged by the same deadline from the outpost's side, and its host is ended.
-
-There is no periodic ticker, since it would wake a thread every millisecond. The deadline is the current epoch plus one, and the outpost's existing watchdog alarm is re-armed at hook entry and increments the epoch once if the hook overruns, so no wake-up occurs unless a hook overruns; the resolution is the alarm's, about a millisecond, and the re-arming is a timer call on the event path the ledger states. Two bounds guard two things:
-
-- The total bound is the worker's remaining handling deadline for the event, ten seconds, chosen in `worker.rs` because starting applications take two or three seconds to answer a read that then succeeds. It is enforced by refusing a read once spent, so a slow application trips a module only where it would trip the outpost.
-- The compute bound is the epoch deadline, which the host extends by each read's duration when the read returns, so it measures the module's own execution only and a slow read cannot trip it. The epoch is wall-clock, so time inside a read would otherwise drain it (fuel would not count it at all), but the deadline check runs only in guest code, so a read in progress is bounded by the outpost's per-call deadline and watchdog ladder, and the trap lands at the first guest check after the read returns. Its value is set from the guest-time distribution the latency stage records once the first-party modules have run through the end-to-end suite, at a generous multiple of the slowest legitimate hook; until then it is deliberately loose, because the total bound still catches a looping module.
-
-On a trap: the hook counts as `pass` for an event and "no change" for a node, so the user hears what the outpost had; the instance is discarded and re-created from the pre-linked form, its state lost; the fault is logged with module, hook, guest time and host-call time; three failures to respond within one minute disable the extension for the session with one report naming it ([security model](security-model.md), A9). A failure is a missed compute deadline, a trap or the host ending with a call in flight; a read refused because the event's total deadline is spent is not one, so an extension is not disabled for an application's slowness.
-
-## 9. Capabilities and what the user sees
-
-### 9.1 The model
-
-What the mechanisms are for is the security model's section 2.1: recovery, privilege containment and honest consent, and not keeping content from an extension the user gave it to. Installing an extension is trusting its author, which the install dialog says. The import list bounds what an extension can ever call, not what it does with what it is given.
-
-Isolation comes from Wasm: memory safety, no system calls, only the imports the host links. A component's binary lists the interfaces it imports with their versions, and the host links only the granted ones; anything else is absent, and the component fails to instantiate rather than reaching an ungranted function. Native code is never loaded into Core or an outpost; it runs only in an extension's own host (section 13).
-
-### 9.2 Derived, never declared
-
-Capabilities are derived from the component's imports for built-ins and installed extensions alike (Dickson, 2026-10-22). Native code has no import list, so a native module states its network use in its manifest, and what it can do is bounded by its container alone (section 13). Browsers and phones need permission manifests because JavaScript and phone apps reach privileged APIs dynamically and no inspection of the package can enumerate them; a Wasm component's import list is a complete, exact statement of every host function the code can ever call, produced by the compiler. A declaration would be a second copy that must equal the first. A capability with a parameter the import cannot carry, later the network host list, gets a manifest entry for the parameter only, and the import still decides whether the capability exists. Scope is expressed as which interface is imported. The packaging tool prints the derived list and any refusal before producing a `.vext`, which is where an author learns that a dependency pulled in an import.
-
-### 9.3 Shown and silent
-
-The install dialog and the Extensions dialog show flows: a source of the user's content together with an exit that can send data out, since a source with no exit cannot leak and an exit with no source has nothing to send (Dickson, 2026-11-06). The two are shown together because together they mean the content can leave, not because Verbatim knows it does. Beside them, lines that name code outside Verbatim's control or something the user must act on:
-
-- Runs native code in a restricted process of its own. Shown first; the module's sources and exits are shown as for any other module, from its kind and its manifest.
-- Receives <source>, and can connect to <hosts>: for example "Receives all the text Verbatim speaks, and can connect to api.example.com", or "Reads the controls and text of Notepad, and can connect to api.example.com". One warning line for each source the extension has together with its exits, naming the hosts, or "the address you enter" for an endpoint the user chooses. The line states what the extension can do, never what it does: Verbatim does not analyse which code sends what, since data can pass between any of a component's functions.
-- Reads the controls and text of the named applications. Always shown for an app module.
-- Runs its own code when something happens in the named applications. Derived from exported hooks.
-- Changes how Verbatim reads the named applications with N rules, with no code of its own. For a rules-only module.
-- Adds keyboard commands in the named applications, one command and its default binding per line.
-- Changes what Verbatim says before it is spoken. For a speech-text stage, beside the warning for its source.
-- Provides a speech synthesizer, named, which receives all the text Verbatim speaks.
-- Drives <display>, for a braille driver.
-- Needs files you add yourself, named.
-- Later: reads and changes the clipboard; moves the mouse pointer; reads every application.
-
-Silent but enforced: the data folder, speech and sounds, the log, reading Verbatim's settings, process facts. The Extensions dialog's details view has a "show everything" line for them, and developer mode shows the full list for built-ins, which is how Verbatim checks that its own modules import no more than they need. Refused imports stop installation with the import named: "This extension cannot be installed: it needs wasi:cli/environment, which Verbatim does not provide to extensions."
-
-Installing is a request to the running Verbatim, as NVDA does it: the `.vext` file type is registered to a small helper executable, as NVDA registers `.nvda-addon` to `nvda_slave.exe addons_installAddonPackage`, which sends the path over the control plane and exits, or shows a message box that Verbatim must be running when nothing answers. `verbatim.exe` has no install flag, so its single-instance takeover is never involved. The Extensions dialog in the Verbatim menu lists each installed extension with its version and status, shows the description and the sentences above with the module's activity counts, and uninstalls with a confirmation. No store, updates or reordering in M5.
-
-## 10. The runtime and the guest workflow
-
-### 10.1 wasmtime
-
-The runtime is wasmtime with the component model (Dickson, 2026-10-22), reached by a requirements-driven comparison rather than by default: Windows x64 and ARM64, the component model and WIT, interruption of running code, memory limits, precompiled artifacts. wasmer dropped its Windows native compilers, wasmi and WAMR have no component model, WasmEdge is x64 only. The alternative was a host-defined ABI over core modules, which would admit wasmi but give up typed bindings generated from one definition for every guest language, versions carried in the binary and generated documentation. wasmtime is pinned to its long-term-support line, Cranelift compiles on both architectures, and the Pulley interpreter, an architecture-neutral bytecode interpreter inside wasmtime with the same API and interruption, is switched on for ARM64 only if the `ci-arm64` ratification or a Cranelift fault requires it. Winch is excluded because it cannot be epoch-interrupted. `verbatim-ext` is the only crate that names the runtime, as D6 asks; `verbatim-ext-api`, which holds the WIT files and the manifest and rule types, is platform neutral and on xtask's neutral list.
-
-### 10.2 Rust guests
-
-A guest crate uses `wit-bindgen` against the WIT in `verbatim-ext-api`, implements the generated export trait, and is type checked by ordinary compilation with rust-analyzer completion; `cargo doc` carries the WIT comments. Guests live in an `extensions/` (planned) Cargo workspace separate from the host workspace, so the platform-neutral check and `workspace-hack` never see a Wasm target, and build for `wasm32-unknown-unknown`, wrapped into components by `wasm-tools component new` with no WASI adapter, so they carry no WASI import. `cargo xtask build-extensions` builds, validates against the world and places each component beside its manifest; this is a named target, a listed exception to the coding standard that builds use the host's architecture. Any toolchain producing a component for the world works the same way, which is the test that other languages can be used. The guest SDK crate carries its own permissive licence so an extension's licence is the author's choice.
-
-Scripted modules in TypeScript or JavaScript are not M5 (Dickson, 2026-10-22). JavaScript is never compiled to Wasm; the serverless providers compile an engine to Wasm and interpret the script inside it, and the engine's code and heap would be carried by every outpost hosting a scripted module. The QuickJS engine component, TypeScript erasure and the generated declarations move to M10 with the console, whose single Core instance pays the engine cost once; the API does not change, since an interpreter component is a component of the same world.
-
-### 10.3 Testing
-
-A module's decisions are functions over the generated types, unit tested in its own crate on the host with `cargo test`. Hooks that read or speak are integration tests in the module's folder, using the `verbatim-ext` test helper as a library against a fake tree, run by `cargo xtask build-extensions`. `verbatim-ext`'s own tests prove only the surface: round trips of every import and export, rule compilation per subject, budget interruption, memory fault containment, reload and failed reload, never application logic. End-to-end scenarios cover the real application, with spoken expectations taken from NVDA captures by the `/port` protocol.
-
-## 11. Versioning
-
-A WIT package carries a semantic version, and every interface a component imports is named with it in the binary. wasmtime's linker resolves an import by exact name first and otherwise by track: for major 0 the minor is the track, for major 1 and up the major is. Several tracks live side by side in one linker, so the host keeps the previous track for a deprecation period. Additions are marked `@since`, removals `@deprecated`, experiments `@unstable`, and `wasm-tools component semver-check` proves in CI that a new API version is a compatible evolution of the old.
-
-The manifest carries the extension's own `version`, the `api` version the module was built against, and `verbatim-minimum` and `verbatim-tested`, mirroring NVDA's `minimumNVDAVersion` and `lastTestedNVDAVersion` with NVDA's rule and user override for an untested but otherwise supported extension. During M5 and the porting track the package is `verbatim:ext@0.x`, every minor a track, additions within a track `@since`-gated. At install the host reads the component's imports and refuses one that names a track it does not offer, with both versions named; the manifest's `api` must agree with the binary's imports. The binary is the authority; the manifest field is for people.
-
-## 12. The console
-
-In M5, `verbatim-inspect call` invokes any function of the world by name with WAVE-encoded arguments through the host's dynamic call path, with no interpreter and no variables; it inspects the focus, walks the tree and speaks from the command line, and it is the smoke test that every interface is callable by hand.
-
-In M10, the interpreter console: the QuickJS component loaded in developer mode with every capability, running in Core on its own console thread, never the reducer thread and never in an outpost, with node reads as requests to the owning outpost's readers, synchronous from the script's view, so console snippets paste into modules unchanged. NVDA's console runs each line on its main thread with the watchdog disabled, so a long evaluation freezes NVDA; Verbatim's gets an epoch budget of seconds and Control+C in `verbatim-inspect` cancels it. Its snapshot variables follow NVDA's (`focus`, `focusAnc`, `fg`, `caretPos`, `review`, `nav`) with `outposts`, `attention`, `state` and `recorder` added; its rule functions test a rule against a node with the loader's validation, list the nodes a matcher selects, explain a node's provenance, and install session-scoped rules tagged as the console's; it traces events with their acceptance decisions and calls a module's hook by hand. Modification functions are not in its first version (Dickson, 2026-10-22), apart from installing session rules; when they come, a property override is a session rule and a behaviour change is an injected input recorded in the flight recorder, never a direct write.
-
-## 13. Synthesizers and native code
-
-### 13.1 Wasm synthesizers
-
-The `verbatim:synth` world is the `SynthDriver` trait of `verbatim-speech` in WIT: `describe`, `set-setting`, `speak(sequence)` with the sink as the imports push PCM, mark reached and is cancelled. A Wasm engine, such as eSpeak NG compiled from its source, is one component that runs on x64 and ARM64 unchanged, in the synthesizer host for the machine's architecture (`verbatim-synth-host --wasm`), which wraps it as a `SynthDriver` so that from the pipe upward Core cannot tell it from a native or built-in engine. It reads its own folders and writes its data folder ([security model](security-model.md), X14), traps without killing the host (re-instantiated from the pre-linked form), is interrupted by the epoch when it stops producing, and is bounded by store limits. The tone synthesizer that proves the world lands in M6 beside the test adapter.
-
-### 13.2 Native synthesizers
-
-Wasm modules never call DLLs: a component has no foreign-function interface, by design. So native code may be part of a module of any kind (Dickson, 2026-11-06), and a native module implements its kind's interface as a C ABI beside the kind's WIT world; a kind's C ABI is defined when the first native module of that kind needs it. The synthesizer's comes first. Three facts force native code for Eloquence: the IBM engine is a proprietary 32-bit `ECI.DLL` with no source, so it cannot be compiled to Wasm; no 64-bit process can load a 32-bit DLL, and a native ARM64 process cannot load an x64 one; and its files cannot be distributed. The existing `eloquence_64` NVDA add-on confirms the shape: it ships no 64-bit engine and runs the 32-bit DLL in a 32-bit helper over a named pipe.
-
-The mechanism is general and the host has no engine-specific code:
-
-- The ABI, `verbatim_synth_v1`, is the `SynthDriver` trait spelled as C exports: version, create, destroy, describe, set a setting, speak a sequence through PCM, mark and is-cancelled callbacks, cancel, with every string a pointer and a length and every buffer owned by its allocator. A first-party adapter crate supplies the export boilerplate, so an adapter author implements `SynthDriver` in Rust in a `cdylib` with the engine calls inside.
-- A native synthesizer module's manifest names one adapter library per architecture (`x86`, `x64`, `arm64`), named `<engine>-<arch>.dll`, and a `user-files` list of engine files the user must supply because they cannot be distributed; the Extensions dialog shows "add the engine files" while any is missing.
-- The host for the declared architecture loads only the adapter, which loads the engine, and speaks the D18 protocol to Core unchanged; Core's mixer plays and resamples the PCM, so the host renders nothing. The x86 host is a cross-compile for `i686-pc-windows-msvc` shipped with every install, a reduced build carrying only the adapter loader and the protocol, not eSpeak NG or OneCore (Dickson, 2026-10-22), so no 32-bit C build is needed; it exists for as long as Windows 11 emulates x86 on x64 and ARM64. An x64 adapter on an ARM64 machine is unsupported until an x64 cross-build is added, which Eloquence does not need. The x86 host carries no Wasm runtime, so an extension whose native code is built only for x86 contains no other module, and the packaging tool and the package check refuse one that mixes them (Dickson, 2026-11-06); an extension that needs an app module beside such an engine ships it as a second extension.
-- Eloquence's adapter is first-party by location only: a Rust `cdylib` written from IBM's documented SDK, since the add-on has no licence to port from, mapping the engine's parameters to settings descriptors, inserting an index per mark, delivering 16-bit mono 11025 Hz buffers to the PCM callback and stopping on cancellation at the next callback. Its bundle in this repository holds an empty engine folder for `ECI.DLL`, `ECI.INI` and the voice files. OpenEVV, the MIT x64 reimplementation, is US English only and could be bundled with an x64 adapter later.
-
-Guidance to authors: compile to Wasm when source exists, since a component runs on x64 and ARM64 unchanged and its imports state its capabilities; native code is for what has no source, or must call Windows or a vendor library directly.
-
-### 13.3 The container
-
-An extension's host runs in an AppContainer (M6 for synthesizers, M5 for the rest): a process token with a package identity and the user's own rights stripped, Low integrity, no network unless the extension imports a network interface or, for native code, states it, no registry writes, no access to other processes or windows, files only where the launching program grants the container's identity access. Read and execute access entries for "all restricted application packages" are set on the host executable's folder by the installer for an installed copy, since Core cannot change the administrator-owned installation, and by the contained launch for a portable or development copy, and access entries for the extension's own container identity, never for all packages, on its module folder (read and execute) and its data folder (read and write), which the user owns, by the contained launch, so no extension's host reaches another's folders. Every extension host takes the less privileged container wherever its modules allow, since the ordinary container can read whatever Windows grants all application packages, such as the Windows folder, Program Files and much of the machine-wide registry; the ordinary container is the fall-back only with the failing call named, as for engines below. The pipe to Core is inherited by handle, which keeps working because access is checked when a handle is opened, not on each use, which is the basis Chromium's renderers run on below Low integrity. The job object with its memory cap and kill-on-close stays around the container, because a container does not bound CPU or memory and cannot interrupt a hung native call.
-
-The sandbox level is per host process, and each engine declares the strictest level it is known to work under: eSpeak NG, which only reads files, can take the less privileged container or a restricted token at Untrusted integrity; OneCore needs WinRT activation and so the ordinary AppContainer at most, since Store apps call it from one and the less privileged container blocks COM activation without a capability; native adapters start at the less privileged container (Dickson, 2026-10-22: LPAC first, and a fall-back to the ordinary container only with the failing call named and recorded as a workaround). M6 establishes the levels by running the three.
-
-Low integrity does not hinder the host at the sign-in screen or beside an elevated application: the host writes only to the inherited pipe and, on a secure screen, its scratch folder, and needs no window, desktop, clipboard, registry or UIA access, and a system-account parent can create container children. What changes at sign-in is the missing user profile, which section 2.4's machine-wide copy answers. Outposts cannot run in an AppContainer, because Windows denies a container process UIA and MSAA client access to other processes; they run at the user's own level with the job object and the mitigations that resist takeover ([security model](security-model.md), section 6.9), and an app module works in a secure context wherever its outpost does. Braille drivers reuse the whole pattern with a `verbatim_braille_v1` ABI, in the extension's host, with devices Core opens ([security model](security-model.md), section 6.11).
-
-## 14. Porting NVDA's app modules
-
-The porting track runs from M5 onward. The order is chosen so that each module can be tested on the VM or by Dickson, the software is current, and the module needs only the surface above. Dickson's daily applications (2026-10-22) are Windows Terminal, Firefox, Explorer, VS Code and Thunderbird; Firefox has no NVDA app module, since its support is NVDA's core and Verbatim's browse mode, and VS Code and Thunderbird are web-content hosts whose modules wait for M7.
-
-In M5, every Windows inbox application: Explorer (the staging windows, the shell roots and the snap results as rules; the desktop-icon duplicate-focus veto, the tab-switch announcement and the taskbar and context-menu name fixes as hooks), Windows Terminal (the twin rule), Notepad (the status bar provider and the go-to-line role), Calculator (the display-updated notification read, the pass-through result keys), Task Manager (two rules, proven by `mockapp` until UIAccess lets it be read end to end), Settings (the volume meter is not a progress bar), Start and search (the bad-UIA rule for the Chromium render widget, the suggestion count name, the search field description; the ancestry-override part waits), Quick Settings and Open With. Sleep mode becomes a core per-application list toggled by NVDA's key and seeded with the five executables NVDA's sleep-only modules name, rather than five modules.
-
-After M5, on the track: foobar2000 and Poedit, whose value is commands; Audacity; Notepad++, after a core Scintilla text provider in the outpost that reads the control by its window messages and a buffer allocated in the target process, as NVDA's `scintilla.py` does, since Scintilla exposes no usable UIA or MSAA text; the emoji panel after IME candidate support; lock screen and logon after M8.6; VS Code, Thunderbird and the WebView2 hosts after M7; Word, Excel, Outlook, PowerPoint, LibreOffice and Visual Studio after the object-model bridge; Eclipse after M16. Skipped, with the reason in appendix A: modules for discontinued software, display-model terminals until M17, and modules that read another process's memory.
-
-A module is done when its NVDA behaviours are captured on the VM with the pinned build, one end-to-end scenario per behaviour asserts the captured utterance, its own tests pass, and the parity ledger lists each behaviour with the scenario that pins it.
+- **Gesture order** (Dickson, 2026-11-09): a gesture bound by a global module and by the focused application's app module runs the global module's command, as NVDA checks global plugins before the application's module (`scriptHandler.py`, `_yieldObjectsForFindScript`); the install dialog lists the conflict.
+- **Reads only Core can route** (Dickson, 2026-11-09): a global module's `find-window` when an application has several processes, a read of an application with no outpost, and `focus()` and `foreground()`, which are Core's facts, go from the host to Core's reducer, which answers or names the outpost whose pipe the supervisor then makes; Core owns which outposts exist, so the route has one owner.
+- **Application identity has one resolver** (Dickson, 2026-11-09): the listener resolves a process's identity once, from a process handle it holds, and sends it with the first fact for that process; the supervisor uses it, so the fact has one owner.
 
 ## Appendix A: NVDA's app modules, one line each
 
@@ -415,9 +178,9 @@ Pinned source `nvda/source/appModules`, 78 modules. For each: target and status,
 - itunes (123). Legacy. Skip.
 - javaw (53). Host resolution for Java applications by parent process and command line. Tier E, after M16.
 - kindle (464). Kindle for PC 1.x book view, IA2. Custom browse-mode interceptor. Tier C.
-- lockapp (106). Windows lock screen, current. Overlays, input capture, review position save and restore. After M8.6.
+- lockapp (106). Windows lock screen, current. Overlays, input capture, review position save and restore. After M8.7.
 - lockapphost (15). Legacy. Skip.
-- logonui (129). Windows logon, current. Overlays, focus re-queue, password field name. After M8.6.
+- logonui (129). Windows logon, current. Overlays, focus re-queue, password field name. After M8.7.
 - loudtalks (42). Renamed Zello. Skip.
 - lync (99). Skype for Business, discontinued. Skip.
 - microsoftedge (20), microsoftedgecp (32). EdgeHTML, discontinued. Skip.

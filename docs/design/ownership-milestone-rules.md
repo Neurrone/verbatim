@@ -17,10 +17,10 @@ The ownership refactor's builds are all built: [the one judge build](../../books
   - Cancelling expired focus speech is Core leaving out `DropExpiredSpeech`.
 - M5.
   - The loader owns the rule tables, configuration with a generation.
-  - A listener veto names its generation, and the outpost's rules apply to recovery reads under its current generation.
+  - A listener veto names its generation, and is placed in the outpost too, whose rules apply to its own recovery reads under its current generation.
   - A module's `focus()` is the outpost's newest report of a control, its own fact; a module that reacts to changes is given every change of a node the outpost has not released, and Core decides what is spoken.
-  - A hook runs on a worker in a call program, and its answer is a reducer input.
-  - The wasmtime store is owned by the worker generation in charge, and abandonment while it is lent is the module's fault: the store is discarded and the module instantiated again.
+  - A pending hook is one state of the outpost's reducer, which holds its event intake meanwhile; every message from the host is a reducer input naming its hook call, and each read is a program named by its call.
+  - The wasmtime store is owned by its lane in the extension's host; a trap or overrun discards the store and instantiates the module again, and a hook abandoned at the event's deadline counts as `pass`.
   - Load, swap and `on-command` are queries with responders.
   - A module's speech is a report judged against attention.
   - Module commands enter by the one input route.
@@ -56,7 +56,7 @@ The ownership refactor's builds are all built: [the one judge build](../../books
   - Overlays are written only by reducer effects.
   - An OCR read is a query.
   - Words stay in Core.
-- M8.6: two instances share no writable fact; the integrity of the window in front stays the listener's report.
+- M8.7: two instances share no writable fact; the integrity of the window in front stays the listener's report.
 - M9: logs are one-way and sent in batches; the Verbatim+F1 report is a query.
 - M10: the console reads Core only by queries; its node reads are requests with responders.
 - M11: a theme switch is an input and an effect ordered with `Speak`.

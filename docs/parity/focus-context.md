@@ -285,7 +285,7 @@ is its only report. Core's `tests/foreground.rs`.
   repeat.
 - Different, deliberately: the return to the user's desktop after the
   secure desktop says the title, where NVDA normally says the focus
-  alone (untestable until M8.6).
+  alone (untestable until M8.7).
 - Different, known: on the first Escape from Windows 11 Notepad's WinUI
   context menu, NVDA says "Untitled - Notepad"
   (`keyboard-opened-context-menu.txt` in the same folder). The menu is a

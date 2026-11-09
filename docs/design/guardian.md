@@ -193,6 +193,6 @@ Measured before and after: the longest legitimate reducer step (a terminal flood
 - After a Core restart, a hung background application with a call abandoned inside it delays all reading up to the 13-second grace, and its old child is then killed mid-call. The guardian's death ends everything mid-call, with the same risk.
 - A hang has no flight evidence when the recorder is off; a fast-fail cannot be dumped from outside.
 - An outpost replaced while Core is alive still gets its spare before the old outpost has exited, as today; that ordering is M6.2's.
-- The guardian will need UIAccess when Core does (M8.6), and on a secure desktop one guardian runs per desktop.
+- The guardian will need UIAccess when Core does (M8.7), and on a secure desktop one guardian runs per desktop.
 
 Accepted risks (Dickson): the guardian's dumps of Core contain user text, as flight dumps do; the Core page is shared, unnamed, between Core and its guardian only.

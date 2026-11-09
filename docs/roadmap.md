@@ -166,7 +166,7 @@ The decisions, in brief:
   the read's start; the baseline's life follows the focus Core holds.
 - Remove the second layer: Core's eight caret reports and its Backspace
   and Delete prediction, the outpost's eight reads (so that until
-  uiAccess, M8.6, a caret key in an elevated window is judged from the
+  uiAccess, M8.7, a caret key in an elevated window is judged from the
   last read), the time-zero record, the line-limited "since" check,
   report numbers, the selection baseline's three modes, the separate
   watch request, and the single superseded slot.
@@ -449,8 +449,10 @@ wake-ups and processor time are measured before and after.
 ## M5 — Extensions v1
 
 The design is [extensions](design/extensions.md); the order of work, with the
-tests that prove each step, is [the M5 work plan](design/m5-extensions-work.md).
-This entry keeps the scope and the exit criteria. M4.4, which gave the
+tests that prove each step, is [the M5 work plan](design/m5-extensions-work.md);
+the surface as extension authors see it is the Extensions guide's reference
+(`books/extensions/src/reference/readme.md`), settled with Dickson on
+2026-11-09. This entry keeps the scope and the exit criteria. M4.4, which gave the
 messages the extension surface exposes their final home, is done.
 
 Before step 1, the design is restated against the outpost's reducer,
@@ -462,72 +464,124 @@ package reader get generated tests of their own.
 - Modules as folders: a module is a `module.toml` beside a Wasm component;
   a built-in is a module folder under `extensions/builtin/` (planned), never listed
   and never disabled by the user; an extension is a `.vext` bundle of
-  modules, installed by a request to the running Verbatim through a small
-  helper executable and the control plane (NVDA's `nvda_slave.exe`
+  modules, a zip its author makes by hand, as NVDA's add-ons are, with no
+  packaging tool; installed by a request to the running Verbatim through a
+  small helper executable and the control plane (NVDA's `nvda_slave.exe`
   pattern), never by a flag on `verbatim.exe`, whose single-instance
-  takeover would kill the running instance.
+  takeover would kill the running instance, or from the Extensions
+  dialog's Install from file button. At most one installed extension
+  claims an application, above the built-in, and no two modules of one
+  extension claim the same one; a second is refused at install, so
+  installed extensions need no order among themselves (Dickson,
+  2026-11-09).
 - Rules as data: a matcher and an action with a required id and an explicit
   backend, scoped to the sender's application identity, applied by the
-  outpost before any hook runs, refused at load when two rules of one module
-  contradict.
+  outpost before any hook runs; within a module the later rule wins a
+  property two rules set, with no conflict check (Dickson, 2026-11-09).
 - The component host on wasmtime with the component model (D6, decided
-  2026-10-22): epoch deadlines kept by the worker's own timer, never the
-  reducer's alarm, within the program's deadline the reducer keeps
-  (Dickson, 2026-10-31), with each hook's deadline judged by its own
-  store, since the epoch is the engine's (the work plan's step 0b), node reading as bindings over the outpost's own readers, speech
-  enforced by attention, hooks `on-load`, `on-unload`, `on-event` with
-  `pass`, `drop`, `replace`, `rewrite` and `adopt`, `on-node`, `status-bar`
-  and `on-command`. The `ci-arm64` job ratifies Cranelift on ARM64 and
+  2026-10-22), in extension host processes only: every built-in runs as
+  one internal extension in a host process of its own, started with
+  Verbatim and always running, so no Wasm runtime is in Core, the
+  listener or an outpost (Dickson, 2026-11-09). A host runs one thread
+  per lane: each outpost it serves, each global module; its reads are
+  requests straight to the claiming outpost, its speech and every action
+  that depends on attention go through Core's reducer. Each hook's
+  deadline is judged by its own store, since the epoch is the engine's;
+  the outpost's reducer calls each hook and holds its event intake
+  while it waits, its worker answering the host's reads as ordinary
+  programs, and a module's effects travel back with the hook's verdict
+  inside the event's report. Speech is enforced by attention. The hooks are `on-focus`,
+  `on-event`, `on-node` (one call per emitted batch), `status-bar`,
+  `on-command(command, trigger)` and `on-list-dialog`, and the WIT files
+  are the single source of the host's and the guests' bindings and of
+  the API reference pages, which `cargo xtask ci` checks are current
+  (Dickson, 2026-11-09). The `ci-arm64` job ratifies Cranelift on ARM64 and
   measures host-call overhead against the hook deadlines; Pulley is
   switched on only if that ratification or a Cranelift fault requires it.
   A hook's time is a stage in the latency timeline and two rows in the
   performance ledger.
 - Capabilities derived from the component's imports, never declared; the
-  install and Extensions dialogs show flows and the lines of the
-  [extensions design](design/extensions.md), section 9.3.
+  install and Extensions dialogs are laid out as lists to tab through
+  (applications, commands with their conflicts, and warnings only when
+  there are any), worded as the Extensions guide's capabilities page says
+  (Dickson, 2026-11-09).
 - The breaker: three failures to respond within a minute disable an
-  extension for the session, spoken with its name, for built-ins and
-  installed extensions alike ([security model](design/security-model.md),
+  installed extension for the session, spoken with its name, and a
+  built-in module alone, since built-ins have no switch of their own
+  (Dickson, 2026-11-09) ([security model](design/security-model.md),
   A9); resource figures per extension in developer mode (A6).
 - Binding by application identity (executable, console client, hosted app,
-  WebView2 parent) resolved by the supervisor, one built-in module
-  instance per outpost and one host process per installed extension, of
-  every kind, with developer-folder modules run the same way
-  ([security model](design/security-model.md), X4); hot reload of developer
-  and built-in module folders in developer mode
-  by validate-then-swap, the folder watch starting from the `notify` crate
+  WebView2 parent) resolved by the supervisor, one host process per
+  extension, of every kind, the developer folder working as one extension
+  as the built-ins do, in one host of its own (Dickson, 2026-11-09;
+  [security model](design/security-model.md), X4); a developer-folder
+  module replaces an installed extension's module for the application it
+  claims while it is there, as NVDA's scratchpad does (Dickson,
+  2026-11-09). Loading, enabling and hot reload done on a loader thread
+  of Core's, which reads, validates and compiles, while the reducer owns
+  each extension's active version and publishes the rule tables and the
+  hook registrations to the listener and the outposts, and the gesture
+  map to the hook thread, at a version (Dickson, 2026-11-09); hot reload
+  of developer and built-in module folders in developer mode by
+  validate-then-swap, the folder watch starting from the `notify` crate
   with `notify-debouncer-full`, adopted only once its source and its idle
   wake-ups are checked.
+- Gestures that change while Verbatim runs (Dickson, 2026-11-09): the
+  keyboard hook thread's gesture map published at a version, so module
+  commands follow install, enable and reload; a binding names a number
+  of presses, every press fires at once, the hook thread alone judges
+  from its own map whether the same keys are bound to a higher count
+  and stamps the press when they are, and a list dialog the command
+  opens is held until that press's multi-press window has closed and
+  every later press of the same keys has answered, so a double press
+  never shows the first dialog. Gesture conflicts are listed in the install dialog rather than
+  refused, replacing the reserved gestures.
 - Global modules (Dickson, 2026-10-31, reversing the decision of
   2026-10-22 that left them out): the tray list, the taskbar list and
-  reading the current time move from core code to global modules. A
-  global module runs on a Core thread of its own, never the reducer's;
-  its reads of an application go to the owning outpost as queries in
-  Core's request table, as a module command's do, and its speech is an
-  effect Core's reducer judges. Designed in step 0b, with the thread and
-  hop each adds measured, and a clock import for reading the time.
+  reading the current time move from core code to global modules, which
+  run in their extension's host on a lane of their own, read only the
+  applications their manifest's `reads` names, and may be shipped by
+  installed extensions too (Dickson, 2026-11-09); the surface gains a
+  clock, the Windows version, a list dialog shown by Core with its answer
+  hook, and a click on a node the module holds.
 - The minimal log ring, the log viewer window and the Verbatim+F1 focus
   report, pulled forward from M9 because module failures and rule
   provenance need somewhere to be read.
+- Built for the installed copy that M8.6 adds, though M5 ships only the
+  portable one: every path to a folder Verbatim writes (settings, installed
+  extensions with their staging folders, the developer folder, compiled
+  code, logs) comes from one resolver of the configuration root, which
+  answers the folder beside the executable in portable mode, and never
+  from the executable's own path; built-ins are found from the program
+  folder, never the configuration root, since they are the same for every
+  user; compiled code is named by its content, the runtime's version and
+  the architecture, in a cache that can always be rebuilt; the `.vext`
+  helper finds Verbatim only through the control plane, never by a path,
+  and shows a message box that Verbatim must be running when nothing
+  answers, as NVDA's `nvda_slave.exe` does; and the Extensions dialog has
+  an Install from file button, which is how a portable copy installs, with
+  no file association registered (Dickson, 2026-11-09).
 - The guest workspace under `extensions/` (planned) with a permissively licensed SDK;
   every built-in written in Rust, Calculator and Notepad first.
 - Every Windows inbox application as a built-in: Explorer (starting with the
   cosmetic fixes deferred from M3), Windows Terminal, Notepad, Calculator,
-  Task Manager (proven by `mockapp` until M8.6 lets it be read end to
+  Task Manager (proven by `mockapp` until M8.7 lets it be read end to
   end), Settings, Start and search, Quick Settings and Open With; sleep mode
   as a core per-application list rather than five modules.
-- Windows Terminal's second terminal identity
-  ([design](design/windows-terminal-twin-focus.md)) as the Terminal
-  built-in's `on-event` hook, never core code: it drops a sender with the
-  runtime id starting 14 that is the twin of the current focus starting
-  42, and adopts a 42 sender that is the twin of a current 14 focus, by
-  the design's twin test, with tests that the terminal is followed
-  afterwards and that cover two panes in one window. Before implementing,
-  collect evidence that the runtime id's last part is never reused (pane
-  splits, pane moves, closing and reopening panes, new tabs). Until then
-  the tests accept one repeated "terminal" as an optional utterance, which
-  does not cover the late repeat of a 42 to 14 to 42 flip seen on GitHub's
-  slower runner, so that can still fail scenarios. Evidence:
+- Windows Terminal's second terminal identity as a focus veto rule of the Terminal built-in, never core code
+  and with no hook (Dickson, 2026-11-09): the listener drops every focus
+  event from a `TermControl` whose UIA runtime id starts 14, so only the
+  usual identity starting 42 is announced and followed. In every one of
+  the 156 focus events from a 14 identity measured, a 42 from the same
+  process arrived within 1 second, in either order; where the 14 comes
+  first, "terminal" is said when the 42 arrives instead, which is the
+  rule's one cost, measured by rerunning the experiment's judge with the
+  order and the gap recorded. Node matchers gain the UIA runtime id, with
+  exact and prefix forms, and the listener's cache carries it. Tests: the
+  terminal is announced once and followed afterwards for each order of
+  the two identities, and with two panes in one window; the
+  `windows_terminal_` scenarios without the optional repeated "terminal".
+  Evidence:
   `experiments/windows-terminal-raises-focus-from-a-second-runtime-identity/`.
 
 - Configuration versioned, by the ownership model's version rule
@@ -535,16 +589,17 @@ package reader get generated tests of their own.
   tables and the fetch configuration carry a version published by Core
   alone, every judgement the listener or an outpost makes under them
   names that version, and a receiver recognises a judgement made under
-  a version it has moved past.
+  a version it has moved past and acts on it by its kind, as
+  [extensions](design/extensions.md), section 2.2, says.
 - Focus vetoes and redirects with no read NVDA would not make (Dickson,
   2026-10-29): a veto declared as a rule judged by the listener
-  from the event's cache; a hook's code veto or redirect run in the
+  from the event's cache, and by the outpost on every focus it reads
+  itself; a hook's code veto or redirect run in the
   outpost after the listener's read, as NVDA runs `event_gainFocus` after
   its walk, so it makes no read NVDA would not; node and event rules
   applied in the outpost to every kind of focus report, its own recovery
-  reads included; kept verdicts dropped when rule tables are reloaded; the
-  Windows Terminal second-identity hook restated against repeats judged in
-  Core; and File Explorer's search band refusal (the focus pipeline
+  reads included; kept verdicts dropped when rule tables are reloaded; and
+  File Explorer's search band refusal (the focus pipeline
   audit's difference 24) as a rule of the File Explorer built-in, needed
   on Windows 11 24H2 and not on 25H2, with no `StartButton` rule, since
   the rework's first step found no keyboard route to the MSAA focus on
@@ -555,14 +610,16 @@ package reader get generated tests of their own.
   unless the overflow flyout is open. NVDA's `systrayList` add-on reads
   the MSAA children of the taskbar's
   `Windows.UI.Input.InputSite.WindowClass` window instead, the taskbar's
-  buttons under its first child, and clicks an item at its location. An
+  buttons under its first child, and clicks an item at its location
+  (`ruifontes/systrayList`, read on 2026-11-09). An
   end-to-end scenario, `tray_list_and_task_bar`, lists Verbatim's own
   tray icon and opens its menu with Enter, then lists the taskbar on a
   second press.
 
-Out of M5 by decision (Dickson, 2026-10-22): module settings and storage
-and the timer and asynchronous imports (M13), the utterance,
-settings-changed and response hooks, updating or reordering installed
+Out of M5 by decision (Dickson, 2026-10-22, amended 2026-11-09): module
+settings and storage, the settings view and the timer and asynchronous
+imports (M13), `on-load` and `on-unload`, the utterance, settings-changed
+and response hooks other than the list dialog's, updating installed
 extensions,
 scripted modules and the interpreter console (M10), and the
 `verbatim:synth` world with its tone synthesizer (M6, where the host work
@@ -580,7 +637,7 @@ continuously alongside every later milestone.
 This milestone comes right after M5 and before browse mode so that
 Eloquence can be delivered through the extension mechanism and
 Verbatim can become Dickson's daily screen reader sooner (Dickson,
-2026-10-15). The design is section 13 of [extensions](design/extensions.md)
+2026-10-15). The design is section 12 of [extensions](design/extensions.md)
 and D18; the order of work, with its tests, is
 [the M6 work plan](design/m6-native-synth-work.md).
 
@@ -596,12 +653,16 @@ security model's A3); and a memory cap on the host.
   world with a tone synthesizer component, hosted by the same
   `verbatim-synth-host`, so Wasm and native engines share one host from
   the start.
-- The host loads adapters matched by architecture; a reduced x86 host
-  carrying only the adapter loader and the protocol, cross-built for
-  `i686-pc-windows-msvc` by `cargo xtask`, serves 32-bit engines. An x64
-  adapter on ARM64 is unsupported until an x64 cross-build is added.
-- The AppContainer in its less privileged form wherever the engine allows,
-  each hosted engine declaring the strictest level it works under, the
+- The host loads adapters matched by architecture, read from each DLL's
+  file header rather than declared in the manifest, which only lists the
+  DLLs; Core picks the best build the machine can run, its own
+  architecture, then x64, then x86, and an extension with none is refused
+  at install (Dickson, 2026-11-09). A reduced x86 host carrying only the
+  adapter loader and the protocol, cross-built for `i686-pc-windows-msvc`
+  by `cargo xtask`, serves 32-bit engines on x64 and ARM64. ARM64
+  installations are to run x64 engines too, through a full x64 host under
+  emulation, not built in M6 (Dickson, 2026-11-09).
+- The ordinary AppContainer for every host (Dickson, 2026-11-09), the
   container's access entries set by the contained launch itself, and a
   probe child asserting every denial.
 - The Eloquence adapter, written from IBM's documented SDK as
@@ -743,6 +804,22 @@ silence.
   manager's priorities and cancellation, the culling of expired focus
   speech, index marks and say-all's continuation, the synthesizer host
   and the mixer; every difference no decision covers is fixed here.
+- Long utterances (Dickson, 2026-11-09): OneCore synthesizes a whole
+  utterance before returning any audio (`crates/verbatim-synth-onecore`,
+  `SynthesizeSsmlToStreamAsync` on the whole SSML), so a very long text
+  is heard only after all of it is synthesized and its audio is held in
+  memory, the likely cause of NVDA's freeze on speaking a long copied
+  text, which NVDA avoided rather than fixed (nvaccess/nvda#11843, fixed
+  by speaking a character count above 1,024 characters in
+  nvaccess/nvda#11852). First measure, with OneCore and eSpeak NG, the
+  time to first audio, the synthesizer host's memory and that cancelling
+  stops it, for a text of 100,000 characters; then, if that confirms the
+  cause, have the speech pipeline hand a synthesizer long utterances in
+  pieces split at sentence or clause boundaries, each synthesized while
+  the one before plays, with every piece keeping its marks so say-all and
+  cancelling work across them. The size of a piece is a latency budget
+  Dickson sets. No cap on the length of extensions' speech is needed
+  once this is done.
 - When anything handed to the synthesizer or the mixer has expired,
   everything handed on is stopped and the still-valid utterances are
   handed on again, as NVDA's speech manager does; today they are lost
@@ -1017,7 +1094,7 @@ After M6 (Dickson, 2026-10-31). Developer mode, and the fixes from [the security
 - COM unmarshalling hardened with `EOAC_NO_CUSTOM_MARSHAL`, and the write-restricted token for outposts, which must also stop an outpost writing into the user's other processes, tested together against UIA, MSAA and a remote operation (X7, section 6.9). Test: `mockapp` and Notepad scenarios pass under both, and an object naming a custom unmarshaler is refused.
 - An application named by a handle rather than a process id, a bound on outposts, and the background flood cap (U7 to U9). Test: the hostile `mockapp` mode of M4.9 gains a notification flood and a provider that hangs or crashes mid-call, each asserting the exact speech, that another application keeps speaking within a stated time, and that memory stays under its cap.
 - The per-process mitigations of [the security model](design/security-model.md), section 6.9, applied at each child's start: control-flow guard, strict handle checks, the image load policy, the extension hosts' job limits, and control-flow guard and shadow stacks at link time; never the Microsoft-only image policy for synthesizer hosts or outposts, and no extension-point policy for Core while the GUI is in Core, since NVDA's helper must read Verbatim's GUI for parity captures. Test: each process's mitigations, read back from it, equal its stated list on x64 and ARM64, and the `mockapp` and Notepad scenarios pass under them.
-- Pinned DLL search (X2), moved in from M8.7: each executable calls `SetDefaultDllDirectories` with the system and application folders before anything else loads. Test: a DLL planted beside a portable copy is not loaded.
+- Pinned DLL search (X2), moved in from M8.6: each executable calls `SetDefaultDllDirectories` with the system and application folders before anything else loads. Test: a DLL planted beside a portable copy is not loaded.
 - Synthesizer escapes covering control and NUL characters (J1). Test: text with SSML, NULs and control characters is spoken as text by both built-in drivers.
 - `cargo deny` in `cargo xtask ci` (X10).
 
@@ -1025,15 +1102,15 @@ Exit: every item above is built with its test passing, and wake-ups and processo
 
 Security work other milestones carry, each with its test:
 
-- M5: the extension surface's rules ([extensions](design/extensions.md), section 4.6), each with a test, every navigation import at every boundary included; installed extensions in hosts of their own, with the round trip measured (X4), and a probe inside the host whose every attempt to write outside its data folder, follow a planted junction or hard link out of it, open a socket without importing a network interface, start a process or read the clipboard fails; the breaker (A9); compiled code mapped only from where ordinary processes cannot write (X5); starting with every extension off (A8); the user endpoint taking requests and never commands, one install dialog at a time (C1, C9), tested by a second request refused while the dialog is open; extension installation that writes only inside its own folder (X13), tested by the malicious package corpus; module log caps.
+- M5: the extension surface's rules ([extensions](design/extensions.md), section 4), each with a test, every navigation import at every boundary included; installed extensions in hosts of their own, with the round trip measured (X4), and a probe inside the host whose every attempt to write outside its data folder, follow a planted junction or hard link out of it, open a socket without importing a network interface, start a process or read the clipboard fails; the breaker (A9); compiled code mapped only from where ordinary processes cannot write (X5); starting with every extension off (A8); the user endpoint taking requests and never commands, one install dialog at a time (C1, C9), tested by a second request refused while the dialog is open; extension installation that writes only inside its own folder (X13), tested by the malicious package corpus.
 - M6: the synthesizer container, confirmed before any native code loads, read-only, limited at creation, with the host's messages checked (X6), tested by a probe child asserting every denial on x64 and ARM64 and a host started with the wrong token loading nothing; the synthesizer fallback after repeated crashes and the idle-spin check (A3, A7), tested by an engine that crashes on a string and one that spins; x86 emulation in the container measured.
 - M6.3: speech moved to another audio device while the default refuses Verbatim (A5), tested with the default held in exclusive mode; a cut string known to speech (U4).
 - M6.5: typed characters judged against the focus they were typed in (L9), tested by a password field that closes on its last character.
 - M7: the helper loaded narrowly, handed its channel, version-checked and treated as hostile (X8), tested with a mismatched helper and malformed messages; link destinations (S3).
-- M8.7, with the installer (the screen curtain with M8.4, and linear-time dictionaries, direction overrides and clipboard history with M8.2): a machine-wide, signed, administrator-owned installation (X1); signed updates from a process of their own (X9), tested with an unsigned and a wrongly signed download; never running elevated (B2); diagnostics' home and limits (L4); the screen curtain built for a user who cannot see it (L8), tested across a display change, unlocking and a restart; linear-time dictionaries (J2); direction overrides spoken (S2); clipboard history (L7).
+- M8.6, with the installer (the screen curtain with M8.4, and linear-time dictionaries, direction overrides and clipboard history with M8.2): a machine-wide, signed, administrator-owned installation (X1); signed updates from a process of their own (X9), tested with an unsigned and a wrongly signed download; never running elevated (B2); diagnostics' home and limits (L4); the screen curtain built for a user who cannot see it (L8), tested across a display change, unlocking and a restart; linear-time dictionaries (J2); direction overrides spoken (S2); clipboard history (L7).
 - M4.7 and M4.8: native crashes dumped by Verbatim, never by Windows Error Reporting (L5); Core restarted by the guardian, with a breaker whose last restart runs without extensions (A1); Core's memory cap (A2); the single instance in a private namespace and the `WM_QUIT` filter removed (C2's startup names, C6).
 - M4.9: walks, lists and strings bounded (U2 to U4), terminal alignment below quadratic time (U5), and fuzzing at the parsers (X12).
-- M8.6: the UIAccess measurement first (B1), then the lock and secure-screen rules (B3 to B8) with the secure instance's menu and dialogs as an allowlist, no file choice, and the toolkit's dialogs routed to the log (G1, G2, G4), tested by a list of every window and command the secure instance can reach equalling the allowlist, and by each of NVDA's secure-screen advisories as a scenario; the administrator's copy for secure screens following no links (X13), tested with a planted junction; developer mode in UIAccess builds turned on only in Verbatim's own window (C1); the secure instance's children started without SYSTEM (B10), tested by reading their tokens; "Secure Desktop" announced on the switch (B11); and the secure instance's own curtain.
+- M8.7: the UIAccess measurement first (B1), then the lock and secure-screen rules (B3 to B8) with the secure instance's menu and dialogs as an allowlist, no file choice, and the toolkit's dialogs routed to the log (G1, G2, G4), tested by a list of every window and command the secure instance can reach equalling the allowlist, and by each of NVDA's secure-screen advisories as a scenario; the administrator's copy for secure screens following no links (X13), tested with a planted junction; developer mode in UIAccess builds turned on only in Verbatim's own window (C1); the secure instance's children started without SYSTEM (B10), tested by reading their tokens; "Secure Desktop" announced on the switch (B11); and the secure instance's own curtain.
 - M9: no content in logs at default levels (L3), tested by scanning a full suite run's logs for the planted text.
 - M12: Remote's end-to-end encryption, announcements and lock behaviour (C8, B9), tested with a relay that tries to read and alter traffic and a session that locks.
 - M18: braille drivers in their extensions' hosts, given only the devices Core opens for them (section 6.11), tested with a device sending malformed reports.
@@ -1119,9 +1196,13 @@ are.
 - Layered commands (Dickson, 2026-11-02): a command layer in the input
   crate's decision machine, active after its prefix key until one of its
   commands runs or Escape is pressed, named by input help; extensions
-  declare layers as data from M13. 24 NVDA add-ons use one, and the
-  decision machine's gesture map is fixed while Verbatim runs today.
-- Input help mode; the gesture-remapping configuration GUI.
+  declare layers as data from M13. 24 NVDA add-ons use one; the gesture
+  map published at a version arrives in M5.
+- Input help mode; the gesture-remapping configuration GUI, where
+  changing a binding keeps the binding a module declared, so its
+  `trigger` still names it, and the install dialog's list of an
+  extension's conflicting gestures offers to rebind each (Dickson,
+  2026-11-09).
 - Modifiers left held after the secure desktop, since their releases
   never reach the hook (NVDA clears its modifier record when the secure
   desktop opens; the signal of a desktop switch is designed in the focus
@@ -1207,7 +1288,32 @@ are.
 - From NVDA's changes up to 663e4b679 (reviewed 2026-10-06): OCR captured
   through Windows Graphics Capture.
 
-## M8.6 — UIAccess: elevated windows, UAC and sign-in
+## M8.6 — Installer and updater
+
+No exit criterion of its own: the milestone is done when all of its items
+are.
+
+- Installer/updater skeleton.
+- Verbatim's own notifications raised as Windows toasts (Dickson,
+  2026-11-09): extensions that failed to load and available updates,
+  in place of the sentences spoken at once until then.
+- The installed copy (Dickson, 2026-11-09), by the layout M5 left ready
+  for it: the configuration root resolved to the user's profile for an
+  installed copy ([security model](design/security-model.md), section
+  4.1), so settings, profiles, gestures, installed extensions and the
+  developer folder are per user, and compiled code, logs and dumps go to
+  the user's local application data (L4); built-ins and their compiled
+  code stay in the administrator-owned installation, the same for every
+  user (X5). NVDA keeps its user configuration in roaming application
+  data, or local with an installer option, and a portable copy's beside
+  it (`config/__init__.py`, `getInstalledUserConfigPath` and
+  `getUserDefaultConfigPath`); which of roaming and local Verbatim uses is
+  decided here.
+- The `.vext` file type registered machine-wide to the helper, as NVDA's
+  installer registers `.nvda-addon` to `nvda_slave.exe`
+  (`installer.py`, `registerAddonFileAssociation`).
+
+## M8.7 — UIAccess: elevated windows, UAC and sign-in
 
 Reading elevated console windows, UAC prompts and the lock screen or
 sign-in needs the UIAccess permission; this milestone builds it and reads
@@ -1240,13 +1346,6 @@ each of them end to end.
 
 Exit: a UAC prompt, an elevated console, and the sign-in screen are read
 in the VM.
-
-## M8.7 — Installer and updater
-
-No exit criterion of its own: the milestone is done when all of its items
-are.
-
-- Installer/updater skeleton.
 
 ## M9 — Logging and log viewer
 
@@ -1348,7 +1447,7 @@ proven the surface on the built-in app modules, which is M5's goal
 extension API growth rule asks.
 
 - Acting in the module's own application, bounded by the application
-  boundary of the extensions design (section 4.6) and allowed only while
+  boundary of the extensions design (section 4) and allowed only while
   the application holds attention: node actions (invoke, focus, select,
   expand or collapse, toggle, scroll, and named accessible actions);
   sending keys and inserting text, typed by Core so no extension holds an
@@ -1362,7 +1461,7 @@ extension API growth rule asks.
   module's application; declared read-only window messages to the
   module's own application.
 - Output: packaged sounds, tone sequences with pan, a capped PCM lane, and
-  speaking a node or saying all of its subtree.
+  saying all of a node's subtree (speaking a node arrives in M5).
 - Module settings shown by Core, a secret store outside the settings file,
   shipped with the network imports, and the data folder each extension
   reads and writes, with its size cap
@@ -1375,11 +1474,11 @@ extension API growth rule asks.
   on an update that adds a flow (a new exit, host or device, or a new
   source in an extension that has an exit); clipboard reads and a
   clipboard-changed event from Windows' clipboard
-  listener, never polled; the mouse; global modules with their read
-  boundary; reading speech history, shown at install as receiving all the
+  listener, never polled; the mouse beyond M5's click; global modules
+  reading every application; reading speech history, shown at install as receiving all the
   text Verbatim speaks.
 - The speech-text stage module kind (Dickson, 2026-11-02): an ordered chain
-  in Core's speech queue, each stage a module in its extension's host, or for a built-in on a Core thread,
+  in Core's speech queue, each stage a module in its extension's host, on a lane of its own,
   that takes an utterance's text segments and language tags and returns new
   ones, for translation, untagged-language detection and text rewrites.
   The original text is never spoken: a stage that fails or misses its
@@ -1518,8 +1617,8 @@ Tiers, gated by the capabilities each module needs:
   line 15, tested in `IAccessibleHandler/__init__.py`, lines 1039 to
   1055), since its caret blinks by them; until then a focused Scintilla
   editor tries to read its caret at each blink.
-- **Lock screen and logon UI — after M8.6**: reading the sign-in screen
-  needs UIAccess, which M8.6 builds.
+- **Lock screen and logon UI — after M8.7**: reading the sign-in screen
+  needs UIAccess, which M8.7 builds.
 - **Tier B — the terminal clients, in two stages**: Windows Terminal
   workflows are core M4 behavior, and mintty is triaged on its own after M4
   (its ConPTY integration may make it readable stock). PuTTY, SecureCRT,

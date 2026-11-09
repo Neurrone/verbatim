@@ -39,7 +39,7 @@ The refactor changes who owns each fact, not what is heard. A change in speech d
 
 ## What the rules do not cover
 
-The order across applications, confined to Core's stale rule; the two routes of one application, confined to the outpost's reducer; the applications themselves, bounded by deadlines, abandonment and kill-and-replace; the application rules until M5; version skew and untrusted peers, validated at their boundaries; a second instance in M8.6, sharing no writable fact; the supervisor's wall-clock decisions; thread-affine backends, recovered by kill-and-replace only.
+The order across applications, confined to Core's stale rule; the two routes of one application, confined to the outpost's reducer; the applications themselves, bounded by deadlines, abandonment and kill-and-replace; the application rules until M5; version skew and untrusted peers, validated at their boundaries; a second instance in M8.7, sharing no writable fact; the supervisor's wall-clock decisions; thread-affine backends, recovered by kill-and-replace only.
 
 ## Tests
 

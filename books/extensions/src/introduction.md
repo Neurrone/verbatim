@@ -2,7 +2,7 @@
 
 This guide is for people writing extensions for Verbatim: support for an application, a voice, a braille display, or a change to what Verbatim says, such as translation.
 
-Extensions are being built. App modules, global modules and synthesizers come first; speech-text stages, recognisers, the network and the data folder follow; braille drivers come last. The pages describe extensions as they are designed, and say so where something is not settled yet.
+Extensions are being built. App modules, global modules and synthesizers come first, in milestones M5 and M6; speech-text stages, recognisers, the network and the data folder follow; braille drivers come last. The pages describe extensions as they are designed for M5, and say so where something is not settled yet; the tutorials are drafts until the guest SDK exists.
 
 ## How this guide is organized
 
