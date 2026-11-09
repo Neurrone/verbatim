@@ -30,14 +30,18 @@
 //!   key's evidence, since a caret event is taken only for the focus
 //!   (`docs/parity/text.md`).
 //! - A later key silences only reads begun at or after its press; a read
-//!   begun before it still speaks for the key it silenced
-//!   (`docs/parity/text.md`, "Caret keys and what each speaks").
+//!   begun before it still speaks for the key it silenced while that key
+//!   is still current (`docs/parity/text.md`, "Caret keys and what each
+//!   speaks"). Once the later key has replaced it, its before read asked
+//!   or its pass made, the key speaks no words whatever its read's timing,
+//!   and such a read is an ordinary report whose selection changes are
+//!   heard (the coordinator's ruling, 2026-11-09).
 //! - A focus moving first within the 100 ms speaks the key's unit from the
 //!   read before it, Backspace what that read shows it removes, with no
 //!   before read nothing (2026-11-08, 2026-11-09); a key whose before read
 //!   is still running says nothing (2026-11-09). After the 100 ms and
 //!   before the key has spoken, the key says nothing, its held selection
-//!   changes still coming first (Dickson's answer, 2026-11-09).
+//!   changes still coming first (the coordinator's ruling, 2026-11-09).
 //! - A key waiting behind another when the focus moves still reaches the
 //!   application in press order, and says nothing for itself if its node
 //!   is no longer the focus when it is judged, at its pass (Dickson's
@@ -45,12 +49,11 @@
 //! - A selection change arriving while a key is between its release and
 //!   its words is held and said after them, whether or not another key
 //!   waits behind it; before a key has been released it is said at once
-//!   (Dickson's answer, 2026-11-09).
+//!   (the coordinator's ruling, 2026-11-09).
 //! - Backspace speaks only when its caret moved
 //!   (`nvda/source/editableText.py` 313 to 320): with the caret not moved
 //!   it says nothing for the key and the change is heard; with the caret
-//!   moved and nothing removed it says "blank" (Dickson's answer,
-//!   2026-11-09).
+//!   moved and nothing removed it says "blank" (the coordinator's ruling, 2026-11-09).
 //! - Backspace over a selection says what comes before the selection's
 //!   start, Delete its unit, and the change follows, in general terms
 //!   when the text changed: "selection removed" when nothing is selected
@@ -256,15 +259,20 @@ impl Model {
     }
 
     /// Whether a key is between its release and its words: released with
-    /// its words owed, or silenced with the key that silenced it, or one
-    /// after that, not yet done.
+    /// its words owed, or silenced and not yet replaced.
     fn key_is_out(&self) -> bool {
         self.keys.iter().enumerate().any(|(id, press)| {
             press.passed.is_some()
-                && (!press.done
-                    || (press.silenced_at.is_some()
-                        && self.keys[id + 1..].iter().any(|later| !later.done)))
+                && (!press.done || (press.silenced_at.is_some() && !self.replaced(id)))
         })
+    }
+
+    /// Whether the key after key `id` has become current: its before read
+    /// has been asked, or it has been passed on.
+    fn replaced(&self, id: usize) -> bool {
+        self.keys
+            .get(id + 1)
+            .is_none_or(|later| later.before != BeforeRead::NotAsked || later.passed.is_some())
     }
 
     /// With no key out, the held selection changes are said.
@@ -349,15 +357,17 @@ impl Model {
         self.say_changes(&changes);
     }
 
-    /// The newest silenced key `report` is still evidence for: its read
-    /// began before the later key was pressed and ended after this key's
-    /// pass, and it shows a change.
+    /// The newest silenced key `report` is still evidence for: not yet
+    /// replaced, its read began before the later key was pressed and ended
+    /// after this key's pass, and it shows a change.
     fn silenced_evidence(&self, report: &Report) -> Option<usize> {
         if !self.shows_change {
             return None;
         }
-        self.keys.iter().rposition(|press| {
-            press.node.is_some()
+        (0..self.keys.len()).rev().find(|&id| {
+            let press = &self.keys[id];
+            !self.replaced(id)
+                && press.node.is_some()
                 && press.node == self.focus
                 && press.silenced_at.is_some_and(|at| report.began < at)
                 && press.passed.is_some_and(|at| report.ended >= at)
