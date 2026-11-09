@@ -20,11 +20,11 @@ Scenarios: the `windows_terminal_` scenarios generally, for example `windows_ter
 - Cause: not found; possibly the first entry's.
 - Fix: [M6.4 terminal residuals](roadmap.md#m64--terminal-residuals).
 
-## Windows Terminal's second terminal identity cancels the terminal expected in full
+## Windows Terminal's second terminal identity repeats the terminal at launch
 
-- Scenarios: `windows_terminal_two_windows` (run 41590454080, 2026-11-03; run 42492633218, 2026-11-08, the first window's terminal reported as node 1 then node 7, the second identity's "… terminal Administrator: …" said and cancelled where "blank" was expected); `windows_terminal_editing` (run 42429967492, 2026-11-08), whose opening's terminal focus came under one identity, the second, then the first again, so it was said three times where the opening accepts one repeat.
-- How: the second window's focus is raised five times within about 200 ms by Windows Terminal; each "terminal" and "blank" queued behind the slow "… window" utterance cancels the one waiting before it, so the "… terminal" the scenario expects heard in full ends cancelled: "was expected to end Completed, but ended Cancelled".
-- Cause: Windows Terminal raises focus from a second runtime identity ([UIA faults](../books/dev/src/reference/uia-bugs.md), "Windows Terminal raises focus from a second runtime identity"); Verbatim's rule dropping those repeats is not built, and the scenario's tolerance for optional repeats (`SECOND_WINDOW_REPEATS`, `crates/verbatim-e2e/src/scenarios/terminal.rs`) does not cover the expected utterance itself being cancelled. Whether NVDA cuts the earlier utterance the same way needs a capture.
+- Scenarios: `windows_terminal_editing` (run 42429967492, 2026-11-08).
+- How: the opening's terminal focus came under one identity, the second, then the first again, so it was said three times where the opening accepts one repeat.
+- Cause: Windows Terminal raises focus from a second runtime identity ([UIA faults](../books/dev/src/reference/uia-bugs.md), "Windows Terminal raises focus from a second runtime identity"); Verbatim's rule dropping those repeats is not built, and the scenario accepts one repeat of the terminal.
 - Fix: [M5](roadmap.md#m5--extensions-v1), the Terminal built-in's rule for the second terminal identity.
 
 ## Settings' page focus never delivered by UI Automation
