@@ -460,6 +460,9 @@ pub enum OutpostMessage {
     /// News of the desktop from the focus listener: the app gives it to
     /// Core.
     Desktop(verbatim_model::DesktopNews),
+    /// A progress bar's value changed, as the focus listener read it: the
+    /// app gives it to Core.
+    Progress(verbatim_model::BarChange),
     /// A window came to the system's foreground, as the focus listener
     /// learned it: the app gives it to Core, which decides the keyboard
     /// hook's view of the foreground (architecture section 5), attention

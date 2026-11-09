@@ -133,7 +133,7 @@
 //! after that, for an application still running, starts a new thread.
 
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::thread::{self, JoinHandle};
@@ -149,14 +149,14 @@ use verbatim_uia::map::{
 };
 use verbatim_uia::{
     Ancestor, AncestorGates, Cached, ElementExt as _, Fill, FocusInput, ListenerEvent,
-    ListenerSelection, Node, NodeGates, Shape, Uia,
+    ListenerProgress, ListenerSelection, Node, NodeGates, Place, Shape, Uia,
 };
 use verbatim_uia_rops::{Ancestry, FocusAncestry, FocusQuery, Progress, focus_ancestry_classic};
 
 use verbatim_listener_logic::checks::{self, Check, Gathered, Nearest, Step};
 use verbatim_listener_logic::focus::{
-    Arrival, FocusEvent, Judged, Meta, NO_WINDOW, NOT_FOCUSED, NOT_THE_LAST_READ,
-    NOTIFICATION_NO_WINDOW, TOAST_NOT_CORE_WINDOW, TOAST_NOT_READ, arrival_of,
+    Arrival, BarObject, BarVerdict, FocusEvent, Judged, Meta, NO_WINDOW, NOT_FOCUSED,
+    NOT_THE_LAST_READ, NOTIFICATION_NO_WINDOW, TOAST_NOT_CORE_WINDOW, TOAST_NOT_READ, arrival_of,
 };
 use verbatim_listener_logic::schedule::{
     AlarmChange, AppKey, QueuePlace, Request, Schedule, ScheduleEffect, ScheduleInput, Waking,
@@ -476,7 +476,15 @@ pub struct FocusReader {
     /// system's judgement, unless the listener gives its own
     /// ([`set_window_readability_reader`](Self::set_window_readability_reader)).
     window_readability: WindowReadabilityReader,
+    /// The nearest window of each windowless progress bar read so far on
+    /// this thread, by runtime id, oldest first, at most
+    /// [`BAR_WINDOWS_KEPT`], so a Settings page's bar is walked to its
+    /// window once ([`uia_bar_place`](Self::uia_bar_place)).
+    bar_windows: VecDeque<(Vec<i32>, isize)>,
 }
+
+/// How many windowless bars' nearest windows a reading thread remembers.
+const BAR_WINDOWS_KEPT: usize = 32;
 
 /// Told the name of each call a focus read's classic walk is about to make
 /// ([`FocusReader::observe_calls`]).
@@ -500,7 +508,43 @@ impl FocusReader {
             window: WatchedRead::default(),
             calls: None,
             window_readability: Arc::new(verbatim_win32::window::readability),
+            bar_windows: VecDeque::new(),
         })
+    }
+
+    /// Where the UIA progress bar `sender` is, by one read of its [`Place`],
+    /// and its nearest window: its own window, `hwnd`, when it has one, or
+    /// else by UIA's lookup, memoised by runtime id, as the design's
+    /// "Where each part runs" states. `None` when it cannot be read, is off
+    /// screen, or has no window above it.
+    pub(crate) fn uia_bar_place(
+        &mut self,
+        sender: &Cached<ListenerProgress>,
+        hwnd: isize,
+    ) -> Option<((i32, i32), isize)> {
+        let request = self.uia.request_fixed::<Place>().ok()?;
+        let place = sender.live().refresh(&request).ok()?.read();
+        if place.offscreen {
+            return None;
+        }
+        let rect = place.rect?;
+        let centre = (
+            rect.left.saturating_add(rect.width / 2),
+            rect.top.saturating_add(rect.height / 2),
+        );
+        if hwnd != 0 {
+            return Some((centre, hwnd));
+        }
+        let runtime_id = sender.runtime_id();
+        if let Some(&(_, window)) = self.bar_windows.iter().find(|(id, _)| *id == runtime_id) {
+            return Some((centre, window));
+        }
+        let window = verbatim_uia::nearest_window_handle(sender.live().element())?;
+        self.bar_windows.push_back((runtime_id, window));
+        if self.bar_windows.len() > BAR_WINDOWS_KEPT {
+            self.bar_windows.pop_front();
+        }
+        Some((centre, window))
     }
 
     /// Forgets the focus it read last: the schedule answered that its read
@@ -1805,6 +1849,30 @@ impl<R: Reading> Readers<R> {
             &self.shared,
             &mut state,
             ScheduleInput::MsaaFocus { pid },
+            None,
+        );
+    }
+
+    /// What the running application `pid`'s record remembers `object` to
+    /// be, for the listener's hook; nothing when it has no record. One
+    /// uncontended lock and no call into the application.
+    pub(crate) fn bar_verdict(&self, pid: Pid, object: BarObject) -> Option<BarVerdict> {
+        self.shared.lock().schedule.bar_verdict(pid, object)
+    }
+
+    /// What a reading thread found `object` of `pid`'s to be, for `pid`'s
+    /// record to remember ([`Schedule::bar_verdict`]). One uncontended lock
+    /// and no call into the application.
+    pub(crate) fn learn_bar(&self, pid: Pid, object: BarObject, verdict: BarVerdict) {
+        let mut state = self.shared.lock();
+        step(
+            &self.shared,
+            &mut state,
+            ScheduleInput::BarLearned {
+                pid,
+                object,
+                verdict,
+            },
             None,
         );
     }

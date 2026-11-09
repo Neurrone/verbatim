@@ -62,6 +62,8 @@ pub mod map;
 mod registry;
 mod window;
 
+pub use window::classic_bar_percent;
+
 pub use com::CHILDID_SELF;
 pub use fact::fact_of_win_event;
 pub use hook::{

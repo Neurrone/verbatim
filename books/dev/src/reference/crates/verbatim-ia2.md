@@ -247,7 +247,10 @@ Public API:
   window checked again after the step for a window reparented meanwhile; `read(registry)` reads it
   without reading again the role and state words the checks read;
   `snapshot_from_focus_event` is a candidate read at once),
-  `event_object` (an event's object acquired and nothing read:
+  `event_object` (an event's object acquired and nothing read: its
+  `bar_reading` gives the listener a progress bar's value and place,
+  and the crate's `classic_bar_percent` a bar's percentage by its window
+  messages, with no object built;
   `which_of(nodes, registry)` tells whether it is one of the given nodes by
   the address the node was issued for or by the same COM object and child
   id, reading no property; `is_equal_to(node, registry)` tells whether it

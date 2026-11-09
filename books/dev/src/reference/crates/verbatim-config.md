@@ -35,6 +35,9 @@ Public API:
     NVDA's "Speak passwords in all enhanced terminals".
   - `report_terminal_output`: speak new output in terminals, `true` by
     default ("Report new output", toggled with Verbatim+5).
+  - `report_background_progress_bars`: indicate progress bars in
+    background windows as well, `false` by default, NVDA's "Report
+    background progress bars", with no place in the dialog until M4.3.
   - `terminal_full_lines`: "Lines spoken in full", 30 by default: up to
     this many lines of terminal output waiting to be spoken are all
     spoken.

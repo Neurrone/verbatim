@@ -15,11 +15,11 @@ use std::sync::Arc;
 
 use verbatim_model::protocol::FocusPurpose;
 use verbatim_model::{
-    ActionName, AlertOrigin, Earcon, EarlierElement, Effect, FetchResult, ForegroundWindow, Input,
-    Message, NodeId, NodeSnapshot, NormalizedEvent, Notification, NotificationProcessing,
-    OutpostId, Phrase, Pid, ProgressReading, PropertyChange, QueryKind, ReviewCommand, Role,
-    SegmentContent, SpeechPriority, State, StateSet, TraceId, Utterance, UtteranceSegment,
-    UtteranceSource, WindowFacts,
+    ActionName, AlertOrigin, BarChange, Earcon, EarlierElement, Effect, FetchResult,
+    ForegroundWindow, Input, Message, NodeId, NodeSnapshot, NormalizedEvent, Notification,
+    NotificationProcessing, OutpostId, Percent, Phrase, Pid, ProgressReading, PropertyChange,
+    QueryKind, ReviewCommand, Role, SegmentContent, SpeechPriority, State, StateSet, TraceId,
+    Utterance, UtteranceSegment, UtteranceSource, WindowFacts,
 };
 use verbatim_model::{
     Backend, FirstCachedAncestor, FocusGroup, FocusNow, FocusReaderKind, FocusText, FocusValidity,
@@ -2897,6 +2897,16 @@ fn reduce_value_changed(
     let unchanged = spoken.value == value;
     spoken.value.clone_from(&value);
     focus.snapshot.value.clone_from(&value);
+    // A focused progress bar with a number, on screen, is heard only as a
+    // bar, from the listener's change (`docs/design/progress-bars.md`,
+    // "Rules"); off screen, or with no number, it is an ordinary value
+    // change, as NVDA's behaviour falls through.
+    if focus.snapshot.role == Role::ProgressBar
+        && !focus.snapshot.states.contains(State::Offscreen)
+        && value.as_deref().and_then(Percent::parse).is_some()
+    {
+        return Vec::new();
+    }
     if unchanged {
         return Vec::new();
     }
@@ -2917,19 +2927,6 @@ fn reduce_value_changed(
     )]
 }
 
-/// The percentage a progress bar's value reads as, as NVDA reads it: a
-/// number once any percent signs and null characters at either end are
-/// removed, held between 0 and 100. `None` for anything else.
-fn progress_percentage(value: Option<&str>) -> Option<f64> {
-    let number = value?
-        .trim_matches(|c| c == '%' || c == '\0')
-        .trim()
-        .parse::<f64>()
-        .ok()
-        .filter(|number| number.is_finite())?;
-    Some(number.clamp(0.0, 100.0))
-}
-
 /// A progress bar's value changed, whether or not it is the focus
 /// (`docs/nvda/object-model.md`, "How a progress bar reports its value"):
 /// its percentage is indicated at once (`Earcon::Progress`, a tone by
@@ -2944,7 +2941,11 @@ fn reduce_progress_changed(
     trace_id: TraceId,
     progress: &ProgressReading,
 ) -> Vec<Effect> {
-    let percentage = progress_percentage(progress.value.as_deref()).filter(|_| !progress.offscreen);
+    let percentage = progress
+        .value
+        .as_deref()
+        .and_then(Percent::parse)
+        .filter(|_| !progress.offscreen);
     let Some(percentage) = percentage else {
         return reduce_value_changed(state, trace_id, progress.id, progress.value.clone());
     };
@@ -2959,7 +2960,26 @@ fn reduce_progress_changed(
             rect.top.saturating_add(rect.height / 2),
         )
     });
-    let hundredths = saturating_u32((percentage * 100.0).round());
+    indicate_progress(state, place, percentage)
+}
+
+/// A progress bar's value changed, reported by the listener
+/// (`docs/design/progress-bars.md`, "Rules"): heard when its window is the
+/// foreground window or beneath it, or anywhere when the setting asks for
+/// background bars, by the rule of [`reduce_progress_changed`].
+pub(crate) fn reduce_bar_change(state: &mut SrState, change: &BarChange) -> Vec<Effect> {
+    if !change.in_foreground && !state.settings.report_background_progress_bars {
+        return Vec::new();
+    }
+    indicate_progress(state, change.place, change.percent)
+}
+
+/// The theme's progress indication for the bar at `place` at `percent`,
+/// once the percentage has moved by at least a percent from the last one
+/// indicated at that place (`docs/nvda/object-model.md`, "How a progress
+/// bar reports its value").
+fn indicate_progress(state: &mut SrState, place: (i32, i32), percent: Percent) -> Vec<Effect> {
+    let hundredths = percent.hundredths();
     let last = state
         .progress_reported
         .iter()
@@ -2975,21 +2995,7 @@ fn reduce_progress_changed(
     if state.progress_reported.len() > crate::state::PROGRESS_BARS_KEPT {
         state.progress_reported.remove(0);
     }
-    let whole = u8::try_from(saturating_u32(percentage)).unwrap_or(u8::MAX);
-    vec![Effect::PlayEarcon(Earcon::Progress(whole))]
-}
-
-/// `value` rounded toward zero to a `u32`, saturating: below 0 and NaN
-/// become 0, and past `u32::MAX` becomes `u32::MAX`. The crate's one
-/// conversion from a float to an integer.
-#[expect(
-    clippy::as_conversions,
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    reason = "`as` from a float to an integer saturates, as this helper states"
-)]
-fn saturating_u32(value: f64) -> u32 {
-    value as u32
+    vec![Effect::PlayEarcon(Earcon::Progress(percent.whole()))]
 }
 
 /// Handles a complete state-set replacement on the focused node (MSAA

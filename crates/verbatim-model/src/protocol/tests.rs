@@ -157,7 +157,15 @@ fn next_listener_to_core(previous: Option<&ListenerToCore>) -> Option<ListenerTo
             news: crate::DesktopNews::Returned,
             timing: timing(),
         },
-        ListenerToCore::Desktop { .. } => ListenerToCore::Foreground {
+        ListenerToCore::Desktop { .. } => ListenerToCore::Progress {
+            change: crate::BarChange {
+                percent: crate::Percent::parse("41").expect("a number"),
+                place: (10, 20),
+                in_foreground: true,
+            },
+            timing: timing(),
+        },
+        ListenerToCore::Progress { .. } => ListenerToCore::Foreground {
             window: 1,
             root_owner: 1,
             process: 2,
@@ -265,6 +273,7 @@ fn every_variant_has_its_reviewed_kind() {
             "ExitHandled: Lifecycle",
             "MenuOrSwitchEnded: Report",
             "Desktop: Report",
+            "Progress: Report",
             "Foreground: Report",
             "Pong: Lifecycle",
             "Fault: Report",

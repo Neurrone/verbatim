@@ -1404,6 +1404,17 @@ pub enum ListenerToCore {
         #[serde(default)]
         timing: EventTiming,
     },
+    /// A progress bar's value changed, on the listener's one path for
+    /// every bar (`docs/design/progress-bars.md`), read with no node since
+    /// the bar need not be held to be heard. The supervisor passes it to
+    /// the app, which gives it to Core.
+    Progress {
+        /// What changed.
+        change: crate::BarChange,
+        /// When the listener observed it and queued it, as a menu end's.
+        #[serde(default)]
+        timing: EventTiming,
+    },
     /// A window came to the system's foreground: the only report of one,
     /// from which Core takes the keyboard hook's view of the foreground
     /// (architecture section 5), attention and its foreground record. Sent
@@ -1844,6 +1855,7 @@ impl ListenerToCore {
             ListenerToCore::Fault { .. }
             | ListenerToCore::MenuOrSwitchEnded { .. }
             | ListenerToCore::Desktop { .. }
+            | ListenerToCore::Progress { .. }
             | ListenerToCore::Foreground { .. } => Kind::Report,
             ListenerToCore::Ready { .. }
             | ListenerToCore::Pong { .. }
@@ -1861,7 +1873,8 @@ impl ListenerToCore {
         match self {
             ListenerToCore::FocusFact { timing, .. }
             | ListenerToCore::MenuOrSwitchEnded { timing, .. }
-            | ListenerToCore::Desktop { timing, .. } => {
+            | ListenerToCore::Desktop { timing, .. }
+            | ListenerToCore::Progress { timing, .. } => {
                 timing.listener_written_at_us = at_us;
             }
             ListenerToCore::Pong { written_at_us, .. } => *written_at_us = at_us,

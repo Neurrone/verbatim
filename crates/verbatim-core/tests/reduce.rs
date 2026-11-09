@@ -2546,6 +2546,98 @@ fn only_fetch(effects: &[Effect]) -> verbatim_model::Query {
     }
 }
 
+/// A listener's report of a bar at `left`, `percent` along, in the foreground or not.
+fn bar_change(left: i32, percent: &str, in_foreground: bool) -> Input {
+    Input::Progress {
+        trace_id: TraceId::from_raw(7),
+        change: verbatim_model::BarChange {
+            percent: verbatim_model::Percent::parse(percent).expect("a number"),
+            place: (left, 0),
+            in_foreground,
+        },
+    }
+}
+
+fn background_setting_on() -> Input {
+    Input::Settings(verbatim_model::ReaderSettings {
+        report_background_progress_bars: true,
+        ..verbatim_model::ReaderSettings::default()
+    })
+}
+
+/// A bar in the foreground is heard whether or not the setting is on, and
+/// a background one only with it, by one percent at one place.
+#[test]
+fn a_listeners_bar_change_is_judged_by_the_foreground_and_the_setting() {
+    let progress = |percent: u8| vec![Effect::PlayEarcon(Earcon::Progress(percent))];
+    let (off, effects) = reduce(&SrState::new(), &bar_change(0, "20", true));
+    assert_eq!(effects, progress(20), "a foreground bar, setting off");
+    let (off, effects) = reduce(&off, &bar_change(10, "30", false));
+    assert_eq!(effects, [], "a background bar, setting off");
+    let (off, effects) = reduce(&off, &bar_change(0, "20", true));
+    assert_eq!(
+        effects,
+        [],
+        "less than a percent from the last at its place"
+    );
+    let (on, _) = reduce(&off, &background_setting_on());
+    let (on, effects) = reduce(&on, &bar_change(20, "40", false));
+    assert_eq!(effects, progress(40), "a background bar, setting on");
+    let (_, effects) = reduce(&on, &bar_change(30, "50", true));
+    assert_eq!(effects, progress(50), "a foreground bar, setting on");
+}
+
+/// A focused progress bar with a number, on screen, is heard only from the
+/// listener: its ordinary value change is silent, its value kept. Off
+/// screen, or with no number, it is an ordinary value change.
+#[test]
+fn a_focused_numeric_bar_is_silent_as_a_value_change_and_spoken_otherwise() {
+    let source = Pid(1);
+    let bar = |extra: &[State]| {
+        node(
+            51,
+            Role::ProgressBar,
+            Some("Copying"),
+            Some("0"),
+            states(extra),
+        )
+    };
+    let value = |value: &str| {
+        event_in(
+            source,
+            None,
+            NormalizedEvent::ValueChanged {
+                node_id: bar(&[]).id,
+                value: Some(value.to_owned()),
+            },
+        )
+    };
+    let reader = focused(source, bar(&[State::Focusable, State::Focused]));
+    let (reader, effects) = reduce(&reader, &value("41"));
+    assert_eq!(effects, [], "on screen, with a number");
+    assert_eq!(
+        reader.focused().map(|(_, n)| n.value.clone()),
+        Some(Some("41".to_owned()))
+    );
+    let reader = focused(source, bar(&[State::Focusable, State::Focused]));
+    let (_, effects) = reduce(&reader, &value("indeterminate"));
+    assert_eq!(
+        heard(&effects),
+        vec![queued(vec![UtteranceSegment::value("indeterminate")])],
+        "no number"
+    );
+    let reader = focused(
+        source,
+        bar(&[State::Focusable, State::Focused, State::Offscreen]),
+    );
+    let (_, effects) = reduce(&reader, &value("41"));
+    assert_eq!(
+        heard(&effects),
+        vec![queued(vec![UtteranceSegment::value("41")])],
+        "off screen"
+    );
+}
+
 /// Focus a node so the navigator is seeded, returning the resulting state.
 fn focused(source: Pid, snapshot: NodeSnapshot) -> SrState {
     let (state, _) = reduce(

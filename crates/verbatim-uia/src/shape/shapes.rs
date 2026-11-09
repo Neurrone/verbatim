@@ -19,7 +19,8 @@ use windows::Win32::UI::Accessibility::{
     UIA_IsTogglePatternAvailablePropertyId, UIA_IsValuePatternAvailablePropertyId,
     UIA_LevelPropertyId, UIA_LocalizedControlTypePropertyId, UIA_NamePropertyId,
     UIA_NativeWindowHandlePropertyId, UIA_PATTERN_ID, UIA_PROPERTY_ID, UIA_PositionInSetPropertyId,
-    UIA_ProcessIdPropertyId, UIA_ProviderDescriptionPropertyId, UIA_RangeValueValuePropertyId,
+    UIA_ProcessIdPropertyId, UIA_ProviderDescriptionPropertyId, UIA_RangeValueMaximumPropertyId,
+    UIA_RangeValueMinimumPropertyId, UIA_RangeValueValuePropertyId,
     UIA_Selection2FirstSelectedItemPropertyId, UIA_SelectionItemIsSelectedPropertyId,
     UIA_SelectionPatternId, UIA_SizeOfSetPropertyId, UIA_TextPatternId,
     UIA_ToggleToggleStatePropertyId, UIA_ValueIsReadOnlyPropertyId, UIA_ValueValuePropertyId,
@@ -320,6 +321,31 @@ impl ListenerEvent {
                 ..NodeDetails::default()
             },
         }
+    }
+}
+
+uia_shape! {
+    /// A progress bar's range value changed, as the focus listener's
+    /// desktop-wide registration delivers it: a [`ListenerEvent`], with the
+    /// range its percentage is made from (`docs/design/progress-bars.md`).
+    /// Its place and off-screen state are not here: a desktop-wide cache
+    /// would fill them for every range change (decision 9).
+    pub struct ListenerProgress {
+        gates: none;
+        groups {
+            /// What every desktop-wide event of the listener carries.
+            event: ListenerEvent,
+        }
+        properties {
+            /// The value.
+            value: UIA_RangeValueValuePropertyId => f64,
+            /// The lower end of the range.
+            minimum: UIA_RangeValueMinimumPropertyId => f64,
+            /// The upper end of the range.
+            maximum: UIA_RangeValueMaximumPropertyId => f64,
+        }
+        prefetch {}
+        covers {}
     }
 }
 

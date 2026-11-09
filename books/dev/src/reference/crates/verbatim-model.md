@@ -90,6 +90,12 @@ recorder unchanged. What the reducer does with each type is in
   clicked item's runtime id or name, whether it is off screen, and its
   rectangle, and `ShellCandidates` says whether the walk read every
   button.
+- `Percent` and `BarChange`: what a progress bar's change is, parsed at
+  the boundary so nothing receiving one checks it again: a percentage held
+  between 0 and 100 in hundredths, made only from a bar's range, its position
+  and range, or its text, and the bar's place and whether its window is in
+  the foreground. `ListenerToCore::Progress` carries it to Core, as
+  `Input::Progress`.
 - `NormalizedEvent`, `PropertyChange`, `ProgressReading`, `Notification`,
   `NotificationKind`, `NotificationProcessing`: the events an outpost
   sends.

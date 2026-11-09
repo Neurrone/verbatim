@@ -203,6 +203,15 @@ pub struct EventObject {
     role: Prefetched,
 }
 
+/// What [`EventObject::bar_reading`] read of a progress bar.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BarReading {
+    /// Its value, as accessibility gives it.
+    pub value: Option<String>,
+    /// Where it is on the screen.
+    pub rect: Option<Rect>,
+}
+
 /// Acquires the object a `WinEvent` names, reading nothing of it. `None`
 /// if it cannot be acquired. Blocking; worker only.
 #[must_use]
@@ -410,6 +419,30 @@ impl EventObject {
             value,
             offscreen: states.contains(State::Offscreen),
             rect,
+        })
+    }
+
+    /// The object, known to be a progress bar by its role, read for the
+    /// listener's report of its change: its value and where it is, as
+    /// NVDA's progress bar behavior reads them. `None`, with nothing more
+    /// read, when its states say it is off screen, invisible or a busy
+    /// indicator, none of which report progress here.
+    pub fn bar_reading(&mut self) -> Option<BarReading> {
+        let role = self.role();
+        let state = self.acc.state();
+        let invisible = state
+            .is_some_and(|state| state.cast_unsigned() & crate::map::STATE_SYSTEM_INVISIBLE != 0);
+        let (role, states, _) = role_and_states(&self.acc, self.key, role, state);
+        if role != Role::ProgressBar || invisible || states.contains(State::Offscreen) {
+            return None;
+        }
+        let mut value = visible_text(self.acc.value());
+        if let Some(value) = &mut value {
+            verbatim_text::strip_bidi_controls(value);
+        }
+        Some(BarReading {
+            value,
+            rect: self.acc.location(),
         })
     }
 

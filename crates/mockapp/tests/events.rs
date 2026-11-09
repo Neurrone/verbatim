@@ -904,8 +904,132 @@ fn focus_on_activate_raises_the_focused_nodes_focus_event() {
     app.quit();
 }
 
+/// The listener's UIA subscription for progress bars, on a real provider's
+/// cache: a progress bar's change, with no range, is its value, and a
+/// slider's range change is dropped by its control type in the callback.
+fn the_listeners_callback_keeps_a_progress_bar_and_drops_a_slider() {
+    common::init_com();
+    let title = common::unique_title("mockapp-listener-bar");
+    let mut app = common::spawn("progress.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let (sender, bars) = mpsc::channel();
+    let _registration = Registration::with_parts(
+        vec![Part::shaped::<verbatim_uia::ListenerProgress>(
+            Subscription::Properties {
+                properties: vec![windows::Win32::UI::Accessibility::UIA_RangeValueValuePropertyId],
+                callback: Arc::new(move |element: &Cached<verbatim_uia::ListenerProgress>, _| {
+                    let _ = sender.send(verbatim_listener::listener::bar_percent(&element.read()));
+                }),
+            },
+        )],
+        common::window_subtree(hwnd.0 as isize),
+    )
+    .expect("Registration::with_parts");
+    app.send("set-range level 2");
+    app.send("set-range bar 40");
+    assert_eq!(
+        (
+            bars.recv_timeout(common::WAIT_TIMEOUT),
+            bars.recv_timeout(common::WAIT_TIMEOUT)
+        ),
+        (Ok(None), Ok(verbatim_model::Percent::parse("40")))
+    );
+    app.quit();
+}
+
+/// What `read_classic_bar` reports and learns for `object`, read
+/// synchronously here as the listener's reading thread reads it.
+fn classic_read(
+    object: verbatim_listener_logic::focus::BarObject,
+    read: verbatim_listener_logic::focus::ClassicBarRead,
+) -> (
+    Option<verbatim_model::Percent>,
+    Option<verbatim_listener_logic::focus::BarVerdict>,
+) {
+    use verbatim_model::protocol::Responder;
+    let (reports, changed) = mpsc::channel();
+    let (verdicts, learned) = mpsc::channel();
+    verbatim_listener::listener::read_classic_bar(
+        object,
+        read,
+        Responder::new(move |change: Option<verbatim_model::BarChange>| {
+            if let Some(change) = change {
+                let _ = reports.send(change.percent);
+            }
+        }),
+        Responder::new(
+            move |verdict: Option<verbatim_listener_logic::focus::BarVerdict>| {
+                if let Some(verdict) = verdict {
+                    let _ = verdicts.send(verdict);
+                }
+            },
+        ),
+    );
+    (changed.try_recv().ok(), learned.try_recv().ok())
+}
+
+/// A classic bar known only by its role, in a window with no outpost, is
+/// found to be a bar by the role read and reported with its percentage.
+fn a_classic_bar_is_read_by_its_role_with_no_outpost() {
+    common::init_com();
+    let title = common::unique_title("mockapp-classic-bar");
+    let mut app = common::spawn("progress.json", "msaa", &title);
+    let hwnd = common::find_window(&title);
+    app.send("set-value bar 40");
+    assert_eq!(
+        classic_read(
+            verbatim_listener_logic::focus::BarObject {
+                window: hwnd.0 as isize,
+                object: windows::Win32::UI::WindowsAndMessaging::OBJID_CLIENT.0,
+                child: 1,
+            },
+            verbatim_listener_logic::focus::ClassicBarRead::Unknown,
+        ),
+        (
+            verbatim_model::Percent::parse("40"),
+            Some(verbatim_listener_logic::focus::BarVerdict::Bar)
+        )
+    );
+    app.quit();
+}
+
+/// A native UIA window's classic value change is no bar's: the raw probe
+/// answers before any MSAA call, and the record is told so.
+fn a_native_uia_windows_value_change_is_remembered_as_no_bar() {
+    common::init_com();
+    let title = common::unique_title("mockapp-classic-native");
+    let app = common::spawn("progress.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    assert_eq!(
+        classic_read(
+            verbatim_listener_logic::focus::BarObject {
+                window: hwnd.0 as isize,
+                object: windows::Win32::UI::WindowsAndMessaging::OBJID_CLIENT.0,
+                child: 0,
+            },
+            verbatim_listener_logic::focus::ClassicBarRead::Unknown,
+        ),
+        (
+            None,
+            Some(verbatim_listener_logic::focus::BarVerdict::NotABar)
+        )
+    );
+    app.quit();
+}
 fn main() {
     harness::run_isolated(&[
+        (
+            "the_listeners_callback_keeps_a_progress_bar_and_drops_a_slider",
+            the_listeners_callback_keeps_a_progress_bar_and_drops_a_slider,
+        ),
+        (
+            "a_native_uia_windows_value_change_is_remembered_as_no_bar",
+            a_native_uia_windows_value_change_is_remembered_as_no_bar,
+        ),
+        (
+            "a_classic_bar_is_read_by_its_role_with_no_outpost",
+            a_classic_bar_is_read_by_its_role_with_no_outpost,
+        ),
         (
             "focus_on_activate_raises_the_focused_nodes_focus_event",
             focus_on_activate_raises_the_focused_nodes_focus_event,

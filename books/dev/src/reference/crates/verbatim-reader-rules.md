@@ -15,7 +15,9 @@ Public API:
   `normalize_class_name(raw)` is a class name as NVDA normalizes it
   before matching any class-based rule: a Windows Forms name cut down to
   the control class it wraps, an `ATL:` prefix dropped, and the result
-  looked up in NVDA's class map. `WindowClasses::new(raw, root)` holds a
+  looked up in NVDA's class map. `is_progress_bar_class(normalized)` is
+  whether a normalised name is one NVDA recognises as a progress bar.
+  `WindowClasses::new(raw, root)` holds a
   window's raw class, the normalized one and its root ancestor's; the
   caller reads the names (`verbatim_win32::window::window_classes`).
   `class_verdict(&classes)` is the verdict NVDA's class lists give

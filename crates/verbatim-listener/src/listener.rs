@@ -133,25 +133,31 @@ use windows::Win32::System::Threading::{
     SetThreadpoolTimer, WaitForThreadpoolTimerCallbacks,
 };
 use windows::Win32::UI::Accessibility::{
-    NotificationKind, NotificationProcessing, UIA_MenuOpenedEventId,
-    UIA_SelectionItem_ElementSelectedEventId, UIA_Window_WindowOpenedEventId,
+    NotificationKind, NotificationProcessing, UIA_MenuOpenedEventId, UIA_ProgressBarControlTypeId,
+    UIA_RangeValueValuePropertyId, UIA_SelectionItem_ElementSelectedEventId,
+    UIA_Window_WindowOpenedEventId,
 };
 
 use verbatim_ia2::{LISTENER_SUBSCRIPTIONS, WinEvent, WinEventKind};
-use verbatim_model::{Notification, OutpostId, Pid, TraceId};
+use verbatim_model::{BarChange, Notification, OutpostId, Percent, Pid, Role, TraceId};
 use verbatim_process::scheduling::{ThreadPriority, prioritize_role};
 use verbatim_process::transport::{Backlog, ChildIo, SendError, Sender, Served, Serving};
 use verbatim_uia::map::{
     CachedUiaParts, ignores_notifications, is_toast_candidate, notification_kind_from_uia,
     notification_processing_from_uia,
 };
+use verbatim_uia::served_only_by_uia_proxies;
 use verbatim_uia::{
-    Agile, Cached, ListenerEvent, ListenerSelection, Part, Registration, Scope, Subscription,
+    Agile, Cached, ListenerEvent, ListenerProgress, ListenerSelection, Part, Registration, Scope,
+    Subscription,
 };
 
 use crate::focus_read::{FocusReader, Readers, Reading, WatchedRead};
 use verbatim_ia2::event_thread::{EventHandlers, EventThread, MakeHandlers, Nudger};
-use verbatim_listener_logic::focus::{FocusEvent, Judged, Meta, arrival_of};
+use verbatim_listener_logic::focus::{
+    BAR_READ, BarObject, BarVerdict, ClassicBarRead, FocusEvent, Judged, Meta, arrival_of,
+    classic_value_change,
+};
 use verbatim_listener_logic::foreground::{ForegroundWatch, Front, Step};
 use verbatim_listener_logic::schedule::{GraceEffect, GraceInput, GraceState, QueuePlace};
 use verbatim_model::DesktopNews;
@@ -873,6 +879,18 @@ impl Outgoing {
         });
     }
 
+    /// Sends Core a progress bar's change, read from the event observed at
+    /// `timing`'s observation.
+    fn progress(&self, change: BarChange, timing: EventTiming) {
+        let mut timing = timing;
+        timing.listener_handled_at_us = self.now();
+        sent(&self.sender.send(Sent::Fact(
+            None,
+            ListenerToCore::Progress { change, timing },
+            None,
+        )));
+    }
+
     /// Answers the idle barrier's round `round`, behind every fact sent
     /// before, never merged and never ahead as urgent; behind a menu end
     /// still in its grace too, once that is sent.
@@ -973,6 +991,28 @@ pub(crate) enum UiaJob {
     /// `name`: dropped unanswered, as when the read is abandoned, nothing is
     /// sent.
     DesktopName((isize, i32, i32), Responder<String>),
+    /// A value change the hook let through ([`value_change_event`]), to be
+    /// read as `read` says; a bar's change is sent to Core through
+    /// `report`, what a read found the object to be through `learn`, and
+    /// with them `key`, the limiter's key, so a newer change of the object
+    /// replaces one still waiting.
+    ClassicBar {
+        object: BarObject,
+        read: ClassicBarRead,
+        key: [i32; 4],
+        report: Responder<BarChange>,
+        learn: Responder<BarVerdict>,
+    },
+    /// A UIA progress bar's range value changed: `percent` from its event's
+    /// cache; its place and window are read here
+    /// ([`FocusReader::uia_bar_place`]), and its change sent through `report`.
+    UiaBar {
+        element: Agile<ListenerProgress>,
+        hwnd: isize,
+        runtime_id: Vec<i32>,
+        percent: Percent,
+        report: Responder<BarChange>,
+    },
 }
 
 impl Reading for UiaFocusReading {
@@ -999,10 +1039,40 @@ impl Reading for UiaFocusReading {
         job: Self::Job,
         (watched, queue): (&WatchedRead, QueuePlace),
     ) -> Judged {
+        if let UiaJob::ClassicBar {
+            object,
+            read,
+            report,
+            learn,
+            ..
+        } = job
+        {
+            read_classic_bar(object, read, report, learn);
+            return Judged::Dropped(BAR_READ);
+        }
         let Some(reader) = reader else {
             return Judged::Dropped("its reading thread has no UIA client");
         };
         let (element, kind, fact) = match job {
+            UiaJob::ClassicBar { .. } => unreachable!("handled above"),
+            UiaJob::UiaBar {
+                element,
+                hwnd,
+                percent,
+                report,
+                ..
+            } => {
+                if let Ok(sender) = element.resolve()
+                    && let Some((place, window)) = reader.uia_bar_place(&sender, hwnd)
+                {
+                    report.answer(BarChange {
+                        percent,
+                        place,
+                        in_foreground: in_foreground(window),
+                    });
+                }
+                return Judged::Dropped(BAR_READ);
+            }
             UiaJob::Event(element, _, _, kind, fact) => (element, kind, fact),
             UiaJob::LiveReread(request, _) => return reader.live_reread(request, meta.trace),
             UiaJob::DesktopName((hwnd, id_object, id_child), name) => {
@@ -1039,7 +1109,10 @@ impl Reading for UiaFocusReading {
             // No lookup learns a re-read's window later: with none it is
             // judged by its deadline alone.
             UiaJob::LiveReread(_, hwnd) => (*hwnd != 0).then_some(*hwnd),
-            UiaJob::Event(..) | UiaJob::DesktopName(..) => None,
+            UiaJob::Event(..)
+            | UiaJob::DesktopName(..)
+            | UiaJob::ClassicBar { .. }
+            | UiaJob::UiaBar { .. } => None,
         }
     }
 
@@ -1056,6 +1129,8 @@ impl Reading for UiaFocusReading {
             UiaJob::Event(_, _, _, kind, _) => *kind,
             UiaJob::LiveReread(..) => FocusEvent::LiveReread,
             UiaJob::DesktopName(..) => FocusEvent::DesktopName,
+            UiaJob::ClassicBar { .. } => FocusEvent::ClassicBar,
+            UiaJob::UiaBar { .. } => FocusEvent::UiaBar,
         }
     }
 
@@ -1067,6 +1142,8 @@ impl Reading for UiaFocusReading {
             UiaJob::Event(_, _, runtime_id, kind, _) => {
                 (*kind != FocusEvent::Notification).then_some((*kind, runtime_id.as_slice()))
             }
+            UiaJob::ClassicBar { key, .. } => Some((FocusEvent::ClassicBar, key.as_slice())),
+            UiaJob::UiaBar { runtime_id, .. } => Some((FocusEvent::UiaBar, runtime_id.as_slice())),
             UiaJob::LiveReread(..) | UiaJob::DesktopName(..) => None,
         }
     }
@@ -1085,7 +1162,8 @@ impl Reading for UiaFocusReading {
 
     fn outcome(&self, pid: Pid, meta: Meta, owed: MarkerOwed, judged: Judged) {
         let Some(answer) = owed.answer else {
-            // The desktop's name read owes nothing: it sent its name.
+            // The desktop's name read and a bar's owe nothing: each sent
+            // what it had.
             return;
         };
         if let Some(reason) = judged.dropped_reason() {
@@ -1116,8 +1194,8 @@ const DESKTOP_NAME_READ: &str = "a read of the desktop window's name, owing no o
 /// dropped unanswered too, as when the read was abandoned, so Core's
 /// pending live re-read always ends.
 pub(crate) struct MarkerOwed {
-    /// The answer, `None` for the desktop name's read, which no outpost
-    /// waits on.
+    /// The answer, `None` for the desktop name's read or a bar's, which no
+    /// outpost waits on.
     answer: Option<Responder<DeliveredFact>>,
     reread: Option<u64>,
 }
@@ -1142,7 +1220,7 @@ impl MarkerOwed {
         }
     }
 
-    /// What the desktop name's read owes: nothing.
+    /// What the desktop name's read, or a bar's, owes: nothing.
     fn nothing() -> Self {
         Self {
             answer: None,
@@ -1238,11 +1316,7 @@ impl Listener {
             let desktop_readers = Arc::clone(&readers);
             EventHandlers {
                 win_event: Box::new(move |event: WinEvent| {
-                    if matches!(
-                        event.kind,
-                        WinEventKind::DesktopSwitch | WinEventKind::DesktopName
-                    ) {
-                        desktop_event(&outgoing, &desktop_readers, event);
+                    if routed_elsewhere(&outgoing, &desktop_readers, event) {
                         return;
                     }
                     if matches!(
@@ -1707,6 +1781,7 @@ fn install_desktop_subscriptions(
     let selection = selection_subscription(outgoing, readers);
     let notifications = notification_subscription(outgoing, readers);
     let toasts = toast_subscription(outgoing, readers);
+    let progress = progress_subscription(outgoing, readers);
     // NVDA's base cache request, as its global group carries, with what
     // refines a role (`ListenerEvent`): UIA fills only these in the
     // application for each event, and for an element selected also what
@@ -1718,6 +1793,7 @@ fn install_desktop_subscriptions(
         Part::shaped(menu),
         Part::shaped(notifications),
         Part::shaped(toasts),
+        Part::shaped::<ListenerProgress>(progress),
     ];
     match Registration::with_parts(parts, Scope::Desktop) {
         Ok(registration) => Some(registration),
@@ -1856,6 +1932,264 @@ fn toast_subscription(
     }
 }
 
+/// The desktop-wide subscription to UIA range value changes, the listener's
+/// path for every UIA progress bar, foreground or background
+/// (`docs/design/progress-bars.md`, "Where each part runs"). Its callback
+/// makes no cross-process call: an element whose cached control type is not
+/// a progress bar, whose window's provider is not native (UIA's proxy for a
+/// classic window, heard by the hook instead), or whose window is hung is
+/// dropped, and a range value that is not a number too, parsed once here;
+/// the bar is then queued for its application's reading thread, which reads
+/// where it is and sends it on, with no marker, so no outpost waits on it
+/// and none is started for it.
+fn progress_subscription(
+    outgoing: &Arc<Outgoing>,
+    readers: &Arc<Readers<UiaFocusReading>>,
+) -> Subscription<Cached<ListenerProgress>> {
+    let outgoing = Arc::clone(outgoing);
+    let readers = Arc::clone(readers);
+    Subscription::Properties {
+        properties: vec![UIA_RangeValueValuePropertyId],
+        callback: Arc::new(move |sender: &Cached<ListenerProgress>, _| {
+            let fields = sender.read();
+            let (Some(pid), Some(percent)) = (
+                outgoing.uia_event_process(fields.event.process_id),
+                bar_percent(&fields),
+            ) else {
+                return;
+            };
+            let hwnd = fields.event.role.hwnd;
+            if readers.window_hung(hwnd) {
+                tracing::debug!(%pid, hwnd, "a progress bar's change dropped: its window is hung");
+                return;
+            }
+            let meta = outgoing.received(FocusEvent::UiaBar);
+            let runtime_id = sender.runtime_id();
+            match sender.agile() {
+                Ok(element) => readers.push(
+                    pid,
+                    meta,
+                    UiaJob::UiaBar {
+                        element,
+                        hwnd,
+                        runtime_id,
+                        percent,
+                        report: report_bar(&outgoing, meta),
+                    },
+                    MarkerOwed::nothing(),
+                ),
+                Err(error) => {
+                    tracing::warn!(%error, "a progress bar's element could not be kept");
+                }
+            }
+        }),
+    }
+}
+
+/// What the callback of [`progress_subscription`] makes of ields, an
+/// event's cache: the percentage, when the element is a progress bar with a
+/// native provider and a range that is a number; `None` for anything else,
+/// a slider's range value among them. Public so that mockapp's tests judge
+/// mockapp's own event as the listener judges it.
+#[must_use]
+pub fn bar_percent(fields: &ListenerProgress) -> Option<Percent> {
+    percent_of_bar(
+        fields.event.role.control_type,
+        fields.event.provider_description.as_deref(),
+        (fields.value, fields.minimum, fields.maximum),
+    )
+}
+
+/// [`bar_percent`], from what a callback reads of an event's cache.
+fn percent_of_bar(
+    control_type: Option<i32>,
+    provider: Option<&str>,
+    (value, minimum, maximum): (Option<f64>, Option<f64>, Option<f64>),
+) -> Option<Percent> {
+    if control_type != Some(UIA_ProgressBarControlTypeId.0)
+        || provider.is_some_and(served_only_by_uia_proxies)
+    {
+        return None;
+    }
+    Percent::of_range(value?, minimum?, maximum?)
+}
+
+/// What a bar's change is reported through: sent to Core when the read
+/// answers it, dropped when it does not, with its stamp from the event's
+/// timing, handled now.
+fn report_bar(outgoing: &Arc<Outgoing>, meta: Meta) -> Responder<BarChange> {
+    let reported = Arc::clone(outgoing);
+    Responder::new(move |change: Option<BarChange>| {
+        if let Some(change) = change {
+            reported.progress(change, meta.timing);
+        }
+    })
+}
+
+/// A classic value change, for the listener's progress bar path (the
+/// hook's filter, `docs/design/progress-bars.md`, "Rules"), with no call
+/// into the application: its window is routed as [`forward_msaa_event`]
+/// routes it, and a hung window, an ignored process, a window of a listed
+/// class that is hidden and a known non-bar are dropped here; the rest
+/// queued on the window's application's reading thread, one held per
+/// object, a newer change replacing it, with no marker, so that no outpost
+/// is started or asked and no fact is made of the event.
+fn value_change_event(
+    outgoing: &Arc<Outgoing>,
+    readers: &Arc<Readers<UiaFocusReading>>,
+    event: WinEvent,
+) {
+    let WinEvent {
+        hwnd,
+        id_object,
+        id_child,
+        thread,
+        ..
+    } = event;
+    if hwnd == 0 {
+        return;
+    }
+    let owner = window_pid(hwnd);
+    if owner == 0 {
+        return;
+    }
+    let class = window_class_name(hwnd);
+    let Some(pid) = routed_process(&class, owner, || process_of_thread(thread)).map(Pid) else {
+        return;
+    };
+    if outgoing.ignored.contains(pid) || outgoing.ignored.contains(Pid(owner)) {
+        return;
+    }
+    if readers.window_hung(hwnd) {
+        tracing::debug!(%pid, hwnd, "a value change dropped: its window is hung");
+        return;
+    }
+    let object = BarObject {
+        window: hwnd,
+        object: id_object,
+        child: id_child,
+    };
+    let listed = verbatim_reader_rules::class::is_progress_bar_class(
+        &verbatim_reader_rules::class::normalize_class_name(&class),
+    );
+    let visible = !listed || verbatim_win32::window::window_is_visible(hwnd);
+    let Some(read) = classic_value_change(listed, visible, readers.bar_verdict(pid, object)) else {
+        return;
+    };
+    let meta = outgoing.received(FocusEvent::ClassicBar);
+    readers.push(
+        pid,
+        meta,
+        UiaJob::ClassicBar {
+            object,
+            read,
+            key: bar_key(object),
+            report: report_bar(outgoing, meta),
+            learn: learn_bar(readers, pid, object),
+        },
+        MarkerOwed::nothing(),
+    );
+}
+
+/// The limiter's key for a classic value change: its window and object.
+fn bar_key(object: BarObject) -> [i32; 4] {
+    let window = object.window.to_ne_bytes();
+    [
+        i32::from_ne_bytes([window[0], window[1], window[2], window[3]]),
+        i32::from_ne_bytes([window[4], window[5], window[6], window[7]]),
+        object.object,
+        object.child,
+    ]
+}
+
+/// What the application's record is told an object was found to be.
+fn learn_bar(
+    readers: &Arc<Readers<UiaFocusReading>>,
+    pid: Pid,
+    object: BarObject,
+) -> Responder<BarVerdict> {
+    let readers = Arc::clone(readers);
+    Responder::new(move |verdict: Option<BarVerdict>| {
+        if let Some(verdict) = verdict {
+            readers.learn_bar(pid, object, verdict);
+        }
+    })
+}
+
+/// Reads one classic value change on its application's reading thread, as
+/// `read` says, sends a bar's change through `report`, and what a read
+/// found the object to be through `learn`. Public so that mockapp's tests
+/// read mockapp's own windows as the listener reads them.
+pub fn read_classic_bar(
+    object: BarObject,
+    read: ClassicBarRead,
+    report: Responder<BarChange>,
+    learn: Responder<BarVerdict>,
+) {
+    if read == ClassicBarRead::Listed {
+        if let Some(percent) = verbatim_ia2::classic_bar_percent(object.window)
+            && let Some(place) = window_centre(object.window)
+        {
+            report.answer(BarChange {
+                percent,
+                place,
+                in_foreground: in_foreground(object.window),
+            });
+        }
+        return;
+    }
+    // A native UIA window's bar comes through the group, as NVDA's own
+    // hook drops this event (`internalWinEventHandler.py` 570 to 583).
+    if read == ClassicBarRead::Unknown && verbatim_uia::raw_probe(object.window).has_provider() {
+        learn.answer(BarVerdict::NotABar);
+        return;
+    }
+    let Some(mut bar) =
+        verbatim_ia2::acquire::event_object(object.window, object.object, object.child)
+    else {
+        return;
+    };
+    if read == ClassicBarRead::Unknown && bar.role() != Role::ProgressBar {
+        learn.answer(BarVerdict::NotABar);
+        return;
+    }
+    if read == ClassicBarRead::Unknown {
+        learn.answer(BarVerdict::Bar);
+    }
+    if let Some(reading) = bar.bar_reading()
+        && let Some(percent) = reading.value.as_deref().and_then(Percent::parse)
+    {
+        report.answer(BarChange {
+            percent,
+            place: reading.rect.map_or((0, 0), |rect| {
+                (
+                    rect.left.saturating_add(rect.width / 2),
+                    rect.top.saturating_add(rect.height / 2),
+                )
+            }),
+            in_foreground: in_foreground(object.window),
+        });
+    }
+}
+
+/// The centre of `window` on the screen, a local call; `None` for a window
+/// already gone.
+fn window_centre(window: isize) -> Option<(i32, i32)> {
+    let rect = verbatim_win32::window::rect(window)?;
+    Some((
+        rect.left.saturating_add((rect.right - rect.left) / 2),
+        rect.top.saturating_add((rect.bottom - rect.top) / 2),
+    ))
+}
+
+/// Whether `window` is the foreground window or beneath it, as NVDA judges
+/// a bar's (`NVDAObjects/window/__init__.py` 295 to 297), read here where
+/// the event arrives, since the relation is a local call only there.
+fn in_foreground(window: isize) -> bool {
+    let front = front_window();
+    front != 0 && (window == front || verbatim_win32::window::is_child(front, window))
+}
+
 /// Forwards one global MSAA `WinEvent` as a fact for the process
 /// [`routed_process`] names, with the thread that raised it and when, unless
 /// that process's outpost has its own hook in and took it in itself
@@ -1939,6 +2273,23 @@ fn forward_msaa_event(outgoing: &Outgoing, event: WinEvent) -> Forwarded {
     let focus_of =
         (kind == WinEventKind::Focus && !outgoing.ignored.contains(Pid(pid))).then_some(Pid(pid));
     forwarded(console, focus_of)
+}
+
+/// A value change or one of the desktop's events, each taken by its own
+/// path: whether `event` was one of these, already handled.
+fn routed_elsewhere(
+    outgoing: &Arc<Outgoing>,
+    readers: &Arc<Readers<UiaFocusReading>>,
+    event: WinEvent,
+) -> bool {
+    match event.kind {
+        WinEventKind::ValueChange => value_change_event(outgoing, readers, event),
+        WinEventKind::DesktopSwitch | WinEventKind::DesktopName => {
+            desktop_event(outgoing, readers, event);
+        }
+        _ => return false,
+    }
+    true
 }
 
 /// The desktop's `WinEvent`s, for Core: a desktop switch, judged by NVDA's
@@ -2553,6 +2904,107 @@ mod tests {
             .expect("the listener's cache request");
         uia.any_window_element::<S>(desktop_window(), &request)
             .expect("the desktop's root element")
+    }
+
+    /// A provider that is UIA's proxy for a classic window is dropped, so
+    /// a classic bar proxied through UIA is heard once, from the hook; a
+    /// slider by its control type; and a range that is no number.
+    #[test]
+    fn the_callback_keeps_only_a_native_numeric_progress_bar() {
+        const PROXIED: &str = "Main:Microsoft: MSAA Proxy (unmanaged:uiautomationcore.dll)";
+        const NATIVE: &str = "Main:App provider (unmanaged:app.dll)";
+        let bar = Some(UIA_ProgressBarControlTypeId.0);
+        let of = |control_type, provider, value| {
+            percent_of_bar(
+                control_type,
+                Some(provider),
+                (value, Some(0.0), Some(1000.0)),
+            )
+        };
+        assert_eq!(of(bar, NATIVE, Some(500.0)), Percent::parse("50"));
+        assert_eq!(of(bar, PROXIED, Some(500.0)), None, "a proxied classic bar");
+        assert_eq!(of(Some(0), NATIVE, Some(500.0)), None, "a slider");
+        assert_eq!(of(bar, NATIVE, None), None, "a non-numeric value");
+    }
+
+    /// A hung window's value change is dropped in the hook, with no read
+    /// queued, as a UIA event from one is dropped as it arrives.
+    #[test]
+    fn a_hung_windows_value_change_is_dropped_in_the_hook() {
+        let asked = Arc::new(Mutex::new(Vec::new()));
+        let (outgoing, readers, _events) = listening(|_| Readability::Hung, &asked);
+        let hwnd = desktop_window();
+        value_change_event(&outgoing, &readers, value_change(hwnd));
+        assert_eq!(
+            asked
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .as_slice(),
+            [hwnd]
+        );
+        assert!(
+            !readers.has_reading_thread(Pid(window_pid(hwnd))),
+            "no read was queued"
+        );
+        readers.stop();
+    }
+
+    /// A value change on a window of an ignored process is dropped before
+    /// the readability test.
+    #[test]
+    fn an_ignored_processes_value_change_is_dropped_in_the_hook() {
+        use windows::Win32::UI::WindowsAndMessaging::{
+            CreateWindowExW, DestroyWindow, WINDOW_EX_STYLE, WINDOW_STYLE,
+        };
+        // SAFETY: a plain window of a system class, destroyed below.
+        let window = unsafe {
+            CreateWindowExW(
+                WINDOW_EX_STYLE(0),
+                windows::core::w!("STATIC"),
+                None,
+                WINDOW_STYLE(0),
+                0,
+                0,
+                0,
+                0,
+                None,
+                None,
+                None,
+                None,
+            )
+        }
+        .expect("a window of this process");
+        let hwnd = window.0 as isize;
+        let (outgoing, _reader) = outgoing_with(
+            EVENT_PIPE_BUFFER,
+            IgnoredProcesses::hold([Pid(window_pid(hwnd))]),
+        );
+        let outgoing = Arc::new(outgoing);
+        let readers = Arc::new(Readers::new(
+            UiaFocusReading::new(),
+            verbatim_model::FOCUS_READ_DEADLINE,
+        ));
+        value_change_event(&outgoing, &readers, value_change(hwnd));
+        assert!(
+            !readers.has_reading_thread(Pid(window_pid(hwnd))),
+            "no read was queued"
+        );
+        readers.stop();
+        // SAFETY: the window this test made, on its own thread.
+        unsafe { DestroyWindow(window) }.expect("the window is destroyed");
+    }
+
+    /// A value change at the client of `hwnd`, as the global hook delivers it.
+    fn value_change(hwnd: isize) -> WinEvent {
+        WinEvent {
+            kind: WinEventKind::ValueChange,
+            hwnd,
+            id_object: windows::Win32::UI::WindowsAndMessaging::OBJID_CLIENT.0,
+            id_child: 0,
+            thread: 0,
+            time: 0,
+            raised_ms_ago: 0,
+        }
     }
 
     /// The listener's sending side, taking UIA events, its pipe read on a

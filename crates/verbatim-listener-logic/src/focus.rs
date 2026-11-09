@@ -52,6 +52,16 @@ pub enum FocusEvent {
     /// A Windows toast's window opening, read on its application's reading
     /// thread (the listener's `FocusReader::check_fact`).
     Toast,
+    /// A progress bar's UIA value change, read for its place on its
+    /// application's reading thread. Like a live re-read, it has no marker
+    /// an outpost waits on, moves away from no application, and is no
+    /// pending focus; it starts no outpost and keeps its application's
+    /// reader alive only while it has work ([`crate::schedule`]).
+    UiaBar,
+    /// A classic window's value change, read on its application's reading
+    /// thread as a bar's percentage, or to learn whether the object is a
+    /// bar ([`BarVerdict`]). Like [`FocusEvent::UiaBar`].
+    ClassicBar,
     /// The desktop window's name change, whose MSAA name csrss's reading
     /// thread reads for the virtual desktop's name. Like a live re-read, it
     /// has no marker an outpost waits on, moves away from no application,
@@ -122,6 +132,73 @@ pub const CONSOLE_OWN: &str = "the console window's own focus";
 /// use (`verbatim_reader_rules::class::class_verdict`), so the outpost judges that window MSAA too.
 pub const MSAA_CLASS: &str =
     "its window's class is on NVDA's MSAA list, so its MSAA events speak for it";
+
+/// One object a value change was raised for: a window, and the object and
+/// child ids that name it in that window.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct BarObject {
+    /// The window, which may be a bar's own or its container's.
+    pub window: isize,
+    /// The MSAA object id.
+    pub object: i32,
+    /// The MSAA child id.
+    pub child: i32,
+}
+
+/// Whether an object a value change came from is a progress bar, as the
+/// reading thread found by its role (`docs/design/progress-bars.md`,
+/// "Rules"): what an application's record remembers for the object.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BarVerdict {
+    /// It is a progress bar.
+    Bar,
+    /// It is not: its later value changes are dropped in the hook, with no
+    /// call into the application.
+    NotABar,
+}
+
+/// The most objects an application's record remembers a [`BarVerdict`] for:
+/// the oldest is forgotten first, so an application that changes the values
+/// of more objects than this reads a role again as each comes back, and no
+/// application's record grows with what it does.
+pub const BAR_VERDICTS_KEPT: usize = 256;
+
+/// How a classic value change is to be read, once the hook's filter has
+/// let it through ([`classic_value_change`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ClassicBarRead {
+    /// A bar of a class NVDA lists: its percentage by window messages.
+    Listed,
+    /// An object the record knows to be a bar: its percentage by its value.
+    KnownBar,
+    /// An object the record has no answer for: its role is read, and a bar
+    /// has its percentage read too.
+    Unknown,
+}
+
+/// What the listener's hook does with one `EVENT_OBJECT_VALUECHANGE`, with no
+/// call into the application (`docs/design/progress-bars.md`, "Rules"): a
+/// window of a class NVDA lists as a progress bar, `listed`, read when it
+/// is visible; otherwise what `verdict`, the record's memory of the object,
+/// says. `None` drops the event.
+#[must_use]
+pub fn classic_value_change(
+    listed: bool,
+    visible: bool,
+    verdict: Option<BarVerdict>,
+) -> Option<ClassicBarRead> {
+    if listed {
+        return visible.then_some(ClassicBarRead::Listed);
+    }
+    match verdict {
+        Some(BarVerdict::NotABar) => None,
+        Some(BarVerdict::Bar) => Some(ClassicBarRead::KnownBar),
+        None => Some(ClassicBarRead::Unknown),
+    }
+}
+
+/// What a read of a classic value change, or a UIA bar's, is dropped for.
+pub const BAR_READ: &str = "a read of a progress bar's change, owing no outpost anything";
 
 /// What became of one focus event.
 #[derive(Debug)]
@@ -238,5 +315,38 @@ pub fn arrival_of(meta: Meta, queue: QueuePlace) -> Arrival {
         observed_at_us: meta.timing.observed_at_us,
         place: queue.place,
         left_at: queue.left_at,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A listed class is read when visible and dropped when not.
+    #[test]
+    fn a_listed_class_is_read_only_while_visible() {
+        assert_eq!(
+            classic_value_change(true, true, None),
+            Some(ClassicBarRead::Listed)
+        );
+        assert_eq!(classic_value_change(true, false, None), None);
+    }
+
+    /// Any other object: dropped when known not to be a bar, read when
+    /// known to be one, read once when unknown.
+    #[test]
+    fn another_class_goes_by_the_records_verdict() {
+        assert_eq!(
+            classic_value_change(false, true, Some(BarVerdict::NotABar)),
+            None
+        );
+        assert_eq!(
+            classic_value_change(false, true, Some(BarVerdict::Bar)),
+            Some(ClassicBarRead::KnownBar)
+        );
+        assert_eq!(
+            classic_value_change(false, true, None),
+            Some(ClassicBarRead::Unknown)
+        );
     }
 }

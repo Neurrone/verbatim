@@ -1142,6 +1142,14 @@ pub enum Input {
         /// What happened.
         news: DesktopNews,
     },
+    /// A progress bar's value changed, from the focus listener, which is
+    /// the one owner of every bar's changes.
+    Progress {
+        /// A trace the shell mints for it, which its indication carries.
+        trace_id: TraceId,
+        /// What changed.
+        change: BarChange,
+    },
 }
 
 /// News of the desktop the focus listener tells Core
@@ -1159,6 +1167,130 @@ pub enum DesktopNews {
     /// The name's due time, 250 ms after its event: a name still kept is
     /// spoken as a message.
     NameDue,
+}
+
+/// A progress bar's percentage, 0 to 100, kept in hundredths of a percent
+/// and always in range: made only by parsing a bar's value at the boundary
+/// (`docs/parity/changes-and-selection.md`, "Progress bars"), so what
+/// receives one has nothing left to check.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "u16", into = "u16")]
+pub struct Percent(u16);
+
+impl TryFrom<u16> for Percent {
+    type Error = String;
+
+    fn try_from(hundredths: u16) -> Result<Self, String> {
+        if hundredths <= Self::FULL {
+            Ok(Self(hundredths))
+        } else {
+            Err(format!("{hundredths} hundredths is past 100 percent"))
+        }
+    }
+}
+
+impl From<Percent> for u16 {
+    fn from(percent: Percent) -> u16 {
+        percent.0
+    }
+}
+
+impl Percent {
+    /// 100 percent, in hundredths of a percent.
+    const FULL: u16 = 10_000;
+
+    /// The percentage `fraction` is of the whole, in hundredths, held
+    /// between 0 and 100; `None` for one that is not a finite number.
+    fn of_fraction(fraction: f64) -> Option<Self> {
+        if !fraction.is_finite() {
+            return None;
+        }
+        let hundredths = (fraction * f64::from(Self::FULL)).round();
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            clippy::as_conversions,
+            reason = "clamped to 0 and 10,000 just before, so the conversion is exact"
+        )]
+        let hundredths = hundredths.clamp(0.0, f64::from(Self::FULL)) as u16;
+        Some(Self(hundredths))
+    }
+
+    /// The percentage `value` is along the range from `minimum` to
+    /// `maximum`, rounded to a whole percent, as NVDA's progress bar overlay
+    /// reads a UIA bar's range value; with no range, `value` itself, as the
+    /// pattern gave it, as that overlay uses it. `None` for values that are
+    /// not finite numbers.
+    #[must_use]
+    pub fn of_range(value: f64, minimum: f64, maximum: f64) -> Option<Self> {
+        #[expect(
+            clippy::float_cmp,
+            reason = "an exact comparison, as NVDA's overlay compares them"
+        )]
+        let percentage = if minimum == maximum {
+            value
+        } else {
+            (value - minimum) / (maximum - minimum) * 100.0
+        };
+        Self::of_fraction(percentage.round() / 100.0)
+    }
+
+    /// The percentage `position` is along the integers from `low` to `high`,
+    /// as a classic progress bar reports its range; `None` for an empty or
+    /// reversed range.
+    #[must_use]
+    pub fn of_position(position: i32, low: i32, high: i32) -> Option<Self> {
+        if high <= low {
+            return None;
+        }
+        let span = f64::from(high) - f64::from(low);
+        Self::of_fraction((f64::from(position) - f64::from(low)) / span)
+    }
+
+    /// The percentage a bar's text value says, as NVDA reads it: a number
+    /// once any percent signs and null characters at either end are
+    /// removed, held between 0 and 100. `None` for anything else.
+    #[must_use]
+    pub fn parse(text: &str) -> Option<Self> {
+        let number = text
+            .trim_matches(|c| c == '%' || c == '\0')
+            .trim()
+            .parse::<f64>()
+            .ok()?;
+        Self::of_fraction(number / 100.0)
+    }
+
+    /// The percentage in hundredths of a percent.
+    #[must_use]
+    pub fn hundredths(self) -> u32 {
+        u32::from(self.0)
+    }
+
+    /// The percentage as a whole number, rounded down.
+    #[must_use]
+    pub fn whole(self) -> u8 {
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::as_conversions,
+            reason = "at most 100, by the type's invariant"
+        )]
+        let whole = (self.0 / 100) as u8;
+        whole
+    }
+}
+
+/// A progress bar's value changed, as the focus listener reports it
+/// (`docs/design/progress-bars.md`): the bar is on screen and its value a
+/// number, since a report is made of nothing else, and Core judges only
+/// whether it is heard.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BarChange {
+    /// Its percentage.
+    pub percent: Percent,
+    /// The centre of the bar, by which its last percentage is kept.
+    pub place: (i32, i32),
+    /// Whether its window is the foreground window or beneath it.
+    pub in_foreground: bool,
 }
 
 /// What a [`Input::Script`] runs.
@@ -1207,7 +1339,8 @@ impl Input {
             | Self::ShellItemUnclickable { trace_id, .. }
             | Self::PreviewSpeech { trace_id, .. }
             | Self::ReadFocusUnanswered { trace_id, .. }
-            | Self::Desktop { trace_id, .. } => Some(*trace_id),
+            | Self::Desktop { trace_id, .. }
+            | Self::Progress { trace_id, .. } => Some(*trace_id),
             _ => None,
         }
     }
@@ -1461,4 +1594,41 @@ pub enum Effect {
     /// because it would have spoken a cached ancestor; the shell logs it
     /// and routes it to the listener or the outpost.
     LiveReread(LiveReread),
+}
+
+#[cfg(test)]
+mod percent_tests {
+    use super::Percent;
+
+    /// A UIA bar's range: a range of 0 to 1000 at 500 is 50 percent, and with
+    /// no range the value itself stands, as NVDA's overlay reads it.
+    #[test]
+    fn a_ranged_value_is_made_a_percentage() {
+        let of = |value, minimum, maximum| Percent::of_range(value, minimum, maximum);
+        assert_eq!(of(500.0, 0.0, 1000.0), Percent::parse("50"));
+        assert_eq!(of(50.0, 50.0, 50.0), Percent::parse("50"));
+        assert_eq!(of(f64::NAN, 0.0, 100.0), None);
+    }
+
+    /// A classic bar's position and range, an empty one dropped.
+    #[test]
+    fn a_classic_position_is_made_a_percentage() {
+        assert_eq!(Percent::of_position(30, 10, 50), Percent::parse("50"));
+        assert_eq!(Percent::of_position(10, 10, 10), None);
+    }
+
+    /// A value's text, within its percent signs, held between 0 and 100,
+    /// and anything else refused.
+    #[test]
+    fn a_text_value_is_parsed_and_held_in_range() {
+        assert_eq!(Percent::parse("41%").map(Percent::hundredths), Some(4100));
+        assert_eq!(Percent::parse("250").map(Percent::hundredths), Some(10000));
+        assert_eq!(Percent::parse("nearly"), None);
+    }
+
+    /// A value past 100 percent cannot be deserialized into one.
+    #[test]
+    fn a_percentage_past_100_is_refused_at_the_boundary() {
+        assert!(Percent::try_from(10_001).is_err());
+    }
 }

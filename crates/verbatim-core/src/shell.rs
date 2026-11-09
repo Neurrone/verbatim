@@ -64,6 +64,7 @@ pub(crate) fn reduce(state: &mut SrState, input: &Input) -> Vec<Effect> {
         Input::PreviewEarcon(earcon) => vec![Effect::PlayEarcon(*earcon)],
         Input::MenuOrSwitchEnded { ended_at_us } => menu_or_switch_ended(state, *ended_at_us),
         Input::Desktop { trace_id, news } => crate::desktop::news(state, *trace_id, news),
+        Input::Progress { change, .. } => crate::reduce::reduce_bar_change(state, change),
         _ => Vec::new(),
     }
 }

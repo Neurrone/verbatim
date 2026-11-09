@@ -100,6 +100,8 @@ pub(super) enum OwnerEvent {
     MenuOrSwitchEnded { ended_at_us: u64 },
     /// Read from the listener's pipe: news of the desktop.
     Desktop(verbatim_model::DesktopNews),
+    /// Read from the listener's pipe: a progress bar's value changed.
+    Progress(verbatim_model::BarChange),
     /// Read from the listener's pipe: a window came to the foreground.
     Foreground(crate::ForegroundReport),
     /// Read from a child's pipe: the child sent `Ready`.
@@ -773,6 +775,17 @@ impl Owner {
                 );
                 OwnerEvent::Desktop(news)
             }
+            ListenerToCore::Progress { change, timing } => {
+                tracing::trace!(
+                    target: "verbatim::stage",
+                    handling_us = hop_us(timing.observed_at_us, timing.listener_handled_at_us),
+                    queue_us = hop_us(timing.listener_handled_at_us, timing.listener_written_at_us),
+                    pipe_us = hop_us(timing.listener_written_at_us, received.at_us),
+                    ?change,
+                    "a progress bar's change: listener handling, listener queue, listener's pipe to verbatim.exe"
+                );
+                OwnerEvent::Progress(change)
+            }
             ListenerToCore::Foreground {
                 window,
                 root_owner,
@@ -856,6 +869,7 @@ impl Owner {
                     .send(OutpostMessage::MenuOrSwitchEnded { ended_at_us });
             }
             OwnerEvent::Desktop(news) => self.outbox.send(OutpostMessage::Desktop(news)),
+            OwnerEvent::Progress(change) => self.outbox.send(OutpostMessage::Progress(change)),
             OwnerEvent::Foreground(report) => {
                 self.outbox.send(OutpostMessage::Foreground(report));
             }

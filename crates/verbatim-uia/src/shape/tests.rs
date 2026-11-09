@@ -12,9 +12,9 @@ use windows::core::IUnknown;
 
 use super::{
     Absent, Ancestor, CachedReads, Cell, Description, DialogText, FocusInput, HelpTextRefresh,
-    Kept, ListenerEvent, ListenerSelection, Node, Place, Position, PropertyEvent, ProviderOrigin,
-    Reader, RoleCore, SelectionContainer, Shape, ShellButton, Shortcut, States, SuggestionsRefresh,
-    TextAreaPattern, TextEvent, ValueSet, WindowLookup, request_properties,
+    Kept, ListenerEvent, ListenerProgress, ListenerSelection, Node, Place, Position, PropertyEvent,
+    ProviderOrigin, Reader, RoleCore, SelectionContainer, Shape, ShellButton, Shortcut, States,
+    SuggestionsRefresh, TextAreaPattern, TextEvent, ValueSet, WindowLookup, request_properties,
 };
 
 /// A cache that answers every read, and records what was read.
@@ -113,6 +113,7 @@ fn every_shape_reads_exactly_what_its_request_holds_for_every_combination_of_gat
         PropertyEvent,
         ListenerEvent,
         ListenerSelection,
+        ListenerProgress,
         FocusInput,
         Description,
         Shortcut,
@@ -142,6 +143,7 @@ fn a_shapes_properties_are_its_fields_union_without_repeats() {
         ("TextEvent", TextEvent::PROPERTIES, 3),
         ("PropertyEvent", PropertyEvent::PROPERTIES, 23),
         ("ListenerEvent", ListenerEvent::PROPERTIES, 15),
+        ("ListenerProgress", ListenerProgress::PROPERTIES, 18),
         // A node's, without its place, with the rest of the listener's.
         ("ListenerSelection", ListenerSelection::PROPERTIES, 40),
         ("Node", Node::PROPERTIES, 34),

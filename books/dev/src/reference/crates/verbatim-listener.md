@@ -270,6 +270,28 @@ walk with no cache, keeps the read's place, and sends the read carrying
 `answers`; with no reading thread, no such read, or an abandoned read, the
 answer is `DeliveredFact::UiaLiveRereadGone` (`MarkerOwed`).
 
+## Progress bars
+
+The listener is the one owner of every progress bar's changes,
+foreground and background, classic and UI Automation
+(`docs/design/progress-bars.md`), and Core judges whether each is heard.
+A UIA bar's range value change arrives in the desktop-wide group with its
+range cached; `bar_percent` drops anything but a progress bar, with no
+call, as it does UIA's proxy for a classic window, and the reading thread
+of the bar's application reads its place and its nearest window, once per
+change and memoised by runtime id, and sends a`BarChange`. A classic
+window's `EVENT_OBJECT_VALUECHANGE` reaches the global hook. A window of
+a class NVDA names as a bar, visible, is read by its window messages; any
+other object through `ClassicBarRead`: known not to be a bar in
+its application's capped memo it is dropped with no call, known to be
+one its value is read through MSAA, and otherwise one read asks whether
+its window has a native provider, then its role, and remembers the answer
+in the memo. Neither path makes a marker, starts an outpost or asks
+one; a read is bounded and abandoned as any read is. A process with no
+outpost has its record made for the bar and let go when idle, since no
+supervisor exit would end it; `HookRemoved` ends a record as ever. An
+outpost's own hook keeps the value change for text and reports no bar.
+
 ## Public API
 
 `run_listener` is the listener runtime (`docs/design/communication.md`,

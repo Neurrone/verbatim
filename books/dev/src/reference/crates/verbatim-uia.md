@@ -592,7 +592,9 @@ patterns its request holds.
   `IsDialog` and `IsTogglePatternAvailable`, with the Text pattern;
   `parts(runtime_id)`; `lacked_keyboard_focus()`, true unless its cached
   `HasKeyboardFocus` is true, since a provider that answers nothing and
-  one whose answer fails leave the same default), `ListenerSelection`
+  one whose answer fails leave the same default), `ListenerProgress`,
+  a `ListenerEvent` with the range value, minimum and maximum, for the
+  listener's desktop-wide progress bar subscription, `ListenerSelection`
   (the listener's element selected: a `ListenerEvent` with what Core
   speaks of an item selected in a focused list, `ValueSet`, `States`,
   `Description`, `Shortcut`, `Position`, `Cell` and the level, 40

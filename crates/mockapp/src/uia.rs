@@ -1680,6 +1680,16 @@ mod handler {
             .into();
             return Ok(provider);
         }
+        if pattern_id == windows::Win32::UI::Accessibility::UIA_RangeValuePatternId
+            && role == verbatim_model::Role::ProgressBar
+        {
+            let provider: IUnknown = RangeValueProvider {
+                tree: tree.clone(),
+                index,
+            }
+            .into();
+            return Ok(provider);
+        }
         if pattern_id == UIA_ValuePatternId && has_value {
             let provider: IUnknown = ValueProvider {
                 tree: tree.clone(),
@@ -1850,6 +1860,46 @@ mod handler {
     /// The `ValuePattern` provider for any node whose fixture supplies a
     /// `value`. `SetValue` is a no-op, for the same reason `Invoke` only
     /// counts its hit.
+    /// A progress bar's range value, from 0 to 100, its fixture value being
+    /// its position: what a real bar's `RangeValue` pattern reports.
+    #[implement(windows::Win32::UI::Accessibility::IRangeValueProvider, Agile = false)]
+    struct RangeValueProvider {
+        tree: SharedTree,
+        index: usize,
+    }
+
+    impl windows::Win32::UI::Accessibility::IRangeValueProvider_Impl for RangeValueProvider_Impl {
+        fn SetValue(&self, _value: f64) -> WinResult<()> {
+            Ok(())
+        }
+        fn Value(&self) -> WinResult<f64> {
+            let guard = self
+                .tree
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            Ok(guard.nodes[self.index]
+                .value
+                .as_deref()
+                .and_then(|text| text.parse::<f64>().ok())
+                .unwrap_or(0.0))
+        }
+        fn IsReadOnly(&self) -> WinResult<windows_core::BOOL> {
+            Ok(true.into())
+        }
+        fn Maximum(&self) -> WinResult<f64> {
+            Ok(100.0)
+        }
+        fn Minimum(&self) -> WinResult<f64> {
+            Ok(0.0)
+        }
+        fn LargeChange(&self) -> WinResult<f64> {
+            Ok(10.0)
+        }
+        fn SmallChange(&self) -> WinResult<f64> {
+            Ok(1.0)
+        }
+    }
+
     #[implement(windows::Win32::UI::Accessibility::IValueProvider, Agile = false)]
     struct ValueProvider {
         tree: SharedTree,

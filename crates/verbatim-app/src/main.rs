@@ -1202,6 +1202,12 @@ impl ReducerThread<'_> {
                     news,
                 });
             }
+            OutpostMessage::Progress(change) => {
+                self.apply(Input::Progress {
+                    trace_id: TraceId::mint(),
+                    change,
+                });
+            }
             OutpostMessage::Foreground(report) => {
                 self.apply(Input::Foreground(ForegroundWindow {
                     window: WindowHandle(u64::from_ne_bytes(report.window.to_ne_bytes())),

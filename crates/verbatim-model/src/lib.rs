@@ -62,11 +62,11 @@ mod tree;
 
 pub use calls::{CallCounts, CallKind};
 pub use event::{
-    ActionName, AlertOrigin, DesktopNews, Earcon, EarlierElement, Effect, FetchResult,
+    ActionName, AlertOrigin, BarChange, DesktopNews, Earcon, EarlierElement, Effect, FetchResult,
     FirstCachedAncestor, FocusGroup, FocusReaderKind, ForegroundWindow, GuiRequest, HookForeground,
     Input, LiveReread, LiveRereadLog, LiveRereadReason, LockKey, NormalizedEvent, Notification,
-    NotificationKind, NotificationProcessing, Pid, ProgressReading, PropertyChange, Query, QueryId,
-    QueryKind, ReviewCommand, Script, ToastId, WindowFacts, WindowHandle,
+    NotificationKind, NotificationProcessing, Percent, Pid, ProgressReading, PropertyChange, Query,
+    QueryId, QueryKind, ReviewCommand, Script, ToastId, WindowFacts, WindowHandle,
 };
 pub use gesture::{GestureId, GestureParseError};
 pub use key_seq::KeySeq;

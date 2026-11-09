@@ -364,6 +364,22 @@ a window, with the title check and the live re-read").
   build, a scratch measurement of `reduce` on 2026-11-08). Each report
   overtaken is spoken and expires in the speech manager, as in NVDA.
 
+### A value change anywhere on the desktop, in the listener
+
+Each `EVENT_OBJECT_VALUECHANGE` wakes the listener's WinEvent thread
+once, a typed character in a classic edit control included, as NVDA's one
+hook does, for a few local calls; a bar then adds one wake of a reading
+thread and three window messages, or about four MSAA calls when it is
+known only by its role. The first change of any other object costs one
+wake of a reading thread and one read, the raw probe and `accRole`, once
+per object while its application's memo holds it: and the memo ends with
+its record, so a process with no outpost, whose record ends when idle,
+repays that read for every change (`docs/design/progress-bars.md`,
+"Costs"). Each UIA range value change anywhere wakes the listener's UIA
+thread, and a progress bar's adds a reading thread and its place's read.
+The wake-up and processor time figures are from the design's first
+step, still to be measured.
+
 ### The listener's reads in a window the outpost judges MSAA
 
 The listener makes no backend verdict and no probe; it skips a focus only

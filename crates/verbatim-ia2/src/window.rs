@@ -24,8 +24,8 @@ use std::ffi::c_void;
 
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::UI::Controls::{
-    CCM_GETVERSION, LVM_GETITEMCOUNT, TVIS_STATEIMAGEMASK, TVM_GETITEMSTATE, TVM_GETNEXTITEM,
-    TVM_MAPACCIDTOHTREEITEM, TVM_MAPHTREEITEMTOACCID,
+    CCM_GETVERSION, LVM_GETITEMCOUNT, PBM_GETPOS, PBM_GETRANGE, TVIS_STATEIMAGEMASK,
+    TVM_GETITEMSTATE, TVM_GETNEXTITEM, TVM_MAPACCIDTOHTREEITEM, TVM_MAPHTREEITEMTOACCID,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     IsWindow, SMTO_BLOCK, SMTO_ERRORONEXIT, SendMessageTimeoutW, WM_APP,
@@ -57,6 +57,29 @@ pub(crate) enum Unanswered {
     /// The worker sending it was abandoned: nothing was sent
     /// (`verbatim_win32::calls`).
     Abandoned,
+}
+
+/// The percentage a classic progress bar shows (`msctls_progress32`, or a
+/// class compatible with it), read by three window messages, `PBM_GETPOS`
+/// then `PBM_GETRANGE` for its low end and for its high end, which return
+/// plain integers, so no object is built and no COM call made: bounded as
+/// the reading thread's reads are, by the thread's deadline. `None` for a
+/// window that does not answer, or a range that is empty or reversed.
+/// Blocking; worker only.
+#[must_use]
+pub fn classic_bar_percent(hwnd: isize) -> Option<verbatim_model::Percent> {
+    // SAFETY: integer arguments; these messages take no pointer here.
+    let position = unsafe { send_message(hwnd, PBM_GETPOS, (0, 0), None) }.ok()?;
+    // SAFETY: as above; a true wParam asks for the low end, with no out
+    // parameter.
+    let low = unsafe { send_message(hwnd, PBM_GETRANGE, (1, 0), None) }.ok()?;
+    // SAFETY: as above; a false wParam asks for the high end.
+    let high = unsafe { send_message(hwnd, PBM_GETRANGE, (0, 0), None) }.ok()?;
+    verbatim_model::Percent::of_position(
+        i32::try_from(position).ok()?,
+        i32::try_from(low).ok()?,
+        i32::try_from(high).ok()?,
+    )
 }
 
 /// The time limit a message is sent with: the largest that waits, about 24.8
@@ -218,6 +241,68 @@ pub(crate) fn tree_view_state_image(hwnd: isize, item: isize) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A real common control's position and range, an empty one included,
+    /// read by the three messages the listener sends (docs/design/progress-bars.md).
+    #[test]
+    fn a_classic_bars_percentage_is_read_by_window_messages() {
+        use windows::Win32::UI::Controls::{
+            ICC_PROGRESS_CLASS, INITCOMMONCONTROLSEX, InitCommonControlsEx, PBM_SETPOS,
+            PBM_SETRANGE32,
+        };
+        use windows::Win32::UI::WindowsAndMessaging::{
+            CreateWindowExW, DestroyWindow, SendMessageW, WINDOW_EX_STYLE, WINDOW_STYLE,
+        };
+        use windows::core::w;
+        let init = INITCOMMONCONTROLSEX {
+            dwSize: u32::try_from(size_of::<INITCOMMONCONTROLSEX>()).expect("small"),
+            dwICC: ICC_PROGRESS_CLASS,
+        };
+        // SAFETY: init is a correctly sized local.
+        assert!(unsafe { InitCommonControlsEx(&raw const init) }.as_bool());
+        // SAFETY: a top-level window of a registered class, destroyed below.
+        let bar = unsafe {
+            CreateWindowExW(
+                WINDOW_EX_STYLE(0),
+                w!("msctls_progress32"),
+                None,
+                WINDOW_STYLE(0),
+                0,
+                0,
+                100,
+                10,
+                None,
+                None,
+                None,
+                None,
+            )
+        }
+        .expect("a progress bar");
+        let set = |low: isize, high: isize, position: usize| {
+            // SAFETY: integer arguments on the window just made, on its
+            // own thread.
+            let _ = unsafe {
+                SendMessageW(
+                    bar,
+                    PBM_SETRANGE32,
+                    Some(WPARAM(low.cast_unsigned())),
+                    Some(LPARAM(high)),
+                )
+            };
+            // SAFETY: as above.
+            let _ = unsafe { SendMessageW(bar, PBM_SETPOS, Some(WPARAM(position)), None) };
+        };
+        let percent =
+            || classic_bar_percent(bar.0 as isize).map(verbatim_model::Percent::hundredths);
+        set(10, 50, 30);
+        assert_eq!(percent(), Some(5000), "halfway along 10 to 50");
+        set(0, 200, 150);
+        assert_eq!(percent(), Some(7500), "150 of 200");
+        set(5, 5, 5);
+        assert_eq!(percent(), None, "an empty range");
+        // SAFETY: the window this test made.
+        unsafe { DestroyWindow(bar) }.expect("the window is destroyed");
+    }
 
     /// NVDA's exemption from `SMTO_ABORTIFHUNG` is the range from `WM_APP`
     /// to `0xBFFF`, and every message this crate sends to an application

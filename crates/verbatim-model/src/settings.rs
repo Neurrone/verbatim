@@ -90,6 +90,11 @@ pub struct ReaderSettings {
     /// "skipped N lines" and this many of the newest are kept (default 30,
     /// at most [`MAX_TERMINAL_LINES`]).
     pub terminal_last_lines: u16,
+    /// Indicate a progress bar in a background window as well as one in the
+    /// foreground (NVDA's `reportBackgroundProgressBars`, default off;
+    /// `docs/parity/changes-and-selection.md`, "Progress bars"). Read by
+    /// Core alone.
+    pub report_background_progress_bars: bool,
 }
 
 /// The most lines either terminal limit may be set to, and so the most an
@@ -131,6 +136,7 @@ impl Default for ReaderSettings {
             report_terminal_output: true,
             terminal_full_lines: DEFAULT_TERMINAL_LINES,
             terminal_last_lines: DEFAULT_TERMINAL_LINES,
+            report_background_progress_bars: false,
         }
     }
 }

@@ -292,10 +292,20 @@ attention names, since a page's content can be another process's window.
 A focused progress bar is reported by both its focus subscription and
 this one, so its value is read twice per change, and Core's one-percent
 rule keeps the second silent; a foreground window whose subtree holds no
-progress bar still pays the one registration. Background progress bar
-reporting, an NVDA option off by default, is not
-yet built (M4.3): background progress bars stay silent, with no setting
-(Dickson, 2026-10-10 and 2026-10-15).
+progress bar still pays the one registration. The listener also takes every bar's change, foreground or background,
+as NVDA's one hook does (`docs/design/progress-bars.md`, approved by
+Dickson on 2026-11-09): a UIA bar's range value change in its
+desktop-wide group, filtered by its cached control type and provider on
+the callback thread, and a classic window's `EVENT_OBJECT_VALUECHANGE` on
+its global hook, recognised by its normalised class or, through a capped
+memo per application, its role, with its percentage read on the
+application's reading thread and no outpost started. Core keeps every
+change at one place to one percent, and drops a bar outside the foreground
+window unless `report_background_progress_bars` is on, false by default
+and with no place in the dialog until M4.3. A focused bar's ordinary
+value change is silent when its value is a number and it is on screen,
+heard only as a bar; off screen or with no number it is an ordinary value
+change.
 
 ### A combo box's value from its selected item
 

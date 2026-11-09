@@ -90,9 +90,10 @@ pub use registry::{Interning, NodeIdRegistry, Released};
 pub use shape::{
     Absent, Agile, Ancestor, AncestorGates, Cached, Cell, Covers, Description, DialogText,
     Direction, ElementValue, Fill, FocusInput, HelpTextRefresh, Kept, LEFT_OUT_WHEN_UNSUPPORTED,
-    ListenerEvent, ListenerSelection, Live, Node, NodeGates, Place, Position, PropertyEvent,
-    Request, RoleCore, SelectedItem, SelectionContainer, Shape, ShellButton, Shortcut, States,
-    SuggestionsRefresh, TextAreaPattern, TextEvent, Ungated, ValueSet, WindowLookup,
+    ListenerEvent, ListenerProgress, ListenerSelection, Live, Node, NodeGates, Place, Position,
+    PropertyEvent, Request, RoleCore, SelectedItem, SelectionContainer, Shape, ShellButton,
+    Shortcut, States, SuggestionsRefresh, TextAreaPattern, TextEvent, Ungated, ValueSet,
+    WindowLookup,
 };
 #[cfg(feature = "faults")]
 pub use subscribe::kept_for_tests;

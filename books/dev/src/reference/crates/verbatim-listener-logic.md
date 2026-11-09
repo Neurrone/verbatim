@@ -38,7 +38,11 @@ Public API:
 - `focus` — the vocabulary a focus event is judged and scheduled in: its
   kind (`FocusEvent`), what the callback knew of it (`Meta`) and where it
   was queued (`Arrival`, `arrival_of`), and what became of it (`Judged`,
-  with `into_fact`). Every reason an event is dropped is a constant here
+  with `into_fact`). `classic_value_change`, `BarObject`, `BarVerdict` and
+  `ClassicBarRead` are the listener's hook's table for a classic value
+  change; the schedule keeps each record's memo of objects' verdicts
+  (`bar_verdict`, `ScheduleInput::BarLearned`), capped at
+  `BAR_VERDICTS_KEPT`, and a bar's record is let go when idle. Every reason an event is dropped is a constant here
   (`NOT_IN_TIME`, `MOVED_ON`, `WAITED_TOO_LONG`, `REPLACED`, `NO_WINDOW`,
   `NOT_FOCUSED`, `MSAA_CLASS`, `NEAREST_TIMED_OUT` and the rest). A
   nearest window's lookup that fails with UIA's timeout

@@ -230,10 +230,15 @@ pub const APP_SUBSCRIPTIONS: &[WinEventKind] = &[
 /// ([`suspend_kinds`]) except while a console window in front has not yet
 /// named its thread through one of them. The desktop's switch and the
 /// desktop window's name change are there for Core: the second is hooked
-/// scoped to csrss's process ([`WinEventKind::DesktopName`]).
+/// scoped to csrss's process ([`WinEventKind::DesktopName`]). A value change
+/// is the listener's for every progress bar, foreground or background
+/// (`docs/design/progress-bars.md`), judged by its window's class and
+/// read on its application's reading thread; an outpost's own hook keeps the
+/// same event for text.
 pub const LISTENER_SUBSCRIPTIONS: &[WinEventKind] = &[
     WinEventKind::Focus,
     WinEventKind::Foreground,
+    WinEventKind::ValueChange,
     WinEventKind::MenuPopupStart,
     WinEventKind::MenuEnd,
     WinEventKind::SwitchEnd,
