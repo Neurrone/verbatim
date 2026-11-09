@@ -455,7 +455,7 @@ fn node_window(context: &RequestContext<'_>, node: NodeId) -> Option<Window> {
 /// The application's focus window, with no call into it: the focus window
 /// of the foreground thread when that thread is the application's, else
 /// the top-level window of the focus the outpost expects Core to hold.
-pub(super) fn application_focus_window(context: &RequestContext<'_>) -> Option<Window> {
+fn application_focus_window(context: &RequestContext<'_>) -> Option<Window> {
     context
         .focus_window()
         .filter(|&hwnd| read::serves(context, hwnd))
@@ -3004,6 +3004,11 @@ impl Worker<'_> {
         if matches!(event.kind, UiaKind::Selection)
             && let Some(selection) = self.controlled_selection(&event.parts.runtime_id)
         {
+            if let (NormalizedEvent::ControlledSelection { node, .. }, Some(window)) =
+                (&selection, hwnd)
+            {
+                self.context.store.record_nearest_window(node.id, window);
+            }
             self.emit(trace, observed_at_us, Backend::Uia, hwnd, selection);
             return;
         }
@@ -3364,6 +3369,16 @@ impl Worker<'_> {
             states: parts.states,
             details: parts.details.clone(),
         }
+    }
+
+    /// The node of the UIA focus `read` names, its nearest window recorded
+    /// with it, as NVDA's object fixes its window when it is made.
+    fn focus_node(context: &RequestContext<'_>, read: &UiaFocusRead) -> NodeSnapshot {
+        let node = Self::uia_node(context, &read.snapshot, None);
+        if let Some(window) = read.window.or(Some(read.hwnd).filter(|&hwnd| hwnd != 0)) {
+            context.store.record_nearest_window(node.id, window);
+        }
+        node
     }
 
     /// A fact routed from the listener, or one the outpost's own hook took
@@ -3914,7 +3929,7 @@ impl Worker<'_> {
         self.note_earlier(read);
         let reading = Instant::now();
         let previous = self.focus_chain();
-        let node = Self::uia_node(context, &read.snapshot, None);
+        let node = Self::focus_node(context, read);
         let selected = read
             .selected_child
             .as_ref()

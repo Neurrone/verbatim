@@ -1326,8 +1326,10 @@ Caret and text events:
   column counts included (`Node`'s gated `GridCounts`); a dead element
   answers `Gone`. A UI Automation node that is dead or gone answers `Gone`
   to `Navigate` too, except that `Parent` answers the parent of the
-  element's window (NVDA's fall back, `known_window_of`), the desktop
-  named as NVDA names it.
+  element's window (NVDA's fall back, `known_window_of`): the nearest
+  window recorded in the store when the node was built, and its parent
+  read by the object `window_object` chooses as NVDA does, the desktop
+  carried as `NodeDetails::desktop_window` for Core to name.
 - `Ancestors`, `Navigate`, and `Activate` go to the issuing registry: UIA's
   raw-view walker with the base cache, or MSAA's `accParent`,
   `accNavigate`, and `accDoDefaultAction`. An unknown or unreachable node

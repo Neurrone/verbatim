@@ -1968,6 +1968,7 @@ fn details_speak_in_nvda_property_order() {
         parent_automation_id: None,
         window: None,
         above_boundary: false,
+        desktop_window: false,
     };
 
     // The first level spoken goes first ("Where the level goes" in
@@ -4027,6 +4028,30 @@ fn navigate_at_a_tree_edge_speaks_the_edge_message_and_stays_put() {
     assert_eq!(
         said(&effects),
         vec![UtteranceSegment::label("App"), role(Role::Window)]
+    );
+}
+
+/// A dead element's Parent that reaches the desktop is said "Desktop window",
+/// the word from Core's message, whatever the window's text is.
+#[test]
+fn the_desktop_window_is_named_by_core() {
+    let source = Pid(1);
+    let root = node(10, Role::Window, Some("App"), None, StateSet::new());
+    let state = focused(source, root);
+    let (state, effects) = reduce(
+        &state,
+        &command(TraceId::from_raw(128), ReviewCommand::Parent, 0),
+    );
+    let query = only_fetch(&effects);
+    let mut desktop = node(11, Role::Window, None, None, StateSet::new());
+    desktop.details.desktop_window = true;
+    let (_, effects) = reduce(&state, &fetched(129, &query, FetchResult::Node(desktop)));
+    assert_eq!(
+        said(&effects),
+        vec![
+            UtteranceSegment::new(SegmentContent::Message(verbatim_model::Message::Desktop)),
+            role(Role::Window)
+        ]
     );
 }
 

@@ -201,25 +201,6 @@ Different:
   as it reports it, about 100 ms after the key, once its script ends.
   Verbatim says the suggestion when its event arrives, and ends the key
   with no line.
-- A selection of an element outside every element the relation names,
-  while the first of them has a selection, is reported by Verbatim as
-  that selection and not reported as a suggestion by NVDA (pinned in
-  `crates/mockapp/tests/controller_for.rs`).
-
-Known from the source and not captured:
-
-- A selection in a second controlled element that the search cannot
-  find is reported as the first controlled element's current selection,
-  where NVDA's walk reports the event's element; Settings' search box
-  names one element.
-- A selection event left stale by a second replacement of the list is
-  reported as the current list's selection, and said again when the new
-  list's own selection event follows, where NVDA reports the event's
-  element.
-- A selection event raised on the controlled list itself is a
-  controlled selection in NVDA, whose tree walker's `NormalizeElement`
-  answers the element itself, and none in Verbatim
-  (`crates/mockapp/tests/controller_for.rs`).
 
 ### Suggestions appearing and going away
 

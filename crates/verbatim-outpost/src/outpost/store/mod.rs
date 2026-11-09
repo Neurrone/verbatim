@@ -203,6 +203,10 @@ struct State {
     /// by node (`books/dev/src/explanation/design/terminal-model.md`, "Where it runs"). A read
     /// works on a copy, which only the commit of its result puts in place.
     terminals: HashMap<u64, Terminal>,
+    /// Each UIA node's nearest window, recorded when the node is built and
+    /// kept after its element dies, as NVDA's object keeps the window it
+    /// found when it was made (`NVDAObjects/UIA/__init__.py` 1604 to 1607).
+    nearest_windows: HashMap<u64, isize>,
     /// The objects entries came with, parked until their program takes
     /// them, by key ([`Parked`]).
     parked: HashMap<u64, Parked>,
@@ -286,6 +290,7 @@ impl State {
             }
             removed.patterns.extend(self.patterns.remove(&node));
             self.support.remove(&node);
+            self.nearest_windows.remove(&node);
             removed.terminals.extend(self.terminals.remove(&node));
         }
     }
@@ -332,6 +337,7 @@ impl Store {
                 patterns: HashMap::new(),
                 support: HashMap::new(),
                 terminals: HashMap::new(),
+                nearest_windows: HashMap::new(),
                 parked: HashMap::new(),
                 parked_taken: 0,
             }),
@@ -398,6 +404,18 @@ impl Store {
     /// The MSAA address of the MSAA node `node`.
     pub(super) fn key_of(&self, node: NodeId) -> Option<MsaaKey> {
         self.msaa.key_of(node)
+    }
+
+    /// The nearest window recorded for the UIA node `node`
+    /// ([`Self::record_nearest_window`]).
+    pub(super) fn nearest_window_of(&self, node: NodeId) -> Option<isize> {
+        self.lock().nearest_windows.get(&node.number()).copied()
+    }
+
+    /// Records `window` as the nearest window of the UIA node `node`, as the
+    /// node is built, forgotten with the node.
+    pub(super) fn record_nearest_window(&self, node: NodeId, window: isize) {
+        self.lock().nearest_windows.insert(node.number(), window);
     }
 
     /// The details a node read includes.

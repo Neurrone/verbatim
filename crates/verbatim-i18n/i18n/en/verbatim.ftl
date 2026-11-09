@@ -212,6 +212,7 @@ message-no-next-object = No next
 message-no-previous-object = No previous
 message-no-containing-object = No containing object
 message-no-objects-inside = No objects inside
+message-desktop = Desktop
 message-top = Top
 message-bottom = Bottom
 message-left = Left

@@ -214,6 +214,16 @@ object", as a tree edge does, the navigator staying; Parent from a dead
 element answers the parent of its window, as NVDA's walker fails and it
 falls to the window's parent (`NVDAObjects/UIA/__init__.py` 2136 to 2145,
 `NVDAObjects/window/__init__.py` 287 to 293), the navigator moving there.
+The window is the element's nearest window recorded when its object was
+made (`NVDAObjects/UIA/__init__.py` 1604 to 1607), and its parent is read
+as NVDA's `findBestAPIClass` chooses (`NVDAObjects/window/__init__.py` 84
+to 98 and 291 to 293): the desktop and a hung window are plain windows,
+any other its UIA element or MSAA client, said with its own role; the
+outpost makes no connection to another process's window, which is a
+stand-in from Windows' own state. A limit: the object-activation walk
+goes up by the walker alone and stops at a dead element, where NVDA's
+walk takes the object's parent, the same fall back to the window's
+parent (`globalCommands.py` 1880 to 1901).
 A dead object reviews as an object with empty text: Report Current Object
 says nothing, and the review commands say "blank" or, moving past the
 empty line, "Bottom" and "blank", as NVDA's name and value then read as

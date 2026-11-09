@@ -3606,7 +3606,11 @@ fn node_segments(
     cell_memory: &mut CellMemory,
 ) -> Vec<UtteranceSegment> {
     let mut segments = Vec::new();
-    if let Some(name) = &node.name {
+    if node.details.desktop_window {
+        segments.push(UtteranceSegment::new(SegmentContent::Message(
+            verbatim_model::Message::Desktop,
+        )));
+    } else if let Some(name) = &node.name {
         segments.push(UtteranceSegment::label(name.clone()));
     }
     if speaks_role(node, reason) {

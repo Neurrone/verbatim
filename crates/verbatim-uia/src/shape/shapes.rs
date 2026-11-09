@@ -741,6 +741,7 @@ impl Node {
             parent_automation_id: None,
             window: self.role.window(),
             above_boundary: false,
+            desktop_window: false,
         };
         strip_bidi_controls([&mut name, &mut value, &mut details.description]);
         let offscreen = self.place.as_ref().is_some_and(|place| place.offscreen);

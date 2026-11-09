@@ -577,6 +577,13 @@ pub struct NodeDetails {
     /// when `false`.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub above_boundary: bool,
+    /// Whether the node is the desktop window, which Core names itself, as
+    /// NVDA's `Desktop` object is named by NVDA and not by its window text
+    /// (`docs/parity/review.md`, "Dead objects"). Set only where a dead
+    /// element's Parent reaches the desktop; left out of the message when
+    /// `false`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub desktop_window: bool,
 }
 
 /// Everything the reducer needs to announce one node, captured in one place.

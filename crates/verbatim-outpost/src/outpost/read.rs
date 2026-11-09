@@ -1494,6 +1494,10 @@ fn uia_focused_control(
         let fields = element.read();
         node.details.class_name.clone_from(&fields.role.class_name);
         console_text_area(&mut node, Some(hwnd));
+        context.store.record_nearest_window(
+            node.id,
+            node.details.window.map_or(hwnd, super::window::hwnd_of),
+        );
         // A focus that has moved on since the focused element was read is
         // still this query's answer, read the classic way. Its parent's
         // automation id, for the same rules, comes with its ancestors.
@@ -1827,28 +1831,62 @@ pub(super) fn read_node(
     }
     let (uia, nodes) = client.uia_with(context, Context::read_node_request)?;
     let element = resolve_uia_element(context, uia, &nodes, node_id)?;
-    Ok(element.snapshot_in_table(context.nodes()))
+    Ok(with_legacy_checked_state(
+        element.live().element(),
+        element.snapshot_in_table(context.nodes()),
+    ))
 }
 
-/// The window of the dead UIA element `node_id`, as far as the outpost
-/// still knows it, for NVDA's falling back to the parent of the element's
-/// window: its own window handle when it has one, the handle its runtime
-/// id holds, else the application's focus window. Before any step, since
-/// the step lets a gone element go.
-fn known_window_of(context: &RequestContext<'_>, node_id: NodeId) -> Option<isize> {
-    let own = context
+/// The window handle the kept element of the UIA node `node_id` says it is,
+/// `None` for a windowless element or one no longer kept. No call.
+fn kept_own_window(context: &RequestContext<'_>, node_id: NodeId) -> Option<isize> {
+    context
         .store
         .element_of(node_id)
         .and_then(|agile| agile.resolve().ok())
         .map(|element| element.read().hwnd)
-        .filter(|&hwnd| hwnd != 0);
-    own.or_else(|| match context.store.runtime_id_of(node_id).as_deref() {
-        Some([42, hwnd]) => isize::try_from(*hwnd).ok(),
-        _ => None,
-    })
-    .or_else(|| {
-        super::worker::application_focus_window(context).map(verbatim_reader_rules::Window::get)
-    })
+        .filter(|&hwnd| hwnd != 0)
+}
+
+/// The nearest window of the dead UIA element `node_id`, for NVDA's falling
+/// back to the parent of the element's window: the one recorded when its
+/// node was built, as NVDA's object fixes its window when it is made
+/// (`NVDAObjects/UIA/__init__.py` 1604 to 1607); else, for a window's own
+/// element reached no other way, the handle its kept element or its
+/// runtime id holds. Before any step, since the step lets a gone element
+/// go.
+fn known_window_of(context: &RequestContext<'_>, node_id: NodeId) -> Option<isize> {
+    context
+        .store
+        .nearest_window_of(node_id)
+        .or_else(|| kept_own_window(context, node_id))
+        .or_else(|| match context.store.runtime_id_of(node_id).as_deref() {
+            Some([42, hwnd]) => isize::try_from(*hwnd).ok(),
+            _ => None,
+        })
+}
+
+/// The nearest window of `neighbor`, reached by a step of `kind` from a node
+/// whose nearest window is `from_window` and which is itself a window when
+/// `from_is_window`, from what the step read, with no call: its own window;
+/// else inside the node, or beside or above a windowless node, the same
+/// window as the node's, as NVDA reuses it (`NVDAObjects/UIA/__init__.py`
+/// 2146 to 2153); else, beside or above a window, that window's parent.
+fn neighbor_nearest_window(
+    neighbor: &NodeSnapshot,
+    kind: QueryKind,
+    from_window: Option<isize>,
+    from_is_window: bool,
+) -> Option<isize> {
+    if let Some(own) = neighbor.details.window {
+        return Some(super::window::hwnd_of(own));
+    }
+    if kind == QueryKind::FirstChild || !from_is_window {
+        return from_window;
+    }
+    from_window
+        .map(verbatim_win32::window::parent)
+        .filter(|&parent| parent != 0)
 }
 
 /// The parent of the dead element's window `window`, NVDA's fall back when
@@ -1857,6 +1895,7 @@ fn known_window_of(context: &RequestContext<'_>, node_id: NodeId) -> Option<isiz
 /// too.
 fn parent_of_window(
     context: &RequestContext<'_>,
+    client: &mut Client,
     window: Option<isize>,
 ) -> Result<Option<NodeSnapshot>, ReadError> {
     let Some(window) = window.filter(|&window| verbatim_win32::window::window_exists(window))
@@ -1867,13 +1906,64 @@ fn parent_of_window(
     if parent == 0 {
         return Ok(None);
     }
-    let mut node = plain_window(context, parent);
-    if parent == verbatim_win32::window::desktop_window() {
-        // NVDA's `Desktop` window object, named by NVDA, not by its window
-        // text.
-        node.name = Some("Desktop".to_owned());
+    window_object(context, client, parent).map(Some)
+}
+
+/// The object NVDA's `Window._get_parent` makes of window `hwnd`
+/// (`findBestAPIClass` with the relation "parent",
+/// `NVDAObjects/window/__init__.py` 84 to 98 and 291 to 293): the desktop
+/// and a ghost's or a hung application's window stay plain windows; else,
+/// by the outpost's verdict, its UIA element or its MSAA client, each with
+/// its own role, a window whose MSAA client cannot be acquired being a
+/// plain window, as NVDA's object for it is then its `Window`. Another
+/// process's window is a stand-in read from Windows' own state, since the
+/// outpost makes no connection to it
+/// (`books/dev/src/explanation/design/listener-without-connections.md`,
+/// section 4.3). The desktop is left for Core to name.
+///
+/// # Errors
+///
+/// [`ReadError::Failed`] when a UIA window's element cannot be read, whose
+/// exception ends NVDA's command.
+fn window_object(
+    context: &RequestContext<'_>,
+    client: &mut Client,
+    hwnd: isize,
+) -> Result<NodeSnapshot, ReadError> {
+    if hwnd == desktop_window() {
+        let mut node = plain_window(context, hwnd);
+        node.details.desktop_window = true;
+        return Ok(node);
     }
-    Ok(Some(node))
+    if !serves(context, hwnd) {
+        let mut node = if context.window_unreadable(hwnd).is_none() {
+            client_pane(context, hwnd)
+        } else {
+            plain_window(context, hwnd)
+        };
+        node.details.above_boundary = true;
+        return Ok(node);
+    }
+    if context.window_unreadable(hwnd).is_some() {
+        return Ok(plain_window(context, hwnd));
+    }
+    if window_uses_uia(context, hwnd) {
+        let (uia, nodes) = client.uia_with(context, Context::node_request)?;
+        let element = uia
+            .window_element(hwnd, &nodes)
+            .map_err(|error| ReadError::Failed(format!("the window's element: {error}")))?;
+        let node = element.snapshot(context.nodes());
+        context.store.record_nearest_window(node.id, hwnd);
+        return Ok(node);
+    }
+    Ok(verbatim_ia2::acquire::snapshot_from_event(
+        hwnd,
+        OBJID_CLIENT.0,
+        CHILDID_SELF,
+        context.nodes(),
+        verbatim_ia2::acquire::Purpose::Announce,
+    )
+    .unwrap_or_else(|| plain_window(context, hwnd)))
 }
 
 /// One object-navigation step from a UIA node: the neighbor, or `None` for
@@ -1914,7 +2004,7 @@ pub(super) fn navigate(
     }
     let window = known_window_of(context, node_id);
     match step(context, client, node_id, kind) {
-        Err(ReadError::Gone) => parent_of_window(context, window),
+        Err(ReadError::Gone) => parent_of_window(context, client, window),
         answered => answered,
     }
 }
@@ -1930,6 +2020,14 @@ fn step(
 ) -> Result<Option<NodeSnapshot>, ReadError> {
     let (neighbor, from_window) = if context.store.runtime_id_of(node_id).is_some() {
         let (neighbor, from_window) = uia_step(context, client, node_id, kind)?;
+        if let Some(neighbor) = &neighbor {
+            let from_is_window = kept_own_window(context, node_id).is_some();
+            if let Some(window) =
+                neighbor_nearest_window(neighbor, kind, from_window, from_is_window)
+            {
+                context.store.record_nearest_window(neighbor.id, window);
+            }
+        }
         // A menu item reached by navigation reads its legacy checked state
         // as a focused one does.
         let neighbor = neighbor.map(|neighbor| {

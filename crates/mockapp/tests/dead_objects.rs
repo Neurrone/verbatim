@@ -11,9 +11,10 @@ mod harness;
 
 use verbatim_model::protocol::{OutpostToCore, Query, QueryOutcome, QueryResult};
 use verbatim_model::{
-    CallCounts, NodeId, QueryKind, Role, TextOp, TextPoint, TextRead, TextReply, TextUnit,
+    Backend, CallCounts, NodeId, QueryKind, Role, TextOp, TextPoint, TextRead, TextReply, TextUnit,
 };
 use verbatim_uia::Uia;
+use windows::Win32::Foundation::HWND;
 
 use common::outpost::OutpostUnderTest;
 
@@ -76,9 +77,125 @@ fn a_dead_element_answers_gone_and_its_parent_is_its_windows_parent() {
 
     let (parent, _) = outpost.navigate(group.id, QueryKind::Parent);
     assert_eq!(
-        (parent.role, parent.name.as_deref()),
-        (Role::Window, Some("Desktop")),
-        "the parent of the dead element's window"
+        (parent.role, parent.details.desktop_window),
+        (Role::Window, true),
+        "the parent of the dead element's window, the desktop for Core to name"
+    );
+
+    drop(outpost);
+    app.quit();
+}
+
+/// mockapp's window of `dead_island.json`, titled after `label`, and its UIA
+/// child window, holding the windowless "Inner" and its focused button "OK",
+/// the host holding the windowless button "Apply".
+fn dead_island(label: &str) -> (common::MockApp, HWND, HWND) {
+    use windows::Win32::UI::WindowsAndMessaging::FindWindowExW;
+    let title = common::unique_title(label);
+    let app = common::spawn("dead_island.json", "uia", &title);
+    let host = common::find_window(&title);
+    // SAFETY: a local search of the host window's children.
+    let island = unsafe {
+        FindWindowExW(
+            Some(host),
+            None,
+            windows::core::w!("VerbatimMockAppUiaWindow"),
+            windows::core::PCWSTR::null(),
+        )
+    }
+    .expect("mockapp made the UIA window");
+    (app, host, island)
+}
+
+/// A windowless element's Parent, once it is dead, answers the parent of the
+/// window it was found in, whatever the focus has done since: "Inner",
+/// reached by navigation inside the child window, gives its host window's
+/// own UIA object with its own role and name, the focus having moved to the
+/// host.
+fn a_dead_element_s_parent_is_its_own_window_s_parent_with_its_own_role() {
+    let (mut app, host, island) = dead_island("mockapp-dead-island-navigated");
+    let mut outpost = OutpostUnderTest::new(&app);
+    let uia = Uia::new().expect("a UIA client");
+    let focused = common::listener_focus(&uia, island.0 as isize);
+    let ok = outpost.uia_focus(&focused).node.id;
+    let (inner, _) = outpost.navigate(ok, QueryKind::Parent);
+    assert_eq!(inner.name.as_deref(), Some("Inner"));
+
+    app.send("set-focus apply");
+    let focused = common::listener_focus(&uia, host.0 as isize);
+    let _ = outpost.uia_focus(&focused);
+
+    app.send("island disconnect inner");
+    let (parent, _) = outpost.navigate(inner.id, QueryKind::Parent);
+    assert_eq!(
+        (
+            parent.backend,
+            parent.role,
+            parent.name.as_deref(),
+            parent.details.desktop_window
+        ),
+        (
+            Backend::Uia,
+            Role::Window,
+            Some("Mockapp Dead Island"),
+            false
+        ),
+        "the host window's element, not the focus window's parent"
+    );
+
+    drop(outpost);
+    app.quit();
+}
+
+/// The window a focused windowless element was found in is the one its
+/// Parent answers from, after it dies and the focus has moved into a child
+/// window: "Apply", directly under the host, gives the desktop, the parent
+/// of its own window, and not the host, the parent of the child window that
+/// now has the focus.
+fn a_dead_focus_keeps_the_window_it_was_found_in() {
+    let (mut app, host, island) = dead_island("mockapp-dead-island-focused");
+    let mut outpost = OutpostUnderTest::new(&app);
+    let uia = Uia::new().expect("a UIA client");
+    app.send("set-focus apply");
+    let focused = common::listener_focus(&uia, host.0 as isize);
+    let apply = outpost.uia_focus(&focused).node.id;
+
+    app.send("island set-focus ok");
+    let focused = common::listener_focus(&uia, island.0 as isize);
+    let _ = outpost.uia_focus(&focused);
+
+    app.send("disconnect apply");
+    let (parent, _) = outpost.navigate(apply, QueryKind::Parent);
+    assert_eq!(
+        (parent.role, parent.details.desktop_window),
+        (Role::Window, true)
+    );
+
+    drop(outpost);
+    app.quit();
+}
+
+/// Report Current Object's live read of a menu item reads its legacy state,
+/// as its focus's and a navigation's do
+/// (`verbatim_uia::map::wants_legacy_checked_state`): the read and the
+/// legacy state, two calls, where a button's is one.
+fn a_live_read_of_a_menu_item_reads_its_legacy_state() {
+    let title = common::unique_title("mockapp-live-read-menu-item");
+    let mut app = common::spawn("modal_owner.json", "uia", &title);
+    let window = common::find_window(&title).0 as isize;
+    let mut outpost = OutpostUnderTest::new(&app);
+    let uia = Uia::new().expect("a UIA client");
+    app.send("set-focus copy");
+    let focused = common::listener_focus(&uia, window);
+    let copy = outpost.uia_focus(&focused).node.id;
+    // The element, found by the focus's route, is kept for the read below.
+    let _ = read_node(&mut outpost, copy);
+
+    let (name, calls) = read_node(&mut outpost, copy);
+    assert_eq!(
+        (name.as_deref(), calls.uia, calls.msaa),
+        (Some("Copy"), 2, 0),
+        "the read and the legacy state"
     );
 
     drop(outpost);
@@ -160,6 +277,18 @@ fn main() {
         (
             "a_dead_element_answers_gone_and_its_parent_is_its_windows_parent",
             a_dead_element_answers_gone_and_its_parent_is_its_windows_parent,
+        ),
+        (
+            "a_dead_element_s_parent_is_its_own_window_s_parent_with_its_own_role",
+            a_dead_element_s_parent_is_its_own_window_s_parent_with_its_own_role,
+        ),
+        (
+            "a_dead_focus_keeps_the_window_it_was_found_in",
+            a_dead_focus_keeps_the_window_it_was_found_in,
+        ),
+        (
+            "a_live_read_of_a_menu_item_reads_its_legacy_state",
+            a_live_read_of_a_menu_item_reads_its_legacy_state,
         ),
         (
             "a_text_read_of_a_dead_object_says_gone",

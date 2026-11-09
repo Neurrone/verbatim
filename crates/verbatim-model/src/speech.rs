@@ -305,6 +305,9 @@ pub enum Message {
     NoContainingObject,
     /// Object navigation found no children — NVDA's "No objects inside".
     NoObjectsInside,
+    /// The name of the desktop window, where a dead element's Parent lands
+    /// — NVDA's "Desktop".
+    Desktop,
     /// The review cursor is on the first line or word — NVDA's "Top".
     Top,
     /// The review cursor is on the last line or word — NVDA's "Bottom".

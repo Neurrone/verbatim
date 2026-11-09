@@ -726,6 +726,7 @@ pub fn message_text(message: verbatim_model::Message) -> String {
         Message::NoPreviousObject => i18n_embed_fl::fl!(loader, "message-no-previous-object"),
         Message::NoContainingObject => i18n_embed_fl::fl!(loader, "message-no-containing-object"),
         Message::NoObjectsInside => i18n_embed_fl::fl!(loader, "message-no-objects-inside"),
+        Message::Desktop => i18n_embed_fl::fl!(loader, "message-desktop"),
         Message::Top => i18n_embed_fl::fl!(loader, "message-top"),
         Message::Bottom => i18n_embed_fl::fl!(loader, "message-bottom"),
         Message::Left => i18n_embed_fl::fl!(loader, "message-left"),

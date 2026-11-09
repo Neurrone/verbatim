@@ -1,0 +1,24 @@
+{
+  "id": "root",
+  "role": "window",
+  "name": "Mockapp Dead Island",
+  "children": [
+    { "id": "apply", "role": "button", "name": "Apply", "states": ["focusable"] },
+    {
+      "id": "embedded",
+      "role": "group",
+      "name": "Embedded",
+      "native": "uia_window",
+      "children": [
+        {
+          "id": "inner",
+          "role": "group",
+          "name": "Inner",
+          "children": [
+            { "id": "ok", "role": "button", "name": "OK", "states": ["focusable", "focused"] }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -2196,6 +2196,7 @@ fn read_snapshot_with(
             parent_automation_id: None,
             window,
             above_boundary: false,
+            desktop_window: false,
         },
     }
 }
