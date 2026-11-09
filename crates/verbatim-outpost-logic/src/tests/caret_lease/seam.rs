@@ -701,6 +701,7 @@ impl Seam {
             self.final_outstanding = false;
         }
         seen.push(Seen::Abandoned(match flight.kind {
+            ReadKind::Before(id, ..) if Some(id.number) == self.given_up => ReadRole::Other,
             ReadKind::Before(..) => ReadRole::Before,
             ReadKind::Final(..) => ReadRole::Final,
             ReadKind::Event => ReadRole::Other,

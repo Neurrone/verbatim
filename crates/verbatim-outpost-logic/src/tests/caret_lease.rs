@@ -83,7 +83,7 @@ impl Run {
                     Ok(())
                 }
                 Seen::BeforeReadAsked => {
-                    self.model.before_read_asked();
+                    self.model.before_read_asked(self.now);
                     Ok(())
                 }
                 Seen::Report {
@@ -177,7 +177,7 @@ impl Run {
                 self.now += u64::from(ms) * 1_000;
                 let seen = self.seam.tick(self.now);
                 self.take_seen(seen);
-                let asked = self.final_asked;
+                let asked = self.final_asked || self.seam.final_read_outstanding();
                 if let Err(failure) = self.model.clock(self.now, asked) {
                     self.failure.get_or_insert(failure);
                 }

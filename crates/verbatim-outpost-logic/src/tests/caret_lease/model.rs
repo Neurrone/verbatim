@@ -73,6 +73,18 @@
 //!   nothing (`docs/parity/text.md`, "Holding caret keys").
 //! - A focus in another top-level window cuts speech just before it
 //!   (`docs/parity/focus-events.md`), after a key's words.
+//! - A key that ends with the key after it queued behind a waiting focus
+//!   report says its held selection changes at that ending, and a before
+//!   read abandoned with no key left says what was held (the coordinator's
+//!   ruling, 2026-11-09).
+//! - What Backspace removed is the difference between its before line and
+//!   its after line, carets included (`docs/design/caret-selection-rework.md`,
+//!   `removal`), so an older baseline gives what that difference gives.
+//! - A read committed after its key's note ended, past the key's bound, is
+//!   an ordinary report and not that key's evidence (the coordinator's
+//!   ruling, 2026-11-09).
+//! - At exit nothing further is heard: held keys are delivered, held
+//!   selection changes are not said (the coordinator's ruling, 2026-11-09).
 //! - Backspace speaks only when its caret moved
 //!   (`nvda/source/editableText.py` 313 to 320): with the caret not moved
 //!   it says nothing for the key and the change is heard; with the caret
@@ -122,6 +134,8 @@ fn change_words(last: &Text, text: &Text) -> Vec<String> {
 const BUTTON: usize = 2;
 /// The 100 ms bound, from when the key is passed on (2026-11-09).
 pub const BOUND_US: Us = 100_000;
+/// How long a key's note lives from its setting.
+const NOTE_US: Us = 300_000;
 /// How long a held key's before read may run (2026-11-08).
 pub const BEFORE_READ_US: Us = 150_000;
 
@@ -150,6 +164,9 @@ struct Press {
     /// The node's last read when the key was passed on: what it is
     /// compared with.
     baseline: Option<Text>,
+    /// When its note ends: 300 ms after Core asked its before read, or
+    /// after the pass of a key with none.
+    note_until: Option<Us>,
     /// Heard, silenced or ended: its words are said or owed no more.
     done: bool,
     /// It waits behind a focus report and has not been run.
@@ -314,6 +331,7 @@ impl Model {
             before: BeforeRead::NotAsked,
             passed: None,
             baseline: None,
+            note_until: None,
             done: false,
             queued,
             floor: now,
@@ -337,9 +355,12 @@ impl Model {
             .focus
             .and_then(|field| self.last_read.get(&field).cloned());
         let focus = self.focus;
+        // A before read given up leaves the reads a commit is credited to.
+        self.before_reads.retain(|&key| key != id);
         let press = &mut self.keys[id];
         press.passed = Some(now);
         press.baseline = baseline;
+        press.note_until.get_or_insert(now + NOTE_US);
         if press.node.is_none() || press.node != focus {
             press.done = true;
             self.say_held_when_no_key_is_out();
@@ -348,9 +369,10 @@ impl Model {
     }
 
     /// Core asked a before read, of the oldest key not yet passed on.
-    pub fn before_read_asked(&mut self) {
+    pub fn before_read_asked(&mut self, now: Us) {
         if let Some(id) = self.keys.iter().position(|press| press.passed.is_none()) {
             self.keys[id].before = BeforeRead::Asked;
+            self.keys[id].note_until = Some(now + NOTE_US);
             self.before_reads.push_back(id);
         }
     }
@@ -372,12 +394,19 @@ impl Model {
                 {
                     self.keys[id].done = true;
                 }
+                if self.keys.iter().all(|press| press.done) {
+                    self.say_held_when_no_key_is_out();
+                }
             }
             ReadRole::Final => {
-                if let Some(Some(asker)) = self.final_reads.pop_front()
+                let asker = self.final_reads.pop_front().flatten();
+                if let Some(asker) = asker
                     && self.open() == Some(asker)
                 {
                     self.keys[asker].done = true;
+                    self.say_held_when_no_key_is_out();
+                } else if let Some(id) = self.silenced_before_a_queued_key() {
+                    self.keys[id].silenced_at = None;
                     self.say_held_when_no_key_is_out();
                 }
             }
@@ -462,6 +491,15 @@ impl Model {
                 self.say_changes(&changes);
                 return;
             }
+            if let Some(id) = self.silenced_before_a_queued_key()
+                && self.ends_silenced_key(id, report)
+            {
+                self.keys[id].silenced_at = None;
+                let held = std::mem::take(&mut self.held);
+                self.say_changes(&held);
+                self.say_changes(&changes);
+                return;
+            }
             if self.key_is_out() {
                 self.held.extend(changes);
                 return;
@@ -473,7 +511,9 @@ impl Model {
         };
         let press = &self.keys[open];
         let passed = press.passed.unwrap_or(now);
-        let evidence = report.ended >= passed && self.shows_change;
+        let evidence = report.ended >= passed
+            && self.shows_change
+            && (report.final_read || note_lives(press, report));
         if !evidence && asker != Some(open) {
             self.held.extend(changes);
             return;
@@ -506,7 +546,30 @@ impl Model {
                 && press.node == self.focus
                 && press.silenced_at.is_some_and(|at| report.began < at)
                 && press.passed.is_some_and(|at| report.ended >= at)
+                && note_lives(press, report)
         })
+    }
+
+    /// The silenced key, passed on and still current, whose later key is
+    /// queued behind a waiting focus report, so nothing in the line follows
+    /// it.
+    fn silenced_before_a_queued_key(&self) -> Option<usize> {
+        (0..self.keys.len()).rev().find(|&id| {
+            let press = &self.keys[id];
+            press.passed.is_some()
+                && press.silenced_at.is_some()
+                && self.keys.get(id + 1).is_some_and(|later| later.queued)
+        })
+    }
+
+    /// Whether `report` ends silenced key `id`: its final read, or its
+    /// evidence.
+    fn ends_silenced_key(&self, id: usize, report: &Report) -> bool {
+        let press = &self.keys[id];
+        report.final_read
+            || (self.shows_change
+                && press.passed.is_some_and(|at| report.ended >= at)
+                && note_lives(press, report))
     }
 
     fn note_caret(&mut self, began: Us, caret: usize) {
@@ -555,7 +618,7 @@ impl Model {
             self.keys[open].done = true;
             let press = self.keys[open].clone();
             if press.before == BeforeRead::Committed
-                && press.passed.is_some_and(|at| now <= at + BOUND_US)
+                && press.passed.is_some_and(|at| now < at + BOUND_US)
                 && let Some(words) = focus_first_words(press.key, press.baseline.as_ref())
             {
                 self.reached
@@ -661,6 +724,7 @@ impl Model {
         if self.keys.iter().any(|press| press.passed.is_none()) {
             self.reached.insert("exit with a key in line");
         }
+        self.held.clear();
         self.exited = true;
     }
 
@@ -744,23 +808,42 @@ fn unit(key: Key, text: &Text) -> Option<String> {
     }
 }
 
+/// Whether `report`'s read committed while `press`'s note lived.
+fn note_lives(press: &Press, report: &Report) -> bool {
+    press.note_until.is_some_and(|until| report.ended < until)
+}
+
+/// What the difference from `before` to `after` shows removed at their
+/// carets: the text between them when the rest is kept, the text after the
+/// caret when it stayed; "blank" for a caret moved forward with nothing
+/// removed; `None` for anything else.
+fn removed_between(before: &Text, after: &Text) -> Option<String> {
+    let (was, now) = (&before.letters, &after.letters);
+    let (from, to) = (after.caret, before.caret);
+    if from > to {
+        return Some("blank".to_owned());
+    }
+    let kept_before = was.get(..from) == now.get(..from);
+    if from == to {
+        let gone = was.len().checked_sub(now.len()).filter(|gone| *gone > 0)?;
+        return (kept_before && was.get(to + gone..) == now.get(from..))
+            .then(|| was[to..to + gone].iter().collect());
+    }
+    (kept_before && was.get(to..) == now.get(from..)).then(|| was[from..to].iter().collect())
+}
+
 /// A key's words when `text` is its evidence: its unit, or for Backspace
 /// what `text` shows removed against `baseline`.
 fn evidence_words(key: Key, baseline: Option<&Text>, text: &Text) -> Option<String> {
     if matches!(key, Key::Backspace | Key::WordBackspace) {
         let baseline = baseline?;
-        if baseline.letters.len() == text.letters.len() {
+        if baseline.letters == text.letters {
             return (baseline.caret != text.caret).then(|| "blank".to_owned());
         }
         if let Some((start, _)) = baseline.selection {
             return Some(before_start(key, baseline, start));
         }
-        let gone = baseline.letters.len().checked_sub(text.letters.len())?;
-        (gone > 0).then(|| {
-            baseline.letters[text.caret..text.caret + gone]
-                .iter()
-                .collect()
-        })
+        removed_between(baseline, text)
     } else {
         unit(key, text)
     }
