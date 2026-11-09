@@ -317,3 +317,8 @@ So Verbatim+F11 works like this:
   - Install from file, Enable or Disable, Uninstall ("Uninstall <extension name>?") and Close;
   - actions take effect at once;
   - developer mode lists only the developer folder's modules, never built-ins.
+- The Alt+Tab structural check is part of build A's step 2. If there is no structural difference, `modifiers-held` returns to Dickson.
+- Authoring tools are on demand, not in every report:
+  - build A: `verbatim-inspect matcher`, `dump-tree --properties` and `match '<matcher>'`;
+  - build B: `watch-events --explain`, a module template, and `dump-tree` fixtures for the test helper.
+- A developer-folder DLL is shadow-copied into the cache. A changed DLL restarts the developer folder's host.
