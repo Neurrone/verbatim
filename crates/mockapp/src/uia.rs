@@ -1608,7 +1608,21 @@ mod handler {
         fn BoundingRectangle(&self) -> WinResult<UiaRect> {
             hits::hit(hits::Method::BoundingRectangle);
             props::alive(&self.tree, self.index)?;
-            Ok(bounding_rectangle())
+            let [left, top, width, height] = self
+                .tree
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .nodes[self.index]
+                .location;
+            if [left, top, width, height] == [0; 4] {
+                return Ok(bounding_rectangle());
+            }
+            Ok(UiaRect {
+                left: f64::from(left),
+                top: f64::from(top),
+                width: f64::from(width),
+                height: f64::from(height),
+            })
         }
         fn GetEmbeddedFragmentRoots(&self) -> WinResult<*mut SAFEARRAY> {
             hits::hit(hits::Method::GetEmbeddedFragmentRoots);

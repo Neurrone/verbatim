@@ -341,7 +341,7 @@ pub(crate) struct FixtureNode {
     /// `ROLE_SYSTEM_CLIENT`, a window's client area's, as a Windows Forms
     /// form's client area does, rather than its role's own MSAA role.
     pub(crate) client_role: bool,
-    /// Its MSAA location, left, top, width and height (fixture
+    /// Its location, left, top, width and height (fixture
     /// `location`, all 0 when left out).
     pub(crate) location: [i32; 4],
     pub(crate) children: Vec<FixtureNode>,

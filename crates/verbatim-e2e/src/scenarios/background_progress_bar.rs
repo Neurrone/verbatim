@@ -33,7 +33,22 @@ const FIXTURE: &str = r#"{
       "name": "Go",
       "states": ["focusable", "focused"]
     },
-    { "id": "bar", "role": "progress_bar", "name": "Copying", "value": "10" }
+    { "id": "bar", "role": "progress_bar", "name": "Copying", "value": "10",
+      "location": [10, 10, 200, 20] }
+  ]
+}
+"#;
+
+/// A UIA window holding only its bar. Nothing in it takes the focus, so it
+/// says nothing as it opens, and its bar's change is the first speech it
+/// causes.
+const UIA_FIXTURE: &str = r#"{
+  "id": "root",
+  "role": "window",
+  "name": "{title}",
+  "children": [
+    { "id": "bar", "role": "progress_bar", "name": "Copying", "value": "10",
+      "location": [10, 10, 200, 20] }
   ]
 }
 "#;
@@ -46,15 +61,10 @@ pub(crate) fn report_background_bars(settings: &mut Settings) {
     settings.reader.report_background_progress_bars = true;
 }
 
-/// Opens the UIA window `name`, asserts what it says as it comes to the
-/// foreground, and waits for a client to be listening for its property
-/// changes.
+/// Opens the UIA window `name` and waits for a client to be listening for
+/// its property changes.
 fn open_uia_window<'a>(scenario: &mut Scenario, name: &'a str) -> (&'a str, u32) {
-    let window = (name, open_mockapp_counting(scenario, name, FIXTURE));
-    let title = harness_marker(name);
-    scenario
-        .speech()
-        .expect(&[&format!("{title} window"), "Go button"]);
+    let window = (name, open_mockapp_counting(scenario, name, UIA_FIXTURE));
     apply_to_mockapp(
         scenario,
         window,
@@ -65,12 +75,9 @@ fn open_uia_window<'a>(scenario: &mut Scenario, name: &'a str) -> (&'a str, u32)
 
 /// Opens the classic window, asserting what it says as it comes to the
 /// foreground: MSAA mockapp raises no focus for its button as it opens.
-fn open_classic_window(scenario: &mut Scenario) -> (&'static str, u32) {
-    let window = (
-        CLASSIC_BAR,
-        open_msaa_mockapp(scenario, CLASSIC_BAR, FIXTURE),
-    );
-    let title = harness_marker(CLASSIC_BAR);
+fn open_classic_window<'a>(scenario: &mut Scenario, name: &'a str) -> (&'a str, u32) {
+    let window = (name, open_msaa_mockapp(scenario, name, FIXTURE));
+    let title = harness_marker(name);
     scenario.speech().expect(&[&format!("{title} window")]);
     window
 }
@@ -78,8 +85,8 @@ fn open_classic_window(scenario: &mut Scenario) -> (&'static str, u32) {
 /// With the setting on, each background bar's change is indicated.
 pub(crate) fn on_body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     let uia = open_uia_window(scenario, UIA_BAR);
-    let classic = open_classic_window(scenario);
-    open_uia_window(scenario, FRONT);
+    let classic = open_classic_window(scenario, CLASSIC_BAR);
+    open_classic_window(scenario, FRONT);
 
     apply_to_mockapp(scenario, uia, "set-range bar 40");
     scenario
@@ -95,16 +102,16 @@ pub(crate) fn on_body(scenario: &mut Scenario, _state: &mut ScenarioState) {
 /// tone after it is the foreground bar's, whose change came later.
 pub(crate) fn off_body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     let uia = open_uia_window(scenario, UIA_BAR);
-    let classic = open_classic_window(scenario);
-    let front = open_uia_window(scenario, FRONT);
+    let classic = open_classic_window(scenario, CLASSIC_BAR);
+    let front = open_classic_window(scenario, FRONT);
 
     apply_to_mockapp(scenario, uia, "set-range bar 40");
-    apply_to_mockapp(scenario, front, "set-range bar 20");
+    apply_to_mockapp(scenario, front, "set-value bar 20");
     scenario
         .speech()
         .expect_sequence(&[heard("sound: progress")]);
     apply_to_mockapp(scenario, classic, "set-value bar 60");
-    apply_to_mockapp(scenario, front, "set-range bar 30");
+    apply_to_mockapp(scenario, front, "set-value bar 30");
     scenario
         .speech()
         .expect_sequence(&[heard("sound: progress")]);
