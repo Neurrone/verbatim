@@ -1171,7 +1171,7 @@ A caret key is read and reported for Core, which alone judges it
 (`docs/design/caret-selection-rework.md`):
 
 - A key's reads come from a note on its node (`reducer::KeyNote`), set as a
-  before read's request (`TextOp::ReadCaret` with `ReadPurpose::BeforeKey`)
+  before read's request (`TextOp::ReadCaret` with a before-key `ReadPurpose`)
   or a one-way `CoreToOutpost::KeyNote` arrives and ended by the clock, the
   key's final read or Verbatim's own move; it knows nothing of the key's
   progress. A note past its end counts as absent where it is read.
@@ -1186,7 +1186,7 @@ A caret key is read and reported for Core, which alone judges it
 - The final read, `ReadPurpose::Final`, answers Core with the same
   comparison. Core reports nothing for a key's progress: it passes the key
   on, counts its bound, and judges each report's facts.
-- The console host's caret poll (`NoteReads::Poll`; a documented workaround,
+- The console host's caret poll (`TerminalReads::Poll`; a documented workaround,
   `books/dev/src/explanation/design/key-holding.md`, "The console host's
   caret poll"): the console host raises caret events only on its cursor's
   blink timer, so in its focused text area the note's reads run every 5 ms

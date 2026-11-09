@@ -5,7 +5,7 @@
 use std::sync::atomic::AtomicU64;
 
 use verbatim_model::{
-    CaretMotion, CaretRead, CaretReply, Change, KeyFetch, NodeKind, ReadFacts, ReadPurpose,
+    CaretMotion, CaretRead, CaretReply, Change, KeyFetch, ReadFacts, ReadPurpose,
 };
 
 use super::*;
@@ -418,9 +418,8 @@ fn a_keys_request_is_not_carried_out_by_perform() {
         fetch: KeyFetch {
             unit: TextUnit::Character,
             motion: CaretMotion::NextCharacter,
-            kind: NodeKind::TextField,
         },
-        purpose: ReadPurpose::BeforeKey,
+        purpose: ReadPurpose::BeforeFieldKey,
     };
     let reply = perform(
         &mut source,

@@ -992,7 +992,7 @@ pub(crate) fn plain_followed(node: NodeId, role: Role) -> Followed {
 
 #[cfg(test)]
 mod tests {
-    use verbatim_model::{CaretMotion, KeyFetch, NodeKind, TextUnit};
+    use verbatim_model::{CaretMotion, KeyFetch, TextUnit};
 
     use super::*;
 
@@ -1455,9 +1455,8 @@ mod tests {
         let fetch = KeyFetch {
             unit: TextUnit::Character,
             motion: CaretMotion::NextCharacter,
-            kind: NodeKind::TextField,
         };
-        Arc::make_mut(&mut facts.text).set_note(1, fetch, 0, false);
+        Arc::make_mut(&mut facts.text).set_note(1, fetch, 0, crate::text::NoteOn::Field);
         let elsewhere = Change {
             replaced: Some(NodeId::new(2)),
             ..Change::default()

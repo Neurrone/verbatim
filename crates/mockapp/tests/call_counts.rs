@@ -3121,7 +3121,7 @@ fn answered(checked: KeyChecked) -> CaretReply {
 /// Then a selection no key made is reported the same way, with how it
 /// changed. Then the caret, moved on with nothing selected, is read as the
 /// outpost reads it before a held caret key is passed on
-/// (`ReadPurpose::BeforeKey`, `books/dev/src/explanation/design/key-holding.md`): the report's read,
+/// (`ReadPurpose::BeforeFieldKey`, `books/dev/src/explanation/design/key-holding.md`): the report's read,
 /// leaving the kept selection alone. Returns the calls and hits of the
 /// answer, of the report, of the report with a selection change, and of
 /// the read before a held key.

@@ -10,8 +10,8 @@ use std::collections::VecDeque;
 use serde::{Deserialize, Serialize};
 use verbatim_model::{
     CaretKey, CaretMotion, CaretRead, CaretReply, CaretReport, Change, Effect, Input, KeyFetch,
-    NodeId, NodeKind, NoteRequest, QueryId, ReadFacts, ReadPurpose, SelectionChange, TextChunk,
-    TextOp, TextReply, TraceId, UtteranceSegment, had_effect,
+    NodeId, NoteRequest, QueryId, ReadFacts, ReadPurpose, SelectionChange, TextChunk, TextOp,
+    TextReply, TraceId, UtteranceSegment, had_effect,
 };
 
 use crate::editing::{self, is_grid, text_focus};
@@ -151,15 +151,6 @@ fn focus_is_terminal(state: &SrState) -> bool {
         .is_some_and(|focus| is_grid(focus.snapshot.role))
 }
 
-/// The kind of node `state`'s focus is, named to the outpost.
-fn node_kind(state: &SrState) -> NodeKind {
-    if focus_is_terminal(state) {
-        NodeKind::Terminal
-    } else {
-        NodeKind::TextField
-    }
-}
-
 /// `passed` as a key of `state`'s focus: `before` is kept only for a text
 /// field.
 fn watched_on_focus(state: &SrState, passed: PassedKey, before: Before) -> Watched {
@@ -174,12 +165,11 @@ fn watched_on_focus(state: &SrState, passed: PassedKey, before: Before) -> Watch
     }
 }
 
-/// What the reads for a key of `key`'s motion fetch on `state`'s focus.
-fn fetch_of(state: &SrState, key: CaretKey) -> KeyFetch {
+/// What the reads for a key of `key`'s motion fetch.
+fn fetch_of(key: CaretKey) -> KeyFetch {
     KeyFetch {
         unit: key.motion.unit(),
         motion: key.motion,
-        kind: node_kind(state),
     }
 }
 
@@ -321,8 +311,12 @@ fn start_held(state: &mut SrState, held: HeldKey) -> Vec<Effect> {
         return effects;
     };
     let read = CaretRead {
-        fetch: fetch_of(state, held.key),
-        purpose: ReadPurpose::BeforeKey,
+        fetch: fetch_of(held.key),
+        purpose: if focus_is_terminal(state) {
+            ReadPurpose::BeforeTerminalKey
+        } else {
+            ReadPurpose::BeforeFieldKey
+        },
     };
     let (query, effect) = state.queries.ask(
         Asking::Text(node, TextOp::ReadCaret(read)),
@@ -476,9 +470,11 @@ fn watch_from_last_read(
     let mut effects = key_taking_effect(state, held.key, node);
     effects.push(Effect::BoundHeldKey(Some((held.trace_id, bound_ms))));
     if sends_note {
-        let request = NoteRequest {
-            node,
-            fetch: fetch_of(state, held.key),
+        let fetch = fetch_of(held.key);
+        let request = if focus_is_terminal(state) {
+            NoteRequest::Terminal { node, fetch }
+        } else {
+            NoteRequest::Field { node, fetch }
         };
         effects.push(for_key(held.trace_id, Effect::KeyNote(request)));
     }
@@ -905,7 +901,7 @@ fn bound_passed(state: &mut SrState) -> Vec<Effect> {
     };
     let node = field.passed.node;
     let read = CaretRead {
-        fetch: fetch_of(state, field.passed.key.key),
+        fetch: fetch_of(field.passed.key.key),
         purpose: ReadPurpose::Final,
     };
     let (query, effect) = state.queries.ask(

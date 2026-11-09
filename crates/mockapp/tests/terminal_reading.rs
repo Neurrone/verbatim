@@ -21,7 +21,7 @@
 //!   (`TerminalColours`) and the screen's shape (`TerminalShape`) are
 //!   answered, a colours request with a read with colours at once when a
 //!   read began after the key without them.
-//! - The read before a held key (`ReadPurpose::BeforeKey`) is a snapshot with the caret.
+//! - The read before a held key (`ReadPurpose::BeforeTerminalKey`) is a snapshot with the caret.
 //! - A caret event waiting ahead of a text change in one batch is planned
 //!   after it, so the terminal is read once, the caret with the text.
 //! - Held with its text changed, a caret event is only noted, and the read
@@ -71,9 +71,9 @@ use verbatim_model::protocol::{
     FocusedControl, OutpostToCore, Query, QueryOutcome, QueryResult, RequestId,
 };
 use verbatim_model::{
-    CaretMotion, CaretRead, CaretReply, Change, FocusText, KeyFetch, NodeId, NodeKind,
-    NormalizedEvent, NoteRequest, PropertyChange, ReadPurpose, Role, TerminalScope,
-    TerminalSnapshot, TextOp, TextReply,
+    CaretMotion, CaretRead, CaretReply, Change, FocusText, KeyFetch, NodeId, NormalizedEvent,
+    NoteRequest, PropertyChange, ReadPurpose, Role, TerminalScope, TerminalSnapshot, TextOp,
+    TextReply,
 };
 use verbatim_outpost::Heard;
 use verbatim_process::arguments::OutpostOptions;
@@ -299,7 +299,6 @@ fn terminal_fetch(motion: CaretMotion) -> KeyFetch {
     KeyFetch {
         unit: motion.unit(),
         motion,
-        kind: NodeKind::Terminal,
     }
 }
 
@@ -307,13 +306,13 @@ fn terminal_fetch(motion: CaretMotion) -> KeyFetch {
 fn before_read(motion: CaretMotion) -> TextOp {
     TextOp::ReadCaret(CaretRead {
         fetch: terminal_fetch(motion),
-        purpose: ReadPurpose::BeforeKey,
+        purpose: ReadPurpose::BeforeTerminalKey,
     })
 }
 
 /// A key's note on `node`, from its last read.
 fn watch_key(outpost: &OutpostUnderTest, node: NodeId, motion: CaretMotion) {
-    outpost.key_note(NoteRequest {
+    outpost.key_note(NoteRequest::Terminal {
         node,
         fetch: terminal_fetch(motion),
     });
@@ -981,7 +980,7 @@ fn a_colours_request_after_a_read_without_them_reads_at_once() {
     app.quit();
 }
 
-/// The read before a held key (`ReadPurpose::BeforeKey`) in a terminal is a read of it,
+/// The read before a held key (`ReadPurpose::BeforeTerminalKey`) in a terminal is a read of it,
 /// whose caret answers the request.
 fn the_read_before_a_held_key_is_a_read_with_its_caret() {
     let (mut app, mut outpost, term) = start("mockapp-terminal-before-key");

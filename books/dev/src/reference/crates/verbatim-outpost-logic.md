@@ -175,8 +175,9 @@ error.
 A node's note (`docs/design/caret-selection-rework.md`) is kept in the
 text facts with the node's record (`text.rs`): `KeyNote`, its key's unit and
 motion, when it ends, and what it causes to be read besides the node's
-caret events (`NoteReads`: `CaretAndText`, `CaretOnly` once a read showed
-the key's effect, or `Poll`, the console host's). It is set as a before
+caret events (`NoteReads::Field` or `NoteReads::Terminal`, each
+`CaretAndText`, or `CaretOnly` once a read showed the key's effect, and a
+terminal's `Poll`, the console host's). It is set as a before
 read's request or a one-way `CoreToOutpost::KeyNote` arrives and cleared by
 the key's final read, which goes ahead of queued reads, or Verbatim's own
 caret move; a note past its end counts as absent where it is read, so

@@ -87,10 +87,9 @@ pub use text::{
     BulletStyle, CaretChanges, CaretKey, CaretMotion, CaretRead, CaretReply, CaretReport,
     CaretSelection, Change, Compared, FocusText, FormatRun, HeldAnchors, KeyFetch, LanguageRun,
     LineStyle, MAX_CHUNK_BYTES, MAX_RANGE_BYTES, MAX_READ_AHEAD, MAX_READ_AHEAD_TEXT,
-    MAX_SELECTION_TEXT_BYTES, NodeKind, NoteRequest, ReadFacts, ReadPurpose, Selection,
-    SelectionChange, TextAnchor, TextAttributes, TextChunk, TextMovement, TextOp, TextPoint,
-    TextPosition, TextRead, TextReadAhead, TextReply, TextRequest, TextThrough, TextUnit,
-    had_effect,
+    MAX_SELECTION_TEXT_BYTES, NoteRequest, ReadFacts, ReadPurpose, Selection, SelectionChange,
+    TextAnchor, TextAttributes, TextChunk, TextMovement, TextOp, TextPoint, TextPosition, TextRead,
+    TextReadAhead, TextReply, TextRequest, TextThrough, TextUnit, had_effect,
 };
 pub use theme::{
     DEFAULT_GAIN, Fetches, Indication, IndicationCategory, IndicationSetting, MAX_GAIN,

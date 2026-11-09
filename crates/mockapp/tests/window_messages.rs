@@ -18,8 +18,7 @@ use verbatim_faults::{Fault, Guard};
 use verbatim_ia2::edit::EditError;
 use verbatim_model::protocol::{DeliveredFact, OutpostToCore, Query, QueryOutcome, QueryResult};
 use verbatim_model::{
-    CaretMotion, CaretRead, FocusText, KeyFetch, NodeKind, ReadPurpose, TextAnchor, TextOp,
-    TextReply,
+    CaretMotion, CaretRead, FocusText, KeyFetch, ReadPurpose, TextAnchor, TextOp, TextReply,
 };
 use windows::Win32::Foundation::{CloseHandle, HANDLE, HWND};
 use windows::Win32::System::Memory::{MEM_COMMIT, MEMORY_BASIC_INFORMATION, VirtualQueryEx};
@@ -165,9 +164,8 @@ fn a_slow_edit_control_answers_its_selection() {
             fetch: KeyFetch {
                 unit: CaretMotion::NextCharacter.unit(),
                 motion: CaretMotion::NextCharacter,
-                kind: NodeKind::TextField,
             },
-            purpose: ReadPurpose::BeforeKey,
+            purpose: ReadPurpose::BeforeFieldKey,
         }),
     });
     match outpost.next() {

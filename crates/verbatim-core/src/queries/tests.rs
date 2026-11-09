@@ -512,9 +512,8 @@ pub(super) fn key_op() -> TextOp {
         fetch: verbatim_model::KeyFetch {
             unit: TextUnit::Character,
             motion: CaretMotion::NextCharacter,
-            kind: verbatim_model::NodeKind::TextField,
         },
-        purpose: verbatim_model::ReadPurpose::BeforeKey,
+        purpose: verbatim_model::ReadPurpose::BeforeFieldKey,
     })
 }
 

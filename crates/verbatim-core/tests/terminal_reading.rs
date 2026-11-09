@@ -1299,7 +1299,7 @@ fn the_read_before_a_held_key_is_aligned_and_its_caret_answers_it() {
     assert!(matches!(
         session.requests().as_slice(),
         [TextOp::ReadCaret(verbatim_model::CaretRead {
-            purpose: verbatim_model::ReadPurpose::BeforeKey,
+            purpose: verbatim_model::ReadPurpose::BeforeTerminalKey,
             ..
         })]
     ));
@@ -1359,7 +1359,7 @@ fn a_key_deferred_behind_a_held_key_reaches_the_rules_at_the_held_keys_pass() {
     assert!(matches!(
         session.requests().as_slice(),
         [TextOp::ReadCaret(verbatim_model::CaretRead {
-            purpose: verbatim_model::ReadPurpose::BeforeKey,
+            purpose: verbatim_model::ReadPurpose::BeforeTerminalKey,
             ..
         })]
     ));

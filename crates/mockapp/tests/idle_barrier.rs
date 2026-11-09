@@ -18,8 +18,8 @@ use verbatim_model::protocol::{
     CoreToOutpost, DeliveredFact, OutpostToCore, Query, QueryOutcome, QueryResult, RequestId,
 };
 use verbatim_model::{
-    CaretMotion, CaretReport, FocusText, KeyFetch, NodeId, NodeKind, NormalizedEvent, NoteRequest,
-    TextOp, TextPoint, TextReply,
+    CaretMotion, CaretReport, FocusText, KeyFetch, NodeId, NormalizedEvent, NoteRequest, TextOp,
+    TextPoint, TextReply,
 };
 use verbatim_outpost::Heard;
 use verbatim_process::arguments::OutpostOptions;
@@ -146,12 +146,11 @@ fn the_answer_does_not_wait_for_a_note() {
     let outpost = OutpostUnderTest::new(&app);
     let (notes, _) = notes_focus(&mut app, &outpost, hwnd);
     // Right Arrow, which the application has not handled yet.
-    outpost.key_note(NoteRequest {
+    outpost.key_note(NoteRequest::Field {
         node: notes,
         fetch: KeyFetch {
             unit: CaretMotion::NextCharacter.unit(),
             motion: CaretMotion::NextCharacter,
-            kind: NodeKind::TextField,
         },
     });
     outpost.settled();

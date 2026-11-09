@@ -695,7 +695,7 @@ impl Session {
                             self.held = Some((query_id, scope));
                         }
                         TextOp::ReadCaret(verbatim_model::CaretRead {
-                            purpose: verbatim_model::ReadPurpose::BeforeKey,
+                            purpose: verbatim_model::ReadPurpose::BeforeTerminalKey,
                             ..
                         }) => self.caret_read = Some(query_id),
                         op @ TextOp::TerminalColours { .. } if self.hold_colours => {

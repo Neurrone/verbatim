@@ -34,7 +34,7 @@ use verbatim_model::protocol::{
     DeliveredFact, OutpostToCore, Query, QueryOutcome, QueryResult, RequestId,
 };
 use verbatim_model::{
-    CaretMotion, CaretRead, CaretReply, CaretReport, Change, FocusText, KeyFetch, NodeId, NodeKind,
+    CaretMotion, CaretRead, CaretReply, CaretReport, Change, FocusText, KeyFetch, NodeId,
     NormalizedEvent, NoteRequest, ReadPurpose, SelectionChange, TextOp, TextPoint, TextPosition,
     TextReply,
 };
@@ -99,14 +99,13 @@ fn fetch(motion: CaretMotion) -> KeyFetch {
     KeyFetch {
         unit: motion.unit(),
         motion,
-        kind: NodeKind::TextField,
     }
 }
 
 /// A key with no before read: its note, which reaches the outpost as Core
 /// sends it.
 fn key_from_last_read(outpost: &OutpostUnderTest, node: NodeId, motion: CaretMotion) {
-    outpost.key_note(NoteRequest {
+    outpost.key_note(NoteRequest::Field {
         node,
         fetch: fetch(motion),
     });
@@ -118,7 +117,7 @@ fn held_key(outpost: &mut OutpostUnderTest, node: NodeId, motion: CaretMotion) -
         node_id: node,
         op: TextOp::ReadCaret(CaretRead {
             fetch: fetch(motion),
-            purpose: ReadPurpose::BeforeKey,
+            purpose: ReadPurpose::BeforeFieldKey,
         }),
     });
     let TextReply::Caret(read) = reply_to(outpost, id) else {

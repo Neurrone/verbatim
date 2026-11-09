@@ -69,12 +69,11 @@ fn next_core_to_outpost(previous: Option<&CoreToOutpost>) -> Option<CoreToOutpos
             request: 1,
             trace_id: TraceId::from_raw(4),
         },
-        CoreToOutpost::LiveReread { .. } => CoreToOutpost::KeyNote(crate::NoteRequest {
+        CoreToOutpost::LiveReread { .. } => CoreToOutpost::KeyNote(crate::NoteRequest::Field {
             node: crate::NodeId::new(1),
             fetch: crate::KeyFetch {
                 unit: crate::TextUnit::Word,
                 motion: crate::CaretMotion::NextWord,
-                kind: crate::NodeKind::TextField,
             },
         }),
         CoreToOutpost::KeyNote(_) => CoreToOutpost::ReadTerminal(crate::NodeId::new(1)),

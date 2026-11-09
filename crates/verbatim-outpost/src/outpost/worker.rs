@@ -946,7 +946,9 @@ impl Worker<'_> {
         read: CaretRead,
     ) {
         match read.purpose {
-            ReadPurpose::BeforeKey => self.before_read(request_id, trace, node_id, read),
+            ReadPurpose::BeforeFieldKey | ReadPurpose::BeforeTerminalKey => {
+                self.before_read(request_id, trace, node_id, read);
+            }
             ReadPurpose::Final => self.final_read(request_id, trace, node_id, read),
         }
     }
@@ -1860,7 +1862,7 @@ impl Worker<'_> {
     }
 
     /// Answers Core's request of the focused terminal `node_id` for a read
-    /// at once ([`TextOp::TerminalReadNow`], and a before read ([`ReadPurpose::BeforeKey`]), the
+    /// at once ([`TextOp::TerminalReadNow`], and a before read ([`ReadPurpose::BeforeTerminalKey`]), the
     /// read before a held key, `books/dev/src/explanation/design/key-holding.md`), whatever its
     /// on-demand state. A fresh read before a review command clears a held
     /// state's mark that the text changed, since it reads what was held.
@@ -4272,7 +4274,7 @@ impl Worker<'_> {
             // The read before a held key is a read of the terminal, whose
             // caret answers the request; its note was set as the request arrived.
             TextOp::ReadCaret(CaretRead {
-                purpose: ReadPurpose::BeforeKey,
+                purpose: ReadPurpose::BeforeFieldKey | ReadPurpose::BeforeTerminalKey,
                 ..
             }) if focused => {
                 let terminal = self.terminal_copy(node_id);
@@ -4765,13 +4767,10 @@ impl NoteTrigger {
 
     /// How the read goes under a note reading as `reads`, if it reads.
     fn shape(self, reads: NoteReads) -> Option<ReadShape> {
-        match (self, reads) {
-            (Self::Text, NoteReads::CaretOnly) => None,
-            (Self::Caret | Self::Now, NoteReads::CaretOnly) => Some(ReadShape::Reported),
-            (
-                Self::Caret | Self::Text | Self::Now,
-                NoteReads::CaretAndText | NoteReads::Poll { .. },
-            ) => Some(ReadShape::Compared),
+        match (self, reads.effect_seen()) {
+            (Self::Text, true) => None,
+            (Self::Caret | Self::Now, true) => Some(ReadShape::Reported),
+            (Self::Caret | Self::Text | Self::Now, false) => Some(ReadShape::Compared),
         }
     }
 }

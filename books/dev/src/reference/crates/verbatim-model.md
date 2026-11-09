@@ -493,10 +493,10 @@ supersedes an older one, whose answer Core drops. The operations
 - `ReadCaret(CaretRead { fetch, purpose })`: one read of the caret for a
   key, answered `TextReply::Caret` (a `CaretReply` carrying `ReadFacts`),
   or, in a focused terminal, a `TerminalSnapshot` whose caret answers it.
-  `ReadPurpose::BeforeKey` is a held key's before read, whose arrival sets
-  the node's note; `ReadPurpose::Final` is the key's final read past its
-  bound, whose arrival clears it. `KeyFetch` names the unit, the motion and
-  whether the node is a text field or a terminal. A key with no before read
+  `ReadPurpose::BeforeFieldKey` and `ReadPurpose::BeforeTerminalKey` are a
+  held key's before read, whose arrival sets the node's note;
+  `ReadPurpose::Final` is a text field's key's final read past its bound,
+  whose commit clears it. `KeyFetch` names the unit and the motion. A key with no before read
   sends `CoreToOutpost::KeyNote` instead. A read made under a note, or
   asked for one, reports `ReadFacts` on its `CaretMoved` or reply: the
   unit, how it compared with the node's last read (`Change::NoPrevious` or

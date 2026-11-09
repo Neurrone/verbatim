@@ -431,27 +431,13 @@ pub enum FocusText {
     NotRead,
 }
 
-/// What a key's node is, which decides how a key is judged. Core alone says,
-/// from the node's role, because the outpost's own test can disagree with
-/// the role.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum NodeKind {
-    /// A text field: the key's words come from its evidence or bound answer.
-    TextField,
-    /// A terminal: its reading rules speak.
-    Terminal,
-}
-
-/// What a key's reads fetch: the unit at the caret, what the key does, and
-/// the kind of node it is on.
+/// What a key's reads fetch: the unit at the caret and what the key does.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct KeyFetch {
     /// The unit to read at the caret.
     pub unit: TextUnit,
     /// What the key does, which says what counts as its evidence.
     pub motion: CaretMotion,
-    /// The kind of node the key is on.
-    pub kind: NodeKind,
 }
 
 /// One query reading the caret for a key, answered once.
@@ -463,13 +449,20 @@ pub struct CaretRead {
     pub purpose: ReadPurpose,
 }
 
-/// Which read a [`CaretRead`] is.
+/// Which read a [`CaretRead`] is. Core alone says whether a key's node is a
+/// terminal, from its role, because the outpost's own test can disagree with
+/// the role.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ReadPurpose {
-    /// Before a held key is passed on: its arrival sets the node's note.
-    BeforeKey,
-    /// When the key's bound passes with no evidence: its arrival clears the
-    /// node's note, and it goes ahead of queued reads.
+    /// Before a held key is passed on in a text field: its arrival sets the
+    /// node's note.
+    BeforeFieldKey,
+    /// Before a held key is passed on in a terminal: its arrival sets the
+    /// node's note.
+    BeforeTerminalKey,
+    /// When a text field's key's bound passes with no evidence: it clears
+    /// the node's note when it commits, and goes ahead of queued reads. A
+    /// terminal's key has none.
     Final,
 }
 
@@ -477,11 +470,39 @@ pub enum ReadPurpose {
 /// ([`crate::protocol::CoreToOutpost::KeyNote`]), one-way, set on the node
 /// as it arrives.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct NoteRequest {
+pub enum NoteRequest {
+    /// A key in a text field.
+    Field {
+        /// The key's node.
+        node: NodeId,
+        /// What the node's reads fetch while the note lives.
+        fetch: KeyFetch,
+    },
+    /// A key in a terminal.
+    Terminal {
+        /// The key's node.
+        node: NodeId,
+        /// What the node's reads fetch while the note lives.
+        fetch: KeyFetch,
+    },
+}
+
+impl NoteRequest {
     /// The key's node.
-    pub node: NodeId,
+    #[must_use]
+    pub fn node(self) -> NodeId {
+        match self {
+            Self::Field { node, .. } | Self::Terminal { node, .. } => node,
+        }
+    }
+
     /// What the node's reads fetch while the note lives.
-    pub fetch: KeyFetch,
+    #[must_use]
+    pub fn fetch(self) -> KeyFetch {
+        match self {
+            Self::Field { fetch, .. } | Self::Terminal { fetch, .. } => fetch,
+        }
+    }
 }
 
 /// What a read found compared with the node's last read, by the comparisons

@@ -438,9 +438,19 @@ pub struct NoteFetch {
     pub motion: CaretMotion,
 }
 
-/// What reads a node's note causes besides the node's caret events.
+/// What reads a text field's note causes besides its caret events.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum NoteReads {
+pub enum FieldReads {
+    /// Text changes are read too.
+    CaretAndText,
+    /// A read showed the key's effect: caret events are still read with
+    /// their facts, and text changes are not read.
+    CaretOnly,
+}
+
+/// What reads a terminal's note causes besides its caret events.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TerminalReads {
     /// Text changes are read too.
     CaretAndText,
     /// A read showed the key's effect: caret events are still read with
@@ -453,6 +463,45 @@ pub enum NoteReads {
         /// When the polling ends.
         until_us: u64,
     },
+}
+
+/// What reads a node's note causes besides the node's caret events.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NoteReads {
+    /// A text field's note.
+    Field(FieldReads),
+    /// A terminal's note.
+    Terminal(TerminalReads),
+}
+
+impl NoteReads {
+    /// Whether a read has shown the key's effect.
+    #[must_use]
+    pub fn effect_seen(self) -> bool {
+        matches!(
+            self,
+            Self::Field(FieldReads::CaretOnly) | Self::Terminal(TerminalReads::CaretOnly)
+        )
+    }
+
+    /// These reads once a read has shown the key's effect.
+    fn narrowed(self) -> Self {
+        match self {
+            Self::Field(_) => Self::Field(FieldReads::CaretOnly),
+            Self::Terminal(_) => Self::Terminal(TerminalReads::CaretOnly),
+        }
+    }
+}
+
+/// Which node a note is set on, which says what it reads at first.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NoteOn {
+    /// A text field.
+    Field,
+    /// A terminal other than the console host.
+    Terminal,
+    /// The console host's text area, whose note is polled.
+    ConsoleHost,
 }
 
 /// A node's note: for a short time after a key's request, which unit its
@@ -590,7 +639,7 @@ impl TextFacts {
         now_us: u64,
     ) -> Option<ReadFacts> {
         let note = self.live_note(node, now_us)?;
-        if note.reads == NoteReads::CaretOnly {
+        if note.reads.effect_seen() {
             return None;
         }
         let line = &caret.line;
@@ -627,7 +676,7 @@ impl TextFacts {
                 .get_mut(&node)
                 .and_then(|entry| entry.note.as_mut())
         {
-            narrowed.reads = NoteReads::CaretOnly;
+            narrowed.reads = narrowed.reads.narrowed();
         }
         Some(ReadFacts {
             unit,
@@ -643,9 +692,9 @@ impl TextFacts {
             .filter_map(move |&node| Some((node, self.live_note(node, now_us)?)))
     }
 
-    /// Sets node `node`'s note as a request for it arrives at `now_us`,
-    /// polling for [`POLL_BOUND`] when `console`.
-    pub fn set_note(&mut self, node: u64, fetch: KeyFetch, now_us: u64, console: bool) {
+    /// Sets node `node`'s note as a request for it arrives at `now_us`, one
+    /// on the console host polling for [`POLL_BOUND`].
+    pub fn set_note(&mut self, node: u64, fetch: KeyFetch, now_us: u64, on: NoteOn) {
         let nodes = &self.nodes;
         self.noted.retain(|noted| {
             nodes
@@ -655,15 +704,17 @@ impl TextFacts {
         });
         self.noted.insert(node);
         let until_us = now_us.saturating_add(micros(NOTE_LIFE));
-        let reads = if console {
-            self.polling = Some(node);
-            let until = now_us.saturating_add(micros(POLL_BOUND));
-            NoteReads::Poll {
-                next_us: now_us.saturating_add(micros(POLL_INTERVAL)).min(until),
-                until_us: until,
+        let reads = match on {
+            NoteOn::Field => NoteReads::Field(FieldReads::CaretAndText),
+            NoteOn::Terminal => NoteReads::Terminal(TerminalReads::CaretAndText),
+            NoteOn::ConsoleHost => {
+                self.polling = Some(node);
+                let until = now_us.saturating_add(micros(POLL_BOUND));
+                NoteReads::Terminal(TerminalReads::Poll {
+                    next_us: now_us.saturating_add(micros(POLL_INTERVAL)).min(until),
+                    until_us: until,
+                })
             }
-        } else {
-            NoteReads::CaretAndText
         };
         self.nodes.entry(node).or_default().note = Some(KeyNote {
             fetch: NoteFetch {
@@ -688,8 +739,8 @@ impl TextFacts {
     pub fn poll_due(&self) -> Option<u64> {
         let note = self.nodes.get(&self.polling?)?.note?;
         match note.reads {
-            NoteReads::Poll { next_us, .. } => Some(next_us),
-            NoteReads::CaretAndText | NoteReads::CaretOnly => None,
+            NoteReads::Terminal(TerminalReads::Poll { next_us, .. }) => Some(next_us),
+            NoteReads::Field(_) | NoteReads::Terminal(_) => None,
         }
     }
 
@@ -706,12 +757,12 @@ impl TextFacts {
             self.polling = None;
             return None;
         };
-        let NoteReads::Poll { next_us, until_us } = note.reads else {
+        let NoteReads::Terminal(TerminalReads::Poll { next_us, until_us }) = note.reads else {
             self.polling = None;
             return None;
         };
         if note.until_us <= now_us {
-            note.reads = NoteReads::CaretAndText;
+            note.reads = NoteReads::Terminal(TerminalReads::CaretAndText);
             self.polling = None;
             return None;
         }
@@ -719,13 +770,13 @@ impl TextFacts {
             return None;
         }
         if next_us >= until_us {
-            note.reads = NoteReads::CaretAndText;
+            note.reads = NoteReads::Terminal(TerminalReads::CaretAndText);
             self.polling = None;
         } else {
-            note.reads = NoteReads::Poll {
+            note.reads = NoteReads::Terminal(TerminalReads::Poll {
                 next_us: now_us.saturating_add(micros(POLL_INTERVAL)).min(until_us),
                 until_us,
-            };
+            });
         }
         Some(number)
     }
@@ -800,7 +851,7 @@ impl TextFacts {
             }
             TextChange::NoteEffect { until_us, .. } => {
                 if let Some(note) = self.note_named(node, *until_us) {
-                    note.reads = NoteReads::CaretOnly;
+                    note.reads = note.reads.narrowed();
                 }
             }
             TextChange::NoteCleared { until_us, .. } => {
@@ -813,14 +864,17 @@ impl TextFacts {
                 read_ended_at_us,
                 ..
             } => {
-                if let Some(note) = self.note_named(node, *until_us) {
+                if let Some(note) = self
+                    .note_named(node, *until_us)
+                    .filter(|note| matches!(note.reads, NoteReads::Terminal(_)))
+                {
                     let until = read_ended_at_us.saturating_add(micros(POLL_BOUND));
-                    note.reads = NoteReads::Poll {
+                    note.reads = NoteReads::Terminal(TerminalReads::Poll {
                         next_us: read_ended_at_us
                             .saturating_add(micros(POLL_INTERVAL))
                             .min(until),
                         until_us: until,
-                    };
+                    });
                     self.polling = Some(node);
                 }
             }
@@ -944,7 +998,6 @@ mod tests {
         KeyFetch {
             unit: TextUnit::Character,
             motion,
-            kind: verbatim_model::NodeKind::TextField,
         }
     }
 
@@ -953,7 +1006,7 @@ mod tests {
     #[test]
     fn a_note_ends_by_the_clock() {
         let mut facts = TextFacts::default();
-        facts.set_note(1, fetch(CaretMotion::NextCharacter), 1_000, false);
+        facts.set_note(1, fetch(CaretMotion::NextCharacter), 1_000, NoteOn::Field);
         let until = 301_000;
         assert_eq!(
             facts.live_note(1, until - 1).map(|note| note.until_us),
@@ -970,9 +1023,9 @@ mod tests {
     #[test]
     fn an_effect_narrows_only_the_note_it_was_read_under() {
         let mut facts = TextFacts::default();
-        facts.set_note(1, fetch(CaretMotion::NextCharacter), 1_000, false);
+        facts.set_note(1, fetch(CaretMotion::NextCharacter), 1_000, NoteOn::Field);
         let until = facts.live_note(1, 1_000).expect("the note").until_us;
-        facts.set_note(1, fetch(CaretMotion::Delete), 2_000, false);
+        facts.set_note(1, fetch(CaretMotion::Delete), 2_000, NoteOn::Field);
         // An effect read under the older note does not touch the newer one.
         facts.apply(&TextChange::NoteEffect {
             node: 1,
@@ -980,7 +1033,7 @@ mod tests {
         });
         assert_eq!(
             facts.live_note(1, 2_000).map(|note| note.reads),
-            Some(NoteReads::CaretAndText)
+            Some(NoteReads::Field(FieldReads::CaretAndText))
         );
         let until = facts.live_note(1, 2_000).expect("the note").until_us;
         facts.apply(&TextChange::NoteEffect {
@@ -989,7 +1042,7 @@ mod tests {
         });
         assert_eq!(
             facts.live_note(1, 2_000).map(|note| note.reads),
-            Some(NoteReads::CaretOnly)
+            Some(NoteReads::Field(FieldReads::CaretOnly))
         );
     }
 
@@ -1019,7 +1072,7 @@ mod tests {
             copied: BTreeSet::new(),
         });
         assert_eq!(facts.facts_at_commit(1, (&report(1), false), 0), None);
-        facts.set_note(1, fetch(CaretMotion::NextCharacter), 0, false);
+        facts.set_note(1, fetch(CaretMotion::NextCharacter), 0, NoteOn::Field);
         let found = facts
             .facts_at_commit(1, (&report(1), false), 5)
             .expect("the facts");
@@ -1031,11 +1084,11 @@ mod tests {
         assert_eq!(found.read_ended_at_us, 5);
         assert_eq!(
             facts.live_note(1, 5).map(|note| note.reads),
-            Some(NoteReads::CaretOnly)
+            Some(NoteReads::Field(FieldReads::CaretOnly))
         );
         let mut word = fetch(CaretMotion::NextWord);
         word.unit = TextUnit::Word;
-        facts.set_note(1, word, 6, false);
+        facts.set_note(1, word, 6, NoteOn::Field);
         assert_eq!(
             facts
                 .facts_at_commit(1, (&report(2), false), 7)
@@ -1049,10 +1102,10 @@ mod tests {
     #[test]
     fn a_note_is_dropped_with_its_node() {
         let mut facts = TextFacts::default();
-        facts.set_note(1, fetch(CaretMotion::NextCharacter), 0, false);
+        facts.set_note(1, fetch(CaretMotion::NextCharacter), 0, NoteOn::Field);
         facts.apply(&TextChange::Forget(1));
         assert_eq!(facts.live_note(1, 0), None);
-        facts.set_note(2, fetch(CaretMotion::NextCharacter), 0, false);
+        facts.set_note(2, fetch(CaretMotion::NextCharacter), 0, NoteOn::Field);
         facts.release(&BTreeSet::from([2]), &BTreeSet::new());
         assert_eq!(facts.live_note(2, 0), None);
     }
@@ -1062,7 +1115,7 @@ mod tests {
     #[test]
     fn a_console_note_polls_from_its_before_reads_end() {
         let mut facts = TextFacts::default();
-        facts.set_note(1, fetch(CaretMotion::NextCharacter), 0, false);
+        facts.set_note(1, fetch(CaretMotion::NextCharacter), 0, NoteOn::Terminal);
         let until_us = facts.live_note(1, 0).expect("the note").until_us;
         facts.apply(&TextChange::NotePoll {
             node: 1,

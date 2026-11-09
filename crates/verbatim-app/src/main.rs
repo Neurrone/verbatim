@@ -2023,7 +2023,7 @@ impl ReducerThread<'_> {
                 });
             }
             Effect::KeyNote(note) => {
-                let outpost = note.node.outpost();
+                let outpost = note.node().outpost();
                 let command = CoreToOutpost::KeyNote(note);
                 if let Err(error) = self.context.supervisor.send_to_outpost(outpost, command) {
                     // The key is still judged by its bound: nothing waits

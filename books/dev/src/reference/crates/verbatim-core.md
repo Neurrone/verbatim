@@ -856,13 +856,16 @@ Every caret key goes through `SrState::key_line`, one state: `Idle`, or
 `Busy` with the current key, the keys and commands waiting behind it, and
 the selection changes heard while it runs. The current key is `Reading`,
 a held key whose before read is in flight, or `Watched`, a key that has
-been passed on, whose fields say what it was judged from (`Before`), its
+been passed on: `Watched::Field` in a text field, which holds what it is
+judged from (`Before`), and `Watched::Terminal`, which does not. Each has its
 when it was passed, and whether a later key was marked; and
-`FinalReading` is a key past its bound whose final read is asked.
+`FinalReading` is a text field's key past its bound whose final read is
+asked.
 
 An `Input::HeldKey`, a caret key the hook held back because
 `holds_caret_keys` was true, asks the focus's outpost to read the caret,
-`TextOp::ReadCaret` with `ReadPurpose::BeforeKey`, which also sets the
+`TextOp::ReadCaret` with `ReadPurpose::BeforeFieldKey` or
+`ReadPurpose::BeforeTerminalKey`, which also sets the
 node's note. The answer becomes the focus's caret, its selection changes
 are said, and the key is passed on (`Effect::PassHeldKey`) as the read ended. An `Input::CaretKey`, one the hook did not hold,
 sends the one-way `Effect::KeyNote`, and is judged from the node's last

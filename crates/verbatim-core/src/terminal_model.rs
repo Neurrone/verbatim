@@ -52,7 +52,7 @@
 //!   ([`TERMINAL_ANCHORS`]), which no outpost mints.
 //!
 //! - The read before a held key. A terminal's outpost answers Core's read
-//!   of the caret before a held key ([`ReadPurpose::BeforeKey`](verbatim_model::ReadPurpose::BeforeKey)) with a
+//!   of the caret before a held key ([`ReadPurpose::BeforeTerminalKey`](verbatim_model::ReadPurpose::BeforeTerminalKey)) with a
 //!   snapshot, which is aligned as a live read is and whose caret answers
 //!   the read ([`before_key`]).
 //!

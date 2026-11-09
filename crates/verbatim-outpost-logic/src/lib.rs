@@ -89,7 +89,7 @@ use verbatim_model::protocol::{
     RequestId,
 };
 use verbatim_model::{
-    CallCounts, FocusGroup, NodeId, NormalizedEvent, NoteRequest, ReadPurpose, TextOp, TraceId,
+    CallCounts, FocusGroup, KeyFetch, NodeId, NormalizedEvent, ReadPurpose, TextOp, TraceId,
 };
 use verbatim_reader_rules::Window;
 use verbatim_reader_rules::in_flight::{Abandoned, Ask, Decision, InFlight, RuleWindow};
@@ -105,9 +105,9 @@ pub use self::follow::{
 pub use self::held::{Evidence, Focus, Held, InFront};
 pub use self::intake::{Handling, Marks, Object, Planned, TerminalMark};
 pub use self::text::{
-    Anchor, AnswerCut, CutLine, KeptSelection, KeyNote, LastRead, NOTE_LIFE, NodeAnchors,
-    NoteFetch, NoteReads, POLL_BOUND, POLL_INTERVAL, RangeKey, ReadSelection, ReportCut,
-    TextChange, TextFacts,
+    Anchor, AnswerCut, CutLine, FieldReads, KeptSelection, KeyNote, LastRead, NOTE_LIFE,
+    NodeAnchors, NoteFetch, NoteOn, NoteReads, POLL_BOUND, POLL_INTERVAL, RangeKey, ReadSelection,
+    ReportCut, TerminalReads, TextChange, TextFacts,
 };
 pub use self::verdicts::{Probe, Probed, VerdictChange, Verdicts};
 
@@ -390,10 +390,12 @@ pub enum Input {
     /// queued behind what waits; `console` when its node is the console
     /// host's focused text area, which polls.
     KeyNote {
-        /// The note.
-        note: NoteRequest,
-        /// Whether its node is the focused console host's text area.
-        console: bool,
+        /// The key's node.
+        node: NodeId,
+        /// What the node's reads fetch.
+        fetch: KeyFetch,
+        /// Which node it is.
+        on: NoteOn,
     },
     /// A verdict a program of generation `generation` probed, or a window
     /// it found destroyed, posted alone as it was made, even from an
@@ -748,13 +750,8 @@ impl Reducer {
                     );
                 }
             }
-            Input::KeyNote { note, console } => {
-                Arc::make_mut(&mut self.facts.text).set_note(
-                    note.node.number(),
-                    note.fetch,
-                    now.wall_us,
-                    console,
-                );
+            Input::KeyNote { node, fetch, on } => {
+                Arc::make_mut(&mut self.facts.text).set_note(node.number(), fetch, now.wall_us, on);
             }
             Input::Verdict { generation, change } => {
                 self.record_verdict(generation, &change, &mut effects);
@@ -921,22 +918,17 @@ impl Reducer {
         if self.stopping {
             return false;
         }
-        match read.purpose {
-            ReadPurpose::BeforeKey => {
-                Arc::make_mut(&mut self.facts.text).set_note(
-                    node_id.number(),
-                    read.fetch,
-                    now.wall_us,
-                    false,
-                );
-                false
-            }
+        let on = match read.purpose {
+            ReadPurpose::BeforeFieldKey => NoteOn::Field,
+            ReadPurpose::BeforeTerminalKey => NoteOn::Terminal,
             ReadPurpose::Final => {
                 self.queries.insert(*request_id);
                 self.after.push_back((entry.clone(), None));
-                true
+                return true;
             }
-        }
+        };
+        Arc::make_mut(&mut self.facts.text).set_note(node_id.number(), read.fetch, now.wall_us, on);
+        false
     }
 
     /// A destroyed window answers nothing more: a hang told of it ends.

@@ -66,12 +66,12 @@ Dickson's, each with its date:
 Claude's, each with its reason:
 
 - No value-change sync on the before read: NVDA checks a waiting value change only at the caret event (`nvda/source/NVDAObjects/window/edit.py` 1068 to 1081), and the sync would add a wake before each key.
-- Core alone says whether a key's node is a terminal, from its role, and the request names that kind, because the outpost's own test (the window class, or a UIA console focus) disagrees with the role on an MSAA console.
+- Core alone says whether a key's node is a terminal, from its role, and its requests are different variants for a text field and a terminal, because the outpost's own test (the window class, or a UIA console focus) disagrees with the role on an MSAA console.
 - A bound read that fails or is abandoned says nothing, as `_caretScriptPostMovedHelper` returns when it cannot read (`editableText.py` 168 to 172).
 - A focus read that fails drops the node's last read, as `initAutoSelectDetection` starts again (`editableText.py` 421 to 424).
 - A text field's note lasts 300 ms from the request's arrival: the 150 ms bound on the before read, the 100 ms bound, and a margin for the pipe. Only an unusual path reaches that end, since the final read or the next key's request clears or replaces it first.
 - A note that has passed its end counts as absent where it is read, so no timer ends it and no wake is added.
-- A terminal's note lasts 300 ms, as a text field's does, because its key ends at its 100 ms bound: longer would fetch for no one, and a report with facts cannot be merged, which streaming redraws would pay for. The console host, which raises no prompt caret event, polls during its note (`NoteReads::Poll`), with today's 5 ms interval and 50 ms end (`POLL_BOUND`). This is the one thing the note holds beyond the unit, motion and end.
+- A terminal's note lasts 300 ms, as a text field's does, because its key ends at its 100 ms bound: longer would fetch for no one, and a report with facts cannot be merged, which streaming redraws would pay for. The console host, which raises no prompt caret event, polls during its note (`TerminalReads::Poll`), with today's 5 ms interval and 50 ms end (`POLL_BOUND`). This is the one thing the note holds beyond the unit, motion and end.
 - A terminal's key ends at its 100 ms bound, with no final read: keys behind go ahead, and what the terminal did reaches Core as ordinary reports.
 - A final read clears the note when it commits, so that a read in flight at its arrival still gets its facts (Dickson's decision of 2026-11-09), and it goes ahead of queued reads, so text changes are read no longer than today.
 - A key with no previous read to compare with has no evidence, and at its bound says its unit, as any bound answer does.
@@ -114,18 +114,23 @@ struct Busy {
 enum CurrentKey {
     Reading { query: QueryId, node: NodeId, key: HeldKey },
     Watched(Watched),                // passed on, within its bound
-    FinalReading { query: QueryId, watched: Watched },
+    FinalReading { query: QueryId, field: FieldKey },     // a text field's key only
     MovingBySentence { node: NodeId, key: KeyInfo, later_key_at_us: Option<u64>, step: SentenceStep },
 }
 
-struct Watched {
+// A text field's key and a terminal's are different after the release
+// (Dickson, 2026-11-09): a terminal's has no before unit, no final read and
+// no sentence step, because its reading rules speak.
+enum Watched { Field(FieldKey), Terminal(PassedKey) }
+
+struct PassedKey {                   // what every key passed on has
     node: NodeId,
     key: HeldKey,
-    kind: NodeKind,                  // TextField or Terminal
     passed_at_us: u64,
-    before: Before,
     later_key_at_us: Option<u64>,
 }
+
+struct FieldKey { passed: PassedKey, before: Before, awaiting_unit: bool }
 
 enum Before { Read { unit: TextChunk, line: TextChunk, removed: Option<String> }, NotRead }
 
@@ -136,7 +141,7 @@ enum SentenceStep {
 }
 ```
 
-An idle line with keys waiting cannot be written, and a key past its bound cannot be mistaken for one within it, since `Watched` means within the bound and `FinalReading` means past it; the built `Line` enum goes. The state decides the one deadline: armed in `Reading` (150 ms), `Watched` (100 ms) and `MovingBySentence` (150 ms), and in no other state. Entering a state sets it.
+An idle line with keys waiting cannot be written, and a key past its bound cannot be mistaken for one within it, since `Watched` means within the bound and `FinalReading` means past it, and a terminal's key cannot reach a final read, since only `Watched::Field` becomes `FinalReading` or `MovingBySentence`; the built `Line` enum goes. The state decides the one deadline: armed in `Reading` (150 ms), `Watched` (100 ms) and `MovingBySentence` (150 ms), and in no other state. Entering a state sets it.
 
 Four rules cover every ending, so the tables do not repeat them:
 
@@ -154,7 +159,12 @@ The focus queue stays in front: a key that reaches Core while focus reports wait
 ```rust
 struct KeyNote { unit: TextUnit, motion: CaretMotion, until_us: u64, reads: NoteReads }
 
-enum NoteReads { CaretAndText, CaretOnly, Poll { next_us: u64, until_us: u64 } }
+enum NoteReads { Field(FieldReads), Terminal(TerminalReads) }
+
+enum FieldReads { CaretAndText, CaretOnly }
+
+// The console host's poll belongs to a terminal's note only.
+enum TerminalReads { CaretAndText, CaretOnly, Poll { next_us: u64, until_us: u64 } }
 
 struct NodeRecord<P> {
     anchors: NodeAnchors<P>,
@@ -172,14 +182,17 @@ struct TextFacts { nodes: BTreeMap<u64, NodeText> }
 ### The messages
 
 ```rust
-struct KeyFetch { unit: TextUnit, motion: CaretMotion, kind: NodeKind }
+struct KeyFetch { unit: TextUnit, motion: CaretMotion }
 
 // TextOp::ReadCaret, one query with one reply.
 struct CaretRead { fetch: KeyFetch, purpose: ReadPurpose }
-enum ReadPurpose { BeforeKey, Final }
+enum ReadPurpose { BeforeFieldKey, BeforeTerminalKey, Final }  // Final: a text field's key only
 
 // CoreToOutpost::KeyNote, one-way, for a key with no before read.
-struct NoteRequest { node: NodeId, fetch: KeyFetch }
+enum NoteRequest {
+    Field { node: NodeId, fetch: KeyFetch },
+    Terminal { node: NodeId, fetch: KeyFetch },
+}
 
 // CoreToOutpost::ReadTerminal(NodeId), one-way: at a key's pass in a terminal
 // that is not the console host, read it now. No reply and no lifecycle.
@@ -202,7 +215,7 @@ Core. "Ends", "advance", "the pass" and "says changes" are the four rules above.
 
 | State | Rule | What it does |
 |---|---|---|
-| Idle | held key arrives | Becomes `Reading`, arms 150 ms, asks `ReadCaret` for `BeforeKey`. |
+| Idle | held key arrives | Becomes `Reading`, arms 150 ms, asks `ReadCaret` for `BeforeFieldKey` or `BeforeTerminalKey`, as the focus's role says. |
 | Idle | a caret key the hook passed | Becomes `Watched`, `NotRead`, arms 100 ms, sends `KeyNote`. |
 | Advancing | a sentence key taken with keys still behind it | Passes it on, sends no note, says nothing, and ends, as NVDA's helper does (`editableText.py` 241 to 244). |
 | Advancing | a caret key the hook passed, taken from `waiting` | Becomes `Watched`, `NotRead`, its pass the time it reached Core, its bound 100 ms after that, firing at once if past; sends `KeyNote`. |
@@ -222,14 +235,14 @@ Core. "Ends", "advance", "the pass" and "says changes" are the four rules above.
 | Watched | held key or command arrives | Joins `waiting`; marks `later_key_at_us`. |
 | Watched | typed character or editing chord | Runs at once if `waiting` is empty, else joins it. Its cut of speech marks `later_key_at_us`. |
 | Watched | a caret key the hook passed | With `waiting` empty, replaces the current key as `Watched`, `NotRead`, arms 100 ms, sends `KeyNote`. Otherwise joins `waiting`. |
-| Watched | evidence, no later key or read begun before it | Takes the caret; says the key's words, then changes; ends. In a terminal it takes the caret, and the reading rules speak. |
-| Watched | evidence, later key marked and read begun at or after it | Takes the caret; says changes; ends. |
-| Watched | deadline fires, a text field, not a sentence key | Advances; if this key is still current, asks `ReadCaret` for `Final` and becomes `FinalReading`. |
-| Watched | deadline fires, a sentence key | Asks `ReadCaret` for `Final`; `MovingBySentence` in step `FinalRead`; arms 150 ms. |
-| Watched | deadline fires, a terminal | Ends. |
+| Watched | evidence, no later key or read begun before it | Takes the caret; says a `Field` key's words, then changes; ends. A `Terminal` key has no words of its own: the reading rules speak. |
+| Watched | evidence, later key marked and read begun at or after it | Takes the caret; says changes; ends. A read begun before the pass counts from the pass, so a key with another behind it at its pass says nothing, including one whose before read was given up. |
+| `Watched::Field` | deadline fires, not a sentence key | Advances; if this key is still current, asks `ReadCaret` for `Final` and becomes `FinalReading`. |
+| `Watched::Field` | deadline fires, a sentence key | Asks `ReadCaret` for `Final`; `MovingBySentence` in step `FinalRead`; arms 150 ms. |
+| `Watched::Terminal` | deadline fires | Ends. |
 | Watched | speech cut | Marks `later_key_at_us` if not yet marked. |
-| Watched | focus on another node executes, a text field | As "A focus that moves first"; ends. |
-| Watched | focus on another node executes, a terminal | Ends. |
+| `Watched::Field` | focus on another node executes | As "A focus that moves first"; ends. |
+| `Watched::Terminal` | focus on another node executes | Ends. |
 | Watched | the node's outpost ends | Says nothing for the key; ends. |
 | FinalReading | held key arrives | It becomes current, and this key is replaced. |
 | FinalReading | command arrives | Runs, and this key stays. |
@@ -260,8 +273,8 @@ The outpost, per node. A note past its end counts as absent.
 | Last read present | any read of the node commits | Is replaced; the read compared with the old one. |
 | Last read present | focus read fails | Becomes absent. |
 | Any | release, or the element replaced | The record and its ranges are dropped, the note with them. |
-| Note absent or live | `ReadCaret` for `BeforeKey` arrives | The note is set or replaced at arrival, `CaretAndText`. On the console host, the before read's commit makes it `Poll`, ending 50 ms after that read ended (`POLL_BOUND`), so a slow read does not use up the poll. |
-| Note absent or live | `KeyNote` arrives | The note is set or replaced at arrival: `Poll` on the console host, ending 50 ms after arrival; `CaretAndText` otherwise. |
+| Note absent or live | `ReadCaret` for `BeforeFieldKey` or `BeforeTerminalKey` arrives | The note is set or replaced at arrival, `Field` or `Terminal`, `CaretAndText`. On the console host, the before read's commit makes a `Terminal` note `Poll`, ending 50 ms after that read ended (`POLL_BOUND`), so a slow read does not use up the poll. |
+| Note absent or live | `KeyNote` arrives | The note is set or replaced at arrival: a `Field` request's `CaretAndText`, a `Terminal` request's `Poll` on the console host, ending 50 ms after arrival, and `CaretAndText` otherwise. |
 | Note absent or live | `ReadCaret` for `Final` arrives | The read fetches the request's unit, ahead of queued reads; the note is cleared when it commits. |
 | Note absent | the node's caret event | Reads, as today, with no unit and no `ReadFacts`. |
 | Note absent | the node's text-change event | No read. |
@@ -297,7 +310,7 @@ What Backspace removed is the difference between the report's previous line and 
 
 ### Terminals
 
-A terminal keeps its reading rules. The request names the kind, the before read stays a read of the terminal, a terminal never compares selections, and its key is released at its bound as above. Its note ends after 300 ms, and the console host's note polls for 50 ms after the before read's end. A report of a terminal's caret only keeps Core's caret current, and the rules speak.
+A terminal keeps its reading rules. Core's requests for it are the `Terminal` variants, the before read stays a read of the terminal, a terminal never compares selections, and its key is released at its bound as above. Its note ends after 300 ms, and the console host's note polls for 50 ms after the before read's end. A report of a terminal's caret only keeps Core's caret current, and the rules speak.
 
 ### A focus that moves first
 

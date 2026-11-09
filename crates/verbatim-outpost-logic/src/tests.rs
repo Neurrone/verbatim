@@ -11,9 +11,8 @@ use verbatim_model::protocol::{
     DeliveredFact, EventTiming, OutpostToCore, Query, QueryOutcome, QueryResult, WinEventStamp,
 };
 use verbatim_model::{
-    Backend, CallCounts, CaretMotion, CaretRead, KeyFetch, NodeId, NodeKind, NodeSnapshot,
-    NormalizedEvent, NoteRequest, ReadPurpose, Role, StateSet, TextOp, TextReply, TextUnit,
-    TraceId,
+    Backend, CallCounts, CaretMotion, CaretRead, KeyFetch, NodeId, NodeSnapshot, NormalizedEvent,
+    ReadPurpose, Role, StateSet, TextOp, TextReply, TextUnit, TraceId,
 };
 
 use super::*;
@@ -2264,7 +2263,7 @@ fn every_entry_is_given_the_handling_deadline_but_focus_now_and_a_listener_reads
     assert_eq!(deadline(msaa_focus(1, 5)), HANDLING_DEADLINE);
     assert_eq!(deadline(name_change(1)), HANDLING_DEADLINE);
     assert_eq!(
-        deadline(read_caret(4, ReadPurpose::BeforeKey)),
+        deadline(read_caret(4, ReadPurpose::BeforeFieldKey)),
         HANDLING_DEADLINE
     );
     assert_eq!(
@@ -2401,7 +2400,6 @@ fn fetch() -> KeyFetch {
     KeyFetch {
         unit: TextUnit::Character,
         motion: CaretMotion::NextCharacter,
-        kind: NodeKind::TextField,
     }
 }
 
@@ -2416,7 +2414,8 @@ fn a_before_read_sets_the_note_as_it_arrives_and_a_final_read_goes_ahead_of_the_
     let effects = replay.push(name_change(1), Source::Hook, 1);
     let busy = program(&effects).request;
     assert!(
-        programs(&replay.push(read_caret(5, ReadPurpose::BeforeKey), Source::Other, 2)).is_empty()
+        programs(&replay.push(read_caret(5, ReadPurpose::BeforeFieldKey), Source::Other, 2))
+            .is_empty()
     );
     assert_eq!(
         note_at(&replay, 2),
@@ -2426,11 +2425,12 @@ fn a_before_read_sets_the_note_as_it_arrives_and_a_final_read_goes_ahead_of_the_
                 motion: CaretMotion::NextCharacter,
             },
             until_us: 302_000,
-            reads: NoteReads::CaretAndText,
+            reads: NoteReads::Field(FieldReads::CaretAndText),
         })
     );
     assert!(
-        programs(&replay.push(read_caret(6, ReadPurpose::BeforeKey), Source::Other, 3)).is_empty()
+        programs(&replay.push(read_caret(6, ReadPurpose::BeforeFieldKey), Source::Other, 3))
+            .is_empty()
     );
     assert!(programs(&replay.push(read_caret(7, ReadPurpose::Final), Source::Other, 4)).is_empty());
     assert!(
@@ -2452,11 +2452,9 @@ fn a_console_note_is_polled_when_nothing_else_is_ready_and_stops_at_its_end() {
     let mut replay = Replay::new();
     replay.input(
         Input::KeyNote {
-            note: NoteRequest {
-                node: NodeId::new(1),
-                fetch: fetch(),
-            },
-            console: true,
+            node: NodeId::new(1),
+            fetch: fetch(),
+            on: NoteOn::ConsoleHost,
         },
         1,
     );
@@ -2484,7 +2482,7 @@ fn a_console_note_is_polled_when_nothing_else_is_ready_and_stops_at_its_end() {
     assert_eq!(replay.reducer.next_timer(now(53)), None);
     assert!(matches!(
         note_at(&replay, 53).map(|note| note.reads),
-        Some(NoteReads::CaretAndText)
+        Some(NoteReads::Terminal(TerminalReads::CaretAndText))
     ));
 }
 
@@ -2493,11 +2491,9 @@ fn a_verbatim_caret_move_clears_the_notes_of_its_node() {
     let mut replay = Replay::new();
     replay.input(
         Input::KeyNote {
-            note: NoteRequest {
-                node: NodeId::new(1),
-                fetch: fetch(),
-            },
-            console: false,
+            node: NodeId::new(1),
+            fetch: fetch(),
+            on: NoteOn::Field,
         },
         1,
     );

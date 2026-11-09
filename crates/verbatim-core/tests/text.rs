@@ -398,10 +398,10 @@ fn request(effects: &[Effect]) -> TextRequest {
         // are matched by their node.
         return TextRequest {
             query_id: QueryId(0),
-            node_id: note.node,
+            node_id: note.node(),
             op: TextOp::ReadCaret(CaretRead {
-                fetch: note.fetch,
-                purpose: ReadPurpose::BeforeKey,
+                fetch: note.fetch(),
+                purpose: ReadPurpose::BeforeFieldKey,
             }),
         };
     }

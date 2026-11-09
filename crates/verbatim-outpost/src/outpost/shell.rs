@@ -26,11 +26,11 @@ use super::lock::{Lock, LockGuard};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use verbatim_model::NoteRequest;
 use verbatim_model::TraceId;
 use verbatim_model::protocol::{
     EventTiming, FrontWindow, OutpostToCore, QueryOutcome, RequestId, Responder,
 };
-use verbatim_model::{NodeKind, NoteRequest};
 use verbatim_reader_rules::CONSOLE_WINDOW_CLASS;
 use verbatim_uia::{Agile, Kept};
 use verbatim_win32::window::window_class_name;
@@ -39,8 +39,8 @@ use super::Context;
 use super::commit::{Effects, FocusEffects, KeptTarget, Writes};
 use super::outbound::Carried;
 use super::reducer::{
-    Asker, Change, Cut, Effect, Entry, Group, Input, Item, Marks, Now, Program, Reducer, Request,
-    Source, Subscribed, Subscription, VerdictChange, Verdicts,
+    Asker, Change, Cut, Effect, Entry, Group, Input, Item, Marks, NoteOn, Now, Program, Reducer,
+    Request, Source, Subscribed, Subscription, VerdictChange, Verdicts,
 };
 use super::store::{Removed, Store, Tag};
 use super::worker::{self, Charge, Job};
@@ -570,13 +570,23 @@ impl Shell {
             Posted::KeyNote(note) => {
                 // Only the console host polls its note; finding it is a
                 // local call, whatever the application is doing.
-                let console = note.fetch.kind == NodeKind::Terminal
-                    && self.context.store.has_terminal(note.node)
-                    && self
-                        .reducer
-                        .followed_window()
-                        .is_some_and(|hwnd| window_class_name(hwnd) == CONSOLE_WINDOW_CLASS);
-                Input::KeyNote { note, console }
+                let on = match note {
+                    NoteRequest::Field { .. } => NoteOn::Field,
+                    NoteRequest::Terminal { node, .. }
+                        if self.context.store.has_terminal(node)
+                            && self.reducer.followed_window().is_some_and(|hwnd| {
+                                window_class_name(hwnd) == CONSOLE_WINDOW_CLASS
+                            }) =>
+                    {
+                        NoteOn::ConsoleHost
+                    }
+                    NoteRequest::Terminal { .. } => NoteOn::Terminal,
+                };
+                Input::KeyNote {
+                    node: note.node(),
+                    fetch: note.fetch(),
+                    on,
+                }
             }
             Posted::Verdict { generation, change } => Input::Verdict { generation, change },
             Posted::Commit { request, effects } => {
