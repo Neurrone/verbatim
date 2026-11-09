@@ -22,7 +22,7 @@ use verbatim_model::protocol::{EventTiming, OutpostToCore};
 
 use super::reducer::{
     Change, DialogMemo, FocusCommit, Followed, Group, LastReported, MarkChange, OwedWork, Report,
-    Subscribed, WatchChange,
+    Subscribed,
 };
 use super::store::TextWrite;
 
@@ -45,7 +45,7 @@ pub(super) type Target = Option<KeptTarget>;
 /// evidence says is no longer the node's element: the runtime id names a
 /// new element, the one it named having lost the focus or gone
 /// (`books/dev/src/reference/adr/0001-focus.md`, "Object identity").
-/// The node's terminal entry goes with it, and the caret key's watch on the
+/// The node's terminal entry goes with it, and any key's note on the
 /// node ends (`Change::replaced`).
 pub(super) struct Stale {
     /// The node.
@@ -228,8 +228,6 @@ pub(super) struct Effects {
     /// A read of this node's caret began at the instant given, in
     /// microseconds.
     pub(super) caret_read: Option<(NodeId, u64)>,
-    /// A change of the caret key's watch.
-    pub(super) watch: Option<WatchChange>,
     /// A change of the marks on the followed focus.
     pub(super) mark: Option<MarkChange>,
     /// A held node's states, as an MSAA state change read them.
@@ -264,7 +262,6 @@ impl Effects {
             element: None,
             owed_done: self.owed_done,
             caret_read: self.caret_read,
-            watch: self.watch.clone(),
             mark: self.mark,
             states: self.states,
             noted_caret: self.noted_caret,
@@ -285,7 +282,6 @@ impl Effects {
             result: self.result,
             owed_done: self.owed_done,
             caret_read: self.caret_read,
-            watch: self.watch,
             mark: self.mark,
             states: self.states,
             found: self.found,

@@ -27,12 +27,13 @@
 use std::sync::Arc;
 
 use verbatim_model::{
-    CaretKey, CaretMotion, CaretReply, CaretSelection, Effect, FocusText, FocusValidity, KeyRead,
-    Message, NodeId, NodeSnapshot, Phrase, Role, SegmentContent, SelectionChange, SelectionText,
+    CaretKey, CaretMotion, CaretReply, CaretSelection, Effect, FocusText, FocusValidity, Message,
+    NodeId, NodeSnapshot, Phrase, Role, SegmentContent, SelectionChange, SelectionText,
     SpeechPriority, State, TextAttributes, TextChunk, TextOp, TextPoint, TextRead, TextReply,
     TextUnit, TraceId, TypingEcho, Utterance, UtteranceSegment,
 };
 
+use crate::key_line::Evidence;
 use crate::proven;
 use crate::queries::{Asking, Then};
 use crate::state::{CaretContext, NavigatorRead, PendingText, ReviewText, SrState, TextFollowUp};
@@ -238,16 +239,21 @@ pub(crate) fn changes_of_reply(reply: &CaretReply) -> (Vec<SelectionChange>, Rep
     )
 }
 
-/// A key's read's selection changes, and how they are said.
-pub(crate) fn changes_of_key_read(read: &KeyRead) -> (Vec<SelectionChange>, ReportGeneral) {
-    (
-        read.selection_changes.clone(),
-        ReportGeneral {
-            selection: read.new_selection.clone(),
-            collapsed: read.caret.selection.is_none(),
-            in_general: read.content_changed,
-        },
-    )
+/// A report's parts as the reply its key's words read: the caret, its
+/// changes and how they are said, and `facts`.
+pub(crate) fn report_of(
+    caret: verbatim_model::CaretReport,
+    changes: &[SelectionChange],
+    general: Option<General<'_>>,
+    facts: &verbatim_model::ReadFacts,
+) -> CaretReply {
+    CaretReply {
+        caret,
+        selection_changes: changes.to_vec(),
+        content_changed: general.is_some(),
+        new_selection: general.and_then(|general| general.selection.cloned()),
+        facts: facts.clone(),
+    }
 }
 
 /// What a before read found, as the key keeps it.
@@ -286,7 +292,7 @@ pub(crate) fn before_of_read(
         deleted_text(start_line, offset, line_break, motion, grid)
     });
     BeforeRead {
-        unit: reply.unit.clone().unwrap_or_else(|| line.clone()),
+        unit: reply.facts.unit.clone(),
         line: line.clone(),
         removed,
     }
@@ -317,7 +323,7 @@ pub(crate) fn evidence_words(
     state: &mut SrState,
     node: NodeId,
     key: CaretKey,
-    read: &KeyRead,
+    (read, evidence): (&CaretReply, Evidence<'_>),
 ) -> Vec<UtteranceSegment> {
     if selects(key) {
         return Vec::new();
@@ -328,30 +334,35 @@ pub(crate) fn evidence_words(
         .is_some_and(|focus| focus.snapshot.id == node && is_grid(focus.snapshot.role));
     match key.motion {
         CaretMotion::Backspace | CaretMotion::BackspaceWord => {
-            backspace_segments(state, node, key.motion, read, grid)
+            backspace_segments(state, node, key.motion, (read, evidence), grid)
         }
         // The selection removed with its text, as by a cut: said by its
         // change alone, after, never the removed text, as NVDA's caret
         // event says it (`docs/parity/text.md`, "TextInfo-equivalent layer").
         // NVDA has no script for these keys, and says only its caret
         // event's words.
-        CaretMotion::Other if read.before_selection.is_some() && read.caret.selection.is_none() => {
+        CaretMotion::Other
+            if evidence.previous_selection.is_some() && read.caret.selection.is_none() =>
+        {
             Vec::new()
         }
         CaretMotion::Other => {
             let mut reported = reported_format(state, node);
-            let before = (read.before_line.text.clone(), read.before_line.offset);
+            let before = (
+                evidence.previous_line.text.clone(),
+                evidence.previous_line.offset,
+            );
             let segments = other_key_segments(
                 Some(&before),
                 &read.caret.line,
-                Some(read.on_baseline_line),
+                Some(evidence.on_previous_line),
                 grid,
             )
             .unwrap_or_else(|| line_segments(&read.caret.line, grid, &mut reported));
             keep_reported_format(state, node, reported);
             segments
         }
-        motion => unit_of(state, node, motion, &read.caret.line, &read.unit),
+        motion => unit_of(state, node, motion, &read.caret.line, &read.facts.unit),
     }
 }
 
@@ -362,7 +373,7 @@ pub(crate) fn bound_words(
     state: &mut SrState,
     node: NodeId,
     key: CaretKey,
-    read: &KeyRead,
+    read: &CaretReply,
 ) -> Vec<UtteranceSegment> {
     if selects(key)
         || matches!(
@@ -376,7 +387,7 @@ pub(crate) fn bound_words(
     {
         return Vec::new();
     }
-    unit_of(state, node, key.motion, &read.caret.line, &read.unit)
+    unit_of(state, node, key.motion, &read.caret.line, &read.facts.unit)
 }
 
 /// The words of a key whose focus moved first, from its before read.
@@ -434,15 +445,15 @@ fn backspace_segments(
     state: &SrState,
     node: NodeId,
     motion: CaretMotion,
-    read: &KeyRead,
+    (read, evidence): (&CaretReply, Evidence<'_>),
     grid: bool,
 ) -> Vec<UtteranceSegment> {
     let line_break = state
         .focus_caret(node)
         .and_then(|caret| caret.line_break.as_deref());
-    if read.before_selection.is_some() {
+    if evidence.previous_selection.is_some() {
         let Some((line, offset)) =
-            selection_start(&read.before_line, read.before_selection.as_ref()).flatten()
+            selection_start(evidence.previous_line, evidence.previous_selection).flatten()
         else {
             return Vec::new();
         };
@@ -452,7 +463,7 @@ fn backspace_segments(
         };
     }
     let line = &read.caret.line;
-    let before = &read.before_line;
+    let before = evidence.previous_line;
     let removed = removal(
         (&before.text, text::byte_offset(before.offset)),
         (&line.text, text::byte_offset(line.offset)),

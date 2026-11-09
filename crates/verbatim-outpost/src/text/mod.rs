@@ -39,7 +39,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
 use verbatim_model::{
-    CaretReport, CaretSelection, FormatRun, KeyRead, LanguageRun, MAX_CHUNK_BYTES, MAX_RANGE_BYTES,
+    CaretReply, CaretReport, CaretSelection, Change, Compared, FormatRun, LanguageRun, MAX_CHUNK_BYTES, MAX_RANGE_BYTES, ReadFacts, had_effect,
     MAX_READ_AHEAD, MAX_READ_AHEAD_TEXT, MAX_SELECTION_TEXT_BYTES, Selection, SelectionChange,
     TextAnchor, TextAttributes, TextChunk, TextMovement, TextOp, TextPoint, TextPosition, TextRead,
     TextReadAhead, TextReply, TextThrough, TextUnit,
@@ -49,6 +49,7 @@ use crate::outpost::{
     Anchor, AnswerCut, CutLine, KeptSelection, NodeAnchors, ReadSelection, ReportCut,
 };
 pub use verbatim_outpost_logic::LastRead;
+use verbatim_outpost_logic::NoteFetch;
 
 /// The most UTF-16 code units read for a range copied to the clipboard or a
 /// selection change counted: what fits in [`MAX_RANGE_BYTES`] at worst.
@@ -1173,7 +1174,7 @@ pub fn caret_report<S: TextSource>(
             formats,
             since: None,
             compare: false,
-            unit: None,
+            fetch: None,
         },
     )
     .map(|read| (read.report, read.state))
@@ -1189,8 +1190,17 @@ pub struct ReportAsk<'a, P> {
     /// Whether the selection is compared with the node's last read; a
     /// terminal's reads compare nothing.
     pub compare: bool,
-    /// A unit to read at the caret besides the line, for a before read.
-    pub unit: Option<TextUnit>,
+    /// What the read fetches for a key, when it carries a key's facts.
+    pub fetch: Option<FetchAsk>,
+}
+
+/// What a read made for a key fetches, and how it finds when it ended.
+#[derive(Clone, Copy)]
+pub struct FetchAsk {
+    /// The key's unit and motion.
+    pub note: NoteFetch,
+    /// The shared clock, read when the read ends.
+    pub ended: fn() -> u64,
 }
 
 /// What [`caret_report_since`] read.
@@ -1210,8 +1220,8 @@ pub struct ReportedCaret<P> {
     /// With `content_changed`, the whole new selection's text
     /// ([`CaretReply::new_selection`]).
     pub new_selection: Option<SelectionChange>,
-    /// The unit asked for at the caret; `None` when the unit is the line.
-    pub unit: Option<TextChunk>,
+    /// What the read found for its key, when it was made for one.
+    pub facts: Option<ReadFacts>,
 }
 
 /// [`caret_report`], and, given `since`, whether the caret is no longer
@@ -1239,8 +1249,19 @@ pub fn caret_report_since<S: TextSource>(
 ) -> TextResult<ReportedCaret<S::Pos>> {
     match caret_report_checking(source, anchors, read_at_us, ask, false)? {
         Checked::Done(read) => Ok(read),
-        Checked::Cut(cut) => finish_report(source, anchors, cut, false),
+        Checked::Cut(cut) => finish_report(
+            source,
+            anchors,
+            cut,
+            false,
+            ask.fetch.map_or(no_end, |fetch| fetch.ended),
+        ),
     }
+}
+
+/// A read made for no key has no end to stamp.
+fn no_end() -> u64 {
+    0
 }
 
 /// [`caret_report_since`], cut with `cut` where the comparison with the last
@@ -1269,24 +1290,28 @@ pub(crate) fn caret_report_checking<S: TextSource>(
         formats,
         since,
         compare,
-        unit,
+        fetch,
     } = ask;
     let last = if compare {
         anchors.kept_selection()
     } else {
         None
     };
+    // A read for a key compares with the node's last read, whose caret the
+    // read's one trip can also say it has left; read by parts that would be
+    // a call more, so it is compared by the text.
+    let previous = fetch.and_then(|_| anchors.last_read());
     // NVDA reads and clears the note at every comparison, and keeps it
     // while there is no selection to compare with
     // (`detectPossibleSelectionChange`, `nvda/source/editableText.py` 437
     // to 451).
     let noted = last.is_some() && anchors.take_content_changed();
     let request = CaretRequest {
-        since,
+        since: since.or(previous.as_ref().map(|last| &last.caret)),
         previous: last.as_ref().filter(|_| !noted).map(|last| &last.ends),
         previous_collapsed: last.as_ref().is_some_and(|last| last.collapsed),
         baseline_selection: None,
-        unit: unit.and_then(|unit| extra_unit(source, unit)),
+        unit: fetch.and_then(|fetch| extra_unit(source, fetch.note.unit)),
         formats: formats.then_some(FormatSpan::Line),
         recheck: false,
         read_selection_text: true,
@@ -1328,7 +1353,8 @@ pub(crate) fn caret_report_checking<S: TextSource>(
             moved,
             read_at_us,
             last,
-            unit,
+            fetch: fetch.map(|fetch| fetch.note),
+            previous,
         }));
     }
     reported(
@@ -1337,7 +1363,8 @@ pub(crate) fn caret_report_checking<S: TextSource>(
         (state, moved, read_at_us),
         (last.as_ref(), changed == Some(Changed::Yes)),
         (line, read_changes, start),
-        (selection_text, unit, read_unit),
+        (selection_text, read_unit),
+        (fetch, previous),
     )
     .map(Checked::Done)
 }
@@ -1345,8 +1372,12 @@ pub(crate) fn caret_report_checking<S: TextSource>(
 /// A caret report, or the report cut ([`caret_report_checking`]).
 pub(crate) type ReportStep<P> = Checked<ReportedCaret<P>, ReportCut<P>>;
 
-/// A report's selection text, the unit asked for, and that unit as read.
-type ReportExtras<P> = (Option<Vec<u16>>, Option<TextUnit>, Option<UnitAt<P>>);
+/// A report's selection text, and the key's unit as the read found it.
+type ReportExtras<P> = (Option<Vec<u16>>, Option<UnitAt<P>>);
+
+/// What a read made for a key adds to a report: what it asks, and the last
+/// read it compares with.
+type KeyFetched<P> = (Option<FetchAsk>, Option<LastRead<P>>);
 
 /// Finishes a caret report [`caret_report_checking`] cut: the comparison,
 /// in general terms when a change of the node's text waits to be handled
@@ -1361,18 +1392,21 @@ pub(crate) fn finish_report<S: TextSource>(
     anchors: &mut NodeText<'_, S::Pos>,
     cut: ReportCut<S::Pos>,
     waiting: bool,
+    ended: fn() -> u64,
 ) -> TextResult<ReportedCaret<S::Pos>> {
     let state = CaretState {
         caret: cut.caret,
         selection: cut.selection,
     };
+    let fetch = cut.fetch.map(|note| FetchAsk { note, ended });
     reported(
         source,
         anchors,
         (state, cut.moved, cut.read_at_us),
         (Some(&cut.last), waiting),
         (None, None, None),
-        (None, cut.unit, None),
+        (None, None),
+        (fetch, cut.previous),
     )
 }
 
@@ -1386,7 +1420,8 @@ fn reported<S: TextSource>(
     (state, moved, read_at_us): (CaretState<S::Pos>, bool, u64),
     (last, content_changed): (Option<&KeptSelection<S::Pos>>, bool),
     (line, read_changes, start): ReadParts<S::Pos>,
-    (selection_text, unit, read_unit): ReportExtras<S::Pos>,
+    (selection_text, read_unit): ReportExtras<S::Pos>,
+    (fetch, previous): KeyFetched<S::Pos>,
 ) -> TextResult<ReportedCaret<S::Pos>> {
     let (selection_changes, new_selection) = match (last, read_changes) {
         (Some(last), _) if content_changed => {
@@ -1411,14 +1446,31 @@ fn reported<S: TextSource>(
         (line, start),
         selection_text,
     )?;
-    let unit = match unit {
-        Some(unit) => unit_at_caret(
-            source,
-            anchors,
-            (&state, &report.line),
-            unit,
-            (read_unit, Vec::new()),
-        )?,
+    let facts = match fetch {
+        Some(fetch) => {
+            let unit = unit_at_caret(
+                source,
+                anchors,
+                (&state, &report.line),
+                fetch.note.unit,
+                (read_unit, Vec::new()),
+            )?;
+            keep_unit(anchors, unit.as_ref());
+            let change = match previous {
+                None => Change::NoPrevious,
+                Some(last) => report_change(
+                    &report.line,
+                    (unit.as_ref(), fetch.note),
+                    (moved, !selection_changes.is_empty()),
+                    last,
+                ),
+            };
+            Some(ReadFacts {
+                unit: unit.unwrap_or_else(|| report.line.clone()),
+                change,
+                read_ended_at_us: (fetch.ended)(),
+            })
+        }
         None => None,
     };
     Ok(ReportedCaret {
@@ -1428,8 +1480,57 @@ fn reported<S: TextSource>(
         selection_changes,
         content_changed,
         new_selection,
-        unit,
+        facts,
     })
+}
+
+/// Keeps the unit a read found as part of the node's last read, for the
+/// next read to compare with.
+fn keep_unit<P>(anchors: &mut NodeText<'_, P>, unit: Option<&TextChunk>) {
+    if let Some(last) = anchors.anchors.last.as_mut() {
+        last.unit = unit.cloned();
+    }
+}
+
+/// How a report made for a key compares with `last`, the node's last read:
+/// the line and the characters beside the caret compared by their text, the
+/// caret having moved as the read says or by the text and offset read by
+/// parts (a read by parts adding no call), and on the same line as far as
+/// its text tells.
+fn report_change<P>(
+    line: &TextChunk,
+    (unit, note): (Option<&TextChunk>, NoteFetch),
+    (moved, selection_moved): (bool, bool),
+    last: LastRead<P>,
+) -> Change {
+    let line_changed = line.text != last.line.text;
+    let unit_changed = note.motion.compares_unit()
+        && unit_text(&note, unit, line) != before_unit_text(&last, note.unit);
+    let compared = Compared {
+        caret_moved: moved || line_changed || line.offset != last.line.offset,
+        selection_moved,
+        beside_changed: beside(&line.text, line.offset as usize)
+            != beside(&last.line.text, last.line.offset as usize),
+        unit_changed,
+        line_changed,
+    };
+    Change::Compared {
+        compared,
+        on_previous_line: !line_changed,
+        previous_selection: last.selection.map(|selection| selection.report),
+        previous_line: last.line,
+    }
+}
+
+/// The text of the key's unit a report read, the line's character at the
+/// caret for a character or where no unit was read.
+fn unit_text(note: &NoteFetch, unit: Option<&TextChunk>, line: &TextChunk) -> String {
+    match unit {
+        Some(chunk) if note.unit != TextUnit::Character => chunk.text.clone(),
+        _ => verbatim_text::grapheme_at(&line.text, line.offset as usize)
+            .map(|range| line.text[range].to_owned())
+            .unwrap_or_default(),
+    }
 }
 
 /// What a caret read in one go had besides the caret: the line, the
@@ -1662,6 +1763,7 @@ fn report_for<S: TextSource>(
         line: line.clone(),
         text_changed,
         read_at_us,
+        unit: None,
     });
     Ok(CaretReport {
         line,
@@ -1750,50 +1852,47 @@ fn format_span(unit: TextUnit) -> Option<FormatSpan> {
     }
 }
 
-/// What a key's check compares with: its baseline, the unit it
-/// reports, and which evidence counts.
-pub struct CheckKey<'a, P> {
-    /// The key's baseline.
-    pub baseline: &'a LastRead<P>,
-    /// The key's unit.
-    pub unit: TextUnit,
-    /// The key's motion.
-    pub motion: verbatim_model::CaretMotion,
-    /// The key's unit at the caret before it, when its before read read it.
-    pub before_unit: Option<&'a TextChunk>,
+/// What a key's read of the node asks: the node's last read is its one
+/// baseline.
+#[derive(Clone, Copy)]
+pub struct CheckKey {
+    /// The key's unit and motion.
+    pub note: NoteFetch,
     /// When the read began, on the shared clock.
     pub read_at_us: u64,
-    /// Whether the check is the key's final read, whose answer is the
-    /// bound answer when it finds nothing.
+    /// Whether the read is the key's final read, whose answer is the bound
+    /// answer when it finds nothing.
     pub final_read: bool,
+    /// The shared clock, read when the read ends.
+    pub ended: fn() -> u64,
 }
 
-/// What a key's check found.
+/// What a key's read found.
 #[derive(Debug)]
 pub enum KeyChecked {
     /// The read, and whether it shows the key had an effect.
     Read {
         /// The read.
-        read: Box<KeyRead>,
+        read: Box<CaretReply>,
         /// Whether it shows the key had an effect.
         effect: bool,
     },
     /// The caret moved while it was read, and the event that follows the
-    /// move checks again.
+    /// move reads again.
     Moving,
     /// The text could not be read.
     Failed,
 }
 
-/// Checks a caret key's watch: reads the caret once, with what its result
-/// needs, in one round trip where the source reads the caret in one go
-/// ([`TextSource::caret_read`]), compares what it read with the key's
-/// baseline, judges the evidence ([`verbatim_outpost_logic::had_effect`]),
-/// and reports the read. It never waits.
+/// Reads the caret for a key: once, with what its report needs, in one
+/// round trip where the source reads the caret in one go
+/// ([`TextSource::caret_read`]), compares what it read with the node's last
+/// read, judges the evidence ([`verbatim_model::had_effect`]), and reports
+/// the read. With no last read, the report says so. It never waits.
 pub fn check_key<S: TextSource>(
     source: &mut S,
     anchors: &mut NodeText<'_, S::Pos>,
-    key: &CheckKey<'_, S::Pos>,
+    key: &CheckKey,
 ) -> KeyChecked {
     match check_key_cut(source, anchors, key, false) {
         Checked::Done(checked) => checked,
@@ -1808,7 +1907,7 @@ pub fn check_key<S: TextSource>(
 pub(crate) fn check_key_cut<S: TextSource>(
     source: &mut S,
     anchors: &mut NodeText<'_, S::Pos>,
-    key: &CheckKey<'_, S::Pos>,
+    key: &CheckKey,
     cut: bool,
 ) -> Checked<KeyChecked, AnswerCut<S::Pos>> {
     match key_read(source, anchors, key, cut) {
@@ -1816,7 +1915,7 @@ pub(crate) fn check_key_cut<S: TextSource>(
         Ok(Checked::Done(checked)) => Checked::Done(checked),
         Err(error) => {
             if let TextError::Failed(reason) = error {
-                tracing::debug!(reason, "a caret key's watch could not read the caret");
+                tracing::debug!(reason, "a key's read could not read the caret");
             }
             Checked::Done(KeyChecked::Failed)
         }
@@ -1831,31 +1930,24 @@ pub(crate) fn check_key_cut<S: TextSource>(
 fn key_read<S: TextSource>(
     source: &mut S,
     anchors: &mut NodeText<'_, S::Pos>,
-    key: &CheckKey<'_, S::Pos>,
+    key: &CheckKey,
     cut: bool,
 ) -> TextResult<Checked<KeyChecked, AnswerCut<S::Pos>>> {
-    let baseline = key.baseline;
-    let last = anchors.last_read();
-    let compared = last.as_ref().map(LastRead::kept_selection);
-    // The selection compared with the last read's, and with the baseline's
-    // when a read since replaced it.
-    let baseline_ends = last
-        .as_ref()
-        .filter(|last| last.read_at_us != baseline.read_at_us)
-        .map(|_| baseline.kept_selection().ends);
-    let extra = extra_unit(source, key.unit);
+    let Some(last) = anchors.last_read() else {
+        return no_previous(source, anchors, key).map(Checked::Done);
+    };
+    let compared = last.kept_selection();
+    let extra = extra_unit(source, key.note.unit);
     let request = CaretRequest {
-        since: Some(&baseline.caret),
-        previous: compared.as_ref().map(|compared| &compared.ends),
-        previous_collapsed: compared.as_ref().is_some_and(|compared| compared.collapsed),
-        baseline_selection: baseline_ends.as_ref(),
+        since: Some(&last.caret),
+        previous: Some(&compared.ends),
+        previous_collapsed: compared.collapsed,
+        baseline_selection: None,
         unit: extra,
-        formats: format_span(key.unit),
+        formats: format_span(key.note.unit),
         recheck: true,
         read_selection_text: true,
-        read_previous_text: compared
-            .as_ref()
-            .is_some_and(|compared| compared.text.is_some()),
+        read_previous_text: compared.text.is_some(),
     };
     let mut read = read_for_key(source, &request)?;
     let (unit, offset) = match read.line.take() {
@@ -1864,30 +1956,25 @@ fn key_read<S: TextSource>(
     };
     let (text, mapped, _) = to_utf8(&unit.text, MAX_CHUNK_BYTES, &[offset]);
     read.line = Some((unit, offset));
-    // A read in one go compared the selection with the baseline's itself.
-    let selection_moved = read.selection_moved
-        || read.baseline_moved
-        || (read.moved_while_read.is_none()
-            && baseline_ends.is_some()
-            && !same_selection(source, &read.state, baseline)?);
-    let before_offset = baseline.line.offset as usize;
-    let beside_changed = beside(&text, mapped[0]) != beside(&baseline.line.text, before_offset);
-    let line_changed = text != baseline.line.text;
-    let unit_changed = key.motion.compares_unit()
+    let selection_moved = read.selection_moved;
+    let before_offset = last.line.offset as usize;
+    let beside_changed = beside(&text, mapped[0]) != beside(&last.line.text, before_offset);
+    let line_changed = text != last.line.text;
+    let unit_changed = key.note.motion.compares_unit()
         && text_at_caret(
             source,
             &read.state,
-            (key.unit, read.unit.as_ref().map(|(unit, _)| unit)),
+            (key.note.unit, read.unit.as_ref().map(|(unit, _)| unit)),
             (&text, mapped[0]),
-        )? != before_unit_text(baseline, key.unit, key.before_unit);
-    let compared_facts = verbatim_outpost_logic::Compared {
+        )? != before_unit_text(&last, key.note.unit);
+    let comparison = Compared {
         caret_moved: read.caret_moved,
         selection_moved,
         beside_changed,
         unit_changed,
         line_changed,
     };
-    let effect = verbatim_outpost_logic::had_effect(compared_facts, key.motion);
+    let effect = had_effect(comparison, key.note.motion);
     // The caret may be from before the key and the line from after it: an
     // edit control can handle the key between the two reads (a Backspace's
     // character message comes after the key's own), and a provider takes
@@ -1903,7 +1990,7 @@ fn key_read<S: TextSource>(
             !same_state(source, &again, &read.state)?
         };
         if moved_while_read {
-            tracing::debug!("the caret moved while it was read; the watch waits for its event");
+            tracing::debug!("the caret moved while it was read; its event reads again");
             return Ok(Checked::Done(KeyChecked::Moving));
         }
     }
@@ -1915,8 +2002,8 @@ fn key_read<S: TextSource>(
         let same = if let Some((to_start, to_end)) = read.since_place {
             within_line(to_start, to_end, &unit)
         } else {
-            let to_start = source.compare(&baseline.caret, &unit.start)?;
-            let to_end = source.compare(&baseline.caret, &unit.end)?;
+            let to_start = source.compare(&last.caret, &unit.start)?;
+            let to_end = source.compare(&last.caret, &unit.end)?;
             within_line(to_start, to_end, &unit)
         };
         read.line = Some((unit, offset));
@@ -1928,26 +2015,20 @@ fn key_read<S: TextSource>(
     // `nvda/source/editableText.py` 437 to 451); the comparison then
     // decides in general terms as a caret event's report does
     // ([`content_changed`]).
-    let noted = compared.is_some() && anchors.take_content_changed();
-    let changed = compared.as_ref().map(|compared| {
-        content_changed(
-            noted,
-            (compared, read.state.selection.is_some()),
-            read.previous_text.as_deref(),
-        )
-    });
+    let noted = anchors.take_content_changed();
+    let changed = content_changed(
+        noted,
+        (&compared, read.state.selection.is_some()),
+        read.previous_text.as_deref(),
+    );
     // Only a read by parts is cut: it carries nothing but positions and
     // the caret's line.
-    if cut
-        && read.moved_while_read.is_none()
-        && changed == Some(Changed::Unless)
-        && let Some(compared) = compared
-    {
+    if cut && read.moved_while_read.is_none() && changed == Changed::Unless {
         return Ok(Checked::Cut(answer_cut(
             read,
             key,
-            (on_baseline_line, effect),
-            compared,
+            (on_baseline_line, effect, comparison),
+            (compared, last),
         )));
     }
     let found = key_result(
@@ -1955,10 +2036,46 @@ fn key_read<S: TextSource>(
         anchors,
         read,
         key,
-        (on_baseline_line, effect),
-        (compared.as_ref(), changed == Some(Changed::Yes)),
+        (on_baseline_line, effect, comparison),
+        (&compared, changed == Changed::Yes, last),
     )?;
     Ok(Checked::Done(found))
+}
+
+/// A key's read of a node with no last read: its report, whose change says
+/// so, carrying no effect.
+fn no_previous<S: TextSource>(
+    source: &mut S,
+    anchors: &mut NodeText<'_, S::Pos>,
+    key: &CheckKey,
+) -> TextResult<KeyChecked> {
+    let reported = caret_report_since(
+        source,
+        anchors,
+        key.read_at_us,
+        &ReportAsk {
+            formats: false,
+            since: None,
+            compare: true,
+            fetch: Some(FetchAsk {
+                note: key.note,
+                ended: key.ended,
+            }),
+        },
+    )?;
+    let facts = reported
+        .facts
+        .ok_or_else(|| TextError::Failed("the report has no key's facts".to_owned()))?;
+    Ok(KeyChecked::Read {
+        read: Box::new(CaretReply {
+            caret: reported.report,
+            selection_changes: reported.selection_changes,
+            content_changed: reported.content_changed,
+            new_selection: reported.new_selection,
+            facts,
+        }),
+        effect: false,
+    })
 }
 
 /// Finishes a key's check [`check_key_cut`] cut: its comparison in general
@@ -1966,7 +2083,7 @@ fn key_read<S: TextSource>(
 pub(crate) fn finish_key<S: TextSource>(
     source: &mut S,
     anchors: &mut NodeText<'_, S::Pos>,
-    key: &CheckKey<'_, S::Pos>,
+    key: &CheckKey,
     cut: AnswerCut<S::Pos>,
     waiting: bool,
 ) -> KeyChecked {
@@ -1977,7 +2094,6 @@ pub(crate) fn finish_key<S: TextSource>(
         },
         caret_moved: true,
         selection_moved: false,
-        baseline_moved: false,
         since_place: None,
         line: cut.line.map(|line| {
             (
@@ -2003,46 +2119,36 @@ pub(crate) fn finish_key<S: TextSource>(
         anchors,
         read,
         key,
-        (cut.on_baseline_line, cut.effect),
-        (Some(&cut.compared), waiting),
+        (cut.on_previous_line, cut.effect, cut.comparison),
+        (&cut.compared, waiting, cut.previous),
     ) {
         Ok(found) => found,
         Err(error) => {
             if let TextError::Failed(reason) = error {
-                tracing::debug!(reason, "a caret key's watch could not read the caret");
+                tracing::debug!(reason, "a key's read could not read the caret");
             }
             KeyChecked::Failed
         }
     }
 }
 
-/// The unit at the caret in `baseline`, as text.
-fn before_unit_text<P>(
-    baseline: &LastRead<P>,
-    unit: TextUnit,
-    before_unit: Option<&TextChunk>,
-) -> String {
+/// The unit at the caret in `last`, the node's last read, as text: the
+/// character cut from its line, the unit it fetched when that is the same
+/// kind, or else its line.
+fn before_unit_text<P>(last: &LastRead<P>, unit: TextUnit) -> String {
     if unit == TextUnit::Character {
-        let line = &baseline.line;
+        let line = &last.line;
         return verbatim_text::grapheme_at(&line.text, line.offset as usize)
             .map(|range| line.text[range].to_owned())
             .unwrap_or_default();
     }
-    before_unit.map_or_else(|| baseline.line.text.clone(), |chunk| chunk.text.clone())
+    last.unit
+        .as_ref()
+        .filter(|chunk| chunk.unit == unit)
+        .map_or_else(|| last.line.text.clone(), |chunk| chunk.text.clone())
 }
 
-/// Whether `state`'s selection is `baseline`'s, by its ends (equal ends for
-/// none).
-fn same_selection<S: TextSource>(
-    source: &mut S,
-    state: &CaretState<S::Pos>,
-    baseline: &LastRead<S::Pos>,
-) -> TextResult<bool> {
-    let ends = baseline.kept_selection().ends;
-    Ok(!selection_moved(source, state, &ends)?)
-}
-
-/// One read of a caret key's watch: the caret, the comparisons by position,
+/// One read for a key: the caret, the comparisons by position,
 /// and whatever was read with them.
 struct Polled<P> {
     state: CaretState<P>,
@@ -2050,8 +2156,6 @@ struct Polled<P> {
     caret_moved: bool,
     /// The selection is not the last read's.
     selection_moved: bool,
-    /// The selection is not the baseline's.
-    baseline_moved: bool,
     line: Option<(Unit<P>, usize)>,
     unit: Option<(Unit<P>, usize)>,
     formats: Vec<Formatting>,
@@ -2072,7 +2176,7 @@ struct Polled<P> {
     selection_start: Option<SelectionStart<P>>,
 }
 
-/// Reads the caret for a caret key's check: in one go where the source can
+/// Reads the caret for a key: in one go where the source can
 /// ([`TextSource::caret_read`]), else by its parts.
 fn read_for_key<S: TextSource>(
     source: &mut S,
@@ -2084,7 +2188,6 @@ fn read_for_key<S: TextSource>(
             state: read.state,
             caret_moved: read.moved,
             selection_moved: read.selection_moved,
-            baseline_moved: read.baseline_moved,
             since_place: read.since_place,
             line: Some(read.line),
             unit: read.unit,
@@ -2112,7 +2215,6 @@ fn read_for_key<S: TextSource>(
         state,
         caret_moved,
         selection_moved,
-        baseline_moved: false,
         since_place: None,
         line: None,
         unit: None,
@@ -2125,13 +2227,13 @@ fn read_for_key<S: TextSource>(
     })
 }
 
-/// What a key's check cut at its check of a waiting change of the text
+/// What a key's read cut at its check of a waiting change of the text
 /// carries from `polled`, a read by parts, to [`finish_key`].
 fn answer_cut<P>(
     polled: Polled<P>,
-    key: &CheckKey<'_, P>,
-    (on_baseline_line, effect): (bool, bool),
-    compared: KeptSelection<P>,
+    key: &CheckKey,
+    (on_previous_line, effect, comparison): (bool, bool, Compared),
+    (compared, previous): (KeptSelection<P>, LastRead<P>),
 ) -> AnswerCut<P> {
     AnswerCut {
         caret: polled.state.caret,
@@ -2144,10 +2246,12 @@ fn answer_cut<P>(
             truncated: unit.truncated,
             offset,
         }),
-        unit: key.unit,
-        on_baseline_line,
+        note: key.note,
+        on_previous_line,
         effect,
+        comparison,
         compared,
+        previous,
     }
 }
 
@@ -2187,17 +2291,17 @@ fn within_line<P>(to_start: Ordering, to_end: Ordering, line: &Unit<P>) -> bool 
     }
 }
 
-/// The check's read as the key's result: the caret's report, replacing the
-/// node's last read, the unit at the caret, the selection's changes from
-/// `compared`, and what the baseline held. Only the unit of a check that
-/// answers the key is read; any other carries the line in its place.
+/// The read's report: the caret's report, replacing the node's last read,
+/// the unit at the caret, the selection's changes from `compared`, and what
+/// the last read held. Only the unit of a read with an effect, or the
+/// final read, is fetched here; any other carries the line in its place.
 fn key_result<S: TextSource>(
     source: &mut S,
     anchors: &mut NodeText<'_, S::Pos>,
     polled: Polled<S::Pos>,
-    key: &CheckKey<'_, S::Pos>,
-    (on_baseline_line, effect): (bool, bool),
-    (compared, content_changed): (Option<&KeptSelection<S::Pos>>, bool),
+    key: &CheckKey,
+    (on_previous_line, effect, comparison): (bool, bool, Compared),
+    (compared, content_changed, previous): (&KeptSelection<S::Pos>, bool, LastRead<S::Pos>),
 ) -> TextResult<KeyChecked> {
     let Polled {
         state,
@@ -2209,7 +2313,7 @@ fn key_result<S: TextSource>(
         selection_start,
         ..
     } = polled;
-    let span = format_span(key.unit);
+    let span = format_span(key.note.unit);
     let (line_formats, unit_formats) = if span == Some(FormatSpan::Line) {
         (formats, Vec::new())
     } else {
@@ -2229,59 +2333,54 @@ fn key_result<S: TextSource>(
             source,
             anchors,
             (&state, &caret.line),
-            key.unit,
+            key.note.unit,
             (read_unit, unit_formats),
         )?
     } else {
         None
     };
-    let (selection_changes, new_selection) = match (compared, changes) {
-        (Some(last), _) if content_changed => {
-            general_changes(source, (&last.ends, last.collapsed), &state)?
+    keep_unit(anchors, unit.as_ref());
+    let (selection_changes, new_selection) = match changes {
+        _ if content_changed => {
+            general_changes(source, (&compared.ends, compared.collapsed), &state)?
         }
         // Neither selection holds anything: no change to tell.
-        (Some(last), _) if last.collapsed && state.selection.is_none() => (Vec::new(), None),
-        (Some(_), Some(changes)) => (
+        _ if compared.collapsed && state.selection.is_none() => (Vec::new(), None),
+        Some(changes) => (
             changes
                 .into_iter()
                 .filter_map(|(selected, text)| change_of(selected, &text))
                 .collect(),
             None,
         ),
-        (Some(last), None) => (
-            selection_changes(source, (&last.ends, last.collapsed), &state)?,
+        None => (
+            selection_changes(source, (&compared.ends, compared.collapsed), &state)?,
             None,
         ),
-        (None, _) => (Vec::new(), None),
     };
-    let baseline = key.baseline;
-    let line_chunk = caret.line.clone();
-    let before_unit = key.before_unit.cloned().unwrap_or_else(|| {
-        let mut chunk = baseline.line.clone();
-        chunk.text = before_unit_text(baseline, key.unit, None);
-        chunk.offset = 0;
-        chunk
-    });
+    let unit_chunk = unit.unwrap_or_else(|| caret.line.clone());
     Ok(KeyChecked::Read {
-        read: Box::new(KeyRead {
+        read: Box::new(CaretReply {
             caret,
             selection_changes,
             content_changed,
             new_selection,
-            before_line: baseline.line.clone(),
-            before_selection: baseline
-                .selection
-                .as_ref()
-                .map(|selection| selection.report.clone()),
-            before_unit,
-            unit: unit.unwrap_or(line_chunk),
-            on_baseline_line,
+            facts: ReadFacts {
+                unit: unit_chunk,
+                change: Change::Compared {
+                    compared: comparison,
+                    previous_selection: previous.selection.map(|selection| selection.report),
+                    previous_line: previous.line,
+                    on_previous_line,
+                },
+                read_ended_at_us: (key.ended)(),
+            },
         }),
         effect,
     })
 }
 
-/// The watch's unit at the caret, as a chunk: `None` for a line, which the
+/// The key's unit at the caret, as a chunk: `None` for a line, which the
 /// caret's line already is, and for a unit the source does not have. A
 /// character is cut from the line already read; any other unit is the one
 /// already read (`read`), or read now. `formats` is the formatting read for

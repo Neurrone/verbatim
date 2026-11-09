@@ -226,7 +226,13 @@ pub(crate) fn key_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
             key,
             pressed_at_ms,
             ..
-        } => crate::key_line::unheld_caret_key(state, *trace_id, *key, *pressed_at_ms),
+        } => crate::key_line::unheld_caret_key(
+            state,
+            *trace_id,
+            *key,
+            *pressed_at_ms,
+            crate::key_line::KEY_BOUND_MS,
+        ),
         Input::CharacterTyped { trace_id, text, .. } => {
             editing::character_typed(state, *trace_id, text)
         }
@@ -774,6 +780,14 @@ fn keep_duplicate(state: &mut SrState, report: &Report, cached: Option<CachedFro
         .collect();
     keep_newer_reading(state, &report.node, &live);
     sync_navigator_with_focus(state);
+    if let Some(effects) = crate::key_line::repeat_evidence(
+        state,
+        report.trace_id,
+        report.node.id,
+        report.text.as_ref(),
+    ) {
+        return effects;
+    }
     editing::keep_focus_caret(state, report.node.id, report.text.as_ref());
     let Some(FocusText::Caret { changes, caret, .. }) = report.text.as_ref() else {
         return Vec::new();
@@ -860,24 +874,23 @@ fn reduce_caret_moved(
         selection_changes,
         content_changed,
         new_selection,
+        facts,
     } = moved
     else {
         return Vec::new();
     };
-    let node = *node;
-    let mut effects = Vec::new();
-    editing::update_caret(state, node, caret.clone());
     let general = content_changed.then_some(editing::General {
         selection: new_selection.as_ref(),
         collapsed: caret.selection.is_none(),
     });
-    effects.extend(editing::selection_changed(
+    crate::key_line::caret_report(
         state,
         trace_id,
-        node,
+        *node,
+        caret.clone(),
         (selection_changes, general),
-    ));
-    effects
+        facts.as_deref(),
+    )
 }
 
 /// A live re-read's answer, `event` (`crate::live_reread`): taken only
@@ -1219,11 +1232,6 @@ fn reduce_event(
         NormalizedEvent::ValueChanged { node_id, value } => {
             reduce_value_changed(state, trace_id, *node_id, value.clone())
         }
-        NormalizedEvent::KeyAnswered {
-            node_id,
-            tag,
-            answer,
-        } => crate::key_line::key_answered(state, trace_id, *node_id, *tag, answer.clone()),
         moved @ NormalizedEvent::CaretMoved { .. } => reduce_caret_moved(state, trace_id, moved),
         NormalizedEvent::TerminalSnapshot { node_id, snapshot } => {
             terminal_model::snapshot_event(state, trace_id, *node_id, snapshot)

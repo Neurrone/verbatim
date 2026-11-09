@@ -30,7 +30,9 @@ use verbatim_model::TraceId;
 use verbatim_model::protocol::{
     EventTiming, FrontWindow, OutpostToCore, QueryOutcome, RequestId, Responder,
 };
-use verbatim_model::{KeyTag, WatchOrder};
+use verbatim_model::{NodeKind, NoteRequest};
+use verbatim_reader_rules::CONSOLE_WINDOW_CLASS;
+use verbatim_win32::window::window_class_name;
 use verbatim_uia::{Agile, Kept};
 
 use super::Context;
@@ -64,8 +66,8 @@ pub(super) enum Posted {
     Front(FrontWindow),
     /// Core withdraws a query.
     Cancel(RequestId),
-    /// Core's order to a key's watch.
-    WatchOrder(KeyTag, WatchOrder),
+    /// Core's note of a key with no before read.
+    KeyNote(NoteRequest),
     /// A verdict a program of generation `generation` made, posted alone,
     /// and taken after the mailbox closes, as a commit is.
     Verdict {
@@ -139,7 +141,7 @@ impl Mailbox {
                     | Posted::ForwardingEnded(_)
                     | Posted::Cancel(_)
                     | Posted::Front(_)
-                    | Posted::WatchOrder(..)
+                    | Posted::KeyNote(_)
                     | Posted::HandlingDeadline(_)
             )
         {
@@ -565,7 +567,17 @@ impl Shell {
             Posted::ForwardingEnded(through) => Input::ForwardingEnded(through),
             Posted::Cancel(request_id) => Input::Cancel(request_id),
             Posted::Front(front) => Input::Front(front),
-            Posted::WatchOrder(tag, order) => Input::WatchOrder { tag, order },
+            Posted::KeyNote(note) => {
+                // Only the console host polls its note; finding it is a
+                // local call, whatever the application is doing.
+                let console = note.fetch.kind == NodeKind::Terminal
+                    && self.context.store.has_terminal(note.node)
+                    && self
+                        .reducer
+                        .followed_window()
+                        .is_some_and(|hwnd| window_class_name(hwnd) == CONSOLE_WINDOW_CLASS);
+                Input::KeyNote { note, console }
+            }
             Posted::Verdict { generation, change } => Input::Verdict { generation, change },
             Posted::Commit { request, effects } => {
                 // A dead generation's or a claimed request's commit gives
@@ -750,17 +762,6 @@ impl Shell {
             Effect::Narrow => self
                 .context
                 .nudge_event_thread(super::narrowing::Nudge::Decide),
-            Effect::WatchEnded { trace, why, waited } => {
-                // An observation point: a test asserts why a watch ended.
-                #[cfg(any(test, feature = "faults"))]
-                verbatim_faults::reach(verbatim_faults::Fault::CaretWatchEnded, &why);
-                tracing::debug!(
-                    %trace,
-                    why,
-                    waited_ms = waited.as_millis(),
-                    "a caret key's watch ended without evidence"
-                );
-            }
         }
         Vec::new()
     }

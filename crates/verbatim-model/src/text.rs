@@ -1,6 +1,5 @@
 //! The text protocol (milestone M4): how an outpost sends text to Core and
-//! how Core asks an outpost to read text, watch a key's caret, select, or
-//! move the caret (`books/dev/src/reference/crates/verbatim-model.md`, "The text protocol").
+//! how Core asks an outpost to read text, select, or move the caret (`books/dev/src/reference/crates/verbatim-model.md`, "The text protocol").
 //!
 //! The rules the types follow:
 //!
@@ -415,6 +414,10 @@ pub enum FocusText {
         /// speaks it for a repeated focus, and ignores it for a new one.
         #[serde(default)]
         changes: CaretChanges,
+        /// What the read found for a key, when a key's note lived on the
+        /// node, so a repeated focus cannot consume its effect.
+        #[serde(default)]
+        facts: Option<Box<ReadFacts>>,
     },
     /// The node has no text the outpost can read (an MSAA object that is
     /// not an edit control, a UIA element with no text pattern): Core
@@ -428,113 +431,128 @@ pub enum FocusText {
     NotRead,
 }
 
-/// A caret key's tag: the query id Core gave its request, carried in the
-/// request, so that an answer belongs to one request and no other.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct KeyTag(pub QueryId);
-
-/// What kind of watch a key's node gets. Core alone says, from the node's
-/// role, because the outpost's own test can disagree with the role.
+/// What a key's node is, which decides how a key is judged. Core alone says,
+/// from the node's role, because the outpost's own test can disagree with
+/// the role.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum WatchKind {
-    /// A text field: its watch has no time of its own, and Core ends it.
+pub enum NodeKind {
+    /// A text field: the key's words come from its evidence or bound answer.
     TextField,
-    /// A terminal: its reading rules speak, and the outpost's handling
-    /// deadline or console poll ends its watch.
+    /// A terminal: its reading rules speak.
     Terminal,
 }
 
-/// How a key's request starts.
+/// What a key's reads fetch: the unit at the caret, what the key does, and
+/// the kind of node it is on.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum KeyStart {
-    /// Read the caret, as the before read of a held key, and watch from
-    /// that read.
-    ReadFirst,
-    /// Watch from the node's last read as the request arrives: the key was
-    /// not held, or its before read was given up.
-    FromLastRead,
-}
-
-/// The one request of a caret key: answered once, with [`KeyStarted`] or
-/// [`TextReply::Unanswered`], and after it the key's watch gets one
-/// [`KeyAnswer`] unless Core ended it (`docs/design/caret-selection-rework.md`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct KeyRequest {
-    /// The key's tag.
-    pub tag: KeyTag,
-    /// The kind of watch.
-    pub kind: WatchKind,
-    /// The unit to report at the caret.
+pub struct KeyFetch {
+    /// The unit to read at the caret.
     pub unit: TextUnit,
     /// What the key does, which says what counts as its evidence.
     pub motion: CaretMotion,
-    /// How the request starts.
-    pub start: KeyStart,
+    /// The kind of node the key is on.
+    pub kind: NodeKind,
 }
 
-/// The answer to a [`KeyRequest`].
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum KeyStarted {
-    /// The before read: the watch is open, judged from it.
-    Read(Box<CaretReply>),
-    /// The watch is open, judged from the node's last read.
-    Watching,
-}
-
-/// Core's order to a key's watch ([`crate::protocol::CoreToOutpost::Watch`]),
-/// which has no reply of its own.
+/// One query reading the caret for a key, answered once.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum WatchOrder {
-    /// The key's bound has passed: read once more, and answer.
-    FinalRead,
-    /// The key has ended: stop watching, and answer nothing.
-    End,
+pub struct CaretRead {
+    /// What the read fetches.
+    pub fetch: KeyFetch,
+    /// Which read it is.
+    pub purpose: ReadPurpose,
 }
 
-/// A key's result after its before read, sent as
-/// [`NormalizedEvent::KeyAnswered`](crate::NormalizedEvent::KeyAnswered) so
-/// that it travels in one order with every caret report.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum KeyAnswer {
-    /// A read found evidence of what the key did.
-    Evidence(Box<KeyRead>),
-    /// The final read found no evidence.
-    BoundAnswer(Box<KeyRead>),
-    /// The watch ended with no read to answer from.
-    Ended,
+/// Which read a [`CaretRead`] is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ReadPurpose {
+    /// Before a held key is passed on: its arrival sets the node's note.
+    BeforeKey,
+    /// When the key's bound passes with no evidence: its arrival clears the
+    /// node's note, and it goes ahead of queued reads.
+    Final,
 }
 
-/// A read that is a key's result, with what the key's baseline held.
+/// Core's note for a key with no before read
+/// ([`crate::protocol::CoreToOutpost::KeyNote`]), one-way, set on the node
+/// as it arrives.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NoteRequest {
+    /// The key's node.
+    pub node: NodeId,
+    /// What the node's reads fetch while the note lives.
+    pub fetch: KeyFetch,
+}
+
+/// What a read found compared with the node's last read, by the comparisons
+/// only the provider can make.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each is one comparison the outpost makes"
+)]
+pub struct Compared {
+    /// The caret left where it was.
+    pub caret_moved: bool,
+    /// The selection changed.
+    pub selection_moved: bool,
+    /// The characters beside the caret changed.
+    pub beside_changed: bool,
+    /// The unit at the caret changed.
+    pub unit_changed: bool,
+    /// The caret's line changed.
+    pub line_changed: bool,
+}
+
+/// Whether `compared` is evidence of what a key of `motion` did: the caret
+/// having left where it was, the characters beside it changing, the unit at
+/// the caret changing after Delete, the caret's line changing after a key
+/// that deletes, or the selection changing (`docs/parity/text.md`).
+#[must_use]
+pub fn had_effect(compared: Compared, motion: CaretMotion) -> bool {
+    compared.caret_moved
+        || compared.selection_moved
+        || compared.beside_changed
+        || (motion.compares_unit() && compared.unit_changed)
+        || (motion.deletes() && compared.line_changed)
+}
+
+/// How a read compared with the node's last read.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct KeyRead {
-    /// The caret as it is now.
-    pub caret: CaretReport,
-    /// How the selection changed from the node's last read, by the rule
-    /// [`CaretReply`] describes.
-    #[serde(default)]
-    pub selection_changes: Vec<SelectionChange>,
-    /// The text changed since the selection compared with was read
-    /// ([`CaretReply::content_changed`]).
-    #[serde(default)]
-    pub content_changed: bool,
-    /// With `content_changed`, the whole new selection's text.
-    #[serde(default)]
-    pub new_selection: Option<SelectionChange>,
-    /// The caret's line in the key's baseline, with the caret at its offset.
-    pub before_line: TextChunk,
-    /// The selection in the key's baseline.
-    #[serde(default)]
-    pub before_selection: Option<CaretSelection>,
-    /// The key's unit at the caret in the key's baseline.
-    pub before_unit: TextChunk,
-    /// The key's unit at the caret now; the line where the text has no such
-    /// unit, or the unit is the line.
+pub enum Change {
+    /// The node had no last read to compare with.
+    NoPrevious,
+    /// The read compared with the node's last read.
+    Compared {
+        /// What the comparison found.
+        compared: Compared,
+        /// The caret's line in the last read, with the caret at its offset.
+        previous_line: TextChunk,
+        /// The selection in the last read.
+        #[serde(default)]
+        previous_selection: Option<CaretSelection>,
+        /// Whether the caret is on the line it was on in the last read.
+        on_previous_line: bool,
+    },
+}
+
+/// What a read made under a key's note, or asked for one, carries for Core
+/// to judge: present exactly when the read was made for a key, so a report
+/// without it cannot be taken for evidence
+/// (`docs/design/caret-selection-rework.md`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReadFacts {
+    /// The key's unit at the caret; the line where the text has no such unit
+    /// or the unit is the line.
     pub unit: TextChunk,
-    /// Whether the caret is on the line it was on in the baseline.
-    pub on_baseline_line: bool,
+    /// How the read compared with the node's last read.
+    pub change: Change,
+    /// When the read ended, in microseconds on the clock every process of a
+    /// run shares: Core judges a key's evidence by it.
+    pub read_ended_at_us: u64,
 }
 
-/// A read of the caret, as the before read of a held key answers it.
+/// The answer to a [`CaretRead`]: a read of the caret.
 ///
 /// `selection_changes` describe how the selection changed from the node's
 /// last read. With that selection `[old_start, old_end)` and the selection
@@ -556,10 +574,6 @@ pub struct KeyRead {
 pub struct CaretReply {
     /// The caret as it is now.
     pub caret: CaretReport,
-    /// The key's unit at the caret; `None` when the unit is
-    /// [`TextUnit::Line`], which `caret.line` already is.
-    #[serde(default)]
-    pub unit: Option<TextChunk>,
     /// How the selection changed from the node's last read.
     #[serde(default)]
     pub selection_changes: Vec<SelectionChange>,
@@ -575,6 +589,8 @@ pub struct CaretReply {
     /// always without `content_changed`.
     #[serde(default)]
     pub new_selection: Option<SelectionChange>,
+    /// What the read found for its key.
+    pub facts: ReadFacts,
 }
 
 /// A movement by whole units, positive forward and negative back.
@@ -639,11 +655,11 @@ pub struct TextThrough {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum TextOp {
-    /// A caret key's one request ([`KeyRequest`]): answered
-    /// [`TextReply::Key`], or [`TextReply::TerminalSnapshot`] for a before
+    /// Reads the caret for a key ([`CaretRead`]): answered
+    /// [`TextReply::Caret`], or [`TextReply::TerminalSnapshot`] for a before
     /// read in a terminal, whose caret answers it, or
-    /// [`TextReply::Unanswered`] when no watch opened.
-    Key(KeyRequest),
+    /// [`TextReply::Unanswered`] when the read failed.
+    ReadCaret(CaretRead),
     /// Read one unit: answered [`TextReply::Read`].
     Read(TextRead),
     /// Read the text between two points, in document order whichever comes
@@ -774,8 +790,8 @@ pub struct TextRequest {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum TextReply {
-    /// The answer to [`TextOp::Key`].
-    Key(Box<KeyStarted>),
+    /// The answer to [`TextOp::ReadCaret`].
+    Caret(Box<CaretReply>),
     /// The answer to [`TextOp::Read`]: `moved` is how many units the
     /// movement really went, which is less than asked (and zero for a
     /// movement that could not start) at the document's ends; movement
@@ -820,7 +836,7 @@ pub enum TextReply {
     Selected(Vec<SelectionChange>),
     /// A read of a terminal: the answer to [`TextOp::TerminalReadNow`], to
     /// [`TextOp::TerminalRead`] and [`TextOp::TerminalCancel`], and to
-    /// [`TextOp::Key`] in a terminal, the read before a held key, whose
+    /// [`TextOp::ReadCaret`] in a terminal, the read before a held key, whose
     /// caret answers it.
     TerminalSnapshot(Box<crate::TerminalSnapshot>),
     /// [`TextOp::TerminalRead`] or [`TextOp::TerminalCancel`] found nothing

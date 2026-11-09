@@ -133,7 +133,7 @@ impl ToChild for CoreToOutpost {
             }
             CoreToOutpost::ForwardingEnded { .. }
             | CoreToOutpost::Cancel { .. }
-            | CoreToOutpost::Watch { .. }
+            | CoreToOutpost::KeyNote(_)
             | CoreToOutpost::Ping { .. }
             | CoreToOutpost::Fetches(_)
             | CoreToOutpost::Front(_)

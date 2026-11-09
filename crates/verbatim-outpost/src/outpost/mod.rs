@@ -105,7 +105,7 @@ pub(crate) use reducer::{
     Anchor, AnswerCut, CutLine, KeptSelection, NodeAnchors, Probe, Probed, ReadSelection,
     ReportCut, VerdictChange,
 };
-use reducer::{Entry, Facts, FollowState, Item, KeyWatch, Object, Source, UiaEvent, UiaKind};
+use reducer::{Entry, Facts, FollowState, Item, Object, Source, UiaEvent, UiaKind};
 use shell::{Mailbox, Posted, Shell};
 use worker::Charge;
 
@@ -404,36 +404,6 @@ impl<'a> RequestContext<'a> {
     }
 
     /// The facts as the program's copies hold them.
-    /// The caret key's watch open in the program's copy, a clone.
-    fn open_watch(&self) -> Option<KeyWatch> {
-        self.facts().text.watch.open().cloned()
-    }
-
-    /// The caret key's watch between checks in the program's copy, a clone.
-    fn open_watch_kept(&self) -> Option<KeyWatch> {
-        self.facts().text.watch.kept().cloned()
-    }
-
-    /// Whether `key` is between checks in the program's copy.
-    fn is_kept(&self, key: &KeyWatch) -> bool {
-        self.facts()
-            .text
-            .watch
-            .kept()
-            .is_some_and(|kept| kept.tag == key.tag)
-    }
-
-    /// Whether the watch the program holds has its final read to make.
-    fn watch_is_final(&self) -> bool {
-        matches!(
-            self.facts().text.watch,
-            reducer::Watch::Checking {
-                after: reducer::AfterCheck::Answer,
-                ..
-            }
-        )
-    }
-
     fn facts(&self) -> Ref<'_, Facts> {
         self.facts.borrow()
     }
@@ -524,19 +494,18 @@ impl<'a> RequestContext<'a> {
     /// the program's copies, so what it reads after is what the reducer
     /// will hold (the text facts' changes were applied as they were made),
     /// and posts them for the reducer, which applies them only while the
-    /// request is live. Returns what was done, and the caret key's watch a
-    /// [`reducer::WatchChange::Take`] took out.
-    fn commit(&self, effects: Effects) -> (Committed, Option<KeyWatch>) {
+    /// request is live. Returns what was done.
+    fn commit(&self, effects: Effects) -> Committed {
         let program = self.program();
         let mut effects = self.program_text.borrow_mut().seal(effects);
         // Each commit names the program's window and what it found there.
         effects.found = program.charge.found(program.request);
         if program.charge.is_dead() {
             drop(effects);
-            return (Committed::Refused, None);
+            return Committed::Refused;
         }
         let local = effects.local();
-        let applied = reducer::apply_local(
+        reducer::apply_local(
             &mut self.facts.borrow_mut(),
             program.request.generation,
             &local,
@@ -545,7 +514,7 @@ impl<'a> RequestContext<'a> {
             request: program.request,
             effects: Box::new(effects),
         });
-        (Committed::Applied, applied.taken)
+        Committed::Applied
     }
 }
 
@@ -1578,8 +1547,8 @@ impl Outpost {
             CoreToOutpost::Cancel { request_id } => {
                 context.mailbox.post(Posted::Cancel(*request_id));
             }
-            CoreToOutpost::Watch { tag, order, .. } => {
-                context.mailbox.post(Posted::WatchOrder(*tag, *order));
+            CoreToOutpost::KeyNote(note) => {
+                context.mailbox.post(Posted::KeyNote(*note));
             }
             CoreToOutpost::Ping { seq, .. } => {
                 context.outbound.urgent(context.pong(*seq));

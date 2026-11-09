@@ -722,17 +722,9 @@ pub enum CoreToOutpost {
         /// The query to withdraw.
         request_id: RequestId,
     },
-    /// Core's order to the watch of the key `tag` on `node`, with no reply
-    /// of its own: ignored when no watch with that tag is open, because
-    /// its answer is already on its way.
-    Watch {
-        /// The key's node.
-        node: NodeId,
-        /// The key's tag.
-        tag: crate::KeyTag,
-        /// The order.
-        order: crate::WatchOrder,
-    },
+    /// The note of a key with no before read, set on its node as it
+    /// arrives, with no reply: nothing waits on it.
+    KeyNote(crate::NoteRequest),
     /// Liveness probe; answered by [`OutpostToCore::Pong`].
     Ping {
         /// Echoed in the matching pong.
@@ -845,7 +837,7 @@ impl CoreToOutpost {
         match self {
             CoreToOutpost::Query { .. }
             | CoreToOutpost::Cancel { .. }
-            | CoreToOutpost::Watch { .. }
+            | CoreToOutpost::KeyNote(_)
             | CoreToOutpost::IdleQuery { .. } => Kind::Ask,
             CoreToOutpost::NodesHeld { .. } => Kind::Release,
             CoreToOutpost::Assign { .. }
@@ -1631,20 +1623,34 @@ impl Named {
     }
 
     fn focus_text(&mut self, text: Option<&crate::FocusText>) {
-        if let Some(crate::FocusText::Caret { caret, .. }) = text {
+        if let Some(crate::FocusText::Caret { caret, facts, .. }) = text {
             self.caret(caret);
+            if let Some(facts) = facts {
+                self.facts(facts);
+            }
+        }
+    }
+
+    fn facts(&mut self, facts: &crate::ReadFacts) {
+        self.chunk(&facts.unit);
+        if let crate::Change::Compared {
+            previous_line,
+            previous_selection,
+            ..
+        } = &facts.change
+        {
+            self.chunk(previous_line);
+            if let Some(selection) = previous_selection {
+                self.selection(selection);
+            }
         }
     }
 
     fn text_reply(&mut self, reply: &TextReply) {
         match reply {
-            TextReply::Key(started) => {
-                if let crate::KeyStarted::Read(reply) = &**started {
-                    self.caret(&reply.caret);
-                    if let Some(unit) = &reply.unit {
-                        self.chunk(unit);
-                    }
-                }
+            TextReply::Caret(reply) => {
+                self.caret(&reply.caret);
+                self.facts(&reply.facts);
             }
             TextReply::Read { chunk, .. } => self.chunk(chunk),
             TextReply::Chunks { chunks, .. } => {
@@ -1701,24 +1707,16 @@ impl Named {
                 self.nodes.push(*controller);
                 self.node(node);
             }
-            NormalizedEvent::CaretMoved { node_id, caret, .. } => {
-                self.nodes.push(*node_id);
-                self.caret(caret);
-            }
-            NormalizedEvent::KeyAnswered {
-                node_id, answer, ..
+            NormalizedEvent::CaretMoved {
+                node_id,
+                caret,
+                facts,
+                ..
             } => {
                 self.nodes.push(*node_id);
-                if let crate::KeyAnswer::Evidence(read) | crate::KeyAnswer::BoundAnswer(read) =
-                    answer
-                {
-                    self.caret(&read.caret);
-                    self.chunk(&read.before_line);
-                    if let Some(selection) = &read.before_selection {
-                        self.selection(selection);
-                    }
-                    self.chunk(&read.before_unit);
-                    self.chunk(&read.unit);
+                self.caret(caret);
+                if let Some(facts) = facts {
+                    self.facts(facts);
                 }
             }
             NormalizedEvent::TerminalSnapshot { node_id, snapshot } => {

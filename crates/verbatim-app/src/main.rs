@@ -2022,27 +2022,13 @@ impl ReducerThread<'_> {
                     (key, Instant::now() + Duration::from_millis(within_ms))
                 });
             }
-            Effect::WatchOrder { node, tag, order } => {
-                let outpost = node.outpost();
-                let command = CoreToOutpost::Watch { node, tag, order };
+            Effect::KeyNote(note) => {
+                let outpost = note.node.outpost();
+                let command = CoreToOutpost::KeyNote(note);
                 if let Err(error) = self.context.supervisor.send_to_outpost(outpost, command) {
-                    tracing::debug!(%error, %outpost, "a key's watch order was refused");
-                    // A refused final read still ends with the key's one answer.
-                    if order == verbatim_model::WatchOrder::FinalRead {
-                        self.follow_ups.push(Input::Event {
-                            trace_id,
-                            observed_at_us: verbatim_process::clock::now_us(),
-                            source: Pid(0),
-                            backend: verbatim_model::Backend::Uia,
-                            window: None,
-                            event: verbatim_model::NormalizedEvent::KeyAnswered {
-                                node_id: node,
-                                tag,
-                                answer: verbatim_model::KeyAnswer::Ended,
-                            },
-                            purpose: None,
-                        });
-                    }
+                    // The key is still judged by its bound: nothing waits
+                    // on a note.
+                    tracing::debug!(%error, %outpost, "a key's note was refused");
                 }
             }
             Effect::Withdraw { outpost, query_id } => {

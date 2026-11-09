@@ -79,7 +79,6 @@ mod intake;
 mod tests;
 mod text;
 mod verdicts;
-mod watch;
 
 use std::collections::{BTreeSet, VecDeque};
 use std::sync::Arc;
@@ -87,16 +86,13 @@ use std::time::Duration;
 
 use verbatim_model::protocol::{
     DeliveredFact, EventTiming, FrontWindow, OutpostToCore, Query, QueryOutcome, QueryResult,
-    RequestId, Requester,
+    RequestId,
 };
 use verbatim_model::{
-    Backend, CallCounts, FocusGroup, KeyAnswer, KeyRequest, KeyStart, KeyStarted, KeyTag, NodeId,
-    NormalizedEvent, QueryId, TextOp, TextReply, TraceId, WatchKind, WatchOrder,
+    CallCounts, CaretRead, FocusGroup, NodeId, NoteRequest, ReadPurpose, TextOp, TraceId,
 };
 use verbatim_reader_rules::Window;
 use verbatim_reader_rules::in_flight::{Abandoned, Ask, Decision, InFlight, RuleWindow};
-
-use self::watch::{Answer, FinalRead, Reached};
 
 pub use self::entry::{
     Asker, Entry, Front, Item, Source, UiaEvent, UiaKind, WinKind, is_state_property,
@@ -104,19 +100,16 @@ pub use self::entry::{
 pub use self::follow::{
     Applied, BarWatch, Change, DialogMemo, Facts, FocusCommit, FocusPath, FollowState, Followed,
     Group, LastReported, LogicError, MarkChange, MsaaReport, Origin, Owed, OwedProgram, OwedWork,
-    Report, Route, Subscribed, Subscription, Target, WatchChange, apply_local,
+    Report, Route, Subscribed, Subscription, Target, apply_local,
 };
 pub use self::held::{Evidence, Focus, Held, InFront};
 pub use self::intake::{Handling, Marks, Object, Planned, TerminalMark};
 pub use self::text::{
-    Anchor, AnswerCut, CutLine, KeptSelection, LastRead, NodeAnchors, RangeKey, ReadSelection,
-    ReportCut, TextChange, TextFacts,
+    Anchor, AnswerCut, CutLine, KeptSelection, KeyNote, LastRead, NOTE_LIFE, NodeAnchors,
+    NoteFetch, NoteReads, POLL_BOUND, POLL_INTERVAL, RangeKey, ReadSelection, ReportCut,
+    TextChange, TextFacts,
 };
 pub use self::verdicts::{Probe, Probed, VerdictChange, Verdicts};
-pub use self::watch::{
-    AfterCheck, Baseline, CheckResult, Checked, Compared, Found, KeyWatch, POLL_BOUND,
-    POLL_INTERVAL, Stage, TERMINAL_WATCH_BOUND, Untagged, Watch, had_effect,
-};
 
 /// The deadline of every program but a focus read and a listener read's
 /// report: one UIA request and a margin
@@ -173,10 +166,8 @@ pub enum Work {
 
     /// Drops the objects the shell hands it: what a release let go of.
     Drop,
-    /// One read of the caret key's watch the program's copy holds
-    /// (`Watch::Checking`): Core's final read, or a read of the console
-    /// poll.
-    WatchRead,
+    /// One read of the console poll, of this node under its note.
+    NoteRead(NodeId),
     /// Finds the element of the foreground window for its progress bars
     /// ([`BarWatch`]).
     FindBar(isize),
@@ -232,21 +223,25 @@ pub enum Finish {
         /// What the read part found.
         read: ReportCut<u32>,
     },
-    /// A held key's before read, which answers its request and opens its
-    /// watch.
+    /// A held key's before read, which answers its request.
     Before {
         /// The request's query id.
         request_id: RequestId,
         /// The query's trace.
         trace: TraceId,
-        /// The key's request.
-        key: KeyRequest,
+        /// The read asked.
+        asked: CaretRead,
         /// What the read part found.
         read: ReportCut<u32>,
     },
-    /// A check of the watch the read part took, which the program that
-    /// finishes it holds in its copy.
-    Watch {
+    /// A key's read under its note.
+    Note {
+        /// The event's trace.
+        trace: TraceId,
+        /// The event's observation, in microseconds on the run's shared clock.
+        observed_at_us: u64,
+        /// The end of the note read under.
+        until_us: u64,
         /// What the read part found.
         read: AnswerCut<u32>,
     },
@@ -367,17 +362,6 @@ pub enum Effect {
         /// The window the commit named.
         window: Window,
     },
-    /// A caret key's watch ended with no read to answer from, for the log: why, and
-    /// how long it waited.
-    WatchEnded {
-        /// The key's trace.
-        trace: TraceId,
-        /// Why the watch ended.
-        why: &'static str,
-        /// How long the watch waited, from when its key's program was
-        /// taken from the queue.
-        waited: Duration,
-    },
 }
 
 /// Inputs, in mailbox order.
@@ -404,13 +388,14 @@ pub enum Input {
     Front(FrontWindow),
     /// Core withdraws query `0` if it has not started.
     Cancel(RequestId),
-    /// Core's order to the watch of the key `tag`, handled as it arrives:
-    /// it is not queued behind what waits.
-    WatchOrder {
-        /// The key's tag.
-        tag: KeyTag,
-        /// The order.
-        order: WatchOrder,
+    /// Core's note of a key with no before read, set as it arrives, not
+    /// queued behind what waits; `console` when its node is the console
+    /// host's focused text area, which polls.
+    KeyNote {
+        /// The note.
+        note: NoteRequest,
+        /// Whether its node is the focused console host's text area.
+        console: bool,
     },
     /// A verdict a program of generation `generation` probed, or a window
     /// it found destroyed, posted alone as it was made, even from an
@@ -531,7 +516,7 @@ impl InHand {
             ),
             Work::Owed(_) => ("the work the followed focus owes", None),
             Work::Drop => ("the drop of released objects", None),
-            Work::WatchRead => ("a read of the caret key's watch", None),
+            Work::NoteRead(_) => ("a read of the console poll", None),
             Work::FindBar(_) => ("the foreground window's element", None),
             Work::Finish { .. } => ("the finish of a cut caret read", None),
         };
@@ -556,13 +541,10 @@ struct Current {
     live_reread: Option<u64>,
     /// The focus group try it is, if it is one.
     group: Option<GroupTry>,
-    /// Whether it does work the idle barrier's answer waits for, as it
-    /// waits for an open watch: it holds the caret key's watch, or answered
-    /// it and may still read the terminal under the key's trace.
+    /// Whether it does work the idle barrier's answer waits for: a read of
+    /// the console poll, which may still read the terminal under the key's
+    /// trace.
     deferred: bool,
-    /// The caret key it is the request of, if any: when it ends with no
-    /// watch opened, none will open.
-    key: Option<KeyTag>,
     /// What the program has in hand, for the log of its abandonment.
     in_hand: InHand,
     /// Whether the user moving on from its window abandons it: not for a
@@ -617,9 +599,6 @@ pub struct Reducer {
     facts: Facts,
     /// The program in flight, and the worker generation in charge.
     flight: InFlight<Current>,
-    /// The keys whose request a newer key's replaced before its program
-    /// opened their watch, which end when that program's commit arrives.
-    replaced: BTreeSet<KeyTag>,
     /// The tries left of a focus group whose try was abandoned, to run
     /// before anything else.
     after: VecDeque<(Entry, Option<GroupTry>)>,
@@ -666,6 +645,16 @@ impl Reducer {
         self.handling_deadline.unwrap_or(HANDLING_DEADLINE)
     }
 
+    /// The window of the focus this outpost follows, if any.
+    #[must_use]
+    pub fn followed_window(&self) -> Option<isize> {
+        self.facts
+            .follow
+            .followed
+            .as_ref()
+            .and_then(|followed| followed.window)
+    }
+
     /// The worker generation in charge.
     #[must_use]
     pub fn generation(&self) -> u64 {
@@ -703,9 +692,9 @@ impl Reducer {
     /// When the shell is next to call [`tick`](Self::tick): what the
     /// program in flight next has due (its deadline or its next check),
     /// the front check of the first marker waiting for its read, and the
-    /// watch's due time while no program is in flight, no release is
-    /// pending and the outpost is not stopping (only then is it acted on),
-    /// on the shell's clock.
+    /// console poll's due time while no program is in flight, no release
+    /// is pending and the outpost is not stopping (only then is it acted
+    /// on), on the shell's clock.
     #[must_use]
     pub fn next_timer(&self, now: Now) -> Option<Duration> {
         let mut times = Vec::new();
@@ -718,7 +707,7 @@ impl Reducer {
         if !self.busy()
             && !self.releasing
             && !self.stopping
-            && let Some(due_us) = self.facts.text.watch.due()
+            && let Some(due_us) = self.facts.text.poll_due()
         {
             let left = due_us.saturating_sub(now.wall_us);
             // A time past the clock's range never comes.
@@ -750,10 +739,9 @@ impl Reducer {
             Input::Front(front) => {
                 let mut applied = Applied::default();
                 self.facts.follow.front(front, &mut applied);
-                self.subscription_effects(applied, now, &mut effects);
+                self.subscription_effects(applied, &mut effects);
             }
             Input::Cancel(request_id) => {
-                self.request_cancelled(request_id, &mut effects);
                 if let Some(trace) = self.intake.cancel(request_id) {
                     self.send(
                         reply(request_id, trace, QueryOutcome::NotStarted),
@@ -761,14 +749,21 @@ impl Reducer {
                     );
                 }
             }
-            Input::WatchOrder { tag, order } => self.watch_order(tag, order, now, &mut effects),
+            Input::KeyNote { note, console } => {
+                Arc::make_mut(&mut self.facts.text).set_note(
+                    note.node.number(),
+                    note.fetch,
+                    now.wall_us,
+                    console,
+                );
+            }
             Input::Verdict { generation, change } => {
                 self.record_verdict(generation, &change, &mut effects);
             }
             Input::Commit { request, change } => {
                 if self.accepts(request) {
                     taken = true;
-                    self.commit(request, &change, now, &mut effects);
+                    self.commit(request, &change, &mut effects);
                 }
             }
             Input::Finished {
@@ -776,12 +771,12 @@ impl Reducer {
                 reported,
                 panicked,
                 cut,
-            } => self.finished(request, (reported, panicked), cut, now, &mut effects),
+            } => self.finished(request, (reported, panicked), cut, &mut effects),
             Input::Released {
                 nodes,
                 anchors,
                 objects,
-            } => self.released(&nodes, &anchors, objects, now, &mut effects),
+            } => self.released(&nodes, &anchors, objects, &mut effects),
             Input::HandlingDeadline(deadline) => self.handling_deadline = Some(deadline),
             Input::Judged { request, moved_on } => {
                 if !self.stopping {
@@ -791,7 +786,7 @@ impl Reducer {
                     let decision = self
                         .flight
                         .judged(request, (moved_on && abandons).then_some(Reason::MovedOn));
-                    self.decided(decision, now, &mut effects);
+                    self.decided(decision, &mut effects);
                 }
             }
             Input::HangSeen { window, request } => {
@@ -830,7 +825,7 @@ impl Reducer {
         let mut effects = Vec::new();
         if !self.stopping {
             let decision = self.flight.tick(micros(now.at));
-            self.decided(decision, now, &mut effects);
+            self.decided(decision, &mut effects);
             if self.intake.front_check(now.at) {
                 effects.push(Effect::CheckFront);
             }
@@ -878,7 +873,7 @@ impl Reducer {
     /// otherwise.
     fn entry(&mut self, entry: Entry, source: Source, now: Now, effects: &mut Vec<Effect>) {
         self.destroy_seen(&entry.item);
-        if self.key_arrived(&entry, now, effects) {
+        if self.key_arrived(&entry, now) {
             return;
         }
         match source {
@@ -907,18 +902,17 @@ impl Reducer {
         }
     }
 
-    /// A caret key's request, as it arrives: it ends the watch of the key
-    /// before it. A text field's from the last read makes no call, and opens
-    /// its watch here from the read newest now, whatever waits ahead of it,
-    /// never entering the intake; whether the entry was one. Any other waits
-    /// for its program to open the watch ([`Watch::Reading`]).
-    fn key_arrived(&mut self, entry: &Entry, now: Now, effects: &mut Vec<Effect>) -> bool {
+    /// A read of the caret for a key, as it arrives: a before read sets
+    /// the node's note and is queued; a final read clears it and goes
+    /// ahead of queued reads, as nothing of it can wait behind them.
+    /// Whether the entry was taken here.
+    fn key_arrived(&mut self, entry: &Entry, now: Now) -> bool {
         let Item::Query {
             request_id,
             query:
                 Query::Text {
                     node_id,
-                    op: TextOp::Key(key),
+                    op: TextOp::ReadCaret(read),
                 },
         } = &entry.item
         else {
@@ -927,103 +921,19 @@ impl Reducer {
         if self.stopping {
             return false;
         }
-        let (request_id, trace, node_id, key) = (*request_id, entry.trace, *node_id, *key);
-        let answered_here = key.start == KeyStart::FromLastRead && key.kind == WatchKind::TextField;
-        let baseline = answered_here
-            .then(|| self.facts.text.baseline(node_id.number()))
-            .flatten();
-        if answered_here {
-            let started = match &baseline {
-                None => TextReply::Unanswered,
-                Some(_) => TextReply::Key(Box::new(KeyStarted::Watching)),
-            };
-            let outcome = QueryOutcome::Done(QueryResult::Text(started));
-            self.send(reply(request_id, trace, outcome), effects);
-        }
-        if let Watch::Reading { tag } = self.facts.text.watch {
-            self.replaced.insert(tag);
-        }
-        let answer = self.with_watch(effects, |watch| watch.end("the next caret key replaced it"));
-        if let Some(answer) = answer {
-            self.answer_watch(answer, now, effects);
-        }
-        if !answered_here {
-            self.with_watch(effects, |watch| watch.reading(key.tag));
-            return false;
-        }
-        if let Some(baseline) = baseline {
-            let watch = KeyWatch {
-                tag: key.tag,
-                node: node_id,
-                baseline,
-                unit: key.unit,
-                motion: key.motion,
-                kind: key.kind,
-                before_unit: None,
-                trace,
-                timing: entry.timing,
-                calls: CallCounts::default(),
-            };
-            Arc::make_mut(&mut self.facts.text).watch.start(
-                Box::new(watch),
-                false,
-                Some(now.wall_us),
-            );
-        }
-        true
-    }
-
-    /// Core withdrew query `request_id`: a key's request opens no watch. A
-    /// key's tag is the number of its query.
-    fn request_cancelled(&mut self, request_id: RequestId, effects: &mut Vec<Effect>) {
-        if request_id.asker == Requester::Reducer {
-            let tag = KeyTag(QueryId(request_id.number));
-            self.replaced.remove(&tag);
-            self.with_watch(effects, |watch| watch.reading_ended(tag));
-        }
-    }
-
-    /// Core's order to the watch of key `tag`.
-    fn watch_order(&mut self, tag: KeyTag, order: WatchOrder, now: Now, effects: &mut Vec<Effect>) {
-        match order {
-            WatchOrder::End => {
-                self.replaced.remove(&tag);
-                self.with_watch(effects, |watch| watch.end_order(tag));
+        let node = node_id.number();
+        match read.purpose {
+            ReadPurpose::BeforeKey => {
+                Arc::make_mut(&mut self.facts.text).set_note(node, read.fetch, now.wall_us, false);
+                false
             }
-            WatchOrder::FinalRead => {
-                let busy = self.busy() || self.releasing || self.stopping;
-                let read = self.with_watch(effects, |watch| watch.final_read(tag, busy));
-                if read == FinalRead::Dispatch {
-                    self.dispatch_watch_read(now, effects);
-                }
+            ReadPurpose::Final => {
+                Arc::make_mut(&mut self.facts.text).clear_note(node);
+                self.queries.insert(*request_id);
+                self.after.push_back((entry.clone(), None));
+                true
             }
         }
-    }
-
-    /// Dispatches a read of the watch held for it.
-    fn dispatch_watch_read(&mut self, now: Now, effects: &mut Vec<Effect>) {
-        // Waited for by the idle answer: after its answer it reads the
-        // terminal under the key's trace.
-        self.dispatch(
-            Work::WatchRead,
-            (self.handling_deadline(), None, None),
-            None,
-            now,
-            effects,
-        );
-        if let Some(current) = self.flight.item_mut() {
-            current.deferred = true;
-        }
-    }
-
-    /// Applies `f` to the caret key's watch, the ranges it lets go of
-    /// handed to the store.
-    fn with_watch<T>(&mut self, effects: &mut Vec<Effect>, f: impl FnOnce(&mut Watch) -> T) -> T {
-        let (result, ranges) = Arc::make_mut(&mut self.facts.text).with_watch(f);
-        if !ranges.is_empty() {
-            effects.push(Effect::ForgetRanges(ranges));
-        }
-        result
     }
 
     /// A destroyed window answers nothing more: a hang told of it ends.
@@ -1147,7 +1057,7 @@ impl Reducer {
 
     /// Applies the commit of `request`'s program: its report recorded for
     /// Core's judgement, then its messages sent, then the rest.
-    fn commit(&mut self, request: Request, change: &Change, now: Now, effects: &mut Vec<Effect>) {
+    fn commit(&mut self, request: Request, change: &Change, effects: &mut Vec<Effect>) {
         if let Some(report) = &change.report {
             follow::record(&mut self.facts.held, report);
         }
@@ -1182,21 +1092,7 @@ impl Reducer {
                 front: crate::Front::Untested,
             });
         }
-        let mut applied = follow::apply(
-            &mut self.facts,
-            self.flight.generation(),
-            change,
-            Some(now.wall_us),
-        );
-        if let Some(WatchChange::Open { key, .. }) = &change.watch
-            && !applied.opened
-            && self.replaced.remove(&key.tag)
-        {
-            applied.answers.push(Answer::Ended {
-                key: key.clone(),
-                why: "the next caret key replaced it",
-            });
-        }
+        let mut applied = follow::apply(&mut self.facts, self.flight.generation(), change);
         let ranges = std::mem::take(&mut applied.ranges);
         if !ranges.is_empty() {
             effects.push(Effect::ForgetRanges(ranges));
@@ -1206,17 +1102,7 @@ impl Reducer {
                 .into_iter()
                 .map(Effect::LogicError),
         );
-        if let Some(current) = self.current_of(request) {
-            // A program holding the watch is waited for until it gives it
-            // back, or, having answered it, until it ends.
-            if applied.taken.is_some() {
-                current.deferred = true;
-            }
-            if applied.resumed {
-                current.deferred = false;
-            }
-        }
-        self.subscription_effects(applied, now, effects);
+        self.subscription_effects(applied, effects);
     }
 
     /// Records a verdict of a program of `generation`'s: one from the
@@ -1250,95 +1136,20 @@ impl Reducer {
         }
     }
 
-    /// The shell's part of an [`Applied`]: the subscription moved, the
-    /// elements no longer followed dropped, and the watch's answers sent.
-    fn subscription_effects(&mut self, applied: Applied, now: Now, effects: &mut Vec<Effect>) {
+    /// The shell's part of an [`Applied`]: the subscription moved and the
+    /// elements no longer followed dropped.
+    fn subscription_effects(&mut self, applied: Applied, effects: &mut Vec<Effect>) {
         let Applied {
-            answers,
-            untagged,
             subscribe,
             unfollowed,
             ..
         } = applied;
-        for answer in answers {
-            self.answer_watch(answer, now, effects);
-        }
-        for report in untagged {
-            self.send_untagged(report, now, effects);
-        }
         if let Some(subscribe) = subscribe {
             effects.push(Effect::Subscribe(subscribe));
         }
         if !unfollowed.is_empty() {
             effects.push(Effect::Unfollow(unfollowed));
         }
-    }
-
-    /// Sends the watch's one answer, published now.
-    fn answer_watch(&mut self, answer: Answer, now: Now, effects: &mut Vec<Effect>) {
-        let (key, answered, calls, awaited_at_us) = match answer {
-            Answer::Ended { key, why } => {
-                effects.push(Effect::WatchEnded {
-                    trace: key.trace,
-                    why,
-                    waited: Duration::from_micros(
-                        now.wall_us.saturating_sub(key.timing.dequeued_at_us),
-                    ),
-                });
-                (key, KeyAnswer::Ended, None, 0)
-            }
-            Answer::Evidence { key, found } => {
-                let calls = found.calls;
-                let at = found.awaited_at_us;
-                (key, KeyAnswer::Evidence(found.read), Some(calls), at)
-            }
-            Answer::Bound { key, found } => {
-                let calls = found.calls;
-                let at = found.awaited_at_us;
-                (key, KeyAnswer::BoundAnswer(found.read), Some(calls), at)
-            }
-        };
-        let backend = key.baseline.backend();
-        let observed_at_us = match &answered {
-            KeyAnswer::Evidence(read) | KeyAnswer::BoundAnswer(read) => read.caret.read_at_us,
-            KeyAnswer::Ended => now.wall_us,
-        };
-        let timing = EventTiming {
-            awaited_at_us,
-            awaited_calls: key.calls,
-            // Call counts add saturating.
-            calls: std::ops::Add::add(key.calls, calls.unwrap_or_default()),
-            published_at_us: now.wall_us,
-            ..key.timing
-        };
-        let event = NormalizedEvent::KeyAnswered {
-            node_id: key.node,
-            tag: key.tag,
-            answer: answered,
-        };
-        let message = event_message(key.trace, observed_at_us, backend, timing, event);
-        self.send(message, effects);
-    }
-
-    /// Sends a check's read that ends no watch, as an untagged caret report.
-    fn send_untagged(&mut self, report: Untagged, now: Now, effects: &mut Vec<Effect>) {
-        let Untagged { node, found } = report;
-        let read = found.read;
-        let observed_at_us = read.caret.read_at_us;
-        let timing = EventTiming {
-            calls: found.calls,
-            published_at_us: now.wall_us,
-            ..EventTiming::default()
-        };
-        let event = NormalizedEvent::CaretMoved {
-            node_id: node,
-            caret: read.caret,
-            selection_changes: read.selection_changes,
-            content_changed: read.content_changed,
-            new_selection: read.new_selection,
-        };
-        let message = event_message(found.trace, observed_at_us, found.backend, timing, event);
-        self.send(message, effects);
     }
 
     /// What a release let go of: nodes and anchors by number, and whether
@@ -1348,7 +1159,6 @@ impl Reducer {
         nodes: &BTreeSet<u64>,
         anchors: &BTreeSet<u64>,
         objects: bool,
-        now: Now,
         effects: &mut Vec<Effect>,
     ) {
         self.releasing = false;
@@ -1358,39 +1168,27 @@ impl Reducer {
             effects.push(Effect::ForgetRanges(ranges));
         }
         let mut applied = Applied::default();
-        // A release comes with no program in flight, so the watch
-        // is never held then.
-        if self
-            .facts
-            .text
-            .watch
-            .kept()
-            .is_some_and(|key| nodes.contains(&key.node.number()))
-        {
-            let answer = self.with_watch(effects, |watch| watch.end("its node was released"));
-            applied.answers.extend(answer);
-        }
         self.facts.follow.release_groups(nodes, &mut applied);
-        self.subscription_effects(applied, now, effects);
+        self.subscription_effects(applied, effects);
         self.to_drop |= objects;
     }
 
     /// Does what the work in flight decided at `now`: asks the shell, or
     /// carries out an abandonment.
-    fn decided(&mut self, decision: Decision<Current>, now: Now, effects: &mut Vec<Effect>) {
+    fn decided(&mut self, decision: Decision<Current>, effects: &mut Vec<Effect>) {
         match decision {
             Decision::Nothing => {}
             Decision::Ask(Ask::Judge { request, window }) => {
                 effects.push(Effect::AskJudge { request, window });
             }
-            Decision::Abandon(abandoned) => self.abandoned(abandoned, now, effects),
+            Decision::Abandon(abandoned) => self.abandoned(abandoned, effects),
         }
     }
 
     /// The worker in charge was abandoned: its replacement is started, and
     /// the program's query, the live re-read its entry answers, the owed
-    /// work it attempted and the caret key's watch it held are answered.
-    fn abandoned(&mut self, abandoned: Abandoned<Current>, now: Now, effects: &mut Vec<Effect>) {
+    /// work it attempted are answered.
+    fn abandoned(&mut self, abandoned: Abandoned<Current>, effects: &mut Vec<Effect>) {
         let Abandoned {
             dead,
             replacement,
@@ -1418,14 +1216,6 @@ impl Reducer {
             on_hung: current.hang_mark,
             in_hand,
         });
-        let answer = self.with_watch(effects, Watch::program_ended);
-        if let Some(answer) = answer {
-            self.answer_watch(answer, now, effects);
-        }
-        if let Some(tag) = current.key {
-            self.replaced.remove(&tag);
-            self.with_watch(effects, |watch| watch.reading_ended(tag));
-        }
         if let Some((request_id, trace)) = current.running {
             self.send(reply(request_id, trace, QueryOutcome::Abandoned), effects);
         }
@@ -1445,7 +1235,6 @@ impl Reducer {
         request: Request,
         (reported, panicked): (bool, bool),
         cut: Option<Box<Cut>>,
-        now: Now,
         effects: &mut Vec<Effect>,
     ) {
         if self
@@ -1463,17 +1252,7 @@ impl Reducer {
             return;
         };
         self.facts.follow.bar_program_ended();
-        // A watch the program still holds, because it panicked or returned
-        // without its check's result, ends; a query it left unanswered still
-        // gets its one reply.
-        let answer = self.with_watch(effects, Watch::program_ended);
-        if let Some(answer) = answer {
-            self.answer_watch(answer, now, effects);
-        }
-        if let Some(tag) = current.key {
-            self.replaced.remove(&tag);
-            self.with_watch(effects, |watch| watch.reading_ended(tag));
-        }
+        // A query it left unanswered still gets its one reply.
         if let Some((request_id, trace)) = current.running {
             self.send(
                 reply(
@@ -1505,8 +1284,8 @@ impl Reducer {
     }
 
     /// Answers the idle barrier's query once no deferred work is pending:
-    /// the hook's copies are not held at the start, no caret key's watch is
-    /// open, and the program in flight does not hold the watch. The program
+    /// the hook's copies are not held at the start and the program in
+    /// flight is not a read of the console poll. The program
     /// in flight is otherwise not waited for:
     /// the query is reached only with none in flight, so a program in
     /// flight then handles an entry that arrived after the query.
@@ -1516,7 +1295,6 @@ impl Reducer {
                 .flight
                 .running()
                 .is_some_and(|(_, current)| current.deferred)
-            || !self.facts.text.watch.is_none()
         {
             return;
         }
@@ -1544,12 +1322,6 @@ impl Reducer {
     /// handled on the way.
     fn pump(&mut self, now: Now, effects: &mut Vec<Effect>) {
         while !self.busy() && !self.stopping && !self.releasing {
-            if self.facts.text.watch.final_due() {
-                if self.with_watch(effects, |watch| watch.reach(now.wall_us)) == Reached::Read {
-                    self.dispatch_watch_read(now, effects);
-                }
-                continue;
-            }
             let generation = self.flight.generation();
             if let Some(followed) = self.facts.follow.followed.as_mut()
                 && let Some(owed) = followed
@@ -1595,11 +1367,22 @@ impl Reducer {
                 continue;
             }
             let Some((planned, batch)) = self.intake.next(&self.facts.marks()) else {
-                // Nothing else is ready: the watch's due time is acted on.
-                match self.with_watch(effects, |watch| watch.reach(now.wall_us)) {
-                    Reached::Nothing => return,
-                    Reached::Ended(answer) => self.answer_watch(*answer, now, effects),
-                    Reached::Read => self.dispatch_watch_read(now, effects),
+                // Nothing else is ready: the console poll's due time is
+                // acted on, its read waited for by the idle answer since
+                // after it the program reads the terminal.
+                let due = (self.facts.text.poll_due().is_some_and(|due| due <= now.wall_us))
+                    .then(|| Arc::make_mut(&mut self.facts.text).reach_poll(now.wall_us))
+                    .flatten();
+                let Some(node) = due else { return };
+                self.dispatch(
+                    Work::NoteRead(NodeId::new(node)),
+                    (self.handling_deadline(), None, None),
+                    None,
+                    now,
+                    effects,
+                );
+                if let Some(current) = self.flight.item_mut() {
+                    current.deferred = true;
                 }
                 continue;
             };
@@ -1773,23 +1556,14 @@ impl Reducer {
         now: Now,
         effects: &mut Vec<Effect>,
     ) {
-        let verbatims_move = verbatims_caret_move(&work);
-        if verbatims_move.is_some()
-            && self.facts.text.watch.kept().is_some_and(|key| {
-                key.kind == WatchKind::Terminal && Some(key.node) == verbatims_move
-            })
-        {
-            let answer =
-                self.with_watch(effects, |watch| watch.end_kept("Verbatim moved the caret"));
-            if let Some(answer) = answer {
-                self.answer_watch(answer, now, effects);
-            }
+        if let Some(moved) = verbatims_caret_move(&work) {
+            Arc::make_mut(&mut self.facts.text).clear_note(moved.number());
         }
         let live_reread = match &work {
             Work::Entry { entry, .. } => live_reread_answered_by(&entry.item),
             Work::Owed(_)
             | Work::Drop
-            | Work::WatchRead
+            | Work::NoteRead(_)
             | Work::Finish { .. }
             | Work::FindBar(_) => None,
         };
@@ -1798,7 +1572,6 @@ impl Reducer {
             live_reread,
             group,
             deferred: false,
-            key: key_of(&work),
             in_hand: InHand::of(&work, window),
             hang_mark: false,
             moved_on_abandons: !is_query_off_the_focus(&work),
@@ -1812,7 +1585,7 @@ impl Reducer {
         let rule = match (window, &work) {
             (Some(window), _) => RuleWindow::Known(window),
             (None, Work::Drop | Work::FindBar(_)) => RuleWindow::Never,
-            (None, Work::Entry { .. } | Work::Owed(_) | Work::WatchRead | Work::Finish { .. }) => {
+            (None, Work::Entry { .. } | Work::Owed(_) | Work::NoteRead(_) | Work::Finish { .. }) => {
                 RuleWindow::Named
             }
         };
@@ -1855,7 +1628,7 @@ impl Reducer {
 }
 
 /// The node `work` moves the caret or selects on for Verbatim, if it does:
-/// what ends a terminal's watch besides the next key's request.
+/// the move becomes the last read, and clears the node's note.
 fn verbatims_caret_move(work: &Work) -> Option<NodeId> {
     let Work::Entry {
         entry:
@@ -1873,30 +1646,6 @@ fn verbatims_caret_move(work: &Work) -> Option<NodeId> {
         return None;
     };
     matches!(op, TextOp::MoveCaret(_) | TextOp::Select { .. }).then_some(*node_id)
-}
-
-/// The caret key `work` is the request of, if any.
-fn key_of(work: &Work) -> Option<KeyTag> {
-    let Work::Entry {
-        entry:
-            Entry {
-                item:
-                    Item::Query {
-                        query:
-                            Query::Text {
-                                op: TextOp::Key(key),
-                                ..
-                            },
-                        ..
-                    },
-                ..
-            },
-        ..
-    } = work
-    else {
-        return None;
-    };
-    Some(key.tag)
 }
 
 /// The edit control whose client area's value change `item` is, if it is
@@ -1922,7 +1671,7 @@ fn clears_absorb(item: &Item) -> bool {
         item,
         Item::Query {
             query: Query::Text {
-                op: TextOp::Key(_)
+                op: TextOp::ReadCaret(_)
                     | TextOp::TerminalHold
                     | TextOp::TerminalRead { .. }
                     | TextOp::TerminalCancel,
@@ -2028,26 +1777,5 @@ fn reply(request_id: RequestId, trace: TraceId, outcome: QueryOutcome) -> Outpos
         request_id,
         outcome,
         timing: EventTiming::default(),
-    }
-}
-
-/// `event` as the message that reports it: a key's tagged report, or a
-/// check's untagged read, which carries no window facts.
-#[must_use]
-fn event_message(
-    trace_id: TraceId,
-    observed_at_us: u64,
-    backend: Backend,
-    timing: EventTiming,
-    event: NormalizedEvent,
-) -> OutpostToCore {
-    OutpostToCore::Event {
-        trace_id,
-        observed_at_us,
-        backend,
-        window: None,
-        application: None,
-        timing,
-        event,
     }
 }

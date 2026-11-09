@@ -418,8 +418,8 @@ pub enum NormalizedEvent {
     /// selection no key made
     /// (the mouse's or the application's), as NVDA reports any selection
     /// change of the focus after its caret event
-    /// (`docs/nvda/editable-text-and-terminals.md`, "Selection changes"). A
-    /// caret key's speech comes from its [`NormalizedEvent::KeyAnswered`].
+    /// (`docs/nvda/editable-text-and-terminals.md`, "Selection changes").
+    /// With `facts`, Core may take it as a key's evidence.
     CaretMoved {
         /// The node whose caret moved.
         node_id: NodeId,
@@ -440,17 +440,10 @@ pub enum NormalizedEvent {
         /// [`CaretReply`](crate::CaretReply)'s `new_selection` says.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         new_selection: Option<SelectionChange>,
-    },
-    /// A caret key's result after its before read
-    /// ([`KeyAnswer`](crate::KeyAnswer)), carrying its tag, in one order
-    /// with every caret report.
-    KeyAnswered {
-        /// The key's node.
-        node_id: NodeId,
-        /// The key's tag.
-        tag: crate::KeyTag,
-        /// The result.
-        answer: crate::KeyAnswer,
+        /// What the read found for a key, present exactly when the read was
+        /// made under a key's note.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        facts: Option<Box<crate::ReadFacts>>,
     },
     /// The text of a node changed (UIA's text changed event, an edit
     /// control's change notification). Characters typed into a terminal
@@ -518,7 +511,6 @@ impl NormalizedEvent {
             | NormalizedEvent::ValueChanged { node_id, .. }
             | NormalizedEvent::Notification { node_id, .. }
             | NormalizedEvent::CaretMoved { node_id, .. }
-            | NormalizedEvent::KeyAnswered { node_id, .. }
             | NormalizedEvent::TextChanged { node_id }
             | NormalizedEvent::TerminalSnapshot { node_id, .. }
             | NormalizedEvent::ActiveTextPositionChanged { node_id, .. } => {
@@ -1409,18 +1401,9 @@ pub enum Effect {
     /// when the shell enters [`Input::HeldKeyDue`] with its trace ID. A
     /// later one replaces it.
     BoundHeldKey(Option<(TraceId, u64)>),
-    /// Core's order to the watch of the key `tag` on `node`
-    /// ([`crate::protocol::CoreToOutpost::Watch`]). The shell turns a
-    /// refused final read into [`crate::KeyAnswer::Ended`] for its tag, so
-    /// the key still has its one answer.
-    WatchOrder {
-        /// The key's node.
-        node: NodeId,
-        /// The key's tag.
-        tag: crate::KeyTag,
-        /// The order.
-        order: crate::WatchOrder,
-    },
+    /// Core's note for a key with no before read
+    /// ([`crate::protocol::CoreToOutpost::KeyNote`]), one-way.
+    KeyNote(crate::NoteRequest),
     /// Core gave up on its query `query_id` to `outpost`, which it no longer
     /// records, so its outcome is dropped: the shell withdraws it from its
     /// outpost, which answers it "not started" if it has not started.

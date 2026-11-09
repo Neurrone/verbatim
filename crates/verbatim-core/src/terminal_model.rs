@@ -52,7 +52,7 @@
 //!   ([`TERMINAL_ANCHORS`]), which no outpost mints.
 //!
 //! - The read before a held key. A terminal's outpost answers Core's read
-//!   of the caret before a held key ([`KeyStart::ReadFirst`](verbatim_model::KeyStart::ReadFirst)) with a
+//!   of the caret before a held key ([`ReadPurpose::BeforeKey`](verbatim_model::ReadPurpose::BeforeKey)) with a
 //!   snapshot, which is aligned as a live read is and whose caret answers
 //!   the read ([`before_key`]).
 //!
@@ -65,7 +65,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use verbatim_model::{
-    CaretReply, Effect, Input, KeyStarted, NodeId, OutpostId, QueryId, TerminalColourRun,
+    CaretReply, Effect, Input, NodeId, OutpostId, QueryId, TerminalColourRun,
     TerminalScope, TerminalSnapshot, TerminalText, TextOp, TextPoint, TextReply, TextRequest,
     TraceId,
 };
@@ -950,13 +950,17 @@ pub(crate) fn before_key(
 ) -> (Vec<Effect>, TextReply) {
     let effects = snapshot_event(state, trace_id, node, snapshot);
     let reply = match &snapshot.caret {
-        Some(caret) => TextReply::Key(Box::new(KeyStarted::Read(Box::new(CaretReply {
+        Some(caret) => TextReply::Caret(Box::new(CaretReply {
             caret: caret.clone(),
-            unit: None,
             selection_changes: Vec::new(),
             content_changed: false,
             new_selection: None,
-        })))),
+            facts: verbatim_model::ReadFacts {
+                unit: caret.line.clone(),
+                change: verbatim_model::Change::NoPrevious,
+                read_ended_at_us: caret.read_at_us,
+            },
+        })),
         None => TextReply::Unanswered,
     };
     (effects, reply)

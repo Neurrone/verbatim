@@ -14,7 +14,8 @@
 //! merges across
 //! the idle barrier's answer, and a caret report with selection changes
 //! does not merge across a reply, nor with a report that says its changes
-//! in general terms.
+//! in general terms. A report carrying a key's facts is never merged and
+//! bars merging across it, as a merged report loses its comparison.
 
 use std::mem::Discriminant;
 
@@ -96,6 +97,19 @@ enum Detail {
     Foreground(bool),
 }
 
+/// Whether `event` carries a key's facts: a merged report would lose its
+/// comparison.
+fn carries_key_facts(event: &NormalizedEvent) -> bool {
+    match event {
+        NormalizedEvent::CaretMoved { facts, .. } => facts.is_some(),
+        NormalizedEvent::FocusChanged { text, .. } => matches!(
+            text.as_deref(),
+            Some(crate::FocusText::Caret { facts: Some(_), .. })
+        ),
+        _ => false,
+    }
+}
+
 impl Merge for OutpostToCore {
     type Key = EventKey;
 
@@ -110,6 +124,9 @@ impl Merge for OutpostToCore {
             return None;
         };
         let kind = std::mem::discriminant(event);
+        if carries_key_facts(event) {
+            return None;
+        }
         let (node, detail) = match event {
             NormalizedEvent::FocusChanged {
                 answers: Some(_), ..
@@ -132,9 +149,7 @@ impl Merge for OutpostToCore {
             | NormalizedEvent::ActiveTextPositionChanged { node_id, .. } => {
                 (*node_id, Detail::None)
             }
-            NormalizedEvent::Notification { .. }
-            | NormalizedEvent::TerminalSnapshot { .. }
-            | NormalizedEvent::KeyAnswered { .. } => {
+            NormalizedEvent::Notification { .. } | NormalizedEvent::TerminalSnapshot { .. } => {
                 return None;
             }
         };
@@ -147,11 +162,8 @@ impl Merge for OutpostToCore {
     fn barrier(&self) -> Barrier {
         match self {
             OutpostToCore::IdleAnswer { .. } => Barrier::All,
-            OutpostToCore::Reply { .. }
-            | OutpostToCore::Event {
-                event: NormalizedEvent::KeyAnswered { .. },
-                ..
-            } => Barrier::Reply,
+            OutpostToCore::Reply { .. } => Barrier::Reply,
+            OutpostToCore::Event { event, .. } if carries_key_facts(event) => Barrier::Reply,
             OutpostToCore::Ready { .. }
             | OutpostToCore::SpareReady { .. }
             | OutpostToCore::Event { .. }

@@ -2,8 +2,8 @@
 //! (`books/dev/src/explanation/design/ownership.md`): each node's anchors with their chunks' text, the positions the
 //! outpost reported, and the node's one last read, the only baseline a
 //! caret key or a comparison of selections has
-//! (`docs/design/caret-selection-rework.md`), with the caret key's watch
-//! that pins it. A position is a fact of its own kind: an edit control's
+//! (`docs/design/caret-selection-rework.md`), and for a short time after a
+//! key's request a note of which unit its reads fetch. A position is a fact of its own kind: an edit control's
 //! offset, or the key of a UIA range the outpost's store keeps, so no
 //! application object is held here and an edit control's offsets cross
 //! between programs as they are.
@@ -15,9 +15,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use verbatim_model::{CaretSelection, TextChunk, TextUnit};
+use std::time::Duration;
 
-use super::watch::{Baseline, Watch};
+use verbatim_model::{CaretMotion, CaretSelection, KeyFetch, TextChunk, TextUnit};
 
 /// The key the store keeps a UIA position's range under.
 pub type RangeKey = u64;
@@ -74,6 +74,9 @@ pub struct LastRead<P> {
     pub text_changed: bool,
     /// When the read began, in microseconds on the shared clock.
     pub read_at_us: u64,
+    /// The key's unit at the caret when the read fetched one, for the next
+    /// read to compare with.
+    pub unit: Option<TextChunk>,
 }
 
 impl<P> LastRead<P> {
@@ -95,6 +98,7 @@ impl<P> LastRead<P> {
             line: self.line,
             text_changed: self.text_changed,
             read_at_us: self.read_at_us,
+            unit: self.unit,
         })
     }
 
@@ -267,13 +271,15 @@ pub struct ReportCut<P> {
     pub read_at_us: u64,
     /// The selection the report compares with.
     pub last: KeptSelection<P>,
-    /// The unit a before read asked for at the caret.
-    pub unit: Option<TextUnit>,
+    /// What the read fetches for a key, when it was made for one.
+    pub fetch: Option<NoteFetch>,
+    /// The node's last read, which a read for a key compares with.
+    pub previous: Option<LastRead<P>>,
 }
 
-/// A caret key's answer from an edit control cut at its value change check,
-/// the evidence found: what the read part found, which the part that
-/// finishes it answers from.
+/// A read for a key of an edit control, cut at its value change check, the
+/// evidence found: what the read part found, which the part that finishes
+/// it answers from.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AnswerCut<P> {
     /// The caret and the selection's ends, when something is selected.
@@ -284,14 +290,18 @@ pub struct AnswerCut<P> {
     pub read_at_us: u64,
     /// The caret's line, when the read part read it.
     pub line: Option<CutLine<P>>,
-    /// The watch's unit.
-    pub unit: TextUnit,
-    /// Whether the caret is on the line it was on in the baseline.
-    pub on_baseline_line: bool,
-    /// Whether the check found the key's effect.
+    /// The key's unit and motion.
+    pub note: NoteFetch,
+    /// Whether the caret is on the line it was on in the last read.
+    pub on_previous_line: bool,
+    /// Whether the read found the key's effect.
     pub effect: bool,
+    /// What the read found compared with the last read.
+    pub comparison: verbatim_model::Compared,
     /// The selection the answer compares with.
     pub compared: KeptSelection<P>,
+    /// The node's last read.
+    pub previous: LastRead<P>,
 }
 
 /// The caret's line as a cut read part read it: its ends, its UTF-16 text,
@@ -347,6 +357,25 @@ pub enum TextChange {
     /// Everything of the node's text is forgotten: its runtime id names a
     /// new element, or its window was destroyed.
     Forget(u64),
+    /// A read showed its key's effect: the note ending at `until_us`, when
+    /// it is still the node's, reads no more text changes.
+    NoteEffect {
+        /// The node's number.
+        node: u64,
+        /// The end of the note the read was made under, which names it.
+        until_us: u64,
+    },
+    /// The console host's before read committed, ending at `read_ended_at_us`:
+    /// the note ending at `until_us`, when still the node's, polls for
+    /// [`POLL_BOUND`] from then.
+    NotePoll {
+        /// The node's number.
+        node: u64,
+        /// The end of the note the read was made under, which names it.
+        until_us: u64,
+        /// When the read ended.
+        read_ended_at_us: u64,
+    },
 }
 
 impl TextChange {
@@ -359,7 +388,9 @@ impl TextChange {
             | Self::LastReadFailed(node)
             | Self::ContentChanged(node)
             | Self::ContentCounted(node)
-            | Self::Forget(node) => *node,
+            | Self::Forget(node)
+            | Self::NoteEffect { node, .. }
+            | Self::NotePoll { node, .. } => *node,
         }
     }
 
@@ -374,6 +405,62 @@ impl TextChange {
     }
 }
 
+/// How long a text field's or terminal's note lasts from its request's
+/// arrival: the 150 ms bound on the before read, the 100 ms bound, and a
+/// margin for the pipe.
+pub const NOTE_LIFE: Duration = Duration::from_millis(300);
+
+/// How long after one of the console poll's reads the next is made.
+pub const POLL_INTERVAL: Duration = Duration::from_millis(5);
+
+/// How long after the before read ended, or the key's note arrived, the
+/// console poll ends.
+pub const POLL_BOUND: Duration = Duration::from_millis(50);
+
+/// What a key's reads fetch at the caret.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NoteFetch {
+    /// The unit reads fetch.
+    pub unit: TextUnit,
+    /// What the key does, which says what counts as its evidence.
+    pub motion: CaretMotion,
+}
+
+/// What reads a node's note causes besides the node's caret events.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NoteReads {
+    /// Text changes are read too.
+    CaretAndText,
+    /// A read showed the key's effect: caret events are still read with
+    /// their facts, and text changes are not read.
+    CaretOnly,
+    /// The console host, which raises no prompt caret event, polled too.
+    Poll {
+        /// When the next read is due.
+        next_us: u64,
+        /// When the polling ends.
+        until_us: u64,
+    },
+}
+
+/// A node's note: for a short time after a key's request, which unit its
+/// reads fetch and that text changes are read too. It knows nothing of the
+/// key's progress and ends by the clock.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct KeyNote {
+    /// The key's unit and motion.
+    pub fetch: NoteFetch,
+    /// When it ends, on the shared clock.
+    pub until_us: u64,
+    /// What it reads.
+    pub reads: NoteReads,
+}
+
+/// `duration` in microseconds.
+fn micros(duration: Duration) -> u64 {
+    u64::try_from(duration.as_micros()).unwrap_or(u64::MAX)
+}
+
 /// One node's text facts, of one provider.
 #[derive(Clone, Debug)]
 enum NodeRecord {
@@ -381,19 +468,31 @@ enum NodeRecord {
     Edit(Arc<NodeAnchors<u32>>),
 }
 
+/// Everything kept for one node: its text facts, once a read has made them,
+/// and its note, which end with it.
+#[derive(Clone, Debug, Default)]
+struct NodeEntry {
+    record: Option<NodeRecord>,
+    note: Option<KeyNote>,
+}
+
 /// Every node's text facts, through UIA and through edit controls' messages,
-/// and the caret key's watch, so one place names every range the store must
-/// keep.
+/// and their notes, so one place names every range the store must keep.
 #[derive(Clone, Debug, Default)]
 pub struct TextFacts {
-    nodes: BTreeMap<u64, NodeRecord>,
-    /// The caret key's watch for evidence.
-    pub watch: Watch,
+    nodes: BTreeMap<u64, NodeEntry>,
+    /// The one console poll, whose node's note holds its times, so its due
+    /// time is found without walking the nodes.
+    polling: Option<u64>,
+    /// The nodes that were given a note, as a read of an event not known
+    /// to be the focus's looks one up without walking the nodes; ones past
+    /// their note are removed as the next note is set.
+    noted: BTreeSet<u64>,
 }
 
 /// The keys `record` names.
-fn keys(record: Option<&NodeRecord>) -> BTreeSet<RangeKey> {
-    match record {
+fn keys(record: Option<&NodeEntry>) -> BTreeSet<RangeKey> {
+    match record.and_then(|entry| entry.record.as_ref()) {
         Some(NodeRecord::Uia(anchors)) => anchors.positions().copied().collect(),
         Some(NodeRecord::Edit(_)) | None => BTreeSet::new(),
     }
@@ -403,52 +502,124 @@ impl TextFacts {
     /// UIA node `node`'s facts, when it has any.
     #[must_use]
     pub fn uia(&self, node: u64) -> Option<&NodeAnchors<RangeKey>> {
-        match self.nodes.get(&node) {
-            Some(NodeRecord::Uia(anchors)) => Some(&**anchors),
-            _ => None,
+        match self.nodes.get(&node)?.record.as_ref()? {
+            NodeRecord::Uia(anchors) => Some(&**anchors),
+            NodeRecord::Edit(_) => None,
         }
     }
 
     /// Edit control `node`'s facts, when it has any.
     #[must_use]
     pub fn edit(&self, node: u64) -> Option<&NodeAnchors<u32>> {
-        match self.nodes.get(&node) {
-            Some(NodeRecord::Edit(anchors)) => Some(&**anchors),
-            _ => None,
+        match self.nodes.get(&node)?.record.as_ref()? {
+            NodeRecord::Edit(anchors) => Some(&**anchors),
+            NodeRecord::Uia(_) => None,
         }
     }
 
-    /// The baseline a key arriving now would pin: node `node`'s last read,
-    /// when it has one.
+    /// Node `node`'s note, when it has one and it has not passed its end
+    /// by `now_us`: a note that has passed its end counts as absent.
     #[must_use]
-    pub fn baseline(&self, node: u64) -> Option<Baseline> {
-        match self.nodes.get(&node)? {
-            NodeRecord::Uia(anchors) => anchors.last.clone().map(Baseline::Uia),
-            NodeRecord::Edit(anchors) => anchors.last.clone().map(Baseline::Edit),
+    pub fn live_note(&self, node: u64, now_us: u64) -> Option<KeyNote> {
+        self.nodes
+            .get(&node)?
+            .note
+            .filter(|note| note.until_us > now_us)
+    }
+
+    /// The live notes, by node.
+    pub fn live_notes(&self, now_us: u64) -> impl Iterator<Item = (u64, KeyNote)> + '_ {
+        self.noted
+            .iter()
+            .filter_map(move |&node| Some((node, self.live_note(node, now_us)?)))
+    }
+
+    /// Sets node `node`'s note as a request for it arrives at `now_us`,
+    /// polling for [`POLL_BOUND`] when `console`.
+    pub fn set_note(&mut self, node: u64, fetch: KeyFetch, now_us: u64, console: bool) {
+        let nodes = &self.nodes;
+        self.noted.retain(|noted| {
+            nodes
+                .get(noted)
+                .and_then(|entry| entry.note)
+                .is_some_and(|note| note.until_us > now_us)
+        });
+        self.noted.insert(node);
+        let until_us = now_us.saturating_add(micros(NOTE_LIFE));
+        let reads = if console {
+            self.polling = Some(node);
+            let until = now_us.saturating_add(micros(POLL_BOUND));
+            NoteReads::Poll {
+                next_us: now_us.saturating_add(micros(POLL_INTERVAL)).min(until),
+                until_us: until,
+            }
+        } else {
+            NoteReads::CaretAndText
+        };
+        self.nodes.entry(node).or_default().note = Some(KeyNote {
+            fetch: NoteFetch {
+                unit: fetch.unit,
+                motion: fetch.motion,
+            },
+            until_us,
+            reads,
+        });
+    }
+
+    /// Clears node `node`'s note, when it has one.
+    pub fn clear_note(&mut self, node: u64) {
+        if let Some(entry) = self.nodes.get_mut(&node) {
+            entry.note = None;
         }
     }
 
-    /// The keys of `node`'s facts and of the watch's baseline when it is
-    /// `node`'s.
+    /// When the console poll is next due, while its note lives; the poll
+    /// is acted on only when due.
+    #[must_use]
+    pub fn poll_due(&self) -> Option<u64> {
+        let note = self.nodes.get(&self.polling?)?.note?;
+        match note.reads {
+            NoteReads::Poll { next_us, .. } => Some(next_us),
+            NoteReads::CaretAndText | NoteReads::CaretOnly => None,
+        }
+    }
+
+    /// The console poll's due time, reached at `now_us`: the node whose
+    /// read is due, its next due time moved on, or, past the note's end or
+    /// the poll's last read, the note goes on without polling.
+    pub fn reach_poll(&mut self, now_us: u64) -> Option<u64> {
+        let number = self.polling?;
+        let Some(note) = self.nodes.get_mut(&number).and_then(|entry| entry.note.as_mut()) else {
+            self.polling = None;
+            return None;
+        };
+        let NoteReads::Poll { next_us, until_us } = note.reads else {
+            self.polling = None;
+            return None;
+        };
+        if note.until_us <= now_us {
+            note.reads = NoteReads::CaretAndText;
+            self.polling = None;
+            return None;
+        }
+        if now_us < next_us {
+            return None;
+        }
+        if next_us >= until_us {
+            note.reads = NoteReads::CaretAndText;
+            self.polling = None;
+        } else {
+            note.reads = NoteReads::Poll {
+                next_us: now_us.saturating_add(micros(POLL_INTERVAL)).min(until_us),
+                until_us,
+            };
+        }
+        Some(number)
+    }
+
+    /// The keys of `node`'s facts.
     fn named(&self, node: u64) -> BTreeSet<RangeKey> {
-        let mut named = keys(self.nodes.get(&node));
-        named.extend(self.watch.baseline_keys(node));
-        named
-    }
-
-    /// Applies `f` to the watch. Returns what it returned, and the UIA
-    /// ranges no fact names any more once the watch has let them go, by
-    /// node and key, for the store to let go of.
-    pub fn with_watch<T>(&mut self, f: impl FnOnce(&mut Watch) -> T) -> (T, Vec<(u64, RangeKey)>) {
-        let node = self.watch.open().map(|key| key.node.number());
-        let before = node.map(|node| (node, self.named(node)));
-        let result = f(&mut self.watch);
-        let mut dropped = Vec::new();
-        if let Some((node, before)) = before {
-            let after = self.named(node);
-            dropped.extend(before.difference(&after).map(|&key| (node, key)));
-        }
-        (result, dropped)
+        keys(self.nodes.get(&node))
     }
 
     /// Applies `change`. Returns the UIA ranges no fact names any more, by
@@ -462,10 +633,10 @@ impl TextFacts {
         match change {
             TextChange::Uia { part, copied, .. } => {
                 named.extend(part.positions().copied());
-                let record = self
-                    .nodes
-                    .entry(node)
-                    .or_insert_with(|| NodeRecord::Uia(Arc::default()));
+                let entry = self.nodes.entry(node).or_default();
+                let record = entry
+                    .record
+                    .get_or_insert_with(|| NodeRecord::Uia(Arc::default()));
                 if let NodeRecord::Uia(anchors) = record {
                     Arc::make_mut(anchors).put(part, copied);
                 } else {
@@ -475,10 +646,10 @@ impl TextFacts {
                 }
             }
             TextChange::Edit { part, copied, .. } => {
-                let record = self
-                    .nodes
-                    .entry(node)
-                    .or_insert_with(|| NodeRecord::Edit(Arc::default()));
+                let entry = self.nodes.entry(node).or_default();
+                let record = entry
+                    .record
+                    .get_or_insert_with(|| NodeRecord::Edit(Arc::default()));
                 if let NodeRecord::Edit(anchors) = record {
                     Arc::make_mut(anchors).put(part, copied);
                 } else {
@@ -487,7 +658,7 @@ impl TextFacts {
                     *record = NodeRecord::Edit(Arc::new(anchors));
                 }
             }
-            TextChange::LastReadFailed(_) => match self.nodes.get_mut(&node) {
+            TextChange::LastReadFailed(_) => match self.record_mut(node) {
                 Some(NodeRecord::Uia(anchors)) if anchors.last.is_some() => {
                     Arc::make_mut(anchors).last = None;
                 }
@@ -497,14 +668,14 @@ impl TextFacts {
                 _ => {}
             },
             TextChange::ContentChanged(_) => {
-                if let Some(NodeRecord::Edit(anchors)) = self.nodes.get_mut(&node)
+                if let Some(NodeRecord::Edit(anchors)) = self.record_mut(node)
                     && let Some(last) = Arc::make_mut(anchors).last.as_mut()
                 {
                     last.text_changed = true;
                 }
             }
             TextChange::ContentCounted(_) => {
-                if let Some(NodeRecord::Edit(anchors)) = self.nodes.get_mut(&node)
+                if let Some(NodeRecord::Edit(anchors)) = self.record_mut(node)
                     && anchors.last.as_ref().is_some_and(|last| last.text_changed)
                     && let Some(last) = Arc::make_mut(anchors).last.as_mut()
                 {
@@ -514,9 +685,45 @@ impl TextFacts {
             TextChange::Forget(_) => {
                 self.nodes.remove(&node);
             }
+            TextChange::NoteEffect { until_us, .. } => {
+                if let Some(note) = self.note_named(node, *until_us) {
+                    note.reads = NoteReads::CaretOnly;
+                }
+            }
+            TextChange::NotePoll {
+                until_us,
+                read_ended_at_us,
+                ..
+            } => {
+                if let Some(note) = self.note_named(node, *until_us) {
+                    let until = read_ended_at_us.saturating_add(micros(POLL_BOUND));
+                    note.reads = NoteReads::Poll {
+                        next_us: read_ended_at_us
+                            .saturating_add(micros(POLL_INTERVAL))
+                            .min(until),
+                        until_us: until,
+                    };
+                    self.polling = Some(node);
+                }
+            }
         }
         let after = self.named(node);
         named.difference(&after).map(|&key| (node, key)).collect()
+    }
+
+    /// Node `node`'s record, to change.
+    fn record_mut(&mut self, node: u64) -> Option<&mut NodeRecord> {
+        self.nodes.get_mut(&node)?.record.as_mut()
+    }
+
+    /// Node `node`'s note named by the end `until_us` of the note a program
+    /// read, when it is still the node's.
+    fn note_named(&mut self, node: u64, until_us: u64) -> Option<&mut KeyNote> {
+        self.nodes
+            .get_mut(&node)?
+            .note
+            .as_mut()
+            .filter(|note| note.until_us == until_us)
     }
 
     /// Forgets the nodes `nodes` and the anchors `anchors` a release freed.
@@ -528,11 +735,15 @@ impl TextFacts {
         anchors: &BTreeSet<u64>,
     ) -> Vec<(u64, RangeKey)> {
         self.nodes.retain(|node, _| !nodes.contains(node));
+        self.noted.retain(|node| !nodes.contains(node));
         if anchors.is_empty() {
             return Vec::new();
         }
         let mut dropped = Vec::new();
-        for (&node, record) in &mut self.nodes {
+        for (&node, entry) in &mut self.nodes {
+            let Some(record) = entry.record.as_mut() else {
+                continue;
+            };
             match record {
                 NodeRecord::Uia(kept) => {
                     if !kept.anchors.keys().any(|number| anchors.contains(number)) {
@@ -606,6 +817,7 @@ mod tests {
             },
             text_changed: false,
             read_at_us: 0,
+            unit: None,
         }
     }
 
