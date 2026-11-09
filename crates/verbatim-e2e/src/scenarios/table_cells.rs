@@ -67,21 +67,21 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     ]);
 
     // The next cell in the row says only its column.
-    apply_to_mockapp(scenario, window, "set-focus second");
+    apply_to_mockapp(scenario, window, "focus second");
     scenario.speech().expect(&["Second column 3 3 of 6"]);
 
     // The next cell in the column says only its row.
-    apply_to_mockapp(scenario, window, "set-focus third");
+    apply_to_mockapp(scenario, window, "focus third");
     scenario.speech().expect(&["Third row 2 6 of 6"]);
 
     // Another table says both, at the same row and column.
-    apply_to_mockapp(scenario, window, "set-focus other");
+    apply_to_mockapp(scenario, window, "focus other");
     scenario
         .speech()
         .expect(&["Grid B list", "Other row 2 column 3 1 of 2"]);
 
     // And so does coming back.
-    apply_to_mockapp(scenario, window, "set-focus third");
+    apply_to_mockapp(scenario, window, "focus third");
     scenario
         .speech()
         .expect(&["Grid A list", "Third row 2 column 3 6 of 6"]);

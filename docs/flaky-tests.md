@@ -30,6 +30,7 @@ Scenarios: the `windows_terminal_` scenarios generally, for example `windows_ter
 ## Settings' page focus never delivered by UI Automation
 
 - `settings_system_page` on GitHub's runner (run 42492633218, 2026-11-08)
+- `settings_system_page` on GitHub's runner (run 42514816068, 2026-11-09), the same failure
   - How: "Settings" was said for the frame, then nothing for 75 s; "Settings window" was never queued.
   - Cause: the page's `Windows.UI.Core.CoreWindow` (hwnd 328450, `SystemSettings.exe`) raised two MSAA focus events, which the outpost dropped because UI Automation owns the window, as NVDA drops them; UI Automation delivered no focus event for the page to the listener, whose handler had delivered the frame's focus two seconds before. A focus UI Automation never delivers is lost, as in NVDA ([ADR 0001](../books/dev/src/reference/adr/0001-focus.md), its limits).
   - Fix: none in Verbatim; passed on GitHub's runner in the two runs before it.
@@ -163,3 +164,16 @@ These are `local_only` in the registry. The `e2e` job leaves them out of its gro
 - The `notepad_` scenarios: the runner has classic Notepad, a Win32 edit control, not Windows 11 Notepad. Editing is also covered in the harness's Windows Forms text box.
 - `settings_search_suggestions`: the runner's Settings raises no selection event for a first suggestion as the list opens, so "Suggestions available" plays to completion there, while the scenario expects the first suggestion, which this machine's Settings selects as the list opens, to cut it off.
 - `settings_combo_box_expanded`: the runner's Settings opens its Date and time page with the focus on "Location Settings link", where this machine's opens it on "Region button", which the scenario's opening speech asserts.
+
+## `alt_tab_switcher` on a parked local desktop
+
+- `alt_tab_switcher` locally (10 of 10 runs failed at 6e6c1efa and at bce10932, 2026-11-09)
+  - How: the agent's `SwitcherItems` found no item with the focus within 30 s.
+  - Cause: on this Windows build the switcher, class `XamlExplorerHostIslandWindow`, is open with the selection drawn on its first item, while UI Automation focus stays on the host's empty `InputSite` pane; `switcher_items` (`crates/verbatim-agent/src/focus.rs`) accepts only focus on an element whose parent is `SwitchItemListControl`.
+  - Fix: the harness should wait for that list to exist, not for an item to have the focus. Verbatim is not involved.
+
+## `table_cells`'s first focus
+
+- `table_cells` locally (one failure in 13 runs, 2026-11-09)
+  - How: the window was spoken, then nothing; Core received a UI Automation focus on the window and none on the first cell.
+  - Cause: not established. `mockapp` raises its first focus once, after activation (`crates/mockapp/src/window.rs`, `activated`), and `open_mockapp` waits only for the title; the one failure left no artifacts.
