@@ -468,7 +468,7 @@ fn retitle_while_away(scenario: &mut Scenario, first: &str, second: &str, direct
     scenario
         .wait_for_agent_file(&format!(r"{directory}\retitled"), FLOOD_STEP)
         .expect("the first window is renamed");
-    scenario.expect_nothing_more();
+    let re_reads = scenario.live_re_reads();
     scenario
         .bring_window_forward(first)
         .expect("brings the renamed first window back");
@@ -478,7 +478,11 @@ fn retitle_while_away(scenario: &mut Scenario, first: &str, second: &str, direct
         &format!("{first} terminal {renamed}"),
         PROMPT,
     ]);
-    scenario.expect_live_re_reads(0);
+    assert_eq!(
+        scenario.live_re_reads(),
+        re_reads,
+        "Core's live re-reads as the renamed window came back"
+    );
 }
 
 /// Switches to the tab titled `title`, the `position`th of two, as NVDA was

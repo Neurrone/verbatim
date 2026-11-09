@@ -93,7 +93,7 @@ Recorded by Claude, 2026-11-04.
 
 ## File Explorer
 
-- `explorer_folder_window` locally, Explorer's folder window not responding (2026-10-31)
+- `explorer_folder_window`, Explorer's folder window not responding (locally 2026-10-31; GitHub run 42654703245, where the window took the foreground and no focus event followed)
   - How: nothing is spoken after the desktop's "Recycle Bin 1 of 13"; the folder window, opened in a new `explorer.exe` process, never takes the foreground, its UI thread stops answering about 1.5 s after it opens (an arbitration probe of its `ShellTabWindowClass` window times out at 3 s, an MSAA call waits 13 s), and it does not close within 15 s, so the next scenarios fail at launch on the window left open. Once in 13 runs, with the keep-id fix; the next 10 passed.
   - Cause: not found. Verbatim's outpost was the one waiting on Explorer; no Verbatim call was found that Explorer waited on.
   - Fix: none yet.

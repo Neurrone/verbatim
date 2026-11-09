@@ -103,6 +103,9 @@ const GO_FILE: &str = "prompt-go";
 
 /// The file the start script writes the shell's process id into.
 const SHELL_PID_FILE: &str = "shell-pid";
+/// The file a shell that titles its tab waits for before setting its title
+/// ([`start_script`]).
+const SETTLED_FILE: &str = "title-settled";
 
 /// The window class only the console host registers.
 const CONSOLE_WINDOW_CLASS: &str = "ConsoleWindowClass";
@@ -216,8 +219,9 @@ fn open_with(
         Terminal::ConsoleHost => format!("console-{name}"),
     };
     let title = harness_marker(&name);
-    let (directory, start) = prepare_shell(scenario, &name, &title, scripts)?;
+    let (directory, start) = prepare_shell(scenario, &name, &title, scripts, shell_titles)?;
     let started = format!(r"{directory}\{SHELL_PID_FILE}");
+    let settled = shell_titles.then(|| format!(r"{directory}\{SETTLED_FILE}"));
     let window = match terminal {
         Terminal::WindowsTerminal => {
             let (folder, executable) = windows_terminal_paths(scenario);
@@ -230,8 +234,13 @@ fn open_with(
             let others_before = other_terminal_windows(scenario, None)?;
             let mut args = new_window();
             args.extend(new_tab(&title, &start, shell_titles));
-            let window =
-                scenario.launch_owning_window(&executable, &args, &title, Some(&started))?;
+            let window = scenario.launch_owning_window(
+                &executable,
+                &args,
+                &title,
+                Some(&started),
+                settled.as_deref(),
+            )?;
             require_no_other_terminal_window(scenario, &others_before, window.pid)?;
             window
         }
@@ -284,6 +293,7 @@ fn prepare_shell(
     name: &str,
     title: &str,
     scripts: &[(&str, &str)],
+    shell_titles: bool,
 ) -> io::Result<(String, String)> {
     let directory = scenario.harness_folder(name);
     for (file, contents) in scripts {
@@ -292,10 +302,17 @@ fn prepare_shell(
     let ready = format!(r"{directory}\{READY_FILE}");
     let go = format!(r"{directory}\{GO_FILE}");
     let shell_pid = format!(r"{directory}\{SHELL_PID_FILE}");
+    let settled = shell_titles.then(|| format!(r"{directory}\{SETTLED_FILE}"));
     let start = format!(r"{directory}\start.ps1");
     scenario.write_agent_file(
         &start,
-        start_script(title, &directory, &go, &ready, &shell_pid).as_bytes(),
+        start_script(
+            title,
+            &directory,
+            (&go, &ready, &shell_pid),
+            settled.as_deref(),
+        )
+        .as_bytes(),
     )?;
     Ok((directory, start))
 }
@@ -374,7 +391,7 @@ pub(crate) fn open_windows_terminal_window(
     };
     let running = *running;
     let title = harness_marker(name);
-    let (directory, start) = prepare_shell(scenario, name, &title, &[])?;
+    let (directory, start) = prepare_shell(scenario, name, &title, &[], false)?;
     let started = format!(r"{directory}\{SHELL_PID_FILE}");
     let (_, executable) = windows_terminal_paths(scenario);
     let others_before = other_terminal_windows(scenario, Some(running))?;
@@ -444,7 +461,7 @@ pub(crate) fn open_windows_terminal_tab(
         panic!("the first tab's setup opens a terminal window");
     };
     let title = format!("{first} two");
-    let (directory, start) = prepare_shell(scenario, name, &title, &[])?;
+    let (directory, start) = prepare_shell(scenario, name, &title, &[], false)?;
     let (_, executable) = windows_terminal_paths(scenario);
     let mut args: Vec<String> = vec!["-w".to_owned(), "0".to_owned()];
     args.extend(new_tab(&title, &start, false));
@@ -584,7 +601,29 @@ fn shell_command(start: &str, terminal: Terminal) -> Vec<String> {
 /// in case the shell loaded it after the script ran. The script ends, and
 /// the shell shows its first prompt, once `go` exists: it waits on the
 /// folder's change notifications, never polling.
-fn start_script(title: &str, directory: &str, go: &str, ready: &str, shell_pid: &str) -> String {
+fn start_script(
+    title: &str,
+    directory: &str,
+    (go, ready, shell_pid): (&str, &str, &str),
+    settled: Option<&str>,
+) -> String {
+    // A shell that titles its tab first shows a title of its own and waits:
+    // the console host's "Administrator: " prefix on an elevated runner has
+    // reached the window once that title has, so the harness brings it
+    // forward only after the title that follows.
+    let write_title =
+        |title: &str| format!("[Console]::Write([char]27 + ']0;' + {title} + [char]7)");
+    let (first_title, after_pid) = match settled {
+        Some(settled) => (
+            write_title(&quoted(&format!("{title} settling"))),
+            format!(
+                "while (-not (Test-Path -LiteralPath {})) {{ Start-Sleep -Milliseconds 10 }}\r\n{}\r\n",
+                quoted(settled),
+                write_title(&quoted(title))
+            ),
+        ),
+        None => (write_title(&quoted(title)), String::new()),
+    };
     let title = quoted(title);
     let directory_text = quoted(directory);
     let go_name = quoted(GO_FILE);
@@ -599,8 +638,9 @@ fn start_script(title: &str, directory: &str, go: &str, ready: &str, shell_pid: 
          \x20   $Host.UI.RawUI.BufferSize = New-Object Management.Automation.Host.Size(120, 9001)\r\n\
          }}\r\n\
          $Host.UI.RawUI.WindowTitle = {title}\r\n\
-         if (-not $ConsoleHost) {{ [Console]::Write([char]27 + ']0;' + {title} + [char]7) }}\r\n\
+         if (-not $ConsoleHost) {{ {first_title} }}\r\n\
          [IO.File]::WriteAllText({shell_pid}, \"$PID\")\r\n\
+         {after_pid}\
          Set-Location -LiteralPath {directory_text}\r\n\
          function global:prompt {{\r\n\
          \x20   Remove-Module PSReadLine -ErrorAction SilentlyContinue\r\n\
