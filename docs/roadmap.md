@@ -487,8 +487,10 @@ package reader get generated tests of their own.
   requests straight to the claiming outpost, its speech and every action
   that depends on attention go through Core's reducer. Each hook's
   deadline is judged by its own store, since the epoch is the engine's;
-  the outpost's worker answers the host's reads while it waits on a
-  hook. Speech is enforced by attention. The hooks are `on-focus`,
+  the outpost's reducer calls each hook and holds its event intake
+  while it waits, its worker answering the host's reads as ordinary
+  programs, and a module's effects travel back with the hook's verdict
+  inside the event's report. Speech is enforced by attention. The hooks are `on-focus`,
   `on-event`, `on-node` (one call per emitted batch), `status-bar`,
   `on-command(command, trigger)` and `on-list-dialog`, and the WIT files
   are the single source of the host's and the guests' bindings and of
@@ -510,7 +512,7 @@ package reader get generated tests of their own.
   A9); resource figures per extension in developer mode (A6).
 - Binding by application identity (executable, console client, hosted app,
   WebView2 parent) resolved by the supervisor, one host process per
-  extension, of every kind, with developer-folder modules run the same way
+  extension, of every kind, with each developer-folder module in a host of its own
   ([security model](design/security-model.md), X4); a developer-folder
   module replaces an installed extension's module for the application it
   claims while it is there, as NVDA's scratchpad does (Dickson,
@@ -526,10 +528,12 @@ package reader get generated tests of their own.
 - Gestures that change while Verbatim runs (Dickson, 2026-11-09): the
   keyboard hook thread's gesture map published at a version, so module
   commands follow install, enable and reload; a binding names a number
-  of presses, every press fires at once, and a list dialog a command
-  opens is held for its press's multi-press window when the same keys
-  are bound to a higher count, so a double press never shows the first
-  dialog. Gesture conflicts are listed in the install dialog rather than
+  of presses, every press fires at once, the hook thread alone judges
+  from its own map whether the same keys are bound to a higher count
+  and stamps the press when they are, and a list dialog the command
+  opens is held until that press's multi-press window has closed and
+  every later press of the same keys has answered, so a double press
+  never shows the first dialog. Gesture conflicts are listed in the install dialog rather than
   refused, replacing the reserved gestures.
 - Global modules (Dickson, 2026-10-31, reversing the decision of
   2026-10-22 that left them out): the tray list, the taskbar list and
@@ -584,10 +588,12 @@ package reader get generated tests of their own.
   tables and the fetch configuration carry a version published by Core
   alone, every judgement the listener or an outpost makes under them
   names that version, and a receiver recognises a judgement made under
-  a version it has moved past.
+  a version it has moved past and acts on it by its kind, as
+  [extensions](design/extensions.md), section 2.2, says.
 - Focus vetoes and redirects with no read NVDA would not make (Dickson,
   2026-10-29): a veto declared as a rule judged by the listener
-  from the event's cache; a hook's code veto or redirect run in the
+  from the event's cache, and by the outpost on every focus it reads
+  itself; a hook's code veto or redirect run in the
   outpost after the listener's read, as NVDA runs `event_gainFocus` after
   its walk, so it makes no read NVDA would not; node and event rules
   applied in the outpost to every kind of focus report, its own recovery

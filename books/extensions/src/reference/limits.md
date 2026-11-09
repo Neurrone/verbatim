@@ -6,7 +6,7 @@ The rules behind these limits are explained in [Reliability](../explanation/reli
 
 | Limit | Value |
 |---|---|
-| Time to handle one event, reads included | 10 seconds, shared with Verbatim's own reading |
+| Time to handle one event, reads included | 11 seconds, shared with Verbatim's own reading |
 | Time in your own code per call, reads excluded | Measured; deliberately loose until then |
 | Deadline per speech-text stage | Not set |
 

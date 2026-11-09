@@ -47,7 +47,7 @@ A gesture the user added to your command, rather than changed, has no `declared`
 
 ## Dialogs opened by a command
 
-If one press of a gesture opens a dialog and a second press of the same gesture runs another command, Verbatim holds the first dialog until the multi-press interval after the press has passed. If the second press comes, the second command's dialog replaces it, so the user never sees the first. Commands that only speak are never held: a second press interrupts the first one's speech, as with the time and date.
+If one press of a gesture opens a dialog and a second press of the same gesture runs another command, Verbatim holds the first dialog until the multi-press interval after the press has passed and every later press of the gesture within it has run its command, however long the first command took. If the second press comes, the second command's dialog replaces it, so the user never sees the first. Commands that only speak are never held: a second press interrupts the first one's speech, as with the time and date.
 
 ## Conflicts
 

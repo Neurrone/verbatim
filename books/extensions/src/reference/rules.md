@@ -80,11 +80,12 @@ action = { set = { role = "edit" } }
 
 | Rule | Runs | Cost |
 |---|---|---|
-| Window `backend`, `normalize-class` | where Verbatim first reads the window | a table lookup |
+| Window `backend` | where Verbatim first reads the window | a table lookup |
+| Window `normalize-class` | everywhere Verbatim judges a window's class, so every rule matching `window-class` sees the normalized class | a table lookup |
 | Window `silent` | where Verbatim decides what to say | a table lookup |
 | Event `drop` | as early as its properties allow: before Verbatim reads the control when the matcher names only the event's own properties | a table lookup |
 | Event `accept` | where Verbatim decides what to say | a table lookup, and starting to read the application if needed |
-| Focus veto | before Verbatim reads the focus, when the matcher names only class, automation id, control type, framework, name, runtime id or window; otherwise on the read control | none extra, or the read Verbatim makes anyway |
+| Focus veto | before Verbatim reads the focus, when the matcher names only class, automation id, control type, framework, name, runtime id or window, and also on every focus Verbatim reads by itself, such as after a menu closes; otherwise on the read control | none extra, or the read Verbatim makes anyway |
 | Other node rules, redirects | on the read control | a check of properties already read; a redirect adds the read of its target |
 
 Verbatim chooses where each rule runs from the properties it names. Every property works in every node rule; only the cost differs.

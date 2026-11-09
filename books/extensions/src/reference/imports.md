@@ -31,9 +31,9 @@ Every read stops at your applications: the ones an app module claims, or a globa
 
 | Function | Notes |
 |---|---|
-| `speak(message)` | A message is text, such as a value read from the application, or a message id from your strings with its arguments. It is queued behind current speech. Speech for an application that is not in front is always queued. |
+| `speak(message)` | A message is text, such as a value read from the application, or a message id from your strings with its arguments. It is queued behind current speech. Speech for an application that is not in front is always queued. Speech from `on-command` is dropped once another key is pressed. |
 | `speak-node(node)` | Announces a control exactly as Verbatim would announce it as the focus, with its role, name, states and position, styled by the user's theme. |
-| `cancel-speech()` | Stops current speech; it has an effect only while your application has the user's attention. |
+| `cancel-speech()` | Stops current speech; it has an effect only while your application has the user's attention, or, during `on-command`, until another key is pressed, in a global module too. |
 | `tone(hertz, milliseconds)` | Plays a tone. |
 | `browseable-message(title, text)` | Shows plain text in a window the user can read and close. |
 

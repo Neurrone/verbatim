@@ -19,7 +19,7 @@ App modules, global modules and synthesizers come first, in milestones M5 and M6
 
 ## Built-ins
 
-Verbatim's own support for applications such as Explorer, Notepad and Windows Terminal is written as modules too, called **built-ins**, against the same API you use, and so are its own speech engines. A built-in ships with Verbatim, is not listed among the user's extensions, and cannot be disabled by the user. Because built-ins use the same API, anything Verbatim does for an application through a built-in, an extension can do too.
+Verbatim's own support for applications such as Explorer, Notepad and Windows Terminal is written as modules too, called **built-ins**, against the same API you use. Whether Verbatim's own speech engines become built-ins too is not yet decided. A built-in ships with Verbatim, is not listed among the user's extensions, and cannot be disabled by the user. Because built-ins use the same API, anything Verbatim does for an application through a built-in, an extension can do too.
 
 ## How a module changes Verbatim
 
@@ -41,9 +41,9 @@ A module may claim Verbatim's own executables, to change how Verbatim's own wind
 
 ## Where your code runs
 
-Every extension runs in a process of its own, inside a Windows container, and all of its modules share that process; Verbatim's built-ins are one such extension, and its two speech engines are two more. Your reads of an application are requests that the process reading that application answers, within that application. A crash or hang in your code costs only your extension; [The security model](security-model.md) explains what the container allows.
+Every extension runs in a process of its own, inside a Windows container, and all of its modules share that process; Verbatim's built-ins are one such extension. Your reads of an application are requests that the process reading that application answers, within that application. A crash or hang in your code costs only your extension; [The security model](security-model.md) explains what the container allows.
 
-Inside the process, each application your module serves, and each global module, has its own thread, so an application that is slow to answer holds up only your hooks for that application. Modules you are developing, loaded from the developer folder, run as installed extensions do. The API is the same everywhere.
+Inside the process, each application your module serves, and each global module, has its own thread, so an application that is slow to answer holds up only your hooks for that application. Modules you are developing, loaded from the developer folder, run as installed extensions do, each in a process of its own. The API is the same everywhere.
 
 ## Layers and who wins
 
@@ -51,6 +51,6 @@ At most one installed extension may change a given application, on top of Verbat
 
 A module in the developer folder that claims an application an installed extension claims replaces that extension's module for that application only, while it is there, so you can work on the next version of your own extension with the current one installed. Removing it from the developer folder brings the installed one back.
 
-Within one event, every layer's rules apply first, lowest layer first, so the highest layer's rule wins a property two layers set; then hooks run from the highest layer down, each seeing the control as the layers above left it, until one ends the chain. For commands, the highest layer that binds a gesture gets it.
+Within one event, every layer's rules apply first, lowest layer first, so the highest layer's rule wins a property two layers set; then hooks run from the highest layer down, each seeing the control as the layers above left it: passing it on or rewriting it carries on to the next layer, and dropping or replacing it ends the chain. For commands, the highest layer that binds a gesture gets it.
 
 Nothing is hidden: for every property it changes, Verbatim records which module and rule set it, the focus report shows each property with its source, and the log names the module and rule that dropped an event.

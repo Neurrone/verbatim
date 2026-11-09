@@ -19,8 +19,8 @@ This page describes hooks as designed for milestone M5.
 
 - `pass`: carry on to the layer below, then Verbatim's own behaviour.
 - `drop`: say nothing for this event, and stop.
-- `replace(node)`: announce another control as the focus instead; it must be one your module read. This is a focus redirect in code.
-- `rewrite(changes)`: change properties of the control for this announcement only.
+- `replace(node)`: announce another control as the focus instead, and stop; it must be one your module read. This is a focus redirect in code.
+- `rewrite(changes)`: change properties of the control for this announcement only, and carry on to the layer below, which sees your changes.
 
 `on-node`'s changes apply wherever the control goes, as a node rule's do; `rewrite` applies to the one announcement.
 
@@ -40,7 +40,7 @@ match = { automation-id = "CalculatorResults" }
 
 ## Order
 
-Across layers, hooks run from the highest layer down: a module in the developer folder or an installed extension, then the built-in. `pass` hands the event to the next; any other verdict ends the chain. For `status-bar`, the highest layer that returns a control wins.
+Across layers, hooks run from the highest layer down: a module in the developer folder or an installed extension, then the built-in. `pass` and `rewrite` hand the event to the next, which sees the control as the layers above left it; `drop` and `replace` end the chain, so a lower layer never undoes them. `on-node` runs the same way, each layer's changes added to those above, and on a focus it runs before `on-focus`, which sees its changes. For `status-bar`, the highest layer that returns a control wins.
 
 A module's hooks never run at the same time as each other for one application, so your instance needs no locking.
 
