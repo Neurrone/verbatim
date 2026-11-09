@@ -62,6 +62,11 @@ Dickson's, each with its date:
 - Control+Z, Control+Y, Control+X, Control+V and Escape in a text field set no note and say nothing for the key, as NVDA binds no script to them (2026-10-25; absent from `editableText.py` 387 to 413). Their selection changes are spoken from the application's caret event. Other keys outside the caret table speak by their evidence (2026-10-08).
 - Terminals keep their reading rules and today's handling of the five chords (2026-10-25 and 2026-10-29).
 - Until uiAccess (M8.6), a caret key in an elevated window is judged from the last read (2026-10-25).
+- A silenced key's held selection changes are said when the key ends, in the order they happened (2026-11-09): Shift+Right selecting "a" with Right pressed 30 ms later is heard as "a selected", "b".
+- A key waiting behind another when the focus moves says nothing for itself (2026-11-09).
+- A word key whose read began before its note arrived speaks at the 100 ms mark, character and line keys at that report (2026-11-09).
+- A selection change no key made during Backspace is heard after the key's words, or before a focus that moves away (2026-11-09).
+- A key whose read fails or is abandoned says nothing (2026-11-09).
 
 Claude's, each with its reason:
 
@@ -395,7 +400,7 @@ Removed against main, in the outpost: `CaretSeen`, `REMEMBERED_CARETS` and the s
 
 Kept: holding, deferral, the 100 ms wait for the key ahead (`KEY_AHEAD_BOUND_MS`), now also the key's bound, the 150 ms before read (`HELD_READ_BOUND_MS`), the recheck of non-atomic reads, general terms with the note that the text changed and the WinEvent sync at the caret event, event coverage (`caret_read_since`), the read on every caret event, `heard` and `later_key`, and `deleted_text`.
 
-When this is built, the rule in `books/dev/src/explanation/design/ownership.md` that lists what an outpost decides reads: "which calls to make: the order of its two routes, verdicts, node identity and, while a key's note lives, what its reads fetch and that text changes are read". D14's section in `books/dev/src/explanation/architecture.md` already says everything decided after the read is decided in the reducer, so it needs only: "A caret key's effect is such a decision: the outpost compares and reports, and Core judges." Neither is edited by this document.
+The rule in `books/dev/src/explanation/design/ownership.md` that lists what an outpost decides, and D14's section in `books/dev/src/explanation/architecture.md`, state this: the outpost compares and reports, and Core judges.
 
 ## Costs
 

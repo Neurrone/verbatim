@@ -658,13 +658,14 @@ Each file's module comment says exactly what it asserts; in outline:
   requires the `faults` feature and runs in `cargo xtask faults`.
 - `idle_barrier.rs`: the outpost's part of the harness's idle barrier
   (`docs/design/communication.md`, section 6.7): the answer to an idle
-  query goes behind every message the outpost sent before it, and is held
-  back while a caret key's watch is open.
+  query goes behind every message the outpost sent before it, and a caret
+  key's note holds nothing back.
 - `caret_watch.rs`, over `caret_watch.json` (a UIA document and a
   button), through the outpost harness: a focus delivered while a caret
-  key's watch is open is reported first; a caret moved and reported after
-  the watch opened answers it; a caret event that shows no change leaves
-  its watch open and is reported; a selection made with no event is found
+  key's note lives is reported first; a caret moved and reported after
+  the note was set is reported with its facts, whose comparison shows the
+  key's effect; a caret event that shows no change is reported with no
+  effect; a selection made with no event is found
   by a before read and by a repeated focus, once; a focus-now query's document is the
   outpost's focus, so a caret event no key caused is reported; and
   Verbatim+Tab's query's (`FocusPurpose::Report`, through
@@ -675,7 +676,7 @@ Each file's module comment says exactly what it asserts; in outline:
   and again as the `WinEvent` UIA raises alongside it, in no fixed order;
   so before each step moves on, the test waits until the outpost has heard
   both (`OutpostUnderTest::heard`, from `Outpost::observe_heard`), or the
-  first step's event could answer the second key's watch.
+  first step's event could be reported under the second key's note.
 - `text.rs` drives `verbatim-outpost`'s text module over `text.json` on
   both stacks: lines, words, and characters; movement stopping at the
   empty last line; UIA's missing sentence unit and the edit control's

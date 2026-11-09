@@ -158,7 +158,7 @@ impl Merge for OutpostToCore {
     }
 
     /// The idle barrier's answer is merged across by nothing, so it never
-    /// overtakes what was sent before it; a reply or a key's tagged report
+    /// overtakes what was sent before it; a reply or a report with a key's facts
     /// only bars a caret report with selection changes (Dickson, 2026-10-30).
     fn barrier(&self) -> Barrier {
         match self {
@@ -177,7 +177,7 @@ impl Merge for OutpostToCore {
     }
 
     /// A caret report that carries selection changes is not merged across
-    /// a reply or a key's tagged report: a change moved behind one would
+    /// a reply or a report with a key's facts: a change moved behind one would
     /// reach Core after the answer to a key pressed before Core saw it,
     /// whose own selection
     /// changes, compared with the selection Core knew, already include it.

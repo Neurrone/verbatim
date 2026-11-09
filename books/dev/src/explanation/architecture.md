@@ -276,7 +276,9 @@ thread, and others learn it from one-way reports or views
 ([the ownership model](design/ownership.md)). Core owns every word and
 every fact across applications. Each outpost's reducer owns what its
 application remembers: the order of its two routes, verdicts, the hang notice,
-the reports Core may hold and the caret watch. The object store owns node
+the reports Core may hold and each node's note for a caret key. A caret
+key's effect is such a decision: the outpost compares and reports, and
+Core judges. The object store owns node
 identity and its release. The hook thread owns the key number. The
 threads that call into applications are the focus listener's reading
 threads and each outpost's workers; no other thread makes such a call.

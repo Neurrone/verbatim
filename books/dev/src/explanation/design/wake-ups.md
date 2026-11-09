@@ -133,9 +133,9 @@ The items keep their numbers, since code and the crate guides cite them.
     throttles its own UIA events and is unchanged.
 
 A caret key in the console host cannot wait for the blink timer, so a
-caret watch the first check leaves open re-reads the caret every 5 ms
-until it finds the evidence, or 50 ms after the key: at most 10 worker
-wake-ups a key, none while no watch polls (`books/dev/src/explanation/design/key-holding.md`,
+key's note re-reads the caret every 5 ms until a read finds the evidence,
+or 50 ms after the key's before read: at most 10 worker wake-ups a key,
+none while no note polls (`books/dev/src/explanation/design/key-holding.md`,
 "The console host's caret poll").
 
 ## Narrowing the outpost's hook
@@ -187,11 +187,11 @@ What can be lost:
   kinds kept hooked.
 
 Narrowing exposed a race it had not caused: with value changes unhooked,
-a caret watch's read could run while the console host wrote a character
+a read under a key's note could run while the console host wrote a character
 and moved its cursor between two of its provider calls, pairing the new
 text with the old caret, and the reducer then echoed the character
 wrongly. A remote operation is not atomic against the provider, so the
-watch's program reads the caret again at its end and answers nothing when
+read's program reads the caret again at its end and answers nothing when
 it moved; the update after the write reads again
 (`books/dev/src/reference/crates/verbatim-uia-rops.md`, `recheck` and `moved_while_read`).
 Hooking value changes again only hid the race.

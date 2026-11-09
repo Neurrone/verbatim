@@ -102,8 +102,7 @@ The rules for the edge cases, each with its reason:
 outpost's worker is the only thread that calls into the application, so
 its count is exactly its current entry's; it travels in the published
 event's or reply's timing, and `verbatim-inspect latency` prints it with
-the outpost read stage. A caret key's watch keeps the calls of checks
-that found nothing and prints them with the caret wait stage. A dialog's
+the outpost read stage. A dialog's
 text is gathered on the worker's own client, its calls counted with the
 rest of its program's.
 
@@ -644,7 +643,7 @@ measured per input-hook wake.
 - Latency: two thread hand-offs per program, each an `SetEvent` and a
   wait's return, expected at tens of microseconds.
 - Processor time: per program, a scan of the intake when a caret key's
-  watch is open or a caret key is dispatched; and a scan of the intake for an edit control's
+  read is dispatched; and a scan of the intake for an edit control's
   value change when a caret read is cut at its value change check.
 - Locks: the reducer's thread takes the mailbox's lock to drain it, the store's for
   a commit's writes, and the
@@ -1017,35 +1016,45 @@ errors and links, against mockapp's `tests/fixtures/text.json`, whose
   adds one attribute read each classically and nothing remotely.
 - Bound: one line per key.
 
-### A caret key's watch, UIA
+### A caret key's reads, UIA
 
-A caret key the application has not handled when the request arrives:
-the watch's first check reads the caret, finds no evidence and leaves the
-watch open, and the worker goes on with its queue
-(`books/dev/src/reference/crates/verbatim-outpost.md`); the check the next caret event
-prompts reads the caret again and answers. A key that moves nothing makes
-the first check alone, silently.
+A caret key passed on sets a note on its node
+(`books/dev/src/reference/crates/verbatim-outpost.md`): while it lives,
+the reads of that node the application's events cause fetch the key's
+unit and report how they compare with the node's last read, and Core
+alone judges them. The worker waits for nothing.
 
-- Minimum and today: one round trip per check, nothing for waiting; met.
-  1 remotely per check, the whole caret read; classically 15; in the edit
-  control 5 window messages for a check that finds nothing and 6 for one
-  that answers.
-- With something selected, when a caret report after the key replaced the
-  kept selection, up to two `CompareEndpoints` round trips more (none in an
-  edit control). A possible reduction: record in the caret history whether
-  a report changed the selection.
+- Minimum and today: one round trip per read, nothing for waiting; met.
+  1 remotely per read, the whole caret read; classically 15; in the edit
+  control 5 window messages for a read that finds no effect and 6 for one
+  that finds it.
+- A text change under a note reads the node once, as above, while the
+  note has seen no effect; the first effect, the final read, the next key
+  or the note's end after 300 ms stops those reads.
+- A caret event after the key's effect keeps its facts until the note
+  ends: the read fetches the key's unit, nothing more through UIA and
+  possibly window messages in an edit control.
+- The final read: one read and one report for a text field's key with no
+  evidence by its 100 ms bound, which a key that moves nothing always
+  pays; it goes ahead of queued reads, and clears the note when it
+  commits. A terminal's key has none.
+- A read in flight when the note arrives is compared at its commit by
+  the text both reads hold, with no call; a word key's unit, which it did
+  not fetch, comes from the final read.
 - Over a selection, any key, Backspace and Delete included, compares with
-  the kept selection in the same round trip, reading the old selection's
-  text as its ends now hold it, up to 513 UTF-16 code units
-  (`verbatim_uia_rops::MAX_COMPARED_TEXT`, one more than the 512 characters
-  from which a selection is spoken as a count): inside the program through
-  UIA, one call classically, one `WinEvent` sync in an edit control.
-- In the console host an open watch re-reads the caret every 5 ms for up
-  to 50 ms, a documented workaround (`books/dev/src/explanation/design/key-holding.md`, "The
-  console host's caret poll"): at most 10 round trips and 10 worker
-  wake-ups a key. In `measure_keys_conhost` (release, 2026-10-26) every
-  open watch was answered within 5 ms, caret reads by watches were 1.34 a
-  key, and caret keys reached speech at P95 9.0, P99 9.4 and maximum 9.4
+  the node's last read's selection in the same round trip, reading the
+  old selection's text as its ends now hold it, up to 513 UTF-16 code
+  units (`verbatim_uia_rops::MAX_COMPARED_TEXT`, one more than the 512
+  characters from which a selection is spoken as a count): inside the
+  program through UIA, one call classically, one `WinEvent` sync in an
+  edit control.
+- In the console host a note re-reads the caret every 5 ms for up to 50
+  ms, a documented workaround
+  (`books/dev/src/explanation/design/key-holding.md`, "The console host's
+  caret poll"): at most 10 round trips and 10 worker wake-ups a key. In
+  `measure_keys_conhost` (release, 2026-10-26) every key its first read
+  did not answer was answered within 5 ms, caret reads for keys were 1.34
+  a key, and caret keys reached speech at P95 9.0, P99 9.4 and maximum 9.4
   ms.
 - Nothing waits behind the key: a focus delivered just after a Right Arrow
   the application ignored is taken 0.74 to 0.85 ms after the key
@@ -1082,15 +1091,14 @@ character with nothing selected, then "al" selected from the caret.
 ### The caret read before a held key
 
 A caret key pressed while the focus has text is held by the hook until
-the outpost has read the caret (`KeyStart::ReadFirst`,
+the outpost has read the caret (`ReadPurpose::BeforeFieldKey`,
 `books/dev/src/explanation/design/key-holding.md`); the read is a caret report's, comparing the
 selection with the node's last read and reading the key's unit
 (`caret_moves_cost_exactly`).
 
 - Minimum and today: 1 UIA call remotely, 8 classically with no selection
   to compare and 17 with one's change to read, 5 window messages in a
-  Win32 edit control and 7 with a change to read; met. A possible reduction: skip the
-  watch's first check when the read was a few milliseconds before.
+  Win32 edit control and 7 with a change to read; met.
 - Wake-ups: two more of the hook's thread per held key, and the read's
   round trip: roughly 8 to 13 wake-ups and 0.7 to 1.5 ms of processor time
   per held key in the terminals (debug; `books/dev/src/explanation/design/key-holding.md`,
@@ -1737,10 +1745,10 @@ character, a space or "blank", minimum, P50, P95, P99 and maximum in ms:
   Windows Terminal's median of about 21 ms is one frame.
 - Windows Terminal's caret keys and Backspace (74): 3.7, 5.5, 44.9, 262.2,
   288.0. Its tail is Backspace at 33 ms a key: each held key waits for the
-  watch of the key ahead (`books/dev/src/explanation/design/key-holding.md`, "Keys behind a
+  result of the key ahead (`books/dev/src/explanation/design/key-holding.md`, "Keys behind a
   held key"), answered only when it draws 20 to 80 ms later, so the keys
   queue; the tail varies from run to run. The console host's caret keys
-  are under "A caret key's watch, UIA".
+  are under "A caret key's reads, UIA".
 
 ### A terminal's upward search
 
