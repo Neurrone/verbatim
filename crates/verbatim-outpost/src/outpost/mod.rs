@@ -1548,7 +1548,9 @@ impl Outpost {
                 context.mailbox.post(Posted::Cancel(*request_id));
             }
             CoreToOutpost::ReadTerminal { node, trace_id } => context.push(
-                Item::ReadTerminal { node_id: *node },
+                Item::ReadTerminal {
+                    node_id: node.unstamped(),
+                },
                 (*trace_id, now_us(), EventTiming::default()),
                 Source::Other,
             ),

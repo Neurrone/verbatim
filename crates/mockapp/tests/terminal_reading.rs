@@ -1068,7 +1068,8 @@ fn a_read_terminal_message_reads_the_caret_first_under_the_keys_trace() {
     outpost
         .outpost
         .handle_command(&verbatim_model::protocol::CoreToOutpost::ReadTerminal {
-            node: term,
+            // As Core sends it, stamped with this outpost's generation.
+            node: term.with_outpost(verbatim_model::OutpostId(4)),
             trace_id: trace,
         });
     match outpost.next() {
