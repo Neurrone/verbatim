@@ -252,6 +252,9 @@ mod seam {
         held: Option<u64>,
         /// An event's program has read and not yet committed.
         read: Option<(u64, TextState)>,
+        /// The watch between checks in the program's copy, by which it
+        /// names what it takes.
+        kept: Option<(NodeId, KeyTag)>,
     }
 
     /// The reducer under test with the programs the world runs for it.
@@ -265,6 +268,11 @@ mod seam {
         reads: BTreeMap<u64, TextState>,
         /// The read the commit being made rests on, and what it found.
         pending_read: Option<(u64, TextState)>,
+        /// The keys Core has called off, whose request's reply, when it
+        /// brings no read, says nothing of the key.
+        called_off: BTreeSet<u64>,
+        /// The node each key names.
+        nodes: BTreeMap<u64, u64>,
         /// The held keys whose before read has not answered.
         held: BTreeSet<u64>,
         /// The keys with no before read whose request is not yet handled.
@@ -284,6 +292,8 @@ mod seam {
                 flight: None,
                 reads: BTreeMap::new(),
                 pending_read: None,
+                called_off: BTreeSet::new(),
+                nodes: BTreeMap::new(),
                 held: BTreeSet::new(),
                 unhandled: BTreeSet::new(),
             }
@@ -354,33 +364,7 @@ mod seam {
         /// Reads the effects: programs dispatched, and keys answered.
         fn effects(&mut self, effects: Vec<Effect>) -> Vec<Seen> {
             let mut seen = Vec::new();
-            // A key's request is handled before the end of the older key
-            // its dispatch sends, which comes just before the dispatch.
-            let handled = effects.iter().enumerate().find_map(|(at, effect)| {
-                let Effect::Dispatch(program) = effect else {
-                    return None;
-                };
-                match Self::kind_of(program) {
-                    Kind::Key { key, .. } => Some((
-                        key,
-                        if matches!(at.checked_sub(1).and_then(|at| effects.get(at)),
-                            Some(Effect::Send(message)) if matches!(**message,
-                                OutpostToCore::Event { event: NormalizedEvent::KeyAnswered { .. }, .. }))
-                        {
-                            at - 1
-                        } else {
-                            at
-                        },
-                    )),
-                    _ => None,
-                }
-            });
-            for (at, effect) in effects.into_iter().enumerate() {
-                if let Some((key, first)) = handled
-                    && first == at
-                {
-                    seen.push(Seen::KeyHandled { key });
-                }
+            for effect in effects {
                 match effect {
                     Effect::Dispatch(program) => {
                         let kind = Self::kind_of(&program);
@@ -395,6 +379,12 @@ mod seam {
                             taken: false,
                             held,
                             read: None,
+                            kept: program
+                                .facts
+                                .text
+                                .watch
+                                .kept()
+                                .map(|key| (key.node, key.tag)),
                         });
                     }
                     Effect::Abandon { .. } => self.flight = None,
@@ -420,7 +410,9 @@ mod seam {
                     }
                     if let QueryOutcome::Done(QueryResult::Text(TextReply::Key(started))) = outcome
                     {
-                        if let KeyStarted::Read(_) = *started {
+                        if let KeyStarted::Read(_) = *started
+                            && !self.called_off.contains(&key)
+                        {
                             let (_, state) = self.pending_read.expect("its read");
                             seen.push(Seen::BeforeAnswered { key, state });
                         }
@@ -428,13 +420,15 @@ mod seam {
                         // A request that opened no watch: failed, not
                         // started or with no last read. A held key's
                         // before read's answer comes first.
-                        if self.held.remove(&key) {
+                        if self.held.remove(&key) && !self.called_off.contains(&key) {
                             seen.push(Seen::BeforeAnswered {
                                 key,
                                 state: TextState::default(),
                             });
                         }
-                        seen.push(Seen::Ended { key });
+                        if !self.called_off.contains(&key) {
+                            seen.push(Seen::Ended { key });
+                        }
                     }
                 }
                 OutpostToCore::Event {
@@ -505,16 +499,15 @@ mod seam {
                 motion: motion_of(kind),
                 start: match holding {
                     Holding::Held => KeyStart::ReadFirst,
-                    Holding::NotHeld => KeyStart::FromLastRead { withdrawn: None },
-                    // The request given up on: never sent in this world.
-                    Holding::GivenUp => KeyStart::FromLastRead {
-                        withdrawn: Some(tag(key + 1_000_000)),
-                    },
+                    Holding::NotHeld | Holding::GivenUp => KeyStart::FromLastRead,
                 },
             };
             let mut seen = Vec::new();
+            self.nodes.insert(key, node);
             if holding == Holding::Held {
                 self.held.insert(key);
+                // A key's request acts on the watch as it arrives.
+                seen.push(Seen::KeyHandled { key });
             } else {
                 self.unhandled.insert(key);
             }
@@ -540,6 +533,7 @@ mod seam {
         /// Core calls a key off.
         pub(super) fn call_off(&mut self, key: u64) -> Vec<Seen> {
             self.tick_clock();
+            self.called_off.insert(key);
             self.drive(Input::WatchOrder {
                 tag: tag(key),
                 order: WatchOrder::End,
@@ -773,13 +767,16 @@ mod seam {
         ) -> Vec<Seen> {
             let mut seen = Vec::new();
             if !taken {
-                seen = self.commit(
-                    request,
-                    Change {
-                        watch: Some(WatchChange::Take(NodeId::new(node))),
-                        ..Change::default()
-                    },
-                );
+                let kept = self.flight.as_ref().and_then(|flight| flight.kept);
+                if let Some((_, tag)) = kept.filter(|(at, _)| *at == NodeId::new(node)) {
+                    seen = self.commit(
+                        request,
+                        Change {
+                            watch: Some(WatchChange::Take(NodeId::new(node), tag)),
+                            ..Change::default()
+                        },
+                    );
+                }
                 let held = self.held_watch(node).map(|key| key.tag.0.0);
                 let flight = self.flight.as_mut().expect("the event's program");
                 flight.taken = true;
@@ -851,15 +848,38 @@ mod seam {
         /// The program in flight learns `node`'s element was replaced.
         pub(super) fn replace(&mut self, node: u64) -> Vec<Seen> {
             self.tick_clock();
+            let reading = match self.reducer.facts.text.watch {
+                Watch::Reading { tag } if self.nodes.get(&tag.0.0) == Some(&node) => Some(tag.0.0),
+                _ => None,
+            };
             let request = self.flight.as_ref().expect("a program in flight").request;
-            self.commit(
+            let mut seen = self.commit(
                 request,
                 Change {
                     replaced: Some(NodeId::new(node)),
                     text: vec![TextChange::Forget(node)],
                     ..Change::default()
                 },
-            )
+            );
+            // The program in flight has replaced the element a key still
+            // being read names: Core calls it off, as for a focus elsewhere.
+            if let Some(key) = reading {
+                self.key_called_off_reading(key, &mut seen);
+            }
+            seen
+        }
+
+        /// Core calls off key `key`, and that is its one answer here, after
+        /// its before read's.
+        fn key_called_off_reading(&mut self, key: u64, seen: &mut Vec<Seen>) {
+            seen.extend(self.call_off(key));
+            if self.held.remove(&key) {
+                seen.push(Seen::BeforeAnswered {
+                    key,
+                    state: TextState::default(),
+                });
+            }
+            seen.push(Seen::Ended { key });
         }
 
         /// The program in flight reports a focus on another node. A text
@@ -867,18 +887,15 @@ mod seam {
         /// it, and its end is the key's one answer here.
         pub(super) fn focus_elsewhere(&mut self) -> Vec<Seen> {
             self.tick_clock();
-            let open = self
-                .reducer
-                .facts
-                .text
-                .watch
-                .open()
-                .map(|open| open.tag.0.0);
+            // Core calls off a key still being read as it does an open one.
+            let open = match self.reducer.facts.text.watch {
+                Watch::Reading { tag } => Some(tag.0.0),
+                ref watch => watch.open().map(|open| open.tag.0.0),
+            };
             let request = self.flight.as_ref().expect("a program in flight").request;
             let mut seen = self.commit(request, focus_change(3, false));
             if let Some(key) = open {
-                seen.extend(self.call_off(key));
-                seen.push(Seen::Ended { key });
+                self.key_called_off_reading(key, &mut seen);
             }
             seen
         }

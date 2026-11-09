@@ -1653,7 +1653,7 @@ mod key_line {
                                     KeyStart::ReadFirst => {
                                         self.reading.insert(key, asked);
                                     }
-                                    KeyStart::FromLastRead { .. } => {
+                                    KeyStart::FromLastRead => {
                                         self.baselines.insert(key, self.last.clone());
                                         self.watching.insert(key, asked);
                                     }
