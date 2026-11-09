@@ -994,47 +994,9 @@ pub(crate) fn plain_followed(node: NodeId, role: Role) -> Followed {
 
 #[cfg(test)]
 mod tests {
-    use verbatim_model::{
-        CallCounts, CaretMotion, KeyTag, QueryId, TextAnchor, TextChunk, TextUnit, WatchKind,
-    };
+    use verbatim_model::{CaretMotion, KeyFetch, NodeKind, TextUnit};
 
     use super::*;
-    use crate::{Baseline, KeyWatch, LastRead, Stage, Watch};
-
-    /// A watch of key `tag` on node 1, open.
-    fn waiting(tag: u64) -> Watch {
-        Watch::Open {
-            key: Box::new(KeyWatch {
-                tag: KeyTag(QueryId(tag)),
-                node: NodeId::new(1),
-                baseline: Baseline::Edit(LastRead {
-                    caret: 0,
-                    selection: None,
-                    line: TextChunk {
-                        unit: TextUnit::Line,
-                        text: String::new(),
-                        start: TextAnchor(1),
-                        offset: 0,
-                        languages: Vec::new(),
-                        first: false,
-                        last: false,
-                        truncated: false,
-                        formats: Vec::new(),
-                    },
-                    text_changed: false,
-                    read_at_us: 0,
-                }),
-                unit: TextUnit::Character,
-                motion: CaretMotion::NextCharacter,
-                kind: WatchKind::TextField,
-                before_unit: None,
-                trace: TraceId::from_raw(1),
-                timing: EventTiming::default(),
-                calls: CallCounts::default(),
-            }),
-            stage: Stage::Awaiting,
-        }
-    }
 
     /// A focus, runtime id `[42, 1]`, in window `own` (0 for none), with
     /// ancestors `[42, 2]` and `[42, 3]`, nearest first, in the windows
@@ -1165,7 +1127,7 @@ mod tests {
             }),
             ..Change::default()
         };
-        apply(facts, 0, &change, None)
+        apply(facts, 0, &change)
     }
 
     #[test]
@@ -1281,7 +1243,7 @@ mod tests {
             mark: Some(MarkChange::DropSystemCaret),
             ..Change::default()
         };
-        let applied = apply(&mut facts, 0, &change, None);
+        let applied = apply(&mut facts, 0, &change);
         assert_eq!(
             applied.logic_errors,
             vec![
@@ -1487,33 +1449,28 @@ mod tests {
         );
     }
 
+    /// A focus's element replaced clears the note on its node, and only
+    /// that node's.
     #[test]
-    fn a_focus_whose_element_was_replaced_ends_the_caret_keys_watch_on_its_node() {
+    fn a_focus_whose_element_was_replaced_clears_the_note_on_its_node() {
         let mut facts = Facts::default();
-        Arc::make_mut(&mut facts.text).watch = waiting(7);
-        // Another node replaced leaves the watch on node 1 alone.
+        let fetch = KeyFetch {
+            unit: TextUnit::Character,
+            motion: CaretMotion::NextCharacter,
+            kind: NodeKind::TextField,
+        };
+        Arc::make_mut(&mut facts.text).set_note(1, fetch, 0, false);
         let elsewhere = Change {
             replaced: Some(NodeId::new(2)),
             ..Change::default()
         };
-        let applied = apply(&mut facts, 0, &elsewhere, Some(1));
-        assert_eq!(applied.answers, []);
+        apply(&mut facts, 0, &elsewhere);
+        assert!(facts.text.live_note(1, 0).is_some());
         let replaced = Change {
             replaced: Some(NodeId::new(1)),
             ..Change::default()
         };
-        let applied = apply(&mut facts, 0, &replaced, Some(1));
-        let ended: Vec<(u64, &str)> = applied
-            .answers
-            .iter()
-            .map(|answer| match answer {
-                Answer::Ended { key, why } => (key.tag.0.0, *why),
-                answer => panic!("an end, not {answer:?}"),
-            })
-            .collect();
-        assert_eq!(
-            (ended, facts.text.watch.is_none()),
-            (vec![(7, "the focus's element was replaced")], true)
-        );
+        apply(&mut facts, 0, &replaced);
+        assert_eq!(facts.text.live_note(1, 0), None);
     }
 }
