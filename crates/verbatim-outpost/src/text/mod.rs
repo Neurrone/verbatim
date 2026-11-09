@@ -1750,7 +1750,7 @@ fn format_span(unit: TextUnit) -> Option<FormatSpan> {
     }
 }
 
-/// What a key's check compares with: its pinned baseline, the unit it
+/// What a key's check compares with: its baseline, the unit it
 /// reports, and which evidence counts.
 pub struct CheckKey<'a, P> {
     /// The key's baseline.

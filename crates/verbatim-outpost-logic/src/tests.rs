@@ -859,7 +859,7 @@ fn opens(key: u64, console: bool) -> Change {
 /// The change that takes the watch on node 1.
 fn takes() -> Change {
     Change {
-        watch: Some(WatchChange::Take(NodeId::new(1))),
+        watch: Some(WatchChange::Take(NodeId::new(1), KeyTag(QueryId(7)))),
         ..Change::default()
     }
 }
@@ -1012,9 +1012,12 @@ fn a_newer_keys_request_ends_the_old_watch_and_its_poll() {
     let effects = replay.push(caret_key(8), Source::Other, 4);
     assert_eq!(replies(&effects), [(7, "watch ended")]);
     let key = program(&effects);
-    assert_eq!(key.facts.text.watch, Watch::None);
+    let reading = Watch::Reading {
+        tag: KeyTag(QueryId(8)),
+    };
+    assert_eq!(key.facts.text.watch, reading);
     let next = key.request;
-    assert_eq!(*watch_of(&replay), Watch::None);
+    assert_eq!(*watch_of(&replay), reading);
     let effects = replay.commit(
         next,
         Change {
@@ -1028,6 +1031,25 @@ fn a_newer_keys_request_ends_the_old_watch_and_its_poll() {
     assert!(programs(&replay.finish(next, false, 8)).is_empty());
     assert_eq!(replay.reducer.next_timer(now(8)), None);
     assert!(replay.reducer.queries().is_empty());
+}
+
+#[test]
+fn verbatim_moving_the_caret_ends_a_terminals_watch() {
+    let mut replay = polling();
+    let effects = replay.push(
+        Item::Query {
+            request_id: RequestId::shell(8),
+            query: Query::Text {
+                node_id: NodeId::new(1),
+                op: TextOp::MoveCaret(verbatim_model::TextPoint::At(
+                    verbatim_model::TextPosition::at(verbatim_model::TextAnchor(1)),
+                )),
+            },
+        },
+        Source::Other,
+        4,
+    );
+    assert_eq!(replies(&effects), [(7, "watch ended")]);
 }
 
 #[test]

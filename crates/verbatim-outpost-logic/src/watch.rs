@@ -1,6 +1,6 @@
 //! The caret key's watch (`docs/design/caret-selection-rework.md`): the
 //! outpost's open check for a key's evidence, held as one state beside the
-//! node's last read. A key's baseline is a copy of a last read, pinned here
+//! node's last read. A key's baseline is a copy of a last read, kept here
 //! for the key. The reducer alone decides the times, on the run's shared
 //! clock; each program's copy applies the same transitions with no clock,
 //! its times left at zero, since no program reads them.
@@ -151,6 +151,13 @@ pub enum Watch {
     /// No watch.
     #[default]
     None,
+    /// A key's request whose program opens the watch has arrived: a commit
+    /// opens a watch only from here, and only the watch of this tag, so a
+    /// program whose key was given up or replaced opens none.
+    Reading {
+        /// The key's tag.
+        tag: KeyTag,
+    },
     /// Between checks.
     Open {
         /// The watch.
@@ -259,7 +266,7 @@ pub enum Reached {
 pub enum FinalRead {
     /// The order is for no open watch, and is ignored.
     Ignored,
-    /// The running check, or the next program, is the final read.
+    /// The next idle moment runs the final read.
     Noted,
     /// A read is to be dispatched now: the watch is held for it.
     Dispatch,
@@ -275,11 +282,11 @@ fn micros(duration: Duration) -> u64 {
 }
 
 impl Watch {
-    /// The watch, in any state but [`Watch::None`].
+    /// The watch, when one is open.
     #[must_use]
     pub fn open(&self) -> Option<&KeyWatch> {
         match self {
-            Self::None => None,
+            Self::None | Self::Reading { .. } => None,
             Self::Open { key, .. } | Self::Checking { key, .. } => Some(key),
         }
     }
@@ -289,14 +296,14 @@ impl Watch {
     pub fn kept(&self) -> Option<&KeyWatch> {
         match self {
             Self::Open { key, .. } => Some(key),
-            Self::None | Self::Checking { .. } => None,
+            Self::None | Self::Reading { .. } | Self::Checking { .. } => None,
         }
     }
 
-    /// Whether there is no watch.
+    /// Whether no watch is open.
     #[must_use]
     pub fn is_none(&self) -> bool {
-        matches!(self, Self::None)
+        self.open().is_none()
     }
 
     /// The UIA ranges the baseline names when the watch is `node`'s.
@@ -333,17 +340,36 @@ impl Watch {
                 Stage::Terminal { ends } => Some(*ends),
                 Stage::Poll { next, .. } => Some(*next),
             },
-            Self::None | Self::Checking { .. } => None,
+            Self::None | Self::Reading { .. } | Self::Checking { .. } => None,
         }
     }
 
-    /// Opens `key` from no watch, its stage by its kind and whether its
-    /// node is the focused console host's text area (`console`). Whether
-    /// it opened: a watch already there is left as it is.
+    /// A key's request whose program opens the watch has arrived.
+    pub fn reading(&mut self, tag: KeyTag) {
+        *self = Self::Reading { tag };
+    }
+
+    /// The request of key `tag` was cancelled, or its program ended, and no
+    /// watch will open for it.
+    pub fn reading_ended(&mut self, tag: KeyTag) {
+        if *self == (Self::Reading { tag }) {
+            *self = Self::None;
+        }
+    }
+
+    /// A program's commit opens `key`, from [`Watch::Reading`] of its tag.
+    /// Whether it opened: anything else is left as it is.
     pub fn opened(&mut self, key: Box<KeyWatch>, console: bool, clock: Clock) -> bool {
-        if !self.is_none() {
+        if *self != (Self::Reading { tag: key.tag }) {
             return false;
         }
+        self.start(key, console, clock);
+        true
+    }
+
+    /// Opens `key`, its stage by its kind and whether its node is the
+    /// focused console host's text area (`console`).
+    pub fn start(&mut self, key: Box<KeyWatch>, console: bool, clock: Clock) {
         let stage = match key.kind {
             WatchKind::TextField => Stage::Awaiting,
             WatchKind::Terminal if console => {
@@ -358,13 +384,13 @@ impl Watch {
             },
         };
         *self = Self::Open { key, stage };
-        true
     }
 
-    /// Takes an open watch on `node` for the program in flight to check;
-    /// a final read due makes the check the final read.
-    pub fn take(&mut self, node: NodeId) -> Option<KeyWatch> {
-        if !matches!(self, Self::Open { key, .. } if key.node == node) {
+    /// Takes the open watch of `tag` on `node` for the program in flight to
+    /// check, so a check made from an older copy cannot answer a newer
+    /// watch; a final read due makes the check the final read.
+    pub fn take(&mut self, node: NodeId, tag: KeyTag) -> Option<KeyWatch> {
+        if !matches!(self, Self::Open { key, .. } if key.node == node && key.tag == tag) {
             return None;
         }
         let Self::Open { key, stage } = std::mem::take(self) else {
@@ -475,7 +501,7 @@ impl Watch {
     /// Ends the watch, in any state, for `why`.
     pub fn end(&mut self, why: &'static str) -> Option<Answer> {
         let key = match std::mem::take(self) {
-            Self::None => return None,
+            Self::None | Self::Reading { .. } => return None,
             Self::Open { key, .. } | Self::Checking { key, .. } => key,
         };
         Some(Answer::Ended { key, why })
@@ -497,12 +523,14 @@ impl Watch {
         if self.open().is_some_and(|key| key.tag == tag) {
             *self = Self::None;
         }
+        self.reading_ended(tag);
     }
 
     /// Core's final read of the watch `tag`: an open watch of a text field
     /// is held for a read to be dispatched now, or, with a program in flight
-    /// (`busy`), notes the read as due; a check already running becomes the
-    /// final read. Any other is ignored.
+    /// (`busy`), notes the read as due; a check already running, whose read
+    /// began before the order, is followed by the final read when it finds
+    /// nothing. Any other is ignored.
     pub fn final_read(&mut self, tag: KeyTag, busy: bool) -> FinalRead {
         match self {
             Self::Open { key, stage } if key.tag == tag && *stage == Stage::Awaiting => {
@@ -523,7 +551,7 @@ impl Watch {
             Self::Checking { key, after }
                 if key.tag == tag && *after == AfterCheck::Resume(Stage::Awaiting) =>
             {
-                *after = AfterCheck::Answer;
+                *after = AfterCheck::Resume(Stage::FinalDue);
                 FinalRead::Noted
             }
             _ => FinalRead::Ignored,
@@ -684,7 +712,7 @@ mod tests {
     #[test]
     fn a_console_poll_counts_from_its_opening_and_ends_at_its_last_read() {
         let mut watch = Watch::None;
-        assert!(watch.opened(key(WatchKind::Terminal), true, Some(1_000)));
+        watch.start(key(WatchKind::Terminal), true, Some(1_000));
         assert_eq!(watch.due(), Some(6_000));
         assert_eq!(watch.reach(5_999), Reached::Nothing);
         assert_eq!(watch.reach(6_000), Reached::Read);
@@ -704,7 +732,7 @@ mod tests {
     #[test]
     fn a_terminals_deadline_ends_its_watch() {
         let mut watch = Watch::None;
-        watch.opened(key(WatchKind::Terminal), false, Some(0));
+        watch.start(key(WatchKind::Terminal), false, Some(0));
         let ends = micros(TERMINAL_WATCH_BOUND);
         assert_eq!(watch.reach(ends - 1), Reached::Nothing);
         assert!(matches!(watch.reach(ends), Reached::Ended(_)));
@@ -713,7 +741,7 @@ mod tests {
     #[test]
     fn a_text_fields_watch_has_no_time_of_its_own() {
         let mut watch = Watch::None;
-        watch.opened(key(WatchKind::TextField), false, Some(0));
+        watch.start(key(WatchKind::TextField), false, Some(0));
         assert_eq!(watch.due(), None);
         assert_eq!(watch.reach(u64::MAX), Reached::Nothing);
     }
@@ -721,7 +749,7 @@ mod tests {
     #[test]
     fn a_final_read_with_nothing_found_is_the_bound_answer() {
         let mut watch = Watch::None;
-        watch.opened(key(WatchKind::TextField), false, Some(0));
+        watch.start(key(WatchKind::TextField), false, Some(0));
         assert_eq!(
             watch.final_read(KeyTag(QueryId(7)), false),
             FinalRead::Dispatch
@@ -735,28 +763,46 @@ mod tests {
     #[test]
     fn a_final_read_with_a_program_in_flight_runs_after_it() {
         let mut watch = Watch::None;
-        watch.opened(key(WatchKind::TextField), false, Some(0));
+        watch.start(key(WatchKind::TextField), false, Some(0));
         assert_eq!(watch.final_read(KeyTag(QueryId(7)), true), FinalRead::Noted);
         assert!(watch.final_due());
         assert_eq!(watch.reach(1), Reached::Read);
     }
 
     #[test]
-    fn a_running_check_becomes_the_final_read() {
+    fn a_running_check_is_followed_by_the_final_read() {
         let mut watch = Watch::None;
-        watch.opened(key(WatchKind::TextField), false, Some(0));
-        assert!(watch.take(NodeId::new(1)).is_some());
+        watch.start(key(WatchKind::TextField), false, Some(0));
+        assert!(watch.take(NodeId::new(1), KeyTag(QueryId(7))).is_some());
         assert_eq!(watch.final_read(KeyTag(QueryId(7)), true), FinalRead::Noted);
-        assert!(matches!(
+        assert_eq!(
             watch.checked(Checked::Found(found(false)), Some(1)),
-            CheckResult::Answered(Answer::Bound { .. })
-        ));
+            CheckResult::Resumed(Some(found(false)))
+        );
+        assert!(watch.final_due());
+    }
+
+    #[test]
+    fn a_commit_opens_a_watch_only_from_its_keys_request() {
+        let mut watch = Watch::None;
+        assert!(!watch.opened(key(WatchKind::TextField), false, Some(0)));
+        watch.reading(KeyTag(QueryId(8)));
+        assert!(!watch.opened(key(WatchKind::TextField), false, Some(0)));
+        watch.reading(KeyTag(QueryId(7)));
+        assert!(watch.opened(key(WatchKind::TextField), false, Some(0)));
+    }
+
+    #[test]
+    fn a_take_of_an_older_tag_takes_nothing() {
+        let mut watch = Watch::None;
+        watch.start(key(WatchKind::TextField), false, Some(0));
+        assert_eq!(watch.take(NodeId::new(1), KeyTag(QueryId(8))), None);
     }
 
     #[test]
     fn an_order_for_another_tag_is_ignored() {
         let mut watch = Watch::None;
-        watch.opened(key(WatchKind::TextField), false, Some(0));
+        watch.start(key(WatchKind::TextField), false, Some(0));
         let open = watch.clone();
         assert_eq!(
             watch.final_read(KeyTag(QueryId(8)), false),

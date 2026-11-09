@@ -316,7 +316,7 @@ fn key(motion: CaretMotion, start: KeyStart) -> (KeyTag, TextOp) {
 
 /// A key's watch of `node` from its last read, its request answered.
 fn watch_key(outpost: &mut OutpostUnderTest, node: NodeId, motion: CaretMotion) -> KeyTag {
-    let (tag, op) = key(motion, KeyStart::FromLastRead { withdrawn: None });
+    let (tag, op) = key(motion, KeyStart::FromLastRead);
     let request = ask(outpost, node, op);
     assert_eq!(
         answer_to(outpost, request),

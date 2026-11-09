@@ -156,7 +156,7 @@ fn the_answer_waits_for_an_open_caret_watch() {
             kind: WatchKind::TextField,
             unit: CaretMotion::NextCharacter.unit(),
             motion: CaretMotion::NextCharacter,
-            start: KeyStart::FromLastRead { withdrawn: None },
+            start: KeyStart::FromLastRead,
         }),
     });
     match outpost.next() {

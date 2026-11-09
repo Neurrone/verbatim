@@ -8,7 +8,9 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 use verbatim_model::protocol::{EventTiming, FrontWindow, OutpostToCore, UiaFocusRead};
-use verbatim_model::{CaretReport, NodeId, NodeSnapshot, Role, StateSet, TraceId, WatchKind};
+use verbatim_model::{
+    CaretReport, KeyTag, NodeId, NodeSnapshot, Role, StateSet, TraceId, WatchKind,
+};
 
 use verbatim_reader_rules::Window;
 
@@ -464,7 +466,7 @@ pub enum WatchChange {
         console: bool,
     },
     /// The watch on this node taken by the program to be checked.
-    Take(NodeId),
+    Take(NodeId, KeyTag),
     /// The held watch's check found this.
     Checked(Checked),
 }
@@ -1011,8 +1013,8 @@ fn apply_watch(text: &mut TextFacts, change: &WatchChange, clock: Clock, applied
             applied.opened = text.watch.opened(key.clone(), *console, clock);
             Vec::new()
         }
-        WatchChange::Take(node) => {
-            let (taken, ranges) = text.with_watch(|watch| watch.take(*node));
+        WatchChange::Take(node, tag) => {
+            let (taken, ranges) = text.with_watch(|watch| watch.take(*node, *tag));
             applied.taken = taken;
             ranges
         }

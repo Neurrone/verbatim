@@ -124,12 +124,7 @@ static NEXT_TAG: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::ne
 
 /// A key judged from the node's last read, and its request's answer read.
 fn key_from_last_read(outpost: &mut OutpostUnderTest, node: NodeId, motion: CaretMotion) -> KeyTag {
-    let (key, tag) = ask_key(
-        outpost,
-        node,
-        motion,
-        KeyStart::FromLastRead { withdrawn: None },
-    );
+    let (key, tag) = ask_key(outpost, node, motion, KeyStart::FromLastRead);
     assert_eq!(
         reply_to(outpost, key),
         TextReply::Key(Box::new(KeyStarted::Watching))
@@ -1258,7 +1253,7 @@ fn an_edit_controls_value_change_counted_by_a_keys_answer_leaves_the_next_change
         &mut outpost,
         node,
         CaretMotion::NextCharacter,
-        KeyStart::FromLastRead { withdrawn: None },
+        KeyStart::FromLastRead,
     );
     app.send(r"set-text doc x beta\ngamma\n");
     app.send("caret doc 1");

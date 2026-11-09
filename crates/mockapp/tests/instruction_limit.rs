@@ -489,6 +489,7 @@ fn caret_reads_execute_exactly() {
         worst.unit = Some(TextUnit_Word);
         worst.read_selection_text = true;
         worst.read_previous_text = true;
+        worst.recheck = true;
         let answer = caret_read_remote(&worst).expect("the program runs");
         assert_eq!(answer.runs.len(), 64);
         assert_eq!(answer.changes.map(|changes| changes.len()), Some(1));
@@ -509,8 +510,10 @@ fn caret_reads_execute_exactly() {
     // conditions every read with `TextPattern2` runs (2026-10-22), and
     // 4456 before a selection holding nothing on either side was made one
     // whole change (2026-10-23), and 4462 and 97 before it compared the
-    // selection with a key's baseline (2026-11-09).
-    assert_eq!([worst, typical], [4473, 98], "caret read worst and typical");
+    // selection with a key's baseline (2026-11-09), and 4473 before the
+    // worst case read the caret again at its end, as a key's check does
+    // (2026-11-09).
+    assert_eq!([worst, typical], [4494, 98], "caret read worst and typical");
 }
 
 /// The caret read where every format stretch is two characters with one

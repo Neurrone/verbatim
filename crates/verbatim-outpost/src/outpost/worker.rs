@@ -942,7 +942,7 @@ impl Worker<'_> {
     ) {
         match key.start {
             KeyStart::ReadFirst => self.before_read(request_id, trace, node_id, key),
-            KeyStart::FromLastRead { .. } => {
+            KeyStart::FromLastRead => {
                 let reply = self.watch_from_last_read(trace, node_id, key);
                 let result = self.reply_message(
                     request_id,
@@ -1140,8 +1140,15 @@ impl Worker<'_> {
     /// finishes it, which holds the watch in its place.
     fn check_watch_now(&mut self, node_id: NodeId) -> bool {
         let context = self.context;
+        let Some(tag) = context
+            .open_watch_kept()
+            .filter(|kept| kept.node == node_id)
+            .map(|kept| kept.tag)
+        else {
+            return false;
+        };
         let (committed, taken) = context.commit(Effects {
-            watch: Some(WatchChange::Take(node_id)),
+            watch: Some(WatchChange::Take(node_id, tag)),
             ..Effects::default()
         });
         if committed == Committed::Refused {

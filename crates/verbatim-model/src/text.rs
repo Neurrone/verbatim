@@ -450,13 +450,9 @@ pub enum KeyStart {
     /// Read the caret, as the before read of a held key, and watch from
     /// that read.
     ReadFirst,
-    /// Watch from the node's last read: the key was not held, or its before
-    /// read was given up.
-    FromLastRead {
-        /// The request given up, which this one withdraws: not yet started
-        /// it is cancelled, and running it opens no watch.
-        withdrawn: Option<KeyTag>,
-    },
+    /// Watch from the node's last read as the request arrives: the key was
+    /// not held, or its before read was given up.
+    FromLastRead,
 }
 
 /// The one request of a caret key: answered once, with [`KeyStarted`] or

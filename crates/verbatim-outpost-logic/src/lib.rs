@@ -87,11 +87,11 @@ use std::time::Duration;
 
 use verbatim_model::protocol::{
     DeliveredFact, EventTiming, FrontWindow, OutpostToCore, Query, QueryOutcome, QueryResult,
-    RequestId,
+    RequestId, Requester,
 };
 use verbatim_model::{
     Backend, CallCounts, FocusGroup, KeyAnswer, KeyRequest, KeyStart, KeyStarted, KeyTag, NodeId,
-    NormalizedEvent, TextOp, TextReply, TraceId, WatchKind, WatchOrder,
+    NormalizedEvent, QueryId, TextOp, TextReply, TraceId, WatchKind, WatchOrder,
 };
 use verbatim_reader_rules::Window;
 use verbatim_reader_rules::in_flight::{Abandoned, Ask, Decision, InFlight, RuleWindow};
@@ -546,10 +546,6 @@ impl InHand {
 /// What the reducer keeps of the program in flight, beside what the work
 /// in flight keeps of it (its request, times, walk and moved-on rule).
 #[derive(Clone, Debug)]
-#[expect(
-    clippy::struct_excessive_bools,
-    reason = "each says one independent thing about the program in flight"
-)]
 struct Current {
     /// The query the program answers, if it answers one, which an
     /// abandonment or a program that ends without answering answers.
@@ -564,8 +560,9 @@ struct Current {
     /// waits for an open watch: it holds the caret key's watch, or answered
     /// it and may still read the terminal under the key's trace.
     deferred: bool,
-    /// Core withdrew its query while it ran: it opens no watch.
-    withdrawn: bool,
+    /// The caret key it is the request of, if any: when it ends with no
+    /// watch opened, none will open.
+    key: Option<KeyTag>,
     /// What the program has in hand, for the log of its abandonment.
     in_hand: InHand,
     /// Whether the user moving on from its window abandons it: not for a
@@ -620,9 +617,9 @@ pub struct Reducer {
     facts: Facts,
     /// The program in flight, and the worker generation in charge.
     flight: InFlight<Current>,
-    /// The baselines of key requests from the last read not yet handled,
-    /// pinned as they arrived.
-    pinned: std::collections::BTreeMap<RequestId, Option<Baseline>>,
+    /// The keys whose request a newer key's replaced before its program
+    /// opened their watch, which end when that program's commit arrives.
+    replaced: BTreeSet<KeyTag>,
     /// The tries left of a focus group whose try was abandoned, to run
     /// before anything else.
     after: VecDeque<(Entry, Option<GroupTry>)>,
@@ -756,7 +753,7 @@ impl Reducer {
                 self.subscription_effects(applied, now, &mut effects);
             }
             Input::Cancel(request_id) => {
-                self.pinned.remove(&request_id);
+                self.request_cancelled(request_id, &mut effects);
                 if let Some(trace) = self.intake.cancel(request_id) {
                     self.send(
                         reply(request_id, trace, QueryOutcome::NotStarted),
@@ -881,7 +878,9 @@ impl Reducer {
     /// otherwise.
     fn entry(&mut self, entry: Entry, source: Source, now: Now, effects: &mut Vec<Effect>) {
         self.destroy_seen(&entry.item);
-        self.pin_key_baseline(&entry, effects);
+        if self.key_arrived(&entry, now, effects) {
+            return;
+        }
         match source {
             Source::Hook => {
                 if let Some(entry) = self.hold.hooked_copy(entry) {
@@ -908,37 +907,12 @@ impl Reducer {
         }
     }
 
-    /// A caret key's request that starts from the last read, as it arrives:
-    /// what it is judged from is the read newest now, whatever waits ahead
-    /// of it, so its baseline is pinned here and kept until the request
-    /// comes up in its turn ([`key_from_last_read`](Self::key_from_last_read)).
-    fn pin_key_baseline(&mut self, entry: &Entry, effects: &mut Vec<Effect>) {
-        let Item::Query {
-            request_id,
-            query:
-                Query::Text {
-                    node_id,
-                    op: TextOp::Key(key),
-                },
-        } = &entry.item
-        else {
-            return;
-        };
-        let KeyStart::FromLastRead { withdrawn } = key.start else {
-            return;
-        };
-        if let Some(withdrawn) = withdrawn {
-            self.withdraw_key(*request_id, withdrawn, effects);
-        }
-        self.pinned
-            .insert(*request_id, self.facts.text.baseline(node_id.number()));
-    }
-
-    /// A text field's key request from the last read, in its turn: makes
-    /// no call, and opens its watch from the baseline pinned as it arrived.
-    /// Whether the entry was one; a terminal's goes on to its program,
-    /// which says whether to poll.
-    fn key_from_last_read(&mut self, entry: &Entry, now: Now, effects: &mut Vec<Effect>) -> bool {
+    /// A caret key's request, as it arrives: it ends the watch of the key
+    /// before it. A text field's from the last read makes no call, and opens
+    /// its watch here from the read newest now, whatever waits ahead of it,
+    /// never entering the intake; whether the entry was one. Any other waits
+    /// for its program to open the watch ([`Watch::Reading`]).
+    fn key_arrived(&mut self, entry: &Entry, now: Now, effects: &mut Vec<Effect>) -> bool {
         let Item::Query {
             request_id,
             query:
@@ -950,20 +924,32 @@ impl Reducer {
         else {
             return false;
         };
-        if !matches!(key.start, KeyStart::FromLastRead { .. }) || key.kind == WatchKind::Terminal {
+        if self.stopping {
             return false;
         }
         let (request_id, trace, node_id, key) = (*request_id, entry.trace, *node_id, *key);
-        let baseline = self.pinned.remove(&request_id).flatten();
-        let started = match &baseline {
-            None => TextReply::Unanswered,
-            Some(_) => TextReply::Key(Box::new(KeyStarted::Watching)),
-        };
-        let outcome = QueryOutcome::Done(QueryResult::Text(started));
-        self.send(reply(request_id, trace, outcome), effects);
+        let answered_here = key.start == KeyStart::FromLastRead && key.kind == WatchKind::TextField;
+        let baseline = answered_here
+            .then(|| self.facts.text.baseline(node_id.number()))
+            .flatten();
+        if answered_here {
+            let started = match &baseline {
+                None => TextReply::Unanswered,
+                Some(_) => TextReply::Key(Box::new(KeyStarted::Watching)),
+            };
+            let outcome = QueryOutcome::Done(QueryResult::Text(started));
+            self.send(reply(request_id, trace, outcome), effects);
+        }
+        if let Watch::Reading { tag } = self.facts.text.watch {
+            self.replaced.insert(tag);
+        }
         let answer = self.with_watch(effects, |watch| watch.end("the next caret key replaced it"));
         if let Some(answer) = answer {
             self.answer_watch(answer, now, effects);
+        }
+        if !answered_here {
+            self.with_watch(effects, |watch| watch.reading(key.tag));
+            return false;
         }
         if let Some(baseline) = baseline {
             let watch = KeyWatch {
@@ -978,7 +964,7 @@ impl Reducer {
                 timing: entry.timing,
                 calls: CallCounts::default(),
             };
-            Arc::make_mut(&mut self.facts.text).watch.opened(
+            Arc::make_mut(&mut self.facts.text).watch.start(
                 Box::new(watch),
                 false,
                 Some(now.wall_us),
@@ -987,24 +973,13 @@ impl Reducer {
         true
     }
 
-    /// The request `request_id` withdraws the request of key `tag`: not yet
-    /// started it is cancelled, and running it opens no watch.
-    fn withdraw_key(&mut self, request_id: RequestId, tag: KeyTag, effects: &mut Vec<Effect>) {
-        let withdrawn = RequestId {
-            number: tag.0.0,
-            ..request_id
-        };
-        if let Some(trace) = self.intake.cancel(withdrawn) {
-            self.pinned.remove(&withdrawn);
-            self.send(reply(withdrawn, trace, QueryOutcome::NotStarted), effects);
-            return;
-        }
-        if let Some(current) = self
-            .flight
-            .item_mut()
-            .filter(|current| current.running.is_some_and(|(id, _)| id == withdrawn))
-        {
-            current.withdrawn = true;
+    /// Core withdrew query `request_id`: a key's request opens no watch. A
+    /// key's tag is the number of its query.
+    fn request_cancelled(&mut self, request_id: RequestId, effects: &mut Vec<Effect>) {
+        if request_id.asker == Requester::Reducer {
+            let tag = KeyTag(QueryId(request_id.number));
+            self.replaced.remove(&tag);
+            self.with_watch(effects, |watch| watch.reading_ended(tag));
         }
     }
 
@@ -1012,6 +987,7 @@ impl Reducer {
     fn watch_order(&mut self, tag: KeyTag, order: WatchOrder, now: Now, effects: &mut Vec<Effect>) {
         match order {
             WatchOrder::End => {
+                self.replaced.remove(&tag);
                 self.with_watch(effects, |watch| watch.end_order(tag));
             }
             WatchOrder::FinalRead => {
@@ -1172,20 +1148,6 @@ impl Reducer {
     /// Applies the commit of `request`'s program: its report recorded for
     /// Core's judgement, then its messages sent, then the rest.
     fn commit(&mut self, request: Request, change: &Change, now: Now, effects: &mut Vec<Effect>) {
-        // A request Core withdrew while it ran still answers, so that what
-        // it read is said, and opens no watch.
-        let without_watch;
-        let change = if self.current_of(request).is_some_and(|c| c.withdrawn)
-            && matches!(change.watch, Some(WatchChange::Open { .. }))
-        {
-            without_watch = Change {
-                watch: None,
-                ..change.clone()
-            };
-            &without_watch
-        } else {
-            change
-        };
         if let Some(report) = &change.report {
             follow::record(&mut self.facts.held, report);
         }
@@ -1226,6 +1188,15 @@ impl Reducer {
             change,
             Some(now.wall_us),
         );
+        if let Some(WatchChange::Open { key, .. }) = &change.watch
+            && !applied.opened
+            && self.replaced.remove(&key.tag)
+        {
+            applied.answers.push(Answer::Ended {
+                key: key.clone(),
+                why: "the next caret key replaced it",
+            });
+        }
         let ranges = std::mem::take(&mut applied.ranges);
         if !ranges.is_empty() {
             effects.push(Effect::ForgetRanges(ranges));
@@ -1451,6 +1422,10 @@ impl Reducer {
         if let Some(answer) = answer {
             self.answer_watch(answer, now, effects);
         }
+        if let Some(tag) = current.key {
+            self.replaced.remove(&tag);
+            self.with_watch(effects, |watch| watch.reading_ended(tag));
+        }
         if let Some((request_id, trace)) = current.running {
             self.send(reply(request_id, trace, QueryOutcome::Abandoned), effects);
         }
@@ -1494,6 +1469,10 @@ impl Reducer {
         let answer = self.with_watch(effects, Watch::program_ended);
         if let Some(answer) = answer {
             self.answer_watch(answer, now, effects);
+        }
+        if let Some(tag) = current.key {
+            self.replaced.remove(&tag);
+            self.with_watch(effects, |watch| watch.reading_ended(tag));
         }
         if let Some((request_id, trace)) = current.running {
             self.send(
@@ -1674,9 +1653,6 @@ impl Reducer {
     /// An entry planned on its own: the reducer's own entries are handled
     /// here, and the rest dispatched.
     fn run(&mut self, entry: Entry, batch: u64, now: Now, effects: &mut Vec<Effect>) {
-        if self.key_from_last_read(&entry, now, effects) {
-            return;
-        }
         match entry.item {
             Item::Barrier {
                 asker,
@@ -1786,9 +1762,9 @@ impl Reducer {
     }
 
     /// Dispatches `work` under `deadline`, concerning `window`, if any,
-    /// and answering `running`, as a try of `group` when it is one. A caret
-    /// key's program ends the
-    /// open watch, which the next key replaces, before its copy is taken.
+    /// and answering `running`, as a try of `group` when it is one. Verbatim
+    /// moving the caret or selecting on a terminal ends its open watch,
+    /// before its copy is taken.
     fn dispatch(
         &mut self,
         work: Work,
@@ -1797,10 +1773,14 @@ impl Reducer {
         now: Now,
         effects: &mut Vec<Effect>,
     ) {
-        if is_caret_key(&work) {
-            let answer = self.with_watch(effects, |watch| {
-                watch.end_kept("the next caret key replaced it")
-            });
+        let verbatims_move = verbatims_caret_move(&work);
+        if verbatims_move.is_some()
+            && self.facts.text.watch.kept().is_some_and(|key| {
+                key.kind == WatchKind::Terminal && Some(key.node) == verbatims_move
+            })
+        {
+            let answer =
+                self.with_watch(effects, |watch| watch.end_kept("Verbatim moved the caret"));
             if let Some(answer) = answer {
                 self.answer_watch(answer, now, effects);
             }
@@ -1818,7 +1798,7 @@ impl Reducer {
             live_reread,
             group,
             deferred: false,
-            withdrawn: false,
+            key: key_of(&work),
             in_hand: InHand::of(&work, window),
             hang_mark: false,
             moved_on_abandons: !is_query_off_the_focus(&work),
@@ -1874,25 +1854,49 @@ impl Reducer {
     }
 }
 
-/// Whether `work` is a caret key's program: a key request that runs one, the
-/// next key's request, which ends the open watch.
-fn is_caret_key(work: &Work) -> bool {
-    matches!(
-        work,
-        Work::Entry {
-            entry: Entry {
-                item: Item::Query {
-                    query: Query::Text {
-                        op: TextOp::Key(_),
+/// The node `work` moves the caret or selects on for Verbatim, if it does:
+/// what ends a terminal's watch besides the next key's request.
+fn verbatims_caret_move(work: &Work) -> Option<NodeId> {
+    let Work::Entry {
+        entry:
+            Entry {
+                item:
+                    Item::Query {
+                        query: Query::Text { node_id, op },
                         ..
                     },
-                    ..
-                },
                 ..
             },
-            ..
-        }
-    )
+        ..
+    } = work
+    else {
+        return None;
+    };
+    matches!(op, TextOp::MoveCaret(_) | TextOp::Select { .. }).then_some(*node_id)
+}
+
+/// The caret key `work` is the request of, if any.
+fn key_of(work: &Work) -> Option<KeyTag> {
+    let Work::Entry {
+        entry:
+            Entry {
+                item:
+                    Item::Query {
+                        query:
+                            Query::Text {
+                                op: TextOp::Key(key),
+                                ..
+                            },
+                        ..
+                    },
+                ..
+            },
+        ..
+    } = work
+    else {
+        return None;
+    };
+    Some(key.tag)
 }
 
 /// The edit control whose client area's value change `item` is, if it is
