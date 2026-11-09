@@ -1330,12 +1330,10 @@ Caret and text events:
 ### Selection and notification events
 
 Selections emit `NormalizedEvent::SelectionChanged` and UIA notifications
-`NormalizedEvent::Notification`. A UIA selection inside an element the
-focus names in its ControllerFor relation, or inside none of them (with the
-first controlled element's current selection as its node), emits
+`NormalizedEvent::Notification`. A UIA selection of an element the
+focus names in its ControllerFor relation, or inside one, emits
 `NormalizedEvent::ControlledSelection` with the focus's id, as NVDA reports
-a search suggestion, unless it names the focus itself; the relation and the
-search are one remote operation
+a search suggestion; the relation and the search are one remote operation
 (`verbatim_uia_rops::controlled_selection`). A UIA selection or
 notification goes through its application's reading thread behind a marker
 (`DeliveredFact::UiaMarked`), which finds a non-window sender's nearest

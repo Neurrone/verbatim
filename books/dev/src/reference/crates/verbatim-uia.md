@@ -98,11 +98,9 @@ call waits up to `UIA_CONNECTION_TIMEOUT` to connect and
   search that finds nothing is `Ok(None)`, and so is one that passed over
   a child window whose process did not answer within the connection
   timeout; one that fails otherwise is an error.
-- `controlled(focused, runtime_id, request, current_instead)`: the
-  selected element when it is inside an element the focus names in its
-  `ControllerFor` relation, else, with `current_instead`, the first
-  controlled element's first selected element unless `runtime_id` names
-  it; the classic implementation behind
+- `controlled(focused, runtime_id, request)`: the selected element when
+  it is an element the focus names in its `ControllerFor` relation or is
+  inside one; the classic implementation behind
   `verbatim_uia_rops::controlled_selection`.
 - `selected(container, request)`: the first element of a selection
   container's current selection, or `None`. One `BuildUpdatedCache`

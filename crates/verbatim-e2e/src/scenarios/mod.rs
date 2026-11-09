@@ -16,6 +16,7 @@ use crate::scenario::{Scenario, harness_marker};
 
 pub(crate) mod alt_tab_switcher;
 pub(crate) mod caret_keys;
+pub(crate) mod controlled_list_selections;
 pub(crate) mod crash_recovery;
 pub(crate) mod demo_notepad_editing;
 pub(crate) mod demo_review_cursor;

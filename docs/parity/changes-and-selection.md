@@ -162,22 +162,20 @@ that are in a Chromium document NVDA reads through IA2 are not yet
 built; they belong to the phase that implements IA2 (browsers, M7).
 
 Verbatim reads the relation live for each selection event, as NVDA
-reads it (Dickson, 2026-10-10), and searches down from each element it
-names for the selected element, both in one remote operation. When the
-selected element is inside none of them, Verbatim reports the first
-controlled element's current selection instead, read through its
-`Selection` property in the same operation, unless the selection names
-the focus itself, which the reducer reads as the focus's own selection,
-as NVDA's base selection handler falls through to its state change
-handler (`NVDAObjects/__init__.py` 1314 to 1339). This covers Settings'
-replacing state: in some launches Settings replaces the list's item
-elements within about 60 ms of raising the first item's selected event,
-with no event for the replacement, so the search from the relation
-finds nothing, while the list's current selection is the new first
-item, which Verbatim says as it says it without replacement
-(`target/e2e-evidence/fixes-round-eight-2026-10-21/route-logs`). A
-mockapp test pins the replacing state through a real outpost
-(`crates/mockapp/tests/controller_for.rs`, mockapp's `replace-items`). A
+reads it (Dickson, 2026-10-10), and searches each element it names and
+that element's descendants for the selected element, both in one remote
+operation. NVDA's results captured on mockapp's list fixtures (2026-11-09):
+a selection of the controlled list itself says "Suggestions list selected",
+as NVDA's `NormalizeElement` answers the element itself
+(`NVDAObjects/UIA/__init__.py` 2444 to 2461); a selection in a second
+controlled element says "Elsewhere", the event's element being reported,
+and a selection in a list the focus no longer controls says nothing. A
+selection left stale by a replacement of the list, the first or a second,
+says nothing, since its element is in none of what the focus controls; a
+selection of the replacement item is an ordinary one, "Sound settings  1
+of 2". A mockapp test pins these through a real outpost
+(`crates/mockapp/tests/controller_for.rs`, mockapp's `replace-items` and
+`set-controller-for`). A
 capture of 30 searches for "sound" (2026-11-03) also found, in 5 of
 them, a moment of about 90 ms after the first selection when the list
 had no children and its current selection had no name and no position,

@@ -6,26 +6,20 @@
 //! An item selected through mockapp's `select` command raises a real
 //! `ElementSelected` event; `verbatim_uia_rops::controlled_selection`, the
 //! check the outpost makes on such an event, must find it from the search
-//! box, one level down or inside a group of the list, and must find
-//! nothing for an item outside the controlled list while the list has
-//! nothing selected, for the controlled list itself, or from an element
-//! that controls nothing. A selection the list does not hold, as Settings
-//! raises for a suggestion it has already replaced, is answered with the
-//! list's current selection, and so is an item outside the list while the
-//! list has one, which pins a difference from NVDA, whose test finds such
-//! an item in none of the controlled elements and reports nothing of it
-//! (`docs/parity/changes-and-selection.md`, "Selection in a list the focus
-//! controls"). It answers each in one remote operation, and the classic
-//! calls behind the same signature answer the same. The focused element is passed in rather than read from
-//! the keyboard focus, so the test runs headless.
+//! box, one level down, inside a group of the list, or the controlled
+//! element itself, and must find nothing for an item outside the controlled
+//! list or from an element that controls nothing. It answers each in one
+//! remote operation, and the classic calls behind the same signature answer
+//! the same. The focused element is passed in rather than read from the
+//! keyboard focus, so the test runs headless.
 //!
 //! Through a real outpost, a controlled selection is also reported when the
 //! element the outpost keeps for the focus came from one of its events,
 //! whose cache holds less than a focus read's, with no failed cached read.
 //! A selection raised for an item the list has since replaced (mockapp's
-//! `replace-items`) is reported as the list's current selection, the new
-//! item, with its name and position. A selection of the focus itself is
-//! reported as an ordinary selection change, never as the list's. A
+//! `replace-items`) is no controlled selection, and an ordinary selection
+//! of the new item is one. A selection of the focus itself is reported as
+//! an ordinary selection change, never as the list's. A
 //! search box holding text is reported with the line at its caret in the
 //! focus's own message, ahead of a controlled selection that arrived after
 //! the focus.
@@ -92,7 +86,6 @@ fn controlled(
         focused,
         selected,
         fill: &fill,
-        current_instead: true,
     };
     let _ = verbatim_uia::calls::take();
     let (remote, path) = controlled_selection(uia, &query, true).expect("the remote program");
@@ -177,10 +170,11 @@ fn a_selected_result_is_found_only_inside_the_list_the_search_box_controls() {
         None,
         "a box that controls nothing finds nothing"
     );
+    let results_id = verbatim_uia::runtime_id(&results);
     assert_eq!(
-        controlled(&uia, &search, &verbatim_uia::runtime_id(&results)),
-        None,
-        "the controlled list is not its own descendant"
+        controlled(&uia, &search, &results_id),
+        Some((Some("Suggestions".to_owned()), results_id.clone())),
+        "the controlled list itself is the element NVDA's walker answers"
     );
 
     app.send("select recent1");
@@ -188,28 +182,32 @@ fn a_selected_result_is_found_only_inside_the_list_the_search_box_controls() {
     assert_eq!(
         controlled(&uia, &search, &elsewhere),
         None,
-        "an item outside the controlled list, which has nothing selected, is not a controlled selection"
+        "an item outside the controlled list is not a controlled selection"
     );
 
-    // The list's own selection stands for an element it does not hold.
+    // A selection the list does not hold, however it came to be raised,
+    // reports nothing of the list's own selection.
     app.send("select result2");
     let current = selected_id("Sound settings");
     let replaced: Vec<i32> = current.iter().copied().chain([1]).collect();
     assert_eq!(
         controlled(&uia, &search, &replaced),
-        Some((Some("Sound settings".to_owned()), current.clone())),
-        "a selection the list does not hold is answered with its current selection"
+        None,
+        "a selection the list does not hold is not answered with its current selection"
     );
+
+    // The relation switched to a second list: its item is the event's own
+    // element, and an item of the first list is in nothing the box controls.
+    app.send("set-controller-for search recent");
     assert_eq!(
         controlled(&uia, &search, &elsewhere),
-        Some((Some("Sound settings".to_owned()), current)),
-        "so is an item outside the list while the list has a selection, a difference from NVDA \
-         (docs/parity/changes-and-selection.md)"
+        Some((Some("Elsewhere".to_owned()), elsewhere.clone())),
+        "a selection in a second controlled element is the event's own element"
     );
     assert_eq!(
-        controlled(&uia, &search, &verbatim_uia::runtime_id(&results)),
+        controlled(&uia, &search, &current),
         None,
-        "the controlled list itself is not answered with its selection"
+        "a selection in a list the box no longer controls"
     );
 
     // A marker: its event coming next shows one selection event came for
@@ -312,10 +310,12 @@ fn selections(
 
 /// Settings' replacing state, through a real outpost: the list's first
 /// item is selected, the list then replaces its items under new runtime
-/// ids, the new first item selected, and the selection of the old item
-/// is delivered after that. The outpost reports the list's current
-/// selection, the new item, as a controlled selection of the search box,
-/// with the new item's name and position, and nothing more. The old
+/// ids, and the selection of the old item is delivered after that. Nothing
+/// is reported of the list for it: the item is in none of what the box
+/// controls, so it is an ordinary selection change, which Core does not
+/// speak on a search box (`reduce_selection_changed`). A selection of the
+/// new item that follows is a controlled selection, with its name and
+/// position. The old
 /// item's fact is the listener's own: captured in the event's callback and
 /// checked by the listener's reading thread's check
 /// (`OutpostUnderTest::listener_check`), which finds the windowless item's
@@ -325,7 +325,7 @@ fn selections(
 /// live firings, `docs/parity/changes-and-selection.md`); a check made
 /// after mockapp's item died would drop the event, its nearest-window call
 /// failing on the dead element.
-fn a_selection_of_an_item_the_list_has_replaced_is_reported_as_its_current_selection() {
+fn a_stale_selection_after_a_replacement_reports_nothing_and_an_ordinary_one_the_new_item() {
     let title = common::unique_title("mockapp-controller-replaced");
     let mut app = common::spawn("replaced_suggestions.json", "uia", &title);
     let hwnd = common::find_window(&title);
@@ -368,6 +368,25 @@ fn a_selection_of_an_item_the_list_has_replaced_is_reported_as_its_current_selec
         current, replaced,
         "the new item has a runtime id of its own"
     );
+    outpost.deliver(fact);
+    match outpost.next() {
+        OutpostToCore::Event {
+            event: NormalizedEvent::SelectionChanged { node },
+            ..
+        } => assert_eq!(node.name.as_deref(), Some("Sound settings")),
+        other => panic!("the outpost said {other:?}, not an ordinary selection change"),
+    }
+    outpost.settled();
+
+    app.send("select sound");
+    let (agile, fact) = events
+        .recv_timeout(common::WAIT_TIMEOUT)
+        .expect("an element selected event for the new Sound settings");
+    let element = agile.resolve().expect("the event's element");
+    let fact = match outpost.listener_check(&element.narrow(), fact) {
+        Judged::Passed(fact) => *fact,
+        other => panic!("the listener's check made {other:?} of the selection"),
+    };
     outpost.deliver(fact);
     match outpost.next() {
         OutpostToCore::Event {
@@ -598,8 +617,8 @@ fn main() {
             a_controlled_selection_from_a_kept_event_element_reads_nothing_uncached,
         ),
         (
-            "a_selection_of_an_item_the_list_has_replaced_is_reported_as_its_current_selection",
-            a_selection_of_an_item_the_list_has_replaced_is_reported_as_its_current_selection,
+            "a_stale_selection_after_a_replacement_reports_nothing_and_an_ordinary_one_the_new_item",
+            a_stale_selection_after_a_replacement_reports_nothing_and_an_ordinary_one_the_new_item,
         ),
         (
             "a_selection_of_the_focus_itself_is_reported_as_its_own",

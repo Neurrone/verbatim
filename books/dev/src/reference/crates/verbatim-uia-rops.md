@@ -644,11 +644,10 @@ list the focus controls". The `Controlled` answer holds `controlled`, the
 runtime ids (as `runtime_id_key` writes them) of the elements the focus's
 `ControllerFor` relation names, which the outpost logs, and `selected`, a
 `Cached<Node>`: the element the selection event named
-(`ControlledQuery::selected`) when it is a descendant of one of them, or,
-when it is in none and `ControlledQuery::current_instead` asks, the first
-controlled element's first selected element unless that is the named
-element itself. The program walks each controlled element's raw-view
-descendants depth first comparing runtime ids, since there is no
+(`ControlledQuery::selected`) when it is one of them or a descendant of
+one, and otherwise nothing. The program compares each controlled element
+itself, then walks its raw-view descendants depth first comparing runtime
+ids, since there is no
 `FindFirst` instruction; at about 35 instructions an element, a list of
 more than about 280 is answered classically. The classic implementation
 is `Uia::controlled`, a `FindFirstBuildCache` under each controlled

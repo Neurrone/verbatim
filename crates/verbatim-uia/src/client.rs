@@ -15,9 +15,9 @@ use windows::Win32::UI::Accessibility::{
     CUIAutomation8, CoalesceEventsOptions_Enabled, ConnectionRecoveryBehaviorOptions_Enabled,
     IUIAutomation, IUIAutomation2, IUIAutomation6, IUIAutomationCacheRequest,
     IUIAutomationCondition, IUIAutomationElement, IUIAutomationInvokePattern,
-    IUIAutomationSelectionItemPattern, IUIAutomationSelectionPattern, IUIAutomationTogglePattern,
+    IUIAutomationSelectionItemPattern, IUIAutomationTogglePattern,
     IUIAutomationTreeWalker, TreeScope, TreeScope_Children, TreeScope_Subtree, UIA_InvokePatternId,
-    UIA_PROPERTY_ID, UIA_RuntimeIdPropertyId, UIA_SelectionItemPatternId, UIA_SelectionPatternId,
+    UIA_PROPERTY_ID, UIA_RuntimeIdPropertyId, UIA_SelectionItemPatternId,
     UIA_TogglePatternId,
 };
 
@@ -454,16 +454,10 @@ impl Uia {
 
     /// The element `runtime_id` names, its cache filled by `request`, when
     /// it is a descendant of one of the elements `focused` names in its UIA
-    /// `ControllerFor` relation: NVDA's test for a selection in a list the
-    /// focus controls, such as a search result while the focus stays in
-    /// the search box. `None` when `focused` controls nothing or the
-    /// element is in none of what it controls and no current selection is
-    /// read from the first controlled element: found in none, with
-    /// `current_instead`, the answer is that element's first selected
-    /// element, unless `runtime_id` names it itself, as
-    /// `verbatim_uia_rops::controlled_selection_remote` answers (an item
-    /// Settings has already replaced, `docs/parity/changes-and-selection.md`);
-    /// without it, nothing more is read.
+    /// `ControllerFor` relation or is one of them: NVDA's test for a
+    /// selection in a list the focus controls, such as a search result
+    /// while the focus stays in the search box. `None` when `focused`
+    /// controls nothing or the element is in none of what it controls.
     /// With it, the runtime ids of
     /// the elements the relation names, in its order, which a caller logs
     /// when the element is in none of them. The classic implementation
@@ -483,38 +477,11 @@ impl Uia {
         focused: &Live,
         runtime_id: &[i32],
         request: &Request<S>,
-        current_instead: bool,
     ) -> windows::core::Result<(Option<Cached<S>>, Vec<Vec<i32>>)> {
         let (cache, gates) = request.parts();
         let roots = focused.element().controller_for()?;
         let (found, controlled) = self.controlled_descendant(&roots, runtime_id, cache);
-        if let Some(found) = found {
-            return Ok((Some(Cached::filled(found, gates)), controlled));
-        }
-        if !current_instead {
-            return Ok((None, controlled));
-        }
-        let Some(root) = roots.first() else {
-            return Ok((None, controlled));
-        };
-        if controlled.first().is_some_and(|id| id == runtime_id) {
-            return Ok((None, controlled));
-        }
-        let pattern = unanswered_is_error(
-            root.current_pattern::<IUIAutomationSelectionPattern>(UIA_SelectionPatternId),
-        )?;
-        let first = match pattern {
-            Some(pattern) => unanswered_is_error(current_selection(&pattern))?
-                .and_then(|selection| selection.into_iter().next()),
-            None => None,
-        };
-        let Some(first) = first else {
-            return Ok((None, controlled));
-        };
-        Ok((
-            unanswered_is_error(Live::new(first).refresh(request))?,
-            controlled,
-        ))
+        Ok((found.map(|found| Cached::filled(found, gates)), controlled))
     }
 
     /// The element `runtime_id` names inside `root`'s subtree, rebuilt with
@@ -560,8 +527,8 @@ impl Uia {
         root.find_first_build_cache(scope, &condition, cache)
     }
 
-    /// The element `runtime_id` names, rebuilt with `cache`, when it is a
-    /// descendant of one of `roots`, the elements a focus names in its UIA
+    /// The element `runtime_id` names, rebuilt with `cache`, when it is one
+    /// of `roots` or inside one, the elements a focus names in its UIA
     /// `ControllerFor` relation: NVDA's test for a selection in a list the
     /// focus controls, such as a search result while the focus stays in
     /// the search box. `None` when `roots` is empty or the element is in
@@ -578,14 +545,10 @@ impl Uia {
         let mut controlled = Vec::new();
         for root in roots {
             // A failed read is no runtime id.
-            let root_id = crate::com::runtime_id(root);
-            // A descendant, not the controlled element itself.
-            let searched = root_id != runtime_id;
-            controlled.push(root_id);
+            controlled.push(crate::com::runtime_id(root));
             // A search that fails under one controlled element leaves the
             // others to try.
-            if searched && let Ok(Some(found)) = self.element_by_runtime_id(root, runtime_id, cache)
-            {
+            if let Ok(Some(found)) = self.element_by_runtime_id(root, runtime_id, cache) {
                 return (Some(found), controlled);
             }
         }

@@ -835,12 +835,7 @@ A search box whose ControllerFor relation names a list, and an item of
 the list selected (`crates/mockapp/tests/controller_for.rs`).
 
 - Minimum and today: 1 UIA call, one remote operation, whatever the
-  number of controlled elements; met. An item found in none is answered
-  with the first controlled element's current selection, read in the
-  same operation, where the classic calls take three more. A selection
-  naming the focus itself reads no current selection: one comparison of
-  runtime ids per UIA selection while the focus is a UIA element, and no
-  lock.
+  number of controlled elements; met.
 - Bound: the controlled list's elements, walked inside the provider (see
   "The instruction limit").
 

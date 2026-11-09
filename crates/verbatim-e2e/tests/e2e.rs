@@ -58,6 +58,7 @@ const LIVE: &[&str] = scenario_tests! {
     toast
     foreground_progress_bar
     msaa_flood_then_focus
+    controlled_list_selections
     table_cells
     alt_tab_switcher
     return_after_retirement
