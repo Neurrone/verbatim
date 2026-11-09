@@ -303,3 +303,17 @@ So Verbatim+F11 works like this:
 - ARM64 installations support x86 engines through the 32-bit host, and x64 engines later through a full x64 host under emulation (estimated a day or two, not in M6).
 - DLLs remain the form for native synthesizers, the built-ins included. The executable-over-pipe alternative was considered and rejected, since engine authors expect DLLs and the host handles the process work.
 - wasmi was considered and rejected: no component model as of 2.0.0. Pulley within wasmtime is the interpreter option.
+
+## Build A questions (Dickson, 2026-11-09)
+
+- No child process starts before Core's first publication, with the time measured.
+- `parent-automation-id` is accepted. `alt-held` is too specific: first check with `verbatim-inspect` whether the Alt+Tab switcher and Task View differ structurally on Windows 11. If not, consider a general `modifiers-held`. Until then the rule stays in Core.
+- An MSAA item reporting both expanded and collapsed gets a third value, spoken as NVDA does, after a capture.
+- The built-in failure sentence is spoken at once, unscheduled, named by its folder. Windows toasts replace it, and update notifications, in M8.6.
+- Gesture order: by layer first (developer or installed, then built-in global, then built-in app, then core), and global before app within a layer.
+- The Extensions dialog sits in the Verbatim menu before Preferences:
+  - a list (Name, Version, Author, Status);
+  - the description, and the Applications, Commands and warnings lists;
+  - Install from file, Enable or Disable, Uninstall ("Uninstall <extension name>?") and Close;
+  - actions take effect at once;
+  - developer mode lists only the developer folder's modules, never built-ins.

@@ -1299,6 +1299,9 @@ No exit criterion of its own: the milestone is done when all of its items
 are.
 
 - Installer/updater skeleton.
+- Verbatim's own notifications raised as Windows toasts (Dickson,
+  2026-11-09): extensions that failed to load and available updates,
+  in place of the sentences spoken at once until then.
 - The installed copy (Dickson, 2026-11-09), by the layout M5 left ready
   for it: the configuration root resolved to the user's profile for an
   installed copy ([security model](design/security-model.md), section
