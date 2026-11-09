@@ -175,8 +175,9 @@ pub type KeyReportFn = Box<dyn Fn(KeyReport) + Send>;
 /// speech. Every report of a press carries its key number.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum KeyReport {
-    /// The key completed an observed gesture (`Decision::observed`), a
-    /// caret key whose result the reducer speaks.
+    /// The key completed an observed gesture (`Decision::observed`): a
+    /// caret key whose result the reducer speaks, a clearing key, or an
+    /// editing chord.
     Observed {
         /// The gesture.
         gesture: EmittedGesture,

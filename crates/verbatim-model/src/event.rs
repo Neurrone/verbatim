@@ -949,6 +949,19 @@ pub enum Input {
         #[serde(default)]
         at_ms: u64,
     },
+    /// An editing chord, Control+Z, Control+Y, Control+X, Control+V or
+    /// Escape, was passed to the focused application. In a text field it
+    /// says nothing for the key, its selection changes being spoken from the
+    /// application's caret event; in a terminal it is any other key passed
+    /// (`docs/design/caret-selection-rework.md`).
+    EditingChord {
+        /// Trace ID minted when the key was observed.
+        trace_id: TraceId,
+        /// The key's number, which its speech carries.
+        key_seq: KeySeq,
+        /// As [`Input::CaretKey`]'s: when the hook saw the key.
+        pressed_at_ms: u64,
+    },
     /// Playback reached an index mark the reducer placed in an utterance
     /// ([`crate::SegmentContent::Mark`]), reported by the speech pipeline
     /// when the device has played the audio before it.
@@ -1186,6 +1199,7 @@ impl Input {
             | Self::HeldKey { trace_id, .. }
             | Self::CharacterTyped { trace_id, .. }
             | Self::ClearingKey { trace_id, .. }
+            | Self::EditingChord { trace_id, .. }
             | Self::LockKeyToggled { trace_id, .. }
             | Self::ClockRead { trace_id, .. }
             | Self::ClipboardCopied { trace_id, .. }

@@ -223,14 +223,13 @@ pub(crate) fn text_box_body(scenario: &mut Scenario, _state: &mut ScenarioState)
     press_silent(scenario, "enter");
     down_blocks(scenario, 1);
 
-    // A typed "x" undone with Control+Z, which NVDA does not speak
-    // (`15a-textbox-docA-type-x-control-z.txt`): Control+Z, outside the
-    // caret table, says the "x" it removed. Then, on the next block, since
+    // A typed "x" undone with Control+Z, which says nothing, as NVDA
+    // (`15a-textbox-docA-type-x-control-z.txt`). Then, on the next block, since
     // the edit control's one undo would take back both, a word cut and the
     // cut undone, which selects it again
     // (`19-textbox-docA-select-word-cut-undo-run1.txt`).
     type_text(scenario, "x", &["x"]);
-    press_deviating(scenario, "control+z", &["x"]);
+    press_silent(scenario, "control+z");
     down_blocks(scenario, 1);
     press(scenario, "shift+control+rightarrow", &["alpha  selected"]);
     press(scenario, "control+x", &["selection removed"]);
@@ -261,14 +260,13 @@ pub(crate) fn text_box_body(scenario: &mut Scenario, _state: &mut ScenarioState)
     press(scenario, "downarrow", &["kiwi"]);
 
     // "kiwi", a line break and "mango" pasted at a line's start, which
-    // NVDA does not speak (`15c-textbox-docA-paste-two-lines.txt`): the
-    // paste, outside the caret table, leaves the caret on another line,
-    // which is read.
+    // says nothing, as NVDA (`15c-textbox-docA-paste-two-lines.txt`).
     select_kiwi_mango(scenario, "kiwi   selected");
     press_silent(scenario, "control+c");
     press(scenario, "downarrow", &[FIRST, "kiwi  mango unselected"]);
     press(scenario, "home", &["a"]);
-    press_deviating(scenario, "control+v", &["mangoalpha beta gamma"]);
+    press_silent(scenario, "control+v");
+    scenario.expect_nothing_more();
 }
 
 /// The scenario in Windows 11 Notepad, read through UI Automation, whose
@@ -342,12 +340,11 @@ pub(crate) fn notepad_body(scenario: &mut Scenario, _state: &mut ScenarioState) 
     down_blocks(scenario, 1);
     press(scenario, "home", &["a"]);
 
-    // A typed "x" undone with Control+Z, which NVDA does not speak
-    // (`15a-notepad-docA-type-x-control-z.txt`): Control+Z, outside the
-    // caret table, says the "x" it removed. Then a word copied, which says
-    // nothing (`16-notepad-docA-select-word-control-c-run1.txt`).
+    // A typed "x" undone with Control+Z, which says nothing, as NVDA
+    // (`15a-notepad-docA-type-x-control-z.txt`). Then a word copied, which
+    // says nothing (`16-notepad-docA-select-word-control-c-run1.txt`).
     type_text(scenario, "x", &["x"]);
-    press_deviating(scenario, "control+z", &["x"]);
+    press_silent(scenario, "control+z");
     press(scenario, "shift+control+rightarrow", &["alpha  selected"]);
     press_silent(scenario, "control+c");
     press(scenario, "end", &["carriage return", "alpha  unselected"]);
@@ -385,14 +382,13 @@ pub(crate) fn notepad_body(scenario: &mut Scenario, _state: &mut ScenarioState) 
     press(scenario, "downarrow", &["kiwi"]);
 
     // "kiwi", a line break and "mango" pasted at a line's start, which
-    // NVDA does not speak (`15c-notepad-docA-paste-two-lines.txt`): the
-    // paste, outside the caret table, leaves the caret on another line,
-    // which is read.
+    // says nothing, as NVDA (`15c-notepad-docA-paste-two-lines.txt`).
     select_kiwi_mango(scenario, "kiwi  selected");
     press_silent(scenario, "control+c");
     press(scenario, "downarrow", &[FIRST, "kiwi mango unselected"]);
     press(scenario, "home", &["a"]);
-    press_deviating(scenario, "control+v", &["mangoalpha beta gamma"]);
+    press_silent(scenario, "control+v");
+    scenario.expect_nothing_more();
     scenario
         .save_document(NAME, WINDOW_TIMEOUT)
         .expect("saves the document");

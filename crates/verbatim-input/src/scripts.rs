@@ -472,6 +472,35 @@ pub fn clearing_keys() -> Vec<GestureId> {
     .collect()
 }
 
+/// The editing chords: Control+Z, Control+Y, Control+X, Control+V and Escape.
+/// NVDA binds no script to them, so in a text field they say nothing for
+/// the key (`docs/design/caret-selection-rework.md`). Observed like the
+/// caret keys, never bound: the hook passes each to the application and
+/// reports it with its gesture, and the shell turns it into
+/// `Input::EditingChord`.
+///
+/// # Panics
+///
+/// Never panics in practice: every identifier is a fixed literal pinned
+/// well-formed by this module's tests.
+#[expect(
+    clippy::expect_used,
+    reason = "fixed literals; every entry is parsed by editing_chords_are_never_bound_nor_caret_keys"
+)]
+#[must_use]
+pub fn editing_chords() -> Vec<GestureId> {
+    [
+        "kb:control+z",
+        "kb:control+y",
+        "kb:control+x",
+        "kb:control+v",
+        "kb:escape",
+    ]
+    .into_iter()
+    .map(|identifier| GestureId::parse(identifier).expect("editing chords are well-formed"))
+    .collect()
+}
+
 /// Builds the hook's bound-gesture set from a binding table, for the
 /// decision machine to own.
 ///
@@ -723,6 +752,20 @@ mod tests {
         for layout in [KeyboardLayout::Desktop, KeyboardLayout::Laptop] {
             let bindings = bindings_for(layout);
             for gesture in &clearing {
+                assert!(bindings.iter().all(|(bound, _)| bound != gesture));
+                assert!(caret.iter().all(|(observed, _)| observed != gesture));
+            }
+        }
+    }
+
+    #[test]
+    fn editing_chords_are_never_bound_nor_caret_keys() {
+        let chords = editing_chords();
+        assert_eq!(chords.len(), 5);
+        let caret = caret_bindings();
+        for layout in [KeyboardLayout::Desktop, KeyboardLayout::Laptop] {
+            let bindings = bindings_for(layout);
+            for gesture in &chords {
                 assert!(bindings.iter().all(|(bound, _)| bound != gesture));
                 assert!(caret.iter().all(|(observed, _)| observed != gesture));
             }

@@ -138,6 +138,9 @@ Public API:
   binds it (Control+Pause) and as Windows reports it (the `break` key,
   virtual key 3). Observed like the caret keys; the shell turns each into
   `Input::ClearingKey`.
+- `editing_chords()` — the closed list of Control+Z, Control+Y, Control+X,
+  Control+V and Escape, observed like the caret keys; the shell turns each
+  into `Input::EditingChord`.
 - `harness` — the number an end-to-end test harness puts on each key it
   injects, so Verbatim can say when it has handled that key: evidence for
   "nothing more was said" that is not a period of silence. The agent

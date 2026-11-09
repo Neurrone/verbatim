@@ -581,6 +581,9 @@ exists), or `Unanswered` (no answer in time, or the read failed).
   the selection; `CaretMotion::unit` is the unit spoken after it.
   [verbatim-input](verbatim-input.md)'s `caret_bindings` maps gestures to
   these.
+- `Input::EditingChord { trace_id, key_seq, pressed_at_ms }`: an editing
+  chord (Control+Z, Control+Y, Control+X, Control+V or Escape) the hook
+  passed to the application.
 - `Input::HeldKey`, with the same fields: a caret key the hook held back.
   `Input::HeldKeyDue { trace_id }`: the held key's one deadline passed.
 - `Input::CharacterTyped { trace_id, key_seq, text, at_ms }`: text typed into the

@@ -1334,38 +1334,48 @@ fn a_caret_reports_selection_change_while_a_key_waits_is_said_after_the_keys_wor
     assert_eq!(spoken(&effects), vec![message(Message::SelectionRemoved)]);
 }
 
-/// An undo that restores a selection, a key outside the caret table, says
-/// the selection alone and not the line it changed, as NVDA's caret event
-/// says it (`docs/parity/text.md`, "TextInfo-equivalent layer").
+/// An editing chord as the shell reports it.
+fn chord(number: u64) -> Input {
+    Input::EditingChord {
+        trace_id: TraceId::from_raw(number),
+        key_seq: verbatim_model::KeySeq::NONE_YET,
+        pressed_at_ms: KEY_PRESSED_AT,
+    }
+}
+
+/// An undo that restores a selection, an editing chord, says the selection
+/// alone from the application's caret event and not the line it changed
+/// (`docs/design/caret-selection-rework.md`).
 #[test]
 fn an_undo_restoring_a_selection_says_only_the_selection() {
     let after_cut = "beta gamma\r\n";
     let restored = "alpha beta gamma\r\n";
     let mut state = editing(after_cut, 0);
-    let effects = reduce(&mut state, &key(CaretMotion::Other, false));
-    let reply = key_reply(Box::new(CaretReply {
-        same_line: Some(false),
-        moved: true,
-        read_at_ms: 0,
-        caret: CaretReport {
-            line: line(restored, 100, 0),
-            selection: Some(caret_selection(selection_from(6, true))),
-            read_at_us: stamp(),
-        },
-        unit: None,
-        selection_changes: vec![SelectionChange {
-            selected: true,
-            text: "alpha ".to_owned(),
-            characters: 6,
-        }],
-        content_changed: true,
-        new_selection: Some(SelectionChange {
-            selected: true,
-            text: "alpha ".to_owned(),
-            characters: 6,
+    let effects = reduce(&mut state, &chord(2));
+    assert_eq!(effects, [], "a chord sets no note and asks nothing");
+    let effects = reduce(
+        &mut state,
+        &event(NormalizedEvent::CaretMoved {
+            node_id: id(5),
+            caret: CaretReport {
+                line: line(restored, 100, 0),
+                selection: Some(caret_selection(selection_from(6, true))),
+                read_at_us: stamp(),
+            },
+            selection_changes: vec![SelectionChange {
+                selected: true,
+                text: "alpha ".to_owned(),
+                characters: 6,
+            }],
+            content_changed: true,
+            new_selection: Some(SelectionChange {
+                selected: true,
+                text: "alpha ".to_owned(),
+                characters: 6,
+            }),
+            facts: None,
         }),
-    }));
-    let effects = reduce(&mut state, &completed(request_of(&effects), reply));
+    );
     assert_eq!(
         spoken(&effects),
         vec![UtteranceSegment::new(SegmentContent::Phrase(
@@ -5927,4 +5937,415 @@ fn a_final_read_showing_an_effect_is_the_keys_evidence() {
     }));
     let effects = reduce(&mut state, &completed_text(request_of(&due), reply));
     assert_eq!(spoken(&effects), vec![character("c")]);
+}
+
+/// A chord in a text field says nothing for the line it changes, and a
+/// paste's caret event, an ordinary report with no change of selection,
+/// says nothing either (`docs/design/caret-selection-rework.md`).
+#[test]
+fn a_paste_says_nothing_for_the_line_it_changes() {
+    let mut state = editing("Nam\n", 3);
+    assert_eq!(spoken(&reduce(&mut state, &chord(2))), []);
+    let moved = event(NormalizedEvent::CaretMoved {
+        node_id: id(5),
+        caret: CaretReport {
+            line: line("Name\n", 100, 4),
+            selection: None,
+            read_at_us: stamp(),
+        },
+        selection_changes: Vec::new(),
+        content_changed: true,
+        new_selection: None,
+        facts: None,
+    });
+    assert_eq!(spoken(&reduce(&mut state, &moved)), []);
+    assert!(!state.holds_inputs_back(), "a chord is not the line's key");
+}
+
+/// A terminal keeps its handling of the chords, which is any other key
+/// passed: it sets its node's note and is watched to its bound.
+#[test]
+fn an_editing_chord_in_a_terminal_is_any_other_key_passed() {
+    let mut state = SrState::new();
+    focus(&mut state, node(7, Role::Terminal, StateSet::new()));
+    caret_event(&mut state, 7, line("ready> \n", 100, 7));
+    let effects = reduce(&mut state, &chord(2));
+    assert!(
+        effects
+            .iter()
+            .any(|effect| matches!(own(effect), Effect::KeyNote(_))),
+        "the note is set: {effects:?}"
+    );
+    assert!(state.holds_inputs_back());
+}
+
+/// A Control+Backspace that inserts a character, as the classic edit
+/// control's does in a password box, moves the caret forward with nothing
+/// removed, and says "blank" (`docs/design/caret-selection-rework.md`,
+/// Limits).
+#[test]
+fn a_backspace_that_moved_the_caret_forward_with_nothing_removed_says_blank() {
+    let (mut state, _) = key_passed_on("****\n", 2, CaretMotion::BackspaceWord);
+    let moved = event(NormalizedEvent::CaretMoved {
+        node_id: id(5),
+        caret: CaretReport {
+            line: line("*****\n", 100, 3),
+            selection: None,
+            read_at_us: stamp(),
+        },
+        selection_changes: Vec::new(),
+        content_changed: true,
+        new_selection: None,
+        facts: Some(Box::new(key_facts(
+            line("*****\n", 100, 3),
+            true,
+            (line("****\n", 100, 2), None),
+            true,
+        ))),
+    });
+    assert_eq!(
+        spoken(&reduce(&mut state, &moved)),
+        vec![UtteranceSegment::new(SegmentContent::Message(
+            Message::Blank
+        ))]
+    );
+}
+
+/// A sentence key in a text field past its bound: its final read asked.
+fn sentence_final_read(text: &str, offset: u32, motion: CaretMotion) -> (SrState, QueryId) {
+    let (mut state, _) = key_passed_on(text, offset, motion);
+    let due = reduce(&mut state, &key_bound_passed());
+    assert!(
+        due.contains(&Effect::BoundHeldKey(Some((TraceId::from_raw(2), 150)))),
+        "the step's 150 ms: {due:?}"
+    );
+    let asked = request(&due);
+    assert!(matches!(
+        asked.op,
+        TextOp::ReadCaret(CaretRead {
+            purpose: ReadPurpose::Final,
+            ..
+        })
+    ));
+    (state, asked.query_id)
+}
+
+/// The final read answering, showing no effect at `line`: its effects.
+fn sentence_no_effect(state: &mut SrState, query: QueryId, line: TextChunk) -> Vec<Effect> {
+    let unit = line.clone();
+    let caret = CaretReport {
+        line,
+        selection: None,
+        read_at_us: stamp(),
+    };
+    reduce(state, &completed_text(query, caret_read_reply(caret, unit)))
+}
+
+/// The request of a paragraph read, at `(anchor, offset)` moved by
+/// `count` paragraphs.
+fn paragraph_read(anchor: u64, offset: u32, count: Option<i32>) -> TextOp {
+    TextOp::Read(TextRead {
+        at: TextPoint::At(TextPosition {
+            anchor: TextAnchor(anchor),
+            offset,
+        }),
+        movement: count.map(|count| TextMovement {
+            unit: TextUnit::Sentence,
+            count,
+        }),
+        unit: TextUnit::Sentence,
+    })
+}
+
+/// The answer to a paragraph read.
+fn paragraph(query: QueryId, moved: i32, chunk: TextChunk) -> Input {
+    completed_text(query, TextReply::Read { moved, chunk })
+}
+
+const BANANA: &str = "Banana bread is warm. Cherry tart is sweet.\r\n";
+
+/// The caret moves to `(anchor, offset)` and `heard` is said: the move's
+/// answer's effects are checked.
+fn sentence_moved(
+    state: &mut SrState,
+    effects: &[Effect],
+    (anchor, offset): (u64, u32),
+    heard: &str,
+) {
+    let asked = request(effects);
+    assert_eq!(
+        asked.op,
+        TextOp::MoveCaret(TextPoint::At(TextPosition {
+            anchor: TextAnchor(anchor),
+            offset,
+        }))
+    );
+    let effects = reduce(
+        state,
+        &completed_text(
+            asked.query_id,
+            TextReply::Moved {
+                read_at_us: stamp(),
+            },
+        ),
+    );
+    assert_eq!(spoken(&effects), vec![UtteranceSegment::text(heard)]);
+    assert!(!state.holds_inputs_back(), "the key has ended");
+}
+
+#[test]
+fn alt_down_moves_to_the_next_sentence_in_the_paragraph() {
+    let (mut state, query) = sentence_final_read(BANANA, 3, CaretMotion::NextSentence);
+    let effects = sentence_no_effect(&mut state, query, line(BANANA, 100, 3));
+    let asked = request(&effects);
+    assert_eq!(asked.op, paragraph_read(100, 3, None));
+    let effects = reduce(
+        &mut state,
+        &paragraph(asked.query_id, 0, line(BANANA, 100, 3)),
+    );
+    sentence_moved(&mut state, &effects, (100, 22), "Cherry tart is sweet.");
+}
+
+#[test]
+fn alt_up_from_within_a_sentence_moves_to_its_start() {
+    let (mut state, query) = sentence_final_read(BANANA, 3, CaretMotion::PreviousSentence);
+    let effects = sentence_no_effect(&mut state, query, line(BANANA, 100, 3));
+    let effects = reduce(
+        &mut state,
+        &paragraph(request_of(&effects), 0, line(BANANA, 100, 3)),
+    );
+    sentence_moved(&mut state, &effects, (100, 0), "Banana bread is warm.");
+}
+
+#[test]
+fn a_sentence_move_crosses_into_the_paragraph_beside_it() {
+    // Alt+Down from the paragraph's last sentence: the next paragraph's first.
+    let (mut state, query) = sentence_final_read(BANANA, 30, CaretMotion::NextSentence);
+    let effects = sentence_no_effect(&mut state, query, line(BANANA, 100, 30));
+    let effects = reduce(
+        &mut state,
+        &paragraph(request_of(&effects), 0, line(BANANA, 100, 30)),
+    );
+    let asked = request(&effects);
+    assert_eq!(asked.op, paragraph_read(100, 0, Some(1)));
+    let effects = reduce(
+        &mut state,
+        &paragraph(asked.query_id, 1, line("Date cake is rich.\r\n", 101, 0)),
+    );
+    sentence_moved(&mut state, &effects, (101, 0), "Date cake is rich.");
+
+    // Alt+Up from the paragraph's start: the previous paragraph's last.
+    let (mut state, query) = sentence_final_read(BANANA, 0, CaretMotion::PreviousSentence);
+    let effects = sentence_no_effect(&mut state, query, line(BANANA, 100, 0));
+    let effects = reduce(
+        &mut state,
+        &paragraph(request_of(&effects), 0, line(BANANA, 100, 0)),
+    );
+    let asked = request(&effects);
+    assert_eq!(asked.op, paragraph_read(100, 0, Some(-1)));
+    let effects = reduce(
+        &mut state,
+        &paragraph(
+            asked.query_id,
+            -1,
+            line("Apple pie is good. Yes.\r\n", 99, 0),
+        ),
+    );
+    sentence_moved(&mut state, &effects, (99, 19), "Yes.");
+}
+
+#[test]
+fn alt_down_from_the_texts_last_sentence_moves_to_its_end_and_says_blank() {
+    let text = "Date cake is rich.";
+    let chunk = TextChunk {
+        last: true,
+        ..line(text, 102, 5)
+    };
+    let (mut state, query) = sentence_final_read(text, 5, CaretMotion::NextSentence);
+    let effects = sentence_no_effect(&mut state, query, line(text, 102, 5));
+    let effects = reduce(&mut state, &paragraph(request_of(&effects), 0, chunk));
+    let asked = request(&effects);
+    assert_eq!(asked.op, TextOp::MoveCaret(TextPoint::End));
+    let effects = reduce(
+        &mut state,
+        &completed_text(
+            asked.query_id,
+            TextReply::Moved {
+                read_at_us: stamp(),
+            },
+        ),
+    );
+    assert_eq!(
+        spoken(&effects),
+        vec![UtteranceSegment::new(SegmentContent::Message(
+            Message::Blank
+        ))]
+    );
+}
+
+#[test]
+fn alt_up_at_the_texts_start_stays_and_says_the_first_sentence() {
+    let text = "Apple pie is good.\r\n";
+    let (mut state, query) = sentence_final_read(text, 0, CaretMotion::PreviousSentence);
+    let effects = sentence_no_effect(&mut state, query, line(text, 100, 0));
+    // The outpost could not tell cheaply that this is the first paragraph,
+    // so the paragraph before it is read and nothing is there.
+    let effects = reduce(
+        &mut state,
+        &paragraph(request_of(&effects), 0, line(text, 100, 0)),
+    );
+    let effects = reduce(
+        &mut state,
+        &paragraph(request_of(&effects), 0, line(text, 100, 0)),
+    );
+    assert_eq!(
+        spoken(&effects),
+        vec![UtteranceSegment::text("Apple pie is good.")]
+    );
+    assert!(
+        !effects.iter().any(|effect| matches!(
+            own(effect),
+            Effect::Text(TextRequest {
+                op: TextOp::MoveCaret(_),
+                ..
+            })
+        )),
+        "the caret stays: {effects:?}"
+    );
+    assert!(!state.holds_inputs_back());
+}
+
+#[test]
+fn a_sentence_key_in_text_with_no_sentences_says_nothing() {
+    let (mut state, query) = sentence_final_read(BANANA, 3, CaretMotion::NextSentence);
+    let effects = sentence_no_effect(&mut state, query, line(BANANA, 100, 3));
+    let effects = reduce(
+        &mut state,
+        &completed_text(
+            request_of(&effects),
+            TextReply::UnsupportedUnit(TextUnit::Sentence),
+        ),
+    );
+    assert_eq!(spoken(&effects), []);
+    assert!(!state.holds_inputs_back());
+}
+
+#[test]
+fn a_sentence_keys_final_read_showing_a_move_says_the_line() {
+    let (mut state, query) = sentence_final_read("abc\n", 0, CaretMotion::NextSentence);
+    let reply = TextReply::Caret(Box::new(verbatim_model::CaretReply {
+        caret: CaretReport {
+            line: line("next\n", 101, 0),
+            selection: None,
+            read_at_us: 700_000,
+        },
+        selection_changes: Vec::new(),
+        content_changed: false,
+        new_selection: None,
+        facts: ReadFacts {
+            read_ended_at_us: 700_000,
+            ..key_facts(
+                line("next\n", 101, 0),
+                true,
+                (line("abc\n", 100, 0), None),
+                true,
+            )
+        },
+    }));
+    let effects = reduce(&mut state, &completed_text(query, reply));
+    assert_eq!(spoken(&effects), vec![UtteranceSegment::text("next")]);
+}
+
+#[test]
+fn a_sentence_move_past_its_150_ms_is_dropped() {
+    let (mut state, query) = sentence_final_read(BANANA, 3, CaretMotion::NextSentence);
+    let effects = sentence_no_effect(&mut state, query, line(BANANA, 100, 3));
+    let paragraph_query = request_of(&effects);
+    let due = reduce(&mut state, &key_bound_passed());
+    assert!(
+        due.iter().any(|effect| matches!(
+            own(effect),
+            Effect::Withdraw { query_id, .. } if *query_id == paragraph_query
+        )),
+        "the step's query withdrawn: {due:?}"
+    );
+    assert_eq!(spoken(&due), []);
+    let late = reduce(
+        &mut state,
+        &paragraph(paragraph_query, 0, line(BANANA, 100, 3)),
+    );
+    assert_eq!(late, [], "no move is made");
+}
+
+#[test]
+fn a_later_key_during_a_sentence_move_leaves_it_silent() {
+    let (mut state, query) = sentence_final_read(BANANA, 3, CaretMotion::NextSentence);
+    let effects = sentence_no_effect(&mut state, query, line(BANANA, 100, 3));
+    let _ = reduce(&mut state, &Input::SpeechCancelled { at_us: 700_000 });
+    let effects = reduce(
+        &mut state,
+        &paragraph(request_of(&effects), 0, line(BANANA, 100, 3)),
+    );
+    let asked = request(&effects);
+    let effects = reduce(
+        &mut state,
+        &completed_text(
+            asked.query_id,
+            TextReply::Moved {
+                read_at_us: stamp(),
+            },
+        ),
+    );
+    assert_eq!(spoken(&effects), []);
+}
+
+#[test]
+fn a_sentence_key_with_others_behind_it_is_only_passed_on() {
+    let mut state = editing("abc\n", 0);
+    let first = request_of(&reduce(
+        &mut state,
+        &held_at(TraceId::from_raw(2), CaretMotion::NextCharacter, 499),
+    ));
+    let sentence = TraceId::from_raw(20);
+    let _ = reduce(
+        &mut state,
+        &held_at(sentence, CaretMotion::NextSentence, 500),
+    );
+    let _ = reduce(
+        &mut state,
+        &held_at(TraceId::from_raw(21), CaretMotion::NextCharacter, 501),
+    );
+    // The first key's read unanswered ends it, and the next is taken.
+    let effects = reduce(&mut state, &completed_text(first, TextReply::Unanswered));
+    assert!(
+        effects
+            .iter()
+            .any(|effect| matches!(own(effect), Effect::PassHeldKey(key) if *key == sentence)),
+        "the sentence key is passed on: {effects:?}"
+    );
+    assert_eq!(
+        request(&effects).op,
+        TextOp::ReadCaret(CaretRead {
+            fetch: verbatim_model::KeyFetch {
+                unit: TextUnit::Character,
+                motion: CaretMotion::NextCharacter,
+            },
+            purpose: ReadPurpose::BeforeFieldKey,
+        }),
+        "only the key behind it is read"
+    );
+}
+
+#[test]
+fn a_focus_that_moves_away_ends_a_sentence_move_silently() {
+    let (mut state, query) = sentence_final_read(BANANA, 3, CaretMotion::NextSentence);
+    let effects = sentence_no_effect(&mut state, query, line(BANANA, 100, 3));
+    let paragraph_query = request_of(&effects);
+    focus(&mut state, node(9, Role::Button, StateSet::new()));
+    assert!(!state.holds_inputs_back());
+    let late = reduce(
+        &mut state,
+        &paragraph(paragraph_query, 0, line(BANANA, 100, 3)),
+    );
+    assert_eq!(late, [], "no move is made");
 }

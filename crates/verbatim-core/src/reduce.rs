@@ -140,6 +140,7 @@ fn reduce_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
         | Input::CaretKey { .. }
         | Input::CharacterTyped { .. }
         | Input::ClearingKey { .. }
+        | Input::EditingChord { .. }
         | Input::HeldKey { .. }
         | Input::MenuOrSwitchEnded { .. }
             if state.focus.waiting() =>
@@ -148,9 +149,10 @@ fn reduce_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
             Vec::new()
         }
         Input::Command { .. } | Input::Script { .. } => command_arrived(state, input),
-        Input::CaretKey { .. } | Input::CharacterTyped { .. } | Input::ClearingKey { .. } => {
-            key_arrived(state, input)
-        }
+        Input::CaretKey { .. }
+        | Input::CharacterTyped { .. }
+        | Input::ClearingKey { .. }
+        | Input::EditingChord { .. } => key_arrived(state, input),
         Input::HeldKey {
             trace_id,
             key,
@@ -166,12 +168,7 @@ fn reduce_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
             effects.extend(terminal::mark_reached(state, *mark));
             effects
         }
-        Input::SpeechCancelled { at_us } => {
-            crate::key_line::mark_later(state, *at_us);
-            let mut effects = terminal::cut(state, at_us / 1_000);
-            effects.extend(say_all::stop(state));
-            effects
-        }
+        Input::SpeechCancelled { at_us } => speech_cancelled(state, *at_us),
         Input::Settings(settings) => {
             let effects =
                 if state.settings.report_terminal_output && !settings.report_terminal_output {
@@ -215,9 +212,19 @@ fn reduce_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
     }
 }
 
+/// A key press cut speech off at `at_us`: a key in the line marks it, a
+/// terminal drops what waits, and say-all stops.
+fn speech_cancelled(state: &mut SrState, at_us: u64) -> Vec<Effect> {
+    crate::key_line::mark_later(state, at_us);
+    let mut effects = terminal::cut(state, at_us / 1_000);
+    effects.extend(say_all::stop(state));
+    effects
+}
+
 /// Handles a key passed to the application that is not held: a caret key
 /// judged by where the caret lands, text typed, or a key that clears a
-/// terminal's line. Any other input does nothing here.
+/// terminal's line. Any other input does nothing here, an editing chord in
+/// a text field among them: the hook's cut of speech was all it does.
 pub(crate) fn key_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
     // A terminal Core reads keeps the key for its reading rules.
     let mut effects = terminal_model::key_input(state, input);
@@ -267,6 +274,7 @@ pub(crate) fn key_trace(input: &Input) -> Option<TraceId> {
         Input::CaretKey { trace_id, .. }
         | Input::CharacterTyped { trace_id, .. }
         | Input::ClearingKey { trace_id, .. }
+        | Input::EditingChord { trace_id, .. }
         | Input::HeldKey { trace_id, .. } => Some(*trace_id),
         _ => None,
     }
@@ -1001,9 +1009,10 @@ fn waited_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
         Input::Command { .. } | Input::Script { .. } => {
             under_key(input.trace_id(), command_arrived(state, input))
         }
-        Input::CaretKey { .. } | Input::CharacterTyped { .. } | Input::ClearingKey { .. } => {
-            under_key(key_trace(input), key_arrived(state, input))
-        }
+        Input::CaretKey { .. }
+        | Input::CharacterTyped { .. }
+        | Input::ClearingKey { .. }
+        | Input::EditingChord { .. } => under_key(key_trace(input), key_arrived(state, input)),
         // The held-key line carries a held key's effects under its trace.
         Input::HeldKey {
             trace_id,

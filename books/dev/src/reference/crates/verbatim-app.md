@@ -81,8 +81,9 @@ adds one check of an empty queue, and no timer, lock or message; a kept
 post waits for the next key. Unit tests refuse a post through the
 `KeyPostRefused` fault point ([verbatim-faults](verbatim-faults.md)) and
 check each port takes every post once, in the hook's order. An observed caret key becomes
-`Input::CaretKey`; a clearing key `Input::ClearingKey`, then
-`Input::CaretKey` with `CaretMotion::Other`; Verbatim+V `Input::Script`
+`Input::CaretKey`; a clearing key `Input::ClearingKey`, then, unless it
+is Escape, `Input::CaretKey` with `CaretMotion::Other`; an editing chord
+`Input::EditingChord`, after `Input::ClearingKey` for Escape; Verbatim+V `Input::Script`
 with `Script::ShowMenu`; the time and tray-list bindings `Input::Script`
 with `Script::ReportTime` and `Script::ShellList`; a review or
 object-navigation binding `Input::Command`; a lock key's gesture
@@ -194,7 +195,9 @@ Milestone M4's text protocol is wired here (`books/dev/src/reference/crates/verb
   through the same table, with the time the hook stamped it. It observes
   the clearing keys too (`clearing_keys()`), each of which becomes
   `Input::ClearingKey` and then, like any other key the hook reports as
-  passed without typing text, `Input::CaretKey` with `CaretMotion::Other`.
+  passed without typing text, `Input::CaretKey` with `CaretMotion::Other`,
+  and the editing chords (`editing_chords()`), each of which becomes
+  `Input::EditingChord`, Escape after its `Input::ClearingKey`.
   Each text a key types becomes
   `Input::CharacterTyped` (the hook's translation,
   [verbatim-input-windows](verbatim-input-windows.md)), and each key that

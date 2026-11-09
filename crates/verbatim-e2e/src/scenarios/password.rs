@@ -22,8 +22,9 @@
 //! of circles, whose symbol level is above its default; and it has no
 //! delayed character description, the empty utterance NVDA says after a
 //! character it moves to; and it says the text a key removed, so the
-//! Windows Forms box's Control+Backspace, which removes nothing, is
-//! silent where NVDA says the word it expected to go.
+//! Windows Forms box's Control+Backspace, which removes nothing and moves
+//! the caret forward, says "blank" where NVDA says the word it expected to
+//! go.
 //!
 //! Every key is a real key press the keyboard hook sees and passes to the
 //! form; each step waits for its speech to be heard in full before the
@@ -222,16 +223,10 @@ pub(crate) fn text_box_body(scenario: &mut Scenario, _state: &mut ScenarioState)
     press_without_description(scenario, "leftarrow", &["star"]);
     press_without_description(scenario, "leftarrow", &["star"]);
     // Control+Backspace: the edit control deletes nothing and inserts a
-    // DEL character, masked as one more star, so Verbatim, which says the
-    // text a key removed, says nothing, where NVDA says the word it
-    // expected to go, "4 star". The key changes the line and moves the
-    // caret, evidence that Verbatim has answered it, so nothing more is
-    // expected once Verbatim reports it handled and itself idle.
-    scenario
-        .send_keys(&["control+backspace"])
-        .expect("sends control+backspace");
-    scenario.deviates_from_nvda("docs/parity/text.md", "TextInfo-equivalent layer");
-    scenario.expect_nothing_more();
+    // DEL character, masked as one more star, moving the caret forward with
+    // nothing removed: "blank", where NVDA says the word it expected to go,
+    // "4 star".
+    press_without_description(scenario, "control+backspace", &["blank"]);
     press_without_description(scenario, "home", &["star"]);
     // Control+Delete: the box deletes all of its text, leaving nothing at
     // the caret.

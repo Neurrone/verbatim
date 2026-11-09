@@ -59,6 +59,9 @@ fn user_key(input: &Input) -> Option<(TraceId, KeySeq)> {
         | Input::ClearingKey {
             trace_id, key_seq, ..
         }
+        | Input::EditingChord {
+            trace_id, key_seq, ..
+        }
         | Input::Command {
             trace_id, key_seq, ..
         }

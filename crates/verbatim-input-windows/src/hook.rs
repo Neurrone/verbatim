@@ -517,6 +517,23 @@ mod tests {
             .collect()
     }
 
+    /// An editing chord is passed to the application and reported with its
+    /// gesture, never held (`docs/design/caret-selection-rework.md`).
+    #[test]
+    fn an_editing_chord_is_reported_with_its_gesture() {
+        let reports = Arc::new(Mutex::new(Vec::new()));
+        let mut state = holding_state(&reports);
+        let escape = KeyEvent {
+            vk: 0x1B,
+            scan_code: 0x01,
+            extended: false,
+            injected: false,
+            pressed: true,
+        };
+        assert_eq!(decide(&mut state, escape, 0x01, 0), KeyDecision::Pass);
+        assert_eq!(described(&reports.lock().unwrap()), ["observed kb:escape"]);
+    }
+
     /// While Core's view of the window in front says keys may not be held
     /// for it, as for a window of higher integrity than Verbatim's, a caret
     /// key passes unheld and is reported observed, and no key is deferred

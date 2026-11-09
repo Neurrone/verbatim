@@ -1582,7 +1582,9 @@ impl ReducerThread<'_> {
                 input,
                 pressed_at_us,
             } => {
-                if let Input::CaretKey { trace_id, .. } = &*input {
+                if let Input::CaretKey { trace_id, .. } | Input::EditingChord { trace_id, .. } =
+                    &*input
+                {
                     self.context.ledger.key_pressed(*trace_id, pressed_at_us);
                 }
                 self.apply(*input);
@@ -2571,6 +2573,7 @@ fn bound_gestures(layout: KeyboardLayout) -> GestureMap {
     );
     GestureMap::new(gestures)
         .with_observed(verbatim_input::clearing_keys())
+        .with_observed(verbatim_input::editing_chords())
         .with_held(
             verbatim_input::caret_bindings()
                 .into_iter()

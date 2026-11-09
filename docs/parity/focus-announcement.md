@@ -193,7 +193,7 @@ focus.
   ("Symbol/punctuation processing, speech dictionaries, character
   descriptions" in [speech-audio.md](speech-audio.md)).
   The Windows Forms box's Control+Backspace deletes nothing and inserts
-  a DEL character, masked as a star, and is silent, where NVDA says the
+  a DEL character, masked as a star, and says "blank", where NVDA says the
   word it expected to go, as in any classic edit control
   ([text.md](text.md), "What Backspace and Delete say"). Pinned by
   `text_box_password` and `wpf_password`, from

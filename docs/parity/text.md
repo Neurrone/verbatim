@@ -115,23 +115,31 @@ through UI Automation, which has no sentence unit, it moves nothing
 (Notepad, where its captures then say "Non Client Input Sink Window", a
 window behind the document).
 
-Verbatim: **different** (Dickson, 2026-10-08): a key that does not move
-the caret is silent. The outpost never waits for a caret key, so that
-nothing else of the application, a focus change above all, waits behind
-one; it watches for the evidence and speaks when it comes, however late.
-A watch that ends without evidence, because the next key replaced it,
-the focus moved, or it reached its ten-second bound, says nothing. The
-same holds for a key whose application moves the caret without
-reporting it at all, where NVDA's polling finds the move. A focused
-classic edit control's system caret location change and show are caret
-events to Verbatim; a Common Controls version 6 edit control, such as a
-Windows Forms text box with visual styles, reports it with its text
-selection event too. An application whose Up Arrow on the first line, or
-Down Arrow on the last, moves the caret to the line's start or end has
-that move spoken as the key's answer, as NVDA speaks it. Alt with Up or
-Down Arrow that moves nothing says nothing in both controls, since
-Verbatim never decides that a key moved nothing; moving by sentence
-itself awaits Dickson's decision.
+Verbatim: **matched** (Dickson, 2026-10-29 and 2026-11-08). The key's
+bound is Core's, 100 ms from when the key is passed on, NVDA's wait, in
+Windows Terminal too. A key with no evidence by then has one final read,
+and a read showing no effect is the bound answer: the line after Up and
+Down Arrow, the page keys and Control with Home or End; the character
+after Left and Right Arrow, Home and End, "blank" where there is none;
+the word after Control with Left or Right Arrow; the paragraph after
+Control with Up or Down Arrow; the unit at the caret after Delete,
+Shift+Delete and Control+Delete. Backspace and Control+Backspace say
+nothing where the caret stayed, and a key with Shift says nothing. Alt
+with Up or Down Arrow where the application moves nothing moves the
+caret by sentence, by Unicode's rules within each paragraph, and through
+UI Automation, which has no sentence unit, says nothing.
+
+The differences: a move later than 100 ms is not spoken, and a control
+that raises a caret event for a key that moved nothing is heard at the
+100 ms where NVDA speaks at once. A sentence move whose final read or a
+later step passes 150 ms is dropped, the caret staying, where NVDA
+blocks until it can read. A focused classic edit control's system caret
+location change and show are caret events to Verbatim; a Common Controls
+version 6 edit control, such as a Windows Forms text box with visual
+styles, reports it with its text selection event too. An application
+whose Up Arrow on the first line, or Down Arrow on the last, moves the
+caret to the line's start or end has that move spoken as the key's
+answer, as NVDA speaks it.
 
 ### What counts as a caret key's evidence
 
@@ -188,13 +196,16 @@ NVDA's Backspace and Delete scripts speak what they expect the key to
 remove: Control+Backspace in a Windows Forms password box says "4 star"
 (`winforms-password-deleting-keys.txt` in
 `target/e2e-evidence/m42-protected-fixes-2026-10-22/`).
-Verbatim: **different** (Dickson, 2026-10-08): what Backspace deleted is
-worked out by comparing the line read before the key with the line
-after it ([holding caret keys](../../books/dev/src/explanation/design/key-holding.md)). The text
-removed at the caret is spoken, in any language, and nothing when
-nothing was removed: the classic edit control's Control+Backspace
-inserts a DEL character, where NVDA would speak the word it expected to
-go (`text_box_password`).
+Verbatim: **different** (Dickson, 2026-10-08, amended 2026-11-09): what
+Backspace deleted is worked out by comparing the line read before the
+key with the line after it ([holding caret
+keys](../../books/dev/src/explanation/design/key-holding.md)). The text
+removed at the caret is spoken, in any language. With nothing removed a
+caret that stayed says nothing, and a caret that moved forward says
+"blank", as NVDA's empty deleted text does: so the classic edit
+control's Control+Backspace, which inserts a DEL character, says "blank"
+wherever it is, where NVDA says "blank" only at the text's start and
+elsewhere the word it expected to go (`text_box_password`).
 
 - A backspace over a line break, with or without Control, names the
   kind of break the text was last seen to use, which is what NVDA reads,
@@ -211,26 +222,30 @@ go (`text_box_password`).
 
 NVDA says nothing for a key outside its caret keys that types no text.
 Verbatim: **different** (Dickson, 2026-10-08): such a key (bash's
-Control+A, Control+E, Alt+B, Alt+F, Control+W, Control+K, and Escape
-clearing a line) is spoken by its evidence: text it removed at the
-caret, the new line when the caret left its line, and otherwise by where
-the caret landed (the character, the word, or the word then the
-character). Both editors, the `caret_keys` scenarios:
+Control+A, Control+E, Alt+B, Alt+F, Control+W, Control+K, and in a
+terminal the editing chords, Escape clearing a line among them) is spoken
+by its evidence: text it removed at the caret, the new line when the
+caret left its line, and otherwise by where the caret landed (the
+character, the word, or the word then the character).
 
-- Escape after `echo hi` is silent in NVDA and "echo hi" in Verbatim.
+- Escape after `echo hi` in a terminal is silent in NVDA and "echo hi"
+  in Verbatim.
 - Escape after inline prediction showed `git status` is silent in NVDA
   and "git", the text typed, in Verbatim.
-- Control+Z after typing "x" is silent in NVDA and "x" in Verbatim.
-- Pasting "kiwi" and "mango" on two lines at a line's start is silent
-  in NVDA and reads the line the caret is left on, "mangoalpha beta
-  gamma", in Verbatim.
 - Escape on a typed line that had wrapped onto a second row says all it
   removed, as on a line of one row, though the caret went up a row; NVDA
   is silent.
-- A key outside the caret table that removes a selection (Control+X,
-  Control+V), something selected before it and nothing after, says only
-  the selection's change, never the text it removed, which was the
-  selection's: NVDA has no script for these keys.
+- A key outside the caret table that removes a selection, something
+  selected before it and nothing after, says only the selection's change,
+  never the text it removed, which was the selection's: NVDA has no
+  script for these keys.
+
+In a text field the editing chords, Control+Z, Control+Y, Control+X,
+Control+V and Escape, match NVDA (Dickson, 2026-10-25): they say nothing
+for the key, as NVDA binds no script to them, and a selection change the
+application's caret event shows is spoken from that event, as "alpha
+selected" after Control+Z restores a cut word (the `caret_keys`
+scenarios).
 
 ### Selecting with Shift
 

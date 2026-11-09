@@ -345,13 +345,12 @@ pub(crate) fn evidence_words(
         CaretMotion::Backspace | CaretMotion::BackspaceWord => {
             backspace_segments(state, node, key.motion, (read, evidence), grid)
         }
-        // A selection removed with its text, as by a cut, or restored, as
-        // by an undo: said by its change alone, after, never the text, as
-        // NVDA's caret event says it (`docs/parity/text.md`,
-        // "TextInfo-equivalent layer"). NVDA has no script for these keys,
-        // and says only its caret event's words.
+        // The selection removed with its text: said by its change alone,
+        // after, never the removed text, as NVDA's caret event says it
+        // (`docs/parity/text.md`, "TextInfo-equivalent layer"). NVDA has no
+        // script for these keys, and says only its caret event's words.
         CaretMotion::Other
-            if evidence.previous_selection.is_some() || read.caret.selection.is_some() =>
+            if evidence.previous_selection.is_some() && read.caret.selection.is_none() =>
         {
             Vec::new()
         }
@@ -376,8 +375,8 @@ pub(crate) fn evidence_words(
 }
 
 /// The words of a key whose final read found nothing: the unit for a
-/// movement key or Delete, nothing for Backspace, a Shift key, a key
-/// outside the table, or a sentence key.
+/// movement key or Delete, nothing for Backspace, a Shift key or a key
+/// outside the table. A sentence key moves by sentence instead.
 pub(crate) fn bound_words(
     state: &mut SrState,
     node: NodeId,
@@ -387,11 +386,7 @@ pub(crate) fn bound_words(
     if selects(key)
         || matches!(
             key.motion,
-            CaretMotion::Backspace
-                | CaretMotion::BackspaceWord
-                | CaretMotion::Other
-                | CaretMotion::PreviousSentence
-                | CaretMotion::NextSentence
+            CaretMotion::Backspace | CaretMotion::BackspaceWord | CaretMotion::Other
         )
     {
         return Vec::new();
@@ -615,6 +610,71 @@ fn landing_segments(from: usize, line: &TextChunk, grid: bool) -> Vec<UtteranceS
         return segments;
     }
     character()
+}
+
+/// A sentence found in a paragraph: its start and its text.
+pub(crate) struct Sentence {
+    pub(crate) offset: u32,
+    pub(crate) text: String,
+}
+
+/// The sentences of `paragraph` by Unicode's rules, within its content,
+/// and the caret's byte offset in it (`docs/design/caret-selection-rework.md`,
+/// "Moving by sentence").
+fn sentences(paragraph: &TextChunk) -> (&str, usize, Vec<std::ops::Range<usize>>) {
+    let content = text::line_content(&paragraph.text, false);
+    let caret = text::boundary(content, text::byte_offset(paragraph.offset));
+    let ranges = verbatim_text::Segmenter::new().sentences(content);
+    (content, caret, ranges)
+}
+
+/// The sentence at `range` of `content`.
+fn sentence_at(content: &str, range: std::ops::Range<usize>) -> Sentence {
+    Sentence {
+        offset: u32::try_from(range.start).unwrap_or(u32::MAX),
+        text: proven::text_in(content, range).to_owned(),
+    }
+}
+
+/// The first sentence starting after `paragraph`'s caret, Alt+Down's
+/// landing within it.
+pub(crate) fn next_sentence(paragraph: &TextChunk) -> Option<Sentence> {
+    let (content, caret, ranges) = sentences(paragraph);
+    let range = ranges.into_iter().find(|range| range.start > caret)?;
+    Some(sentence_at(content, range))
+}
+
+/// The sentence holding the character before `paragraph`'s caret, Alt+Up's
+/// landing within it, as NVDA steps back one offset and takes that
+/// sentence's start.
+pub(crate) fn sentence_before(paragraph: &TextChunk) -> Option<Sentence> {
+    let (content, caret, ranges) = sentences(paragraph);
+    let range = ranges.into_iter().rfind(|range| range.start < caret)?;
+    Some(sentence_at(content, range))
+}
+
+/// `paragraph`'s first sentence; an empty one at its start when it has
+/// none.
+pub(crate) fn first_sentence(paragraph: &TextChunk) -> Sentence {
+    let (content, _, ranges) = sentences(paragraph);
+    sentence_at(content, ranges.into_iter().next().unwrap_or(0..0))
+}
+
+/// `paragraph`'s last sentence; an empty one at its start when it has
+/// none.
+pub(crate) fn last_sentence(paragraph: &TextChunk) -> Sentence {
+    let (content, _, ranges) = sentences(paragraph);
+    sentence_at(content, ranges.into_iter().next_back().unwrap_or(0..0))
+}
+
+/// The speech for a sentence moved to, in `line`: "blank" where there is
+/// none, as NVDA reads the empty text at the caret.
+pub(crate) fn sentence_words(line: &TextChunk, sentence: &str) -> Vec<UtteranceSegment> {
+    let spoken = sentence.trim();
+    if spoken.is_empty() {
+        return text::character_segments(None, None);
+    }
+    text::text_segments(spoken, line.language_at(text::byte_offset(line.offset)))
 }
 
 /// The speech for text a Backspace deleted: a character, or a line break

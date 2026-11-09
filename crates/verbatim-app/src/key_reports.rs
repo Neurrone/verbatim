@@ -33,6 +33,7 @@ use crate::{SHOW_MENU_GESTURE, ShellCommand};
 pub(crate) struct Tables {
     caret_keys: HashMap<GestureId, CaretKey>,
     clearing_keys: HashSet<GestureId>,
+    editing_chords: HashSet<GestureId>,
     show_menu: GestureId,
     scripts: HashMap<GestureId, ScriptAction>,
     toggles: HashMap<GestureId, LockKey>,
@@ -44,6 +45,7 @@ impl Tables {
         Self {
             caret_keys: verbatim_input::caret_bindings().into_iter().collect(),
             clearing_keys: verbatim_input::clearing_keys().into_iter().collect(),
+            editing_chords: verbatim_input::editing_chords().into_iter().collect(),
             show_menu: GestureId::parse(SHOW_MENU_GESTURE).expect("valid binding"),
             scripts: verbatim_input::bindings_for(layout).into_iter().collect(),
             toggles: [
@@ -219,42 +221,69 @@ pub(crate) fn reports(
     })
 }
 
+/// Any other key passed to the application that types no text.
+const OTHER_KEY: CaretKey = CaretKey {
+    motion: CaretMotion::Other,
+    select: false,
+};
+
+/// The commands an observed gesture is to the reducer, in order: a caret
+/// key's, a clearing key's or an editing chord's.
+fn observed_commands(
+    gesture: &EmittedGesture,
+    key_seq: KeySeq,
+    pressed_at_us: u64,
+    tables: &Tables,
+    post: &mut impl FnMut(ShellCommand),
+) {
+    let caret_key = |caret| ShellCommand::CaretKey {
+        input: Box::new(Input::CaretKey {
+            trace_id: gesture.trace_id,
+            key_seq,
+            key: caret,
+            pressed_at_ms: pressed_at_us / 1_000,
+        }),
+        pressed_at_us,
+    };
+    let editing_chord = || ShellCommand::CaretKey {
+        input: Box::new(Input::EditingChord {
+            trace_id: gesture.trace_id,
+            key_seq,
+            pressed_at_ms: pressed_at_us / 1_000,
+        }),
+        pressed_at_us,
+    };
+    let chord = tables.editing_chords.contains(&gesture.gesture);
+    if let Some(&caret) = tables.caret_keys.get(&gesture.gesture) {
+        post(caret_key(caret));
+    } else if tables.clearing_keys.contains(&gesture.gesture) {
+        // The typing held is forgotten first; then the key is judged as
+        // what else it is (Escape clearing a terminal's line speaks what it
+        // removed).
+        post(ShellCommand::Input(Box::new(Input::ClearingKey {
+            trace_id: gesture.trace_id,
+            key_seq,
+            at_ms: pressed_at_us / 1_000,
+        })));
+        post(if chord {
+            editing_chord()
+        } else {
+            caret_key(OTHER_KEY)
+        });
+    } else if chord {
+        post(editing_chord());
+    }
+}
+
 /// The commands `report` is to the reducer, in order, each given to
 /// `post`: none for a gesture nothing is bound to.
 fn commands_for(report: KeyReport, tables: &Tables, mut post: impl FnMut(ShellCommand)) {
-    let other_key = CaretKey {
-        motion: CaretMotion::Other,
-        select: false,
-    };
     match report {
         KeyReport::Observed {
             gesture,
             key_seq,
             pressed_at_us,
-        } => {
-            let caret_key = |caret| ShellCommand::CaretKey {
-                input: Box::new(Input::CaretKey {
-                    trace_id: gesture.trace_id,
-                    key_seq,
-                    key: caret,
-                    pressed_at_ms: pressed_at_us / 1_000,
-                }),
-                pressed_at_us,
-            };
-            if let Some(&caret) = tables.caret_keys.get(&gesture.gesture) {
-                post(caret_key(caret));
-            } else if tables.clearing_keys.contains(&gesture.gesture) {
-                // The typing held is forgotten first; then the key is
-                // judged like any other (Escape clearing a line speaks what
-                // it removed).
-                post(ShellCommand::Input(Box::new(Input::ClearingKey {
-                    trace_id: gesture.trace_id,
-                    key_seq,
-                    at_ms: pressed_at_us / 1_000,
-                })));
-                post(caret_key(other_key));
-            }
-        }
+        } => observed_commands(&gesture, key_seq, pressed_at_us, tables, &mut post),
         // A held key always reaches the reducer thread, which sends it on;
         // the hook holds only caret keys, so it is one.
         KeyReport::Held {
@@ -287,7 +316,7 @@ fn commands_for(report: KeyReport, tables: &Tables, mut post: impl FnMut(ShellCo
             input: Box::new(Input::CaretKey {
                 trace_id,
                 key_seq,
-                key: other_key,
+                key: OTHER_KEY,
                 pressed_at_ms: pressed_at_us / 1_000,
             }),
             pressed_at_us,
@@ -444,8 +473,26 @@ mod tests {
                         at_ms: PRESSED_AT_US / 1_000
                     }
                 ),
-                format!("{:?}", caret(CaretMotion::Other)),
+                format!(
+                    "{:?}",
+                    Input::EditingChord {
+                        trace_id,
+                        key_seq,
+                        pressed_at_ms: PRESSED_AT_US / 1_000
+                    }
+                ),
             ]
+        );
+        assert_eq!(
+            mapped(observed("kb:control+z")),
+            [format!(
+                "{:?}",
+                Input::EditingChord {
+                    trace_id,
+                    key_seq,
+                    pressed_at_ms: PRESSED_AT_US / 1_000
+                }
+            )]
         );
         assert_eq!(mapped(KeyReport::Handled(3)), ["handled 3"]);
         assert_eq!(

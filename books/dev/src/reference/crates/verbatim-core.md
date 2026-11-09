@@ -858,9 +858,12 @@ the selection changes heard while it runs. The current key is `Reading`,
 a held key whose before read is in flight, or `Watched`, a key that has
 been passed on: `Watched::Field` in a text field, which holds what it is
 judged from (`Before`), and `Watched::Terminal`, which does not. Each has its
-when it was passed, and whether a later key was marked; and
-`FinalReading` is a text field's key past its bound whose final read is
-asked.
+when it was passed, and whether a later key was marked; `FinalReading` is
+a text field's key past its bound whose final read is asked; and
+`MovingBySentence` is a sentence key past its bound with no evidence,
+which moves the caret by sentence itself (`SentenceStep`: the final read,
+a paragraph's read and the move, each under the before read's 150 ms; a
+step past it, or a failed one, ends the key with the caret staying).
 
 An `Input::HeldKey`, a caret key the hook held back because
 `holds_caret_keys` was true, asks the focus's outpost to read the caret,
@@ -878,8 +881,15 @@ asked, and `KEY_BOUND_MS` (100 ms) after a key is passed on. Evidence
 clears it. A before read past its bound is withdrawn and the key is passed
 on, watched from the last read. A passed-on key past its bound has what waits behind it run and, if it
 is still current, asks one final read (`TextOp::ReadCaret` with
-`ReadPurpose::Final`), becoming `FinalReading`. A terminal's key has no
-final read: its deadline ends it.
+`ReadPurpose::Final`), becoming `FinalReading`. A sentence key past its
+bound asks the same read and becomes `MovingBySentence`, with what waits
+behind it waiting for the move. A terminal's key has no final read: its
+deadline ends it.
+
+An `Input::EditingChord` in a text field does nothing, the hook having cut
+speech, and its selection changes come from the application's caret
+event; in a terminal it is `Input::CaretKey` with `CaretMotion::Other`,
+judged at its arrival in the line.
 
 A held key that reaches Core while focus reports wait joins the focus
 queue first and is taken in its turn, as NVDA runs its caret script in
@@ -910,7 +920,7 @@ exit every key still held is passed on in press order.
 
 (`books/dev/src/explanation/design/ownership.md`.) Every user input carries the number the keyboard hook's thread
 gave it (`verbatim_model::KeySeq`), as `key_seq` on all seven:
-`CaretKey`, `HeldKey`, `CharacterTyped`, `ClearingKey`, `Command`,
+`CaretKey`, `HeldKey`, `CharacterTyped`, `ClearingKey`, `EditingChord`, `Command`,
 `Script` and `ToggleKeyPressed`. `reduce` records the input's trace and
 number in `SrState::key_origins` (`keys.rs`, the newest 1,024 pairs)
 before dispatching it, and as its last step stamps every `Effect::Speak`,
