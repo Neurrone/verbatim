@@ -18,6 +18,7 @@ use verbatim_model::{
 
 use super::*;
 
+mod caret_lease;
 mod explore;
 #[cfg(any())]
 mod followed;

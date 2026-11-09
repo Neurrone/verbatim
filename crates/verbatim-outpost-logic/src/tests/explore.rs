@@ -81,6 +81,13 @@ fn explore_generated() {
 
 #[test]
 #[ignore = "exploration: run by the nightly workflow with its own seed (books/dev/src/reference/testing.md, Exploration tests)"]
+fn explore_caret_lease() {
+    let (config, again) = explored("explore_caret_lease");
+    super::caret_lease::run_generated(config, &again);
+}
+
+#[test]
+#[ignore = "exploration: run by the nightly workflow with its own seed (books/dev/src/reference/testing.md, Exploration tests)"]
 fn explore_intake() {
     let (config, again) = explored("explore_intake");
     let _ = super::intake_order::run_generated(config, &again);
