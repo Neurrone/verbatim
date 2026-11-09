@@ -798,9 +798,10 @@ pub(crate) fn selection_changed(
     node: NodeId,
     (changes, general): (&[SelectionChange], Option<General<'_>>),
 ) -> Vec<Effect> {
-    if changes.is_empty() || !state.focus_matches(node) {
+    if !state.focus_matches(node) {
         return Vec::new();
     }
+    // Even with no change of its own, a report says what waits for the line.
     let segments = selection_segments(changes, general);
     crate::key_line::changes_heard(state, trace_id, node, segments)
 }

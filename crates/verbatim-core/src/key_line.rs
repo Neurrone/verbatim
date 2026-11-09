@@ -67,9 +67,6 @@ pub(crate) struct Busy {
     waiting: VecDeque<WaitingKey>,
     /// Selection changes held for the next words.
     heard: Vec<UtteranceSegment>,
-    /// The current key took over from a key it silenced, so what is reported
-    /// while it is read waits for its words too.
-    follows_silenced_key: bool,
 }
 
 /// What the current key is doing.
@@ -213,7 +210,6 @@ fn set_current(state: &mut SrState, current: CurrentKey) {
                 current,
                 waiting: VecDeque::new(),
                 heard: Vec::new(),
-                follows_silenced_key: false,
             }));
         }
     }
@@ -522,7 +518,6 @@ fn run_waiting(
             && matches!(&busy.current, CurrentKey::Reading { key, .. } if Some(key.trace_id) == trace)
         {
             busy.waiting.append(&mut waiting);
-            busy.follows_silenced_key = true;
             break;
         }
         if starts_key
@@ -531,7 +526,6 @@ fn run_waiting(
                 if Some(watched.key.trace_id) == trace)
         {
             busy.waiting.append(&mut waiting);
-            busy.follows_silenced_key = true;
             effects.extend(pass_rule(state));
             break;
         }
@@ -1054,12 +1048,11 @@ pub(crate) fn changes_heard(
     let Some(busy) = state.busy_mut() else {
         return editing::speak_each(trace_id, segments);
     };
-    let held = busy.follows_silenced_key
-        || busy
-            .current
-            .watched()
-            .is_some_and(|watched| watched.node == node);
-    if held {
+    if busy
+        .current
+        .watched()
+        .is_some_and(|watched| watched.node == node)
+    {
         busy.heard.extend(segments);
         return Vec::new();
     }
