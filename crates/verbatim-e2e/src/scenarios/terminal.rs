@@ -617,7 +617,11 @@ fn start_script(
         Some(settled) => (
             write_title(&quoted(&format!("{title} settling"))),
             format!(
-                "while (-not (Test-Path -LiteralPath {})) {{ Start-Sleep -Milliseconds 10 }}\r\n{}\r\n",
+                "$settled = New-Object IO.FileSystemWatcher({}, {})\r\n\
+                 if (-not (Test-Path -LiteralPath {})) {{ $null = $settled.WaitForChanged('Created') }}\r\n\
+                 $settled.Dispose()\r\n{}\r\n",
+                quoted(directory),
+                quoted(SETTLED_FILE),
                 quoted(settled),
                 write_title(&quoted(title))
             ),
@@ -933,9 +937,8 @@ mod tests {
         let script = start_script(
             "it's",
             r"C:\run's",
-            r"C:\run's\go",
-            r"C:\run's\ready",
-            r"C:\run's\pid",
+            (r"C:\run's\go", r"C:\run's\ready", r"C:\run's\pid"),
+            None,
         );
         assert!(script.contains("WindowTitle = 'it''s'"));
         assert!(script.contains(r"Set-Location -LiteralPath 'C:\run''s'"));
