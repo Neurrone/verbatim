@@ -310,6 +310,7 @@ pub(super) struct Wire {
 pub(super) enum Asked {
     Navigate,
     Activate,
+    ReadNode,
     Text(TextOp),
 }
 
@@ -325,6 +326,10 @@ impl Wire {
                 Effect::Activate { query_id, node_id } => {
                     self.open
                         .insert(*query_id, (node_id.outpost(), Asked::Activate));
+                }
+                Effect::ReadNode { query_id, node_id } => {
+                    self.open
+                        .insert(*query_id, (node_id.outpost(), Asked::ReadNode));
                 }
                 Effect::Text(request) => {
                     self.open.insert(
@@ -539,6 +544,7 @@ fn fitting(outpost: OutpostId, asked: &Asked) -> QueryResult {
     match asked {
         Asked::Navigate => QueryResult::Navigated(Some(node(outpost, 1, Role::Window, "Window"))),
         Asked::Activate => QueryResult::Activated(None),
+        Asked::ReadNode => QueryResult::Node(node(outpost, 1, Role::Window, "Window")),
         Asked::Text(op) => QueryResult::Text(match op {
             TextOp::ReadCaret(_) => caret_reply(),
             TextOp::Read(_) => TextReply::Read {
@@ -693,7 +699,11 @@ fn one_of(then: &Then) -> Option<String> {
                 ModelAsk::Find { .. } => "find",
             }
         )),
-        Then::Activation | Then::Key { .. } | Then::MovedCaret { .. } | Then::Nothing => None,
+        Then::Activation
+        | Then::Key { .. }
+        | Then::MovedCaret { .. }
+        | Then::Review(_)
+        | Then::Nothing => None,
     }
 }
 
@@ -959,21 +969,25 @@ fn an_answer_runs_its_continuation_once_and_ends_its_query() {
     );
 }
 
-/// A navigation a newer one superseded is waited for until its answer
-/// comes, which runs nothing; the newer one's answer moves the navigator.
+/// A navigation pressed while one is running waits behind it, and its
+/// own read is asked once the first has answered: the two run in press
+/// order, each moving the navigator.
 #[test]
-fn a_superseded_navigations_answer_runs_nothing_and_is_waited_for_until_it_comes() {
+fn a_second_navigation_waits_behind_the_one_running() {
     let mut state = text_box();
     let first = navigate(&mut state);
-    let second = navigate(&mut state);
-    assert_eq!(state.outstanding_queries(), 2);
-    assert_eq!(
-        reduce(&mut state, &answered(first, EDIT_OUTPOST, window_found())),
-        []
-    );
+    let asked = requests(&reduce(&mut state, &command(ReviewCommand::Parent)));
+    assert_eq!(asked, [], "the second waits behind the first");
+    assert_eq!(state.outstanding_queries(), 1);
+    let effects = reduce(&mut state, &answered(first, EDIT_OUTPOST, window_found()));
+    assert!(speaks(&effects), "the first moves: {effects:?}");
+    let asked = requests(&effects);
+    let [(second, None)] = asked[..] else {
+        panic!("the second's navigation, not {asked:?}");
+    };
     assert_eq!(state.outstanding_queries(), 1);
     let effects = reduce(&mut state, &answered(second, EDIT_OUTPOST, window_found()));
-    assert!(speaks(&effects), "the newer navigation moves: {effects:?}");
+    assert!(speaks(&effects), "the second moves: {effects:?}");
     assert_eq!(state.outstanding_queries(), 0);
 }
 
@@ -993,10 +1007,10 @@ fn an_answer_from_another_outpost_leaves_its_query_open() {
 }
 
 /// A navigation's outcome other than an answer reads as unanswered, which
-/// leaves the navigator where it is, and only a gone node as gone, which
-/// returns it to the focus.
+/// leaves the navigator where it is, and only a gone node as gone, whose
+/// edge is spoken with the navigator staying.
 #[test]
-fn an_unanswered_navigation_stays_and_only_a_gone_node_returns_to_the_focus() {
+fn an_unanswered_navigation_stays_silent_and_a_gone_node_says_the_edge() {
     for outcome in [
         QueryOutcome::Abandoned,
         QueryOutcome::NotStarted,
@@ -1015,19 +1029,18 @@ fn an_unanswered_navigation_stays_and_only_a_gone_node_returns_to_the_focus() {
         &mut state,
         &answered(query, EDIT_OUTPOST, QueryOutcome::Gone),
     );
-    assert!(speaks(&effects), "the focus is announced: {effects:?}");
+    assert!(speaks(&effects), "the edge is spoken: {effects:?}");
 }
 
-/// A text request's outcome other than an answer reads as unanswered, and
-/// a gone node as gone: a review command's read of the caret's line says
-/// nothing for either.
+/// A text request's outcome other than an answer or a gone node reads as
+/// unanswered: a review command's read of the caret's line says nothing
+/// for it.
 #[test]
 fn a_text_requests_failure_reads_as_unanswered() {
     for outcome in [
         QueryOutcome::Abandoned,
         QueryOutcome::NotStarted,
         QueryOutcome::Failed("the read failed".to_owned()),
-        QueryOutcome::Gone,
     ] {
         let mut state = text_box();
         let asked = requests(&reduce(
@@ -1161,5 +1174,5 @@ fn the_open_queries_round_trip_with_the_state() {
     let json = serde_json::to_string(&state).expect("the state serializes");
     let read: SrState = serde_json::from_str(&json).expect("the state reads");
     assert_eq!(read, state);
-    assert_eq!(read.outstanding_queries(), 2);
+    assert_eq!(read.outstanding_queries(), 1, "the press behind waits");
 }

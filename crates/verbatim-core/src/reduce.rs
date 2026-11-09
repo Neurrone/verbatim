@@ -32,6 +32,7 @@ use crate::focus_rules::{
     lowest_common_ancestor, needs_live_ancestry, repeats_focus, selection_target,
 };
 use crate::foreground::{Attention, ForegroundFact, LatestFocus};
+use crate::key_line::ReviewPress;
 use crate::queries::Then;
 use crate::state::PendingText;
 use crate::state::{
@@ -83,6 +84,9 @@ pub fn reduce(state: &mut SrState, input: &Input) -> Vec<Effect> {
         terminal_model::sync_settings(state);
         effects = terminal_model::intercept(state, effects, terminal_model::input_trace(input));
     }
+    // A press whose read ended with no answer, its terminal's model gone,
+    // says nothing and ends.
+    effects.extend(crate::key_line::press_without_read(state));
     // Whatever cuts speech off drops the terminal output handed to it, and
     // with it the output still waiting, as a key press does in NVDA.
     if effects.iter().any(terminal::cuts_speech) {
@@ -1435,6 +1439,7 @@ fn execute_report(state: &mut SrState, owned: &Report, left: bool, arrival: u64)
     let first = crate::key_line::before_focus(state, node);
     let mut effects = execute_focus(state, owned, (left, arrival), first);
     effects.extend(crate::key_line::focus_executed(state, node));
+    effects.extend(crate::key_line::navigator_moved(state));
     effects
 }
 
@@ -1494,10 +1499,7 @@ fn execute_focus(
 
     // The review cursor follows focus (roadmap M3): every focus change snaps
     // the navigator object to the new focus and resets the review cursor to
-    // its start. This deliberately leaves a navigation still pending alone:
-    // an app-initiated focus event is not newer user intent than an
-    // object-navigation command already in flight, so its answer must still
-    // be free to apply once it lands ([`navigate_completed`]).
+    // its start.
     let navigator = Navigator::on(report.node.clone());
     // When speech is cut off (`docs/nvda/speech.md`, "Cancellation", and
     // `docs/nvda/events.md`): focus speech is queued, not interrupting. A
@@ -2028,6 +2030,7 @@ fn outpost_ended(state: &mut SrState, outpost: OutpostId) -> Vec<Effect> {
     state
         .queries
         .forget(|then| matches!(then, Then::Navigation { from, .. } if from.outpost() == outpost));
+    crate::key_line::forget_press_read(state, outpost);
     effects
 }
 
@@ -2272,7 +2275,14 @@ fn reduce_command(
             terminal_model::report_status_bar(state, trace_id, repeat)
         }
         ReviewCommand::PreviousCommandMark | ReviewCommand::NextCommandMark => {
-            review_text::command_mark(state, trace_id, command)
+            review_text::command_mark(
+                state,
+                ReviewPress {
+                    trace_id,
+                    command,
+                    repeat,
+                },
+            )
         }
         _ => navigator_command(state, trace_id, command, repeat),
     };
@@ -2383,10 +2393,15 @@ fn navigator_command(
         )];
     };
 
+    let press = ReviewPress {
+        trace_id,
+        command,
+        repeat,
+    };
     match command {
         #[expect(clippy::unreachable, reason = "moving to the focus returned above")]
         ReviewCommand::ToFocus => unreachable!("handled above"),
-        ReviewCommand::ReportObject => report_object(state, trace_id, repeat),
+        ReviewCommand::ReportObject => review_text::read_object(state, press),
         ReviewCommand::Activate => {
             let node = navigator.object.id;
             vec![
@@ -2396,37 +2411,25 @@ fn navigator_command(
                     .1,
             ]
         }
-        ReviewCommand::Parent => navigate(state, trace_id, QueryKind::Parent),
-        ReviewCommand::NextSibling => navigate(state, trace_id, QueryKind::NextSibling),
-        ReviewCommand::PreviousSibling => navigate(state, trace_id, QueryKind::PreviousSibling),
-        ReviewCommand::FirstChild => navigate(state, trace_id, QueryKind::FirstChild),
-        command if review_text::handles(command) => {
-            match review_text::run(state, trace_id, command, repeat) {
-                review_text::Outcome::Done(effects) => effects,
-                review_text::Outcome::Flat => flat_review_command(state, trace_id, command, repeat),
-            }
-        }
+        ReviewCommand::Parent => navigate(state, press, QueryKind::Parent),
+        ReviewCommand::NextSibling => navigate(state, press, QueryKind::NextSibling),
+        ReviewCommand::PreviousSibling => navigate(state, press, QueryKind::PreviousSibling),
+        ReviewCommand::FirstChild => navigate(state, press, QueryKind::FirstChild),
+        command if review_text::handles(command) => review_text::run(state, press),
         _ => Vec::new(),
     }
 }
 
 /// Snaps the navigator (and review cursor) back to the current focus and
-/// reports it, and turns a navigation still pending to nothing, so it
-/// cannot override this explicit return to focus. Does nothing else with
-/// nothing focused, or with a focus whose outpost has ended. Also reused to
-/// re-seed the navigator when a navigation fetch reports `FetchResult::Gone`
-/// (the outpost could not reach the navigator's node): the same "fall back to
-/// focus and announce it" behavior applies there too.
+/// reports it. Does nothing else with nothing focused, or with a focus
+/// whose outpost has ended.
 fn navigator_to_focus(state: &mut SrState, trace_id: TraceId) -> Vec<Effect> {
-    state
-        .queries
-        .forget(|then| matches!(then, Then::Navigation { .. }));
     let Some(focus) = state.focus.object().filter(|focus| focus.alive) else {
         return Vec::new();
     };
     let object = focus.snapshot.clone();
     state.navigator = Some(Navigator::on(object.clone()));
-    announce_focus_object(state, trace_id, &object, Reason::Focus)
+    announce_focus_object(state, trace_id, &object, Reason::Focus, None)
 }
 
 /// Announces the navigator object `object` after object navigation or on
@@ -2438,6 +2441,7 @@ fn announce_navigator(
     trace_id: TraceId,
     object: &NodeSnapshot,
     reason: Reason,
+    press: Option<ReviewPress>,
 ) -> Vec<Effect> {
     let levels = (reason, &mut state.last_tree_level, &mut state.cell_memory);
     let utterance = if editing::may_have_text(object.role) && object.value.is_some() {
@@ -2453,6 +2457,7 @@ fn announce_navigator(
         trace_id,
         object,
         NavigatorRead::Announce,
+        press,
     ));
     effects
 }
@@ -2478,6 +2483,7 @@ fn announce_focus_object(
     trace_id: TraceId,
     object: &NodeSnapshot,
     reason: Reason,
+    press: Option<ReviewPress>,
 ) -> Vec<Effect> {
     if let Some(focus) = state
         .focus
@@ -2487,20 +2493,25 @@ fn announce_focus_object(
         let ancestors = Arc::clone(&focus.spoken().ancestors);
         focus.spoken = SpokenRecord::of(object, ancestors);
     }
-    announce_navigator(state, trace_id, object, reason)
+    announce_navigator(state, trace_id, object, reason, press)
 }
 
-/// Reports the navigator object: on the first press its full announcement,
+/// Reports the navigator object, read live for the press: on the first press its full announcement,
 /// on the second its text spelled character by character, on the third its
 /// name and value copied to the clipboard (NVDA's multi-press semantics).
-fn report_object(state: &mut SrState, trace_id: TraceId, repeat: u8) -> Vec<Effect> {
+pub(crate) fn report_object(
+    state: &mut SrState,
+    trace_id: TraceId,
+    press: ReviewPress,
+) -> Vec<Effect> {
     let Some(navigator) = state.navigator.as_ref() else {
         return Vec::new();
     };
+    let repeat = press.repeat;
     match repeat {
         0 => {
             let object = navigator.object.clone();
-            announce_focus_object(state, trace_id, &object, Reason::Query)
+            announce_focus_object(state, trace_id, &object, Reason::Query, Some(press))
         }
         // An object with text spells or copies its name and the text it
         // would announce, the selection or the caret's line, as NVDA does
@@ -2512,7 +2523,7 @@ fn report_object(state: &mut SrState, trace_id: TraceId, repeat: u8) -> Vec<Effe
             } else {
                 NavigatorRead::Copy
             };
-            editing::navigator_text(state, trace_id, &object, read)
+            editing::navigator_text(state, trace_id, &object, read, Some(press))
         }
         1 => {
             // NVDA spells the name and value joined by a space.
@@ -2597,21 +2608,19 @@ pub(crate) fn clipboard_text(node: &NodeSnapshot) -> String {
 /// Emits a navigation fetch for the navigator object's neighbor in the
 /// direction `kind` names; its answer ([`navigate_completed`]) moves the
 /// navigator and announces the result, or reports the edge when there is no
-/// such neighbor. A navigation still pending is turned to nothing: this
-/// newer one supersedes it, so its eventual answer runs nothing.
-fn navigate(state: &mut SrState, _trace_id: TraceId, kind: QueryKind) -> Vec<Effect> {
+/// such neighbor. The press stays current until the answer.
+fn navigate(state: &mut SrState, press: ReviewPress, kind: QueryKind) -> Vec<Effect> {
     let Some(navigator) = state.navigator.as_ref() else {
         return Vec::new();
     };
     let from = navigator.object.id;
-    state
-        .queries
-        .forget(|then| matches!(then, Then::Navigation { .. }));
-    let (_, effect) = state.queries.ask(
+    let (query, effect) = state.queries.ask(
         crate::queries::Asking::Navigate(from, kind),
         Then::Navigation { from, kind },
     );
-    vec![effect]
+    let mut effects = crate::key_line::press_read(state, from, query, press);
+    effects.push(effect);
+    effects
 }
 
 /// `text` spelled character by character, a space spoken as "space".
@@ -2640,45 +2649,45 @@ pub(crate) fn flat_review_command(
     trace_id: TraceId,
     command: ReviewCommand,
     repeat: u8,
+    text: &str,
 ) -> Vec<Effect> {
-    if let Some(effects) = review_text::flat_extra(state, trace_id, command, repeat) {
+    if let Some(effects) = review_text::flat_extra(state, trace_id, command, repeat, text) {
         return effects;
     }
     let Some(navigator) = state.navigator.as_mut() else {
         return Vec::new();
     };
-    let text = review::text_of(&navigator.object);
     let offset = navigator.review_offset.min(text.len());
-    let line = review::line_span(&text, offset);
-    let char_at = |at: usize| review::char_span(&text, at).unwrap_or((at, at));
+    let line = review::line_span(text, offset);
+    let char_at = |at: usize| review::char_span(text, at).unwrap_or((at, at));
 
     let (new_offset, spoken, edge) = match command {
-        ReviewCommand::ReviewTop => (0, review::line_span(&text, 0), None),
+        ReviewCommand::ReviewTop => (0, review::line_span(text, 0), None),
         ReviewCommand::ReviewBottom => {
-            let start = review::line_span(&text, text.len()).0;
-            (start, review::line_span(&text, start), None)
+            let start = review::line_span(text, text.len()).0;
+            (start, review::line_span(text, start), None)
         }
-        ReviewCommand::ReviewPreviousLine => match review::previous_char(&text, line.0) {
+        ReviewCommand::ReviewPreviousLine => match review::previous_char(text, line.0) {
             Some(target) => {
-                let span = review::line_span(&text, target);
+                let span = review::line_span(text, target);
                 (span.0, span, None)
             }
             None => (line.0, line, Some(Message::Top)),
         },
-        ReviewCommand::ReviewNextLine => match review::next_line_span(&text, line.0) {
+        ReviewCommand::ReviewNextLine => match review::next_line_span(text, line.0) {
             Some(span) => (span.0, span, None),
             None => (line.0, line, Some(Message::Bottom)),
         },
-        // Current-line and start-of-line both land the cursor at the line
-        // start and read the whole line; the only difference a text model
-        // (M4) will draw between them is the reported position, not the
-        // spoken text.
-        ReviewCommand::ReviewCurrentLine | ReviewCommand::ReviewStartOfLine => (line.0, line, None),
+        // The current line leaves the position where it was, as NVDA's sets
+        // none (`globalCommands.py` 1975 to 1990); start of line lands at
+        // the line's start, reading the whole line.
+        ReviewCommand::ReviewCurrentLine => (offset, line, None),
+        ReviewCommand::ReviewStartOfLine => (line.0, line, None),
         ReviewCommand::ReviewEndOfLine => (line.1, line, None),
         ReviewCommand::ReviewPreviousWord
         | ReviewCommand::ReviewNextWord
         | ReviewCommand::ReviewCurrentWord => {
-            let words = review::words(&text);
+            let words = review::words(text);
             let current = text::word_at(&words, offset)
                 .map_or((offset, offset), |word| (word.start, word.end));
             let target = match command {
@@ -2694,11 +2703,11 @@ pub(crate) fn flat_review_command(
                 None => (offset, current, Some(Message::Bottom)),
             }
         }
-        ReviewCommand::ReviewPreviousCharacter => match review::previous_char(&text, offset) {
+        ReviewCommand::ReviewPreviousCharacter => match review::previous_char(text, offset) {
             Some(target) if target >= line.0 => (target, char_at(target), None),
             _ => (offset, char_at(offset), Some(Message::Left)),
         },
-        ReviewCommand::ReviewNextCharacter => match review::char_span(&text, offset) {
+        ReviewCommand::ReviewNextCharacter => match review::char_span(text, offset) {
             Some((_, next)) if next < line.1 => (next, char_at(next), None),
             _ => (offset, char_at(offset), Some(Message::Right)),
         },
@@ -2869,6 +2878,7 @@ fn reduce_controlled_selection(
         None,
     )];
     effects.extend(crate::key_line::controlled_selection(state, controller));
+    effects.extend(crate::key_line::navigator_moved(state));
     effects
 }
 
@@ -3228,42 +3238,35 @@ fn reduce_description_changed(
     )]
 }
 
-/// Completes an object-navigation fetch, the answer to the navigation
-/// still pending: one a newer navigation superseded, `ToFocus` cleared, or
-/// its outpost's end cleared runs nothing ([`crate::queries`]). A focus
-/// event arriving between the command and its answer snaps the navigator
-/// (review follows focus) but leaves the navigation pending, so the user's
-/// own navigation still lands.
+/// Completes an object-navigation press with its answer
+/// (`crate::key_line`).
 ///
 /// On `FetchResult::Node`, moves the navigator to the returned neighbor and
-/// announces it. On `FetchResult::NoNeighbor`, leaves the navigator put and
-/// speaks the direction's edge message — NVDA's wording: "No next", "No
-/// previous", "No containing object", "No objects inside". Live testing
-/// found silence indistinguishable from a broken command, exactly as NVDA's
-/// spoken messages predict. On `FetchResult::Gone` — the navigator's node
-/// could no longer be reached, distinct from a genuine tree edge — re-seeds
-/// the navigator from the current focus and announces it (via
-/// [`navigator_to_focus`]) rather than staying silent; if nothing live is
-/// focused either, that stays silent too.
+/// announces it. On `FetchResult::NoNeighbor` or `FetchResult::Gone`, the
+/// navigator stays put and the direction's edge message is spoken, NVDA's
+/// wording: "No next", "No previous", "No containing object", "No objects
+/// inside" (`docs/parity/review.md`, "Dead objects"). Live testing found
+/// silence indistinguishable from a broken command, exactly as NVDA's
+/// spoken messages predict.
 pub(crate) fn navigate_completed(
     state: &mut SrState,
     trace_id: TraceId,
+    press: ReviewPress,
     kind: QueryKind,
     result: &FetchResult,
 ) -> Vec<Effect> {
     match result {
         FetchResult::Node(snapshot) => {
             state.navigator = Some(Navigator::on(snapshot.clone()));
-            announce_navigator(state, trace_id, snapshot, Reason::Focus)
+            announce_navigator(state, trace_id, snapshot, Reason::Focus, Some(press))
         }
-        FetchResult::Gone => navigator_to_focus(state, trace_id),
         // The application did not answer: the navigator stays where it is,
         // and nothing is known to speak.
         FetchResult::Unanswered => Vec::new(),
-        // A genuine tree edge: the navigator stays put and the edge is
-        // spoken (NVDA's wording, chosen per direction). Any future
-        // `FetchResult` variant added under `#[non_exhaustive]` stays
-        // silent until given a meaning here.
+        // A tree edge or a dead object: the navigator stays put and the
+        // edge is spoken (NVDA's wording, chosen per direction). Any future
+        // `FetchResult` variant added under `#[non_exhaustive]` stays silent
+        // until given a meaning here.
         _ => {
             let Some(message) = edge_message_of(kind) else {
                 return Vec::new();
@@ -3637,6 +3640,18 @@ fn node_segments(
         if let Some(column) = column {
             segments.push(UtteranceSegment::new(SegmentContent::Column(column)));
         }
+    }
+    if let Some(counts) = node.details.table_counts {
+        // NVDA's counts are said for a query only, and leave the table
+        // forgotten, so the next cell says both its row and its column
+        // (`docs/parity/focus-announcement.md`, "Table cell coordinates").
+        segments.push(UtteranceSegment::new(SegmentContent::Phrase(
+            verbatim_model::Phrase::TableCounts {
+                rows: counts.rows,
+                columns: counts.columns,
+            },
+        )));
+        cell_memory.forget_table();
     }
     if let Some(position) = node.details.position_in_set {
         segments.push(UtteranceSegment::new(SegmentContent::Position {

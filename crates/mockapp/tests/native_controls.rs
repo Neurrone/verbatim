@@ -445,6 +445,24 @@ fn bidirectional_marks_are_stripped_from_a_name() {
             repeat: 0,
         },
     );
+    // Flat review reads the object live; here it has not changed.
+    let [Effect::ReadNode { query_id, node_id }] = effects[..] else {
+        panic!("the object's live read, not {effects:?}");
+    };
+    let mut object = date.node.clone();
+    object.assign_outpost(OutpostId(1));
+    let effects = verbatim_core::reduce(
+        &mut state,
+        &Input::Answered {
+            at_us: 0,
+            trace_id: TraceId::mint(),
+            query_id,
+            outpost: node_id.outpost(),
+            outcome: verbatim_model::protocol::QueryOutcome::Done(
+                verbatim_model::protocol::QueryResult::Node(object),
+            ),
+        },
+    );
     let spoken: Vec<Vec<SegmentContent>> = effects
         .into_iter()
         .map(|effect| match effect {

@@ -76,6 +76,10 @@ name = "child_cleanup"
 harness = false
 
 [[test]]
+name = "dead_objects"
+harness = false
+
+[[test]]
 name = "controller_for"
 harness = false
 

@@ -1,18 +1,20 @@
 //! The shapes, and the mapping each group does from what it reads.
 
 use verbatim_model::{
-    Backend, CellPosition, NodeDetails, NodeSnapshot, Role, State, StateSet, TableId, WindowHandle,
+    Backend, CellPosition, NodeDetails, NodeSnapshot, Role, State, StateSet, TableCounts, TableId,
+    WindowHandle,
 };
 use windows::Win32::UI::Accessibility::{
     IUIAutomationSelectionPattern, IUIAutomationTextPattern, UIA_AcceleratorKeyPropertyId,
     UIA_AccessKeyPropertyId, UIA_AutomationIdPropertyId, UIA_BoundingRectanglePropertyId,
     UIA_ClassNamePropertyId, UIA_ControlTypePropertyId, UIA_ControllerForPropertyId,
     UIA_ExpandCollapseExpandCollapseStatePropertyId, UIA_FrameworkIdPropertyId,
-    UIA_FullDescriptionPropertyId, UIA_GridItemColumnPropertyId, UIA_GridItemRowPropertyId,
-    UIA_HasKeyboardFocusPropertyId, UIA_HelpTextPropertyId, UIA_IsContentElementPropertyId,
-    UIA_IsControlElementPropertyId, UIA_IsDataValidForFormPropertyId, UIA_IsDialogPropertyId,
-    UIA_IsEnabledPropertyId, UIA_IsExpandCollapsePatternAvailablePropertyId,
-    UIA_IsGridItemPatternAvailablePropertyId, UIA_IsKeyboardFocusablePropertyId,
+    UIA_FullDescriptionPropertyId, UIA_GridColumnCountPropertyId, UIA_GridItemColumnPropertyId,
+    UIA_GridItemRowPropertyId, UIA_GridRowCountPropertyId, UIA_HasKeyboardFocusPropertyId,
+    UIA_HelpTextPropertyId, UIA_IsContentElementPropertyId, UIA_IsControlElementPropertyId,
+    UIA_IsDataValidForFormPropertyId, UIA_IsDialogPropertyId, UIA_IsEnabledPropertyId,
+    UIA_IsExpandCollapsePatternAvailablePropertyId, UIA_IsGridItemPatternAvailablePropertyId,
+    UIA_IsGridPatternAvailablePropertyId, UIA_IsKeyboardFocusablePropertyId,
     UIA_IsOffscreenPropertyId, UIA_IsPasswordPropertyId,
     UIA_IsRangeValuePatternAvailablePropertyId, UIA_IsRequiredForFormPropertyId,
     UIA_IsSelectionItemPatternAvailablePropertyId, UIA_IsTextPatternAvailablePropertyId,
@@ -623,6 +625,44 @@ impl Cell {
 }
 
 uia_shape! {
+    /// A grid's row and column counts, read only for Report Current Object's
+    /// live read, from the element's own Grid pattern, as NVDA reads them
+    /// for a query only (`NVDAObjects/UIA/__init__.py` 2310 to 2321).
+    pub struct GridCounts {
+        gates: none;
+        groups {}
+        properties {
+            /// Whether it has the Grid pattern.
+            grid: UIA_IsGridPatternAvailablePropertyId => bool,
+            /// How many rows.
+            rows: UIA_GridRowCountPropertyId => i32,
+            /// How many columns.
+            columns: UIA_GridColumnCountPropertyId => i32,
+        }
+        prefetch {}
+        covers {}
+    }
+}
+
+impl GridCounts {
+    /// The counts, `None` for an element without the Grid pattern or with
+    /// no rows and no columns.
+    #[must_use]
+    pub fn counts(&self) -> Option<TableCounts> {
+        if !self.grid {
+            return None;
+        }
+        let count = |value: Option<i32>| {
+            value
+                .and_then(|value| u32::try_from(value).ok())
+                .unwrap_or(0)
+        };
+        let (rows, columns) = (count(self.rows), count(self.columns));
+        (rows > 0 || columns > 0).then_some(TableCounts { rows, columns })
+    }
+}
+
+uia_shape! {
     /// A node as Core is told of it: a focus, a selection, a neighbour, a
     /// window, a tree dump's node. Its four details are fetched only when
     /// the active theme reports them, and its [`Place`] only for a read of
@@ -649,6 +689,9 @@ uia_shape! {
             place: Place,
             /// Where it is in a grid, when it is a grid's item.
             cell: Cell,
+            /// How many rows and columns it has, when it is a grid: read
+            /// only for Report Current Object's live read.
+            counts: GridCounts,
         }
         properties {
             /// The name.
@@ -694,6 +737,7 @@ impl Node {
             top_level_client: false,
             class_name: None,
             cell: self.cell.as_ref().and_then(Cell::position),
+            table_counts: self.counts.as_ref().and_then(GridCounts::counts),
             parent_automation_id: None,
             window: self.role.window(),
             above_boundary: false,

@@ -89,11 +89,11 @@ pub use probe::{RawProbe, UIA_RAW_PROBE_TIMEOUT_MS, raw_probe, raw_probe_verdict
 pub use registry::{Interning, NodeIdRegistry, Released};
 pub use shape::{
     Absent, Agile, Ancestor, AncestorGates, Cached, Cell, Covers, Description, DialogText,
-    Direction, ElementValue, Fill, FocusInput, HelpTextRefresh, Kept, LEFT_OUT_WHEN_UNSUPPORTED,
-    ListenerEvent, ListenerProgress, ListenerSelection, Live, Node, NodeGates, Place, Position,
-    PropertyEvent, Request, RoleCore, SelectedItem, SelectionContainer, Shape, ShellButton,
-    Shortcut, States, SuggestionsRefresh, TextAreaPattern, TextEvent, Ungated, ValueSet,
-    WindowLookup,
+    Direction, ElementValue, Fill, FocusInput, GridCounts, HelpTextRefresh, Kept,
+    LEFT_OUT_WHEN_UNSUPPORTED, ListenerEvent, ListenerProgress, ListenerSelection, Live, Node,
+    NodeGates, Place, Position, PropertyEvent, Request, RoleCore, SelectedItem, SelectionContainer,
+    Shape, ShellButton, Shortcut, States, SuggestionsRefresh, TextAreaPattern, TextEvent, Ungated,
+    ValueSet, WindowLookup,
 };
 #[cfg(feature = "faults")]
 pub use subscribe::kept_for_tests;

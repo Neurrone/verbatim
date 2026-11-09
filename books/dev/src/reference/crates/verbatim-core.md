@@ -709,15 +709,17 @@ element while its window is in front.
 review cursor that follow focus. A `Command` runs against them:
 report-object announces, spells, then copies on repeated presses; parent,
 sibling and first-child moves emit a navigation `Fetch` whose completion
-moves and announces the navigator, a newer navigation turning an older
-one still pending to nothing; activate emits `Activate`, whose answer says
-what was done; to-focus snaps back, turning a pending navigation to
-nothing; report focus asks a live query ("Verbatim+Tab", below). With no
-navigator a command says "No navigator object". An object with text is announced by
-`announce_navigator` and `editing::navigator_text`: name, role and states,
-then its text, read from the known caret or through a `PendingText` with
-`NavigatorSelection` and `NavigatorLine` follow-ups, which a newer text
-request supersedes.
+moves and announces the navigator; activate emits `Activate`, whose answer
+says what was done; to-focus snaps back; report focus asks a live query
+("Verbatim+Tab", below). With no navigator a command says "No navigator
+object". A review or object-navigation press is an entry of the key line
+(`CurrentKey::Review(Press)`, in `key_line.rs`; see "The key line"), so it
+reads live and runs in press order with keys. An object with text is
+announced by `announce_navigator` and `editing::navigator_text`: name, role
+and states, then its text, read from the known caret or through
+`NavigatorSelection` and `NavigatorLine` follow-ups: a press's follow-up
+reads, `Then::Review`, or, for a focus or Verbatim+Tab's answer, a
+`PendingText` a newer text request supersedes.
 
 ### Verbatim+Tab
 
@@ -751,16 +753,19 @@ it waits leaves it waiting, as NVDA runs NVDA+Tab after the focus event
 queued before it and speaks both. An answer for no waiting press says
 nothing.
 
-Completions are matched by the state's latest navigation query id, not by
-navigator identity, so a focus event between a command and its completion
-snaps the navigator without discarding the navigation, while a second move
-or a to-focus supersedes it. `NoNeighbor` speaks the edge message; `Gone`
-re-seeds the navigator from the focus; `Unanswered` says nothing.
+A press's answer ends it, or a follow-up read replaces its read (a line
+read for the line, then a move, or an object's announcement and then its
+text). A navigation that finds no neighbour or a dead object says the
+direction's edge and the navigator stays (`docs/parity/review.md`, "Dead
+objects"); `Unanswered` says nothing for the press. A dead object reviews
+as empty flat text, one rule at the boundary (`review_text::press_answer`);
+Report Current Object says nothing.
 
 An object with no text interface is reviewed as flat text, its value or
-name, in the pure `review` module, by the same units as text: grapheme
-clusters, and words from `text::words`, chosen from the text since flat
-text carries no language.
+name, read live by `Query::ReadNode` (`Effect::ReadNode`), in the pure
+`review` module, by the same units as text: grapheme clusters, and words
+from `text::words`, chosen from the text since flat text carries no
+language.
 
 ## What the shell learns
 
@@ -863,7 +868,10 @@ a text field's key past its bound whose final read is asked; and
 `MovingBySentence` is a sentence key past its bound with no evidence,
 which moves the caret by sentence itself (`SentenceStep`: the final read,
 a paragraph's read and the move, each under the before read's 150 ms; a
-step past it, or a failed one, ends the key with the caret staying).
+step past it, or a failed one, ends the key with the caret staying);
+`Review` is a review or object-navigation press whose read is running
+(`Press`: its read, node and the press), which stays current until the
+answer to its last read, a follow-up read replacing its `query`.
 
 An `Input::HeldKey`, a caret key the hook held back because
 `holds_caret_keys` was true, asks the focus's outpost to read the caret,
@@ -906,7 +914,17 @@ A review command or a script (`Input::Command`, `Input::Script`) pressed
 while the key is `Reading` or `Watched` waits behind the key, at most the
 key's bound. The key ahead says nothing once a later key is marked, and
 the command reads the line the key moved to, where NVDA reads the line
-before it (`books/dev/src/explanation/design/ownership.md`).
+before it (`books/dev/src/explanation/design/ownership.md`). A review
+press pressed while a key's final read runs replaces that key, as a held
+key does; anything else behind a press waits, and `advance` stops at a
+press as at a held key. A press with nothing behind it has its read's own
+deadline; with something behind it, armed when the first entry joins it or
+when it becomes current with entries waiting, `HELD_READ_BOUND_MS`, past
+which its read is withdrawn and it says nothing, the entries behind it then
+running, so a held key waits at most 150 ms for its own before read. A
+focus that moves the navigator ends a press saying nothing, the entries
+behind it running on the navigator as it then is
+(`docs/design/m42-parity.md`, "Build two").
 
 A focus on another node ends a watched key. In a text field, within the
 bound and with no later key, it first says the before read's unit, or
@@ -1019,12 +1037,12 @@ the cursor follows the caret (`ReviewText::Caret`), a review command reads
 the line at the caret as the outpost finds it (`TextPoint::Caret`), never
 from Core's copy, because a caret event can reach Core after a review
 command pressed later; say-all from the caret and the caret's location do
-the same. Once moved, the cursor holds its line, so motion within it and
-reading the current unit need no round trip; other lines, the document's
-ends, the selection's ends and the start marker are read through the
-protocol. Moving to another line keeps a cell column in a terminal and a
-remembered character column elsewhere. A lost anchor starts again from
-the caret.
+the same. Once moved, a command that answers from the cursor's line first reads
+the line where it is now (one round trip, `review_text::run`); a move goes
+straight to the read that moves, so no press reads twice to move. Moving
+to another line keeps a cell column in a terminal and a remembered
+character column elsewhere, kept across a short line for every text. A
+lost anchor starts again from the caret.
 
 Select then copy (`docs/parity/review.md`, "Select then copy from the
 review cursor"): Verbatim+F9 marks the start, Verbatim+Shift+F9 moves the

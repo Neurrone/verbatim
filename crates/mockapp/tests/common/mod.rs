@@ -711,6 +711,7 @@ pub fn ancestor_gates() -> verbatim_uia::AncestorGates {
         node: verbatim_uia::NodeGates {
             place: None,
             cell: None,
+            counts: None,
             ..verbatim_uia::Node::all_on()
         },
         ..verbatim_uia::Ancestor::all_on()

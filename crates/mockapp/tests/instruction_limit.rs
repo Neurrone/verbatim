@@ -118,7 +118,13 @@ impl Fixture {
         Fill::new(
             &self
                 .uia
-                .request::<Ancestor>(Ancestor::all_on())
+                .request::<Ancestor>(verbatim_uia::AncestorGates {
+                    node: NodeGates {
+                        counts: None,
+                        ..Node::all_on()
+                    },
+                    ..Ancestor::all_on()
+                })
                 .expect("a cache request"),
         )
     }
@@ -132,18 +138,22 @@ impl Fixture {
                 .request::<Node>(NodeGates {
                     place: None,
                     cell: None,
+                    counts: None,
                     ..Node::all_on()
                 })
                 .expect("a cache request"),
         )
     }
 
-    /// The fill of a node, with every detail.
+    /// The fill of a node, with every detail a remote read takes.
     fn nodes(&self) -> Fill<Node> {
         Fill::new(
             &self
                 .uia
-                .request::<Node>(Node::all_on())
+                .request::<Node>(NodeGates {
+                    counts: None,
+                    ..Node::all_on()
+                })
                 .expect("a cache request"),
         )
     }

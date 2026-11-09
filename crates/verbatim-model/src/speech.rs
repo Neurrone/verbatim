@@ -212,6 +212,15 @@ pub enum SelectionText {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum Phrase {
+    /// A table's row and column counts, for Report Current Object:
+    /// NVDA's "with 3 rows and 2 columns" (`speech.py`, `_rowAndColumnCountText`);
+    /// a count that is 0 is not said, at least one is not 0.
+    TableCounts {
+        /// How many rows.
+        rows: u32,
+        /// How many columns.
+        columns: u32,
+    },
     /// Text became selected: NVDA's "hello selected".
     Selected(SelectionText),
     /// Text stopped being selected: NVDA's "hello unselected".

@@ -25,8 +25,39 @@ fn reduce(state: &SrState, input: &Input) -> (SrState, Vec<Effect>) {
         event.assign_outpost(outpost_of(*source));
     }
     let mut next = state.clone();
-    let effects = verbatim_core::reduce(&mut next, &input);
+    let mut effects = verbatim_core::reduce(&mut next, &input);
+    answer_object_reads(&mut next, &mut effects);
     (next, effects)
+}
+
+/// Answers each live read of the navigator (`Effect::ReadNode`) in
+/// `effects` with the navigator's own object, as an application that has not
+/// changed answers it, its effects put in its place.
+fn answer_object_reads(state: &mut SrState, effects: &mut Vec<Effect>) {
+    let mut index = 0;
+    while index < effects.len() {
+        let read = match &effects[index] {
+            Effect::ForKey(_, inner) => &**inner,
+            effect => effect,
+        };
+        let Effect::ReadNode { query_id, node_id } = *read else {
+            index += 1;
+            continue;
+        };
+        let whole = serde_json::to_value(&*state).expect("the state serializes");
+        let object = serde_json::from_value(whole["navigator"]["object"].clone())
+            .expect("the navigator's object");
+        let answer = Input::Answered {
+            at_us: 0,
+            trace_id: TraceId::from_raw(1),
+            query_id,
+            outpost: node_id.outpost(),
+            outcome: QueryOutcome::Done(QueryResult::Node(object)),
+        };
+        let mut more = verbatim_core::reduce(state, &answer);
+        answer_object_reads(state, &mut more);
+        effects.splice(index..=index, more);
+    }
 }
 
 fn node(
@@ -1933,6 +1964,7 @@ fn details_speak_in_nvda_property_order() {
             column: 1,
             table: None,
         }),
+        table_counts: None,
         parent_automation_id: None,
         window: None,
         above_boundary: false,
@@ -4023,41 +4055,57 @@ fn every_navigation_direction_speaks_its_own_edge_message() {
     }
 }
 
+/// A focus that moves the navigator while a press reads withdraws the
+/// press's read, which says nothing, and the entries behind it run on the
+/// navigator as it then is.
 #[test]
-fn navigate_completion_after_an_intervening_focus_event_still_applies() {
+fn a_focus_ends_a_navigation_press_and_what_waits_runs_on_the_new_navigator() {
     let source = Pid(1);
     let button = node(10, Role::Button, Some("OK"), None, StateSet::new());
     let state = focused(source, button);
 
-    // Issue the navigation command; its completion is still in flight.
     let (state, effects) = reduce(
         &state,
         &command(TraceId::from_raw(133), ReviewCommand::Parent, 0),
     );
     let query = only_fetch(&effects);
-
-    // A focus event for a different node in the same application arrives
-    // before the completion does. Review follows focus, so the navigator
-    // snaps to it, but this must not discard the user's still-pending
-    // navigation.
-    let elsewhere = node(20, Role::Button, Some("Cancel"), None, StateSet::new());
-    let (state, _) = reduce(
+    // Another press waits behind it, arming the bound.
+    let (state, effects) = reduce(
         &state,
-        &focus_event(TraceId::from_raw(134), source, elsewhere),
+        &command(TraceId::from_raw(134), ReviewCommand::ReportObject, 0),
+    );
+    assert_eq!(
+        effects,
+        vec![Effect::BoundHeldKey(Some((TraceId::from_raw(133), 150)))],
+        "the first entry arms the press's bound"
     );
 
-    let parent = node(11, Role::Group, Some("Buttons"), None, StateSet::new());
-    let completion = fetched(135, &query, FetchResult::Node(parent));
-    let (_, effects) = reduce(&state, &completion);
-    assert_eq!(
-        said(&effects),
-        vec![UtteranceSegment::label("Buttons"), role(Role::Group)],
-        "a navigation completion must still land after an intervening focus event"
+    let elsewhere = node(20, Role::Button, Some("Cancel"), None, StateSet::new());
+    let (state, effects) = reduce(
+        &state,
+        &focus_event(TraceId::from_raw(135), source, elsewhere),
     );
+    assert!(
+        effects
+            .iter()
+            .any(|effect| matches!(effect, Effect::ForKey(_, inner) if matches!(**inner, Effect::Withdraw { .. }))),
+        "the navigation is withdrawn: {effects:?}"
+    );
+    assert_eq!(
+        said_last(&effects),
+        vec![UtteranceSegment::label("Cancel"), role(Role::Button)],
+        "the waiting report reads the new navigator"
+    );
+
+    // Its late answer runs nothing.
+    let parent = node(11, Role::Group, Some("Buttons"), None, StateSet::new());
+    let (_, effects) = reduce(&state, &fetched(136, &query, FetchResult::Node(parent)));
+    assert_eq!(effects, [], "no navigation after the focus");
 }
 
+/// A navigation pressed behind another waits its turn, in press order.
 #[test]
-fn a_second_navigation_supersedes_the_first_pending_one() {
+fn a_second_navigation_waits_behind_the_first_press() {
     let source = Pid(1);
     let button = node(10, Role::Button, Some("OK"), None, StateSet::new());
     let state = focused(source, button);
@@ -4067,34 +4115,46 @@ fn a_second_navigation_supersedes_the_first_pending_one() {
         &command(TraceId::from_raw(136), ReviewCommand::Parent, 0),
     );
     let first_query = only_fetch(&effects);
-
     let (state, effects) = reduce(
         &state,
         &command(TraceId::from_raw(137), ReviewCommand::NextSibling, 0),
     );
-    let second_query = only_fetch(&effects);
-
-    // The first (now stale) completion is dropped.
-    let stale_parent = node(11, Role::Group, Some("Buttons"), None, StateSet::new());
-    let stale_completion = fetched(138, &first_query, FetchResult::Node(stale_parent));
-    let (state, effects) = reduce(&state, &stale_completion);
-    assert!(
-        effects.is_empty(),
-        "a completion for a superseded navigation is dropped"
+    assert_eq!(
+        effects,
+        vec![Effect::BoundHeldKey(Some((TraceId::from_raw(136), 150)))],
+        "the second waits, and arms the first's bound"
     );
 
-    // The second completion applies.
+    let parent = node(11, Role::Group, Some("Buttons"), None, StateSet::new());
+    let (state, effects) = reduce(
+        &state,
+        &fetched(138, &first_query, FetchResult::Node(parent)),
+    );
+    let second_query = match effects.as_slice() {
+        [speak, _clear, Effect::ForKey(_, inner)] => {
+            assert!(matches!(speak, Effect::Speak(..)));
+            let Effect::Fetch(query) = **inner else {
+                panic!("the second navigation, not {inner:?}");
+            };
+            query
+        }
+        other => panic!("the first's speech and the second's fetch, not {other:?}"),
+    };
     let sibling = node(12, Role::Button, Some("Cancel"), None, StateSet::new());
-    let completion = fetched(139, &second_query, FetchResult::Node(sibling));
-    let (_, effects) = reduce(&state, &completion);
+    let (_, effects) = reduce(
+        &state,
+        &fetched(139, &second_query, FetchResult::Node(sibling)),
+    );
     assert_eq!(
         said(&effects),
         vec![UtteranceSegment::label("Cancel"), role(Role::Button)]
     );
 }
 
+/// The to-focus command waits behind a navigation running, as any
+/// command does.
 #[test]
-fn to_focus_after_a_navigation_drops_its_late_completion() {
+fn to_focus_waits_behind_a_navigation_press() {
     let source = Pid(1);
     let button = node(10, Role::Button, Some("OK"), None, StateSet::new());
     let state = focused(source, button);
@@ -4104,25 +4164,260 @@ fn to_focus_after_a_navigation_drops_its_late_completion() {
         &command(TraceId::from_raw(140), ReviewCommand::Parent, 0),
     );
     let query = only_fetch(&effects);
-
-    // The user explicitly returns to focus before the navigation's
-    // completion arrives; that explicit intent must win.
-    let (state, _) = reduce(
+    let (state, effects) = reduce(
         &state,
         &command(TraceId::from_raw(141), ReviewCommand::ToFocus, 0),
     );
+    assert_eq!(
+        effects,
+        vec![Effect::BoundHeldKey(Some((TraceId::from_raw(140), 150)))]
+    );
 
     let parent = node(11, Role::Group, Some("Buttons"), None, StateSet::new());
-    let completion = fetched(142, &query, FetchResult::Node(parent));
-    let (_, effects) = reduce(&state, &completion);
-    assert!(
-        effects.is_empty(),
-        "a navigation completion after an explicit ToFocus is dropped"
+    let (_, effects) = reduce(&state, &fetched(142, &query, FetchResult::Node(parent)));
+    assert_eq!(
+        said_all(&effects),
+        vec![
+            vec![UtteranceSegment::label("Buttons"), role(Role::Group)],
+            vec![
+                message(verbatim_model::Message::MoveToFocus),
+                UtteranceSegment::label("OK"),
+                role(Role::Button),
+            ],
+        ],
+        "the navigation's answer, then the focus"
     );
 }
 
+/// Runs review command `cmd` on `state` with no answer scripted, returning
+/// the state and its request of the navigator object.
+fn asked_object_read(state: &SrState, cmd: ReviewCommand, repeat: u8) -> (SrState, Effect) {
+    let mut state = state.clone();
+    let effects = verbatim_core::reduce(&mut state, &command(TraceId::from_raw(190), cmd, repeat));
+    let [read @ Effect::ReadNode { .. }] = effects.as_slice() else {
+        panic!("the navigator's live read, not {effects:?}");
+    };
+    (state, read.clone())
+}
+
+/// `read`, an [`Effect::ReadNode`], answered `outcome`, with what that does.
+fn object_read_answered(state: &mut SrState, read: &Effect, outcome: QueryOutcome) -> Vec<Effect> {
+    let Effect::ReadNode { query_id, node_id } = read else {
+        panic!("not a read of the node: {read:?}");
+    };
+    verbatim_core::reduce(
+        state,
+        &Input::Answered {
+            at_us: 0,
+            trace_id: TraceId::from_raw(191),
+            query_id: *query_id,
+            outpost: node_id.outpost(),
+            outcome,
+        },
+    )
+}
+
+/// A dead object reviews as empty flat text: the current line, word and
+/// character are "blank", the next line says "Bottom" and "blank" as on one
+/// empty line, and the report says nothing, however often it is pressed.
 #[test]
-fn navigate_completion_gone_reseeds_the_navigator_to_focus() {
+fn a_dead_object_reviews_as_empty_flat_text_and_reports_nothing() {
+    use verbatim_model::Message;
+    let state = reviewing("hello");
+    for (cmd, expected) in [
+        (
+            ReviewCommand::ReviewCurrentLine,
+            vec![message(Message::Blank)],
+        ),
+        (
+            ReviewCommand::ReviewCurrentWord,
+            vec![message(Message::Blank)],
+        ),
+        (
+            ReviewCommand::ReviewCurrentCharacter,
+            vec![message(Message::Blank)],
+        ),
+        (
+            ReviewCommand::ReviewNextLine,
+            vec![message(Message::Bottom), message(Message::Blank)],
+        ),
+    ] {
+        let (mut next, read) = asked_object_read(&state, cmd, 0);
+        let effects = object_read_answered(&mut next, &read, QueryOutcome::Gone);
+        assert_eq!(said(&effects), expected, "{cmd:?}");
+    }
+    for repeat in [0, 1] {
+        let (mut next, read) = asked_object_read(&state, ReviewCommand::ReportObject, repeat);
+        let effects = object_read_answered(&mut next, &read, QueryOutcome::Gone);
+        assert_eq!(effects, [], "press {repeat}");
+    }
+}
+
+/// A live read answered: its object is used, so what a report says is
+/// what the application has now, and a read that gets no answer says
+/// nothing for the press.
+#[test]
+fn report_current_object_reads_the_object_live_and_says_nothing_unanswered() {
+    let source = Pid(1);
+    let button = node(10, Role::Button, Some("OK"), None, StateSet::new());
+    let state = focused(source, button.clone());
+    let (mut next, read) = asked_object_read(&state, ReviewCommand::ReportObject, 0);
+    let renamed = NodeSnapshot {
+        name: Some("Renamed".to_owned()),
+        id: NodeId::in_outpost(outpost_of(source), 10),
+        ..button
+    };
+    let effects = object_read_answered(
+        &mut next,
+        &read,
+        QueryOutcome::Done(QueryResult::Node(renamed)),
+    );
+    assert_eq!(
+        said(&effects),
+        vec![UtteranceSegment::label("Renamed"), role(Role::Button)]
+    );
+
+    let (mut next, read) = asked_object_read(&state, ReviewCommand::ReportObject, 0);
+    let effects = object_read_answered(&mut next, &read, QueryOutcome::Abandoned);
+    assert_eq!(effects, [], "unanswered");
+    let (next, effects) = reduce(
+        &next,
+        &command(TraceId::from_raw(192), ReviewCommand::Parent, 0),
+    );
+    let _ = (next, only_fetch(&effects));
+}
+
+/// The press at the front with something behind it gives way at its
+/// bound: its read is withdrawn, it says nothing, and what waited runs.
+#[test]
+fn a_press_with_something_behind_it_gives_way_at_its_bound() {
+    let source = Pid(1);
+    let button = node(10, Role::Button, Some("OK"), None, StateSet::new());
+    let state = focused(source, button);
+
+    let press = TraceId::from_raw(193);
+    let (state, effects) = reduce(&state, &command(press, ReviewCommand::Parent, 0));
+    let _ = only_fetch(&effects);
+    let (state, effects) = reduce(
+        &state,
+        &command(TraceId::from_raw(194), ReviewCommand::ReportObject, 0),
+    );
+    assert_eq!(
+        effects,
+        vec![Effect::BoundHeldKey(Some((press, 150)))],
+        "the first entry behind it arms the press's bound"
+    );
+    let (_, effects) = reduce(
+        &state,
+        &Input::HeldKeyDue {
+            trace_id: press,
+            at_us: 5_000_000,
+        },
+    );
+    assert!(
+        effects
+            .iter()
+            .any(|effect| matches!(effect, Effect::ForKey(_, inner) if matches!(**inner, Effect::Withdraw { .. }))),
+        "{effects:?}"
+    );
+    assert_eq!(
+        said_last(&effects),
+        vec![UtteranceSegment::label("OK"), role(Role::Button)],
+        "the report that waited runs, on the navigator as it is"
+    );
+}
+
+/// An object's own row and column counts are said after its other
+/// properties, and the next cell says both its row and its column, even
+/// in the table remembered (`docs/parity/focus-announcement.md`, "Table
+/// cell coordinates").
+#[test]
+fn report_current_object_says_a_tables_counts_and_forgets_the_table() {
+    use verbatim_model::{CellPosition, Phrase, TableCounts, TableId};
+    let source = Pid(1);
+    let cell = |number: u64, column: u32| {
+        let mut cell = node(number, Role::ListItem, Some("Cell"), None, StateSet::new());
+        cell.details.cell = Some(CellPosition {
+            row: 1,
+            column,
+            table: Some(TableId(7)),
+        });
+        cell
+    };
+    let state = focused(source, cell(10, 1));
+    let (state, effects) = reduce(
+        &state,
+        &focus_event(TraceId::from_raw(195), source, cell(11, 2)),
+    );
+    assert_eq!(
+        said_last(&effects),
+        [
+            UtteranceSegment::label("Cell"),
+            UtteranceSegment::new(SegmentContent::Column(2)),
+        ],
+        "unchanged, the row is left out"
+    );
+    let (mut next, read) = asked_object_read(&state, ReviewCommand::ReportObject, 0);
+    let mut grid = node(12, Role::List, Some("Grid"), None, StateSet::new());
+    grid.id = NodeId::in_outpost(outpost_of(source), 11);
+    grid.details.table_counts = Some(TableCounts {
+        rows: 3,
+        columns: 2,
+    });
+    let effects = object_read_answered(
+        &mut next,
+        &read,
+        QueryOutcome::Done(QueryResult::Node(grid)),
+    );
+    assert_eq!(
+        said(&effects),
+        vec![
+            UtteranceSegment::label("Grid"),
+            role(Role::List),
+            UtteranceSegment::new(SegmentContent::Phrase(Phrase::TableCounts {
+                rows: 3,
+                columns: 2,
+            })),
+        ]
+    );
+    let (_, effects) = reduce(
+        &next,
+        &focus_event(TraceId::from_raw(196), source, cell(13, 2)),
+    );
+    assert_eq!(
+        said_last(&effects),
+        [
+            UtteranceSegment::label("Cell"),
+            UtteranceSegment::new(SegmentContent::Row(1)),
+            UtteranceSegment::new(SegmentContent::Column(2)),
+        ],
+        "the table was forgotten"
+    );
+}
+
+/// Flat review's current line leaves the position where it was
+/// (`docs/parity/review.md`, "Dead objects"; `globalCommands.py` 1975 to
+/// 1990).
+#[test]
+fn flat_reviews_current_line_leaves_the_position_where_it_was() {
+    let state = reviewing("hello\nworld");
+    let (state, segments) = review(&state, ReviewCommand::ReviewNextCharacter, 0);
+    assert_eq!(segments, spelled_character("e"));
+    let (state, segments) = review(&state, ReviewCommand::ReviewCurrentLine, 0);
+    assert_eq!(segments, vec![UtteranceSegment::text("hello")]);
+    let (_, segments) = review(&state, ReviewCommand::ReviewNextCharacter, 0);
+    assert_eq!(segments, spelled_character("l"));
+}
+
+/// A character as a flat review press speaks it.
+fn spelled_character(character: &str) -> Vec<UtteranceSegment> {
+    vec![UtteranceSegment::text(character.to_owned())]
+}
+
+/// A navigator on a dead object says the direction's edge and stays
+/// (`docs/parity/review.md`, "Dead objects"), for each direction.
+#[test]
+fn a_gone_navigation_says_the_direction_edge_and_the_navigator_stays() {
     let source = Pid(1);
     let button = node(10, Role::Button, Some("OK"), None, StateSet::new());
     let state = focused(source, button);
@@ -4133,15 +4428,37 @@ fn navigate_completion_gone_reseeds_the_navigator_to_focus() {
     );
     let query = only_fetch(&effects);
 
-    // The outpost could not re-acquire the navigator's node: distinct from
-    // a tree edge, so this must not stay silent. It falls back to
-    // announcing whatever is currently focused.
     let completion = fetched(144, &query, FetchResult::Gone);
-    let (_, effects) = reduce(&state, &completion);
+    let (state, effects) = reduce(&state, &completion);
     assert_eq!(
         said(&effects),
-        vec![UtteranceSegment::label("OK"), role(Role::Button)]
+        vec![message(verbatim_model::Message::NoContainingObject)],
+        "the navigator stays on the dead button"
     );
+    for (trace, command_id, edge) in [
+        (
+            146,
+            ReviewCommand::NextSibling,
+            verbatim_model::Message::NoNextObject,
+        ),
+        (
+            147,
+            ReviewCommand::PreviousSibling,
+            verbatim_model::Message::NoPreviousObject,
+        ),
+        (
+            148,
+            ReviewCommand::FirstChild,
+            verbatim_model::Message::NoObjectsInside,
+        ),
+    ] {
+        let (next, effects) = reduce(&state, &command(TraceId::from_raw(trace), command_id, 0));
+        let query = only_fetch(&effects);
+        let (next, effects) = reduce(&next, &fetched(trace + 10, &query, FetchResult::Gone));
+        assert_eq!(said(&effects), vec![message(edge)]);
+        // Nothing moved: the next press still starts from the same object.
+        assert_eq!(navigator_id(&next), navigator_id(&state));
+    }
 }
 
 #[test]
@@ -4280,16 +4597,28 @@ fn navigator_follows_focus_and_returns_to_focus() {
                 UtteranceSegment::label("Field"),
                 role(Role::EditableText),
             ]),
-            read_selection(1),
+            read_selection(2),
         ],
         "the navigator followed focus to the new control"
     );
 
+    // The read of its text answered: the press ends.
+    let text_read = Input::Answered {
+        at_us: 0,
+        trace_id: TraceId::from_raw(160),
+        query_id: QueryId(2),
+        outpost: outpost_of(source),
+        outcome: QueryOutcome::Done(QueryResult::Text(verbatim_model::TextReply::Unanswered)),
+    };
+    let (state, _) = reduce(&state, &text_read);
+
     // Explicit "to focus" also reports the focused control after wandering.
-    let (state, _) = reduce(
+    let (state, effects) = reduce(
         &state,
         &command(TraceId::from_raw(157), ReviewCommand::Parent, 0),
     );
+    let query = only_fetch(&effects);
+    let (state, _) = reduce(&state, &fetched(161, &query, FetchResult::NoNeighbor));
     let (_, effects) = reduce(
         &state,
         &command(TraceId::from_raw(158), ReviewCommand::ToFocus, 0),
@@ -4302,8 +4631,8 @@ fn navigator_follows_focus_and_returns_to_focus() {
                 UtteranceSegment::label("Field"),
                 role(Role::EditableText),
             ]),
-            // The parent fetch in between took query 2.
-            read_selection(3),
+            // The parent fetch in between took query 3.
+            read_selection(4),
         ],
         "to-focus says \"Move to focus\" and snaps the navigator back"
     );
@@ -6974,6 +7303,34 @@ fn said(effects: &[Effect]) -> Vec<UtteranceSegment> {
         [Heard::Say(SpeechPriority::Queued, segments)] => segments.clone(),
         other => panic!("expected one queued utterance and nothing else, got {other:?}"),
     }
+}
+
+/// The segments of each queued utterance among `effects`.
+fn said_all(effects: &[Effect]) -> Vec<Vec<UtteranceSegment>> {
+    let bare: Vec<Effect> = effects
+        .iter()
+        .map(|effect| match effect {
+            Effect::ForKey(_, inner) => (**inner).clone(),
+            effect => effect.clone(),
+        })
+        .collect();
+    heard(&bare)
+        .into_iter()
+        .filter_map(|heard| match heard {
+            Heard::Say(SpeechPriority::Queued, segments) => Some(segments),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The segments of the last utterance among `effects`.
+fn said_last(effects: &[Effect]) -> Vec<UtteranceSegment> {
+    said_all(effects).pop().expect("a queued utterance")
+}
+
+/// The navigator's object's id, from the state as a test can read it.
+fn navigator_id(state: &SrState) -> serde_json::Value {
+    serde_json::to_value(state).expect("the state serializes")["navigator"]["object"]["id"].clone()
 }
 
 fn message(message: verbatim_model::Message) -> UtteranceSegment {

@@ -765,6 +765,49 @@ pub fn message_text(message: verbatim_model::Message) -> String {
     }
 }
 
+/// "3 rows", or "1 row".
+fn row_count_text(rows: u32) -> String {
+    let loader = loader();
+    if rows == 1 {
+        i18n_embed_fl::fl!(loader, "phrase-table-row")
+    } else {
+        i18n_embed_fl::fl!(loader, "phrase-table-rows", count = rows.to_string())
+    }
+}
+
+/// "2 columns", or "1 column".
+fn column_count_text(columns: u32) -> String {
+    let loader = loader();
+    if columns == 1 {
+        i18n_embed_fl::fl!(loader, "phrase-table-column")
+    } else {
+        i18n_embed_fl::fl!(loader, "phrase-table-columns", count = columns.to_string())
+    }
+}
+
+/// NVDA's "with 3 rows and 2 columns", with one count when the other is 0.
+fn table_counts(rows: u32, columns: u32) -> String {
+    let loader = loader();
+    match (rows, columns) {
+        (0, columns) => i18n_embed_fl::fl!(
+            loader,
+            "phrase-table-counts-one",
+            counts = column_count_text(columns)
+        ),
+        (rows, 0) => i18n_embed_fl::fl!(
+            loader,
+            "phrase-table-counts-one",
+            counts = row_count_text(rows)
+        ),
+        (rows, columns) => i18n_embed_fl::fl!(
+            loader,
+            "phrase-table-counts",
+            rows = row_count_text(rows),
+            columns = column_count_text(columns)
+        ),
+    }
+}
+
 /// The localized wording of a reader message with values in it
 /// (`SegmentContent::Phrase`), used by the speech pipeline when it renders
 /// utterances. Wording matches NVDA's.
@@ -820,6 +863,7 @@ pub fn phrase_text(phrase: &verbatim_model::Phrase) -> String {
             "phrase-speak-typed-words",
             mode = typing_echo_name(*mode)
         ),
+        Phrase::TableCounts { rows, columns } => table_counts(*rows, *columns),
         Phrase::SkippedLines(1) => {
             i18n_embed_fl::fl!(loader, "phrase-skipped-line", count = "1")
         }
@@ -1895,6 +1939,27 @@ mod tests {
         assert_eq!(
             phrase_text(&Phrase::SkippedMoreThanLines(1)),
             "skipped more than 1 line"
+        );
+        assert_eq!(
+            phrase_text(&Phrase::TableCounts {
+                rows: 3,
+                columns: 2
+            }),
+            "with 3 rows and 2 columns"
+        );
+        assert_eq!(
+            phrase_text(&Phrase::TableCounts {
+                rows: 1,
+                columns: 0
+            }),
+            "with 1 row"
+        );
+        assert_eq!(
+            phrase_text(&Phrase::TableCounts {
+                rows: 0,
+                columns: 4
+            }),
+            "with 4 columns"
         );
         assert_eq!(
             phrase_text(&Phrase::SkippedAboutLines(1941)),

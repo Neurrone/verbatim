@@ -1993,6 +1993,12 @@ impl ReducerThread<'_> {
                     kind: query.kind,
                 },
             ),
+            Effect::ReadNode { query_id, node_id } => self.ask_for_reducer(
+                trace_id,
+                query_id,
+                node_id.outpost(),
+                Query::ReadNode { node_id },
+            ),
             Effect::Activate { query_id, node_id } => self.ask_for_reducer(
                 trace_id,
                 query_id,

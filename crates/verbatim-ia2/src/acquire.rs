@@ -1305,6 +1305,17 @@ enum NavigateDirection {
     FirstChild,
 }
 
+/// The node `node` as it is now (`Query::ReadNode`): an object that no
+/// longer answers reads with an unknown role and no name, as NVDA's does.
+///
+/// # Errors
+///
+/// [`AcquireError::Gone`] when its window is gone or it cannot be found.
+pub fn read_node(node: NodeId, registry: &dyn Interning) -> Result<NodeSnapshot, AcquireError> {
+    let (acc, key, at) = locate(node, registry)?;
+    Ok(read_snapshot(&acc, key, at, registry))
+}
+
 /// Navigates one step from the node named by `key` in the direction `kind`
 /// names; any other kind is an error.
 ///
@@ -2181,6 +2192,7 @@ fn read_snapshot_with(
             top_level_client,
             class_name: None,
             cell: None,
+            table_counts: None,
             parent_automation_id: None,
             window,
             above_boundary: false,

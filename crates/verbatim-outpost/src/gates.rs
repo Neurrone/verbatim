@@ -38,6 +38,7 @@ pub fn many_node_gates(fetches: &Fetches) -> NodeGates {
         position: fetches.position.then_some(()),
         place: None,
         cell: None,
+        counts: None,
         level: fetches.level,
     }
 }
@@ -102,6 +103,11 @@ mod tests {
     fn assert_only(off: impl FnOnce(&mut Fetches), expected: NodeGates) {
         let mut fetches = Fetches::default();
         off(&mut fetches);
+        // Only Report Current Object's live read takes a table's counts.
+        let expected = NodeGates {
+            counts: None,
+            ..expected
+        };
         let among_many = NodeGates {
             place: None,
             cell: None,

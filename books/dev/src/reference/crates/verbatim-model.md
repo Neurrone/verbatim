@@ -172,8 +172,9 @@ recorder unchanged. What the reducer does with each type is in
     `FocusNow`); `Fetch` (a `Query` naming the node and a `QueryKind`:
     parent, next or previous sibling, first child, answered by a
     `FetchResult` that tells a tree edge, `NoNeighbor`, from a node that
-    could not be re-acquired, `Gone`); `PlayEarcon`; `Activate` (a node
-    to activate, under its `QueryId`); `Withdraw` (a query Core gave up
+    could not be re-acquired, `Gone`); `ReadNode` (a review command's live
+    read of a node, answered `QueryResult::Node` or `Gone`); `PlayEarcon`;
+    `Activate` (a node to activate, under its `QueryId`); `Withdraw` (a query Core gave up
     on, to withdraw from its outpost);
     `CopyToClipboard` (routed through the shell's clipboard helper, its
     result back as `Input::ClipboardCopied`); `ReadFocus(FocusPurpose)`
@@ -204,7 +205,8 @@ recorder unchanged. What the reducer does with each type is in
   `TextFormat`: structured speech per decision D12. Segments are semantic
   spans: literal text, `Label`, `Value`, `Description`, role and state
   tokens (`NegatedState` for "not checked"), `SpelledCapital`, `Position`
-  ("2 of 5"), `Level`, `Row` and `Column`, `Message` (a fixed reader
+  ("2 of 5"), `Level`, `Row` and `Column`, `Phrase::TableCounts` (a table's
+  row and column counts, Report Current Object's), `Message` (a fixed reader
   message), `Character` (one character spoken on its own),
   `CharacterDescription` ("Alfa"), `Mark` (a `SpeechMark` reported back
   when playback reaches it), `Phrase` (a reader message with values in

@@ -485,6 +485,16 @@ impl NodeDetails {
     }
 }
 
+/// How many rows and columns a table reports, at least one above zero; a
+/// count the table does not report is 0.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TableCounts {
+    /// How many rows, 0 when not reported.
+    pub rows: u32,
+    /// How many columns, 0 when not reported.
+    pub columns: u32,
+}
+
 /// The optional per-node properties beyond name, role, value, and states —
 /// grouped so [`NodeSnapshot`] literals name one field and so later
 /// milestones grow this struct instead of the snapshot itself.
@@ -534,6 +544,12 @@ pub struct NodeDetails {
     /// out of the message when `None`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cell: Option<CellPosition>,
+    /// The row and column counts of a table, read only for Report Current
+    /// Object's live read (`Query::ReadNode`), and from the node's own Grid
+    /// pattern (`docs/parity/focus-announcement.md`, "Table cell
+    /// coordinates"). Left out of the message when `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub table_counts: Option<TableCounts>,
     /// The UI Automation `AutomationId` of the node's raw-view parent,
     /// carried only on the snapshot of a UI Automation focus, as
     /// [`class_name`](Self::class_name) is, for Core's rules for an

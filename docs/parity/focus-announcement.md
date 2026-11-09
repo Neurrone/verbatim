@@ -287,10 +287,11 @@ grids (`docs/parity/windows-and-processes.md`, "The Alt+Tab switcher's
 pane"; the `table_cells` scenario). Cases that differ: NVDA reads the
 table of a selected cell too, while a selection the desktop-wide
 listener hears carries no table, so such a cell says both its row and
-its column every time; Report Current Object does not say an object's
-row and column counts, "with 3 rows and 2 columns", nor forget the
-table as NVDA does after them, which waits on the review cursor's live
-read of the object;
+its column every time; Report Current Object says an object's row and
+column counts, "with 3 rows and 2 columns" (NVDA, for a query only:
+`speech/speech.py` 2145 to 2152; Verbatim from the object's own Grid
+pattern in the live read), and forgets the table as NVDA does after them,
+so the next cell says both;
 NVDA speaks a cell's coordinates text in place of its numbers when the
 cell gives one, and its row and column header texts before its row and
 column (from UI Automation's `TableItem` pattern, by default) and "through"

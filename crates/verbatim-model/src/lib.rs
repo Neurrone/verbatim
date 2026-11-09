@@ -98,7 +98,7 @@ pub use theme::{
 };
 pub use tree::{
     Backend, CellPosition, NodeDetails, NodeSnapshot, ObjectKey, Rect, Role, State, StateSet,
-    TableId, TreeNode, WindowIdentity,
+    TableCounts, TableId, TreeNode, WindowIdentity,
 };
 
 use std::fmt;

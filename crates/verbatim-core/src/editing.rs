@@ -33,7 +33,7 @@ use verbatim_model::{
     TextUnit, TraceId, TypingEcho, Utterance, UtteranceSegment,
 };
 
-use crate::key_line::Evidence;
+use crate::key_line::{Evidence, ReviewPress};
 use crate::proven;
 use crate::queries::{Asking, Then};
 use crate::state::{CaretContext, NavigatorRead, PendingText, ReviewText, SrState, TextFollowUp};
@@ -1109,8 +1109,9 @@ pub(crate) fn navigator_text(
     trace_id: TraceId,
     node: &NodeSnapshot,
     read: NavigatorRead,
+    press: Option<ReviewPress>,
 ) -> Vec<Effect> {
-    text_of_object(state, trace_id, node, (read, false))
+    text_of_object(state, trace_id, node, (read, false), press)
 }
 
 /// Reads the text of `node`, Verbatim+Tab's answer, which is neither the
@@ -1122,7 +1123,7 @@ pub(crate) fn reported_text(
     trace_id: TraceId,
     node: &NodeSnapshot,
 ) -> Vec<Effect> {
-    text_of_object(state, trace_id, node, (NavigatorRead::Announce, true))
+    text_of_object(state, trace_id, node, (NavigatorRead::Announce, true), None)
 }
 
 /// [`navigator_text`], its follow-ups carrying `node` when `carried`.
@@ -1131,6 +1132,7 @@ fn text_of_object(
     trace_id: TraceId,
     node: &NodeSnapshot,
     (read, carried): (NavigatorRead, bool),
+    press: Option<ReviewPress>,
 ) -> Vec<Effect> {
     if !may_have_text(node.role) {
         return Vec::new();
@@ -1162,6 +1164,7 @@ fn text_of_object(
             through: None,
         },
         TextFollowUp::NavigatorSelection(read),
+        press,
     )
 }
 
@@ -1189,13 +1192,24 @@ fn named_text(
 }
 
 /// Asks the outpost of `node` for its text, for the navigator's
-/// announcement to go on with `then`. A newer text request supersedes it.
+/// announcement to go on with `then`: a press's follow-up read, which keeps
+/// the press current until it is answered, or a read of its own, which a
+/// newer text request supersedes.
 fn navigator_request(
     state: &mut SrState,
     (node, about): (NodeId, Option<Box<NodeSnapshot>>),
     op: TextOp,
     then: TextFollowUp,
+    press: Option<ReviewPress>,
 ) -> Vec<Effect> {
+    if let Some(press) = press {
+        let (query, effect) = state
+            .queries
+            .ask(Asking::Text(node, op), Then::Review(then));
+        let mut effects = crate::key_line::press_read(state, node, query, press);
+        effects.push(effect);
+        return effects;
+    }
     state.queries.forget(|then| matches!(then, Then::Text(_)));
     let (_, effect) = state.queries.ask(
         Asking::Text(node, op),
@@ -1216,6 +1230,7 @@ pub(crate) fn navigator_text_reply(
     trace_id: TraceId,
     pending: &PendingText,
     reply: TextReply,
+    press: Option<ReviewPress>,
 ) -> Vec<Effect> {
     let navigator = state.navigator.as_ref().map(|navigator| &navigator.object);
     let focus = state
@@ -1240,7 +1255,7 @@ pub(crate) fn navigator_text_reply(
     let segments = match (&pending.then, reply) {
         (TextFollowUp::NavigatorSelection(_), TextReply::Range { text, .. }) => {
             if verbatim_text::graphemes(&text).is_empty() {
-                return navigator_line(state, (pending.node, pending.about.clone()), read);
+                return navigator_line(state, (pending.node, pending.about.clone()), read, press);
             }
             if read != NavigatorRead::Announce {
                 return named_text(trace_id, &object, read, &text);
@@ -1248,7 +1263,7 @@ pub(crate) fn navigator_text_reply(
             selected_segments(text).unwrap_or_default()
         }
         (TextFollowUp::NavigatorSelection(_), TextReply::Unsupported) => {
-            return navigator_line(state, (pending.node, pending.about.clone()), read);
+            return navigator_line(state, (pending.node, pending.about.clone()), read, press);
         }
         (TextFollowUp::NavigatorLine(_), TextReply::Read { chunk, .. }) => {
             let grid = is_grid(object.role);
@@ -1287,6 +1302,7 @@ fn navigator_line(
     state: &mut SrState,
     node: (NodeId, Option<Box<NodeSnapshot>>),
     read: NavigatorRead,
+    press: Option<ReviewPress>,
 ) -> Vec<Effect> {
     navigator_request(
         state,
@@ -1297,6 +1313,7 @@ fn navigator_line(
             unit: TextUnit::Line,
         }),
         TextFollowUp::NavigatorLine(read),
+        press,
     )
 }
 

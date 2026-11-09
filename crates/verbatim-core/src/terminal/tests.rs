@@ -1304,6 +1304,17 @@ fn the_review_cursor_reads_at_the_caret_once_it_followed_it() {
             offset: 0,
         })]
     );
+    let Some(Effect::Text(request)) = effects.into_iter().next() else {
+        panic!("a read of the review cursor's place");
+    };
+    let _ = reduce(
+        &mut state,
+        &answered(
+            TraceId::from_raw(8),
+            request.query_id,
+            TextReply::Unanswered,
+        ),
+    );
     // The reading rules found that a key moved the caret, and the review
     // cursor followed it: the next command reads at the caret.
     let followed = TerminalSpeech {

@@ -3,7 +3,7 @@
 //! review cursor over text, say-all, and formatting spoken as it changes,
 //! each driven through the text protocol with scripted outpost replies.
 
-use verbatim_core::{SrState, reduce};
+use verbatim_core::SrState;
 use verbatim_model::{
     Backend, CaretKey, CaretMotion, CaretRead, CaretReport, CaretSelection, Change, Compared,
     Effect, Input, Message, NodeDetails, NodeId, NodeSnapshot, NormalizedEvent, OutpostId, Phrase,
@@ -16,6 +16,88 @@ use verbatim_model::{
 use verbatim_model::{BulletStyle, FocusText, FormatRun, LineStyle, TextAttributes, TextFormat};
 
 const OUTPOST: OutpostId = OutpostId(1);
+
+/// Runs the reducer and answers what an unchanged application answers
+/// without being asked anything new: a review command's read of the line
+/// the review cursor is already on, which the tests below do not script, and
+/// a live read of the navigator object.
+fn reduce(state: &mut SrState, input: &Input) -> Vec<Effect> {
+    let mut effects = verbatim_core::reduce(state, input);
+    settle_unchanged(state, input.trace_id(), &mut effects);
+    effects
+}
+
+/// [`reduce`]'s answers to `effects`, each put in the place of its request.
+fn settle_unchanged(state: &mut SrState, trace: Option<TraceId>, effects: &mut Vec<Effect>) {
+    let mut index = 0;
+    while index < effects.len() {
+        let Some((query_id, outpost, outcome)) = unchanged_answer(state, own(&effects[index]))
+        else {
+            index += 1;
+            continue;
+        };
+        let answer = Input::Answered {
+            at_us: 0,
+            trace_id: trace.unwrap_or(TraceId::from_raw(1)),
+            query_id,
+            outpost,
+            outcome,
+        };
+        let mut more = verbatim_core::reduce(state, &answer);
+        settle_unchanged(state, trace, &mut more);
+        effects.splice(index..=index, more);
+    }
+}
+
+/// The answer an unchanged application gives `effect`: a read of the
+/// review cursor's own line, or a live read of the navigator object.
+fn unchanged_answer(
+    state: &SrState,
+    effect: &Effect,
+) -> Option<(QueryId, OutpostId, verbatim_model::protocol::QueryOutcome)> {
+    use verbatim_model::protocol::{QueryOutcome, QueryResult};
+    let whole = serde_json::to_value(state).expect("the state serializes");
+    let navigator = &whole["navigator"];
+    match effect {
+        Effect::ReadNode { query_id, node_id } => {
+            let object = serde_json::from_value(navigator["object"].clone()).ok()?;
+            Some((
+                *query_id,
+                node_id.outpost(),
+                QueryOutcome::Done(QueryResult::Node(object)),
+            ))
+        }
+        Effect::Text(TextRequest {
+            query_id,
+            node_id,
+            op:
+                TextOp::Read(TextRead {
+                    at: TextPoint::At(position),
+                    movement: None,
+                    unit: TextUnit::Line,
+                }),
+        }) => {
+            let review_offset = navigator["text"]["At"]["offset"].as_u64();
+            if navigator["object"]["role"] == "Terminal"
+                || review_offset != Some(u64::from(position.offset))
+            {
+                return None;
+            }
+            let mut chunk: TextChunk =
+                serde_json::from_value(navigator["text"]["At"]["line"].clone()).ok()?;
+            if chunk.start != position.anchor {
+                return None;
+            }
+            chunk.offset = position.offset;
+            Some((
+                *query_id,
+                node_id.outpost(),
+                QueryOutcome::Done(QueryResult::Text(TextReply::Read { moved: 0, chunk })),
+            ))
+        }
+        _ => None,
+    }
+}
 
 fn id(number: u64) -> NodeId {
     NodeId::in_outpost(OUTPOST, number)
@@ -1882,11 +1964,7 @@ fn a_terminal_keeps_a_cell_column_and_reads_past_the_text_as_blank() {
         line("ab中文cd    \r\n", 200, 2),
     );
     assert_eq!(spoken(&effects), vec![character("文")]);
-    let effects = seeded(
-        &mut state,
-        ReviewCommand::ReviewNextLine,
-        line("ab中文cd    \r\n", 200, 5),
-    );
+    let effects = reduce(&mut state, &command(ReviewCommand::ReviewNextLine, 0));
     let effects = reduce(
         &mut state,
         &completed(
@@ -1905,11 +1983,7 @@ fn a_terminal_keeps_a_cell_column_and_reads_past_the_text_as_blank() {
         line("xy\r\n", 201, 2),
     );
     assert_eq!(spoken(&effects), vec![message(Message::Blank)]);
-    let effects = seeded(
-        &mut state,
-        ReviewCommand::ReviewPreviousLine,
-        line("xy\r\n", 201, 2),
-    );
+    let effects = reduce(&mut state, &command(ReviewCommand::ReviewPreviousLine, 0));
     let _ = reduce(
         &mut state,
         &completed(
@@ -1948,6 +2022,16 @@ fn review_edges_are_known_from_the_line_or_from_a_movement_that_did_not_move() {
         },
     );
     let effects = reduce(&mut state, &command(ReviewCommand::ReviewPreviousLine, 0));
+    let effects = reduce(
+        &mut state,
+        &completed(
+            request_of(&effects),
+            TextReply::Read {
+                moved: 0,
+                chunk: line("only\n", 300, 0),
+            },
+        ),
+    );
     assert_eq!(
         spoken(&effects),
         vec![message(Message::Top), UtteranceSegment::text("only")]
@@ -2177,7 +2261,7 @@ fn a_copy_keeps_a_start_marker_set_while_its_read_was_in_flight() {
     let effects = reduce(&mut state, &command(ReviewCommand::SelectThenCopy, 1));
     let copy = request(&effects);
     let effects = reduce(&mut state, &command(ReviewCommand::SetStartMarker, 0));
-    assert_eq!(spoken(&effects), vec![message(Message::StartMarked)]);
+    assert_eq!(spoken(&effects), [], "the press waits behind the copy");
     let effects = reduce(
         &mut state,
         &completed(
@@ -2188,7 +2272,15 @@ fn a_copy_keeps_a_start_marker_set_while_its_read_was_in_flight() {
             },
         ),
     );
-    assert_eq!(effects, vec![Effect::CopyToClipboard("hello w".to_owned())]);
+    assert_eq!(
+        effects
+            .iter()
+            .filter(|effect| matches!(effect, Effect::CopyToClipboard(_)))
+            .count(),
+        1,
+        "{effects:?}"
+    );
+    assert_eq!(spoken(&effects), vec![message(Message::StartMarked)]);
     // The new marker, on "w", is kept: a first press selects from it.
     let effects = reduce(&mut state, &command(ReviewCommand::SelectThenCopy, 0));
     assert_eq!(
@@ -2493,18 +2585,6 @@ fn review_bottom_reads_the_last_line_from_its_start() {
 fn review_bottom_in_a_terminal_reads_the_last_row() {
     let mut state = reviewing_terminal("$ ls", 2);
     let effects = reduce(&mut state, &command(ReviewCommand::ReviewBottom, 0));
-    let effects = answer_read(
-        &mut state,
-        &effects,
-        &line_read(
-            TextPoint::At(TextPosition {
-                anchor: TextAnchor(400),
-                offset: 2,
-            }),
-            None,
-        ),
-        (0, line("$ ls", 400, 2)),
-    );
     let effects = answer_read(
         &mut state,
         &effects,
@@ -4965,10 +5045,11 @@ fn a_navigator_edit_field_without_text_says_its_value_and_a_late_answer_is_dropp
         vec![UtteranceSegment::value("first line second line")]
     );
 
-    // An answer for an object the navigator has left says nothing.
+    // An answer for an object a focus has taken the navigator from says
+    // nothing.
     let effects = navigate_to(&mut state, unfocused_edit());
     let selection = request(&effects);
-    let _ = navigate_to(&mut state, node(31, Role::Button, StateSet::new()));
+    focus(&mut state, node(31, Role::Button, StateSet::new()));
     let effects = reduce(
         &mut state,
         &completed(
@@ -5592,6 +5673,80 @@ fn a_keys_final_read_follows_what_waits_and_a_key_taking_the_line_has_none() {
         []
     );
     assert_eq!(final_reads(&reduce(&mut state, &key_bound_passed())), 0);
+}
+
+/// A review press that finds a key in its final read replaces it, as a
+/// held key does, since the press cuts speech and the key's bound answer
+/// would be cut with it (`docs/design/m42-parity.md`, "Build two").
+#[test]
+fn a_review_press_replaces_a_key_in_its_final_read() {
+    let (mut state, _) = key_passed_on("abc\n", 0, CaretMotion::NextCharacter);
+    let due = reduce(&mut state, &key_bound_passed());
+    let final_read = request_of(&due);
+    let effects = reduce(&mut state, &command(ReviewCommand::ReviewCurrentLine, 0));
+    let press_read = request(&effects);
+    assert_eq!(press_read.op, line_read(TextPoint::Caret, None));
+    let effects = reduce(
+        &mut state,
+        &completed_text(final_read, TextReply::Unanswered),
+    );
+    assert_eq!(spoken(&effects), Vec::new(), "the key says nothing");
+    let effects = reduce(
+        &mut state,
+        &completed(
+            press_read.query_id,
+            TextReply::Read {
+                moved: 0,
+                chunk: line("abc\n", 100, 0),
+            },
+        ),
+    );
+    assert_eq!(spoken(&effects), vec![UtteranceSegment::text("abc")]);
+}
+
+/// In plain text a line move leaves the column remembered, so a move
+/// back to a longer line finds it, whatever command read the short line.
+#[test]
+fn a_column_remembered_across_a_short_line_comes_back_in_plain_text() {
+    let mut state = reviewing("hello world\n", 7);
+    let effects = reduce(&mut state, &command(ReviewCommand::ReviewNextLine, 0));
+    let effects = reduce(
+        &mut state,
+        &completed(
+            request_of(&effects),
+            TextReply::Read {
+                moved: 1,
+                chunk: line("ok\n", 101, 0),
+            },
+        ),
+    );
+    assert_eq!(spoken(&effects), vec![UtteranceSegment::text("ok")]);
+    // The line read again keeps the column past the short line's text.
+    let effects = reduce(
+        &mut state,
+        &command(ReviewCommand::ReviewCurrentCharacter, 0),
+    );
+    assert_eq!(spoken(&effects), vec![character("k")]);
+    let effects = reduce(&mut state, &command(ReviewCommand::ReviewPreviousLine, 0));
+    let effects = reduce(
+        &mut state,
+        &completed(
+            request_of(&effects),
+            TextReply::Read {
+                moved: -1,
+                chunk: line("hello world\n", 100, 0),
+            },
+        ),
+    );
+    assert_eq!(
+        spoken(&effects),
+        vec![UtteranceSegment::text("hello world")]
+    );
+    let effects = reduce(
+        &mut state,
+        &command(ReviewCommand::ReviewCurrentCharacter, 0),
+    );
+    assert_eq!(spoken(&effects), vec![character("o")]);
 }
 
 #[test]

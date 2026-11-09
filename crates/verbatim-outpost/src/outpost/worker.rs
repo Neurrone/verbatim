@@ -413,6 +413,7 @@ fn named_window(context: &RequestContext<'_>, work: &Work) -> Option<Window> {
             Item::Query { query, .. } => match query {
                 Query::ReadFocus { .. } => application_focus_window(context),
                 Query::Navigate { node_id, .. }
+                | Query::ReadNode { node_id }
                 | Query::Activate { node_id }
                 | Query::Ancestors { node_id }
                 | Query::Text { node_id, .. } => node_window(context, *node_id),
@@ -454,7 +455,7 @@ fn node_window(context: &RequestContext<'_>, node: NodeId) -> Option<Window> {
 /// The application's focus window, with no call into it: the focus window
 /// of the foreground thread when that thread is the application's, else
 /// the top-level window of the focus the outpost expects Core to hold.
-fn application_focus_window(context: &RequestContext<'_>) -> Option<Window> {
+pub(super) fn application_focus_window(context: &RequestContext<'_>) -> Option<Window> {
     context
         .focus_window()
         .filter(|&hwnd| read::serves(context, hwnd))
@@ -4415,6 +4416,9 @@ impl Worker<'_> {
             }
             Query::Navigate { node_id, kind } => {
                 read::navigate(context, client, *node_id, *kind).map(QueryResult::Navigated)
+            }
+            Query::ReadNode { node_id } => {
+                read::read_node(context, client, *node_id).map(QueryResult::Node)
             }
             Query::Activate { node_id } => {
                 read::activate(context, client, *node_id).map(QueryResult::Activated)

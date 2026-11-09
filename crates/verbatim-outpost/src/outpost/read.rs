@@ -1815,6 +1815,92 @@ pub(super) fn ancestors(
         .map_err(ReadError::from)
 }
 
+/// The node `node_id` as it is now, for a review command's live read
+/// (`Query::ReadNode`), its table's row and column counts included.
+pub(super) fn read_node(
+    context: &RequestContext<'_>,
+    client: &mut Client,
+    node_id: NodeId,
+) -> Result<NodeSnapshot, ReadError> {
+    if context.store.runtime_id_of(node_id).is_none() {
+        return verbatim_ia2::acquire::read_node(node_id, context.nodes()).map_err(ReadError::from);
+    }
+    let (uia, nodes) = client.uia_with(context, Context::read_node_request)?;
+    let element = resolve_uia_element(context, uia, &nodes, node_id)?;
+    Ok(element.snapshot_in_table(context.nodes()))
+}
+
+/// The window of the dead UIA element `node_id`, as far as the outpost
+/// still knows it, for NVDA's falling back to the parent of the element's
+/// window: its own window handle when it has one, the handle its runtime
+/// id holds, else the application's focus window. Before any step, since
+/// the step lets a gone element go.
+fn known_window_of(context: &RequestContext<'_>, node_id: NodeId) -> Option<isize> {
+    let own = context
+        .store
+        .element_of(node_id)
+        .and_then(|agile| agile.resolve().ok())
+        .map(|element| element.read().hwnd)
+        .filter(|&hwnd| hwnd != 0);
+    own.or_else(|| match context.store.runtime_id_of(node_id).as_deref() {
+        Some([42, hwnd]) => isize::try_from(*hwnd).ok(),
+        _ => None,
+    })
+    .or_else(|| {
+        super::worker::application_focus_window(context).map(verbatim_reader_rules::Window::get)
+    })
+}
+
+/// The parent of the dead element's window `window`, NVDA's fall back when
+/// its walker fails (`NVDAObjects/UIA/__init__.py` 2136 to 2145,
+/// `NVDAObjects/window/__init__.py` 287 to 293); gone when the window is
+/// too.
+fn parent_of_window(
+    context: &RequestContext<'_>,
+    window: Option<isize>,
+) -> Result<Option<NodeSnapshot>, ReadError> {
+    let Some(window) = window.filter(|&window| verbatim_win32::window::window_exists(window))
+    else {
+        return Err(ReadError::Gone);
+    };
+    let parent = verbatim_win32::window::parent(window);
+    if parent == 0 {
+        return Ok(None);
+    }
+    let mut node = plain_window(context, parent);
+    if parent == verbatim_win32::window::desktop_window() {
+        // NVDA's `Desktop` window object, named by NVDA, not by its window
+        // text.
+        node.name = Some("Desktop".to_owned());
+    }
+    Ok(Some(node))
+}
+
+/// One object-navigation step from a UIA node: the neighbor, or `None` for
+/// a genuine tree edge, and the node's nearest window.
+fn uia_step(
+    context: &RequestContext<'_>,
+    client: &mut Client,
+    node_id: NodeId,
+    kind: QueryKind,
+) -> Result<Stepped, ReadError> {
+    if let Some(step) = uia_remote_step(context, client, node_id, kind)? {
+        return Ok(step);
+    }
+    let (uia, nodes, element) = uia_node(context, client, node_id)?;
+    let from_window = verbatim_uia::nearest_window_handle(element.live().element());
+    let neighbor = uia
+        .neighbor(element.live(), &nodes, context.nodes(), kind)
+        .map_err(|error| {
+            if verbatim_uia::element_is_gone(&error) {
+                ReadError::Gone
+            } else {
+                ReadError::Failed(format!("UIA navigation failed: {error}"))
+            }
+        })?;
+    Ok((neighbor, from_window))
+}
+
 /// One object-navigation step: the neighbor, or `None` for a genuine tree
 /// edge, never conflated with a node that is gone.
 pub(super) fn navigate(
@@ -1823,24 +1909,27 @@ pub(super) fn navigate(
     node_id: NodeId,
     kind: QueryKind,
 ) -> Result<Option<NodeSnapshot>, ReadError> {
+    if kind != QueryKind::Parent || context.store.runtime_id_of(node_id).is_none() {
+        return step(context, client, node_id, kind);
+    }
+    let window = known_window_of(context, node_id);
+    match step(context, client, node_id, kind) {
+        Err(ReadError::Gone) => parent_of_window(context, window),
+        answered => answered,
+    }
+}
+
+/// One navigation step, with no falling back to a dead element's window:
+/// the neighbor, or `None` for a genuine tree edge, never conflated with a
+/// node that is gone.
+fn step(
+    context: &RequestContext<'_>,
+    client: &mut Client,
+    node_id: NodeId,
+    kind: QueryKind,
+) -> Result<Option<NodeSnapshot>, ReadError> {
     let (neighbor, from_window) = if context.store.runtime_id_of(node_id).is_some() {
-        let (neighbor, from_window) =
-            if let Some(step) = uia_remote_step(context, client, node_id, kind)? {
-                step
-            } else {
-                let (uia, nodes, element) = uia_node(context, client, node_id)?;
-                let from_window = verbatim_uia::nearest_window_handle(element.live().element());
-                let neighbor = uia
-                    .neighbor(element.live(), &nodes, context.nodes(), kind)
-                    .map_err(|error| {
-                        if verbatim_uia::element_is_gone(&error) {
-                            ReadError::Gone
-                        } else {
-                            ReadError::Failed(format!("UIA navigation failed: {error}"))
-                        }
-                    })?;
-                (neighbor, from_window)
-            };
+        let (neighbor, from_window) = uia_step(context, client, node_id, kind)?;
         // A menu item reached by navigation reads its legacy checked state
         // as a focused one does.
         let neighbor = neighbor.map(|neighbor| {
@@ -2015,7 +2104,7 @@ pub(super) fn activate(
                 }
             }
         }
-        match navigate(context, client, current, QueryKind::Parent) {
+        match step(context, client, current, QueryKind::Parent) {
             Ok(Some(parent)) => current = parent.id,
             _ => break,
         }

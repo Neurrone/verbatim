@@ -99,6 +99,10 @@ pub fn controlled_selection(
 /// # Errors
 ///
 /// Any [`Error`] from running the program.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one remote program, read top to bottom"
+)]
 pub fn controlled_selection_remote(
     _uia: &Uia,
     query: &ControlledQuery<'_>,

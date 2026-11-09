@@ -98,6 +98,9 @@ call waits up to `UIA_CONNECTION_TIMEOUT` to connect and
   search that finds nothing is `Ok(None)`, and so is one that passed over
   a child window whose process did not answer within the connection
   timeout; one that fails otherwise is an error.
+- A `Node` read for Report Current Object includes `GridCounts`, the
+  element's own Grid pattern's row and column counts
+  (`NodeGates::counts`), which no other read takes.
 - `controlled(focused, runtime_id, request)`: the selected element when
   it is an element the focus names in its `ControllerFor` relation or is
   inside one; the classic implementation behind

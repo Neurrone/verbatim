@@ -119,6 +119,9 @@ const LIVE: &[&str] = scenario_tests! {
     conhost_editing
     windows_terminal_review_grid
     conhost_review_grid
+    windows_terminal_review_stays_on_line
+    conhost_review_stays_on_line
+    review_dead_object
     windows_terminal_progress
     conhost_progress
     windows_terminal_typing

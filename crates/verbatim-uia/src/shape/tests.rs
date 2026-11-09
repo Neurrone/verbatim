@@ -130,10 +130,10 @@ fn every_shape_reads_exactly_what_its_request_holds_for_every_combination_of_gat
         TextAreaPattern,
         ProviderOrigin,
     );
-    // Six gates each: the description, shortcut, position, place and cell
-    // groups and the level.
-    assert_eq!(Node::combinations().len(), 64);
-    assert_eq!(Ancestor::combinations().len(), 64);
+    // Seven gates each: the description, shortcut, position, place, cell
+    // and counts groups and the level.
+    assert_eq!(Node::combinations().len(), 128);
+    assert_eq!(Ancestor::combinations().len(), 128);
 }
 
 #[test]
@@ -146,12 +146,12 @@ fn a_shapes_properties_are_its_fields_union_without_repeats() {
         ("ListenerProgress", ListenerProgress::PROPERTIES, 18),
         // A node's, without its place, with the rest of the listener's.
         ("ListenerSelection", ListenerSelection::PROPERTIES, 40),
-        ("Node", Node::PROPERTIES, 34),
+        ("Node", Node::PROPERTIES, 37),
         // Neither the rectangle nor whether it is off the screen is read
         // unless the place's gate asks for them, nor the row and column
         // unless the cell's does.
         ("Node, ungated", Node::UNGATED, 22),
-        ("Ancestor", Ancestor::PROPERTIES, 37),
+        ("Ancestor", Ancestor::PROPERTIES, 40),
         ("Ancestor, ungated", Ancestor::UNGATED, 27),
         ("DialogText", DialogText::PROPERTIES, 24),
     ] {

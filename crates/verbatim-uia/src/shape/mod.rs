@@ -50,11 +50,11 @@ mod shapes;
 mod tests;
 
 pub use shapes::{
-    Ancestor, AncestorGates, Cell, Description, DialogText, FocusInput, HelpTextRefresh, Kept,
-    ListenerEvent, ListenerProgress, ListenerSelection, Node, NodeGates, Place, Position,
-    ProcessOrigin, PropertyEvent, ProviderOrigin, RoleCore, SelectedItem, SelectionContainer,
-    ShellButton, Shortcut, States, SuggestionsRefresh, TextAreaPattern, TextEvent, ValueSet,
-    WindowLookup,
+    Ancestor, AncestorGates, Cell, Description, DialogText, FocusInput, GridCounts,
+    HelpTextRefresh, Kept, ListenerEvent, ListenerProgress, ListenerSelection, Node, NodeGates,
+    Place, Position, ProcessOrigin, PropertyEvent, ProviderOrigin, RoleCore, SelectedItem,
+    SelectionContainer, ShellButton, Shortcut, States, SuggestionsRefresh, TextAreaPattern,
+    TextEvent, ValueSet, WindowLookup,
 };
 
 mod sealed {

@@ -468,7 +468,16 @@ fn msaa_tree_dump_ends_an_objects_children_where_it_is_gone() {
         "the tree before the list's first item goes"
     );
 
+    let first_item = whole.children[2].children[0].snapshot.id;
     app.send("disconnect item1");
+    // A live read of the dead item, a navigator object's read: no name, an
+    // unknown role, as NVDA's disconnected MSAA object reads.
+    let dead = verbatim_ia2::acquire::read_node(first_item, &registry).expect("the node's read");
+    assert_eq!(
+        (dead.role, dead.name),
+        (verbatim_model::Role::Unknown, None),
+        "a disconnected MSAA object"
+    );
     let (dumped, truncated) =
         verbatim_ia2::acquire::walk_tree(hwnd.0 as isize, &registry, (64, 4096), false)
             .expect("the dump with a gone item");

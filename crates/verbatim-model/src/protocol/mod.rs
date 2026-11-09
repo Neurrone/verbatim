@@ -1009,6 +1009,14 @@ pub enum Query {
         /// Which way: parent, next or previous sibling, or first child.
         kind: QueryKind,
     },
+    /// The node as it is now: its name, value and the rest, read live for
+    /// a review command, and its table's row and column counts, for Report
+    /// Current Object (`docs/design/m42-parity.md`). Answered
+    /// [`QueryResult::Node`] or [`QueryOutcome::Gone`].
+    ReadNode {
+        /// The node to read.
+        node_id: NodeId,
+    },
     /// Activate a node: UIA `Invoke`, `Toggle`, or the legacy default
     /// action; MSAA `accDoDefaultAction`.
     Activate {
@@ -1125,6 +1133,8 @@ pub enum QueryResult {
     /// The answer to [`Query::Navigate`]: the neighbor, or `None` for a
     /// genuine tree edge (not an error).
     Navigated(Option<NodeSnapshot>),
+    /// The answer to [`Query::ReadNode`].
+    Node(NodeSnapshot),
     /// The answer to [`Query::Activate`]: the name of the action performed,
     /// if it has one.
     Activated(Option<crate::ActionName>),
@@ -1574,7 +1584,9 @@ impl OutpostToCore {
                         }
                     }
                 }
-                QueryResult::Navigated(Some(node)) => node.assign_outpost(outpost),
+                QueryResult::Navigated(Some(node)) | QueryResult::Node(node) => {
+                    node.assign_outpost(outpost);
+                }
                 QueryResult::Ancestors(chain) => {
                     for node in chain {
                         node.assign_outpost(outpost);
@@ -1789,7 +1801,7 @@ impl OutpostToCore {
                         named.focus_text(control.text.as_deref());
                     }
                 }
-                QueryResult::Navigated(Some(node)) => named.node(node),
+                QueryResult::Navigated(Some(node)) | QueryResult::Node(node) => named.node(node),
                 QueryResult::Ancestors(chain) => {
                     for node in chain {
                         named.node(node);

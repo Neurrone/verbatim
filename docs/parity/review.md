@@ -196,15 +196,54 @@ them as plain check boxes with MSAA's flat navigation; Verbatim still
 navigates and walks them through the control's messages, which reads
 more usefully and changes nothing spoken on focus.
 
-### Navigator death recovery
+### Dead objects
 
-NVDA reports failure and stays; Verbatim
-re-seeds navigator from focus on `Gone` and announces it:
-**different**, documented in [verbatim-core](../../books/dev/src/reference/crates/verbatim-core.md); NVDA-side
-behavior in [Focus and the navigator](../nvda/focus-and-navigator.md).
-A navigation the application did not answer (too slow, or the read
-failed) is not `Gone`: the navigator stays where it is,
-as NVDA's stays when a call to a busy application is cancelled.
+An object whose element no longer exists. NVDA: only a focus moves its
+navigator, and the navigator object it has stays when the object dies; a
+command on it does what the object's dead calls do. Verbatim follows NVDA
+throughout (Dickson, 2026-11-09), and the review cursor reads live: every
+review command is a press of the key line, reading the application first
+(`Query::ReadNode` for an object's name and value, and a line read for a
+text command that answers from its line), so a press costs one round
+trip. Only a focus, the to-focus command and a successful object
+navigation move the navigator. "No navigator object" is said only when
+there is no navigator, its only source in NVDA (`globalCommands.py` 1517
+to 1520). A navigation from a dead object says the direction's edge
+message, "No next", "No previous", "No objects inside" or "No containing
+object", as a tree edge does, the navigator staying; Parent from a dead
+element answers the parent of its window, as NVDA's walker fails and it
+falls to the window's parent (`NVDAObjects/UIA/__init__.py` 2136 to 2145,
+`NVDAObjects/window/__init__.py` 287 to 293), the navigator moving there.
+A dead object reviews as an object with empty text: Report Current Object
+says nothing, and the review commands say "blank" or, moving past the
+empty line, "Bottom" and "blank", as NVDA's name and value then read as
+empty (`NVDAObjects/__init__.py` 1450 to 1463). Captured from NVDA on
+mockapp's disconnected UIA nodes, 2026-11-09, on a dead button: Next
+Object "No next", Previous Object "No previous", First Child "No objects
+inside", Parent "Desktop window", Report Current Object nothing, review
+line, word and character "blank", review next line "Bottom", "blank",
+the to-focus command "Move to focus" and the focus. A destroyed window: the same
+edges and "No containing object"; report nothing. The review cursor's
+current line (flat review) leaves its position where it was
+(`globalCommands.py` 1975 to 1990), so a column stays across a short line in every text.
+A navigation the application did not answer is not `Gone`: the navigator
+stays where it is and nothing is said, as NVDA's stays when a call to a
+busy application is cancelled. A press of a command the application took
+longer than its bound to answer, with a press behind it, gives way
+(`docs/design/m42-parity.md`, "Limits"), saying nothing.
+
+Review presses run in press order among keys, as NVDA's scripts are one
+queue (`scriptHandler.py` 242 to 252), a press with something behind it
+bounded by 150 ms and one alone by its read's own deadline; a focus that
+moves the navigator ends a press saying nothing. Core's
+`a_gone_navigation_says_the_direction_edge_and_the_navigator_stays`,
+`a_dead_object_reviews_as_empty_flat_text_and_reports_nothing`,
+`a_press_with_something_behind_it_gives_way_at_its_bound`,
+`a_focus_ends_a_navigation_press_and_what_waits_runs_on_the_new_navigator`
+and `flat_reviews_current_line_leaves_the_position_where_it_was`;
+mockapp's `dead_objects` tests through a real outpost; the
+`review_dead_object`, `windows_terminal_review_stays_on_line` and
+`conhost_review_stays_on_line` scenarios.
 
 ### Review cursor line/word/character over object text
 

@@ -777,7 +777,7 @@ pub enum Input {
         purpose: Option<crate::protocol::FocusPurpose>,
     },
     /// An outpost answered a query the reducer asked ([`Effect::Fetch`],
-    /// [`Effect::Text`] or [`Effect::Activate`]), or the shell could not
+    /// [`Effect::Text`], [`Effect::ReadNode`] or [`Effect::Activate`]), or the shell could not
     /// send it: the protocol's outcome, which the reducer turns into the
     /// result its query's kind takes.
     Answered {
@@ -1518,6 +1518,14 @@ pub enum Effect {
     /// Indicate an event at once, as the active theme reports it: a sound
     /// on its own mixer source, words, both, or nothing.
     PlayEarcon(Earcon),
+    /// Read a node as it is now ([`crate::protocol::Query::ReadNode`]): a
+    /// review command's live read of the navigator object.
+    ReadNode {
+        /// Correlates the answer with this request.
+        query_id: QueryId,
+        /// The node to read. Its outpost is the one asked.
+        node_id: NodeId,
+    },
     /// Activate a node — invoke, toggle, or its default action — in the
     /// application that owns it; the answer re-enters as
     /// [`Input::Answered`], and the reducer speaks what was done.

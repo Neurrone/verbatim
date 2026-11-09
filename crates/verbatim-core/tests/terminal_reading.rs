@@ -1133,15 +1133,10 @@ fn a_press_makes_at_most_three_searches() {
 fn a_line_move_after_a_mark_move_while_output_scrolls_reads_its_own_line() {
     // The review position on "$ line 1", above the rows the memory keeps,
     // and six lines printed that no read has shown yet. Three commands are
-    // pressed faster than the outpost answers: a line move down, which reads
-    // the history after its fresh read; a move to the previous command mark,
-    // whose search goes out while two more lines are read; and a line move
-    // up, which reads from where the review position was when it was
-    // pressed. The read taken while the search was out counts its rows from
-    // a start six rows lower, so the history the first command read is not
-    // among its rows: the last command reads the history again and says the
-    // line above "$ line 1". Each command's speech cuts off the one before,
-    // so only the last is heard after the output.
+    // pressed faster than the outpost answers: they run one after another in
+    // the key line, each answered in press order with what its own read
+    // finds: the line after "$ line 1", the previous command mark, and the
+    // line above it, each from where the one before left the review cursor.
     let mut session = showing(30, 4, 100, "intro\r\n$ ");
     let at_ms = enter(&mut session, "echo one", "one\r\n", 1000);
     session.write(&numbered(1..=20), at_ms);
@@ -1161,8 +1156,17 @@ fn a_line_move_after_a_mark_move_while_output_scrolls_reads_its_own_line() {
     assert_eq!(
         session.heard(),
         plain(&[
-            "line 21", "line 22", "line 23", "line 24", "line 25", "line 26", "line 27", "line 28",
-            "one"
+            "line 2",
+            "line 21",
+            "line 22",
+            "line 23",
+            "line 24",
+            "line 25",
+            "line 26",
+            "line 27",
+            "line 28",
+            "$ echo one",
+            "intro"
         ])
     );
     let history = |above| TextOp::TerminalHistory {
@@ -1171,7 +1175,13 @@ fn a_line_move_after_a_mark_move_while_output_scrolls_reads_its_own_line() {
     };
     assert_eq!(
         session.requests(),
-        [FRESH, history(31), find("$ echo one", 25), history(33)]
+        [
+            FRESH,
+            history(31),
+            FRESH,
+            find("$ echo one", 25),
+            history(35)
+        ]
     );
 }
 

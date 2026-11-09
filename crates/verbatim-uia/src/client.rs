@@ -15,10 +15,9 @@ use windows::Win32::UI::Accessibility::{
     CUIAutomation8, CoalesceEventsOptions_Enabled, ConnectionRecoveryBehaviorOptions_Enabled,
     IUIAutomation, IUIAutomation2, IUIAutomation6, IUIAutomationCacheRequest,
     IUIAutomationCondition, IUIAutomationElement, IUIAutomationInvokePattern,
-    IUIAutomationSelectionItemPattern, IUIAutomationTogglePattern,
-    IUIAutomationTreeWalker, TreeScope, TreeScope_Children, TreeScope_Subtree, UIA_InvokePatternId,
-    UIA_PROPERTY_ID, UIA_RuntimeIdPropertyId, UIA_SelectionItemPatternId,
-    UIA_TogglePatternId,
+    IUIAutomationSelectionItemPattern, IUIAutomationTogglePattern, IUIAutomationTreeWalker,
+    TreeScope, TreeScope_Children, TreeScope_Subtree, UIA_InvokePatternId, UIA_PROPERTY_ID,
+    UIA_RuntimeIdPropertyId, UIA_SelectionItemPatternId, UIA_TogglePatternId,
 };
 
 use windows::core::Interface;

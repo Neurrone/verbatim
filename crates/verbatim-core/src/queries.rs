@@ -48,8 +48,11 @@ pub(crate) enum Then {
     /// A move of the caret Core made, whose answer gives the stamp of the
     /// caret it leaves.
     MovedCaret { node: NodeId, line: TextChunk },
-    /// A review or text command's request.
+    /// A text request no press waits for: the caret's location, the
+    /// navigator's text for an announcement, Verbatim+Tab's line.
     Text(PendingText),
+    /// A review press's read, answered to the press (`crate::key_line`).
+    Review(crate::state::TextFollowUp),
     /// Say-all's read.
     SayAll,
     /// The flood policy's request of the focused terminal.
@@ -120,6 +123,8 @@ pub(crate) enum Asking {
     Text(NodeId, TextOp),
     /// An activation of the node.
     Activate(NodeId),
+    /// A live read of the node.
+    ReadNode(NodeId),
 }
 
 /// Core's open queries, by number.
@@ -157,6 +162,9 @@ impl Queries {
             ),
             Asking::Activate(node_id) => {
                 (node_id, Asked::Read, Effect::Activate { query_id, node_id })
+            }
+            Asking::ReadNode(node_id) => {
+                (node_id, Asked::Read, Effect::ReadNode { query_id, node_id })
             }
         };
         self.open.insert(
@@ -237,6 +245,19 @@ impl Queries {
         });
     }
 
+    /// Whether query `query_id` is still open.
+    pub(crate) fn has_open(&self, query_id: QueryId) -> bool {
+        self.open.contains_key(&query_id)
+    }
+
+    /// Turns query `query_id` to [`Then::Nothing`], its answer ending it
+    /// and running nothing.
+    pub(crate) fn forget_query(&mut self, query_id: QueryId) {
+        if let Some(open) = self.open.get_mut(&query_id) {
+            open.then = Then::Nothing;
+        }
+    }
+
     /// Withdraws query `query_id` from its outpost, its entry kept so that
     /// its one answer still runs its continuation: not started it is
     /// answered "not started", and already running it answers with what it
@@ -302,7 +323,8 @@ impl Queries {
             Effect::ForKey(key, inner) => return self.set_trace(first, inner, Some(*key)),
             Effect::Fetch(Query { query_id, .. })
             | Effect::Text(TextRequest { query_id, .. })
-            | Effect::Activate { query_id, .. } => *query_id,
+            | Effect::Activate { query_id, .. }
+            | Effect::ReadNode { query_id, .. } => *query_id,
             _ => return,
         };
         if query_id.0 >= first
@@ -346,7 +368,7 @@ pub(crate) enum Ending {
 impl Ending {
     /// The text answer this ending is, a failure of any kind as
     /// "unanswered" and a gone node as gone.
-    fn reply(self) -> TextReply {
+    pub(crate) fn reply(self) -> TextReply {
         match self {
             Self::Reply(reply) | Self::Outcome(QueryOutcome::Done(QueryResult::Text(reply))) => {
                 reply
@@ -466,7 +488,7 @@ pub(crate) fn ended(
                 Ending::Outcome(QueryOutcome::Gone) => FetchResult::Gone,
                 _ => FetchResult::Unanswered,
             };
-            crate::reduce::navigate_completed(state, trace_id, kind, &result)
+            crate::key_line::navigation_answered(state, trace_id, query_id, kind, &result)
         }
         Then::Activation => match ending {
             Ending::Outcome(QueryOutcome::Done(QueryResult::Activated(action))) => {
@@ -511,9 +533,14 @@ pub(crate) fn ended(
                 crate::state::TextFollowUp::NavigatorSelection(_)
                     | crate::state::TextFollowUp::NavigatorLine(_)
             ) {
-                return crate::editing::navigator_text_reply(state, trace_id, &pending, reply);
+                return crate::editing::navigator_text_reply(
+                    state, trace_id, &pending, reply, None,
+                );
             }
-            crate::review_text::reply(state, trace_id, pending, reply)
+            crate::review_text::location(trace_id, &reply)
+        }
+        Then::Review(then) => {
+            crate::key_line::press_answered(state, trace_id, query_id, then, ending)
         }
         Then::SayAll => crate::say_all::reply(state, trace_id, ending.reply()),
         Then::Terminal(ask) => crate::terminal::reply(state, trace_id, ask, &ending.reply()),

@@ -1322,6 +1322,12 @@ Caret and text events:
   nodes, saying whether incomplete. Locations are read only with
   `locations`, since a title bar's are asked of the UI thread
   (`WM_GETTITLEBARINFOEX`).
+- `ReadNode` reads a node live for a review command, its table's row and
+  column counts included (`Node`'s gated `GridCounts`); a dead element
+  answers `Gone`. A UI Automation node that is dead or gone answers `Gone`
+  to `Navigate` too, except that `Parent` answers the parent of the
+  element's window (NVDA's fall back, `known_window_of`), the desktop
+  named as NVDA names it.
 - `Ancestors`, `Navigate`, and `Activate` go to the issuing registry: UIA's
   raw-view walker with the base cache, or MSAA's `accParent`,
   `accNavigate`, and `accDoDefaultAction`. An unknown or unreachable node

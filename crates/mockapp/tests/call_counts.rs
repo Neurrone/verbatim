@@ -1820,7 +1820,13 @@ fn uia_walk_from_a_window_element_held_without_its_handle_stops_below_the_bounda
     let element_fill = Fill::new(
         &under_test
             .uia
-            .request::<Ancestor>(Ancestor::all_on())
+            .request::<Ancestor>(verbatim_uia::AncestorGates {
+                node: verbatim_uia::NodeGates {
+                    counts: None,
+                    ..Node::all_on()
+                },
+                ..Ancestor::all_on()
+            })
             .expect("the focus's cache request"),
     );
     common::reset_hits(parent);
@@ -2748,7 +2754,10 @@ fn uia_selected_children_cost_exactly() {
     let under_test = UiaUnderTest::new(hwnd);
     let nodes = under_test
         .uia
-        .request::<Node>(Node::all_on())
+        .request::<Node>(verbatim_uia::NodeGates {
+            counts: None,
+            ..Node::all_on()
+        })
         .expect("a cache request");
     let ancestors = Fill::new(
         &under_test
@@ -2759,7 +2768,13 @@ fn uia_selected_children_cost_exactly() {
     let element_fill = Fill::new(
         &under_test
             .uia
-            .request::<Ancestor>(Ancestor::all_on())
+            .request::<Ancestor>(verbatim_uia::AncestorGates {
+                node: verbatim_uia::NodeGates {
+                    counts: None,
+                    ..Node::all_on()
+                },
+                ..Ancestor::all_on()
+            })
             .expect("a cache request"),
     );
     let mut ratchet = Ratchet::default();
@@ -5346,7 +5361,10 @@ fn a_cells_table_costs_exactly() {
     let under_test = UiaUnderTest::new(hwnd);
     let nodes = under_test
         .uia
-        .request::<Node>(Node::all_on())
+        .request::<Node>(verbatim_uia::NodeGates {
+            counts: None,
+            ..Node::all_on()
+        })
         .expect("a cache request");
     let ancestors = Fill::new(
         &under_test
@@ -5357,7 +5375,13 @@ fn a_cells_table_costs_exactly() {
     let element_fill = Fill::new(
         &under_test
             .uia
-            .request::<Ancestor>(Ancestor::all_on())
+            .request::<Ancestor>(verbatim_uia::AncestorGates {
+                node: verbatim_uia::NodeGates {
+                    counts: None,
+                    ..Node::all_on()
+                },
+                ..Ancestor::all_on()
+            })
             .expect("a cache request"),
     );
     let mut ratchet = Ratchet::default();

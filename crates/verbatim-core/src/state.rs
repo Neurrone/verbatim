@@ -248,8 +248,8 @@ impl CaretContext {
     }
 }
 
-/// A text request a review or text command made, and what to do with its
-/// answer. A newer command's request supersedes it.
+/// A text request made outside a review press, and what to do with its
+/// answer.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct PendingText {
     pub(crate) node: NodeId,
@@ -276,6 +276,9 @@ pub(crate) enum TextFollowUp {
     Copy { marker: u64 },
     /// A location report.
     Location,
+    /// A live read of the navigator object (`Query::ReadNode`), for a flat
+    /// review command or Report Current Object.
+    NodeRead,
     /// The selected text of the navigator object was read: use it, or with
     /// nothing selected read the caret's line.
     NavigatorSelection(NavigatorRead),
@@ -465,6 +468,12 @@ pub struct CellMemory {
 }
 
 impl CellMemory {
+    /// Forgets the table, as NVDA does after saying a table's counts, so
+    /// the next cell says both its row and column even in the same table.
+    pub(crate) fn forget_table(&mut self) {
+        self.table = None;
+    }
+
     /// The row and column to say of `cell`, each `None` when it is unchanged
     /// within one table, and remembers it. A cell with no table says both
     /// and leaves the table remembered as it was.

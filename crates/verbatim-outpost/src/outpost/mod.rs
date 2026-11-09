@@ -709,6 +709,16 @@ impl Context {
         uia.request(crate::gates::node_gates(&self.fetches()))
     }
 
+    /// The request a review command's live read of a node
+    /// (`Query::ReadNode`) is made with: a node read alone, with its table's
+    /// row and column counts.
+    fn read_node_request(&self, uia: &Uia) -> windows::core::Result<Request<Node>> {
+        uia.request(verbatim_uia::NodeGates {
+            counts: Some(()),
+            ..crate::gates::node_gates(&self.fetches())
+        })
+    }
+
     /// The request an ancestor is fetched with, for the details the active
     /// theme wants.
     fn ancestor_request(&self, uia: &Uia) -> windows::core::Result<Request<Ancestor>> {
@@ -1664,6 +1674,9 @@ fn unstamped(query: &Query) -> Query {
         Query::Navigate { node_id, kind } => Query::Navigate {
             node_id: node_id.unstamped(),
             kind: *kind,
+        },
+        Query::ReadNode { node_id } => Query::ReadNode {
+            node_id: node_id.unstamped(),
         },
         Query::Activate { node_id } => Query::Activate {
             node_id: node_id.unstamped(),

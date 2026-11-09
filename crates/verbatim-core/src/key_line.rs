@@ -9,15 +9,15 @@ use std::collections::VecDeque;
 
 use serde::{Deserialize, Serialize};
 use verbatim_model::{
-    CaretKey, CaretMotion, CaretRead, CaretReply, CaretReport, Change, Effect, Input, KeyFetch,
-    NodeId, NoteRequest, QueryId, ReadFacts, ReadPurpose, SelectionChange, TextChunk, TextMovement,
-    TextOp, TextPoint, TextPosition, TextRead, TextReply, TextUnit, TraceId, UtteranceSegment,
-    had_effect,
+    CaretKey, CaretMotion, CaretRead, CaretReply, CaretReport, Change, Effect, FetchResult, Input,
+    KeyFetch, NodeId, NoteRequest, QueryId, QueryKind, ReadFacts, ReadPurpose, ReviewCommand,
+    SelectionChange, TextChunk, TextMovement, TextOp, TextPoint, TextPosition, TextRead, TextReply,
+    TextUnit, TraceId, UtteranceSegment, had_effect,
 };
 
 use crate::editing::{self, is_grid, text_focus};
-use crate::queries::{Asking, Then};
-use crate::state::SrState;
+use crate::queries::{Asking, Ending, Then};
+use crate::state::{SrState, TextFollowUp};
 
 /// The key's bound: 100 ms after Core passed it on, NVDA's
 /// `caretMoveTimeoutMs`, and the wait of whatever is behind it.
@@ -96,6 +96,11 @@ enum CurrentKey {
         passed: PassedKey,
         step: SentenceStep,
     },
+    /// A review or object-navigation press whose read is running: it stays
+    /// current until the answer to its last read, so it cannot end before
+    /// its move. Anything behind it waits, with a time bound on the press
+    /// ([`HELD_READ_BOUND_MS`]).
+    Review(Press),
 }
 
 /// How far a sentence move has got.
@@ -157,6 +162,30 @@ struct PassedKey {
     passed_at_us: u64,
     /// When a later key was pressed, once one has been.
     later_key_at_us: Option<u64>,
+}
+
+/// A review or object-navigation command the line runs
+/// (`docs/design/m42-parity.md`, "Build two"): what is asked of the
+/// application and the press it serves.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct Press {
+    /// The node its read is of, which the state holds.
+    node: NodeId,
+    /// Its one read in flight: a follow-up read replaces it, so the press
+    /// stays current until the answer to its last read.
+    query: QueryId,
+    /// What was pressed.
+    review: ReviewPress,
+}
+
+/// A press of a review command: the command and how many times it was
+/// repeated. What the press's reads answer is run against it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct ReviewPress {
+    /// The key's trace, which also names it to the line.
+    pub(crate) trace_id: TraceId,
+    pub(crate) command: ReviewCommand,
+    pub(crate) repeat: u8,
 }
 
 /// A key passed on in a text field.
@@ -234,7 +263,8 @@ fn terminal_read_now(state: &SrState, node: NodeId, trace_id: TraceId) -> Option
             CurrentKey::Watched(Watched::Field(_))
             | CurrentKey::Reading { .. }
             | CurrentKey::FinalReading { .. }
-            | CurrentKey::MovingBySentence { .. },
+            | CurrentKey::MovingBySentence { .. }
+            | CurrentKey::Review(_),
         )
         | None => false,
     };
@@ -288,6 +318,7 @@ impl SrState {
     pub(crate) fn key_line_node(&self) -> Option<NodeId> {
         match self.current()? {
             CurrentKey::Reading { node, .. } => Some(*node),
+            CurrentKey::Review(press) => Some(press.node),
             passed_on @ (CurrentKey::Watched(_)
             | CurrentKey::FinalReading { .. }
             | CurrentKey::MovingBySentence { .. }) => passed_on.passed().map(|passed| passed.node),
@@ -299,7 +330,7 @@ impl CurrentKey {
     /// What the key has once it has been passed on, in its bound or past it.
     fn passed(&self) -> Option<&PassedKey> {
         match self {
-            Self::Reading { .. } => None,
+            Self::Reading { .. } | Self::Review(_) => None,
             Self::Watched(watched) => Some(watched.passed()),
             Self::FinalReading { field, .. } => Some(&field.passed),
             Self::MovingBySentence { passed, .. } => Some(passed),
@@ -309,7 +340,7 @@ impl CurrentKey {
     /// [`Self::passed`], to change.
     fn passed_mut(&mut self) -> Option<&mut PassedKey> {
         match self {
-            Self::Reading { .. } => None,
+            Self::Reading { .. } | Self::Review(_) => None,
             Self::Watched(watched) => Some(match watched {
                 Watched::Field(field) => &mut field.passed,
                 Watched::Terminal(passed) => passed,
@@ -323,6 +354,7 @@ impl CurrentKey {
     fn trace_id(&self) -> Option<TraceId> {
         match self {
             Self::Reading { key, .. } => Some(key.trace_id),
+            Self::Review(press) => Some(press.review.trace_id),
             passed_on @ (Self::Watched(_)
             | Self::FinalReading { .. }
             | Self::MovingBySentence { .. }) => {
@@ -335,7 +367,10 @@ impl CurrentKey {
     /// key in its final read has let what was behind it go ahead.
     fn holds_arrivals(&self) -> bool {
         match self {
-            Self::Reading { .. } | Self::Watched(_) | Self::MovingBySentence { .. } => true,
+            Self::Reading { .. }
+            | Self::Watched(_)
+            | Self::MovingBySentence { .. }
+            | Self::Review(_) => true,
             Self::FinalReading { .. } => false,
         }
     }
@@ -345,7 +380,7 @@ impl CurrentKey {
     /// ([`sentence_key_at_final_read`]).
     fn watched(&self) -> Option<Watched> {
         match self {
-            Self::Reading { .. } | Self::MovingBySentence { .. } => None,
+            Self::Reading { .. } | Self::MovingBySentence { .. } | Self::Review(_) => None,
             Self::Watched(watched) => Some(watched.clone()),
             Self::FinalReading { field, .. } => Some(Watched::Field(field.clone())),
         }
@@ -437,10 +472,7 @@ pub(crate) fn held_key(
     };
     if state.current().is_some_and(CurrentKey::holds_arrivals) {
         mark_later(state, pressed_at_ms.saturating_mul(1_000));
-        if let Some(busy) = state.busy_mut() {
-            busy.waiting.push_back(WaitingKey::Held(held));
-        }
-        return Vec::new();
+        return join(state, WaitingKey::Held(held));
     }
     if is_sentence_key(key) && state.focus.input_queued() {
         return under(Some(trace_id), pass_sentence_key(state, held));
@@ -457,7 +489,7 @@ pub(crate) fn key_arrived(state: &mut SrState, input: &Input) -> Vec<Effect> {
     let input = as_caret_key.as_ref().unwrap_or(input);
     let joins = match state.current() {
         None => false,
-        Some(CurrentKey::Reading { .. }) => true,
+        Some(CurrentKey::Reading { .. } | CurrentKey::Review(_)) => true,
         Some(CurrentKey::MovingBySentence { .. }) => {
             if let Some(at_us) = input_pressed_at_us(input) {
                 mark_later(state, at_us);
@@ -469,11 +501,7 @@ pub(crate) fn key_arrived(state: &mut SrState, input: &Input) -> Vec<Effect> {
             .is_some_and(|busy| !busy.waiting.is_empty()),
     };
     if joins {
-        if let Some(busy) = state.busy_mut() {
-            busy.waiting
-                .push_back(WaitingKey::Later(Box::new(input.clone())));
-        }
-        return Vec::new();
+        return join(state, WaitingKey::Later(Box::new(input.clone())));
     }
     crate::reduce::key_input(state, input)
 }
@@ -510,11 +538,27 @@ pub(crate) fn command_arrived(state: &mut SrState, input: &Input) -> Vec<Effect>
     if let Some(at_ms) = command_time(input) {
         mark_later(state, at_ms.saturating_mul(1_000));
     }
-    if let Some(busy) = state.busy_mut() {
-        busy.waiting
-            .push_back(WaitingKey::Command(Box::new(input.clone())));
+    join(state, WaitingKey::Command(Box::new(input.clone())))
+}
+
+/// `item` joins the line behind the current key. The first entry behind a
+/// press arms the press's bound, so whatever waits behind it waits at most
+/// [`HELD_READ_BOUND_MS`].
+fn join(state: &mut SrState, item: WaitingKey) -> Vec<Effect> {
+    let Some(busy) = state.busy_mut() else {
+        return Vec::new();
+    };
+    let arms = busy.waiting.is_empty();
+    busy.waiting.push_back(item);
+    match &busy.current {
+        CurrentKey::Review(press) if arms => vec![bound_of(press.review.trace_id)],
+        _ => Vec::new(),
     }
-    Vec::new()
+}
+
+/// The time bound on a press with something behind it.
+fn bound_of(trace_id: TraceId) -> Effect {
+    Effect::BoundHeldKey(Some((trace_id, HELD_READ_BOUND_MS)))
 }
 
 /// When a command or script was pressed.
@@ -717,9 +761,15 @@ fn run_waiting(
             }
             WaitingKey::Command(input) => {
                 let trace = input.trace_id();
-                (trace, crate::reduce::command_input(state, &input), false)
+                (trace, crate::reduce::command_input(state, &input), true)
             }
         };
+        // Armed before the read, so a read the shell answers at once ends
+        // it.
+        if let Some(Some(trace_id)) = starts_key.then(|| press_with_entries(state, trace, &waiting))
+        {
+            effects.push(bound_of(trace_id));
+        }
         effects.extend(under(trace, own));
         if !starts_key {
             continue;
@@ -747,14 +797,31 @@ fn became_current(state: &SrState, trace: Option<TraceId>) -> Option<RunsAtPass>
         Some(CurrentKey::Watched(watched)) if Some(watched.passed().key.trace_id) == trace => {
             Some(RunsAtPass::Yes)
         }
+        Some(CurrentKey::Review(press)) if Some(press.review.trace_id) == trace => {
+            Some(RunsAtPass::No)
+        }
         Some(
             CurrentKey::Reading { .. }
             | CurrentKey::Watched(_)
             | CurrentKey::FinalReading { .. }
-            | CurrentKey::MovingBySentence { .. },
+            | CurrentKey::MovingBySentence { .. }
+            | CurrentKey::Review(_),
         )
         | None => None,
     }
+}
+
+/// The trace of the press `trace` has just become current, when entries
+/// wait behind it.
+fn press_with_entries(
+    state: &SrState,
+    trace: Option<TraceId>,
+    waiting: &VecDeque<WaitingKey>,
+) -> Option<TraceId> {
+    let Some(CurrentKey::Review(press)) = state.current() else {
+        return None;
+    };
+    (Some(press.review.trace_id) == trace && !waiting.is_empty()).then_some(press.review.trace_id)
 }
 
 /// Whether the key that has just become current has reached its pass, so
@@ -817,7 +884,12 @@ pub(crate) fn controlled_selection(state: &mut SrState, controller: NodeId) -> V
     let passed = match state.current() {
         Some(CurrentKey::Watched(watched)) => watched.passed(),
         Some(CurrentKey::FinalReading { field, .. }) => &field.passed,
-        Some(CurrentKey::Reading { .. } | CurrentKey::MovingBySentence { .. }) | None => {
+        Some(
+            CurrentKey::Reading { .. }
+            | CurrentKey::MovingBySentence { .. }
+            | CurrentKey::Review(_),
+        )
+        | None => {
             return Vec::new();
         }
     };
@@ -874,7 +946,8 @@ pub(crate) fn request_answered(
             CurrentKey::Reading { .. }
             | CurrentKey::Watched(_)
             | CurrentKey::FinalReading { .. }
-            | CurrentKey::MovingBySentence { .. },
+            | CurrentKey::MovingBySentence { .. }
+            | CurrentKey::Review(_),
         )
         | None => {
             let TextReply::Caret(read) = reply else {
@@ -1081,6 +1154,163 @@ pub(crate) fn deadline_passed(state: &mut SrState, trace_id: TraceId, at_us: u64
         Some(CurrentKey::MovingBySentence { passed, step }) => {
             sentence_dropped(state, &passed, step.query())
         }
+        Some(CurrentKey::Review(press)) => press_gave_way(state, press),
+    }
+}
+
+/// `press`'s read is withdrawn and it ends saying nothing, the review
+/// cursor staying where it was: its bound has passed, or a focus moved the
+/// navigator while it read.
+fn press_gave_way(state: &mut SrState, press: Press) -> Vec<Effect> {
+    let trace_id = press.review.trace_id;
+    let mut effects: Vec<Effect> = state
+        .queries
+        .withdraw_kept(press.query)
+        .into_iter()
+        .map(|effect| for_key(trace_id, effect))
+        .collect();
+    // Its answer, whenever it comes, runs nothing.
+    state.queries.forget_query(press.query);
+    effects.extend(end_press(state, press));
+    effects
+}
+
+/// Ends the press `press`: only a press with something behind it was bound,
+/// so one with nothing behind it has no bound to clear.
+fn end_press(state: &mut SrState, press: Press) -> Vec<Effect> {
+    let bounded = state
+        .busy_mut()
+        .is_some_and(|busy| !busy.waiting.is_empty());
+    let mut effects = end_current(state, press.review.trace_id, None);
+    if !bounded {
+        effects.retain(|effect| !matches!(effect, Effect::BoundHeldKey(None)));
+    }
+    effects
+}
+
+/// The press that is the current key.
+fn current_press(state: &SrState) -> Option<Press> {
+    match state.current() {
+        Some(CurrentKey::Review(press)) => Some(*press),
+        Some(
+            CurrentKey::Reading { .. }
+            | CurrentKey::Watched(_)
+            | CurrentKey::FinalReading { .. }
+            | CurrentKey::MovingBySentence { .. },
+        )
+        | None => None,
+    }
+}
+
+/// The current press if `query` is its read.
+fn press_of(state: &SrState, query: QueryId) -> Option<Press> {
+    current_press(state).filter(|press| press.query == query)
+}
+
+/// `press` becomes the current key, its read `query` of `node` running, or,
+/// already current, goes on with this follow-up read. A held key's or
+/// passed key's replacement is said as it ends. Returns what was heard.
+pub(crate) fn press_read(
+    state: &mut SrState,
+    node: NodeId,
+    query: QueryId,
+    press: ReviewPress,
+) -> Vec<Effect> {
+    let heard = replaced_key_heard(state, press.trace_id);
+    set_current(
+        state,
+        CurrentKey::Review(Press {
+            node,
+            query,
+            review: press,
+        }),
+    );
+    heard
+}
+
+/// The answer to a press's read of `query`: what it continues, run against
+/// `ending`. An answer to a press no longer current, one that gave way or
+/// was superseded, runs nothing. With no follow-up read asked, the press
+/// ends and the line moves on.
+pub(crate) fn press_answered(
+    state: &mut SrState,
+    trace_id: TraceId,
+    query: QueryId,
+    then: TextFollowUp,
+    ending: Ending,
+) -> Vec<Effect> {
+    let Some(press) = press_of(state, query) else {
+        return Vec::new();
+    };
+    let mut effects =
+        crate::review_text::press_answer(state, trace_id, press.node, press.review, then, ending);
+    effects.extend(end_unless_followed(state, query, press));
+    effects
+}
+
+/// The answer to a press's object navigation `query`.
+pub(crate) fn navigation_answered(
+    state: &mut SrState,
+    trace_id: TraceId,
+    query: QueryId,
+    kind: QueryKind,
+    result: &FetchResult,
+) -> Vec<Effect> {
+    let Some(press) = press_of(state, query) else {
+        return Vec::new();
+    };
+    let mut effects =
+        crate::reduce::navigate_completed(state, trace_id, press.review, kind, result);
+    effects.extend(end_unless_followed(state, query, press));
+    effects
+}
+
+/// Ends `press` unless a follow-up read replaced `query`.
+fn end_unless_followed(state: &mut SrState, query: QueryId, press: Press) -> Vec<Effect> {
+    if press_of(state, query).is_some() {
+        end_press(state, press)
+    } else {
+        Vec::new()
+    }
+}
+
+/// The current press's read was ended with no answer, its terminal's model
+/// having gone: it says nothing and ends.
+pub(crate) fn press_without_read(state: &mut SrState) -> Vec<Effect> {
+    let Some(press) = current_press(state) else {
+        return Vec::new();
+    };
+    if state.queries.has_open(press.query) {
+        return Vec::new();
+    }
+    end_press(state, press)
+}
+
+/// A focus or a controlled selection has moved the navigator: a press still
+/// reading says nothing and ends, its words would follow the focus's. What
+/// is behind it runs on the navigator as it then is.
+pub(crate) fn navigator_moved(state: &mut SrState) -> Vec<Effect> {
+    let Some(press) = current_press(state) else {
+        return Vec::new();
+    };
+    if state
+        .navigator
+        .as_ref()
+        .is_some_and(|navigator| navigator.object.id == press.node)
+    {
+        return Vec::new();
+    }
+    press_gave_way(state, press)
+}
+
+/// The current press's outpost has ended: its read's "gone" is not an
+/// answer, so it is turned to nothing before the outpost's queries end, and
+/// the press ends in [`outpost_ended`], saying nothing.
+pub(crate) fn forget_press_read(state: &mut SrState, outpost: verbatim_model::OutpostId) {
+    if let Some(press) = current_press(state)
+        && press.node.outpost() == outpost
+    {
+        state.queries.forget_query(press.query);
     }
 }
 
@@ -1153,7 +1383,8 @@ fn bound_passed(state: &mut SrState, watched: Watched) -> Vec<Effect> {
             CurrentKey::Watched(_)
             | CurrentKey::Reading { .. }
             | CurrentKey::FinalReading { .. }
-            | CurrentKey::MovingBySentence { .. },
+            | CurrentKey::MovingBySentence { .. }
+            | CurrentKey::Review(_),
         )
         | None => return effects,
     };
@@ -1214,7 +1445,8 @@ fn sentence_key_at_final_read(state: &SrState, node: NodeId) -> Option<PassedKey
             CurrentKey::MovingBySentence { .. }
             | CurrentKey::Reading { .. }
             | CurrentKey::Watched(_)
-            | CurrentKey::FinalReading { .. },
+            | CurrentKey::FinalReading { .. }
+            | CurrentKey::Review(_),
         )
         | None => None,
     }
@@ -1524,7 +1756,9 @@ fn awaiting_its_unit(
             Watched::Terminal(_) => {}
         },
         CurrentKey::FinalReading { field, .. } => field.awaiting_unit = true,
-        CurrentKey::Reading { .. } | CurrentKey::MovingBySentence { .. } => {}
+        CurrentKey::Reading { .. }
+        | CurrentKey::MovingBySentence { .. }
+        | CurrentKey::Review(_) => {}
     }
     Some(Vec::new())
 }
@@ -1634,7 +1868,8 @@ pub(crate) fn before_focus(state: &mut SrState, node: NodeId) -> Vec<Effect> {
             CurrentKey::Watched(_)
             | CurrentKey::FinalReading { .. }
             | CurrentKey::Reading { .. }
-            | CurrentKey::MovingBySentence { .. },
+            | CurrentKey::MovingBySentence { .. }
+            | CurrentKey::Review(_),
         )
         | None => return Vec::new(),
     };
@@ -1695,7 +1930,10 @@ pub(crate) fn focus_executed(state: &mut SrState, node: NodeId) -> Vec<Effect> {
     let sentence_query = match state.current() {
         Some(CurrentKey::MovingBySentence { step, .. }) => Some(step.query()),
         Some(
-            CurrentKey::Watched(_) | CurrentKey::FinalReading { .. } | CurrentKey::Reading { .. },
+            CurrentKey::Watched(_)
+            | CurrentKey::FinalReading { .. }
+            | CurrentKey::Reading { .. }
+            | CurrentKey::Review(_),
         )
         | None => None,
     };
@@ -1715,6 +1953,11 @@ pub(crate) fn outpost_ended(
     state: &mut SrState,
     outpost: verbatim_model::OutpostId,
 ) -> Vec<Effect> {
+    if let Some(press) = current_press(state)
+        && press.node.outpost() == outpost
+    {
+        return end_press(state, press);
+    }
     let Some(passed) = state.current().and_then(CurrentKey::passed).cloned() else {
         return Vec::new();
     };
@@ -1739,7 +1982,9 @@ pub(crate) fn changes_heard(
     let holds = match &busy.current {
         CurrentKey::Watched(watched) => watched.passed().node == node,
         CurrentKey::FinalReading { field, .. } => field.passed.node == node,
-        CurrentKey::Reading { .. } | CurrentKey::MovingBySentence { .. } => false,
+        CurrentKey::Reading { .. }
+        | CurrentKey::MovingBySentence { .. }
+        | CurrentKey::Review(_) => false,
     };
     if holds {
         busy.heard.extend(segments);
@@ -1761,7 +2006,8 @@ pub(crate) fn exit(state: &mut SrState) -> Vec<Effect> {
             CurrentKey::Reading { key, .. } => effects.push(Effect::PassHeldKey(key.trace_id)),
             CurrentKey::Watched(_)
             | CurrentKey::FinalReading { .. }
-            | CurrentKey::MovingBySentence { .. } => {}
+            | CurrentKey::MovingBySentence { .. }
+            | CurrentKey::Review(_) => {}
         }
         for item in waiting {
             match item {

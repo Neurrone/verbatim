@@ -73,8 +73,9 @@ use verbatim_text::terminal_reading::{
 };
 use verbatim_text::terminal_rows::{Anchor, Lost, MARKS, NewRow, Read, ReadText};
 
+use crate::key_line::ReviewPress;
 use crate::queries::{ModelAsk, Then};
-use crate::state::{PendingText, SrState};
+use crate::state::{SrState, TextFollowUp};
 use crate::terminal::{Said, SaidItem, Skipped, TerminalItem, TerminalKeyKind, TerminalUnit};
 
 pub(crate) use review::CaretAt;
@@ -1215,27 +1216,25 @@ pub(crate) fn report_status_bar(state: &mut SrState, trace_id: TraceId, repeat: 
 pub(crate) fn command_mark(
     state: &mut SrState,
     node: NodeId,
-    trace_id: TraceId,
+    press: ReviewPress,
     (forward, from): (bool, TextPoint),
-    then: PendingText,
+    then: TextFollowUp,
 ) -> Option<Vec<Effect>> {
     model_of(state, node)?;
-    // The move is the review command's request, which supersedes the one
-    // before it.
-    state.queries.forget(|then| matches!(then, Then::Text(_)));
-    let query_id = state.queries.ask_memory(node, Then::Text(then));
-    let effects = queue(
+    let query_id = state.queries.ask_memory(node, Then::Review(then));
+    let mut effects = crate::key_line::press_read(state, node, query_id, press);
+    effects.extend(queue(
         state,
         node,
         Waiting {
-            trace: Some(trace_id),
+            trace: Some(press.trace_id),
             review: Review::Mark {
                 query_id,
                 forward,
                 from,
             },
         },
-    );
+    ));
     Some(effects)
 }
 
@@ -1340,6 +1339,11 @@ fn answer_reviews(state: &mut SrState, node: NodeId, trace_id: TraceId) -> Vec<E
                 }
                 let caused = crate::queries::answer_from_memory(state, trace, query_id, reply);
                 effects.extend(queue_only(state, caused, trace));
+                // Answering a press ran the next press in the line, which
+                // waits for a fresh read of its own.
+                if model_asks(state, node, |ask| !ask.owed()) {
+                    break;
+                }
             }
             // The history read for this request does not hold the row it
             // needs, as when more than a screen of output scrolled while it

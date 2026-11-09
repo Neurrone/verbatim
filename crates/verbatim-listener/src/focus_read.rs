@@ -768,6 +768,7 @@ impl FocusReader {
             node: NodeGates {
                 place: None,
                 cell: None,
+                counts: None,
                 ..Node::all_on()
             },
             ..Ancestor::all_on()
@@ -775,7 +776,18 @@ impl FocusReader {
         let read = self
             .uia
             .request::<Ancestor>(ancestors)
-            .and_then(|request| Ok((request, self.uia.request::<Ancestor>(Ancestor::all_on())?)))
+            .and_then(|request| {
+                Ok((
+                    request,
+                    self.uia.request::<Ancestor>(AncestorGates {
+                        node: NodeGates {
+                            counts: None,
+                            ..Node::all_on()
+                        },
+                        ..Ancestor::all_on()
+                    })?,
+                ))
+            })
             .map_err(verbatim_uia_rops::Error::Uia)
             .and_then(|(request, element_request)| {
                 let fill = Fill::new(&request);

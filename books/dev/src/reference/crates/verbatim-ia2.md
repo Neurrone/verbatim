@@ -200,6 +200,9 @@ Public API:
   its first child and each next sibling through `TVM_GETNEXTITEM`, as
   NVDA counts them; read by the outpost only with a state change that
   leaves the item expanded),
+  `read_node` (a node as it is now, for a review command's live read: an
+  object that no longer answers reads with an unknown role and no name, as
+  NVDA's does),
   `walk_tree` (the control plane's tree dump, from a window's client
   object, bounded by a depth and a node-count cap, each object's location
   and off-screen state read only when asked for, and otherwise left out
