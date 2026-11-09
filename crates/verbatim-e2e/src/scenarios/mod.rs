@@ -15,6 +15,7 @@ use crate::registry::ScenarioState;
 use crate::scenario::{Scenario, harness_marker};
 
 pub(crate) mod alt_tab_switcher;
+pub(crate) mod background_progress_bar;
 pub(crate) mod caret_keys;
 pub(crate) mod controlled_list_selections;
 pub(crate) mod crash_recovery;
