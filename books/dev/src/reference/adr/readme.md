@@ -5,3 +5,4 @@ Each record here keeps the decisions behind one part of Verbatim: the problem, t
 Records are numbered in the order they were decided, because the order matters: a later record can rest on an earlier one, and never the other way round. A decision taken while Dickson was away is marked "pending Dickson's acceptance" until he accepts it. [The architecture](../../explanation/architecture.md) remains the index of every decision of record and links to the record that holds each one.
 
 - [ADR 0001: Focus](0001-focus.md) — which process reads each focus, how a focus keeps its order, how Verbatim waits for a slow or hung application, how an earlier ancestry is reused safely, and what Verbatim+Tab reports.
+- [ADR 0002: State models](0002-state-models.md) — why the listener's record of an application is kept by generation, how one hang is told per application, and why the outpost's followed focus is one record replaced whole.
