@@ -93,6 +93,8 @@ struct Flight {
     began: Us,
     /// The note its copy of the facts held as it was dispatched.
     note: Option<KeyNote>,
+    /// A final read's: the end of the note that lived as it arrived.
+    final_note_until: Option<u64>,
 }
 
 /// Core's reducer and the outpost's together, with a stand-in for the
@@ -354,7 +356,10 @@ impl Seam {
         if let Work::NoteRead(node) = &program.work {
             seen.push(Seen::PollRead(field_of_node(*node), self.now));
         }
-        let Work::Entry { entry, .. } = &program.work else {
+        let Work::Entry {
+            entry, handling, ..
+        } = &program.work
+        else {
             self.finish(program.request, seen);
             return;
         };
@@ -427,6 +432,10 @@ impl Seam {
             field: field_of_node(node),
             kind,
             note: program.facts.text.live_note(node.number(), self.now),
+            final_note_until: match handling {
+                crate::intake::Handling::FinalRead { note_until } => *note_until,
+                _ => None,
+            },
             facts: program.facts.clone(),
             began: self.now,
         });
@@ -861,16 +870,10 @@ impl Seam {
             flight.node.number(),
             &found,
         )];
-        if let ReadKind::Final(request_id, ..) = &flight.kind
-            && let Some(live) = flight
-                .facts
-                .text
-                .live_note(flight.node.number(), flight.began)
-                .filter(|live| live.final_read == Some(*request_id))
-        {
+        if let Some(until_us) = flight.final_note_until {
             changes.push(TextChange::NoteCleared {
                 node: flight.node.number(),
-                until_us: live.until_us,
+                until_us,
             });
         }
         if let Some((fetch, Some(until_us))) = fetch
