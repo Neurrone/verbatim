@@ -205,3 +205,25 @@ So Verbatim+F11 works like this:
   - how-to outlines.
 
   Examples become compiled crates in `extensions/`, included into the book with `{{#include}}`. The design records are updated in a separate commit.
+
+## Section 4, imports (Dickson, 2026-11-09)
+
+- Node reading:
+  - `properties()`, read from the cached snapshot;
+  - parent, children, first and last child, next and previous sibling;
+  - find-descendant with a depth limit, and find-ancestor, using the matcher grammar;
+  - `window()`, `text()`, `focus()` and `foreground()`;
+  - `find-window(application, class-path, backend)`, for app modules' own applications and global modules' `reads`;
+  - errors: gone, deadline, outside, wrong-backend.
+- Output:
+  - `speak(message)`, where a message is application text or a Fluent id with arguments, at normal priority and queued;
+  - `speak-node(node)`, announced as a focus would be, through the theme (pulled forward from M13);
+  - `cancel-speech()`, effective only while the application holds attention;
+  - `tone`, capped;
+  - `browseable-message`, plain text.
+- `pass-through()`, which is an error outside `on-command`.
+- `show-list-dialog`.
+- `click(node, left | left-double | right)`, shown at install as "Clicks the mouse in" the named applications.
+- `windows-version()`, `clock()` and `node.process()`, which replaces the module-level process facts.
+- `log`, capped.
+- The settings view is dropped. No M5 module needs it, and neither does M6, since synthesizers receive their own settings through the synthesizer interface.
