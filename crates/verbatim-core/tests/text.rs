@@ -5759,6 +5759,7 @@ fn terminal_reads(effects: &[Effect]) -> usize {
 /// flag is `console`; what the pass did.
 fn passed_on_over(role: Role, console: bool) -> Vec<Effect> {
     let mut state = SrState::new();
+    focus(&mut state, node(5, role, StateSet::new()));
     let window = verbatim_model::WindowHandle(0x100);
     let _ = reduce(
         &mut state,
@@ -5774,7 +5775,6 @@ fn passed_on_over(role: Role, console: bool) -> Vec<Effect> {
             own_integrity: None,
         }),
     );
-    focus(&mut state, node(5, role, StateSet::new()));
     let query = request_of(&reduce(
         &mut state,
         &held_at(TraceId::from_raw(2), CaretMotion::NextCharacter, 499),
