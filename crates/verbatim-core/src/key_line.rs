@@ -35,6 +35,9 @@ pub(crate) struct HeldKey {
     pub(crate) key: CaretKey,
     /// When the hook saw it, on the outposts' clock.
     pub(crate) pressed_at_ms: u64,
+    /// The focus with text when it was pressed: judged at its pass, it says
+    /// nothing if that is no longer the focus (Dickson, 2026-11-09).
+    pub(crate) pressed_on: Option<NodeId>,
 }
 
 /// A key waiting behind the current key, in press order.
@@ -274,6 +277,7 @@ pub(crate) fn held_key(
         trace_id,
         key,
         pressed_at_ms,
+        pressed_on: text_focus(state),
     };
     let joins = matches!(
         state.current(),
@@ -373,6 +377,7 @@ pub(crate) fn unheld_caret_key(
         trace_id,
         key,
         pressed_at_ms,
+        pressed_on: Some(node),
     };
     let mut effects = watch_from_last_read(
         state,
@@ -717,15 +722,20 @@ fn before_read_answered(state: &mut SrState, trace_id: TraceId, reply: TextReply
         effects.extend(end_current(state, held.trace_id, None));
         return effects;
     };
-    if !state.focus_matches(node) {
-        // The focus moved on while the key was read: its words would follow
-        // the focus's.
-        let mut effects = crate::say_all::stop(state);
+    let read = *read;
+    if !state.focus_matches(node) || held.pressed_on != Some(node) {
+        // The focus moved on while the key was read or waited: its words
+        // would follow the focus's. Its read is still a report of the focus
+        // it read.
+        let (changes, general) = editing::changes_of_reply(&read);
+        editing::update_caret(state, node, read.caret);
+        let mut effects =
+            editing::selection_changed(state, trace_id, node, (&changes, general.as_general()));
+        effects.extend(crate::say_all::stop(state));
         effects.push(Effect::PassHeldKey(held.trace_id));
         effects.extend(end_current(state, held.trace_id, None));
         return effects;
     }
-    let read = *read;
     let (changes, general) = editing::changes_of_reply(&read);
     let before = editing::before_of_read(state, node, held.key.motion, &read);
     let passed_at_us = read.facts.read_ended_at_us;
@@ -789,7 +799,7 @@ fn before_read_given_up(state: &mut SrState, trace_id: TraceId, at_us: u64) -> V
         .into_iter()
         .map(|effect| for_key(trace_id, effect))
         .collect();
-    if !state.focus_matches(node) {
+    if !state.focus_matches(node) || key.pressed_on != Some(node) {
         effects.extend(crate::say_all::stop(state));
         effects.push(Effect::PassHeldKey(trace_id));
         effects.extend(end_current(state, trace_id, None));
