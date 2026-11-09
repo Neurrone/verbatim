@@ -166,7 +166,7 @@ The decisions, in brief:
   the read's start; the baseline's life follows the focus Core holds.
 - Remove the second layer: Core's eight caret reports and its Backspace
   and Delete prediction, the outpost's eight reads (so that until
-  uiAccess, M8.6, a caret key in an elevated window is judged from the
+  uiAccess, M8.7, a caret key in an elevated window is judged from the
   last read), the time-zero record, the line-limited "since" check,
   report numbers, the selection baseline's three modes, the separate
   watch request, and the single superseded slot.
@@ -509,25 +509,43 @@ package reader get generated tests of their own.
 - The minimal log ring, the log viewer window and the Verbatim+F1 focus
   report, pulled forward from M9 because module failures and rule
   provenance need somewhere to be read.
+- Built for the installed copy that M8.6 adds, though M5 ships only the
+  portable one: every path to a folder Verbatim writes (settings, installed
+  extensions with their staging folders, the developer folder, compiled
+  code, logs) comes from one resolver of the configuration root, which
+  answers the folder beside the executable in portable mode, and never
+  from the executable's own path; built-ins are found from the program
+  folder, never the configuration root, since they are the same for every
+  user; compiled code is named by its content, the runtime's version and
+  the architecture, in a cache that can always be rebuilt; the `.vext`
+  helper finds Verbatim only through the control plane, never by a path,
+  and shows a message box that Verbatim must be running when nothing
+  answers, as NVDA's `nvda_slave.exe` does; and the Extensions dialog has
+  an Install from file button, which is how a portable copy installs, with
+  no file association registered (Dickson, 2026-11-09).
 - The guest workspace under `extensions/` (planned) with a permissively licensed SDK;
   every built-in written in Rust, Calculator and Notepad first.
 - Every Windows inbox application as a built-in: Explorer (starting with the
   cosmetic fixes deferred from M3), Windows Terminal, Notepad, Calculator,
-  Task Manager (proven by `mockapp` until M8.6 lets it be read end to
+  Task Manager (proven by `mockapp` until M8.7 lets it be read end to
   end), Settings, Start and search, Quick Settings and Open With; sleep mode
   as a core per-application list rather than five modules.
 - Windows Terminal's second terminal identity
-  ([design](design/windows-terminal-twin-focus.md)) as the Terminal
-  built-in's `on-event` hook, never core code: it drops a sender with the
-  runtime id starting 14 that is the twin of the current focus starting
-  42, and adopts a 42 sender that is the twin of a current 14 focus, by
-  the design's twin test, with tests that the terminal is followed
-  afterwards and that cover two panes in one window. Before implementing,
-  collect evidence that the runtime id's last part is never reused (pane
-  splits, pane moves, closing and reopening panes, new tabs). Until then
-  the tests accept one repeated "terminal" as an optional utterance, which
-  does not cover the late repeat of a 42 to 14 to 42 flip seen on GitHub's
-  slower runner, so that can still fail scenarios. Evidence:
+  ([design](design/windows-terminal-twin-focus.md), whose twin test this
+  replaces) as a focus veto rule of the Terminal built-in, never core code
+  and with no hook (Dickson, 2026-11-09): the listener drops every focus
+  event from a `TermControl` whose UIA runtime id starts 14, so only the
+  usual identity starting 42 is announced and followed. In every one of
+  the 156 focus events from a 14 identity measured, a 42 from the same
+  process arrived within 1 second, in either order; where the 14 comes
+  first, "terminal" is said when the 42 arrives instead, which is the
+  rule's one cost, measured by rerunning the experiment's judge with the
+  order and the gap recorded. Node matchers gain the UIA runtime id, with
+  exact and prefix forms, and the listener's cache carries it. Tests: the
+  terminal is announced once and followed afterwards for each order of
+  the two identities, and with two panes in one window; the
+  `windows_terminal_` scenarios without the optional repeated "terminal".
+  Evidence:
   `experiments/windows-terminal-raises-focus-from-a-second-runtime-identity/`.
 
 - Configuration versioned, by the ownership model's version rule
@@ -542,9 +560,8 @@ package reader get generated tests of their own.
   outpost after the listener's read, as NVDA runs `event_gainFocus` after
   its walk, so it makes no read NVDA would not; node and event rules
   applied in the outpost to every kind of focus report, its own recovery
-  reads included; kept verdicts dropped when rule tables are reloaded; the
-  Windows Terminal second-identity hook restated against repeats judged in
-  Core; and File Explorer's search band refusal (the focus pipeline
+  reads included; kept verdicts dropped when rule tables are reloaded; and
+  File Explorer's search band refusal (the focus pipeline
   audit's difference 24) as a rule of the File Explorer built-in, needed
   on Windows 11 24H2 and not on 25H2, with no `StartButton` rule, since
   the rework's first step found no keyboard route to the MSAA focus on
@@ -1022,7 +1039,7 @@ After M6 (Dickson, 2026-10-31). Developer mode, and the fixes from [the security
 - COM unmarshalling hardened with `EOAC_NO_CUSTOM_MARSHAL`, and the write-restricted token for outposts, which must also stop an outpost writing into the user's other processes, tested together against UIA, MSAA and a remote operation (X7, section 6.9). Test: `mockapp` and Notepad scenarios pass under both, and an object naming a custom unmarshaler is refused.
 - An application named by a handle rather than a process id, a bound on outposts, and the background flood cap (U7 to U9). Test: the hostile `mockapp` mode of M4.9 gains a notification flood and a provider that hangs or crashes mid-call, each asserting the exact speech, that another application keeps speaking within a stated time, and that memory stays under its cap.
 - The per-process mitigations of [the security model](design/security-model.md), section 6.9, applied at each child's start: control-flow guard, strict handle checks, the image load policy, the extension hosts' job limits, and control-flow guard and shadow stacks at link time; never the Microsoft-only image policy for synthesizer hosts or outposts, and no extension-point policy for Core while the GUI is in Core, since NVDA's helper must read Verbatim's GUI for parity captures. Test: each process's mitigations, read back from it, equal its stated list on x64 and ARM64, and the `mockapp` and Notepad scenarios pass under them.
-- Pinned DLL search (X2), moved in from M8.7: each executable calls `SetDefaultDllDirectories` with the system and application folders before anything else loads. Test: a DLL planted beside a portable copy is not loaded.
+- Pinned DLL search (X2), moved in from M8.6: each executable calls `SetDefaultDllDirectories` with the system and application folders before anything else loads. Test: a DLL planted beside a portable copy is not loaded.
 - Synthesizer escapes covering control and NUL characters (J1). Test: text with SSML, NULs and control characters is spoken as text by both built-in drivers.
 - `cargo deny` in `cargo xtask ci` (X10).
 
@@ -1035,10 +1052,10 @@ Security work other milestones carry, each with its test:
 - M6.3: speech moved to another audio device while the default refuses Verbatim (A5), tested with the default held in exclusive mode; a cut string known to speech (U4).
 - M6.5: typed characters judged against the focus they were typed in (L9), tested by a password field that closes on its last character.
 - M7: the helper loaded narrowly, handed its channel, version-checked and treated as hostile (X8), tested with a mismatched helper and malformed messages; link destinations (S3).
-- M8.7, with the installer (the screen curtain with M8.4, and linear-time dictionaries, direction overrides and clipboard history with M8.2): a machine-wide, signed, administrator-owned installation (X1); signed updates from a process of their own (X9), tested with an unsigned and a wrongly signed download; never running elevated (B2); diagnostics' home and limits (L4); the screen curtain built for a user who cannot see it (L8), tested across a display change, unlocking and a restart; linear-time dictionaries (J2); direction overrides spoken (S2); clipboard history (L7).
+- M8.6, with the installer (the screen curtain with M8.4, and linear-time dictionaries, direction overrides and clipboard history with M8.2): a machine-wide, signed, administrator-owned installation (X1); signed updates from a process of their own (X9), tested with an unsigned and a wrongly signed download; never running elevated (B2); diagnostics' home and limits (L4); the screen curtain built for a user who cannot see it (L8), tested across a display change, unlocking and a restart; linear-time dictionaries (J2); direction overrides spoken (S2); clipboard history (L7).
 - M4.7 and M4.8: native crashes dumped by Verbatim, never by Windows Error Reporting (L5); Core restarted by the guardian, with a breaker whose last restart runs without extensions (A1); Core's memory cap (A2); the single instance in a private namespace and the `WM_QUIT` filter removed (C2's startup names, C6).
 - M4.9: walks, lists and strings bounded (U2 to U4), terminal alignment below quadratic time (U5), and fuzzing at the parsers (X12).
-- M8.6: the UIAccess measurement first (B1), then the lock and secure-screen rules (B3 to B8) with the secure instance's menu and dialogs as an allowlist, no file choice, and the toolkit's dialogs routed to the log (G1, G2, G4), tested by a list of every window and command the secure instance can reach equalling the allowlist, and by each of NVDA's secure-screen advisories as a scenario; the administrator's copy for secure screens following no links (X13), tested with a planted junction; developer mode in UIAccess builds turned on only in Verbatim's own window (C1); the secure instance's children started without SYSTEM (B10), tested by reading their tokens; "Secure Desktop" announced on the switch (B11); and the secure instance's own curtain.
+- M8.7: the UIAccess measurement first (B1), then the lock and secure-screen rules (B3 to B8) with the secure instance's menu and dialogs as an allowlist, no file choice, and the toolkit's dialogs routed to the log (G1, G2, G4), tested by a list of every window and command the secure instance can reach equalling the allowlist, and by each of NVDA's secure-screen advisories as a scenario; the administrator's copy for secure screens following no links (X13), tested with a planted junction; developer mode in UIAccess builds turned on only in Verbatim's own window (C1); the secure instance's children started without SYSTEM (B10), tested by reading their tokens; "Secure Desktop" announced on the switch (B11); and the secure instance's own curtain.
 - M9: no content in logs at default levels (L3), tested by scanning a full suite run's logs for the planted text.
 - M12: Remote's end-to-end encryption, announcements and lock behaviour (C8, B9), tested with a relay that tries to read and alter traffic and a session that locks.
 - M18: braille drivers in their extensions' hosts, given only the devices Core opens for them (section 6.11), tested with a device sending malformed reports.
@@ -1212,7 +1229,29 @@ are.
 - From NVDA's changes up to 663e4b679 (reviewed 2026-10-06): OCR captured
   through Windows Graphics Capture.
 
-## M8.6 — UIAccess: elevated windows, UAC and sign-in
+## M8.6 — Installer and updater
+
+No exit criterion of its own: the milestone is done when all of its items
+are.
+
+- Installer/updater skeleton.
+- The installed copy (Dickson, 2026-11-09), by the layout M5 left ready
+  for it: the configuration root resolved to the user's profile for an
+  installed copy ([security model](design/security-model.md), section
+  4.1), so settings, profiles, gestures, installed extensions and the
+  developer folder are per user, and compiled code, logs and dumps go to
+  the user's local application data (L4); built-ins and their compiled
+  code stay in the administrator-owned installation, the same for every
+  user (X5). NVDA keeps its user configuration in roaming application
+  data, or local with an installer option, and a portable copy's beside
+  it (`config/__init__.py`, `getInstalledUserConfigPath` and
+  `getUserDefaultConfigPath`); which of roaming and local Verbatim uses is
+  decided here.
+- The `.vext` file type registered machine-wide to the helper, as NVDA's
+  installer registers `.nvda-addon` to `nvda_slave.exe`
+  (`installer.py`, `registerAddonFileAssociation`).
+
+## M8.7 — UIAccess: elevated windows, UAC and sign-in
 
 Reading elevated console windows, UAC prompts and the lock screen or
 sign-in needs the UIAccess permission; this milestone builds it and reads
@@ -1245,13 +1284,6 @@ each of them end to end.
 
 Exit: a UAC prompt, an elevated console, and the sign-in screen are read
 in the VM.
-
-## M8.7 — Installer and updater
-
-No exit criterion of its own: the milestone is done when all of its items
-are.
-
-- Installer/updater skeleton.
 
 ## M9 — Logging and log viewer
 
@@ -1523,8 +1555,8 @@ Tiers, gated by the capabilities each module needs:
   line 15, tested in `IAccessibleHandler/__init__.py`, lines 1039 to
   1055), since its caret blinks by them; until then a focused Scintilla
   editor tries to read its caret at each blink.
-- **Lock screen and logon UI — after M8.6**: reading the sign-in screen
-  needs UIAccess, which M8.6 builds.
+- **Lock screen and logon UI — after M8.7**: reading the sign-in screen
+  needs UIAccess, which M8.7 builds.
 - **Tier B — the terminal clients, in two stages**: Windows Terminal
   workflows are core M4 behavior, and mintty is triaged on its own after M4
   (its ConPTY integration may make it readable stock). PuTTY, SecureCRT,

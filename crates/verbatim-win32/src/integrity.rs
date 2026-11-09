@@ -8,7 +8,7 @@
 //! elevated application's, without an error, since Verbatim runs without
 //! the uiAccess privilege; a caret key held back there and sent again
 //! would be lost. This guard is temporary, removed when Verbatim gains
-//! uiAccess (`docs/roadmap.md`, M8.6).
+//! uiAccess (`docs/roadmap.md`, M8.7).
 //!
 //! Every read is a local call into the kernel (opening the process and its
 //! token, and reading the token's label), which never waits on another

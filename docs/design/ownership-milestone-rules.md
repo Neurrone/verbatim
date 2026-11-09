@@ -56,7 +56,7 @@ The ownership refactor's builds are all built: [the one judge build](../../books
   - Overlays are written only by reducer effects.
   - An OCR read is a query.
   - Words stay in Core.
-- M8.6: two instances share no writable fact; the integrity of the window in front stays the listener's report.
+- M8.7: two instances share no writable fact; the integrity of the window in front stays the listener's report.
 - M9: logs are one-way and sent in batches; the Verbatim+F1 report is a query.
 - M10: the console reads Core only by queries; its node reads are requests with responders.
 - M11: a theme switch is an input and an effect ordered with `Speak`.

@@ -40,12 +40,12 @@ Dickson's, each with its date:
 - A key's results after its before read are tagged `KeyAnswered` events, and the request answers once (2026-11-08, its shape 2026-11-09), so that they travel in one order with every caret report and no several-answer responder exists. This replaces the stream responder in `docs/design/ownership-milestone-rules.md`.
 - A key whose before read is running when the focus moves to another node says nothing, a difference from NVDA, whose script speaks the old field's unit before the focus (`editableText.py` 97 to 99, 165 to 192), because in Verbatim the focus has already been spoken and the unit would follow it (2026-11-09).
 - A sentence move whose final read or later step passes its 150 ms is dropped: nothing is said and the caret stays, a difference from NVDA, which blocks until it can read and then moves (`editableText.py` 245 to 262), so that keys behind it are not held longer (2026-11-09).
-- A command pressed within 100 ms of a caret key that was not held waits for it, at most those 100 ms, the one added delay in this design, ending with uiAccess (M8.6) (2026-11-09).
+- A command pressed within 100 ms of a caret key that was not held waits for it, at most those 100 ms, the one added delay in this design, ending with uiAccess (M8.7) (2026-11-09).
 - Alt+Up and Alt+Down match NVDA (2026-10-29): sentences by UAX #29 within each paragraph; in UIA text, which has no sentence unit, nothing is said (`editableText.py` 263; `nvda/source/UIAHandler/__init__.py` 158 to 176). A rich edit control is read as a plain edit control until M6.5.
 - Control+Z, Control+Y, Control+X, Control+V and Escape in a text field open no watch and say nothing for the key, as NVDA binds no script to them (2026-10-25; absent from `editableText.py` 387 to 413). Their selection changes are spoken from the application's caret event. Other keys outside the caret table speak by their evidence (2026-10-08).
 - Terminals keep their reading rules and today's handling of the five chords (2026-10-25 and 2026-10-29).
 - The judgement of evidence stays in the outpost, named in D14 (2026-10-25), because it bounds reads on text changes.
-- Until uiAccess (M8.6), a caret key in an elevated window is judged from the last read (2026-10-25).
+- Until uiAccess (M8.7), a caret key in an elevated window is judged from the last read (2026-10-25).
 
 Claude's, each with its reason:
 
@@ -379,7 +379,7 @@ Captured from NVDA at its pinned build, in the Windows Forms text box and Notepa
 - A focus executing while a key is still being read leaves that key silent, since its words would follow the focus's.
 - A duplicate focus report does not stand for a focus that moves first: NVDA would speak the unit at once, and Verbatim speaks it at the bound.
 - A key within a few milliseconds of an earlier key can be read before the earlier key's effect, as today.
-- A key in an elevated window, until M8.6, is judged from the last read; one whose own event was read first may find no evidence and speak at its bound from the caret after the key.
+- A key in an elevated window, until M8.7, is judged from the last read; one whose own event was read first may find no evidence and speak at its bound from the caret after the key.
 - A rich edit control's sentences stop at a wrapped line's end until M6.5.
 - A letter typed within 100 ms of a key that moves nothing leaves the key silent, as NVDA's speech for it is cut as it starts (`nvda/source/inputCore.py` 584 to 605).
 - NVDA speaks as soon as a control raises a caret event, moved or not, about 8 ms after the key in the text box (`editableText.py` 104 to 120). Verbatim judges by position, so the same words come at 100 ms.

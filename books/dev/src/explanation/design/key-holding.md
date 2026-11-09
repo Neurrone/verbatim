@@ -39,7 +39,7 @@ Verbatim's own commands are deferred in Core rather than in the hook: they never
 
 ### Elevated windows
 
-Verbatim runs without the uiAccess privilege, and Windows drops input it sends to a window of higher integrity without an error, so a key held for such a window would be lost. While the foreground window's process has higher integrity than Verbatim's, or its integrity cannot be read, the hook therefore holds and defers nothing. The focus listener reads each foreground window's integrity, and Core publishes whether keys may be held there in a lock-free view the hook applies only while the window it names is still in front (architecture section 5; `books/dev/src/reference/crates/verbatim-input-windows.md`, "Holding caret keys"). This is a temporary guard, removed when uiAccess is built (`docs/roadmap.md`, M8.6). The live case is not checked, since no elevated window can be opened without a UAC prompt.
+Verbatim runs without the uiAccess privilege, and Windows drops input it sends to a window of higher integrity without an error, so a key held for such a window would be lost. While the foreground window's process has higher integrity than Verbatim's, or its integrity cannot be read, the hook therefore holds and defers nothing. The focus listener reads each foreground window's integrity, and Core publishes whether keys may be held there in a lock-free view the hook applies only while the window it names is still in front (architecture section 5; `books/dev/src/reference/crates/verbatim-input-windows.md`, "Holding caret keys"). This is a temporary guard, removed when uiAccess is built (`docs/roadmap.md`, M8.7). The live case is not checked, since no elevated window can be opened without a UAC prompt.
 
 ### Core
 

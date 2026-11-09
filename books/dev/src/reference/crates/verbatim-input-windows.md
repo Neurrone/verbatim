@@ -195,7 +195,7 @@ with its process's integrity level, and Core decides whether keys may be
 held there (`SrState::hook_foreground`). Until Core has caught up with a
 foreground change, or before Core has any view, nothing is held, a key
 judged without its caret costing less than a key lost. It is a temporary
-guard until uiAccess (`docs/roadmap.md`, M8.6). Unit tests drive `decide`
+guard until uiAccess (`docs/roadmap.md`, M8.7). Unit tests drive `decide`
 with each tag, with Core's view forbidding holding, with the focus
 without text, and with a view of another window or none; the tests fix
 the window in front (`HookState::front`), so nothing depends on the
