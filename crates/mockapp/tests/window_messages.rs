@@ -18,8 +18,8 @@ use verbatim_faults::{Fault, Guard};
 use verbatim_ia2::edit::EditError;
 use verbatim_model::protocol::{DeliveredFact, OutpostToCore, Query, QueryOutcome, QueryResult};
 use verbatim_model::{
-    CaretMotion, FocusText, KeyRequest, KeyStart, KeyStarted, KeyTag, QueryId, TextAnchor, TextOp,
-    TextReply, WatchKind,
+    CaretMotion, CaretRead, FocusText, KeyFetch, NodeKind, ReadPurpose, TextAnchor, TextOp,
+    TextReply,
 };
 use windows::Win32::Foundation::{CloseHandle, HANDLE, HWND};
 use windows::Win32::System::Memory::{MEM_COMMIT, MEMORY_BASIC_INFORMATION, VirtualQueryEx};
@@ -161,23 +161,21 @@ fn a_slow_edit_control_answers_its_selection() {
     app.stall(stall);
     let request_id = outpost.ask(Query::Text {
         node_id: focus.node.id,
-        op: TextOp::Key(KeyRequest {
-            tag: KeyTag(QueryId(1)),
-            kind: WatchKind::TextField,
-            unit: CaretMotion::NextCharacter.unit(),
-            motion: CaretMotion::NextCharacter,
-            start: KeyStart::ReadFirst,
+        op: TextOp::ReadCaret(CaretRead {
+            fetch: KeyFetch {
+                unit: CaretMotion::NextCharacter.unit(),
+                motion: CaretMotion::NextCharacter,
+                kind: NodeKind::TextField,
+            },
+            purpose: ReadPurpose::BeforeKey,
         }),
     });
     match outpost.next() {
         OutpostToCore::Reply {
             request_id: answered,
-            outcome: QueryOutcome::Done(QueryResult::Text(TextReply::Key(started))),
+            outcome: QueryOutcome::Done(QueryResult::Text(TextReply::Caret(reply))),
             ..
-        } if answered == request_id => match *started {
-            KeyStarted::Read(reply) => assert_eq!(unanchored(&reply.caret), expected),
-            other @ KeyStarted::Watching => panic!("the outpost answered {other:?}, not the caret"),
-        },
+        } if answered == request_id => assert_eq!(unanchored(&reply.caret), expected),
         other => panic!("the outpost said {other:?}, not the caret"),
     }
     app.stall_ended(stall);

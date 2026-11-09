@@ -49,7 +49,7 @@ use crate::outpost::{
     Anchor, AnswerCut, CutLine, KeptSelection, NodeAnchors, ReadSelection, ReportCut,
 };
 pub use verbatim_outpost_logic::LastRead;
-use verbatim_outpost_logic::NoteFetch;
+pub use verbatim_outpost_logic::NoteFetch;
 
 /// The most UTF-16 code units read for a range copied to the clipboard or a
 /// selection change counted: what fits in [`MAX_RANGE_BYTES`] at worst.

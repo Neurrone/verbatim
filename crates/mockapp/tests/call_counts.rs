@@ -64,7 +64,7 @@ use verbatim_model::{
     CallCounts, Fetches, FocusText, NodeSnapshot, NormalizedEvent, QueryKind, Role, WindowHandle,
 };
 use verbatim_model::{
-    CaretMotion, KeyRead, LineStyle, SelectionChange, TextAttributes, TextMovement, TextOp,
+    CaretMotion, CaretReply, LineStyle, SelectionChange, TextAttributes, TextMovement, TextOp,
     TextPoint, TextPosition, TextRead, TextReadAhead, TextReply, TextThrough, TextUnit, Theme,
 };
 use verbatim_outpost::arbitration::NEGATIVE_VERDICT_LIFETIME;
@@ -72,7 +72,7 @@ use verbatim_outpost::dialog_text::{UiaDialog, dialog_text};
 use verbatim_outpost::text::edit::EditText;
 use verbatim_outpost::text::uia::{UiaPos, UiaText};
 use verbatim_outpost::text::{
-    Anchors, CheckKey, KeyChecked, LastRead, ReportAsk, TextSource, caret_report,
+    Anchors, CheckKey, FetchAsk, KeyChecked, NoteFetch, LastRead, ReportAsk, TextSource, caret_report,
     caret_report_since, check_key, perform,
 };
 use verbatim_process::arguments::OutpostOptions;
@@ -3084,25 +3084,26 @@ fn uia_active_text_position_costs_exactly() {
 fn check<S: TextSource>(
     source: &mut S,
     anchors: &mut verbatim_outpost::text::NodeText<'_, S::Pos>,
-    baseline: &LastRead<S::Pos>,
+    _baseline: &LastRead<S::Pos>,
 ) -> KeyChecked {
     let motion = CaretMotion::NextCharacter;
     check_key(
         source,
         anchors,
         &CheckKey {
-            baseline,
-            unit: motion.unit(),
-            motion,
-            before_unit: None,
+            note: NoteFetch {
+                unit: motion.unit(),
+                motion,
+            },
             read_at_us: 2,
             final_read: false,
+            ended: || 3,
         },
     )
 }
 
 /// The read of a check that found evidence.
-fn answered(checked: KeyChecked) -> KeyRead {
+fn answered(checked: KeyChecked) -> CaretReply {
     match checked {
         KeyChecked::Read { read, effect: true } => *read,
         other => panic!("no evidence: {other:?}"),
@@ -3120,7 +3121,7 @@ fn answered(checked: KeyChecked) -> KeyRead {
 /// Then a selection no key made is reported the same way, with how it
 /// changed. Then the caret, moved on with nothing selected, is read as the
 /// outpost reads it before a held caret key is passed on
-/// (`KeyStart::ReadFirst`, `books/dev/src/explanation/design/key-holding.md`): the report's read,
+/// (`ReadPurpose::BeforeKey`, `books/dev/src/explanation/design/key-holding.md`): the report's read,
 /// leaving the kept selection alone. Returns the calls and hits of the
 /// answer, of the report, of the report with a selection change, and of
 /// the read before a held key.
@@ -3140,7 +3141,7 @@ fn measure_caret_move<S: TextSource>(
     let _ = verbatim_uia::calls::take_failed_reads();
     let reply = answered(check(source, &mut anchors, &baseline));
     let calls = take();
-    assert_eq!(reply.unit.text, "l");
+    assert_eq!(reply.facts.unit.text, "l");
     let answer = Cost {
         calls,
         hits: common::read_hits(hwnd),
@@ -3158,7 +3159,7 @@ fn measure_caret_move<S: TextSource>(
             formats: false,
             since: None,
             compare: true,
-            unit: None,
+            fetch: None,
         },
     )
     .expect("the caret");
@@ -3183,7 +3184,7 @@ fn measure_caret_move<S: TextSource>(
             formats: false,
             since: None,
             compare: true,
-            unit: None,
+            fetch: None,
         },
     )
     .expect("the caret");
@@ -3213,7 +3214,13 @@ fn measure_caret_move<S: TextSource>(
             formats: false,
             since: None,
             compare: true,
-            unit: Some(CaretMotion::NextCharacter.unit()),
+            fetch: Some(FetchAsk {
+                note: NoteFetch {
+                    unit: CaretMotion::NextCharacter.unit(),
+                    motion: CaretMotion::NextCharacter,
+                },
+                ended: || 3,
+            }),
         },
     )
     .expect("the caret");
@@ -4725,7 +4732,7 @@ fn measure_watch<S: TextSource>(
     let _ = take();
     let _ = verbatim_uia::calls::take_failed_reads();
     let reply = answered(check(source, &mut anchors, &baseline));
-    assert_eq!(reply.unit.text, "p");
+    assert_eq!(reply.facts.unit.text, "p");
     let later = Cost {
         calls: take(),
         hits: common::read_hits(hwnd),

@@ -18,8 +18,8 @@ use verbatim_model::protocol::{
     CoreToOutpost, DeliveredFact, OutpostToCore, Query, QueryOutcome, QueryResult, RequestId,
 };
 use verbatim_model::{
-    CaretMotion, CaretReport, FocusText, KeyAnswer, KeyRequest, KeyStart, KeyTag, NodeId,
-    NormalizedEvent, QueryId, TextOp, TextPoint, TextReply, WatchKind,
+    CaretMotion, CaretReport, FocusText, KeyFetch, NodeId, NodeKind, NormalizedEvent, NoteRequest,
+    TextOp, TextPoint, TextReply,
 };
 use verbatim_outpost::Heard;
 use verbatim_process::arguments::OutpostOptions;
@@ -139,55 +139,36 @@ fn notes_focus(
     (node.id, caret)
 }
 
-/// An idle query handed over while a caret key's watch is open is not
-/// answered while the watch waits for its evidence: the answer goes once
-/// the application's caret event answers the key, behind that answer.
-fn the_answer_waits_for_an_open_caret_watch() {
-    let (mut app, hwnd) = start("mockapp-idle-caret-watch");
-    let mut outpost = OutpostUnderTest::new(&app);
+/// A key's note holds no answer: an idle query is answered as the outpost
+/// is idle, while the key waits for its evidence in Core's key line.
+fn the_answer_does_not_wait_for_a_note() {
+    let (mut app, hwnd) = start("mockapp-idle-caret-note");
+    let outpost = OutpostUnderTest::new(&app);
     let (notes, _) = notes_focus(&mut app, &outpost, hwnd);
-    // Right Arrow, which the application has not handled yet: the watch
-    // stays open.
-    let tag = KeyTag(QueryId(1));
-    let key = outpost.ask(Query::Text {
-        node_id: notes,
-        op: TextOp::Key(KeyRequest {
-            tag,
-            kind: WatchKind::TextField,
+    // Right Arrow, which the application has not handled yet.
+    outpost.key_note(NoteRequest {
+        node: notes,
+        fetch: KeyFetch {
             unit: CaretMotion::NextCharacter.unit(),
             motion: CaretMotion::NextCharacter,
-            start: KeyStart::FromLastRead,
-        }),
+            kind: NodeKind::TextField,
+        },
     });
-    match outpost.next() {
-        OutpostToCore::Reply {
-            request_id,
-            outcome: QueryOutcome::Done(QueryResult::Text(TextReply::Key(_))),
-            ..
-        } if request_id == key => {}
-        other => panic!("the outpost said {other:?}, not that the key is watched"),
-    }
     outpost.settled();
     outpost
         .outpost
         .handle_command(&CoreToOutpost::IdleQuery { round: 3 });
-    // The worker has reached the query, and nothing is said.
-    outpost.settled();
+    // Answered with nothing held back.
+    assert_eq!(outpost.next(), OutpostToCore::IdleAnswer { round: 3 });
     app.send("caret doc 1");
     app.send("caret-event doc");
     match outpost.next() {
         OutpostToCore::Event {
-            event:
-                NormalizedEvent::KeyAnswered {
-                    tag: answered,
-                    answer: KeyAnswer::Evidence(_),
-                    ..
-                },
+            event: NormalizedEvent::CaretMoved { facts: Some(_), .. },
             ..
-        } if answered == tag => {}
-        other => panic!("the outpost said {other:?}, not the key's answer"),
+        } => {}
+        other => panic!("the outpost said {other:?}, not the note's report"),
     }
-    assert_eq!(outpost.next(), OutpostToCore::IdleAnswer { round: 3 });
     outpost.heard(&[
         Heard::UiaTextSelection,
         Heard::Msaa(WinEventKind::TextSelectionChange),
@@ -316,8 +297,8 @@ fn main() {
             the_answer_goes_behind_a_message_in_the_pipe_and_one_in_the_backlog,
         ),
         (
-            "the_answer_waits_for_an_open_caret_watch",
-            the_answer_waits_for_an_open_caret_watch,
+            "the_answer_does_not_wait_for_a_note",
+            the_answer_does_not_wait_for_a_note,
         ),
     ]);
 }

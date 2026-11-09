@@ -23,7 +23,7 @@ use std::sync::Arc;
 
 use verbatim_core::{SrState, reduce};
 use verbatim_model::{
-    Backend, CaretMotion, Effect, Input, KeyRead, NodeDetails, NodeId, NodeSnapshot,
+    Backend, CaretMotion, CaretReply, Effect, Input, NodeDetails, NodeId, NodeSnapshot,
     NormalizedEvent, OutpostId, Pid, ReviewCommand, Role, SegmentContent, SpeechMark, StateSet,
     TextChunk, TextMovement, TextOp, TextPoint, TextPosition, TextRead, TextReadAhead, TextReply,
     TextUnit, TraceId,
@@ -31,7 +31,7 @@ use verbatim_model::{
 use verbatim_outpost::text::edit::EditText;
 use verbatim_outpost::text::uia::UiaText;
 use verbatim_outpost::text::{
-    Anchors, CheckKey, KeyChecked, NodeText, TextSource, caret_report, check_key, perform,
+    Anchors, CheckKey, KeyChecked, NodeText, NoteFetch, TextSource, caret_report, check_key, perform,
 };
 use verbatim_uia::Uia;
 use verbatim_uia::text::Endpoint;
@@ -53,18 +53,18 @@ fn answered<S: TextSource>(
     source: &mut S,
     anchors: &mut NodeText<'_, S::Pos>,
     motion: CaretMotion,
-) -> KeyRead {
-    let baseline = anchors.last_read().expect("a read made the baseline");
+) -> CaretReply {
     let checked = check_key(
         source,
         anchors,
         &CheckKey {
-            baseline: &baseline,
-            unit: motion.unit(),
-            motion,
-            before_unit: None,
+            note: NoteFetch {
+                unit: motion.unit(),
+                motion,
+            },
             read_at_us: 2,
             final_read: false,
+            ended: || 3,
         },
     );
     match checked {
@@ -294,7 +294,7 @@ fn a_caret_key_is_answered_with_what_it_did<S: TextSource>(
     common::apply(app, hwnd, "caret doc 6");
     let reply = answered(source, anchors, CaretMotion::NextWord);
     assert_eq!(reply.caret.line.offset, 6);
-    assert_eq!(reply.unit.text, second_word);
+    assert_eq!(reply.facts.unit.text, second_word);
 
     common::apply(app, hwnd, "caret doc 0");
     caret_report(source, anchors, 1, false).expect("the caret");

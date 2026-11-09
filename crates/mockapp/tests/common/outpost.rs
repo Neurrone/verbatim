@@ -1157,6 +1157,11 @@ impl OutpostUnderTest {
         self.hand_over(fact, self.observed_now());
     }
 
+    /// Sends the outpost a key's note, as Core would, and returns at once.
+    pub fn key_note(&self, note: verbatim_model::NoteRequest) {
+        self.outpost.handle_command(&CoreToOutpost::KeyNote(note));
+    }
+
     /// Asks the outpost `query`, as Core would, and returns its request id
     /// at once.
     pub fn ask(&mut self, query: Query) -> RequestId {

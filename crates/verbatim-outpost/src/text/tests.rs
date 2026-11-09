@@ -4,7 +4,7 @@
 
 use std::sync::atomic::AtomicU64;
 
-use verbatim_model::{CaretMotion, KeyRequest, KeyTag};
+use verbatim_model::{CaretMotion, CaretRead, CaretReply, Change, KeyFetch, NodeKind, ReadFacts, ReadPurpose};
 
 use super::*;
 
@@ -235,7 +235,7 @@ fn compared(source: &mut Fake, anchors: &mut Anchors<usize>) -> ReportedCaret<us
             formats: false,
             since: None,
             compare: true,
-            unit: None,
+            fetch: None,
         },
     )
     .expect("the fake answers")
@@ -247,7 +247,7 @@ fn comparing<'a>() -> ReportAsk<'a, usize> {
         formats: false,
         since: None,
         compare: true,
-        unit: None,
+        fetch: None,
     }
 }
 
@@ -263,27 +263,68 @@ fn pinned(anchors: &mut Anchors<usize>) -> LastRead<usize> {
 fn check(
     source: &mut Fake,
     anchors: &mut Anchors<usize>,
-    baseline: &LastRead<usize>,
+    _baseline: &LastRead<usize>,
     motion: CaretMotion,
 ) -> KeyChecked {
     check_key(
         source,
         &mut anchors.node(1),
         &CheckKey {
-            baseline,
-            unit: motion.unit(),
-            motion,
-            before_unit: None,
+            note: NoteFetch {
+                unit: motion.unit(),
+                motion,
+            },
             read_at_us: REPORTED_AT + 2,
             final_read: false,
+            ended: || REPORTED_AT + 3,
         },
     )
 }
 
+/// A read for a key, its report and what it compared with apart.
+struct Evidence {
+    caret: verbatim_model::CaretReport,
+    selection_changes: Vec<SelectionChange>,
+    content_changed: bool,
+    new_selection: Option<SelectionChange>,
+    unit: verbatim_model::TextChunk,
+    before_line: verbatim_model::TextChunk,
+    on_baseline_line: bool,
+}
+
+impl Evidence {
+    fn of(read: Box<CaretReply>) -> Self {
+        let CaretReply {
+            caret,
+            selection_changes,
+            content_changed,
+            new_selection,
+            facts: ReadFacts { unit, change, .. },
+        } = *read;
+        let Change::Compared {
+            previous_line,
+            on_previous_line,
+            ..
+        } = change
+        else {
+            panic!("no comparison: {change:?}");
+        };
+        Evidence {
+            caret,
+            selection_changes,
+            content_changed,
+            new_selection,
+            unit,
+            before_line: previous_line,
+            on_baseline_line: on_previous_line,
+        }
+    }
+}
+
 /// The read of a check that found evidence.
-fn answered(checked: KeyChecked) -> Box<KeyRead> {
+fn answered(checked: KeyChecked) -> Evidence {
     match checked {
-        KeyChecked::Read { read, effect: true } => read,
+        KeyChecked::Read { read, effect: true } => Evidence::of(read),
         other => panic!("no evidence: {other:?}"),
     }
 }
@@ -371,14 +412,15 @@ fn an_anchor_is_kept_however_many_are_minted_until_it_is_forgotten() {
 fn a_keys_request_is_not_carried_out_by_perform() {
     // A key's check is made by `check_key`.
     let mut source = Fake::new("one", 0);
-    let request = KeyRequest {
-        tag: KeyTag(verbatim_model::QueryId(1)),
-        kind: verbatim_model::WatchKind::TextField,
-        unit: TextUnit::Character,
-        motion: CaretMotion::NextCharacter,
-        start: verbatim_model::KeyStart::ReadFirst,
+    let request = CaretRead {
+        fetch: KeyFetch {
+            unit: TextUnit::Character,
+            motion: CaretMotion::NextCharacter,
+            kind: NodeKind::TextField,
+        },
+        purpose: ReadPurpose::BeforeKey,
     };
-    let reply = perform(&mut source, &mut store().node(1), &TextOp::Key(request));
+    let reply = perform(&mut source, &mut store().node(1), &TextOp::ReadCaret(request));
     assert_eq!(reply, TextReply::Unsupported);
     assert_eq!(source.caret_reads, 0);
 }
@@ -511,6 +553,11 @@ fn a_deleting_key_in_a_run_of_one_character_is_evidence_by_its_line() {
         nothing(&checked),
         "no evidence but a deleting key's: {checked:?}"
     );
+    // The check replaced the last read; the key's read compares with the
+    // field before it, as it would have with a key of its own.
+    source.text = "******".encode_utf16().collect();
+    report(&mut source, &mut anchors);
+    source.text = "*****".encode_utf16().collect();
     let read = answered(check(
         &mut source,
         &mut anchors,
@@ -1076,7 +1123,7 @@ fn a_selection_typed_over_is_cut_then_finished_in_general_terms() {
         (1, None, (0, 5), false)
     );
     let read =
-        finish_report(&mut source, &mut anchors.node(1), cut, true).expect("the fake answers");
+        finish_report(&mut source, &mut anchors.node(1), cut, true, || 0).expect("the fake answers");
     assert_eq!(
         (
             read.selection_changes,
