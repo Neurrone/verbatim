@@ -512,8 +512,9 @@ package reader get generated tests of their own.
   A9); resource figures per extension in developer mode (A6).
 - Binding by application identity (executable, console client, hosted app,
   WebView2 parent) resolved by the supervisor, one host process per
-  extension, of every kind, with each developer-folder module in a host of its own
-  ([security model](design/security-model.md), X4); a developer-folder
+  extension, of every kind, the developer folder working as one extension
+  as the built-ins do, in one host of its own (Dickson, 2026-11-09;
+  [security model](design/security-model.md), X4); a developer-folder
   module replaces an installed extension's module for the application it
   claims while it is there, as NVDA's scratchpad does (Dickson,
   2026-11-09). Loading, enabling and hot reload done on a loader thread

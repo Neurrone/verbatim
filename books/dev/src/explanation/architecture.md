@@ -144,16 +144,17 @@ screen reader in both rendered and source form.
   (`books/dev/src/reference/crates/verbatim-speech.md`). Why: say-all and cancellation need
   endings true for every synthesizer. Decided 2026-10-04.
 - **D18, native synthesizers run in a synthesizer host process.** Each
-  built-in engine, OneCore and eSpeak NG, runs in a
-  `verbatim-synth-host.exe` of its own, and an installed synthesizer runs
-  in its extension's own host (D6), which serves it over the same
-  protocol: the `SynthDriver` trait over a pipe, with native engines
+  built-in engine, OneCore and eSpeak NG, is a built-in extension holding
+  one native synthesizer module, run in an extension host of its own as
+  every extension is (D6, from M6), and an installed synthesizer runs in
+  its extension's own host, which serves it over the same protocol: the `SynthDriver` trait over a pipe, with native engines
   loaded through C-ABI adapter DLLs in an AppContainer (section 6). The
   x86 host for 32-bit engines carries no Wasm runtime, so an extension
   whose native code is built only for x86 holds nothing else. Verbatim is
   GPL version 3 or later, and eSpeak NG is linked into the host only. Why:
-  an engine's crash or hang costs one restartable process, never Core.
-  Decided 2026-10-04. Amended 2026-10-22 and 2026-11-06 (Dickson).
+  an engine's crash or hang costs one restartable process, never Core, and
+  never the other engine Verbatim falls back to. Decided 2026-10-04.
+  Amended 2026-10-22, 2026-11-06 and 2026-11-09 (Dickson).
 
 ## 1. Process and thread model
 
@@ -205,7 +206,7 @@ Verbatim runs as four kinds of process:
    messages.
 4. **Extension host processes** (D6, D18), one per extension in use,
    Verbatim's built-ins being one extension whose host always runs, and
-   one per built-in engine, each in a kill-on-close job, with one thread
+   each built-in engine one more from M6, each in a kill-on-close job, with one thread
    per lane: each outpost the host serves, and each global module. A
    host's reads go to the claiming outpost over a pipe the supervisor
    makes; a synthesizer's host streams PCM to Core over a pipe. Every

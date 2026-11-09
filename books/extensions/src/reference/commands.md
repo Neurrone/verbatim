@@ -14,7 +14,7 @@ This page describes commands as designed for milestone M5.
 | `category` | no | One of Verbatim's command categories, for grouping in input help. Left out, the command is grouped under your extension's name. |
 | `pass-through` | no | `true` to send the gesture on to the application as well, always. |
 
-An app module's commands work only while one of its applications is in front. A global module's commands work everywhere.
+An app module's commands work only while one of its applications is in front. A global module's commands work everywhere. Where a global module and the focused application's app module bind the same gesture, the global module's command runs, as in NVDA, which checks global plugins before the application's module.
 
 ## Gestures
 

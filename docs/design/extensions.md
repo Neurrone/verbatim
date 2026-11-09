@@ -11,7 +11,7 @@ The surface as extension authors see it, every manifest key, matcher form, rule 
 - A **built-in** is a module folder that ships with Verbatim under `extensions/builtin/` (planned). The built-ins together are one internal extension, loaded and run as an installed one is, but never listed, installed or disabled by the user.
 - A **rule** is a matcher and an action Verbatim applies itself, without calling the module; a **hook** is a function a module exports and Verbatim calls, with a deadline.
 - A **capability** is a WIT interface a component imports, derived from its imports and never declared.
-- The **host** is the process running one extension's modules, `--extension <id>`, or one developer-folder module's; a **lane** is one thread in it, one per outpost it serves and one per global module.
+- The **host** is the process running one extension's modules, `--extension <id>`; a **lane** is one thread in it, one per outpost it serves and one per global module.
 - The **loader** is a thread of Core's that reads, validates and compiles extensions and reports each result to the reducer.
 - A **generation** is one publication by Core's reducer of the merged rule tables, hook registrations and gesture map of every active extension; every judgement a reader makes names the generation it was made under.
 - A **hook call** is one call of one hook in one layer, named by an id the outpost or Core mints; a read the hook makes names its call.
@@ -38,7 +38,7 @@ The reducer owns each extension's lifecycle as one state value, in the table bel
 
 The rules that read it: Core holds the listener's `Ready`, and so input, until the built-in extension has left `Loading`, so the first focus is judged with the built-ins' rules; the breaker turns off a built-in module by adding it to `Active`'s set and an installed extension or developer-folder module by `Disabled`; an effect is judged against the state of its module's extension as above; `RulesReady` is reached only at a first load, since a reload publishes rules and hooks of one version together.
 
-The developer folder holds unpacked module folders and is watched, with the built-in folder, only in developer mode. Each developer-folder module runs in a host of its own, with its folder's path as its id and the breaker counting it alone (Dickson, 2026-11-06). A developer-folder module that claims an application an installed extension claims replaces that extension's module for that application only, while it is there, as NVDA's scratchpad does (`addonHandler/packaging.py`, `addDirsToPythonPackagePath`), so an author can work on the next version of an installed extension (Dickson, 2026-11-09); of two developer-folder modules claiming one application, the later fails, by the order above. Speech says "Reloaded <module>", or "Reload of <module> failed" with the first line of the reason.
+The developer folder is watched, with the built-in folder, only in developer mode, and works as one extension, as the built-ins do (Dickson, 2026-11-09): its module folders, with a `locale/` folder for their strings and no extension manifest, are loaded as one internal extension, run in one host of its own, and counted by the breaker per module, as built-ins are. Its modules claim applications as an installed extension's do, so no two of them claim one application. A developer-folder module that claims an application an installed extension claims replaces that extension's module for that application only, while it is there, as NVDA's scratchpad does (`addonHandler/packaging.py`, `addDirsToPythonPackagePath`), so an author can work on the next version of an installed extension (Dickson, 2026-11-09). Speech says "Loaded <module>" for a module that appears, "Reloaded <module>" for one that changed, or "Reload of <module> failed" with the first line of the reason (Dickson, 2026-11-09).
 
 A built-in failing to load is a defect or a damaged install, logged and spoken once as "Built-in module <name> failed to load". Installed extensions' failures are one sentence, "<n> extensions failed to load", with each marked failed in the Extensions dialog.
 
@@ -48,9 +48,9 @@ Secure mode (M8.7) loads only a machine-wide copy of the extensions the user all
 
 ## 3. Binding a module to an application
 
-The supervisor resolves each outpost's application identity at launch from a fixed core table: the executable name; for a console window, the console client's executable; for `wwahost.exe`, the hosted application's name from its application user model id; for `msedgewebview2.exe`, the parent process's executable. The listener learns a process's identity the same way, with one image-name query per process, so window and event rules apply before any outpost exists; its cache is keyed by the process id with the process's creation time, and an entry is dropped when its process exits, so a reused process id never carries another executable's identity. Whether the supervisor and the listener keep resolving identity separately, or one resolves it and hands it to the other, is open (section 14). A module's `applications` list is NVDA's alias table in the module's own manifest.
+Application identity comes from a fixed core table: the executable name; for a console window, the console client's executable; for `wwahost.exe`, the hosted application's name from its application user model id; for `msedgewebview2.exe`, the parent process's executable. The listener resolves it once per process, with one image-name query from a process handle it holds, so window and event rules apply before any outpost exists, and sends it with the first fact for that process; the supervisor uses that identity rather than resolving its own (section 14). The listener's cache is keyed by the process id with the process's creation time, and an entry is dropped when its process exits, so a reused process id never carries another executable's identity. A module's `applications` list is NVDA's alias table in the module's own manifest.
 
-At most one installed extension claims an application, above the built-in, and no two modules of one extension claim the same one; a second is refused at install, so installed extensions need no order among themselves (Dickson, 2026-11-09). A host runs one instance per process of a claimed application, on the lane of that process's outpost, as NVDA keeps one `AppModule` per process; the instance's memory is its state, lost on reload or fault. When an outpost is replaced for the same process, the instance moves to the new outpost's lane with its lane record, and the nodes it held come back `gone`, since they were the old outpost's. A global module has one instance on a lane of its own, and its reads reach only the applications in `reads`; how such a read reaches an application with no outpost, or chooses between two processes of one application, is open (section 14).
+At most one installed extension claims an application, above the built-in, and no two modules of one extension claim the same one; a second is refused at install, so installed extensions need no order among themselves (Dickson, 2026-11-09). A host runs one instance per process of a claimed application, on the lane of that process's outpost, as NVDA keeps one `AppModule` per process; the instance's memory is its state, lost on reload or fault. When an outpost is replaced for the same process, the instance moves to the new outpost's lane with its lane record, and the nodes it held come back `gone`, since they were the old outpost's. A global module has one instance on a lane of its own, and its reads reach only the applications in `reads`; a read that only Core can route goes through Core's reducer (section 14).
 
 ## 4. The surface, as implemented
 
@@ -70,7 +70,7 @@ The outpost's reducer holds, for each host it serves, the host's pipe as `Waitin
 
 | Rule | `NoHook` | `AwaitingHook` |
 |---|---|---|
-| An event from the intake | judged; a registered hook whose host's pipe is `Ready` starts a call, to `AwaitingHook`; one whose pipe is `Waiting` is open (section 14) | held, as behind a marker |
+| An event from the intake | judged; a registered hook whose host's pipe is `Ready` starts a call, to `AwaitingHook`; one whose pipe is `Waiting`, or whose extension is still `RulesReady`, waits for it, bounded by the host's measured start-up time within the event's deadline, then counts as `pass`, which is logged (Dickson, 2026-11-09) | held, as behind a marker |
 | A verdict naming the current call | none can arrive | the chain function gives the next layer's call, staying `AwaitingHook`, or the outcome, reported with the calls' effects in call order, to `NoHook` |
 | A verdict naming an ended call | dropped as late | dropped as late |
 | A read naming a call of this outpost's that has ended | answered `deadline` | answered `deadline` |
@@ -86,7 +86,7 @@ A lane's list dialog record is keyed by the instance that showed it: `None`, `He
 | `show-list-dialog` during an `on-command` whose press carries `hold_until` | to `Held`, waiting on no press | spec replaced, stays `Held` | replaced in place and brought to the front |
 | `show-list-dialog` during an `on-command` with no `hold_until` | shown, to `Open` | spec replaced, stays `Held` | replaced in place and brought to the front |
 | A later press of the same keys raised before `until` | nothing | added to the presses waited on | nothing |
-| A waited press's `on-command` answers | nothing | removed from the presses waited on; when none is left and `until` has passed, shown, to `Open`; a waited press that ran another module's command is open (section 14) | nothing |
+| A waited press's `on-command` answers | nothing | removed from the presses waited on; when none is left and `until` has passed, shown, to `Open`; a waited press that ran another module's command withdraws the held dialog unseen, `on-list-dialog(cancelled)` to its instance, to `None` (Dickson, 2026-11-09) | nothing |
 | The alarm at `until` | no alarm | when no press is waited on, shown, to `Open` | no alarm |
 | The user answers | none can arrive | none can arrive | `on-list-dialog` to the instance, its one answer, to `None` |
 | The instance ends: a swap to a new version, the host's end, the breaker, its application process's end | nothing | discarded with no answer, to `None` | closed with no answer, to `None` |
@@ -97,7 +97,7 @@ A lane's list dialog record is keyed by the instance that showed it: `None`, `He
 - **The outposts** apply node rules, call hooks from their reducer and answer hosts' reads on their worker; they load no runtime.
 - **The listener** applies window rules, focus vetoes and event drops as data, and runs no module code.
 - **Core** owns the extension lifecycle, publishes the tables and the gesture map, judges and performs effects, and shows dialogs; it runs no module code and links no Wasm runtime.
-- **The synthesizer hosts** run eSpeak NG and OneCore as D18 has them; whether they become built-in extensions behind the synthesizer C ABI is open (section 12).
+- **eSpeak NG and OneCore** are built-in extensions of their own, each a native synthesizer module in its own host behind `verbatim_synth_v1` (Dickson, 2026-11-09; section 12).
 
 Core's reducer stays pure: a module's speech is an ordinary effect, and a module command and a dialog's answer are recorded inputs, so the flight recorder's replay needs no module.
 
@@ -133,21 +133,17 @@ In M5, `verbatim-inspect call` invokes any function of the world by name with WA
 
 Native code comes in two forms (Dickson, 2026-11-09): a library a Wasm module of any kind calls through a narrow import that passes bytes to a named function in a DLL its extension ships, in the extension's host, which covers NVDA add-ons calling a vendor SDK; and a whole native module for a kind with a small interface, implementing that kind's C ABI, first the synthesizer's, `verbatim_synth_v1`, the `SynthDriver` trait as C exports (version, create, destroy, describe, set a setting, speak a sequence through PCM, mark and is-cancelled callbacks, cancel). A native synthesizer's manifest names one adapter library per architecture. An engine's files that may not be distributed, such as Eloquence's, are added by the user to the extension's folder before zipping it; there is no `user-files` list (Dickson, 2026-11-09). The x86 host for 32-bit engines carries no Wasm runtime, so an extension whose native code is built only for x86 holds no other module. Native code runs in its extension's host, contained as section 5 says, and the install dialog warns that it "Contains native code that runs outside Verbatim's extension sandbox", the extension sandbox being the Wasm boundary.
 
-Open: whether eSpeak NG and OneCore become built-in extensions, each a native synthesizer module in a host of its own behind `verbatim_synth_v1`, in place of `verbatim-synth-host`'s engine mode, so that every host process is one extension's host. Their sandbox levels differ and an engine's crash must not stop the other, so they stay separate processes either way.
+eSpeak NG and OneCore are built-in extensions, each one native synthesizer module behind `verbatim_synth_v1`, in a host of its own, so that every host process is one extension's host and `verbatim-synth-host` loses its engine mode (Dickson, 2026-11-09, built in M6). They stay separate processes because an engine's crash must not stop the other, which the fallback to the other engine needs (A3).
 
 ## 13. Porting NVDA's app modules
 
 The porting track runs from M5 onward. In M5, every Windows inbox application: Explorer, Windows Terminal (a focus veto dropping every `TermControl` focus whose runtime id starts 14, with no hook; Dickson, 2026-11-09), Notepad, Calculator, Task Manager (proven by `mockapp` until UIAccess), Settings, Start and search, Quick Settings and Open With, and the tray list, taskbar list and time as global modules. Sleep mode becomes a core per-application list seeded with the five executables NVDA's sleep-only modules name. A module is done when its NVDA behaviours are captured on the VM with the pinned build, one end-to-end scenario per behaviour asserts the captured utterance, its own tests pass, and the parity ledger lists each behaviour with the scenario that pins it. After M5 the order of the track is appendix A's tiers.
 
-## 14. Open questions
+## 14. Routing and identity
 
-Each waits on a decision of Dickson's, and nothing that depends on one is built before it is answered.
-
-- **A hook not yet ready.** An event that meets a registered hook whose host's pipe is `Waiting` (a new outpost, a restarted host) or whose extension is `RulesReady` (start-up on a cold cache): it waits, bounded by the host's measured start-up time within the event's deadline, or the hook counts as `pass`, which is logged.
-- **Reads only Core can route.** A global module's `find-window` when an application has two processes (Explorer's separate folder windows), a read of an application with no outpost and its answer while the outpost's start is in backoff, and `focus()` and `foreground()`, which are Core's facts: whether the host asks Core, which answers or names the outpost whose pipe the supervisor then makes, or another route.
-- **Application identity.** Whether the supervisor and the listener resolve it separately, as now, or the listener resolves it once from a process handle it holds and sends it with the first fact for that process, for the supervisor to use.
-- **A developer-folder module's strings.** A module folder has no extension manifest or `locale/`: whether a developer-folder module carries a `locale/` of its own, or the developer folder holds unpacked extensions.
-- **A held dialog when a later press runs another module's command.**
+- **Gesture order** (Dickson, 2026-11-09): a gesture bound by a global module and by the focused application's app module runs the global module's command, as NVDA checks global plugins before the application's module (`scriptHandler.py`, `_yieldObjectsForFindScript`); the install dialog lists the conflict.
+- **Reads only Core can route** (Dickson, 2026-11-09): a global module's `find-window` when an application has several processes, a read of an application with no outpost, and `focus()` and `foreground()`, which are Core's facts, go from the host to Core's reducer, which answers or names the outpost whose pipe the supervisor then makes; Core owns which outposts exist, so the route has one owner.
+- **Application identity has one resolver** (Dickson, 2026-11-09): the listener resolves a process's identity once, from a process handle it holds, and sends it with the first fact for that process; the supervisor uses it, so the fact has one owner.
 
 ## Appendix A: NVDA's app modules, one line each
 

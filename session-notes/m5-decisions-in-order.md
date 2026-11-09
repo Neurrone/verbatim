@@ -286,3 +286,15 @@ So Verbatim+F11 works like this:
   - whether eSpeak NG and OneCore become built-in extensions;
   - the developer folder's "Loaded <module>" sentence;
   - the TOML spellings of rule actions, which are provisional until the schema is generated.
+
+## Review decisions (Dickson, 2026-11-09)
+
+- When a global module and an app module bind the same gesture, the global module runs first, as NVDA does.
+- A held dialog is withdrawn unseen, with `on-list-dialog(cancelled)` sent to its instance, when a later press runs another module's command.
+- A hook that is not ready yet waits, bounded by the host's measured start-up time, then counts as `pass`.
+- A read that only Core can route goes from the host to Core's reducer.
+- Application identity is resolved once, by the listener, and sent to the supervisor.
+- The developer folder works as one extension, as the built-ins do: module folders and a `locale/`, no manifest, one host, the breaker per module.
+- eSpeak NG and OneCore become built-in extensions, each a native synthesizer module in its own host (M6). Whether the less privileged AppContainer is worth keeping is still open.
+- "Loaded <module>" is accepted for a newly added module.
+- The TOML spellings of rule actions are accepted.
