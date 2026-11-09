@@ -476,8 +476,8 @@ package reader get generated tests of their own.
   2026-11-09).
 - Rules as data: a matcher and an action with a required id and an explicit
   backend, scoped to the sender's application identity, applied by the
-  outpost before any hook runs, refused at load when two rules of one module
-  contradict.
+  outpost before any hook runs; within a module the later rule wins a
+  property two rules set, with no conflict check (Dickson, 2026-11-09).
 - The component host on wasmtime with the component model (D6, decided
   2026-10-22), in extension host processes only: every built-in runs as
   one internal extension in a host process of its own, started with

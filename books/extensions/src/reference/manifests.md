@@ -53,7 +53,6 @@ An extension is refused at install, with the reason shown in the install dialog,
 - two modules of the extension claim the same application;
 - an installed extension already claims one of its applications;
 - a rule or a command id appears twice in one module, or one module binds the same gesture twice;
-- two window or event rules of one module match the same thing with different actions;
 - a rule names a property of a backend other than the one it names;
 - a component imports something the extension API does not offer.
 

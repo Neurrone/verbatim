@@ -333,3 +333,4 @@ So Verbatim+F11 works like this:
   - late effects from a `Loading` extension are dropped;
   - newer rules replace ones held in `RulesReady`;
   - a failed newer version leaves the previous version everywhere, as `extensions.md` 2.2 says.
+- No conflict check between rules: within a module the later rule wins and provenance names both. Nothing is refused or warned of, and the overlap bound question is gone.

@@ -93,8 +93,7 @@ Verbatim chooses where each rule runs from the properties it names. Every proper
 ## Order and conflicts
 
 - Within one module, rules apply in the order written, and a later rule wins a property an earlier one set.
-- Two window or event rules of one module that match the same thing with different actions are refused at load.
-- Two node rules of one module that set one property to different values log a warning naming both, since that cannot be known until a control matches both.
+- Overlapping rules are never refused or warned of: where two rules of one module set the same property, the later one wins, and the focus report names both.
 - Across layers, the developer folder or an installed extension applies after the built-in, so its rule wins a property both set.
 - A drop from any layer stands.
 
