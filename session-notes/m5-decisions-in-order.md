@@ -238,3 +238,14 @@ So Verbatim+F11 works like this:
 - Installed extensions may ship global modules in M5. The M13 item reduces to reading every application.
 - The install dialog's wording is to be reviewed separately with Dickson; he does not accept the current wording.
 - Open: the limit values in section 5's table.
+
+## Limits (Dickson, 2026-11-09)
+
+- Focus vetoes are placed by the loader: in the listener when they name only listener-cached properties (the `ListenerEvent` shape), and otherwise in the outpost on the read node. The refusal is dropped.
+- Limits:
+  - the compute bound per hook: loose, then measured in step 8;
+  - 10 seconds per event;
+  - 64 MiB per store and 256 MiB per installed extension's host, both to measure; the built-in host's cap is measured;
+  - the breaker: 3 failures in 1 minute;
+  - no caps on speak, browseable messages, tones, logs, list dialogs or packages for now. This amends the "bounded output" rule.
+- Added to M6.3: measure a 100,000-character utterance on OneCore and eSpeak NG, then split long utterances into pieces in the speech pipeline (NVDA issue 11843, never diagnosed by NVDA).

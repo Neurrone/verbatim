@@ -760,6 +760,22 @@ silence.
   manager's priorities and cancellation, the culling of expired focus
   speech, index marks and say-all's continuation, the synthesizer host
   and the mixer; every difference no decision covers is fixed here.
+- Long utterances (Dickson, 2026-11-09): OneCore synthesizes a whole
+  utterance before returning any audio (`crates/verbatim-synth-onecore`,
+  `SynthesizeSsmlToStreamAsync` on the whole SSML), so a very long text
+  is heard only after all of it is synthesized and its audio is held in
+  memory, the likely cause of NVDA's freeze on speaking a long copied
+  text, which NVDA avoided rather than fixed (nvaccess/nvda#11843, fixed
+  by speaking a character count above 1,024 characters in
+  nvaccess/nvda#11852). First measure, with OneCore and eSpeak NG, the
+  time to first audio, the synthesizer host's memory and that cancelling
+  stops it, for a text of 100,000 characters; then, if that confirms the
+  cause, have the speech pipeline hand a synthesizer long utterances in
+  pieces split at sentence or clause boundaries, each synthesized while
+  the one before plays, with every piece keeping its marks so say-all and
+  cancelling work across them. The size of a piece is a latency budget
+  Dickson sets. No cap on the length of extensions' speech is needed
+  once this is done.
 - When anything handed to the synthesizer or the mixer has expired,
   everything handed on is stopped and the still-valid utterances are
   handed on again, as NVDA's speech manager does; today they are lost
