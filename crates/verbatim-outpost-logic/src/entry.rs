@@ -200,6 +200,11 @@ pub enum Item {
         /// The terminal's node.
         node_id: NodeId,
     },
+    /// Core passed a caret key on in this terminal: read it now.
+    ReadTerminal {
+        /// The terminal's node.
+        node_id: NodeId,
+    },
     /// The idle barrier (`docs/design/communication.md`, section 6.7):
     /// it ends its batch, and is reached once everything that arrived
     /// before it has been handled and a noted caret is read. Core's round

@@ -928,9 +928,10 @@ fn classify(item: &Item) -> (Option<Key>, Category, isize) {
         Item::Fact(fact, _) => classify_fact(fact, raiser_of(item)),
         // Only the newest list of held nodes matters.
         Item::NodesHeld { .. } => (Some(Key::NodesHeld), Category::Exempt, 0),
-        Item::Query { .. } | Item::NotedCaret { .. } | Item::Barrier { .. } => {
-            (None, Category::Exempt, 0)
-        }
+        Item::Query { .. }
+        | Item::NotedCaret { .. }
+        | Item::ReadTerminal { .. }
+        | Item::Barrier { .. } => (None, Category::Exempt, 0),
     }
 }
 

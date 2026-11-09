@@ -1404,6 +1404,9 @@ pub enum Effect {
     /// Core's note for a key with no before read
     /// ([`crate::protocol::CoreToOutpost::KeyNote`]), one-way.
     KeyNote(crate::NoteRequest),
+    /// Read this terminal now
+    /// ([`crate::protocol::CoreToOutpost::ReadTerminal`]), one-way.
+    ReadTerminal(NodeId),
     /// Core gave up on its query `query_id` to `outpost`, which it no longer
     /// records, so its outcome is dropped: the shell withdraws it from its
     /// outpost, which answers it "not started" if it has not started.

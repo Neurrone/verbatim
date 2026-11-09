@@ -140,6 +140,17 @@ fn fetch_of(state: &SrState, key: CaretKey) -> KeyFetch {
     }
 }
 
+/// The read of a terminal asked at a key's pass, in a terminal other than
+/// the console host, whose caret poll covers its reads.
+fn terminal_read_now(state: &SrState, node: NodeId, trace_id: TraceId) -> Option<Effect> {
+    let console = state
+        .foreground
+        .window()
+        .is_some_and(|window| window.console);
+    (node_kind(state) == NodeKind::Terminal && !console)
+        .then(|| for_key(trace_id, Effect::ReadTerminal(node)))
+}
+
 /// `effect` carried under the key `trace_id`'s trace.
 fn for_key(trace_id: TraceId, effect: Effect) -> Effect {
     Effect::ForKey(trace_id, Box::new(effect))
@@ -769,6 +780,7 @@ fn before_read_answered(state: &mut SrState, trace_id: TraceId, reply: TextReply
         })),
     );
     effects.push(for_key(held.trace_id, Effect::PassHeldKey(held.trace_id)));
+    effects.extend(terminal_read_now(state, node, held.trace_id));
     effects.extend(pass_rule(state));
     effects
 }
@@ -819,6 +831,7 @@ fn before_read_given_up(state: &mut SrState, trace_id: TraceId, at_us: u64) -> V
         (at_us, KEY_BOUND_MS, false),
     ));
     effects.push(for_key(trace_id, Effect::PassHeldKey(trace_id)));
+    effects.extend(terminal_read_now(state, node, trace_id));
     effects.extend(pass_rule(state));
     effects
 }

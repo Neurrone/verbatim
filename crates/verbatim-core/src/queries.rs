@@ -518,9 +518,7 @@ mod ended;
 mod explore;
 #[cfg(test)]
 pub(crate) use explore::config as explore_config;
-// The generated tests are being rewritten against the new messages and
-// are temporarily compiled out; they name removed types.
-#[cfg(any())]
+#[cfg(test)]
 mod generated;
 #[cfg(test)]
 mod tests;

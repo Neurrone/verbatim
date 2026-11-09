@@ -505,6 +505,7 @@ fn describe_item(item: &Item) -> String {
         Item::Query { query, .. } => format!("query {query:?}"),
         Item::NodesHeld { nodes, .. } => format!("nodes held ({})", nodes.len()),
         Item::NotedCaret { node_id } => format!("noted caret of {node_id:?}"),
+        Item::ReadTerminal { node_id } => format!("the read after a key of {node_id:?}"),
         Item::Barrier { asker, .. } => format!("barrier of {asker:?}"),
     }
 }
@@ -926,6 +927,11 @@ impl Worker<'_> {
             Item::Query { request_id, query } => self.query(request_id, &query, trace),
             // Read now that nothing else waits, unless a read since saw it.
             Item::NotedCaret { node_id } => self.caret_of(node_id, trace, observed_at_us),
+            Item::ReadTerminal { node_id } => {
+                if self.focused_terminal(node_id) {
+                    self.terminal_output(node_id, trace, observed_at_us);
+                }
+            }
             // The reducer's own: never a program's.
             Item::NodesHeld { .. } | Item::Barrier { .. } => {}
         }

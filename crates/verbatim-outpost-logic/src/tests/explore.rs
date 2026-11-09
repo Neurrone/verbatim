@@ -71,14 +71,6 @@ fn explore_followed() {
     super::followed::run_generated(config, &again);
 }
 
-#[cfg(any())]
-#[test]
-#[ignore = "exploration: run by the nightly workflow with its own seed (books/dev/src/reference/testing.md, Exploration tests)"]
-fn explore_generated() {
-    let (config, again) = explored("explore_generated");
-    super::generated::run_generated(config, &again);
-}
-
 #[test]
 #[ignore = "exploration: run by the nightly workflow with its own seed (books/dev/src/reference/testing.md, Exploration tests)"]
 fn explore_caret_lease() {

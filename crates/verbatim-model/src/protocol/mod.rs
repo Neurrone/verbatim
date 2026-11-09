@@ -725,6 +725,10 @@ pub enum CoreToOutpost {
     /// The note of a key with no before read, set on its node as it
     /// arrives, with no reply: nothing waits on it.
     KeyNote(crate::NoteRequest),
+    /// Read this terminal now: a caret key was passed on in a terminal that
+    /// is not the console host. No reply and no lifecycle; a late or refused
+    /// one leaves the read to the next event.
+    ReadTerminal(NodeId),
     /// Liveness probe; answered by [`OutpostToCore::Pong`].
     Ping {
         /// Echoed in the matching pong.
@@ -838,6 +842,7 @@ impl CoreToOutpost {
             CoreToOutpost::Query { .. }
             | CoreToOutpost::Cancel { .. }
             | CoreToOutpost::KeyNote(_)
+            | CoreToOutpost::ReadTerminal(_)
             | CoreToOutpost::IdleQuery { .. } => Kind::Ask,
             CoreToOutpost::NodesHeld { .. } => Kind::Release,
             CoreToOutpost::Assign { .. }

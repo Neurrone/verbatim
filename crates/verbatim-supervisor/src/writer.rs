@@ -134,6 +134,7 @@ impl ToChild for CoreToOutpost {
             CoreToOutpost::ForwardingEnded { .. }
             | CoreToOutpost::Cancel { .. }
             | CoreToOutpost::KeyNote(_)
+            | CoreToOutpost::ReadTerminal(_)
             | CoreToOutpost::Ping { .. }
             | CoreToOutpost::Fetches(_)
             | CoreToOutpost::Front(_)

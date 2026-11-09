@@ -5747,6 +5747,54 @@ fn a_report_read_after_the_pass_showing_a_change_is_the_keys_evidence() {
     assert!(!state.holds_inputs_back(), "the key ended");
 }
 
+/// How many one-way terminal reads `effects` ask.
+fn terminal_reads(effects: &[Effect]) -> usize {
+    effects
+        .iter()
+        .filter(|effect| matches!(own(effect), Effect::ReadTerminal(_)))
+        .count()
+}
+
+/// A held key passed on over a field of `role`, in a window whose console
+/// flag is `console`; what the pass did.
+fn passed_on_over(role: Role, console: bool) -> Vec<Effect> {
+    let mut state = SrState::new();
+    let window = verbatim_model::WindowHandle(0x100);
+    let _ = reduce(
+        &mut state,
+        &Input::Foreground(verbatim_model::ForegroundWindow {
+            window,
+            root_owner: window,
+            process: Pid(7),
+            observed_at_us: 1,
+            own: false,
+            thread: 1,
+            console,
+            integrity: None,
+            own_integrity: None,
+        }),
+    );
+    focus(&mut state, node(5, role, StateSet::new()));
+    let query = request_of(&reduce(
+        &mut state,
+        &held_at(TraceId::from_raw(2), CaretMotion::NextCharacter, 499),
+    ));
+    reduce(
+        &mut state,
+        &completed(query, read_before(line("abc\n", 100, 0), 500)),
+    )
+}
+
+#[test]
+fn a_key_passed_on_in_a_terminal_asks_one_read_and_only_there() {
+    assert_eq!(terminal_reads(&passed_on_over(Role::Terminal, false)), 1);
+    assert_eq!(terminal_reads(&passed_on_over(Role::Terminal, true)), 0);
+    assert_eq!(
+        terminal_reads(&passed_on_over(Role::EditableText, false)),
+        0
+    );
+}
+
 #[test]
 fn evidence_with_no_unit_waits_for_the_final_reads_unit() {
     let (mut state, _) = key_passed_on("abc\n", 0, CaretMotion::NextLine);

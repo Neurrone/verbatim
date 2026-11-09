@@ -22,8 +22,6 @@ mod caret_lease;
 mod explore;
 #[cfg(any())]
 mod followed;
-#[cfg(any())]
-mod generated;
 mod intake_order;
 #[cfg(any())]
 mod reducer;

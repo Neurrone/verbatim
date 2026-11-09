@@ -1037,6 +1037,21 @@ fn a_console_hosts_caret_moved_without_an_event_answers_its_watch() {
     app.quit();
 }
 
+/// Core's word after passing a key on in a terminal has the outpost read
+/// it, with no event of the terminal's and no reply.
+fn a_read_terminal_message_reads_the_terminal() {
+    let (mut app, outpost, term) = start("mockapp-terminal-read-message");
+    let rows: Vec<&str> = START.iter().copied().chain(["three"]).collect();
+    app.send(&format!("set-text term {}", terminal_text(&rows)));
+    outpost
+        .outpost
+        .handle_command(&verbatim_model::protocol::CoreToOutpost::ReadTerminal(term));
+    assert_eq!(text(&reported(&outpost, term)), after(&["three"]));
+    outpost.settled();
+    drop(outpost);
+    app.quit();
+}
+
 /// The console's caret event for a watched node whose check finds no move,
 /// such as a blink tick left over from an earlier cursor set, leaves the
 /// poll reading: a caret moved after it, with no event, answers the key.
@@ -1091,6 +1106,10 @@ fn main() {
         (
             "a_console_hosts_caret_moved_without_an_event_answers_its_watch",
             a_console_hosts_caret_moved_without_an_event_answers_its_watch,
+        ),
+        (
+            "a_read_terminal_message_reads_the_terminal",
+            a_read_terminal_message_reads_the_terminal,
         ),
         (
             "a_console_caret_event_without_a_move_leaves_the_poll_reading",

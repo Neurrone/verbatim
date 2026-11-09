@@ -77,7 +77,8 @@ fn next_core_to_outpost(previous: Option<&CoreToOutpost>) -> Option<CoreToOutpos
                 kind: crate::NodeKind::TextField,
             },
         }),
-        CoreToOutpost::KeyNote(_) => return None,
+        CoreToOutpost::KeyNote(_) => CoreToOutpost::ReadTerminal(crate::NodeId::new(1)),
+        CoreToOutpost::ReadTerminal(_) => return None,
     })
 }
 
@@ -208,6 +209,7 @@ fn every_variant_has_its_reviewed_kind() {
             "Assign: Lifecycle",
             "LiveReread: Routed",
             "KeyNote: Ask",
+            "ReadTerminal: Ask",
         ]
     );
     assert_eq!(

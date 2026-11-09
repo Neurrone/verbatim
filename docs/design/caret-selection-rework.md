@@ -181,6 +181,9 @@ enum ReadPurpose { BeforeKey, Final }
 // CoreToOutpost::KeyNote, one-way, for a key with no before read.
 struct NoteRequest { node: NodeId, fetch: KeyFetch }
 
+// CoreToOutpost::ReadTerminal(NodeId), one-way: at a key's pass in a terminal
+// that is not the console host, read it now. No reply and no lifecycle.
+
 // On a CaretReply, and on NormalizedEvent::CaretMoved as Option<ReadFacts>:
 // present exactly when the read was made under a note or asked for one.
 struct ReadFacts { unit: TextChunk, change: Change, read_ended_at_us: u64 }
@@ -211,7 +214,7 @@ Core. "Ends", "advance", "the pass" and "says changes" are the four rules above.
 | Busy | focus on the key's own node executes | A repeat carrying evidence takes the evidence row, in `Watched` or `FinalReading`. Otherwise a repeat's changes go to `heard` and a new focus's are ignored; nothing else changes for the key. |
 | Busy | exit | Passes every held key on, in press order. |
 | Reading | any key or command arrives | Joins `waiting`. |
-| Reading | before read answered | Takes the caret, says changes, passes the key on; `Watched`, `Read`, arms 100 ms; the pass. With a focus on another node since, instead: passes the key on, says nothing for it, ends, because its words would follow the focus's. |
+| Reading | before read answered | Takes the caret, says changes, passes the key on; `Watched`, `Read`, arms 100 ms; the pass, and in a terminal other than the console host `ReadTerminal`. With a focus on another node since, instead: passes the key on, says nothing for it, ends, because its words would follow the focus's. |
 | Reading | `Unanswered` | Passes the key on, says nothing for it, ends. |
 | Reading | deadline fires | Withdraws the query, passes the key on; `Watched`, `NotRead`, arms 100 ms; the pass. With a focus on another node since, instead: withdraws, passes the key on, says nothing for it, ends. |
 | Reading | focus on another node executes | Stays `Reading`, judged at its answer or deadline as above. |
@@ -395,6 +398,7 @@ Against the baseline measured at 6e6c1efa (the session's `measure-before/results
 | A key's second caret event, after its effect | A read with no unit, the watch having answered | A read fetching the unit: nothing more through UIA, possibly window messages in a classic edit control. The prototype counts it, and any extra call goes to Dickson |
 | A text-change event during the before read | No read | A read under the note. The prototype counts it, and any extra call goes to Dickson |
 | A focus that moves, or the next key | A message | None |
+| A held key passed on in Windows Terminal | One terminal read after the key | One `ReadTerminal`, one terminal read, as today; a late or refused one leaves it to the next event (Dickson, 2026-11-09) |
 | Wake-ups | 21,000 to 25,500 woken in Core, 28,000 to 35,700 in the outpost, over 45 s of the text box workload | Not above that; one request fewer per held key |
 | Key to first sound, caret keys | P50 9, P95 29 in the text box; 14, 57 in Notepad; 5, 50 in Windows Terminal | Unchanged for a key that moves; a key that moves nothing speaks at 100 ms |
 | Remote operations | Caret program under 5,000 instructions | One comparison, under 5,000 |

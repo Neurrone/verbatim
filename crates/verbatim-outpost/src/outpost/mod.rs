@@ -1547,6 +1547,11 @@ impl Outpost {
             CoreToOutpost::Cancel { request_id } => {
                 context.mailbox.post(Posted::Cancel(*request_id));
             }
+            CoreToOutpost::ReadTerminal(node) => context.push(
+                Item::ReadTerminal { node_id: *node },
+                (TraceId::mint(), now_us(), EventTiming::default()),
+                Source::Other,
+            ),
             CoreToOutpost::KeyNote(note) => {
                 context.mailbox.post(Posted::KeyNote(*note));
             }

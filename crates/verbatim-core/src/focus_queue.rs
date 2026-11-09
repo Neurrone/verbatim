@@ -569,7 +569,7 @@ impl FocusState {
 
     /// The changes and the count of inputs, for a test that compares
     /// everything else across a foreground change.
-    #[cfg(any())]
+    #[cfg(test)]
     pub(crate) fn take_changes_of(&mut self, other: &Self) {
         self.changes.clone_from(&other.changes);
         self.inputs = other.inputs;

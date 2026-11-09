@@ -18,7 +18,6 @@ use verbatim_model::OutpostId;
 /// stands: fields by name, a list's element as `[]`, a map's entry by its
 /// key when the key is text and as `{}` otherwise, an enum's variant by
 /// its name, and a map's key itself as `{}` after the map's path.
-#[cfg(any())]
 pub(super) fn naming(value: &impl Serialize, ended: &BTreeSet<OutpostId>) -> BTreeSet<String> {
     let mut finder = Finder {
         ended,

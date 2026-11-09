@@ -709,6 +709,7 @@ impl Session {
                 Effect::PassHeldKey(_)
                 | Effect::BoundHeldKey(_)
                 | Effect::KeyNote(_)
+                | Effect::ReadTerminal(_)
                 | Effect::DropExpiredSpeech(_)
                 | Effect::Fetch(_)
                 | Effect::PlayEarcon(_) => {}

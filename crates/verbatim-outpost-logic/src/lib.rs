@@ -508,6 +508,7 @@ impl InHand {
                     Item::Query { .. } => "a query from Core",
                     Item::NodesHeld { .. } => "the nodes Core holds",
                     Item::NotedCaret { .. } => "a noted caret",
+                    Item::ReadTerminal { .. } => "a terminal's read after a key",
                     Item::Barrier { .. } => "the idle barrier",
                 },
                 Some(entry.trace),
@@ -1765,6 +1766,7 @@ fn budget(entry: &Entry, now: Now, handling: Duration) -> (Duration, Option<(Req
         | Item::Msaa { .. }
         | Item::Uia(_)
         | Item::NotedCaret { .. }
+        | Item::ReadTerminal { .. }
         | Item::Barrier { .. }
         | Item::NodesHeld { .. } => (handling, None),
     }
