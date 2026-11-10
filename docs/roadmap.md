@@ -32,52 +32,69 @@ applications build is built (2026-11-07). Next, in this order (Dickson,
 9. M4.9 (Lints and unsafe);
 10. M6.2, with the rest after.
 
-Ahead of every item of that list not yet built comes the outpost
-rewrite (Dickson, 2026-11-10), below. M5's build A waits for its target
-design.
+Ahead of every item of that list not yet built come the foundation
+fixes (Dickson, 2026-11-10), below. M5's build A waits for the
+correction of its design, the last of them.
 
 The published site's homepage, `books/index.html`, carries one line of
 this status per milestone, and changes with it.
 
-## The outpost rewrite
+## Foundation fixes
 
 Next (Dickson, 2026-11-10). A retrospective of the work from 2026-10-10
-to 2026-11-10 found that the concurrency defects and the slowest builds
-came from one application's logic being split between Core and its
-outpost: a lifecycle held on two or more sides, an order judged across
-processes by stamps, and a decision made by a process that does not see
-its facts in order.
+to 2026-11-10 classified its 519 defect fixes: about a quarter were
+concurrency defects, and the rest were test and harness defects,
+behaviour of NVDA or an application learned after building, and plain
+logic errors. Three target designs that moved the judging of keys and
+focus out of Core into the outposts each failed its adversarial review,
+so Core stays the one judge of both (Dickson, 2026-11-10): focus across
+applications is ordered only where every application's reports meet,
+and a key is ordered with an application's reads only because the
+keyboard hook posts it to Core before it returns.
 
-Each piece of functionality is judged in its application's outpost when
-judging it needs no state of Core's, and stays in Core otherwise
-(Dickson, 2026-11-10). Core goes on judging every focus across
-applications, from complete reports, and never asks a reader again in
-order to judge one; what happens inside one application, such as a caret
-key's effect and words and a terminal's memory, rules and flood policy,
-is judged in that application's outpost. The process layout stays as D9
-and D13 have it.
+In this order:
 
-Decided with it (Dickson, 2026-11-10):
+1. Tooling for the working process: commit trailers naming each
+   commit's kind and each fix's mechanism, checked by a commit hook and
+   by `cargo xtask ci`; a report of fixes per feature commit, repairs of
+   recent commits and fixes per mechanism, read at the start of a
+   session; and a recorder of the events a real application raises,
+   driven by a scenario's steps, whose file a design cites beside
+   NVDA's capture.
+2. The keyboard held when the focus listener ends while a live re-read
+   waits: Core is told of the listener's end when it happens, not at its
+   replacement's readiness.
+3. The ancestry cache. The listener marks an application's cache stale
+   at that application's own MSAA focus as well as when the application
+   is left, so every report reaches Core complete, and Core's check of
+   cached ancestors, the live re-read and the focus queue's waiting are
+   removed. It amends ADR 0001's "Reusing an earlier ancestry", which is
+   Dickson's to approve with the design.
+4. The confirmed defects: a progress bar reported by both the listener
+   and an outpost, and the listener's two tests of a native window,
+   against the design of 2026-11-09; the fake focus spoken twice when
+   the real focus's read outlasts its grace; a dialog's text spoken
+   stale after a visit to a window that raised no focus; a UIA menu
+   opening dropped against focuses the listener's checks later drop; a
+   held caret key's evidence timed by two clocks; and the places where
+   the documents disagree with the code.
+5. The delay between the keyboard hook and Core's reducer while typing
+   in the console host, measured and given a bound, since every key
+   waits on it.
+6. M5's design corrected before build A: a hook call timed by its host
+   alone; a list dialog's record held in Core; the code version carried
+   on the call; hook registrations published with the rules; one writer
+   of each child's configuration; and whether an app module's commands
+   follow the window in front or the focus, which is Dickson's.
 
-- An outpost is not retired for being idle, since it holds its
-  application's state.
-- Core passes a held caret key on and tells the outpost so by an ordered
-  message.
-- The logic that moves lives in a new platform-neutral crate,
-  `verbatim-presentation`, which the outpost links, and `verbatim-core`
-  keeps what stays in Core.
-- Memory is reduced where the rewrite allows, against a budget per
-  outpost set from a measurement.
-- Browse mode (M7) keeps as little cached state as it can, with no page
-  buffer if recordings, captures and measurements allow.
-- The target design accounts for every milestone planned after it.
+Three changes found with them belong to milestones already planned and
+are listed there: one record of an outpost generation's life (M6.2), one
+record and one form of cancel per utterance (M6.3), and every terminal
+read naming the read it follows (M6.4).
 
-Status: nothing is built. A first draft, which moved the judging of
-focus into the outposts as well, failed its adversarial review, because
-an outpost would then judge Core's facts from notices that reach it by
-another route than the events it judges them against. The target design
-is being redrafted on the split above. Its plan is written for one pass,
-once the design is approved.
+Status: nothing is built. The process and testing rules the
+retrospective led to are in `CLAUDE.md`, `REVIEW.md` and
+[the testing standard](../books/dev/src/reference/testing.md).
 
 ## M4 — Text, editing, and terminals
 
@@ -789,6 +806,14 @@ so for up to `SHUTDOWN_LIMIT` a stuck outpost and its replacement can
 both be in the application, where two Verbatim processes' calls collide
 inside UIA (`books/dev/src/explanation/design/listener-without-connections.md`).
 
+- An outpost is not retired merely for being idle (Dickson,
+  2026-11-10): the early retirement of idle outposts that the
+  architecture allows to bound memory is settled here, with the rest of
+  how an outpost ends.
+- One record of an outpost generation's life: today the relay thread
+  and the reducer thread each keep one, kept in step by ten kinds of
+  notice; which thread owns the single record is decided with the owner
+  thread's state machine below.
 - The supervisor checks an application's exit twice, from the outpost's
   report and by polling the process; M6.2's single child record keeps
   one (the reducers' simplification study).
@@ -842,6 +867,10 @@ device after a write fails; and a liveness check that notices speech
 requested with no frames reaching the device, never falling back to
 silence.
 
+- One record per utterance on the speech queue's thread, from waiting
+  to handed on to stopping, and one form of cancel, in place of the
+  copies the queue keeps of what the mixer owns (the retrospective of
+  2026-11-10).
 - An audit of the speech and audio pipeline against NVDA, as the focus
   pipeline's was made: for each step, the rule, the order, what happens
   on a slow or failed engine, and what is heard, across the speech
@@ -953,6 +982,9 @@ pushed until the last. The model in `verbatim-text`, its move into Core's
 reducer, "Report status bar" and moving by command are built. What
 remains, in order:
 
+- Every terminal read names the read its start was counted from, so
+  that Core and the outpost agree on the last read without each
+  tracking it unnamed (the retrospective of 2026-11-10).
 - Generated invariant tests for the terminal's line comparison, if it is pure: the comparison of an old and a new screen must give back the new one exactly.
 - Pi's regular mode in the moving-by-command and "Report status bar"
   scenarios, once Pi is installed on the test machine.
@@ -1172,7 +1204,12 @@ Security work other milestones carry, each with its test:
   flight recorder's checkpoints stay affordable. Starting points: `imbl`
   for the map, whose MPL-2.0 licence is checked against the
   platform-neutral tier first, and `ropey` or `crop` for the rope (Dickson,
-  2026-10-31).
+  2026-10-31). Browse mode keeps as little cached state as it
+  can, with no page buffer if recordings, captures and measurements
+  allow, its commands querying the document live as NVDA's browse mode
+  for UI Automation documents does (`nvda/source/UIAHandler/browseMode.py`),
+  because a buffer read before it is refreshed speaks a page that has
+  changed (Dickson, 2026-11-10).
 - IA2 lands here, deferred from M3 because browsers are what motivate it:
   interface acquisition (`IServiceProvider::QueryService` from the
   WinEvent's `IAccessible` to `IAccessible2` and the IA2 text, hypertext,
