@@ -30,6 +30,7 @@
 - [Glossary](reference/glossary.md)
 - [Decision records](reference/adr/readme.md)
   - [ADR 0001: Focus](reference/adr/0001-focus.md)
+  - [ADR 0002: What Core judges](reference/adr/0002-what-core-judges.md)
 - [Crate guides](reference/crates/readme.md)
   - [verbatim-model](reference/crates/verbatim-model.md)
   - [verbatim-i18n](reference/crates/verbatim-i18n.md)

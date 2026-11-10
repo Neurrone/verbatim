@@ -63,27 +63,11 @@ code before it is built.
 
 Three target designs that moved judging out of Core into each
 application's outpost failed their adversarial reviews, and Dickson
-decided on 2026-11-10 that Core stays the one judge of both. The idea
-is not proposed again without a new measured fact that removes one of
-these obstacles:
-
-- Focus across applications is ordered only where every application's
-  reports and the listener's foreground changes meet, which is Core's
-  input. A notice telling an outpost that the focus went elsewhere
-  reaches it by a route not ordered with its own events, or is sent
-  before the other focus is known to count.
-- A key is ordered with an application's reads only because the
-  keyboard hook posts it to Core before it returns. Forwarded to an
-  outpost it can arrive after the read of its own echo: the console
-  host echoes a typed character within about a millisecond.
-- Core needs the focus in any case, for typed echo, the hook's hold
-  permit, browse mode's key modes, review, braille and profiles, so
-  judging it elsewhere would leave each of them reading a copy.
-
-When Core owns an interaction with an application, the outpost keeps
-nothing for it between requests: each request carries what it needs
-and gets one answer. A caret key's handling held in four places is
-what this rule is for, and browse mode's design starts from it.
+decided on 2026-11-10 that Core stays the one judge of both.
+[ADR 0002](../books/dev/src/reference/adr/0002-what-core-judges.md)
+keeps the options weighed, the two facts that decide it, the rule
+that an outpost keeps nothing for Core between requests, and what
+would reopen the question. Browse mode's design starts from it.
 
 ### Order
 
@@ -265,6 +249,30 @@ the design.
   failed-read counters that only log lines use, the ping's sequence
   number, the reducer watch that is reported and never acted on, and
   the wire variant for an MSAA live re-read that never crosses a pipe.
+
+Where each starts in the code, as the audits found it at 04268b78:
+
+- Progress bars: `BarWatch` in
+  `crates/verbatim-outpost-logic/src/follow.rs`, the outpost's
+  `ProgressChanged` in `crates/verbatim-outpost/src/outpost/worker.rs`,
+  `CoreToOutpost::Front`, and the listener's own verdicts in
+  `crates/verbatim-listener/src/value_change.rs`.
+- The fake focus: `menu_or_switch_ended` in
+  `crates/verbatim-core/src/shell.rs`, the missing duplicate test in
+  `crates/verbatim-core/src/reduce.rs`, and the query planned behind
+  a marker in `crates/verbatim-outpost-logic/src/intake.rs`.
+- Dialog text: `already_entered` in
+  `crates/verbatim-outpost/src/outpost/read.rs`.
+- The menu opening: `focus_pending` in
+  `crates/verbatim-listener/src/focus_read.rs` and the schedule's
+  push in `crates/verbatim-listener-logic/src/schedule.rs`; NVDA's
+  rule is in `nvda/source/UIAHandler/__init__.py`.
+- The caret key: `crates/verbatim-core/src/key_line.rs`, the note in
+  `crates/verbatim-outpost-logic/src/text.rs`, and the withdrawal in
+  `crates/verbatim-outpost/src/outpost/mod.rs`.
+- Report focus: `crates/verbatim-core/src/report_focus.rs`; typed
+  echo: `echo` and `character_typed` in
+  `crates/verbatim-core/src/editing.rs`.
 
 ### The delay between the keyboard hook and Core's reducer
 

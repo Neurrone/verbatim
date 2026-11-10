@@ -326,7 +326,10 @@ gate):
   for events and answer queries, the supervisor manages processes and
   routes messages, and the reducer decides what to speak, which events to
   accept, and what attention is. A decision about presentation never lives
-  in an outpost, because only Core sees every application.
+  in an outpost, because only Core sees every application
+  ([ADR 0002](../reference/adr/0002-what-core-judges.md), which weighed
+  judging in each application's outpost again on 2026-11-10 and kept
+  Core as the judge of keys and focus).
 - Each correctness rule has exactly one owner, so that changing it cannot
   break a case another mechanism was quietly covering.
 - Every queue has a stated overload policy, and no thread that others
