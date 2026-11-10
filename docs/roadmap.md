@@ -59,8 +59,9 @@ In this order:
    by `cargo xtask ci`; a report of fixes per feature commit, repairs of
    recent commits and fixes per mechanism, read at the start of a
    session; and a recorder of the events a real application raises,
-   driven by a scenario's steps, whose file a design cites beside
-   NVDA's capture.
+   an executable beside `verbatim.exe` that a user can run while
+   Verbatim is running (Dickson, 2026-11-10) and that a scenario's
+   steps can drive, whose file a design cites beside NVDA's capture.
 2. The keyboard held when the focus listener ends while a live re-read
    waits: Core is told of the listener's end when it happens, not at its
    replacement's readiness.
