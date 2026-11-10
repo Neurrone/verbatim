@@ -695,10 +695,38 @@ fn uia_activation_invokes_then_toggles_then_selects() {
     app.quit();
 }
 
+/// The descent from the root finds a window another process's visible
+/// window owns, which UIA's raw view puts under its owner, and not under
+/// the root, as a dialog is. With the descent limited to the root's
+/// children, it answers nothing.
+fn window_element_from_root_finds_an_owned_window() {
+    let owner_title = common::unique_title("mockapp-from-root-owner");
+    let opener = common::spawn_shown("owner_window.json", &owner_title, None);
+    let title = common::unique_title("mockapp-from-root-owned");
+    let owned = common::spawn_shown("owned_dialog.json", &title, Some(&owner_title));
+    let hwnd = common::find_window(&title).0 as isize;
+
+    let uia = Uia::new().expect("Uia::new");
+    let request = uia
+        .request_fixed::<verbatim_uia::WindowLookup>()
+        .expect("the window lookup's request");
+    let found = uia
+        .window_element_from_root(hwnd, &request)
+        .expect("the descent")
+        .expect("the owned window under its owner");
+    assert_eq!(found.read().hwnd, hwnd);
+    owned.quit();
+    opener.quit();
+}
+
 /// Runs this file's tests through the UIA test runner, which explains why
 /// these binaries do not exit normally (`common/harness.rs`).
 fn main() {
     harness::run_isolated(&[
+        (
+            "window_element_from_root_finds_an_owned_window",
+            window_element_from_root_finds_an_owned_window,
+        ),
         (
             "uia_activation_invokes_then_toggles_then_selects",
             uia_activation_invokes_then_toggles_then_selects,

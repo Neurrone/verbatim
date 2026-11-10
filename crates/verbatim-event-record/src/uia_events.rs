@@ -9,7 +9,7 @@ use verbatim_uia::{
     Cached, FOCUS_PROPERTIES, Part, RecordedEvent, Subscription, variant_f64, variant_i32,
     variant_optional_bool, variant_string,
 };
-use verbatim_win32::window::{focus_window, top_level_of};
+use verbatim_win32::window::focus_window;
 use windows::Win32::System::Variant::{
     VARENUM, VARIANT, VT_BOOL, VT_BSTR, VT_EMPTY, VT_I4, VT_R8, VT_UNKNOWN,
 };
@@ -34,7 +34,7 @@ use windows::Win32::UI::Accessibility::{
 
 use crate::behind::Focus;
 use crate::line::EventData;
-use crate::target::Target;
+use crate::target::{Target, window_in_target};
 use crate::writer::{Arrivals, EventArrival, Message};
 
 /// The events registered desktop-wide beside focus, so that a new window's
@@ -88,18 +88,19 @@ impl UiaEvents {
     }
 
     /// Whether the element is the target's: its process, or in window
-    /// mode the root of its own window, or of the keyboard focus window
-    /// for an element with none. Local, from the cache and `GetAncestor`.
+    /// mode the rule of [`window_in_target`] applied to its own window, or
+    /// to the keyboard focus window for an element with none. Local, from
+    /// the cache and local window reads.
     fn in_target(&self, fields: &RecordedEvent) -> bool {
         match self.target {
             Target::Process(pid) => fields.process_id == Some(pid),
-            Target::Window { hwnd, .. } => {
+            Target::Window { hwnd, pid } => {
                 let own = if fields.hwnd == 0 {
                     focus_window().unwrap_or(0)
                 } else {
                     fields.hwnd
                 };
-                top_level_of(own) == hwnd
+                window_in_target(hwnd, pid, own)
             }
         }
     }

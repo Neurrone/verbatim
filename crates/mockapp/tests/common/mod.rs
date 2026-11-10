@@ -393,6 +393,18 @@ pub fn spawn_hiding_window_handle(fixture: &str, title: &str) -> MockApp {
     spawn_with(fixture, "uia", title, &["--hide-window-handle"])
 }
 
+/// [`spawn`] on the UIA backend, the window shown (`--show`) and, when
+/// `owner_title` names a window, owned by it (`--owner-title`), as a dialog
+/// another process opens is owned by the window it opens over.
+#[must_use]
+pub fn spawn_shown(fixture: &str, title: &str, owner_title: Option<&str>) -> MockApp {
+    let mut extra = vec!["--show"];
+    if let Some(owner) = owner_title {
+        extra.extend(["--owner-title", owner]);
+    }
+    spawn_with(fixture, "uia", title, &extra)
+}
+
 fn spawn_with(fixture: &str, backend: &str, title: &str, extra: &[&str]) -> MockApp {
     contain_children();
     let exe = env!("CARGO_BIN_EXE_mockapp");

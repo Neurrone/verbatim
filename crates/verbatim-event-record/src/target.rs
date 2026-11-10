@@ -4,14 +4,23 @@ use std::os::windows::io::{FromRawHandle as _, OwnedHandle, RawHandle};
 
 use serde_json::{Value, json};
 use verbatim_uia::{is_top_level_window, provider_process};
-use verbatim_win32::window::{top_level_windows, window_is_visible, window_text};
+use verbatim_win32::window::{
+    related, top_level_of, top_level_windows, window_class_name, window_is_visible, window_text,
+};
 use windows::Win32::Foundation::{CloseHandle, HANDLE};
 use windows::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS,
 };
 use windows::Win32::System::Threading::{OpenProcess, PROCESS_SYNCHRONIZE};
+use windows::Win32::UI::WindowsAndMessaging::GW_OWNER;
 
 use crate::line::window_text as window_field;
+
+/// The class of a Win32 popup menu's top-level window.
+const MENU_CLASS: &str = "#32768";
+
+/// The class of a common control tool tip's top-level window.
+const TOOL_TIP_CLASS: &str = "tooltips_class32";
 
 /// The target as the command line names it.
 pub(crate) enum Selector {
@@ -126,7 +135,7 @@ fn window_title(pid: u32) -> String {
 
 /// The ids of the processes named `name`, with or without `.exe`.
 fn processes_named(name: &str) -> Result<Vec<u32>, String> {
-    let name = name.strip_suffix(".exe").unwrap_or(name).to_lowercase();
+    let name = process_stem(name);
     // SAFETY: a snapshot of the system's processes; closed below.
     let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) }
         .map_err(|error| format!("could not list the processes: {error}"))?;
@@ -143,8 +152,8 @@ fn processes_named(name: &str) -> Result<Vec<u32>, String> {
             .iter()
             .position(|&c| c == 0)
             .unwrap_or(entry.szExeFile.len());
-        let exe = String::from_utf16_lossy(&entry.szExeFile[..length]).to_lowercase();
-        if exe.strip_suffix(".exe").unwrap_or(&exe) == name {
+        let exe = String::from_utf16_lossy(&entry.szExeFile[..length]);
+        if process_stem(&exe) == name {
             pids.push(entry.th32ProcessID);
         }
         // SAFETY: as above.
@@ -153,6 +162,66 @@ fn processes_named(name: &str) -> Result<Vec<u32>, String> {
     // SAFETY: the handle the snapshot call returned, closed once.
     let _ = unsafe { CloseHandle(snapshot) };
     Ok(pids)
+}
+
+/// `name` as process names are compared: lower case, without `.exe`.
+fn process_stem(name: &str) -> String {
+    let lower = name.to_lowercase();
+    match lower.strip_suffix(".exe") {
+        Some(stem) => stem.to_owned(),
+        None => lower,
+    }
+}
+
+/// What the `--window` rule reads of a window's top-level window.
+#[derive(Debug)]
+struct RootFacts {
+    /// The top-level window (`GetAncestor` with `GA_ROOT`).
+    root: isize,
+    /// The root's owners, nearest first (`GetWindow` with `GW_OWNER`).
+    owners: Vec<isize>,
+    /// The root's window class.
+    class: String,
+    /// The process serving the root.
+    process: Option<u32>,
+}
+
+/// `window`'s [`RootFacts`], read locally.
+fn root_facts(window: isize) -> RootFacts {
+    let root = top_level_of(window);
+    let mut owners = Vec::new();
+    let mut last = root;
+    loop {
+        let owner = related(last, GW_OWNER);
+        if owner == 0 {
+            break;
+        }
+        owners.push(owner);
+        last = owner;
+    }
+    RootFacts {
+        root,
+        owners,
+        class: window_class_name(root),
+        process: provider_process(root),
+    }
+}
+
+/// The `--window` rule: an element is the target's when its root window
+/// is the target, the target owns that root through its owner chain, or
+/// that root is a menu or tool tip of the target's process, each of which
+/// Windows makes a top-level window of its own.
+fn counts_as_target(hwnd: isize, pid: u32, facts: &RootFacts) -> bool {
+    facts.root == hwnd
+        || facts.owners.contains(&hwnd)
+        || (facts.process == Some(pid)
+            && (facts.class == MENU_CLASS || facts.class == TOOL_TIP_CLASS))
+}
+
+/// Whether `window` counts as part of the `--window` target `hwnd`, served
+/// by `pid`. Local calls only.
+pub(crate) fn window_in_target(hwnd: isize, pid: u32, window: isize) -> bool {
+    counts_as_target(hwnd, pid, &root_facts(window))
 }
 
 /// Opens `pid` for waiting on its end.
@@ -173,4 +242,81 @@ pub(crate) fn open_process(pid: u32) -> Result<OwnedHandle, String> {
 pub(crate) fn raw(owned: &OwnedHandle) -> HANDLE {
     use std::os::windows::io::AsRawHandle as _;
     HANDLE(owned.as_raw_handle())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const TARGET: isize = 100;
+    const PROCESS: u32 = 7;
+
+    fn root(root: isize, owners: &[isize], class: &str, process: u32) -> RootFacts {
+        RootFacts {
+            root,
+            owners: owners.to_vec(),
+            class: class.to_owned(),
+            process: Some(process),
+        }
+    }
+
+    #[test]
+    fn a_process_name_matches_in_any_case_with_or_without_exe() {
+        assert_eq!(process_stem("NOTEPAD.EXE"), "notepad");
+        assert_eq!(process_stem("Notepad"), "notepad");
+    }
+
+    #[test]
+    fn an_element_whose_root_is_the_target_counts() {
+        assert!(counts_as_target(
+            TARGET,
+            PROCESS,
+            &root(TARGET, &[], "Frame", PROCESS)
+        ));
+    }
+
+    #[test]
+    fn a_window_the_target_owns_through_its_chain_counts() {
+        assert!(counts_as_target(
+            TARGET,
+            PROCESS,
+            &root(300, &[200, TARGET], "Dialog", 99)
+        ));
+    }
+
+    #[test]
+    fn a_menu_of_the_targets_process_counts() {
+        assert!(counts_as_target(
+            TARGET,
+            PROCESS,
+            &root(300, &[], MENU_CLASS, PROCESS)
+        ));
+    }
+
+    #[test]
+    fn a_tool_tip_of_the_targets_process_counts() {
+        assert!(counts_as_target(
+            TARGET,
+            PROCESS,
+            &root(300, &[], TOOL_TIP_CLASS, PROCESS)
+        ));
+    }
+
+    #[test]
+    fn a_menu_of_another_process_does_not_count() {
+        assert!(!counts_as_target(
+            TARGET,
+            PROCESS,
+            &root(300, &[], MENU_CLASS, 99)
+        ));
+    }
+
+    #[test]
+    fn another_top_level_window_of_the_targets_process_does_not_count() {
+        assert!(!counts_as_target(
+            TARGET,
+            PROCESS,
+            &root(300, &[400], "Frame", PROCESS)
+        ));
+    }
 }

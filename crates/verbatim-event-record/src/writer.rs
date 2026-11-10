@@ -164,51 +164,57 @@ impl Arrivals {
 /// The writer thread: writes `header`, then every line, flushing whenever
 /// the channel is empty, until `End`. A write error ends the recording
 /// early and discards later lines; `End` still returns.
+///
+/// # Errors
+///
+/// Returns the first write error, the final flush's included, so the
+/// closing message and the exit code say whether the file is whole.
 pub(crate) fn serve<W: Write>(
     mut out: W,
     header: &str,
     received: &Receiver<Stamped>,
     early: &Arc<EarlyEnd>,
-) {
-    let mut failed = false;
-    let report = |result: io::Result<()>, failed: &mut bool| {
+) -> Result<(), String> {
+    let mut failure: Option<String> = None;
+    let report = |result: io::Result<()>, failure: &mut Option<String>| {
         if let Err(error) = result
-            && !*failed
+            && failure.is_none()
         {
-            *failed = true;
+            *failure = Some(error.to_string());
             early.end(Reason::WriteFailed(error.to_string()));
         }
     };
-    report(writeln!(out, "{header}"), &mut failed);
+    report(writeln!(out, "{header}"), &mut failure);
     let mut pairs = Pairs::default();
     loop {
         let stamped = match received.try_recv() {
             Ok(stamped) => stamped,
             Err(TryRecvError::Empty) => {
-                report(out.flush(), &mut failed);
+                report(out.flush(), &mut failure);
                 match received.recv() {
                     Ok(stamped) => stamped,
-                    Err(_) => return,
+                    Err(_) => break,
                 }
             }
-            Err(TryRecvError::Disconnected) => return,
+            Err(TryRecvError::Disconnected) => break,
         };
         let t_us = stamped.t_us;
         let lines = match stamped.message {
             Message::End => {
-                report(out.flush(), &mut failed);
-                return;
+                report(out.flush(), &mut failure);
+                break;
             }
             Message::Registered(window) => vec![registered_line(t_us, window)],
             Message::Event(arrival) => event_lines(t_us, &arrival, &mut pairs),
         };
-        if failed {
+        if failure.is_some() {
             continue;
         }
         for line in lines {
-            report(writeln!(out, "{line}"), &mut failed);
+            report(writeln!(out, "{line}"), &mut failure);
         }
     }
+    failure.map_or(Ok(()), Err)
 }
 
 /// `arrival`'s line, and any `behind` line it causes.
@@ -224,4 +230,44 @@ fn event_lines(t_us: u64, arrival: &EventArrival, pairs: &mut Pairs) -> Vec<Stri
         lines.push(behind_line(t_us, "uia_focus", late));
     }
     lines
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::mpsc;
+
+    use super::*;
+
+    /// A file whose flush fails, as a full disk's does at the final flush.
+    struct FlushFails;
+
+    impl Write for FlushFails {
+        fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+            Ok(buffer.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Err(io::Error::other("the disk is full"))
+        }
+    }
+
+    #[test]
+    fn a_flush_that_fails_at_the_end_is_the_writers_result() {
+        let (sender, received) = mpsc::channel();
+        let early = Arc::new(EarlyEnd::new().expect("an end event"));
+        sender
+            .send(Stamped {
+                t_us: 0,
+                message: Message::End,
+            })
+            .expect("the channel is open");
+        assert_eq!(
+            serve(FlushFails, "header", &received, &early),
+            Err("the disk is full".to_owned())
+        );
+        assert_eq!(
+            early.reason().map(Reason::describe),
+            Some("the file could not be written: the disk is full".to_owned())
+        );
+    }
 }

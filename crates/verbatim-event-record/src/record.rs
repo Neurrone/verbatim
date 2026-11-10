@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufWriter, Write as _};
 use std::os::windows::io::OwnedHandle;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, OnceLock};
 use std::thread::{self, JoinHandle};
@@ -14,9 +14,10 @@ use std::time::{Duration, Instant};
 use verbatim_process::report_error;
 use verbatim_uia::{Registration, Scope, UIA_CONNECTION_TIMEOUT, Uia, WindowLookup};
 use verbatim_win32::window::{
-    top_level_of, top_level_windows, window_class_name, window_exists, window_is_visible,
+    rect, related, top_level_windows, window_class_name, window_exists, window_is_visible,
 };
-use windows::Win32::Foundation::{HANDLE, WAIT_FAILED, WAIT_OBJECT_0, WAIT_TIMEOUT};
+use windows::Win32::Foundation::{HANDLE, HWND, WAIT_FAILED, WAIT_OBJECT_0, WAIT_TIMEOUT};
+use windows::Win32::Graphics::Dwm::{DWMWA_CLOAKED, DwmGetWindowAttribute};
 use windows::Win32::System::Console::SetConsoleCtrlHandler;
 use windows::Win32::System::SystemInformation::GetSystemTime;
 use windows::Win32::UI::Accessibility::IUIAutomationElement;
@@ -29,7 +30,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     EVENT_OBJECT_SELECTIONWITHIN, EVENT_OBJECT_SHOW, EVENT_OBJECT_STATECHANGE,
     EVENT_OBJECT_TEXTSELECTIONCHANGED, EVENT_OBJECT_VALUECHANGE, EVENT_SYSTEM_ALERT,
     EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_MENUEND, EVENT_SYSTEM_MENUPOPUPEND,
-    EVENT_SYSTEM_MENUPOPUPSTART, EVENT_SYSTEM_SWITCHEND, MSG, MsgWaitForMultipleObjects,
+    EVENT_SYSTEM_MENUPOPUPSTART, EVENT_SYSTEM_SWITCHEND, GW_OWNER, MSG, MsgWaitForMultipleObjects,
     OBJID_WINDOW, PM_REMOVE, PeekMessageW, QS_HOTKEY, WM_HOTKEY,
 };
 use windows::core::{AgileReference, BOOL};
@@ -38,7 +39,7 @@ use crate::hooks::{RawEvent, Sink, spawn_hook_thread};
 use crate::line::{EventData, header};
 use crate::steps::{self, Agent, Step, StepsThread};
 use crate::stop_key::{self, STOP_KEY_ID};
-use crate::target::{Selector, Target, open_process, raw, resolve};
+use crate::target::{Selector, Target, open_process, raw, resolve, window_in_target};
 use crate::uia_events::{UiaEvents, desktop_parts, target_parts};
 use crate::writer::{Arrivals, EarlyEnd, EventArrival, Message, Reason, Stamped, serve};
 
@@ -99,7 +100,7 @@ pub(crate) fn run(options: Options) -> u32 {
 struct Recording {
     arrivals: Arc<Arrivals>,
     early: Arc<EarlyEnd>,
-    writer: JoinHandle<()>,
+    writer: JoinHandle<Result<(), String>>,
     target_process: OwnedHandle,
     deadline: Option<Instant>,
     steps: Option<StepsThread>,
@@ -125,6 +126,16 @@ fn start(options: Options) -> Result<Recording, String> {
             steps::parse(&text)
         })
         .transpose()?;
+
+    // Before UI Automation is first used, so that a console control event
+    // during any later step, such as the agent connection, ends the
+    // recording and never reaches the detach fault.
+    let early = Arc::new(EarlyEnd::new()?);
+    let _ = EARLY.set(Arc::clone(&early));
+    // SAFETY: registers a handler for this process's console events; the
+    // handler has the required signature and lives for the process.
+    unsafe { SetConsoleCtrlHandler(Some(on_console_control), true) }
+        .map_err(|error| format!("could not set the console handler: {error}"))?;
 
     let uia = Uia::new().map_err(|error| format!("could not start UI Automation: {error}"))?;
     let request = uia
@@ -156,13 +167,6 @@ fn start(options: Options) -> Result<Recording, String> {
 
     let path = options.output.unwrap_or_else(default_path);
     let file = File::create(&path).map_err(|error| format!("{}: {error}", path.display()))?;
-
-    let early = Arc::new(EarlyEnd::new()?);
-    let _ = EARLY.set(Arc::clone(&early));
-    // SAFETY: registers a handler for this process's console events; the
-    // handler has the required signature and lives for the process.
-    unsafe { SetConsoleCtrlHandler(Some(on_console_control), true) }
-        .map_err(|error| format!("could not set the console handler: {error}"))?;
 
     let (sender, received): (Sender<Stamped>, Receiver<Stamped>) = mpsc::channel();
     let arrivals = Arc::new(Arrivals::new(sender));
@@ -213,7 +217,7 @@ fn start(options: Options) -> Result<Recording, String> {
                     windows.insert(window, element);
                 }
                 Some(Err(message)) => report_error!("{message}"),
-                None => report_error!("window {window:#X} of the target was not found"),
+                None => report_not_found(window),
             }
         }
     }
@@ -238,7 +242,9 @@ fn start(options: Options) -> Result<Recording, String> {
     }
     settle(registration);
 
-    if let (Some(agent), Some(steps)) = (agent, parsed_steps) {
+    // A console control event during start-up has already ended the
+    // recording, so no key is sent for it.
+    if let (Some(agent), Some(steps), None) = (agent, parsed_steps, early.reason()) {
         match steps::spawn(agent, steps, Arc::clone(&early)) {
             Ok(thread) => recording.steps = Some(thread),
             Err(message) => recording.failed = Some(message),
@@ -261,6 +267,38 @@ fn find_window(
             None
         }
     }
+}
+
+/// Says on standard error which window of the target was not found, with
+/// what explains it: its class, owner, rectangle and whether it is cloaked.
+fn report_not_found(window: isize) {
+    let owner = related(window, GW_OWNER);
+    let rectangle = rect(window).map_or_else(
+        || "none".to_owned(),
+        |r| format!("{},{},{},{}", r.left, r.top, r.right, r.bottom),
+    );
+    report_error!(
+        "window {window:#X} of the target was not found: class {}, owner {owner:#X}, rectangle {rectangle}, cloaked {}",
+        window_class_name(window),
+        is_cloaked(window),
+    );
+}
+
+/// Whether the desktop's compositor hides `window` (`DWMWA_CLOAKED`), as
+/// a suspended Store application's window is. A local read.
+fn is_cloaked(window: isize) -> bool {
+    let mut cloaked: u32 = 0;
+    // SAFETY: the out-parameter is a u32, the size DWMWA_CLOAKED writes;
+    // any handle is tolerated, failing.
+    let read = unsafe {
+        DwmGetWindowAttribute(
+            HWND(window as *mut _),
+            DWMWA_CLOAKED,
+            (&raw mut cloaked).cast(),
+            4,
+        )
+    };
+    read.is_ok() && cloaked != 0
 }
 
 /// `element` as a reference a registration can use on its thread.
@@ -311,7 +349,7 @@ fn target_sink(
         let window_object = raw.object == OBJID_WINDOW.0 && raw.child == CHILDID_SELF;
         let destroyed = raw.event == EVENT_OBJECT_DESTROY && window_object;
         if let Target::Window { hwnd, .. } = target
-            && !(raw.hwnd == hwnd || top_level_of(raw.hwnd) == hwnd)
+            && !(raw.hwnd == hwnd || window_in_target(hwnd, target.pid(), raw.hwnd))
         {
             return;
         }
@@ -346,7 +384,7 @@ fn focus_sink(target: Target, arrivals: Arc<Arrivals>) -> Sink {
         let provider = verbatim_uia::provider_process(raw.hwnd);
         let in_target = match target {
             Target::Process(pid) => provider == Some(pid),
-            Target::Window { hwnd, .. } => top_level_of(raw.hwnd) == hwnd,
+            Target::Window { hwnd, pid } => window_in_target(hwnd, pid, raw.hwnd),
         };
         let focus = provider.map(|process| crate::behind::Focus::Msaa {
             process,
@@ -486,7 +524,7 @@ fn watch(
                             added.push(window);
                         }
                         Some(Err(message)) => report_error!("{message}"),
-                        None => report_error!("window {window:#X} of the target was not found"),
+                        None => report_not_found(window),
                     }
                 }
                 WindowChange::Shown(_) => {}
@@ -590,15 +628,38 @@ impl Recording {
             steps.end();
         }
         self.arrivals.arrive(Message::End);
-        let _ = self.writer.join();
-        let mut stdout = std::io::stdout();
-        let _ = writeln!(
-            stdout,
-            "Recording written to {}: {reason}.",
-            self.path.display()
-        );
-        let _ = stdout.flush();
+        let written = self
+            .writer
+            .join()
+            .unwrap_or_else(|_| Err("the writer panicked".to_owned()));
+        let (code, message) = closing(written, code, reason, &self.path);
+        if code == 0 {
+            let mut stdout = std::io::stdout();
+            let _ = writeln!(stdout, "{message}");
+            let _ = stdout.flush();
+        } else {
+            report_error!("{message}");
+        }
         code
+    }
+}
+
+/// The exit code and closing message: the writer's result decides, read
+/// after `End`, so that a failed write makes the recording a failure even
+/// when the ending itself would be 0.
+fn closing(written: Result<(), String>, code: u32, reason: &str, path: &Path) -> (u32, String) {
+    match written {
+        Ok(()) => (
+            code,
+            format!("Recording written to {}: {reason}.", path.display()),
+        ),
+        Err(error) => (
+            1,
+            format!(
+                "The recording could not be written to {}: {error}.",
+                path.display()
+            ),
+        ),
     }
 }
 
@@ -657,4 +718,38 @@ fn windows_build() -> String {
         (status == 0).then(|| info.dwBuildNumber.to_string())
     };
     read().unwrap_or_else(|| "unknown".to_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use super::closing;
+
+    #[test]
+    fn a_write_that_failed_makes_the_exit_code_one_and_says_so() {
+        assert_eq!(
+            closing(
+                Err("the disk is full".to_owned()),
+                0,
+                "the time limit passed",
+                Path::new("file.jsonl")
+            ),
+            (
+                1,
+                "The recording could not be written to file.jsonl: the disk is full.".to_owned()
+            )
+        );
+    }
+
+    #[test]
+    fn a_written_recording_keeps_the_endings_code() {
+        assert_eq!(
+            closing(Ok(()), 0, "the time limit passed", Path::new("file.jsonl")),
+            (
+                0,
+                "Recording written to file.jsonl: the time limit passed.".to_owned()
+            )
+        );
+    }
 }

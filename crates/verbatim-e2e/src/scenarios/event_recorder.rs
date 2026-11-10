@@ -1,7 +1,10 @@
 //! The event recorder (`books/dev/src/reference/crates/verbatim-event-record.md`)
 //! records mockapp while a steps file presses Tab, beside a running
 //! Verbatim: the file holds the window's registration and the focus the
-//! key moved, and the recorder ends by itself after its last step.
+//! key moved after that registration, and the recorder ends by itself after
+//! its last step. A focus event arrives as the handlers are added, before
+//! any step runs, naming the taskbar or the window's focus, so only what
+//! comes after the registration is the key's.
 
 use serde_json::Value;
 
@@ -17,6 +20,7 @@ const FIXTURE: &str = r#"{
   "id": "root",
   "role": "window",
   "name": "{title}",
+  "dialog_keys": true,
   "children": [
     { "id": "first", "role": "button", "name": "First", "states": ["focusable", "focused"] },
     { "id": "second", "role": "button", "name": "Second", "states": ["focusable"] }
@@ -73,11 +77,11 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
         .expect("the recording ends by itself with code 0");
     scenario.speech().expect(&["Second button"]);
 
-    let lines = parse_lines(
-        &scenario
-            .wait_for_agent_file(&output, WINDOW_TIMEOUT)
-            .expect("the recording"),
-    );
+    let contents = scenario
+        .wait_for_agent_file(&output, WINDOW_TIMEOUT)
+        .expect("the recording");
+    let recording = String::from_utf8_lossy(&contents);
+    let lines = parse_lines(&contents);
     assert_eq!(lines[0]["format_version"], Value::from(1));
     assert_eq!(lines[0]["target"]["window"], Value::from(handle.clone()));
     let registered: Vec<&Value> = lines
@@ -85,11 +89,15 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
         .filter(|line| line["kind"] == "registered")
         .map(|line| &line["window"])
         .collect();
-    assert_eq!(registered, [&Value::from(handle)]);
-    let focuses: Vec<&Value> = lines
+    assert_eq!(registered, [&Value::from(handle)], "{recording}");
+    let after_registration = lines
+        .iter()
+        .position(|line| line["kind"] == "registered")
+        .expect("the registered line");
+    let focuses: Vec<&Value> = lines[after_registration..]
         .iter()
         .filter(|line| line["kind"] == "uia_focus" && line["in_target"] == true)
         .map(|line| &line["name"])
         .collect();
-    assert_eq!(focuses, [&Value::from("Second")]);
+    assert_eq!(focuses, [&Value::from("Second")], "{recording}");
 }

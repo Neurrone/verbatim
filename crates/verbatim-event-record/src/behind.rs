@@ -325,6 +325,52 @@ mod tests {
     }
 
     #[test]
+    fn a_waiting_uia_focus_expires_at_the_next_arrival() {
+        let mut pairs = Pairs::default();
+        pairs.arrive(uia(1), 0);
+        // Window 1's entry has expired, so this waits on its own instead
+        // of pairing.
+        assert_eq!(pairs.arrive(msaa(1), timeout_us() + 1), None);
+        assert_eq!(waiting(&pairs), Some(("msaa", 1)));
+    }
+
+    #[test]
+    fn an_msaa_focus_with_another_object_of_the_same_window_is_queued() {
+        let mut pairs = Pairs::default();
+        pairs.arrive(msaa(1), 0);
+        let other_object = Focus::Msaa {
+            process: PROCESS,
+            window: 1,
+            object: -4,
+            child: 3,
+        };
+        assert_eq!(pairs.arrive(other_object, 10), None);
+        assert_eq!(waiting(&pairs), Some(("msaa", 2)));
+    }
+
+    #[test]
+    fn a_uia_focus_takes_the_oldest_entry_for_its_window_and_keeps_the_later_ones() {
+        let mut pairs = Pairs::default();
+        pairs.arrive(msaa(1), 0);
+        pairs.arrive(msaa(2), 10);
+        pairs.arrive(msaa(1), 200_000);
+        // Paired with the first entry for window 1, 300 ms before; the
+        // entries for window 2 and the later window 1 stay.
+        assert_eq!(pairs.arrive(uia(1), 300_000), Some(300));
+        assert_eq!(waiting(&pairs), Some(("msaa", 2)));
+    }
+
+    #[test]
+    fn an_msaa_focus_takes_the_oldest_uia_entry_for_its_window_and_keeps_the_later_ones() {
+        let mut pairs = Pairs::default();
+        pairs.arrive(uia(1), 0);
+        pairs.arrive(uia(2), 10);
+        pairs.arrive(uia(1), 20);
+        assert_eq!(pairs.arrive(msaa(1), 900_000), None);
+        assert_eq!(waiting(&pairs), Some(("uia", 2)));
+    }
+
+    #[test]
     fn a_process_of_its_own_pairs_alone() {
         let mut pairs = Pairs::default();
         pairs.arrive(msaa(1), 0);
