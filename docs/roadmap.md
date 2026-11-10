@@ -17,85 +17,314 @@ layout was weighed again and kept: an outpost process per application
 and a separate focus listener (D9, D13; Dickson, 2026-11-02). The focus
 pipeline rework's second build is built (2026-11-02). The owner endings build is
 built (2026-11-03). The UIA facts build is built (2026-11-06). The slow
-applications build is built (2026-11-07). Next, in this order (Dickson,
-2026-11-05):
+applications build is built (2026-11-07). The focus pipeline rework's
+third build, the state models, the caret and selection rework and M4.2
+are built (Dickson, 2026-11-10). Next, in this order (Dickson,
+2026-11-05, with the first item added on 2026-11-10):
 
-1. the focus pipeline rework's third build, with Core's focus queue
-   redesign;
-2. the state models below, "State models" (Dickson, 2026-11-08);
-3. the caret and selection rework, which ends M4;
-4. M4.2;
-5. M5;
-6. M6;
-7. M4.3;
-8. M4.8 (Guardian) and M4.7 (Containment);
-9. M4.9 (Lints and unsafe);
-10. M6.2, with the rest after.
-
-Ahead of every item of that list not yet built come the foundation
-fixes (Dickson, 2026-11-10), below. M5's build A waits for the
-correction of its design, the last of them.
+1. the misc fixes below, whose last item lets M5's build A start;
+2. M5;
+3. M6;
+4. M4.3;
+5. M4.8 (Guardian) and M4.7 (Containment);
+6. M4.9 (Lints and unsafe);
+7. M6.2, with the rest after.
 
 The published site's homepage, `books/index.html`, carries one line of
 this status per milestone, and changes with it.
 
-## Foundation fixes
+## Misc fixes
 
-Next (Dickson, 2026-11-10). A retrospective of the work from 2026-10-10
-to 2026-11-10 classified its 519 defect fixes: about a quarter were
-concurrency defects, and the rest were test and harness defects,
-behaviour of NVDA or an application learned after building, and plain
-logic errors. Three target designs that moved the judging of keys and
-focus out of Core into the outposts each failed its adversarial review,
-so Core stays the one judge of both (Dickson, 2026-11-10): focus across
-applications is ordered only where every application's reports meet,
-and a key is ordered with an application's reads only because the
-keyboard hook posts it to Core before it returns.
+Next (Dickson, 2026-11-10). Nothing here is built. This entry holds
+what a new session needs to resume: the findings, the order, each
+item's code locations and what waits for Dickson. The findings come
+from a retrospective of the work from 2026-10-10 to 2026-11-10, made by
+audits that read the code at 04268b78; only the held-keyboard defect's
+central claim was rechecked by hand, so each item is verified in the
+code before it is built.
 
-In this order:
+### What the retrospective found
 
-1. Tooling for the working process: commit trailers naming each
-   commit's kind and each fix's mechanism, checked by a commit hook and
-   by `cargo xtask ci`; a report of fixes per feature commit, repairs of
-   recent commits and fixes per mechanism, read at the start of a
-   session; and a recorder of the events a real application raises,
-   an executable beside `verbatim.exe` that a user can run while
-   Verbatim is running (Dickson, 2026-11-10) and that a scenario's
-   steps can drive, whose file a design cites beside NVDA's capture.
-2. The keyboard held when the focus listener ends while a live re-read
-   waits: Core is told of the listener's end when it happens, not at its
-   replacement's readiness.
-3. The ancestry cache. The listener marks an application's cache stale
-   at that application's own MSAA focus as well as when the application
-   is left, so every report reaches Core complete, and Core's check of
-   cached ancestors, the live re-read and the focus queue's waiting are
-   removed. It amends ADR 0001's "Reusing an earlier ancestry", which is
-   Dickson's to approve with the design.
-4. The confirmed defects: a progress bar reported by both the listener
-   and an outpost, and the listener's two tests of a native window,
-   against the design of 2026-11-09; the fake focus spoken twice when
-   the real focus's read outlasts its grace; a dialog's text spoken
-   stale after a visit to a window that raised no focus; a UIA menu
-   opening dropped against focuses the listener's checks later drop; a
-   held caret key's evidence timed by two clocks; and the places where
-   the documents disagree with the code.
-5. The delay between the keyboard hook and Core's reducer while typing
-   in the console host, measured and given a bound, since every key
-   waits on it.
-6. M5's design corrected before build A: a hook call timed by its host
-   alone; a list dialog's record held in Core; the code version carried
-   on the call; hook registrations published with the rules; one writer
-   of each child's configuration; and whether an app module's commands
-   follow the window in front or the focus, which is Dickson's.
+- Of 1,816 commits, 519 were defect fixes. By cause: a test, the
+  harness or a generated model wrong while the product was right, 164;
+  a plain logic error, 80; bookkeeping of a waiting state, 71; NVDA's
+  behaviour learned after building, 60; an application's behaviour
+  learned after building, 52; ordering across a hand-off, 40; a fact
+  judged away from its owner, 16. About a quarter were concurrency
+  defects.
+- The ownership refactor removed copied facts and most ordering
+  defects, but left the hand-offs, so each became a waiting state in a
+  reducer, and bookkeeping fixes rose afterwards.
+- The process and testing rules it led to are in `CLAUDE.md`,
+  `REVIEW.md` and
+  [the testing standard](../books/dev/src/reference/testing.md).
 
-Three changes found with them belong to milestones already planned and
-are listed there: one record of an outpost generation's life (M6.2), one
-record and one form of cancel per utterance (M6.3), and every terminal
-read naming the read it follows (M6.4).
+### Core stays the judge of keys and focus
 
-Status: nothing is built. The process and testing rules the
-retrospective led to are in `CLAUDE.md`, `REVIEW.md` and
-[the testing standard](../books/dev/src/reference/testing.md).
+Three target designs that moved judging out of Core into each
+application's outpost failed their adversarial reviews, and Dickson
+decided on 2026-11-10 that Core stays the one judge of both. The idea
+is not proposed again without a new measured fact that removes one of
+these obstacles:
+
+- Focus across applications is ordered only where every application's
+  reports and the listener's foreground changes meet, which is Core's
+  input. A notice telling an outpost that the focus went elsewhere
+  reaches it by a route not ordered with its own events, or is sent
+  before the other focus is known to count.
+- A key is ordered with an application's reads only because the
+  keyboard hook posts it to Core before it returns. Forwarded to an
+  outpost it can arrive after the read of its own echo: the console
+  host echoes a typed character within about a millisecond.
+- Core needs the focus in any case, for typed echo, the hook's hold
+  permit, browse mode's key modes, review, braille and profiles, so
+  judging it elsewhere would leave each of them reading a copy.
+
+When Core owns an interaction with an application, the outpost keeps
+nothing for it between requests: each request carries what it needs
+and gets one answer. A caret key's handling held in four places is
+what this rule is for, and browse mode's design starts from it.
+
+### Order
+
+One build that changes state is in flight at a time; the recorder, the
+document corrections, the delay measurement and M5's design
+corrections change no state and may run beside one.
+
+1. The trailers, the hook and the health report.
+2. The held-keyboard defect.
+3. The event recorder.
+4. The ancestry cache.
+5. The confirmed defects, one small build each.
+6. The delay between the keyboard hook and Core's reducer.
+7. M5's design corrections, after which build A may start.
+
+### The trailers, the hook and the health report
+
+- Every commit ends with a `Kind:` trailer (feature, fix, test,
+  design, record, process, refactor or removal); a fix also carries
+  `Mechanism:`, and `Fixes:` with the hash when it repairs an earlier
+  commit.
+- A tracked hooks folder holds a `commit-msg` hook that refuses a
+  commit without them, merge commits excepted, with copies of Git
+  LFS's four hooks, since setting `core.hooksPath` replaces the
+  default hooks folder; the setup guide gains the command that sets
+  it. `cargo xtask ci` checks the commits being pushed, so a clone
+  without the hook still fails on GitHub.
+- A health report, a new xtask command, gives for the last seven days
+  the fix commits per feature commit, the share of fixes repairing a
+  commit under fourteen days old, and the fixes per mechanism. A
+  session reads it at its start and starts no build above 2 fixes per
+  feature commit or 30 percent repairs: the weeks of October measured
+  1.4, 6.0 and 2.5 fixes per feature commit, and 44 percent repairs.
+- `CLAUDE.md` gains the trailer rule and the report's rule with the
+  tools, and its third-fix rule then counts by trailer.
+
+### The held-keyboard defect
+
+When the listener ends while Core waits on a live re-read from it, the
+keyboard can stop reaching every application. Core ends a listener's
+re-reads only when a replacement listener is ready
+(`crates/verbatim-app/src/main.rs`, where `Input::ListenerReplaced` is
+applied), and the three paths in
+`crates/verbatim-supervisor/src/owner.rs` that end the listener (its
+pipe closing, its missed pings, a failed launch) tell the outposts and
+not Core. A caret key pressed meanwhile is held behind the report set
+aside, and the hook defers every later key. The fix: the relay posts
+the listener's end on the ordered path of its other lifecycle notices,
+and Core applies the listener-replaced rule then.
+`books/dev/src/explanation/design/key-holding.md` says this wait is
+bounded by the re-read's deadline, which runs in the listener that
+ended.
+
+### The event recorder
+
+An executable beside `verbatim.exe` that a user can run while Verbatim
+is running (Dickson, 2026-11-10), and that a scenario's steps can
+drive, so that a design cites what a real application raises beside
+NVDA's capture.
+
+- It holds no desktop-wide focus handler, since a second process with
+  one receives proxied focus events late and could slow Verbatim's
+  ([UIA defects](../books/dev/src/reference/uia-bugs.md), "Desktop-wide
+  focus handlers in a second process deliver late"). It takes focus
+  from MSAA events and from a registration scoped to the target's
+  windows, with a process-scoped WinEvent hook and UI Automation
+  handlers on the target's top-level windows.
+- It is given a window or a process and records until a key or a time
+  limit, or runs a steps file through the end-to-end agent.
+- It writes one line per event in arrival order: the time, the kind,
+  the runtime id, the window, the name, control type, class,
+  automation id and framework, a property change's property and
+  value, and whether the element was the focus; a line when its own
+  delivery falls behind; and it can print a file as sentences.
+- It asks nothing before writing (Dickson, 2026-11-10). Its name, its
+  command line and its file format are a public contract and go to
+  Dickson before it is built. It is a new crate classed in
+  `xtask/src/tiers.rs`, and M8.6's installer carries it.
+- With it, `CLAUDE.md` and the testing standard gain two rules that
+  wait for it: a design cites the recorder's file with NVDA's capture,
+  and a fixture is checked against a recording of the application it
+  stands for.
+
+### The ancestry cache
+
+Today each focus reader, the listener's reading thread for an
+application and the outpost's own MSAA reads, stops its walk at its
+ancestry cache, and Core, which cannot tell whether a cached ancestor
+is stale, checks every report (`needs_live_ancestry` in
+`crates/verbatim-core/src/focus_rules.rs`), sets a doubtful one aside,
+asks its reader for a live re-read and holds every later report and
+key behind it. The change makes the readers' reports trustworthy, so
+that Core checks nothing:
+
+- The listener reuses an application's cache only while that
+  application has not been left since the cached read, which it
+  already records (`QueuePlace::current_since` in
+  `crates/verbatim-listener-logic/src/schedule.rs`), and has had no
+  MSAA focus or menu start of its own since then. The listener
+  receives every application's MSAA focus event and today uses them
+  only to mark other applications left. Otherwise it walks live to the
+  top or the process boundary. The title check stays.
+- A listener read walked live says so, and the outpost does not cut
+  it at its own followed chain.
+- The outpost's own MSAA reads keep their title check and drop their
+  cache at a foreground event of their own windows.
+- Removed in the same build: Core's check and its set-aside state,
+  the live re-read messages in both directions and their two "gone"
+  answers, both readers' re-read code, and the focus queue's waiting,
+  with the keys, commands and menu ends that queue behind a report.
+  Focus is still judged in Core.
+
+A return between windows then costs one full walk in place of a
+partial walk, a round trip, a full walk and a second completion; moves
+within an application cost what they do today.
+
+Before its design: a recording and an NVDA capture of Alt+Space in
+Windows Terminal, and of a container renamed while the user is in
+another application. Its design lists as limits the listener's
+WinEvent thread seeing a departure after its UI Automation thread has
+started the return's read, and a read Core refused. It amends ADR
+0001's "Reusing an earlier ancestry", which rejected a record owned by
+the listener because the listener "cannot see" the focus move to the
+outpost within one application; that it receives those MSAA focus
+events is the changed fact. The amendment is Dickson's to approve with
+the design.
+
+### The confirmed defects
+
+- Progress bars have two owners. The design of 2026-11-09 says an
+  outpost reports none, but the outpost's bar watch, its progress
+  reports and Core's message naming the window in front are still
+  live beside the listener's, so one bar can be heard out of order.
+  The listener's UI Automation and classic paths also test whether a
+  bar's window is native differently. ADR 0001's "each window has one
+  backend verdict" is amended to name the listener's verdict for
+  bars, and `docs/design/progress-bars.md`, `docs/design/m42-parity.md`,
+  the M4.2 and M4.3 entries and the performance ledger's progress
+  entries are corrected.
+- The fake focus after a menu or the task switcher ends is spoken
+  twice when the real focus's read outlasts the 50 ms grace, since a
+  UI Automation answer to it gets no duplicate test. The end's time
+  travels with the query, and the outpost answers that it is covered
+  when its newest report was observed at or after it.
+- A dialog's text is spoken stale after a visit to a window that
+  raised no focus, because the outpost gathers it only for dialogs no
+  held report is inside. It is gathered again on the first report
+  after a foreground event of the outpost's own windows.
+- A UI Automation menu opening is dropped while a focus is pending,
+  counting focuses the listener's own checks later drop, where NVDA
+  counts only accepted ones. It is judged at the menu opening's turn.
+- A held caret key's evidence is timed by two clocks: the outpost's
+  note lasts 300 ms from the request's arrival and Core's window 100
+  ms from the pass, so Backspace over a character says nothing when
+  Core is busy for 160 ms. A read withdrawn after it started can also
+  finish late and become the next key's baseline. Both get one design
+  within the caret's code.
+- Verbatim+Tab followed at once by Tab says only the new focus or
+  names it twice; and Tab into a protected field followed at once by a
+  character may be echoed. Each needs an NVDA capture first, since
+  NVDA's source does not settle what it says, and then Dickson's
+  decision.
+- Documents that disagree with the code, corrected in one commit:
+  architecture section 1's list of an outpost's threads (no watchdog
+  thread exists; the reducer and registering threads are missing; the
+  sending thread writes its own messages); the outpost guide's
+  per-kind deadlines and its claim that the outpost tests a UI
+  Automation focus against the foreground; the ownership design's
+  "failed at its deadline" for a request table that keeps no deadline,
+  and its wake only when a lane was empty; the communication design's
+  remote operation in the listener; the ping's sequence said to be
+  echoed and never compared; the speech guide's thread for playback
+  milestones; the reader rules guide's missing ancestry cache module;
+  the coverage document's Settings scenario listed for report focus;
+  and, in the extensions design, the listener's readiness held by
+  Core, `accept` placed in Core's reducer and the missing identity
+  path.
+- State nothing reads, removed: the program's in-hand record and the
+  failed-read counters that only log lines use, the ping's sequence
+  number, the reducer watch that is reported and never acted on, and
+  the wire variant for an MSAA live re-read that never crosses a pipe.
+
+### The delay between the keyboard hook and Core's reducer
+
+In recorded console typing the time from the hook seeing a key to the
+end of Core's work on it was 10.2 ms at the 95th percentile, against
+1.0 ms over every scenario measured. Every key waits on Core, and more
+will as browse mode and later features arrive. The steps that hold
+Core's input are measured by kind, and a bound is proposed to Dickson
+as a performance budget.
+
+### M5's design corrections
+
+Before build A starts, in `docs/design/extensions.md` and
+`docs/design/m5-build-a.md`, with one review of the amended parts:
+
+- A hook call has one clock, its host's: the host enforces the
+  deadline and always answers, and the outpost waits for that answer
+  or the pipe's end. Today's design times it on both sides, so one
+  overrun makes the next event's hook time out too.
+- A list dialog's record is held by Core's reducer, which sees every
+  press in key order, not by the lane.
+- During a reload the code version travels only on the call.
+- Hook registrations are published with the rules and marked as code
+  pending, so the first focus of a cold start waits for its hook.
+- Each child's configuration has one writer.
+- A module that binds a held caret key takes its hold away, and the
+  design says what passing it through then does; and a gesture bound
+  only by an app module must not reach the application between a
+  foreground change and Core's next publication.
+- Whether an app module's commands follow the window in front, as
+  designed, or the focus, as NVDA's do: Dickson's.
+
+### Findings for later milestones
+
+Recorded here so their designs start from them:
+
+- M4.7 and M4.8: the hook's bypass after 1 second and the guardian's
+  limit of 2 to 5 seconds are two judges of the reducer's liveness,
+  and the hook's resync clears its half of the held-key line and not
+  Core's, which leaves a key down.
+- M6.2: its retirement check compares two observations made at
+  different times, so an application that recovers between them gets
+  a healthy outpost retired.
+- M6.3: the fix for expired speech stops and hands on valid
+  utterances again, so a valid say-all chunk can end cancelled or
+  twice; and an interrupting notification during say-all should pause
+  it in the same reducer step that emits the notification.
+- M7: one owner, Core, for the mode a key is in and the position in
+  the document, with the outpost running each search as one request
+  and one answer.
+
+### Waiting for Dickson
+
+The ancestry cache's amendment of ADR 0001; the health report's two
+thresholds; the recorder's name, command line and file format; typed
+echo after Tab into a protected field and Verbatim+Tab followed by
+Tab, each after its NVDA capture; whether an app module's commands
+follow the window in front or the focus; the bound on the delay
+between the hook and Core's reducer; and, in M6.2, which thread owns
+the single record of an outpost generation's life.
 
 ## M4 — Text, editing, and terminals
 
