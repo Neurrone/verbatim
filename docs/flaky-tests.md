@@ -38,6 +38,7 @@ Scenarios: the `windows_terminal_` scenarios generally, for example `windows_ter
 
 - `settings_system_page` on GitHub's runner (run 42492633218, 2026-11-08)
 - `settings_system_page` on GitHub's runner (run 42514816068, 2026-11-09), the same failure
+- `settings_system_page` on GitHub's runner (run 42861051487, 2026-11-10), the same failure
   - How: "Settings" was said for the frame, then nothing for 75 s; "Settings window" was never queued.
   - Cause: the page's `Windows.UI.Core.CoreWindow` (hwnd 328450, `SystemSettings.exe`) raised two MSAA focus events, which the outpost dropped because UI Automation owns the window, as NVDA drops them; UI Automation delivered no focus event for the page to the listener, whose handler had delivered the frame's focus two seconds before. A focus UI Automation never delivers is lost, as in NVDA ([ADR 0001](../books/dev/src/reference/adr/0001-focus.md), its limits).
   - Fix: none in Verbatim; passed on GitHub's runner in the two runs before it.
@@ -117,6 +118,14 @@ Scenarios: `measure_keys_conhost` and `measure_keys_conhost_unmoved` (release bu
 - How: setup fails with "no window titled ... opened within 30s"; the PowerShell console's window is hidden and not responding, or not shown at all. The outpost given the new `conhost.exe` starts watching it, and its worker's first call passes its 10 s deadline about 10 s later and finishes only at shutdown, 2 to 35 s after. 3 of 20 runs; in one, a crate split build's unit tests were running on the same desktop.
 - Cause: not found. In two `conhost_full_history_flood` failures on 2026-11-01 whose artifacts were kept, Verbatim waited on the console host and not the reverse: the window never answered the outpost's first message (the arbitration's `WM_GETOBJECT` probe timed out at 3 s, where a healthy console answers in about 0.4 s), the outpost's worker then blocked in an MSAA read until the outpost was killed, and the console host stayed hung after every Verbatim process had exited. Both runs also had Explorer's notification area not answering (`Shell_NotifyIcon` timed out at Verbatim's start) and the Widgets process not responding, which no passing run showed. What the console host's window thread waited on is not in the logs.
 - Fix: none yet. The harness now records, when this wait fails, the wait chain of each not-responding window's thread and of the launched process's threads, in the failure message and in `wait-chains.txt` ([the end-to-end guide](../books/dev/src/how-to/e2e.md)), and the outpost's abandoned-worker warning names the entry its worker had in hand; the next failure's artifacts are to be read for what the thread waits on. A roadmap follow-up under M4.
+
+## Windows Terminal's two windows, the elevated title at launch
+
+- Scenarios: `windows_terminal_two_windows` on GitHub's runner: runs 42654703245, 42861051487 and 42861605191.
+- How: the scenario's first step hears only "Administrator: verbatim-e2e-two-a-... window". The title then settles on the one the terminal's title sequence sets, and the expected terminal and "blank" lines never come.
+- How often: 3 of 7 code runs since 2026-11-09, always at the first step, about 4 seconds after the previous scenario; 4 runs passed between them, and the runs at 7969a2a8 and c037e645 failed.
+- Cause: a race at launch between the console host's "Administrator: " prefix, which an elevated PowerShell adds on GitHub's runner, and the terminal's title sequence. The first focus is read while the window still has the prefixed title.
+- Fix: none yet; the scenario's opening has to wait for the title its shell sets.
 
 ## A new application's window not shown in time
 
