@@ -88,6 +88,8 @@ changed crate's own guide leaves those claims stale.
   server (D8).
 - [verbatim-inspect](verbatim-inspect.md) — the CLI client for a running
   Verbatim.
+- [verbatim-event-record](verbatim-event-record.md) — records what an
+  application raises as JSON Lines, and prints a recording as sentences.
 - [verbatim-agent](verbatim-agent.md) — the in-guest test agent and
   control tunnel.
 - [verbatim-e2e](verbatim-e2e.md) — the end-to-end scenario registry.

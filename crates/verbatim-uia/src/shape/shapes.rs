@@ -22,7 +22,7 @@ use windows::Win32::UI::Accessibility::{
     UIA_LevelPropertyId, UIA_LocalizedControlTypePropertyId, UIA_NamePropertyId,
     UIA_NativeWindowHandlePropertyId, UIA_PATTERN_ID, UIA_PROPERTY_ID, UIA_PositionInSetPropertyId,
     UIA_ProcessIdPropertyId, UIA_ProviderDescriptionPropertyId, UIA_RangeValueMaximumPropertyId,
-    UIA_RangeValueMinimumPropertyId, UIA_RangeValueValuePropertyId,
+    UIA_RangeValueMinimumPropertyId, UIA_RangeValueValuePropertyId, UIA_RuntimeIdPropertyId,
     UIA_Selection2FirstSelectedItemPropertyId, UIA_SelectionItemIsSelectedPropertyId,
     UIA_SelectionPatternId, UIA_SizeOfSetPropertyId, UIA_TextPatternId,
     UIA_ToggleToggleStatePropertyId, UIA_ValueIsReadOnlyPropertyId, UIA_ValueValuePropertyId,
@@ -77,6 +77,38 @@ impl RoleCore {
     #[must_use]
     pub fn window(&self) -> Option<WindowHandle> {
         (self.hwnd != 0).then(|| WindowHandle(u64::from_ne_bytes(self.hwnd.to_ne_bytes())))
+    }
+}
+
+uia_shape! {
+    /// An event's element as `verbatim-event-record` writes it: what its
+    /// line holds, so that a delivery makes no cross-process call, the
+    /// runtime id included (no `GetRuntimeId`).
+    pub struct RecordedEvent {
+        gates: none;
+        groups {}
+        properties {
+            /// The name.
+            name: UIA_NamePropertyId => string,
+            /// The control type id.
+            control_type: UIA_ControlTypePropertyId => i32,
+            /// The UIA class name.
+            class_name: UIA_ClassNamePropertyId => string,
+            /// The automation id.
+            automation_id: UIA_AutomationIdPropertyId => string,
+            /// The UIA framework, such as `XAML` or `WinForm`.
+            framework_id: UIA_FrameworkIdPropertyId => string,
+            /// The element's own window, 0 for an element that is not one.
+            hwnd: UIA_NativeWindowHandlePropertyId => window_handle,
+            /// The owning process.
+            process_id: UIA_ProcessIdPropertyId => process_id,
+            /// Whether it has the keyboard focus.
+            has_focus: UIA_HasKeyboardFocusPropertyId => bool,
+            /// The runtime id.
+            runtime_id: UIA_RuntimeIdPropertyId => runtime_id,
+        }
+        prefetch {}
+        covers {}
     }
 }
 

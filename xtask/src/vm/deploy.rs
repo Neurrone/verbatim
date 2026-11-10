@@ -53,6 +53,8 @@ pub(crate) struct BuiltArtifacts {
     synth_host: PathBuf,
     /// The scripted application a scenario reading scripted text launches.
     mockapp: PathBuf,
+    /// The event recorder, which the recorder's scenario launches.
+    event_record: PathBuf,
     agent: PathBuf,
 }
 
@@ -82,6 +84,7 @@ pub(crate) fn build(repo_root: &Path) -> VmResult<BuiltArtifacts> {
         listener: require_artifact(&target_dir, "verbatim-listener.exe")?,
         synth_host: require_artifact(&target_dir, "verbatim-synth-host.exe")?,
         mockapp: require_artifact(&target_dir, "mockapp.exe")?,
+        event_record: require_artifact(&target_dir, "verbatim-event-record.exe")?,
         agent: require_artifact(&target_dir, "verbatim-agent.exe")?,
     })
 }
@@ -105,6 +108,10 @@ pub(crate) fn build(repo_root: &Path) -> VmResult<BuiltArtifacts> {
 ///
 /// Returns an error if staging `settings.toml`, hashing (local or
 /// guest-side), or any copy or in-guest step fails.
+#[expect(
+    clippy::too_many_lines,
+    reason = "the one list of what a deploy copies"
+)]
 pub(crate) fn stage_and_copy(
     host: &dyn Host,
     repo_root: &Path,
@@ -150,6 +157,13 @@ pub(crate) fn stage_and_copy(
             label: "mockapp.exe".to_owned(),
             local_path: built.mockapp,
             remote_path: format!(r"{VERBATIM_DIR}\mockapp.exe"),
+            is_executable: true,
+            after_copy: None,
+        },
+        Artifact {
+            label: "verbatim-event-record.exe".to_owned(),
+            local_path: built.event_record,
+            remote_path: format!(r"{VERBATIM_DIR}\verbatim-event-record.exe"),
             is_executable: true,
             after_copy: None,
         },
@@ -518,6 +532,8 @@ fn build_binaries(repo_root: &Path) -> VmResult<()> {
             "verbatim-synth-host",
             "-p",
             "mockapp",
+            "-p",
+            "verbatim-event-record",
         ])
         .current_dir(repo_root);
     let status = command

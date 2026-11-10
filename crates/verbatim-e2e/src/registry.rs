@@ -172,7 +172,7 @@ use crate::scenario::{
 use crate::scenarios::{
     alt_tab_switcher, background_progress_bar, caret_keys, controlled_list_selections,
     crash_recovery, demo_notepad_editing, demo_review_cursor, demo_say_all,
-    demo_settings_dialog_keys, demo_terminal_session, document_keys, editing,
+    demo_settings_dialog_keys, demo_terminal_session, document_keys, editing, event_recorder,
     explorer_folder_window, foreground_progress_bar, lock_key_announcements, measure,
     menu_and_settings_dialog, msaa_flood_then_focus, notepad_say_all, notepad_spelling_errors,
     object_navigation_in_settings, object_navigation_over_uia, owned_dialog_across_processes,
@@ -1557,6 +1557,20 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         setup: terminal_windows::setup_tabs,
         body: terminal_windows::body_tabs,
         teardown: terminal_windows::teardown,
+    },
+    ScenarioDef {
+        name: "event_recorder_records_mockapp",
+        group: Group::Shell,
+        settings: None,
+        local_only: false,
+        quick_retirement: false,
+        document: None,
+        comparable: Comparable::No(
+            "the recorder's file is what is under test, which NVDA does not write",
+        ),
+        setup: event_recorder::setup,
+        body: event_recorder::body,
+        teardown: event_recorder::teardown,
     },
     ScenarioDef {
         name: "object_navigation_over_uia",

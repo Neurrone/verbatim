@@ -66,6 +66,7 @@
   - [mockapp](reference/crates/mockapp.md)
   - [verbatim-control](reference/crates/verbatim-control.md)
   - [verbatim-inspect](reference/crates/verbatim-inspect.md)
+  - [verbatim-event-record](reference/crates/verbatim-event-record.md)
   - [verbatim-agent](reference/crates/verbatim-agent.md)
   - [verbatim-e2e](reference/crates/verbatim-e2e.md)
   - [verbatim-gui](reference/crates/verbatim-gui.md)

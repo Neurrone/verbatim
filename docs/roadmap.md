@@ -86,24 +86,17 @@ is running (Dickson, 2026-11-10), and that a scenario's steps can
 drive, so that a design cites what a real application raises beside
 NVDA's capture.
 
-- It holds no desktop-wide focus handler, since a second process with
-  one receives proxied focus events late and could slow Verbatim's
-  ([UIA defects](../books/dev/src/reference/uia-bugs.md), "Desktop-wide
-  focus handlers in a second process deliver late"). It takes focus
-  from MSAA events and from a registration scoped to the target's
-  windows, with a process-scoped WinEvent hook and UI Automation
-  handlers on the target's top-level windows.
-- It is given a window or a process and records until a key or a time
-  limit, or runs a steps file through the end-to-end agent.
-- It writes one line per event in arrival order: the time, the kind,
-  the runtime id, the window, the name, control type, class,
-  automation id and framework, a property change's property and
-  value, and whether the element was the focus; a line when its own
-  delivery falls behind; and it can print a file as sentences.
-- It asks nothing before writing (Dickson, 2026-11-10). Its name, its
-  command line and its file format are a public contract and go to
-  Dickson before it is built. It is a new crate classed in
-  `xtask/src/tiers.rs`, and M8.6's installer carries it.
+- Built: `crates/verbatim-event-record`, a tool crate, with a guide
+  ([verbatim-event-record](../books/dev/src/reference/crates/verbatim-event-record.md)).
+  It takes a window or a process, records until a key or a time limit
+  or runs a steps file through the end-to-end agent, and writes one
+  line per event in arrival order, with a `behind` line when its
+  delivery falls behind and a `registered` line for each window's
+  registration, and can print a file as sentences. It holds a
+  desktop-wide focus handler (Dickson, 2026-11-10), since without it
+  a recorder is useless: most recordings are made without Verbatim
+  running, and the second-process lateness applies only beside it.
+  M8.6's installer carries it.
 - With it, `CLAUDE.md` and the testing standard gain two rules that
   wait for it: a design cites the recorder's file with NVDA's capture,
   and a fixture is checked against a recording of the application it

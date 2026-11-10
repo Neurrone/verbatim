@@ -1996,6 +1996,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "verbatim-event-record"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "serde_json",
+ "verbatim-agent",
+ "verbatim-control",
+ "verbatim-ia2",
+ "verbatim-process",
+ "verbatim-uia",
+ "verbatim-win32",
+ "windows",
+ "workspace-hack",
+]
+
+[[package]]
 name = "verbatim-ext"
 version = "0.1.0"
 dependencies = [

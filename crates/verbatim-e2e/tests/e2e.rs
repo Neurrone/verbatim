@@ -57,6 +57,7 @@ const LIVE: &[&str] = scenario_tests! {
     speak_time_and_date
     toast
     foreground_progress_bar
+    event_recorder_records_mockapp
     background_progress_bar
     background_progress_bar_off
     msaa_flood_then_focus

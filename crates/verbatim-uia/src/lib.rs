@@ -91,16 +91,16 @@ pub use shape::{
     Absent, Agile, Ancestor, AncestorGates, Cached, Cell, Covers, Description, DialogText,
     Direction, ElementValue, Fill, FocusInput, GridCounts, HelpTextRefresh, Kept,
     LEFT_OUT_WHEN_UNSUPPORTED, ListenerEvent, ListenerProgress, ListenerSelection, Live, Node,
-    NodeGates, Place, Position, PropertyEvent, Request, RoleCore, SelectedItem, SelectionContainer,
-    Shape, ShellButton, Shortcut, States, SuggestionsRefresh, TextAreaPattern, TextEvent, Ungated,
-    ValueSet, WindowLookup,
+    NodeGates, Place, Position, PropertyEvent, RecordedEvent, Request, RoleCore, SelectedItem,
+    SelectionContainer, Shape, ShellButton, Shortcut, States, SuggestionsRefresh, TextAreaPattern,
+    TextEvent, Ungated, ValueSet, WindowLookup,
 };
 #[cfg(feature = "faults")]
 pub use subscribe::kept_for_tests;
 pub use subscribe::{
     ActiveTextPositionCallback, ElementCallback, EventCallback, FOCUS_PROPERTIES, Group,
-    NotificationCallback, Part, PropertyCallback, Registration, Scope, Subscription,
-    registering_thread_runs,
+    NotificationCallback, Part, PropertyCallback, PropertyValueCallback, Registration, Scope,
+    StructureCallback, Subscription, registering_thread_runs,
 };
 pub use verbatim_model::UIA_TRANSACTION_TIMEOUT;
 pub use verbatim_win32::provider::{

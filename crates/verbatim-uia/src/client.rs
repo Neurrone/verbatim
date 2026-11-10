@@ -16,8 +16,9 @@ use windows::Win32::UI::Accessibility::{
     IUIAutomation, IUIAutomation2, IUIAutomation6, IUIAutomationCacheRequest,
     IUIAutomationCondition, IUIAutomationElement, IUIAutomationInvokePattern,
     IUIAutomationSelectionItemPattern, IUIAutomationTogglePattern, IUIAutomationTreeWalker,
-    TreeScope, TreeScope_Children, TreeScope_Subtree, UIA_InvokePatternId, UIA_PROPERTY_ID,
-    UIA_RuntimeIdPropertyId, UIA_SelectionItemPatternId, UIA_TogglePatternId,
+    TreeScope, TreeScope_Children, TreeScope_Subtree, UIA_InvokePatternId,
+    UIA_NativeWindowHandlePropertyId, UIA_PROPERTY_ID, UIA_RuntimeIdPropertyId,
+    UIA_SelectionItemPatternId, UIA_TogglePatternId,
 };
 
 use windows::core::Interface;
@@ -413,6 +414,62 @@ impl Uia {
             self.any_element_from_handle(hwnd, cache)?,
             gates,
         ))
+    }
+
+    /// The element for the top-level window `hwnd`, its cache filled by
+    /// `request`, found by descending its owner chain from the desktop's
+    /// root in the raw view, since the raw view puts an owned window under
+    /// its visible owner ([`crate::raw_view_parent_window`]). No proxy
+    /// rule, and no connection by handle: a new connection by handle while
+    /// another process's remote operation waits can answer UIA's window
+    /// proxy, and a walk down from the root is not affected. `Ok(None)`
+    /// when the root or an owner on the way has no such child.
+    /// Cross-process.
+    ///
+    /// # Errors
+    ///
+    /// Returns the COM error if the request cannot be copied or a search
+    /// fails.
+    pub fn window_element_from_root<S: crate::Shape>(
+        &self,
+        hwnd: isize,
+        request: &crate::Request<S>,
+    ) -> windows::core::Result<Option<crate::Cached<S>>> {
+        let (cache, gates) = request.parts();
+        // SAFETY: `cache` is a live cache request; the copy is this call's.
+        let raw_scoped = unsafe { cache.Clone() }?;
+        // SAFETY: `self.client` is a live IUIAutomation; the call takes no
+        // arguments.
+        let raw_view = unsafe { self.client.RawViewCondition() }?;
+        // SAFETY: `raw_scoped` is a live cache request and `raw_view` a
+        // live condition from the same client: the search is in the raw
+        // view, as the owner chain is.
+        unsafe { raw_scoped.SetTreeFilter(&raw_view) }?;
+        let mut chain = vec![hwnd];
+        while let Some(owner) = chain
+            .last()
+            .copied()
+            .and_then(crate::raw_view_parent_window)
+        {
+            chain.push(owner);
+        }
+        let mut found: Option<IUIAutomationElement> = None;
+        for window in chain.into_iter().rev() {
+            let handle = i32::try_from(window).map_err(|_| {
+                windows::core::Error::new(E_INVALIDARG, "a window handle wider than 32 bits")
+            })?;
+            let condition =
+                self.property_condition(UIA_NativeWindowHandlePropertyId, &VARIANT::from(handle))?;
+            let parent = match found.take() {
+                Some(parent) => parent,
+                None => self.root_element()?,
+            };
+            match parent.find_first_build_cache(TreeScope_Children, &condition, &raw_scoped)? {
+                Some(element) => found = Some(element),
+                None => return Ok(None),
+            }
+        }
+        Ok(found.map(|element| crate::Cached::filled(element, gates)))
     }
 
     /// The element for a top-level window handle, with no cache: for a

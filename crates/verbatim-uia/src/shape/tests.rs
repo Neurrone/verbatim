@@ -13,8 +13,9 @@ use windows::core::IUnknown;
 use super::{
     Absent, Ancestor, CachedReads, Cell, Description, DialogText, FocusInput, HelpTextRefresh,
     Kept, ListenerEvent, ListenerProgress, ListenerSelection, Node, Place, Position, PropertyEvent,
-    ProviderOrigin, Reader, RoleCore, SelectionContainer, Shape, ShellButton, Shortcut, States,
-    SuggestionsRefresh, TextAreaPattern, TextEvent, ValueSet, WindowLookup, request_properties,
+    ProviderOrigin, Reader, RecordedEvent, RoleCore, SelectionContainer, Shape, ShellButton,
+    Shortcut, States, SuggestionsRefresh, TextAreaPattern, TextEvent, ValueSet, WindowLookup,
+    request_properties,
 };
 
 /// A cache that answers every read, and records what was read.
@@ -128,6 +129,7 @@ fn every_shape_reads_exactly_what_its_request_holds_for_every_combination_of_gat
         WindowLookup,
         ShellButton,
         TextAreaPattern,
+        RecordedEvent,
         ProviderOrigin,
     );
     // Seven gates each: the description, shortcut, position, place, cell

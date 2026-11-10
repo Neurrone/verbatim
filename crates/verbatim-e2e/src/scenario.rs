@@ -3674,6 +3674,8 @@ fn build_default_source_binaries() -> io::Result<()> {
                     "verbatim-synth-host",
                     "-p",
                     "mockapp",
+                    "-p",
+                    "verbatim-event-record",
                 ])
                 .current_dir(workspace_root())
                 .status()
@@ -3683,7 +3685,7 @@ fn build_default_source_binaries() -> io::Result<()> {
             } else {
                 Err(format!(
                     "cargo build -p verbatim-app -p verbatim-outpost -p verbatim-listener \
-                     -p verbatim-synth-host -p mockapp failed ({status}); set \
+                     -p verbatim-synth-host -p mockapp -p verbatim-event-record failed ({status}); set \
                      {VERBATIM_EXE_ENV} to stage an existing build instead"
                 ))
             }
@@ -3745,6 +3747,11 @@ const STAGED_BINARIES: [&str; 5] = [
     "mockapp.exe",
 ];
 
+/// Staged when present, so that `VERBATIM_E2E_VERBATIM_EXE` can name a
+/// folder built from a commit older than it: only the event recorder's
+/// scenario needs it, and fails when it is missing.
+const STAGED_WHEN_PRESENT: [&str; 1] = ["verbatim-event-record.exe"];
+
 /// The directory-parameterized core of [`stage_binaries`], split out so unit
 /// tests can exercise the hash-skip and missing-source-binary behavior
 /// against temporary directories instead of the real workspace's
@@ -3762,6 +3769,13 @@ fn copy_into_stage(source_dir: &Path, stage_dir: &Path) -> io::Result<()> {
         }
         let destination = stage_dir.join(name);
         if !files_match(&source, &destination)? {
+            stage_copy(&source, &destination)?;
+        }
+    }
+    for name in STAGED_WHEN_PRESENT {
+        let source = source_dir.join(name);
+        let destination = stage_dir.join(name);
+        if source.is_file() && !files_match(&source, &destination)? {
             stage_copy(&source, &destination)?;
         }
     }

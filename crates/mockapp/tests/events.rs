@@ -29,13 +29,13 @@ use verbatim_ia2::{APP_SUBSCRIPTIONS, WinEvent, WinEventHook, WinEventKind};
 use verbatim_model::{NotificationKind, NotificationProcessing, State, StateSet};
 use verbatim_uia::{
     Cached, ElementExt as _, FOCUS_PROPERTIES, ListenerEvent, ListenerSelection, Part,
-    PropertyEvent, Registration, Scope, Subscription, Uia,
+    PropertyEvent, RecordedEvent, Registration, Scope, Subscription, Uia,
     map::{ignores_notifications, notification_kind_from_uia, notification_processing_from_uia},
 };
 use windows::Win32::Foundation::{HWND, WAIT_TIMEOUT};
 use windows::Win32::UI::Accessibility::{
-    UIA_AutomationFocusChangedEventId, UIA_HasKeyboardFocusPropertyId, UIA_NamePropertyId,
-    UIA_SelectionItem_ElementSelectedEventId, UIA_ValueValuePropertyId,
+    UIA_AutomationFocusChangedEventId, UIA_ButtonControlTypeId, UIA_HasKeyboardFocusPropertyId,
+    UIA_NamePropertyId, UIA_SelectionItem_ElementSelectedEventId, UIA_ValueValuePropertyId,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     DispatchMessageW, MSG, MWMO_INPUTAVAILABLE, MsgWaitForMultipleObjectsEx, PM_REMOVE,
@@ -1065,8 +1065,64 @@ fn a_native_uia_windows_value_change_is_remembered_as_no_bar() {
     );
     app.quit();
 }
+/// A `RecordedEvent` delivered with a property change reads its whole
+/// line, the runtime id included, from its cache: mockapp's providers answer
+/// no call between the delivery and the end of the read. mockapp raises the
+/// event with an empty new value, which the callback receives as such.
+fn a_recorded_event_is_read_with_no_call_after_its_delivery() {
+    let title = common::unique_title("mockapp-events-recorded");
+    let mut app = common::spawn("small.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let window = hwnd.0 as isize;
+    let (sender, reads) = mpsc::channel();
+    let _registration =
+        Registration::with_parts(
+            vec![Part::shaped::<RecordedEvent>(Subscription::PropertyValues {
+            properties: vec![UIA_NamePropertyId],
+            callback: Arc::new(
+                move |element: &Cached<RecordedEvent>,
+                      property,
+                      value: &windows::Win32::System::Variant::VARIANT| {
+                    let hwnd = HWND(window as _);
+                    common::reset_hits(hwnd);
+                    let read = element.read();
+                    let hits = common::read_hits(hwnd);
+                    let _ = sender.send((
+                        read.name,
+                        read.control_type,
+                        read.runtime_id.is_some_and(|id| !id.is_empty()),
+                        verbatim_uia::variant_string(value),
+                        property,
+                        hits,
+                    ));
+                },
+            ),
+        })],
+            common::window_subtree(window),
+        )
+        .expect("Registration::with_parts");
+
+    app.send("set-name btn1 Renamed");
+    expect_events(
+        &reads,
+        &[(
+            Some("Renamed".to_owned()),
+            Some(UIA_ButtonControlTypeId.0),
+            true,
+            None,
+            UIA_NamePropertyId.0,
+            Vec::new(),
+        )],
+    );
+    app.quit();
+}
+
 fn main() {
     harness::run_isolated(&[
+        (
+            "a_recorded_event_is_read_with_no_call_after_its_delivery",
+            a_recorded_event_is_read_with_no_call_after_its_delivery,
+        ),
         (
             "the_listeners_callback_keeps_a_progress_bar_and_drops_a_slider",
             the_listeners_callback_keeps_a_progress_bar_and_drops_a_slider,

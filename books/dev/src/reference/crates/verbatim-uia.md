@@ -59,6 +59,12 @@ shapes, below), or a `Live` when nothing of the element is read. Each
 call waits up to `UIA_CONNECTION_TIMEOUT` to connect and
 `UIA_TRANSACTION_TIMEOUT` for its answer, and every one is safe to call.
 
+- `window_element_from_root(hwnd, request)`: a top-level window's
+  element, found by descending its owner chain from the desktop's root
+  in the raw view, since the raw view puts an owned window under its
+  visible owner, or `None` when not found: for a caller that must not
+  make a new connection by handle (`verbatim-event-record`). No proxy
+  rule.
 - `window_element(hwnd, request)`: a window's element
   (`ElementFromHandleBuildCache`), for an outpost's own application's
   window with a provider. It is refused, by the proxy rule, when only
@@ -338,7 +344,11 @@ subscriptions".
   one registration type for every event. A
   `Subscription` is `Properties` (property ids, such as
   `FOCUS_PROPERTIES`: name, value, range value, toggle state, enabled,
-  expand/collapse, help text, and `ControllerFor`), `Event` (an
+  expand/collapse, help text, and `ControllerFor`), `PropertyValues`
+  (the same, the callback also receiving the event's new value, for
+  [verbatim-event-record](verbatim-event-record.md)), `Structure` (the
+  kind of a change to the tree under the scope, also for the recorder),
+  `Event` (an
   automation event id), `Events` (several event ids through one handler
   whose callback receives the id), `Notifications` (the raising element
   with kind, processing, display string, and activity id),
@@ -589,6 +599,10 @@ patterns its request holds.
   kept element reads, covered by every shape whose elements are kept.
   `FocusInput`: control type and native window handle, what the remote
   focus query reads of its input.
+- `RecordedEvent`: what `verbatim-event-record` writes of an event's
+  element: name, control type, class, automation id, framework, native
+  window, process, keyboard focus and runtime id, the last read from the
+  cache by a read kind of its own, so that a delivery makes no call.
 - The event shapes: `ListenerEvent` (NVDA's thirteen base properties,
   `IsDialog` and `IsTogglePatternAvailable`, with the Text pattern;
   `parts(runtime_id)`; `lacked_keyboard_focus()`, true unless its cached

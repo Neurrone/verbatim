@@ -116,6 +116,7 @@ pub const TIERS: &[(Tier, &[&str])] = &[
             "mockapp",
             "verbatim-agent",
             "verbatim-e2e",
+            "verbatim-event-record",
             "verbatim-inspect",
             "verbatim-replay",
             "verbatim-term-sim",

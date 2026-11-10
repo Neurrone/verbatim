@@ -79,17 +79,18 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use windows::Win32::Foundation::E_FAIL;
+use windows::Win32::System::Variant::VARIANT;
 
 use windows::Win32::UI::Accessibility::{
     IUIAutomation6, IUIAutomationActiveTextPositionChangedEventHandler, IUIAutomationCacheRequest,
     IUIAutomationElement, IUIAutomationEventHandler, IUIAutomationEventHandlerGroup,
     IUIAutomationFocusChangedEventHandler, IUIAutomationNotificationEventHandler,
-    IUIAutomationPropertyChangedEventHandler, IUIAutomationTextRange, NotificationKind,
-    NotificationProcessing, TreeScope, TreeScope_Element, TreeScope_Subtree,
-    UIA_ControllerForPropertyId, UIA_EVENT_ID, UIA_ExpandCollapseExpandCollapseStatePropertyId,
-    UIA_HelpTextPropertyId, UIA_IsEnabledPropertyId, UIA_NamePropertyId, UIA_PATTERN_ID,
-    UIA_PROPERTY_ID, UIA_RangeValueValuePropertyId, UIA_ToggleToggleStatePropertyId,
-    UIA_ValueValuePropertyId,
+    IUIAutomationPropertyChangedEventHandler, IUIAutomationStructureChangedEventHandler,
+    IUIAutomationTextRange, NotificationKind, NotificationProcessing, StructureChangeType,
+    TreeScope, TreeScope_Element, TreeScope_Subtree, UIA_ControllerForPropertyId, UIA_EVENT_ID,
+    UIA_ExpandCollapseExpandCollapseStatePropertyId, UIA_HelpTextPropertyId,
+    UIA_IsEnabledPropertyId, UIA_NamePropertyId, UIA_PATTERN_ID, UIA_PROPERTY_ID,
+    UIA_RangeValueValuePropertyId, UIA_ToggleToggleStatePropertyId, UIA_ValueValuePropertyId,
 };
 use windows::core::AgileReference;
 use windows_core::Interface;
@@ -101,6 +102,17 @@ use crate::shape::{Cached, Ungated, delivered};
 /// Invoked on a UIA callback thread for a property change, with the cached
 /// element and the changed property id.
 pub type PropertyCallback<E = IUIAutomationElement> = Arc<dyn Fn(&E, i32) + Send + Sync>;
+
+/// Invoked on a UIA callback thread for a property change, with the cached
+/// element, the changed property id, and the new value UIA delivers with
+/// the event, which [`PropertyCallback`] leaves out.
+pub type PropertyValueCallback<E = IUIAutomationElement> =
+    Arc<dyn Fn(&E, i32, &VARIANT) + Send + Sync>;
+
+/// Invoked on a UIA callback thread for a change to an element's structure,
+/// with the cached element and the kind of change.
+pub type StructureCallback<E = IUIAutomationElement> =
+    Arc<dyn Fn(&E, StructureChangeType) + Send + Sync>;
 
 /// Invoked on a UIA callback thread for an automation event, with the cached
 /// element that raised it.
@@ -225,6 +237,20 @@ pub enum Subscription<E = IUIAutomationElement> {
         /// Called for each change.
         callback: PropertyCallback<E>,
     },
+    /// Changes to these properties, with the new value of each, for a
+    /// caller that records it (`verbatim-event-record`).
+    PropertyValues {
+        /// The properties to watch.
+        properties: Vec<UIA_PROPERTY_ID>,
+        /// Called for each change.
+        callback: PropertyValueCallback<E>,
+    },
+    /// Changes to the structure of the tree under the scope, for a caller
+    /// that records it (`verbatim-event-record`).
+    Structure {
+        /// Called for each change.
+        callback: StructureCallback<E>,
+    },
     /// An automation event, such as `SelectionItem_ElementSelected` or
     /// `MenuOpened`.
     Event {
@@ -280,6 +306,20 @@ impl<S: Ungated> Subscription<Cached<S>> {
                 properties,
                 callback: Arc::new(move |element, property| {
                     callback(&delivered::<S>(element), property);
+                }),
+            },
+            Self::PropertyValues {
+                properties,
+                callback,
+            } => Subscription::PropertyValues {
+                properties,
+                callback: Arc::new(move |element, property, value| {
+                    callback(&delivered::<S>(element), property, value);
+                }),
+            },
+            Self::Structure { callback } => Subscription::Structure {
+                callback: Arc::new(move |element, change| {
+                    callback(&delivered::<S>(element), change);
                 }),
             },
             Self::Event { event, callback } => Subscription::Event {
@@ -798,6 +838,7 @@ enum Handler {
         IUIAutomationPropertyChangedEventHandler,
         Vec<UIA_PROPERTY_ID>,
     ),
+    Structure(IUIAutomationStructureChangedEventHandler),
     Event(IUIAutomationEventHandler, UIA_EVENT_ID),
     Events(IUIAutomationEventHandler, Vec<UIA_EVENT_ID>),
     Notifications(IUIAutomationNotificationEventHandler),
@@ -822,6 +863,26 @@ impl Handler {
                 }
                 .into(),
                 properties,
+            ),
+            Subscription::PropertyValues {
+                properties,
+                callback,
+            } => Self::Properties(
+                handlers::PropertyValueHandler {
+                    callback: Arc::new(move |element, property, value| {
+                        counted(&failed_reads, || callback(element, property, value));
+                    }),
+                }
+                .into(),
+                properties,
+            ),
+            Subscription::Structure { callback } => Self::Structure(
+                handlers::StructureHandler {
+                    callback: Arc::new(move |element, change| {
+                        counted(&failed_reads, || callback(element, change));
+                    }),
+                }
+                .into(),
             ),
             Subscription::Event { event, callback } => Self::Event(
                 handlers::EventHandler {
@@ -883,6 +944,10 @@ impl Handler {
             // this thread; the property slice outlives the call.
             Self::Properties(handler, properties) => unsafe {
                 group.AddPropertyChangedEventHandler(tree_scope, cache, handler, properties)
+            },
+            // SAFETY: as above.
+            Self::Structure(handler) => unsafe {
+                group.AddStructureChangedEventHandler(tree_scope, cache, handler)
             },
             // SAFETY: as above.
             Self::Event(handler, event) => unsafe {
@@ -1569,17 +1634,20 @@ fn describe(scope: &Scope) -> String {
 mod handlers {
     #![allow(clippy::inline_always, clippy::ref_as_ptr)]
 
+    use windows::Win32::System::Com::SAFEARRAY;
     use windows::Win32::System::Variant::VARIANT;
     use windows::Win32::UI::Accessibility::{
         IUIAutomationActiveTextPositionChangedEventHandler_Impl, IUIAutomationElement,
         IUIAutomationEventHandler_Impl, IUIAutomationNotificationEventHandler_Impl,
-        IUIAutomationPropertyChangedEventHandler_Impl, IUIAutomationTextRange, NotificationKind,
-        NotificationProcessing, UIA_EVENT_ID, UIA_PROPERTY_ID,
+        IUIAutomationPropertyChangedEventHandler_Impl,
+        IUIAutomationStructureChangedEventHandler_Impl, IUIAutomationTextRange, NotificationKind,
+        NotificationProcessing, StructureChangeType, UIA_EVENT_ID, UIA_PROPERTY_ID,
     };
     use windows_core::implement;
 
     use super::{
         ActiveTextPositionCallback, EventCallback, NotificationCallback, PropertyCallback,
+        PropertyValueCallback, StructureCallback,
     };
 
     /// The active text position handler.
@@ -1622,6 +1690,50 @@ mod handlers {
             if let Some(element) = sender.as_ref() {
                 crate::com::log_arrival("property", propertyid.0, element);
                 crate::com::guarded("property", || (self.callback)(element, propertyid.0));
+            }
+            Ok(())
+        }
+    }
+
+    /// The property-change handler that passes on the new value.
+    #[implement(windows::Win32::UI::Accessibility::IUIAutomationPropertyChangedEventHandler)]
+    pub struct PropertyValueHandler {
+        pub callback: PropertyValueCallback,
+    }
+
+    impl IUIAutomationPropertyChangedEventHandler_Impl for PropertyValueHandler_Impl {
+        fn HandlePropertyChangedEvent(
+            &self,
+            sender: windows_core::Ref<IUIAutomationElement>,
+            propertyid: UIA_PROPERTY_ID,
+            newvalue: &VARIANT,
+        ) -> windows_core::Result<()> {
+            if let Some(element) = sender.as_ref() {
+                crate::com::log_arrival("property", propertyid.0, element);
+                crate::com::guarded("property", || {
+                    (self.callback)(element, propertyid.0, newvalue);
+                });
+            }
+            Ok(())
+        }
+    }
+
+    /// The structure-change handler.
+    #[implement(windows::Win32::UI::Accessibility::IUIAutomationStructureChangedEventHandler)]
+    pub struct StructureHandler {
+        pub callback: StructureCallback,
+    }
+
+    impl IUIAutomationStructureChangedEventHandler_Impl for StructureHandler_Impl {
+        fn HandleStructureChangedEvent(
+            &self,
+            sender: windows_core::Ref<IUIAutomationElement>,
+            changetype: StructureChangeType,
+            _runtimeid: *const SAFEARRAY,
+        ) -> windows_core::Result<()> {
+            if let Some(element) = sender.as_ref() {
+                crate::com::log_arrival("structure", changetype.0, element);
+                crate::com::guarded("structure", || (self.callback)(element, changetype));
             }
             Ok(())
         }

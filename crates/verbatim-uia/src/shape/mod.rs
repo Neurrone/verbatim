@@ -41,7 +41,7 @@ use windows::core::{AgileReference, IUnknown, Interface};
 
 use crate::com::{
     is_not_supported, variant_bool, variant_element, variant_element_count, variant_f64,
-    variant_i32, variant_optional_bool, variant_string,
+    variant_i32, variant_i32_array, variant_optional_bool, variant_string,
 };
 use crate::element::{ElementExt, WalkerExt};
 
@@ -52,9 +52,9 @@ mod tests;
 pub use shapes::{
     Ancestor, AncestorGates, Cell, Description, DialogText, FocusInput, GridCounts,
     HelpTextRefresh, Kept, ListenerEvent, ListenerProgress, ListenerSelection, Node, NodeGates,
-    Place, Position, ProcessOrigin, PropertyEvent, ProviderOrigin, RoleCore, SelectedItem,
-    SelectionContainer, ShellButton, Shortcut, States, SuggestionsRefresh, TextAreaPattern,
-    TextEvent, ValueSet, WindowLookup,
+    Place, Position, ProcessOrigin, PropertyEvent, ProviderOrigin, RecordedEvent, RoleCore,
+    SelectedItem, SelectionContainer, ShellButton, Shortcut, States, SuggestionsRefresh,
+    TextAreaPattern, TextEvent, ValueSet, WindowLookup,
 };
 
 mod sealed {
@@ -247,6 +247,12 @@ impl Reader<'_> {
     /// `None` when not supported, or UIA supplies only its default.
     pub(crate) fn optional_bool(&self, property: UIA_PROPERTY_ID) -> Option<bool> {
         variant_optional_bool(&self.value_ignoring_default(property)?)
+    }
+
+    /// The runtime id, read from the cache as an element's other cached
+    /// properties are, `None` when not cached.
+    pub(crate) fn runtime_id(&self, property: UIA_PROPERTY_ID) -> Option<Vec<i32>> {
+        variant_i32_array(&self.value(property)?)
     }
 
     /// `None` when not cached or not an integer.
@@ -979,6 +985,7 @@ macro_rules! kind_type {
     (window_handle) => { isize };
     (process_id) => { Option<u32> };
     (one_based) => { Option<u32> };
+    (runtime_id) => { Option<Vec<i32>> };
     (rect) => { Option<verbatim_model::Rect> };
     (element) => { Option<$crate::shape::ElementValue> };
     (names_any) => { bool };
