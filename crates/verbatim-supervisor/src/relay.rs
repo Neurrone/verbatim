@@ -592,10 +592,7 @@ mod tests {
             "the stuck write's completion"
         );
         assert_eq!(
-            stuck.push(Outgoing::Ping(CoreToOutpost::Ping {
-                seq: 1,
-                sent_at_us: 0,
-            })),
+            stuck.push(Outgoing::Ping(CoreToOutpost::Ping { sent_at_us: 0 })),
             Err(QueueError::Closed)
         );
         assert!(!relay.is_idle(), "the other child's writer is still open");
@@ -615,19 +612,18 @@ mod tests {
             .add_reader(outpost, Source::Listener, core)
             .expect("added");
         let mut listener = File::from(listener);
-        for seq in [1, 2] {
+        for parked_count in [1, 2] {
             write_message(
                 &mut listener,
                 &ListenerToCore::Pong {
-                    seq,
-                    parked_count: 0,
+                    parked_count,
                     written_at_us: 0,
                 },
             )
             .expect("written");
         }
         drop(listener);
-        let mut seqs = Vec::new();
+        let mut counts = Vec::new();
         let mut ended = None;
         let mut completions = Completions::with_capacity(4);
         while ended.is_none() {
@@ -643,8 +639,8 @@ mod tests {
                 match read.pipe.take(&completion, &port, |body| {
                     let message: ListenerToCore =
                         verbatim_process::message::decode_message(body).expect("a message");
-                    if let ListenerToCore::Pong { seq, .. } = message {
-                        seqs.push(seq);
+                    if let ListenerToCore::Pong { parked_count, .. } = message {
+                        counts.push(parked_count);
                     }
                     Ok(())
                 }) {
@@ -653,7 +649,7 @@ mod tests {
                 }
             }
         }
-        assert_eq!(seqs, [1, 2]);
+        assert_eq!(counts, [1, 2]);
         assert!(matches!(ended, Some(Ok(()))), "{ended:?}");
         assert!(relay.is_idle());
     }

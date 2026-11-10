@@ -736,8 +736,6 @@ pub enum CoreToOutpost {
     },
     /// Liveness probe; answered by [`OutpostToCore::Pong`].
     Ping {
-        /// Echoed in the matching pong.
-        seq: u64,
         /// When verbatim.exe began writing this command, in microseconds
         /// since the Unix epoch ([`CoreToOutpost::stamp_sent`]).
         #[serde(default)]
@@ -905,8 +903,6 @@ pub enum CoreToListener {
     },
     /// Liveness probe; answered by [`ListenerToCore::Pong`].
     Ping {
-        /// Echoed in the matching pong.
-        seq: u64,
         /// When verbatim.exe began writing this command to the listener's
         /// pipe, in microseconds since the Unix epoch
         /// ([`CoreToListener::stamp_sent`]).
@@ -1262,8 +1258,6 @@ pub enum OutpostToCore {
     },
     /// Answer to [`CoreToOutpost::Ping`].
     Pong {
-        /// The probed sequence number.
-        seq: u64,
         /// How many of this outpost's workers have been abandoned and have
         /// not yet returned, but for those parked on a window the outpost
         /// judged hung ([`Self::Pong::parked_on_hung`]): the supervisor
@@ -1465,8 +1459,6 @@ pub enum ListenerToCore {
     },
     /// Answer to [`CoreToListener::Ping`].
     Pong {
-        /// The probed sequence number.
-        seq: u64,
         /// Always 0: the listener abandons no workers.
         parked_count: usize,
         /// When the writer began writing this pong to verbatim.exe's pipe,
@@ -1932,8 +1924,6 @@ pub enum Kind {
 pub enum Urgent {
     /// [`OutpostToCore::Pong`].
     Pong {
-        /// The probed sequence number.
-        seq: u64,
         /// How many of the outpost's workers are abandoned, but for those
         /// parked on a window it judged hung.
         parked_count: usize,
@@ -1960,11 +1950,9 @@ impl From<Urgent> for OutpostToCore {
     fn from(urgent: Urgent) -> Self {
         match urgent {
             Urgent::Pong {
-                seq,
                 parked_count,
                 parked_on_hung,
             } => OutpostToCore::Pong {
-                seq,
                 parked_count,
                 parked_on_hung,
                 written_at_us: 0,

@@ -103,8 +103,7 @@ fn stand_in(args: &[String]) -> ! {
             Err(error) => panic!("the command pipe failed: {error}"),
         };
         match command {
-            CoreToOutpost::Ping { seq, .. } => send(&OutpostToCore::Pong {
-                seq,
+            CoreToOutpost::Ping { .. } => send(&OutpostToCore::Pong {
                 parked_count: 0,
                 parked_on_hung: 0,
                 written_at_us: 0,
@@ -150,8 +149,7 @@ fn listener_stand_in(
             Err(error) => panic!("the command pipe failed: {error}"),
         };
         match command {
-            CoreToListener::Ping { seq, .. } => send(&ListenerToCore::Pong {
-                seq,
+            CoreToListener::Ping { .. } => send(&ListenerToCore::Pong {
                 parked_count: 0,
                 written_at_us: 0,
             }),

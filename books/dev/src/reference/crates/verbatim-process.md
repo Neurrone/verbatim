@@ -135,8 +135,7 @@ Public API:
   posters remain, or `Closed` at that end, so a caller with a deadline of
   its own never takes a wait that ran out for the queue's end.
   `Poster::progress()` gives the counts posted and taken (`Progress`,
-  with `waiting()`), which the supervisor's relay reads to watch the
-  reducer. Items still on the port when everything is dropped are
+  with `waiting()`). Items still on the port when everything is dropped are
   dropped with it. `send` carries the fault point `PortRefusesPost`,
   with the item as subject, which gives the item back as a refused
   packet does; it is compiled only into this crate's tests and under its

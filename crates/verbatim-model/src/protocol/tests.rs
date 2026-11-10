@@ -51,10 +51,7 @@ fn next_core_to_outpost(previous: Option<&CoreToOutpost>) -> Option<CoreToOutpos
         CoreToOutpost::Query { .. } => CoreToOutpost::Cancel {
             request_id: RequestId::shell(1),
         },
-        CoreToOutpost::Cancel { .. } => CoreToOutpost::Ping {
-            seq: 1,
-            sent_at_us: 0,
-        },
+        CoreToOutpost::Cancel { .. } => CoreToOutpost::Ping { sent_at_us: 0 },
         CoreToOutpost::Ping { .. } => CoreToOutpost::Fetches(crate::Fetches::default()),
         CoreToOutpost::Fetches(_) => CoreToOutpost::Front(FrontWindow::Left),
         CoreToOutpost::Front(_) => CoreToOutpost::NodesHeld {
@@ -99,10 +96,7 @@ fn next_core_to_listener(previous: Option<&CoreToListener>) -> Option<CoreToList
             sent_at_us: 0,
         },
         CoreToListener::HookRemoved { .. } => CoreToListener::ApplicationExited { pid: Pid(1) },
-        CoreToListener::ApplicationExited { .. } => CoreToListener::Ping {
-            seq: 1,
-            sent_at_us: 0,
-        },
+        CoreToListener::ApplicationExited { .. } => CoreToListener::Ping { sent_at_us: 0 },
         CoreToListener::Ping { .. } => CoreToListener::IdleQuery { round: 1 },
         CoreToListener::IdleQuery { .. } => CoreToListener::Shutdown,
         CoreToListener::Shutdown => CoreToListener::LiveReread {
@@ -175,7 +169,6 @@ fn next_listener_to_core(previous: Option<&ListenerToCore>) -> Option<ListenerTo
             integrity: None,
         },
         ListenerToCore::Foreground { .. } => ListenerToCore::Pong {
-            seq: 1,
             parked_count: 0,
             written_at_us: 0,
         },
@@ -543,7 +536,6 @@ fn a_win_event_is_raised_before_or_after_a_tick_across_the_clocks_wrap() {
 #[test]
 fn a_pongs_trip_back_runs_from_its_write_to_verbatim_exes_read() {
     let mut pong = OutpostToCore::Pong {
-        seq: 1,
         parked_count: 0,
         parked_on_hung: 0,
         written_at_us: 0,

@@ -328,8 +328,6 @@ pub enum Effect {
         /// Whether it is parked on a hung window: its program's hang mark,
         /// set by an [`Input::HangSeen`] of its request.
         on_hung: bool,
-        /// What the abandoned worker had in hand, for the log.
-        in_hand: InHand,
     },
     /// The push-time copy of the facts' marks, given after a transition
     /// that changed them, ahead of the transition's other effects so that
@@ -509,50 +507,6 @@ pub enum Input {
     Close,
 }
 
-/// What a program had in hand, which the log names when its worker is
-/// abandoned: the work, the entry's trace and the window it concerns.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct InHand {
-    /// What the program does: the kind of entry it handles, or its other
-    /// work.
-    pub work: &'static str,
-    /// The trace of the entry it handles, when it handles one.
-    pub trace: Option<TraceId>,
-    /// The window whose application it waits on, when it is known.
-    pub window: Option<isize>,
-}
-
-impl InHand {
-    /// What a program doing `work`, concerning `window`, has in hand.
-    fn of(work: &Work, window: Option<Window>) -> Self {
-        let (work, trace) = match work {
-            Work::Entry { entry, .. } => (
-                match entry.item {
-                    Item::Msaa { .. } => "an MSAA event",
-                    Item::Uia(_) => "a UIA event",
-                    Item::Fact(..) => "a fact such as a focus or a foreground change",
-                    Item::Query { .. } => "a query from Core",
-                    Item::NodesHeld { .. } => "the nodes Core holds",
-                    Item::NotedCaret { .. } => "a noted caret",
-                    Item::ReadTerminal { .. } => "a terminal's read after a key",
-                    Item::Barrier { .. } => "the idle barrier",
-                },
-                Some(entry.trace),
-            ),
-            Work::Owed(_) => ("the work the followed focus owes", None),
-            Work::Drop => ("the drop of released objects", None),
-            Work::NoteRead(_) => ("a read of the console poll", None),
-            Work::FindBar(_) => ("the foreground window's element", None),
-            Work::Finish { .. } => ("the finish of a cut caret read", None),
-        };
-        Self {
-            work,
-            trace,
-            window: window.map(Window::get),
-        }
-    }
-}
-
 /// What the reducer keeps of the program in flight, beside what the work
 /// in flight keeps of it (its request, times, walk and moved-on rule).
 #[derive(Clone, Debug)]
@@ -570,8 +524,6 @@ struct Current {
     /// the console poll, which may still read the terminal under the key's
     /// trace.
     deferred: bool,
-    /// What the program has in hand, for the log of its abandonment.
-    in_hand: InHand,
     /// Whether the user moving on from its window abandons it: not for a
     /// query that is not about the focus, a tree dump or a shell item
     /// query, which is bounded by its deadline alone, as NVDA's watchdog
@@ -1270,7 +1222,6 @@ impl Reducer {
             item: current,
             ..
         } = abandoned;
-        let in_hand = current.in_hand;
         self.facts.follow.bar_program_ended();
         if let Some(followed) = self.facts.follow.followed.as_mut()
             && followed
@@ -1288,7 +1239,6 @@ impl Reducer {
                 Reason::MovedOn => "the user moved on from a slow window",
             },
             on_hung: current.hang_mark,
-            in_hand,
         });
         if let Some((request_id, trace)) = current.running {
             self.send(reply(request_id, trace, QueryOutcome::Abandoned), effects);
@@ -1650,7 +1600,6 @@ impl Reducer {
             live_reread,
             group,
             deferred: false,
-            in_hand: InHand::of(&work, window),
             hang_mark: false,
             moved_on_abandons: !is_query_off_the_focus(&work),
         };

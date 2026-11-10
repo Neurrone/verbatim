@@ -2438,27 +2438,14 @@ fn not_responding(
 
 /// Posts the supervisor's messages to the reducer thread's port, in line
 /// with its keys and commands, so the reducer takes them all in the order
-/// they arrived (`docs/design/communication.md`, section 4.5); and lets the
-/// supervisor's relay watch the reducer through the port's counts, logging
-/// a stall it reports (section 6.8).
+/// they arrived (`docs/design/communication.md`, section 4.5).
 fn outpost_sink(command_tx: Commands) -> verbatim_supervisor::EventSink {
-    let progress = command_tx.clone();
     verbatim_supervisor::EventSink::posting(command_tx, ShellCommand::Outpost, |command| {
         let ShellCommand::Outpost(message) = command else {
             unreachable!("the sink is given back only the command it posted")
         };
         message
     })
-    .watched(
-        move || progress.progress(),
-        |stall| {
-            tracing::warn!(
-                stalled_for = ?stall.stalled_for,
-                waiting = stall.waiting,
-                "the reducer has taken none of its inputs for three ping intervals while some waited; no outpost is ended for it"
-            );
-        },
-    )
 }
 
 /// The reducer thread body: takes outpost messages and commands from other

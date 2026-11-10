@@ -797,13 +797,12 @@ mod tests {
         outbound.send(reply(7));
         outbound.send(text_changed(1));
         outbound.urgent(Urgent::Pong {
-            seq: 3,
             parked_count: 0,
             parked_on_hung: 0,
         });
         assert_eq!(summary(&read(&mut reader)), summary(&large()));
         assert!(
-            matches!(read(&mut reader), OutpostToCore::Pong { seq: 3, .. }),
+            matches!(read(&mut reader), OutpostToCore::Pong { .. }),
             "the pong goes ahead of what waited"
         );
         let rest: Vec<String> = (0..4).map(|_| summary(&read(&mut reader))).collect();
@@ -837,13 +836,12 @@ mod tests {
         outbound.send(OutpostToCore::IdleAnswer { round: 4 });
         outbound.send(text_changed(1));
         outbound.urgent(Urgent::Pong {
-            seq: 3,
             parked_count: 0,
             parked_on_hung: 0,
         });
         assert_eq!(summary(&read(&mut reader)), summary(&large()));
         assert!(
-            matches!(read(&mut reader), OutpostToCore::Pong { seq: 3, .. }),
+            matches!(read(&mut reader), OutpostToCore::Pong { .. }),
             "the pong goes ahead of what waited"
         );
         let rest: Vec<String> = (0..4).map(|_| summary(&read(&mut reader))).collect();

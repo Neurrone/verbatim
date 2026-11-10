@@ -228,7 +228,6 @@ The mechanism is in `books/dev/src/reference/crates/verbatim-app.md` (the reduce
 
 - The relay pings every child every 3 seconds; the child's I/O thread answers itself, as an urgent message that goes ahead of the backlog (behind only a write already in flight); the relay reads the pong from the child's pipe itself. Three missed intervals, 9 s, is a wedge.
 - The reducer is not on the way, so a stalled reducer can never make a healthy outpost look wedged, and no outpost is judged wedged while its pipe is unread, because the thread that reads it is the thread that judges.
-- A stalled reducer is a fault of its own: the relay reads the reducer's port's counts on its heartbeat and reports a stall once three heartbeats in a row find inputs waiting and none taken. Nothing is killed for it.
 - A changed list of an outpost's held nodes (`NodesHeld`) rides on Core's next write to that outpost, a request or the next ping, so it is at most one ping interval late and costs no write of its own (section 11, step 11).
 - Every child stays pinged every 3 seconds, idle or not (decision 16).
 
@@ -435,7 +434,7 @@ Each point was checked against NVDA and the suite, with what guards it:
 
 - Speech frames on the control plane: every utterance is broadcast as queued when it is queued, including those cut before playing, as the Control and Shift flood scenarios and the speech collector's `expect_queued`, `take_until` and `expect_nothing_more` require. Guarded by those scenarios.
 - The idle barrier covers frames in pipes and backlogs, events not yet published and caret watches (section 6.7). Guarded by mockapp's `idle_barrier.rs`, the supervisor's `idle_round.rs`, and every scenario, since each ends with the barrier.
-- Wedge verdicts: a stalled reducer makes no healthy outpost look wedged (section 6.8). Guarded by `crates/verbatim-supervisor/tests/arrival_order.rs` and the pong-while-worker-stuck test in mockapp's `shutdown.rs`.
+- Wedge verdicts: a stalled reducer makes no healthy outpost look wedged (section 6.8). Guarded by the pong-while-worker-stuck test in mockapp's `shutdown.rs`.
 - Frames never cut mid-write: a started frame is never cancelled, a child drains before it exits, a marker means completed, and a cut frame is the pipe's end (sections 4.2, 4.3, 4.6, 7.2). Guarded by the transport's tests, the host's `protocol.rs` tests, and `outposts_shut_down_cleanly`.
 - Arrival order under load: a frame written before a key is reduced before it however busy the reducer is (section 4.5). Guarded by `arrival_order.rs`.
 - No new merging: the relay keeps draining while the reducer is held, so the outbound merge rules act no more than before. Guarded by `arrival_order.rs`.

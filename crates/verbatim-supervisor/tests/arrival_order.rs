@@ -1,5 +1,5 @@
 //! The reducer's order of arrival with the relay reading the outposts'
-//! pipes (`docs/design/communication.md`, sections 4.5, 4.8, 6.2 and 6.8;
+//! pipes (`docs/design/communication.md`, sections 4.5, 4.8 and 6.2;
 //! migration step 7). The test stands in for verbatim.exe's reducer: it
 //! takes its inputs from a port queue, as the reducer does, into which the
 //! supervisor's sink posts and the test posts its own keys, and passes the
@@ -27,21 +27,18 @@
 use std::collections::HashMap;
 use std::io::{BufReader, Read as _, Write as _};
 use std::process::{Child, Command, Stdio};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use crossbeam_channel::{Receiver, unbounded};
 use verbatim_model::protocol::{
     CoreToListener, CoreToOutpost, EventTiming, ListenerToCore, OutpostToCore, RequestId,
 };
 use verbatim_model::{Backend, NodeId, NormalizedEvent, OutpostId, Pid, TraceId};
 use verbatim_process::arguments::OutpostOptions;
 use verbatim_process::message::{read_message, write_message};
-use verbatim_process::port_queue::{PortQueue, Progress, Received, port_queue};
+use verbatim_process::port_queue::{PortQueue, Received, port_queue};
 use verbatim_process::transport::{BlockingReader, BlockingWriter};
 use verbatim_supervisor::{
-    EventSink, Executables, Frames, OutpostMessage, ReducerStall, ShutdownSummary, Supervisor,
+    EventSink, Executables, Frames, OutpostMessage, ShutdownSummary, Supervisor,
 };
 use windows::Win32::Foundation::{CloseHandle, HANDLE, WAIT_OBJECT_0};
 use windows::Win32::System::Threading::{CreateEventW, SetEvent, WaitForSingleObject};
@@ -187,10 +184,9 @@ fn stand_in(args: &[String]) -> ! {
                 Err(error) => panic!("the command pipe failed: {error}"),
             };
             match command {
-                CoreToListener::Ping { seq, .. } => write_message(
+                CoreToListener::Ping { .. } => write_message(
                     &mut messages,
                     &ListenerToCore::Pong {
-                        seq,
                         parked_count: 0,
                         written_at_us: 0,
                     },
@@ -218,10 +214,9 @@ fn stand_in(args: &[String]) -> ! {
             Err(error) => panic!("the command pipe failed: {error}"),
         };
         match command {
-            CoreToOutpost::Ping { seq, .. } => send(
+            CoreToOutpost::Ping { .. } => send(
                 &mut messages,
                 &OutpostToCore::Pong {
-                    seq,
                     parked_count: 0,
                     parked_on_hung: 0,
                     written_at_us: 0,
@@ -301,42 +296,20 @@ struct Reducer {
     keys: verbatim_process::port_queue::Poster<Input>,
     frames: Frames,
     supervisor: Supervisor,
-    stalls: Receiver<ReducerStall>,
-    /// Whether the relay's heartbeats see the queue's progress. Until a
-    /// test sets it they see nothing waiting, so no stall can be reported
-    /// however long a step of the test takes; only a hold the test makes
-    /// to be reported is watched.
-    watching: Arc<AtomicBool>,
     names: HashMap<OutpostId, String>,
 }
 
 impl Reducer {
     /// A supervisor launching this binary's stand-ins, posting to a port
-    /// queue, with the queue watched.
+    /// queue.
     fn start() -> Self {
         let (poster, queue) = port_queue::<Input>().expect("a port");
-        let (stalls_tx, stalls) = unbounded();
-        let watching = Arc::new(AtomicBool::new(false));
-        let watched = Arc::clone(&watching);
-        let progress = poster.clone();
         let deliver = poster.clone();
         let sink = EventSink::new(move |message| {
             deliver
                 .send(Input::Outpost(message))
                 .map_err(|_| verbatim_supervisor::Undelivered::Gone)
-        })
-        .watched(
-            move || {
-                if watched.load(Ordering::SeqCst) {
-                    progress.progress()
-                } else {
-                    Progress::default()
-                }
-            },
-            move |stall| {
-                let _ = stalls_tx.send(stall);
-            },
-        );
+        });
         let exe = std::env::current_exe().expect("this test binary's path");
         let supervisor = Supervisor::with_executables(
             sink,
@@ -352,8 +325,6 @@ impl Reducer {
             keys: poster,
             frames,
             supervisor,
-            stalls,
-            watching,
             names: HashMap::new(),
         }
     }
@@ -465,10 +436,6 @@ impl Reducer {
             }
         }
         assert!(rest.is_empty(), "nothing more was delivered: {rest:?}");
-        assert!(
-            self.stalls.try_recv().is_err(),
-            "no stall was reported but those asserted"
-        );
     }
 }
 
@@ -548,40 +515,6 @@ fn a_closed_pipe_reaches_the_app_after_every_frame_before_it() {
     reducer.finish(ShutdownSummary {
         clean: 2,
         exited: 1,
-        killed: 0,
-        killed_on_failure: 0,
-    });
-    end(app);
-}
-
-/// The reducer held for longer than three ping intervals ends no outpost,
-/// since the relay reads the outposts' pongs itself, and is reported as
-/// its own stall, once. The supervisor pings at Verbatim's interval, so a
-/// stand-in has the time a real outpost has to answer, and the hold lasts
-/// nine seconds.
-fn a_reducer_held_past_three_ping_intervals_ends_no_outpost_and_is_reported_as_its_own_stall() {
-    let (app, pid) = application();
-    let mut reducer = Reducer::start();
-    reducer.with_outposts(&[pid]);
-
-    // Held from here, with a key waiting, and watched.
-    reducer.watching.store(true, Ordering::SeqCst);
-    reducer.press(1);
-    let stall = reducer
-        .stalls
-        .recv_timeout(WAIT)
-        .expect("the reducer's stall is reported");
-    assert_eq!(stall.waiting, 1, "the key waited: {stall:?}");
-
-    assert_eq!(reducer.take(1), ["key 1"]);
-    reducer.watching.store(false, Ordering::SeqCst);
-    // The outpost was not ended, and still answers.
-    reducer.cue("O1", 7);
-    assert_eq!(reducer.take(1), ["O1: C"]);
-
-    reducer.finish(ShutdownSummary {
-        clean: 2,
-        exited: 0,
         killed: 0,
         killed_on_failure: 0,
     });
@@ -694,7 +627,7 @@ fn main() -> std::process::ExitCode {
     // Each test names the event its stand-in listener sets ([`Signal`]),
     // which every stand-in listener opens, whether or not the test waits
     // on it.
-    let tests: [(&str, fn()); 6] = [
+    let tests: [(&str, fn()); 5] = [
         (
             "a_frame_written_before_a_key_is_reduced_before_it_and_one_written_after_it_after",
             || {
@@ -727,13 +660,6 @@ fn main() -> std::process::ExitCode {
             || {
                 let _signal = Signal::new();
                 nothing_an_outpost_writes_after_the_supervisor_ended_it_reaches_the_reducer();
-            },
-        ),
-        (
-            "a_reducer_held_past_three_ping_intervals_ends_no_outpost_and_is_reported_as_its_own_stall",
-            || {
-                let _signal = Signal::new();
-                a_reducer_held_past_three_ping_intervals_ends_no_outpost_and_is_reported_as_its_own_stall();
             },
         ),
     ];

@@ -91,9 +91,6 @@ fault point, `RelayWake`, to refuse the wake of `shutdown`'s message once,
 since its subject is private to the crate ([verbatim-faults](verbatim-faults.md));
 `fault_paths` checks that such a shutdown still ends, at the next
 heartbeat.
-`EventSink::watched(progress, stalled)` reports a `ReducerStall` once the
-reducer thread has taken nothing for three heartbeats while inputs waited;
-nothing is ended for it (`docs/design/communication.md`, section 6.8).
 
 How it works:
 

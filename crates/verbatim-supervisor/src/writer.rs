@@ -74,8 +74,8 @@ pub(crate) trait ToChild: Message + Clone + std::fmt::Debug + Send + 'static {
     /// one.
     type Fact: std::fmt::Debug + Send + 'static;
 
-    /// A ping numbered `seq`.
-    fn ping(seq: u64) -> Self;
+    /// A ping.
+    fn ping() -> Self;
 
     /// The shutdown message.
     fn shutdown() -> Self;
@@ -105,8 +105,8 @@ pub(crate) struct RoutedFact {
 impl ToChild for CoreToOutpost {
     type Fact = RoutedFact;
 
-    fn ping(seq: u64) -> Self {
-        CoreToOutpost::Ping { seq, sent_at_us: 0 }
+    fn ping() -> Self {
+        CoreToOutpost::Ping { sent_at_us: 0 }
     }
 
     fn shutdown() -> Self {
@@ -150,8 +150,8 @@ impl ToChild for CoreToOutpost {
 impl ToChild for CoreToListener {
     type Fact = Infallible;
 
-    fn ping(seq: u64) -> Self {
-        CoreToListener::Ping { seq, sent_at_us: 0 }
+    fn ping() -> Self {
+        CoreToListener::Ping { sent_at_us: 0 }
     }
 
     fn shutdown() -> Self {
@@ -534,10 +534,7 @@ mod tests {
     use verbatim_model::protocol::{DeliveredFact, RequestId, UiaSnapshotFact};
 
     fn ping() -> Outgoing<CoreToOutpost> {
-        Outgoing::Ping(CoreToOutpost::Ping {
-            seq: 1,
-            sent_at_us: 0,
-        })
+        Outgoing::Ping(CoreToOutpost::Ping { sent_at_us: 0 })
     }
 
     fn query() -> Outgoing<CoreToOutpost> {
@@ -566,14 +563,13 @@ mod tests {
         )
     }
 
-    /// The window a routed foreground change names, or a ping's number.
+    /// The window a routed foreground change names.
     fn number(command: &CoreToOutpost) -> Option<u64> {
         match command {
             CoreToOutpost::DeliverFact {
                 fact: DeliveredFact::Foreground { hwnd },
                 ..
             } => Some(hwnd.cast_unsigned() as u64),
-            CoreToOutpost::Ping { seq, .. } => Some(*seq),
             _ => None,
         }
     }
@@ -691,7 +687,7 @@ mod tests {
             verbatim_process::message::read_message::<_, CoreToOutpost>(&mut data).expect("a frame")
         {
             names.push(match command {
-                CoreToOutpost::Ping { seq, .. } => format!("ping {seq}"),
+                CoreToOutpost::Ping { .. } => "ping".to_owned(),
                 CoreToOutpost::Query { request_id, .. } => {
                     format!("query {}", request_id.number)
                 }
@@ -774,7 +770,7 @@ mod tests {
         writer.leave_held(held_list(4));
         assert!(child.nothing_written(), "the list is not written alone");
         writer.push(ping()).expect("written");
-        assert_eq!(child.one_write(), ["ping 1", "held 4"]);
+        assert_eq!(child.one_write(), ["ping", "held 4"]);
     }
 
     /// A newer list replaces one not yet sent, and only the newer one
@@ -786,7 +782,7 @@ mod tests {
         writer.leave_held(held_list(9));
         assert!(child.nothing_written(), "neither list is written alone");
         writer.push(ping()).expect("written");
-        assert_eq!(child.one_write(), ["ping 1", "held 9"]);
+        assert_eq!(child.one_write(), ["ping", "held 9"]);
     }
 
     /// A selection of `runtime_id` named `name`, as routed.
@@ -1018,7 +1014,7 @@ mod tests {
     #[test]
     fn a_command_to_the_listener_is_stamped_as_its_write_begins() {
         let commands = [
-            Outgoing::Ping(CoreToListener::ping(1)),
+            Outgoing::Ping(CoreToListener::ping()),
             Outgoing::HandOver(CoreToListener::HookRemoved {
                 pid: verbatim_model::Pid(5),
                 sent_at_us: 0,

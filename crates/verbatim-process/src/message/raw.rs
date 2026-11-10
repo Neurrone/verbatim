@@ -785,7 +785,6 @@ mod tests {
     fn a_message_without_a_terminals_text_is_framed_as_its_json_alone() {
         let messages = [
             OutpostToCore::Pong {
-                seq: 1,
                 parked_count: 0,
                 parked_on_hung: 0,
                 written_at_us: 2,

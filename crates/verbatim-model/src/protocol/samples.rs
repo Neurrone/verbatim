@@ -51,7 +51,6 @@ fn next(previous: Option<&OutpostToCore>) -> Option<OutpostToCore> {
             timing: EventTiming::default(),
         },
         OutpostToCore::Reply { .. } => OutpostToCore::Pong {
-            seq: 1,
             parked_count: 0,
             parked_on_hung: 0,
             written_at_us: 0,

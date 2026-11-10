@@ -280,13 +280,11 @@ fn a_ping_is_answered_while_the_worker_is_held_in_a_call() {
         "TextGetSelection",
         "the worker is in the read's first provider call"
     );
-    outpost.outpost.handle_command(&CoreToOutpost::Ping {
-        seq: 9,
-        sent_at_us: 0,
-    });
+    outpost
+        .outpost
+        .handle_command(&CoreToOutpost::Ping { sent_at_us: 0 });
     match outpost.next() {
         OutpostToCore::Pong {
-            seq: 9,
             parked_count: 0,
             parked_on_hung: 0,
             ..

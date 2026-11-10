@@ -311,7 +311,6 @@ mod tests {
             .map(|(message, _)| message.clone());
         let urgent = [
             Urgent::Pong {
-                seq: 1,
                 parked_count: 0,
                 parked_on_hung: 0,
             },
@@ -345,7 +344,6 @@ mod tests {
             message_kind(body.parts().body).map(str::to_owned)
         };
         let pong = OutpostToCore::Pong {
-            seq: 1,
             parked_count: 0,
             parked_on_hung: 0,
             written_at_us: 0,
@@ -370,7 +368,6 @@ mod tests {
     #[test]
     fn each_urgent_message_converts_to_the_variant_of_its_name() {
         let pong = OutpostToCore::Pong {
-            seq: 1,
             parked_count: 0,
             parked_on_hung: 0,
             written_at_us: 0,
@@ -393,7 +390,6 @@ mod tests {
         );
         assert_eq!(
             OutpostToCore::from(Urgent::Pong {
-                seq: 1,
                 parked_count: 0,
                 parked_on_hung: 0
             }),
@@ -507,10 +503,7 @@ mod tests {
 
     #[test]
     fn ping_and_pong_round_trip() {
-        let ping = CoreToOutpost::Ping {
-            seq: 5,
-            sent_at_us: 4_000,
-        };
+        let ping = CoreToOutpost::Ping { sent_at_us: 4_000 };
         let mut buffer = Vec::new();
         write_message(&mut buffer, &ping).expect("writes");
         let mut reader = buffer.as_slice();
@@ -520,7 +513,6 @@ mod tests {
         assert_eq!(read_back, ping);
 
         let expected_pong = OutpostToCore::Pong {
-            seq: 5,
             parked_count: 3,
             parked_on_hung: 0,
             written_at_us: 4_500,

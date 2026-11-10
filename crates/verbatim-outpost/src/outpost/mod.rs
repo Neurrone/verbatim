@@ -599,11 +599,10 @@ impl Context {
         reader(hwnd)
     }
 
-    /// The answer to ping `seq`.
-    fn pong(&self, seq: u64) -> Urgent {
+    /// The answer to a ping.
+    fn pong(&self) -> Urgent {
         let parked = *self.parked.lock();
         Urgent::Pong {
-            seq,
             parked_count: parked.other,
             parked_on_hung: parked.on_hung,
         }
@@ -1565,8 +1564,8 @@ impl Outpost {
             CoreToOutpost::KeyNote(note) => {
                 context.mailbox.post(Posted::KeyNote(*note));
             }
-            CoreToOutpost::Ping { seq, .. } => {
-                context.outbound.urgent(context.pong(*seq));
+            CoreToOutpost::Ping { .. } => {
+                context.outbound.urgent(context.pong());
             }
             CoreToOutpost::Fetches(fetches) => {
                 *context.fetches.lock() = *fetches;

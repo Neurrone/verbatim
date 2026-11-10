@@ -122,8 +122,7 @@ fn stand_in(args: &[String]) -> ! {
         let mut released = false;
         loop {
             match read_message::<_, CoreToListener>(&mut commands) {
-                Ok(Some(CoreToListener::Ping { seq, .. })) => send(&ListenerToCore::Pong {
-                    seq,
+                Ok(Some(CoreToListener::Ping { .. })) => send(&ListenerToCore::Pong {
                     parked_count: 0,
                     written_at_us: 0,
                 }),
@@ -152,8 +151,7 @@ fn stand_in(args: &[String]) -> ! {
     });
     loop {
         match read_message::<_, CoreToOutpost>(&mut commands) {
-            Ok(Some(CoreToOutpost::Ping { seq, .. })) => send(&OutpostToCore::Pong {
-                seq,
+            Ok(Some(CoreToOutpost::Ping { .. })) => send(&OutpostToCore::Pong {
                 parked_count: 0,
                 parked_on_hung: 0,
                 written_at_us: 0,

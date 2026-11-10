@@ -10,7 +10,7 @@
 //! delivering every other frame to the app whole, in the pass that read
 //! it; finishes every child's writes that pended; and takes everything
 //! other threads report from its mailbox when the port says there is
-//! something. Its heartbeat, which also watches the reducer, and its sweep
+//! something. Its heartbeat and its sweep
 //! run when the wait's deadline passes. It never blocks: launches
 //! and retirements run on threads of their own and report back.
 
@@ -26,7 +26,6 @@ use std::time::{Duration, Instant};
 use crossbeam_channel::Sender;
 use verbatim_model::{OutpostId, Pid, TraceId};
 use verbatim_process::overlapped::{Completion, Completions, Port};
-use verbatim_process::port_queue::Progress;
 use verbatim_process::scheduling::{ThreadPriority, prioritize_role};
 use verbatim_process::transport::{Parts, Reading};
 
@@ -48,8 +47,8 @@ use super::relay::{COMPLETIONS_PER_WAIT, CommandPipes, Inbox, Mailbox, Relay, So
 use super::retire::{Ending, ShutdownSummary, retire};
 use super::writer::{Outgoing, Received, ToChild, WriterHandle, received_now};
 use super::{
-    ABANDONED_WORKER_LIMIT, EndReason, EventSink, OutpostMessage, ReducerStall, SPARES, Sealed,
-    Timings, Undelivered, Writers,
+    ABANDONED_WORKER_LIMIT, EndReason, EventSink, OutpostMessage, SPARES, Sealed, Timings,
+    Undelivered, Writers,
 };
 use super::{Executables, sealed};
 use verbatim_process::arguments::ListenerArguments;
@@ -317,7 +316,6 @@ struct Owner {
     apps: BTreeMap<Pid, App>,
     attention: Option<Pid>,
     holding: BTreeSet<OutpostId>,
-    ping_seq: u64,
     own_pid: Pid,
     /// How long an ending child has to exit after the shutdown message.
     shutdown_limit: Duration,
@@ -335,8 +333,6 @@ struct Owner {
     /// The idle barrier's round under way in the relay, until the
     /// outposts are asked.
     idle: Option<IdleStage>,
-    /// The watch over the reducer, read at each heartbeat.
-    reducer: ReducerWatch,
     /// The spare outposts kept waiting, and the replacements owed
     /// (`books/dev/src/reference/adr/0001-focus.md`, "Spare outposts").
     spares: Spares,
@@ -363,54 +359,6 @@ struct SpareChild {
     /// When it was launched, on the run's shared clock: how long it had
     /// been up when it fails.
     started_us: u64,
-}
-
-/// The relay's watch over the thread taking the app's inputs, the reducer
-/// (`docs/design/communication.md`, section 6.8): a fault of its own,
-/// reported and never acted on.
-#[derive(Default)]
-struct ReducerWatch {
-    /// Its progress at the last heartbeat, and when that was.
-    last: Option<(Progress, Instant)>,
-    /// How many heartbeats in a row have found it taking nothing while
-    /// inputs waited, and since when.
-    stuck: Option<(u32, Instant)>,
-    /// Whether this stall has been reported.
-    reported: bool,
-}
-
-impl ReducerWatch {
-    /// Notes the reducer's `progress` at `now`, a heartbeat, and returns
-    /// the stall to report, once per stall: none of its inputs taken for
-    /// `missed_pongs` heartbeats in a row while some waited
-    /// ([`Timings::missed_pongs`]).
-    fn note(
-        &mut self,
-        progress: Progress,
-        now: Instant,
-        missed_pongs: u32,
-    ) -> Option<ReducerStall> {
-        let stuck = self
-            .last
-            .is_some_and(|(last, _)| last.waiting() > 0 && last.taken == progress.taken);
-        let since = self.last.map_or(now, |(_, at)| at);
-        self.last = Some((progress, now));
-        if !stuck {
-            self.stuck = None;
-            self.reported = false;
-            return None;
-        }
-        let (count, since) = self.stuck.get_or_insert((0, since));
-        *count += 1;
-        if *count < missed_pongs || self.reported {
-            return None;
-        }
-        self.reported = true;
-        Some(ReducerStall {
-            stalled_for: now.saturating_duration_since(*since),
-            waiting: progress.waiting(),
-        })
-    }
 }
 
 /// Starts the owner thread, which starts the listener at once.
@@ -447,11 +395,9 @@ pub(super) fn start(setup: Setup) -> io::Result<()> {
         apps: BTreeMap::new(),
         attention: None,
         holding: BTreeSet::new(),
-        ping_seq: 0,
         own_pid: Pid(std::process::id()),
         ignored,
         idle: None,
-        reducer: ReducerWatch::default(),
         spares: Spares::default(),
         spare_children: BTreeMap::new(),
     };
@@ -2072,14 +2018,7 @@ impl Owner {
         if self.shutting_down.is_some() {
             return;
         }
-        let now = Instant::now();
-        if let Some(progress) = self.outbox.sink.progress()
-            && let Some(stall) = self.reducer.note(progress, now, self.timings.missed_pongs)
-        {
-            self.outbox.sink.stalled(stall);
-        }
-        self.ping_seq += 1;
-        let ping = CoreToOutpost::ping(self.ping_seq);
+        let ping = CoreToOutpost::ping();
         let mut wedged = Vec::new();
         let mut exited = Vec::new();
         let at_us = now_us();
@@ -2132,9 +2071,7 @@ impl Owner {
                         self.listener_gone();
                         self.start_listener(true);
                     } else {
-                        let _ = child
-                            .writer
-                            .push(Outgoing::Ping(CoreToListener::ping(self.ping_seq)));
+                        let _ = child.writer.push(Outgoing::Ping(CoreToListener::ping()));
                     }
                 }
             }

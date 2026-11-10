@@ -375,17 +375,16 @@ fn inner_group(
 
 /// The outpost's pong, asked for now: its workers parked on windows not
 /// judged hung, and those on windows judged hung.
-fn parked(outpost: &OutpostUnderTest, seq: u64) -> (usize, usize) {
+fn parked(outpost: &OutpostUnderTest) -> (usize, usize) {
     outpost
         .outpost
-        .handle_command(&CoreToOutpost::Ping { seq, sent_at_us: 0 });
+        .handle_command(&CoreToOutpost::Ping { sent_at_us: 0 });
     match outpost.next() {
         OutpostToCore::Pong {
-            seq: answered,
             parked_count,
             parked_on_hung,
             ..
-        } if answered == seq => (parked_count, parked_on_hung),
+        } => (parked_count, parked_on_hung),
         other => panic!("the outpost said {other:?}, not its pong"),
     }
 }
@@ -424,7 +423,7 @@ fn a_query_whose_window_hangs_during_its_call_is_answered_when_it_answers() {
         },
         "Core is told of the hang"
     );
-    assert_eq!(parked(&outpost, 1), (0, 0), "no worker abandoned");
+    assert_eq!(parked(&outpost), (0, 0), "no worker abandoned");
     app.release();
     match reply_to(&outpost, request_id) {
         QueryOutcome::Done(QueryResult::Navigated(Some(neighbor))) => {
@@ -508,7 +507,7 @@ fn a_query_whose_user_moved_on_is_abandoned() {
     outpost.set_focus_window(other);
     assert_eq!(reply_to(&outpost, request_id), QueryOutcome::Abandoned);
     assert_eq!(
-        parked(&outpost, 1),
+        parked(&outpost),
         (1, 0),
         "one worker parked, not on a hung window"
     );
@@ -516,13 +515,11 @@ fn a_query_whose_user_moved_on_is_abandoned() {
     // The evidence that the abandoned worker returned: its pong counts
     // none parked.
     let returned_by = std::time::Instant::now() + common::WAIT_TIMEOUT;
-    let mut seq = 2;
-    while parked(&outpost, seq) != (0, 0) {
+    while parked(&outpost) != (0, 0) {
         assert!(
             std::time::Instant::now() < returned_by,
             "the abandoned worker did not return"
         );
-        seq += 1;
     }
     drop(outpost);
     app.quit();

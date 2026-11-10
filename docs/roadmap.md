@@ -196,10 +196,9 @@ the design.
   and, in the extensions design, the listener's readiness held by
   Core, `accept` placed in Core's reducer and the missing identity
   path.
-- State nothing reads, removed: the program's in-hand record and the
-  failed-read counters that only log lines use, the ping's sequence
-  number, the reducer watch that is reported and never acted on, and
-  the wire variant for an MSAA live re-read that never crosses a pipe.
+- State nothing reads, still to remove: the failed-read counters that
+  only log lines use, and the wire variant for an MSAA live re-read that
+  never crosses a pipe.
 
 Where each starts in the code, as the audits found it at 04268b78:
 
@@ -338,10 +337,8 @@ More follow-ups:
   host not responding at its outpost's first call"). The kept artifacts
   show the console host hung on its own. The harness now records the wait
   chain of each not-responding window's thread and of the launched
-  process's threads when its window wait fails (`wait-chains.txt`), and
-  the outpost's abandoned-worker warning names the entry its worker had in
-  hand; read the next failure's chains to find what holds the window's
-  thread.
+  process's threads when its window wait fails (`wait-chains.txt`); read
+  the next failure's chains to find what holds the window's thread.
 - A new application's window sometimes does not appear within the
   harness's 30 seconds: Notepad five times locally and a mockapp Windows
   Forms window once on GitHub's runner, on 2026-11-01 ([the flaky

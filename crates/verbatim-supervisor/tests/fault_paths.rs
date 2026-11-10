@@ -77,10 +77,9 @@ fn stand_in(args: &[String]) -> ! {
         .expect("a message is written");
         loop {
             match read_message::<_, CoreToListener>(&mut commands) {
-                Ok(Some(CoreToListener::Ping { seq, .. })) => write_message(
+                Ok(Some(CoreToListener::Ping { .. })) => write_message(
                     &mut messages,
                     &ListenerToCore::Pong {
-                        seq,
                         parked_count: 0,
                         written_at_us: 0,
                     },
@@ -106,8 +105,7 @@ fn stand_in(args: &[String]) -> ! {
     }
     loop {
         match read_message::<_, CoreToOutpost>(&mut commands) {
-            Ok(Some(CoreToOutpost::Ping { seq, .. })) => send(&OutpostToCore::Pong {
-                seq,
+            Ok(Some(CoreToOutpost::Ping { .. })) => send(&OutpostToCore::Pong {
                 parked_count: 0,
                 parked_on_hung: 0,
                 written_at_us: 0,

@@ -27,12 +27,6 @@
 //!   so the reducer thread sends a query without waiting and without a
 //!   hand-off, and a write the pipe cannot take at once is finished by the
 //!   relay.
-//! - The relay watches the reducer too: at each heartbeat it reads how many
-//!   of the app's inputs wait and how many the reducer has taken, and
-//!   reports a reducer that has taken nothing for three ping intervals
-//!   while inputs waited ([`EventSink::watched`]). Since the relay reads
-//!   the pongs itself, a stalled reducer never makes an outpost look
-//!   wedged (section 6.8).
 //! - The supervisor therefore runs on one thread, the relay; the app parses
 //!   every frame on its reducer thread ([`Frames`]).
 //! - It keeps two spare outposts started and waiting, with no application
@@ -70,7 +64,7 @@ use std::time::Duration;
 
 use crossbeam_channel::Sender;
 use verbatim_model::{OutpostId, Pid};
-use verbatim_process::port_queue::{Poster, Progress};
+use verbatim_process::port_queue::Poster;
 
 use verbatim_model::protocol::{CoreToListener, CoreToOutpost, OutpostToCore};
 
@@ -215,27 +209,6 @@ const STAYED_UP: Duration = Duration::from_mins(1);
 #[derive(Clone)]
 pub struct EventSink {
     deliver: Arc<dyn Fn(OutpostMessage) -> Result<(), Undelivered> + Send + Sync>,
-    watch: Option<Arc<ReducerWatch>>,
-}
-
-/// How the relay watches the thread taking the sink's messages: what it
-/// reads at each heartbeat, and where it reports a stall.
-struct ReducerWatch {
-    progress: Box<dyn Fn() -> Progress + Send + Sync>,
-    stalled: Box<dyn Fn(ReducerStall) + Send + Sync>,
-}
-
-/// A stall of the thread taking the sink's messages, the reducer: it has
-/// taken none of its inputs for at least three ping intervals while some
-/// waited (`docs/design/communication.md`, section 6.8). It is a fault of
-/// its own, and nothing is ended for it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ReducerStall {
-    /// How long it has taken nothing while inputs waited, as the relay's
-    /// heartbeats measured it.
-    pub stalled_for: Duration,
-    /// How many of its inputs waited at the last heartbeat.
-    pub waiting: u64,
 }
 
 /// Why an [`EventSink`] did not deliver a message.
@@ -259,7 +232,6 @@ impl EventSink {
     ) -> Self {
         Self {
             deliver: Arc::new(deliver),
-            watch: None,
         }
     }
 
@@ -283,26 +255,6 @@ impl EventSink {
         })
     }
 
-    /// This sink, with the thread taking its messages watched: at each
-    /// heartbeat the relay reads `progress`, how many of that thread's
-    /// inputs have been posted and how many taken, and once it has taken
-    /// none for three ping intervals while some waited, reports the stall
-    /// to `stalled`, once until it takes something again.
-    #[must_use]
-    pub fn watched(
-        self,
-        progress: impl Fn() -> Progress + Send + Sync + 'static,
-        stalled: impl Fn(ReducerStall) + Send + Sync + 'static,
-    ) -> Self {
-        Self {
-            deliver: self.deliver,
-            watch: Some(Arc::new(ReducerWatch {
-                progress: Box::new(progress),
-                stalled: Box::new(stalled),
-            })),
-        }
-    }
-
     /// Delivers `message`.
     ///
     /// # Errors
@@ -310,18 +262,6 @@ impl EventSink {
     /// Returns why it was not delivered ([`Undelivered`]).
     pub fn send(&self, message: OutpostMessage) -> Result<(), Undelivered> {
         (self.deliver)(message)
-    }
-
-    /// The watched thread's progress, if it is watched.
-    fn progress(&self) -> Option<Progress> {
-        self.watch.as_ref().map(|watch| (watch.progress)())
-    }
-
-    /// Reports a stall of the watched thread.
-    fn stalled(&self, stall: ReducerStall) {
-        if let Some(watch) = &self.watch {
-            (watch.stalled)(stall);
-        }
     }
 }
 

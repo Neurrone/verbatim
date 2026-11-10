@@ -338,8 +338,7 @@ fn stand_in(args: &[String]) -> ! {
         match command {
             Ok(Some(CoreToOutpost::Shutdown) | None) => std::process::exit(0),
             Ok(Some(_)) if mute => {}
-            Ok(Some(CoreToOutpost::Ping { seq, .. })) => send(&OutpostToCore::Pong {
-                seq,
+            Ok(Some(CoreToOutpost::Ping { .. })) => send(&OutpostToCore::Pong {
                 parked_count: 0,
                 parked_on_hung: 0,
                 written_at_us: 0,
@@ -382,8 +381,7 @@ fn listener_stand_in(
     loop {
         match read_message::<_, CoreToListener>(commands) {
             Ok(Some(CoreToListener::Shutdown) | None) => std::process::exit(0),
-            Ok(Some(CoreToListener::Ping { seq, .. })) => send(&ListenerToCore::Pong {
-                seq,
+            Ok(Some(CoreToListener::Ping { .. })) => send(&ListenerToCore::Pong {
                 parked_count: 0,
                 written_at_us: 0,
             }),

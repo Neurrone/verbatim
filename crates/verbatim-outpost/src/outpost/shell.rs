@@ -741,15 +741,11 @@ impl Shell {
                 replacement,
                 reason,
                 on_hung,
-                in_hand,
             } => {
                 self.parked.insert(dead, on_hung);
                 tracing::warn!(
                     abandoned = self.parked.len(),
                     reason,
-                    in_hand = in_hand.work,
-                    trace = in_hand.trace.map(|trace| trace.to_string()),
-                    window = in_hand.window.map(|window| format!("{window:#x}")),
                     "the worker is abandoned and replaced"
                 );
                 if let Some(generation) = self.generations.remove(&dead) {
@@ -1045,7 +1041,7 @@ mod tests {
 
     use verbatim_model::protocol::{Query, RequestId, Urgent};
 
-    use super::super::reducer::{Anchor, InHand, NodeAnchors, TextChange};
+    use super::super::reducer::{Anchor, NodeAnchors, TextChange};
     use super::super::store::TextWrite;
     use super::*;
 
@@ -1256,15 +1252,9 @@ mod tests {
             replacement: dead + 1,
             reason: "a test's abandonment",
             on_hung,
-            in_hand: InHand {
-                work: "nothing",
-                trace: None,
-                window: None,
-            },
         };
-        let counts = |shell: &Shell| match shell.context.pong(7) {
+        let counts = |shell: &Shell| match shell.context.pong() {
             Urgent::Pong {
-                seq: 7,
                 parked_count,
                 parked_on_hung,
             } => (parked_count, parked_on_hung),

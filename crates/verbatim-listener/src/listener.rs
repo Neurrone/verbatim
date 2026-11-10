@@ -1488,9 +1488,8 @@ impl Listener {
             tracing::trace!(target: "verbatim::stage", stage = "verbatim.exe to the listener", us, ?command);
         }
         match command {
-            CoreToListener::Ping { seq, .. } => {
+            CoreToListener::Ping { .. } => {
                 self.outgoing.urgent(ListenerToCore::Pong {
-                    seq: *seq,
                     parked_count: 0,
                     written_at_us: 0,
                 });
@@ -2912,7 +2911,6 @@ mod tests {
         // to the back.
         outgoing.fact(Pid(5), msaa_focus(), None, None, 2_000);
         outgoing.urgent(ListenerToCore::Pong {
-            seq: 4,
             parked_count: 0,
             written_at_us: 0,
         });
@@ -2922,11 +2920,11 @@ mod tests {
                 ListenerToCore::FocusFact { fact, timing, .. } => {
                     format!("{} {}", fact.pid.0, timing.observed_at_us)
                 }
-                ListenerToCore::Pong { seq, .. } => format!("pong {seq}"),
+                ListenerToCore::Pong { .. } => "pong".to_owned(),
                 other => format!("{other:?}"),
             })
             .collect();
-        assert_eq!(order, ["7 1000", "pong 4", "6 1000", "5 2000"]);
+        assert_eq!(order, ["7 1000", "pong", "6 1000", "5 2000"]);
     }
 
     #[test]
@@ -3678,7 +3676,6 @@ mod tests {
         outgoing.idle_answer(1);
         outgoing.fact(Pid(5), msaa_focus(), None, None, 2_000);
         outgoing.urgent(ListenerToCore::Pong {
-            seq: 4,
             parked_count: 0,
             written_at_us: 0,
         });
@@ -3693,7 +3690,7 @@ mod tests {
                 ListenerToCore::FocusFact { fact, timing, .. } => {
                     format!("{} {}", fact.pid.0, timing.observed_at_us)
                 }
-                ListenerToCore::Pong { seq, .. } => format!("pong {seq}"),
+                ListenerToCore::Pong { .. } => "pong".to_owned(),
                 ListenerToCore::IdleAnswer { round } => format!("idle {round}"),
                 ListenerToCore::MenuOrSwitchEnded { .. } => "menu end".to_owned(),
                 other => format!("{other:?}"),
@@ -3702,7 +3699,7 @@ mod tests {
         assert_eq!(
             order,
             [
-                "7 1000", "pong 4", "5 1000", "idle 1", "5 2000", "6 3000", "menu end", "idle 2"
+                "7 1000", "pong", "5 1000", "idle 1", "5 2000", "6 3000", "menu end", "idle 2"
             ]
         );
     }
