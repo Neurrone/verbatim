@@ -48,14 +48,14 @@ outpost: a lifecycle held on two or more sides, an order judged across
 processes by stamps, and a decision made by a process that does not see
 its facts in order.
 
-Each application's outpost runs the screen reader logic for its
-application (focus speech, the caret and text, terminals with their
-memory, rules and flood policy, the review cursor, object navigation and
-say-all) and sends Core finished utterances. Core keeps what spans
-applications: the keyboard hook, the routing of each key and command to
-exactly one handler, the speech queue, typed echo, attention,
-window-level announcements, settings and the supervisor. The process
-layout stays as D9 and D13 have it.
+Each piece of functionality is judged in its application's outpost when
+judging it needs no state of Core's, and stays in Core otherwise
+(Dickson, 2026-11-10). Core goes on judging every focus across
+applications, from complete reports, and never asks a reader again in
+order to judge one; what happens inside one application, such as a caret
+key's effect and words and a terminal's memory, rules and flood policy,
+is judged in that application's outpost. The process layout stays as D9
+and D13 have it.
 
 Decided with it (Dickson, 2026-11-10):
 
@@ -63,21 +63,21 @@ Decided with it (Dickson, 2026-11-10):
   application's state.
 - Core passes a held caret key on and tells the outpost so by an ordered
   message.
-- The tree level and table cell last spoken are kept per application and
-  cleared when the application is left, a deliberate difference from
-  NVDA.
-- The per-application logic lives in a new platform-neutral crate,
+- The logic that moves lives in a new platform-neutral crate,
   `verbatim-presentation`, which the outpost links, and `verbatim-core`
-  keeps what is global.
+  keeps what stays in Core.
 - Memory is reduced where the rewrite allows, against a budget per
   outpost set from a measurement.
 - Browse mode (M7) keeps as little cached state as it can, with no page
   buffer if recordings, captures and measurements allow.
 - The target design accounts for every milestone planned after it.
 
-Status: the target design is a draft under adversarial review, and
-nothing is built. The order of its work is planned once the design is
-approved.
+Status: nothing is built. A first draft, which moved the judging of
+focus into the outposts as well, failed its adversarial review, because
+an outpost would then judge Core's facts from notices that reach it by
+another route than the events it judges them against. The target design
+is being redrafted on the split above. Its plan is written for one pass,
+once the design is approved.
 
 ## M4 — Text, editing, and terminals
 
