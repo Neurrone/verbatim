@@ -32,8 +32,52 @@ applications build is built (2026-11-07). Next, in this order (Dickson,
 9. M4.9 (Lints and unsafe);
 10. M6.2, with the rest after.
 
+Ahead of every item of that list not yet built comes the outpost
+rewrite (Dickson, 2026-11-10), below. M5's build A waits for its target
+design.
+
 The published site's homepage, `books/index.html`, carries one line of
 this status per milestone, and changes with it.
+
+## The outpost rewrite
+
+Next (Dickson, 2026-11-10). A retrospective of the work from 2026-10-10
+to 2026-11-10 found that the concurrency defects and the slowest builds
+came from one application's logic being split between Core and its
+outpost: a lifecycle held on two or more sides, an order judged across
+processes by stamps, and a decision made by a process that does not see
+its facts in order.
+
+Each application's outpost runs the screen reader logic for its
+application (focus speech, the caret and text, terminals with their
+memory, rules and flood policy, the review cursor, object navigation and
+say-all) and sends Core finished utterances. Core keeps what spans
+applications: the keyboard hook, the routing of each key and command to
+exactly one handler, the speech queue, typed echo, attention,
+window-level announcements, settings and the supervisor. The process
+layout stays as D9 and D13 have it.
+
+Decided with it (Dickson, 2026-11-10):
+
+- An outpost is not retired for being idle, since it holds its
+  application's state.
+- Core passes a held caret key on and tells the outpost so by an ordered
+  message.
+- The tree level and table cell last spoken are kept per application and
+  cleared when the application is left, a deliberate difference from
+  NVDA.
+- The per-application logic lives in a new platform-neutral crate,
+  `verbatim-presentation`, which the outpost links, and `verbatim-core`
+  keeps what is global.
+- Memory is reduced where the rewrite allows, against a budget per
+  outpost set from a measurement.
+- Browse mode (M7) keeps as little cached state as it can, with no page
+  buffer if recordings, captures and measurements allow.
+- The target design accounts for every milestone planned after it.
+
+Status: the target design is a draft under adversarial review, and
+nothing is built. The order of its work is planned once the design is
+approved.
 
 ## M4 — Text, editing, and terminals
 

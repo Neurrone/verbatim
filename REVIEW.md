@@ -12,7 +12,9 @@ A change has failed review when any of these holds:
 - a race hidden by a retry, a sleep or a bound added without evidence that the proper fix is not enough;
 - a document that describes a removed mechanism, or a decision attributed to Dickson that he did not take;
 - a removal or a protocol change that a remaining caller, document or wire version still depends on.
-- state in the code that does not match the design's table of states, or a new flag or optional field that encodes a state the table does not list.
+- state in the code that does not match the design's table of states, or a new flag or optional field that encodes a state the table does not list;
+- a waiting state, message, timer or lifecycle held in two places that the design's list of what it adds does not name;
+- a decision outside Core whose decider does not see, in order, the facts it depends on, where a wrong guess can change what is spoken.
 
 ## What a finding must carry
 
@@ -39,7 +41,7 @@ The unit is a completed step, not a commit: the whole implementation of a milest
 1. The completed step is reviewed once, in full, by a separate read-only subagent with this file, the targets list, the step's brief and design, and the evidence of its runs.
 2. Important findings are reproduced, then fixed in one commit. Nits from the review are fixed in the same commit only when they touch lines the fix already changes; the rest wait.
 3. When the fix is large, the fix commit is re-reviewed on its diff only, against the counterexamples of the first review; a small fix gets no re-review. New findings outside that diff are recorded, not pursued, except a defect in the mechanism the step builds, which is fixed in the step rather than deferred.
-4. After the re-review, or after the fix when there is none, the loop stops. What remains at Nit or Pre-existing goes into one documents-and-nits commit for the step, which needs no review, or into the roadmap. If the re-review still finds an Important defect, the parent asks whether the design is wrong rather than opening a third round.
+4. After the re-review, or after the fix when there is none, the loop stops. What remains at Nit or Pre-existing goes into one documents-and-nits commit for the step, which needs no review, or into the roadmap. If the re-review still finds an Important defect, the parent asks whether the design is wrong rather than opening a third round. The third fix commit in one mechanism after its implementation review ends the loop and goes to Dickson, as `CLAUDE.md` says.
 
 Trivial changes need no review: a title string, a format fix, a log line, a doc correction, a nits commit. A change is not made trivial by being small; a one-line change to a key, a bound or a drop reason is nontrivial and is reviewed with its step.
 
@@ -49,4 +51,4 @@ A reviewer reads the evidence before the code: the test output, the scenario log
 
 ## Decisions
 
-A decision the parent session takes while Dickson is away is recorded as "(Claude, <date>, pending Dickson's acceptance)", naming no model in documents and commit messages, listed for him, and never written as his. A decision he took keeps "(Dickson, <date>)".
+A decision outside Dickson's areas that the parent session takes while he is away is recorded as "(Claude, <date>, pending Dickson's acceptance)", naming no model in documents and commit messages, listed for him, and never written as his. A decision in his areas is never taken pending: its build waits for him. A decision he took keeps "(Dickson, <date>)".
