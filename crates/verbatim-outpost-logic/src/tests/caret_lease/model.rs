@@ -84,6 +84,11 @@
 //! - What Backspace removed is the difference between its before line and
 //!   its after line, carets included (`docs/design/caret-selection-rework.md`,
 //!   `removal`), so an older baseline gives what that difference gives.
+//!   The before line of a report's evidence is the last read that report
+//!   replaced: one last read is the only baseline (Dickson, 2026-10-25),
+//!   an ordinary report consumes the effect and the next read compares
+//!   with the state after it, and Backspace compares the report's previous
+//!   line (`docs/design/caret-selection-rework.md`, lines 39, 45, 303, 314).
 //! - A read of a key's node counts for that key when it was dispatched or
 //!   committed while the key was within its window, from Core's asking
 //!   its before read or its pass, however late the read ends; outside the
@@ -254,6 +259,9 @@ pub struct Model {
     keys: Vec<Press>,
     /// Each node's one last read, replaced by every read.
     last_read: BTreeMap<usize, Text>,
+    /// The last read the newest committed read replaced: the line a
+    /// Backspace's evidence is compared with.
+    replaced_read: Option<Text>,
     /// The field of the newest read committed.
     committed_field: Option<usize>,
     /// Whether the newest read differed from the one before it.
@@ -621,6 +629,7 @@ impl Model {
                 (shows, change_words(last, text))
             },
         );
+        self.replaced_read = self.last_read.get(&field).cloned();
         self.committed_field = Some(field);
         self.shows_change = shows;
         self.changes = changes;
@@ -659,7 +668,7 @@ impl Model {
             if let Some(id) = self.silenced_evidence(report) {
                 self.reached.insert("a silenced key's words");
                 let press = &self.keys[id];
-                let words = evidence_words(press.key, press.baseline.as_ref(), &report.text);
+                let words = evidence_words(press.key, self.replaced_read.as_ref(), &report.text);
                 self.keys[id].silenced_at = None;
                 if let Some(words) = words {
                     self.expected.push(Heard::Words(words));
@@ -697,7 +706,7 @@ impl Model {
             return;
         }
         let words = if evidence {
-            evidence_words(press.key, press.baseline.as_ref(), &report.text)
+            evidence_words(press.key, self.replaced_read.as_ref(), &report.text)
         } else {
             unit(press.key, &report.text)
         };
