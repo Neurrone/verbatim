@@ -534,6 +534,29 @@ fn fixed() -> Vec<Vec<Action>> {
             Action::Select,
             Action::Finish,
         ],
+        vec![
+            Action::Event,
+            Action::FocusButton { new_window: false },
+            Action::Release,
+            Action::Focus {
+                other: false,
+                ago: 0,
+            },
+            Action::Press { key: 0, held: true },
+            Action::Finish,
+            Action::Event,
+            Action::Tick(60),
+            Action::Select,
+            Action::Focus {
+                other: false,
+                ago: 1,
+            },
+            Action::Tick(30),
+            Action::Tick(60),
+            Action::Abandon,
+            Action::Press { key: 0, held: true },
+            Action::Finish,
+        ],
     ]
 }
 

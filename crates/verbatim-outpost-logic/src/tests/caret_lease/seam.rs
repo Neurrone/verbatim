@@ -111,7 +111,12 @@ pub struct Seam {
     /// The commit of a focus report, for the program dispatched to make it.
     focusing: Option<Box<Change>>,
     /// The field whose release was asked for, until the shell's answer.
-    releasing: Option<usize>,
+    releasing: Option<(usize, u64)>,
+    /// How many reports the outpost has sent Core, the position Core's
+    /// held lists acknowledge.
+    sent: u64,
+    /// The position of the newest report of each node.
+    reported: BTreeMap<u64, u64>,
     /// The field whose element is replaced by the next name change.
     replacing: Option<usize>,
     /// Whether the foreground window is the console host's.
@@ -265,6 +270,8 @@ impl Seam {
             note_log: BTreeMap::new(),
             focusing: None,
             releasing: None,
+            sent: 0,
+            reported: BTreeMap::new(),
             replacing: None,
             console_front: false,
             due: None,
@@ -333,13 +340,34 @@ impl Seam {
     fn after_outpost(&mut self, effects: Vec<Effect>, seen: &mut Vec<Seen>) {
         for effect in effects {
             match effect {
-                Effect::Send(message) => self.enter_core_message(*message, seen),
+                Effect::Send(message) => {
+                    self.sent += 1;
+                    if let OutpostToCore::Event {
+                        event: NormalizedEvent::FocusChanged { node, .. },
+                        ..
+                    } = &*message
+                    {
+                        self.reported.insert(node.id.number(), self.sent);
+                    }
+                    self.enter_core_message(*message, seen);
+                }
                 Effect::Dispatch(program) => self.take_program(&program, seen),
                 Effect::Release { .. } => {
+                    // Only what Core released at an acknowledged position is
+                    // freed: a node reported since stays held
+                    // (`verbatim-outpost` `Store::release`).
                     let released: BTreeSet<u64> = self
                         .releasing
                         .take()
-                        .map(|field| node_of(self.generation, field).number())
+                        .map(|(field, acknowledged)| {
+                            (node_of(self.generation, field).number(), acknowledged)
+                        })
+                        .filter(|(node, acknowledged)| {
+                            self.reported
+                                .get(node)
+                                .is_none_or(|position| position <= acknowledged)
+                        })
+                        .map(|(node, _)| node)
                         .into_iter()
                         .collect();
                     if let Some(&node) = released.iter().next() {
@@ -682,13 +710,13 @@ impl Seam {
     /// Core no longer holds `field`.
     pub fn release(&mut self, field: usize, now: Us) -> Vec<Seen> {
         self.now = now;
-        self.releasing = Some(field);
+        self.releasing = Some((field, self.sent));
         let mut seen = Vec::new();
         let entry = Entry {
             item: Item::NodesHeld {
                 nodes: Vec::new(),
                 anchors: Vec::new(),
-                acknowledged: 0,
+                acknowledged: self.sent,
             },
             trace: self.trace(),
             observed_at_us: now,
