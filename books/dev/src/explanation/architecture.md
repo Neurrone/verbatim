@@ -194,9 +194,11 @@ Verbatim runs as four kinds of process:
 2. **Outpost processes (`verbatim-outpost.exe`), one per target application**
    (D9), each containing an event thread (WinEvent message loop and UIA
    callbacks), one worker, the only thread that calls into the
-   application, a watchdog that abandons and replaces a worker past its
-   deadline, and an I/O thread that reads Core's commands, answers pings,
-   and finishes the writes to Core that pended; every other thread writes
+   application, a reducer thread that decides what the worker takes next
+   and abandons and replaces a worker past its deadline, a registering
+   thread that subscribes to UI Automation events, a target-watch thread,
+   and an I/O thread that reads Core's commands, answers pings, and
+   finishes the writes to Core that pended; every other thread writes
    its own messages to Core (`docs/design/communication.md`, section 6.4).
 3. **The focus listener process (`verbatim-listener.exe`)** (D13), one
    for the desktop, containing its `WinEvent` thread, its UIA event

@@ -190,7 +190,7 @@ Starvation is not a risk of this policy: only threads that run for microseconds 
 - I/O thread (its main thread), `HIGHEST`. Waits on its port. Woken by commands from verbatim.exe and by a pended write's completion. The menu-end grace is a threadpool timer.
 - `WinEvent` thread, `HIGHEST`: the message loop for its global hooks. Builds each fact from the event's arguments and local reads, and writes it inline.
 - UIA's callback threads (UIA's own): hand the event to its application's reading thread, or, for a fact built from cached properties, write it inline.
-- Per-application reading threads, normal: judge and read the focus in one remote operation, then write inline.
+- Per-application reading threads, normal: judge and read the focus with calls on elements the listener holds (no remote operation, `books/dev/src/explanation/design/listener-without-connections.md`), then write inline.
 
 ### 6.4 An outpost
 

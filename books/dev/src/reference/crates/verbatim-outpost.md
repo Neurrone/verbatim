@@ -642,10 +642,10 @@ Inside an outpost (`docs/design/communication.md`, section 6.4;
   crates' per-thread call counts into each published `EventTiming`; a
   program that publishes nothing logs its calls (`books/dev/src/reference/performance.md`,
   "Cancelled traces").
-- Deadlines and abandonment are the reducer's: an event, a focus, or a
-  focus-now 10 s, NVDA's watchdog timeout; a navigation or activation
-  400 ms; an ancestor walk, a tree dump or a release 5 s; a text request
-  2 s. A program on a window also has its worker abandoned once the user
+- Deadlines and abandonment are the reducer's: an entry has the handling
+  deadline (`HANDLING_DEADLINE`, 11 s); a focus read, and the report of a
+  listener's read, the focus read's (`FOCUS_READ_DEADLINE`, 13 s); a shell
+  query the due time it carries (`budget` in `verbatim-outpost-logic`). A program on a window also has its worker abandoned once the user
   has moved to another UI thread of the same provider process, judged
   when the half-second grace ends and every half second after until the
   deadline, as NVDA's watchdog judges, by an ask the shell answers with
@@ -873,10 +873,12 @@ and the inherited pipe handles.
 
 ### Reading the focus
 
-- A UIA focus is reported from the listener's read (`Worker::uia_focus`):
-  tested against the foreground with its nearest window (or 0, which passes,
-  as NVDA's `shouldAcceptEvent`; [ADR 0001: Focus](../adr/0001-focus.md), "The
-  listener's checks, ported from NVDA's focus handler"), its backend decided. Its runtime id keeps its node; when the
+- A UIA focus is reported from the listener's read (`Worker::uia_focus`),
+  which the outpost does not test against the foreground: the listener made
+  that test before it read ([ADR 0001: Focus](../adr/0001-focus.md), "The
+  listener's checks, ported from NVDA's focus handler"). The outpost's
+  acceptance test covers MSAA events and the other UI Automation events,
+  not a focus. Its backend is decided. Its runtime id keeps its node; when the
   listener read that the earlier element under it lost the focus or is
   gone, the report carries that evidence (`FocusChanged::earlier`) and its
   commit evicts the element kept for the node, if still kept

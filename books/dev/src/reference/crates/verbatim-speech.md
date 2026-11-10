@@ -204,7 +204,7 @@ Public API:
   until the mixer reports its ending, so that utterance costs one small
   list, and no other speech costs anything). `utterance_queued`, and the ending of an utterance
   cancelled before synthesis, are called on the queue thread; the rest on
-  the mixer's audio thread, so every implementation must be cheap and
+  the mixer's delivery thread, so every implementation must be cheap and
   non-blocking.
 - `Presenter` and `ThemePresenter` — the presentation stage (decision
   D12, [verbatim-model](verbatim-model.md), "Themes"): a presenter flattens each structured utterance to the
