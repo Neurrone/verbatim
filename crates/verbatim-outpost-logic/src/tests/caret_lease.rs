@@ -496,6 +496,17 @@ fn fixed() -> Vec<Vec<Action>> {
             Action::Tick(120),
             Action::Tick(120),
         ],
+        vec![
+            Action::FocusTerminal { console: false },
+            Action::Press { key: 0, held: true },
+            Action::Focus {
+                other: false,
+                ago: 0,
+            },
+            Action::FocusTerminal { console: true },
+            Action::Finish,
+            Action::Tick(10),
+        ],
     ]
 }
 

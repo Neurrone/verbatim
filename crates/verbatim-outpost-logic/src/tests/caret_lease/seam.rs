@@ -137,6 +137,10 @@ pub struct Seam {
     pub unexpressed: BTreeSet<&'static str>,
 }
 
+/// The terminal node that is the console host's; node 10 is the other
+/// terminal.
+const CONSOLE_NODE: u64 = 11;
+
 /// The node of field `field` in outpost generation `generation`.
 fn node_of(generation: u64, field: usize) -> NodeId {
     NodeId::in_outpost(OutpostId(generation), 5 + field as u64)
@@ -541,7 +545,9 @@ impl Seam {
                         fetch: note.fetch(),
                         on: match note {
                             NoteRequest::Field { .. } => NoteOn::Field,
-                            NoteRequest::Terminal { .. } if self.console_front => {
+                            NoteRequest::Terminal { .. }
+                                if note.node().number() == CONSOLE_NODE =>
+                            {
                                 NoteOn::ConsoleHost
                             }
                             NoteRequest::Terminal { .. } => NoteOn::Terminal,
@@ -746,7 +752,7 @@ impl Seam {
         seen.push(Seen::TerminalRead(flight.field, now));
         let text = flight
             .note
-            .filter(|_| self.console_front)
+            .filter(|_| flight.node.number() == CONSOLE_NODE)
             .into_iter()
             .map(|note| TextChange::NotePoll {
                 node: flight.node.number(),
@@ -786,7 +792,7 @@ impl Seam {
                 ancestors: vec![snapshot(self.generation, 1, Role::Window, "Window")],
                 node: snapshot(
                     self.generation,
-                    if console { 11 } else { 10 },
+                    if console { CONSOLE_NODE } else { 10 },
                     Role::Terminal,
                     "Terminal",
                 ),
