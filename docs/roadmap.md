@@ -39,8 +39,7 @@ Next (Dickson, 2026-11-10). Nothing here is built. This entry holds
 what a new session needs to resume: the findings, the order, each
 item's code locations and what waits for Dickson. The findings come
 from a retrospective of the work from 2026-10-10 to 2026-11-10, made by
-audits that read the code at 04268b78; only the held-keyboard defect's
-central claim was rechecked by hand, so each item is verified in the
+audits that read the code at 04268b78, so each item is verified in the
 code before it is built.
 
 ### What the retrospective found
@@ -72,54 +71,13 @@ would reopen the question. Browse mode's design starts from it.
 ### Order
 
 One build that changes state is in flight at a time; the recorder, the
-document corrections, the delay measurement and M5's design
-corrections change no state and may run beside one.
+document corrections and M5's design corrections change no state and
+may run beside one.
 
-1. The trailers, the hook and the health report.
-2. The held-keyboard defect.
-3. The event recorder.
-4. The ancestry cache.
-5. The confirmed defects, one small build each.
-6. The delay between the keyboard hook and Core's reducer.
-7. M5's design corrections, after which build A may start.
-
-### The trailers, the hook and the health report
-
-- Every commit ends with a `Kind:` trailer (feature, fix, test,
-  design, record, process, refactor or removal); a fix also carries
-  `Mechanism:`, and `Fixes:` with the hash when it repairs an earlier
-  commit.
-- A tracked hooks folder holds a `commit-msg` hook that refuses a
-  commit without them, merge commits excepted, with copies of Git
-  LFS's four hooks, since setting `core.hooksPath` replaces the
-  default hooks folder; the setup guide gains the command that sets
-  it. `cargo xtask ci` checks the commits being pushed, so a clone
-  without the hook still fails on GitHub.
-- A health report, a new xtask command, gives for the last seven days
-  the fix commits per feature commit, the share of fixes repairing a
-  commit under fourteen days old, and the fixes per mechanism. A
-  session reads it at its start and starts no build above 2 fixes per
-  feature commit or 30 percent repairs: the weeks of October measured
-  1.4, 6.0 and 2.5 fixes per feature commit, and 44 percent repairs.
-- `CLAUDE.md` gains the trailer rule and the report's rule with the
-  tools, and its third-fix rule then counts by trailer.
-
-### The held-keyboard defect
-
-When the listener ends while Core waits on a live re-read from it, the
-keyboard can stop reaching every application. Core ends a listener's
-re-reads only when a replacement listener is ready
-(`crates/verbatim-app/src/main.rs`, where `Input::ListenerReplaced` is
-applied), and the three paths in
-`crates/verbatim-supervisor/src/owner.rs` that end the listener (its
-pipe closing, its missed pings, a failed launch) tell the outposts and
-not Core. A caret key pressed meanwhile is held behind the report set
-aside, and the hook defers every later key. The fix: the relay posts
-the listener's end on the ordered path of its other lifecycle notices,
-and Core applies the listener-replaced rule then.
-`books/dev/src/explanation/design/key-holding.md` says this wait is
-bounded by the re-read's deadline, which runs in the listener that
-ended.
+1. The event recorder.
+2. The ancestry cache.
+3. The confirmed defects, one small build each.
+4. M5's design corrections, after which build A may start.
 
 ### The event recorder
 
@@ -228,8 +186,8 @@ the design.
 - Verbatim+Tab followed at once by Tab says only the new focus or
   names it twice; and Tab into a protected field followed at once by a
   character may be echoed. Each needs an NVDA capture first, since
-  NVDA's source does not settle what it says, and then Dickson's
-  decision.
+  NVDA's source does not settle what it says, and then matches it
+  (Dickson, 2026-11-10).
 - Documents that disagree with the code, corrected in one commit:
   architecture section 1's list of an outpost's threads (no watchdog
   thread exists; the reducer and registering threads are missing; the
@@ -274,15 +232,6 @@ Where each starts in the code, as the audits found it at 04268b78:
   echo: `echo` and `character_typed` in
   `crates/verbatim-core/src/editing.rs`.
 
-### The delay between the keyboard hook and Core's reducer
-
-In recorded console typing the time from the hook seeing a key to the
-end of Core's work on it was 10.2 ms at the 95th percentile, against
-1.0 ms over every scenario measured. Every key waits on Core, and more
-will as browse mode and later features arrive. The steps that hold
-Core's input are measured by kind, and a bound is proposed to Dickson
-as a performance budget.
-
 ### M5's design corrections
 
 Before build A starts, in `docs/design/extensions.md` and
@@ -302,8 +251,9 @@ Before build A starts, in `docs/design/extensions.md` and
   design says what passing it through then does; and a gesture bound
   only by an app module must not reach the application between a
   foreground change and Core's next publication.
-- Whether an app module's commands follow the window in front, as
-  designed, or the focus, as NVDA's do: Dickson's.
+- An app module's commands follow the focus, as NVDA's do
+  (`nvda/source/scriptHandler.py`, `_yieldObjectsForFindScript`), and
+  not the window in front as designed (Dickson, 2026-11-10).
 
 ### Findings for later milestones
 
@@ -326,13 +276,9 @@ Recorded here so their designs start from them:
 
 ### Waiting for Dickson
 
-The ancestry cache's amendment of ADR 0001; the health report's two
-thresholds; the recorder's name, command line and file format; typed
-echo after Tab into a protected field and Verbatim+Tab followed by
-Tab, each after its NVDA capture; whether an app module's commands
-follow the window in front or the focus; the bound on the delay
-between the hook and Core's reducer; and, in M6.2, which thread owns
-the single record of an outpost generation's life.
+The ancestry cache's amendment of ADR 0001, approved with its design;
+and, in M6.2, which thread owns the single record of an outpost
+generation's life.
 
 ## M4 — Text, editing, and terminals
 
