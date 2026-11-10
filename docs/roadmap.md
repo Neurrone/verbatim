@@ -226,26 +226,43 @@ Where each starts in the code, as the audits found it at 04268b78:
 
 ### M5's design corrections
 
-Before build A starts, in `docs/design/extensions.md` and
-`docs/design/m5-build-a.md`, with one review of the amended parts:
+Made on 2026-11-11 in `docs/design/extensions.md` and
+`docs/design/m5-build-a.md`; build A starts after one review of the
+amended parts:
 
-- A hook call has one clock, its host's: the host enforces the
-  deadline and always answers, and the outpost waits for that answer
-  or the pipe's end. Today's design times it on both sides, so one
-  overrun makes the next event's hook time out too.
+- A hook call has one clock, its host's: the call carries its deadline,
+  the host's lane counts it from the call's start and always answers,
+  and the outpost's reducer and Core keep no timer for it, waiting for
+  the answer or the pipe's end (extensions, section 4, "A hook call has
+  one clock", and the hook state table, which gains `AwaitingHost` and
+  loses its deadline row; section 7).
 - A list dialog's record is held by Core's reducer, which sees every
-  press in key order, not by the lane.
-- During a reload the code version travels only on the call.
-- Hook registrations are published with the rules and marked as code
-  pending, so the first focus of a cold start waits for its hook.
-- Each child's configuration has one writer.
-- A module that binds a held caret key takes its hold away, and the
-  design says what passing it through then does; and a gesture bound
-  only by an app module must not reach the application between a
-  foreground change and Core's next publication.
-- An app module's commands follow the focus, as NVDA's do
-  (`nvda/source/scriptHandler.py`, `_yieldObjectsForFindScript`), and
-  not the window in front as designed (Dickson, 2026-11-10).
+  press in key order and every command's answer (extensions, section
+  4, its table).
+- During a reload the code version travels only on the call; a host is
+  sent no version, a lane never goes back to an older one, and a
+  version no longer in memory is loaded again from the compiled-code
+  cache (extensions, section 2.2).
+- Hook registrations are published with the rules and marked code
+  pending in `RulesReady`, so the first focus of a cold start waits for
+  its hook (extensions, section 2.2; build A, section 8.2, rows 3, 5
+  and 8).
+- Each child's configuration has one writer, the supervisor's owner
+  thread, and a configuration is never refused by a full queue (build
+  A, sections 9.1 and 9.2).
+- A module that binds a caret key takes its hold away, and passing it
+  through sends the key on unheld with nothing more, as NVDA runs the
+  app module's script in place of the caret script; a gesture bound
+  only by an app module, pressed before Core has committed the new
+  focus, reaches the application, as in NVDA, under Dickson's rule of
+  2026-11-11 to match NVDA (build A, section 10).
+- An app module's commands follow the focus (Dickson, 2026-11-10): the
+  hook thread reads the focus's application, the process and identity
+  of the outpost that reported Core's committed focus, from Core's view
+  (build A, sections 4.2 and 10; extensions, section 4, "Commands").
+- The identity's path from the listener to the supervisor, the
+  outposts' first commands, Core's record of each outpost and the
+  hook's view (extensions, section 3).
 
 ### Findings for later milestones
 
