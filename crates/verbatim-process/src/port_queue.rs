@@ -12,10 +12,6 @@
 //! thread takes up to 64 packets per wait, so a burst costs it one system
 //! call, not one per item.
 //!
-//! The queue counts the items posted and the items taken ([`Progress`]),
-//! so another thread can tell whether the taking thread has stopped taking
-//! while items wait: the relay's watch over the reducer (section 6.8).
-//!
 //! The module's rule for its `unsafe` code: a packet carrying an item is
 //! made only by [`Poster::send`], from a box it gives up, on a port no
 //! other code posts to, and each such packet is taken off the port exactly
@@ -26,7 +22,7 @@ use std::collections::VecDeque;
 use std::io;
 use std::marker::PhantomData;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use windows::Win32::System::IO::{OVERLAPPED, PostQueuedCompletionStatus};
@@ -41,24 +37,6 @@ const CLOSED_KEY: usize = 2;
 
 /// How many packets one wait takes at most.
 const TAKEN_PER_WAIT: usize = 64;
-
-/// How many items have been posted to a queue, and how many its taker has
-/// taken: the difference is what waits.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Progress {
-    /// Items posted so far.
-    pub posted: u64,
-    /// Items the [`PortQueue`] has handed out so far.
-    pub taken: u64,
-}
-
-impl Progress {
-    /// How many items wait to be taken.
-    #[must_use]
-    pub fn waiting(&self) -> u64 {
-        self.posted.saturating_sub(self.taken)
-    }
-}
 
 /// What a wait with a timeout ([`PortQueue::recv_timeout`]) came to.
 #[derive(Debug, PartialEq, Eq)]
@@ -80,8 +58,6 @@ struct Shared<T> {
     port: Port,
     /// The live [`Poster`]s; the last one dropped posts [`CLOSED_KEY`].
     posters: AtomicUsize,
-    posted: AtomicU64,
-    taken: AtomicU64,
     /// Cleared when the [`PortQueue`] is dropped: later sends fail.
     open: AtomicBool,
     /// The queue carries `T`s from thread to thread: sendable and
@@ -156,8 +132,6 @@ impl<T: Send + 'static> Poster<T> {
         if verbatim_faults::hit(verbatim_faults::Fault::PortRefusesPost, &item) {
             return Err(item);
         }
-        // Counted first, so the taken count never passes the posted one.
-        self.shared.posted.fetch_add(1, Ordering::SeqCst);
         let item = Box::into_raw(Box::new(item));
         // SAFETY: the port is open; the pointer is carried, never read by
         // the system, and comes back to the queue's taker (the module's
@@ -173,7 +147,6 @@ impl<T: Send + 'static> Poster<T> {
         if posted.is_ok() {
             return Ok(());
         }
-        self.shared.posted.fetch_sub(1, Ordering::SeqCst);
         // SAFETY: the packet was not posted, so the box was never given up.
         Err(*unsafe { Box::from_raw(item) })
     }
@@ -185,18 +158,6 @@ impl<T: Send + 'static> Poster<T> {
     #[must_use]
     pub fn is_open(&self) -> bool {
         self.shared.open.load(Ordering::SeqCst)
-    }
-
-    /// How many items have been posted and taken so far.
-    #[must_use]
-    pub fn progress(&self) -> Progress {
-        // The taken count first: read after it, the posted count is at
-        // least as large.
-        let taken = self.shared.taken.load(Ordering::SeqCst);
-        Progress {
-            posted: self.shared.posted.load(Ordering::SeqCst),
-            taken,
-        }
     }
 }
 
@@ -239,8 +200,6 @@ pub fn port_queue<T: Send>() -> io::Result<(Poster<T>, PortQueue<T>)> {
     let shared = Arc::new(Shared {
         port: Port::new()?,
         posters: AtomicUsize::new(1),
-        posted: AtomicU64::new(0),
-        taken: AtomicU64::new(0),
         open: AtomicBool::new(true),
         items: PhantomData,
     });
@@ -287,7 +246,6 @@ impl<T: Send> PortQueue<T> {
     fn next(&mut self, deadline: Option<Instant>) -> Received<T> {
         loop {
             if let Some(item) = self.ready.pop_front() {
-                self.shared.taken.fetch_add(1, Ordering::SeqCst);
                 return Received::Item(item);
             }
             if self.closed {
@@ -349,24 +307,6 @@ mod tests {
             .collect();
         assert_eq!(taken, ["first", "second", "third"]);
         assert_eq!(queue.try_recv(), None);
-    }
-
-    #[test]
-    fn progress_counts_what_waits_until_it_is_taken() {
-        let (poster, mut queue) = port_queue::<u32>().expect("a queue");
-        poster.send(1).expect("posted");
-        poster.send(2).expect("posted");
-        assert_eq!(
-            poster.progress(),
-            Progress {
-                posted: 2,
-                taken: 0
-            }
-        );
-        assert_eq!(queue.try_recv(), Some(1));
-        assert_eq!(poster.progress().waiting(), 1);
-        assert_eq!(queue.try_recv(), Some(2));
-        assert_eq!(poster.progress().waiting(), 0);
     }
 
     #[test]

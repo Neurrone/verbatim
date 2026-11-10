@@ -390,9 +390,7 @@ knowing for review:
   speech marks, and control-plane requests. It passes every supervisor
   message through the supervisor's `Frames`, which turns each outpost's
   frame into the message it carries, on the reducer's thread whatever its
-  size, in the order the frames arrive. The supervisor's relay watches the port's counts and
-  logs a warning when the reducer has taken nothing for three ping
-  intervals while inputs waited (`EventSink::watched`). Every outpost message arrives tagged with the
+  size, in the order the frames arrive. Every outpost message arrives tagged with the
   outpost generation whose pipe carried it; an outpost joins the live set
   on `OutpostMessage::Started`, which precedes all its messages, and leaves
   it on `OutpostMessage::Ended`, and a message from an outpost not in the

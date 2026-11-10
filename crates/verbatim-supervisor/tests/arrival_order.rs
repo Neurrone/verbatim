@@ -50,11 +50,14 @@ const APPLICATION: &str = "--stand-in-application";
 /// The environment variable naming the event the stand-in listener sets.
 const SIGNAL_ENV: &str = "VERBATIM_TEST_ARRIVAL_SIGNAL";
 
+/// The environment variable naming the event the stand-in outpost sets on
+/// its fourth ping.
+const PINGS_ENV: &str = "VERBATIM_TEST_ARRIVAL_PINGS";
+
 /// How long a child has to exit after the shutdown message.
 const LIMIT: Duration = Duration::from_secs(5);
 
-/// The longest any step waits: past the four heartbeats, three ping
-/// intervals apart, a reducer's stall is reported on.
+/// The longest any step waits: past four pings, three intervals apart.
 const WAIT: Duration = Duration::from_secs(30);
 
 /// The value after `name` on the command line.
@@ -144,6 +147,14 @@ fn send_unreadable(messages: &mut BlockingWriter) {
     messages.write_all(&frame).expect("the frame is written");
 }
 
+/// The test's event named by the environment variable `variable`.
+fn open_event(variable: &str) -> HANDLE {
+    let name = std::env::var(variable).expect("the test names its event");
+    // SAFETY: opens the test's named event, or makes it; the handle is
+    // owned by the caller until the process ends.
+    unsafe { CreateEventW(None, false, false, &HSTRING::from(name)) }.expect("the test's event")
+}
+
 /// A stand-in child, as the module says.
 fn stand_in(args: &[String]) -> ! {
     let handle = |name| {
@@ -164,11 +175,7 @@ fn stand_in(args: &[String]) -> ! {
     let listener = args.iter().any(|arg| arg == "--listener");
     let mut commands = BufReader::new(commands);
     if listener {
-        let name = std::env::var(SIGNAL_ENV).expect("the test names its event");
-        // SAFETY: opens the test's named event, or makes it; the handle is
-        // owned here until the process ends.
-        let signal = unsafe { CreateEventW(None, false, false, &HSTRING::from(name)) }
-            .expect("the test's event");
+        let signal = open_event(SIGNAL_ENV);
         write_message(
             &mut messages,
             &ListenerToCore::Ready {
@@ -207,6 +214,8 @@ fn stand_in(args: &[String]) -> ! {
     };
     // Whether to write a frame when shut down.
     let mut farewell = false;
+    let pings_event = open_event(PINGS_ENV);
+    let mut pings = 0;
     loop {
         let command = match read_message::<_, CoreToOutpost>(&mut commands) {
             Ok(Some(command)) => command,
@@ -214,14 +223,21 @@ fn stand_in(args: &[String]) -> ! {
             Err(error) => panic!("the command pipe failed: {error}"),
         };
         match command {
-            CoreToOutpost::Ping { .. } => send(
-                &mut messages,
-                &OutpostToCore::Pong {
-                    parked_count: 0,
-                    parked_on_hung: 0,
-                    written_at_us: 0,
-                },
-            ),
+            CoreToOutpost::Ping { .. } => {
+                send(
+                    &mut messages,
+                    &OutpostToCore::Pong {
+                        parked_count: 0,
+                        parked_on_hung: 0,
+                        written_at_us: 0,
+                    },
+                );
+                pings += 1;
+                if pings == 4 {
+                    // SAFETY: an event handle this process holds.
+                    unsafe { SetEvent(pings_event) }.expect("the pings event is set");
+                }
+            }
             CoreToOutpost::Shutdown => {
                 if farewell {
                     send(&mut messages, &fault("Z", 0));
@@ -245,8 +261,9 @@ fn stand_in(args: &[String]) -> ! {
     }
 }
 
-/// The named event the stand-in listener sets.
-struct Signal(HANDLE);
+/// The named events the stand-ins set: the listener's, when an outpost's
+/// hook is in, and the outpost's, on its fourth ping.
+struct Signal(HANDLE, HANDLE);
 
 impl Signal {
     /// Names this process's event for the stand-in listeners it starts,
@@ -259,8 +276,26 @@ impl Signal {
         // SAFETY: makes a named, auto-reset event; the handle is closed on
         // drop.
         let event =
-            unsafe { CreateEventW(None, false, false, &HSTRING::from(name)) }.expect("an event");
-        Self(event)
+            unsafe { CreateEventW(None, false, false, &HSTRING::from(&name)) }.expect("an event");
+        let pings_name = format!("{name}-pings");
+        // SAFETY: as above.
+        unsafe { std::env::set_var(PINGS_ENV, &pings_name) };
+        // SAFETY: as above.
+        let pings = unsafe { CreateEventW(None, false, false, &HSTRING::from(pings_name)) }
+            .expect("an event");
+        Self(event, pings)
+    }
+
+    /// Waits for the outpost to say it has been pinged four times: three
+    /// ping intervals have passed since its first.
+    fn wait_for_fourth_ping(&self) {
+        let milliseconds = u32::try_from(WAIT.as_millis()).expect("in range");
+        // SAFETY: an event handle this process holds.
+        let waited = unsafe { WaitForSingleObject(self.1, milliseconds) };
+        assert_eq!(
+            waited, WAIT_OBJECT_0,
+            "the outpost was not pinged four times"
+        );
     }
 
     /// Waits for the listener to say an outpost's hook is in: the relay
@@ -280,6 +315,8 @@ impl Drop for Signal {
     fn drop(&mut self) {
         // SAFETY: the handle is this value's, closed once.
         let _ = unsafe { CloseHandle(self.0) };
+        // SAFETY: as above.
+        let _ = unsafe { CloseHandle(self.1) };
     }
 }
 
@@ -521,6 +558,33 @@ fn a_closed_pipe_reaches_the_app_after_every_frame_before_it() {
     end(app);
 }
 
+/// The reducer held for three ping intervals ends no outpost, since the
+/// relay reads the outposts' pongs itself: its stand-in is pinged four
+/// times with a key waiting, is then still answering, and is shut down
+/// cleanly.
+fn a_reducer_held_past_three_ping_intervals_ends_no_outpost(signal: &Signal) {
+    let (app, pid) = application();
+    let mut reducer = Reducer::start();
+    reducer.with_outposts(&[pid]);
+
+    // Held from here, with a key waiting.
+    reducer.press(1);
+    signal.wait_for_fourth_ping();
+
+    assert_eq!(reducer.take(1), ["key 1"]);
+    // The outpost was not ended, and still answers.
+    reducer.cue("O1", 7);
+    assert_eq!(reducer.take(1), ["O1: C"]);
+
+    reducer.finish(ShutdownSummary {
+        clean: 2,
+        exited: 0,
+        killed: 0,
+        killed_on_failure: 0,
+    });
+    end(app);
+}
+
 /// While the reducer is held, the relay keeps draining an outpost's pipe:
 /// the outpost writes far more than the pipe holds, and each of its writes
 /// completes, so nothing it sends waits behind a write in flight, which is
@@ -627,7 +691,7 @@ fn main() -> std::process::ExitCode {
     // Each test names the event its stand-in listener sets ([`Signal`]),
     // which every stand-in listener opens, whether or not the test waits
     // on it.
-    let tests: [(&str, fn()); 5] = [
+    let tests: [(&str, fn()); 6] = [
         (
             "a_frame_written_before_a_key_is_reduced_before_it_and_one_written_after_it_after",
             || {
@@ -660,6 +724,12 @@ fn main() -> std::process::ExitCode {
             || {
                 let _signal = Signal::new();
                 nothing_an_outpost_writes_after_the_supervisor_ended_it_reaches_the_reducer();
+            },
+        ),
+        (
+            "a_reducer_held_past_three_ping_intervals_ends_no_outpost",
+            || {
+                a_reducer_held_past_three_ping_intervals_ends_no_outpost(&Signal::new());
             },
         ),
     ];
