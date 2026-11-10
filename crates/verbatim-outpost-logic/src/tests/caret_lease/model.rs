@@ -34,6 +34,8 @@
 //!   ruling, 2026-11-09). One that shows a change is an ordinary report,
 //!   so that key's evidence when it ended after that key's pass
 //!   (2026-11-09).
+//! - A silenced key whose before read ends with no result has ended, so
+//!   changes arriving after it are said at once (Dickson, 2026-11-10).
 //! - The caret is the focus object's, the one whose read began most
 //!   recently (2026-10-25), and ends with that focus.
 //! - A report of a node no longer the focus says nothing and is not a
@@ -555,10 +557,11 @@ impl Model {
     pub fn abandoned(&mut self, role: ReadRole) {
         match role {
             ReadRole::Before => {
-                if let Some(id) = self.before_reads.pop_front()
-                    && self.keys[id].passed.is_none()
-                {
-                    self.keys[id].done = true;
+                if let Some(id) = self.before_reads.pop_front() {
+                    self.keys[id].silenced_at = None;
+                    if self.keys[id].passed.is_none() {
+                        self.keys[id].done = true;
+                    }
                 }
                 if self.keys.iter().all(|press| press.done) {
                     self.say_held_when_no_key_is_out();
