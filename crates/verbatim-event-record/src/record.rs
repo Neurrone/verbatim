@@ -28,7 +28,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     EVENT_OBJECT_HIDE, EVENT_OBJECT_LOCATIONCHANGE, EVENT_OBJECT_NAMECHANGE, EVENT_OBJECT_REORDER,
     EVENT_OBJECT_SELECTION, EVENT_OBJECT_SELECTIONADD, EVENT_OBJECT_SELECTIONREMOVE,
     EVENT_OBJECT_SELECTIONWITHIN, EVENT_OBJECT_SHOW, EVENT_OBJECT_STATECHANGE,
-    EVENT_OBJECT_TEXTSELECTIONCHANGED, EVENT_OBJECT_VALUECHANGE, EVENT_SYSTEM_ALERT,
+    EVENT_OBJECT_TEXTSELECTIONCHANGED, EVENT_OBJECT_UNCLOAKED, EVENT_OBJECT_VALUECHANGE, EVENT_SYSTEM_ALERT,
     EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_MENUEND, EVENT_SYSTEM_MENUPOPUPEND,
     EVENT_SYSTEM_MENUPOPUPSTART, EVENT_SYSTEM_SWITCHEND, GW_OWNER, MSG, MsgWaitForMultipleObjects,
     OBJID_WINDOW, PM_REMOVE, PeekMessageW, QS_HOTKEY, WM_HOTKEY,
@@ -64,7 +64,7 @@ const CHILDID_SELF: i32 = 0;
 
 /// What the watcher is sent.
 enum WindowChange {
-    /// A top-level window of the target's process was shown.
+    /// A top-level window of the target's process was shown or uncloaked.
     Shown(isize),
     /// A window of the target's process was destroyed.
     Gone(isize),
@@ -367,8 +367,7 @@ fn target_sink(
             Target::Process(_) => {
                 if destroyed {
                     let _ = changes.send(WindowChange::Gone(raw.hwnd));
-                } else if raw.event == EVENT_OBJECT_SHOW
-                    && window_object
+                } else if shows_window(raw.event, window_object)
                     && verbatim_uia::is_top_level_window(raw.hwnd)
                 {
                     let _ = changes.send(WindowChange::Shown(raw.hwnd));
@@ -376,6 +375,13 @@ fn target_sink(
             }
         }
     })
+}
+
+/// Whether `event` makes a window of the target one the watcher should
+/// register: its window object was shown, or uncloaked, as a modern
+/// application's frame is some time after it exists.
+fn shows_window(event: u32, window_object: bool) -> bool {
+    window_object && (event == EVENT_OBJECT_SHOW || event == EVENT_OBJECT_UNCLOAKED)
 }
 
 /// What the desktop's focus hook does with each focus event.
@@ -724,7 +730,18 @@ fn windows_build() -> String {
 mod tests {
     use std::path::Path;
 
-    use super::closing;
+    use super::{closing, shows_window};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        EVENT_OBJECT_HIDE, EVENT_OBJECT_SHOW, EVENT_OBJECT_UNCLOAKED,
+    };
+
+    #[test]
+    fn a_window_object_shown_or_uncloaked_is_one_to_register() {
+        assert!(shows_window(EVENT_OBJECT_SHOW, true));
+        assert!(shows_window(EVENT_OBJECT_UNCLOAKED, true));
+        assert!(!shows_window(EVENT_OBJECT_UNCLOAKED, false));
+        assert!(!shows_window(EVENT_OBJECT_HIDE, true));
+    }
 
     #[test]
     fn a_write_that_failed_makes_the_exit_code_one_and_says_so() {
