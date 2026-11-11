@@ -107,13 +107,21 @@ impl<T, S> FlightRecorder<T, S> {
     /// An entry larger than the whole byte bound is not kept, so the bound
     /// always holds.
     pub fn record(&mut self, entry: T, bytes: usize, checkpoint: impl FnOnce() -> S) {
+        self.record_when(entry, bytes, Some(checkpoint));
+    }
+
+    /// [`record`](Self::record), for a state that can be copied only at
+    /// some steps: with no `checkpoint` the newest segment stays open
+    /// whatever its size, and closes at the first later entry that has one.
+    pub fn record_when(&mut self, entry: T, bytes: usize, checkpoint: Option<impl FnOnce() -> S>) {
         let newest = self.newer.back_mut().unwrap_or(&mut self.oldest);
         newest.entries.push((entry, bytes));
         newest.bytes = newest.bytes.saturating_add(bytes);
         self.entries = self.entries.saturating_add(1);
         self.bytes = self.bytes.saturating_add(bytes);
-        if newest.entries.len() >= self.max_entries.div_ceil(2)
-            || newest.bytes >= self.max_bytes.div_ceil(2)
+        if (newest.entries.len() >= self.max_entries.div_ceil(2)
+            || newest.bytes >= self.max_bytes.div_ceil(2))
+            && let Some(checkpoint) = checkpoint
         {
             self.newer.push_back(Segment::starting_at(checkpoint()));
         }

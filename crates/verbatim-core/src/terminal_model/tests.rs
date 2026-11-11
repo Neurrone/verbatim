@@ -10,7 +10,7 @@ use verbatim_text::terminal_reading::{Settings, Speech, Step};
 use verbatim_text::terminal_rows::Lost;
 
 use super::{Said, SaidItem, rules_key, speech_of};
-use crate::state::SrState;
+use crate::driver::Core as SrState;
 
 use crate::terminal::{Skipped, TerminalItem, TerminalKeyKind, TerminalUnit};
 

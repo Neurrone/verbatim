@@ -9,15 +9,16 @@ use std::collections::VecDeque;
 
 use serde::{Deserialize, Serialize};
 use verbatim_model::{
-    CaretKey, CaretMotion, CaretRead, CaretReply, CaretReport, Change, Effect, FetchResult, Input,
-    KeyFetch, NodeId, NoteRequest, QueryId, QueryKind, ReadFacts, ReadPurpose, ReviewCommand,
-    SelectionChange, TextChunk, TextMovement, TextOp, TextPoint, TextPosition, TextRead, TextReply,
-    TextUnit, TraceId, UtteranceSegment, had_effect,
+    CaretKey, CaretMotion, CaretRead, CaretReply, CaretReport, Change, Effect, Input, KeyFetch,
+    NodeId, NoteRequest, QueryId, ReadFacts, ReadPurpose, ReviewCommand, SelectionChange,
+    TextChunk, TextMovement, TextOp, TextPoint, TextPosition, TextRead, TextReply, TextUnit,
+    TraceId, UtteranceSegment, had_effect,
 };
 
+use crate::driver::{Core, Signal};
 use crate::editing::{self, is_grid, text_focus};
-use crate::queries::{Asking, Ending, Then};
-use crate::state::{SrState, TextFollowUp};
+use crate::queries::{Asking, Then};
+use crate::state::SrState;
 
 /// The key's bound: 100 ms after Core passed it on, NVDA's
 /// `caretMoveTimeoutMs`, and the wait of whatever is behind it.
@@ -165,17 +166,14 @@ struct PassedKey {
 }
 
 /// A review or object-navigation command the line runs
-/// (`docs/design/m42-parity.md`, "Build two"): what is asked of the
-/// application and the press it serves.
+/// (`docs/design/m42-parity.md`, "Build two"): the line's record that the
+/// press's function is reading (`crate::press`), which holds the rest.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Press {
     /// The node its read is of, which the state holds.
     node: NodeId,
-    /// Its one read in flight: a follow-up read replaces it, so the press
-    /// stays current until the answer to its last read.
-    query: QueryId,
-    /// What was pressed.
-    review: ReviewPress,
+    /// The key's trace, which names the press.
+    trace_id: TraceId,
 }
 
 /// A press of a review command: the command and how many times it was
@@ -354,7 +352,7 @@ impl CurrentKey {
     fn trace_id(&self) -> Option<TraceId> {
         match self {
             Self::Reading { key, .. } => Some(key.trace_id),
-            Self::Review(press) => Some(press.review.trace_id),
+            Self::Review(press) => Some(press.trace_id),
             passed_on @ (Self::Watched(_)
             | Self::FinalReading { .. }
             | Self::MovingBySentence { .. }) => {
@@ -531,7 +529,7 @@ fn chord_in_terminal(state: &SrState, input: &Input) -> Option<Input> {
 
 /// A review command or script: one that finds a key in the line that still
 /// holds it waits behind it, and any other runs now.
-pub(crate) fn command_arrived(state: &mut SrState, input: &Input) -> Vec<Effect> {
+pub(crate) fn command_arrived(state: &mut Core, input: &Input) -> Vec<Effect> {
     if !state.current().is_some_and(CurrentKey::holds_arrivals) {
         return crate::reduce::command_input(state, input);
     }
@@ -551,7 +549,7 @@ fn join(state: &mut SrState, item: WaitingKey) -> Vec<Effect> {
     let arms = busy.waiting.is_empty();
     busy.waiting.push_back(item);
     match &busy.current {
-        CurrentKey::Review(press) if arms => vec![bound_of(press.review.trace_id)],
+        CurrentKey::Review(press) if arms => vec![bound_of(press.trace_id)],
         _ => Vec::new(),
     }
 }
@@ -724,7 +722,7 @@ fn pressed_no_earlier(input: Input, at_ms: Option<u64>) -> Input {
 /// caret key the hook passed starts its bound from when it reached Core,
 /// firing at once when that has passed.
 fn run_waiting(
-    state: &mut SrState,
+    state: &mut Core,
     mut waiting: VecDeque<WaitingKey>,
     passed_at_ms: Option<u64>,
 ) -> Vec<Effect> {
@@ -797,9 +795,7 @@ fn became_current(state: &SrState, trace: Option<TraceId>) -> Option<RunsAtPass>
         Some(CurrentKey::Watched(watched)) if Some(watched.passed().key.trace_id) == trace => {
             Some(RunsAtPass::Yes)
         }
-        Some(CurrentKey::Review(press)) if Some(press.review.trace_id) == trace => {
-            Some(RunsAtPass::No)
-        }
+        Some(CurrentKey::Review(press)) if Some(press.trace_id) == trace => Some(RunsAtPass::No),
         Some(
             CurrentKey::Reading { .. }
             | CurrentKey::Watched(_)
@@ -821,7 +817,7 @@ fn press_with_entries(
     let Some(CurrentKey::Review(press)) = state.current() else {
         return None;
     };
-    (Some(press.review.trace_id) == trace && !waiting.is_empty()).then_some(press.review.trace_id)
+    (Some(press.trace_id) == trace && !waiting.is_empty()).then_some(press.trace_id)
 }
 
 /// Whether the key that has just become current has reached its pass, so
@@ -852,7 +848,7 @@ fn pass_sentence_key(state: &mut SrState, held: HeldKey) -> Vec<Effect> {
 
 /// Advances the line: runs what waits, a key still current staying until a
 /// held key replaces it.
-fn advance(state: &mut SrState, at_ms: Option<u64>) -> Vec<Effect> {
+fn advance(state: &mut Core, at_ms: Option<u64>) -> Vec<Effect> {
     let Some(busy) = state.busy_mut() else {
         return Vec::new();
     };
@@ -863,7 +859,7 @@ fn advance(state: &mut SrState, at_ms: Option<u64>) -> Vec<Effect> {
 /// Ends the current key: clears its deadline, says what is left in `heard`,
 /// and advances. With no key left
 /// the line is `Idle`.
-fn end_current(state: &mut SrState, trace_id: TraceId, passed_at_ms: Option<u64>) -> Vec<Effect> {
+fn end_current(state: &mut Core, trace_id: TraceId, passed_at_ms: Option<u64>) -> Vec<Effect> {
     let KeyLine::Busy(busy) = std::mem::take(&mut state.key_line) else {
         return Vec::new();
     };
@@ -880,7 +876,7 @@ fn end_current(state: &mut SrState, trace_id: TraceId, passed_at_ms: Option<u64>
 /// suggestions do for Down Arrow: a key passed on from `controller` ends
 /// with no words of its own, as NVDA's line for the key is cut off by the
 /// selection's report (`docs/parity/changes-and-selection.md`).
-pub(crate) fn controlled_selection(state: &mut SrState, controller: NodeId) -> Vec<Effect> {
+pub(crate) fn controlled_selection(state: &mut Core, controller: NodeId) -> Vec<Effect> {
     let passed = match state.current() {
         Some(CurrentKey::Watched(watched)) => watched.passed(),
         Some(CurrentKey::FinalReading { field, .. }) => &field.passed,
@@ -923,7 +919,7 @@ fn caret_key_pressed_at(input: &Input) -> Option<u64> {
 /// A key's read answered: the current key's before read or final read, or a
 /// reply no longer the current key's, an ordinary report.
 pub(crate) fn request_answered(
-    state: &mut SrState,
+    state: &mut Core,
     trace_id: TraceId,
     (query, node): (QueryId, NodeId),
     reply: TextReply,
@@ -960,12 +956,7 @@ pub(crate) fn request_answered(
 
 /// A read of `node` with its facts, a query's reply no longer current or a
 /// report: the key's evidence if it is, else an ordinary report.
-fn report_read(
-    state: &mut SrState,
-    trace_id: TraceId,
-    node: NodeId,
-    read: CaretReply,
-) -> Vec<Effect> {
+fn report_read(state: &mut Core, trace_id: TraceId, node: NodeId, read: CaretReply) -> Vec<Effect> {
     let (changes, general) = editing::changes_of_reply(&read);
     if let Some(watched) = current_watched(state, node)
         && let Some(evidence) = evidence_of(watched.passed(), &read.facts)
@@ -1023,7 +1014,7 @@ pub(crate) struct Evidence<'a> {
 
 /// A caret report of `node`, the key's evidence or an ordinary report.
 pub(crate) fn caret_report(
-    state: &mut SrState,
+    state: &mut Core,
     trace_id: TraceId,
     node: NodeId,
     caret: CaretReport,
@@ -1051,7 +1042,7 @@ pub(crate) fn caret_report(
 /// A repeated focus on the current key's node that carries the key's
 /// evidence, which takes the evidence row; `None` when it does not.
 pub(crate) fn repeat_evidence(
-    state: &mut SrState,
+    state: &mut Core,
     trace_id: TraceId,
     node: NodeId,
     text: Option<&verbatim_model::FocusText>,
@@ -1080,7 +1071,7 @@ pub(crate) fn repeat_evidence(
 /// passed on saying nothing. The pass is `passed_at_us`, when Core passes it
 /// on: a read that ended before that is not the key's.
 fn before_read_answered(
-    state: &mut SrState,
+    state: &mut Core,
     trace_id: TraceId,
     (node, held): (NodeId, HeldKey),
     reply: TextReply,
@@ -1141,7 +1132,7 @@ fn before_read_answered(
 }
 
 /// The line's one deadline has passed.
-pub(crate) fn deadline_passed(state: &mut SrState, trace_id: TraceId, at_us: u64) -> Vec<Effect> {
+pub(crate) fn deadline_passed(state: &mut Core, trace_id: TraceId, at_us: u64) -> Vec<Effect> {
     let current = state.current().cloned();
     match current {
         // Of a key no longer current, or one with no deadline.
@@ -1154,34 +1145,40 @@ pub(crate) fn deadline_passed(state: &mut SrState, trace_id: TraceId, at_us: u64
         Some(CurrentKey::MovingBySentence { passed, step }) => {
             sentence_dropped(state, &passed, step.query())
         }
-        Some(CurrentKey::Review(press)) => press_gave_way(state, press),
+        Some(CurrentKey::Review(_)) => crate::driver::signal(state, Signal::PressGivesWay),
     }
 }
 
-/// `press`'s read is withdrawn and it ends saying nothing, the review
-/// cursor staying where it was: its bound has passed, or a focus moved the
-/// navigator while it read.
-fn press_gave_way(state: &mut SrState, press: Press) -> Vec<Effect> {
-    let trace_id = press.review.trace_id;
-    let mut effects: Vec<Effect> = state
+/// A press that gives way withdraws its read `query`, whose answer,
+/// whenever it comes, runs nothing: its bound has passed, or a focus moved
+/// the navigator while it read. It then ends saying nothing, the review
+/// cursor staying where it was.
+pub(crate) fn withdraw_press_read(
+    state: &mut SrState,
+    trace_id: TraceId,
+    query: QueryId,
+) -> Vec<Effect> {
+    let effects = state
         .queries
-        .withdraw_kept(press.query)
+        .withdraw_kept(query)
         .into_iter()
         .map(|effect| for_key(trace_id, effect))
         .collect();
-    // Its answer, whenever it comes, runs nothing.
-    state.queries.forget_query(press.query);
-    effects.extend(end_press(state, press));
+    state.queries.forget_query(query);
     effects
 }
 
-/// Ends the press `press`: only a press with something behind it was bound,
-/// so one with nothing behind it has no bound to clear.
-fn end_press(state: &mut SrState, press: Press) -> Vec<Effect> {
+/// The press `trace_id` is over: when it read, and so is the current key,
+/// it ends and the line moves on. Only a press with something behind it
+/// was bound, so one with nothing behind it has no bound to clear.
+pub(crate) fn press_ended(state: &mut Core, trace_id: TraceId) -> Vec<Effect> {
+    if current_press(state).is_none_or(|press| press.trace_id != trace_id) {
+        return Vec::new();
+    }
     let bounded = state
         .busy_mut()
         .is_some_and(|busy| !busy.waiting.is_empty());
-    let mut effects = end_current(state, press.review.trace_id, None);
+    let mut effects = end_current(state, trace_id, None);
     if !bounded {
         effects.retain(|effect| !matches!(effect, Effect::BoundHeldKey(None)));
     }
@@ -1202,94 +1199,19 @@ fn current_press(state: &SrState) -> Option<Press> {
     }
 }
 
-/// The current press if `query` is its read.
-fn press_of(state: &SrState, query: QueryId) -> Option<Press> {
-    current_press(state).filter(|press| press.query == query)
-}
-
-/// `press` becomes the current key, its read `query` of `node` running, or,
+/// The press `trace_id` reads `node`: it becomes the current key, or,
 /// already current, goes on with this follow-up read. A held key's or
 /// passed key's replacement is said as it ends. Returns what was heard.
-pub(crate) fn press_read(
-    state: &mut SrState,
-    node: NodeId,
-    query: QueryId,
-    press: ReviewPress,
-) -> Vec<Effect> {
-    let heard = replaced_key_heard(state, press.trace_id);
-    set_current(
-        state,
-        CurrentKey::Review(Press {
-            node,
-            query,
-            review: press,
-        }),
-    );
+pub(crate) fn press_reads(state: &mut SrState, node: NodeId, trace_id: TraceId) -> Vec<Effect> {
+    let heard = replaced_key_heard(state, trace_id);
+    set_current(state, CurrentKey::Review(Press { node, trace_id }));
     heard
-}
-
-/// The answer to a press's read of `query`: what it continues, run against
-/// `ending`. An answer to a press no longer current, one that gave way or
-/// was superseded, runs nothing. With no follow-up read asked, the press
-/// ends and the line moves on.
-pub(crate) fn press_answered(
-    state: &mut SrState,
-    trace_id: TraceId,
-    query: QueryId,
-    then: TextFollowUp,
-    ending: Ending,
-) -> Vec<Effect> {
-    let Some(press) = press_of(state, query) else {
-        return Vec::new();
-    };
-    let mut effects =
-        crate::review_text::press_answer(state, trace_id, press.node, press.review, then, ending);
-    effects.extend(end_unless_followed(state, query, press));
-    effects
-}
-
-/// The answer to a press's object navigation `query`.
-pub(crate) fn navigation_answered(
-    state: &mut SrState,
-    trace_id: TraceId,
-    query: QueryId,
-    kind: QueryKind,
-    result: &FetchResult,
-) -> Vec<Effect> {
-    let Some(press) = press_of(state, query) else {
-        return Vec::new();
-    };
-    let mut effects =
-        crate::reduce::navigate_completed(state, trace_id, press.review, kind, result);
-    effects.extend(end_unless_followed(state, query, press));
-    effects
-}
-
-/// Ends `press` unless a follow-up read replaced `query`.
-fn end_unless_followed(state: &mut SrState, query: QueryId, press: Press) -> Vec<Effect> {
-    if press_of(state, query).is_some() {
-        end_press(state, press)
-    } else {
-        Vec::new()
-    }
-}
-
-/// The current press's read was ended with no answer, its terminal's model
-/// having gone: it says nothing and ends.
-pub(crate) fn press_without_read(state: &mut SrState) -> Vec<Effect> {
-    let Some(press) = current_press(state) else {
-        return Vec::new();
-    };
-    if state.queries.has_open(press.query) {
-        return Vec::new();
-    }
-    end_press(state, press)
 }
 
 /// A focus or a controlled selection has moved the navigator: a press still
 /// reading says nothing and ends, its words would follow the focus's. What
 /// is behind it runs on the navigator as it then is.
-pub(crate) fn navigator_moved(state: &mut SrState) -> Vec<Effect> {
+pub(crate) fn navigator_moved(state: &mut Core) -> Vec<Effect> {
     let Some(press) = current_press(state) else {
         return Vec::new();
     };
@@ -1300,25 +1222,14 @@ pub(crate) fn navigator_moved(state: &mut SrState) -> Vec<Effect> {
     {
         return Vec::new();
     }
-    press_gave_way(state, press)
-}
-
-/// The current press's outpost has ended: its read's "gone" is not an
-/// answer, so it is turned to nothing before the outpost's queries end, and
-/// the press ends in [`outpost_ended`], saying nothing.
-pub(crate) fn forget_press_read(state: &mut SrState, outpost: verbatim_model::OutpostId) {
-    if let Some(press) = current_press(state)
-        && press.node.outpost() == outpost
-    {
-        state.queries.forget_query(press.query);
-    }
+    crate::driver::signal(state, Signal::PressGivesWay)
 }
 
 /// The before read of the current key passed 150 ms: the key is passed on
 /// and judged from the last read, the note its request set still live, or,
 /// with the focus moved on, says nothing and ends.
 fn before_read_given_up(
-    state: &mut SrState,
+    state: &mut Core,
     trace_id: TraceId,
     (query, node, key): (QueryId, NodeId, HeldKey),
     at_us: u64,
@@ -1358,7 +1269,7 @@ fn before_read_given_up(
 /// for a text field's what waits goes ahead, and the key, if still current,
 /// has its final read asked, and a sentence key goes on to move by
 /// sentence, with what is behind it waiting for the move.
-fn bound_passed(state: &mut SrState, watched: Watched) -> Vec<Effect> {
+fn bound_passed(state: &mut Core, watched: Watched) -> Vec<Effect> {
     let (trace_id, pass_ms) = (
         watched.passed().key.trace_id,
         Some(watched.passed().passed_at_us.div_ceil(1_000)),
@@ -1455,7 +1366,7 @@ fn sentence_key_at_final_read(state: &SrState, node: NodeId) -> Option<PassedKey
 /// The application moved the caret for a sentence key: its line unless a
 /// later key is marked, then the changes, and it ends.
 fn sentence_moved_by_application(
-    state: &mut SrState,
+    state: &mut Core,
     trace_id: TraceId,
     passed: &PassedKey,
     read: &CaretReply,
@@ -1472,7 +1383,7 @@ fn sentence_moved_by_application(
 
 /// The answer to the sentence move's current step.
 fn sentence_answered(
-    state: &mut SrState,
+    state: &mut Core,
     trace_id: TraceId,
     passed: PassedKey,
     step: SentenceStep,
@@ -1573,7 +1484,7 @@ fn read_beside(
 
 /// A paragraph answered: finds the sentence, or the paragraph it is in.
 fn paragraph_answered(
-    state: &mut SrState,
+    state: &mut Core,
     passed: PassedKey,
     paragraph: ParagraphAt,
     moved: i32,
@@ -1664,11 +1575,7 @@ fn move_caret(
 }
 
 /// At the text's start the caret stays, and the first sentence is said.
-fn stay_at_text_start(
-    state: &mut SrState,
-    passed: &PassedKey,
-    paragraph: &TextChunk,
-) -> Vec<Effect> {
+fn stay_at_text_start(state: &mut Core, passed: &PassedKey, paragraph: &TextChunk) -> Vec<Effect> {
     let sentence = editing::first_sentence(paragraph);
     let words = editing::sentence_words(paragraph, &sentence.text);
     sentence_said(state, passed, words)
@@ -1676,7 +1583,7 @@ fn stay_at_text_start(
 
 /// Ends the sentence move, saying `words` unless a later key is marked.
 fn sentence_said(
-    state: &mut SrState,
+    state: &mut Core,
     passed: &PassedKey,
     words: Vec<UtteranceSegment>,
 ) -> Vec<Effect> {
@@ -1695,7 +1602,7 @@ fn sentence_said(
 
 /// The sentence move past its 150 ms, or left by the focus: its query is
 /// withdrawn and it ends, saying nothing, the caret staying.
-fn sentence_dropped(state: &mut SrState, passed: &PassedKey, query: QueryId) -> Vec<Effect> {
+fn sentence_dropped(state: &mut Core, passed: &PassedKey, query: QueryId) -> Vec<Effect> {
     let trace_id = passed.key.trace_id;
     let mut effects: Vec<Effect> = state
         .queries
@@ -1711,7 +1618,7 @@ fn sentence_dropped(state: &mut SrState, passed: &PassedKey, query: QueryId) -> 
 /// its evidence, any other read the bound answer, and anything else ends it
 /// saying nothing.
 fn final_read_answered(
-    state: &mut SrState,
+    state: &mut Core,
     trace_id: TraceId,
     field: &FieldKey,
     reply: TextReply,
@@ -1765,7 +1672,7 @@ fn awaiting_its_unit(
 
 /// A read that is the current key's result, by which node the key is on.
 fn result(
-    state: &mut SrState,
+    state: &mut Core,
     trace_id: TraceId,
     watched: &Watched,
     read: &CaretReply,
@@ -1793,7 +1700,7 @@ fn result_speaks(passed: &PassedKey, read: &CaretReply, is_evidence: bool) -> bo
 /// A read that is a text field's key's result: `evidence` when it is the
 /// key's evidence, else the bound answer.
 fn field_result(
-    state: &mut SrState,
+    state: &mut Core,
     trace_id: TraceId,
     field: &FieldKey,
     read: &CaretReply,
@@ -1816,7 +1723,7 @@ fn field_result(
 /// Finishes a key with its result: takes the caret, says the key's `words`,
 /// then what the line heard, then this read's changes, and ends the key.
 fn finish(
-    state: &mut SrState,
+    state: &mut Core,
     trace_id: TraceId,
     passed: &PassedKey,
     read: &CaretReply,
@@ -1912,7 +1819,7 @@ fn first_words(state: &SrState, watched: &Watched) -> Vec<UtteranceSegment> {
 /// A focus of node `node` has executed. A key still being read that the
 /// focus has left is no longer pressed on it, even if the focus comes back
 /// before its read answers.
-pub(crate) fn focus_executed(state: &mut SrState, node: NodeId) -> Vec<Effect> {
+pub(crate) fn focus_executed(state: &mut Core, node: NodeId) -> Vec<Effect> {
     if let Some(busy) = state.busy_mut()
         && let CurrentKey::Reading {
             node: read, key, ..
@@ -1948,16 +1855,9 @@ pub(crate) fn focus_executed(state: &mut SrState, node: NodeId) -> Vec<Effect> {
 }
 
 /// The current key's node's outpost has ended: a watched key says nothing
-/// and ends; a key being read is ended by its request's "gone".
-pub(crate) fn outpost_ended(
-    state: &mut SrState,
-    outpost: verbatim_model::OutpostId,
-) -> Vec<Effect> {
-    if let Some(press) = current_press(state)
-        && press.node.outpost() == outpost
-    {
-        return end_press(state, press);
-    }
+/// and ends; a key being read is ended by its request's "gone", and a
+/// press by its function, woken with its read lost (`crate::driver::reap`).
+pub(crate) fn outpost_ended(state: &mut Core, outpost: verbatim_model::OutpostId) -> Vec<Effect> {
     let Some(passed) = state.current().and_then(CurrentKey::passed).cloned() else {
         return Vec::new();
     };

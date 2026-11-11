@@ -211,7 +211,7 @@ fn regenerate_fixture() {
         dump::UNKNOWN_COMMIT,
         false,
         "2026-07-14T00:00:00Z",
-        &SrState::new(),
+        &verbatim_core::Checkpoint::new(),
         &recorded,
     )
     .expect("writes");

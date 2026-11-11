@@ -9,6 +9,7 @@
 use serde::{Deserialize, Serialize};
 use verbatim_model::{Effect, Input};
 
+use crate::driver::Core;
 use crate::flight_recorder::FlightRecorder;
 use crate::reduce::reduce;
 use crate::state::SrState;
@@ -321,13 +322,22 @@ impl ReducerRecorder {
     /// when this step closes a segment of the window (see
     /// [`crate::flight_recorder`] for the rule). The state is cloned only
     /// then, and its clone shares everything large.
-    pub fn record_input(&mut self, input: Input, effect_count: usize, state: &SrState) {
+    ///
+    /// A step that leaves a function paused (`crate::driver`) closes no
+    /// segment, since a paused function cannot be copied: the segment
+    /// stays open, past its half of the window if need be, until a step
+    /// leaves nothing paused.
+    pub fn record_input(&mut self, input: Input, effect_count: usize, state: &Core) {
         let entry = RecordedInput {
             input,
             effect_count,
         };
         let bytes = entry.estimated_bytes();
-        self.record(entry, bytes, || state.clone());
+        self.record_when(
+            entry,
+            bytes,
+            state.checkpoint().map(|state| || state.clone()),
+        );
     }
 
     /// The recorded inputs, oldest first, with their effect counts dropped —
@@ -346,7 +356,7 @@ impl ReducerRecorder {
 /// same effects, every time.
 #[must_use]
 pub fn replay(initial: &SrState, inputs: &[Input]) -> Vec<Vec<Effect>> {
-    let mut state = initial.clone();
+    let mut state = Core::from(initial.clone());
     let mut all_effects = Vec::with_capacity(inputs.len());
     for input in inputs {
         all_effects.push(reduce(&mut state, input));
@@ -393,7 +403,7 @@ mod tests {
         // so four are kept.
         let mut recorder = ReducerRecorder::with_default_bounds(SrState::new());
         for _ in 0..20 {
-            recorder.record_input(typed("x".repeat(1 << 20)), 0, &SrState::new());
+            recorder.record_input(typed("x".repeat(1 << 20)), 0, &Core::new());
         }
         assert_eq!(recorder.len(), 4);
         assert!(recorder.bytes() <= ReducerRecorder::DEFAULT_MAX_BYTES);

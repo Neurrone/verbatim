@@ -51,6 +51,7 @@
 
 mod applications;
 mod desktop;
+mod driver;
 pub mod dump;
 mod editing;
 pub mod flight_recorder;
@@ -60,6 +61,7 @@ mod foreground;
 mod key_line;
 mod keys;
 mod live_reread;
+mod press;
 mod proven;
 mod queries;
 mod recorder;
@@ -76,6 +78,9 @@ mod terminal;
 mod terminal_model;
 mod text;
 
+/// The reducer's state with the functions paused beside it, under the
+/// name every caller of [`reduce`] already uses.
+pub use driver::Core as SrState;
 pub use dump::{
     DUMP_FORMAT_VERSION, DumpContents, DumpHeader, DumpReadError, UNKNOWN_COMMIT, read_dump,
     write_dump,
@@ -84,5 +89,7 @@ pub use flight_recorder::FlightRecorder;
 pub use focus_rules::is_selection_container;
 pub use recorder::{RecordedInput, ReducerRecorder, replay};
 pub use reduce::{SNAP_RESULTS_ACTIVITY, reduce};
-pub use state::SrState;
+/// The reducer's state alone: what a checkpoint clones, a dump writes and
+/// a replay starts from.
+pub use state::SrState as Checkpoint;
 pub use terminal_model::{read_at, read_of, snapshot_of};

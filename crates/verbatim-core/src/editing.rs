@@ -33,7 +33,7 @@ use verbatim_model::{
     TextUnit, TraceId, TypingEcho, Utterance, UtteranceSegment,
 };
 
-use crate::key_line::{Evidence, ReviewPress};
+use crate::key_line::Evidence;
 use crate::proven;
 use crate::queries::{Asking, Then};
 use crate::state::{CaretContext, NavigatorRead, PendingText, ReviewText, SrState, TextFollowUp};
@@ -1109,9 +1109,15 @@ pub(crate) fn navigator_text(
     trace_id: TraceId,
     node: &NodeSnapshot,
     read: NavigatorRead,
-    press: Option<ReviewPress>,
 ) -> Vec<Effect> {
-    text_of_object(state, trace_id, node, (read, false), press)
+    text_of_object(state, trace_id, node, (read, false))
+}
+
+/// A step of reading an object's text: said, or a read to make first,
+/// whose answer [`text_reply`] goes on with.
+pub(crate) enum TextStep {
+    Said(Vec<Effect>),
+    Read(TextOp, TextFollowUp),
 }
 
 /// Reads the text of `node`, Verbatim+Tab's answer, which is neither the
@@ -1123,19 +1129,37 @@ pub(crate) fn reported_text(
     trace_id: TraceId,
     node: &NodeSnapshot,
 ) -> Vec<Effect> {
-    text_of_object(state, trace_id, node, (NavigatorRead::Announce, true), None)
+    text_of_object(state, trace_id, node, (NavigatorRead::Announce, true))
 }
 
-/// [`navigator_text`], its follow-ups carrying `node` when `carried`.
+/// [`navigator_text`], its follow-ups carrying `node` when `carried`: a
+/// read of its own, which a newer text request supersedes.
 fn text_of_object(
     state: &mut SrState,
     trace_id: TraceId,
     node: &NodeSnapshot,
     (read, carried): (NavigatorRead, bool),
-    press: Option<ReviewPress>,
 ) -> Vec<Effect> {
+    match object_text(state, trace_id, node, read) {
+        TextStep::Said(effects) => effects,
+        TextStep::Read(op, then) => navigator_request(
+            state,
+            (node.id, carried.then(|| Box::new(node.clone()))),
+            op,
+            then,
+        ),
+    }
+}
+
+/// The first step of reading `node`'s text for `read`.
+pub(crate) fn object_text(
+    state: &mut SrState,
+    trace_id: TraceId,
+    node: &NodeSnapshot,
+    read: NavigatorRead,
+) -> TextStep {
     if !may_have_text(node.role) {
-        return Vec::new();
+        return TextStep::Said(Vec::new());
     }
     let (start, end) = match state.focus_caret(node.id) {
         Some(caret) => match &caret.selection {
@@ -1144,27 +1168,26 @@ fn text_of_object(
                 TextPoint::At(selection.range.end),
             ),
             None if read == NavigatorRead::Announce => {
-                return caret_line(state, node.id)
-                    .map(|segments| vec![speak_about(trace_id, node, segments)])
-                    .unwrap_or_default();
+                return TextStep::Said(
+                    caret_line(state, node.id)
+                        .map(|segments| vec![speak_about(trace_id, node, segments)])
+                        .unwrap_or_default(),
+                );
             }
             None => {
                 let line = text::line_content(&caret.line.text, is_grid(node.role)).to_owned();
-                return named_text(trace_id, node, read, &line);
+                return TextStep::Said(named_text(trace_id, node, read, &line));
             }
         },
         None => (TextPoint::SelectionStart, TextPoint::SelectionEnd),
     };
-    navigator_request(
-        state,
-        (node.id, carried.then(|| Box::new(node.clone()))),
+    TextStep::Read(
         TextOp::ReadRange {
             start,
             end,
             through: None,
         },
         TextFollowUp::NavigatorSelection(read),
-        press,
     )
 }
 
@@ -1192,24 +1215,14 @@ fn named_text(
 }
 
 /// Asks the outpost of `node` for its text, for the navigator's
-/// announcement to go on with `then`: a press's follow-up read, which keeps
-/// the press current until it is answered, or a read of its own, which a
-/// newer text request supersedes.
+/// announcement to go on with `then`: a read of its own, which a newer
+/// text request supersedes.
 fn navigator_request(
     state: &mut SrState,
     (node, about): (NodeId, Option<Box<NodeSnapshot>>),
     op: TextOp,
     then: TextFollowUp,
-    press: Option<ReviewPress>,
 ) -> Vec<Effect> {
-    if let Some(press) = press {
-        let (query, effect) = state
-            .queries
-            .ask(Asking::Text(node, op), Then::Review(then));
-        let mut effects = crate::key_line::press_read(state, node, query, press);
-        effects.push(effect);
-        return effects;
-    }
     state.queries.forget(|then| matches!(then, Then::Text(_)));
     let (_, effect) = state.queries.ask(
         Asking::Text(node, op),
@@ -1230,8 +1243,22 @@ pub(crate) fn navigator_text_reply(
     trace_id: TraceId,
     pending: &PendingText,
     reply: TextReply,
-    press: Option<ReviewPress>,
 ) -> Vec<Effect> {
+    match text_reply(state, trace_id, pending, reply) {
+        TextStep::Said(effects) => effects,
+        TextStep::Read(op, then) => {
+            navigator_request(state, (pending.node, pending.about.clone()), op, then)
+        }
+    }
+}
+
+/// The step after `reply`, the answer to the read `pending` made.
+pub(crate) fn text_reply(
+    state: &SrState,
+    trace_id: TraceId,
+    pending: &PendingText,
+    reply: TextReply,
+) -> TextStep {
     let navigator = state.navigator.as_ref().map(|navigator| &navigator.object);
     let focus = state
         .focus
@@ -1246,74 +1273,67 @@ pub(crate) fn navigator_text_reply(
         .find(|object| object.id == pending.node)
         .cloned()
     else {
-        return Vec::new();
+        return TextStep::Said(Vec::new());
     };
     let (TextFollowUp::NavigatorSelection(read) | TextFollowUp::NavigatorLine(read)) = pending.then
     else {
-        return Vec::new();
+        return TextStep::Said(Vec::new());
     };
+    let said = TextStep::Said;
     let segments = match (&pending.then, reply) {
         (TextFollowUp::NavigatorSelection(_), TextReply::Range { text, .. }) => {
             if verbatim_text::graphemes(&text).is_empty() {
-                return navigator_line(state, (pending.node, pending.about.clone()), read, press);
+                return navigator_line(read);
             }
             if read != NavigatorRead::Announce {
-                return named_text(trace_id, &object, read, &text);
+                return said(named_text(trace_id, &object, read, &text));
             }
             selected_segments(text).unwrap_or_default()
         }
         (TextFollowUp::NavigatorSelection(_), TextReply::Unsupported) => {
-            return navigator_line(state, (pending.node, pending.about.clone()), read, press);
+            return navigator_line(read);
         }
         (TextFollowUp::NavigatorLine(_), TextReply::Read { chunk, .. }) => {
             let grid = is_grid(object.role);
             if read != NavigatorRead::Announce {
-                return named_text(
+                return said(named_text(
                     trace_id,
                     &object,
                     read,
                     text::line_content(&chunk.text, grid),
-                );
+                ));
             }
             line_segments(&chunk, grid, &mut TextAttributes::default())
         }
         (_, TextReply::NoText | TextReply::Unsupported) => {
             if read != NavigatorRead::Announce {
-                return named_text(
+                return said(named_text(
                     trace_id,
                     &object,
                     read,
                     object.value.as_deref().unwrap_or_default(),
-                );
+                ));
             }
             match object.value.as_ref().filter(|value| !value.is_empty()) {
                 Some(value) => vec![UtteranceSegment::value(value.clone())],
-                None => return Vec::new(),
+                None => return said(Vec::new()),
             }
         }
-        _ => return Vec::new(),
+        _ => return said(Vec::new()),
     };
-    vec![speak_about(trace_id, &object, segments)]
+    said(vec![speak_about(trace_id, &object, segments)])
 }
 
-/// Asks for the line at the caret of the navigator object `node`, or its
-/// first line when it reports no caret, for `read`.
-fn navigator_line(
-    state: &mut SrState,
-    node: (NodeId, Option<Box<NodeSnapshot>>),
-    read: NavigatorRead,
-    press: Option<ReviewPress>,
-) -> Vec<Effect> {
-    navigator_request(
-        state,
-        node,
+/// The read of the line at the caret of the navigator object, or its first
+/// line when it reports no caret, for `read`.
+fn navigator_line(read: NavigatorRead) -> TextStep {
+    TextStep::Read(
         TextOp::Read(TextRead {
             at: TextPoint::Caret,
             movement: None,
             unit: TextUnit::Line,
         }),
         TextFollowUp::NavigatorLine(read),
-        press,
     )
 }
 

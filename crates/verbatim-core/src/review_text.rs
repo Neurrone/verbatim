@@ -27,12 +27,11 @@ use verbatim_model::{
 };
 
 use crate::editing::{is_grid, may_have_text, selection_segments, speak, speak_each};
-use crate::key_line::{self, ReviewPress};
+use crate::key_line::ReviewPress;
 use crate::proven;
-use crate::queries::{Ending, Then};
+use crate::queries::Ending;
 use crate::state::{
-    Landing, LandingPlace, PendingText, ReviewPosition, ReviewText, SharedChunk, SrState,
-    StartMarker, TextFollowUp,
+    Landing, LandingPlace, ReviewPosition, ReviewText, SharedChunk, SrState, StartMarker,
 };
 use crate::text;
 use verbatim_model::protocol::{QueryOutcome, QueryResult};
@@ -87,51 +86,76 @@ fn answers_from_line(command: ReviewCommand) -> bool {
     )
 }
 
-/// Runs a review press against the navigator's text, reading the line at
-/// its review position or caret first for a command that answers from it.
-pub(crate) fn run(state: &mut SrState, press: ReviewPress) -> Vec<Effect> {
-    let Some(navigator) = state.navigator.as_mut() else {
-        return Vec::new();
-    };
+/// Where a review press starts.
+pub(crate) enum Start {
+    /// On the review cursor's line as Core holds it.
+    At(ReviewPosition),
+    /// With a read of the line at this point, where the cursor is placed.
+    Line(TextPoint),
+    /// On the navigator object's flat text, read live.
+    Flat,
+}
+
+/// What a review command does with the review cursor at a position: it is
+/// said at once, or a read is made first.
+pub(crate) enum Plan {
+    Say(Vec<Effect>),
+    Read(TextOp, After),
+}
+
+/// What a press's read is for.
+pub(crate) enum After {
+    /// The review cursor moved to another line: land on it and speak.
+    Land(Landing),
+    /// A select then copy selected the text.
+    Selected,
+    /// A select then copy read the text to copy, for the start marker
+    /// whose [`SrState::start_marker_generation`] this is: the copy clears
+    /// that marker only, not one set while the read was in flight.
+    Copy { marker: u64 },
+    /// A location report.
+    Location,
+}
+
+/// Where `command` starts on the navigator's text: a command that answers
+/// from the review cursor's line reads it first, and any other goes
+/// straight to the read that moves.
+pub(crate) fn start_of(state: &mut SrState, command: ReviewCommand) -> Option<Start> {
+    let navigator = state.navigator.as_mut()?;
     let node = navigator.object.id;
-    match navigator.text.clone() {
-        ReviewText::At(position) if answers_from_line(press.command) => {
-            seed(state, press, node, TextPoint::At(point_of(&position)))
+    Some(match navigator.text.clone() {
+        ReviewText::At(position) if answers_from_line(command) => {
+            Start::Line(TextPoint::At(point_of(&position)))
         }
-        ReviewText::At(position) => execute(state, press.trace_id, press, node, &position),
-        ReviewText::Point(point) => seed(state, press, node, TextPoint::At(point)),
-        ReviewText::Flat => read_object(state, press),
+        ReviewText::At(position) => Start::At(position),
+        ReviewText::Point(point) => Start::Line(TextPoint::At(point)),
+        ReviewText::Flat => Start::Flat,
         // The caret as the outpost finds it, never Core's copy, which can
         // lag behind a key the application has already handled.
-        ReviewText::Caret => seed(state, press, node, TextPoint::Caret),
+        ReviewText::Caret => Start::Line(TextPoint::Caret),
         ReviewText::Unknown => {
             let has_caret = state
                 .focus
                 .object()
                 .is_some_and(|focus| focus.snapshot.id == node && focus.caret.is_some());
             if has_caret || may_have_text(navigator.object.role) {
-                seed(state, press, node, TextPoint::Caret)
+                Start::Line(TextPoint::Caret)
             } else {
                 navigator.text = ReviewText::Flat;
-                read_object(state, press)
+                Start::Flat
             }
         }
-    }
+    })
 }
 
-/// Moves the review cursor to the previous or next command mark of the
+/// A move of the review cursor to the previous or next command mark of the
 /// navigator's terminal (`books/dev/src/explanation/design/terminal-model.md`, "Features and
-/// settings"): Core's terminal model answers it as the line move it is,
+/// settings"), which Core's terminal model answers as the line move it is,
 /// landing at the review cursor's column and speaking the line, so the
-/// review position and what is said follow a line move's; nothing is said
-/// past the last mark that way, or when the navigator is not a terminal
-/// Core models.
-pub(crate) fn command_mark(state: &mut SrState, press: ReviewPress) -> Vec<Effect> {
-    let command = press.command;
-    let Some(navigator) = state.navigator.as_ref() else {
-        return Vec::new();
-    };
-    let node = navigator.object.id;
+/// review position and what is said follow a line move's: where it moves
+/// from, and how it lands.
+pub(crate) fn mark_move(state: &SrState, command: ReviewCommand) -> Option<(TextPoint, Landing)> {
+    let navigator = state.navigator.as_ref()?;
     let (from, place) = match &navigator.text {
         ReviewText::At(position) => (
             TextPoint::At(point_of(position)),
@@ -139,15 +163,15 @@ pub(crate) fn command_mark(state: &mut SrState, press: ReviewPress) -> Vec<Effec
         ),
         _ => (TextPoint::Caret, LandingPlace::Start),
     };
-    let forward = command == ReviewCommand::NextCommandMark;
-    let then = TextFollowUp::Land(Landing {
-        place,
-        speak: TextUnit::Line,
-        edge: None,
-        command,
-    });
-    crate::terminal_model::command_mark(state, node, press, (forward, from), then)
-        .unwrap_or_default()
+    Some((
+        from,
+        Landing {
+            place,
+            speak: TextUnit::Line,
+            edge: None,
+            command,
+        },
+    ))
 }
 
 /// A review position on `line` at byte `offset`, which may be on its line
@@ -162,56 +186,13 @@ fn position_at(line: &SharedChunk, offset: usize, grid: bool) -> ReviewPosition 
     }
 }
 
-/// `press` asks for the text read `op`, to be followed up by `then`: it
-/// stays current until the answer.
-fn request(
-    state: &mut SrState,
-    press: ReviewPress,
-    node: NodeId,
-    op: TextOp,
-    then: TextFollowUp,
-) -> Vec<Effect> {
-    let (query, effect) = state
-        .queries
-        .ask(crate::queries::Asking::Text(node, op), Then::Review(then));
-    let mut effects = key_line::press_read(state, node, query, press);
-    effects.push(effect);
-    effects
-}
-
-/// Reads the navigator object live, for a flat review command or Report
-/// Current Object.
-pub(crate) fn read_object(state: &mut SrState, press: ReviewPress) -> Vec<Effect> {
-    let Some(navigator) = state.navigator.as_ref() else {
-        return Vec::new();
-    };
-    let node = navigator.object.id;
-    let (query, effect) = state.queries.ask(
-        crate::queries::Asking::ReadNode(node),
-        Then::Review(TextFollowUp::NodeRead),
-    );
-    let mut effects = key_line::press_read(state, node, query, press);
-    effects.push(effect);
-    effects
-}
-
-/// Reads the line at `at` to place the review cursor there, then runs the
-/// command.
-fn seed(state: &mut SrState, press: ReviewPress, node: NodeId, at: TextPoint) -> Vec<Effect> {
-    request(
-        state,
-        press,
-        node,
-        TextOp::Read(TextRead {
-            at,
-            movement: None,
-            unit: TextUnit::Line,
-        }),
-        TextFollowUp::Seed {
-            command: press.command,
-            repeat: press.repeat,
-        },
-    )
+/// The read of the line at `at`, where the review cursor is then placed.
+pub(crate) fn line_at(at: TextPoint) -> TextOp {
+    TextOp::Read(TextRead {
+        at,
+        movement: None,
+        unit: TextUnit::Line,
+    })
 }
 
 /// The point the review cursor is at, as a position the outpost resolves.
@@ -222,18 +203,18 @@ fn point_of(position: &ReviewPosition) -> TextPosition {
     }
 }
 
-/// Runs a command with the review cursor at `position`.
+/// Plans a command with the review cursor at `position`.
 #[expect(
     clippy::too_many_lines,
     reason = "one arm per review command, each short, reads best together"
 )]
-fn execute(
+pub(crate) fn execute(
     state: &mut SrState,
     trace_id: TraceId,
     press: ReviewPress,
     node: NodeId,
     position: &ReviewPosition,
-) -> Vec<Effect> {
+) -> Plan {
     let (command, repeat) = (press.command, press.repeat);
     let grid = state
         .navigator
@@ -262,7 +243,7 @@ fn execute(
                 movement,
                 unit: TextUnit::Line,
             }),
-            TextFollowUp::Land(landing),
+            After::Land(landing),
         )
     };
     let landing = |place, speak, edge| Landing {
@@ -281,7 +262,7 @@ fn execute(
                 1 => spell_or_blank(content, false, line.language_at(0)),
                 _ => spell_or_blank(content, true, line.language_at(0)),
             };
-            return vec![speak(trace_id, segments)];
+            return Plan::Say(vec![speak(trace_id, segments)]);
         }
         ReviewCommand::ReviewCurrentWord => {
             let words = text::words(content, line.language_at(0));
@@ -293,7 +274,7 @@ fn execute(
                 (Some(word), 1) => text::spelled(word, false, language),
                 (Some(word), _) => text::spelled(word, true, language),
             };
-            return vec![speak(trace_id, segments)];
+            return Plan::Say(vec![speak(trace_id, segments)]);
         }
         ReviewCommand::ReviewCurrentCharacter => {
             let character = text::character_at(&line.text, position.offset, grid);
@@ -305,10 +286,10 @@ fn execute(
                 }],
                 (Some(character), _) => code_segments(character),
             };
-            return vec![speak(trace_id, segments)];
+            return Plan::Say(vec![speak(trace_id, segments)]);
         }
         ReviewCommand::ReviewStartOfLine => {
-            return land_here(state, trace_id, position, 0, grid);
+            return Plan::Say(land_here(state, trace_id, position, 0, grid));
         }
         ReviewCommand::ReviewEndOfLine => {
             // The line's last character, its line break when it has one, as
@@ -316,30 +297,32 @@ fn execute(
             let last = text::characters(&line.text, grid)
                 .last()
                 .map_or(0, |range| range.start);
-            return land_here(state, trace_id, position, last, grid);
+            return Plan::Say(land_here(state, trace_id, position, last, grid));
         }
         ReviewCommand::ReviewPreviousCharacter => {
             let text_width = text::column_of(content, content.len(), true);
             if grid && position.offset >= content.len() && position.column > text_width {
                 // Past the end of a terminal row's text: the blank cell to
                 // the left.
-                return move_column(
+                return Plan::Say(move_column(
                     state,
                     trace_id,
                     position,
                     position.column.saturating_sub(1),
                     grid,
-                );
+                ));
             }
-            return match text::previous_character(&line.text, position.offset, grid) {
-                Some(range) => land_here(state, trace_id, position, range.start, grid),
-                None => edge(
-                    trace_id,
-                    Message::Left,
-                    text::character_at(&line.text, position.offset, grid),
-                    language,
-                ),
-            };
+            return Plan::Say(
+                match text::previous_character(&line.text, position.offset, grid) {
+                    Some(range) => land_here(state, trace_id, position, range.start, grid),
+                    None => edge(
+                        trace_id,
+                        Message::Left,
+                        text::character_at(&line.text, position.offset, grid),
+                        language,
+                    ),
+                },
+            );
         }
         ReviewCommand::ReviewNextCharacter => {
             let character = text::character_at(&line.text, position.offset, grid);
@@ -352,14 +335,16 @@ fn execute(
                     character.map_or(1, |character| verbatim_text::cell_width(character).max(1)),
                 );
                 if next >= text::column_of(content, content.len(), true) {
-                    return edge(trace_id, Message::Right, character, language);
+                    return Plan::Say(edge(trace_id, Message::Right, character, language));
                 }
-                return move_column(state, trace_id, position, next, grid);
+                return Plan::Say(move_column(state, trace_id, position, next, grid));
             }
-            return match text::next_character(&line.text, position.offset, grid) {
-                Some(range) => land_here(state, trace_id, position, range.start, grid),
-                None => edge(trace_id, Message::Right, character, language),
-            };
+            return Plan::Say(
+                match text::next_character(&line.text, position.offset, grid) {
+                    Some(range) => land_here(state, trace_id, position, range.start, grid),
+                    None => edge(trace_id, Message::Right, character, language),
+                },
+            );
         }
         ReviewCommand::ReviewPreviousWord | ReviewCommand::ReviewNextWord => {
             let forward = command == ReviewCommand::ReviewNextWord;
@@ -381,10 +366,10 @@ fn execute(
             if let Some(target) = target {
                 let start = target.start;
                 set_position(state, position_at(line, start, grid));
-                return vec![speak(
+                return Plan::Say(vec![speak(
                     trace_id,
                     text::word_segments(proven::text_in(content, target.clone()), language),
-                )];
+                )]);
             }
             let at_edge = if forward { line.last } else { line.first };
             let message = if forward {
@@ -394,10 +379,10 @@ fn execute(
             };
             if at_edge {
                 let word = current.map(|range| proven::text_in(content, range));
-                return vec![speak(
+                return Plan::Say(vec![speak(
                     trace_id,
                     with_edge(message, text::word_segments(word.unwrap_or(""), language)),
-                )];
+                )]);
             }
             read_line(
                 by(TextUnit::Line, if forward { 1 } else { -1 }),
@@ -474,22 +459,22 @@ fn execute(
                 after: after_cursor(),
                 selected_to: None,
             });
-            return vec![speak(trace_id, message(Message::StartMarked))];
+            return Plan::Say(vec![speak(trace_id, message(Message::StartMarked))]);
         }
         ReviewCommand::MoveToStartMarker => match marker_in(state, node) {
-            Err(effect) => return vec![speak(trace_id, effect)],
+            Err(effect) => return Plan::Say(vec![speak(trace_id, effect)]),
             Ok(StartMarker::Text { at, .. }) => read_line(
                 None,
                 TextPoint::At(at),
                 landing(LandingPlace::Point, TextUnit::Character, None),
             ),
             Ok(StartMarker::Flat { .. }) => {
-                return vec![speak(trace_id, message(Message::NoStartMarker))];
+                return Plan::Say(vec![speak(trace_id, message(Message::NoStartMarker))]);
             }
         },
         ReviewCommand::SelectThenCopy => {
             let (at, after, selected_to) = match marker_in(state, node) {
-                Err(effect) => return vec![speak(trace_id, effect)],
+                Err(effect) => return Plan::Say(vec![speak(trace_id, effect)]),
                 Ok(StartMarker::Text {
                     at,
                     after,
@@ -497,7 +482,7 @@ fn execute(
                     ..
                 }) => (at, after, selected_to),
                 Ok(StartMarker::Flat { .. }) => {
-                    return vec![speak(trace_id, message(Message::NoStartMarker))];
+                    return Plan::Say(vec![speak(trace_id, message(Message::NoStartMarker))]);
                 }
             };
             // From the earlier of the marker and the review cursor through
@@ -520,7 +505,7 @@ fn execute(
                 // press copies it or the marker is set again; a further
                 // first press only says so (`docs/parity/review.md`,
                 // "Select then copy from the review cursor").
-                return vec![speak(trace_id, message(Message::PressTwiceToCopy))];
+                return Plan::Say(vec![speak(trace_id, message(Message::PressTwiceToCopy))]);
             }
             if repeat == 0 {
                 // The second press copies the range this one selects, as
@@ -539,7 +524,7 @@ fn execute(
                         end,
                         through,
                     },
-                    TextFollowUp::Selected,
+                    After::Selected,
                 )
             } else {
                 let (start, end, through) =
@@ -550,22 +535,26 @@ fn execute(
                         end,
                         through,
                     },
-                    TextFollowUp::Copy {
+                    After::Copy {
                         marker: state.start_marker_generation,
                     },
                 )
             }
         }
-        ReviewCommand::ReportReviewLocation => (
-            TextOp::Location(TextPoint::At(cursor)),
-            TextFollowUp::Location,
-        ),
-        ReviewCommand::SayAllFromReview => {
-            return crate::say_all::start(state, node, false, TextPoint::At(point_of(position)));
+        ReviewCommand::ReportReviewLocation => {
+            (TextOp::Location(TextPoint::At(cursor)), After::Location)
         }
-        _ => return Vec::new(),
+        ReviewCommand::SayAllFromReview => {
+            return Plan::Say(crate::say_all::start(
+                state,
+                node,
+                false,
+                TextPoint::At(point_of(position)),
+            ));
+        }
+        _ => return Plan::Say(Vec::new()),
     };
-    request(state, press, node, op, then)
+    Plan::Read(op, then)
 }
 
 /// The start marker, when it is in `node`'s text; otherwise what to say:
@@ -679,79 +668,17 @@ fn move_column(
     )]
 }
 
-/// What ends a press's read, run against the press, the read being of
-/// `node`: an object read, a text follow-up, or the navigator's text.
-pub(crate) fn press_answer(
+/// The flat text of the navigator object from its live read, for a flat
+/// review command or Report Current Object, the navigator taking the
+/// object read. Gone, a dead object reviews as empty flat text and the
+/// report says nothing; a read that gets no answer says nothing at all,
+/// which is `None`.
+pub(crate) fn object_read(
     state: &mut SrState,
-    trace_id: TraceId,
-    node: NodeId,
-    press: ReviewPress,
-    then: TextFollowUp,
+    command: ReviewCommand,
     ending: Ending,
-) -> Vec<Effect> {
-    match then {
-        TextFollowUp::NodeRead => object_read(state, trace_id, press, ending),
-        TextFollowUp::NavigatorSelection(_) | TextFollowUp::NavigatorLine(_) => {
-            let pending = PendingText {
-                node,
-                then,
-                about: None,
-            };
-            let reply = ending.reply();
-            crate::editing::navigator_text_reply(state, trace_id, &pending, reply, Some(press))
-        }
-        then => {
-            let reply = ending.reply();
-            match (&then, reply) {
-                // A dead object: one rule at the boundary, the press run on
-                // empty flat text. A copy clears its marker as it does for
-                // any answer, and says nothing.
-                (TextFollowUp::Copy { .. }, TextReply::Gone) => reply_to(
-                    state,
-                    trace_id,
-                    press,
-                    PendingText {
-                        node,
-                        then,
-                        about: None,
-                    },
-                    TextReply::Gone,
-                ),
-                (_, TextReply::Gone) => crate::reduce::flat_review_command(
-                    state,
-                    trace_id,
-                    press.command,
-                    press.repeat,
-                    "",
-                ),
-                (_, TextReply::Unanswered) => Vec::new(),
-                (_, reply) => reply_to(
-                    state,
-                    trace_id,
-                    press,
-                    PendingText {
-                        node,
-                        then,
-                        about: None,
-                    },
-                    reply,
-                ),
-            }
-        }
-    }
-}
-
-/// A live read of the navigator object answered: a flat review command is
-/// run on its text and Report Current Object on it. Gone, a dead object
-/// reviews as empty flat text and the report says nothing; a read that
-/// gets no answer says nothing at all.
-fn object_read(
-    state: &mut SrState,
-    trace_id: TraceId,
-    press: ReviewPress,
-    ending: Ending,
-) -> Vec<Effect> {
-    let text = match ending {
+) -> Option<String> {
+    match ending {
         Ending::Outcome(QueryOutcome::Done(QueryResult::Node(object))) => {
             let flat = crate::review::text_of(&object);
             if let Some(navigator) = state.navigator.as_mut() {
@@ -764,18 +691,12 @@ fn object_read(
                     navigator.review_offset = 0;
                 }
             }
-            if press.command == ReviewCommand::ReportObject {
-                return crate::reduce::report_object(state, trace_id, press);
-            }
-            flat
+            Some(flat)
         }
-        Ending::Outcome(QueryOutcome::Gone) if press.command == ReviewCommand::ReportObject => {
-            return Vec::new();
-        }
-        Ending::Outcome(QueryOutcome::Gone) => String::new(),
-        _ => return Vec::new(),
-    };
-    crate::reduce::flat_review_command(state, trace_id, press.command, press.repeat, &text)
+        Ending::Outcome(QueryOutcome::Gone) if command == ReviewCommand::ReportObject => None,
+        Ending::Outcome(QueryOutcome::Gone) => Some(String::new()),
+        _ => None,
+    }
 }
 
 /// The caret's or the review cursor's location answered.
@@ -812,55 +733,50 @@ pub(crate) fn location(trace_id: TraceId, reply: &TextReply) -> Vec<Effect> {
     }
 }
 
-/// The answer to a press's text read.
-fn reply_to(
+/// Whether the navigator is on `node`: a read answered after it moved off
+/// places nothing.
+fn on_navigator(state: &SrState, node: NodeId) -> bool {
+    state
+        .navigator
+        .as_ref()
+        .is_some_and(|navigator| navigator.object.id == node)
+}
+
+/// What the read of the review cursor's line found.
+pub(crate) enum Seeded {
+    /// The line, the review cursor placed on it.
+    At(ReviewPosition),
+    /// No text: the object is reviewed as flat text from now on.
+    Flat,
+    /// The position the cursor was at is gone: start again from the caret.
+    Lost,
+    /// Nothing to go on with, and this said.
+    Said(Vec<Effect>),
+}
+
+/// Places the review cursor from `reply`, the read of its line in `node`.
+/// A dead object is one rule at the boundary: the press run on empty flat
+/// text.
+pub(crate) fn seeded(
     state: &mut SrState,
     trace_id: TraceId,
     press: ReviewPress,
-    pending: PendingText,
+    node: NodeId,
     reply: TextReply,
-) -> Vec<Effect> {
-    let on_navigator = state
-        .navigator
-        .as_ref()
-        .is_some_and(|navigator| navigator.object.id == pending.node);
-    match (pending.then, reply) {
-        (TextFollowUp::Location, reply) => location(trace_id, &reply),
-        // A copy clears the start marker it copied from whatever it found,
-        // so a further press has none, but keeps a marker set while the
-        // read was in flight; a range with nothing in it copies nothing and
-        // says nothing (`docs/parity/review.md`, "Select then copy from
-        // the review cursor").
-        (TextFollowUp::Copy { marker }, reply) => {
-            if state.start_marker_generation == marker {
-                state.start_marker = None;
-            }
-            match reply {
-                TextReply::Range { text, .. } if !text.is_empty() => {
-                    vec![Effect::CopyToClipboard(text)]
-                }
-                TextReply::Unsupported | TextReply::UnsupportedUnit(_) | TextReply::NoText => {
-                    vec![speak(trace_id, message(Message::NotSupported))]
-                }
-                _ => Vec::new(),
-            }
+) -> Seeded {
+    let on_navigator = on_navigator(state, node);
+    match reply {
+        TextReply::Gone => Seeded::Said(crate::reduce::flat_review_command(
+            state,
+            trace_id,
+            press.command,
+            press.repeat,
+            "",
+        )),
+        TextReply::Unsupported | TextReply::UnsupportedUnit(_) => {
+            Seeded::Said(vec![speak(trace_id, message(Message::NotSupported))])
         }
-        // The selection the command made is spoken as a caret key's is,
-        // "selected" and "unselected" from the same comparison
-        // (`docs/parity/review.md`, "Select then copy from the review
-        // cursor").
-        (TextFollowUp::Selected, TextReply::Selected(changes)) => {
-            speak_each(trace_id, selection_segments(&changes, None))
-        }
-        // The text cannot be selected: the second press still copies it.
-        (TextFollowUp::Selected, TextReply::Unsupported | TextReply::NoText) => {
-            vec![speak(trace_id, message(Message::CannotSelect))]
-        }
-        (_, TextReply::Unsupported | TextReply::UnsupportedUnit(_)) => {
-            vec![speak(trace_id, message(Message::NotSupported))]
-        }
-        (_, _) if !on_navigator => Vec::new(),
-        (TextFollowUp::Seed { command, repeat }, TextReply::Read { chunk, .. }) => {
+        TextReply::Read { chunk, .. } if on_navigator => {
             let grid = navigator_grid(state);
             let offset = text::byte_offset(chunk.offset);
             let mut position = position_at(&Arc::new(chunk), offset, grid);
@@ -876,45 +792,91 @@ fn reply_to(
                 position.column = was.column;
             }
             set_position(state, position.clone());
-            let press = ReviewPress {
-                trace_id: press.trace_id,
-                command,
-                repeat,
-            };
-            execute(state, trace_id, press, pending.node, &position)
+            Seeded::At(position)
         }
-        (TextFollowUp::Seed { command, repeat }, TextReply::NoText) => {
+        TextReply::NoText if on_navigator => {
             if let Some(navigator) = state.navigator.as_mut() {
                 navigator.text = ReviewText::Flat;
             }
-            let press = ReviewPress {
-                trace_id: press.trace_id,
-                command,
-                repeat,
-            };
-            read_object(state, press)
+            Seeded::Flat
         }
-        (TextFollowUp::Land(landing), TextReply::Read { moved, chunk }) => {
+        TextReply::AnchorLost if on_navigator => {
+            forget_position(state);
+            Seeded::Lost
+        }
+        _ => Seeded::Said(Vec::new()),
+    }
+}
+
+/// The review cursor's position is gone from the application.
+fn forget_position(state: &mut SrState) {
+    if let Some(navigator) = state.navigator.as_mut() {
+        navigator.text = ReviewText::Unknown;
+    }
+}
+
+/// Ends a press with `reply`, the answer to the read its command planned
+/// for `after`, in `node`; `None` when the position it moved from is gone,
+/// and the press starts again from the caret.
+pub(crate) fn after_read(
+    state: &mut SrState,
+    trace_id: TraceId,
+    press: ReviewPress,
+    node: NodeId,
+    after: After,
+    reply: TextReply,
+) -> Option<Vec<Effect>> {
+    let on_navigator = on_navigator(state, node);
+    Some(match (after, reply) {
+        (_, TextReply::Unanswered) => Vec::new(),
+        // A copy clears the start marker it copied from whatever it found,
+        // so a further press has none, but keeps a marker set while the
+        // read was in flight; a range with nothing in it copies nothing and
+        // says nothing (`docs/parity/review.md`, "Select then copy from
+        // the review cursor").
+        (After::Copy { marker }, reply) => {
+            if state.start_marker_generation == marker {
+                state.start_marker = None;
+            }
+            match reply {
+                TextReply::Range { text, .. } if !text.is_empty() => {
+                    vec![Effect::CopyToClipboard(text)]
+                }
+                TextReply::Unsupported | TextReply::UnsupportedUnit(_) | TextReply::NoText => {
+                    vec![speak(trace_id, message(Message::NotSupported))]
+                }
+                _ => Vec::new(),
+            }
+        }
+        // A dead object: the press run on empty flat text.
+        (_, TextReply::Gone) => {
+            crate::reduce::flat_review_command(state, trace_id, press.command, press.repeat, "")
+        }
+        (After::Location, reply) => location(trace_id, &reply),
+        // The selection the command made is spoken as a caret key's is,
+        // "selected" and "unselected" from the same comparison
+        // (`docs/parity/review.md`, "Select then copy from the review
+        // cursor").
+        (After::Selected, TextReply::Selected(changes)) => {
+            speak_each(trace_id, selection_segments(&changes, None))
+        }
+        // The text cannot be selected: the second press still copies it.
+        (After::Selected, TextReply::Unsupported | TextReply::NoText) => {
+            vec![speak(trace_id, message(Message::CannotSelect))]
+        }
+        (_, TextReply::Unsupported | TextReply::UnsupportedUnit(_)) => {
+            vec![speak(trace_id, message(Message::NotSupported))]
+        }
+        (_, _) if !on_navigator => Vec::new(),
+        (After::Land(landing), TextReply::Read { moved, chunk }) => {
             land(state, trace_id, landing, moved, chunk)
         }
-        (
-            TextFollowUp::Land(Landing { command, .. }) | TextFollowUp::Seed { command, .. },
-            TextReply::AnchorLost,
-        ) => {
-            // The position the cursor was at is gone: start again from the
-            // caret.
-            if let Some(navigator) = state.navigator.as_mut() {
-                navigator.text = ReviewText::Unknown;
-            }
-            let press = ReviewPress {
-                trace_id: press.trace_id,
-                command,
-                repeat: 0,
-            };
-            seed(state, press, pending.node, TextPoint::Caret)
+        (After::Land(_), TextReply::AnchorLost) => {
+            forget_position(state);
+            return None;
         }
         _ => Vec::new(),
-    }
+    })
 }
 
 /// Whether the navigator object is a terminal.

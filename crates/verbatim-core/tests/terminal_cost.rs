@@ -231,7 +231,7 @@ fn measure(case: &Case, flavor: Flavor) -> String {
         .collect();
     let mut times: Vec<Times> = reads.iter().map(|_| Times::default()).collect();
     for _ in 0..RUNS {
-        let mut state = before.clone();
+        let mut state = verbatim_core::SrState::from(before.clone());
         for (at, input) in inputs.iter().enumerate() {
             match reads.iter().position(|read| *read == at) {
                 Some(read) => time(&mut state, input, &mut times[read]),

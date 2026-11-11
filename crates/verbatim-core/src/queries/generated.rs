@@ -37,9 +37,9 @@ use verbatim_model::{
 use super::Asked as Waited;
 use super::Then;
 use super::tests::{self, Visit, Wire};
+use crate::driver::Core as SrState;
 use crate::foreground::{Attention, Front};
 use crate::reduce;
-use crate::state::SrState;
 
 /// The application every outpost generation reads.
 const APPLICATION: Pid = Pid(7);
@@ -1042,7 +1042,7 @@ impl Run {
                 Then::Text(pending) => pending.node,
                 // A review read carries no node: the press it serves, the
                 // current key, has it.
-                Then::Review(_) => state
+                Then::Task => state
                     .key_line_node()
                     .expect("a review read's press is the current key"),
                 _ => continue,

@@ -25,7 +25,8 @@ use verbatim_model::{
     TextReply, TextRequest, TraceId,
 };
 
-use crate::state::{PendingText, SrState};
+use crate::driver::Core;
+use crate::state::PendingText;
 
 /// Who answers a query.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -39,8 +40,6 @@ pub(crate) enum Asked {
 /// What the answer to a query continues.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) enum Then {
-    /// A navigation of the navigator object from `from`.
-    Navigation { from: NodeId, kind: QueryKind },
     /// An activation of the navigator object, whose outcome is spoken.
     Activation,
     /// A caret key's one request (`crate::key_line`), on `node`.
@@ -51,8 +50,9 @@ pub(crate) enum Then {
     /// A text request no press waits for: the caret's location, the
     /// navigator's text for an announcement, Verbatim+Tab's line.
     Text(PendingText),
-    /// A review press's read, answered to the press (`crate::key_line`).
-    Review(crate::state::TextFollowUp),
+    /// A read a paused function waits for (`crate::driver`): its ending
+    /// wakes the function, which holds what the answer continues.
+    Task,
     /// Say-all's read.
     SayAll,
     /// The flood policy's request of the focused terminal.
@@ -245,6 +245,16 @@ impl Queries {
         });
     }
 
+    /// Turns query `query_id` to [`Then::Nothing`] when it was asked of
+    /// `outpost`, whose end is no answer to what waits for it.
+    pub(crate) fn forget_at(&mut self, query_id: QueryId, outpost: OutpostId) {
+        if let Some(open) = self.open.get_mut(&query_id)
+            && open.outpost == outpost
+        {
+            open.then = Then::Nothing;
+        }
+    }
+
     /// Whether query `query_id` is still open.
     pub(crate) fn has_open(&self, query_id: QueryId) -> bool {
         self.open.contains_key(&query_id)
@@ -366,6 +376,20 @@ pub(crate) enum Ending {
 }
 
 impl Ending {
+    /// The navigation result this ending is.
+    pub(crate) fn navigated(self) -> FetchResult {
+        match self {
+            Self::Outcome(QueryOutcome::Done(QueryResult::Navigated(Some(node)))) => {
+                FetchResult::Node(node)
+            }
+            Self::Outcome(QueryOutcome::Done(QueryResult::Navigated(None))) => {
+                FetchResult::NoNeighbor
+            }
+            Self::Outcome(QueryOutcome::Gone) => FetchResult::Gone,
+            _ => FetchResult::Unanswered,
+        }
+    }
+
     /// The text answer this ending is, a failure of any kind as
     /// "unanswered" and a gone node as gone.
     pub(crate) fn reply(self) -> TextReply {
@@ -384,7 +408,7 @@ impl Ending {
 /// no open query, from another outpost than the one asked, or to a query
 /// only Core answers, is dropped.
 pub(crate) fn answered(
-    state: &mut SrState,
+    state: &mut Core,
     trace_id: TraceId,
     query_id: QueryId,
     outpost: OutpostId,
@@ -415,7 +439,7 @@ pub(crate) fn answered(
 /// Core's answer `reply` from a terminal's memory to query `query_id`,
 /// under `trace_id`: ends the query and runs what it continues.
 pub(crate) fn answer_from_memory(
-    state: &mut SrState,
+    state: &mut Core,
     trace_id: TraceId,
     query_id: QueryId,
     reply: TextReply,
@@ -437,11 +461,7 @@ pub(crate) fn answer_from_memory(
 /// Ends every query still open at `outpost`, whose end Core has handled,
 /// "gone", in number order, each under its own trace or else `trace_id`,
 /// the end's.
-pub(crate) fn outpost_gone(
-    state: &mut SrState,
-    trace_id: TraceId,
-    outpost: OutpostId,
-) -> Vec<Effect> {
+pub(crate) fn outpost_gone(state: &mut Core, trace_id: TraceId, outpost: OutpostId) -> Vec<Effect> {
     let gone: Vec<QueryId> = state
         .queries
         .open
@@ -469,7 +489,7 @@ pub(crate) fn outpost_gone(
 
 /// Runs `then`, what ended query `query_id` continues.
 pub(crate) fn ended(
-    state: &mut SrState,
+    state: &mut Core,
     trace_id: TraceId,
     query_id: QueryId,
     then: Then,
@@ -477,19 +497,7 @@ pub(crate) fn ended(
     at_us: u64,
 ) -> Vec<Effect> {
     match then {
-        Then::Navigation { kind, .. } => {
-            let result = match ending {
-                Ending::Outcome(QueryOutcome::Done(QueryResult::Navigated(Some(node)))) => {
-                    FetchResult::Node(node)
-                }
-                Ending::Outcome(QueryOutcome::Done(QueryResult::Navigated(None))) => {
-                    FetchResult::NoNeighbor
-                }
-                Ending::Outcome(QueryOutcome::Gone) => FetchResult::Gone,
-                _ => FetchResult::Unanswered,
-            };
-            crate::key_line::navigation_answered(state, trace_id, query_id, kind, &result)
-        }
+        Then::Task => crate::driver::answered(state, query_id, ending, trace_id),
         Then::Activation => match ending {
             Ending::Outcome(QueryOutcome::Done(QueryResult::Activated(action))) => {
                 crate::reduce::activation_completed(trace_id, true, action.as_ref())
@@ -533,14 +541,9 @@ pub(crate) fn ended(
                 crate::state::TextFollowUp::NavigatorSelection(_)
                     | crate::state::TextFollowUp::NavigatorLine(_)
             ) {
-                return crate::editing::navigator_text_reply(
-                    state, trace_id, &pending, reply, None,
-                );
+                return crate::editing::navigator_text_reply(state, trace_id, &pending, reply);
             }
             crate::review_text::location(trace_id, &reply)
-        }
-        Then::Review(then) => {
-            crate::key_line::press_answered(state, trace_id, query_id, then, ending)
         }
         Then::SayAll => crate::say_all::reply(state, trace_id, ending.reply()),
         Then::Terminal(ask) => crate::terminal::reply(state, trace_id, ask, &ending.reply()),

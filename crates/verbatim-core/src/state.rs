@@ -263,22 +263,8 @@ pub(crate) struct PendingText {
 /// What to do with the answer to a [`PendingText`] request.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) enum TextFollowUp {
-    /// The review cursor's line was read: place the cursor at the point
-    /// read, then run the command.
-    Seed { command: ReviewCommand, repeat: u8 },
-    /// The review cursor moved to another line: land on it and speak.
-    Land(Landing),
-    /// A select then copy selected the text.
-    Selected,
-    /// A select then copy read the text to copy, for the start marker
-    /// whose [`SrState::start_marker_generation`] this is: the copy clears
-    /// that marker only, not one set while the read was in flight.
-    Copy { marker: u64 },
     /// A location report.
     Location,
-    /// A live read of the navigator object (`Query::ReadNode`), for a flat
-    /// review command or Report Current Object.
-    NodeRead,
     /// The selected text of the navigator object was read: use it, or with
     /// nothing selected read the caret's line.
     NavigatorSelection(NavigatorRead),
@@ -842,7 +828,6 @@ impl SrState {
         }
         for then in self.queries.continuations() {
             match then {
-                Then::Navigation { from, .. } => insert(*from),
                 Then::Key { node } | Then::Text(PendingText { node, .. }) => insert(*node),
                 _ => {}
             }

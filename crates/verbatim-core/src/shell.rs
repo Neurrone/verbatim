@@ -16,16 +16,18 @@ use verbatim_model::{
     ShellItemKind, SpeechPriority, TraceId, Utterance, UtteranceSegment,
 };
 
+use crate::driver::Core;
 use crate::reduce::process_is_attended;
 use crate::state::SrState;
 
 /// Handles one input the shell's threads produce; any other input does
 /// nothing here.
-pub(crate) fn reduce(state: &mut SrState, input: &Input) -> Vec<Effect> {
+pub(crate) fn reduce(state: &mut Core, input: &Input) -> Vec<Effect> {
     match input {
         Input::Started => started(),
         Input::Exiting { replaced } => {
             let mut effects = crate::key_line::exit(state);
+            crate::driver::exit(state);
             state.exiting = true;
             effects.extend(exiting(*replaced));
             effects

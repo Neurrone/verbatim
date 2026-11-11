@@ -2,7 +2,7 @@
 //! milestone's exit-criteria scenarios, plus flight-recorder replay
 //! determinism.
 
-use verbatim_core::{ReducerRecorder, SrState, replay};
+use verbatim_core::{Checkpoint, ReducerRecorder, replay};
 use verbatim_model::protocol::{QueryOutcome, QueryResult};
 use verbatim_model::{
     AlertOrigin, Backend, CellPosition, Earcon, EarlierElement, Effect, FetchResult, FocusGroup,
@@ -17,6 +17,85 @@ fn outpost_of(source: Pid) -> OutpostId {
     OutpostId(u64::from(source.0))
 }
 
+/// The reducer's state as these tests use it: a value each step copies
+/// and leaves untouched, so a test can try another input from an earlier
+/// state. Core's state with a function paused beside it cannot be copied,
+/// so this keeps the last state copied with nothing paused and every input
+/// since, and a copy made while a function is paused replays them.
+struct SrState {
+    core: verbatim_core::SrState,
+    base: Checkpoint,
+    inputs: Vec<Input>,
+}
+
+impl SrState {
+    fn new() -> Self {
+        Self::from(Checkpoint::new())
+    }
+
+    /// Reduces `input`, kept for the copies made later.
+    fn step(&mut self, input: &Input) -> Vec<Effect> {
+        self.inputs.push(input.clone());
+        verbatim_core::reduce(&mut self.core, input)
+    }
+}
+
+impl From<Checkpoint> for SrState {
+    fn from(base: Checkpoint) -> Self {
+        Self {
+            core: verbatim_core::SrState::from(base.clone()),
+            base,
+            inputs: Vec::new(),
+        }
+    }
+}
+
+impl Clone for SrState {
+    fn clone(&self) -> Self {
+        if let Some(state) = self.core.checkpoint() {
+            return Self::from(state.clone());
+        }
+        let mut copy = Self::from(self.base.clone());
+        for input in &self.inputs {
+            let _ = copy.step(input);
+        }
+        copy
+    }
+}
+
+impl std::ops::Deref for SrState {
+    type Target = verbatim_core::SrState;
+
+    fn deref(&self) -> &Self::Target {
+        &self.core
+    }
+}
+
+/// Equal when nothing is paused beside either and the states are equal.
+impl PartialEq for SrState {
+    fn eq(&self, other: &Self) -> bool {
+        self.core.checkpoint().is_some() && self.core.checkpoint() == other.core.checkpoint()
+    }
+}
+
+impl std::fmt::Debug for SrState {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.core.fmt(formatter)
+    }
+}
+
+impl serde::Serialize for SrState {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.core.serialize(serializer)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for SrState {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Checkpoint::deserialize(deserializer).map(Self::from)
+    }
+}
+
 /// Runs the reducer the way Core feeds it: an event's node ids are stamped
 /// with the outpost of the pipe it arrived on, here the outpost of its pid.
 fn reduce(state: &SrState, input: &Input) -> (SrState, Vec<Effect>) {
@@ -25,7 +104,7 @@ fn reduce(state: &SrState, input: &Input) -> (SrState, Vec<Effect>) {
         event.assign_outpost(outpost_of(*source));
     }
     let mut next = state.clone();
-    let mut effects = verbatim_core::reduce(&mut next, &input);
+    let mut effects = next.step(&input);
     answer_object_reads(&mut next, &mut effects);
     (next, effects)
 }
@@ -54,7 +133,7 @@ fn answer_object_reads(state: &mut SrState, effects: &mut Vec<Effect>) {
             outpost: node_id.outpost(),
             outcome: QueryOutcome::Done(QueryResult::Node(object)),
         };
-        let mut more = verbatim_core::reduce(state, &answer);
+        let mut more = state.step(&answer);
         answer_object_reads(state, &mut more);
         effects.splice(index..=index, more);
     }
@@ -1453,7 +1532,7 @@ fn sample_script() -> Vec<Input> {
 
 #[test]
 fn replay_is_deterministic() {
-    let initial = SrState::new();
+    let initial = Checkpoint::new();
     let script = sample_script();
 
     let first = replay(&initial, &script);
@@ -1465,8 +1544,8 @@ fn replay_is_deterministic() {
 
 #[test]
 fn flight_recorder_dump_replays_to_the_same_effects_as_live_reduction() {
-    let mut recorder = ReducerRecorder::with_default_bounds(SrState::new());
-    let mut state = SrState::new();
+    let mut recorder = ReducerRecorder::with_default_bounds(Checkpoint::new());
+    let mut state = verbatim_core::SrState::new();
     let script = sample_script();
 
     let mut live_effects = Vec::new();
@@ -1494,8 +1573,8 @@ fn a_window_that_dropped_its_start_replays_from_its_checkpoint() {
     let mut script = vec![focus_event(TraceId::from_raw(50), Pid(1), slider)];
     script.extend((1..=20).map(|value| value_changed(1, &value.to_string())));
 
-    let mut recorder = ReducerRecorder::new(4, 1 << 20, SrState::new());
-    let mut state = SrState::new();
+    let mut recorder = ReducerRecorder::new(4, 1 << 20, Checkpoint::new());
+    let mut state = verbatim_core::SrState::new();
     let mut live_effects = Vec::new();
     for input in &script {
         let effects = verbatim_core::reduce(&mut state, input);
@@ -1536,7 +1615,7 @@ fn a_window_that_dropped_its_start_replays_from_its_checkpoint() {
     let contents = verbatim_core::read_dump(&mut buffer.as_slice()).expect("reads");
 
     assert_eq!(replay(&contents.base, &kept), live_tail);
-    assert_ne!(replay(&SrState::new(), &kept), live_tail);
+    assert_ne!(replay(&Checkpoint::new(), &kept), live_tail);
 }
 
 /// A focus event whose snapshot arrives with an ancestor chain, outermost
@@ -4253,7 +4332,7 @@ fn to_focus_waits_behind_a_navigation_press() {
 /// the state and its request of the navigator object.
 fn asked_object_read(state: &SrState, cmd: ReviewCommand, repeat: u8) -> (SrState, Effect) {
     let mut state = state.clone();
-    let effects = verbatim_core::reduce(&mut state, &command(TraceId::from_raw(190), cmd, repeat));
+    let effects = state.step(&command(TraceId::from_raw(190), cmd, repeat));
     let [read @ Effect::ReadNode { .. }] = effects.as_slice() else {
         panic!("the navigator's live read, not {effects:?}");
     };
@@ -4265,16 +4344,13 @@ fn object_read_answered(state: &mut SrState, read: &Effect, outcome: QueryOutcom
     let Effect::ReadNode { query_id, node_id } = read else {
         panic!("not a read of the node: {read:?}");
     };
-    verbatim_core::reduce(
-        state,
-        &Input::Answered {
-            at_us: 0,
-            trace_id: TraceId::from_raw(191),
-            query_id: *query_id,
-            outpost: node_id.outpost(),
-            outcome,
-        },
-    )
+    state.step(&Input::Answered {
+        at_us: 0,
+        trace_id: TraceId::from_raw(191),
+        query_id: *query_id,
+        outpost: node_id.outpost(),
+        outcome,
+    })
 }
 
 /// A dead object reviews as empty flat text: the current line, word and
@@ -5639,7 +5715,7 @@ fn reduce_from(state: &SrState, input: &Input, outpost: OutpostId) -> (SrState, 
         event.assign_outpost(outpost);
     }
     let mut next = state.clone();
-    let effects = verbatim_core::reduce(&mut next, &input);
+    let effects = next.step(&input);
     (next, effects)
 }
 

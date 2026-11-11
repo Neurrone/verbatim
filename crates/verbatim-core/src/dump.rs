@@ -335,9 +335,9 @@ mod tests {
 
     /// A state with a focus, so the base state line carries something.
     fn sample_base() -> SrState {
-        let mut state = SrState::new();
+        let mut state = crate::driver::Core::new();
         let _ = crate::reduce(&mut state, &sample_inputs()[0].input);
-        state
+        state.checkpoint().cloned().expect("nothing is paused")
     }
 
     #[test]

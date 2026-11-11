@@ -12,9 +12,9 @@ use verbatim_model::{
     TextOp, TextReply, TextUnit, TraceId,
 };
 
+use crate::driver::Core as SrState;
 use crate::queries::{self, ModelAsk, Then};
 use crate::reduce;
-use crate::state::SrState;
 
 /// The text box's outpost.
 const EDIT_OUTPOST: OutpostId = OutpostId(1);
@@ -664,7 +664,6 @@ fn nodes_held(state: &SrState) -> BTreeMap<OutpostId, std::collections::BTreeSet
     }
     for (_, open) in state.queries.entries() {
         match &open.then {
-            Then::Navigation { from, .. } => insert(*from),
             Then::Key { node } => insert(*node),
             Then::Text(pending) => insert(pending.node),
             _ => {}
@@ -682,7 +681,6 @@ fn insert_key_line(state: &SrState, insert: &mut impl FnMut(NodeId)) {
 /// each is open: `None` for those of which several may be.
 fn one_of(then: &Then) -> Option<String> {
     match then {
-        Then::Navigation { .. } => Some("navigation".to_owned()),
         Then::Text(_) => Some("text".to_owned()),
         Then::SayAll => Some("say-all".to_owned()),
         Then::Terminal(ask) => Some(format!("terminal {ask:?}")),
@@ -702,7 +700,7 @@ fn one_of(then: &Then) -> Option<String> {
         Then::Activation
         | Then::Key { .. }
         | Then::MovedCaret { .. }
-        | Then::Review(_)
+        | Then::Task
         | Then::Nothing => None,
     }
 }

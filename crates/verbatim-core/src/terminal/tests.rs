@@ -22,8 +22,8 @@ use super::{
     Said, SaidItem, Skipped, TerminalItem, TerminalKeyKind, TerminalUnit, caret_key_kind,
     typed_kind,
 };
+use crate::driver::Core as SrState;
 use crate::reduce::reduce;
-use crate::state::SrState;
 
 const OUTPOST: OutpostId = OutpostId(1);
 

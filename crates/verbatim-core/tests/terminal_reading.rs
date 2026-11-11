@@ -1257,7 +1257,11 @@ fn a_mark_above_windows_terminals_clear_is_dropped() {
 fn a_terminal_session_survives_a_flight_recorders_dump_and_replay() {
     let mut session = showing(20, 4, 100, "one\r\ntwo\r\n");
     session.write("three\r\n", 100);
-    let base: SrState = session.state.clone();
+    let base: verbatim_core::Checkpoint = session
+        .state
+        .checkpoint()
+        .expect("nothing is paused")
+        .clone();
     session.log.clear();
     let (_, input) = typed("l", 1000);
     session.input(&input);

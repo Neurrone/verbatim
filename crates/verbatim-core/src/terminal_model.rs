@@ -73,9 +73,9 @@ use verbatim_text::terminal_reading::{
 };
 use verbatim_text::terminal_rows::{Anchor, Lost, MARKS, NewRow, Read, ReadText};
 
-use crate::key_line::ReviewPress;
+use crate::driver::Core;
 use crate::queries::{ModelAsk, Then};
-use crate::state::{SrState, TextFollowUp};
+use crate::state::SrState;
 use crate::terminal::{Said, SaidItem, Skipped, TerminalItem, TerminalKeyKind, TerminalUnit};
 
 pub(crate) use review::CaretAt;
@@ -972,7 +972,7 @@ pub(crate) fn before_key(
 /// one, since a model forgotten, evicted or ended takes its requests with
 /// it.
 pub(crate) fn reply(
-    state: &mut SrState,
+    state: &mut Core,
     trace_id: TraceId,
     (node, generation, ask): (NodeId, u64, ModelAsk),
     reply: TextReply,
@@ -1063,7 +1063,7 @@ pub(crate) fn reply(
 /// nothing: a command mark's move whose search never ran, its line move
 /// answered as when no mark is left that way, or a request whose history
 /// rows could not be placed or fell short, answered unanswered.
-fn abandon(state: &mut SrState, node: NodeId, trace_id: TraceId) -> Vec<Effect> {
+fn abandon(state: &mut Core, node: NodeId, trace_id: TraceId) -> Vec<Effect> {
     let Some(model) = model_mut(state, node) else {
         return Vec::new();
     };
@@ -1216,18 +1216,17 @@ pub(crate) fn report_status_bar(state: &mut SrState, trace_id: TraceId, repeat: 
 pub(crate) fn command_mark(
     state: &mut SrState,
     node: NodeId,
-    press: ReviewPress,
+    press: TraceId,
     (forward, from): (bool, TextPoint),
-    then: TextFollowUp,
-) -> Option<Vec<Effect>> {
+) -> Option<(QueryId, Vec<Effect>)> {
     model_of(state, node)?;
-    let query_id = state.queries.ask_memory(node, Then::Review(then));
-    let mut effects = crate::key_line::press_read(state, node, query_id, press);
+    let query_id = state.queries.ask_memory(node, Then::Task);
+    let mut effects = crate::key_line::press_reads(state, node, press);
     effects.extend(queue(
         state,
         node,
         Waiting {
-            trace: Some(press.trace_id),
+            trace: Some(press),
             review: Review::Mark {
                 query_id,
                 forward,
@@ -1235,7 +1234,7 @@ pub(crate) fn command_mark(
             },
         },
     ));
-    Some(effects)
+    Some((query_id, effects))
 }
 
 /// What "Report status bar" says of `footer`, its lines, on press
@@ -1275,7 +1274,7 @@ fn status_bar(trace_id: TraceId, repeat: u8, footer: &[String]) -> Effect {
 /// asked for. A request an answer causes is answered in turn. An answer
 /// whose request came with no trace is spoken under `trace_id`, the trace
 /// of the read or history that came.
-fn answer_reviews(state: &mut SrState, node: NodeId, trace_id: TraceId) -> Vec<Effect> {
+fn answer_reviews(state: &mut Core, node: NodeId, trace_id: TraceId) -> Vec<Effect> {
     let mut effects = Vec::new();
     loop {
         let held = held_anchors(state, node);
