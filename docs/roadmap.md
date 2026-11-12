@@ -95,7 +95,10 @@ These change no state and may run side by side.
   against a fake reader, and is judged on how closely each reads
   against NVDA's code, what a state dump shows in the middle of an
   entry, whether replay stays exact, and its size. The choice is
-  Dickson's.
+  Dickson's. An earlier prototype of the async form, written against
+  the reducer as it is today, is on the branch
+  prototype/core-async-driver, and the trial's async form can start
+  from its driver; the build notes give what it found.
 - The event recorder, described under "Misc fixes" below, which the
   speech-level tests need.
 
