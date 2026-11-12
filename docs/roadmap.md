@@ -20,18 +20,150 @@ built (2026-11-03). The UIA facts build is built (2026-11-06). The slow
 applications build is built (2026-11-07). The focus pipeline rework's
 third build, the state models, the caret and selection rework and M4.2
 are built (Dickson, 2026-11-10). Next, in this order (Dickson,
-2026-11-05, with the first item added on 2026-11-10):
+2026-11-05, with the misc fixes added on 2026-11-10 and "Readers tell,
+Core asks" placed first on 2026-11-13):
 
-1. the misc fixes below, whose last item lets M5's build A start;
-2. M5;
-3. M6;
-4. M4.3;
-5. M4.8 (Guardian) and M4.7 (Containment);
-6. M4.9 (Lints and unsafe);
-7. M6.2, with the rest after.
+1. "Readers tell, Core asks", below;
+2. the misc fixes below, whose last item lets M5's build A start;
+3. M5;
+4. M6;
+5. M4.3;
+6. M4.8 (Guardian) and M4.7 (Containment);
+7. M4.9 (Lints and unsafe);
+8. M6.2's remaining items, with the rest after.
 
 The published site's homepage, `books/index.html`, carries one line of
 this status per milestone, and changes with it.
+
+## Readers tell, Core asks
+
+Next (Dickson, 2026-11-13). Nothing here is built. The phase changes
+how the readers, Core and the messages between them are arranged, so
+that a feature's logic sits in Core and reads like NVDA's, and a new
+feature needs no protocol or waiting state of its own.
+
+Its decision record is ADR 0003, "Readers tell, Core asks", which
+awaits Dickson's approval. Until it is approved and committed, the
+record and its build notes are the files 0003-readers-tell-core-asks.md
+and readers-tell-core-asks-build-notes.md on the branch
+notes/rearchitecture-2026-11-11. The build notes hold what a new
+session needs to resume: each build's scope, code locations and state
+tables, the rules Core applies with NVDA's source lines, the small
+behaviours that must be moved when code is deleted, the measurements,
+and what each later milestone must not lose.
+
+### The model, in short
+
+- The listener and the outposts read nothing on their own. Each tells
+  Core of an event with only what arrived with it, and every call into
+  an application is made for a request from Core, which gets one
+  answer.
+- Everything arrives at Core's inbox in order. Application events,
+  keys and commands wait in one event queue, with at most one request
+  out, for its front entry, as NVDA's one queue.
+- Only Core stops waiting: when Windows reports a request's window
+  hung, at its due time, or when the foreground moves away from its
+  window.
+  A reader abandons a thread stuck in a call only when the
+  foreground moved away; after a hung report the thread is left alone,
+  so the focus is spoken when the window answers again (Dickson,
+  2026-11-13).
+- The listener holds every desktop-wide registration and hook. An
+  outpost holds none but a console host's, makes every call on one
+  worker, and keeps objects behind ids Core names.
+
+### Before the builds
+
+These change no state and may run side by side.
+
+- Dickson's approval of ADR 0003. With it, in one change: the record
+  joins the decision records; ADR 0002 is renamed "No screen reader
+  per outpost" and gains the keyboard hook in each outpost as an
+  option weighed and rejected; ADR 0001, D2 and D14 are amended as the
+  record lists.
+- The latency of one crossing between the listener and Core over the
+  present pipes, each leg timed at the median and the 99th percentile,
+  idle, during speech and under a flood, and then what brings it down.
+  The aim is under 0.1 ms a crossing (Dickson, 2026-11-13); whether
+  that can be met is not known.
+- The background events that reach Core once every WinEvent hook is in
+  the listener, desktop-wide: the listener's and Core's wake-ups and
+  processor time, and the delay from a held key's press to Core taking
+  it, idle with File Explorer open, under a background console flood
+  and under an MSAA flood. If the budget is missed, the listener
+  filters change events to the foreground's processes, and that is
+  measured before anything is built.
+- A trial of how Core's "ask, wait, continue" code is written, which
+  is not decided: step functions in a reducer, async functions run on
+  Core's thread, or a logic thread that waits on each request beside a
+  small inbox thread that owns the queue and the waiting. The trial
+  writes the event queue with a focus and a caret key in each form
+  against a fake reader, and is judged on how closely each reads
+  against NVDA's code, what a state dump shows in the middle of an
+  entry, whether replay stays exact, and its size. The choice is
+  Dickson's.
+- The event recorder, described under "Misc fixes" below, which the
+  speech-level tests need.
+
+### The builds, in order
+
+One build that changes state is in flight at a time. Each has its own
+design with a state table, one adversarial review, an implementation
+review and its related scenarios.
+
+- The speech-level tests: a fast level that feeds keys and application
+  events in and checks speech out, with the real listener, outposts
+  and Core in the loop, so that it survives the builds after it. Its
+  design decisions are Dickson's and still open: where its inputs
+  enter, one recording of an application replayed both to a simulator
+  and to real Windows so that NVDA is captured against the same
+  application, and the wording of the rules for tests and documents.
+- The event queue and focus: the listener takes every hook; a focus is
+  told, then read by two requests; acceptance is judged in Core; the
+  frozen-window rule; the single record of an outpost generation's
+  life, from M6.2; each property and event kind declared once, and one
+  list of requests shared with extensions. The marker, the hand-over
+  of an application's first events, the live re-read and the readers'
+  ancestry caches go. Keys are handled as today in this build. It
+  replaces the ancestry cache build that was planned.
+- Changes and announcements: state, name and value changes,
+  selections, menus, notifications and toasts.
+- Keys and text: keys take their place in the event queue, with a
+  key's action chosen at its press; the caret watch in the outpost;
+  selection; the sentence move as one request; text positions held by
+  the outpost; the shell's copy of the line of held keys removed.
+- Terminals: told once, read when Core asks.
+- Clearing up: the messages and code nothing uses are deleted, the
+  explanation pages and crate guides describe what is built, and
+  wake-ups and processor time are measured for the phase.
+
+After the phase: M5's design corrections and build A, with the
+sections the record requires redesigned; and, last, the UI Automation
+events NVDA registers that Verbatim does not yet take (tooltip opened,
+live region changed, system alert, selection added and removed, the
+drag events and effects, layout invalidated for suggestion lists).
+
+### Waiting for Dickson
+
+- Approval of ADR 0003.
+- The speech-level tests' design decisions.
+- The form of Core's code, after the trial.
+
+### Found for later milestones
+
+- M8.7: whether UIAccess reaches elevated windows in a standard user's
+  session is not established; Microsoft's documents disagree, and an
+  experiment decides it. UIAccess is also not inherited by child
+  processes, and the hook's guard compares integrity levels, so it
+  cannot simply be removed.
+- M7: the in-process helper is required for web pages' buffers, live
+  regions and composed text, and talks only to its own outpost; D2 is
+  amended with the record.
+- M13: some of NVDA's support reads an application's own object model
+  or its text through window messages (Word's older interface, Excel's
+  borders, charts, Scintilla), which no request reaches yet.
+- The build notes list about twenty statements in the project's own
+  documents that the pinned NVDA source or the code contradicts.
 
 ## Misc fixes
 
@@ -74,10 +206,10 @@ One build that changes state is in flight at a time; the recorder, the
 document corrections and M5's design corrections change no state and
 may run beside one.
 
-1. The event recorder.
-2. The ancestry cache.
-3. The confirmed defects, one small build each.
-4. M5's design corrections, after which build A may start.
+1. The event recorder, in the preparation of "Readers tell, Core asks".
+2. The confirmed defects, one small build each, after that phase; each
+   is checked against it first, since some lie in code it removes.
+3. M5's design corrections, after which build A may start.
 
 ### The event recorder
 
@@ -101,50 +233,6 @@ NVDA's capture.
   wait for it: a design cites the recorder's file with NVDA's capture,
   and a fixture is checked against a recording of the application it
   stands for.
-
-### The ancestry cache
-
-Today each focus reader, the listener's reading thread for an
-application and the outpost's own MSAA reads, stops its walk at its
-ancestry cache, and Core, which cannot tell whether a cached ancestor
-is stale, checks every report (`needs_live_ancestry` in
-`crates/verbatim-core/src/focus_rules.rs`), sets a doubtful one aside,
-asks its reader for a live re-read and holds every later report and
-key behind it. The change makes the readers' reports trustworthy, so
-that Core checks nothing:
-
-- The listener reuses an application's cache only while that
-  application has not been left since the cached read, which it
-  already records (`QueuePlace::current_since` in
-  `crates/verbatim-listener-logic/src/schedule.rs`), and has had no
-  MSAA focus or menu start of its own since then. The listener
-  receives every application's MSAA focus event and today uses them
-  only to mark other applications left. Otherwise it walks live to the
-  top or the process boundary. The title check stays.
-- A listener read walked live says so, and the outpost does not cut
-  it at its own followed chain.
-- The outpost's own MSAA reads keep their title check and drop their
-  cache at a foreground event of their own windows.
-- Removed in the same build: Core's check and its set-aside state,
-  the live re-read messages in both directions and their two "gone"
-  answers, both readers' re-read code, and the focus queue's waiting,
-  with the keys, commands and menu ends that queue behind a report.
-  Focus is still judged in Core.
-
-A return between windows then costs one full walk in place of a
-partial walk, a round trip, a full walk and a second completion; moves
-within an application cost what they do today.
-
-Before its design: a recording and an NVDA capture of Alt+Space in
-Windows Terminal, and of a container renamed while the user is in
-another application. Its design lists as limits the listener's
-WinEvent thread seeing a departure after its UI Automation thread has
-started the return's read, and a read Core refused. It amends ADR
-0001's "Reusing an earlier ancestry", which rejected a record owned by
-the listener because the listener "cannot see" the focus move to the
-outpost within one application; that it receives those MSAA focus
-events is the changed fact. The amendment is Dickson's to approve with
-the design.
 
 ### The confirmed defects
 
@@ -285,9 +373,9 @@ Recorded here so their designs start from them:
 
 ### Waiting for Dickson
 
-The ancestry cache's amendment of ADR 0001, approved with its design;
-and, in M6.2, which thread owns the single record of an outpost
-generation's life.
+Which thread owns the single record of an outpost generation's life,
+which the event queue and focus build of "Readers tell, Core asks" now
+builds.
 
 ## M4 — Text, editing, and terminals
 
