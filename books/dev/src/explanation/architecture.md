@@ -17,13 +17,17 @@ screen reader in both rendered and source form.
   (roadmap M16). Why: UIA alone serves WinUI, Terminal and modern Office,
   while browsers and much of Win32 are richest through MSAA/IA2. Decided
   2026-07-13.
-- **D2, injection never required for correctness.** An in-process helper,
-  NVDA's nvdaHelper analog, ships with browse mode (M7) after
-  out-of-process IA2 has proven correctness, for IA2 call batching and
-  virtual-buffer speed. Why: NVDA shows in-process access is what makes
-  large documents fast, and the helper's binary matrix and antivirus
-  friction stay out of early milestones. Decided 2026-07-13. Amended
-  2026-07-15.
+- **D2, the in-process helper.** An in-process helper, NVDA's
+  nvdaHelper analog, ships with browse mode (M7) and is required, in
+  every application with a text field, not only browsers: it builds and
+  repairs a web page's browse-mode buffer inside the browser, reads live
+  region text at the event, as NVDA's does, and serves composed text. It
+  is part of its application's outpost and talks only to it, which
+  treats what it sends as untrusted ([ADR 0003](../reference/adr/0003-readers-tell-core-asks.md), "Who holds what").
+  Why: NVDA shows in-process access is what makes large documents fast,
+  and a page's text changes and live region text cannot be had from
+  outside the application. Decided 2026-07-13. Amended 2026-07-15 and
+  2026-11-13 (Dickson).
 - **D3, the end-to-end suite runs wherever the harness reaches; CI is
   hosted runners only.** The suite talks to the in-guest agent at an
   address, on a hosted runner, a developer's machine or VM, or a local
@@ -93,39 +97,46 @@ screen reader in both rendered and source form.
   cues (section 6; `books/dev/src/reference/crates/verbatim-model.md`, "Themes").
   Why: earcons and voice styling become a theme swap. Decided 2026-07-15.
   Amended 2026-10-07.
-- **D13, the focus listener.** One permanent listener process holds the
-  desktop-wide UIA focus registration and the MSAA hooks. Its callbacks
-  make no cross-process call; it reads each UIA focus on a thread per
-  application, with no remote operation or connection, and forwards each
-  fact to Core, which routes it to the application's own outpost to
-  report (section 1). It reports every foreground change to Core, with
-  when it observed it, the only report of one, from which Core takes the
-  keyboard hook's view, attention and its foreground record. Why: an
-  outpost started after the event would miss the first focus, and a hung
-  window holds every UIA event of the process with the focus
-  registration; one sender of the fact that a window came to the
-  foreground needs no event from a held application. Limitation, a known
+- **D13, the focus listener.** One permanent listener process holds
+  every desktop-wide registration: the UIA focus handler and global
+  event group, and every WinEvent hook but a console host's five
+  events, which its outpost keeps. Its callbacks make no cross-process
+  call; it tells Core of each event, and reads a UIA focus only when
+  Core asks, on a thread per application, with no remote operation or
+  connection; with its answer Core asks the application's outpost to
+  complete the read ([ADR 0003](../reference/adr/0003-readers-tell-core-asks.md), "Who holds what" and "A UI
+  Automation focus read"). It reports every foreground change to Core,
+  the only report of one, from which Core takes the keyboard hook's
+  view, attention and its foreground record. Why: an outpost started
+  after the event would miss the first focus, and a hung window holds
+  every UIA event of the process with the focus registration; one
+  desktop-wide hook keeps Windows' order of events across applications;
+  one sender of the fact that a window came to the foreground needs no
+  event from a held application. Limitation, a known
   cost: while a window's thread in an application is busy, a new
   connection that the application's own outpost leaves pending there can
   hold the listener's reads into that application for up to one
   connection timeout
   (`uia-facts/a-pending-connection-holds-its-own-processs-other-calls/`).
   Decided 2026-07-16. Amended 2026-10-20 (Dickson), 2026-11-02 (Dickson:
-  the foreground change) and 2026-11-06 (Dickson: the pending
-  connection's cost accepted).
+  the foreground change), 2026-11-06 (Dickson: the pending
+  connection's cost accepted) and 2026-11-13 (Dickson).
 - **D14, attention follows focus.** Attention moves only on the focus
   listener's foreground change, never on a focus or an outpost's report,
-  and the foreground is announced, never a gate; each event rule is
-  defined once, judged in Core, outside Core only before a read and only
-  from the reader's own observations, and Core orders focuses by when
-  they happened (section 2). Why: a foreground gate failed broker-hosted
+  and the foreground is announced, never a gate. Each event rule is
+  defined once and judged in Core, the acceptance test included; a
+  reader judges nothing but NVDA's local drops, which cannot hang; Core
+  orders events, keys and commands by arrival in its one event queue;
+  and facts Core carries in a request are used only inside that
+  request's answer ([ADR 0003](../reference/adr/0003-readers-tell-core-asks.md); section 2). Why: a foreground gate failed broker-hosted
   applications and background events users expect. Decided 2026-09-02.
   Amended 2026-10-25 (Dickson, 2026-10-26), 2026-10-30 (Dickson: no state
   of Core is sent to a reader, [the ownership model](design/ownership.md)),
   2026-10-31 (the ported rules both readers apply are defined in
-  `verbatim-reader-rules`, section 2) and 2026-11-02 (Dickson: attention
+  `verbatim-reader-rules`, section 2), 2026-11-02 (Dickson: attention
   moves only on the listener's foreground change, and a focus is judged
-  against Core's record of the window in front).
+  against Core's record of the window in front) and 2026-11-13 (Dickson:
+  readers tell, Core asks).
 - **D15, the latency budget is split in two and measured per stage.** The
   OS event to the utterance queued takes 10 ms or less on every backend,
   and queued to first audio 10 ms or less with eSpeak NG, OneCore exempt
@@ -329,7 +340,7 @@ gate):
   routes messages, and the reducer decides what to speak, which events to
   accept, and what attention is. A decision about presentation never lives
   in an outpost, because only Core sees every application
-  ([ADR 0002](../reference/adr/0002-what-core-judges.md), which weighed
+  ([ADR 0002](../reference/adr/0002-no-screen-reader-per-outpost.md), which weighed
   judging in each application's outpost again on 2026-11-10 and kept
   Core as the judge of keys and focus).
 - Each correctness rule has exactly one owner, so that changing it cannot

@@ -74,6 +74,11 @@ harness, NVDA captures and troubleshooting.
 - [Experiments](../experiments/readme.md) — the experiments behind the
   UIA faults and the surveys behind design choices, one folder each.
 - Design records of work still being designed or built:
+  - [readers-tell-core-asks.md](design/readers-tell-core-asks.md) — the
+    build notes of "Readers tell, Core asks" (ADR 0003): each build's
+    scope, code, state tables and messages, Core's rules with NVDA's
+    source, the behaviours the deleted code carries, the measurements,
+    and what later milestones must keep.
   - [communication.md](design/communication.md) — every pipe and thread
     from an event or a key to sound; published once its audio step is
     built.

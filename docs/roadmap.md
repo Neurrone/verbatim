@@ -42,12 +42,11 @@ how the readers, Core and the messages between them are arranged, so
 that a feature's logic sits in Core and reads like NVDA's, and a new
 feature needs no protocol or waiting state of its own.
 
-Its decision record is ADR 0003, "Readers tell, Core asks", which
-awaits Dickson's approval. Until it is approved and committed, the
-record and its build notes are the files 0003-readers-tell-core-asks.md
-and readers-tell-core-asks-build-notes.md on the branch
-notes/rearchitecture-2026-11-11. The build notes hold what a new
-session needs to resume: each build's scope, code locations and state
+Its decision record is
+[ADR 0003, "Readers tell, Core asks"](../books/dev/src/reference/adr/0003-readers-tell-core-asks.md),
+decided by Dickson on 2026-11-13. Its build notes are
+[readers-tell-core-asks.md](design/readers-tell-core-asks.md), which
+hold what a new session needs to resume: each build's scope, code locations and state
 tables, the rules Core applies with NVDA's source lines, the small
 behaviours that must be moved when code is deleted, the measurements,
 and what each later milestone must not lose.
@@ -76,11 +75,6 @@ and what each later milestone must not lose.
 
 These change no state and may run side by side.
 
-- Dickson's approval of ADR 0003. With it, in one change: the record
-  joins the decision records; ADR 0002 is renamed "No screen reader
-  per outpost" and gains the keyboard hook in each outpost as an
-  option weighed and rejected; ADR 0001, D2 and D14 are amended as the
-  record lists.
 - The latency of one crossing between the listener and Core over the
   present pipes, each leg timed at the median and the 99th percentile,
   idle, during speech and under a flood, and then what brings it down.
@@ -145,7 +139,6 @@ drag events and effects, layout invalidated for suggestion lists).
 
 ### Waiting for Dickson
 
-- Approval of ADR 0003.
 - The speech-level tests' design decisions.
 - The form of Core's code, after the trial.
 
@@ -157,8 +150,8 @@ drag events and effects, layout invalidated for suggestion lists).
   processes, and the hook's guard compares integrity levels, so it
   cannot simply be removed.
 - M7: the in-process helper is required for web pages' buffers, live
-  regions and composed text, and talks only to its own outpost; D2 is
-  amended with the record.
+  regions and composed text, and talks only to its own outpost, as D2
+  now says.
 - M13: some of NVDA's support reads an application's own object model
   or its text through window messages (Word's older interface, Excel's
   borders, charts, Scintilla), which no request reaches yet.
@@ -195,7 +188,7 @@ code before it is built.
 Three target designs that moved judging out of Core into each
 application's outpost failed their adversarial reviews, and Dickson
 decided on 2026-11-10 that Core stays the one judge of both.
-[ADR 0002](../books/dev/src/reference/adr/0002-what-core-judges.md)
+[ADR 0002, "No screen reader per outpost"](../books/dev/src/reference/adr/0002-no-screen-reader-per-outpost.md)
 keeps the options weighed, the two facts that decide it, the rule
 that an outpost keeps nothing for Core between requests, and what
 would reopen the question. Browse mode's design starts from it.

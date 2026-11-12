@@ -1,6 +1,6 @@
-# ADR 0002: What Core judges
+# ADR 0002: No screen reader per outpost
 
-Status: decided, 2026-11-10.
+Status: decided, 2026-11-10; amended 2026-11-13.
 
 This record keeps why the keys, the focus and everything that depends on them are judged in Core and not in each application's outpost: the problem, the options weighed, what was chosen and by whom, and the limits accepted. How the processes are laid out is in [the architecture](../../explanation/architecture.md), section 1, and how a focus travels is in [How focus works](../../explanation/design/focus.md).
 
@@ -29,19 +29,20 @@ Weighed and rejected:
 - Only what needs no state of Core's is judged in the outpost. Rejected, because nearly every rule reads Core's state, so little moves, and what does move splits a record that is whole today: a terminal's memory in the outpost with its review position, its focus and its record of keys in Core.
 - Core forwards each key to the outpost of the focused application, and the listener tells an outpost when the focus goes elsewhere. Rejected for keys, because a forwarded key can arrive after the read of its own echo, which no comparison of times repairs, since the key is not yet there to compare; and for focus, because the listener learns that a focus elsewhere counts only after its checks, on another thread than the one that sees the event, so the notice is either early and sometimes false, or late.
 - Focus alone judged in the outposts, with the relay telling each outpost when another application's focus passes. Rejected, because the keys stay in Core and need the focus there, so nothing that reads the focus would become simpler, and a third place would hold which application's focus is current.
+- A keyboard hook in each application's outpost, installed while that application is in front and removed when it is not, so that a key and the application's reads meet beside the application (Dickson, 2026-11-12). Rejected, because a key pressed in the gap at a switch between applications reaches the old outpost's hook or none, so Verbatim's modifier or Caps Lock would act on the application; a held modifier or held caret key would have to be carried across the switch; no outpost is in front on the desktop, in an ignored process or while one is starting; a stuck outpost is killed and its hook goes with it, at the moment stop-speech and Alt+Tab matter most; and Windows removes a hook that answers too slowly without telling the process. A permanent fallback hook in Core would mean two hooks judging one key.
 
-### What an outpost keeps for Core (Dickson, 2026-11-10)
+### What an outpost keeps for Core (Dickson, 2026-11-10; amended 2026-11-13)
 
-When Core owns an interaction with an application, the outpost keeps nothing for it between requests: each request carries what it needs and gets one answer. Reason: an interaction's progress then lives in one place, Core's, and an outpost's ending or its worker's abandonment loses nothing Core has to reconcile. A design that needs the outpost to remember something for Core between two requests says why one request cannot carry it.
+A reader keeps nothing for Core between requests but held objects, the requests waiting in an outpost's table and a terminal's "changed" flag, and judges nothing about them: each request carries what it needs and gets one answer ([ADR 0003](0003-readers-tell-core-asks.md), "Readers tell, Core asks"). Reason: an interaction's progress then lives in one place, Core's, and an outpost's ending or its worker's abandonment loses nothing Core has to reconcile. A design that needs the outpost to remember something for Core between two requests says why one request cannot carry it.
 
-A reader may still decide, before a read and from its own observations, what to read, as [ADR 0001](0001-focus.md) records. Such a decision is a guess where the fact is Core's: one that can only cost calls is allowed, and one that can change what is spoken is not built, so that Core never has to ask a reader again in order to judge a report.
+A reader decides nothing about what to read: it drops an event only by NVDA's local checks that cannot hang, and every call into an application is made for a request from Core ([ADR 0003](0003-readers-tell-core-asks.md)), so that Core never has to ask a reader again in order to judge a report.
 
 ## Limits accepted
 
 - Core's reducer is on the path of every key and every focus, so a slow step in it delays them all, and each later feature that reads the keys or the focus adds work there. The delay between the keyboard hook and the reducer is measured and bounded as a performance budget.
 - A held caret key's handling stays on two sides at least, the hook's line and Core's, because Windows waits on the hook's return and the read is made in the outpost.
-- A focus that an application raises reaches Core after its reader's calls, so one slow application delays its own focuses, though not another's.
+- Keys, commands and every application's events wait in Core's one event queue behind its front entry, so a read of one slow application holds what is queued behind it until it answers or Core gives it up ([ADR 0003](0003-readers-tell-core-asks.md), "Limits accepted").
 
 ## What would reopen this
 
-A measured fact that removes one of the two deciding facts: a way for an outpost to receive what Core knows in one order with its own application's events, or a way for a key to reach an outpost before the application's reaction to it can be read. A planned feature that needs an application's focus judged without Core would also be such a fact; none is on the roadmap.
+A measured fact that removes one of the two deciding facts: a way for an outpost to receive what Core knows in one order with its own application's events, or a way for a key to reach an outpost before the application's reaction to it can be read. A planned feature that needs an application's focus judged without Core would also be such a fact; none is on the roadmap. [ADR 0003](0003-readers-tell-core-asks.md) rests on this record, so such a fact reopens it too.
