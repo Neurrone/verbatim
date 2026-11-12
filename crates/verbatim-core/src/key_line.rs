@@ -15,9 +15,9 @@ use verbatim_model::{
     TraceId, UtteranceSegment, had_effect,
 };
 
-use crate::driver::{Core, Signal};
+use crate::driver::{Core, Cx, Signal, Wait, Woke};
 use crate::editing::{self, is_grid, text_focus};
-use crate::queries::{Asking, Then};
+use crate::queries::{Asking, Ending, Then};
 use crate::state::SrState;
 
 /// The key's bound: 100 ms after Core passed it on, NVDA's
@@ -78,71 +78,24 @@ pub(crate) struct Busy {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 enum CurrentKey {
     /// Its before read is running.
-    Reading {
-        query: QueryId,
-        node: NodeId,
-        key: HeldKey,
-    },
+    Reading { node: NodeId, key: HeldKey },
     /// Passed on, within its bound.
     Watched(Watched),
     /// A text field's key past its bound: its final read is asked, and what
     /// was behind it has gone ahead.
-    FinalReading {
-        query: QueryId,
-        field: Box<FieldKey>,
-    },
+    FinalReading { field: Box<FieldKey> },
     /// A sentence key past its bound with no evidence: Verbatim moves the
     /// caret by sentence, each step reusing the before read's 150 ms.
     MovingBySentence {
         passed: PassedKey,
-        step: SentenceStep,
+        /// Its final read is out, whose evidence a report may still be.
+        final_read: bool,
     },
     /// A review or object-navigation press whose read is running: it stays
     /// current until the answer to its last read, so it cannot end before
     /// its move. Anything behind it waits, with a time bound on the press
     /// ([`HELD_READ_BOUND_MS`]).
     Review(Press),
-}
-
-/// How far a sentence move has got.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-enum SentenceStep {
-    /// The final read, which may show that the application moved the caret.
-    FinalRead { query: QueryId },
-    /// A read of the paragraph a sentence is looked for in.
-    ReadingParagraph {
-        query: QueryId,
-        paragraph: ParagraphAt,
-    },
-    /// The caret being moved to `sentence`, the start of `line` at `line`'s
-    /// offset.
-    Moving {
-        query: QueryId,
-        line: Box<TextChunk>,
-        sentence: String,
-    },
-}
-
-impl SentenceStep {
-    /// The step's one query.
-    fn query(&self) -> QueryId {
-        match self {
-            Self::FinalRead { query }
-            | Self::ReadingParagraph { query, .. }
-            | Self::Moving { query, .. } => *query,
-        }
-    }
-}
-
-/// Which paragraph a sentence move is reading.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-enum ParagraphAt {
-    /// The caret's.
-    Caret,
-    /// The one after `current`, the caret's, which has no later sentence.
-    Next { current: Box<TextChunk> },
-    /// The one before `current`, the caret's, which has no earlier sentence.
-    Previous { current: Box<TextChunk> },
 }
 
 /// A key passed on, within its bound. A text field's key and a terminal's
@@ -414,7 +367,7 @@ fn key_taking_effect(state: &mut SrState, key: CaretKey, node: NodeId) -> Vec<Ef
 /// Starts `held`: its before read is asked, bounded by
 /// [`HELD_READ_BOUND_MS`], or it is passed on at once when the focus has no
 /// caret to read.
-fn start_held(state: &mut SrState, held: HeldKey) -> Vec<Effect> {
+fn start_held(state: &mut Core, held: HeldKey) -> Vec<Effect> {
     let Some(node) = text_focus(state) else {
         let mut effects = crate::say_all::stop(state);
         if !editing::selects(held.key) && held.key.motion != CaretMotion::Other {
@@ -423,6 +376,18 @@ fn start_held(state: &mut SrState, held: HeldKey) -> Vec<Effect> {
         effects.push(Effect::PassHeldKey(held.trace_id));
         return effects;
     };
+    crate::driver::spawn(state, move |cx| {
+        let key = Key {
+            cx,
+            trace_id: held.trace_id,
+        };
+        held_caret_key(key, held, node)
+    })
+}
+
+/// Asks for the read of the caret before `held`, on `node`, which becomes
+/// the current key, bounded by [`HELD_READ_BOUND_MS`].
+fn read_before(state: &mut SrState, held: HeldKey, node: NodeId) -> (QueryId, Vec<Effect>) {
     let heard = replaced_key_heard(state, held.trace_id);
     let read = CaretRead {
         fetch: fetch_of(held.key),
@@ -436,14 +401,7 @@ fn start_held(state: &mut SrState, held: HeldKey) -> Vec<Effect> {
         Asking::Text(node, TextOp::ReadCaret(read)),
         Then::Key { node },
     );
-    set_current(
-        state,
-        CurrentKey::Reading {
-            query,
-            node,
-            key: held,
-        },
-    );
+    set_current(state, CurrentKey::Reading { node, key: held });
     // The deadline first, so a read the shell answers at once ends it.
     let mut effects = heard;
     effects.push(Effect::BoundHeldKey(Some((
@@ -451,13 +409,13 @@ fn start_held(state: &mut SrState, held: HeldKey) -> Vec<Effect> {
         HELD_READ_BOUND_MS,
     ))));
     effects.push(effect);
-    effects
+    (query, effects)
 }
 
 /// A caret key the keyboard hook held back: it starts its turn at once, or
 /// waits behind the keys in the line.
 pub(crate) fn held_key(
-    state: &mut SrState,
+    state: &mut Core,
     trace_id: TraceId,
     key: CaretKey,
     pressed_at_ms: u64,
@@ -482,7 +440,7 @@ pub(crate) fn held_key(
 /// caret key judged from the node's last read, text typed, or a key that
 /// clears a terminal's line): one that finds the line holding waits behind
 /// it, or runs at once while nothing is behind it.
-pub(crate) fn key_arrived(state: &mut SrState, input: &Input) -> Vec<Effect> {
+pub(crate) fn key_arrived(state: &mut Core, input: &Input) -> Vec<Effect> {
     let as_caret_key = chord_in_terminal(state, input);
     let input = as_caret_key.as_ref().unwrap_or(input);
     let joins = match state.current() {
@@ -580,7 +538,7 @@ pub(crate) fn mark_later(state: &mut SrState, at_us: u64) {
 /// becomes the current key, judged from the node's last read. Any other
 /// does nothing but what a key always does.
 pub(crate) fn unheld_caret_key(
-    state: &mut SrState,
+    state: &mut Core,
     trace_id: TraceId,
     key: CaretKey,
     pressed_at_ms: u64,
@@ -606,6 +564,9 @@ pub(crate) fn unheld_caret_key(
         (pressed_at_ms.saturating_mul(1_000), bound_ms, true),
     );
     effects.extend(pass_rule(state));
+    effects.extend(crate::driver::spawn(state, move |cx| async move {
+        let _ = passed_key(&Key { cx, trace_id }).await;
+    }));
     effects
 }
 
@@ -646,7 +607,7 @@ fn watch_from_last_read(
 /// once, as NVDA's typed keys are not held behind a script, stopping at the
 /// first command or held key, and anything left behind it marks a later
 /// key at the time it was pressed.
-fn pass_rule(state: &mut SrState) -> Vec<Effect> {
+fn pass_rule(state: &mut Core) -> Vec<Effect> {
     let mut effects = Vec::new();
     loop {
         let Some(busy) = state.busy_mut() else {
@@ -868,6 +829,8 @@ fn end_current(state: &mut Core, trace_id: TraceId, passed_at_ms: Option<u64>) -
     // Said in the order they happened, before anything that waited behind
     // the key (Dickson, 2026-11-09).
     effects.extend(editing::speak_each(trace_id, heard));
+    // The key's function, when the reducer and not it ended the key.
+    effects.extend(crate::driver::signal(state, Signal::KeyEnded, 0));
     effects.extend(run_waiting(state, waiting, passed_at_ms));
     effects
 }
@@ -916,8 +879,9 @@ fn caret_key_pressed_at(input: &Input) -> Option<u64> {
     }
 }
 
-/// A key's read answered: the current key's before read or final read, or a
-/// reply no longer the current key's, an ordinary report.
+/// A key's read answered: the key's function goes on with it while it
+/// waits for it, and a reply no longer waited for, of a read given up or of
+/// a key that has ended, is an ordinary report.
 pub(crate) fn request_answered(
     state: &mut Core,
     trace_id: TraceId,
@@ -925,33 +889,18 @@ pub(crate) fn request_answered(
     reply: TextReply,
     at_us: u64,
 ) -> Vec<Effect> {
-    match state.current().cloned() {
-        Some(CurrentKey::Reading {
-            query: asked,
-            node: read,
-            key,
-        }) if asked == query => before_read_answered(state, trace_id, (read, key), reply, at_us),
-        Some(CurrentKey::FinalReading {
-            query: asked,
-            field,
-        }) if asked == query => final_read_answered(state, trace_id, &field, reply),
-        Some(CurrentKey::MovingBySentence { passed, step }) if step.query() == query => {
-            sentence_answered(state, trace_id, passed, step, reply)
-        }
-        Some(
-            CurrentKey::Reading { .. }
-            | CurrentKey::Watched(_)
-            | CurrentKey::FinalReading { .. }
-            | CurrentKey::MovingBySentence { .. }
-            | CurrentKey::Review(_),
-        )
-        | None => {
-            let TextReply::Caret(read) = reply else {
-                return Vec::new();
-            };
-            report_read(state, trace_id, node, *read)
-        }
+    if crate::driver::awaits(state, query) {
+        return crate::driver::answered(state, query, Ending::Reply(reply), trace_id, at_us);
     }
+    late_read(state, trace_id, node, reply)
+}
+
+/// `reply`, a key's read no longer the current key's: an ordinary report.
+fn late_read(state: &mut Core, trace_id: TraceId, node: NodeId, reply: TextReply) -> Vec<Effect> {
+    let TextReply::Caret(read) = reply else {
+        return Vec::new();
+    };
+    report_read(state, trace_id, node, *read)
 }
 
 /// A read of `node` with its facts, a query's reply no longer current or a
@@ -1131,21 +1080,19 @@ fn before_read_answered(
     effects
 }
 
-/// The line's one deadline has passed.
+/// The line's one deadline has passed, at `at_us`: the wait it bounds is
+/// over, for the key's function or the press's. Nothing for a key no
+/// longer current, or one with no deadline.
 pub(crate) fn deadline_passed(state: &mut Core, trace_id: TraceId, at_us: u64) -> Vec<Effect> {
-    let current = state.current().cloned();
-    match current {
-        // Of a key no longer current, or one with no deadline.
+    match state.current() {
         Some(key) if key.trace_id() != Some(trace_id) => Vec::new(),
         None | Some(CurrentKey::FinalReading { .. }) => Vec::new(),
-        Some(CurrentKey::Reading { query, node, key }) => {
-            before_read_given_up(state, trace_id, (query, node, key), at_us)
-        }
-        Some(CurrentKey::Watched(watched)) => bound_passed(state, watched),
-        Some(CurrentKey::MovingBySentence { passed, step }) => {
-            sentence_dropped(state, &passed, step.query())
-        }
-        Some(CurrentKey::Review(_)) => crate::driver::signal(state, Signal::PressGivesWay),
+        Some(CurrentKey::Review(_)) => crate::driver::signal(state, Signal::PressGivesWay, 0),
+        Some(
+            CurrentKey::Reading { .. }
+            | CurrentKey::Watched(_)
+            | CurrentKey::MovingBySentence { .. },
+        ) => crate::driver::signal(state, Signal::KeyBound, at_us),
     }
 }
 
@@ -1222,7 +1169,7 @@ pub(crate) fn navigator_moved(state: &mut Core) -> Vec<Effect> {
     {
         return Vec::new();
     }
-    crate::driver::signal(state, Signal::PressGivesWay)
+    crate::driver::signal(state, Signal::PressGivesWay, 0)
 }
 
 /// The before read of the current key passed 150 ms: the key is passed on
@@ -1265,11 +1212,23 @@ fn before_read_given_up(
     effects
 }
 
+/// What the current key's bound passing with no evidence leads to.
+enum AtBound {
+    /// The key is over, or a key that waited has taken its place.
+    Over(Vec<Effect>),
+    /// A text field's key: what waited has gone ahead, and its final read,
+    /// this query, is asked.
+    FinalRead(QueryId, Vec<Effect>),
+    /// A sentence key: Verbatim moves the caret by sentence, with what is
+    /// behind it waiting for the move.
+    Sentence(PassedKey),
+}
+
 /// The current key's bound passed with no evidence: a terminal's key ends;
 /// for a text field's what waits goes ahead, and the key, if still current,
 /// has its final read asked, and a sentence key goes on to move by
-/// sentence, with what is behind it waiting for the move.
-fn bound_passed(state: &mut Core, watched: Watched) -> Vec<Effect> {
+/// sentence.
+fn bound_passed(state: &mut Core, watched: Watched) -> AtBound {
     let (trace_id, pass_ms) = (
         watched.passed().key.trace_id,
         Some(watched.passed().passed_at_us.div_ceil(1_000)),
@@ -1278,10 +1237,10 @@ fn bound_passed(state: &mut Core, watched: Watched) -> Vec<Effect> {
     // waited behind it.
     let field = match watched {
         Watched::Field(field) => field,
-        Watched::Terminal(_) => return end_current(state, trace_id, pass_ms),
+        Watched::Terminal(_) => return AtBound::Over(end_current(state, trace_id, pass_ms)),
     };
     if is_sentence_key(field.passed.key.key) && !field.awaiting_unit {
-        return final_read_of_sentence_key(state, field.passed);
+        return AtBound::Sentence(field.passed);
     }
     let mut effects = advance(state, pass_ms);
     let field = match state.current() {
@@ -1297,7 +1256,7 @@ fn bound_passed(state: &mut Core, watched: Watched) -> Vec<Effect> {
             | CurrentKey::MovingBySentence { .. }
             | CurrentKey::Review(_),
         )
-        | None => return effects,
+        | None => return AtBound::Over(effects),
     };
     let node = field.passed.node;
     let read = CaretRead {
@@ -1308,40 +1267,9 @@ fn bound_passed(state: &mut Core, watched: Watched) -> Vec<Effect> {
         Asking::Text(node, TextOp::ReadCaret(read)),
         Then::Key { node },
     );
-    set_current(state, CurrentKey::FinalReading { query, field });
+    set_current(state, CurrentKey::FinalReading { field });
     effects.push(for_key(trace_id, effect));
-    effects
-}
-
-/// `passed`, a sentence key at its bound, has its final read asked: its
-/// reply says whether to move by sentence.
-fn final_read_of_sentence_key(state: &mut SrState, passed: PassedKey) -> Vec<Effect> {
-    let node = passed.node;
-    let read = CaretRead {
-        fetch: fetch_of(passed.key.key),
-        purpose: ReadPurpose::Final,
-    };
-    let (query, effect) = state.queries.ask(
-        Asking::Text(node, TextOp::ReadCaret(read)),
-        Then::Key { node },
-    );
-    sentence_step(state, passed, SentenceStep::FinalRead { query }, effect)
-}
-
-/// `passed` goes on to `step`, its `effect` carried under the key, with
-/// the step's 150 ms: first, so a read the shell answers at once ends it.
-fn sentence_step(
-    state: &mut SrState,
-    passed: PassedKey,
-    step: SentenceStep,
-    effect: Effect,
-) -> Vec<Effect> {
-    let trace_id = passed.key.trace_id;
-    set_current(state, CurrentKey::MovingBySentence { passed, step });
-    vec![
-        Effect::BoundHeldKey(Some((trace_id, HELD_READ_BOUND_MS))),
-        for_key(trace_id, effect),
-    ]
+    AtBound::FinalRead(query, effects)
 }
 
 /// The sentence key waiting for its final read on `node`, whose evidence a
@@ -1350,7 +1278,7 @@ fn sentence_key_at_final_read(state: &SrState, node: NodeId) -> Option<PassedKey
     match state.current() {
         Some(CurrentKey::MovingBySentence {
             passed,
-            step: SentenceStep::FinalRead { .. },
+            final_read: true,
         }) if passed.node == node => Some(passed.clone()),
         Some(
             CurrentKey::MovingBySentence { .. }
@@ -1381,204 +1309,22 @@ fn sentence_moved_by_application(
     finish(state, trace_id, passed, read, (speaks, words))
 }
 
-/// The answer to the sentence move's current step.
-fn sentence_answered(
-    state: &mut Core,
-    trace_id: TraceId,
-    passed: PassedKey,
-    step: SentenceStep,
-    reply: TextReply,
-) -> Vec<Effect> {
-    match (step, reply) {
-        (SentenceStep::FinalRead { .. }, TextReply::Caret(read)) => {
-            if let Some(evidence) = evidence_of(&passed, &read.facts) {
-                return sentence_moved_by_application(state, trace_id, &passed, &read, evidence);
-            }
-            final_read_found_no_effect(state, passed, *read)
-        }
-        (SentenceStep::ReadingParagraph { paragraph, .. }, TextReply::Read { moved, chunk }) => {
-            paragraph_answered(state, passed, paragraph, moved, chunk)
-        }
-        (SentenceStep::Moving { line, sentence, .. }, TextReply::Moved { read_at_us }) => {
-            let words = editing::sentence_words(&line, &sentence);
-            editing::caret_moved_by_core(state, passed.node, *line, read_at_us);
-            sentence_said(state, &passed, words)
-        }
-        // A step that failed: text with no sentences (UIA's answer), or a
-        // read or move that could not be made. The sentence does not move.
-        (
-            SentenceStep::FinalRead { .. }
-            | SentenceStep::ReadingParagraph { .. }
-            | SentenceStep::Moving { .. },
-            _,
-        ) => sentence_said(state, &passed, Vec::new()),
-    }
-}
-
 /// The final read showed no effect: the caret is taken, its changes wait
 /// for the key's words, and the caret's paragraph is read from the read's
-/// own position, as NVDA's move works from the position it read.
-fn final_read_found_no_effect(
-    state: &mut SrState,
-    passed: PassedKey,
-    read: CaretReply,
-) -> Vec<Effect> {
+/// own position, which this returns, as NVDA's move works from the position
+/// it read.
+fn final_read_found_no_effect(state: &mut SrState, node: NodeId, read: CaretReply) -> TextPoint {
     let (changes, general) = editing::changes_of_reply(&read);
     let segments = editing::selection_segments(&changes, general.as_general());
     let at = TextPoint::At(TextPosition {
         anchor: read.caret.line.start,
         offset: read.caret.line.offset,
     });
-    editing::update_caret(state, passed.node, read.caret);
+    editing::update_caret(state, node, read.caret);
     if let Some(busy) = state.busy_mut() {
         busy.heard.extend(segments);
     }
-    read_paragraph(state, passed, at, None, ParagraphAt::Caret)
-}
-
-/// Asks for the paragraph `paragraph` names, at `at` moved by `movement`.
-fn read_paragraph(
-    state: &mut SrState,
-    passed: PassedKey,
-    at: TextPoint,
-    movement: Option<TextMovement>,
-    paragraph: ParagraphAt,
-) -> Vec<Effect> {
-    let node = passed.node;
-    let read = TextRead {
-        at,
-        movement,
-        unit: TextUnit::Sentence,
-    };
-    let (query, effect) = state
-        .queries
-        .ask(Asking::Text(node, TextOp::Read(read)), Then::Key { node });
-    sentence_step(
-        state,
-        passed,
-        SentenceStep::ReadingParagraph { query, paragraph },
-        effect,
-    )
-}
-
-/// Reads the paragraph `count` paragraphs on from `current`.
-fn read_beside(
-    state: &mut SrState,
-    passed: PassedKey,
-    current: TextChunk,
-    count: i32,
-) -> Vec<Effect> {
-    let at = TextPoint::At(TextPosition::at(current.start));
-    let movement = TextMovement {
-        unit: TextUnit::Sentence,
-        count,
-    };
-    let current = Box::new(current);
-    let paragraph = if count > 0 {
-        ParagraphAt::Next { current }
-    } else {
-        ParagraphAt::Previous { current }
-    };
-    read_paragraph(state, passed, at, Some(movement), paragraph)
-}
-
-/// A paragraph answered: finds the sentence, or the paragraph it is in.
-fn paragraph_answered(
-    state: &mut Core,
-    passed: PassedKey,
-    paragraph: ParagraphAt,
-    moved: i32,
-    chunk: TextChunk,
-) -> Vec<Effect> {
-    let forward = passed.key.key.motion == CaretMotion::NextSentence;
-    match paragraph {
-        ParagraphAt::Caret => {
-            let found = if forward {
-                editing::next_sentence(&chunk)
-            } else {
-                editing::sentence_before(&chunk)
-            };
-            match found {
-                Some(sentence) => move_to_sentence(state, passed, chunk, sentence),
-                None if forward && chunk.last => move_to_text_end(state, passed, chunk),
-                None if forward => read_beside(state, passed, chunk, 1),
-                None if chunk.first => stay_at_text_start(state, &passed, &chunk),
-                None => read_beside(state, passed, chunk, -1),
-            }
-        }
-        ParagraphAt::Next { current } if moved == 0 => move_to_text_end(state, passed, *current),
-        ParagraphAt::Next { .. } => {
-            let sentence = editing::first_sentence(&chunk);
-            move_to_sentence(state, passed, chunk, sentence)
-        }
-        ParagraphAt::Previous { current } if moved == 0 => {
-            stay_at_text_start(state, &passed, &current)
-        }
-        ParagraphAt::Previous { .. } => {
-            let sentence = editing::last_sentence(&chunk);
-            move_to_sentence(state, passed, chunk, sentence)
-        }
-    }
-}
-
-/// Moves the caret to `sentence` in `paragraph`.
-fn move_to_sentence(
-    state: &mut SrState,
-    passed: PassedKey,
-    paragraph: TextChunk,
-    sentence: editing::Sentence,
-) -> Vec<Effect> {
-    let point = TextPoint::At(TextPosition {
-        anchor: paragraph.start,
-        offset: sentence.offset,
-    });
-    let line = TextChunk {
-        offset: sentence.offset,
-        ..paragraph
-    };
-    move_caret(state, passed, point, line, sentence.text)
-}
-
-/// From the text's last sentence the caret goes to the text's end, where
-/// no sentence is ("blank").
-fn move_to_text_end(state: &mut SrState, passed: PassedKey, paragraph: TextChunk) -> Vec<Effect> {
-    let line = TextChunk {
-        offset: u32::try_from(paragraph.text.len()).unwrap_or(u32::MAX),
-        ..paragraph
-    };
-    move_caret(state, passed, TextPoint::End, line, String::new())
-}
-
-/// Moves the caret to `point`, in `line`; `sentence` is said when it has.
-fn move_caret(
-    state: &mut SrState,
-    passed: PassedKey,
-    point: TextPoint,
-    line: TextChunk,
-    sentence: String,
-) -> Vec<Effect> {
-    let node = passed.node;
-    let (query, effect) = state.queries.ask(
-        Asking::Text(node, TextOp::MoveCaret(point)),
-        Then::Key { node },
-    );
-    sentence_step(
-        state,
-        passed,
-        SentenceStep::Moving {
-            query,
-            line: Box::new(line),
-            sentence,
-        },
-        effect,
-    )
-}
-
-/// At the text's start the caret stays, and the first sentence is said.
-fn stay_at_text_start(state: &mut Core, passed: &PassedKey, paragraph: &TextChunk) -> Vec<Effect> {
-    let sentence = editing::first_sentence(paragraph);
-    let words = editing::sentence_words(paragraph, &sentence.text);
-    sentence_said(state, passed, words)
+    at
 }
 
 /// Ends the sentence move, saying `words` unless a later key is marked.
@@ -1612,6 +1358,301 @@ fn sentence_dropped(state: &mut Core, passed: &PassedKey, query: QueryId) -> Vec
         .collect();
     effects.extend(sentence_said(state, passed, Vec::new()));
     effects
+}
+
+/// A caret key's function's handle: the driver's, and the key's trace,
+/// which names it in the line.
+struct Key {
+    cx: Cx,
+    trace_id: TraceId,
+}
+
+impl Key {
+    /// The key as the line holds it now, while it is still the current key:
+    /// the reducer writes the line while the function waits (a later key is
+    /// marked, a report without its unit is taken, another key takes its
+    /// place), so every step reads it again.
+    fn current(&self) -> Option<CurrentKey> {
+        self.cx.with(|core| {
+            core.current()
+                .filter(|current| current.trace_id() == Some(self.trace_id))
+                .cloned()
+        })
+    }
+
+    /// The key while it moves by sentence.
+    fn sentence(&self) -> Option<PassedKey> {
+        match self.current()? {
+            CurrentKey::MovingBySentence { passed, .. } => Some(passed),
+            _ => None,
+        }
+    }
+
+    /// Says `effects`, the key's last.
+    #[expect(clippy::unnecessary_wraps, reason = "a key's way out, like its waits")]
+    fn say(&self, effects: Vec<Effect>) -> Option<()> {
+        self.cx.emit(effects);
+        Some(())
+    }
+
+    /// Ends the sentence move, saying `words` unless a later key is marked.
+    fn sentence_said(&self, words: Vec<UtteranceSegment>) -> Option<()> {
+        let passed = self.sentence()?;
+        self.say(self.cx.with(|core| sentence_said(core, &passed, words)))
+    }
+}
+
+/// A held caret key on `node`, from the read of the caret before it to its
+/// result: the read, for at most 150 ms; then the key passed on, with that
+/// caret or, the read given up, judged from the node's last read.
+async fn held_caret_key(key: Key, held: HeldKey, node: NodeId) {
+    let (query, effects) = key.cx.with(|core| read_before(core, held, node));
+    key.cx.emit(effects);
+    let wait = Wait {
+        query: Some(query),
+        signals: &[Signal::KeyBound],
+        due_us: None,
+    };
+    match key.cx.wait(wait).await {
+        Woke::Answered {
+            ending,
+            trace_id,
+            at_us,
+        } => {
+            let reply = ending.reply();
+            key.cx
+                .run(|core| before_read_answered(core, trace_id, (node, held), reply, at_us));
+        }
+        Woke::Signalled(_, at_us) => key
+            .cx
+            .run(|core| before_read_given_up(core, held.trace_id, (query, node, held), at_us)),
+        Woke::Due | Woke::Lost => return,
+    }
+    let _ = passed_key(&key).await;
+}
+
+/// A key passed on, held or not, to its result. Within its bound the
+/// reducer ends it: a report that is its evidence, a focus elsewhere, a
+/// controlled selection or its outpost's end. At its bound a terminal's key
+/// ends, a sentence key goes on to move by sentence, and a text field's
+/// lets what waited go ahead and asks its final read, whose answer is its
+/// result, or, another key having taken its place, an ordinary report.
+async fn passed_key(key: &Key) -> Option<()> {
+    let watching = Wait {
+        query: None,
+        signals: &[Signal::KeyBound, Signal::KeyEnded],
+        due_us: None,
+    };
+    let CurrentKey::Watched(_) = key.current()? else {
+        return None;
+    };
+    let Woke::Signalled(Signal::KeyBound, _) = key.cx.wait(watching).await else {
+        return None;
+    };
+    let CurrentKey::Watched(watched) = key.current()? else {
+        return None;
+    };
+    let node = watched.passed().node;
+    let query = match key.cx.with(|core| bound_passed(core, watched)) {
+        AtBound::Over(effects) => return key.say(effects),
+        AtBound::Sentence(passed) => return sentence_move(key, passed).await,
+        AtBound::FinalRead(query, effects) => {
+            key.cx.emit(effects);
+            query
+        }
+    };
+    let wait = Wait {
+        query: Some(query),
+        signals: &[],
+        due_us: None,
+    };
+    let Woke::Answered {
+        ending, trace_id, ..
+    } = key.cx.wait(wait).await
+    else {
+        return None;
+    };
+    let reply = ending.reply();
+    match key.current() {
+        Some(CurrentKey::FinalReading { field }) => key.say(
+            key.cx
+                .with(|core| final_read_answered(core, trace_id, &field, reply)),
+        ),
+        _ => key.say(key.cx.with(|core| late_read(core, trace_id, node, reply))),
+    }
+}
+
+/// A sentence key past its bound with no evidence: Verbatim moves the caret
+/// by sentence (`docs/design/caret-selection-rework.md`, "Moving by
+/// sentence"). The final read may show that the application moved the
+/// caret after all; if not, the caret's paragraph is read for the sentence
+/// after or before the caret, then the paragraph beside it when it has
+/// none, and the caret is moved there and the sentence said. A step that
+/// fails (text with no sentences, a read or move that could not be made)
+/// ends the move saying nothing.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one sequence of four reads, which reads best whole"
+)]
+async fn sentence_move(key: &Key, passed: PassedKey) -> Option<()> {
+    let node = passed.node;
+    let forward = passed.key.key.motion == CaretMotion::NextSentence;
+    let read = CaretRead {
+        fetch: fetch_of(passed.key.key),
+        purpose: ReadPurpose::Final,
+    };
+    key.cx.with(|core| {
+        let current = CurrentKey::MovingBySentence {
+            passed,
+            final_read: true,
+        };
+        set_current(core, current);
+    });
+    let (reply, trace_id) = sentence_step(key, node, TextOp::ReadCaret(read)).await?;
+    let TextReply::Caret(read) = reply else {
+        return key.sentence_said(Vec::new());
+    };
+    let passed = key.sentence()?;
+    if let Some(evidence) = evidence_of(&passed, &read.facts) {
+        return key.say(
+            key.cx.with(|core| {
+                sentence_moved_by_application(core, trace_id, &passed, &read, evidence)
+            }),
+        );
+    }
+    let caret = key
+        .cx
+        .with(|core| final_read_found_no_effect(core, node, *read));
+    let sentence_at = |at, movement| {
+        TextOp::Read(TextRead {
+            at,
+            movement,
+            unit: TextUnit::Sentence,
+        })
+    };
+    let (reply, _) = sentence_step(key, node, sentence_at(caret, None)).await?;
+    let TextReply::Read { chunk, .. } = reply else {
+        return key.sentence_said(Vec::new());
+    };
+    // At the text's start the caret stays, and the first sentence is said.
+    let stays = |paragraph: &TextChunk| {
+        let sentence = editing::first_sentence(paragraph);
+        key.sentence_said(editing::sentence_words(paragraph, &sentence.text))
+    };
+    let found = if forward {
+        editing::next_sentence(&chunk)
+    } else {
+        editing::sentence_before(&chunk)
+    };
+    // The paragraph the caret goes to and the sentence in it, or, from the
+    // text's last sentence, the text's end, where no sentence is.
+    let (paragraph, sentence) = match found {
+        Some(sentence) => (chunk, Some(sentence)),
+        None if forward && chunk.last => (chunk, None),
+        None if !forward && chunk.first => return stays(&chunk),
+        None => {
+            let movement = TextMovement {
+                unit: TextUnit::Sentence,
+                count: if forward { 1 } else { -1 },
+            };
+            let from = TextPoint::At(TextPosition::at(chunk.start));
+            let (reply, _) = sentence_step(key, node, sentence_at(from, Some(movement))).await?;
+            let TextReply::Read {
+                moved,
+                chunk: beside,
+            } = reply
+            else {
+                return key.sentence_said(Vec::new());
+            };
+            match (moved, forward) {
+                (0, true) => (chunk, None),
+                (0, false) => return stays(&chunk),
+                (_, true) => {
+                    let sentence = editing::first_sentence(&beside);
+                    (beside, Some(sentence))
+                }
+                (_, false) => {
+                    let sentence = editing::last_sentence(&beside);
+                    (beside, Some(sentence))
+                }
+            }
+        }
+    };
+    let (point, line, said) = match sentence {
+        Some(sentence) => (
+            TextPoint::At(TextPosition {
+                anchor: paragraph.start,
+                offset: sentence.offset,
+            }),
+            TextChunk {
+                offset: sentence.offset,
+                ..paragraph
+            },
+            sentence.text,
+        ),
+        None => (
+            TextPoint::End,
+            TextChunk {
+                offset: u32::try_from(paragraph.text.len()).unwrap_or(u32::MAX),
+                ..paragraph
+            },
+            String::new(),
+        ),
+    };
+    let (reply, _) = sentence_step(key, node, TextOp::MoveCaret(point)).await?;
+    let TextReply::Moved { read_at_us } = reply else {
+        return key.sentence_said(Vec::new());
+    };
+    let words = editing::sentence_words(&line, &said);
+    key.cx
+        .with(|core| editing::caret_moved_by_core(core, node, line, read_at_us));
+    key.sentence_said(words)
+}
+
+/// One step of a sentence move: asks `op` of `node` under the key, with
+/// the step's 150 ms, armed first so that a read the shell answers at once
+/// ends it, and waits. `None` when the step passed its 150 ms or the focus
+/// left, the read withdrawn and the move ended saying nothing, or when the
+/// reducer ended the key meanwhile.
+async fn sentence_step(key: &Key, node: NodeId, op: TextOp) -> Option<(TextReply, TraceId)> {
+    let final_read = matches!(op, TextOp::ReadCaret(_));
+    let query = key.cx.with(|core| {
+        if let Some(busy) = core.busy_mut()
+            && let CurrentKey::MovingBySentence { final_read: at, .. } = &mut busy.current
+        {
+            *at = final_read;
+        }
+        core.queries.ask(Asking::Text(node, op), Then::Key { node })
+    });
+    let (query, effect) = query;
+    key.cx.emit([
+        Effect::BoundHeldKey(Some((key.trace_id, HELD_READ_BOUND_MS))),
+        for_key(key.trace_id, effect),
+    ]);
+    let wait = Wait {
+        query: Some(query),
+        signals: &[Signal::KeyBound, Signal::KeyEnded],
+        due_us: None,
+    };
+    match key.cx.wait(wait).await {
+        Woke::Answered {
+            ending, trace_id, ..
+        } => {
+            let reply = ending.reply();
+            if key.sentence().is_none() {
+                // The key has ended: its read is an ordinary report.
+                key.cx.run(|core| late_read(core, trace_id, node, reply));
+                return None;
+            }
+            Some((reply, trace_id))
+        }
+        Woke::Signalled(Signal::KeyBound, _) => {
+            let passed = key.sentence()?;
+            key.cx.run(|core| sentence_dropped(core, &passed, query));
+            None
+        }
+        Woke::Signalled(..) | Woke::Due | Woke::Lost => None,
+    }
 }
 
 /// The final read of the current key answered: a read showing an effect is
@@ -1834,18 +1875,10 @@ pub(crate) fn focus_executed(state: &mut Core, node: NodeId) -> Vec<Effect> {
     if passed.node == node {
         return Vec::new();
     }
-    let sentence_query = match state.current() {
-        Some(CurrentKey::MovingBySentence { step, .. }) => Some(step.query()),
-        Some(
-            CurrentKey::Watched(_)
-            | CurrentKey::FinalReading { .. }
-            | CurrentKey::Reading { .. }
-            | CurrentKey::Review(_),
-        )
-        | None => None,
-    };
-    if let Some(query) = sentence_query {
-        return sentence_dropped(state, &passed, query);
+    // A sentence move the focus left is dropped by its function, which
+    // holds its read.
+    if matches!(state.current(), Some(CurrentKey::MovingBySentence { .. })) {
+        return crate::driver::signal(state, Signal::KeyBound, 0);
     }
     end_current(
         state,

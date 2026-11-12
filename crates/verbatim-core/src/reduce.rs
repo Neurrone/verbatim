@@ -234,7 +234,7 @@ fn speech_cancelled(state: &mut SrState, at_us: u64) -> Vec<Effect> {
 /// judged by where the caret lands, text typed, or a key that clears a
 /// terminal's line. Any other input does nothing here, an editing chord in
 /// a text field among them: the hook's cut of speech was all it does.
-pub(crate) fn key_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
+pub(crate) fn key_input(state: &mut Core, input: &Input) -> Vec<Effect> {
     // A terminal Core reads keeps the key for its reading rules.
     let mut effects = terminal_model::key_input(state, input);
     effects.extend(match input {
@@ -1033,7 +1033,7 @@ fn waited_input(state: &mut Core, input: &Input) -> Vec<Effect> {
 /// key waits reaches the application after it, so it is handled after it
 /// (`books/dev/src/explanation/design/key-holding.md`, "Keys behind a held
 /// key"); any other now.
-fn key_arrived(state: &mut SrState, input: &Input) -> Vec<Effect> {
+fn key_arrived(state: &mut Core, input: &Input) -> Vec<Effect> {
     crate::key_line::key_arrived(state, input)
 }
 

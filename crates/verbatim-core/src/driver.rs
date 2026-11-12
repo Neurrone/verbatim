@@ -213,14 +213,22 @@ pub(crate) enum Signal {
     /// The review press in the key line gives way: its bound passed, or a
     /// focus moved the navigator while it read.
     PressGivesWay,
+    /// The key line's one deadline passed for the current caret key, or a
+    /// focus left a key that is moving by sentence: the wait it bounds is
+    /// over.
+    KeyBound,
+    /// The reducer ended the current caret key: a report was its evidence,
+    /// the focus or a controlled selection moved on, or its outpost ended.
+    KeyEnded,
 }
 
-/// What a function waits for: the first of an answer, a signal and a time.
+/// What a function waits for: the first of an answer, any of some
+/// signals and a time.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Wait {
     /// The query whose one ending wakes it.
     pub(crate) query: Option<QueryId>,
-    pub(crate) signal: Option<Signal>,
+    pub(crate) signals: &'static [Signal],
     /// A time on the run's shared clock, in microseconds.
     pub(crate) due_us: Option<u64>,
 }
@@ -235,8 +243,11 @@ pub(crate) enum Woke {
     Answered {
         ending: Ending,
         trace_id: TraceId,
+        /// When the answer was read, in microseconds, or 0.
+        at_us: u64,
     },
-    Signalled(Signal),
+    /// A signal, with the time its input carried, in microseconds, or 0.
+    Signalled(Signal, u64),
     /// Its time passed.
     #[cfg_attr(
         not(test),
@@ -378,6 +389,7 @@ pub(crate) fn answered(
     query: QueryId,
     ending: Ending,
     trace_id: TraceId,
+    at_us: u64,
 ) -> Vec<Effect> {
     let Some(id) = waiting(core, |wait| wait.query == Some(query))
         .first()
@@ -385,15 +397,28 @@ pub(crate) fn answered(
     else {
         return Vec::new();
     };
-    resume(core, id, Woke::Answered { ending, trace_id })
+    resume(
+        core,
+        id,
+        Woke::Answered {
+            ending,
+            trace_id,
+            at_us,
+        },
+    )
+}
+
+/// Whether a function waits for query `query`.
+pub(crate) fn awaits(core: &Core, query: QueryId) -> bool {
+    !waiting(core, |wait| wait.query == Some(query)).is_empty()
 }
 
 /// Wakes each function waiting for `signal`, in the order they were
 /// started.
-pub(crate) fn signal(core: &mut Core, signal: Signal) -> Vec<Effect> {
+pub(crate) fn signal(core: &mut Core, signal: Signal, at_us: u64) -> Vec<Effect> {
     let mut effects = Vec::new();
-    for id in waiting(core, |wait| wait.signal == Some(signal)) {
-        effects.extend(resume(core, id, Woke::Signalled(signal)));
+    for id in waiting(core, |wait| wait.signals.contains(&signal)) {
+        effects.extend(resume(core, id, Woke::Signalled(signal, at_us)));
     }
     effects
 }
@@ -491,7 +516,7 @@ mod tests {
             cx.emit([request]);
             let wait = Wait {
                 query: Some(query),
-                signal: Some(Signal::PressGivesWay),
+                signals: &[Signal::PressGivesWay],
                 due_us,
             };
             match cx.wait(wait).await {
@@ -525,7 +550,7 @@ mod tests {
         let _ = asker(&mut core, 1, 2, 3, None);
         let _ = asker(&mut core, 4, 5, 6, None);
         assert_eq!(
-            signal(&mut core, Signal::PressGivesWay),
+            signal(&mut core, Signal::PressGivesWay, 0),
             [marker(3), marker(6)]
         );
         assert!(core.quiescent());
@@ -567,7 +592,7 @@ mod tests {
             recorder.record_input(verbatim_model::Input::Tick, 0, &core);
         }
         assert_eq!(recorder.len(), 6);
-        let _ = signal(&mut core, Signal::PressGivesWay);
+        let _ = signal(&mut core, Signal::PressGivesWay, 0);
         // The first step with nothing paused closes the segment, and the
         // window, over its bound, drops it whole.
         recorder.record_input(verbatim_model::Input::Tick, 0, &core);

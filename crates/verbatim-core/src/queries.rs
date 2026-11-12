@@ -250,6 +250,7 @@ impl Queries {
     pub(crate) fn forget_at(&mut self, query_id: QueryId, outpost: OutpostId) {
         if let Some(open) = self.open.get_mut(&query_id)
             && open.outpost == outpost
+            && open.then == Then::Task
         {
             open.then = Then::Nothing;
         }
@@ -497,7 +498,7 @@ pub(crate) fn ended(
     at_us: u64,
 ) -> Vec<Effect> {
     match then {
-        Then::Task => crate::driver::answered(state, query_id, ending, trace_id),
+        Then::Task => crate::driver::answered(state, query_id, ending, trace_id, at_us),
         Then::Activation => match ending {
             Ending::Outcome(QueryOutcome::Done(QueryResult::Activated(action))) => {
                 crate::reduce::activation_completed(trace_id, true, action.as_ref())

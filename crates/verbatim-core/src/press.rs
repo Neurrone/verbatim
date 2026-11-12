@@ -268,14 +268,14 @@ impl Reads {
     async fn answer(&self, query: QueryId) -> Option<(Ending, TraceId)> {
         let wait = Wait {
             query: Some(query),
-            signal: Some(Signal::PressGivesWay),
+            signals: &[Signal::PressGivesWay],
             due_us: None,
         };
         match self.cx.wait(wait).await {
             Woke::Answered {
                 ending, trace_id, ..
             } => Some((ending, trace_id)),
-            Woke::Signalled(Signal::PressGivesWay) => {
+            Woke::Signalled(..) => {
                 self.cx
                     .run(|core| key_line::withdraw_press_read(core, self.key, query));
                 None
