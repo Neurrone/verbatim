@@ -378,15 +378,33 @@ fn without_colours(line: &str) -> String {
     plain
 }
 
+/// The label `stages.txt` gives a latency line's closing sentence, the time
+/// from the last key to the speech being queued.
+const LAST_KEY: &str = "from the last key to speech";
+
 /// A latency line's stages:`... verbatim::latency: ... Event: a 0.1, b
-/// 2.0 (3 calls). Speech: c 1.0.`, as (stage, milliseconds).
+/// 2.0 (3 calls). Speech: c 1.0.`, as (stage, milliseconds), and, when the
+/// line closes with ` From the last key to speech 3.5, a key that typed
+/// text.`, that time as [`LAST_KEY`].
 fn latency_entries(line: &str) -> Option<Vec<(String, f64)>> {
     let line = without_colours(line);
     let rest = &line[line.find("verbatim::latency:")?..];
     let event = &rest[rest.find(" Event: ")? + " Event: ".len()..];
     let (event, speech) = event.split_once(". Speech: ")?;
-    let speech = speech.trim_end().strip_suffix('.').unwrap_or(speech);
+    // The speech stages end at their full stop; a stage's time has a
+    // decimal point but never a space after it.
+    let (speech, after) = speech.split_once(". ").unwrap_or((speech, ""));
+    let speech = speech.trim_end();
+    let speech = speech.strip_suffix('.').unwrap_or(speech);
     let mut entries = Vec::new();
+    if let Some(time) = after
+        .trim_start()
+        .strip_prefix("From the last key to speech ")
+        .and_then(|rest| rest.split(',').next())
+        .and_then(|time| time.parse::<f64>().ok())
+    {
+        entries.push((LAST_KEY.to_owned(), time));
+    }
     for part in event.split(", ").chain(speech.split(", ")) {
         let part = part.trim();
         let part = match part.rfind(" (") {
@@ -695,6 +713,41 @@ mod tests {
                 ("to speech".to_owned(), 0.4),
                 ("mixer and device".to_owned(), 54.4),
             ])
+        );
+    }
+
+    /// A line closing with the time from the last key reads that time as
+    /// its own figure, and leaves the last speech stage as it is, as
+    /// `verbatim-app`'s ledger writes it (`latency.rs`, the line's format).
+    #[test]
+    fn the_last_key_sentence_is_its_own_figure_not_part_of_a_stage() {
+        let line = "2026-11-14T05:20:01.150652Z  INFO verbatim::latency: 12.8 ms for \"b\": \
+                    4.3 ms to speech and 8.5 ms to sound, not counting 0.0 ms waiting behind \
+                    earlier speech. Event: to speech 4.3. Speech: synthesizer request 0.0, \
+                    mixer and device 8.2, device clock 9.9. From the last key to speech 4.6, \
+                    a key that typed text.";
+        assert_eq!(
+            latency_entries(line),
+            Some(vec![
+                (LAST_KEY.to_owned(), 4.6),
+                ("to speech".to_owned(), 4.3),
+                ("synthesizer request".to_owned(), 0.0),
+                ("mixer and device".to_owned(), 8.2),
+                ("device clock".to_owned(), 9.9),
+            ])
+        );
+    }
+
+    /// A line whose stage lists are both empty, as a key's own line can be,
+    /// still reads its last key's time.
+    #[test]
+    fn empty_stage_lists_still_read_the_last_key() {
+        let line = "INFO verbatim::latency: 3.5 ms for \"a\": 3.5 ms to speech and 0.0 ms \
+                    to sound, not counting 0.0 ms waiting behind earlier speech. Event: . \
+                    Speech: . From the last key to speech 3.5, a key that typed nothing.";
+        assert_eq!(
+            latency_entries(line),
+            Some(vec![(LAST_KEY.to_owned(), 3.5)])
         );
     }
 

@@ -38,8 +38,11 @@ silent run takes; `measure_speech_real` is named with `--scenario` in an
 audible run), keeps each run's `stderr.log`, and writes `stages.txt`: for
 every stage of the latency line, over every announcement, the count, the
 median, the 99th and 99.9th percentiles, the maximum, and the share over
-1 and 2 ms, in milliseconds. It ends with two totals summed per
-announcement: verbatim.exe's own stage with its hop to the outpost, the
+1 and 2 ms, in milliseconds. A line that closes with the time from the
+last key to its speech being queued gives that time as its own figure,
+`from the last key to speech`: what a user waits for after a key, however
+it was split between reaching Core and Core's own wait. It ends with two
+totals summed per announcement: verbatim.exe's own stage with its hop to the outpost, the
 outpost's outbound queue and its pipe back, and the wait for the reducer;
 and a key's way to its speech queued. The stages are those the latency
 line names, listed with it under "Driving a running Verbatim with
