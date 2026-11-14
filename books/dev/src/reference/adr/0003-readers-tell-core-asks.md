@@ -256,16 +256,12 @@ Still to be verified, before M8.7 relies on it: whether UIAccess reaches elevate
 
 Core's logic is written as async functions run on Core's thread, from the event queue and focus build, under five rules: only a request to a reader can be awaited; each request names the type of its answer, which the queue decodes once; every request gets exactly one outcome, so no paused function outlives its entry; the recorder's checkpoint is the state at the front entry's start plus the inputs since, so replay stays exact; and a state dump shows each entry, the answers it has had and the request out. Reason: a feature's handling reads top to bottom like NVDA's and keeps its code in one place, while the dumps and exact replay the project relies on are kept. Limits: a copied fact held across a wait is not caught by the compiler and is checked in review; the checkpoint copies Core's state at entry boundaries, whose cost grows with the application. The trial and its figures are in [the build notes](https://github.com/Neurrone/verbatim/blob/main/docs/design/readers-tell-core-asks.md).
 
-## To try (Dickson, 2026-11-13)
-
-- One recorded tape of an application's events and tree, replayed both to a simulator and to real Windows, so that NVDA is captured against the same application; for the design of the speech-level tests.
-
 ## Before the build, and the order of building
 
 - Measured first: the background-event backlog and the keyboard, with every change kind hooked desktop-wide, idle with File Explorer open, a background console flood and an MSAA flood, counting the listener's and Core's wake-ups, processor time, and the delay from a held key's press to Core taking its report. If the budget is missed, the ruled fallback is measured before anything else is built. The same measurement decides whether count caps are needed at the listener's limiter.
 - Also before: the cost of starting a listener reading thread after its application went idle; the property changes following the focus and its ancestors brings in File Explorer and Settings; the lag between a focus and its state changes across the two routes.
 - In the first build: the live hang check's own time, and the below-the-lock-screen test while locked.
-- Builds, one changing state at a time: the fast speech-level tests first; then the event queue and focus as one build; then changes and announcements; then keys and text; then terminals; then M5's design corrections and build A.
+- Builds, one changing state at a time, each covered by the existing unit tests and end-to-end scenarios: the event queue and focus first, as one build; then changes and announcements; then keys and text; then terminals; then M5's design corrections and build A.
 
 ## What would reopen this
 

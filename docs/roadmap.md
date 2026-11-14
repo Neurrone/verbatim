@@ -107,22 +107,17 @@ done on 2026-11-14; the build notes give their figures.
   itself followed; the old focus stays followed until Core commits the
   new one, so a combo box's "expanded" raised just after its item's
   focus is still heard.
-- The event recorder, described under "Misc fixes" below, which the
-  speech-level tests need: built, and its two rules are in `CLAUDE.md`.
+- The event recorder, described under "Misc fixes" below: built, and
+  its two rules are in `CLAUDE.md`.
 
 ### The builds, in order
 
 One build that changes state is in flight at a time. Each has its own
 design with a state table, one adversarial review, an implementation
-review and its related scenarios.
+review and its related scenarios. No new test level is built for the
+phase: the existing unit tests and end-to-end scenarios cover each
+build, used wherever they can be (Dickson, 2026-11-14).
 
-- The speech-level tests: a fast level that feeds keys and application
-  events in and checks speech out, with the real listener, outposts
-  and Core in the loop, so that it survives the builds after it. Its
-  design decisions are Dickson's and still open: where its inputs
-  enter, one recording of an application replayed both to a simulator
-  and to real Windows so that NVDA is captured against the same
-  application, and the wording of the rules for tests and documents.
 - The event queue and focus: the listener takes every hook; a focus is
   told, then read by two requests; acceptance is judged in Core; the
   frozen-window rule; the single record of an outpost generation's
@@ -147,10 +142,6 @@ sections the record requires redesigned; and, last, the UI Automation
 events NVDA registers that Verbatim does not yet take (tooltip opened,
 live region changed, system alert, selection added and removed, the
 drag events and effects, layout invalidated for suggestion lists).
-
-### Waiting for Dickson
-
-- The speech-level tests' design decisions.
 
 ### Found for later milestones
 
