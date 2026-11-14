@@ -108,7 +108,7 @@ done on 2026-11-14; the build notes give their figures.
   new one, so a combo box's "expanded" raised just after its item's
   focus is still heard.
 - The event recorder, described under "Misc fixes" below, which the
-  speech-level tests need.
+  speech-level tests need: built, and its two rules are in `CLAUDE.md`.
 
 ### The builds, in order
 
@@ -232,10 +232,10 @@ NVDA's capture.
   a recorder is useless: most recordings are made without Verbatim
   running, and the second-process lateness applies only beside it.
   M8.6's installer carries it.
-- With it, `CLAUDE.md` and the testing standard gain two rules that
-  wait for it: a design cites the recorder's file with NVDA's capture,
-  and a fixture is checked against a recording of the application it
-  stands for.
+- `CLAUDE.md` holds its two rules (Dickson, 2026-11-14): a design
+  cites a recording of the real application beside NVDA's capture, and
+  a stand-in for an application is checked against a recording of the
+  application it imitates.
 
 ### The confirmed defects
 
