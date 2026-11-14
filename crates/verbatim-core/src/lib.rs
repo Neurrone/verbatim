@@ -75,7 +75,7 @@ pub mod supervisor;
 mod terminal;
 mod terminal_model;
 mod text;
-#[cfg(test)]
+#[cfg(any(test, doctest))]
 mod trial;
 
 pub use dump::{

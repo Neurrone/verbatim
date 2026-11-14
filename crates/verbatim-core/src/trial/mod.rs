@@ -9,8 +9,15 @@
 //! - [`thread_form::ThreadCore`]: a logic thread that waits on each
 //!   request beside an inbox thread that owns the queue and the waiting.
 
+#[cfg(test)]
 mod async_form;
+#[cfg(doctest)]
+mod fact_borrows;
+#[cfg(test)]
 mod harness;
+#[cfg(test)]
 mod scenarios;
+#[cfg(test)]
 mod step;
+#[cfg(test)]
 mod thread_form;

@@ -3,11 +3,13 @@
 
 use super::async_form::AsyncCore;
 use super::harness::{
-    Ask, Effect, Form, Input, Kind, Outcome, Reader, Reply, Request, RequestId, Step, Stop, Window,
-    replay, run,
+    Ask, Effect, Form, Input, Kind, Outcome, Reader, Reply, Request, RequestId, Step, Stop, Timed,
+    Window, replay, run,
 };
 use super::step::StepCore;
 use super::thread_form::ThreadCore;
+
+mod async_rules;
 
 const APP: u32 = 1;
 /// The focused window, in top-level window 1.
@@ -426,8 +428,8 @@ fn checkpoints<F: Form>() -> Vec<bool> {
     taken
 }
 
-fn a_checkpoint_mid_entry_resumes_exactly() {
-    assert_eq!(checkpoints::<StepCore>(), [true; 6]);
+fn a_checkpoint_mid_entry_resumes_exactly<F: Form>() {
+    assert_eq!(checkpoints::<F>(), [true; 6]);
 }
 
 fn no_checkpoint_mid_entry<F: Form>() {
@@ -436,6 +438,59 @@ fn no_checkpoint_mid_entry<F: Form>() {
         checkpoints::<F>(),
         [false, false, false, false, false, true]
     );
+}
+
+/// The async form with a checkpoint taken after every input, and every
+/// checkpoint fed the rest of the run beside the uninterrupted instance,
+/// each asserted to make the same effects in the same order and to reach
+/// the same state; the scenarios then assert the uninterrupted run's
+/// effects exactly, as for the other forms.
+struct Resumed {
+    main: AsyncCore,
+    forks: Vec<AsyncCore>,
+}
+
+impl Form for Resumed {
+    fn new() -> Self {
+        Self {
+            main: AsyncCore::new(),
+            forks: Vec::new(),
+        }
+    }
+
+    fn feed(&mut self, input: &Timed) -> Vec<Effect> {
+        let effects = self.main.feed(input);
+        let dump = self.main.dump();
+        for fork in &mut self.forks {
+            assert_eq!(fork.feed(input), effects);
+            assert_eq!(fork.dump(), dump);
+        }
+        let checkpoint = self
+            .main
+            .checkpoint()
+            .expect("the async form takes a checkpoint at every input");
+        self.forks.push(checkpoint);
+        effects
+    }
+
+    fn dump(&self) -> String {
+        self.main.dump()
+    }
+
+    fn checkpoint(&self) -> Option<Self> {
+        self.main.checkpoint().map(|main| Self {
+            main,
+            forks: Vec::new(),
+        })
+    }
+
+    fn next_due(&self) -> Option<u64> {
+        let due = self.main.next_due();
+        for fork in &self.forks {
+            assert_eq!(fork.next_due(), due);
+        }
+        due
+    }
 }
 
 /// The dump while a caret key waits for its watch.
@@ -485,6 +540,12 @@ macro_rules! each_form {
                 super::$scenario::<super::ThreadCore>();
             })*
         }
+        mod async_form_resumed {
+            $(#[test]
+            fn $scenario() {
+                super::$scenario::<super::Resumed>();
+            })*
+        }
     };
 }
 
@@ -507,12 +568,12 @@ each_form!(
 
 #[test]
 fn step_form_checkpoint_mid_entry_resumes_exactly() {
-    a_checkpoint_mid_entry_resumes_exactly();
+    a_checkpoint_mid_entry_resumes_exactly::<StepCore>();
 }
 
 #[test]
-fn async_form_takes_no_checkpoint_mid_entry() {
-    no_checkpoint_mid_entry::<AsyncCore>();
+fn async_form_checkpoint_mid_entry_resumes_exactly() {
+    a_checkpoint_mid_entry_resumes_exactly::<AsyncCore>();
 }
 
 #[test]
@@ -541,20 +602,20 @@ fn step_form_dumps() {
 fn async_form_dumps() {
     assert_eq!(
         dump_watching::<AsyncCore>(),
-        "AsyncCore { queue: Queue { now_us: 2000, next_request: 2, front: Some(Front { entry: \
-         CaretKey { key: 40, app: 1, window: Window { top: 1, id: 11 }, silent: false }, out: \
-         Some(Out { id: RequestId(2), reader: Outpost(1), window: Window { top: 1, id: 11 }, \
-         request: Watch { within_ms: 100 }, due_us: 11001000 }) }), waiting: [], emitted: [], \
-         ending: None }, task: Some(\"paused\") }"
+        "AsyncCore { now_us: 2000, next_request: 2, front: Some(Front { entry: CaretKey { key: \
+         40, app: 1, window: Window { top: 1, id: 11 }, silent: false }, answers: \
+         [Result(CaretPosition)], out: Some(Out { id: RequestId(2), reader: Outpost(1), window: \
+         Window { top: 1, id: 11 }, request: Watch { within_ms: 100 }, due_us: 11001000 }) }), \
+         waiting: [] }"
     );
     assert_eq!(
         dump_completing::<AsyncCore>(),
-        "AsyncCore { queue: Queue { now_us: 2000, next_request: 2, front: Some(Front { entry: \
-         Focus { app: 1, window: Window { top: 1, id: 11 }, token: 5 }, out: Some(Out { id: \
-         RequestId(2), reader: Outpost(1), window: Window { top: 1, id: 11 }, request: \
-         CompleteFocus { route: 7 }, due_us: 13001000 }) }), waiting: [CaretKey { key: 40, app: \
-         1, window: Window { top: 1, id: 11 }, silent: false }], emitted: [], ending: None }, \
-         task: Some(\"paused\") }"
+        "AsyncCore { now_us: 2000, next_request: 2, front: Some(Front { entry: Focus { app: 1, \
+         window: Window { top: 1, id: 11 }, token: 5 }, answers: [Result(Element { name: \
+         \"Save\", route: 7 })], out: Some(Out { id: RequestId(2), reader: Outpost(1), window: \
+         Window { top: 1, id: 11 }, request: CompleteFocus { route: 7 }, due_us: 13001000 }) }), \
+         waiting: [CaretKey { key: 40, app: 1, window: Window { top: 1, id: 11 }, silent: false \
+         }] }"
     );
 }
 
