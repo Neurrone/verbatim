@@ -75,6 +75,8 @@ pub mod supervisor;
 mod terminal;
 mod terminal_model;
 mod text;
+#[cfg(test)]
+mod trial;
 
 pub use dump::{
     DUMP_FORMAT_VERSION, DumpContents, DumpHeader, DumpReadError, UNKNOWN_COMMIT, read_dump,
